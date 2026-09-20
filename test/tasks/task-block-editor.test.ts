@@ -508,7 +508,7 @@ describe('TaskBlockEditor', () => {
     );
     expect(added).toMatchObject({
       type: 'changed',
-      content: '- [ ] root\n  - 2026-07-14T12:34:56+07:00: note',
+      content: '- [ ] root\n\t- 2026-07-14T12:34:56+07:00: note',
     });
   });
 
@@ -795,11 +795,11 @@ describe('TaskBlockEditor nested line indentation', () => {
   );
 
   it.each(['comment', 'subtask'] as const)(
-    'keeps two spaces without a nested line for a %s',
+    'defaults to a tab without a nested line for a %s',
     (edit) => {
       const source = '- [ ] root\n';
 
-      expect(written(source, 1, edit)).toBe(`${source}  ${ADDED[edit]}\n`);
+      expect(written(source, 1, edit)).toBe(`${source}\t${ADDED[edit]}\n`);
     },
   );
 

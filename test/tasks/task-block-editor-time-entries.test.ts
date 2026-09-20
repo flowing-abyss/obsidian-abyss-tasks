@@ -315,7 +315,7 @@ describe('TaskBlockEditor time entries', () => {
         { relativeLine: 0, lineCount: 1, childRanges: [] },
         { type: 'add-time-entry', stamp: atomDateTime(START) },
       ),
-    ).toMatchObject({ type: 'changed', content: `- [ ] root\n${line}` });
+    ).toMatchObject({ type: 'changed', content: `- [ ] root\n\t- ${START} →` });
 
     expect(
       editBlock(
@@ -344,7 +344,7 @@ describe('TaskBlockEditor entry indentation', () => {
     expect(result).toMatchObject({ type: 'changed', content: `${source}\t- ${START} →\n` });
   });
 
-  it('opens an entry at two spaces under a node without nested lines', () => {
+  it('opens an entry with a tab under a node without nested lines', () => {
     const source = '- [ ] root\n';
 
     const result = editBlock(
@@ -353,6 +353,6 @@ describe('TaskBlockEditor entry indentation', () => {
       { type: 'add-time-entry', stamp: atomDateTime(START) },
     );
 
-    expect(result).toMatchObject({ type: 'changed', content: `${source}  - ${START} →\n` });
+    expect(result).toMatchObject({ type: 'changed', content: `${source}\t- ${START} →\n` });
   });
 });

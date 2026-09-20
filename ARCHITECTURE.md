@@ -48,7 +48,13 @@ remain separate even when one controller uses both.
 [`src/main.ts`](src/main.ts) is the task-system composition root and Obsidian lifecycle entry point.
 It loads settings, creates the status catalog and task adapters, wires application capabilities,
 registers views and commands, and starts and stops the index. Concrete Obsidian task adapters are
-wired here; consumers receive interfaces instead of constructing alternate repositories or indexes.
+wired here; consumers receive interfaces instead of constructing alternate repositories or indexes. The
+composition root injects a native indentation provider into the Markdown block editor through a
+checked, read-only adapter for Obsidian's untyped `getConfig('useTab')` method. Each block mutation captures
+the current unit: a tab by default, or four spaces when disabled. New nested content reuses the
+existing nested prefix or appends that unit to its owner's exact prefix; description replacements
+retain their original prefixes. Reading, reordering, moving, and restoring source preserve authored
+indentation.
 
 | Boundary                                         | Responsibility                                                                              | Dependency direction                                                     |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |

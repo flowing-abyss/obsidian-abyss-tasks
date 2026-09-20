@@ -49,6 +49,7 @@ import { TaskBlockEditor } from './tasks/infrastructure/markdown/TaskBlockEditor
 import { parseMarkdownFrontmatter } from './tasks/infrastructure/markdown/taskBlockSyntax';
 import { TaskLocator } from './tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from './tasks/infrastructure/markdown/TaskMarkdownCodec';
+import { nativeTaskIndentUnit } from './tasks/infrastructure/obsidian/nativeTaskIndentation';
 import { ObsidianTaskDestinationProvider } from './tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider';
 import { ObsidianTaskRepository } from './tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { TaskIndex, type TaskSourceMetadata } from './tasks/infrastructure/TaskIndex';
@@ -113,7 +114,7 @@ export default class TaskCalendarPlugin extends Plugin {
     const codec = new TaskMarkdownCodec(this.statusCatalog);
     const repository = new ObsidianTaskRepository(this.app, {
       codec,
-      editor: new TaskBlockEditor(),
+      editor: new TaskBlockEditor(() => nativeTaskIndentUnit(this.app.vault)),
       locator: new TaskLocator(refAuthority),
       snapshotsFromContent: (path, content) => this.taskIndex.snapshotsFromContent(path, content),
       refAuthority,

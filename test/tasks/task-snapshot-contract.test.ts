@@ -242,4 +242,35 @@ describe('TaskSnapshot contract', () => {
     }
     index.destroy();
   });
+
+  it.each(['  ', '    ', '\t'])(
+    'retains hierarchy and plain comments for authored prefix %j',
+    async (prefix) => {
+      const content = [
+        '- [ ] root',
+        `${prefix}- plain comment`,
+        `${prefix}- [ ] first`,
+        '',
+        `${prefix}- [ ] second`,
+        `${prefix}${prefix}- [ ] grandchild`,
+        `${prefix}- > details`,
+        `${prefix}- 2026-09-20T12:00:00+07:00 →`,
+      ].join('\r\n');
+      const { index } = await snapshotIndex(content);
+      try {
+        const roots = index.list();
+        expect(roots).toHaveLength(1);
+        const root = expectDefined(roots[0]);
+        expect(root.source.originalBlock).toBe(content);
+        expect(root.comments.map((comment) => comment.text)).toEqual(['plain comment']);
+        expect(root.subtasks.map((child) => child.title)).toEqual(['first', 'second']);
+        expect(root.subtasks[0]?.subtasks).toHaveLength(0);
+        expect(root.subtasks[1]?.subtasks.map((child) => child.title)).toEqual(['grandchild']);
+        expect(root.description).toBe('details');
+        expect(root.timeEntries).toHaveLength(1);
+      } finally {
+        index.destroy();
+      }
+    },
+  );
 });

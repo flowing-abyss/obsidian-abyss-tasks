@@ -131,13 +131,13 @@ describe('public atomic dependency subtask creation', () => {
 
     outcome(await h.create('blocked-by', 'Child #work'));
     expect(await h.read()).toBe(
-      '- [ ] Current ⛔ 00000000\n  - [ ] Plan `#inbox` Child #work 🆔 00000000\n',
+      '- [ ] Current ⛔ 00000000\n\t- [ ] Plan `#inbox` Child #work 🆔 00000000\n',
     );
   });
 
   it.each([
-    ['blocked-by', '- [ ] Current ⛔ 00000000\n  - [ ] Child ➕ 2026-09-06 🆔 00000000\n'],
-    ['blocks', '- [ ] Current 🆔 00000000\n  - [ ] Child ➕ 2026-09-06 ⛔ 00000000\n'],
+    ['blocked-by', '- [ ] Current ⛔ 00000000\n\t- [ ] Child ➕ 2026-09-06 🆔 00000000\n'],
+    ['blocks', '- [ ] Current 🆔 00000000\n\t- [ ] Child ➕ 2026-09-06 ⛔ 00000000\n'],
   ] as const)(
     'publishes only the complete %s edge and fresh evidence',
     async (direction, expected) => {
@@ -175,7 +175,7 @@ describe('public atomic dependency subtask creation', () => {
     const generate = vi.fn<TaskDependencyIdGenerator>(() => 'invalid!');
     const h = await harness('- [ ] Current 🆔 authored\n', generate, false);
     expect(outcome(await h.create('blocks')).dependencyId).toBe('authored');
-    expect(await h.read()).toBe('- [ ] Current 🆔 authored\n  - [ ] Child ⛔ authored\n');
+    expect(await h.read()).toBe('- [ ] Current 🆔 authored\n\t- [ ] Child ⛔ authored\n');
     expect(generate).not.toHaveBeenCalled();
   });
 
@@ -188,7 +188,7 @@ describe('public atomic dependency subtask creation', () => {
     const h = await harness('- [ ] Current 🆔 authored ⛔ 00000000\n', generate, false);
     expect(outcome(await h.create()).dependencyId).toBe('00000001');
     expect(await h.read()).toBe(
-      '- [ ] Current 🆔 authored ⛔ 00000000, 00000001\n  - [ ] Child 🆔 00000001\n',
+      '- [ ] Current 🆔 authored ⛔ 00000000, 00000001\n\t- [ ] Child 🆔 00000001\n',
     );
   });
 
@@ -200,7 +200,7 @@ describe('public atomic dependency subtask creation', () => {
     vi.spyOn(h.index, 'listNodes').mockReturnValue(nodes);
     expect(outcome(await h.create('blocked-by', 'Child', current)).dependencyId).toBe('00000001');
     expect(await h.read()).toBe(
-      '- [ ] Current 🆔 00000000 ⛔ 00000001\n  - [ ] Child ➕ 2026-09-06 🆔 00000001\n',
+      '- [ ] Current 🆔 00000000 ⛔ 00000001\n\t- [ ] Child ➕ 2026-09-06 🆔 00000001\n',
     );
   });
 
@@ -301,7 +301,7 @@ describe('public atomic dependency subtask creation', () => {
     expect(result.current.root.source.line).toBe(2);
     expect(write).toHaveBeenCalledTimes(2);
     expect(await h.read()).toBe(
-      '\n- [ ] Current ⛔ 00000000\n  - [ ] Child ➕ 2026-09-06 🆔 00000000\n',
+      '\n- [ ] Current ⛔ 00000000\n\t- [ ] Child ➕ 2026-09-06 🆔 00000000\n',
     );
   });
 

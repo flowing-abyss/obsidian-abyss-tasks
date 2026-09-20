@@ -324,7 +324,7 @@ describe('inspector tracked time badge', () => {
     toggle(harness.el).click();
     await flushMicrotasks();
 
-    expect(await harness.read()).toBe(`- [ ] Current\n  - ${NOW_ATOM} →\n`);
+    expect(await harness.read()).toBe(`- [ ] Current\n\t- ${NOW_ATOM} →\n`);
     expect(badge(harness.el).classList.contains('is-tracking')).toBe(true);
     expect(toggle(harness.el).getAttribute('aria-label')).toBe('Pause tracking');
     expect(body(harness.el).textContent).toBe('0m');
@@ -334,7 +334,7 @@ describe('inspector tracked time badge', () => {
     await flushMicrotasks();
 
     expect(await harness.read()).toBe(
-      `- [ ] Current\n  - ${NOW_ATOM} → 2026-09-18T14:07:32+03:00\n`,
+      `- [ ] Current\n\t- ${NOW_ATOM} → 2026-09-18T14:07:32+03:00\n`,
     );
     expect(badge(harness.el).classList.contains('is-tracking')).toBe(false);
     expect(toggle(harness.el).getAttribute('aria-label')).toBe('Start tracking');
@@ -348,7 +348,7 @@ describe('inspector tracked time badge', () => {
     toggle(harness.el).click();
     await flushMicrotasks();
 
-    expect(await harness.read()).toBe(`- [ ] Current\n  - [ ] Child\n    - ${NOW_ATOM} →\n`);
+    expect(await harness.read()).toBe(`- [ ] Current\n  - [ ] Child\n  \t- ${NOW_ATOM} →\n`);
   });
 
   it('hands the inspector selection the entry it just wrote', async () => {

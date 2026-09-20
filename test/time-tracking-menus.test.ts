@@ -364,7 +364,7 @@ describe('task card tracking menu item', () => {
     item.onClick__?.(new MouseEvent('click'));
     await flushMicrotasks();
 
-    expect(await harness.read()).toBe(`- [ ] Alpha\n- [ ] Beta\n  - ${NOW_ATOM} →\n`);
+    expect(await harness.read()).toBe(`- [ ] Alpha\n- [ ] Beta\n\t- ${NOW_ATOM} →\n`);
   });
 
   it('pauses the running task', async () => {
@@ -517,7 +517,7 @@ describe('inspector context menu tracking item', () => {
     expectDefined(inspectorItem(harness.el, 'Start tracking')).click();
     await flushMicrotasks();
 
-    expect(await harness.read()).toBe(`- [ ] Alpha\n  - ${NOW_ATOM} →\n- [ ] Beta\n`);
+    expect(await harness.read()).toBe(`- [ ] Alpha\n\t- ${NOW_ATOM} →\n- [ ] Beta\n`);
   });
 
   it('starts tracking the selected sub-task', async () => {
@@ -526,7 +526,7 @@ describe('inspector context menu tracking item', () => {
     expectDefined(inspectorItem(harness.el, 'Start tracking')).click();
     await flushMicrotasks();
 
-    expect(await harness.read()).toBe(`- [ ] Alpha\n  - [ ] Child\n    - ${NOW_ATOM} →\n`);
+    expect(await harness.read()).toBe(`- [ ] Alpha\n  - [ ] Child\n  \t- ${NOW_ATOM} →\n`);
   });
 
   it('pauses the running selection', async () => {

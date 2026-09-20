@@ -166,7 +166,7 @@ describe('time tracking orchestration', () => {
       });
 
       expect(result).toMatchObject({ type: 'ok', changed: true });
-      expect(await read(stack.app, 'a.md')).toBe(`- [ ] Alpha\n  - ${NOW_ATOM} →\n`);
+      expect(await read(stack.app, 'a.md')).toBe(`- [ ] Alpha\n\t- ${NOW_ATOM} →\n`);
       expect(activeTitles(stack)).toEqual(['Alpha']);
     } finally {
       stack.index.destroy();
@@ -188,7 +188,7 @@ describe('time tracking orchestration', () => {
       expect(await read(stack.app, 'a.md')).toBe(
         `- [ ] Alpha\n  - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n`,
       );
-      expect(await read(stack.app, 'b.md')).toBe(`- [ ] Bravo\n  - ${NOW_ATOM} →\n`);
+      expect(await read(stack.app, 'b.md')).toBe(`- [ ] Bravo\n\t- ${NOW_ATOM} →\n`);
       expect(activeTitles(stack)).toEqual(['Bravo']);
     } finally {
       stack.index.destroy();
@@ -278,7 +278,7 @@ describe('time tracking orchestration', () => {
 
         expect(result).toMatchObject({ type: 'ok', changed: true });
         expect(await read(stack.app, 'a.md')).toBe(
-          `- [ ] Alpha\n  - ${NOW_ATOM}: note\n  - ${NOW_ATOM} →\n`,
+          `- [ ] Alpha\n\t- ${NOW_ATOM}: note\n\t- ${NOW_ATOM} →\n`,
         );
         expect(activeTitles(stack)).toEqual(['Alpha']);
       } finally {
@@ -308,7 +308,7 @@ describe('time tracking orchestration', () => {
 
       expect(result).toMatchObject({ type: 'ok', changed: true });
       expect(await read(stack.app, 'a.md')).toBe(
-        `# Heading\n- [ ] Alpha\n  - ${NOW_ATOM} →\n- [ ] Bravo\n`,
+        `# Heading\n- [ ] Alpha\n\t- ${NOW_ATOM} →\n- [ ] Bravo\n`,
       );
       expect(activeTitles(stack)).toEqual(['Alpha']);
     } finally {
@@ -338,7 +338,7 @@ describe('time tracking orchestration', () => {
       expect(await read(stack.app, 'b.md')).toBe(
         `- [ ] Other\n  - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n`,
       );
-      expect(await read(stack.app, 'c.md')).toBe(`- [ ] Alpha\n  - ${NOW_ATOM} →\n`);
+      expect(await read(stack.app, 'c.md')).toBe(`- [ ] Alpha\n\t- ${NOW_ATOM} →\n`);
       expect([...activeTitles(stack)].sort((left, right) => left.localeCompare(right))).toEqual([
         'Alpha',
         'Foreign',
@@ -417,7 +417,7 @@ describe('time tracking orchestration', () => {
       expect(await read(stack.app, 'b.md')).toBe(
         `- [ ] Bravo 🆔 00000000\n  - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n- [ ] Charlie ⛔ 00000000\n`,
       );
-      expect(await read(stack.app, 'a.md')).toBe(`- [ ] Alpha\n  - ${NOW_ATOM} →\n`);
+      expect(await read(stack.app, 'a.md')).toBe(`- [ ] Alpha\n\t- ${NOW_ATOM} →\n`);
       expect(activeTitles(stack)).toEqual(['Alpha']);
     } finally {
       vi.restoreAllMocks();
@@ -464,7 +464,7 @@ describe('time tracking orchestration', () => {
       expect(running).toHaveLength(1);
       const tracked = expectDefined(running[0]);
       const idle = tracked.filePath === 'a.md' ? 'b.md' : 'a.md';
-      expect(await read(stack.app, tracked.filePath)).toContain(` - ${NOW_ATOM} →\n`);
+      expect(await read(stack.app, tracked.filePath)).toContain(`\t- ${NOW_ATOM} →\n`);
       // The losing session lasted no time at all, so its line leaves no trace.
       expect(await read(stack.app, idle)).not.toContain('→');
     } finally {
@@ -499,7 +499,7 @@ describe('time tracking orchestration', () => {
 
       expect(kept).toEqual({ type: 'ok', changed: true, outcome: { type: 'stopped' } });
       expect(await read(stack.app, 'a.md')).toBe(
-        `- [ ] Alpha\n  - ${atomAt(SHORT_SESSION_MS)} → ${atomAt(SHORT_SESSION_MS + LONG_SESSION_MS)}\n`,
+        `- [ ] Alpha\n\t- ${atomAt(SHORT_SESSION_MS)} → ${atomAt(SHORT_SESSION_MS + LONG_SESSION_MS)}\n`,
       );
       expect(active(stack)).toEqual([]);
     } finally {
@@ -774,7 +774,7 @@ describe('time tracking orchestration', () => {
 
       expect(result).toMatchObject({ type: 'ok', changed: true });
       expect(await read(stack.app, 'a.md')).toBe(
-        `- [ ] Alpha\n  - [ ] One\n    - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n  - [ ] Two\n    - ${NOW_ATOM} →\n`,
+        `- [ ] Alpha\n  - [ ] One\n    - ${HOUR_AGO_ATOM} → ${NOW_ATOM}\n  - [ ] Two\n  \t- ${NOW_ATOM} →\n`,
       );
       expect(activeTitles(stack)).toEqual(['Two']);
       expect(childOf(rootIn(stack, 'a.md')).timeEntries).toMatchObject([{ state: 'closed' }]);
@@ -818,7 +818,7 @@ describe.each([
 
         expect(result).toMatchObject({ type: 'ok', changed: true, outcome });
         expect(await read(stack.app, 'a.md')).toBe(
-          `${LEAD}- [ ] Above\n${left}- [ ] Below\n  - ${NOW_ATOM} →\n`,
+          `${LEAD}- [ ] Above\n${left}- [ ] Below\n\t- ${NOW_ATOM} →\n`,
         );
         expect(activeTitles(stack)).toEqual(['Below']);
       } finally {
@@ -842,7 +842,7 @@ describe.each([
 
         expect(result).toMatchObject({ type: 'ok', changed: true, outcome });
         expect(await read(stack.app, 'a.md')).toBe(
-          `${LEAD}- [ ] Above\n  - ${NOW_ATOM} →\n- [ ] Below\n${left}`,
+          `${LEAD}- [ ] Above\n\t- ${NOW_ATOM} →\n- [ ] Below\n${left}`,
         );
         expect(activeTitles(stack)).toEqual(['Above']);
       } finally {
@@ -867,7 +867,7 @@ describe.each([
 
         expect(result).toMatchObject({ type: 'ok', changed: true, outcome });
         expect(await read(stack.app, 'a.md')).toBe(
-          `${LEAD}- [ ] Above\n${left}- [ ] Below\n  - [ ] Child\n    - ${NOW_ATOM} →\n`,
+          `${LEAD}- [ ] Above\n${left}- [ ] Below\n  - [ ] Child\n  \t- ${NOW_ATOM} →\n`,
         );
         expect(activeTitles(stack)).toEqual(['Child']);
       } finally {

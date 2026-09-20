@@ -35,6 +35,7 @@ const privateOwners = new Set([
   'PanelView',
   'CalendarSettingsTab',
   'ObsidianTaskRepository',
+  'TaskBlockEditor',
   'RecurrenceEditorController',
   'AnchoredRecurrenceEditorController',
   'LeftPanel',

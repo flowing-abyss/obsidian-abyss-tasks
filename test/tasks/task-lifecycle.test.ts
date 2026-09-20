@@ -1814,7 +1814,7 @@ describe('repository-owned index observations', () => {
           text: 'Second child',
         }),
       ).resolves.toMatchObject({ type: 'ok', changed: true });
-      expect(await app.vault.read(fileAt(app, path))).toContain('  - [ ] Second child');
+      expect(await app.vault.read(fileAt(app, path))).toContain('\t- [ ] Second child');
     } finally {
       h.index.destroy();
     }

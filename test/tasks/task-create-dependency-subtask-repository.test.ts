@@ -154,7 +154,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       });
       expect(result).toMatchObject({ type: 'committed', outcome: { dependencyId: 'existing' } });
       expect(await h.read()).toBe(
-        '- [ ] Root 🆔 existing ⛔ first, first, second\n  - [ ] Child ⛔ existing\n',
+        '- [ ] Root 🆔 existing ⛔ first, first, second\n\t- [ ] Child ⛔ existing\n',
       );
     });
 
@@ -171,7 +171,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         ).type,
       ).toBe('committed');
       expect(await h.read()).toBe(
-        '- [ ] Root 🆔 existing ⛔ first, first, second, child_id\n  - [ ] Child 🆔 child_id\n',
+        '- [ ] Root 🆔 existing ⛔ first, first, second, child_id\n\t- [ ] Child 🆔 child_id\n',
       );
     });
 

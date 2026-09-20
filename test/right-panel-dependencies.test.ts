@@ -2079,7 +2079,7 @@ describe('RightPanel dependency inspector', () => {
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       await flushMicrotasks();
       expect(await h.read()).toBe(
-        '- [ ] Current 🆔 generate\n  - [ ] Brand new ➕ 2026-09-05 ⛔ generate\n',
+        '- [ ] Current 🆔 generate\n\t- [ ] Brand new ➕ 2026-09-05 ⛔ generate\n',
       );
       expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
       expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Current']);

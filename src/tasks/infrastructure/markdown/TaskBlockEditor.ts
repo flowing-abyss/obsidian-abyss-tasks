@@ -37,6 +37,8 @@ export function stripTerminalBlockId(line: string): string {
   return stripRecurrenceTerminalBlockId(line);
 }
 
+export type TaskIndentUnit = '\t' | '    ';
+
 export interface TaskRootBlock {
   readonly line: number;
   readonly toLine: number;
@@ -304,6 +306,7 @@ function commentParts(
 }
 
 interface BlockEditContext {
+  readonly indentUnit: TaskIndentUnit;
   readonly lines: SourceLine[];
   readonly content: string;
   readonly block: TaskRootBlock;
@@ -679,16 +682,24 @@ function replaceDescriptionLines(
   directDescriptions: readonly number[],
   requested: string | undefined,
 ): void {
-  const { lines, block, parent, parentLine, ending } = context;
+  const { lines, block, parentLine, ending } = context;
   const firstDescription = directDescriptions[0];
   const insertionLine =
     firstDescription === undefined ? parentLine + 1 : block.line + firstDescription;
+  const fallbackPrefix = nestedLinePrefix(context);
+  const originalPrefixes = directDescriptions.map((relativeLine) => {
+    const original = lines[block.line + relativeLine];
+    return original === undefined
+      ? fallbackPrefix
+      : (PREFIX_RE.exec(original.text)?.[1] ?? fallbackPrefix);
+  });
   for (const relativeLine of [...directDescriptions].sort((left, right) => right - left)) {
     lines.splice(block.line + relativeLine, 1);
   }
   if (requested !== undefined) {
-    const prefix = `${PREFIX_RE.exec(parent.text)?.[1] ?? ''}  `;
-    const replacements = requested.split('\n').map((line) => `${prefix}- > ${line}`);
+    const replacements = requested
+      .split('\n')
+      .map((line, index) => `${originalPrefixes[index] ?? fallbackPrefix}- > ${line}`);
     insertAt(lines, insertionLine, insertedLines(replacements, ending), ending);
   }
 }
@@ -721,7 +732,7 @@ function addSubtask(
  * The prefix a new nested line takes. A node that already holds one uses that line's exact
  * indentation and quote markers, so a note written with tabs or four spaces never ends up with
  * one node's children at two different indents. Only a node without any nested line falls back
- * to the parent's own prefix and two spaces.
+ * to the parent's own prefix and the injected native indentation unit.
  */
 function nestedLinePrefix(context: BlockEditContext): string {
   const parentIndent = indentation(context.parent.text);
@@ -731,7 +742,7 @@ function nestedLinePrefix(context: BlockEditContext): string {
     if (line === undefined || isTaskBlockBlankLine(line.text)) continue;
     if (indentation(line.text) > parentIndent) return PREFIX_RE.exec(line.text)?.[1] ?? '';
   }
-  return `${PREFIX_RE.exec(context.parent.text)?.[1] ?? ''}  `;
+  return `${PREFIX_RE.exec(context.parent.text)?.[1] ?? ''}${context.indentUnit}`;
 }
 
 function insertChildLine(context: BlockEditContext, at: number, text: string): void {
@@ -1130,6 +1141,7 @@ function editContext(
   content: string,
   block: TaskRootBlock,
   target: TaskBlockTarget,
+  indentUnit: TaskIndentUnit,
 ): BlockEditContext | undefined {
   const lines = sourceLines(content);
   const parentLine = block.line + target.relativeLine;
@@ -1145,12 +1157,15 @@ function editContext(
     target,
     parent,
     parentLine,
+    indentUnit,
     ending: preferredEnding(lines, parentLine),
     hadFinalEnding: content.endsWith('\n'),
   };
 }
 
 export class TaskBlockEditor {
+  constructor(private readonly indentUnit_abyssPrivate: () => TaskIndentUnit = () => '\t') {}
+
   ownedTaskSubtree(
     rootBlock: string,
     ownerRelativeLine: number,
@@ -1265,7 +1280,7 @@ export class TaskBlockEditor {
     target: TaskBlockTarget,
     edit: TaskBlockEdit,
   ): TaskBlockEditResult {
-    const context = editContext(content, block, target);
+    const context = editContext(content, block, target, this.indentUnit_abyssPrivate());
     if (context === undefined) return { type: 'conflict' };
     const earlyResult = applyEdit(context, edit);
     return earlyResult ?? editedResult(context);
@@ -1277,7 +1292,7 @@ export class TaskBlockEditor {
     block: TaskRootBlock,
     edit: CreateDependencySubtaskEdit,
   ): CreateDependencySubtaskEditResult {
-    const context = editContext(content, block, edit.current);
+    const context = editContext(content, block, edit.current, this.indentUnit_abyssPrivate());
     if (context === undefined) return { type: 'conflict' };
     const linked = createLinkedTaskLines(codec, context.parent.text, edit);
     if (linked === undefined) return { type: 'invalid', field: 'subtask' };
