@@ -352,3 +352,48 @@ it('reports actionable spans for scope, color, important and spacing findings', 
     { ruleId: 'abyss/scale-spacing', line: 3, column: 11 },
   ]);
 });
+
+describe('filter shadow color policy', () => {
+  it.each([
+    ['filter', 31],
+    ['backdrop-filter', 40],
+  ])('rejects named shadow colors in %s at their source span', (property, column) => {
+    const css = `.abyss-x {\n  ${property}: drop-shadow(0 0 2px red);\n}`;
+    expect(analyze(css)).toEqual([
+      expect.objectContaining({
+        ruleId: 'abyss/token-color',
+        file: 'fixture.css',
+        line: 2,
+        column,
+      }),
+    ]);
+  });
+
+  it('rejects named colors nested in a shadow fallback and color mix', () => {
+    const css =
+      '.abyss-x { filter: drop-shadow(0 0 2px color-mix(in srgb, var(--text-normal, red), blue)); }';
+    expect(analyze(css).map(({ ruleId }) => ruleId)).toEqual([
+      'abyss/token-color',
+      'abyss/token-color',
+    ]);
+  });
+
+  it.each(['filter', 'backdrop-filter'])(
+    'accepts host-derived and currentColor shadows in %s',
+    (property) => {
+      expect(
+        analyze(
+          `.abyss-x { ${property}: drop-shadow(0 0 2px var(--text-normal)) drop-shadow(0 0 1px currentColor); }`,
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it('ignores color words in filter URLs and quoted text', () => {
+    expect(
+      analyze(
+        '.abyss-x { filter: url(red) url("blue"); backdrop-filter: url("data:image/svg+xml,red"); content: "drop-shadow(0 0 2px red)"; }',
+      ),
+    ).toEqual([]);
+  });
+});

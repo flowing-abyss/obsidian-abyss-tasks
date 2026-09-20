@@ -133,7 +133,7 @@ function literalColor(node, property) {
   if (node.type === 'word') {
     if (/^#[\da-f]{3,8}$/i.test(node.value)) return true;
     return (
-      /^(--|.*color$|background|border|outline|.*shadow$|fill$|stroke$|text-decoration|column-rule)/.test(
+      /^(--|.*color$|background|border|outline|.*shadow$|fill$|stroke$|text-decoration|column-rule|(?:-webkit-)?(?:backdrop-)?filter$)/.test(
         property,
       ) && namedColors.has(node.value.toLowerCase())
     );
