@@ -1,3 +1,7 @@
 coverage/
+dev-vault-tasks/
 dist/
+docs/
 node_modules/
+.codegraph/
+.superpowers/

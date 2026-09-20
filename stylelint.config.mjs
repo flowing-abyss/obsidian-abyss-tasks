@@ -2,9 +2,8 @@
 const config = {
   extends: ['stylelint-config-standard'],
   rules: {
-    // The legacy code-block calendar renders semantic HTML elements under a
-    // scoped host. A small type-selector allowance keeps those rules scoped
-    // without requiring extra presentation-only classes in generated markup.
+    // Plugin-scoped controls and task content use semantic elements such as
+    // buttons, inputs, and links. Allow those type selectors under scoped hosts.
     'selector-max-type': 3,
     'custom-property-pattern': null,
     // Existing plugin selectors use BEM-style modifiers and must coexist with
