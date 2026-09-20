@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import { SHORTCUT_ACTIONS } from '../src/settings/shortcuts';
 import type { CalendarSettings } from '../src/settings/types';
+import { cssRuleContaining, cssValue } from './cssHelpers';
 import { expectDefined, useRealMoment } from './helpers';
 
 useRealMoment();
@@ -18,12 +19,11 @@ async function loadStylesFixture(): Promise<string> {
 const css = await loadStylesFixture();
 
 function expectDeclaration(source: string, property: string, value: string): void {
-  expect(source).toMatch(new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*${value}\\s*(?:;|$)`, 'u'));
+  expect(cssValue(source, property)).toBe(value);
 }
 
 function declarationsFor(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-  return new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'u').exec(css)?.[1] ?? '';
+  return cssRuleContaining(css, [selector]);
 }
 
 interface StubPlugin {
@@ -86,7 +86,7 @@ describe('CalendarSettingsTab sections', () => {
     expectDeclaration(header, 'font', 'inherit');
     expectDeclaration(header, 'line-height', 'normal');
     expectDeclaration(header, 'width', '100%');
-    expectDeclaration(header, 'padding', '12px 16px');
+    expectDeclaration(header, 'padding', 'var(--size-4-3) var(--size-4-4)');
 
     const body = declarationsFor('.abyss-settings-section-body');
     const openBody = declarationsFor(
@@ -97,7 +97,7 @@ describe('CalendarSettingsTab sections', () => {
     expectDeclaration(
       declarationsFor('.abyss-settings-section-body-inner'),
       'padding',
-      '12px 16px 8px',
+      'var(--size-4-3) var(--size-4-4) var(--size-4-2)',
     );
   });
 

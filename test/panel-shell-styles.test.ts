@@ -1,5 +1,8 @@
+import postcss from 'postcss';
+import valueParser from 'postcss-value-parser';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { cssDeclarationText, cssDeclarations, normalizeCssSelector } from './cssHelpers';
 import { expandCompoundSelectorLists } from './support/expandedCss';
 
 function readStyles(): string {
@@ -9,76 +12,6 @@ function readStyles(): string {
 }
 
 const css = readStyles();
-
-interface CssRule {
-  selector: string;
-  body: string;
-}
-
-function normalizeSelector(selector: string): string {
-  let normalized = '';
-  let pendingSpace = false;
-  for (const character of selector) {
-    if (
-      character === ' ' ||
-      character === '\n' ||
-      character === '\r' ||
-      character === '\t' ||
-      character === '\f'
-    ) {
-      pendingSpace = normalized.length > 0 && normalized[normalized.length - 1] !== ' ';
-    } else if (character === ',') {
-      normalized += ', ';
-      pendingSpace = false;
-    } else {
-      if (pendingSpace) normalized += ' ';
-      normalized += character;
-      pendingSpace = false;
-    }
-  }
-  return normalized.trim();
-}
-
-function withoutComments(source: string): string {
-  let clean = '';
-  let cursor = 0;
-  while (cursor < source.length) {
-    const commentStart = source.indexOf('/*', cursor);
-    if (commentStart === -1) return clean + source.slice(cursor);
-    clean += source.slice(cursor, commentStart);
-    const commentEnd = source.indexOf('*/', commentStart + 2);
-    if (commentEnd === -1) return clean;
-    cursor = commentEnd + 2;
-  }
-  return clean;
-}
-
-function parseTopLevelRules(source: string): CssRule[] {
-  const parsed: CssRule[] = [];
-  let depth = 0;
-  let selectorStart = 0;
-  let bodyStart = 0;
-  let selector = '';
-
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source[index];
-    if (character === '{') {
-      if (depth === 0) {
-        selector = normalizeSelector(source.slice(selectorStart, index));
-        bodyStart = index + 1;
-      }
-      depth += 1;
-    } else if (character === '}') {
-      depth -= 1;
-      if (depth === 0) {
-        parsed.push({ selector, body: source.slice(bodyStart, index) });
-        selectorStart = index + 1;
-      }
-    }
-  }
-
-  return parsed;
-}
 
 function withoutWhitespace(source: string): string {
   let compact = '';
@@ -108,22 +41,37 @@ function countOccurrences(source: string, needle: string): number {
   return count;
 }
 
-const rules = parseTopLevelRules(withoutComments(css));
+const rules = postcss
+  .parse(css)
+  .nodes.filter((node) => node.type === 'rule')
+  .map((rule) => ({
+    selector: rule.selector,
+    body: rule.nodes
+      .filter((node) => node.type === 'decl')
+      .map((node) => node.toString())
+      .join('\n'),
+  }));
 
 function declarationsFor(selector: string): string {
-  const normalized = normalizeSelector(selector);
-  return rules
-    .filter((rule) => rule.selector === normalized)
-    .map((rule) => rule.body)
-    .join('\n');
+  return cssDeclarationText(css, selector, true);
 }
 
 function supplementalTopPaddingPx(selector: string): number {
-  const declaration = declarationsFor(selector);
-  const prefix = 'padding-top: calc(';
-  const valueStart = declaration.indexOf(prefix) + prefix.length;
-  const valueEnd = declaration.indexOf('px', valueStart);
-  return Number(declaration.slice(valueStart, valueEnd));
+  const declaration = cssDeclarations(css, selector, true).find(
+    (item) => item.prop === 'padding-top',
+  );
+  const expression = valueParser(declaration?.value ?? '').nodes[0];
+  if (expression?.type !== 'function' || expression.value !== 'calc')
+    throw new Error('Expected calculated inset');
+  return defaultSpacingPx(expression.nodes[0]);
+}
+
+function defaultSpacingPx(base: valueParser.Node | undefined): number {
+  // Independently documented Default-theme spacing; this assertion guards the original geometry.
+  const defaults: Record<string, number> = { '--size-4-2': 8, '--size-4-3': 12 };
+  if (base?.type === 'function' && base.value === 'var')
+    return defaults[base.nodes[0]?.value ?? ''] ?? NaN;
+  return base?.type === 'word' ? Number.parseFloat(base.value) : NaN;
 }
 
 describe('Panel shell top rhythm', () => {
@@ -143,20 +91,24 @@ describe('Panel shell top rhythm', () => {
   });
 
   it.each([
-    ['.abyss-layout > .abyss-rail', '8px', false],
-    ['.abyss-layout > .abyss-left > .abyss-left-section:first-child', '12px', false],
+    ['.abyss-layout > .abyss-rail', 'var(--size-4-2)', false],
+    ['.abyss-layout > .abyss-left > .abyss-left-section:first-child', 'var(--size-4-3)', false],
     [
       '.abyss-layout--tasks > .abyss-center-shell > .abyss-center > .abyss-center-header, .abyss-layout--search > .abyss-center-shell > .abyss-center > .abyss-center-header',
-      '12px',
+      'var(--size-4-3)',
       true,
     ],
-    ['.abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav', '8px', true],
+    [
+      '.abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav',
+      'var(--size-4-2)',
+      true,
+    ],
     [
       '.abyss-layout--projects > .abyss-center-shell > .abyss-center .abyss-projects-toolbar',
-      '12px',
+      'var(--size-4-3)',
       true,
     ],
-    ['.abyss-layout > .abyss-right > .abyss-right-header:first-child', '12px', false],
+    ['.abyss-layout > .abyss-right > .abyss-right-header:first-child', 'var(--size-4-3)', false],
     ['.abyss-layout > .abyss-right > .abyss-breadcrumb:first-child', '18px', false],
   ])(
     'adds the inset to the approved top-level surface %s',
@@ -190,17 +142,19 @@ describe('Panel shell top rhythm', () => {
   it('does not add the inset to content, grid, empty, section, or modal surfaces', () => {
     const insetSelectors = rules
       .filter((rule) => rule.body.includes('var(--abyss-shell-top-inset)'))
-      .map((rule) => rule.selector);
+      .map((rule) => normalizeCssSelector(rule.selector));
 
-    expect(insetSelectors).toEqual([
-      '.abyss-layout > .abyss-rail',
-      '.abyss-layout > .abyss-left > .abyss-left-section:first-child',
-      '.abyss-layout--tasks > .abyss-center-shell > .abyss-center > .abyss-center-header, .abyss-layout--search > .abyss-center-shell > .abyss-center > .abyss-center-header',
-      '.abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav',
-      '.abyss-layout--projects > .abyss-center-shell > .abyss-center .abyss-projects-toolbar',
-      '.abyss-layout > .abyss-right > .abyss-right-header:first-child',
-      '.abyss-layout > .abyss-right > .abyss-breadcrumb:first-child',
-    ]);
+    expect(insetSelectors).toEqual(
+      [
+        '.abyss-layout > .abyss-rail',
+        '.abyss-layout > .abyss-left > .abyss-left-section:first-child',
+        '.abyss-layout--tasks > .abyss-center-shell > .abyss-center > .abyss-center-header, .abyss-layout--search > .abyss-center-shell > .abyss-center > .abyss-center-header',
+        '.abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav',
+        '.abyss-layout--projects > .abyss-center-shell > .abyss-center .abyss-projects-toolbar',
+        '.abyss-layout > .abyss-right > .abyss-right-header:first-child',
+        '.abyss-layout > .abyss-right > .abyss-breadcrumb:first-child',
+      ].map(normalizeCssSelector),
+    );
 
     for (const selector of [
       '.abyss-center-scroll',

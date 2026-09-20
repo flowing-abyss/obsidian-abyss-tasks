@@ -22,7 +22,6 @@
   --abyss-event-fill-strength: 11%;
   --abyss-event-outline-strength: 24%;
   --abyss-event-focus-tag-strength: 55%;
-  --abyss-preview-fill-strength: 7%;
 
   /* Preview outlines mix toward the theme's text color. Pale tags need a stronger text share on
      light backgrounds, while dark tags need more of their own hue to stay recognizable in dark. */
@@ -65,7 +64,6 @@
   --abyss-calendar-forecast-fill-strength: 9%;
   --abyss-event-fill-strength: 14%;
   --abyss-event-outline-strength: 32%;
-  --abyss-preview-fill-strength: 10%;
   --abyss-preview-border-tag-strength: 55%;
 }
 
@@ -91,7 +89,7 @@
   container-type: inline-size;
   container-name: abyss-panel-layout;
   background: var(--background-primary);
-  font-family: var(--font-interface);
+  font-family: var(--font-interface, var(--font-interface-theme));
 }
 
 .abyss-creation-feedback {
@@ -100,11 +98,11 @@
   inset-inline-end: 16px;
   inset-block-end: calc(var(--size-4-8, 2rem) + var(--size-4-4, 1rem));
   max-width: min(360px, calc(100% - 32px));
-  padding: 8px 12px;
+  padding: var(--size-4-2) var(--size-4-3);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
   background: var(--background-secondary);
-  box-shadow: var(--shadow-s);
+  box-shadow: var(--shadow-s, none);
   color: var(--text-normal);
   pointer-events: none;
 }
@@ -141,11 +139,11 @@
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
   background: var(--background-primary);
-  box-shadow: var(--shadow-l);
+  box-shadow: var(--shadow-l, none);
 }
 
-.is-just-created {
-  --abyss-creation-accent: var(--abyss-tag-color, var(--task-color, var(--interactive-accent)));
+:where(.abyss-panel-view, .abyss-modal) .is-just-created {
+  --abyss-creation-accent: var(--abyss-tag-color, var(--interactive-accent));
 
   outline: 2px solid var(--abyss-creation-accent);
   outline-offset: 2px;
@@ -166,7 +164,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .is-just-created {
+  :where(.abyss-panel-view, .abyss-modal) .is-just-created {
     outline: 2px solid var(--abyss-creation-accent);
     outline-offset: 2px;
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--abyss-creation-accent) 28%, transparent);
@@ -204,7 +202,7 @@
     inset-block: var(--abyss-compact-overlay-top, var(--abyss-center-toolbar-height)) 0;
     inset-inline-end: 0;
     inline-size: min(20rem, calc(100cqi - 48px));
-    box-shadow: var(--shadow-l);
+    box-shadow: var(--shadow-l, none);
   }
 
   .abyss-layout--tasks .abyss-compact-pane-button--right {
@@ -223,7 +221,7 @@
     inset-block: var(--abyss-compact-overlay-top, var(--abyss-center-toolbar-height)) 0;
     inset-inline-start: 48px;
     inline-size: min(15rem, calc(100cqi - 48px));
-    box-shadow: var(--shadow-l);
+    box-shadow: var(--shadow-l, none);
   }
 
   .abyss-layout--tasks .abyss-compact-pane-button--left {
@@ -255,10 +253,10 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 8px 0;
+  padding: var(--size-4-2) 0;
   background: var(--background-secondary);
   border-right: 1px solid var(--background-modifier-border);
-  gap: 2px;
+  gap: var(--size-2-1);
   z-index: 1;
 }
 
@@ -379,7 +377,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-tg-header-cell {
   flex: 1;
   text-align: center;
-  padding: 6px 0;
+  padding: var(--size-2-3) 0;
   font-size: 0.8em;
   font-weight: 600;
   color: var(--text-muted);
@@ -438,7 +436,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   width: 3.5em;
   flex-shrink: 0;
   text-align: right;
-  padding-right: 4px;
+  padding-right: var(--size-4-1);
 }
 
 /* Task 47: the "No-time" text's smaller/muted styling lives on this nested label, not on
@@ -477,16 +475,16 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   min-width: 0;
   position: relative;
   border-left: 1px solid var(--background-modifier-border);
-  padding: 2px 4px;
+  padding: var(--size-2-1) var(--size-4-1);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--size-2-1);
 }
 
 .abyss-tg-cell-items {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--size-2-1);
   margin-top: calc(var(--abyss-span-lane-count, 0) * var(--abyss-calendar-track-height));
 }
 
@@ -534,7 +532,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-span-piece {
   box-sizing: border-box;
   height: calc(100% - 2px);
-  margin: 1px 2px;
+  margin: 1px var(--size-2-1);
   pointer-events: auto;
   cursor: grab;
   min-width: 0;
@@ -547,7 +545,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-tg-root--week .abyss-tg-span-layer > .abyss-span-move-preview,
 .abyss-tg-root--week .abyss-tg-span-layer > .abyss-span-boundary-preview {
   margin-block: 1px;
-  margin-inline: 5px 4px;
+  margin-inline: 5px var(--size-4-1);
 }
 
 .abyss-span-piece:focus-visible {
@@ -560,7 +558,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-span-piece.is-picked-up {
-  box-shadow: var(--shadow-s);
+  box-shadow: var(--shadow-s, none);
 }
 
 .abyss-span-move-preview,
@@ -600,7 +598,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   font-size: 0.75em;
   color: var(--text-faint);
   text-align: right;
-  padding-right: 4px;
+  padding-right: var(--size-4-1);
   transform: translateY(-0.5em);
 }
 
@@ -693,7 +691,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   .abyss-mg-deadline-marker
 ).abyss-calendar-item {
   border-radius: var(--abyss-calendar-item-radius);
-  padding: 2px var(--abyss-calendar-item-pad-inline);
+  padding: var(--size-2-1) var(--abyss-calendar-item-pad-inline);
   font-size: var(--abyss-calendar-item-font-size);
 }
 
@@ -724,7 +722,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   z-index: 2;
   pointer-events: auto;
   border-radius: var(--abyss-calendar-item-radius);
-  padding: 2px var(--abyss-calendar-item-pad-inline);
+  padding: var(--size-2-1) var(--abyss-calendar-item-pad-inline);
   font-size: var(--abyss-calendar-item-font-size);
   overflow: hidden;
   cursor: grab;
@@ -855,8 +853,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
-  margin-inline-start: 4px;
+  gap: var(--size-4-1);
+  margin-inline-start: var(--size-4-1);
   flex-shrink: 0;
 }
 
@@ -870,7 +868,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 6px;
+  gap: var(--size-2-3);
   min-width: 0;
 
   /* Task 36: the LEAST important row — collapses first (down to 0 height, `overflow: hidden`
@@ -897,7 +895,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-tg-block-badges {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--size-4-1);
   flex-shrink: 0;
 }
 
@@ -950,7 +948,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-tg-span-edge:hover::after,
 .abyss-tg-resize-handle:active::after,
 .abyss-tg-span-edge:active::after,
-[data-active-resize='true']::after {
+:where(.abyss-panel-view, .abyss-modal) [data-active-resize='true']::after {
   opacity: 1;
 }
 
@@ -964,7 +962,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   box-sizing: border-box;
   min-block-size: 0;
   border-radius: var(--abyss-calendar-item-radius);
-  padding: 2px var(--abyss-calendar-item-pad-inline);
+  padding: var(--size-2-1) var(--abyss-calendar-item-pad-inline);
   font-size: var(--abyss-calendar-item-font-size);
   line-height: 1.4;
   cursor: grab;
@@ -1145,7 +1143,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   border-radius: var(--abyss-calendar-item-radius);
   border-inline-start: var(--abyss-calendar-ghost-rail) dashed
     var(--abyss-tag-color, var(--interactive-accent));
-  padding: 2px var(--abyss-calendar-item-pad-inline);
+  padding: var(--size-2-1) var(--abyss-calendar-item-pad-inline);
   font-size: var(--abyss-calendar-item-font-size);
   overflow: hidden;
   background: var(--abyss-calendar-surface);
@@ -1209,7 +1207,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   flex-direction: column;
   gap: 1px;
   border-radius: var(--abyss-calendar-item-radius);
-  padding: 2px var(--abyss-calendar-item-pad-inline);
+  padding: var(--size-2-1) var(--abyss-calendar-item-pad-inline);
   font-size: var(--abyss-calendar-item-font-size);
   background: color-mix(
     in srgb,
@@ -1297,9 +1295,9 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-tg-deadline-marker {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--size-4-1);
   border-radius: 5px;
-  padding: 2px 6px;
+  padding: var(--size-2-1) var(--size-2-3);
   font-size: 0.78em;
   border: 1px solid var(--background-modifier-border);
   color: var(--text-muted);
@@ -1428,7 +1426,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   background: var(--background-primary);
   border: 1px solid var(--interactive-accent);
   border-radius: 4px;
-  padding: 2px 6px;
+  padding: var(--size-2-1) var(--size-2-3);
 }
 
 .abyss-tg-quick-add-input {
@@ -1455,7 +1453,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   background: var(--background-primary);
   border: 1px solid var(--interactive-accent);
   border-radius: 4px;
-  padding: 0 4px;
+  padding: 0 var(--size-4-1);
 }
 
 .abyss-tg-allday-quick-add-input {
@@ -1499,7 +1497,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   text-align: center;
   font-size: 0.75em;
   color: var(--text-faint);
-  padding: 4px 0;
+  padding: var(--size-4-1) 0;
 }
 
 /* Empty corner cell above the week-number column, keeps day-of-week headers aligned
@@ -1531,7 +1529,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   position: relative;
   flex: 1;
   border: 1px solid var(--background-modifier-border);
-  padding: 2px 4px;
+  padding: var(--size-2-1) var(--size-4-1);
   overflow: hidden;
   cursor: pointer;
   display: flex;
@@ -1597,7 +1595,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   background: var(--background-primary);
   border: 1px solid var(--interactive-accent);
   border-radius: 4px;
-  padding: 0 4px;
+  padding: 0 var(--size-4-1);
 }
 
 .abyss-mg-quick-add-input {
@@ -1652,7 +1650,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   position: relative;
   font-size: var(--abyss-calendar-item-font-size);
   border-radius: var(--abyss-calendar-item-radius);
-  padding: 2px var(--abyss-calendar-item-pad-inline);
+  padding: var(--size-2-1) var(--abyss-calendar-item-pad-inline);
   overflow: hidden;
   cursor: pointer;
   display: flex;
@@ -1716,7 +1714,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: var(--size-2-1);
   flex: 1;
 }
 
@@ -1724,7 +1722,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-bottom: 4px;
+  padding-bottom: var(--size-4-1);
 }
 
 .abyss-rail-btn {
@@ -1763,7 +1761,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 /* ---- Left Panel ---- */
 .abyss-left-section-header {
-  padding: 12px 16px 4px;
+  padding: var(--size-4-3) var(--size-4-4) var(--size-4-1);
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
@@ -1773,16 +1771,16 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-left-section {
-  padding: 4px 0;
+  padding: var(--size-4-1) 0;
 }
 
 .abyss-left-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 12px 5px 16px;
+  padding: 5px var(--size-4-3) 5px var(--size-4-4);
   border-radius: 6px;
-  margin: 1px 6px;
+  margin: 1px var(--size-2-3);
   cursor: pointer;
   transition: background 0.1s;
   user-select: none;
@@ -1804,7 +1802,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-left-item-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--size-4-2);
   min-width: 0;
 }
 
@@ -1839,14 +1837,14 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 /* Tag groups */
 .abyss-tag-group {
-  margin: 1px 6px;
+  margin: 1px var(--size-2-3);
 }
 
 .abyss-tag-group-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
+  gap: var(--size-2-3);
+  padding: 5px var(--size-4-3);
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.1s;
@@ -1920,12 +1918,12 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
      top-align felt detached). Relative to centre so it holds across row heights. */
   transform: translateY(-2px);
   border-radius: 50%;
-  background: var(--color-accent);
+  background: var(--color-accent, var(--interactive-accent));
   opacity: 0.9;
 }
 
 .abyss-tag-group-children {
-  padding-left: 8px;
+  padding-left: var(--size-4-2);
 }
 
 .abyss-tag-child {
@@ -1953,7 +1951,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   border: 1px solid var(--background-modifier-border);
   border-left: 3px solid var(--interactive-accent);
   border-radius: var(--radius-m);
-  margin-bottom: 12px;
+  margin-bottom: var(--size-4-3);
   overflow: hidden;
 }
 
@@ -1964,7 +1962,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   width: 100%;
   min-height: 0;
   height: auto;
-  padding: 12px 16px;
+  padding: var(--size-4-3) var(--size-4-4);
   border: 0;
   border-radius: 0;
   box-shadow: none;
@@ -1975,7 +1973,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   font: inherit;
   line-height: normal;
   text-align: start;
-  gap: 8px;
+  gap: var(--size-4-2);
 }
 
 .abyss-settings-section-header:hover {
@@ -2032,7 +2030,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-settings-section-body-inner {
-  padding: 12px 16px 8px;
+  padding: var(--size-4-3) var(--size-4-4) var(--size-4-2);
 }
 
 .abyss-settings-section-body[hidden] {
@@ -2048,8 +2046,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 /* Configurable local shortcut inputs. */
 .abyss-shortcuts-list {
   display: grid;
-  gap: 8px;
-  padding: 12px;
+  gap: var(--size-4-2);
+  padding: var(--size-4-3);
 }
 
 .abyss-shortcut-validation-status:empty,
@@ -2061,7 +2059,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: flex;
   align-items: center;
   gap: var(--size-4-2);
-  padding-inline: 12px;
+  padding-inline: var(--size-4-3);
   color: var(--text-error);
 }
 
@@ -2073,8 +2071,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(9rem, 14rem);
   align-items: center;
-  gap: 8px 12px;
-  padding: 8px 10px;
+  gap: var(--size-4-2) var(--size-4-3);
+  padding: var(--size-4-2) 10px;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
   background: var(--background-primary-alt);
@@ -2091,7 +2089,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   background: var(--background-modifier-form-field);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
-  font-family: var(--font-monospace);
+  font-family: var(--font-monospace, var(--font-monospace-theme));
 }
 
 .abyss-shortcut-input[aria-invalid='true'] {
@@ -2119,7 +2117,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 /* ---- Center Panel ---- */
 .abyss-center-header {
-  padding: 12px 16px;
+  padding: var(--size-4-3) var(--size-4-4);
   flex-shrink: 0;
   border-bottom: 1px solid var(--background-modifier-border);
 }
@@ -2143,7 +2141,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   border: 1px solid var(--background-modifier-border);
   background: var(--background-secondary);
   color: var(--text-normal);
-  padding: 0 8px;
+  padding: 0 var(--size-4-2);
   font-size: 13px;
   width: 160px;
   outline: none;
@@ -2172,18 +2170,18 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-center-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 0;
+  padding: var(--size-4-2) 0;
 }
 
 .abyss-center-empty {
   text-align: center;
   color: var(--text-muted);
-  padding: 40px 20px;
+  padding: 40px var(--size-4-5);
   font-size: 14px;
 }
 
 .abyss-group-header {
-  padding: 16px 16px 6px;
+  padding: var(--size-4-4) var(--size-4-4) var(--size-2-3);
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
@@ -2191,15 +2189,15 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   color: var(--text-faint);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--size-4-2);
   user-select: none;
-  margin-top: 2px;
+  margin-top: var(--size-2-1);
   border-top: 1px solid var(--background-modifier-border);
 }
 
 .abyss-group-header--first {
   border-top: none;
-  padding-top: 8px;
+  padding-top: var(--size-4-2);
   margin-top: 0;
 }
 
@@ -2211,9 +2209,9 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 2px;
+  gap: var(--size-2-1);
   min-width: 0;
-  padding: 8px 12px;
+  padding: var(--size-4-2) var(--size-4-3);
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.1s;
@@ -2400,7 +2398,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-task-title-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--size-2-3);
   flex-wrap: nowrap;
 }
 
@@ -2416,13 +2414,13 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  margin-top: 2px;
+  margin-top: var(--size-2-1);
 }
 
 .abyss-task-desc {
   font-size: var(--font-smallest, 11px);
   color: var(--text-muted);
-  margin-top: 2px;
+  margin-top: var(--size-2-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2440,7 +2438,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--size-4-1);
   flex-wrap: nowrap;
   overflow: hidden;
 }
@@ -2496,7 +2494,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   color: var(--abyss-tag-color, var(--text-faint));
   background: transparent;
   border: none;
-  padding: 0 2px;
+  padding: 0 var(--size-2-1);
   height: auto;
   display: inline-flex;
   align-items: center;
@@ -2519,7 +2517,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   color: var(--text-muted);
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--size-2-1);
   opacity: 0.8;
   cursor: default;
   pointer-events: none;
@@ -2550,7 +2548,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   font-variant-numeric: tabular-nums;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--size-2-1);
 }
 
 .abyss-task-count-badge {
@@ -2558,7 +2556,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   color: var(--text-muted);
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--size-2-1);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2582,8 +2580,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   font-weight: 500;
   flex-shrink: 0;
   min-width: 36px;
-  font-family: var(--font-monospace, monospace);
-  margin-right: 4px;
+  font-family: var(--font-monospace, var(--font-monospace-theme));
+  margin-right: var(--size-4-1);
 }
 
 /* Delete button on task card */
@@ -2615,7 +2613,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-task-delete-btn:hover {
   color: var(--text-error);
-  background: hsl(0deg 70% 50% / 10%);
+  background: color-mix(in srgb, var(--text-error) 10%, transparent);
 }
 
 /* Keep the title readable when the center pane is squeezed between both side panels. Metadata
@@ -2625,7 +2623,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   .abyss-task-card-main-row {
     display: grid;
     grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr);
-    gap: 2px var(--abyss-task-card-primary-gap);
+    gap: var(--size-2-1) var(--abyss-task-card-primary-gap);
   }
 
   .abyss-task-card-main-row--has-delete {
@@ -2698,7 +2696,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   block-size: var(--abyss-inline-capture-block-size);
   box-sizing: border-box;
   width: 100%;
-  gap: 8px;
+  gap: var(--size-4-2);
   padding-block: 0;
   padding-inline: 10px;
   border: 1px solid var(--background-modifier-border);
@@ -2737,7 +2735,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-quick-capture {
-  padding: 4px 4px 6px;
+  padding: var(--size-4-1) var(--size-4-1) var(--size-2-3);
 }
 
 .abyss-capture-surface {
@@ -2763,14 +2761,14 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-capture-input {
   grid-column: 1 / -1;
   width: 100%;
-  padding: 8px 12px;
+  padding: var(--size-4-2) var(--size-4-3);
   border-radius: 6px;
   border: 1.5px solid var(--background-modifier-border);
   background: var(--background-primary);
   color: var(--text-normal);
   font-size: 14px;
   outline: none;
-  box-shadow: var(--shadow-s);
+  box-shadow: var(--shadow-s, none);
   box-sizing: border-box;
 }
 
@@ -2877,7 +2875,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 :is(.abyss-tg-quick-add, .abyss-tg-allday-quick-add, .abyss-mg-quick-add) .abyss-capture-input {
-  padding: 2px 0;
+  padding: var(--size-2-1) 0;
   border: none;
   border-radius: 0;
   background: transparent;
@@ -2914,7 +2912,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
   background: var(--background-primary);
-  box-shadow: var(--shadow-s);
+  box-shadow: var(--shadow-s, none);
   pointer-events: none;
 }
 
@@ -2934,28 +2932,28 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: var(--size-4-2) var(--size-4-3);
   border-bottom: 1px solid var(--background-modifier-border);
-  gap: 8px;
+  gap: var(--size-4-2);
   flex-shrink: 0;
 }
 
 .abyss-cal-nav-left {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--size-2-1);
 }
 
 .abyss-cal-nav-right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--size-4-1);
 }
 
 .abyss-cal-nav-title-group {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--size-4-1);
   position: relative;
 }
 
@@ -2967,7 +2965,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   font-size: var(--font-ui-medium);
   font-weight: 600;
   cursor: pointer;
-  padding: 2px 4px;
+  padding: var(--size-2-1) var(--size-4-1);
   border-radius: 4px;
   transition: background 0.1s;
 }
@@ -3000,7 +2998,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-cal-nav-today {
-  padding: 4px 10px;
+  padding: var(--size-4-1) 10px;
   border-radius: 6px;
   border: none;
   background: transparent;
@@ -3019,14 +3017,14 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 :is(.abyss-cal-view-switcher, .abyss-project-overview-switcher) {
   display: flex;
-  gap: 2px;
+  gap: var(--size-2-1);
   background: var(--background-modifier-border);
   border-radius: 8px;
-  padding: 2px;
+  padding: var(--size-2-1);
 }
 
 :is(button.abyss-cal-view-btn, button.abyss-project-overview-mode) {
-  padding: 4px 10px;
+  padding: var(--size-4-1) 10px;
   border-radius: 6px;
   border: none;
   background: transparent;
@@ -3053,8 +3051,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-year-picker {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
-  padding: 8px;
+  gap: var(--size-4-1);
+  padding: var(--size-4-2);
   min-width: 180px;
   position: absolute;
   top: calc(100% + 4px);
@@ -3063,7 +3061,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
-  box-shadow: var(--shadow-l);
+  box-shadow: var(--shadow-l, none);
 }
 
 .abyss-year-picker {
@@ -3073,7 +3071,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-month-picker-btn,
 .abyss-year-picker-btn {
-  padding: 6px 4px;
+  padding: var(--size-2-3) var(--size-4-1);
   border: none;
   border-radius: 4px;
   background: transparent;
@@ -3096,7 +3094,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   flex: 1;
   overflow: hidden;
   min-height: 0;
-  padding: 8px 0;
+  padding: var(--size-4-2) 0;
   display: flex;
   flex-direction: column;
 }
@@ -3123,7 +3121,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   color: var(--text-faint);
   background: var(--background-modifier-hover);
   border-radius: 10px;
-  padding: 0 6px;
+  padding: 0 var(--size-2-3);
 }
 
 /* ---- Right Panel ---- */
@@ -3134,9 +3132,9 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   justify-content: center;
   height: 100%;
   color: var(--text-faint);
-  padding: 20px;
+  padding: var(--size-4-5);
   text-align: center;
-  gap: 6px;
+  gap: var(--size-2-3);
   user-select: none;
 }
 
@@ -3144,7 +3142,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   width: 56px;
   height: 56px;
   opacity: 0.2;
-  margin-bottom: 8px;
+  margin-bottom: var(--size-4-2);
 }
 
 .abyss-right-empty-icon svg {
@@ -3176,7 +3174,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-comment-date {
   display: block;
-  margin-bottom: 2px;
+  margin-bottom: var(--size-2-1);
   font-variant-numeric: tabular-nums;
 }
 
@@ -3188,7 +3186,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 /* Breadcrumb */
 .abyss-breadcrumb {
-  padding: 8px 16px 4px;
+  padding: var(--size-4-2) var(--size-4-4) var(--size-4-1);
   font-size: 12px;
   color: var(--text-muted);
   display: flex;
@@ -3220,9 +3218,9 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-breadcrumb .abyss-inspector-back {
   width: auto;
   height: 24px;
-  gap: 4px;
-  margin-inline-end: 8px;
-  padding: 0 4px;
+  gap: var(--size-4-1);
+  margin-inline-end: var(--size-4-2);
+  padding: 0 var(--size-4-1);
   font-size: inherit;
   color: var(--text-muted);
   box-shadow: none;
@@ -3242,8 +3240,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-right-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 16px 10px;
+  gap: var(--size-4-2);
+  padding: var(--size-4-3) var(--size-4-4) 10px;
   position: relative;
   border-bottom: 1px solid var(--background-modifier-border);
 }
@@ -3256,7 +3254,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   background: transparent;
   color: var(--text-normal);
   outline: none;
-  padding: 2px 4px;
+  padding: var(--size-2-1) var(--size-4-1);
   border-radius: 4px;
   min-width: 0;
 }
@@ -3267,7 +3265,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-right-title-view {
   min-height: var(--input-height, 30px);
-  padding: 4px 6px;
+  padding: var(--size-4-1) var(--size-2-3);
   border-radius: var(--radius-s);
   cursor: text;
   overflow: auto;
@@ -3299,7 +3297,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-right-header-actions {
   display: flex;
-  gap: 4px;
+  gap: var(--size-4-1);
   flex-shrink: 0;
 }
 
@@ -3325,14 +3323,14 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-chips-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 4px 16px 10px;
+  gap: var(--size-2-3);
+  padding: var(--size-4-1) var(--size-4-4) 10px;
 }
 
 .abyss-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--size-4-1);
   height: 24px;
   padding: 0 10px;
   border-radius: var(--radius-l);
@@ -3416,7 +3414,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
   border-radius: 0.5rem;
-  box-shadow: var(--shadow-s);
+  box-shadow: var(--shadow-s, none);
   z-index: 100;
   padding: 0.5rem;
   min-width: 10rem;
@@ -3467,7 +3465,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-time-popover {
   border: 0;
   border-radius: 0.5rem;
-  box-shadow: var(--shadow-s);
+  box-shadow: var(--shadow-s, none);
 }
 
 .abyss-date-popover .abyss-date-input,
@@ -3491,7 +3489,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   border-radius: 0.5rem;
   border: 0;
   overflow: hidden;
-  box-shadow: var(--shadow-s);
+  box-shadow: var(--shadow-s, none);
 }
 
 .abyss-priority-option {
@@ -3598,7 +3596,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   gap: 0.5rem;
   inline-size: 100%;
   color: var(--text-normal);
-  font-family: var(--font-interface);
+  font-family: var(--font-interface, var(--font-interface-theme));
   font-size: var(--font-ui-smaller);
 }
 
@@ -3811,7 +3809,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   align-items: center;
   justify-content: center;
   padding: var(--size-4-6);
-  background: var(--modal-scrim-background);
+  background: var(--background-modifier-cover, var(--background-primary));
 }
 
 .abyss-recurrence-delete-confirm-dialog {
@@ -3821,7 +3819,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-l);
   background: var(--background-primary);
-  box-shadow: var(--shadow-l);
+  box-shadow: var(--shadow-l, none);
   color: var(--text-normal);
 }
 
@@ -3907,7 +3905,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-accent);
+  color: var(--color-accent, var(--interactive-accent));
 }
 
 .abyss-priority-option-check svg {
@@ -3935,7 +3933,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
-  box-shadow: var(--shadow-s);
+  box-shadow: var(--shadow-s, none);
   font-size: var(--font-ui-small);
   line-height: var(--line-height-tight);
   color: var(--text-normal);
@@ -3981,9 +3979,9 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-status-popover-flag.is-active {
-  border-color: var(--color-accent);
+  border-color: var(--color-accent, var(--interactive-accent));
   background: var(--background-modifier-hover);
-  box-shadow: inset 0 0 0 1px var(--color-accent);
+  box-shadow: inset 0 0 0 1px var(--color-accent, var(--interactive-accent));
 }
 
 .abyss-status-popover-flag svg {
@@ -4132,7 +4130,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   flex-shrink: 0;
   width: 0.9rem;
   height: 0.9rem;
-  color: var(--color-accent);
+  color: var(--color-accent, var(--interactive-accent));
 }
 
 .abyss-status-popover-check svg {
@@ -4168,17 +4166,17 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 /* Right panel body */
 .abyss-right-section {
-  padding: 16px 16px 0;
+  padding: var(--size-4-4) var(--size-4-4) 0;
 }
 
 .abyss-right-section + .abyss-right-section {
-  margin-top: 8px;
+  margin-top: var(--size-4-2);
 }
 
 .abyss-right-section-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--size-4-2);
   margin-bottom: 10px;
 }
 
@@ -4194,13 +4192,13 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   width: 100%;
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
-  padding: 8px;
+  padding: var(--size-4-2);
   background: var(--background-secondary);
   color: var(--text-normal);
   font-size: var(--font-ui-small);
   resize: vertical;
   min-height: 60px;
-  font-family: var(--font-text);
+  font-family: var(--font-text, var(--font-text-theme));
   outline: none;
   box-sizing: border-box;
 }
@@ -4271,11 +4269,11 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 :is(.abyss-dep-badge, .abyss-time-badge) > button {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--size-2-1);
 
   /* The pill counts its border into its 24px, so a button of that height would stand over it. */
   height: 100%;
-  padding: 3px 6px;
+  padding: 3px var(--size-2-3);
   border: 0;
   border-radius: inherit;
   background: transparent;
@@ -4285,11 +4283,11 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-dep-badge > .abyss-dep-badge-body {
-  padding-inline: 10px 2px;
+  padding-inline: 10px var(--size-2-1);
 }
 
 .abyss-dep-badge > .abyss-dep-badge-add {
-  padding-inline: 2px 10px;
+  padding-inline: var(--size-2-1) 10px;
 }
 
 /* The fill `.abyss-chip:hover` gives every chip in the row, said again because the rest-state fill
@@ -4485,7 +4483,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-dep-search-field {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--size-2-3);
   color: var(--text-muted);
 }
 
@@ -4497,7 +4495,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-dep-search-results {
   flex-shrink: 1;
-  margin-top: 6px;
+  margin-top: var(--size-2-3);
   min-height: 0;
   max-height: min(40vh, 16rem);
   overflow: hidden auto;
@@ -4505,7 +4503,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-dep-search-option:not([hidden]) {
   display: block;
-  padding: 5px 6px;
+  padding: 5px var(--size-2-3);
   text-align: left;
 }
 
@@ -4524,14 +4522,14 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-dep-search-directions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: var(--size-2-3);
+  margin-bottom: var(--size-2-3);
 }
 
 .abyss-dep-search-direction {
   flex: 1;
   height: auto;
-  padding: 4px 6px;
+  padding: var(--size-4-1) var(--size-2-3);
   border: 1px solid var(--background-modifier-border);
   box-shadow: none;
   font: inherit;
@@ -4544,7 +4542,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-dep-search-create,
 .abyss-dep-search-error {
-  padding: 6px;
+  padding: var(--size-2-3);
 }
 
 .abyss-dep-search-error {
@@ -4554,13 +4552,13 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-subtask-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--size-4-1);
 }
 
 .abyss-subtask-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--size-4-2);
   padding: 3px 0;
   cursor: grab;
   position: relative;
@@ -4636,7 +4634,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-subtask-title-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--size-4-2);
 }
 
 .abyss-subtask-title-row .abyss-subtask-label {
@@ -4654,8 +4652,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-subtask-meta {
   display: flex;
-  gap: 6px;
-  margin-top: 2px;
+  gap: var(--size-2-3);
+  margin-top: var(--size-2-1);
 }
 
 .abyss-subtask-comment-count {
@@ -4665,13 +4663,13 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-subtask-new-input {
   width: 100%;
-  padding: 4px 8px;
+  padding: var(--size-4-1) var(--size-4-2);
   border: 1px solid var(--interactive-accent);
   border-radius: 4px;
   background: var(--background-secondary);
   color: var(--text-normal);
   font-size: var(--font-ui-small);
-  margin: 4px 0;
+  margin: var(--size-4-1) 0;
   box-sizing: border-box;
   outline: none;
 }
@@ -4680,8 +4678,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-subtask-add-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 0 4px;
+  gap: var(--size-2-3);
+  padding: var(--size-2-3) 0 var(--size-4-1);
   cursor: pointer;
   color: var(--text-muted);
   border-radius: 4px;
@@ -4709,7 +4707,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-comment-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--size-2-3);
   margin-bottom: 10px;
 }
 
@@ -4718,10 +4716,10 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   color: var(--text-normal);
   background: var(--background-secondary);
   border-radius: 6px;
-  padding: 6px 10px;
+  padding: var(--size-2-3) 10px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--size-2-1);
 }
 
 .abyss-comment-text {
@@ -4739,14 +4737,14 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   resize: vertical;
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
-  padding: 8px;
+  padding: var(--size-4-2);
   font-size: var(--font-ui-small);
   background: var(--background-secondary);
   color: var(--text-normal);
-  margin-top: 8px;
+  margin-top: var(--size-4-2);
   box-sizing: border-box;
   display: block;
-  font-family: var(--font-text);
+  font-family: var(--font-text, var(--font-text-theme));
   outline: none;
 }
 
@@ -4759,20 +4757,20 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   width: 100%;
   border: 1px solid var(--interactive-accent);
   border-radius: 6px;
-  padding: 6px 8px;
+  padding: var(--size-2-3) var(--size-4-2);
   background: var(--background-secondary);
   color: var(--text-normal);
   font-size: 13px;
-  font-family: var(--font-text);
+  font-family: var(--font-text, var(--font-text-theme));
   resize: vertical;
   min-height: 48px;
   outline: none;
   box-sizing: border-box;
-  margin-top: 4px;
+  margin-top: var(--size-4-1);
 }
 
 .abyss-tag-input {
-  padding: 3px 8px;
+  padding: 3px var(--size-4-2);
   font-size: 12px;
   border-radius: 20px;
   border: 1px solid var(--interactive-accent);
@@ -4798,7 +4796,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-tag-picker-search {
   width: 100%;
-  padding: 10px 16px;
+  padding: 10px var(--size-4-4);
   border: none;
   border-bottom: 1px solid var(--divider-color);
   background: transparent;
@@ -4810,20 +4808,20 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-tag-picker-list {
   max-height: 320px;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: var(--size-4-1) 0;
 }
 
 .abyss-tag-picker-row {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--size-2-1);
   min-width: 0;
-  padding: 1px 6px;
+  padding: 1px var(--size-2-3);
 }
 
 .abyss-tag-picker-section-label,
 .abyss-tag-picker-heading {
-  padding: 6px 14px 3px;
+  padding: var(--size-2-3) 14px 3px;
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
   font-weight: var(--font-semibold);
@@ -4840,8 +4838,9 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 8px;
-  padding: 6px 8px 6px calc(8px + var(--abyss-tag-indent, 0px));
+  gap: var(--size-4-2);
+  padding: var(--size-2-3) var(--size-4-2) var(--size-2-3)
+    calc(var(--size-4-2) + var(--abyss-tag-indent, 0px));
   width: auto;
   min-width: 0;
   flex: 1 1 auto;
@@ -4938,7 +4937,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-tag-picker-empty {
-  padding: 16px;
+  padding: var(--size-4-4);
   text-align: center;
   color: var(--text-muted);
   font-size: var(--font-ui-small);
@@ -4952,11 +4951,11 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
-  box-shadow: var(--shadow-s);
+  box-shadow: var(--shadow-s, none);
   min-width: 160px;
   max-height: 220px;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: var(--size-4-1) 0;
 }
 
 .abyss-tag-dropdown--hidden {
@@ -4964,7 +4963,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-tag-dropdown-opt {
-  padding: 5px 12px;
+  padding: 5px var(--size-4-3);
   font-size: 12px;
   color: var(--abyss-tag-opt-color, var(--text-faint));
   cursor: pointer;
@@ -4984,7 +4983,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
-  box-shadow: var(--shadow-s);
+  box-shadow: var(--shadow-s, none);
   z-index: 100;
   min-width: 140px;
   overflow: hidden;
@@ -4998,7 +4997,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-context-item {
-  padding: 8px 14px;
+  padding: var(--size-4-2) 14px;
   cursor: pointer;
   font-size: 13px;
   color: var(--text-normal);
@@ -5009,7 +5008,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-context-item.abyss-context-danger {
-  color: var(--color-red, #e74c3c);
+  color: var(--text-error);
 }
 
 /* Time popover */
@@ -5037,7 +5036,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-modal-backdrop {
   position: fixed;
   inset: 0;
-  background: var(--modal-scrim-background, rgb(0 0 0 / 45%));
+  background: var(--background-modifier-cover, var(--background-primary));
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -5058,7 +5057,7 @@ body.abyss-modal-open .popover.hover-popover {
   width: min(480px, calc(100vw - 32px));
   max-height: 80vh;
   overflow-y: auto;
-  box-shadow: var(--shadow-l);
+  box-shadow: var(--shadow-l, none);
 }
 
 .abyss-modal-close-btn {
@@ -5073,12 +5072,13 @@ body.abyss-modal-open .popover.hover-popover {
 
 /* ── Drag-and-drop states ────────────────────────────────── */
 
-.is-dragging:not(.abyss-tg-block, .abyss-tg-body, .abyss-mg-block-dot, .abyss-mg-plain) {
+:where(.abyss-panel-view, .abyss-modal)
+  .is-dragging:not(.abyss-tg-block, .abyss-tg-body, .abyss-mg-block-dot, .abyss-mg-plain) {
   opacity: 0.4;
   cursor: grabbing;
 }
 
-.is-drag-over {
+:where(.abyss-panel-view, .abyss-modal) .is-drag-over {
   background: var(--background-modifier-hover);
   outline: 2px dashed var(--color-accent, var(--interactive-accent));
   outline-offset: -2px;
@@ -5121,27 +5121,27 @@ body.abyss-modal-open .popover.hover-popover {
 
 .abyss-rename-input {
   width: 100%;
-  margin-bottom: 12px;
+  margin-bottom: var(--size-4-3);
 }
 
 .abyss-rename-btn-row {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--size-4-2);
 }
 
 /* ── Center header controls ─────────────────────────────────── */
 .abyss-center-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--size-4-2);
 }
 
 .abyss-center-controls {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--size-2-3);
   position: relative;
 }
 
@@ -5153,9 +5153,9 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-filter-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--size-4-1);
   height: 22px;
-  padding: 0 4px 0 10px;
+  padding: 0 var(--size-4-1) 0 10px;
   border-radius: var(--radius-l);
   border: 1px solid var(--background-modifier-border);
   background: var(--background-secondary);
@@ -5191,7 +5191,7 @@ body.abyss-modal-open .popover.hover-popover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px 6px;
+  padding: var(--size-4-1) var(--size-2-3);
   border-radius: 6px;
   background: none;
   border: none;
@@ -5205,7 +5205,7 @@ body.abyss-modal-open .popover.hover-popover {
 }
 
 .abyss-view-state-btn--active {
-  color: var(--color-accent);
+  color: var(--color-accent, var(--interactive-accent));
 }
 
 .abyss-view-state-btn--active::after {
@@ -5216,7 +5216,7 @@ body.abyss-modal-open .popover.hover-popover {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: var(--color-accent);
+  background: var(--color-accent, var(--interactive-accent));
 }
 
 /* ── View-state popover ─────────────────────────────────────── */
@@ -5231,7 +5231,7 @@ body.abyss-modal-open .popover.hover-popover {
   background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
-  box-shadow: var(--shadow-s);
+  box-shadow: var(--shadow-s, none);
 }
 
 .abyss-view-state-row {
@@ -5246,7 +5246,7 @@ body.abyss-modal-open .popover.hover-popover {
   display: flex;
   width: 100%;
   align-items: center;
-  gap: 8px;
+  gap: var(--size-4-2);
   padding: 10px 14px;
   border: 0;
   border-radius: 0;
@@ -5287,20 +5287,20 @@ body.abyss-modal-open .popover.hover-popover {
 }
 
 .abyss-view-state-sublist {
-  padding: 4px 0;
+  padding: var(--size-4-1) 0;
 }
 
 .abyss-view-state-sublist > .abyss-view-state-row {
-  margin-inline-start: 8px;
+  margin-inline-start: var(--size-4-2);
   border-inline-start: 1px solid var(--background-modifier-border-hover);
 }
 
 .abyss-view-state-popover button.abyss-view-state-option {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--size-2-3);
   width: 100%;
-  padding: 7px 12px 7px 14px;
+  padding: 7px var(--size-4-3) 7px 14px;
   text-align: left;
   background: none;
   border: none;
@@ -5320,7 +5320,7 @@ body.abyss-modal-open .popover.hover-popover {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: var(--color-accent);
+  color: var(--color-accent, var(--interactive-accent));
 }
 
 .abyss-view-state-option-check svg {
@@ -5336,19 +5336,19 @@ body.abyss-modal-open .popover.hover-popover {
   font-size: 10px;
   color: var(--text-faint);
   margin-left: auto;
-  padding-left: 8px;
+  padding-left: var(--size-4-2);
 }
 
 .abyss-view-state-option-required {
   margin-left: auto;
-  padding-left: 8px;
+  padding-left: var(--size-4-2);
   color: var(--text-faint);
   font-size: 10px;
 }
 
 .abyss-view-state-sublist-divider {
   height: 1px;
-  margin: 4px 12px;
+  margin: var(--size-4-1) var(--size-4-3);
   background: var(--background-modifier-border);
 }
 
@@ -5377,7 +5377,7 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-task-time-part {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--size-4-1);
 }
 
 :is(.abyss-task-date-part, .abyss-task-time-part):hover {
@@ -5388,7 +5388,7 @@ body.abyss-modal-open .popover.hover-popover {
 /* ── View-state popover reset row ───────────────────────────── */
 .abyss-view-state-reset {
   border-top: 1px solid var(--background-modifier-border);
-  padding: 8px 14px;
+  padding: var(--size-4-2) 14px;
   display: flex;
   justify-content: center;
 }
@@ -5399,7 +5399,7 @@ body.abyss-modal-open .popover.hover-popover {
   cursor: pointer;
   font-size: 11px;
   color: var(--text-faint);
-  padding: 2px 6px;
+  padding: var(--size-2-1) var(--size-2-3);
   border-radius: 4px;
 }
 
@@ -5437,7 +5437,7 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-left-section-header--collapsible {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--size-2-3);
   cursor: pointer;
   user-select: none;
 }
@@ -5489,7 +5489,7 @@ body.abyss-modal-open .popover.hover-popover {
 
 .abyss-left-add-input {
   width: 100%;
-  margin: 4px 0;
+  margin: var(--size-4-1) 0;
   font-size: var(--font-ui-small);
 }
 
@@ -5512,7 +5512,7 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-progress-wrap {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--size-2-3);
   min-width: 90px;
 }
 
@@ -5548,10 +5548,10 @@ body.abyss-modal-open .popover.hover-popover {
 /* Projects table */
 .abyss-projects-table-session,
 .abyss-projects-table {
-  --abyss-project-progress-low: color-mix(in srgb, #b86f5a 78%, var(--text-normal));
-  --abyss-project-progress-quarter: color-mix(in srgb, #ad842f 78%, var(--text-normal));
-  --abyss-project-progress-half: color-mix(in srgb, #5e83a6 80%, var(--text-normal));
-  --abyss-project-progress-high: color-mix(in srgb, #5f8d68 80%, var(--text-normal));
+  --abyss-project-progress-low: color-mix(in srgb, var(--color-red) 78%, var(--text-normal));
+  --abyss-project-progress-quarter: color-mix(in srgb, var(--color-yellow) 78%, var(--text-normal));
+  --abyss-project-progress-half: color-mix(in srgb, var(--color-blue) 80%, var(--text-normal));
+  --abyss-project-progress-high: color-mix(in srgb, var(--color-green) 80%, var(--text-normal));
 
   display: flex;
   flex: 1;
@@ -5567,9 +5567,9 @@ body.abyss-modal-open .popover.hover-popover {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 8px;
+  gap: var(--size-4-2);
   min-height: var(--abyss-center-toolbar-height);
-  padding: 17px 16px 12px;
+  padding: 17px var(--size-4-4) var(--size-4-3);
   border-bottom: 1px solid var(--background-modifier-border);
 }
 
@@ -5643,13 +5643,13 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-project-table-feedback {
   flex: 0 0 auto;
   min-height: 0;
-  padding: 0 16px;
+  padding: 0 var(--size-4-4);
   color: var(--text-error);
   font-size: var(--font-ui-smaller);
 }
 
 .abyss-project-table-feedback:not(:empty) {
-  padding-block: 6px;
+  padding-block: var(--size-2-3);
   border-bottom: 1px solid var(--background-modifier-border);
 }
 
@@ -5682,7 +5682,7 @@ table.abyss-project-table {
 .abyss-project-table th,
 .abyss-project-table td {
   height: 34px;
-  padding: 0 8px;
+  padding: 0 var(--size-4-2);
   border-right: 1px solid var(--background-modifier-border);
   border-bottom: 1px solid var(--background-modifier-border);
   background: var(--background-primary);
@@ -5805,7 +5805,7 @@ table.abyss-project-table {
 .abyss-project-column-rename {
   width: calc(100% - 6px);
   height: 26px;
-  padding: 2px 5px;
+  padding: var(--size-2-1) 5px;
   font: inherit;
 }
 
@@ -5894,8 +5894,8 @@ table.abyss-project-table {
   height: 100%;
   flex-direction: column;
   justify-content: center;
-  gap: 2px;
-  padding-block: 4px;
+  gap: var(--size-2-1);
+  padding-block: var(--size-4-1);
 }
 
 .abyss-project-table-row[draggable='true'] {
@@ -5960,7 +5960,7 @@ table.abyss-project-table {
 
 .abyss-md > p:only-child {
   display: inline;
-  margin: 0;
+  margin-inline: 0;
 }
 
 .abyss-project-table-group-row td {
@@ -6058,7 +6058,7 @@ table.abyss-project-table {
 }
 
 .abyss-project-table-group-toggle .abyss-projects-group-count {
-  margin-left: 2px;
+  margin-left: var(--size-2-1);
 }
 
 .abyss-project-table-drop-hint {
@@ -6081,7 +6081,7 @@ table.abyss-project-table {
 .abyss-projects-empty {
   color: var(--text-muted);
   text-align: center;
-  padding: 24px;
+  padding: var(--size-4-6);
 }
 
 .abyss-project-table-status-pill,
@@ -6090,7 +6090,7 @@ button.abyss-project-table-status-pill {
   overflow: hidden;
   max-width: 100%;
   align-items: center;
-  padding: 2px 8px;
+  padding: var(--size-2-1) var(--size-4-2);
   border: 1px solid
     color-mix(in srgb, var(--abyss-project-status-color, var(--text-faint)) 40%, transparent);
   border-radius: 6px;
@@ -6120,7 +6120,7 @@ button.abyss-project-table-status-pill {
   display: inline-block;
   overflow: hidden;
   max-width: 100%;
-  padding: 2px 7px;
+  padding: var(--size-2-1) 7px;
   border: 1px solid
     color-mix(in srgb, var(--abyss-project-property-color, var(--text-faint)) 38%, transparent);
   border-radius: var(--radius-s);
@@ -6175,7 +6175,7 @@ button.abyss-project-table-status-pill {
 .abyss-project-preset-suggestion {
   width: fit-content;
   max-width: 100%;
-  padding: 1px 6px;
+  padding: 1px var(--size-2-3);
   border: 1px solid
     color-mix(
       in srgb,
@@ -6218,7 +6218,7 @@ button.abyss-project-table-status-pill {
 .abyss-project-progress-segments {
   display: grid;
   grid-template-columns: repeat(10, 3px);
-  gap: 2px;
+  gap: var(--size-2-1);
   height: 15px;
   align-items: end;
 }
@@ -6277,7 +6277,7 @@ button.abyss-project-table-status-pill {
   display: flex;
   overflow: hidden;
   align-items: center;
-  gap: 4px;
+  gap: var(--size-4-1);
 }
 
 .abyss-project-table-values.metadata-property-value[data-property-type='tags'] {
@@ -6315,7 +6315,7 @@ button.abyss-project-table-status-pill {
   overflow: hidden;
   align-items: center;
   max-width: 140px;
-  padding: 1px 6px;
+  padding: 1px var(--size-2-3);
   border-radius: var(--radius-s);
   background: var(--background-secondary);
   color: var(--text-muted);
@@ -6372,7 +6372,7 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-table-unavailable {
   display: inline-flex;
-  margin-left: 6px;
+  margin-left: var(--size-2-3);
   color: var(--text-faint);
   font-size: var(--font-ui-smaller);
   white-space: nowrap;
@@ -6388,7 +6388,7 @@ button.abyss-project-table-status-pill {
   justify-content: center;
   width: 14px;
   height: 14px;
-  margin-left: 6px;
+  margin-left: var(--size-2-3);
   border-radius: 50%;
   background: var(--background-modifier-error);
   color: var(--text-error);
@@ -6444,7 +6444,7 @@ button.abyss-project-table-status-pill {
   overflow: visible;
   width: 100%;
   min-width: 0;
-  padding: 2px 7px;
+  padding: var(--size-2-1) 7px;
   border: 0;
   border-radius: 0;
   background: var(--background-primary);
@@ -6493,8 +6493,8 @@ button.abyss-project-table-status-pill {
   width: 100%;
   max-height: var(--abyss-project-editor-content-max-height, none);
   flex-direction: column;
-  gap: 4px;
-  padding: 6px;
+  gap: var(--size-4-1);
+  padding: var(--size-2-3);
   box-shadow: none;
   font-size: var(--font-ui-small);
 }
@@ -6519,8 +6519,8 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-value-picker-group:not([hidden]) + .abyss-project-value-picker-group:not([hidden]) {
-  margin-top: 4px;
-  padding-top: 4px;
+  margin-top: var(--size-4-1);
+  padding-top: var(--size-4-1);
   border-top: 1px solid var(--background-modifier-border);
 }
 
@@ -6535,7 +6535,7 @@ button.abyss-project-table-status-pill {
   height: 26px;
   min-height: 26px;
   align-items: center;
-  padding: 1px 4px;
+  padding: 1px var(--size-4-1);
   border-radius: var(--radius-s);
   cursor: pointer;
   grid-template-columns: 18px minmax(0, 1fr) 22px;
@@ -6563,7 +6563,7 @@ button.abyss-project-table-status-pill {
   overflow: hidden;
   min-width: 0;
   align-items: center;
-  gap: 6px;
+  gap: var(--size-2-3);
   white-space: nowrap;
 }
 
@@ -6620,8 +6620,8 @@ button.abyss-project-table-status-pill {
   min-height: 22px;
   align-items: center;
   justify-content: flex-start;
-  gap: 4px;
-  padding: 0 6px;
+  gap: var(--size-4-1);
+  padding: 0 var(--size-2-3);
   border: 0;
   background: transparent;
   box-shadow: none;
@@ -6667,15 +6667,15 @@ button.abyss-project-table-status-pill {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 8px;
+  gap: var(--size-4-2);
   min-height: 38px;
-  padding: 5px 12px;
+  padding: 5px var(--size-4-3);
   border-top: 1px solid var(--background-modifier-border);
   background: var(--background-secondary);
 }
 
 .abyss-projects-table button.abyss-projects-new {
-  padding: 3px 8px;
+  padding: 3px var(--size-4-2);
   border: 0;
   background: transparent;
   box-shadow: none;
@@ -6696,12 +6696,12 @@ button.abyss-project-table-status-pill {
   z-index: var(--layer-popover, 30);
   display: grid;
   box-sizing: border-box;
-  gap: var(--size-4-2, 8px);
-  padding: var(--size-4-3, 12px);
+  gap: var(--size-4-2, var(--size-4-2));
+  padding: var(--size-4-3, var(--size-4-3));
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
   background: var(--background-primary);
-  box-shadow: var(--shadow-l);
+  box-shadow: var(--shadow-l, none);
   color: var(--text-normal);
 }
 
@@ -6734,7 +6734,7 @@ button.abyss-project-table-status-pill {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: var(--size-4-2, 8px);
+  gap: var(--size-4-2, var(--size-4-2));
 }
 
 /* Project Kanban shares the table session, cell renderers, and toolbar. */
@@ -6759,8 +6759,8 @@ button.abyss-project-table-status-pill {
   min-width: 0;
   min-height: 0;
   align-items: stretch;
-  gap: 8px;
-  padding: 8px;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2);
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
@@ -6792,7 +6792,7 @@ button.abyss-project-table-status-pill {
   flex: 0 0 auto;
   align-items: center;
   gap: 7px;
-  padding: 7px 8px;
+  padding: 7px var(--size-4-2);
   border-bottom: 1px solid var(--background-modifier-border);
   background: var(--background-secondary);
 }
@@ -6818,7 +6818,7 @@ button.abyss-project-table-status-pill {
   width: 24px;
   height: 24px;
   flex: 0 0 auto;
-  padding: 4px;
+  padding: var(--size-4-1);
   color: var(--text-muted);
 }
 
@@ -6826,7 +6826,7 @@ button.abyss-project-table-status-pill {
   width: 24px;
   height: 24px;
   flex: 0 0 auto;
-  padding: 4px;
+  padding: var(--size-4-1);
   color: var(--text-muted);
 }
 
@@ -6839,7 +6839,7 @@ button.abyss-project-table-status-pill {
   height: 100%;
   min-height: 0;
   flex-direction: column;
-  padding: 8px 5px;
+  padding: var(--size-4-2) 5px;
   border-bottom: 0;
 }
 
@@ -6861,7 +6861,7 @@ button.abyss-project-table-status-pill {
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
-  padding: 8px;
+  padding: var(--size-4-2);
   scrollbar-gutter: stable;
 }
 
@@ -6925,12 +6925,12 @@ button.abyss-project-table-status-pill {
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
   background: var(--background-secondary);
-  box-shadow: var(--shadow-s);
+  box-shadow: var(--shadow-s, none);
 }
 
 .abyss-project-kanban-hover-title,
 .abyss-project-kanban-hover-group-title {
-  padding: 8px;
+  padding: var(--size-4-2);
   color: var(--text-muted);
   font-size: var(--font-ui-small);
   font-weight: var(--font-medium);
@@ -6938,19 +6938,19 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-kanban-hover-body {
   overflow-y: auto;
-  padding: 0 8px 8px;
+  padding: 0 var(--size-4-2) var(--size-4-2);
 }
 
 .abyss-project-kanban-hover-group {
   position: relative;
-  padding: 4px;
+  padding: var(--size-4-1);
   border: 1px solid transparent;
   border-radius: 6px;
 }
 
 .abyss-project-kanban-hover-card {
-  margin-top: 6px;
-  padding: 8px;
+  margin-top: var(--size-2-3);
+  padding: var(--size-4-2);
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
   background: var(--background-primary);
@@ -6959,7 +6959,7 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-kanban-group + .abyss-project-kanban-group {
-  margin-top: 8px;
+  margin-top: var(--size-4-2);
 }
 
 .abyss-project-kanban-group {
@@ -6972,7 +6972,7 @@ button.abyss-project-table-status-pill {
   width: 100%;
   min-height: 24px;
   margin-bottom: 5px;
-  padding: 2px 4px;
+  padding: var(--size-2-1) var(--size-4-1);
   border: 0;
   background: transparent;
   box-shadow: none;
@@ -7007,13 +7007,13 @@ button.abyss-project-table-status-pill {
   display: grid;
   min-width: 0;
   grid-template-columns: minmax(0, 1fr);
-  gap: 8px;
+  gap: var(--size-4-2);
 }
 
 .abyss-project-kanban-card {
   display: grid;
   min-width: 0;
-  gap: 8px;
+  gap: var(--size-4-2);
   padding: 10px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 7px;
@@ -7202,7 +7202,7 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-timeline-axis .abyss-cal-nav-today {
-  padding: 0 6px;
+  padding: 0 var(--size-2-3);
 }
 
 .abyss-project-timeline-axis button + button {
@@ -7319,7 +7319,7 @@ button.abyss-project-table-status-pill {
   box-sizing: border-box;
   height: 100%;
   align-items: center;
-  gap: 4px;
+  gap: var(--size-4-1);
   padding: 0 5px;
   border-left: 1px solid var(--background-modifier-border);
   color: var(--text-muted);
@@ -7340,7 +7340,7 @@ button.abyss-project-table-status-pill {
   overflow: hidden;
   height: 100%;
   align-items: center;
-  gap: 4px;
+  gap: var(--size-4-1);
   padding: 0 5px;
 }
 
@@ -7387,7 +7387,7 @@ button.abyss-project-table-status-pill {
   min-height: 30px;
   align-items: center;
   gap: 7px;
-  padding: 4px 10px;
+  padding: var(--size-4-1) 10px;
   border: 0;
   border-right: 1px solid var(--background-modifier-border);
   border-bottom: 1px solid var(--background-modifier-border);
@@ -7470,7 +7470,7 @@ button.abyss-project-table-status-pill {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 3px 8px;
+  gap: 3px var(--size-4-2);
   flex-wrap: wrap;
 }
 
@@ -7542,7 +7542,7 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-timeline-progress .abyss-project-table-progress {
-  gap: 6px;
+  gap: var(--size-2-3);
 }
 
 .abyss-project-timeline-progress:has(.abyss-project-progress-value:only-child) {
@@ -7688,11 +7688,11 @@ button.abyss-project-table-status-pill {
   position: fixed;
   z-index: var(--layer-popover);
   max-width: min(280px, calc(100vw - 16px));
-  padding: 4px 7px;
+  padding: var(--size-4-1) 7px;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
   background: var(--background-primary-alt);
-  box-shadow: var(--shadow-s);
+  box-shadow: var(--shadow-s, none);
   color: var(--text-normal);
   font-size: var(--font-ui-smaller);
   font-variant-numeric: tabular-nums;
@@ -7784,7 +7784,7 @@ button.abyss-project-table-status-pill {
   min-width: 52px;
   height: 24px;
   flex: 0 0 auto;
-  padding: 2px 6px;
+  padding: var(--size-2-1) var(--size-2-3);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
   background: var(--interactive-normal);
@@ -7806,7 +7806,7 @@ button.abyss-project-table-status-pill {
   position: sticky;
   left: 0;
   width: min(320px, calc(100% - 24px));
-  margin: 8px 12px;
+  margin: var(--size-4-2) var(--size-4-3);
   font-size: var(--font-ui-small);
   flex: 0 0 auto;
 }
@@ -7814,18 +7814,18 @@ button.abyss-project-table-status-pill {
 /* Project table settings */
 .abyss-project-table-settings {
   display: grid;
-  gap: 8px;
-  margin-top: 12px;
+  gap: var(--size-4-2);
+  margin-top: var(--size-4-3);
 }
 
 .abyss-project-table-settings h4 {
-  margin: 4px 0;
+  margin: var(--size-4-1) 0;
 }
 
 .abyss-project-column-settings {
   display: grid;
   min-width: 0;
-  gap: 6px;
+  gap: var(--size-2-3);
 }
 
 .abyss-project-property-card > .abyss-settings-card-header,
@@ -7833,11 +7833,11 @@ button.abyss-project-table-status-pill {
   display: grid;
   grid-template-columns: 38px minmax(60px, 1fr) minmax(80px, 1.2fr) 38px 28px 28px;
   align-items: center;
-  gap: 6px;
+  gap: var(--size-2-3);
 }
 
 .abyss-project-column-settings-header {
-  padding: 0 8px;
+  padding: 0 var(--size-4-2);
   color: var(--text-faint);
   font-size: var(--font-ui-smaller);
 }
@@ -7856,11 +7856,11 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-property-card > .abyss-settings-card-header {
-  padding: 7px 8px;
+  padding: 7px var(--size-4-2);
 }
 
 .abyss-settings-card-body.abyss-project-property-details {
-  padding-block: 6px 10px;
+  padding-block: var(--size-2-3) 10px;
 }
 
 .abyss-project-property-details > .setting-item {
@@ -7873,16 +7873,16 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-value-list {
   display: grid;
-  gap: 6px;
+  gap: var(--size-2-3);
 }
 
 .abyss-project-value-row {
   display: grid;
   grid-template-columns: 20px minmax(72px, 1fr) minmax(92px, 1fr) 34px 88px 28px;
-  gap: 6px;
+  gap: var(--size-2-3);
   align-items: center;
   min-width: 0;
-  padding: 6px 8px;
+  padding: var(--size-2-3) var(--size-4-2);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
   background: var(--background-secondary);
@@ -7933,11 +7933,11 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-value-add {
   justify-self: start;
-  margin-top: 6px;
+  margin-top: var(--size-2-3);
 }
 
-.abyss-project-value-add + .setting-item {
-  margin-top: 8px;
+:where(.abyss-settings-tab) .abyss-project-value-add + .setting-item {
+  margin-top: var(--size-4-2);
 }
 
 @media (width <= 900px) {
@@ -7985,7 +7985,7 @@ button.abyss-project-table-status-pill {
 .abyss-project-column-order {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--size-2-1);
 }
 
 .abyss-project-column-required {
@@ -7999,7 +7999,7 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-column-source-badge {
   margin-inline-start: 5px;
-  padding: 1px 4px;
+  padding: 1px var(--size-4-1);
   border-radius: var(--radius-s);
   background: var(--background-modifier-hover);
   color: var(--text-faint);
@@ -8018,7 +8018,7 @@ button.abyss-project-table-status-pill {
 .abyss-project-column-setting button.abyss-project-column-action,
 .abyss-project-column-add {
   min-height: 28px;
-  padding: 3px 8px;
+  padding: 3px var(--size-4-2);
 }
 
 .abyss-project-column-setting button.abyss-project-column-action,
@@ -8029,7 +8029,7 @@ button.abyss-project-table-status-pill {
 .abyss-project-column-add-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--size-4-2);
 }
 
 .abyss-project-column-add-input {
@@ -8074,7 +8074,7 @@ button.abyss-project-table-status-pill {
   .abyss-project-property-card > .abyss-settings-card-header,
   .abyss-project-column-settings-header {
     grid-template-columns: 28px minmax(0, 0.8fr) minmax(0, 1.2fr) 28px 28px 28px;
-    gap: 4px;
+    gap: var(--size-4-1);
   }
 
   .abyss-project-property-details > .abyss-project-property-single-line-setting {
@@ -8108,7 +8108,7 @@ button.abyss-project-table-status-pill {
 
 /* Projects dashboard (single project) */
 .abyss-projects-dashboard {
-  padding: 12px 16px;
+  padding: var(--size-4-3) var(--size-4-4);
   overflow-y: auto;
 }
 
@@ -8117,14 +8117,14 @@ button.abyss-project-table-status-pill {
   align-self: flex-start;
   width: fit-content;
   align-items: center;
-  gap: 6px;
+  gap: var(--size-2-3);
   background: transparent;
   border: none;
   box-shadow: none;
   color: var(--text-muted);
   cursor: pointer;
-  padding: 4px 6px;
-  margin-bottom: 8px;
+  padding: var(--size-4-1) var(--size-2-3);
+  margin-bottom: var(--size-4-2);
 }
 
 .abyss-project-back:hover {
@@ -8172,14 +8172,14 @@ button.abyss-project-table-status-pill {
 .abyss-project-dashboard-stats {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin: 12px 0;
+  gap: var(--size-4-4);
+  margin: var(--size-4-3) 0;
 }
 
 .abyss-project-time {
   display: inline-flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--size-2-3);
   flex: 0 0 auto;
   font-size: var(--font-ui-smaller);
   white-space: nowrap;
@@ -8196,13 +8196,13 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-description {
   color: var(--text-muted);
-  margin: 8px 0 16px;
+  margin: var(--size-4-2) 0 var(--size-4-4);
   white-space: pre-wrap;
 }
 
 .abyss-project-tasks {
   border-top: 1px solid var(--background-modifier-border);
-  padding-top: 8px;
+  padding-top: var(--size-4-2);
 }
 
 /* ── Settings: collapsible drag-to-reorder cards (statuses + tag groups) ────── */
@@ -8211,7 +8211,7 @@ button.abyss-project-table-status-pill {
    grip + chevron are the only added affordances. */
 .abyss-settings-card {
   border-radius: var(--radius-m);
-  margin-bottom: 6px;
+  margin-bottom: var(--size-2-3);
   background: var(--background-secondary);
 }
 
@@ -8228,7 +8228,7 @@ button.abyss-project-table-status-pill {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 14px;
+  padding: var(--size-4-3) 14px;
   cursor: pointer;
   user-select: none;
 }
@@ -8273,7 +8273,7 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-settings-card-body {
-  padding: 0 12px 8px;
+  padding: 0 var(--size-4-3) var(--size-4-2);
   border-top: 1px solid var(--background-modifier-border);
 }
 
@@ -8283,7 +8283,7 @@ button.abyss-project-table-status-pill {
 
 /* ── Settings: custom statuses section ──────────────────────────────────── */
 .abyss-status-type-group {
-  margin-bottom: 16px;
+  margin-bottom: var(--size-4-4);
 }
 
 .abyss-status-type-group-label {
@@ -8292,12 +8292,12 @@ button.abyss-project-table-status-pill {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
-  margin: 0 0 6px 2px;
+  margin: 0 0 var(--size-2-3) var(--size-2-1);
 }
 
 /* Symbol badges in this section are single characters — monospace reads clearer. */
 .abyss-status-type-group .abyss-settings-card-badge {
-  font-family: var(--font-monospace);
+  font-family: var(--font-monospace, var(--font-monospace-theme));
 }
 
 .abyss-status-header-preview {
@@ -8308,27 +8308,27 @@ button.abyss-project-table-status-pill {
 .abyss-status-symbol-error {
   color: var(--text-error);
   font-size: var(--font-ui-smaller);
-  margin-top: 4px;
+  margin-top: var(--size-4-1);
 }
 
 .abyss-status-icon-field {
-  margin-bottom: 12px;
+  margin-bottom: var(--size-4-3);
 }
 
 .abyss-status-icon-input-host {
-  margin-top: 4px;
+  margin-top: var(--size-4-1);
 }
 
 .abyss-status-icon-results {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--size-2-3);
   max-height: 220px;
   overflow-y: auto;
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
-  padding: 8px;
-  margin-top: 8px;
+  padding: var(--size-4-2);
+  margin-top: var(--size-4-2);
 }
 
 .abyss-status-icon-field button.abyss-status-icon-result {
@@ -8378,7 +8378,7 @@ button.abyss-project-table-status-pill {
 .abyss-status-icon-empty {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
-  padding: 4px 2px;
+  padding: var(--size-4-1) var(--size-2-1);
 }
 
 .abyss-status-icon-clear .abyss-status-icon-result-icon {
@@ -8389,7 +8389,7 @@ button.abyss-project-table-status-pill {
 .abyss-status-symbol-lock {
   display: inline-flex;
   align-items: center;
-  margin-left: 6px;
+  margin-left: var(--size-2-3);
   color: var(--text-muted);
   vertical-align: middle;
 }
@@ -8407,7 +8407,7 @@ button.abyss-project-table-status-pill {
 .abyss-status-icon-lock {
   display: inline-flex;
   align-items: center;
-  margin-left: 6px;
+  margin-left: var(--size-2-3);
   color: var(--text-muted);
   vertical-align: middle;
 }
@@ -8436,7 +8436,7 @@ button.abyss-project-table-status-pill {
 .abyss-status-preview {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--size-4-2);
 }
 
 .abyss-status-preview-title {
@@ -8445,30 +8445,30 @@ button.abyss-project-table-status-pill {
 
 /* Seat only the first navigation/control surfaces below the shell edge. */
 .abyss-layout > .abyss-rail {
-  padding-top: calc(8px + var(--abyss-shell-top-inset));
+  padding-top: calc(var(--size-4-2) + var(--abyss-shell-top-inset));
 }
 
 .abyss-layout > .abyss-left > .abyss-left-section:first-child {
-  padding-top: calc(12px + var(--abyss-shell-top-inset));
+  padding-top: calc(var(--size-4-3) + var(--abyss-shell-top-inset));
 }
 
 :is(.abyss-layout--tasks, .abyss-layout--search)
   > .abyss-center-shell
   > .abyss-center
   > .abyss-center-header {
-  padding-top: calc(12px + min(var(--abyss-shell-top-inset), 5px));
+  padding-top: calc(var(--size-4-3) + min(var(--abyss-shell-top-inset), 5px));
 }
 
 .abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav {
-  padding-top: calc(8px + min(var(--abyss-shell-top-inset), 5px));
+  padding-top: calc(var(--size-4-2) + min(var(--abyss-shell-top-inset), 5px));
 }
 
 .abyss-layout--projects > .abyss-center-shell > .abyss-center .abyss-projects-toolbar {
-  padding-top: calc(12px + min(var(--abyss-shell-top-inset), 5px));
+  padding-top: calc(var(--size-4-3) + min(var(--abyss-shell-top-inset), 5px));
 }
 
 .abyss-layout > .abyss-right > .abyss-right-header:first-child {
-  padding-top: calc(12px + var(--abyss-shell-top-inset));
+  padding-top: calc(var(--size-4-3) + var(--abyss-shell-top-inset));
 }
 
 .abyss-layout > .abyss-right > .abyss-breadcrumb:first-child {
@@ -8478,9 +8478,9 @@ button.abyss-project-table-status-pill {
 /* Persistent, panel-owned recovery surface for drafts whose task identity became stale. */
 .abyss-detached-drafts {
   display: grid;
-  gap: 6px;
-  margin: 8px 12px;
-  padding: 8px;
+  gap: var(--size-2-3);
+  margin: var(--size-4-2) var(--size-4-3);
+  padding: var(--size-4-2);
   min-width: 0;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-s);
@@ -8496,10 +8496,10 @@ button.abyss-project-table-status-pill {
 .abyss-detached-draft {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 4px 6px;
+  gap: var(--size-4-1) var(--size-2-3);
   align-items: center;
   min-width: 0;
-  padding-top: 6px;
+  padding-top: var(--size-2-3);
   border-top: 1px solid var(--background-modifier-border);
 }
 
@@ -8516,7 +8516,7 @@ button.abyss-project-table-status-pill {
   grid-column: 1 / -1;
   max-height: 8rem;
   margin: 0;
-  padding: 6px;
+  padding: var(--size-2-3);
   overflow: auto;
   border-radius: var(--radius-s);
   background: var(--background-primary);
@@ -8528,7 +8528,7 @@ button.abyss-project-table-status-pill {
 
 .abyss-detached-draft-copy,
 .abyss-detached-draft-discard {
-  padding: 2px 6px;
+  padding: var(--size-2-1) var(--size-2-3);
   font-size: var(--font-ui-smaller);
 }
 
@@ -8591,13 +8591,13 @@ body.is-phone.is-mobile .abyss-creation-feedback {
  * two speak the same language without a copy of it here.
  */
 .abyss-time-badge > .abyss-time-badge-body {
-  padding-inline: 10px 2px;
+  padding-inline: 10px var(--size-2-1);
   font-variant-numeric: tabular-nums;
 }
 
 /* Quiet until it is reached for, and the colour of the badge itself once a timer is running. */
 .abyss-time-badge > .abyss-time-badge-toggle {
-  padding-inline: 2px 10px;
+  padding-inline: var(--size-2-1) 10px;
   color: var(--text-muted);
 }
 
@@ -8633,7 +8633,7 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   --abyss-time-gain: color-mix(in srgb, var(--color-green) 60%, var(--text-normal));
 
   z-index: var(--layer-popover, 30);
-  gap: 2px;
+  gap: var(--size-2-1);
   overflow-y: auto;
 }
 
@@ -8649,17 +8649,17 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 .abyss-time-day {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--size-2-1);
 }
 
 /* The popover's own 2px gap makes this a step of 8 between a day's last row and the next heading. */
 .abyss-time-day + .abyss-time-day {
-  margin-top: 6px;
+  margin-top: var(--size-2-3);
 }
 
 /* The heading takes its weight and its colour from the inspector's section labels. */
 .abyss-time-day-label {
-  padding: 2px 6px;
+  padding: var(--size-2-1) var(--size-2-3);
 }
 
 /*
@@ -8672,8 +8672,8 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   display: grid;
   grid-template-columns: minmax(5.2em, auto) minmax(0, 1fr) 7.2em 14px;
   align-items: center;
-  gap: 8px;
-  padding: 4px 6px;
+  gap: var(--size-4-2);
+  padding: var(--size-4-1) var(--size-2-3);
   border-radius: var(--radius-s);
   color: var(--text-normal);
 }
@@ -8735,7 +8735,7 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 }
 
 .abyss-time-row-note > span + span {
-  margin-inline-start: 8px;
+  margin-inline-start: var(--size-4-2);
 }
 
 .abyss-time-row-warning {
@@ -8754,8 +8754,8 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 }
 
 .abyss-time-tracking-popover--sessions .abyss-undo-row {
-  gap: 6px;
-  padding: 0 6px;
+  gap: var(--size-2-3);
+  padding: 0 var(--size-2-3);
 }
 
 /*
@@ -8788,7 +8788,7 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 
   /* The two controls take the whole column as target, so the space between them is their own. */
   gap: 0;
-  padding-bottom: 8px;
+  padding-bottom: var(--size-4-2);
   color: var(--text-muted);
 
   /*
@@ -8846,7 +8846,7 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   min-height: 0;
 
   /* No padding beside the digits: `23h 59m` fills the rail, and a gap there belongs to the rail. */
-  padding: 6px 0;
+  padding: var(--size-2-3) 0;
   border: none;
   border-radius: var(--radius-s);
   background: transparent;
@@ -8881,7 +8881,7 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 .abyss-rail-tracking-rule {
   width: 20px;
   height: 1px;
-  margin-top: 4px;
+  margin-top: var(--size-4-1);
   background: var(--background-modifier-border);
 }
 
@@ -8939,10 +8939,10 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 6px;
+  gap: var(--size-2-3);
   width: 100%;
   min-width: 0;
-  padding: 4px 6px;
+  padding: var(--size-4-1) var(--size-2-3);
   border: none;
   border-radius: var(--radius-s);
   background: transparent;
@@ -8979,7 +8979,7 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 .abyss-tracked-day-rows {
   display: flex;
   flex-direction: column;
-  padding-inline-start: 8px;
+  padding-inline-start: var(--size-4-2);
 }
 
 /* A folded day keeps its rows in the tree for the next tick, so the fold has to beat the flow. */
@@ -9033,12 +9033,12 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   align-self: stretch;
   align-items: center;
   justify-content: flex-start;
-  gap: 6px;
+  gap: var(--size-2-3);
   min-width: 0;
   height: auto;
   min-height: 0;
   margin-block: -4px;
-  padding: 4px 0;
+  padding: var(--size-4-1) 0;
   border: none;
   background: transparent;
   box-shadow: none;

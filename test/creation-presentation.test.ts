@@ -1,4 +1,5 @@
 import { Notice, Platform, type App } from 'obsidian';
+import postcss from 'postcss';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
@@ -22,6 +23,7 @@ import {
 } from '../src/ui/taskPresentationIdentity';
 import type { CalendarOccurrence } from '../src/views/calendarOccurrences';
 import { applyOccurrenceDomState } from '../src/views/timegrid/renderTaskMeta';
+import { cssRuleContaining, cssValue } from './cssHelpers';
 import { expectDefined, freshContainer, methodOf, task, useRealMoment } from './helpers';
 
 async function loadStylesFixture(): Promise<string> {
@@ -795,10 +797,12 @@ describe('CreationPresentationController', () => {
 
 describe('new-task feedback CSS', () => {
   it('uses task/theme color variables and paint-only properties for the 1100 ms animation', () => {
-    const rule = /\.is-just-created\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
+    const rule = cssRuleContaining(css, [
+      ':where(.abyss-panel-view, .abyss-modal) .is-just-created',
+    ]);
 
-    expect(rule).toMatch(
-      /var\(\s*--abyss-tag-color\s*,\s*var\(\s*--task-color\s*,\s*var\(\s*--interactive-accent\s*\)\s*\)\s*\)/u,
+    expect(cssValue(rule, '--abyss-creation-accent')).toBe(
+      'var(--abyss-tag-color, var(--interactive-accent))',
     );
     expect(rule).toMatch(/animation\s*:[^;]*1100ms/u);
     expect(rule).toMatch(/outline\s*:/u);
@@ -806,17 +810,20 @@ describe('new-task feedback CSS', () => {
   });
 
   it('uses a static reduced-motion paint state while the controller owns the 800 ms lifecycle', () => {
-    const reduced =
-      /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.is-just-created\s*\{([^}]*)\}/u.exec(
-        css,
-      )?.[1] ?? '';
+    let reduced = '';
+    postcss.parse(css).walkAtRules('media', (rule) => {
+      if (rule.params === '(prefers-reduced-motion: reduce)')
+        reduced += cssRuleContaining(rule.toString(), [
+          ':where(.abyss-panel-view, .abyss-modal) .is-just-created',
+        ]);
+    });
 
     expect(reduced).toMatch(/animation\s*:\s*none/u);
     expect(reduced).toMatch(/outline/u);
   });
 
   it('keeps the initially empty live host in the accessibility tree', () => {
-    const emptyRule = /\.abyss-creation-feedback:empty\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
+    const emptyRule = cssRuleContaining(css, ['.abyss-creation-feedback:empty']);
 
     expect(emptyRule).toMatch(/opacity\s*:\s*0/u);
     expect(emptyRule).not.toMatch(/(?:display|visibility|content-visibility)\s*:/u);

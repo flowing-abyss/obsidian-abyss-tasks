@@ -10,8 +10,8 @@ import {
   attachTimedInteractions,
   createTimedInteractionOwner,
 } from '../src/views/timegrid/timedInteractions';
+import { cssDeclarationText, cssRuleContaining, cssValue } from './cssHelpers';
 import {
-  cssRuleParts,
   dispatchDnD,
   expectDefined,
   freshContainer,
@@ -37,22 +37,15 @@ function createForeignDiv(owner: Document): HTMLDivElement {
 }
 
 function declarationsFor(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
-  const match = new RegExp(`${escaped}\\s*\\{(?<body>[^}]*)\\}`, 'u').exec(css);
-  return match?.groups?.['body'] ?? '';
+  return cssDeclarationText(css, selector);
 }
 
 function declarationsForExactRule(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
-  const match = new RegExp(`(?:^|\\})\\s*${escaped}\\s*\\{(?<body>[^}]*)\\}`, 'u').exec(css);
-  return match?.groups?.['body'] ?? '';
+  return cssRuleContaining(css, [selector]);
 }
 
 function declarationsForRuleContaining(...selectors: string[]): string {
-  for (const rule of cssRuleParts(css)) {
-    if (selectors.every((selector) => rule.selector.includes(selector))) return rule.declarations;
-  }
-  return '';
+  return cssRuleContaining(css, selectors);
 }
 
 function expectInertPreview(preview: HTMLElement, title: string): void {
@@ -628,7 +621,9 @@ describe('Task 2 unified timed interaction contract', () => {
     );
     expect(shell).toMatch(/border-radius\s*:\s*var\(--abyss-calendar-item-radius\)/u);
     expect(shell).toMatch(/font-size\s*:\s*var\(--abyss-calendar-item-font-size\)/u);
-    expect(shell).toMatch(/padding\s*:\s*2px var\(--abyss-calendar-item-pad-inline\)/u);
+    expect(cssValue(shell, 'padding')).toBe(
+      'var(--size-2-1) var(--abyss-calendar-item-pad-inline)',
+    );
     expect(shell).toMatch(/--abyss-event-fill-strength/u);
     expect(declarationsFor('.abyss-calendar-preview-title')).toMatch(/font-size\s*:\s*inherit/u);
     expect(css).toMatch(
@@ -1053,7 +1048,7 @@ describe('renderTimedBlocksForDay', () => {
       '.abyss-tg-span-edge:hover::after',
       '.abyss-tg-resize-handle:active::after',
       '.abyss-tg-span-edge:active::after',
-      "[data-active-resize='true']::after",
+      ":where(.abyss-panel-view, .abyss-modal) [data-active-resize='true']::after",
     );
 
     expect(revealed).toMatch(/opacity\s*:\s*1/u);
@@ -3139,7 +3134,9 @@ describe('calendar surface style contract', () => {
 
     expect(terminal).toMatch(/font-size\s*:\s*var\(--abyss-calendar-item-font-size\)/u);
     expect(terminal).toMatch(/border-radius\s*:\s*var\(--abyss-calendar-item-radius\)/u);
-    expect(terminal).toMatch(/padding\s*:\s*2px\s+var\(--abyss-calendar-item-pad-inline\)/u);
+    expect(cssValue(terminal, 'padding')).toBe(
+      'var(--size-2-1) var(--abyss-calendar-item-pad-inline)',
+    );
     expect(ghost).toMatch(/border-inline-start\s*:\s*var\(--abyss-calendar-ghost-rail\) dashed/u);
     expect(ghost).toMatch(/background\s*:\s*var\(--abyss-calendar-surface\)/u);
     expect(sharedFill).toMatch(

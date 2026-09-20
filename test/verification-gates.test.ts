@@ -33,8 +33,10 @@ function runGate(
   writeFileSync(
     pnpmPath,
     `#!/usr/bin/env node
-const { appendFileSync } = require('node:fs');
+const { appendFileSync, existsSync, writeFileSync } = require('node:fs');
 const command = process.argv[2];
+if (command === 'release:artifacts') writeFileSync('fresh-artifact', 'fresh');
+if (command === 'lint:css:artifact' && !existsSync('fresh-artifact')) process.exit(2);
 appendFileSync(process.env.COMMAND_LOG, command + '\\n');
 process.exit(command === process.env.FAIL_COMMAND ? 1 : 0);
 `,
@@ -81,6 +83,14 @@ describe('verification gates', () => {
     expect(result.commands).not.toContain('test');
   });
 
+  it('stops when artifact CSS fails after fresh generation', () => {
+    const result = runGate(scripts['verify'] ?? '', 'lint:css:artifact');
+    expect(result.status).not.toBe(0);
+    expect(result.commands).toContain('release:artifacts');
+    expect(result.commands).toContain('lint:css:artifact');
+    expect(result.commands).not.toContain('release:check');
+  });
+
   it('runs every established stage of the full verification gate', () => {
     const result = runGate(scripts['verify'] ?? '');
 
@@ -96,6 +106,7 @@ describe('verification gates', () => {
       'test:coverage',
       'build',
       'release:artifacts',
+      'lint:css:artifact',
       'release:check',
       'audit:dependencies',
     ]);

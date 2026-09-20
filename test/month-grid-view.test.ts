@@ -1,4 +1,7 @@
+import { compare, selectorSpecificity } from '@csstools/selector-specificity';
 import { Component, Platform, type App } from 'obsidian';
+import postcss from 'postcss';
+import selectorParser from 'postcss-selector-parser';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
@@ -7,14 +10,12 @@ import { MonthGridView } from '../src/views/MonthGridView';
 import { createSpanInteractionOwner } from '../src/views/spanInteractions';
 import { layoutVisibleSpans } from '../src/views/spanLayout';
 import { renderAllDaySpanLayer } from '../src/views/timegrid/renderAllDay';
+import { cssDeclarationText, cssRuleContaining, cssValue } from './cssHelpers';
 import {
-  cssDeclarationValue,
-  cssRuleParts,
   DataTransferStub,
   expectDefined,
   freshContainer,
   resolvedConfig,
-  stripCssComments,
   subtask,
   task,
   taskComment,
@@ -38,19 +39,11 @@ async function loadStyles(): Promise<string> {
 }
 
 function declarationsFor(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
-  const match = new RegExp(`${escaped}\\s*\\{(?<body>[^}]*)\\}`, 'u').exec(css);
-  return match?.groups?.['body'] ?? '';
+  return cssDeclarationText(css, selector);
 }
 
 function declarationsForRuleContaining(...selectors: string[]): string {
-  for (const rule of cssRuleParts(css)) {
-    const roots = stripCssComments(rule.selector)
-      .split(',')
-      .map((selector) => selector.trim());
-    if (selectors.every((selector) => roots.includes(selector))) return rule.declarations;
-  }
-  return '';
+  return cssRuleContaining(css, selectors);
 }
 
 function selectorMatches(element: Element, selector: string): boolean {
@@ -62,28 +55,24 @@ function selectorMatches(element: Element, selector: string): boolean {
   }
 }
 
-function specificityScore(selector: string): number {
-  const count = (character: string): number => selector.split(character).length - 1;
-  const pseudoClasses = count(':') - count('::') * 2;
-  return count('#') * 100 + (count('.') + count('[') + pseudoClasses) * 10;
-}
-
 function winningCssDeclaration(element: Element, property: string): string {
-  const withoutComments = stripCssComments(css);
   let winner = '';
-  let winnerSpecificity = -1;
-  for (const rule of cssRuleParts(withoutComments)) {
-    const value = cssDeclarationValue(rule.declarations, property);
-    if (value === undefined || value.length === 0) continue;
-    for (const selector of rule.selector.split(',').map((part) => part.trim())) {
-      if (!selectorMatches(element, selector)) continue;
-      const specificity = specificityScore(selector);
-      if (specificity >= winnerSpecificity) {
-        winner = value.trim();
-        winnerSpecificity = specificity;
+  let specificity = { a: -1, b: -1, c: -1 };
+  postcss.parse(css).walkRules((rule) => {
+    if (rule.parent?.type !== 'root') return;
+    const declaration = rule.nodes.find(
+      (node): node is postcss.Declaration => node.type === 'decl' && node.prop === property,
+    );
+    if (declaration === undefined) return;
+    for (const selector of selectorParser().astSync(rule.selector).nodes) {
+      if (!selectorMatches(element, selector.toString())) continue;
+      const candidate = selectorSpecificity(selector);
+      if (compare(candidate, specificity) >= 0) {
+        winner = declaration.value;
+        specificity = candidate;
       }
     }
-  }
+  });
   return winner;
 }
 
@@ -1930,7 +1919,7 @@ describe('MonthGridView', () => {
       for (const match of css.matchAll(/^\.abyss-mg-span-layer[ \t]*\{([^}]*)\}/gmu)) {
         monthSpanLayer = match[1] ?? '';
       }
-      const monthDayLabel = declarationsFor('.abyss-mg-day-label');
+      const monthDayLabel = declarationsFor('.abyss-mg-cell button.abyss-mg-day-label');
 
       expect(monthDayLabel).toMatch(/font-size\s*:\s*0\.75em/u);
       expect(monthSpanLayer).toMatch(/top\s*:\s*calc\(3px\s*\+\s*0\.75lh\)/u);
@@ -1966,7 +1955,9 @@ describe('MonthGridView', () => {
       expect(monthItems).not.toMatch(/margin-top\s*:[^;]*--abyss-span-lane-count/u);
       expect(monthItem).toMatch(/font-size\s*:\s*var\(--abyss-calendar-item-font-size\)/u);
       expect(monthItem).toMatch(/border-radius\s*:\s*var\(--abyss-calendar-item-radius\)/u);
-      expect(monthItem).toMatch(/padding\s*:\s*2px\s+var\(--abyss-calendar-item-pad-inline\)/u);
+      expect(cssValue(monthItem, 'padding')).toBe(
+        'var(--size-2-1) var(--abyss-calendar-item-pad-inline)',
+      );
       expect(monthSpanGeometry).toMatch(/margin-inline\s*:\s*5px/u);
       expect(compactGeometry).toMatch(/block-size\s*:\s*calc\(100% - 2px\)/u);
       expect(compactGeometry).toMatch(/margin-block\s*:\s*1px/u);

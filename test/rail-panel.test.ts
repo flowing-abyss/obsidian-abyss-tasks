@@ -3,13 +3,10 @@ import { AppState } from '../src/app/AppState';
 import { RailPanel } from '../src/panels/RailPanel';
 import type { PanelNavigationActions } from '../src/views/panelNavigation';
 import {
-  cssDeclarationsFor,
-  cssDeclarationValue,
-  expectDefined,
-  freshContainer,
-  loadPluginStyles,
-  methodOf,
-} from './helpers';
+  cssDeclarationText as cssDeclarationsFor,
+  cssValue as cssDeclarationValue,
+} from './cssHelpers';
+import { expectDefined, freshContainer, loadPluginStyles, methodOf } from './helpers';
 
 const css = await loadPluginStyles();
 
@@ -427,9 +424,9 @@ describe('RailPanel', () => {
     // under them, and the widget's bottom padding is the 8px below the hairline.
     const widget = cssDeclarationsFor(css, '.abyss-rail-tracking');
     expect(cssDeclarationValue(widget, 'gap')).toBe('0');
-    expect(widget).toContain('padding-bottom: 8px');
+    expect(widget).toContain('padding-bottom: var(--size-4-2)');
     const rule = cssDeclarationsFor(css, '.abyss-rail-tracking-rule');
-    expect(rule).toContain('margin-top: 4px');
+    expect(rule).toContain('margin-top: var(--size-4-1)');
     expect(rule).toContain('width: 20px');
     expect(rule).toContain('height: 1px');
   });
@@ -444,7 +441,7 @@ describe('RailPanel', () => {
     // the same above and below, so the digits sit in the middle of what a pointer aims at.
     expect(cssDeclarationValue(widget, 'font-size')).toBe('10px');
     expect(cssDeclarationValue(widget, 'line-height')).toBe('1.2');
-    expect(cssDeclarationValue(number, 'padding')).toBe('6px 0');
+    expect(cssDeclarationValue(number, 'padding')).toBe('var(--size-2-3) 0');
     // The column pays for the target rather than lending it out of the control above, so the two
     // never overlap and nothing of the number reaches into the toggle's own square.
     expect(cssDeclarationValue(number, 'margin-block')).toBeUndefined();

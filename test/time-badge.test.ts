@@ -11,10 +11,12 @@ import { mountTimeBadge } from '../src/ui/timeTracking/TimeBadge';
 import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import { createTrackingActions } from '../src/ui/timeTracking/trackingActions';
 import {
+  cssDeclarationText as cssDeclarationsFor,
+  cssValue as cssDeclarationValue,
+} from './cssHelpers';
+import {
   configuredTaskApplication,
   createAppWithFiles,
-  cssDeclarationsFor,
-  cssDeclarationValue,
   cssRuleSelectorsFor,
   expectDefined,
   flushMicrotasks,
@@ -548,8 +550,8 @@ describe('inspector tracked time badge weight', () => {
       cssDeclarationValue(cssDeclarationsFor(css, selector), 'padding-inline');
 
     // 10px is where a neighbouring chip starts its own text.
-    expect(inset('.abyss-time-badge > .abyss-time-badge-body')).toBe('10px 2px');
-    expect(inset('.abyss-time-badge > .abyss-time-badge-toggle')).toBe('2px 10px');
+    expect(inset('.abyss-time-badge > .abyss-time-badge-body')).toBe('10px var(--size-2-1)');
+    expect(inset('.abyss-time-badge > .abyss-time-badge-toggle')).toBe('var(--size-2-1) 10px');
     expect(inset('.abyss-time-badge > .abyss-time-badge-body')).toBe(
       inset('.abyss-dep-badge > .abyss-dep-badge-body'),
     );

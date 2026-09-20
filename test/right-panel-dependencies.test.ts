@@ -28,9 +28,11 @@ import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/Obs
 import { TaskModal } from '../src/ui/TaskModal';
 import { rebuildTaskSelection, rootTaskRef } from '../src/ui/taskSelection';
 import {
+  cssDeclarationText as cssDeclarationsFor,
+  cssValue as cssDeclarationValue,
+} from './cssHelpers';
+import {
   createAppWithFiles,
-  cssDeclarationsFor,
-  cssDeclarationValue,
   deferred,
   expectDefined,
   flushMicrotasks,
@@ -862,15 +864,19 @@ describe('inspector subtask row removal', () => {
     );
     expect(value('.abyss-dep-badge:hover', 'background')).toBe('var(--background-modifier-hover)');
     expect(value('.abyss-dep-badge.abyss-chip', 'padding')).toBe('0');
-    expect(value('.abyss-dep-badge > button', 'padding')).toBe('3px 6px');
+    expect(value('.abyss-dep-badge > button', 'padding')).toBe('3px var(--size-2-3)');
     // The text starts where a neighbouring chip's does, which is 10px in from the pill.
-    expect(value('.abyss-dep-badge > .abyss-dep-badge-body', 'padding-inline')).toBe('10px 2px');
-    expect(value('.abyss-dep-badge > .abyss-dep-badge-add', 'padding-inline')).toBe('2px 10px');
-    expect(value('.abyss-dep-badge > button', 'gap')).toBe('2px');
+    expect(value('.abyss-dep-badge > .abyss-dep-badge-body', 'padding-inline')).toBe(
+      '10px var(--size-2-1)',
+    );
+    expect(value('.abyss-dep-badge > .abyss-dep-badge-add', 'padding-inline')).toBe(
+      'var(--size-2-1) 10px',
+    );
+    expect(value('.abyss-dep-badge > button', 'gap')).toBe('var(--size-2-1)');
     expect(value('.abyss-dep-badge-add:hover', 'background')).toBe(
       'var(--background-modifier-active-hover)',
     );
-    expect(value('.abyss-right-section-count', 'padding')).toBe('0 6px');
+    expect(value('.abyss-right-section-count', 'padding')).toBe('0 var(--size-2-3)');
     expect(value('.abyss-dep-divider', 'background')).toBe('var(--text-muted)');
     expect(value('.abyss-dep-indicator', 'gap')).toBe('1px');
     expect(value('.abyss-dep-indicator', 'margin-inline-end')).toBe('-2px');
@@ -2098,7 +2104,7 @@ describe('RightPanel dependency inspector', () => {
     expect(value('.abyss-dep-badge.abyss-chip', 'background')).toBe('var(--interactive-normal)');
     // The pill is 24px with its border counted in, so a 24px child would stand over it.
     expect(value('.abyss-dep-badge > button', 'height')).toBe('100%');
-    expect(value('.abyss-dep-badge > button', 'gap')).toBe('2px');
+    expect(value('.abyss-dep-badge > button', 'gap')).toBe('var(--size-2-1)');
     expect(value('.abyss-dep-badge > button', 'font')).toBe('inherit');
     expect(value('.abyss-dep-lock', 'color')).toBe('var(--text-muted)');
     expect(value('.abyss-dep-count-blocked-by', 'color')).toBe(

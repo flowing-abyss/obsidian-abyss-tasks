@@ -8,10 +8,12 @@ import { mountRailTrackingWidget } from '../src/ui/timeTracking/RailTrackingWidg
 import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import { createTrackingActions } from '../src/ui/timeTracking/trackingActions';
 import {
+  cssDeclarationText as cssDeclarationsFor,
+  cssValue as cssDeclarationValue,
+} from './cssHelpers';
+import {
   configuredTaskApplication,
   createAppWithFiles,
-  cssDeclarationsFor,
-  cssDeclarationValue,
   expectDefined,
   flushMicrotasks,
   loadPluginStyles,
@@ -436,7 +438,7 @@ describe('tracked tasks popover', () => {
     expect(declarations).toContain('align-self: stretch');
     expect(declarations).toContain('align-items: center');
     expect(declarations).toContain('margin-block: -4px');
-    expect(declarations).toContain('padding: 4px 0');
+    expect(declarations).toContain('padding: var(--size-4-1) 0');
     expect(declarations).not.toContain('align-items: baseline');
     expect(
       cssDeclarationsFor(css, '.abyss-time-tracking-popover--tasks .abyss-tracked-day-header'),

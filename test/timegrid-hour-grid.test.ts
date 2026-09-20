@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderHourGrid, repositionNowLine } from '../src/views/timegrid/HourGrid';
+import { cssDeclarationText, cssRuleContaining, cssValue } from './cssHelpers';
 import {
-  cssDeclarationsFor,
-  cssRuleParts,
   DataTransferStub,
   expectDefined,
   freshContainer,
@@ -15,17 +14,11 @@ useRealMoment();
 const css = await loadPluginStyles();
 
 function declarationsFor(selector: string): string {
-  return cssDeclarationsFor(css, selector);
+  return cssDeclarationText(css, selector);
 }
 
 function declarationsForRuleContaining(...selectors: string[]): string {
-  for (const rule of cssRuleParts(css)) {
-    const selectorList = rule.selector.replace(/\s+/gu, '');
-    if (selectors.every((selector) => selectorList.includes(selector.replace(/\s+/gu, '')))) {
-      return rule.declarations;
-    }
-  }
-  return '';
+  return cssRuleContaining(css, selectors);
 }
 
 describe('renderHourGrid', () => {
@@ -51,7 +44,7 @@ describe('renderHourGrid', () => {
       '.abyss-tg-span',
       '.abyss-tg-plain',
       '.abyss-mg-block-dot',
-      '.abyss-mg-span-segment',
+      '.abyss-mg-span-segment:not(.abyss-mg-span-continuation)',
       '.abyss-mg-plain',
     );
     const itemTokens = declarationsFor('.abyss-calendar-item');
@@ -90,11 +83,7 @@ describe('renderHourGrid', () => {
     expect(css).not.toMatch(/(?:^|\n)\.is-dragging\s*\{[^}]*opacity\s*:/u);
     expect(
       declarationsForRuleContaining(
-        '.is-dragging:not(',
-        '.abyss-tg-block',
-        '.abyss-tg-body',
-        '.abyss-mg-block-dot',
-        '.abyss-mg-plain',
+        ':where(.abyss-panel-view, .abyss-modal) .is-dragging:not(.abyss-tg-block, .abyss-tg-body, .abyss-mg-block-dot, .abyss-mg-plain)',
       ),
     ).toMatch(/opacity\s*:\s*0\.4/u);
   });
@@ -301,7 +290,9 @@ describe('renderHourGrid', () => {
     expect(allDayBody).not.toMatch(/block-size\s*:\s*100%/u);
     expect(allDayBody).toMatch(/min-block-size\s*:\s*0/u);
     expect(allDayBody).toMatch(/border-radius\s*:\s*var\(--abyss-calendar-item-radius\)/u);
-    expect(allDayBody).toMatch(/padding\s*:\s*2px\s+var\(--abyss-calendar-item-pad-inline\)/u);
+    expect(cssValue(allDayBody, 'padding')).toBe(
+      'var(--size-2-1) var(--abyss-calendar-item-pad-inline)',
+    );
     expect(allDayBody).toMatch(/align-items\s*:\s*center/u);
     expect(allDayBody).toMatch(/line-height\s*:\s*1\.4/u);
     for (const ghost of [ghostTimegrid, ghostMonth]) {

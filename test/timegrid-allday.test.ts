@@ -7,10 +7,9 @@ import { calendarOccurrenceForRender } from '../src/views/calendarOccurrences';
 import { createSpanInteractionOwner } from '../src/views/spanInteractions';
 import { layoutVisibleSpans } from '../src/views/spanLayout';
 import { renderAllDayCell, renderAllDaySpanLayer } from '../src/views/timegrid/renderAllDay';
+import { cssDeclarationText, cssRuleContaining, cssValue } from './cssHelpers';
 import {
   cssDeclarationValue,
-  cssDeclarationsFor,
-  cssRuleParts,
   dispatchDnD,
   expectDefined,
   freshContainer,
@@ -27,18 +26,11 @@ const fakeApp = {} as App;
 const css = await loadPluginStyles();
 
 function declarationsFor(selector: string): string {
-  return cssDeclarationsFor(css, selector);
+  return cssDeclarationText(css, selector);
 }
 
 function declarationsForRuleContaining(...selectors: string[]): string {
-  let declarations = '';
-  for (const rule of cssRuleParts(css)) {
-    const selectorList = rule.selector.split(',').map((selector) => selector.trim());
-    if (selectors.every((selector) => selectorList.includes(selector))) {
-      declarations = rule.declarations;
-    }
-  }
-  return declarations;
+  return cssRuleContaining(css, selectors, true);
 }
 
 function rgb(hex: string): readonly [number, number, number] {
@@ -1287,10 +1279,10 @@ describe('renderAllDayCell', () => {
       expect(layer).toMatch(/grid-auto-rows\s*:\s*var\(--abyss-calendar-track-height\)/u);
       expect(layer).toMatch(/gap\s*:\s*0/u);
       expect(piece).toMatch(/height\s*:\s*calc\(100% - 2px\)/u);
-      expect(piece).toMatch(/margin\s*:\s*1px 2px/u);
+      expect(cssValue(piece, 'margin')).toBe('1px var(--size-2-1)');
       expect(items).toMatch(/display\s*:\s*flex/u);
       expect(items).toMatch(/flex-direction\s*:\s*column/u);
-      expect(items).toMatch(/gap\s*:\s*2px/u);
+      expect(cssValue(items, 'gap')).toBe('var(--size-2-1)');
       expect(items).toMatch(
         /margin-top\s*:\s*calc\(var\(--abyss-span-lane-count, 0\) \* var\(--abyss-calendar-track-height\)\)/u,
       );
@@ -1311,14 +1303,16 @@ describe('renderAllDayCell', () => {
           '.abyss-tg-root--week .abyss-tg-span-layer > .abyss-span-boundary-preview',
       );
       expect(weekSpanGeometry).toMatch(/margin-block\s*:\s*1px/u);
-      expect(weekSpanGeometry).toMatch(/margin-inline\s*:\s*5px 4px/u);
+      expect(cssValue(weekSpanGeometry, 'margin-inline')).toBe('5px var(--size-4-1)');
       expect(weekSpanGeometry).not.toMatch(/(?:^|;)\s*margin\s*:/u);
       expect(css).not.toMatch(/\.abyss-tg-span\s*\{[^}]*--interactive-accent/u);
       expect(host).toMatch(/height\s*:\s*100%/u);
       expect(host).toMatch(/min-height\s*:\s*0/u);
       expect(item).toMatch(/font-size\s*:\s*var\(--abyss-calendar-item-font-size\)/u);
       expect(item).toMatch(/border-radius\s*:\s*var\(--abyss-calendar-item-radius\)/u);
-      expect(item).toMatch(/padding\s*:\s*2px\s+var\(--abyss-calendar-item-pad-inline\)/u);
+      expect(cssValue(item, 'padding')).toBe(
+        'var(--size-2-1) var(--abyss-calendar-item-pad-inline)',
+      );
     });
 
     it('keeps a long Week deadline marker inside its no-time grid track while its title ellipsizes', () => {

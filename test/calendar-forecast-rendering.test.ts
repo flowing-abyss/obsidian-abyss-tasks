@@ -1,4 +1,6 @@
+import { selectorSpecificity as calculateSpecificity } from '@csstools/selector-specificity';
 import { moment, Platform, type App } from 'obsidian';
+import selectorParser from 'postcss-selector-parser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
@@ -29,8 +31,8 @@ import {
 import { toTimedBlockInputs } from '../src/views/timegrid/renderTimedBlocks';
 import { previewTimedPositionFor, TodayView } from '../src/views/TodayView';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
+import { cssDeclarationText, cssRuleContaining, cssValue } from './cssHelpers';
 import {
-  cssRuleParts,
   expectDefined,
   freshContainer,
   methodOf,
@@ -64,16 +66,11 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
 }
 
 function declarationsFor(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
-  const match = new RegExp(`${escaped}\\s*\\{(?<body>[^}]*)\\}`, 'u').exec(css);
-  return match?.groups?.['body'] ?? '';
+  return cssDeclarationText(css, selector);
 }
 
 function declarationsForRuleContaining(...selectors: string[]): string {
-  for (const rule of cssRuleParts(css)) {
-    if (selectors.every((selector) => rule.selector.includes(selector))) return rule.declarations;
-  }
-  return '';
+  return cssRuleContaining(css, selectors);
 }
 
 interface StyleRuleLike {
@@ -108,12 +105,10 @@ function calendarStyleRules(style: HTMLStyleElement): readonly StyleRuleLike[] {
 }
 
 function selectorSpecificity(selector: string): readonly [number, number, number] {
-  const count = (character: string): number => selector.split(character).length - 1;
-  const ids = count('#');
-  const pseudoClasses = count(':') - count('::') * 2 - count(':not(');
-  const classes = count('.') + count('[') + pseudoClasses;
-  const types = selector.split(/[\s>+~]+/u).filter((part) => /^[a-z][\w-]*/iu.test(part)).length;
-  return [ids, classes, types];
+  const node = selectorParser().astSync(selector).nodes[0];
+  if (node === undefined) throw new Error('Expected one selector');
+  const { a, b, c } = calculateSpecificity(node);
+  return [a, b, c];
 }
 
 function compareSpecificity(
@@ -795,7 +790,9 @@ describe('forecast visual system', () => {
       '.abyss-mg-plain.abyss-calendar-item',
     );
     expect(geometry).toMatch(/border-radius\s*:\s*var\(--abyss-calendar-item-radius\)/u);
-    expect(geometry).toMatch(/padding\s*:\s*2px var\(--abyss-calendar-item-pad-inline\)/u);
+    expect(cssValue(geometry, 'padding')).toBe(
+      'var(--size-2-1) var(--abyss-calendar-item-pad-inline)',
+    );
     expect(geometry).toMatch(/font-size\s*:\s*var\(--abyss-calendar-item-font-size\)/u);
     const materializedSurface = declarationsForRuleContaining(
       '.abyss-tg-block',

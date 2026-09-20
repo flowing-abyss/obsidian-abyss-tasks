@@ -1,4 +1,6 @@
+import postcss from 'postcss';
 import { describe, expect, it } from 'vitest';
+import { cssDeclarationText } from './cssHelpers';
 import { cssDeclarationsFor, loadPluginStyles } from './helpers';
 
 const css = await loadPluginStyles();
@@ -8,23 +10,16 @@ function declarationsFor(selector: string): string {
 }
 
 function declarationsForSource(source: string, selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
-  const match = new RegExp(`${escaped}\\s*\\{(?<body>[^}]*)\\}`, 'u').exec(source);
-  return match?.groups?.['body'] ?? '';
+  return cssDeclarationText(source, selector);
 }
 
 function atRuleBlock(header: string): string {
-  const start = css.indexOf(header);
-  if (start < 0) return '';
-  const opening = css.indexOf('{', start + header.length);
-  if (opening < 0) return '';
-  let depth = 0;
-  for (let index = opening; index < css.length; index++) {
-    if (css[index] === '{') depth += 1;
-    if (css[index] === '}') depth -= 1;
-    if (depth === 0) return css.slice(opening + 1, index);
-  }
-  return '';
+  const rules: string[] = [];
+  postcss.parse(css).walkAtRules((rule) => {
+    if (`@${rule.name} ${rule.params}` === header)
+      rules.push(rule.nodes?.map((node) => node.toString()).join('\n') ?? '');
+  });
+  return rules.join('\n');
 }
 
 describe('CenterPanel task metadata styles', () => {
@@ -196,7 +191,7 @@ describe('Shared popover styles', () => {
     expect(popover).toContain('border-radius: 0.5rem');
     expect(popover).toContain('padding: 0.5rem');
     expect(popover).toContain('min-width: 10rem');
-    expect(popover).toContain('box-shadow: var(--shadow-s)');
+    expect(popover).toContain('box-shadow: var(--shadow-s, none)');
   });
 
   it('priority popover follows the view-state menu surface and option rhythm', () => {
@@ -216,7 +211,7 @@ describe('Shared popover styles', () => {
     expect(priorityPopover).toContain('border-radius: 0.5rem');
     expect(priorityPopover).toContain('border: 0');
     expect(priorityPopover).toContain('overflow: hidden');
-    expect(priorityPopover).toContain('box-shadow: var(--shadow-s)');
+    expect(priorityPopover).toContain('box-shadow: var(--shadow-s, none)');
     expect(priorityOption).toContain('grid-template-columns: 0.8em 0.9em max-content');
     expect(priorityOption).toContain('justify-content: start');
     expect(priorityOption).toContain('column-gap: 0.35em');
@@ -248,7 +243,7 @@ describe('Shared popover styles', () => {
     );
 
     expect(dateTimePopover).toContain('border: 0');
-    expect(dateTimePopover).toContain('box-shadow: var(--shadow-s)');
+    expect(dateTimePopover).toContain('box-shadow: var(--shadow-s, none)');
     expect(dateTimePopover).toContain('border-radius: 0.5rem');
     expect(inputRow).toContain('height: 2rem');
     expect(inputRow).toContain('gap: 0.5rem');
@@ -297,7 +292,7 @@ describe('Panel hierarchy styles', () => {
 
     expect(css).not.toContain('.abyss-left-divider');
     expect(css).not.toContain('.abyss-right-divider');
-    expect(adjacentRightSections).toContain('margin-top: 8px');
+    expect(adjacentRightSections).toContain('margin-top: var(--size-4-2)');
     expect(adjacentRightSections).not.toContain('border');
   });
 });

@@ -335,6 +335,9 @@ export default defineConfig(
       '*.cjs',
       'release-check.mjs',
       'release-artifacts.mjs',
+      'tooling/check-css.mjs',
+      'tooling/css-policy.mjs',
+      'tooling/css-contracts.mjs',
       'test/dependency-rules.test.ts',
       'test/release-artifacts.test.ts',
     ],
@@ -398,6 +401,12 @@ export default defineConfig(
       'src/panels/projects/projectTableViewport.ts',
     ],
     rules: { 'project-policy/ambient': ['error', 'pure'] },
+  },
+  {
+    files: ['tooling/*.mjs'],
+    languageOptions: {
+      parserOptions: { projectService: false, project: './tooling/tsconfig.json' },
+    },
   },
   prettier,
 );
