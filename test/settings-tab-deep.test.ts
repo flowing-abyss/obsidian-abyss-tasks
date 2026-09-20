@@ -2351,17 +2351,14 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
   });
 
   it('refreshes a mounted project table after description and column view saves', async () => {
-    const { tab, plugin } = makeTab();
+    const { tab, plugin, captured } = makeTab();
     const projectsHeader = Array.from(
       tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
     ).find((header) => header.textContent.includes('Projects'));
     expectDefined(projectsHeader).click();
-    const description = expectDefined(
-      tab.containerEl.querySelector<HTMLInputElement>('.abyss-project-show-description'),
-    );
+    const description = expectDefined(findComp(captured, 'Show description', 'toggle'));
 
-    description.checked = false;
-    description.dispatchEvent(new Event('change', { bubbles: true }));
+    description.comp.onClick();
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     expect(plugin.saveViewState).toHaveBeenCalledOnce();
     expect(plugin.refreshProjectTableSettings).toHaveBeenCalledOnce();
