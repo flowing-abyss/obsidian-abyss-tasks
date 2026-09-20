@@ -10,7 +10,7 @@ import {
   addProjectPropertyColumn,
   renderProjectTableSettings,
 } from '../src/settings/projectTableSettings';
-import { expectDefined } from './helpers';
+import { editSettingControl, expectDefined } from './helpers';
 
 vi.mock('obsidian', async () => {
   const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
@@ -863,7 +863,7 @@ describe('renderProjectTableSettings', () => {
       });
       expandProperty(container, 'start');
 
-      expectDefined(dropdowns[0]).setValue('Kickoff');
+      editSettingControl(expectDefined(dropdowns[0]).selectEl, 'Kickoff');
       await settle();
 
       expect(projects.startProperty).toBe('Kickoff');
@@ -907,7 +907,7 @@ describe('renderProjectTableSettings', () => {
       });
       expandProperty(container, 'start');
 
-      expectDefined(dropdowns[0]).setValue('Kickoff');
+      editSettingControl(expectDefined(dropdowns[0]).selectEl, 'Kickoff');
       await settle();
 
       expect(saveStatic).toHaveBeenCalledOnce();

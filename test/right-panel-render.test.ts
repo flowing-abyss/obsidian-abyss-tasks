@@ -1,4 +1,4 @@
-import { Platform, TFile, type App } from 'obsidian';
+import { MarkdownView, Platform, TFile, type App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
@@ -1512,10 +1512,6 @@ describe('RightPanel popovers', () => {
     });
     const child = expectDefined(root.subtasks[0]);
     state.set('taskStack', [root, child]);
-    const leaf = app.workspace.getLeaf('tab');
-    const setCursor = vi.fn();
-    (leaf as unknown as { view: unknown }).view = { editor: { setCursor } };
-    vi.spyOn(app.workspace, 'getLeaf').mockReturnValue(leaf);
 
     click(expectDefined(el.querySelector<HTMLElement>('[aria-label="More actions"]')));
     const openItem = Array.from(el.querySelectorAll<HTMLElement>('.abyss-context-item')).find(
@@ -1524,7 +1520,12 @@ describe('RightPanel popovers', () => {
     click(expectDefined(openItem));
     await flushMicrotasks();
 
-    expect(setCursor).toHaveBeenCalledWith({ line: 7, ch: 0 });
+    const leaf = expectDefined(app.workspace.getLeavesOfType('markdown')[0]);
+    const view = leaf.view;
+    if (!(view instanceof MarkdownView)) throw new Error('Expected a Markdown view');
+    expect(view.file?.path).toBe('f.md');
+    expect(view.editor.getCursor()).toEqual({ line: 7, ch: 0 });
+    leaf.detach();
   });
 
   it('date chip click → date popover appears', async () => {

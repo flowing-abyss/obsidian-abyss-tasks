@@ -666,6 +666,20 @@ export function createAppWithFiles(files: Record<string, string>): Promise<Obsid
   return Promise.resolve(app);
 }
 
+/** Edit a native settings control through its owning window's user-input event. */
+export function editSettingControl(
+  element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
+  value: string,
+): void {
+  element.value = value;
+  const ownerWindow = expectDefined(element.ownerDocument.defaultView);
+  element.dispatchEvent(
+    new ownerWindow.Event(element.tagName === 'SELECT' ? 'change' : 'input', {
+      bubbles: true,
+    }),
+  );
+}
+
 /** Let scheduled application work settle after a fixture interaction. */
 export async function flushMicrotasks(ms = 10): Promise<void> {
   await new Promise<void>((resolve) => {

@@ -2,6 +2,22 @@ packages:
   - .
 
 minimumReleaseAge: 1440
+# This cohort-only age exception excludes no future versions and is redundant after maturity.
+minimumReleaseAgeExclude:
+  - '@commitlint/cli@21.2.3'
+  - '@commitlint/config-conventional@21.2.3'
+  - '@commitlint/config-validator@21.2.3'
+  - '@commitlint/ensure@21.2.3'
+  - '@commitlint/format@21.2.3'
+  - '@commitlint/is-ignored@21.2.3'
+  - '@commitlint/lint@21.2.3'
+  - '@commitlint/load@21.2.3'
+  - '@commitlint/parse@21.2.3'
+  - '@commitlint/read@21.2.3'
+  - '@commitlint/resolve-extends@21.2.3'
+  - '@commitlint/rules@21.2.3'
+  - '@commitlint/types@21.2.3'
+  - obsidian-test-mocks@6.0.0
 blockExoticSubdeps: true
 saveExact: true
 strictPeerDependencies: true

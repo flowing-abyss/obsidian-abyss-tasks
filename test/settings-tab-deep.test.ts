@@ -12,9 +12,11 @@ import type { TaskSnapshot } from '../src/tasks';
 import {
   DataTransferStub,
   deferred,
+  editSettingControl,
   expectDefined,
   flushMicrotasks,
   loadPluginStyles,
+  methodOf,
   objectMatching,
   queryApiForTasks,
   task,
@@ -57,50 +59,70 @@ function expandAllSettingsCards(settings: CalendarSettings, expanded: Set<string
   }
 }
 
-interface CapturedComp {
-  type: 'text' | 'dropdown' | 'toggle' | 'button' | 'color';
-  name: string;
-  comp: {
-    getValue?: () => unknown;
-    setValue: (v: unknown) => unknown;
-    clickHandler?: () => void;
-    selectEl?: HTMLSelectElement;
-  };
-}
+type CapturedComp =
+  | { type: 'text'; name: string; comp: ObsidianModule.TextComponent }
+  | { type: 'dropdown'; name: string; comp: ObsidianModule.DropdownComponent }
+  | { type: 'toggle'; name: string; comp: ObsidianModule.ToggleComponent }
+  | { type: 'button'; name: string; comp: ObsidianModule.ButtonComponent }
+  | { type: 'color'; name: string; comp: ObsidianModule.ColorComponent };
 
 function patchSetting(captured: CapturedComp[]): () => void {
-  const proto = Setting.prototype as unknown as Record<string, (...args: unknown[]) => unknown>;
-  const refs: Record<string, (...args: unknown[]) => unknown> = {
-    addText: expectDefined(proto['addText']),
-    addDropdown: expectDefined(proto['addDropdown']),
-    addToggle: expectDefined(proto['addToggle']),
-    addButton: expectDefined(proto['addButton']),
-    addColorPicker: expectDefined(proto['addColorPicker']),
-  };
-  const wrap = (orig: (...args: unknown[]) => unknown, type: CapturedComp['type']) =>
-    function (this: { components: unknown[]; nameEl?: { textContent?: string } }, cb: unknown) {
-      const result = orig.call(this, cb);
-      captured.push({
-        type,
-        name: this.nameEl?.textContent ?? '',
-        comp: this.components[this.components.length - 1] as CapturedComp['comp'],
-      });
-      return result;
-    };
-  const set = (name: string, fn: unknown) => {
-    (Setting.prototype as unknown as Record<string, unknown>)[name] = fn;
-  };
-  set('addText', wrap(expectDefined(refs['addText']), 'text'));
-  set('addDropdown', wrap(expectDefined(refs['addDropdown']), 'dropdown'));
-  set('addToggle', wrap(expectDefined(refs['addToggle']), 'toggle'));
-  set('addButton', wrap(expectDefined(refs['addButton']), 'button'));
-  set('addColorPicker', wrap(expectDefined(refs['addColorPicker']), 'color'));
+  const originalAddText = methodOf(Setting.prototype, 'addText');
+  const textSpy = vi.spyOn(Setting.prototype, 'addText').mockImplementation(function (
+    this: Setting,
+    callback,
+  ) {
+    return originalAddText.call(this, (component) => {
+      callback(component);
+      captured.push({ type: 'text', name: this.nameEl.textContent, comp: component });
+    });
+  });
+  const originalAddDropdown = methodOf(Setting.prototype, 'addDropdown');
+  const dropdownSpy = vi.spyOn(Setting.prototype, 'addDropdown').mockImplementation(function (
+    this: Setting,
+    callback,
+  ) {
+    return originalAddDropdown.call(this, (component) => {
+      callback(component);
+      captured.push({ type: 'dropdown', name: this.nameEl.textContent, comp: component });
+    });
+  });
+  const originalAddToggle = methodOf(Setting.prototype, 'addToggle');
+  const toggleSpy = vi.spyOn(Setting.prototype, 'addToggle').mockImplementation(function (
+    this: Setting,
+    callback,
+  ) {
+    return originalAddToggle.call(this, (component) => {
+      callback(component);
+      captured.push({ type: 'toggle', name: this.nameEl.textContent, comp: component });
+    });
+  });
+  const originalAddButton = methodOf(Setting.prototype, 'addButton');
+  const buttonSpy = vi.spyOn(Setting.prototype, 'addButton').mockImplementation(function (
+    this: Setting,
+    callback,
+  ) {
+    return originalAddButton.call(this, (component) => {
+      callback(component);
+      captured.push({ type: 'button', name: this.nameEl.textContent, comp: component });
+    });
+  });
+  const originalAddColorPicker = methodOf(Setting.prototype, 'addColorPicker');
+  const colorSpy = vi.spyOn(Setting.prototype, 'addColorPicker').mockImplementation(function (
+    this: Setting,
+    callback,
+  ) {
+    return originalAddColorPicker.call(this, (component) => {
+      callback(component);
+      captured.push({ type: 'color', name: this.nameEl.textContent, comp: component });
+    });
+  });
   return () => {
-    set('addText', expectDefined(refs['addText']));
-    set('addDropdown', expectDefined(refs['addDropdown']));
-    set('addToggle', expectDefined(refs['addToggle']));
-    set('addButton', expectDefined(refs['addButton']));
-    set('addColorPicker', expectDefined(refs['addColorPicker']));
+    textSpy.mockRestore();
+    dropdownSpy.mockRestore();
+    toggleSpy.mockRestore();
+    buttonSpy.mockRestore();
+    colorSpy.mockRestore();
   };
 }
 
@@ -219,12 +241,14 @@ function findColorInput(body: HTMLElement, name: string): HTMLInputElement | nul
   );
 }
 
-function findComp(
+function findComp<T extends CapturedComp['type']>(
   captured: CapturedComp[],
   name: string,
-  type: CapturedComp['type'],
-): CapturedComp | undefined {
-  return captured.find((c) => c.name === name && c.type === type);
+  type: T,
+): Extract<CapturedComp, { type: T }> | undefined {
+  return captured.find(
+    (c): c is Extract<CapturedComp, { type: T }> => c.name === name && c.type === type,
+  );
 }
 
 function attachSettingsScroller(tab: CalendarSettingsTab, scrollTop: number): HTMLElement {
@@ -270,18 +294,17 @@ function capturedButton(
   captured: CapturedComp[],
   text: string,
   sectionTitle: string,
-): CapturedComp['comp'] {
+): HTMLButtonElement {
   return expectDefined(
-    captured.find((candidate) => {
-      if (candidate.type !== 'button') return false;
-      const button = (candidate.comp as { buttonEl?: HTMLButtonElement }).buttonEl;
-      return (
-        button?.textContent === text &&
-        button.closest<HTMLElement>('[data-section-title]')?.dataset['sectionTitle'] ===
-          sectionTitle
-      );
-    }),
-  ).comp;
+    captured
+      .flatMap((candidate) => (candidate.type === 'button' ? [candidate.comp.buttonEl] : []))
+      .find(
+        (button) =>
+          button.textContent === text &&
+          button.closest<HTMLElement>('[data-section-title]')?.dataset['sectionTitle'] ===
+            sectionTitle,
+      ),
+  );
 }
 
 function dragCard(source: HTMLElement, target: HTMLElement): void {
@@ -943,8 +966,12 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     const input = findInput(body, 'Task prefix');
     expect(input).not.toBeNull();
     expect(expectDefined(input).value).toBe('#task');
-    expectDefined(findComp(captured, 'Task prefix', 'text')).comp.setValue('#todo');
-    expect(plugin.saveSettings).toHaveBeenCalled();
+    expect(plugin.saveSettings).not.toHaveBeenCalled();
+    editSettingControl(
+      expectDefined(findComp(captured, 'Task prefix', 'text')).comp.inputEl,
+      '#todo',
+    );
+    expect(plugin.saveSettings).toHaveBeenCalledOnce();
     expect(plugin.settings.taskPrefix).toBe('#todo');
   });
 
@@ -974,14 +1001,14 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
       'Tasks created elsewhere with this prefix do not appear in an untagged inbox.',
     );
 
-    component.setValue('#work');
+    editSettingControl(component.inputEl, '#work');
     await flushMicrotasks();
     expect(body.textContent).toContain(
       'Tasks created elsewhere with this prefix do not appear in an untagged inbox.',
     );
     expect(activeDocument.activeElement).toBe(input);
 
-    component.setValue('plain text');
+    editSettingControl(component.inputEl, 'plain text');
     await flushMicrotasks();
     expect(body.textContent).not.toContain(
       'Tasks created elsewhere with this prefix do not appear in an untagged inbox.',
@@ -1002,7 +1029,10 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     const other = activeDocument.body.createEl('button');
     input.focus();
 
-    expectDefined(findComp(captured, 'Task prefix', 'text')).comp.setValue('#work');
+    editSettingControl(
+      expectDefined(findComp(captured, 'Task prefix', 'text')).comp.inputEl,
+      '#work',
+    );
     other.focus();
     pending.resolve();
     await flushMicrotasks();
@@ -1020,7 +1050,10 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     const input = findInput(body, 'Task file');
     expect(input).not.toBeNull();
     expect(expectDefined(input).value).toBe('inbox.md');
-    expectDefined(findComp(captured, 'Task file', 'text')).comp.setValue('new.md');
+    editSettingControl(
+      expectDefined(findComp(captured, 'Task file', 'text')).comp.inputEl,
+      'new.md',
+    );
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.taskFilePath).toBe('new.md');
   });
@@ -1054,7 +1087,10 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     const { tab, plugin, captured } = makeTab({ taskTemplatePath: 'templates/task.md' });
     const body = openSection(tab, 0);
     expect(expectDefined(findInput(body, 'Note template')).value).toBe('templates/task.md');
-    expectDefined(findComp(captured, 'Note template', 'text')).comp.setValue('templates/new.md');
+    editSettingControl(
+      expectDefined(findComp(captured, 'Note template', 'text')).comp.inputEl,
+      'templates/new.md',
+    );
     expect(plugin.settings.taskTemplatePath).toBe('templates/new.md');
   });
 
@@ -1066,8 +1102,8 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     openSection(tab, 0);
 
     const position = expectDefined(findComp(captured, 'Section position', 'dropdown'));
-    expect(position.comp.getValue?.()).toBe('bottom');
-    position.comp.setValue('top');
+    expect(position.comp.getValue()).toBe('bottom');
+    editSettingControl(position.comp.selectEl, 'top');
 
     expect(plugin.settings.taskInsertionSectionPosition).toBe('top');
     expect(plugin.saveSettings).toHaveBeenCalled();
@@ -1081,8 +1117,8 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
     openSection(tab, 3);
 
     const position = expectDefined(findComp(captured, 'Task section position', 'dropdown'));
-    expect(position.comp.getValue?.()).toBe('bottom');
-    position.comp.setValue('top');
+    expect(position.comp.getValue()).toBe('bottom');
+    editSettingControl(position.comp.selectEl, 'top');
 
     expect(plugin.settings.projects.taskInsertionSectionPosition).toBe('top');
     expect(plugin.saveSettings).toHaveBeenCalled();
@@ -1399,7 +1435,10 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
       'Remove inbox tag when assigning another tag',
     );
 
-    expectDefined(findComp(captured, 'Inbox source', 'dropdown')).comp.setValue('tag');
+    editSettingControl(
+      expectDefined(findComp(captured, 'Inbox source', 'dropdown')).comp.selectEl,
+      'tag',
+    );
     await flushMicrotasks();
 
     expect(plugin.saveSettings).toHaveBeenCalledOnce();
@@ -1418,7 +1457,10 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
       'Remove inbox tag when assigning another tag',
     );
 
-    expectDefined(findComp(captured, 'Inbox source', 'dropdown')).comp.setValue('both');
+    editSettingControl(
+      expectDefined(findComp(captured, 'Inbox source', 'dropdown')).comp.selectEl,
+      'both',
+    );
     await flushMicrotasks();
 
     expect(plugin.settings.inbox).toEqual({
@@ -1459,7 +1501,10 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
       inbox: { mode: 'tag', tag: '#old', removeTagOnAssign: true },
     });
     openSection(tab, 1);
-    expectDefined(findComp(captured, 'Inbox tag', 'text')).comp.setValue('  #new  ');
+    editSettingControl(
+      expectDefined(findComp(captured, 'Inbox tag', 'text')).comp.inputEl,
+      '  #new  ',
+    );
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.inbox.tag).toBe('#new');
   });
@@ -1472,11 +1517,11 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     const component = expectDefined(findComp(captured, 'Inbox tag', 'text')).comp;
     const input = expectDefined(findInput(body, 'Inbox tag'));
 
-    component.setValue('##work');
+    editSettingControl(component.inputEl, '##work');
     expect(plugin.settings.inbox.tag).toBe('#work');
     expect(input.getAttribute('aria-invalid')).toBeNull();
 
-    component.setValue('#work #home');
+    editSettingControl(component.inputEl, '#work #home');
     expect(plugin.settings.inbox.tag).toBe('#work');
     expect(input.getAttribute('aria-invalid')).toBe('true');
     expect(body.textContent).toContain('Enter one inbox tag.');
@@ -1513,15 +1558,12 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     const { tab, plugin, captured } = makeTab({ tagGroups: [] });
     openSection(tab, 2);
     // Add group button is the only button with empty name (no setName called)
-    const addBtn = captured.find((c) => c.type === 'button' && c.name === '');
+    const addBtn = findComp(captured, '', 'button');
     expect(addBtn).toBeDefined();
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-25T10:00:00Z'));
     const addButton = expectDefined(addBtn).comp;
-    if (addButton.clickHandler === undefined) {
-      throw new Error('Expected the add button to expose a click handler');
-    }
-    addButton.clickHandler();
+    addButton.buttonEl.click();
     vi.useRealTimers();
     expect(plugin.settings.tagGroups).toHaveLength(1);
     expect(expectDefined(plugin.settings.tagGroups[0]).id).toMatch(/^group-\d+$/);
@@ -1549,9 +1591,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     expect(body.textContent).toContain('zero');
     expect(body.textContent).toContain('#gone');
 
-    expectDefined(
-      captured.find((entry) => entry.type === 'button' && entry.name === 'zero'),
-    ).comp.clickHandler?.();
+    expectDefined(findComp(captured, 'zero', 'button')).comp.buttonEl.click();
     await flushMicrotasks();
     expect(plugin.settings.archivedTagPrefixes).toEqual([]);
   });
@@ -1564,7 +1604,10 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     );
     openSection(tab, 2);
 
-    expectDefined(findComp(captured, 'Group name', 'text')).comp.setValue('Automatic renamed');
+    editSettingControl(
+      expectDefined(findComp(captured, 'Group name', 'text')).comp.inputEl,
+      'Automatic renamed',
+    );
 
     expect(plugin.settings.tagGroups).toEqual([
       expect.objectContaining({ id, name: 'Automatic renamed', tags: ['#auto'] }),
@@ -1579,10 +1622,13 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     );
     openSection(tab, 2);
 
-    expectDefined(findComp(captured, 'Group name', 'text')).comp.setValue('Focused work');
+    editSettingControl(
+      expectDefined(findComp(captured, 'Group name', 'text')).comp.inputEl,
+      'Focused work',
+    );
     await flushMicrotasks();
     const restore = patchSetting(captured);
-    expectDefined(capturedButton(captured, 'Archive', 'Tags').clickHandler)();
+    capturedButton(captured, 'Archive', 'Tags').click();
     await flushMicrotasks();
     restore();
 
@@ -1590,7 +1636,7 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
       expect.objectContaining({ id, name: 'Focused work', archived: true }),
     ]);
     expect(plugin.settings.archivedTagPrefixes).toEqual([]);
-    expectDefined(capturedButton(captured, 'Unarchive', 'Tags').clickHandler)();
+    capturedButton(captured, 'Unarchive', 'Tags').click();
     await flushMicrotasks();
 
     expect(plugin.settings.tagGroups).toEqual([
@@ -1613,7 +1659,10 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     );
     openSection(tab, 2);
 
-    expectDefined(findComp(captured, 'Group name', 'text')).comp.setValue('Unsaved name');
+    editSettingControl(
+      expectDefined(findComp(captured, 'Group name', 'text')).comp.inputEl,
+      'Unsaved name',
+    );
     await flushMicrotasks();
 
     expect(plugin.settings.tagGroups).toEqual([]);
@@ -1630,7 +1679,10 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
   it('group name input saves on change', () => {
     const { tab, plugin, captured } = makeTab({ tagGroups: [{ ...baseGroup }] });
     openSection(tab, 2);
-    expectDefined(findComp(captured, 'Group name', 'text')).comp.setValue('Personal');
+    editSettingControl(
+      expectDefined(findComp(captured, 'Group name', 'text')).comp.inputEl,
+      'Personal',
+    );
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(expectDefined(plugin.settings.tagGroups[0]).name).toBe('Personal');
   });
@@ -1661,7 +1713,10 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
   it('prefix input normalizes one tag before saving', () => {
     const { tab, plugin, captured } = makeTab({ tagGroups: [{ ...baseGroup, prefix: '' }] });
     openSection(tab, 2);
-    expectDefined(findComp(captured, 'Prefix', 'text')).comp.setValue('  ##work  ');
+    editSettingControl(
+      expectDefined(findComp(captured, 'Prefix', 'text')).comp.inputEl,
+      '  ##work  ',
+    );
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(expectDefined(plugin.settings.tagGroups[0]).prefix).toBe('work');
   });
@@ -1671,7 +1726,10 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
       tagGroups: [{ ...baseGroup, mode: 'manual', tags: [] }],
     });
     openSection(tab, 2);
-    expectDefined(findComp(captured, 'Tags', 'text')).comp.setValue('a, ##b, #a #c, c');
+    editSettingControl(
+      expectDefined(findComp(captured, 'Tags', 'text')).comp.inputEl,
+      'a, ##b, #a #c, c',
+    );
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(expectDefined(plugin.settings.tagGroups[0]).tags).toEqual(['#a', '#b', '#c']);
   });
@@ -1681,7 +1739,7 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
       tagGroups: [{ ...baseGroup, mode: 'manual', tags: [] }],
     });
     openSection(tab, 2);
-    expectDefined(findComp(captured, 'Tags', 'text')).comp.setValue('a,, ,b');
+    editSettingControl(expectDefined(findComp(captured, 'Tags', 'text')).comp.inputEl, 'a,, ,b');
     expect(expectDefined(plugin.settings.tagGroups[0]).tags).toEqual(['#a', '#b']);
   });
 
@@ -1698,7 +1756,7 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
     const input = expectDefined(findInput(body, field));
     vi.mocked(plugin.saveSettings).mockClear();
 
-    expectDefined(findComp(captured, field, 'text')).comp.setValue(value);
+    editSettingControl(expectDefined(findComp(captured, field, 'text')).comp.inputEl, value);
 
     expect(input.getAttribute('aria-invalid')).toBe('true');
     expect(body.textContent).toContain(message);
@@ -1724,17 +1782,13 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
     const cards = body.querySelectorAll('.abyss-settings-card');
     expect(cards).toHaveLength(2);
     // Each card has its own "Delete group" warning button.
-    const delBtns = captured.filter((c) => {
-      if (c.type !== 'button') return false;
-      const el = (c.comp as unknown as { buttonEl?: HTMLElement }).buttonEl;
-      return el?.textContent === 'Delete group';
-    });
+    const delBtns = captured.flatMap((c) =>
+      c.type === 'button' && c.comp.buttonEl.textContent === 'Delete group'
+        ? [c.comp.buttonEl]
+        : [],
+    );
     expect(delBtns).toHaveLength(2);
-    const deleteButton = expectDefined(delBtns[0]).comp;
-    if (deleteButton.clickHandler === undefined) {
-      throw new Error('Expected the delete button to expose a click handler');
-    }
-    deleteButton.clickHandler();
+    expectDefined(delBtns[0]).click();
     expect(plugin.saveSettings).toHaveBeenCalled();
     expect(plugin.settings.tagGroups).toHaveLength(1);
     expect(expectDefined(plugin.settings.tagGroups[0]).id).toBe('g2');
@@ -1750,7 +1804,10 @@ describe('shared calendar preference', () => {
       .map((el) => el.textContent);
     expect(names.filter((name) => name === 'First day of week')).toHaveLength(1);
     expect(findDropdown(body, 'First day of week')?.value).toBe('1');
-    expectDefined(findComp(captured, 'First day of week', 'dropdown')).comp.setValue('6');
+    editSettingControl(
+      expectDefined(findComp(captured, 'First day of week', 'dropdown')).comp.selectEl,
+      '6',
+    );
     expect(plugin.settings.firstDayOfWeek).toBe(6);
     expect(plugin.saveSettings).toHaveBeenCalled();
   });
@@ -2194,7 +2251,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     openSection(tab, 2);
     attachSettingsScroller(tab, 513);
 
-    expectDefined(capturedButton(captured, '+ add group', 'Tags').clickHandler)();
+    capturedButton(captured, '+ add group', 'Tags').click();
 
     expect(plugin.settings.tagGroups).toHaveLength(1);
     expect(cardNamed(tab.containerEl, 'New group').isConnected).toBe(true);
@@ -2216,7 +2273,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     openSection(tab, 2);
     attachSettingsScroller(tab, 513);
 
-    expectDefined(capturedButton(captured, 'Delete group', 'Tags').clickHandler)();
+    capturedButton(captured, 'Delete group', 'Tags').click();
 
     expect(plugin.settings.tagGroups).toHaveLength(0);
     expect(tab.containerEl.textContent).not.toContain('Work');
@@ -2277,15 +2334,15 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     openSection(tab, 4);
     attachSettingsScroller(tab, 513);
 
-    expectDefined(capturedButton(captured, '+ add status', 'Custom statuses').clickHandler)();
+    capturedButton(captured, '+ add status', 'Custom statuses').click();
     expect(cardNamed(tab.containerEl, 'New status').isConnected).toBe(true);
     expect(plugin.rebuildTaskStatusSemantics).toHaveBeenCalled();
     await Promise.resolve();
     await Promise.resolve();
 
     const deleteButton = capturedButton(captured, 'Delete status', 'Custom statuses');
-    expectDefined(deleteButton.clickHandler)();
-    expectDefined(deleteButton.clickHandler)();
+    deleteButton.click();
+    deleteButton.click();
     expect(plugin.settings.taskStatuses.some(({ id }) => id === custom.id)).toBe(false);
     expect(tab.containerEl.querySelector(`[data-card-id="${custom.id}"]`)).toBeNull();
     await Promise.resolve();
@@ -2475,10 +2532,10 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
   it('a single Default status dropdown lists all statuses and sets defaultStatusId', () => {
     const { tab, plugin, captured } = makeTab();
     openSection(tab, 3);
-    const dd = captured.find((c) => c.name === 'Default status' && c.type === 'dropdown');
+    const dd = findComp(captured, 'Default status', 'dropdown');
     expect(dd).toBeTruthy();
     const plannedId = expectDefined(plugin.settings.projects.statuses[1]).id;
-    expectDefined(dd).comp.setValue(plannedId);
+    editSettingControl(expectDefined(dd).comp.selectEl, plannedId);
     expect(plugin.settings.projects.defaultStatusId).toBe(plannedId);
     // No per-status "Default for new projects" toggle remains.
     expect(captured.some((c) => c.name === 'Default for new projects')).toBe(false);
@@ -2722,12 +2779,10 @@ describe('CalendarSettingsTab card badges and project status metadata', () => {
     const body = openSection(tab, 3);
     expect(findDropdown(body, 'Status migration needs attention')).not.toBeNull();
     const resolution = expectDefined(
-      captured.find(
-        (entry) => entry.type === 'dropdown' && entry.name === 'Status migration needs attention',
-      ),
+      findComp(captured, 'Status migration needs attention', 'dropdown'),
     );
 
-    resolution.comp.setValue('phase');
+    editSettingControl(resolution.comp.selectEl, 'phase');
     await Promise.resolve();
     await Promise.resolve();
 

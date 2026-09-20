@@ -11,7 +11,7 @@ import type { TaskStorageSettings } from '../src/settings/taskStorageSettings';
 import type { CalendarSettings } from '../src/settings/types';
 import { taskNodeAddress, type TrackedEntry } from '../src/tasks';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
-import { flushMicrotasks, useRealMoment } from './helpers';
+import { createAppWithFiles, expectDefined, flushMicrotasks, useRealMoment } from './helpers';
 
 useRealMoment();
 
@@ -624,6 +624,41 @@ describe('TaskCalendarPlugin onunload', () => {
 });
 
 describe('TaskCalendarPlugin openPanel', () => {
+  it('opens and reuses the registered panel, closes its surface on replacement, and detaches the leaf', async () => {
+    const app = await createAppWithFiles({});
+    const errors = vi.spyOn(console, 'error');
+    const warnings = vi.spyOn(console, 'warn');
+    const plugin = new TaskCalendarPlugin(app, MANIFEST);
+    vi.spyOn(plugin, 'loadData').mockResolvedValue(null);
+    const registerCommand = vi.spyOn(plugin, 'addCommand');
+    await plugin.onload();
+    const command = expectDefined(
+      registerCommand.mock.calls.find(([entry]) => entry.id === 'open-panel')?.[0],
+    );
+    const openPanel = expectDefined(command.callback);
+    try {
+      await openPanel();
+      const leaf = expectDefined(app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)[0]);
+      const view = leaf.view;
+      expect(view).toBeInstanceOf(PanelView);
+      expect(
+        view.containerEl.querySelector('.abyss-panel-view')?.childElementCount,
+      ).toBeGreaterThan(0);
+      await openPanel();
+      expect(app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)).toEqual([leaf]);
+      await leaf.setViewState({ type: 'empty' });
+      expect(view.containerEl.querySelector('.abyss-panel-view')?.childElementCount).toBe(0);
+      leaf.detach();
+      await flushMicrotasks();
+      expect(app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)).toEqual([]);
+      expect(app.workspace.getLeavesOfType('empty')).not.toContain(leaf);
+      expect(errors).not.toHaveBeenCalled();
+      expect(warnings).not.toHaveBeenCalled();
+    } finally {
+      plugin.onunload();
+    }
+  });
+
   it('reveals existing leaf without creating a new one', async () => {
     const plugin = makePlugin();
     await plugin.onload();

@@ -1,9 +1,9 @@
-import { addIcon, App, Setting } from 'obsidian';
+import { addIcon, App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import type { CalendarSettings } from '../src/settings/types';
-import { expectDefined, methodOf, useRealMoment } from './helpers';
+import { editSettingControl, expectDefined, methodOf, useRealMoment } from './helpers';
 
 useRealMoment();
 
@@ -16,67 +16,10 @@ interface StubPlugin {
   rebuildTaskStatusSemantics: ReturnType<typeof vi.fn>;
 }
 
-interface CapturedButton {
-  el: HTMLButtonElement;
-  click: () => void;
-}
-
-/**
- * obsidian-test-mocks' ButtonComponent never wires a real DOM 'click' listener —
- * `onClick` only stores the handler, invoked via its internal `simulateClick__`.
- * Patch `addButton` to capture components so tests can trigger clicks directly.
- */
-interface CapturedText {
-  el: HTMLInputElement;
-  invokeChange: (v: string) => unknown;
-}
-
-/**
- * Patch `addText` to capture each TextComponent's inputEl + its registered
- * onChange callback, so a test can invoke the handler directly without
- * relying on DOM 'input' event wiring (which obsidian-test-mocks doesn't
- * simulate for TextComponent).
- */
-function patchAddText(captured: CapturedText[]): () => void {
-  const proto = Setting.prototype as unknown as Record<string, (...args: unknown[]) => unknown>;
-  const orig = expectDefined(proto['addText']);
-  proto['addText'] = function (
-    this: {
-      components: Array<{ inputEl: HTMLInputElement; _onChange?: (v: string) => unknown }>;
-    },
-    cb: unknown,
-  ) {
-    const result = orig.call(this, cb);
-    const comp = expectDefined(this.components[this.components.length - 1]);
-    captured.push({ el: comp.inputEl, invokeChange: (v: string) => comp._onChange?.(v) });
-    return result;
-  };
-  return () => {
-    proto['addText'] = orig;
-  };
-}
-
-function patchAddButton(captured: CapturedButton[]): () => void {
-  const proto = Setting.prototype as unknown as Record<string, (...args: unknown[]) => unknown>;
-  const orig = expectDefined(proto['addButton']);
-  proto['addButton'] = function (
-    this: { components: Array<{ buttonEl: HTMLButtonElement; clickHandler?: () => void }> },
-    cb: unknown,
-  ) {
-    const result = orig.call(this, cb);
-    const comp = expectDefined(this.components[this.components.length - 1]);
-    captured.push({ el: comp.buttonEl, click: () => comp.clickHandler?.() });
-    return result;
-  };
-  return () => {
-    proto['addButton'] = orig;
-  };
-}
-
 function makeTab(opts: { withCustomStatus?: boolean } = {}): {
   tab: CalendarSettingsTab;
   plugin: StubPlugin;
-  captured: CapturedButton[];
+  captured: HTMLButtonElement[];
 } {
   const app = new App();
   (app as unknown as Record<string, unknown>)['plugins'] = { getPlugin: () => null };
@@ -102,8 +45,6 @@ function makeTab(opts: { withCustomStatus?: boolean } = {}): {
     refreshProjectTableSettings: vi.fn(),
     rebuildTaskStatusSemantics: vi.fn(),
   };
-  const captured: CapturedButton[] = [];
-  const restore = patchAddButton(captured);
   const tab = new CalendarSettingsTab(
     app,
     plugin as unknown as ConstructorParameters<typeof CalendarSettingsTab>[1],
@@ -112,7 +53,7 @@ function makeTab(opts: { withCustomStatus?: boolean } = {}): {
     .expandedCards_abyssPrivate;
   for (const s of settings.taskStatuses) expanded.add(s.id);
   (tab as unknown as { display(): void }).display();
-  restore();
+  const captured = Array.from(tab.containerEl.querySelectorAll<HTMLButtonElement>('button'));
   return { tab, plugin, captured };
 }
 
@@ -173,7 +114,7 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     const { tab, captured } = makeTab();
     const body = openStatusesSection(tab);
     const deleteButtons = captured.filter(
-      (b) => body.contains(b.el) && b.el.textContent === 'Delete status',
+      (b) => body.contains(b) && b.textContent === 'Delete status',
     );
     // All 4 default statuses are core => none get a delete button.
     expect(deleteButtons).toHaveLength(0);
@@ -182,7 +123,7 @@ describe('CalendarSettingsTab — custom statuses section', () => {
   it('"+ add status" appends a new, non-core, deletable card', async () => {
     const { tab, plugin, captured } = makeTab();
     const body = openStatusesSection(tab);
-    const addBtn = captured.find((b) => body.contains(b.el) && b.el.textContent === '+ add status');
+    const addBtn = captured.find((b) => body.contains(b) && b.textContent === '+ add status');
     expect(addBtn).toBeDefined();
     expectDefined(addBtn).click();
     await Promise.resolve(); // flush the async onClick handler
@@ -200,7 +141,7 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     const { tab, plugin, captured } = makeTab();
     const body = openStatusesSection(tab);
     const addBtn = expectDefined(
-      captured.find((b) => body.contains(b.el) && b.el.textContent === '+ add status'),
+      captured.find((b) => body.contains(b) && b.textContent === '+ add status'),
     );
     addBtn.click();
     await Promise.resolve();
@@ -214,16 +155,14 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     const { tab, plugin, captured } = makeTab({ withCustomStatus: true });
     const body = openStatusesSection(tab);
 
-    const deleteBtn = captured.find(
-      (b) => body.contains(b.el) && b.el.textContent === 'Delete status',
-    );
+    const deleteBtn = captured.find((b) => body.contains(b) && b.textContent === 'Delete status');
     expect(deleteBtn).toBeDefined();
     const before = plugin.settings.taskStatuses.length;
 
     expectDefined(deleteBtn).click();
     await Promise.resolve();
     expect(plugin.settings.taskStatuses).toHaveLength(before); // armed, not yet deleted
-    expect(expectDefined(deleteBtn).el.textContent).toBe('Click again to confirm');
+    expect(expectDefined(deleteBtn).textContent).toBe('Click again to confirm');
 
     expectDefined(deleteBtn).click();
     await Promise.resolve();
@@ -292,22 +231,18 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     // an editable glyph-mode dropdown.
   });
 
-  it('core Symbol onChange is a guarded no-op even if invoked directly', async () => {
-    const captured: CapturedText[] = [];
-    const restore = patchAddText(captured);
-    const { plugin } = makeTab();
-    restore();
+  it('core Symbol remains unchanged after a synthetic input event on its disabled control', async () => {
+    const { tab, plugin } = makeTab();
 
     const coreStatus = expectDefined(plugin.settings.taskStatuses.find((s) => s.core));
     expect(coreStatus).toBeDefined();
     const originalSymbol = coreStatus.symbol;
 
-    const coreSymbolInput = captured.find((c) =>
-      c.el.classList.contains('abyss-status-symbol-locked'),
+    const coreSymbolInput = expectDefined(
+      tab.containerEl.querySelector<HTMLInputElement>('.abyss-status-symbol-locked'),
     );
-    expect(coreSymbolInput).toBeDefined();
-
-    expectDefined(coreSymbolInput).invokeChange('!');
+    expect(coreSymbolInput.disabled).toBe(true);
+    editSettingControl(coreSymbolInput, '!');
     await Promise.resolve();
 
     expect(coreStatus.symbol).toBe(originalSymbol);
@@ -336,11 +271,8 @@ describe('CalendarSettingsTab — custom statuses section', () => {
   });
 
   it('filters custom icon choices as native pressed buttons and keeps selection focus after rerender', async () => {
-    addIcon('alert-triangle', '<svg><path d="M12 2 2 22h20z" /></svg>');
-    const captured: CapturedText[] = [];
-    const restore = patchAddText(captured);
+    addIcon('alert-triangle', '<path d="M12 2 2 22h20z" />');
     const { tab, plugin } = makeTab({ withCustomStatus: true });
-    restore();
     activeDocument.body.append(tab.containerEl);
     const body = openStatusesSection(tab);
     const status = expectDefined(plugin.settings.taskStatuses.find((s) => !s.core));
@@ -350,12 +282,10 @@ describe('CalendarSettingsTab — custom statuses section', () => {
       ),
     );
     const search = expectDefined(
-      captured.find(
-        (input) => card.contains(input.el) && input.el.placeholder === 'Search lucide icons…',
-      ),
+      card.querySelector<HTMLInputElement>('input[placeholder="Search lucide icons…"]'),
     );
 
-    search.invokeChange('alert-triangle');
+    editSettingControl(search, 'alert-triangle');
 
     const results = Array.from(
       card.querySelectorAll<HTMLButtonElement>('.abyss-status-icon-result'),
@@ -402,11 +332,8 @@ describe('CalendarSettingsTab — custom statuses section', () => {
   });
 
   it('restores focus to the clear button when its active filter has no icon results', () => {
-    addIcon('alert-triangle', '<svg><path d="M12 2 2 22h20z" /></svg>');
-    const captured: CapturedText[] = [];
-    const restore = patchAddText(captured);
+    addIcon('alert-triangle', '<path d="M12 2 2 22h20z" />');
     const { tab, plugin } = makeTab({ withCustomStatus: true });
-    restore();
     activeDocument.body.append(tab.containerEl);
     const body = openStatusesSection(tab);
     const status = expectDefined(plugin.settings.taskStatuses.find((s) => !s.core));
@@ -416,12 +343,10 @@ describe('CalendarSettingsTab — custom statuses section', () => {
       ),
     );
     const search = expectDefined(
-      captured.find(
-        (input) => card.contains(input.el) && input.el.placeholder === 'Search lucide icons…',
-      ),
+      card.querySelector<HTMLInputElement>('input[placeholder="Search lucide icons…"]'),
     );
 
-    search.invokeChange('no-matching-icon');
+    editSettingControl(search, 'no-matching-icon');
     const clear = expectDefined(card.querySelector<HTMLButtonElement>('.abyss-status-icon-clear'));
     expect(card.querySelector('.abyss-status-icon-empty')).not.toBeNull();
     clear.focus();
