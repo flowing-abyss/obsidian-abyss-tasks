@@ -277,12 +277,9 @@ function rangeResizeSource(
   endpoint: 'start' | 'end',
   fallback: string,
 ): string {
-  if (endpoint === 'start' && (range.kind === 'closed' || range.kind === 'open-end')) {
-    return range.startDay;
-  }
-  if (endpoint === 'end' && (range.kind === 'closed' || range.kind === 'open-start')) {
-    return range.endDay;
-  }
+  if (range.kind === 'closed') return endpoint === 'start' ? range.startDay : range.endDay;
+  if (range.kind === 'open-end') return range.startDay;
+  if (range.kind === 'open-start') return range.endDay;
   return fallback;
 }
 

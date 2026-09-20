@@ -469,7 +469,10 @@ describe('ProjectTimelinePointerInteraction', () => {
 
     expect(mounted.commitRangeEdit).not.toHaveBeenCalled();
     expect(mounted.bar.classList).toContain('is-previewing');
-    expect(mounted.bar.style.left).toBe(mounted.bar.style.left);
+    expect(mounted.bar.style.left).toBe('30%');
+    expect(mounted.controls.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
+      '30%',
+    );
     expect(mounted.root.querySelector('.abyss-project-timeline-tooltip')?.textContent).toBe(
       '2026-09-04',
     );
@@ -522,7 +525,9 @@ describe('ProjectTimelinePointerInteraction', () => {
     await flushMicrotasks();
     expect(mounted.bar.style.left).toBe('10%');
     expect(mounted.bar.style.width).toBe('30%');
-    expect(mounted.bar.style.left).toBe('10%');
+    expect(mounted.controls.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
+      '10%',
+    );
   });
 
   it('rolls a rejected command back and reports it once', async () => {
@@ -539,7 +544,7 @@ describe('ProjectTimelinePointerInteraction', () => {
 
     expect(mounted.bar.style.left).toBe('');
     expect(mounted.bar.style.width).toBe('');
-    expect(mounted.bar.style.left).toBe('');
+    expect(mounted.controls.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe('');
     expect(mounted.bar.classList).not.toContain('is-previewing');
     expect(mounted.reportRangeFailure).toHaveBeenCalledOnce();
   });
@@ -573,10 +578,10 @@ describe('ProjectTimelinePointerInteraction', () => {
   });
 
   it.each([
-    ['start', { kind: 'open-start', endDay: '2026-09-08' }, '2026-09-04', 'resizeStart'],
+    ['start', { kind: 'open-start', endDay: '2026-09-08' }, '2026-09-10', 'resizeStart'],
     ['end', { kind: 'open-end', startDay: '2026-09-02' }, '2026-09-04', 'resizeEnd'],
   ] as const)(
-    'sets an absent %s endpoint from the dragged pointer day',
+    'proposes an absent %s endpoint from the existing day plus pointer delta',
     async (part, range, expectedDay, type) => {
       const mounted = mount(range);
       const handle = mounted.track.querySelector<HTMLElement>(`[data-timeline-part="${part}"]`);
@@ -626,6 +631,147 @@ describe('ProjectTimelinePointerInteraction', () => {
       kind: 'pointer',
       source: source(range),
       intent: { type: 'resizeEnd', day: '2026-09-20' },
+    });
+  });
+
+  it.each([
+    {
+      label: 'native month missing End',
+      range: { kind: 'open-end', startDay: '2026-09-20' },
+      window: { startDay: '2026-01-01', endDay: '2026-12-31', dayCount: 365, scale: 'month' },
+      trackWidth: 1565,
+      part: 'end',
+      center: 1301.3671875,
+      deltaDays: 2,
+      expectedDay: '2026-09-22',
+      leftOrdinal: 262,
+      rangeDays: 3,
+    },
+    {
+      label: 'native month missing Start',
+      range: { kind: 'open-start', endDay: '2026-09-24' },
+      window: { startDay: '2026-01-01', endDay: '2026-12-31', dayCount: 365, scale: 'month' },
+      trackWidth: 1565,
+      part: 'start',
+      center: 1256.8046875,
+      deltaDays: -2,
+      expectedDay: '2026-09-22',
+      leftOrdinal: 264,
+      rangeDays: 3,
+    },
+    {
+      label: 'year missing End',
+      range: { kind: 'open-end', startDay: '2026-06-23' },
+      window: { startDay: '2025-01-01', endDay: '2028-12-31', dayCount: 1461, scale: 'year' },
+      trackWidth: 1461,
+      part: 'end',
+      center: 716,
+      deltaDays: 7,
+      expectedDay: '2026-06-30',
+      leftOrdinal: 538,
+      rangeDays: 8,
+    },
+    {
+      label: 'year missing Start',
+      range: { kind: 'open-start', endDay: '2026-06-23' },
+      window: { startDay: '2025-01-01', endDay: '2028-12-31', dayCount: 1461, scale: 'year' },
+      trackWidth: 1461,
+      part: 'start',
+      center: 651,
+      deltaDays: -7,
+      expectedDay: '2026-06-16',
+      leftOrdinal: 531,
+      rangeDays: 8,
+    },
+    {
+      label: 'left-clamped year missing Start',
+      range: { kind: 'open-start', endDay: '2025-01-10' },
+      window: { startDay: '2025-01-01', endDay: '2028-12-31', dayCount: 1461, scale: 'year' },
+      trackWidth: 2922,
+      part: 'start',
+      center: 152,
+      deltaDays: -2,
+      expectedDay: '2025-01-08',
+      leftOrdinal: 7,
+      rangeDays: 3,
+    },
+    {
+      label: 'right-clamped year missing End',
+      range: { kind: 'open-end', startDay: '2028-12-22' },
+      window: { startDay: '2025-01-01', endDay: '2028-12-31', dayCount: 1461, scale: 'year' },
+      trackWidth: 1461,
+      part: 'end',
+      center: 1599,
+      deltaDays: 5,
+      expectedDay: '2028-12-27',
+      leftOrdinal: 1451,
+      rangeDays: 6,
+    },
+  ] as const)(
+    'anchors $label to the existing endpoint from its displaced handle center',
+    async ({
+      range,
+      window,
+      trackWidth,
+      part,
+      center,
+      deltaDays,
+      expectedDay,
+      leftOrdinal,
+      rangeDays,
+    }) => {
+      const mounted = mount(range, window);
+      vi.spyOn(mounted.track, 'getBoundingClientRect').mockReturnValue(geometry(145, trackWidth));
+      vi.spyOn(mounted.scroll, 'getBoundingClientRect').mockReturnValue(geometry(145, trackWidth));
+      applyProjectTimelineBarGeometry(
+        mounted.bar,
+        range,
+        expectDefined(projectTimelineBarGeometry(range, window)),
+      );
+      const handle = expectDefined(
+        mounted.controls.querySelector<HTMLElement>(`[data-timeline-part="${part}"]`),
+      );
+      const held = deferredResult();
+      mounted.commitRangeEdit.mockReturnValueOnce(held.promise);
+      handle.dispatchEvent(pointerEvent('pointerdown', center));
+      await flushMicrotasks();
+      expect(mounted.bar.classList).not.toContain('is-previewing');
+      const destination = center + (deltaDays * trackWidth) / window.dayCount;
+      mounted.track.dispatchEvent(pointerEvent('pointermove', destination));
+      expect(Number.parseFloat(mounted.bar.style.left)).toBeCloseTo(
+        (leftOrdinal * 100) / window.dayCount,
+      );
+      expect(Number.parseFloat(mounted.bar.style.width)).toBeCloseTo(
+        (rangeDays * 100) / window.dayCount,
+      );
+      mounted.track.dispatchEvent(pointerEvent('pointerup', destination));
+      expect(mounted.commitRangeEdit).toHaveBeenCalledExactlyOnceWith({
+        kind: 'pointer',
+        source: source(range),
+        intent: { type: part === 'start' ? 'resizeStart' : 'resizeEnd', day: expectedDay },
+      });
+      expect(Number.parseFloat(mounted.bar.style.width)).toBeCloseTo(
+        (rangeDays * 100) / window.dayCount,
+      );
+      expect(mounted.controls.classList).toContain('is-previewing');
+      held.resolve({ applied: [], failed: [] });
+      await flushMicrotasks();
+    },
+  );
+
+  it.each([
+    [{ kind: 'open-end', startDay: '2026-09-02' }, 'setEnd'],
+    [{ kind: 'open-start', endDay: '2026-09-09' }, 'setStart'],
+  ] as const)('keeps missing endpoint track clicks absolute for %s', async (range, type) => {
+    const mounted = mount(range);
+    mounted.track.dispatchEvent(pointerEvent('pointerdown', 55));
+    await flushMicrotasks();
+    mounted.track.dispatchEvent(pointerEvent('pointerup', 55));
+    await flushMicrotasks();
+    expect(mounted.commitRangeEdit).toHaveBeenCalledExactlyOnceWith({
+      kind: 'pointer',
+      source: source(range),
+      intent: { type, day: '2026-09-05' },
     });
   });
 

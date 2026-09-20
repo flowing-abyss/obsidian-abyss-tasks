@@ -1754,12 +1754,12 @@ describe('ProjectsTableView', () => {
     'creates the missing endpoint next to timed %s through real manager receipts and history',
     async (existing) => {
       vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(new Date(2026, 8, 3, 12));
+      vi.setSystemTime(new Date(2026, 8, 20, 12));
       const config = settings();
       config.projects.overviewView = 'timeline';
       config.projects.timeline = buildDefaultProjectTimelineSettings(config.projects.table);
-      config.projects.timeline.scale = 'day';
-      const timestamp = '2026-09-03T09:30:15.12';
+      config.projects.timeline.scale = 'month';
+      const timestamp = existing === 'start' ? '2026-09-20T09:30:15.12' : '2026-09-24T09:30:15.12';
       const app = await createAppWithFiles({
         'Projects/A.md': `---\nstatus: active\n${existing}: ${timestamp}\n---\n`,
       });
@@ -1779,13 +1779,14 @@ describe('ProjectsTableView', () => {
       const handle = expectDefined(
         track.querySelector<HTMLElement>(`[data-timeline-part="${missing}"]`),
       );
-      vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 140, 30));
+      vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(rectangle(145, 0, 1710, 30));
       expect(bar.hidden).toBe(false);
       expect(bar.style.left).not.toBe('');
-      const position = Number.parseFloat(bar.style.left) * 1.4 + 5;
+      // Captured native centers of the displaced 40px controls on the 1565px annual axis.
+      const position = existing === 'start' ? 1301.3671875 : 1256.8046875;
       handle.dispatchEvent(timelinePointerEvent('pointerdown', position));
       await flushMicrotasks();
-      const destination = position + (existing === 'start' ? 20 : -10);
+      const destination = position + (existing === 'start' ? 2 : -2) * (1565 / 365);
       track.dispatchEvent(timelinePointerEvent('pointermove', destination));
       track.dispatchEvent(timelinePointerEvent('pointerup', destination));
       for (let attempt = 0; attempt < 5; attempt++) await flushMicrotasks();
@@ -1797,8 +1798,7 @@ describe('ProjectsTableView', () => {
         restoreSourceValue: true,
         valueExists: true,
       });
-      const createdValue =
-        existing === 'start' ? '2026-09-05T09:30:15.12' : '2026-09-02T09:30:15.12';
+      const createdValue = '2026-09-22T09:30:15.12';
       expect(changes.find(({ field }) => field.id === missing)).toMatchObject({
         value: createdValue,
         expectedExists: false,
