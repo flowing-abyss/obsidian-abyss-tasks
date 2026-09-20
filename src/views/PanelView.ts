@@ -178,9 +178,10 @@ export class PanelView extends ItemView {
   private quickCapture_abyssPrivate: QuickCaptureCoordinator | undefined;
   private shortcutRouter_abyssPrivate: PanelShortcutRouter | undefined;
   private panelNavigation_abyssPrivate!: PanelNavigator;
-  private compactPaneElements_abyssPrivate: CompactPaneElements | undefined;
+  private compactPaneElements_abyssPrivate: CompactPaneAccessElements | undefined;
   private compactPaneCleanup_abyssPrivate: (() => void) | undefined;
   private compactPaneRefresh_abyssPrivate: (() => void) | undefined;
+  private compactHeaderResizeObserver_abyssPrivate: ResizeObserver | undefined = undefined;
   private compactPaneOpen_abyssPrivate: CompactPane | null = null;
   private compactTaskSelectionKey_abyssPrivate: string | undefined = undefined;
   private compactLeftCollapsed_abyssPrivate = false;
@@ -352,28 +353,22 @@ export class PanelView extends ItemView {
     const railEl = layout.createDiv({ cls: 'abyss-rail' });
     const leftEl = layout.createDiv({ cls: 'abyss-left' });
     const centerShell = layout.createDiv({ cls: 'abyss-center-shell' });
-    const compactPaneControls = centerShell.createDiv({
-      cls: 'abyss-compact-pane-controls',
-      attr: { role: 'toolbar', 'aria-label': 'Task panes' },
-    });
-    const compactLeftButton = compactPaneControls.createEl('button', {
-      cls: 'abyss-compact-pane-button abyss-compact-pane-button--left',
-      attr: {
-        type: 'button',
-        'aria-label': 'Show task lists',
-        title: 'Show task lists',
-        'aria-expanded': 'false',
-      },
+    const compactLeftButton = centerShell.createEl('button');
+    compactLeftButton.addClass('abyss-compact-pane-button', 'abyss-compact-pane-button--left');
+    compactLeftButton.setAttrs({
+      type: 'button',
+      'aria-label': 'Show task lists',
+      title: 'Show task lists',
+      'aria-expanded': 'false',
     });
     setIcon(compactLeftButton, 'panel-left');
-    const compactRightButton = compactPaneControls.createEl('button', {
-      cls: 'abyss-compact-pane-button abyss-compact-pane-button--right',
-      attr: {
-        type: 'button',
-        'aria-label': 'Show task details',
-        title: 'Show task details',
-        'aria-expanded': 'false',
-      },
+    const compactRightButton = centerShell.createEl('button');
+    compactRightButton.addClass('abyss-compact-pane-button', 'abyss-compact-pane-button--right');
+    compactRightButton.setAttrs({
+      type: 'button',
+      'aria-label': 'Show task details',
+      title: 'Show task details',
+      'aria-expanded': 'false',
     });
     setIcon(compactRightButton, 'panel-right');
     const centerEl = centerShell.createDiv({ cls: 'abyss-center' });
@@ -449,6 +444,13 @@ export class PanelView extends ItemView {
       this.panelNavigation_abyssPrivate,
       this.onSaveViewState_abyssPrivate,
       timeTracking,
+      (header, title, controls) => {
+        const compact = this.compactPaneElements_abyssPrivate;
+        if (compact === undefined) return;
+        header.insertBefore(compact.leftButton, title);
+        controls.append(compact.rightButton);
+        this.observeCompactHeader_abyssPrivate(header);
+      },
     );
     this.right_abyssPrivate = new RightPanel(
       this.state_abyssPrivate,
@@ -741,6 +743,8 @@ export class PanelView extends ItemView {
   private resetCompactPaneState_abyssPrivate(): void {
     this.compactPaneCleanup_abyssPrivate?.();
     this.compactPaneCleanup_abyssPrivate = undefined;
+    this.compactHeaderResizeObserver_abyssPrivate?.disconnect();
+    this.compactHeaderResizeObserver_abyssPrivate = undefined;
     this.compactPaneRefresh_abyssPrivate = undefined;
     this.closeCompactPane_abyssPrivate(false);
     this.compactPaneElements_abyssPrivate = undefined;
@@ -832,6 +836,27 @@ export class PanelView extends ItemView {
       if (this.compactPaneRefresh_abyssPrivate === onWindowResize)
         this.compactPaneRefresh_abyssPrivate = undefined;
     };
+  }
+
+  private observeCompactHeader_abyssPrivate(header: HTMLElement): void {
+    this.compactHeaderResizeObserver_abyssPrivate?.disconnect();
+    const ownerWindow = header.ownerDocument.defaultView;
+    const update = (): void => {
+      const height = header.getBoundingClientRect().height;
+      if (Number.isFinite(height) && height > 0) {
+        this.compactPaneElements_abyssPrivate?.layout.style.setProperty(
+          '--abyss-compact-overlay-top',
+          `${String(height)}px`,
+        );
+      }
+    };
+    const candidate: unknown =
+      ownerWindow == null ? undefined : Reflect.get(ownerWindow, 'ResizeObserver');
+    if (isResizeObserverConstructor(candidate)) {
+      this.compactHeaderResizeObserver_abyssPrivate = new candidate(update);
+      this.compactHeaderResizeObserver_abyssPrivate.observe(header);
+    }
+    update();
   }
 
   private createCompactResizeObserver_abyssPrivate(

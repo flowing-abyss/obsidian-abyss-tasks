@@ -2,7 +2,7 @@
    Abyss Tasks — CSS custom properties
    ============================================================ */
 .abyss-panel-view {
-  --abyss-shell-top-inset: clamp(3px, 0.4vw, 5px);
+  --abyss-shell-top-inset: calc(clamp(3px, 0.4vw, 5px) - 2px);
   --abyss-center-toolbar-height: 60px;
   --abyss-priority-a: var(--color-red);
   --abyss-priority-b: var(--color-orange);
@@ -84,8 +84,6 @@
 }
 
 .abyss-layout {
-  --abyss-compact-controls-height: 44px;
-
   position: relative;
   display: flex;
   height: 100%;
@@ -203,19 +201,14 @@
   .abyss-layout--tasks > .abyss-right.is-compact-open {
     position: absolute;
     z-index: calc(var(--layer-popover, 30) - 1);
-    inset-block: var(--abyss-compact-controls-height) 0;
+    inset-block: var(--abyss-compact-overlay-top, var(--abyss-center-toolbar-height)) 0;
     inset-inline-end: 0;
     inline-size: min(20rem, calc(100cqi - 48px));
     box-shadow: var(--shadow-l);
   }
 
-  .abyss-layout--tasks > .abyss-center-shell {
-    --abyss-shell-top-inset: var(--abyss-compact-controls-height);
-  }
-
-  .abyss-layout--tasks .abyss-compact-pane-controls {
-    display: flex;
-    justify-content: flex-end;
+  .abyss-layout--tasks .abyss-compact-pane-button--right {
+    display: inline-flex;
   }
 }
 
@@ -227,18 +220,30 @@
   .abyss-layout--tasks > .abyss-left.is-compact-open {
     position: absolute;
     z-index: calc(var(--layer-popover, 30) - 1);
-    inset-block: 0;
+    inset-block: var(--abyss-compact-overlay-top, var(--abyss-center-toolbar-height)) 0;
     inset-inline-start: 48px;
     inline-size: min(15rem, calc(100cqi - 48px));
     box-shadow: var(--shadow-l);
   }
 
-  .abyss-layout--tasks .abyss-compact-pane-controls {
-    justify-content: space-between;
-  }
-
   .abyss-layout--tasks .abyss-compact-pane-button--left {
     display: inline-flex;
+  }
+
+  .abyss-layout--tasks .abyss-center-header {
+    flex-wrap: wrap;
+  }
+
+  .abyss-layout--tasks .abyss-center-controls {
+    flex: 1 1 100%;
+    min-inline-size: 0;
+    margin-inline-start: 0;
+  }
+
+  .abyss-layout--tasks .abyss-center-search {
+    flex: 1 1 6rem;
+    min-inline-size: 0;
+    width: auto;
   }
 }
 
@@ -277,19 +282,9 @@
   overflow: hidden;
 }
 
-.abyss-compact-pane-controls {
-  position: relative;
-  z-index: var(--layer-popover, 30);
+button.abyss-compact-pane-button {
   display: none;
-  flex: 0 0 var(--abyss-compact-controls-height);
-  align-items: center;
-  padding-inline: var(--size-4-2, 0.5rem);
-  border-block-end: 1px solid var(--background-modifier-border);
-  background: var(--background-primary);
-}
-
-.abyss-compact-pane-button {
-  display: inline-flex;
+  flex: 0 0 32px;
   inline-size: 32px;
   block-size: 32px;
   align-items: center;
@@ -299,23 +294,21 @@
   border-radius: var(--radius-s);
   background: var(--interactive-normal);
   color: var(--text-muted);
+  box-shadow: none;
+  margin: 0;
 }
 
-.abyss-compact-pane-button--left {
-  display: none;
-}
-
-.abyss-compact-pane-button:hover {
+button.abyss-compact-pane-button:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
-.abyss-compact-pane-button:focus-visible {
+button.abyss-compact-pane-button:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
 }
 
-.abyss-compact-pane-button[aria-expanded='true'] {
+button.abyss-compact-pane-button[aria-expanded='true'] {
   border-color: var(--interactive-accent);
   color: var(--interactive-accent);
 }

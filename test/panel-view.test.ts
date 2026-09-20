@@ -397,6 +397,17 @@ describe('PanelView', () => {
       expect(details.getAttribute('aria-controls')).toBe(right.id);
       expect(lists.getAttribute('aria-expanded')).toBe('false');
       expect(details.getAttribute('aria-expanded')).toBe('false');
+      const header = expectDefined(layout.querySelector<HTMLElement>('.abyss-center-header'));
+      const title = expectDefined(header.querySelector<HTMLElement>('.abyss-center-title'));
+      const controls = expectDefined(header.querySelector<HTMLElement>('.abyss-center-controls'));
+      expect(lists.closest('.abyss-center-header')).toBe(header);
+      expect(details.closest('.abyss-center-header')).toBe(header);
+      expect(lists.nextElementSibling).toBe(title);
+      expect(details.parentElement).toBe(controls);
+
+      emitQueryEvent(taskApplication.index, { type: 'changed', files: ['x.md'] });
+      expect(layout.querySelector('[aria-label="Show task lists"]')).toBe(lists);
+      expect(layout.querySelector('[aria-label="Show task details"]')).toBe(details);
 
       setGeometry(layout, rect(0, 0, 1200, 480));
       window.dispatchEvent(new Event('resize'));
@@ -484,6 +495,8 @@ describe('PanelView', () => {
       expect(right.classList.contains('is-compact-open')).toBe(false);
       expect(lists.getAttribute('aria-expanded')).toBe('false');
       expect(details.getAttribute('aria-expanded')).toBe('false');
+      expect(layout.contains(lists)).toBe(false);
+      expect(layout.contains(details)).toBe(false);
 
       setTaskStack(internals.state_abyssPrivate, []);
       setTaskStack(internals.state_abyssPrivate, [task()]);
@@ -495,6 +508,13 @@ describe('PanelView', () => {
       activeDocument.dispatchEvent(calendarEscape);
       expect(calendarEscape.defaultPrevented).toBe(false);
       expect(right.classList.contains('is-compact-open')).toBe(false);
+
+      internals.panelNavigation_abyssPrivate.openTasks();
+      const refreshedHeader = expectDefined(
+        layout.querySelector<HTMLElement>('.abyss-center-header'),
+      );
+      expect(lists.closest('.abyss-center-header')).toBe(refreshedHeader);
+      expect(details.closest('.abyss-center-header')).toBe(refreshedHeader);
     });
 
     it.each(['resolving', 'open'] as const)(

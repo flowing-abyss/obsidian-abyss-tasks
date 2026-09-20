@@ -254,6 +254,11 @@ type CenterPanelConstructorArgs = [
   navigation?: PanelNavigationActions,
   onSaveViewState?: () => Promise<void>,
   timeTracking?: TrackingSurface,
+  onRenderTaskHeaderActions?: (
+    header: HTMLElement,
+    title: HTMLElement,
+    controls: HTMLElement,
+  ) => void,
 ];
 
 /** One rendered card badge a tick can repaint without asking the index anything again. */
@@ -387,6 +392,8 @@ export class CenterPanel {
   private readonly onRenderComplete_abyssPrivate: (root: HTMLElement) => void;
   private readonly interactionOwnership_abyssPrivate: InteractionOwnershipPort;
   private readonly timeTracking_abyssPrivate: TrackingSurface | undefined;
+  private readonly onRenderTaskHeaderActions_abyssPrivate:
+    ((header: HTMLElement, title: HTMLElement, controls: HTMLElement) => void) | undefined;
   /** The running card badges of the current render, keyed by the root address a tick looks up. */
   private readonly runningCardBadges_abyssPrivate = new Map<string, RunningCardBadge>();
   /** The one instant every card badge of the current render is read against. */
@@ -412,6 +419,7 @@ export class CenterPanel {
       navigation,
       onSaveViewState = async () => {},
       timeTracking,
+      onRenderTaskHeaderActions,
     ] = args;
     this.state_abyssPrivate = state;
     this.app_abyssPrivate = app;
@@ -428,6 +436,7 @@ export class CenterPanel {
     this.onRenderComplete_abyssPrivate = onRenderComplete;
     this.interactionOwnership_abyssPrivate = interactionOwnership;
     this.timeTracking_abyssPrivate = timeTracking;
+    this.onRenderTaskHeaderActions_abyssPrivate = onRenderTaskHeaderActions;
     this.captureApplication_abyssPrivate = captureApplication ?? null;
     this.captureTargets_abyssPrivate =
       this.captureApplication_abyssPrivate != null
@@ -1077,6 +1086,7 @@ export class CenterPanel {
     const chips = controls.createSpan({ cls: 'abyss-task-filter-chips' });
     const viewButton = this.renderViewStateButton_abyssPrivate(controls);
     const filterInput = this.renderTaskFilterInput_abyssPrivate(controls);
+    this.onRenderTaskHeaderActions_abyssPrivate?.(header, title, controls);
     const scroll = this.el.createDiv({ cls: 'abyss-center-scroll' });
     const addBar = this.el.createDiv({ cls: 'abyss-add-task-bar' });
     const shell = {

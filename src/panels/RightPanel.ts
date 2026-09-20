@@ -4,6 +4,8 @@ import type { AppState, InspectorHistoryFrame, TaskNodeDragPayload } from '../ap
 import type { LinkToken } from '../markdown/links';
 import { formatDurationFromMinutes, parseDurationToMinutes } from '../parser/TaskParser';
 
+const DURATION_INPUT_EXAMPLE = '1h30m';
+
 import { DEFAULT_SETTINGS } from '../settings/defaults';
 import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
@@ -3596,7 +3598,8 @@ export class RightPanel {
       cls: 'abyss-duration-input',
       attr: {
         type: 'text',
-        placeholder: 'Duration (for example, 1h30m)',
+        placeholder: DURATION_INPUT_EXAMPLE,
+        'aria-label': 'Duration',
         value:
           task.planning.duration == null ? '' : formatDurationFromMinutes(task.planning.duration),
       },

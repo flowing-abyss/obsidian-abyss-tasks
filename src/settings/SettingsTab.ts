@@ -42,6 +42,10 @@ import {
 import { type TaskStorageSettings, validateTaskStorageDraft } from './taskStorageSettings';
 import type { CalendarSettings, ProjectStatus, TaskStatusDef } from './types';
 
+const IGNORED_SOURCE_EXAMPLE = '#private';
+const IGNORED_SOURCE_DESCRIPTION =
+  'Exclude note paths, tags, or frontmatter from all task views. Example: archive/ OR #private.';
+
 interface TaskCalendarPlugin extends Plugin {
   settings: CalendarSettings;
   tagManager?: TagManager;
@@ -552,7 +556,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private renderTaskDestinationSettings_abyssPrivate(containerEl: HTMLElement): void {
     new Setting(containerEl)
       .setName('Task file')
-      .setDesc('New tasks are captured here. Use {{YYYY-MM-DD}} for a local date.')
+      .setDesc('New tasks are captured here. For dated files, use tasks/{{YYYY-MM-DD}}.md.')
       .addText((text) =>
         text
           .setPlaceholder('tasks/active.md')
@@ -595,10 +599,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
     const ignoreSetting = new Setting(containerEl)
       .setName('Ignored task sources')
-      .setDesc('Exclude matching note paths, tags, or frontmatter from all task views.')
+      .setDesc(IGNORED_SOURCE_DESCRIPTION)
       .addText((text) => {
         text
-          .setPlaceholder('"archive/{{YYYY}}.md" OR #private')
+          .setPlaceholder(IGNORED_SOURCE_EXAMPLE)
           .setValue(this.plugin_abyssPrivate.settings.taskIgnoreQuery);
         ignoreInput = text.inputEl;
       });
@@ -608,9 +612,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     });
     const commitStorage = (): boolean => {
       archiveSetting.setDesc('Tasks are archived here. Use {{YYYY-MM-DD}} for a local date.');
-      ignoreSetting.setDesc(
-        'Exclude matching note paths, tags, or frontmatter from all task views.',
-      );
+      ignoreSetting.setDesc(IGNORED_SOURCE_DESCRIPTION);
       const validation = validateTaskStorageDraft(
         {
           taskArchivePath: this.plugin_abyssPrivate.settings.taskArchivePath,

@@ -139,19 +139,14 @@ function phase(h: Harness): QuickCapturePhase {
 }
 
 describe('QuickCaptureCoordinator', () => {
-  it('keeps the compact inspector header below its existing pane-controls strip', () => {
-    expect(declarationsFor('.abyss-layout')).toContain('--abyss-compact-controls-height: 44px');
-    expect(declarationsFor('.abyss-compact-pane-controls')).toContain(
-      'flex: 0 0 var(--abyss-compact-controls-height)',
-    );
+  it('keeps compact overlays below the retained task header without a dedicated controls row', () => {
+    expect(declarationsFor('.abyss-layout')).not.toContain('--abyss-compact-controls-height');
+    expect(declarationsFor('.abyss-compact-pane-controls')).toBe('');
     expect(declarationsFor('.abyss-layout--tasks > .abyss-right.is-compact-open')).toContain(
-      'inset-block: var(--abyss-compact-controls-height) 0',
-    );
-    expect(declarationsFor('.abyss-layout--tasks > .abyss-center-shell')).toContain(
-      '--abyss-shell-top-inset: var(--abyss-compact-controls-height)',
+      'inset-block: var(--abyss-compact-overlay-top, var(--abyss-center-toolbar-height)) 0',
     );
     expect(declarationsFor('.abyss-layout--tasks > .abyss-left.is-compact-open')).toContain(
-      'inset-block: 0',
+      'inset-block: var(--abyss-compact-overlay-top, var(--abyss-center-toolbar-height)) 0',
     );
   });
 
@@ -188,7 +183,7 @@ describe('QuickCaptureCoordinator', () => {
       /\.abyss-layout--tasks\s*>\s*\.abyss-(?:left|right)\.is-compact-open\s*\{[\s\S]*?position:\s*absolute[\s\S]*?z-index:/u,
     );
     expect(css).toMatch(
-      /@container\s+abyss-panel-layout\s*\(max-width:\s*58rem\)[\s\S]*?\.abyss-compact-pane-controls\s*\{[\s\S]*?display:\s*flex/u,
+      /@container\s+abyss-panel-layout\s*\(max-width:\s*58rem\)[\s\S]*?\.abyss-compact-pane-button--right\s*\{[\s\S]*?display:\s*inline-flex/u,
     );
   });
 
