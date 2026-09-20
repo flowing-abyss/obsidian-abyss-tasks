@@ -28,6 +28,7 @@ import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/Obs
 import { TaskModal } from '../src/ui/TaskModal';
 import { rebuildTaskSelection, rootTaskRef } from '../src/ui/taskSelection';
 import {
+  createCssReader,
   cssDeclarationText as cssDeclarationsFor,
   cssValue as cssDeclarationValue,
 } from './cssHelpers';
@@ -842,8 +843,9 @@ describe('inspector subtask row removal', () => {
     const css = expandCompoundSelectorLists(
       fs.readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8'),
     );
+    const cssReader = createCssReader(css);
     const value = (selector: string, property: string) =>
-      cssDeclarationValue(cssDeclarationsFor(css, selector), property);
+      cssDeclarationValue(cssReader.declarationText(selector), property);
     expect(value('.abyss-subtask-remove', 'opacity')).toBe('0');
     expect(value('.abyss-subtask-remove', 'position')).not.toBe('absolute');
     expect(value('.abyss-subtask-row:hover .abyss-subtask-remove', 'opacity')).toBe('1');

@@ -1,8 +1,85 @@
 import postcss from 'postcss';
 import selectorParser from 'postcss-selector-parser';
 
+interface CssRuleRecord {
+  readonly rule: postcss.Rule;
+  readonly normalizedSelector: string;
+  readonly normalizedBranches: readonly string[];
+}
+
+export interface CssReader {
+  declarations(selector: string, topLevel?: boolean): postcss.Declaration[];
+  declarationText(selector: string, topLevel?: boolean): string;
+  ruleContaining(selectors: string[], last?: boolean): string;
+}
+
 export function normalizeCssSelector(selector: string): string {
   return selectorParser().processSync(selector, { lossless: false });
+}
+
+function declarationsFor(
+  records: readonly CssRuleRecord[],
+  selector: string,
+  topLevel: boolean,
+): postcss.Declaration[] {
+  const declarations: postcss.Declaration[] = [];
+  const target = normalizeCssSelector(selector);
+  for (const { rule, normalizedSelector, normalizedBranches } of records) {
+    if (topLevel && rule.parent?.type !== 'root') continue;
+    if (normalizedSelector !== target && !normalizedBranches.some((branch) => branch === target))
+      continue;
+    rule.each((node) => {
+      if (node.type === 'decl') declarations.push(node);
+    });
+  }
+  return declarations;
+}
+
+function declarationText(declarations: readonly postcss.Declaration[]): string {
+  return declarations
+    .map(
+      (declaration) =>
+        `${declaration.prop}: ${declaration.value}${declaration.important ? ' !important' : ''};`,
+    )
+    .join('\n');
+}
+
+function ruleContaining(
+  records: readonly CssRuleRecord[],
+  selectors: string[],
+  last: boolean,
+): string {
+  const matches: string[] = [];
+  const wanted = selectors.map(normalizeCssSelector);
+  for (const { rule, normalizedSelector, normalizedBranches } of records) {
+    if (
+      wanted.every((selector) => normalizedBranches.includes(selector)) ||
+      (wanted.length === 1 && normalizedSelector === wanted[0])
+    ) {
+      matches.push(declarationText(rule.nodes.filter((node) => node.type === 'decl')));
+    }
+  }
+  return (last ? matches[matches.length - 1] : matches[0]) ?? '';
+}
+
+/** Parse and normalize a stylesheet once for repeated exact-selector queries. */
+export function createCssReader(source: string): CssReader {
+  const records: CssRuleRecord[] = [];
+  postcss.parse(source).walkRules((rule) => {
+    records.push({
+      rule,
+      normalizedSelector: normalizeCssSelector(rule.selector),
+      normalizedBranches: selectorParser()
+        .astSync(rule.selector)
+        .nodes.map((branch) => normalizeCssSelector(branch.toString())),
+    });
+  });
+  return {
+    declarations: (selector, topLevel = false) => declarationsFor(records, selector, topLevel),
+    declarationText: (selector, topLevel = false) =>
+      declarationText(declarationsFor(records, selector, topLevel)),
+    ruleContaining: (selectors, last = false) => ruleContaining(records, selectors, last),
+  };
 }
 
 /** Read declarations from actual selector branches, preserving cascade/source order. */
@@ -11,30 +88,11 @@ export function cssDeclarations(
   selector: string,
   topLevel = false,
 ): postcss.Declaration[] {
-  const declarations: postcss.Declaration[] = [];
-  const target = normalizeCssSelector(selector);
-  postcss.parse(source).walkRules((rule) => {
-    if (topLevel && rule.parent?.type !== 'root') return;
-    const branches = selectorParser().astSync(rule.selector).nodes;
-    if (
-      normalizeCssSelector(rule.selector) !== target &&
-      !branches.some((branch) => normalizeCssSelector(branch.toString()) === target)
-    )
-      return;
-    rule.each((node) => {
-      if (node.type === 'decl') declarations.push(node);
-    });
-  });
-  return declarations;
+  return createCssReader(source).declarations(selector, topLevel);
 }
 
 export function cssDeclarationText(source: string, selector: string, topLevel = false): string {
-  return cssDeclarations(source, selector, topLevel)
-    .map(
-      (declaration) =>
-        `${declaration.prop}: ${declaration.value}${declaration.important ? ' !important' : ''};`,
-    )
-    .join('\n');
+  return createCssReader(source).declarationText(selector, topLevel);
 }
 
 export function cssValue(declarations: string, property: string): string | undefined {
@@ -46,23 +104,5 @@ export function cssValue(declarations: string, property: string): string | undef
 
 /** Exact selector branches in one rule, with source-order selection explicit at call sites. */
 export function cssRuleContaining(source: string, selectors: string[], last = false): string {
-  const matches: string[] = [];
-  const wanted = selectors.map(normalizeCssSelector);
-  postcss.parse(source).walkRules((rule) => {
-    const actual = selectorParser()
-      .astSync(rule.selector)
-      .nodes.map((branch) => normalizeCssSelector(branch.toString()));
-    if (
-      wanted.every((selector) => actual.includes(selector)) ||
-      (wanted.length === 1 && normalizeCssSelector(rule.selector) === wanted[0])
-    ) {
-      matches.push(
-        rule.nodes
-          .filter((node) => node.type === 'decl')
-          .map((node) => `${node.prop}: ${node.value}${node.important ? ' !important' : ''};`)
-          .join('\n'),
-      );
-    }
-  });
-  return (last ? matches[matches.length - 1] : matches[0]) ?? '';
+  return createCssReader(source).ruleContaining(selectors, last);
 }
