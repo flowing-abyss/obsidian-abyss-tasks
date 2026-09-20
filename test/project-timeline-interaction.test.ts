@@ -90,11 +90,13 @@ function mount(
     cls: 'abyss-project-timeline-bar',
     attr: { tabindex: '0', 'data-timeline-part': 'bar' },
   });
-  bar.createSpan({
+  const controls = track.createDiv({ cls: 'abyss-project-timeline-range-controls' });
+  controls.createDiv({ cls: 'abyss-project-timeline-move', attr: { 'data-timeline-part': 'bar' } });
+  controls.createSpan({
     cls: 'abyss-project-timeline-handle is-start',
     attr: { 'data-timeline-part': 'start' },
   });
-  bar.createSpan({
+  controls.createSpan({
     cls: 'abyss-project-timeline-handle is-end',
     attr: { 'data-timeline-part': 'end' },
   });
@@ -122,10 +124,14 @@ function mount(
     scroll,
     track,
     bar,
+    controls,
     interaction,
     commitRangeEdit,
     reportRangeFailure,
     selected,
+    setCapturedSource: (value: FrozenProjectTimelineRangeSource) => {
+      captured = value;
+    },
     setCapturedRange: (nextRange: FrozenProjectTimelineRangeSource['range']) => {
       captured = source(nextRange);
     },
@@ -156,6 +162,172 @@ afterEach(() => {
 });
 
 describe('ProjectTimelinePointerInteraction', () => {
+  if (process.env['TZ'] === 'America/New_York') {
+    it('restores rejected DST preview and reports its reason only once on release', async () => {
+      const range = { kind: 'open-end', startDay: '2026-03-07' } as const;
+      const window = {
+        startDay: '2026-03-01',
+        endDay: '2026-03-10',
+        dayCount: 10,
+        scale: 'day',
+      } as const;
+      const mounted = mount(range, window);
+      const captured = source(range);
+      mounted.setCapturedSource({
+        ...captured,
+        start: { ...captured.start, expectedValue: '2026-03-07T02:30' },
+      });
+      applyProjectTimelineBarGeometry(
+        mounted.bar,
+        range,
+        expectDefined(projectTimelineBarGeometry(range, window)),
+      );
+      const initialBar = mounted.bar.style.cssText;
+      const initialControls = mounted.controls.style.cssText;
+      mounted.bar.dispatchEvent(pointerEvent('pointerdown', 75));
+      await flushMicrotasks();
+      mounted.track.dispatchEvent(pointerEvent('pointermove', 95));
+      expect(mounted.bar.style.left).toBe('80%');
+      mounted.track.dispatchEvent(pointerEvent('pointermove', 85));
+      expect(mounted.bar.style.cssText).toBe(initialBar);
+      expect(mounted.controls.style.cssText).toBe(initialControls);
+      expect(mounted.root.querySelector('.abyss-project-timeline-tooltip')?.textContent).toMatch(
+        /does not exist/u,
+      );
+      expect(mounted.reportRangeFailure).not.toHaveBeenCalled();
+      mounted.track.dispatchEvent(pointerEvent('pointerup', 85));
+      await flushMicrotasks();
+      expect(mounted.commitRangeEdit).not.toHaveBeenCalled();
+      expect(mounted.reportRangeFailure).toHaveBeenCalledExactlyOnceWith(
+        expect.stringMatching(/does not exist/u),
+      );
+    });
+  }
+
+  it.each([
+    { kind: 'open-start', endDay: '2026-06-23' },
+    { kind: 'closed', startDay: '2026-06-23', endDay: '2026-06-23' },
+    { kind: 'closed', startDay: '2026-06-22', endDay: '2026-06-23' },
+    { kind: 'closed', startDay: '2026-06-21', endDay: '2026-06-23' },
+  ] as const)(
+    'retains the exact fixed End for $kind at year scale through pending and cancel/failure',
+    async (range) => {
+      const window = {
+        startDay: '2025-01-01',
+        endDay: '2028-12-31',
+        dayCount: 1461,
+        scale: 'year',
+      } as const;
+      const mounted = mount(range, window);
+      applyProjectTimelineBarGeometry(
+        mounted.bar,
+        range,
+        expectDefined(projectTimelineBarGeometry(range, window)),
+      );
+      const right = () =>
+        Number.parseFloat(mounted.bar.style.left) + Number.parseFloat(mounted.bar.style.width);
+      const fixedRight = right();
+      const initialControls = mounted.controls.style.cssText;
+      expect(
+        mounted.controls.style.getPropertyValue('--abyss-project-timeline-range-left'),
+      ).not.toBe('');
+      const handle = expectDefined(
+        mounted.controls.querySelector<HTMLElement>('[data-timeline-part="start"]'),
+      );
+      const held = deferredResult();
+      mounted.commitRangeEdit.mockReturnValueOnce(held.promise);
+      handle.dispatchEvent(pointerEvent('pointerdown', 46.86));
+      await flushMicrotasks();
+      mounted.track.dispatchEvent(pointerEvent('pointermove', 44.86));
+      expect(right()).toBeCloseTo(fixedRight);
+      mounted.track.dispatchEvent(pointerEvent('pointermove', 40.86));
+      expect(right()).toBeCloseTo(fixedRight);
+      expect(mounted.controls.classList).toContain('is-previewing');
+      mounted.track.dispatchEvent(pointerEvent('pointerup', 40.86));
+      expect(right()).toBeCloseTo(fixedRight);
+      held.reject(new Error('Conflict'));
+      await flushMicrotasks();
+      expect(right()).toBeCloseTo(fixedRight);
+      expect(mounted.controls.style.cssText).toBe(initialControls);
+      expect(mounted.controls.classList).not.toContain('is-previewing');
+      handle.dispatchEvent(pointerEvent('pointerdown', 46.86, 2));
+      await flushMicrotasks();
+      mounted.track.dispatchEvent(pointerEvent('pointermove', 40.86, 2));
+      mounted.interaction.cancelActive();
+      expect(right()).toBeCloseTo(fixedRight);
+      expect(mounted.controls.style.cssText).toBe(initialControls);
+    },
+  );
+
+  it('reconciles the fixed End to an authoritative compact receipt without a geometry jump', async () => {
+    const range = { kind: 'open-start', endDay: '2026-06-23' } as const;
+    const committed = { kind: 'closed', startDay: '2026-06-22', endDay: '2026-06-23' } as const;
+    const window = {
+      startDay: '2025-01-01',
+      endDay: '2028-12-31',
+      dayCount: 1461,
+      scale: 'year',
+    } as const;
+    const mounted = mount(range, window);
+    vi.spyOn(mounted.track, 'getBoundingClientRect').mockReturnValue(geometry(0, 14610));
+    vi.spyOn(mounted.scroll, 'getBoundingClientRect').mockReturnValue(geometry(0, 14610));
+    applyProjectTimelineBarGeometry(
+      mounted.bar,
+      range,
+      expectDefined(projectTimelineBarGeometry(range, window)),
+    );
+    const fixedRight =
+      Number.parseFloat(mounted.bar.style.left) + Number.parseFloat(mounted.bar.style.width);
+    mounted.controls
+      .querySelector<HTMLElement>('[data-timeline-part="start"]')
+      ?.dispatchEvent(pointerEvent('pointerdown', 5385));
+    await flushMicrotasks();
+    mounted.track.dispatchEvent(pointerEvent('pointermove', 5375));
+    mounted.track.dispatchEvent(pointerEvent('pointerup', 5375));
+    expect(
+      Number.parseFloat(mounted.bar.style.left) + Number.parseFloat(mounted.bar.style.width),
+    ).toBeCloseTo(fixedRight);
+    expect(mounted.controls.classList).toContain('is-previewing');
+    mounted.setCapturedRange(committed);
+    applyProjectTimelineBarGeometry(
+      mounted.bar,
+      committed,
+      expectDefined(projectTimelineBarGeometry(committed, window)),
+    );
+    mounted.interaction.reconcileAfterRender();
+    expect(
+      Number.parseFloat(mounted.bar.style.left) + Number.parseFloat(mounted.bar.style.width),
+    ).toBeCloseTo(fixedRight);
+    expect(Number.parseFloat(mounted.bar.style.width)).toBeCloseTo(200 / 1461);
+    expect(mounted.controls.classList).not.toContain('is-previewing');
+    expect(mounted.bar.classList).not.toContain('is-previewing');
+  });
+
+  it('previews the clamped clock-aware Start day and preserves raw source evidence', async () => {
+    const range = { kind: 'closed', startDay: '2026-09-01', endDay: '2026-09-03' } as const;
+    const mounted = mount(range);
+    const evidence = source(range);
+    const captured = {
+      ...evidence,
+      start: { ...evidence.start, expectedValue: '2026-09-01T18:00' },
+      end: { ...evidence.end, expectedValue: '2026-09-03T09:00' },
+    };
+    mounted.setCapturedSource(captured);
+    mounted.controls
+      .querySelector<HTMLElement>('[data-timeline-part="start"]')
+      ?.dispatchEvent(pointerEvent('pointerdown', 15));
+    await flushMicrotasks();
+    mounted.track.dispatchEvent(pointerEvent('pointermove', 35));
+    expect(mounted.bar.style.left).toBe('10%');
+    expect(mounted.bar.style.width).toBe('20%');
+    mounted.track.dispatchEvent(pointerEvent('pointerup', 35));
+    expect(mounted.commitRangeEdit).toHaveBeenCalledWith({
+      kind: 'pointer',
+      source: captured,
+      intent: { type: 'resizeStart', day: '2026-09-03' },
+    });
+  });
+
   it.each([
     ['start-only', { kind: 'open-end', startDay: '2026-09-02' }],
     ['same-day', { kind: 'closed', startDay: '2026-09-02', endDay: '2026-09-02' }],
@@ -168,27 +340,21 @@ describe('ProjectTimelinePointerInteraction', () => {
         range,
         expectDefined(projectTimelineBarGeometry(range, defaultWindow)),
       );
-      const initialLeft = mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left');
-      const endHandle = mounted.bar.querySelector<HTMLElement>('[data-timeline-part="end"]');
+      const initialLeft = mounted.bar.style.left;
+      const endHandle = mounted.track.querySelector<HTMLElement>('[data-timeline-part="end"]');
 
       endHandle?.dispatchEvent(pointerEvent('pointerdown', 25));
       await flushMicrotasks();
       mounted.track.dispatchEvent(pointerEvent('pointermove', 27));
-      expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
-        initialLeft,
-      );
+      expect(mounted.bar.style.left).toBe(initialLeft);
       expect(mounted.bar.classList).toContain('is-one-date');
 
       mounted.track.dispatchEvent(pointerEvent('pointermove', 55));
-      expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
-        initialLeft,
-      );
+      expect(mounted.bar.style.left).toBe(initialLeft);
       expect(mounted.bar.classList).not.toContain('is-one-date');
 
       mounted.root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
-        initialLeft,
-      );
+      expect(mounted.bar.style.left).toBe(initialLeft);
       expect(mounted.bar.classList).toContain('is-one-date');
       expect(mounted.commitRangeEdit).not.toHaveBeenCalled();
     },
@@ -202,11 +368,11 @@ describe('ProjectTimelinePointerInteraction', () => {
       range,
       expectDefined(projectTimelineBarGeometry(range, defaultWindow)),
     );
-    const initialLeft = mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left');
+    const initialLeft = mounted.bar.style.left;
     const held = deferredResult();
     mounted.commitRangeEdit.mockReturnValueOnce(held.promise);
 
-    mounted.bar
+    mounted.track
       .querySelector<HTMLElement>('[data-timeline-part="end"]')
       ?.dispatchEvent(pointerEvent('pointerdown', 25));
     await flushMicrotasks();
@@ -214,17 +380,13 @@ describe('ProjectTimelinePointerInteraction', () => {
     mounted.track.dispatchEvent(pointerEvent('pointerup', 55));
 
     expect(mounted.bar.classList).toContain('is-previewing');
-    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
-      initialLeft,
-    );
+    expect(mounted.bar.style.left).toBe(initialLeft);
     held.resolve({ applied: [], failed: [{ path: 'Projects/A.md', message: 'Conflict' }] });
     await flushMicrotasks();
 
     expect(mounted.bar.classList).toContain('is-one-date');
     expect(mounted.bar.classList).not.toContain('is-previewing');
-    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
-      initialLeft,
-    );
+    expect(mounted.bar.style.left).toBe(initialLeft);
   });
 
   it('keeps the 2026-02-20 start anchor through a successful End commit to 2026-06-23', async () => {
@@ -246,11 +408,11 @@ describe('ProjectTimelinePointerInteraction', () => {
       range,
       expectDefined(projectTimelineBarGeometry(range, window)),
     );
-    const initialLeft = mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left');
+    const initialLeft = mounted.bar.style.left;
     const held = deferredResult();
     mounted.commitRangeEdit.mockReturnValueOnce(held.promise);
 
-    mounted.bar
+    mounted.track
       .querySelector<HTMLElement>('[data-timeline-part="end"]')
       ?.dispatchEvent(pointerEvent('pointerdown', 38.44));
     await flushMicrotasks();
@@ -263,9 +425,7 @@ describe('ProjectTimelinePointerInteraction', () => {
       intent: { type: 'resizeEnd', day: '2026-06-23' },
     });
     expect(mounted.bar.classList).toContain('is-previewing');
-    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
-      initialLeft,
-    );
+    expect(mounted.bar.style.left).toBe(initialLeft);
 
     held.resolve({
       applied: [
@@ -295,9 +455,7 @@ describe('ProjectTimelinePointerInteraction', () => {
     );
     mounted.interaction.reconcileAfterRender();
 
-    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
-      initialLeft,
-    );
+    expect(mounted.bar.style.left).toBe(initialLeft);
     expect(mounted.bar.classList).not.toContain('is-one-date');
     expect(mounted.bar.classList).not.toContain('is-previewing');
   });
@@ -311,9 +469,7 @@ describe('ProjectTimelinePointerInteraction', () => {
 
     expect(mounted.commitRangeEdit).not.toHaveBeenCalled();
     expect(mounted.bar.classList).toContain('is-previewing');
-    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
-      mounted.bar.style.left,
-    );
+    expect(mounted.bar.style.left).toBe(mounted.bar.style.left);
     expect(mounted.root.querySelector('.abyss-project-timeline-tooltip')?.textContent).toBe(
       '2026-09-04',
     );
@@ -339,7 +495,7 @@ describe('ProjectTimelinePointerInteraction', () => {
     mounted.track.dispatchEvent(pointerEvent('pointermove', 45));
     const desiredLeft = mounted.bar.style.left;
     const desiredWidth = mounted.bar.style.width;
-    const desiredRangeLeft = mounted.bar.style.getPropertyValue(
+    const desiredRangeLeft = mounted.controls.style.getPropertyValue(
       '--abyss-project-timeline-range-left',
     );
 
@@ -353,20 +509,20 @@ describe('ProjectTimelinePointerInteraction', () => {
     mounted.bar.setCssProps({
       left: '10%',
       width: '30%',
-      '--abyss-project-timeline-range-left': '10%',
     });
+    mounted.controls.setCssProps({ '--abyss-project-timeline-range-left': '10%' });
     mounted.interaction.reconcileAfterRender();
 
     expect(mounted.bar.style.left).toBe(desiredLeft);
     expect(mounted.bar.style.width).toBe(desiredWidth);
-    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
+    expect(mounted.controls.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
       desiredRangeLeft,
     );
     held.resolve({ applied: [], failed: [] });
     await flushMicrotasks();
     expect(mounted.bar.style.left).toBe('10%');
     expect(mounted.bar.style.width).toBe('30%');
-    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe('10%');
+    expect(mounted.bar.style.left).toBe('10%');
   });
 
   it('rolls a rejected command back and reports it once', async () => {
@@ -383,7 +539,7 @@ describe('ProjectTimelinePointerInteraction', () => {
 
     expect(mounted.bar.style.left).toBe('');
     expect(mounted.bar.style.width).toBe('');
-    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe('');
+    expect(mounted.bar.style.left).toBe('');
     expect(mounted.bar.classList).not.toContain('is-previewing');
     expect(mounted.reportRangeFailure).toHaveBeenCalledOnce();
   });
@@ -423,7 +579,7 @@ describe('ProjectTimelinePointerInteraction', () => {
     'sets an absent %s endpoint from the dragged pointer day',
     async (part, range, expectedDay, type) => {
       const mounted = mount(range);
-      const handle = mounted.bar.querySelector<HTMLElement>(`[data-timeline-part="${part}"]`);
+      const handle = mounted.track.querySelector<HTMLElement>(`[data-timeline-part="${part}"]`);
 
       handle?.dispatchEvent(pointerEvent('pointerdown', 25));
       await flushMicrotasks();
@@ -447,7 +603,7 @@ describe('ProjectTimelinePointerInteraction', () => {
       dayCount: 365,
       scale: 'year',
     });
-    const endHandle = mounted.bar.querySelector<HTMLElement>('[data-timeline-part="end"]');
+    const endHandle = mounted.track.querySelector<HTMLElement>('[data-timeline-part="end"]');
     mounted.bar.className = 'abyss-project-timeline-bar is-open-end is-one-date';
     mounted.bar.setCssProps({ left: '66.849315%', width: '0.273973%' });
 
@@ -502,7 +658,7 @@ describe('ProjectTimelinePointerInteraction', () => {
 
   it('resizes from the frozen endpoint delta instead of a minimum-width handle position', async () => {
     const mounted = mount({ kind: 'closed', startDay: '2026-09-02', endDay: '2026-09-02' });
-    const endHandle = mounted.bar.querySelector<HTMLElement>('[data-timeline-part="end"]');
+    const endHandle = mounted.track.querySelector<HTMLElement>('[data-timeline-part="end"]');
     expect(endHandle).not.toBeNull();
 
     endHandle?.dispatchEvent(pointerEvent('pointerdown', 25));
@@ -605,7 +761,7 @@ describe('ProjectTimelinePointerInteraction', () => {
     mounted.track.dispatchEvent(pointerEvent(type, 45));
 
     expect(mounted.bar.classList).not.toContain('is-previewing');
-    expect(mounted.bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe('');
+    expect(mounted.bar.style.left).toBe('');
     expect(mounted.commitRangeEdit).not.toHaveBeenCalled();
     mounted.interaction.destroy();
   });

@@ -212,33 +212,6 @@ export const contracts = {
       context: ['@media (prefers-reduced-motion: reduce)'],
       reason: 'Reduced motion must override control transition declarations.',
     },
-    {
-      ruleId: 'abyss/important',
-      selector: '.abyss-project-timeline-bar:not(.is-one-date)',
-      property: 'left',
-      value: 'max(0px, min(var(--abyss-project-timeline-range-left), 100% - 40px))',
-      context: [],
-      reason:
-        'Clamp live inline Timeline preview geometry to the visible track; CSS owns the constrained preview.',
-    },
-    {
-      ruleId: 'abyss/important',
-      selector: '.abyss-project-timeline-bar.is-one-date',
-      property: 'left',
-      value: 'max(0px, min(var(--abyss-project-timeline-range-left), 100% - 40px))',
-      context: [],
-      reason:
-        'Clamp live inline Timeline preview geometry to the visible track; CSS owns the constrained preview.',
-    },
-    {
-      ruleId: 'abyss/important',
-      selector: '.abyss-project-timeline-bar.is-one-date',
-      property: 'width',
-      value: '0',
-      context: [],
-      reason:
-        'Clamp live inline Timeline preview geometry to the visible track; CSS owns the constrained preview.',
-    },
   ],
 };
 // Finite wrappers, scoped to their source owners. Contract tests execute/discover each family.

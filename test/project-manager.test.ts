@@ -1,4 +1,4 @@
-import { TFile } from 'obsidian';
+import { parseYaml, TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CreatedNoteTemplateError, NoteTemplateService } from '../src/notes/NoteTemplateService';
 import { joinSerializedFrontmatter, ProjectManager } from '../src/projects/ProjectManager';
@@ -736,5 +736,169 @@ describe('ProjectManager.create', () => {
 
     await expect(pm.create('Blocked')).rejects.toBe(folderFailure);
     expect(createNoteFromTemplate).not.toHaveBeenCalled();
+  });
+});
+
+describe('ProjectManager timed Timeline receipts', () => {
+  const start: ProjectField = { id: 'start', property: 'start', label: 'Start', type: 'date' };
+  const end: ProjectField = { id: 'end', property: 'end', label: 'End', type: 'date' };
+  const timestamp = '2026-09-03T09:30:15.12';
+  async function metadata(app: Awaited<ReturnType<typeof createAppWithFiles>>) {
+    const file = app.vault.getAbstractFileByPath('P.md');
+    if (!(file instanceof TFile)) throw new Error('Missing test project');
+    const block = expectDefined(/^---\n([\s\S]*?)\n---/u.exec(await app.vault.read(file)));
+    return parseYaml(expectDefined(block[1])) as Record<string, unknown>;
+  }
+
+  it.each([undefined, null, ''])(
+    'creates a timed End and restores exact missing/empty %s evidence through receipts',
+    async (empty) => {
+      const presentSuffix = empty === null ? 'end: null\n' : 'end: ""\n';
+      const suffix = empty === undefined ? '' : presentSuffix;
+      const app = await createAppWithFiles({
+        'P.md': `---\nstatus: active\nstart: ${timestamp}\n${suffix}---\n`,
+      });
+      const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+      const result = await pm.applyEdits([
+        {
+          path: 'P.md',
+          field: start,
+          value: timestamp,
+          expectedValue: timestamp,
+          expectedExists: true,
+          sourceProperty: 'start',
+          sourceKey: 'start',
+          restoreSourceValue: true,
+          valueExists: true,
+        },
+        {
+          path: 'P.md',
+          field: end,
+          value: '2026-09-07T09:30:15.12',
+          expectedValue: empty,
+          expectedExists: empty !== undefined,
+          sourceProperty: 'end',
+          sourceKey: 'end',
+        },
+      ]);
+      expect(result.failed).toEqual([]);
+      const history = new ProjectEditHistory((changes) => pm.applyEdits(changes));
+      history.record(result);
+      expect((await history.undo()).failed).toEqual([]);
+      expect(await metadata(app)).toEqual({
+        status: 'active',
+        start: timestamp,
+        ...(empty === undefined ? {} : { end: empty }),
+      });
+      expect((await history.redo()).failed).toEqual([]);
+      expect(await metadata(app)).toEqual({
+        status: 'active',
+        start: timestamp,
+        end: '2026-09-07T09:30:15.12',
+      });
+    },
+  );
+
+  it.each(['2026-09-03T09:30:15.12Z', '2026-09-03T09:30+02:00'])(
+    'accepts curated offset %s but preserves custom date validation',
+    async (value) => {
+      const app = await createAppWithFiles({ 'P.md': '# Project\n' });
+      const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+      await pm.setProperty('P.md', start, value, undefined);
+      expect((await metadata(app))['start']).toBe(value);
+      await expect(
+        pm.setProperty(
+          'P.md',
+          { id: 'property:Date', property: 'Date', label: 'Date', type: 'date' },
+          value,
+          undefined,
+        ),
+      ).rejects.toThrow(/date/u);
+    },
+  );
+
+  it('rejects reversed timed assignments before any source write', async () => {
+    const app = await createAppWithFiles({
+      'P.md': `---\nstart: ${timestamp}\nend: 2026-09-03T18:00\n---\n`,
+    });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+    const process = vi.spyOn(app.vault, 'process');
+    await expect(
+      pm.applyEdits([
+        { path: 'P.md', field: end, value: '2026-09-03T08:00', expectedValue: '2026-09-03T18:00' },
+      ]),
+    ).rejects.toThrow(/on or after/u);
+    expect(process).not.toHaveBeenCalled();
+    expect((await metadata(app))['end']).toBe('2026-09-03T18:00');
+  });
+
+  it('rechecks timed ordering against an unguarded counterpart inside the transaction', async () => {
+    const app = await createAppWithFiles({
+      'P.md': `---\nstart: ${timestamp}\nend: 2026-09-03T18:00\n---\n`,
+    });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+    const original = app.vault.process.bind(app.vault);
+    vi.spyOn(app.vault, 'process').mockImplementationOnce(async (file, callback, options) => {
+      await original(file, (source) => source.replace(timestamp, '2026-09-03T17:00'));
+      return original(file, callback, options);
+    });
+    const result = await pm.applyEdits([
+      { path: 'P.md', field: end, value: '2026-09-03T12:00', expectedValue: '2026-09-03T18:00' },
+    ]);
+    expect(result.applied).toEqual([]);
+    expect(result.failed[0]?.message).toMatch(/on or after/u);
+    expect(await metadata(app)).toEqual({ start: '2026-09-03T17:00', end: '2026-09-03T18:00' });
+  });
+
+  it('rejects a clock-only companion race inside Vault.process', async () => {
+    const app = await createAppWithFiles({ 'P.md': `---\nstart: ${timestamp}\n---\n` });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+    const original = app.vault.process.bind(app.vault);
+    vi.spyOn(app.vault, 'process').mockImplementationOnce(async (file, callback, options) => {
+      await original(file, (source) => source.replace(timestamp, '2026-09-03T10:30:15.12'));
+      return original(file, callback, options);
+    });
+    const result = await pm.applyEdits([
+      {
+        path: 'P.md',
+        field: start,
+        value: timestamp,
+        expectedValue: timestamp,
+        expectedExists: true,
+        sourceProperty: 'start',
+        sourceKey: 'start',
+        restoreSourceValue: true,
+        valueExists: true,
+      },
+      {
+        path: 'P.md',
+        field: end,
+        value: '2026-09-07T09:30:15.12',
+        expectedValue: undefined,
+        expectedExists: false,
+        sourceProperty: 'end',
+        sourceKey: 'end',
+      },
+    ]);
+    expect(result.applied).toEqual([]);
+    expect(result.failed).toHaveLength(1);
+    expect(await metadata(app)).toEqual({ start: '2026-09-03T10:30:15.12' });
+  });
+
+  it.each([
+    ['broken', '2026-09-03'],
+    ['2026-09-03T18:00', '2026-09-03T09:00'],
+  ])('preserves unrelated edit behavior with existing %s / %s', async (startValue, endValue) => {
+    const app = await createAppWithFiles({
+      'P.md': `---\nstart: ${startValue}\nend: ${endValue}\n---\n`,
+    });
+    const pm = new ProjectManager(app, clone(), {} as never, {} as never);
+    await pm.setProperty(
+      'P.md',
+      { id: 'property:Budget', property: 'Budget', label: 'Budget', type: 'number' },
+      12,
+      undefined,
+    );
+    expect(await metadata(app)).toEqual({ start: startValue, end: endValue, Budget: 12 });
   });
 });

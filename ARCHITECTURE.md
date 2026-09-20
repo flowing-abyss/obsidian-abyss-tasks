@@ -322,10 +322,19 @@ the shared mutation queue, batches metadata assignments, and updates manual rank
 Native drag presentation owns payload and cleanup, not metadata or settings writes.
 
 Timeline separates pure `projectTimelineModel`,
-[projectTimelineAxis](src/projects/projectTimelineAxis.ts), and `projectTimelineEdits` from native
-`projectTimelineInteraction` and `ProjectsTimelineView`. Calendar geometry uses inclusive
-day ordinals. The axis generates only the visible slice plus overscan; a browser-safe physical width
-cap never changes logical mapping. Minimum bar/handle presentation does not alter edit geometry.
+[projectTimelineAxis](src/projects/projectTimelineAxis.ts), `projectTimelineEdits`, and
+[projectTimelineEndpointEdits](src/projects/projectTimelineEndpointEdits.ts) from native
+`projectTimelineInteraction` and `ProjectsTimelineView`. Timeline uses inclusive local calendar
+days for its axis and range geometry. The endpoint planner retains raw date and datetime values
+separately from those days. Moves and resizes preserve each existing endpoint's local clock and
+encoding; creating a missing endpoint inherits its timed counterpart's clock. The planner rejects
+nonexistent local times and returns the final projected range for both preview and persistence.
+Unchanged endpoints retain their exact source values.
+
+The visual range follows its exact calendar boundaries. Separate compact controls keep the move
+and resize targets reachable without changing those boundaries. Preview, receipt reconciliation,
+cancellation, and failure restore both together. The axis generates only the visible slice plus
+overscan; a browser-safe physical width cap never changes logical mapping.
 Direct and options scale changes share the guarded controller path and fit valid filtered bounds;
 Today and navigation preserve the selected scale.
 
@@ -354,10 +363,14 @@ one batch, retaining the unchanged endpoint as an exact companion guard. No-op p
 and history.
 
 `ProjectManager.applyEdits()` preflights the batch, then rechecks current source/type binding, exact
-key, existence, and expected value inside each note's `Vault.process` transaction. Combined final
-date values must form a valid range. Partial multi-file failure returns exact applied and failed
-receipts. Status and description edits use this same path; status input becomes a configured literal
-name. Failures propagate to the initiating presentation boundary.
+key, existence, and expected value inside each note's `Vault.process` transaction. It accepts valid
+date or datetime values for configured Start and End fields and checks their combined range inside
+the source transaction. Other date fields retain their declared validation. Timeline submits both
+endpoint values in one guarded batch, including the unchanged endpoint as an exact companion.
+Existing receipts and history preserve timestamp spelling and property presence for undo and redo.
+Partial multi-file failure returns exact applied and failed receipts. Status and description edits
+use this same path; status input becomes a configured literal name. Failures propagate to the
+initiating presentation boundary.
 
 Successful receipts enter the session projection immediately. Ordinary store/settings/task refreshes
 do not retire them. Only verified per-path source observations acknowledge or supersede receipts;

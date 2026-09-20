@@ -1,9 +1,18 @@
-import { App, MarkdownRenderer, Menu, Notice, type WorkspaceLeaf } from 'obsidian';
+import {
+  App,
+  MarkdownRenderer,
+  Menu,
+  Notice,
+  parseYaml,
+  TFile,
+  type WorkspaceLeaf,
+} from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
 import { mountProjectCellEditorPosition } from '../src/panels/projects/projectCellEditorPosition';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
+import { ProjectManager } from '../src/projects/ProjectManager';
 import { ProjectCreationError } from '../src/projects/projectCreation';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { ProjectEditHistory } from '../src/projects/projectEditHistory';
@@ -19,7 +28,13 @@ import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTime
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
-import { expectDefined, flushMicrotasks, freshContainer, loadPluginStyles } from './helpers';
+import {
+  createAppWithFiles,
+  expectDefined,
+  flushMicrotasks,
+  freshContainer,
+  loadPluginStyles,
+} from './helpers';
 
 interface TestTransfer {
   readonly types: string[];
@@ -1436,12 +1451,12 @@ describe('ProjectsTableView', () => {
     expect(history.canRedo).toBe(true);
   });
 
-  it('rejects a frozen pointer edit when the opposite endpoint changes before release', async () => {
+  it('rejects a frozen pointer edit when the opposite timestamp clock changes on the same day', async () => {
     const noticeSpy = spyOnNotices();
     const config = settings();
     config.projects.overviewView = 'timeline';
     const item = project({
-      frontmatter: { status: 'active', start: '2026-09-01', end: '2026-09-30' },
+      frontmatter: { status: 'active', start: '2026-09-01', end: '2026-09-30T09:30' },
     });
     const applyEdits = vi.fn(async () => ({ applied: [], failed: [] }));
     const { host } = mount([item], { settings: config, applyEdits });
@@ -1451,7 +1466,7 @@ describe('ProjectsTableView', () => {
 
     bar.dispatchEvent(timelinePointerEvent('pointerdown', 20));
     await flushMicrotasks();
-    item.frontmatter['end'] = '2026-10-02';
+    item.frontmatter['end'] = '2026-09-30T10:30';
     track.dispatchEvent(timelinePointerEvent('pointermove', 30));
     track.dispatchEvent(timelinePointerEvent('pointerup', 30));
     await flushMicrotasks();
@@ -1571,7 +1586,7 @@ describe('ProjectsTableView', () => {
     const track = expectDefined(row.querySelector<HTMLElement>('.abyss-project-timeline-track'));
     const bar = expectDefined(track.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
     const start = expectDefined(
-      bar.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-start'),
+      bar.parentElement?.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-start'),
     );
     vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 140, 30));
 
@@ -1662,49 +1677,154 @@ describe('ProjectsTableView', () => {
     expect(applyEdits).not.toHaveBeenCalled();
   });
 
-  it.each(['pointer', 'keyboard'] as const)(
-    'keeps datetime ranges readable and reports a blocked %s edit through one Notice',
-    async (input) => {
+  if (process.env['TZ'] === 'America/New_York') {
+    it('rejects a keyboard DST gap once without a source write or history entry', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 2, 7, 12));
       const config = settings();
       config.projects.overviewView = 'timeline';
       const applyEdits = vi.fn(async () => ({ applied: [], failed: [] }));
-      const noticeSpy = spyOnNotices();
-      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const history = new ProjectEditHistory(applyEdits);
+      const notice = spyOnNotices();
+      const { host } = mount(
+        [project({ frontmatter: { status: 'active', start: '2026-03-07T02:30' } })],
+        { settings: config, applyEdits, history },
+      );
+      pressTimelineArrow(
+        expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar')),
+      );
+      await flushMicrotasks();
+      expect(applyEdits).not.toHaveBeenCalled();
+      expect(history.canUndo).toBe(false);
+      expect(notice).toHaveBeenCalledOnce();
+      expect(notice.mock.calls[0]?.[0]).toEqual(expect.stringContaining('does not exist'));
+    });
+  }
+
+  it.each(['pointer', 'keyboard'] as const)(
+    'edits timed ranges through %s without a Notice',
+    async (input) => {
+      const config = settings();
+      config.projects.overviewView = 'timeline';
+      config.projects.timeline = buildDefaultProjectTimelineSettings(config.projects.table);
+      config.projects.timeline.scale = 'day';
+      const applyEdits = vi.fn(async (_changes: readonly ProjectCellChange[]) => ({
+        applied: [],
+        failed: [],
+      }));
+      const notice = spyOnNotices();
       const { host } = mount(
         [
           project({
             frontmatter: {
               status: 'active',
-              start: '2026-09-01T09:30',
-              end: '2026-09-30',
+              start: '2026-09-03T09:30:15.12',
+              end: '2026-09-07T18:00',
             },
           }),
         ],
         { settings: config, applyEdits },
       );
       const bar = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
-      if (input === 'pointer') {
-        vi.spyOn(
-          expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-track')),
-          'getBoundingClientRect',
-        ).mockReturnValue(rectangle(0, 0, 100, 30));
-        bar.dispatchEvent(timelinePointerEvent('pointerdown', 20));
-      } else {
-        pressTimelineArrow(bar);
+      const track = expectDefined(bar.parentElement);
+      expect(bar.getAttribute('aria-disabled')).toBe('false');
+      if (input === 'keyboard') pressTimelineArrow(bar);
+      else {
+        vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 140, 30));
+        bar.dispatchEvent(timelinePointerEvent('pointerdown', 35));
+        await flushMicrotasks();
+        track.dispatchEvent(timelinePointerEvent('pointermove', 45));
+        track.dispatchEvent(timelinePointerEvent('pointerup', 45));
       }
       await flushMicrotasks();
+      expect(applyEdits).toHaveBeenCalledOnce();
+      expect(applyEdits.mock.calls[0]?.[0]).toMatchObject([
+        {
+          field: { id: 'start' },
+          expectedValue: '2026-09-03T09:30:15.12',
+          value: '2026-09-04T09:30:15.12',
+        },
+        { field: { id: 'end' }, expectedValue: '2026-09-07T18:00', value: '2026-09-08T18:00' },
+      ]);
+      expect(notice).not.toHaveBeenCalled();
+    },
+  );
 
-      expect(bar.getAttribute('aria-disabled')).toBe('true');
-      expect(bar.getAttribute('title')).toBeNull();
-      expect(describedText(bar)).toContain('Start contains a date and time');
-      expect(host.querySelector('[data-column-id="start"]')).not.toBeNull();
-      expect(applyEdits).not.toHaveBeenCalled();
-      expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
-      expect(noticeSpy).toHaveBeenCalledOnce();
-      expect(noticeSpy.mock.calls[0]?.[0]).toEqual(
-        expect.stringContaining('contains a date and time'),
+  it.each(['start', 'end'] as const)(
+    'creates the missing endpoint next to timed %s through real manager receipts and history',
+    async (existing) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 8, 3, 12));
+      const config = settings();
+      config.projects.overviewView = 'timeline';
+      config.projects.timeline = buildDefaultProjectTimelineSettings(config.projects.table);
+      config.projects.timeline.scale = 'day';
+      const timestamp = '2026-09-03T09:30:15.12';
+      const app = await createAppWithFiles({
+        'Projects/A.md': `---\nstatus: active\n${existing}: ${timestamp}\n---\n`,
+      });
+      const manager = new ProjectManager(app, config, {} as never, {} as never);
+      const applyEdits = vi.fn((changes: readonly ProjectCellChange[]) =>
+        manager.applyEdits(changes),
       );
-      expect(errorSpy).not.toHaveBeenCalled();
+      const history = new ProjectEditHistory(applyEdits);
+      const notice = spyOnNotices();
+      const { host } = mount(
+        [project({ frontmatter: { status: 'active', [existing]: timestamp } })],
+        { app, settings: config, applyEdits, history },
+      );
+      const track = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-track'));
+      const bar = expectDefined(track.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+      const missing = existing === 'start' ? 'end' : 'start';
+      const handle = expectDefined(
+        track.querySelector<HTMLElement>(`[data-timeline-part="${missing}"]`),
+      );
+      vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(rectangle(0, 0, 140, 30));
+      expect(bar.hidden).toBe(false);
+      expect(bar.style.left).not.toBe('');
+      const position = Number.parseFloat(bar.style.left) * 1.4 + 5;
+      handle.dispatchEvent(timelinePointerEvent('pointerdown', position));
+      await flushMicrotasks();
+      const destination = position + (existing === 'start' ? 20 : -10);
+      track.dispatchEvent(timelinePointerEvent('pointermove', destination));
+      track.dispatchEvent(timelinePointerEvent('pointerup', destination));
+      for (let attempt = 0; attempt < 5; attempt++) await flushMicrotasks();
+      expect(applyEdits).toHaveBeenCalledOnce();
+      const changes = expectDefined(applyEdits.mock.calls[0]?.[0]);
+      expect(changes.find(({ field }) => field.id === existing)).toMatchObject({
+        value: timestamp,
+        expectedValue: timestamp,
+        restoreSourceValue: true,
+        valueExists: true,
+      });
+      const createdValue =
+        existing === 'start' ? '2026-09-05T09:30:15.12' : '2026-09-02T09:30:15.12';
+      expect(changes.find(({ field }) => field.id === missing)).toMatchObject({
+        value: createdValue,
+        expectedExists: false,
+      });
+      const file = app.vault.getAbstractFileByPath('Projects/A.md');
+      if (!(file instanceof TFile)) throw new Error('Missing fixture');
+      const read = async () =>
+        parseYaml(
+          expectDefined(
+            expectDefined(/^---\n([\s\S]*?)\n---/u.exec(await app.vault.read(file)))[1],
+          ),
+        ) as Record<string, unknown>;
+      expect(await read()).toEqual({
+        status: 'active',
+        [existing]: timestamp,
+        [missing]: createdValue,
+      });
+      expect((await history.undo()).failed).toEqual([]);
+      expect(await read()).toEqual({ status: 'active', [existing]: timestamp });
+      expect((await history.redo()).failed).toEqual([]);
+      expect(await read()).toEqual({
+        status: 'active',
+        [existing]: timestamp,
+        [missing]: createdValue,
+      });
+      expect(notice).not.toHaveBeenCalled();
     },
   );
 

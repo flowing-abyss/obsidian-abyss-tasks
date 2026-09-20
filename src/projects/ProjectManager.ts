@@ -19,6 +19,7 @@ import {
   type ProjectPropertyCatalog,
 } from './ObsidianProjectProperties';
 import { ProjectCreationError, type ProjectCreateOptions } from './projectCreation';
+import { parseProjectDate } from './projectDateValue';
 import { isProjectEditValidationError, ProjectEditValidationError } from './projectEditError';
 import {
   createOwnedInferredPropertyClear,
@@ -130,13 +131,17 @@ function validDatetime(value: string): boolean {
 }
 
 function isInvalidProjectDateRange(start: unknown, end: unknown): boolean {
+  const parsedStart = parseProjectDate(start);
+  const parsedEnd = parseProjectDate(end);
   return (
-    typeof start === 'string' &&
-    typeof end === 'string' &&
-    validDate(start) &&
-    validDate(end) &&
-    start > end
+    parsedStart !== undefined &&
+    parsedEnd !== undefined &&
+    parsedStart.value.getTime() > parsedEnd.value.getTime()
   );
+}
+
+function bothDateOnly(start: unknown, end: unknown): boolean {
+  return typeof start === 'string' && typeof end === 'string' && validDate(start) && validDate(end);
 }
 
 type PropertyValidator = (value: unknown, label: string) => void;
@@ -773,6 +778,12 @@ export class ProjectManager {
     if (change.restoreSourceValue === true || !assignment.exists) {
       return { clear: !assignment.exists, value: assignment.value };
     }
+    if (
+      (change.field.id === 'start' || change.field.id === 'end') &&
+      parseProjectDate(assignment.value) !== undefined
+    ) {
+      return { clear: false, value: assignment.value };
+    }
     if (change.field.type === 'status') {
       if (typeof assignment.value !== 'string' || assignment.value.length === 0) {
         throw new ProjectEditValidationError('Status must be a nonempty string.');
@@ -801,6 +812,10 @@ export class ProjectManager {
     }
     const start = uniqueFrontmatterProperty(resulting, this.settings.projects.startProperty)?.value;
     const end = uniqueFrontmatterProperty(resulting, this.settings.projects.endProperty)?.value;
+    const editsEndpoint = changes.some(
+      ({ change }) => change.field.id === 'start' || change.field.id === 'end',
+    );
+    if (!editsEndpoint && !bothDateOnly(start, end)) return;
     if (!isInvalidProjectDateRange(start, end)) return;
     throw new ProjectEditValidationError(this.dateRangeMessage(changes));
   }

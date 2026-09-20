@@ -527,33 +527,42 @@ it('preserves case-sensitive custom-property identities while checking filter pr
   ).toEqual(['abyss/known-variable', 'abyss/unused-variable']);
 });
 
-it.each([
-  [
-    '.abyss-project-timeline-bar:not(.is-one-date)',
-    'max(0px,min(var(--abyss-project-timeline-range-left),100% - 40px))',
-  ],
-  [
-    '.abyss-project-timeline-bar.is-one-date',
-    'max(0px,min(var(--abyss-project-timeline-range-left),100% - 40px))',
-  ],
-])('keeps the exact optimized Timeline geometry contract for %s', (selector, value) => {
+it('keeps compact control geometry CSS-owned without allowing visual bar overrides', () => {
   const options = {
-    file: 'dist/fixture.css',
+    file: 'fixture.css',
     contracts: {
       ...fixtureContracts,
-      runtime: {
-        produced: ['--abyss-project-timeline-range-left'],
-        consumed: [],
-      },
-      exceptions: contracts.exceptions.filter(
-        (entry) => entry.selector === selector && entry.property === 'left',
+      runtime: { produced: ['--abyss-project-timeline-range-left'], consumed: [] },
+      exceptions: contracts.exceptions.filter((entry) =>
+        entry.selector.startsWith('.abyss-project-timeline-bar'),
       ),
     },
   };
-  expect(analyzeCss(`${selector}{left:${value}!important}`, options)).toEqual([]);
   expect(
-    analyzeCss(`${selector}{left:${value.replace('40px', '41px')}!important}`, options).map(
-      (entry) => entry.ruleId,
+    analyzeCss(
+      '.abyss-project-timeline-range-controls { left: max(0px, min(var(--abyss-project-timeline-range-left), 100% - 40px)); }',
+      options,
     ),
-  ).toEqual(['abyss/important', 'abyss/stale-exception']);
+  ).toEqual([]);
+  expect(
+    analyzeCss('.abyss-project-timeline-bar.is-one-date { width: 0 !important; }', options).map(
+      ({ ruleId }) => ruleId,
+    ),
+  ).toContain('abyss/important');
+});
+
+it('discovers the range-control coordinate from its real source owner', async () => {
+  const { default: ts } = await import('typescript');
+  const source = ts.sys.readFile(
+    ts.sys.resolvePath('src/panels/projects/projectTimelineInteraction.ts'),
+  );
+  if (source === undefined) throw new Error('Missing Timeline interaction owner');
+  const runtime = discoverRuntimeVariables(source);
+  expect(runtime.produced).toContain('--abyss-project-timeline-range-left');
+  expect(
+    analyzeCss(
+      '.abyss-project-timeline-range-controls { left: var(--abyss-project-timeline-range-left); }',
+      { file: 'fixture.css', contracts: { ...fixtureContracts, runtime } },
+    ),
+  ).toEqual([]);
 });

@@ -97,6 +97,7 @@ interface RenderedRow<TCell extends ProjectTimelineCellContext> {
   readonly track: HTMLElement;
   readonly grid: HTMLElement;
   readonly bar: HTMLElement;
+  readonly controls: HTMLElement;
   readonly startHandle: HTMLElement;
   readonly endHandle: HTMLElement;
   readonly state: HTMLElement;
@@ -246,7 +247,7 @@ function exactRangeEventTarget(
   if (event.target === bar) return bar;
   if (
     event.target instanceof Element &&
-    event.target.closest('.abyss-project-timeline-handle')?.parentElement === bar
+    event.target.closest('.abyss-project-timeline-range-controls')?.parentElement === track
   ) {
     return bar;
   }
@@ -1015,8 +1016,11 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     return { name, description, attributes };
   }
 
-  private createRangeHandle_abyssPrivate(bar: HTMLElement, endpoint: 'start' | 'end'): HTMLElement {
-    const handle = bar.createSpan({
+  private createRangeHandle_abyssPrivate(
+    controls: HTMLElement,
+    endpoint: 'start' | 'end',
+  ): HTMLElement {
+    const handle = controls.createSpan({
       cls: `abyss-project-timeline-handle is-${endpoint}`,
       attr: { 'data-timeline-part': endpoint, 'aria-hidden': 'true' },
     });
@@ -1044,8 +1048,16 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       cls: 'abyss-project-timeline-bar',
       attr: { ...rangeTargetAttributes('bar'), ...accessibility.attributes },
     });
-    const startHandle = this.createRangeHandle_abyssPrivate(bar, 'start');
-    const endHandle = this.createRangeHandle_abyssPrivate(bar, 'end');
+    const controls = track.createDiv({
+      cls: 'abyss-project-timeline-range-controls',
+      attr: { 'aria-hidden': 'true' },
+    });
+    controls.createDiv({
+      cls: 'abyss-project-timeline-move',
+      attr: { 'data-timeline-part': 'bar' },
+    });
+    const startHandle = this.createRangeHandle_abyssPrivate(controls, 'start');
+    const endHandle = this.createRangeHandle_abyssPrivate(controls, 'end');
     const row: RenderedRow<TCell> = {
       element,
       summary,
@@ -1055,6 +1067,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       track,
       grid,
       bar,
+      controls,
       startHandle,
       endHandle,
       state: track.createSpan({ cls: 'abyss-project-timeline-state' }),
@@ -1259,6 +1272,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     const geometry = projectTimelineBarGeometry(range, window);
     if (geometry === undefined) {
       row.bar.hidden = true;
+      row.controls.hidden = true;
       this.renderMissingRange_abyssPrivate(row, range, window);
       return;
     }
@@ -1298,8 +1312,10 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     bar.hidden = false;
     applyProjectTimelineBarGeometry(bar, range, geometry);
     const color = this.context_abyssPrivate.statusColor(row.project);
-    if (color !== undefined) bar.style.setProperty('--abyss-project-status-color', color);
-    else bar.style.removeProperty('--abyss-project-status-color');
+    for (const element of [bar, row.controls]) {
+      if (color !== undefined) element.style.setProperty('--abyss-project-status-color', color);
+      else element.style.removeProperty('--abyss-project-status-color');
+    }
     row.startHandle.hidden = !(
       range.kind === 'open-start' || endpointVisible(rangeEndpoint(range, 'start'), window)
     );

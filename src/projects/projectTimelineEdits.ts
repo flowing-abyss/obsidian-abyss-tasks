@@ -189,15 +189,14 @@ function endpointEligibility(
     return { kind: 'eligible' };
   }
   const parsed = parseProjectDate(endpoint.value);
-  if (parsed?.kind === 'date') return { kind: 'eligible' };
-  const detail = parsed?.kind === 'datetime' ? 'contains a date and time' : 'is not a valid date';
+  if (parsed !== undefined) return { kind: 'eligible' };
   return {
     kind: 'ineligible',
-    reason: `${label} ${detail}. Use the Start and End fields to edit this range.`,
+    reason: `${label} is not a valid date. Use the Start and End fields to edit this range.`,
   };
 }
 
-/** Rejects gesture editing when a nonempty raw endpoint cannot round-trip as a date-only value. */
+/** Rejects gesture editing when a nonempty raw endpoint cannot be parsed as a date or datetime. */
 export function projectTimelineRawEditEligibility(
   start: ProjectTimelineRawEndpoint,
   end: ProjectTimelineRawEndpoint,

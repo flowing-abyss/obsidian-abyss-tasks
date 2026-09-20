@@ -8,7 +8,7 @@ import type {
   ProjectTimelineEditIntent,
   ProjectTimelineRelativeEditIntent,
 } from '../../projects/projectTimelineEdits';
-import { planProjectTimelineEdit } from '../../projects/projectTimelineEdits';
+import { planProjectTimelineEndpointEdit } from '../../projects/projectTimelineEndpointEdits';
 import {
   projectTimelineBarGeometry,
   type ProjectTimelineBarGeometry,
@@ -142,6 +142,14 @@ interface TimelinePointerTarget {
   readonly part: TimelinePointerPart;
 }
 
+interface RangeElementSnapshot {
+  readonly className: string;
+  readonly hidden: HTMLElement['hidden'];
+  readonly left: string;
+  readonly width: string;
+  readonly rangeLeft: string;
+}
+
 interface ActivePointerGesture {
   readonly pointerId: number;
   readonly target: TimelinePointerTarget;
@@ -153,13 +161,7 @@ interface ActivePointerGesture {
   prepared: boolean;
   released: boolean;
   moved: boolean;
-  readonly barSnapshot?: {
-    readonly className: string;
-    readonly hidden: HTMLElement['hidden'];
-    readonly left: string;
-    readonly width: string;
-    readonly rangeLeft: string;
-  };
+  readonly barSnapshot?: RangeElementSnapshot & { readonly controls?: RangeElementSnapshot };
 }
 
 interface PendingPointerPreview {
@@ -175,8 +177,8 @@ const EDGE_SCROLL_ZONE_PX = 32;
 const EDGE_SCROLL_STEP_PX = 12;
 const NESTED_CONTROL_SELECTOR = 'button, input, select, textarea, a, [contenteditable="true"]';
 
-function setRangeLeft(bar: HTMLElement, left: string): void {
-  bar.style.setProperty('--abyss-project-timeline-range-left', left);
+function setRangeLeft(controls: HTMLElement, left: string): void {
+  controls.style.setProperty('--abyss-project-timeline-range-left', left);
 }
 
 function pointerPart(element: HTMLElement): TimelinePointerPart | undefined {
@@ -194,16 +196,41 @@ function eventTimelineTarget(event: Event): HTMLElement | undefined {
     : event.target;
 }
 
+function rangeControls(bar: HTMLElement): HTMLElement | null {
+  return (
+    bar.parentElement?.querySelector<HTMLElement>(
+      ':scope > .abyss-project-timeline-range-controls',
+    ) ?? null
+  );
+}
+
+function elementSnapshot(element: HTMLElement): RangeElementSnapshot {
+  return {
+    className: element.className,
+    hidden: element.hidden,
+    left: element.style.left,
+    width: element.style.width,
+    rangeLeft: element.style.getPropertyValue('--abyss-project-timeline-range-left'),
+  };
+}
+
+function restoreElement(element: HTMLElement, snapshot: RangeElementSnapshot): void {
+  element.className = snapshot.className;
+  element.hidden = snapshot.hidden;
+  element.style.left = snapshot.left;
+  element.style.width = snapshot.width;
+  if (snapshot.rangeLeft === '')
+    element.style.removeProperty('--abyss-project-timeline-range-left');
+  else setRangeLeft(element, snapshot.rangeLeft);
+}
+
 function barSnapshot(bar: HTMLElement | null): ActivePointerGesture['barSnapshot'] {
-  return bar === null
-    ? undefined
-    : {
-        className: bar.className,
-        hidden: bar.hidden,
-        left: bar.style.left,
-        width: bar.style.width,
-        rangeLeft: bar.style.getPropertyValue('--abyss-project-timeline-range-left'),
-      };
+  if (bar === null) return undefined;
+  const controls = rangeControls(bar);
+  return {
+    ...elementSnapshot(bar),
+    ...(controls === null ? {} : { controls: elementSnapshot(controls) }),
+  };
 }
 
 function isOneDateRange(range: ProjectTimelineRange): boolean {
@@ -225,10 +252,15 @@ export function applyProjectTimelineBarGeometry(
   bar.style.width = `${geometry.widthPercent}%`;
   const oneDate = isOneDateRange(range);
   bar.toggleClass('is-one-date', oneDate);
+  const controls = rangeControls(bar);
+  if (controls === null) return;
+  controls.className = `abyss-project-timeline-range-controls is-${range.kind}`;
+  controls.hidden = bar.hidden;
+  controls.style.width = bar.style.width;
   setRangeLeft(
-    bar,
+    controls,
     range.kind === 'open-start'
-      ? `calc(${geometry.leftPercent + geometry.widthPercent}% - 40px)`
+      ? `calc(${geometry.leftPercent + geometry.widthPercent}% - max(40px, ${geometry.widthPercent}%))`
       : bar.style.left,
   );
 }
@@ -276,17 +308,6 @@ function trackIntent(active: ActivePointerGesture): ProjectTimelineEditIntent | 
 function edgeDirection(clientX: number, bounds: DOMRect): -1 | 0 | 1 {
   if (clientX < bounds.left + EDGE_SCROLL_ZONE_PX) return -1;
   return clientX > bounds.right - EDGE_SCROLL_ZONE_PX ? 1 : 0;
-}
-
-function timelineRangeFromPlan(
-  plan: Extract<ReturnType<typeof planProjectTimelineEdit>, { readonly kind: 'ready' }>,
-): ProjectTimelineRange {
-  if (plan.startDay !== undefined && plan.endDay !== undefined) {
-    return { kind: 'closed', startDay: plan.startDay, endDay: plan.endDay };
-  }
-  if (plan.startDay !== undefined) return { kind: 'open-end', startDay: plan.startDay };
-  if (plan.endDay !== undefined) return { kind: 'open-start', endDay: plan.endDay };
-  return { kind: 'unscheduled' };
 }
 
 /** Owns Timeline pointer capture, preview, cancellation, hover, and edge scrolling. */
@@ -384,12 +405,7 @@ export class ProjectTimelinePointerInteraction {
     this.stopEdgeScroll_abyssPrivate();
     this.hideOverlays_abyssPrivate();
     if (restorePreview && active?.barSnapshot !== undefined && active.target.bar !== null) {
-      const { bar } = active.target;
-      bar.className = active.barSnapshot.className;
-      bar.hidden = active.barSnapshot.hidden;
-      bar.style.left = active.barSnapshot.left;
-      bar.style.width = active.barSnapshot.width;
-      setRangeLeft(bar, active.barSnapshot.rangeLeft);
+      this.restorePendingPreview_abyssPrivate(active);
     }
     if (active !== undefined) this.releasePointerCapture_abyssPrivate(active);
   }
@@ -408,15 +424,16 @@ export class ProjectTimelinePointerInteraction {
     this.restorePendingPreview_abyssPrivate(pending);
   }
 
-  private restorePendingPreview_abyssPrivate(pending: PendingPointerPreview): void {
+  private restorePendingPreview_abyssPrivate(
+    pending: Pick<PendingPointerPreview, 'target' | 'barSnapshot'>,
+  ): void {
     const snapshot = pending.barSnapshot;
     const bar = pending.target.bar;
     if (snapshot === undefined || bar?.isConnected !== true) return;
-    bar.className = snapshot.className;
-    bar.hidden = snapshot.hidden;
-    bar.style.left = snapshot.left;
-    bar.style.width = snapshot.width;
-    setRangeLeft(bar, snapshot.rangeLeft);
+    restoreElement(bar, snapshot);
+    const controls = rangeControls(bar);
+    if (controls !== null && snapshot.controls !== undefined)
+      restoreElement(controls, snapshot.controls);
   }
 
   private releasePointerCapture_abyssPrivate(active: ActivePointerGesture): void {
@@ -578,13 +595,24 @@ export class ProjectTimelinePointerInteraction {
     if (!active.prepared || (!active.moved && active.target.part !== 'track')) return undefined;
     const intent = this.intent_abyssPrivate(active);
     if (intent === undefined) return undefined;
-    const plan = planProjectTimelineEdit(active.source.range, intent);
-    if (plan.kind !== 'ready') return undefined;
+    const { source } = active;
+    const plan = planProjectTimelineEndpointEdit(
+      source.range,
+      {
+        start: { exists: source.start.expectedExists, value: source.start.expectedValue },
+        end: { exists: source.end.expectedExists, value: source.end.expectedValue },
+      },
+      intent,
+    );
+    if (plan.kind === 'rejected') {
+      this.context_abyssPrivate.reportRangeFailure(plan.reason);
+      return undefined;
+    }
     const pending: PendingPointerPreview = {
       id: ++this.previewSequence_abyssPrivate,
       target: active.target,
       source: active.source,
-      range: timelineRangeFromPlan(plan),
+      range: plan.range,
       ...(active.barSnapshot === undefined ? {} : { barSnapshot: active.barSnapshot }),
     };
     return {
@@ -638,18 +666,32 @@ export class ProjectTimelinePointerInteraction {
     if (!this.shouldPreview_abyssPrivate(active)) return;
     const intent = this.intent_abyssPrivate(active);
     if (intent === undefined) return;
-    const plan = planProjectTimelineEdit(active.source.range, intent);
+    const { source } = active;
+    const plan = planProjectTimelineEndpointEdit(
+      source.range,
+      {
+        start: { exists: source.start.expectedExists, value: source.start.expectedValue },
+        end: { exists: source.end.expectedExists, value: source.end.expectedValue },
+      },
+      intent,
+    );
     if (plan.kind === 'rejected') {
+      this.restorePendingPreview_abyssPrivate({
+        target: active.target,
+        ...(active.barSnapshot === undefined ? {} : { barSnapshot: active.barSnapshot }),
+      });
       this.tooltip_abyssPrivate.setText(plan.reason);
       this.showTooltip_abyssPrivate(active.lastClientX, active.target.track);
       return;
     }
-    const previewRange = timelineRangeFromPlan(plan);
+    const previewRange = plan.range;
     this.applyPreview_abyssPrivate(active.target.bar, previewRange);
     this.showCursor_abyssPrivate(active.target.track, active.lastClientX);
     let activeEndpoint = active.lastDay;
-    if (active.target.part === 'start') activeEndpoint = plan.startDay ?? active.lastDay;
-    else if (active.target.part === 'end') activeEndpoint = plan.endDay ?? active.lastDay;
+    if (active.target.part === 'start')
+      activeEndpoint = rangeResizeSource(plan.range, 'start', active.lastDay);
+    else if (active.target.part === 'end')
+      activeEndpoint = rangeResizeSource(plan.range, 'end', active.lastDay);
     this.tooltip_abyssPrivate.setText(activeEndpoint);
     this.showTooltip_abyssPrivate(active.lastClientX, active.target.track);
   }
@@ -665,6 +707,7 @@ export class ProjectTimelinePointerInteraction {
     bar.hidden = false;
     applyProjectTimelineBarGeometry(bar, range, geometry);
     bar.addClass('is-previewing');
+    rangeControls(bar)?.addClass('is-previewing');
   }
 
   private showCursor_abyssPrivate(track: HTMLElement, clientX: number): void {

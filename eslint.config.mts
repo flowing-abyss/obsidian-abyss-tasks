@@ -398,6 +398,7 @@ export default defineConfig(
       'src/projects/projectTimelineModel.ts',
       'src/projects/projectTimelineAxis.ts',
       'src/projects/projectTimelineEdits.ts',
+      'src/projects/projectTimelineEndpointEdits.ts',
       'src/panels/projects/projectTableViewport.ts',
     ],
     rules: { 'project-policy/ambient': ['error', 'pure'] },

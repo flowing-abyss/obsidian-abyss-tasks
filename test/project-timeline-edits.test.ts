@@ -102,18 +102,27 @@ describe('project Timeline date edits', () => {
     expect(projectTimelineRawEditEligibility(start, end)).toEqual({ kind: 'eligible' });
   });
 
-  it.each([
-    ['2026-09-03T09:30', 'Start contains a date and time'],
-    ['September 3', 'Start is not a valid date'],
-  ])('rejects lossy gesture editing for raw value %s', (value, prefix) => {
+  it.each(['2026-09-03T09:30', '2026-09-03T09:30+02:00'])('allows valid timestamp %s', (value) => {
     expect(
       projectTimelineRawEditEligibility(
         { exists: true, value },
-        { exists: true, value: '2026-09-04' },
+        { exists: false, value: undefined },
       ),
-    ).toEqual({
-      kind: 'ineligible',
-      reason: `${prefix}. Use the Start and End fields to edit this range.`,
-    });
+    ).toEqual({ kind: 'eligible' });
   });
+
+  it.each([['September 3', 'Start is not a valid date']])(
+    'rejects lossy gesture editing for raw value %s',
+    (value, prefix) => {
+      expect(
+        projectTimelineRawEditEligibility(
+          { exists: true, value },
+          { exists: true, value: '2026-09-04' },
+        ),
+      ).toEqual({
+        kind: 'ineligible',
+        reason: `${prefix}. Use the Start and End fields to edit this range.`,
+      });
+    },
+  );
 });

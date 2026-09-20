@@ -71,11 +71,14 @@ import {
   setProjectTableColumnDateDisplay,
 } from '../../projects/projectTableSettings';
 import {
-  planProjectTimelineEdit,
   PROJECT_TIMELINE_INVALID_RANGE_REASON,
   projectTimelineRawEditEligibility,
-  type ProjectTimelineEditPlan,
+  type ProjectTimelineRawEndpoint,
 } from '../../projects/projectTimelineEdits';
+import {
+  planProjectTimelineEndpointEdit,
+  type ProjectTimelineEndpointEditPlan,
+} from '../../projects/projectTimelineEndpointEdits';
 import {
   buildProjectTimelineModel,
   type ProjectTimelineRow,
@@ -1971,17 +1974,17 @@ export class ProjectsTableView {
 
   private timelineChangesForPlan_abyssPrivate(
     source: FrozenProjectTimelineRangeSource,
-    plan: Extract<ProjectTimelineEditPlan, { readonly kind: 'ready' }>,
+    plan: Extract<ProjectTimelineEndpointEditPlan, { readonly kind: 'ready' }>,
   ): readonly ProjectCellChange[] {
     const endpoint = (
       evidence: ProjectTimelineEndpointEvidence,
-      desiredDay: string | undefined,
+      desired: ProjectTimelineRawEndpoint,
     ): {
       readonly changed: boolean;
       readonly change: ProjectCellChange;
     } => {
-      const desiredExists = desiredDay === undefined ? evidence.expectedExists : true;
-      const desiredValue = desiredDay ?? copyProjectedValue(evidence.expectedValue);
+      const desiredExists = desired.exists;
+      const desiredValue = desired.value;
       const changed =
         desiredExists !== evidence.expectedExists ||
         !Object.is(desiredValue, evidence.expectedValue);
@@ -1998,8 +2001,8 @@ export class ProjectsTableView {
         },
       };
     };
-    const start = endpoint(source.start, plan.startDay);
-    const end = endpoint(source.end, plan.endDay);
+    const start = endpoint(source.start, plan.start);
+    const end = endpoint(source.end, plan.end);
     if (!start.changed && !end.changed) return [];
     return [
       start.changed
@@ -2048,8 +2051,13 @@ export class ProjectsTableView {
             'The project dates changed after this Timeline edit started. Reload and try again.',
           );
         }
-        const plan = planProjectTimelineEdit(
-          request.kind === 'pointer' ? request.source.range : current.range,
+        const source = request.kind === 'pointer' ? request.source : current;
+        const plan = planProjectTimelineEndpointEdit(
+          source.range,
+          {
+            start: { exists: source.start.expectedExists, value: source.start.expectedValue },
+            end: { exists: source.end.expectedExists, value: source.end.expectedValue },
+          },
           request.intent,
         );
         if (plan.kind === 'rejected') throw new ProjectEditValidationError(plan.reason);
