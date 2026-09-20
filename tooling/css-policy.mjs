@@ -25,6 +25,19 @@ const colorFunctions = new Set([
   'oklch',
   'color',
 ]);
+const colorArgumentFunctions = new Set([
+  ...colorFunctions,
+  'color-mix',
+  'light-dark',
+  'drop-shadow',
+  'image',
+  'linear-gradient',
+  'radial-gradient',
+  'conic-gradient',
+  'repeating-linear-gradient',
+  'repeating-radial-gradient',
+  'repeating-conic-gradient',
+]);
 
 /** @param {string} value @param {boolean} [context] @returns {string} */
 function canonical(value, context = false) {
@@ -58,8 +71,8 @@ function contextOf(node) {
   return context;
 }
 
-/** @param {import('postcss-selector-parser').Selector} selector */
-function scoped(selector) {
+/** @param {import('postcss-selector-parser').Selector} selector @returns {{ancestor: boolean, scoped: boolean}} */
+function selectorOwnership(selector) {
   let ancestor = false;
   let own = false;
   for (const node of selector.nodes) {
@@ -69,10 +82,13 @@ function scoped(selector) {
     } else if (node.type === 'class' && /^abyss-[a-z0-9_-]+$/i.test(node.value)) {
       own = true;
     } else if (node.type === 'pseudo' && [':is', ':where'].includes(node.value)) {
-      own ||= node.nodes.length > 0 && node.nodes.every(scoped);
+      const branches = node.nodes.map(selectorOwnership);
+      // Siblings retain a proven ancestor, but not ownership of the subject itself.
+      ancestor ||= branches.length > 0 && branches.every((branch) => branch.ancestor);
+      own ||= branches.length > 0 && branches.every((branch) => branch.scoped);
     }
   }
-  return ancestor || own;
+  return { ancestor, scoped: ancestor || own };
 }
 
 /** @param {ts.CallExpression} call @param {Set<string>} produced @param {Set<string>} consumed */
@@ -128,14 +144,30 @@ function fallbackOf(node) {
   return comma < 0 ? '' : valueParser.stringify(node.nodes.slice(comma + 1)).trim();
 }
 
-/** @param {import('postcss-value-parser').Node} node @param {string} property */
-function literalColor(node, property) {
+/** @param {import('postcss-value-parser').Node[]} nodes @param {(node: import('postcss-value-parser').Node, colorContext: boolean) => void} visit @param {boolean} [colorContext] */
+function walkColorValues(nodes, visit, colorContext = false) {
+  for (const node of nodes) {
+    if (node.type === 'function' && node.value.toLowerCase() === 'url') continue;
+    visit(node, colorContext);
+    if (node.type === 'function')
+      walkColorValues(
+        node.nodes,
+        visit,
+        colorContext || colorArgumentFunctions.has(node.value.toLowerCase()),
+      );
+  }
+}
+
+/** @param {import('postcss-value-parser').Node} node @param {string} property @param {boolean} colorContext */
+function literalColor(node, property, colorContext) {
   if (node.type === 'word') {
     if (/^#[\da-f]{3,8}$/i.test(node.value)) return true;
     return (
-      /^(--|.*color$|background|border|outline|.*shadow$|fill$|stroke$|text-decoration|column-rule|(?:-webkit-)?(?:backdrop-)?filter$)/.test(
-        property.startsWith('--') ? property : property.toLowerCase(),
-      ) && namedColors.has(node.value.toLowerCase())
+      (colorContext ||
+        /^(--|.*color$|background|border|outline|.*shadow$|fill$|stroke$|text-decoration|column-rule|(?:-webkit-)?(?:backdrop-)?filter$)/.test(
+          property.startsWith('--') ? property : property.toLowerCase(),
+        )) &&
+      namedColors.has(node.value.toLowerCase())
     );
   }
   if (node.type !== 'function' || !colorFunctions.has(node.value.toLowerCase())) return false;
@@ -165,7 +197,10 @@ function incompatibleFallback(core, node) {
 
 /** @param {import('postcss-value-parser').Node} node @param {string} property @param {CssContracts['spacing']} spacing */
 function spacingToken(node, property, spacing) {
-  if (node.type !== 'word' || !/^(padding|margin)(-|$)|^(row-|column-)?gap$/.test(property))
+  if (
+    node.type !== 'word' ||
+    !/^(padding|margin)(-|$)|^(row-|column-)?gap$/.test(property.toLowerCase())
+  )
     return undefined;
   const dimension = valueParser.unit(node.value);
   return dimension && dimension.unit.toLowerCase() === 'px'
@@ -243,7 +278,7 @@ export function analyzeCss(css, { file, contracts }) {
     if (contextOf(rule).some((context) => /^@(?:-webkit-)?keyframes\b/.test(context))) return;
     const selectors = selectorParser().astSync(rule.selector);
     for (const selector of selectors.nodes) {
-      if (!scoped(selector))
+      if (!selectorOwnership(selector).scoped)
         report(
           'abyss/selector-scope',
           rule,
@@ -260,8 +295,7 @@ export function analyzeCss(css, { file, contracts }) {
         'Add an exact justified cascade exception or remove !important.',
       );
     const valueOffset = declaration.prop.length + (declaration.raws.between ?? ':').length;
-    valueParser(declaration.value).walk((node) => {
-      if (node.type === 'function' && node.value.toLowerCase() === 'url') return false;
+    walkColorValues(valueParser(declaration.value).nodes, (node, colorContext) => {
       if (node.type === 'function' && node.value === 'var') {
         const name = node.nodes[0]?.value ?? '';
         used.add(name);
@@ -281,7 +315,10 @@ export function analyzeCss(css, { file, contracts }) {
             valueOffset + node.sourceIndex,
           );
       }
-      if (literalColor(node, declaration.prop) && !excepted('abyss/token-color', declaration))
+      if (
+        literalColor(node, declaration.prop, colorContext) &&
+        !excepted('abyss/token-color', declaration)
+      )
         report(
           'abyss/token-color',
           declaration,
@@ -296,7 +333,6 @@ export function analyzeCss(css, { file, contracts }) {
           `Replace ${node.value} with var(${token}).`,
           valueOffset + node.sourceIndex,
         );
-      return undefined;
     });
   });
   root.walkDecls((declaration) => {

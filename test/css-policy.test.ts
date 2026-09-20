@@ -8,6 +8,105 @@ const fixtureContracts = { ...contracts, exceptions: [], runtime: { produced: []
 const analyze = (css: string) =>
   analyzeCss(css, { file: 'fixture.css', contracts: fixtureContracts });
 
+describe('nested image color policy', () => {
+  it.each([
+    ['mask-image', 'linear-gradient(red, transparent)'],
+    ['list-style-image', 'linear-gradient(red, transparent)'],
+    ['mask-image', 'repeating-linear-gradient(red, transparent)'],
+    ['mask-image', 'radial-gradient(red, transparent)'],
+    ['mask-image', 'repeating-radial-gradient(red, transparent)'],
+    ['mask-image', 'conic-gradient(red, transparent)'],
+    ['mask-image', 'repeating-conic-gradient(red, transparent)'],
+    ['list-style-image', 'image(url("red"), red)'],
+    ['content', 'linear-gradient(red, transparent)'],
+    ['mask-image', 'linear-gradient(var(--text-normal, red), transparent)'],
+    ['mask-image', 'linear-gradient(color-mix(in srgb, var(--text-normal), red), transparent)'],
+  ])('rejects named colors inside %s: %s', (property, value) => {
+    expect(analyze(`.abyss-x { ${property}: ${value}; }`).map((x) => x.ruleId)).toEqual([
+      'abyss/token-color',
+    ]);
+  });
+
+  it('keeps the nested named-color diagnostic at its authored source span', () => {
+    expect(analyze('.abyss-x {\n  mask-image: linear-gradient(red, transparent);\n}')).toEqual([
+      expect.objectContaining({ ruleId: 'abyss/token-color', line: 2, column: 31 }),
+    ]);
+  });
+
+  it('accepts derived image colors and keeps URLs, strings and unrelated identifiers opaque', () => {
+    expect(
+      analyze(
+        '.abyss-x { mask-image: linear-gradient(var(--text-normal), currentColor, transparent); list-style-image: image(url(red), var(--text-normal)); content: "linear-gradient(red, blue)"; font-family: red; animation-name: blue; background-image: url("linear-gradient(red, blue)"); }',
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe('case-insensitive standard spacing properties', () => {
+  it.each([
+    ['padding', 21],
+    ['PADDING', 21],
+    ['PaDdInG', 21],
+    ['padding-inline-start', 34],
+    ['PaDdInG-InLiNe-StArT', 34],
+    ['margin', 20],
+    ['MARGIN', 20],
+    ['MaRgIn-BlOcK', 26],
+    ['gap', 17],
+    ['GAP', 17],
+    ['row-gap', 21],
+    ['RoW-GaP', 21],
+    ['column-gap', 24],
+    ['CoLuMn-GaP', 24],
+  ])('rejects exact-scale literals in %s without shifting their span', (property, column) => {
+    expect(analyze(`.abyss-x { ${property}: 8px; }`)).toEqual([
+      expect.objectContaining({ ruleId: 'abyss/scale-spacing', line: 1, column }),
+    ]);
+    expect(analyze(`.abyss-x { ${property}: var(--size-4-2); }`)).toEqual([]);
+  });
+
+  it('preserves custom-property spelling and does not classify custom names as standard spacing', () => {
+    expect(analyze('.abyss-x { --abyss-PADDING: 8px; PADDING: var(--abyss-PADDING); }')).toEqual(
+      [],
+    );
+    expect(
+      analyze('.abyss-x { --abyss-PADDING: 8px; PADDING: var(--abyss-padding); }').map(
+        (x) => x.ruleId,
+      ),
+    ).toEqual(['abyss/known-variable', 'abyss/unused-variable']);
+  });
+});
+
+describe('combined installed Stylelint and analyzer gate', () => {
+  it.each([
+    ['mask-image: linear-gradient(red, transparent)', 'abyss/token-color'],
+    ['list-style-image: linear-gradient(red, transparent)', 'abyss/token-color'],
+    ['mask-image: linear-gradient(var(--text-normal, red), transparent)', 'abyss/token-color'],
+    ['PADDING: 8px', 'abyss/scale-spacing'],
+    ['MaRgIn: 8px', 'abyss/scale-spacing'],
+    ['RoW-GaP: 8px', 'abyss/scale-spacing'],
+  ])('rejects the policy escape %s', async (declaration, ruleId) => {
+    const code = `.abyss-x { ${declaration}; }`;
+    const result = await stylelint.lint({ code, configFile: 'stylelint.config.mjs' });
+    expect(result.results.flatMap((x) => x.warnings)).toEqual([]);
+    expect(analyze(code).map((x) => x.ruleId)).toEqual([ruleId]);
+  });
+
+  it('accepts token-derived images and spacing through both installed gates', async () => {
+    const code = `.abyss-x {
+  mask-image: linear-gradient(var(--text-normal), currentcolor, transparent);
+  list-style-image: url("red");
+  padding: var(--size-4-2);
+  margin: var(--size-4-2);
+  row-gap: var(--size-4-2);
+  content: "red";
+}`;
+    const result = await stylelint.lint({ code, configFile: 'stylelint.config.mjs' });
+    expect(result.results.flatMap((x) => x.warnings)).toEqual([]);
+    expect(analyze(code)).toEqual([]);
+  });
+});
+
 describe('CSS policy', () => {
   it('reports unknown variables at the actual var name, including nested fallbacks', () => {
     expect(analyze('.abyss-x {\n  color: var(--text-nromal);\n}')).toEqual([
@@ -36,6 +135,15 @@ describe('CSS policy', () => {
     ['body .abyss-a:hover > .child + .sibling { opacity: .5; }', false],
     ['.abyss-a + .abyss-b { opacity: .5; }', false],
     ['.abyss-a:not(.setting-item) { opacity: .5; }', false],
+    [':is(.abyss-a .x) + .sibling { color: var(--text-normal); }', false],
+    [':where(.abyss-a .x, .abyss-b > .y) ~ .sibling { color: currentColor; }', false],
+    [':is(:where(.abyss-a .x)) + .sibling { color: currentColor; }', false],
+    [':is(.abyss-a .x, .abyss-b) > .child + .sibling { color: currentColor; }', false],
+    [':is(.abyss-a .x, .abyss-b) + .sibling { color: currentColor; }', true],
+    [':where(.abyss-a, .abyss-b) ~ .sibling { color: currentColor; }', true],
+    [':is(.abyss-a .x, body .x) + .sibling { color: currentColor; }', true],
+    [':is(.abyss-a + .x) + .sibling { color: currentColor; }', true],
+    [':is(.abyss-a .x) + .sibling, .outside { color: currentColor; }', true],
     [
       '@keyframes pulse { from { opacity: 0; } to { opacity: 1; } } .abyss-a { animation: pulse 1s; }',
       false,
