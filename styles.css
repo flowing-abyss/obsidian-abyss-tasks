@@ -8541,7 +8541,7 @@ button.abyss-project-table-status-pill {
 .abyss-project-kanban-field-value {
   box-sizing: border-box;
   min-width: 0;
-  padding: var(--size-2-1);
+  padding: var(--size-2-2);
   font-size: var(--font-ui-smaller);
 }
 
@@ -8921,7 +8921,7 @@ button.abyss-project-table-status-pill {
 .abyss-project-timeline-field-value {
   box-sizing: border-box;
   flex: 1 1 auto;
-  padding: var(--size-2-1);
+  padding: var(--size-2-2);
   line-height: 1.2;
 }
 

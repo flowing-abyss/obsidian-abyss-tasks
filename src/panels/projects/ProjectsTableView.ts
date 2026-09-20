@@ -3459,9 +3459,11 @@ export class ProjectsTableView {
   }
 
   private readonly handleOverviewBackgroundClick_abyssPrivate = (event: MouseEvent): void => {
-    if (!(event.target instanceof Element)) return;
+    const ownerWindow = this.root_abyssPrivate.ownerDocument.defaultView;
+    const target = event.target as Node | null;
+    if (ownerWindow === null || target?.instanceOf(ownerWindow.Element) !== true) return;
     if (
-      !event.target.matches(
+      !target.matches(
         [
           '.abyss-project-table-scroll',
           '.abyss-project-table-host',
@@ -3478,9 +3480,19 @@ export class ProjectsTableView {
     this.finishEditorBeforeAction(() => {
       this.selection_abyssPrivate.clear();
       this.syncSelection_abyssPrivate();
-      this.scroll_abyssPrivate.focus({ preventScroll: true });
+      this.overviewFocusSurface_abyssPrivate().focus({ preventScroll: true });
     });
   };
+
+  private overviewFocusSurface_abyssPrivate(): HTMLElement {
+    if (this.overviewMode_abyssPrivate === 'kanban') {
+      return this.kanbanView_abyssPrivate?.scroll ?? this.scroll_abyssPrivate;
+    }
+    if (this.overviewMode_abyssPrivate === 'timeline') {
+      return this.timelineView_abyssPrivate?.scroll ?? this.scroll_abyssPrivate;
+    }
+    return this.scroll_abyssPrivate;
+  }
 
   private focusSelectionCell_abyssPrivate(
     identity: ProjectTableSelectableCell,

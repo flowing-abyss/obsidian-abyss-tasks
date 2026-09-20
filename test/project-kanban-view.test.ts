@@ -118,9 +118,9 @@ function catalog(
 function mountView(
   projects: readonly Project[] = [project()],
   overrides: Partial<ConstructorParameters<typeof ProjectsTableView>[1]> = {},
+  host = freshContainer(),
 ) {
-  const host = freshContainer();
-  activeDocument.body.append(host);
+  if (!host.isConnected) host.ownerDocument.body.append(host);
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.projects.propertyDefinitions['property:Budget'] = { type: 'number' };
   settings.projects.propertyDefinitions['property:Flag'] = { type: 'checkbox' };
@@ -152,6 +152,58 @@ function mountView(
   mounted.add(view);
   view.mount(projects);
   return { host, view, settings, applyEdits };
+}
+
+function installObsidianDomExtensions(ownerWindow: Window & typeof window): void {
+  const prototypePairs: Array<[object, object]> = [
+    [HTMLElement.prototype, ownerWindow.HTMLElement.prototype],
+    [Element.prototype, ownerWindow.Element.prototype],
+    [Node.prototype, ownerWindow.Node.prototype],
+  ];
+  for (const [source, target] of prototypePairs) {
+    for (const name of Object.getOwnPropertyNames(source)) {
+      if (name === 'constructor' || name in target) continue;
+      const descriptor = Object.getOwnPropertyDescriptor(source, name);
+      if (descriptor !== undefined) Object.defineProperty(target, name, descriptor);
+    }
+  }
+  const prototype = ownerWindow.HTMLElement.prototype;
+  const createEl = function (
+    this: HTMLElement,
+    tag: string,
+    options: { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
+  ): HTMLElement {
+    const child = this.ownerDocument.createElementNS('http://www.w3.org/1999/xhtml', tag);
+    const classes = Array.isArray(options.cls) ? options.cls : options.cls?.split(' ');
+    if (classes !== undefined) child.classList.add(...classes.filter(Boolean));
+    if (options.text !== undefined) child.textContent = options.text;
+    for (const [name, value] of Object.entries(options.attr ?? {})) child.setAttribute(name, value);
+    this.append(child);
+    return child;
+  };
+  Object.defineProperties(prototype, {
+    createEl: { configurable: true, value: createEl },
+    createDiv: {
+      configurable: true,
+      value(
+        this: HTMLElement,
+        value:
+          string | { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
+      ) {
+        return createEl.call(this, 'div', typeof value === 'string' ? { cls: value } : value);
+      },
+    },
+    createSpan: {
+      configurable: true,
+      value(
+        this: HTMLElement,
+        value:
+          string | { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
+      ) {
+        return createEl.call(this, 'span', typeof value === 'string' ? { cls: value } : value);
+      },
+    },
+  });
 }
 
 function clickView(host: HTMLElement, mode: 'Table' | 'Kanban' | 'Timeline'): void {
@@ -1298,20 +1350,27 @@ describe('project Kanban overview', () => {
   });
 
   it.each([
-    ['Table', '.abyss-project-table-cell[data-column-id="start"]', '.abyss-project-table-scroll'],
+    [
+      'Table',
+      '.abyss-project-table-cell[data-column-id="start"]',
+      '.abyss-project-table-scroll',
+      '.abyss-project-table-scroll',
+    ],
     [
       'Kanban',
       '.abyss-project-kanban-cell[data-column-id="start"]',
       '.abyss-project-kanban-column-body',
+      '.abyss-project-kanban-scroll',
     ],
     [
       'Timeline',
       '.abyss-project-timeline-cell[data-column-id="start"]',
       '.abyss-project-timeline-scroll',
+      '.abyss-project-timeline-scroll',
     ],
   ] as const)(
     'clears the %s logical and DOM selection when its blank canvas is clicked',
-    (mode, cellSelector, backgroundSelector) => {
+    (mode, cellSelector, backgroundSelector, focusSelector) => {
       const { host, view, applyEdits } = mountView();
       clickView(host, mode);
       const cell = expectDefined(host.querySelector<HTMLElement>(cellSelector));
@@ -1328,32 +1387,90 @@ describe('project Kanban overview', () => {
       expect(host.querySelector('.abyss-project-timeline-row.is-selected')).toBeNull();
       expect(view.selectedProjectPath()).toBeUndefined();
       expect(activeDocument.activeElement).toBe(
-        expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-scroll')),
+        expectDefined(host.querySelector<HTMLElement>(focusSelector)),
       );
       expect(applyEdits).not.toHaveBeenCalled();
     },
   );
 
-  it('saves a dirty editor before a blank canvas clears selection and takes focus', async () => {
-    const { host, applyEdits } = mountView();
-    const start = expectDefined(
-      host.querySelector<HTMLElement>('.abyss-project-table-cell[data-column-id="start"]'),
+  it.each([
+    [
+      'Table',
+      '.abyss-project-table-cell[data-column-id="start"]',
+      '.abyss-project-table-scroll',
+      '.abyss-project-table-scroll',
+    ],
+    [
+      'Kanban',
+      '.abyss-project-kanban-cell[data-column-id="start"]',
+      '.abyss-project-kanban-column-body',
+      '.abyss-project-kanban-scroll',
+    ],
+    [
+      'Timeline',
+      '.abyss-project-timeline-cell[data-column-id="start"]',
+      '.abyss-project-timeline-scroll',
+      '.abyss-project-timeline-scroll',
+    ],
+  ] as const)(
+    'saves a dirty %s editor before blank canvas clears selection and focuses its visible surface',
+    async (mode, cellSelector, backgroundSelector, focusSelector) => {
+      const { host, applyEdits } = mountView();
+      clickView(host, mode);
+      const start = expectDefined(host.querySelector<HTMLElement>(cellSelector));
+      const background = expectDefined(host.querySelector<HTMLElement>(backgroundSelector));
+      start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const input = expectDefined(start.querySelector<HTMLInputElement>('input[type="date"]'));
+      input.value = '2026-09-02';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+
+      background.click();
+      await flushMicrotasks();
+
+      expect(applyEdits).toHaveBeenCalledOnce();
+      expect(host.querySelector('.abyss-project-cell-editor')).toBeNull();
+      expect(host.querySelector('.abyss-project-table-cell.is-selected')).toBeNull();
+      expect(background.ownerDocument.activeElement).toBe(
+        expectDefined(host.querySelector<HTMLElement>(focusSelector)),
+      );
+    },
+  );
+
+  it('clears selection from a project surface mounted in a popout realm', () => {
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = expectDefined(frame.contentDocument);
+    const ownerWindow = expectDefined(frame.contentWindow) as Window & typeof window;
+    installObsidianDomExtensions(ownerWindow);
+    const host = ownerDocument.body.createDiv();
+    const { view, applyEdits } = mountView(undefined, {}, host);
+    clickView(host, 'Kanban');
+    const cell = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-kanban-cell[data-column-id="start"]'),
     );
     const background = expectDefined(
-      host.querySelector<HTMLElement>('.abyss-project-table-scroll'),
+      host.querySelector<HTMLElement>('.abyss-project-kanban-column-body'),
     );
-    start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
-    const input = expectDefined(start.querySelector<HTMLInputElement>('input[type="date"]'));
-    input.value = '2026-09-02';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const board = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-scroll'));
+    const internals = view as unknown as {
+      readonly kanbanRenderedCells_abyssPrivate: ReadonlyArray<{
+        readonly element: HTMLElement;
+        readonly field: { readonly id: string };
+      }>;
+      selectCell_abyssPrivate(cell: unknown, extend: boolean): void;
+    };
+    const rendered = expectDefined(
+      internals.kanbanRenderedCells_abyssPrivate.find(({ field }) => field.id === 'start'),
+    );
+    internals.selectCell_abyssPrivate(rendered, false);
 
+    expect(cell).not.toBeInstanceOf(HTMLElement);
+    expect(cell.classList.contains('is-selected')).toBe(true);
     background.click();
-    await flushMicrotasks();
 
-    expect(applyEdits).toHaveBeenCalledOnce();
-    expect(host.querySelector('.abyss-project-cell-editor')).toBeNull();
+    expect(view.selectedProjectPath()).toBeUndefined();
     expect(host.querySelector('.abyss-project-table-cell.is-selected')).toBeNull();
-    expect(activeDocument.activeElement).toBe(background);
+    expect(ownerDocument.activeElement).toBe(board);
+    expect(applyEdits).not.toHaveBeenCalled();
   });
 
   it('keeps a failed editor and its selection when blank canvas commit is rejected', async () => {

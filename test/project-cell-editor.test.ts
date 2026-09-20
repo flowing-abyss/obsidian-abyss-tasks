@@ -50,6 +50,15 @@ function localDatetimeInputValue(source: string): string {
   return `${date}T${time}.${String(value.getMilliseconds()).padStart(3, '0')}`;
 }
 
+function localDateInputValue(source: string): string {
+  const value = new Date(source);
+  return [
+    String(value.getFullYear()).padStart(4, '0'),
+    String(value.getMonth() + 1).padStart(2, '0'),
+    String(value.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
 function pickerInput(container: HTMLElement): HTMLInputElement {
   return expectDefined(container.querySelector<HTMLInputElement>('[role="combobox"]'));
 }
@@ -912,7 +921,7 @@ describe('mountProjectCellEditor', () => {
     });
     const input = expectDefined(container.querySelector<HTMLInputElement>('input[type="date"]'));
 
-    expect(input.value).toBe('2026-09-06');
+    expect(input.value).toBe(localDateInputValue('2026-09-06T13:09:22+07:00'));
     await expect(handle.commit()).resolves.toBe(true);
     expect(save).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledWith('committed', { navigation: 'restore-current' });
