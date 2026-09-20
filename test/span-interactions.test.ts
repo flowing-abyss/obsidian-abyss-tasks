@@ -485,3 +485,81 @@ describe('span release cell ownership', () => {
     root.remove();
   });
 });
+
+describe.each(['week', 'month'])('%s span Escape cancellation', (view) => {
+  it.each(['move', 'due', 'create-span'] as const)(
+    'cancels %s before pointer release and releases keyboard ownership',
+    (kind) => {
+      const month = view === 'month';
+      const root = createDiv({ cls: month ? 'abyss-mg-grid' : 'abyss-tg-root' });
+      document.body.append(root);
+      const row = root.createDiv({ cls: month ? 'abyss-mg-row' : 'abyss-tg-allday-days' });
+      const layer = row.createDiv({ cls: month ? 'abyss-mg-span-layer' : 'abyss-tg-span-layer' });
+      for (const [index, date] of ['2026-07-06', '2026-07-07'].entries()) {
+        const cell = row.createDiv({ cls: month ? 'abyss-mg-cell' : 'abyss-tg-allday-cell' });
+        cell.dataset[month ? 'mgDate' : 'tgDate'] = date;
+        vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue(
+          new DOMRect(index * 100, 0, 100, 100),
+        );
+      }
+      const source = layer.createDiv();
+      source.setAttribute('draggable', 'true');
+      const handle = source.createDiv();
+      const onMove = vi.fn();
+      const onBoundary = vi.fn();
+      const owner = createSpanInteractionOwner();
+      attachSpanInteractions({
+        source,
+        task: task({ planning: { start: '2026-07-06', due: '2026-07-06' } }),
+        segmentStart: '2026-07-06',
+        segmentEnd: '2026-07-06',
+        owner,
+        boundaryHandles: kind === 'move' ? [] : [{ element: handle, boundary: kind }],
+        onMove,
+        onBoundary,
+      });
+      try {
+        (kind === 'move' ? source : handle).dispatchEvent(
+          new PointerEvent('pointerdown', {
+            bubbles: true,
+            clientX: 50,
+            clientY: 50,
+            pointerId: 21,
+          }),
+        );
+        window.dispatchEvent(
+          new PointerEvent('pointermove', { clientX: 150, clientY: 50, pointerId: 21 }),
+        );
+        expect(root.querySelector('.abyss-calendar-preview')).not.toBeNull();
+        source.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+        expect(root.querySelector('.abyss-calendar-preview')).not.toBeNull();
+        const escape = new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        });
+        source.dispatchEvent(escape);
+        expect(root.querySelector('.abyss-calendar-preview')).toBeNull();
+        expect(escape.defaultPrevented).toBe(true);
+        expect(source.classList.contains('is-picked-up')).toBe(false);
+        expect(source.getAttribute('draggable')).toBe('true');
+        expect(handle.hasAttribute('data-active-resize')).toBe(false);
+        window.dispatchEvent(
+          new PointerEvent('pointerup', { clientX: 150, clientY: 50, pointerId: 21 }),
+        );
+        expect(onMove).not.toHaveBeenCalled();
+        expect(onBoundary).not.toHaveBeenCalled();
+        const idleEscape = new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        });
+        source.dispatchEvent(idleEscape);
+        expect(idleEscape.defaultPrevented).toBe(false);
+      } finally {
+        owner.disposeActive();
+        root.remove();
+      }
+    },
+  );
+});

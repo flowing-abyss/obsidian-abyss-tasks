@@ -418,6 +418,7 @@ class SpanDragSession {
     this.ownerWindow.addEventListener('pointerup', this.onPointerUp);
     this.ownerWindow.addEventListener('pointercancel', this.onCancel);
     this.ownerWindow.addEventListener('blur', this.onCancel);
+    this.ownerWindow.addEventListener('keydown', this.onKeyDown, true);
     this.capturedElement.addEventListener('lostpointercapture', this.onCancel);
   }
 
@@ -539,6 +540,7 @@ class SpanDragSession {
     this.ownerWindow.removeEventListener('pointerup', this.onPointerUp);
     this.ownerWindow.removeEventListener('pointercancel', this.onCancel);
     this.ownerWindow.removeEventListener('blur', this.onCancel);
+    this.ownerWindow.removeEventListener('keydown', this.onKeyDown, true);
     this.capturedElement.removeEventListener('lostpointercapture', this.onCancel);
     release(this.capturedElement, this.pointerId);
     owner.end(this.dispose);
@@ -566,6 +568,13 @@ class SpanDragSession {
     if (target == null) return;
     if ('grabbedDate' in target) this.binding.onMove(this.binding.task, target);
     else this.binding.onBoundary(this.binding.task, target);
+  };
+
+  private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.dispose();
   };
 
   private readonly onCancel = (): void => {
