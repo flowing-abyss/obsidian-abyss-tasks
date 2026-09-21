@@ -401,11 +401,9 @@ describe('ProjectsTimelineView', () => {
       ).hidden,
     ).toBe(false);
     if (_kind === 'open-start') {
-      expect(
-        expectDefined(
-          bar.parentElement?.querySelector<HTMLElement>('.abyss-project-timeline-range-controls'),
-        ).style.getPropertyValue('--abyss-project-timeline-range-left'),
-      ).toMatch(/^calc\(.+% - max\(40px, .+%\)\)$/u);
+      expect(bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toMatch(
+        /^calc\(.+% - max\(40px, .+%\)\)$/u,
+      );
     }
   });
 
@@ -429,12 +427,11 @@ describe('ProjectsTimelineView', () => {
 
     expect(bar.classList).toContain('is-one-date');
     expect(bar.style.getPropertyValue('--abyss-project-timeline-one-date-center')).toBe('');
-    expect(
-      expectDefined(
-        bar.parentElement?.querySelector<HTMLElement>('.abyss-project-timeline-range-controls'),
-      ).style.getPropertyValue('--abyss-project-timeline-range-left'),
-    ).toBe(bar.style.left);
-    expect(Number.parseFloat(activeWindow.getComputedStyle(bar).minWidth)).toBe(0);
+    expect(bar.style.getPropertyValue('--abyss-project-timeline-range-left')).toMatch(/^[\d.]+%$/u);
+    expect(bar.style.left).toBe('');
+    expect(start.parentElement).toBe(bar);
+    expect(end.parentElement).toBe(bar);
+    expect(Number.parseFloat(activeWindow.getComputedStyle(bar).minWidth)).toBe(40);
     expect(Number.parseFloat(activeWindow.getComputedStyle(start).width)).toBeGreaterThanOrEqual(
       14,
     );
@@ -471,25 +468,21 @@ describe('ProjectsTimelineView', () => {
       ),
     );
     expect(bar.classList).not.toContain('is-one-date');
-    expect(Number.parseFloat(bar.style.left)).toBeCloseTo((1459 / 1461) * 100);
+    const rangeLeft = bar.style.getPropertyValue('--abyss-project-timeline-range-left');
+    expect(Number.parseFloat(rangeLeft)).toBeCloseTo((1459 / 1461) * 100);
     expect(Number.parseFloat(bar.style.width)).toBeCloseTo((2 / 1461) * 100);
-    expect(
-      expectDefined(
-        bar.parentElement?.querySelector<HTMLElement>('.abyss-project-timeline-range-controls'),
-      ).style.getPropertyValue('--abyss-project-timeline-range-left'),
-    ).toBe(bar.style.left);
+    expect(bar.style.left).toBe('');
     const compactRule = expectDefined(
       Array.from(sheet.sheet?.cssRules ?? []).find(
         (rule): rule is CSSStyleRule =>
-          rule instanceof CSSStyleRule &&
-          rule.selectorText === '.abyss-project-timeline-range-controls',
+          rule instanceof CSSStyleRule && rule.selectorText === '.abyss-project-timeline-bar',
       ),
     );
     expect(compactRule.style.left.replace(/\s+/gu, ' ')).toBe(
       'max(0px, min(var(--abyss-project-timeline-range-left), 100% - 40px))',
     );
     const trackWidth = 640;
-    const sourceLeft = (Number.parseFloat(bar.style.left) / 100) * trackWidth;
+    const sourceLeft = (Number.parseFloat(rangeLeft) / 100) * trackWidth;
     const visualLeft = Math.max(0, Math.min(sourceLeft, trackWidth - 40));
     expect(visualLeft).toBe(600);
     expect(visualLeft + 40).toBe(trackWidth);
@@ -870,13 +863,11 @@ describe('ProjectsTimelineView', () => {
     const end = expectDefined(
       bar.parentElement?.querySelector<HTMLElement>('.abyss-project-timeline-handle.is-end'),
     );
-    const controls = expectDefined(
-      bar.parentElement?.querySelector<HTMLElement>('.abyss-project-timeline-range-controls'),
-    );
-    expect(controls.querySelector('[data-timeline-part="bar"]')).not.toBeNull();
+    expect(bar.dataset['timelinePart']).toBe('bar');
+    expect(start.parentElement).toBe(bar);
+    expect(end.parentElement).toBe(bar);
     expect(bar.tabIndex).toBe(0);
-    expect(Number.parseFloat(activeWindow.getComputedStyle(bar).minWidth)).toBe(0);
-    const barStyle = activeWindow.getComputedStyle(controls);
+    const barStyle = activeWindow.getComputedStyle(bar);
     const minimumBodyAndBorderWidth =
       Number.parseFloat(barStyle.minWidth) -
       Number.parseFloat(activeWindow.getComputedStyle(start).width) -

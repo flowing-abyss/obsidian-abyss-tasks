@@ -7607,7 +7607,6 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-timeline-bar[hidden],
-.abyss-project-timeline-range-controls[hidden],
 .abyss-project-timeline-state[hidden],
 .abyss-project-timeline-cursor[hidden],
 .abyss-project-timeline-tooltip[hidden] {
@@ -7618,8 +7617,9 @@ button.abyss-project-table-status-pill {
   position: absolute;
   z-index: 1;
   top: 50%;
+  left: max(0px, min(var(--abyss-project-timeline-range-left), 100% - 40px));
   box-sizing: border-box;
-  min-width: 0;
+  min-width: 40px;
   height: 16px;
   border: 1px solid
     color-mix(
@@ -7628,7 +7628,6 @@ button.abyss-project-table-status-pill {
         var(--abyss-preview-border-tag-strength),
       var(--text-normal)
     );
-  border-inline-width: 0;
   border-radius: var(--abyss-calendar-item-radius);
   background: color-mix(
     in srgb,
@@ -7640,44 +7639,7 @@ button.abyss-project-table-status-pill {
   transform: translateY(-50%);
 }
 
-.abyss-project-timeline-bar::before,
-.abyss-project-timeline-bar::after {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--text-muted);
-  content: '';
-  pointer-events: none;
-}
-
-.abyss-project-timeline-bar::before {
-  left: 0;
-}
-
-.abyss-project-timeline-bar::after {
-  right: 0;
-}
-
-.abyss-project-timeline-range-controls {
-  position: absolute;
-  z-index: 2;
-  top: 50%;
-  left: max(0px, min(var(--abyss-project-timeline-range-left), 100% - 40px));
-  min-width: 40px;
-  height: 24px;
-  touch-action: none;
-  transform: translateY(-50%);
-}
-
-.abyss-project-timeline-move {
-  position: absolute;
-  inset: 0 14px;
-  cursor: grab;
-}
-
-.abyss-project-timeline-bar.is-previewing,
-.abyss-project-timeline-range-controls.is-previewing {
+.abyss-project-timeline-bar.is-previewing {
   opacity: 0.75;
 }
 
@@ -7748,12 +7710,14 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-timeline-bar.is-open-start {
   border-left-style: dashed;
-  border-radius: 0 4px 4px 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
 }
 
 .abyss-project-timeline-bar.is-open-end {
   border-right-style: dashed;
-  border-radius: 4px 0 0 4px;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 .abyss-project-timeline-state {

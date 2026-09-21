@@ -142,10 +142,9 @@ interface TimelinePointerTarget {
   readonly part: TimelinePointerPart;
 }
 
-interface RangeElementSnapshot {
+interface RangeBarSnapshot {
   readonly className: string;
   readonly hidden: HTMLElement['hidden'];
-  readonly left: string;
   readonly width: string;
   readonly rangeLeft: string;
 }
@@ -161,7 +160,7 @@ interface ActivePointerGesture {
   prepared: boolean;
   released: boolean;
   moved: boolean;
-  readonly barSnapshot?: RangeElementSnapshot & { readonly controls?: RangeElementSnapshot };
+  readonly barSnapshot?: RangeBarSnapshot;
 }
 
 interface PendingPointerPreview {
@@ -177,8 +176,8 @@ const EDGE_SCROLL_ZONE_PX = 32;
 const EDGE_SCROLL_STEP_PX = 12;
 const NESTED_CONTROL_SELECTOR = 'button, input, select, textarea, a, [contenteditable="true"]';
 
-function setRangeLeft(controls: HTMLElement, left: string): void {
-  controls.style.setProperty('--abyss-project-timeline-range-left', left);
+function setRangeLeft(bar: HTMLElement, left: string): void {
+  bar.style.setProperty('--abyss-project-timeline-range-left', left);
 }
 
 function pointerPart(element: HTMLElement): TimelinePointerPart | undefined {
@@ -196,41 +195,23 @@ function eventTimelineTarget(event: Event): HTMLElement | undefined {
     : event.target;
 }
 
-function rangeControls(bar: HTMLElement): HTMLElement | null {
-  return (
-    bar.parentElement?.querySelector<HTMLElement>(
-      ':scope > .abyss-project-timeline-range-controls',
-    ) ?? null
-  );
+function barSnapshot(bar: HTMLElement | null): RangeBarSnapshot | undefined {
+  return bar === null
+    ? undefined
+    : {
+        className: bar.className,
+        hidden: bar.hidden,
+        width: bar.style.width,
+        rangeLeft: bar.style.getPropertyValue('--abyss-project-timeline-range-left'),
+      };
 }
 
-function elementSnapshot(element: HTMLElement): RangeElementSnapshot {
-  return {
-    className: element.className,
-    hidden: element.hidden,
-    left: element.style.left,
-    width: element.style.width,
-    rangeLeft: element.style.getPropertyValue('--abyss-project-timeline-range-left'),
-  };
-}
-
-function restoreElement(element: HTMLElement, snapshot: RangeElementSnapshot): void {
-  element.className = snapshot.className;
-  element.hidden = snapshot.hidden;
-  element.style.left = snapshot.left;
-  element.style.width = snapshot.width;
-  if (snapshot.rangeLeft === '')
-    element.style.removeProperty('--abyss-project-timeline-range-left');
-  else setRangeLeft(element, snapshot.rangeLeft);
-}
-
-function barSnapshot(bar: HTMLElement | null): ActivePointerGesture['barSnapshot'] {
-  if (bar === null) return undefined;
-  const controls = rangeControls(bar);
-  return {
-    ...elementSnapshot(bar),
-    ...(controls === null ? {} : { controls: elementSnapshot(controls) }),
-  };
+function restoreBar(bar: HTMLElement, snapshot: RangeBarSnapshot): void {
+  bar.className = snapshot.className;
+  bar.hidden = snapshot.hidden;
+  bar.style.width = snapshot.width;
+  if (snapshot.rangeLeft === '') bar.style.removeProperty('--abyss-project-timeline-range-left');
+  else setRangeLeft(bar, snapshot.rangeLeft);
 }
 
 function isOneDateRange(range: ProjectTimelineRange): boolean {
@@ -241,53 +222,91 @@ function isOneDateRange(range: ProjectTimelineRange): boolean {
   );
 }
 
-/** Applies exact calendar geometry while allowing CSS to contain compact presentation. */
+/**
+ * Keeps every known endpoint on its calendar boundary. CSS owns the compact minimum width, which
+ * grows away from the anchored endpoint: rightwards from a Start, leftwards from a lone End.
+ */
 export function applyProjectTimelineBarGeometry(
   bar: HTMLElement,
   range: ProjectTimelineRange,
   geometry: ProjectTimelineBarGeometry,
 ): void {
   bar.className = `abyss-project-timeline-bar is-${range.kind}`;
-  bar.style.left = `${geometry.leftPercent}%`;
+  bar.toggleClass('is-one-date', isOneDateRange(range));
   bar.style.width = `${geometry.widthPercent}%`;
-  const oneDate = isOneDateRange(range);
-  bar.toggleClass('is-one-date', oneDate);
-  const controls = rangeControls(bar);
-  if (controls === null) return;
-  controls.className = `abyss-project-timeline-range-controls is-${range.kind}`;
-  controls.hidden = bar.hidden;
-  controls.style.width = bar.style.width;
   setRangeLeft(
-    controls,
+    bar,
     range.kind === 'open-start'
       ? `calc(${geometry.leftPercent + geometry.widthPercent}% - max(40px, ${geometry.widthPercent}%))`
-      : bar.style.left,
+      : `${geometry.leftPercent}%`,
   );
 }
 
-function resizedDay(sourceDay: string, deltaDays: number): string | undefined {
-  const sourceOrdinal = projectCalendarDayOrdinal(sourceDay);
-  return sourceOrdinal === undefined
-    ? undefined
-    : projectCalendarDayFromOrdinal(sourceOrdinal + deltaDays);
+function rangeDay(range: ProjectTimelineRange, endpoint: 'start' | 'end'): string | undefined {
+  if (endpoint === 'start') {
+    return range.kind === 'closed' || range.kind === 'open-end' ? range.startDay : undefined;
+  }
+  return range.kind === 'closed' || range.kind === 'open-start' ? range.endDay : undefined;
 }
 
-function rangeResizeSource(
-  range: ProjectTimelineRange,
-  endpoint: 'start' | 'end',
-  fallback: string,
-): string {
-  if (range.kind === 'closed') return endpoint === 'start' ? range.startDay : range.endDay;
-  if (range.kind === 'open-end') return range.startDay;
-  if (range.kind === 'open-start') return range.endDay;
-  return fallback;
-}
-
-function targetsMissingEndpoint(active: ActivePointerGesture): boolean {
-  const { part } = active.target;
+/** A lone date moves to the pointer's day; a closed range keeps its length from the grab day. */
+function moveAnchorDay(active: ActivePointerGesture): string {
   const { range } = active.source;
-  if (part === 'start') return range.kind === 'open-start' || range.kind === 'unscheduled';
-  return part === 'end' && (range.kind === 'open-end' || range.kind === 'unscheduled');
+  if (range.kind === 'open-end') return range.startDay;
+  return range.kind === 'open-start' ? range.endDay : active.startDay;
+}
+
+/** The day a gesture writes, which the cursor marks: a closed move is read at its Start. */
+function writtenDay(active: ActivePointerGesture, planned: ProjectTimelineRange): string {
+  const { part } = active.target;
+  if (part === 'start') return rangeDay(planned, 'start') ?? active.lastDay;
+  if (part === 'end') return rangeDay(planned, 'end') ?? active.lastDay;
+  if (part === 'track') return trackWrittenDay(active, planned);
+  return rangeDay(planned, 'start') ?? rangeDay(planned, 'end') ?? active.lastDay;
+}
+
+/** A track press fills the missing endpoint, which its counterpart may clamp. */
+function trackWrittenDay(active: ActivePointerGesture, planned: ProjectTimelineRange): string {
+  const { kind } = active.source.range;
+  if (kind === 'open-end') return rangeDay(planned, 'end') ?? active.lastDay;
+  if (kind === 'open-start') return rangeDay(planned, 'start') ?? active.lastDay;
+  return active.lastDay;
+}
+
+function isLaterDay(day: string, reference: string): boolean {
+  const value = projectCalendarDayOrdinal(day);
+  const other = projectCalendarDayOrdinal(reference);
+  return value !== undefined && other !== undefined && value > other;
+}
+
+/** Where a day's boundary sits on the track, or undefined when the window does not hold it. */
+function dayBoundaryLeft(
+  window: ProjectTimelineWindow,
+  day: string,
+  trailing: boolean,
+): string | undefined {
+  const first = projectCalendarDayOrdinal(window.startDay);
+  const ordinal = projectCalendarDayOrdinal(day);
+  if (first === undefined || ordinal === undefined) return undefined;
+  const index = ordinal - first;
+  if (index < 0 || index >= window.dayCount) return undefined;
+  return trailing
+    ? `calc(${((index + 1) / window.dayCount) * 100}% - 1px)`
+    : `${(index / window.dayCount) * 100}%`;
+}
+
+/** A fixed element is placed by its containing block, which a contained leaf takes over. */
+function positioningOrigin(element: HTMLElement): { readonly left: number; readonly top: number } {
+  const block = element.offsetParent;
+  if (block === null) return { left: 0, top: 0 };
+  const bounds = block.getBoundingClientRect();
+  return { left: bounds.left + block.clientLeft, top: bounds.top + block.clientTop };
+}
+
+function gestureLabel(active: ActivePointerGesture, planned: ProjectTimelineRange): string {
+  return active.target.part === 'bar' && planned.kind === 'closed'
+    ? `${planned.startDay} → ${planned.endDay}`
+    : writtenDay(active, planned);
 }
 
 function trackIntent(active: ActivePointerGesture): ProjectTimelineEditIntent | undefined {
@@ -427,10 +446,7 @@ export class ProjectTimelinePointerInteraction {
     const snapshot = pending.barSnapshot;
     const bar = pending.target.bar;
     if (snapshot === undefined || bar?.isConnected !== true) return;
-    restoreElement(bar, snapshot);
-    const controls = rangeControls(bar);
-    if (controls !== null && snapshot.controls !== undefined)
-      restoreElement(controls, snapshot.controls);
+    restoreBar(bar, snapshot);
   }
 
   private releasePointerCapture_abyssPrivate(active: ActivePointerGesture): void {
@@ -640,23 +656,17 @@ export class ProjectTimelinePointerInteraction {
     if (restorePreview) this.restorePendingPreview_abyssPrivate(pending);
   }
 
+  /** Every written date is the day under the pointer, wherever a compact control is displayed. */
   private intent_abyssPrivate(active: ActivePointerGesture): ProjectTimelineEditIntent | undefined {
-    const first = projectCalendarDayOrdinal(active.startDay);
+    const { part } = active.target;
+    if (part === 'start') return { type: 'resizeStart', day: active.lastDay };
+    if (part === 'end') return { type: 'resizeEnd', day: active.lastDay };
+    if (part === 'track') return trackIntent(active);
+    const anchor = projectCalendarDayOrdinal(moveAnchorDay(active));
     const last = projectCalendarDayOrdinal(active.lastDay);
-    if (first === undefined || last === undefined) return undefined;
-    const deltaDays = last - first;
-    if (active.target.part === 'bar') return { type: 'move', deltaDays };
-    if (active.target.part === 'start') {
-      const sourceDay = rangeResizeSource(active.source.range, 'start', active.startDay);
-      const day = resizedDay(sourceDay, deltaDays);
-      return day === undefined ? undefined : { type: 'resizeStart', day };
-    }
-    if (active.target.part === 'end') {
-      const sourceDay = rangeResizeSource(active.source.range, 'end', active.startDay);
-      const day = resizedDay(sourceDay, deltaDays);
-      return day === undefined ? undefined : { type: 'resizeEnd', day };
-    }
-    return trackIntent(active);
+    return anchor === undefined || last === undefined
+      ? undefined
+      : { type: 'move', deltaDays: last - anchor };
   }
 
   private preview_abyssPrivate(active: ActivePointerGesture): void {
@@ -681,20 +691,36 @@ export class ProjectTimelinePointerInteraction {
       this.showTooltip_abyssPrivate(active.lastClientX, active.target.track);
       return;
     }
-    const previewRange = plan.range;
-    this.applyPreview_abyssPrivate(active.target.bar, previewRange);
-    this.showCursor_abyssPrivate(active.target.track, active.lastClientX);
-    let activeEndpoint = active.lastDay;
-    if (active.target.part === 'start')
-      activeEndpoint = rangeResizeSource(plan.range, 'start', active.lastDay);
-    else if (active.target.part === 'end')
-      activeEndpoint = rangeResizeSource(plan.range, 'end', active.lastDay);
-    this.tooltip_abyssPrivate.setText(activeEndpoint);
+    this.applyPreview_abyssPrivate(active.target.bar, plan.range);
+    this.markWrittenDay_abyssPrivate(active, plan.range);
+    this.tooltip_abyssPrivate.setText(gestureLabel(active, plan.range));
     this.showTooltip_abyssPrivate(active.lastClientX, active.target.track);
   }
 
+  /** A press alone writes nothing through a range control, so it must not move the range. */
   private shouldPreview_abyssPrivate(active: ActivePointerGesture): boolean {
-    return active.moved || !targetsMissingEndpoint(active);
+    return active.moved || active.target.part === 'track';
+  }
+
+  /**
+   * Keeps the cursor inside the day being written. It follows the pointer there; once the
+   * counterpart clamps the date, or a closed range moves, it rests on that day's boundary.
+   */
+  private markWrittenDay_abyssPrivate(
+    active: ActivePointerGesture,
+    planned: ProjectTimelineRange,
+  ): void {
+    const { track, part } = active.target;
+    const day = writtenDay(active, planned);
+    const rigid = part === 'bar' && planned.kind === 'closed';
+    if (day === active.lastDay && !rigid) {
+      this.showCursor_abyssPrivate(track, active.lastClientX);
+      return;
+    }
+    const trailing = part !== 'bar' && isLaterDay(active.lastDay, day);
+    const left = dayBoundaryLeft(this.context_abyssPrivate.window(), day, trailing);
+    if (left === undefined) this.cursor_abyssPrivate.hidden = true;
+    else this.placeCursor_abyssPrivate(track, left);
   }
 
   private applyPreview_abyssPrivate(bar: HTMLElement | null, range: ProjectTimelineRange): void {
@@ -704,7 +730,6 @@ export class ProjectTimelinePointerInteraction {
     bar.hidden = false;
     applyProjectTimelineBarGeometry(bar, range, geometry);
     bar.addClass('is-previewing');
-    rangeControls(bar)?.addClass('is-previewing');
   }
 
   private showCursor_abyssPrivate(track: HTMLElement, clientX: number): void {
@@ -712,13 +737,17 @@ export class ProjectTimelinePointerInteraction {
     if (day === undefined) return;
     const bounds = track.getBoundingClientRect();
     const fraction = Math.max(0, Math.min(1, (clientX - bounds.left) / bounds.width));
-    if (this.cursor_abyssPrivate.parentElement !== track) track.append(this.cursor_abyssPrivate);
-    this.cursor_abyssPrivate.hidden = false;
-    this.cursor_abyssPrivate.style.left = `${fraction * 100}%`;
+    this.placeCursor_abyssPrivate(track, `${fraction * 100}%`);
     if (this.active_abyssPrivate === undefined) {
       this.tooltip_abyssPrivate.setText(day);
       this.showTooltip_abyssPrivate(clientX, track);
     }
+  }
+
+  private placeCursor_abyssPrivate(track: HTMLElement, left: string): void {
+    if (this.cursor_abyssPrivate.parentElement !== track) track.append(this.cursor_abyssPrivate);
+    this.cursor_abyssPrivate.hidden = false;
+    this.cursor_abyssPrivate.style.left = left;
   }
 
   private showTooltip_abyssPrivate(clientX: number, track: HTMLElement): void {
@@ -736,8 +765,10 @@ export class ProjectTimelinePointerInteraction {
     const above = bounds.top - height - 8;
     const top =
       above >= 8 ? above : Math.max(8, Math.min(viewportHeight - height - 8, bounds.bottom + 8));
-    this.tooltip_abyssPrivate.style.left = `${left}px`;
-    this.tooltip_abyssPrivate.style.top = `${top}px`;
+    // The placement is in viewport space, so it is read back into whichever ancestor positions it.
+    const origin = positioningOrigin(this.tooltip_abyssPrivate);
+    this.tooltip_abyssPrivate.style.left = `${left - origin.left}px`;
+    this.tooltip_abyssPrivate.style.top = `${top - origin.top}px`;
   }
 
   private hideOverlays_abyssPrivate(): void {

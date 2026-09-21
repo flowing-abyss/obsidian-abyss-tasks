@@ -1543,6 +1543,9 @@ describe('ProjectsTableView', () => {
   });
 
   it('keeps a held Start resize visible and reorders its focused row on the receipt', async () => {
+    // The Day window is the fortnight around today, so the fixture dates need a pinned clock.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 8, 10, 12));
     const config = settings();
     config.projects.overviewView = 'timeline';
     config.projects.table.sortBy = { field: 'start', dir: 'asc' };
@@ -1781,12 +1784,13 @@ describe('ProjectsTableView', () => {
       );
       vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(rectangle(145, 0, 1710, 30));
       expect(bar.hidden).toBe(false);
-      expect(bar.style.left).not.toBe('');
-      // Captured native centers of the displaced 40px controls on the 1565px annual axis.
+      expect(bar.style.getPropertyValue('--abyss-project-timeline-range-left')).not.toBe('');
+      // Captured native centers of the compact 40px range's handles on the 1565px annual axis.
+      // Each handle is displayed days away from its date, so the pointer day decides the write.
       const position = existing === 'start' ? 1301.3671875 : 1256.8046875;
       handle.dispatchEvent(timelinePointerEvent('pointerdown', position));
       await flushMicrotasks();
-      const destination = position + (existing === 'start' ? 2 : -2) * (1565 / 365);
+      const destination = 145 + 264.5 * (1565 / 365);
       track.dispatchEvent(timelinePointerEvent('pointermove', destination));
       track.dispatchEvent(timelinePointerEvent('pointerup', destination));
       for (let attempt = 0; attempt < 5; attempt++) await flushMicrotasks();

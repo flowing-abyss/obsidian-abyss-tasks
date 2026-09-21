@@ -339,9 +339,13 @@ encoding; creating a missing endpoint inherits its timed counterpart's clock. Th
 nonexistent local times and returns the final projected range for both preview and persistence.
 Unchanged endpoints retain their exact source values.
 
-The visual range follows its exact calendar boundaries. Separate compact controls keep the move
-and resize targets reachable without changing those boundaries. Preview, receipt reconciliation,
-cancellation, and failure restore both together. The axis generates only the visible slice plus
+One range element is both the visual block and its move and resize targets. Every known endpoint
+sits on its exact calendar boundary; a CSS-owned compact minimum grows away from the anchored
+endpoint, rightwards from a Start and leftwards from a lone End, and the open side stays dashed.
+A pointer resize or a move of a one-date range writes the day under the pointer, while a closed
+range moves rigidly from its grab day. The cursor line and tooltip always mark the day being
+written, including when the counterpart clamps it. Preview, receipt reconciliation, cancellation,
+and failure restore that one element. The axis generates only the visible slice plus
 overscan; a browser-safe physical width cap never changes logical mapping.
 Direct and options scale changes share the guarded controller path and fit valid filtered bounds;
 Today and navigation preserve the selected scale.

@@ -527,7 +527,7 @@ it('preserves case-sensitive custom-property identities while checking filter pr
   ).toEqual(['abyss/known-variable', 'abyss/unused-variable']);
 });
 
-it('keeps compact control geometry CSS-owned without allowing visual bar overrides', () => {
+it('keeps compact range geometry CSS-owned without allowing forced bar overrides', () => {
   const options = {
     file: 'fixture.css',
     contracts: {
@@ -540,7 +540,7 @@ it('keeps compact control geometry CSS-owned without allowing visual bar overrid
   };
   expect(
     analyzeCss(
-      '.abyss-project-timeline-range-controls { left: max(0px, min(var(--abyss-project-timeline-range-left), 100% - 40px)); }',
+      '.abyss-project-timeline-bar { left: max(0px, min(var(--abyss-project-timeline-range-left), 100% - 40px)); min-width: 40px; }',
       options,
     ),
   ).toEqual([]);
@@ -551,7 +551,7 @@ it('keeps compact control geometry CSS-owned without allowing visual bar overrid
   ).toContain('abyss/important');
 });
 
-it('discovers the range-control coordinate from its real source owner', async () => {
+it('discovers the range coordinate from its real source owner', async () => {
   const { default: ts } = await import('typescript');
   const source = ts.sys.readFile(
     ts.sys.resolvePath('src/panels/projects/projectTimelineInteraction.ts'),
@@ -560,9 +560,9 @@ it('discovers the range-control coordinate from its real source owner', async ()
   const runtime = discoverRuntimeVariables(source);
   expect(runtime.produced).toContain('--abyss-project-timeline-range-left');
   expect(
-    analyzeCss(
-      '.abyss-project-timeline-range-controls { left: var(--abyss-project-timeline-range-left); }',
-      { file: 'fixture.css', contracts: { ...fixtureContracts, runtime } },
-    ),
+    analyzeCss('.abyss-project-timeline-bar { left: var(--abyss-project-timeline-range-left); }', {
+      file: 'fixture.css',
+      contracts: { ...fixtureContracts, runtime },
+    }),
   ).toEqual([]);
 });

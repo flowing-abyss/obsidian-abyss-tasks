@@ -67,6 +67,28 @@ function geometry(left: number, width: number): DOMRect {
   };
 }
 
+function rangeLeft(bar: HTMLElement): string {
+  return bar.style.getPropertyValue('--abyss-project-timeline-range-left');
+}
+
+/** Reads the calendar right edge whether the range is anchored at its Start or at its End. */
+function rightEdgePercent(bar: HTMLElement): number {
+  const endAnchored = /^calc\(([\d.]+)% - /u.exec(rangeLeft(bar));
+  return endAnchored === null
+    ? Number.parseFloat(rangeLeft(bar)) + Number.parseFloat(bar.style.width)
+    : Number(endAnchored[1]);
+}
+
+function cursorLeftPercent(root: HTMLElement): number {
+  const cursor = expectDefined(root.querySelector<HTMLElement>('.abyss-project-timeline-cursor'));
+  expect(cursor.hidden).toBe(false);
+  return Number.parseFloat(cursor.style.left);
+}
+
+function tooltipText(root: HTMLElement): string | null | undefined {
+  return root.querySelector('.abyss-project-timeline-tooltip')?.textContent;
+}
+
 const defaultWindow: ProjectTimelineWindow = {
   startDay: '2026-09-01',
   endDay: '2026-09-10',
@@ -90,13 +112,11 @@ function mount(
     cls: 'abyss-project-timeline-bar',
     attr: { tabindex: '0', 'data-timeline-part': 'bar' },
   });
-  const controls = track.createDiv({ cls: 'abyss-project-timeline-range-controls' });
-  controls.createDiv({ cls: 'abyss-project-timeline-move', attr: { 'data-timeline-part': 'bar' } });
-  controls.createSpan({
+  bar.createSpan({
     cls: 'abyss-project-timeline-handle is-start',
     attr: { 'data-timeline-part': 'start' },
   });
-  controls.createSpan({
+  bar.createSpan({
     cls: 'abyss-project-timeline-handle is-end',
     attr: { 'data-timeline-part': 'end' },
   });
@@ -124,7 +144,6 @@ function mount(
     scroll,
     track,
     bar,
-    controls,
     interaction,
     commitRangeEdit,
     reportRangeFailure,
@@ -183,14 +202,12 @@ describe('ProjectTimelinePointerInteraction', () => {
         expectDefined(projectTimelineBarGeometry(range, window)),
       );
       const initialBar = mounted.bar.style.cssText;
-      const initialControls = mounted.controls.style.cssText;
       mounted.bar.dispatchEvent(pointerEvent('pointerdown', 75));
       await flushMicrotasks();
       mounted.track.dispatchEvent(pointerEvent('pointermove', 95));
-      expect(mounted.bar.style.left).toBe('80%');
+      expect(rangeLeft(mounted.bar)).toBe('80%');
       mounted.track.dispatchEvent(pointerEvent('pointermove', 85));
       expect(mounted.bar.style.cssText).toBe(initialBar);
-      expect(mounted.controls.style.cssText).toBe(initialControls);
       expect(mounted.root.querySelector('.abyss-project-timeline-tooltip')?.textContent).toMatch(
         /does not exist/u,
       );
@@ -224,15 +241,12 @@ describe('ProjectTimelinePointerInteraction', () => {
         range,
         expectDefined(projectTimelineBarGeometry(range, window)),
       );
-      const right = () =>
-        Number.parseFloat(mounted.bar.style.left) + Number.parseFloat(mounted.bar.style.width);
+      const right = () => rightEdgePercent(mounted.bar);
       const fixedRight = right();
-      const initialControls = mounted.controls.style.cssText;
-      expect(
-        mounted.controls.style.getPropertyValue('--abyss-project-timeline-range-left'),
-      ).not.toBe('');
+      const initialBar = mounted.bar.style.cssText;
+      expect(rangeLeft(mounted.bar)).not.toBe('');
       const handle = expectDefined(
-        mounted.controls.querySelector<HTMLElement>('[data-timeline-part="start"]'),
+        mounted.bar.querySelector<HTMLElement>('[data-timeline-part="start"]'),
       );
       const held = deferredResult();
       mounted.commitRangeEdit.mockReturnValueOnce(held.promise);
@@ -242,20 +256,20 @@ describe('ProjectTimelinePointerInteraction', () => {
       expect(right()).toBeCloseTo(fixedRight);
       mounted.track.dispatchEvent(pointerEvent('pointermove', 40.86));
       expect(right()).toBeCloseTo(fixedRight);
-      expect(mounted.controls.classList).toContain('is-previewing');
+      expect(mounted.bar.classList).toContain('is-previewing');
       mounted.track.dispatchEvent(pointerEvent('pointerup', 40.86));
       expect(right()).toBeCloseTo(fixedRight);
       held.reject(new Error('Conflict'));
       await flushMicrotasks();
       expect(right()).toBeCloseTo(fixedRight);
-      expect(mounted.controls.style.cssText).toBe(initialControls);
-      expect(mounted.controls.classList).not.toContain('is-previewing');
+      expect(mounted.bar.style.cssText).toBe(initialBar);
+      expect(mounted.bar.classList).not.toContain('is-previewing');
       handle.dispatchEvent(pointerEvent('pointerdown', 46.86, 2));
       await flushMicrotasks();
       mounted.track.dispatchEvent(pointerEvent('pointermove', 40.86, 2));
       mounted.interaction.cancelActive();
       expect(right()).toBeCloseTo(fixedRight);
-      expect(mounted.controls.style.cssText).toBe(initialControls);
+      expect(mounted.bar.style.cssText).toBe(initialBar);
     },
   );
 
@@ -276,18 +290,15 @@ describe('ProjectTimelinePointerInteraction', () => {
       range,
       expectDefined(projectTimelineBarGeometry(range, window)),
     );
-    const fixedRight =
-      Number.parseFloat(mounted.bar.style.left) + Number.parseFloat(mounted.bar.style.width);
-    mounted.controls
+    const fixedRight = rightEdgePercent(mounted.bar);
+    mounted.bar
       .querySelector<HTMLElement>('[data-timeline-part="start"]')
       ?.dispatchEvent(pointerEvent('pointerdown', 5385));
     await flushMicrotasks();
     mounted.track.dispatchEvent(pointerEvent('pointermove', 5375));
     mounted.track.dispatchEvent(pointerEvent('pointerup', 5375));
-    expect(
-      Number.parseFloat(mounted.bar.style.left) + Number.parseFloat(mounted.bar.style.width),
-    ).toBeCloseTo(fixedRight);
-    expect(mounted.controls.classList).toContain('is-previewing');
+    expect(rightEdgePercent(mounted.bar)).toBeCloseTo(fixedRight);
+    expect(mounted.bar.classList).toContain('is-previewing');
     mounted.setCapturedRange(committed);
     applyProjectTimelineBarGeometry(
       mounted.bar,
@@ -295,11 +306,8 @@ describe('ProjectTimelinePointerInteraction', () => {
       expectDefined(projectTimelineBarGeometry(committed, window)),
     );
     mounted.interaction.reconcileAfterRender();
-    expect(
-      Number.parseFloat(mounted.bar.style.left) + Number.parseFloat(mounted.bar.style.width),
-    ).toBeCloseTo(fixedRight);
+    expect(rightEdgePercent(mounted.bar)).toBeCloseTo(fixedRight);
     expect(Number.parseFloat(mounted.bar.style.width)).toBeCloseTo(200 / 1461);
-    expect(mounted.controls.classList).not.toContain('is-previewing');
     expect(mounted.bar.classList).not.toContain('is-previewing');
   });
 
@@ -313,12 +321,12 @@ describe('ProjectTimelinePointerInteraction', () => {
       end: { ...evidence.end, expectedValue: '2026-09-03T09:00' },
     };
     mounted.setCapturedSource(captured);
-    mounted.controls
+    mounted.bar
       .querySelector<HTMLElement>('[data-timeline-part="start"]')
       ?.dispatchEvent(pointerEvent('pointerdown', 15));
     await flushMicrotasks();
     mounted.track.dispatchEvent(pointerEvent('pointermove', 35));
-    expect(mounted.bar.style.left).toBe('10%');
+    expect(rangeLeft(mounted.bar)).toBe('10%');
     expect(mounted.bar.style.width).toBe('20%');
     mounted.track.dispatchEvent(pointerEvent('pointerup', 35));
     expect(mounted.commitRangeEdit).toHaveBeenCalledWith({
@@ -340,21 +348,21 @@ describe('ProjectTimelinePointerInteraction', () => {
         range,
         expectDefined(projectTimelineBarGeometry(range, defaultWindow)),
       );
-      const initialLeft = mounted.bar.style.left;
+      const initialLeft = rangeLeft(mounted.bar);
       const endHandle = mounted.track.querySelector<HTMLElement>('[data-timeline-part="end"]');
 
       endHandle?.dispatchEvent(pointerEvent('pointerdown', 25));
       await flushMicrotasks();
       mounted.track.dispatchEvent(pointerEvent('pointermove', 27));
-      expect(mounted.bar.style.left).toBe(initialLeft);
+      expect(rangeLeft(mounted.bar)).toBe(initialLeft);
       expect(mounted.bar.classList).toContain('is-one-date');
 
       mounted.track.dispatchEvent(pointerEvent('pointermove', 55));
-      expect(mounted.bar.style.left).toBe(initialLeft);
+      expect(rangeLeft(mounted.bar)).toBe(initialLeft);
       expect(mounted.bar.classList).not.toContain('is-one-date');
 
       mounted.root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      expect(mounted.bar.style.left).toBe(initialLeft);
+      expect(rangeLeft(mounted.bar)).toBe(initialLeft);
       expect(mounted.bar.classList).toContain('is-one-date');
       expect(mounted.commitRangeEdit).not.toHaveBeenCalled();
     },
@@ -368,7 +376,7 @@ describe('ProjectTimelinePointerInteraction', () => {
       range,
       expectDefined(projectTimelineBarGeometry(range, defaultWindow)),
     );
-    const initialLeft = mounted.bar.style.left;
+    const initialLeft = rangeLeft(mounted.bar);
     const held = deferredResult();
     mounted.commitRangeEdit.mockReturnValueOnce(held.promise);
 
@@ -380,13 +388,13 @@ describe('ProjectTimelinePointerInteraction', () => {
     mounted.track.dispatchEvent(pointerEvent('pointerup', 55));
 
     expect(mounted.bar.classList).toContain('is-previewing');
-    expect(mounted.bar.style.left).toBe(initialLeft);
+    expect(rangeLeft(mounted.bar)).toBe(initialLeft);
     held.resolve({ applied: [], failed: [{ path: 'Projects/A.md', message: 'Conflict' }] });
     await flushMicrotasks();
 
     expect(mounted.bar.classList).toContain('is-one-date');
     expect(mounted.bar.classList).not.toContain('is-previewing');
-    expect(mounted.bar.style.left).toBe(initialLeft);
+    expect(rangeLeft(mounted.bar)).toBe(initialLeft);
   });
 
   it('keeps the 2026-02-20 start anchor through a successful End commit to 2026-06-23', async () => {
@@ -408,7 +416,7 @@ describe('ProjectTimelinePointerInteraction', () => {
       range,
       expectDefined(projectTimelineBarGeometry(range, window)),
     );
-    const initialLeft = mounted.bar.style.left;
+    const initialLeft = rangeLeft(mounted.bar);
     const held = deferredResult();
     mounted.commitRangeEdit.mockReturnValueOnce(held.promise);
 
@@ -425,7 +433,7 @@ describe('ProjectTimelinePointerInteraction', () => {
       intent: { type: 'resizeEnd', day: '2026-06-23' },
     });
     expect(mounted.bar.classList).toContain('is-previewing');
-    expect(mounted.bar.style.left).toBe(initialLeft);
+    expect(rangeLeft(mounted.bar)).toBe(initialLeft);
 
     held.resolve({
       applied: [
@@ -455,7 +463,7 @@ describe('ProjectTimelinePointerInteraction', () => {
     );
     mounted.interaction.reconcileAfterRender();
 
-    expect(mounted.bar.style.left).toBe(initialLeft);
+    expect(rangeLeft(mounted.bar)).toBe(initialLeft);
     expect(mounted.bar.classList).not.toContain('is-one-date');
     expect(mounted.bar.classList).not.toContain('is-previewing');
   });
@@ -469,13 +477,8 @@ describe('ProjectTimelinePointerInteraction', () => {
 
     expect(mounted.commitRangeEdit).not.toHaveBeenCalled();
     expect(mounted.bar.classList).toContain('is-previewing');
-    expect(mounted.bar.style.left).toBe('30%');
-    expect(mounted.controls.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
-      '30%',
-    );
-    expect(mounted.root.querySelector('.abyss-project-timeline-tooltip')?.textContent).toBe(
-      '2026-09-04',
-    );
+    expect(rangeLeft(mounted.bar)).toBe('30%');
+    expect(mounted.bar.style.width).toBe('30%');
 
     mounted.track.dispatchEvent(pointerEvent('pointerup', 45));
     await flushMicrotasks();
@@ -496,38 +499,28 @@ describe('ProjectTimelinePointerInteraction', () => {
     mounted.bar.dispatchEvent(pointerEvent('pointerdown', 25));
     await flushMicrotasks();
     mounted.track.dispatchEvent(pointerEvent('pointermove', 45));
-    const desiredLeft = mounted.bar.style.left;
+    const desiredLeft = rangeLeft(mounted.bar);
     const desiredWidth = mounted.bar.style.width;
-    const desiredRangeLeft = mounted.controls.style.getPropertyValue(
-      '--abyss-project-timeline-range-left',
-    );
 
     mounted.track.dispatchEvent(pointerEvent('pointerup', 45));
 
-    expect(mounted.bar.style.left).toBe(desiredLeft);
+    expect(rangeLeft(mounted.bar)).toBe(desiredLeft);
     expect(mounted.bar.style.width).toBe(desiredWidth);
     expect(mounted.bar.classList).toContain('is-previewing');
 
     mounted.bar.className = 'abyss-project-timeline-bar is-closed';
     mounted.bar.setCssProps({
-      left: '10%',
+      '--abyss-project-timeline-range-left': '10%',
       width: '30%',
     });
-    mounted.controls.setCssProps({ '--abyss-project-timeline-range-left': '10%' });
     mounted.interaction.reconcileAfterRender();
 
-    expect(mounted.bar.style.left).toBe(desiredLeft);
+    expect(rangeLeft(mounted.bar)).toBe(desiredLeft);
     expect(mounted.bar.style.width).toBe(desiredWidth);
-    expect(mounted.controls.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
-      desiredRangeLeft,
-    );
     held.resolve({ applied: [], failed: [] });
     await flushMicrotasks();
-    expect(mounted.bar.style.left).toBe('10%');
+    expect(rangeLeft(mounted.bar)).toBe('10%');
     expect(mounted.bar.style.width).toBe('30%');
-    expect(mounted.controls.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe(
-      '10%',
-    );
   });
 
   it('rolls a rejected command back and reports it once', async () => {
@@ -542,9 +535,8 @@ describe('ProjectTimelinePointerInteraction', () => {
     held.resolve({ applied: [], failed: [{ path: 'Projects/A.md', message: 'Conflict' }] });
     await flushMicrotasks();
 
-    expect(mounted.bar.style.left).toBe('');
+    expect(rangeLeft(mounted.bar)).toBe('');
     expect(mounted.bar.style.width).toBe('');
-    expect(mounted.controls.style.getPropertyValue('--abyss-project-timeline-range-left')).toBe('');
     expect(mounted.bar.classList).not.toContain('is-previewing');
     expect(mounted.reportRangeFailure).toHaveBeenCalledOnce();
   });
@@ -564,13 +556,13 @@ describe('ProjectTimelinePointerInteraction', () => {
     await flushMicrotasks();
     mounted.track.dispatchEvent(pointerEvent('pointermove', 55, 2));
     mounted.track.dispatchEvent(pointerEvent('pointerup', 55, 2));
-    const newestLeft = mounted.bar.style.left;
+    const newestLeft = rangeLeft(mounted.bar);
     const newestWidth = mounted.bar.style.width;
 
     first.resolve({ applied: [], failed: [] });
     await flushMicrotasks();
 
-    expect(mounted.bar.style.left).toBe(newestLeft);
+    expect(rangeLeft(mounted.bar)).toBe(newestLeft);
     expect(mounted.bar.style.width).toBe(newestWidth);
     expect(mounted.bar.classList).toContain('is-previewing');
     second.resolve({ applied: [], failed: [] });
@@ -578,10 +570,10 @@ describe('ProjectTimelinePointerInteraction', () => {
   });
 
   it.each([
-    ['start', { kind: 'open-start', endDay: '2026-09-08' }, '2026-09-10', 'resizeStart'],
+    ['start', { kind: 'open-start', endDay: '2026-09-08' }, '2026-09-04', 'resizeStart'],
     ['end', { kind: 'open-end', startDay: '2026-09-02' }, '2026-09-04', 'resizeEnd'],
   ] as const)(
-    'proposes an absent %s endpoint from the existing day plus pointer delta',
+    'sets an absent %s endpoint to the day under the pointer',
     async (part, range, expectedDay, type) => {
       const mounted = mount(range);
       const handle = mounted.track.querySelector<HTMLElement>(`[data-timeline-part="${part}"]`);
@@ -610,14 +602,17 @@ describe('ProjectTimelinePointerInteraction', () => {
     });
     const endHandle = mounted.track.querySelector<HTMLElement>('[data-timeline-part="end"]');
     mounted.bar.className = 'abyss-project-timeline-bar is-open-end is-one-date';
-    mounted.bar.setCssProps({ left: '66.849315%', width: '0.273973%' });
+    mounted.bar.setCssProps({
+      '--abyss-project-timeline-range-left': '66.849315%',
+      width: '0.273973%',
+    });
 
     endHandle?.dispatchEvent(pointerEvent('pointerdown', 77));
     await flushMicrotasks();
     mounted.interaction.reconcileAfterRender();
 
     expect(mounted.bar.className).toBe('abyss-project-timeline-bar is-open-end is-one-date');
-    expect(mounted.bar.style.left).toBe('66.849315%');
+    expect(rangeLeft(mounted.bar)).toBe('66.849315%');
     expect(mounted.bar.style.width).toBe('0.273973%');
 
     mounted.track.dispatchEvent(pointerEvent('pointermove', 79));
@@ -641,11 +636,11 @@ describe('ProjectTimelinePointerInteraction', () => {
       window: { startDay: '2026-01-01', endDay: '2026-12-31', dayCount: 365, scale: 'month' },
       trackWidth: 1565,
       part: 'end',
-      center: 1301.3671875,
-      deltaDays: 2,
-      expectedDay: '2026-09-22',
+      handleCenter: 1301.3671875,
+      targetIndex: 271,
+      targetDay: '2026-09-29',
       leftOrdinal: 262,
-      rangeDays: 3,
+      rangeDays: 10,
     },
     {
       label: 'native month missing Start',
@@ -653,11 +648,11 @@ describe('ProjectTimelinePointerInteraction', () => {
       window: { startDay: '2026-01-01', endDay: '2026-12-31', dayCount: 365, scale: 'month' },
       trackWidth: 1565,
       part: 'start',
-      center: 1256.8046875,
-      deltaDays: -2,
-      expectedDay: '2026-09-22',
-      leftOrdinal: 264,
-      rangeDays: 3,
+      handleCenter: 1256.8046875,
+      targetIndex: 257,
+      targetDay: '2026-09-15',
+      leftOrdinal: 257,
+      rangeDays: 10,
     },
     {
       label: 'year missing End',
@@ -665,9 +660,9 @@ describe('ProjectTimelinePointerInteraction', () => {
       window: { startDay: '2025-01-01', endDay: '2028-12-31', dayCount: 1461, scale: 'year' },
       trackWidth: 1461,
       part: 'end',
-      center: 716,
-      deltaDays: 7,
-      expectedDay: '2026-06-30',
+      handleCenter: 716,
+      targetIndex: 545,
+      targetDay: '2026-06-30',
       leftOrdinal: 538,
       rangeDays: 8,
     },
@@ -677,9 +672,9 @@ describe('ProjectTimelinePointerInteraction', () => {
       window: { startDay: '2025-01-01', endDay: '2028-12-31', dayCount: 1461, scale: 'year' },
       trackWidth: 1461,
       part: 'start',
-      center: 651,
-      deltaDays: -7,
-      expectedDay: '2026-06-16',
+      handleCenter: 651,
+      targetIndex: 531,
+      targetDay: '2026-06-16',
       leftOrdinal: 531,
       rangeDays: 8,
     },
@@ -689,9 +684,9 @@ describe('ProjectTimelinePointerInteraction', () => {
       window: { startDay: '2025-01-01', endDay: '2028-12-31', dayCount: 1461, scale: 'year' },
       trackWidth: 2922,
       part: 'start',
-      center: 152,
-      deltaDays: -2,
-      expectedDay: '2025-01-08',
+      handleCenter: 152,
+      targetIndex: 7,
+      targetDay: '2025-01-08',
       leftOrdinal: 7,
       rangeDays: 3,
     },
@@ -701,59 +696,68 @@ describe('ProjectTimelinePointerInteraction', () => {
       window: { startDay: '2025-01-01', endDay: '2028-12-31', dayCount: 1461, scale: 'year' },
       trackWidth: 1461,
       part: 'end',
-      center: 1599,
-      deltaDays: 5,
-      expectedDay: '2028-12-27',
+      handleCenter: 1599,
+      targetIndex: 1459,
+      targetDay: '2028-12-30',
       leftOrdinal: 1451,
-      rangeDays: 6,
+      rangeDays: 9,
     },
   ] as const)(
-    'anchors $label to the existing endpoint from its displaced handle center',
+    'sets $label to the day under the pointer wherever its compact handle is displayed',
     async ({
       range,
       window,
       trackWidth,
       part,
-      center,
-      deltaDays,
-      expectedDay,
+      handleCenter,
+      targetIndex,
+      targetDay,
       leftOrdinal,
       rangeDays,
     }) => {
+      const trackLeft = 145;
       const mounted = mount(range, window);
-      vi.spyOn(mounted.track, 'getBoundingClientRect').mockReturnValue(geometry(145, trackWidth));
-      vi.spyOn(mounted.scroll, 'getBoundingClientRect').mockReturnValue(geometry(145, trackWidth));
+      vi.spyOn(mounted.track, 'getBoundingClientRect').mockReturnValue(
+        geometry(trackLeft, trackWidth),
+      );
+      vi.spyOn(mounted.scroll, 'getBoundingClientRect').mockReturnValue(
+        geometry(trackLeft, trackWidth),
+      );
       applyProjectTimelineBarGeometry(
         mounted.bar,
         range,
         expectDefined(projectTimelineBarGeometry(range, window)),
       );
       const handle = expectDefined(
-        mounted.controls.querySelector<HTMLElement>(`[data-timeline-part="${part}"]`),
+        mounted.bar.querySelector<HTMLElement>(`[data-timeline-part="${part}"]`),
       );
       const held = deferredResult();
       mounted.commitRangeEdit.mockReturnValueOnce(held.promise);
-      handle.dispatchEvent(pointerEvent('pointerdown', center));
+      handle.dispatchEvent(pointerEvent('pointerdown', handleCenter));
       await flushMicrotasks();
       expect(mounted.bar.classList).not.toContain('is-previewing');
-      const destination = center + (deltaDays * trackWidth) / window.dayCount;
+      const destination = trackLeft + ((targetIndex + 0.5) * trackWidth) / window.dayCount;
       mounted.track.dispatchEvent(pointerEvent('pointermove', destination));
-      expect(Number.parseFloat(mounted.bar.style.left)).toBeCloseTo(
+      expect(Number.parseFloat(rangeLeft(mounted.bar))).toBeCloseTo(
         (leftOrdinal * 100) / window.dayCount,
       );
       expect(Number.parseFloat(mounted.bar.style.width)).toBeCloseTo(
         (rangeDays * 100) / window.dayCount,
       );
+      expect(tooltipText(mounted.root)).toBe(targetDay);
+      expect(cursorLeftPercent(mounted.root)).toBeCloseTo(
+        ((targetIndex + 0.5) * 100) / window.dayCount,
+      );
       mounted.track.dispatchEvent(pointerEvent('pointerup', destination));
       expect(mounted.commitRangeEdit).toHaveBeenCalledExactlyOnceWith({
         kind: 'pointer',
         source: source(range),
-        intent: { type: part === 'start' ? 'resizeStart' : 'resizeEnd', day: expectedDay },
+        intent: { type: part === 'start' ? 'resizeStart' : 'resizeEnd', day: targetDay },
       });
       expect(Number.parseFloat(mounted.bar.style.width)).toBeCloseTo(
         (rangeDays * 100) / window.dayCount,
       );
-      expect(mounted.controls.classList).toContain('is-previewing');
+      expect(mounted.bar.classList).toContain('is-previewing');
       held.resolve({ applied: [], failed: [] });
       await flushMicrotasks();
     },
@@ -802,23 +806,154 @@ describe('ProjectTimelinePointerInteraction', () => {
     });
   });
 
-  it('resizes from the frozen endpoint delta instead of a minimum-width handle position', async () => {
-    const mounted = mount({ kind: 'closed', startDay: '2026-09-02', endDay: '2026-09-02' });
+  it('resizes to the day under the pointer even from a minimum-width handle position', async () => {
+    const range = { kind: 'closed', startDay: '2026-09-02', endDay: '2026-09-02' } as const;
+    const mounted = mount(range);
     const endHandle = mounted.track.querySelector<HTMLElement>('[data-timeline-part="end"]');
     expect(endHandle).not.toBeNull();
 
-    endHandle?.dispatchEvent(pointerEvent('pointerdown', 25));
+    // The compact handle is displayed two days to the right of the End it edits.
+    endHandle?.dispatchEvent(pointerEvent('pointerdown', 45));
     await flushMicrotasks();
-    mounted.track.dispatchEvent(pointerEvent('pointermove', 35));
-    mounted.track.dispatchEvent(pointerEvent('pointerup', 35));
+    mounted.track.dispatchEvent(pointerEvent('pointermove', 65));
+    expect(tooltipText(mounted.root)).toBe('2026-09-06');
+    expect(cursorLeftPercent(mounted.root)).toBeCloseTo(55);
+    mounted.track.dispatchEvent(pointerEvent('pointerup', 65));
     await flushMicrotasks();
 
     expect(mounted.commitRangeEdit).toHaveBeenCalledWith({
       kind: 'pointer',
-      source: source({ kind: 'closed', startDay: '2026-09-02', endDay: '2026-09-02' }),
-      intent: { type: 'resizeEnd', day: '2026-09-03' },
+      source: source(range),
+      intent: { type: 'resizeEnd', day: '2026-09-06' },
     });
   });
+
+  it.each([
+    [{ kind: 'open-end', startDay: '2026-09-02' }, 5],
+    [{ kind: 'open-start', endDay: '2026-09-09' }, -2],
+  ] as const)(
+    'moves the only date of %s to the day under the pointer',
+    async (range, deltaDays) => {
+      const mounted = mount(range);
+
+      // The compact block is wider than its day, so the grab point is not the date itself.
+      mounted.bar.dispatchEvent(pointerEvent('pointerdown', 45));
+      await flushMicrotasks();
+      expect(mounted.bar.classList).not.toContain('is-previewing');
+      mounted.track.dispatchEvent(pointerEvent('pointermove', 47));
+      expect(mounted.bar.classList).not.toContain('is-previewing');
+      mounted.track.dispatchEvent(pointerEvent('pointermove', 75));
+      expect(tooltipText(mounted.root)).toBe('2026-09-07');
+      expect(cursorLeftPercent(mounted.root)).toBeCloseTo(65);
+      mounted.track.dispatchEvent(pointerEvent('pointerup', 75));
+      await flushMicrotasks();
+
+      expect(mounted.commitRangeEdit).toHaveBeenCalledExactlyOnceWith({
+        kind: 'pointer',
+        source: source(range),
+        intent: { type: 'move', deltaDays },
+      });
+    },
+  );
+
+  it('marks the written Start and reports both dates while a closed range moves', async () => {
+    const mounted = mount();
+
+    mounted.bar.dispatchEvent(pointerEvent('pointerdown', 35));
+    await flushMicrotasks();
+    mounted.track.dispatchEvent(pointerEvent('pointermove', 65));
+
+    expect(rangeLeft(mounted.bar)).toBe('40%');
+    expect(tooltipText(mounted.root)).toBe('2026-09-05 → 2026-09-07');
+    expect(cursorLeftPercent(mounted.root)).toBeCloseTo(40);
+  });
+
+  it('places the date above its track inside whichever ancestor positions the tooltip', () => {
+    const mounted = mount();
+    const tooltip = expectDefined(
+      mounted.root.querySelector<HTMLElement>('.abyss-project-timeline-tooltip'),
+    );
+    // A contained workspace leaf, not the viewport, positions fixed descendants.
+    const leaf = mounted.root.createDiv();
+    vi.spyOn(leaf, 'getBoundingClientRect').mockReturnValue({
+      ...geometry(30, 400),
+      top: 40,
+      y: 40,
+    });
+    Object.defineProperty(tooltip, 'offsetParent', { configurable: true, value: leaf });
+    vi.spyOn(tooltip, 'getBoundingClientRect').mockReturnValue({
+      ...geometry(0, 80),
+      top: 0,
+      bottom: 24,
+      height: 24,
+    });
+    vi.spyOn(mounted.track, 'getBoundingClientRect').mockReturnValue({
+      ...geometry(10, 100),
+      top: 200,
+      bottom: 268,
+    });
+
+    mounted.track.dispatchEvent(pointerEvent('pointermove', 55));
+
+    expect(tooltip.hidden).toBe(false);
+    expect(tooltip.style.left).toBe(`${55 + 12 - 30}px`);
+    expect(tooltip.style.top).toBe(`${200 - 24 - 8 - 40}px`);
+  });
+
+  it('keeps the marker on the written day when the counterpart clamps a resize', async () => {
+    const mounted = mount();
+    const endHandle = mounted.track.querySelector<HTMLElement>('[data-timeline-part="end"]');
+
+    endHandle?.dispatchEvent(pointerEvent('pointerdown', 45));
+    await flushMicrotasks();
+    mounted.track.dispatchEvent(pointerEvent('pointermove', 12));
+
+    expect(tooltipText(mounted.root)).toBe('2026-09-02');
+    expect(cursorLeftPercent(mounted.root)).toBeCloseTo(10);
+    expect(rangeLeft(mounted.bar)).toBe('10%');
+    expect(mounted.bar.style.width).toBe('10%');
+    mounted.interaction.cancelActive();
+
+    const startHandle = mounted.track.querySelector<HTMLElement>('[data-timeline-part="start"]');
+    startHandle?.dispatchEvent(pointerEvent('pointerdown', 25, 2));
+    await flushMicrotasks();
+    mounted.track.dispatchEvent(pointerEvent('pointermove', 95, 2));
+
+    expect(tooltipText(mounted.root)).toBe('2026-09-04');
+    expect(
+      mounted.root.querySelector<HTMLElement>('.abyss-project-timeline-cursor')?.style.left,
+    ).toBe('calc(40% - 1px)');
+    expect(rangeLeft(mounted.bar)).toBe('30%');
+    expect(mounted.bar.style.width).toBe('10%');
+  });
+
+  it.each([
+    {
+      label: 'End before its Start',
+      range: { kind: 'open-end', startDay: '2026-09-05' },
+      clientX: 12,
+      cursorLeft: '40%',
+    },
+    {
+      label: 'Start after its End',
+      range: { kind: 'open-start', endDay: '2026-09-05' },
+      clientX: 88,
+      cursorLeft: 'calc(50% - 1px)',
+    },
+  ] as const)(
+    'marks the written day when a track press would set $label',
+    async ({ range, clientX, cursorLeft }) => {
+      const mounted = mount(range);
+
+      mounted.track.dispatchEvent(pointerEvent('pointerdown', clientX));
+      await flushMicrotasks();
+
+      expect(tooltipText(mounted.root)).toBe('2026-09-05');
+      expect(
+        mounted.root.querySelector<HTMLElement>('.abyss-project-timeline-cursor')?.style.left,
+      ).toBe(cursorLeft);
+    },
+  );
 
   it('leaves nested track controls to their existing click workflow', async () => {
     const mounted = mount({ kind: 'open-end', startDay: '2026-09-02' });
@@ -907,7 +1042,7 @@ describe('ProjectTimelinePointerInteraction', () => {
     mounted.track.dispatchEvent(pointerEvent(type, 45));
 
     expect(mounted.bar.classList).not.toContain('is-previewing');
-    expect(mounted.bar.style.left).toBe('');
+    expect(rangeLeft(mounted.bar)).toBe('');
     expect(mounted.commitRangeEdit).not.toHaveBeenCalled();
     mounted.interaction.destroy();
   });
