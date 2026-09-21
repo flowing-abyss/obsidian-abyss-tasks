@@ -22,7 +22,17 @@ afterEach(() => {
   rmSync(fixtureDirectory, { recursive: true, force: true });
 });
 
-function runScript(scriptPath: string, env = process.env): SpawnSyncReturns<string> {
+// A tag-triggered workflow exports its own ref, which the checker compares with the fixture manifest.
+function withoutAmbientReleaseRef(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(env).filter(([key]) => key !== 'GITHUB_REF_TYPE' && key !== 'GITHUB_REF_NAME'),
+  );
+}
+
+function runScript(
+  scriptPath: string,
+  env = withoutAmbientReleaseRef(process.env),
+): SpawnSyncReturns<string> {
   return spawnSync(process.execPath, [scriptPath], {
     cwd: fixtureDirectory,
     encoding: 'utf8',
@@ -215,6 +225,42 @@ describe('release stylesheet checker', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('release:check passed.');
     expect(result.stderr).toBe('');
+  });
+});
+
+describe('release tag checker', () => {
+  function writeAcceptedFixture(): void {
+    writeCheckerFixture(128);
+    mkdirSync(path.join(fixtureDirectory, 'dist'));
+    writeFileSync(path.join(fixtureDirectory, 'dist/styles.css'), '.a{}\n');
+  }
+
+  function releaseRef(tag: string): NodeJS.ProcessEnv {
+    return {
+      ...withoutAmbientReleaseRef(process.env),
+      GITHUB_REF_TYPE: 'tag',
+      GITHUB_REF_NAME: tag,
+    };
+  }
+
+  it('rejects a release tag that differs from the manifest version', () => {
+    writeAcceptedFixture();
+
+    const result = runScript(CHECKER_PATH, releaseRef('2.0.0'));
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      'Release tag "2.0.0" must equal manifest.json version "1.0.0".',
+    );
+  });
+
+  it('accepts a release tag that equals the manifest version', () => {
+    writeAcceptedFixture();
+
+    const result = runScript(CHECKER_PATH, releaseRef('1.0.0'));
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('release:check passed.');
   });
 });
 
