@@ -175,6 +175,33 @@ describe('CenterPanel task metadata styles', () => {
     expect(declarationsFor('body.is-phone .abyss-panel-view .abyss-cal-nav-today')).toBe('');
   });
 
+  it('dresses standalone phone controls as switcher cells', () => {
+    const family =
+      'body.is-phone .abyss-panel-view :is(.abyss-view-state-btn, button.abyss-compact-pane-button)';
+    const today = 'body.is-phone .abyss-cal-nav .abyss-cal-nav-today';
+    for (const selector of [family, today]) {
+      const rule = declarationsFor(selector);
+      expect(rule, selector).toContain('border: 0');
+      expect(rule, selector).toContain('border-radius: 8px');
+      expect(rule, selector).toContain('background: var(--background-modifier-border)');
+      expect(rule, selector).not.toContain('color:');
+      expect(declarationsFor(`${selector}:hover`), selector).toContain(
+        'background: var(--background-modifier-hover)',
+      );
+    }
+    expect(declarationsFor('body.is-phone .abyss-panel-view .abyss-center-search')).toContain(
+      'border-radius: 8px',
+    );
+    // The tray the family copies (its :is() list is expanded for these assertions).
+    expect(declarationsFor('.abyss-cal-view-switcher')).toContain('border-radius: 8px');
+    // The date group stays flat whatever the host paints on plain buttons.
+    for (const control of ['.abyss-cal-nav-btn', '.abyss-cal-nav-month', '.abyss-cal-nav-year']) {
+      const flat = declarationsFor(`body.is-phone .abyss-cal-nav ${control}`);
+      expect(flat, control).toContain('background: transparent');
+      expect(flat, control).toContain('box-shadow: none');
+    }
+  });
+
   it('reserves the phone navigation inset from the host variable', () => {
     expect(declarationsFor('.abyss-panel-view')).toContain('--abyss-shell-bottom-inset: 0px');
     expect(declarationsFor('body.is-phone .abyss-panel-view')).toContain(

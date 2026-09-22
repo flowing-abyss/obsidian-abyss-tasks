@@ -8731,6 +8731,37 @@ body.is-phone .abyss-cal-nav .abyss-cal-view-btn {
   flex: 1 1 0;
 }
 
+/* Every standalone phone control is a cell of the same family as the view switcher: the tray
+   background, the tray radius and the shared control size. Colors stay with each control so the
+   active sort accent and each hover color keep working. */
+body.is-phone .abyss-panel-view :is(.abyss-view-state-btn, button.abyss-compact-pane-button),
+body.is-phone .abyss-cal-nav .abyss-cal-nav-today {
+  border: 0;
+  border-radius: 8px;
+  background: var(--background-modifier-border);
+  box-shadow: none;
+}
+
+body.is-phone .abyss-panel-view :is(.abyss-view-state-btn, button.abyss-compact-pane-button):hover,
+body.is-phone .abyss-cal-nav .abyss-cal-nav-today:hover {
+  background: var(--background-modifier-hover);
+}
+
+body.is-phone .abyss-cal-nav .abyss-cal-nav-today {
+  padding: 0 var(--size-4-3);
+}
+
+/* The date is the toolbar's heading. Its buttons stay flat on the phone whatever the host paints
+   on plain buttons, so only the actions (Today and the switcher) read as cells. */
+body.is-phone .abyss-cal-nav :is(.abyss-cal-nav-btn, .abyss-cal-nav-month, .abyss-cal-nav-year) {
+  background: transparent;
+  box-shadow: none;
+}
+
+body.is-phone .abyss-panel-view .abyss-center-search {
+  border-radius: 8px;
+}
+
 /* Obsidian's floating navigation covers the bottom of the view on phones. Each pane reserves the
    same inset Obsidian gives its own views, so "Add task" and the settings button stay reachable. */
 body.is-phone .abyss-panel-view {
