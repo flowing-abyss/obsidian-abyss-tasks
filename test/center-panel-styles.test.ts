@@ -200,6 +200,21 @@ describe('CenterPanel task metadata styles', () => {
       expect(flat, control).toContain('background: transparent');
       expect(flat, control).toContain('box-shadow: none');
     }
+    // The search field takes the tray fill too, so light theme does not paint it lighter than the
+    // cells beside it; focus keeps its accent edge.
+    const search = declarationsFor('body.is-phone .abyss-panel-view .abyss-center-search');
+    expect(search).toContain('background: var(--background-modifier-border)');
+    expect(search).toContain('border-color: var(--background-modifier-border)');
+    expect(declarationsFor('body.is-phone .abyss-panel-view .abyss-center-search:focus')).toContain(
+      'border-color: var(--interactive-accent)',
+    );
+    // The calendar toolbar sits on the same inset as the other phone toolbars.
+    expect(declarationsFor('body.is-phone .abyss-cal-nav')).toContain(
+      'padding: var(--size-4-3) var(--size-4-4)',
+    );
+    expect(declarationsFor('.abyss-center-header')).toContain(
+      'padding: var(--size-4-3) var(--size-4-4)',
+    );
   });
 
   it('paints the picker options as switcher cells on every platform', () => {

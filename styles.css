@@ -8716,6 +8716,9 @@ body.is-phone .abyss-cal-nav {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   overflow: visible;
+
+  /* The same inset as the other phone toolbars, so the controls do not jump between modes. */
+  padding: var(--size-4-3) var(--size-4-4);
 }
 
 body.is-phone .abyss-cal-nav-right {
@@ -8763,8 +8766,16 @@ body.is-phone .abyss-cal-nav :is(.abyss-cal-nav-btn, .abyss-cal-nav-month, .abys
   box-shadow: none;
 }
 
+/* The search field is a cell of the family too: the tray fill in both themes, an edge only when
+   focused. */
 body.is-phone .abyss-panel-view .abyss-center-search {
   border-radius: 8px;
+  border-color: var(--background-modifier-border);
+  background: var(--background-modifier-border);
+}
+
+body.is-phone .abyss-panel-view .abyss-center-search:focus {
+  border-color: var(--interactive-accent);
 }
 
 /* Obsidian's floating navigation covers the bottom of the view on phones. Each pane reserves the
