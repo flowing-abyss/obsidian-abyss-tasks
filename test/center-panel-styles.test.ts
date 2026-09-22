@@ -104,6 +104,40 @@ describe('CenterPanel task metadata styles', () => {
     expect(metadata).toContain('min-width: auto');
   });
 
+  it('sizes every toolbar control from one host-derived token', () => {
+    expect(declarationsFor('.abyss-panel-view')).toContain(
+      '--abyss-toolbar-control-size: var(--input-height)',
+    );
+    const token = 'var(--abyss-toolbar-control-size)';
+    for (const selector of [
+      'button.abyss-compact-pane-button',
+      '.abyss-view-state-btn',
+      '.abyss-center-search',
+      '.abyss-cal-nav-btn',
+      '.abyss-cal-nav-today',
+      '.abyss-cal-nav-month',
+      '.abyss-cal-nav-year',
+      '.abyss-cal-view-switcher',
+      '.abyss-project-overview-switcher',
+      'button.abyss-cal-view-btn',
+      'button.abyss-project-overview-mode',
+      '.abyss-project-table-controls .abyss-view-state-btn',
+      '.abyss-projects-table button.abyss-project-overview-mode',
+    ]) {
+      expect(declarationsFor(selector), selector).toContain(token);
+    }
+    for (const selector of [
+      '.abyss-center-search',
+      '.abyss-project-table-controls .abyss-center-search',
+      '.abyss-project-table-controls .abyss-view-state-btn',
+      '.abyss-projects-table button.abyss-project-overview-mode',
+      '.abyss-cal-nav-btn',
+      'button.abyss-compact-pane-button',
+    ]) {
+      expect(declarationsFor(selector), selector).not.toMatch(/(?:block-size|height): \d+px/);
+    }
+  });
+
   it('keeps a usable title track under the observed 292px center metadata pressure', () => {
     const center = declarationsFor('.abyss-center');
     const compact = atRuleBlock('@container abyss-task-list (max-width: 28rem)');

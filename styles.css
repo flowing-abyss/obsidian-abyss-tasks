@@ -4,6 +4,9 @@
 .abyss-panel-view {
   --abyss-shell-top-inset: calc(clamp(3px, 0.4vw, 5px) - 2px);
   --abyss-center-toolbar-height: 60px;
+
+  /* One size for every toolbar button and input; Obsidian grows it to the touch size on mobile. */
+  --abyss-toolbar-control-size: var(--input-height);
   --abyss-priority-a: var(--color-red);
   --abyss-priority-b: var(--color-orange);
   --abyss-priority-c: var(--color-yellow);
@@ -283,9 +286,9 @@
 
 button.abyss-compact-pane-button {
   display: none;
-  flex: 0 0 32px;
-  inline-size: 32px;
-  block-size: 32px;
+  flex: 0 0 var(--abyss-toolbar-control-size);
+  inline-size: var(--abyss-toolbar-control-size);
+  block-size: var(--abyss-toolbar-control-size);
   align-items: center;
   justify-content: center;
   padding: 0;
@@ -2136,7 +2139,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-center-search {
-  height: 28px;
+  height: var(--abyss-toolbar-control-size);
   border-radius: 6px;
   border: 1px solid var(--background-modifier-border);
   background: var(--background-secondary);
@@ -3016,15 +3019,15 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   position: relative;
 }
 
-.abyss-cal-nav-month,
-.abyss-cal-nav-year {
+:is(.abyss-cal-nav-month, .abyss-cal-nav-year) {
   background: transparent;
   border: none;
   color: var(--text-normal);
   font-size: var(--font-ui-medium);
   font-weight: 600;
   cursor: pointer;
-  padding: var(--size-2-1) var(--size-4-1);
+  padding: 0 var(--size-4-1);
+  block-size: var(--abyss-toolbar-control-size);
   border-radius: 4px;
   transition: background 0.1s;
 }
@@ -3039,8 +3042,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   padding: 0;
   cursor: pointer;
   color: var(--icon-color);
-  width: 28px;
-  height: 28px;
+  width: var(--abyss-toolbar-control-size);
+  height: var(--abyss-toolbar-control-size);
   border-radius: 4px;
   display: flex;
   align-items: center;
@@ -3057,7 +3060,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-cal-nav-today {
-  padding: var(--size-4-1) 10px;
+  padding: 0 10px;
+  block-size: var(--abyss-toolbar-control-size);
   border-radius: 6px;
   border: none;
   background: transparent;
@@ -3076,6 +3080,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 :is(.abyss-cal-view-switcher, .abyss-project-overview-switcher) {
   display: flex;
+  box-sizing: border-box;
+  block-size: var(--abyss-toolbar-control-size);
   gap: var(--size-2-1);
   background: var(--background-modifier-border);
   border-radius: 8px;
@@ -3083,7 +3089,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 :is(button.abyss-cal-view-btn, button.abyss-project-overview-mode) {
-  padding: var(--size-4-1) 10px;
+  padding: 0 10px;
+  block-size: calc(var(--abyss-toolbar-control-size) - 2 * var(--size-2-1));
   border-radius: 6px;
   border: none;
   background: transparent;
@@ -5256,7 +5263,9 @@ body.abyss-modal-open .popover.hover-popover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: var(--size-4-1) var(--size-2-3);
+  inline-size: var(--abyss-toolbar-control-size);
+  block-size: var(--abyss-toolbar-control-size);
+  padding: 0;
   border-radius: 6px;
   background: none;
   border: none;
@@ -5691,15 +5700,12 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-project-table-controls .abyss-center-search {
   width: min(160px, 24vw);
   min-width: 92px;
-  height: 30px;
   border-radius: 8px;
 }
 
 .abyss-project-table-controls .abyss-view-state-btn {
-  width: 30px;
-  height: 30px;
-  min-width: 30px;
-  padding: 5px;
+  min-width: var(--abyss-toolbar-control-size);
+  padding: 0;
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
   background: var(--interactive-normal);
@@ -5708,10 +5714,9 @@ body.abyss-modal-open .popover.hover-popover {
 }
 
 .abyss-projects-table button.abyss-project-overview-mode {
-  width: 30px;
-  height: 30px;
-  min-width: 30px;
-  padding: 5px;
+  inline-size: calc(var(--abyss-toolbar-control-size) - 2 * var(--size-2-1));
+  min-width: 0;
+  padding: 0;
 }
 
 .abyss-project-table-controls
