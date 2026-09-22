@@ -2424,7 +2424,7 @@ export class CenterPanel {
 
     const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
     this.renderTaskStatus_abyssPrivate(mainRow, task);
-    this.renderTaskCardBody_abyssPrivate(mainRow, card, task);
+    this.renderTaskCardBody_abyssPrivate(mainRow, task);
     this.renderTaskCardMetadata_abyssPrivate(mainRow, task, tagGroups);
     this.mountTaskCardInteractions_abyssPrivate(card, task);
     this.syncTaskDeleteButton_abyssPrivate(
@@ -2468,11 +2468,7 @@ export class CenterPanel {
     return target === undefined ? undefined : this.tasks_abyssPrivate?.queries.dependencies(target);
   };
 
-  private renderTaskCardBody_abyssPrivate(
-    mainRow: HTMLElement,
-    card: HTMLElement,
-    task: TaskSnapshot,
-  ): void {
+  private renderTaskCardBody_abyssPrivate(mainRow: HTMLElement, task: TaskSnapshot): void {
     const body = mainRow.createDiv({ cls: 'abyss-task-body' });
     const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
     const recurrence = task.recurrence;
@@ -2489,7 +2485,7 @@ export class CenterPanel {
         this.editTaskLink_abyssPrivate(task, occurrence, token);
       },
     });
-    this.renderTaskDescription_abyssPrivate(card, task);
+    this.renderTaskDescription_abyssPrivate(body, task);
   }
 
   private renderTaskCountBadges_abyssPrivate(titleRow: HTMLElement, task: TaskSnapshot): void {
@@ -2586,10 +2582,10 @@ export class CenterPanel {
     }
   }
 
-  private renderTaskDescription_abyssPrivate(card: HTMLElement, task: TaskSnapshot): void {
+  private renderTaskDescription_abyssPrivate(host: HTMLElement, task: TaskSnapshot): void {
     const description = task.description;
     if (description === undefined || description === '') return;
-    const descriptionElement = card.createDiv({ cls: 'abyss-task-desc' });
+    const descriptionElement = host.createDiv({ cls: 'abyss-task-desc' });
     renderTaskText(descriptionElement, description.split('\n')[0] ?? '', {
       app: this.app_abyssPrivate,
       sourcePath: task.source.filePath,

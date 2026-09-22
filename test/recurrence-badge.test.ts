@@ -69,7 +69,7 @@ describe('renderRecurrenceBadge', () => {
 
   it('keeps valid, invalid, and forecast states on one tokenized fixed geometry without opacity', () => {
     const css = styles();
-    const base = /\.abyss-recurrence-badge\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
+    const base = /^\.abyss-recurrence-badge\s*\{([^}]*)\}/mu.exec(css)?.[1] ?? '';
     const icon = /\.abyss-recurrence-badge-icon\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
     const invalid =
       /\.abyss-recurrence-badge\[data-recurrence-validity='invalid'\]\s*\{([^}]*)\}/u.exec(

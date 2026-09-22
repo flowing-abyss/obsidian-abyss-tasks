@@ -32,36 +32,76 @@ describe('CenterPanel task metadata styles', () => {
     expect(focusVisible).toContain('outline-offset: -1px');
   });
 
-  it('uses one centered primary-row contract without compensating offsets', () => {
+  it('seats markers, badges and chips on the first title line', () => {
     const card = declarationsFor('.abyss-task-card');
     const mainRow = declarationsFor('.abyss-task-card-main-row');
-    const titleRow = declarationsFor('.abyss-task-title-row');
-    const metadata = declarationsFor('.abyss-task-meta-right');
+    const firstLine = [
+      '.abyss-status-marker',
+      '.abyss-status-control',
+      '.abyss-dep-indicator',
+      '.abyss-task-delete-btn',
+    ].map((child) => declarationsFor(`.abyss-task-card-main-row > ${child}`));
+    const titleRow = declarationsFor('.abyss-task-card .abyss-task-title-row');
+    const recurrenceBadge = declarationsFor(
+      '.abyss-task-card .abyss-task-title-row > .abyss-recurrence-badge',
+    );
+    const countBadge = declarationsFor(
+      '.abyss-task-card .abyss-task-title-row > .abyss-task-count-badge',
+    );
+    const title = declarationsFor('.abyss-task-card .abyss-task-title');
+    const chips = declarationsFor('.abyss-task-card .abyss-task-meta-right > *');
     const deleteButton = declarationsFor('.abyss-task-delete-btn');
 
     expect(card).toContain('flex-direction: column');
     expect(card).toContain('min-width: 0');
+    expect(card).toContain(
+      '--abyss-task-card-title-line: calc(var(--font-ui-medium) * var(--line-height-tight))',
+    );
     expect(mainRow).toContain('display: flex');
-    expect(mainRow).toContain('align-items: center');
+    expect(mainRow).toContain('align-items: flex-start');
     expect(mainRow).toContain('width: 100%');
     expect(mainRow).toContain('min-width: 0');
-    expect(titleRow).toContain('align-items: center');
-    expect(metadata).not.toContain('padding-top');
+    for (const child of firstLine) {
+      expect(child).toContain('margin-block-start: calc(');
+      expect(child).toContain('var(--abyss-task-card-title-line)');
+    }
+    expect(titleRow).toContain('display: block');
+    for (const badge of [recurrenceBadge, countBadge]) {
+      expect(badge).toContain('vertical-align: top');
+      expect(badge).toContain('margin-inline-end: var(--size-2-3)');
+    }
+    expect(countBadge).toContain('block-size: var(--abyss-task-card-title-line)');
+    expect(title).toContain('display: inline');
+    expect(chips).toContain('block-size: var(--abyss-task-card-title-line)');
     expect(deleteButton).not.toContain('align-self');
     expect(deleteButton).toContain('height: var(--abyss-task-card-marker-size)');
   });
 
-  it('keeps descriptions title-aligned while narrow primary rows contain their content', () => {
-    const description = declarationsFor('.abyss-task-card > .abyss-task-desc');
+  it('lets the title and the metadata column split the row by natural width', () => {
+    const body = declarationsFor('.abyss-task-body');
+    const metadata = declarationsFor('.abyss-task-meta-right');
+    const noteName = declarationsFor('.abyss-task-source-note-name');
+    const tag = declarationsFor('.abyss-task-tag');
+
+    expect(body).toContain('flex: 1 1 auto');
+    expect(metadata).toContain('flex: 0 1 auto');
+    expect(metadata).toContain('flex-wrap: wrap');
+    expect(metadata).toContain('place-content: flex-start flex-end');
+    expect(metadata).not.toContain('overflow: hidden');
+    expect(metadata).not.toContain('padding-top');
+    expect(noteName).toContain('max-width: 12rem');
+    expect(tag).toContain('max-width: 12rem');
+  });
+
+  it('keeps the description inside the title column without widening it', () => {
+    const description = declarationsFor('.abyss-task-body > .abyss-task-desc');
     const body = declarationsFor('.abyss-task-body');
     const metadata = declarationsFor('.abyss-task-meta-right');
 
-    expect(description).toContain('margin-inline-start:');
-    expect(description).toContain('var(--abyss-task-card-marker-size)');
-    expect(description).toContain('var(--abyss-task-card-primary-gap)');
+    expect(declarationsFor('.abyss-task-card > .abyss-task-desc')).toBe('');
+    expect(description).toContain('contain: inline-size');
     expect(body).toContain('min-width: 0');
-    expect(metadata).toContain('min-width: 0');
-    expect(metadata).toContain('overflow: hidden');
+    expect(metadata).toContain('min-width: auto');
   });
 
   it('keeps a usable title track under the observed 292px center metadata pressure', () => {

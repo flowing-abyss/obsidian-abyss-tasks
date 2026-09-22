@@ -320,9 +320,11 @@ describe('CenterPanel task-card primary row', () => {
       );
       expect(recurrence.nextElementSibling?.classList.contains('abyss-task-title')).toBe(true);
 
+      const body = expectDefined(mainRow.querySelector<HTMLElement>('.abyss-task-body'));
       const description = expectDefined(card.querySelector<HTMLElement>('.abyss-task-desc'));
-      expect(description.parentElement).toBe(card);
-      expect(description.previousElementSibling).toBe(mainRow);
+      expect(description.parentElement).toBe(body);
+      expect(description.previousElementSibling).toBe(titleRow);
+      expect(card.querySelector(':scope > .abyss-task-desc')).toBeNull();
 
       card.click();
       expect(state.get('taskStack')).toEqual([snapshot]);
@@ -393,7 +395,7 @@ describe('CenterPanel task-card primary row', () => {
       const body = expectDefined(mainRow.querySelector<HTMLElement>('.abyss-task-body'));
       expect(body.querySelector('.abyss-task-title')).not.toBeNull();
       expect(mainRow.querySelector('.abyss-task-meta-right')).not.toBeNull();
-      expect(panel['el'].querySelector('.abyss-task-card > .abyss-task-desc')).toBeNull();
+      expect(panel['el'].querySelector('.abyss-task-desc')).toBeNull();
     } finally {
       panel.destroy();
     }

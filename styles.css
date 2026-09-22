@@ -2205,6 +2205,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-task-card {
   --abyss-task-card-marker-size: 19px;
   --abyss-task-card-primary-gap: 8px;
+  --abyss-task-card-title-line: calc(var(--font-ui-medium) * var(--line-height-tight));
 
   display: flex;
   flex-direction: column;
@@ -2220,10 +2221,23 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-task-card-main-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--abyss-task-card-primary-gap);
   width: 100%;
   min-width: 0;
+}
+
+/* Everything that is not the title or the metadata column sits on the title's first line: the
+   card reads as one line at the top however far the title or the chips wrap below it. */
+.abyss-task-card-main-row
+  > :is(.abyss-status-marker, .abyss-status-control, .abyss-dep-indicator, .abyss-task-delete-btn) {
+  margin-block-start: calc(
+    (var(--abyss-task-card-title-line) - var(--abyss-task-card-marker-size)) / 2
+  );
+}
+
+.abyss-task-card-main-row > .abyss-dep-indicator {
+  min-height: var(--abyss-task-card-marker-size);
 }
 
 .abyss-task-card-main-row > .abyss-status-marker,
@@ -2390,8 +2404,11 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   color: var(--abyss-priority-f, var(--color-purple));
 }
 
+/* Title and metadata split the row by their natural widths. When both do not fit, each yields in
+   proportion to what it asked for, so a long title keeps most of the row and a long chip list
+   wraps inside its own column instead of squeezing the title into a few characters. */
 .abyss-task-body {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -2410,6 +2427,32 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   color: var(--text-normal);
 }
 
+/* The title row is text. Badges are inline boxes at the head of the first line, so a wrapped
+   title returns to the column's left edge under them, level with the description. */
+.abyss-task-card .abyss-task-title-row {
+  display: block;
+}
+
+.abyss-task-card .abyss-task-title-row > :is(.abyss-task-count-badge, .abyss-recurrence-badge) {
+  vertical-align: top;
+  margin-inline-end: var(--size-2-3);
+}
+
+/* A count badge is exactly one title line tall, so it sits on that line without growing it. */
+.abyss-task-card .abyss-task-title-row > .abyss-task-count-badge {
+  block-size: var(--abyss-task-card-title-line);
+}
+
+.abyss-task-card .abyss-task-title-row > .abyss-recurrence-badge {
+  margin-block-start: calc(
+    (var(--abyss-task-card-title-line) - var(--abyss-recurrence-badge-height)) / 2
+  );
+}
+
+.abyss-task-card .abyss-task-title {
+  display: inline;
+}
+
 .abyss-task-meta {
   display: flex;
   flex-direction: column;
@@ -2426,21 +2469,28 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   white-space: nowrap;
 }
 
-.abyss-task-card > .abyss-task-desc {
-  margin-top: 0;
-  margin-inline-start: calc(
-    var(--abyss-task-card-marker-size) + var(--abyss-task-card-primary-gap)
-  );
+/* The description belongs to the title column. Inline-size containment keeps its length out of
+   the title/metadata split, so a long note never squeezes the chips. */
+.abyss-task-body > .abyss-task-desc {
+  contain: inline-size;
 }
 
+/* The metadata column keeps the right edge. Its chips wrap onto further lines that follow the
+   title's line grid, and the column never drops below its widest chip, so a chip is never cut by
+   the column itself. */
 .abyss-task-meta-right {
-  flex-shrink: 1;
-  min-width: 0;
+  flex: 0 1 auto;
+  min-width: auto;
+  max-width: 100%;
   display: flex;
+  flex-wrap: wrap;
+  place-content: flex-start flex-end;
   align-items: center;
-  gap: var(--size-4-1);
-  flex-wrap: nowrap;
-  overflow: hidden;
+  gap: 0 var(--size-4-1);
+}
+
+.abyss-task-card .abyss-task-meta-right > * {
+  block-size: var(--abyss-task-card-title-line);
 }
 
 .abyss-task-date {
@@ -2491,6 +2541,10 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-task-tag {
   font-size: 11px;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--abyss-tag-color, var(--text-faint));
   background: transparent;
   border: none;
@@ -2518,6 +2572,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: inline-flex;
   align-items: center;
   gap: var(--size-2-1);
+  white-space: nowrap;
   opacity: 0.8;
   cursor: default;
   pointer-events: none;
@@ -2534,7 +2589,11 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   height: 11px;
 }
 
+/* A long note name is capped so it cannot claim the whole row; the inspector shows it in full. */
 .abyss-task-source-note-name {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
   text-decoration: underline;
   text-decoration-color: var(--text-faint);
   text-decoration-thickness: 1px;
