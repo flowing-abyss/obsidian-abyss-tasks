@@ -3138,8 +3138,9 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   min-width: 160px;
 }
 
-/* Picker options are cells of the switcher family: the tray fill on every platform and theme, so
-   they never depend on what the host paints on a plain button (nothing, on the phone). */
+/* Picker options are cells of the switcher family: the tray fill on every platform and theme. The
+   `button.` prefix outranks Obsidian's `button:not(.clickable-icon)` rule, which paints its own
+   fill on desktop and nothing on the phone. */
 .abyss-month-picker button.abyss-month-picker-btn,
 .abyss-year-picker button.abyss-year-picker-btn {
   padding: var(--size-2-3) var(--size-4-1);
@@ -8716,9 +8717,13 @@ body.is-phone .abyss-cal-nav {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   overflow: visible;
-
-  /* The same inset as the other phone toolbars, so the controls do not jump between modes. */
   padding: var(--size-4-3) var(--size-4-4);
+}
+
+/* The same top inset as the tasks header, so the controls do not jump between modes. This outranks
+   the desktop calendar rule above that keeps its toolbar one step shorter. */
+body.is-phone .abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav {
+  padding-top: calc(var(--size-4-3) + min(var(--abyss-shell-top-inset), 5px));
 }
 
 body.is-phone .abyss-cal-nav-right {
@@ -8760,7 +8765,8 @@ body.is-phone .abyss-cal-nav .abyss-cal-nav-today {
 }
 
 /* The date is the toolbar's heading. Its buttons stay flat on the phone whatever the host paints
-   on plain buttons, so only the actions (Today and the switcher) read as cells. */
+   on plain buttons, so only the actions (Today and the switcher) read as cells. The hover fill
+   goes with the rest; there is no hover on touch. */
 body.is-phone .abyss-cal-nav :is(.abyss-cal-nav-btn, .abyss-cal-nav-month, .abyss-cal-nav-year) {
   background: transparent;
   box-shadow: none;

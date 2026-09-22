@@ -213,13 +213,25 @@ describe('CenterPanel task metadata styles', () => {
     expect(declarationsFor('body.is-phone .abyss-panel-view .abyss-center-search:focus')).toContain(
       'border-color: var(--interactive-accent)',
     );
-    // The calendar toolbar sits on the same inset as the other phone toolbars.
+    // The calendar toolbar sits on the same inset as the other phone toolbars, including the top
+    // inset the desktop calendar rule would otherwise shorten.
     expect(declarationsFor('body.is-phone .abyss-cal-nav')).toContain(
       'padding: var(--size-4-3) var(--size-4-4)',
     );
     expect(declarationsFor('.abyss-center-header')).toContain(
       'padding: var(--size-4-3) var(--size-4-4)',
     );
+    const topInset = 'padding-top: calc(var(--size-4-3) + min(var(--abyss-shell-top-inset), 5px))';
+    expect(
+      declarationsFor(
+        'body.is-phone .abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav',
+      ),
+    ).toContain(topInset);
+    expect(
+      declarationsFor(
+        '.abyss-layout--tasks > .abyss-center-shell > .abyss-center > .abyss-center-header',
+      ),
+    ).toContain(topInset);
   });
 
   it('paints the picker options as switcher cells on every platform', () => {
