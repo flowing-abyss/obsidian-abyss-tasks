@@ -37,28 +37,35 @@ describe('CenterPanel task metadata styles', () => {
     const mainRow = declarationsFor('.abyss-task-card-main-row');
     const marker = declarationsFor('.abyss-task-card-main-row .abyss-status-marker');
     const strut = declarationsFor('.abyss-task-card-main-row .abyss-status-marker::before');
-    const hanging = ['.abyss-status-marker', '.abyss-status-control'].map((child) =>
-      declarationsFor(`.abyss-task-card-main-row > ${child}`),
-    );
-    const lineBoxed = ['.abyss-task-meta-right', '.abyss-task-delete-btn'].map((child) =>
-      declarationsFor(`.abyss-task-card-main-row > ${child}`),
-    );
+    const hanging = [
+      '.abyss-status-marker',
+      '.abyss-status-control',
+      '.abyss-dep-indicator',
+      '.abyss-task-delete-btn',
+    ].map((child) => declarationsFor(`.abyss-task-card-main-row > ${child}`));
+    const metadata = declarationsFor('.abyss-task-card-main-row > .abyss-task-meta-right');
     const dependency = declarationsFor('.abyss-task-card-main-row > .abyss-dep-indicator');
-    const rowDeleteButton = declarationsFor('.abyss-task-card-main-row > .abyss-task-delete-btn');
+    const deleteStrut = declarationsFor(
+      '.abyss-task-card-main-row > .abyss-task-delete-btn::before',
+    );
+    const compact = atRuleBlock('@container abyss-task-list (max-width: 28rem)');
     const titleRow = declarationsFor('.abyss-task-title-row');
     const recurrenceBadge = declarationsFor('.abyss-task-title-row > .abyss-recurrence-badge');
     const countBadge = declarationsFor('.abyss-task-title-row > .abyss-task-count-badge');
     const title = declarationsFor('.abyss-task-title');
     const chips = declarationsFor('.abyss-task-card .abyss-task-meta-right > *');
     const deleteButton = declarationsFor('.abyss-task-delete-btn');
-    const flat = (declarations: string): string => declarations.replace(/\s+/g, ' ');
+    const flat = (declarations: string): string => declarations.replace(/\s+/g, '');
 
     expect(card).toContain('flex-direction: column');
     expect(card).toContain('min-width: 0');
     expect(card).toContain(
       '--abyss-task-card-title-line: calc(var(--font-ui-medium) * var(--line-height-tight))',
     );
-    expect(card).toContain('--abyss-task-card-cap-half: calc(var(--font-ui-medium) * 0.35)');
+    expect(card).toContain('--abyss-task-card-cap-ratio: 0.36');
+    expect(card).toContain(
+      '--abyss-task-card-cap-half: calc(var(--font-ui-medium) * var(--abyss-task-card-cap-ratio))',
+    );
     expect(mainRow).toContain('display: flex');
     // The glyphs' place inside a line box depends on the font's ascent and descent, which the
     // phone's system font makes a pixel or two taller; the baseline is where the glyphs are.
@@ -69,6 +76,8 @@ describe('CenterPanel task metadata styles', () => {
     // The marker has no baseline of its own, so a zero-width strut a cap height tall, centred in
     // the marker, ends half a cap height below the centre: baseline alignment then centres the
     // marker on the title's caps. The strut is the first grid item, and the columns stay centred.
+    expect(declarationsFor('.abyss-status-marker')).toContain('display: grid');
+    expect(declarationsFor('.abyss-status-marker')).toContain('place-items: center');
     expect(marker).toContain('grid-auto-flow: column');
     expect(marker).toContain('justify-content: center');
     expect(strut).toContain("content: ''");
@@ -77,10 +86,14 @@ describe('CenterPanel task metadata styles', () => {
     expect(strut).toContain('align-self: center');
     for (const child of hanging) {
       expect(child).not.toContain('margin-block-start');
+      expect(child).not.toContain('align-self');
       expect(child).toContain('margin-block-end: -2px');
     }
-    expect(dependency).not.toContain('margin-block-start');
     expect(dependency).toContain('min-height: var(--abyss-task-card-marker-size)');
+    // The delete button is a flex box around its icon, so it gets the same strut as the lock.
+    expect(deleteStrut).toContain("content: ''");
+    expect(deleteStrut).toContain('inline-size: 0');
+    expect(deleteStrut).toContain('block-size: calc(2 * var(--abyss-task-card-cap-half))');
     // The indicator's lock is an inline-flex box around the icon, so its baseline would be the
     // icon's bottom edge; the same strut centres the icon on the caps.
     const lock = declarationsFor(
@@ -93,10 +106,17 @@ describe('CenterPanel task metadata styles', () => {
     expect(lockStrut).toContain("content: ''");
     expect(lockStrut).toContain('inline-size: 0');
     expect(lockStrut).toContain('block-size: calc(2 * var(--abyss-task-card-cap-half))');
-    // Chips and the delete button are boxes, not glyphs; they keep the line box.
-    for (const child of lineBoxed) expect(child).toContain('align-self: flex-start');
-    expect(rowDeleteButton).toContain('margin-block-start: calc(');
-    expect(rowDeleteButton).toContain('var(--abyss-task-card-title-line)');
+    // Chips are boxes, not glyphs; the column keeps the line box.
+    expect(metadata).toContain('align-self: flex-start');
+    // The compact grid inherits the baseline alignment and keeps the hanging items on row 1.
+    expect(declarationsForSource(compact, '.abyss-task-card-main-row')).not.toContain(
+      'align-items',
+    );
+    for (const child of ['.abyss-status-marker', '.abyss-status-control'])
+      expect(declarationsForSource(compact, `.abyss-task-card-main-row > ${child}`)).toContain(
+        'grid-row: 1',
+      );
+    expect(declarationsForSource(compact, '.abyss-task-delete-btn')).toContain('grid-row: 1');
     // The row's first line is exactly the title line the chips centre on, whatever line height
     // the host gives the panel (the phone's is taller), so the base rule pins it.
     expect(titleRow).toContain('display: block');
@@ -111,11 +131,21 @@ describe('CenterPanel task metadata styles', () => {
       expect(badge).not.toContain('margin-block-start');
       expect(badge).not.toContain('block-size');
     }
+    // The count badge is inline text: the digits sit on its baseline, raised so their cap centre
+    // is the title's, and the icon is placed from that baseline so it centres on the digits on
+    // every font.
+    expect(countBadge).toContain('display: inline');
+    expect(countBadge).toContain('white-space: nowrap');
     expect(flat(countBadge)).toContain(
-      'vertical-align: calc( var(--abyss-task-card-cap-half) - var(--abyss-task-count-badge-icon-size) / 2 )',
+      'vertical-align:calc(var(--abyss-task-card-cap-half)-var(--abyss-task-card-cap-ratio)*1em)',
+    );
+    const countBadgeIcon = declarationsFor('.abyss-task-title-row > .abyss-task-count-badge > svg');
+    expect(countBadgeIcon).toContain('margin-inline-end: var(--size-2-1)');
+    expect(flat(countBadgeIcon)).toContain(
+      'vertical-align:calc(var(--abyss-task-card-cap-ratio)*1em-var(--abyss-task-count-badge-icon-size)/2)',
     );
     expect(flat(recurrenceBadge)).toContain(
-      'vertical-align: calc( var(--abyss-task-card-cap-half) - var(--abyss-recurrence-badge-icon-size) / 2 )',
+      'vertical-align:calc(var(--abyss-task-card-cap-half)-var(--abyss-recurrence-badge-icon-size)/2)',
     );
     expect(declarationsFor('.abyss-task-count-badge')).toContain(
       '--abyss-task-count-badge-icon-size: 11px',
