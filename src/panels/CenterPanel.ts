@@ -127,6 +127,7 @@ import {
   type CalViewType,
   type PanelNavigationActions,
 } from '../views/panelNavigation';
+import { listSelectionTitle } from '../views/panelTitle';
 import type { InteractiveSpanBoundaryTarget, SpanMoveTarget } from '../views/spanInteractions';
 import {
   groupTasksByDate,
@@ -277,10 +278,6 @@ function isRealmHTMLElement(target: EventTarget | null): target is HTMLElement {
   const ownerDocument = (target as { readonly ownerDocument?: Document }).ownerDocument;
   const realm = ownerDocument?.defaultView;
   return realm !== null && realm !== undefined && target instanceof realm.HTMLElement;
-}
-
-function projectNameFromPath(path: string): string {
-  return (path.split('/').pop() ?? path).replace(/\.md$/, '');
 }
 
 /**
@@ -4124,46 +4121,12 @@ export class CenterPanel {
   }
 
   private getTitle_abyssPrivate(): string {
-    const sel: unknown = this.state_abyssPrivate.get('selectedList');
-    if (typeof sel === 'string') {
-      const titles: Record<string, string> = {
-        inbox: 'Inbox',
-        today: 'Today',
-        upcoming: 'Upcoming',
-      };
-      return titles[sel] ?? 'Tasks';
-    }
-    if (sel == null || typeof sel !== 'object') return 'Tasks';
-    const selection = sel as {
-      readonly type?: string;
-      readonly tag?: string;
-      readonly path?: string;
-      readonly groupId?: string;
-    };
-    return this.structuredSelectionTitle_abyssPrivate(selection);
-  }
-
-  private structuredSelectionTitle_abyssPrivate(selection: {
-    readonly type?: string;
-    readonly tag?: string;
-    readonly path?: string;
-    readonly groupId?: string;
-  }): string {
-    switch (selection.type) {
-      case 'tag':
-        return selection.tag ?? 'Tasks';
-      case 'project':
-        return selection.path === undefined ? 'Tasks' : projectNameFromPath(selection.path);
-      case 'group': {
-        const group = this.effectiveTagGroups_abyssPrivate().find(
-          (candidate) => candidate.id === selection.groupId,
-        );
-        return group?.name ?? 'Group';
-      }
-      case undefined:
-      default:
-        return 'Tasks';
-    }
+    const selection = this.state_abyssPrivate.get('selectedList');
+    const groups =
+      typeof selection === 'object' && selection.type === 'group'
+        ? this.effectiveTagGroups_abyssPrivate()
+        : [];
+    return listSelectionTitle(selection, groups);
   }
 
   private formatDate_abyssPrivate(d: string): string {
