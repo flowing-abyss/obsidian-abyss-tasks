@@ -1424,7 +1424,11 @@ export class CenterPanel {
     this.calViewInstance_abyssPrivate?.destroy();
     context.viewContainer.empty();
     const { config, issues, tasks } = this.currentCalendarContent_abyssPrivate();
-    const shouldScrollToNow = this.shouldScrollCalendarToNow_abyssPrivate();
+    // A rebuilt grid with no position to restore would start at midnight, so it scrolls to now
+    // even when this (view, date) pair was visited before. Only a same-date refresh that keeps its
+    // position skips the scroll.
+    const shouldScrollToNow =
+      this.shouldScrollCalendarToNow_abyssPrivate() || preservedScrollTop === undefined;
     this.calViewInstance_abyssPrivate = this.createCalendarView_abyssPrivate(
       context.forecastMenuOwner,
       context.handlers,

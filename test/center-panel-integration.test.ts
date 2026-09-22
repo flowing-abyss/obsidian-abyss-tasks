@@ -4097,6 +4097,24 @@ describe('CenterPanel calendar mode — scroll-to-now dedup (Task 27)', () => {
     renderSpy.mockRestore();
   });
 
+  it('returning to the calendar from another mode scrolls again, since the grid was rebuilt', async () => {
+    const renderSpy = vi.spyOn(WeekTimeGridView.prototype, 'render');
+    const { el, state } = await makeReactiveCalendarPanel();
+    clickCalendarView(el, 'Week');
+    expect(lastShouldScrollToNow(renderSpy)).toBe(true);
+    const gridRowEl = el.querySelector('.abyss-tg-grid-row');
+
+    state.set('mode', 'tasks');
+    expect(el.querySelector('.abyss-tg-grid-row')).toBeNull();
+    state.set('mode', 'calendar');
+
+    const rebuilt = el.querySelector('.abyss-tg-grid-row');
+    expect(rebuilt).not.toBeNull();
+    expect(rebuilt).not.toBe(gridRowEl);
+    expect(lastShouldScrollToNow(renderSpy)).toBe(true);
+    renderSpy.mockRestore();
+  });
+
   it("Round 2 Task 16's periodic now-line interval remains registered across a query patch", async () => {
     const { el, index, tasks } = await makeReactiveCalendarPanel();
     clickCalendarView(el, 'Week');
