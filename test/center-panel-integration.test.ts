@@ -6572,3 +6572,19 @@ describe('calendar child day gestures persist on the child', () => {
     },
   );
 });
+
+describe('CenterPanel search mode — empty query hint', () => {
+  it('renders the hint with the shared center empty-state style', () => {
+    const state = new AppState();
+    state.set('mode', 'search');
+    const panel = makeStaticPanel(state, []);
+    try {
+      panel.mount(freshContainer());
+      const hint = expectDefined(panel['el'].querySelector<HTMLElement>('.abyss-center-empty'));
+      expect(hint.textContent).toBe('Type to search tasks…');
+      expect(panel['el'].querySelector('.abyss-empty-state')).toBeNull();
+    } finally {
+      panel.destroy();
+    }
+  });
+});

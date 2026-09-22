@@ -2313,7 +2313,7 @@ export class CenterPanel {
     host.toggleClass('abyss-search-empty', query.length === 0);
 
     if (query.length === 0) {
-      host.createEl('p', { cls: 'abyss-empty-state', text: 'Type to search tasks…' });
+      host.createDiv({ cls: 'abyss-center-empty', text: 'Type to search tasks…' });
       this.completeTaskCardRender_abyssPrivate();
       return;
     }
