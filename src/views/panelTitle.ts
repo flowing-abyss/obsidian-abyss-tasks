@@ -12,7 +12,10 @@ export function projectNameFromPath(path: string): string {
   return (path.split('/').pop() ?? path).replace(/\.md$/, '');
 }
 
-/** The heading of the tasks list for one selection, as the center panel and the phone header show it. */
+/**
+ * The heading of the tasks list for one selection, as the center panel and the phone header show
+ * it. Persisted state may carry a selection this build does not know; that reads as "Tasks".
+ */
 export function listSelectionTitle(
   selection: ListSelection,
   groups: readonly PanelTitleGroup[],
@@ -25,6 +28,8 @@ export function listSelectionTitle(
         return 'Today';
       case 'upcoming':
         return 'Upcoming';
+      default:
+        return 'Tasks';
     }
   }
   switch (selection.type) {
@@ -34,6 +39,8 @@ export function listSelectionTitle(
       return projectNameFromPath(selection.path);
     case 'group':
       return groups.find((group) => group.id === selection.groupId)?.name ?? 'Group';
+    default:
+      return 'Tasks';
   }
 }
 

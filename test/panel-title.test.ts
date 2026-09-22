@@ -19,6 +19,16 @@ describe('panelTitle', () => {
     );
   });
 
+  it('reads selections this build does not know as Tasks', () => {
+    expect(listSelectionTitle('archive' as unknown as 'inbox', groups)).toBe('Tasks');
+    expect(
+      listSelectionTitle(
+        { type: 'saved', id: 'x' } as unknown as { type: 'tag'; tag: string },
+        groups,
+      ),
+    ).toBe('Tasks');
+  });
+
   it('strips folders and the markdown extension from project paths', () => {
     expect(projectNameFromPath('a/b/Plan.md')).toBe('Plan');
     expect(projectNameFromPath('Plan')).toBe('Plan');
