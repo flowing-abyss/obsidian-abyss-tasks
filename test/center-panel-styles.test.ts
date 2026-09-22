@@ -205,7 +205,10 @@ describe('CenterPanel task metadata styles', () => {
   it('reserves the phone navigation inset from the host variable', () => {
     expect(declarationsFor('.abyss-panel-view')).toContain('--abyss-shell-bottom-inset: 0px');
     expect(declarationsFor('body.is-phone .abyss-panel-view')).toContain(
-      '--abyss-shell-bottom-inset: var(--view-bottom-spacing, 0px)',
+      '--abyss-shell-bottom-inset: max(0px, var(--view-bottom-spacing, 0px))',
+    );
+    expect(declarationsFor('body.is-phone .abyss-panel-view.abyss-panel-view--keyboard')).toContain(
+      '--abyss-shell-bottom-inset: 0px',
     );
     for (const pane of ['.abyss-rail', '.abyss-left', '.abyss-center-shell', '.abyss-right']) {
       expect(declarationsFor(`body.is-phone .abyss-layout > ${pane}`), pane).toContain(

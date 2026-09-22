@@ -57,6 +57,8 @@ export const PANEL_VIEW_TYPE = 'task-calendar-panel';
 let panelViewInstanceSequence = 0;
 const COMPACT_RIGHT_MAX_REM = 58;
 const COMPACT_LEFT_MAX_REM = 38;
+/** Set on the panel root while the phone keyboard is up; the stylesheet drops the bottom inset. */
+const KEYBOARD_CLASS = 'abyss-panel-view--keyboard';
 
 /** Obsidian's leaf refreshes its tab header from getDisplayText, but the call is undocumented. */
 function hasHeaderRefresh(value: unknown): value is { updateHeader(): void } {
@@ -195,6 +197,7 @@ export class PanelView extends ItemView {
   private listUnsub_abyssPrivate: (() => void) | undefined;
   /** The phone view header text; Obsidian reads it before onOpen and on every layout save. */
   private hostTitle_abyssPrivate = PANEL_DISPLAY_TEXT;
+  private keyboardCleanup_abyssPrivate: (() => void) | undefined = undefined;
   private selectedListRenameUnsub_abyssPrivate: (() => void) | undefined;
   private projectStore_abyssPrivate?: ProjectStore;
   private projectStoreUnsub_abyssPrivate?: () => void;
@@ -319,16 +322,40 @@ export class PanelView extends ItemView {
         selectionTasks,
       );
     this.createPanels_abyssPrivate(selectionTasks, projectStore, projectManager);
+    // A phone screen fits one day. The month grid is unreadable there, so Day is the useful start.
+    if (Platform.isPhone) this.center_abyssPrivate.setCalendarView('today');
     this.registerProjectUpdates_abyssPrivate(projectStore);
     this.registerWorkspaceUpdates_abyssPrivate();
     this.mountPanels_abyssPrivate(elements);
-    // A phone screen fits one day. The month grid is unreadable there, so Day is the useful start.
-    if (Platform.isPhone) this.center_abyssPrivate.setCalendarView('today');
     this.initializeCapture_abyssPrivate(elements, selectionTasks);
     this.subscribeToState_abyssPrivate(elements.layout);
     this.subscribeToQueries_abyssPrivate();
     this.refreshHostHeader_abyssPrivate();
+    this.watchPhoneKeyboard_abyssPrivate();
     return Promise.resolve();
+  }
+
+  /**
+   * Obsidian hides its floating navigation while the keyboard is up, but only iOS subtracts the
+   * keyboard from the host inset variable. The class drops the panel's inset on both platforms.
+   */
+  private watchPhoneKeyboard_abyssPrivate(): void {
+    if (!Platform.isPhone) return;
+    const realm = this.contentEl.ownerDocument.defaultView;
+    if (realm === null) return;
+    const show = (): void => {
+      this.contentEl.addClass(KEYBOARD_CLASS);
+    };
+    const hide = (): void => {
+      this.contentEl.removeClass(KEYBOARD_CLASS);
+    };
+    realm.addEventListener('keyboardWillShow', show);
+    realm.addEventListener('keyboardWillHide', hide);
+    this.keyboardCleanup_abyssPrivate = () => {
+      realm.removeEventListener('keyboardWillShow', show);
+      realm.removeEventListener('keyboardWillHide', hide);
+      hide();
+    };
   }
 
   refreshProjectTableSettings(): void {
@@ -812,6 +839,8 @@ export class PanelView extends ItemView {
     this.destroyInteractionControllers_abyssPrivate();
     this.releaseSubscriptions_abyssPrivate();
     this.destroyOwnedViews_abyssPrivate();
+    this.keyboardCleanup_abyssPrivate?.();
+    this.keyboardCleanup_abyssPrivate = undefined;
     this.contentEl.empty();
   }
 

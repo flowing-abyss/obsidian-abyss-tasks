@@ -8765,7 +8765,13 @@ body.is-phone .abyss-panel-view .abyss-center-search {
 /* Obsidian's floating navigation covers the bottom of the view on phones. Each pane reserves the
    same inset Obsidian gives its own views, so "Add task" and the settings button stay reachable. */
 body.is-phone .abyss-panel-view {
-  --abyss-shell-bottom-inset: var(--view-bottom-spacing, 0px);
+  --abyss-shell-bottom-inset: max(0px, var(--view-bottom-spacing, 0px));
+}
+
+/* Obsidian hides its navigation while the keyboard is up, but only iOS subtracts the keyboard from
+   the host variable. PanelView sets the class from Obsidian's keyboard events on both platforms. */
+body.is-phone .abyss-panel-view.abyss-panel-view--keyboard {
+  --abyss-shell-bottom-inset: 0px;
 }
 
 body.is-phone .abyss-layout > :is(.abyss-rail, .abyss-left, .abyss-center-shell, .abyss-right) {

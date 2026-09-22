@@ -2032,6 +2032,42 @@ describe('PanelView', () => {
       }
     });
 
+    it('drops the bottom inset while the phone keyboard is open', async () => {
+      Platform.isPhone = true;
+      const freshLeaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+      Object.assign(freshLeaf, { updateHeader: vi.fn() });
+      const fresh = new PanelView(
+        freshLeaf,
+        settings,
+        tagManager,
+        taskApplication.index,
+        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.statusRegistry,
+      );
+      Object.assign(fresh, { titleEl: createDiv() });
+      const keyboardClass = 'abyss-panel-view--keyboard';
+      try {
+        await fresh.onOpen();
+        window.dispatchEvent(new Event('keyboardWillShow'));
+        expect(fresh.contentEl.hasClass(keyboardClass)).toBe(true);
+        window.dispatchEvent(new Event('keyboardWillHide'));
+        expect(fresh.contentEl.hasClass(keyboardClass)).toBe(false);
+        window.dispatchEvent(new Event('keyboardWillShow'));
+        expect(fresh.contentEl.hasClass(keyboardClass)).toBe(true);
+        await fresh.onClose();
+        expect(fresh.contentEl.hasClass(keyboardClass)).toBe(false);
+        window.dispatchEvent(new Event('keyboardWillShow'));
+        expect(fresh.contentEl.hasClass(keyboardClass)).toBe(false);
+      } finally {
+        Platform.isPhone = false;
+      }
+    });
+
+    it('ignores the keyboard events on desktop', () => {
+      window.dispatchEvent(new Event('keyboardWillShow'));
+      expect(view.contentEl.hasClass('abyss-panel-view--keyboard')).toBe(false);
+    });
+
     it('getIcon returns calendar-days', () => {
       expect(view.getIcon()).toBe('calendar-days');
     });
