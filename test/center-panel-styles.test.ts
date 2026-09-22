@@ -41,14 +41,10 @@ describe('CenterPanel task metadata styles', () => {
       '.abyss-dep-indicator',
       '.abyss-task-delete-btn',
     ].map((child) => declarationsFor(`.abyss-task-card-main-row > ${child}`));
-    const titleRow = declarationsFor('.abyss-task-card .abyss-task-title-row');
-    const recurrenceBadge = declarationsFor(
-      '.abyss-task-card .abyss-task-title-row > .abyss-recurrence-badge',
-    );
-    const countBadge = declarationsFor(
-      '.abyss-task-card .abyss-task-title-row > .abyss-task-count-badge',
-    );
-    const title = declarationsFor('.abyss-task-card .abyss-task-title');
+    const titleRow = declarationsFor('.abyss-task-title-row');
+    const recurrenceBadge = declarationsFor('.abyss-task-title-row > .abyss-recurrence-badge');
+    const countBadge = declarationsFor('.abyss-task-title-row > .abyss-task-count-badge');
+    const title = declarationsFor('.abyss-task-title');
     const chips = declarationsFor('.abyss-task-card .abyss-task-meta-right > *');
     const deleteButton = declarationsFor('.abyss-task-delete-btn');
 
@@ -65,13 +61,19 @@ describe('CenterPanel task metadata styles', () => {
       expect(child).toContain('margin-block-start: calc(');
       expect(child).toContain('var(--abyss-task-card-title-line)');
     }
+    // The row's first line is exactly the title line the markers centre on, whatever line height
+    // the host gives the panel (the phone's is taller), so the base rule pins it.
     expect(titleRow).toContain('display: block');
+    expect(titleRow).not.toContain('display: flex');
+    expect(titleRow).toContain('font-size: var(--font-ui-medium)');
+    expect(titleRow).toContain('line-height: var(--line-height-tight)');
     for (const badge of [recurrenceBadge, countBadge]) {
       expect(badge).toContain('vertical-align: top');
       expect(badge).toContain('margin-inline-end: var(--size-2-3)');
     }
     expect(countBadge).toContain('block-size: var(--abyss-task-card-title-line)');
     expect(title).toContain('display: inline');
+    expect(title).not.toContain('flex:');
     expect(chips).toContain('block-size: var(--abyss-task-card-title-line)');
     expect(deleteButton).not.toContain('align-self');
     expect(deleteButton).toContain('height: var(--abyss-task-card-marker-size)');
@@ -91,17 +93,20 @@ describe('CenterPanel task metadata styles', () => {
     expect(metadata).not.toContain('padding-top');
     expect(noteName).toContain('max-width: 12rem');
     expect(tag).toContain('max-width: 12rem');
+    expect(tag).toContain('text-overflow: ellipsis');
+    // The ellipsis needs a block container; the shared flex chip would clip without one.
+    const columnTag = declarationsFor('.abyss-task-meta-right > .abyss-task-tag');
+    expect(columnTag).toContain('display: inline-block');
+    expect(columnTag).toContain('line-height: var(--abyss-task-card-title-line)');
   });
 
   it('keeps the description inside the title column without widening it', () => {
     const description = declarationsFor('.abyss-task-body > .abyss-task-desc');
     const body = declarationsFor('.abyss-task-body');
-    const metadata = declarationsFor('.abyss-task-meta-right');
 
     expect(declarationsFor('.abyss-task-card > .abyss-task-desc')).toBe('');
     expect(description).toContain('contain: inline-size');
     expect(body).toContain('min-width: 0');
-    expect(metadata).toContain('min-width: auto');
   });
 
   it('sizes every toolbar control from one host-derived token', () => {
@@ -281,9 +286,6 @@ describe('CenterPanel task metadata styles', () => {
 
     expect(metadata).toContain('grid-row: 2');
     expect(metadata).toContain('justify-content: flex-start');
-    expect(declarationsFor('.abyss-task-meta-right')).toContain(
-      'place-content: flex-start flex-end',
-    );
   });
 
   it('keeps a mounted delete button visible without a card-hover reveal rule', () => {

@@ -2418,45 +2418,38 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   min-width: 0;
 }
 
+/* The title row is text. Its first line is exactly one --abyss-task-card-title-line tall, the
+   height the marker, the badges and the chips centre on, so the row pins the title size and the
+   tight line height instead of inheriting the host's, which is taller on the phone. Badges are
+   inline boxes at the head of that line, so a wrapped title returns to the column's left edge
+   under them, level with the description. */
 .abyss-task-title-row {
-  display: flex;
-  align-items: center;
-  gap: var(--size-2-3);
-  flex-wrap: nowrap;
-}
-
-.abyss-task-title {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-size: var(--font-ui-medium);
-  color: var(--text-normal);
-}
-
-/* The title row is text. Badges are inline boxes at the head of the first line, so a wrapped
-   title returns to the column's left edge under them, level with the description. */
-.abyss-task-card .abyss-task-title-row {
   display: block;
+  font-size: var(--font-ui-medium);
+  line-height: var(--line-height-tight);
 }
 
-.abyss-task-card .abyss-task-title-row > :is(.abyss-task-count-badge, .abyss-recurrence-badge) {
+.abyss-task-title-row > :is(.abyss-task-count-badge, .abyss-recurrence-badge) {
   vertical-align: top;
   margin-inline-end: var(--size-2-3);
 }
 
 /* A count badge is exactly one title line tall, so it sits on that line without growing it. */
-.abyss-task-card .abyss-task-title-row > .abyss-task-count-badge {
+.abyss-task-title-row > .abyss-task-count-badge {
   block-size: var(--abyss-task-card-title-line);
 }
 
-.abyss-task-card .abyss-task-title-row > .abyss-recurrence-badge {
+.abyss-task-title-row > .abyss-recurrence-badge {
   margin-block-start: calc(
     (var(--abyss-task-card-title-line) - var(--abyss-recurrence-badge-height)) / 2
   );
 }
 
-.abyss-task-card .abyss-task-title {
+.abyss-task-title {
   display: inline;
+  overflow-wrap: anywhere;
+  font-size: var(--font-ui-medium);
+  color: var(--text-normal);
 }
 
 .abyss-task-meta {
@@ -2486,7 +2479,6 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
    the column itself. */
 .abyss-task-meta-right {
   flex: 0 1 auto;
-  min-width: auto;
   max-width: 100%;
   display: flex;
   flex-wrap: wrap;
@@ -2497,6 +2489,14 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-task-card .abyss-task-meta-right > * {
   block-size: var(--abyss-task-card-title-line);
+}
+
+/* In the metadata column a tag is a text box, so its 12rem cap ends in an ellipsis; the shared
+   flex chip would clip the text without one. The line height fills the chip, which keeps the text
+   centred on the title line. */
+.abyss-task-meta-right > .abyss-task-tag {
+  display: inline-block;
+  line-height: var(--abyss-task-card-title-line);
 }
 
 .abyss-task-date {
