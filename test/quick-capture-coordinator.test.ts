@@ -153,7 +153,7 @@ describe('QuickCaptureCoordinator', () => {
   it('lets narrow task-header controls wrap only when their content requires it', () => {
     const compactControls = declarationsFor('.abyss-layout--tasks .abyss-center-controls');
 
-    expect(compactControls).toContain('flex: 0 1 auto');
+    expect(compactControls).toContain('flex: 1 1 auto');
     expect(compactControls).toContain('min-inline-size: 0');
     expect(compactControls).toContain('flex-wrap: wrap');
     expect(compactControls).not.toContain('flex: 1 1 100%');
