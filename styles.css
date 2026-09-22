@@ -236,7 +236,7 @@
   }
 
   .abyss-layout--tasks .abyss-center-controls {
-    flex: 0 1 auto;
+    flex: 1 1 auto;
     flex-wrap: wrap;
     min-inline-size: 0;
     justify-content: flex-end;
@@ -8678,6 +8678,27 @@ button.abyss-project-table-status-pill {
       var(--size-4-16, 4rem) + var(--size-4-12, 3rem) + var(--size-4-4, 1rem)
     );
   }
+}
+
+/* ---- Phone ---- */
+
+/* Obsidian's view header carries the list name on the phone (PanelView.getDisplayText), so the
+   plugin heading would only repeat it. The header keeps one control row. */
+body.is-phone .abyss-panel-view .abyss-center-title {
+  display: none;
+}
+
+body.is-phone .abyss-projects-toolbar {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.is-phone .abyss-project-table-controls {
+  justify-self: stretch;
+}
+
+body.is-phone .abyss-project-table-controls .abyss-center-search {
+  flex: 1 1 auto;
+  width: auto;
 }
 
 /* Seat global results above Obsidian's floating navigation in either phone orientation. */

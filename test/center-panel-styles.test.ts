@@ -138,6 +138,25 @@ describe('CenterPanel task metadata styles', () => {
     }
   });
 
+  it('collapses the phone header to one control row', () => {
+    expect(declarationsFor('body.is-phone .abyss-panel-view .abyss-center-title')).toContain(
+      'display: none',
+    );
+    expect(declarationsFor('body.is-phone .abyss-projects-toolbar')).toContain(
+      'grid-template-columns: minmax(0, 1fr)',
+    );
+    expect(declarationsFor('body.is-phone .abyss-project-table-controls')).toContain(
+      'justify-self: stretch',
+    );
+    expect(
+      declarationsFor('body.is-phone .abyss-project-table-controls .abyss-center-search'),
+    ).toContain('flex: 1 1 auto');
+    const narrow = atRuleBlock('@container abyss-panel-layout (max-width: 38rem)');
+    expect(declarationsForSource(narrow, '.abyss-layout--tasks .abyss-center-controls')).toContain(
+      'flex: 1 1 auto',
+    );
+  });
+
   it('keeps a usable title track under the observed 292px center metadata pressure', () => {
     const center = declarationsFor('.abyss-center');
     const compact = atRuleBlock('@container abyss-task-list (max-width: 28rem)');

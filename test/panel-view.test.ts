@@ -414,8 +414,9 @@ describe('PanelView', () => {
       const controls = expectDefined(header.querySelector<HTMLElement>('.abyss-center-controls'));
       expect(lists.closest('.abyss-center-header')).toBe(header);
       expect(details.closest('.abyss-center-header')).toBe(header);
-      expect(lists.nextElementSibling).toBe(title);
-      expect(details.parentElement).toBe(controls);
+      expect(title.parentElement).toBe(header);
+      expect(controls.firstElementChild).toBe(lists);
+      expect(controls.lastElementChild).toBe(details);
 
       emitQueryEvent(taskApplication.index, { type: 'changed', files: ['x.md'] });
       expect(layout.querySelector('[aria-label="Show task lists"]')).toBe(lists);

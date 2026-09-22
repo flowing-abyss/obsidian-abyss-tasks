@@ -446,10 +446,10 @@ export class PanelView extends ItemView {
       this.panelNavigation_abyssPrivate,
       this.onSaveViewState_abyssPrivate,
       timeTracking,
-      (header, title, controls) => {
+      (header, _title, controls) => {
         const compact = this.compactPaneElements_abyssPrivate;
         if (compact === undefined) return;
-        header.insertBefore(compact.leftButton, title);
+        controls.prepend(compact.leftButton);
         controls.append(compact.rightButton);
         this.observeCompactHeader_abyssPrivate(header);
       },
