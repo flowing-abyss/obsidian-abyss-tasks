@@ -100,10 +100,6 @@
     "to": ":is(.abyss-tg-block-title, .abyss-tg-block-continuation-title).is-cancelled"
   },
   {
-    "from": ".abyss-month-picker-btn.is-active,\n.abyss-year-picker-btn.is-active",
-    "to": ":is(.abyss-month-picker-btn, .abyss-year-picker-btn).is-active"
-  },
-  {
     "from": ".abyss-tg-block-title.is-done,\n.abyss-tg-block-continuation-title.is-done",
     "to": ":is(.abyss-tg-block-title, .abyss-tg-block-continuation-title).is-done"
   },
@@ -118,10 +114,6 @@
   {
     "from": ".abyss-cal-nav-month:hover,\n.abyss-cal-nav-year:hover",
     "to": ":is(.abyss-cal-nav-month, .abyss-cal-nav-year):hover"
-  },
-  {
-    "from": ".abyss-month-picker-btn:hover,\n.abyss-year-picker-btn:hover",
-    "to": ":is(.abyss-month-picker-btn, .abyss-year-picker-btn):hover"
   },
   {
     "from": ".abyss-task-date-part:hover,\n.abyss-task-time-part:hover",
