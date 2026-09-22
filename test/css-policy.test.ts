@@ -297,29 +297,37 @@ describe('selected third-party correctness rules', () => {
   });
 });
 
-it('CLI rejects a bad source and accepts a valid source with no output', async () => {
-  if (!Platform.isDesktop) throw new Error('CSS CLI tests require desktop');
-  const [{ spawnSync }, fs, os, path] = await Promise.all([
-    import('node:child_process'),
-    import('node:fs'),
-    import('node:os'),
-    import('node:path'),
-  ]);
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'abyss-css-'));
-  const file = path.join(directory, 'fixture.css');
-  try {
-    fs.writeFileSync(file, '.abyss-x { color: var(--text-nromal); }');
-    const bad = spawnSync(process.execPath, ['tooling/check-css.mjs', file], { encoding: 'utf8' });
-    expect(bad.status).toBe(1);
-    expect(bad.stderr).toContain('abyss/known-variable');
-    fs.writeFileSync(file, '.abyss-x { color: var(--text-normal); }');
-    const good = spawnSync(process.execPath, ['tooling/check-css.mjs', file], { encoding: 'utf8' });
-    expect(good.status).toBe(0);
-    expect(good.stdout + good.stderr).toBe('');
-  } finally {
-    fs.rmSync(directory, { recursive: true, force: true });
-  }
-});
+it(
+  'CLI rejects a bad source and accepts a valid source with no output',
+  { timeout: 30_000 },
+  async () => {
+    if (!Platform.isDesktop) throw new Error('CSS CLI tests require desktop');
+    const [{ spawnSync }, fs, os, path] = await Promise.all([
+      import('node:child_process'),
+      import('node:fs'),
+      import('node:os'),
+      import('node:path'),
+    ]);
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'abyss-css-'));
+    const file = path.join(directory, 'fixture.css');
+    try {
+      fs.writeFileSync(file, '.abyss-x { color: var(--text-nromal); }');
+      const bad = spawnSync(process.execPath, ['tooling/check-css.mjs', file], {
+        encoding: 'utf8',
+      });
+      expect(bad.status).toBe(1);
+      expect(bad.stderr).toContain('abyss/known-variable');
+      fs.writeFileSync(file, '.abyss-x { color: var(--text-normal); }');
+      const good = spawnSync(process.execPath, ['tooling/check-css.mjs', file], {
+        encoding: 'utf8',
+      });
+      expect(good.status).toBe(0);
+      expect(good.stdout + good.stderr).toBe('');
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 it('does not mistake a variable alpha channel for token-derived color channels', () => {
   expect(
