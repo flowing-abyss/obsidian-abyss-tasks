@@ -193,6 +193,8 @@ export class PanelView extends ItemView {
   private modeUnsub_abyssPrivate: (() => void) | undefined;
   private selectionUnsub_abyssPrivate: (() => void) | undefined;
   private listUnsub_abyssPrivate: (() => void) | undefined;
+  /** The phone view header text; Obsidian reads it before onOpen and on every layout save. */
+  private hostTitle_abyssPrivate = PANEL_DISPLAY_TEXT;
   private selectedListRenameUnsub_abyssPrivate: (() => void) | undefined;
   private projectStore_abyssPrivate?: ProjectStore;
   private projectStoreUnsub_abyssPrivate?: () => void;
@@ -253,7 +255,7 @@ export class PanelView extends ItemView {
     return PANEL_VIEW_TYPE;
   }
   override getDisplayText(): string {
-    return Platform.isPhone ? this.panelTitle_abyssPrivate() : PANEL_DISPLAY_TEXT;
+    return Platform.isPhone ? this.hostTitle_abyssPrivate : PANEL_DISPLAY_TEXT;
   }
 
   private panelTitle_abyssPrivate(): string {
@@ -268,10 +270,15 @@ export class PanelView extends ItemView {
     return panelTitle(this.state_abyssPrivate.get('mode'), selection, groups);
   }
 
-  /** Obsidian reads getDisplayText once at load; the phone header follows the panel afterwards. */
+  /**
+   * Obsidian reads getDisplayText at load, before onOpen, and on every layout save, so the phone
+   * title is a cached field; this refresh recomputes it from the panel state and pushes it to the
+   * host header.
+   */
   private refreshHostHeader_abyssPrivate(): void {
     if (!Platform.isPhone) return;
-    const title = this.getDisplayText();
+    const title = this.panelTitle_abyssPrivate();
+    this.hostTitle_abyssPrivate = title;
     const leaf: unknown = this.leaf;
     if (hasHeaderRefresh(leaf)) leaf.updateHeader();
     const realm = this.contentEl.ownerDocument.defaultView;

@@ -1962,6 +1962,32 @@ describe('PanelView', () => {
       }
     });
 
+    it('reads as Abyss Tasks on a phone until the panel opens', async () => {
+      Platform.isPhone = true;
+      const freshLeaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+      Object.assign(freshLeaf, { updateHeader: vi.fn() });
+      const fresh = new PanelView(
+        freshLeaf,
+        settings,
+        tagManager,
+        taskApplication.index,
+        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.statusRegistry,
+      );
+      const titleEl = createDiv();
+      Object.assign(fresh, { titleEl });
+      try {
+        // Obsidian reads the title during View.load and layout serialization, before onOpen.
+        expect(fresh.getDisplayText()).toBe('Abyss Tasks');
+        await fresh.onOpen();
+        expect(fresh.getDisplayText()).toBe('Today');
+        expect(titleEl.textContent).toBe('Today');
+      } finally {
+        Platform.isPhone = false;
+        await fresh.onClose();
+      }
+    });
+
     it('stops following the list after close', async () => {
       const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       Platform.isPhone = true;
