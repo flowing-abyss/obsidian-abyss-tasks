@@ -322,6 +322,8 @@ export class PanelView extends ItemView {
     this.registerProjectUpdates_abyssPrivate(projectStore);
     this.registerWorkspaceUpdates_abyssPrivate();
     this.mountPanels_abyssPrivate(elements);
+    // A phone screen fits one day. The month grid is unreadable there, so Day is the useful start.
+    if (Platform.isPhone) this.center_abyssPrivate.setCalendarView('today');
     this.initializeCapture_abyssPrivate(elements, selectionTasks);
     this.subscribeToState_abyssPrivate(elements.layout);
     this.subscribeToQueries_abyssPrivate();

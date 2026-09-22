@@ -8704,6 +8704,33 @@ body.is-phone .abyss-project-table-controls .abyss-center-search {
   width: auto;
 }
 
+/* The calendar toolbar does not fit one phone row. Row one keeps the date and Today, row two is
+   the view switcher across the width. The pickers float from the center pane, so nothing here
+   needs to scroll or clip. */
+body.is-phone .abyss-cal-nav {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  overflow: visible;
+}
+
+body.is-phone .abyss-cal-nav-right {
+  display: contents;
+}
+
+body.is-phone .abyss-cal-nav-left {
+  min-width: 0;
+}
+
+/* Scoped to the calendar toolbar: the project timeline reuses the switcher and Today classes
+   inside its own segmented control and keeps its own layout. */
+body.is-phone .abyss-cal-nav .abyss-cal-view-switcher {
+  grid-column: 1 / -1;
+}
+
+body.is-phone .abyss-cal-nav .abyss-cal-view-btn {
+  flex: 1 1 0;
+}
+
 /* Obsidian's floating navigation covers the bottom of the view on phones. Each pane reserves the
    same inset Obsidian gives its own views, so "Add task" and the settings button stay reachable. */
 body.is-phone .abyss-panel-view {

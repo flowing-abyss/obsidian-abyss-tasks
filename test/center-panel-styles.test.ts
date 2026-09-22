@@ -157,6 +157,24 @@ describe('CenterPanel task metadata styles', () => {
     );
   });
 
+  it('lays the phone calendar toolbar out in two rows', () => {
+    const nav = declarationsFor('body.is-phone .abyss-cal-nav');
+    expect(nav).toContain('display: grid');
+    expect(nav).toContain('grid-template-columns: minmax(0, 1fr) auto');
+    expect(nav).toContain('overflow: visible');
+    expect(declarationsFor('body.is-phone .abyss-cal-nav-right')).toContain('display: contents');
+    expect(declarationsFor('body.is-phone .abyss-cal-nav-left')).toContain('min-width: 0');
+    // Scoped to the toolbar: the project timeline reuses these classes in its own control.
+    expect(declarationsFor('body.is-phone .abyss-cal-nav .abyss-cal-view-switcher')).toContain(
+      'grid-column: 1 / -1',
+    );
+    expect(declarationsFor('body.is-phone .abyss-cal-nav .abyss-cal-view-btn')).toContain(
+      'flex: 1 1 0',
+    );
+    expect(declarationsFor('body.is-phone .abyss-cal-view-switcher')).toBe('');
+    expect(declarationsFor('body.is-phone .abyss-panel-view .abyss-cal-nav-today')).toBe('');
+  });
+
   it('reserves the phone navigation inset from the host variable', () => {
     expect(declarationsFor('.abyss-panel-view')).toContain('--abyss-shell-bottom-inset: 0px');
     expect(declarationsFor('body.is-phone .abyss-panel-view')).toContain(

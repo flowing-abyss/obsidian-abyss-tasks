@@ -1988,6 +1988,33 @@ describe('PanelView', () => {
       }
     });
 
+    it('opens the calendar in the Day view on a phone and in Month on desktop', async () => {
+      const calendarViewOf = (target: PanelView): string =>
+        (
+          target as unknown as { center_abyssPrivate: { calendarView(): string } }
+        ).center_abyssPrivate.calendarView();
+      expect(calendarViewOf(view)).toBe('month');
+      Platform.isPhone = true;
+      const freshLeaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+      Object.assign(freshLeaf, { updateHeader: vi.fn() });
+      const fresh = new PanelView(
+        freshLeaf,
+        settings,
+        tagManager,
+        taskApplication.index,
+        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.statusRegistry,
+      );
+      Object.assign(fresh, { titleEl: createDiv() });
+      try {
+        await fresh.onOpen();
+        expect(calendarViewOf(fresh)).toBe('today');
+      } finally {
+        Platform.isPhone = false;
+        await fresh.onClose();
+      }
+    });
+
     it('stops following the list after close', async () => {
       const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       Platform.isPhone = true;
