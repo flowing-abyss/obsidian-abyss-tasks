@@ -3138,23 +3138,28 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   min-width: 160px;
 }
 
-.abyss-month-picker-btn,
-.abyss-year-picker-btn {
+/* Picker options are cells of the switcher family: the tray fill on every platform and theme, so
+   they never depend on what the host paints on a plain button (nothing, on the phone). */
+.abyss-month-picker button.abyss-month-picker-btn,
+.abyss-year-picker button.abyss-year-picker-btn {
   padding: var(--size-2-3) var(--size-4-1);
   border: none;
   border-radius: 4px;
-  background: transparent;
+  background: var(--background-modifier-border);
+  box-shadow: none;
   cursor: pointer;
   font-size: var(--font-ui-small);
   color: var(--text-normal);
   transition: background 0.1s;
 }
 
-:is(.abyss-month-picker-btn, .abyss-year-picker-btn):hover {
+.abyss-month-picker button.abyss-month-picker-btn:hover,
+.abyss-year-picker button.abyss-year-picker-btn:hover {
   background: var(--background-modifier-hover);
 }
 
-:is(.abyss-month-picker-btn, .abyss-year-picker-btn).is-active {
+.abyss-month-picker button.abyss-month-picker-btn.is-active,
+.abyss-year-picker button.abyss-year-picker-btn.is-active {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
 }

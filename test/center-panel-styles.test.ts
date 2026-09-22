@@ -202,6 +202,23 @@ describe('CenterPanel task metadata styles', () => {
     }
   });
 
+  it('paints the picker options as switcher cells on every platform', () => {
+    const month = '.abyss-month-picker button.abyss-month-picker-btn';
+    const year = '.abyss-year-picker button.abyss-year-picker-btn';
+    for (const cell of [month, year]) {
+      const rule = declarationsFor(cell);
+      expect(rule, cell).toContain('background: var(--background-modifier-border)');
+      expect(rule, cell).toContain('box-shadow: none');
+      expect(declarationsFor(`${cell}:hover`), cell).toContain(
+        'background: var(--background-modifier-hover)',
+      );
+      expect(declarationsFor(`${cell}.is-active`), cell).toContain(
+        'background: var(--interactive-accent)',
+      );
+    }
+    expect(declarationsFor('.abyss-month-picker-btn')).toBe('');
+  });
+
   it('reserves the phone navigation inset from the host variable', () => {
     expect(declarationsFor('.abyss-panel-view')).toContain('--abyss-shell-bottom-inset: 0px');
     expect(declarationsFor('body.is-phone .abyss-panel-view')).toContain(
