@@ -2710,10 +2710,13 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
     grid-row: 1;
   }
 
+  /* The row under the title starts at the text's left edge, so a list of cards keeps one rhythm
+     instead of chips ending at the right and starting at random points. */
   .abyss-task-meta-right {
     grid-column: 2 / -1;
     grid-row: 2;
     width: 100%;
+    justify-content: flex-start;
   }
 
   .abyss-task-card-main-row:has(> .abyss-dep-indicator) {

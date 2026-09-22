@@ -195,6 +195,17 @@ describe('CenterPanel task metadata styles', () => {
     expect(sourceNote).toContain('white-space: nowrap');
   });
 
+  it('starts the narrow metadata row at the title text edge on every device', () => {
+    const compact = atRuleBlock('@container abyss-task-list (max-width: 28rem)');
+    const metadata = declarationsForSource(compact, '.abyss-task-meta-right');
+
+    expect(metadata).toContain('grid-row: 2');
+    expect(metadata).toContain('justify-content: flex-start');
+    expect(declarationsFor('.abyss-task-meta-right')).toContain(
+      'place-content: flex-start flex-end',
+    );
+  });
+
   it('keeps a mounted delete button visible without a card-hover reveal rule', () => {
     const deleteButton = declarationsFor('.abyss-task-delete-btn');
 
