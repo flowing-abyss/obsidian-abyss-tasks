@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { listSelectionTitle, panelTitle, projectNameFromPath } from '../src/views/panelTitle';
+import { describe, expect, it, vi } from 'vitest';
+import { listSelectionTitle, panelTitle } from '../src/views/panelTitle';
 
 const groups = [{ id: 'g-work', name: 'Work' }];
 
@@ -30,15 +30,16 @@ describe('panelTitle', () => {
   });
 
   it('strips folders and the markdown extension from project paths', () => {
-    expect(projectNameFromPath('a/b/Plan.md')).toBe('Plan');
-    expect(projectNameFromPath('Plan')).toBe('Plan');
+    expect(listSelectionTitle({ type: 'project', path: 'a/b/Plan.md' }, groups)).toBe('Plan');
+    expect(listSelectionTitle({ type: 'project', path: 'Plan' }, groups)).toBe('Plan');
   });
 
-  it('names every mode', () => {
-    expect(panelTitle('tasks', 'today', groups)).toBe('Today');
-    expect(panelTitle('tasks', { type: 'group', groupId: 'g-work' }, groups)).toBe('Work');
-    expect(panelTitle('calendar', 'today', groups)).toBe('Calendar');
-    expect(panelTitle('projects', 'today', groups)).toBe('Projects');
-    expect(panelTitle('search', 'today', groups)).toBe('Search');
+  it('names every mode and asks for the list name only in tasks mode', () => {
+    const listTitle = vi.fn(() => 'Work');
+    expect(panelTitle('tasks', listTitle)).toBe('Work');
+    expect(panelTitle('calendar', listTitle)).toBe('Calendar');
+    expect(panelTitle('projects', listTitle)).toBe('Projects');
+    expect(panelTitle('search', listTitle)).toBe('Search');
+    expect(listTitle).toHaveBeenCalledTimes(1);
   });
 });

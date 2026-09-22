@@ -69,10 +69,6 @@ function hasHeaderRefresh(value: unknown): value is { updateHeader(): void } {
   );
 }
 
-function isElementOf(realm: Window & typeof window, value: unknown): value is HTMLElement {
-  return value instanceof realm.HTMLElement;
-}
-
 /** The in-view header title element Obsidian fills once at load, when the view exposes it. */
 function headerTitleElement(
   value: unknown,
@@ -80,7 +76,7 @@ function headerTitleElement(
 ): HTMLElement | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
   const titleEl: unknown = Reflect.get(value, 'titleEl');
-  return isElementOf(realm, titleEl) ? titleEl : undefined;
+  return titleEl instanceof realm.HTMLElement ? titleEl : undefined;
 }
 
 type CompactPane = 'left' | 'right';
@@ -261,16 +257,9 @@ export class PanelView extends ItemView {
     return Platform.isPhone ? this.hostTitle_abyssPrivate : PANEL_DISPLAY_TEXT;
   }
 
+  /** The center panel already names the list it renders; the phone header shows the same name. */
   private panelTitle_abyssPrivate(): string {
-    const selection = this.state_abyssPrivate.get('selectedList');
-    const groups =
-      typeof selection === 'object' && selection.type === 'group'
-        ? resolveEffectiveTagGroups(
-            this.settings_abyssPrivate,
-            collectTaskNodeTags(this.tasks_abyssPrivate.queries.listNodes()),
-          )
-        : [];
-    return panelTitle(this.state_abyssPrivate.get('mode'), selection, groups);
+    return panelTitle(this.state_abyssPrivate.get('mode'), () => this.center_abyssPrivate.title());
   }
 
   /**

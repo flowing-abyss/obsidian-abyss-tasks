@@ -824,6 +824,11 @@ export class CenterPanel {
     return this.calViewType_abyssPrivate;
   }
 
+  /** The heading of the tasks list for the current selection, as the center header shows it. */
+  title(): string {
+    return this.getTitle_abyssPrivate();
+  }
+
   setCalendarView(view: CalViewType): void {
     this.calViewType_abyssPrivate = view;
     if (view === 'week') this.calDate_abyssPrivate = window.moment().startOf('isoWeek');

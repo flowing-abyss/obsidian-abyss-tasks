@@ -8,7 +8,7 @@ export interface PanelTitleGroup {
   readonly name: string;
 }
 
-export function projectNameFromPath(path: string): string {
+function projectNameFromPath(path: string): string {
   return (path.split('/').pop() ?? path).replace(/\.md$/, '');
 }
 
@@ -44,15 +44,14 @@ export function listSelectionTitle(
   }
 }
 
-/** The panel title for one mode; only the tasks mode depends on the selected list. */
-export function panelTitle(
-  mode: ViewMode,
-  selection: ListSelection,
-  groups: readonly PanelTitleGroup[],
-): string {
+/**
+ * The panel title for one mode. Only the tasks mode shows the list's name, so it is read lazily
+ * from the panel that already knows it.
+ */
+export function panelTitle(mode: ViewMode, listTitle: () => string): string {
   switch (mode) {
     case 'tasks':
-      return listSelectionTitle(selection, groups);
+      return listTitle();
     case 'calendar':
       return 'Calendar';
     case 'projects':

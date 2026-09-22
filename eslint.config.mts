@@ -400,6 +400,7 @@ export default defineConfig(
       'src/projects/projectTimelineEdits.ts',
       'src/projects/projectTimelineEndpointEdits.ts',
       'src/panels/projects/projectTableViewport.ts',
+      'src/views/panelTitle.ts',
     ],
     rules: { 'project-policy/ambient': ['error', 'pure'] },
   },
