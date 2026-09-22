@@ -2213,6 +2213,11 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   --abyss-task-card-primary-gap: 8px;
   --abyss-task-card-title-line: calc(var(--font-ui-medium) * var(--line-height-tight));
 
+  /* Half the title's cap height. The cap height of a UI sans is 0.70em within a hundredth (Plex
+     0.698, Roboto 0.711, SF 0.705, Segoe 0.70), so the marker and the badges centre on it without
+     a unit the marker's own smaller font would resolve wrongly. */
+  --abyss-task-card-cap-half: calc(var(--font-ui-medium) * 0.35);
+
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -2225,25 +2230,67 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   position: relative;
 }
 
+/* The row aligns on the title's baseline, not on its line box. Where the glyphs sit inside a line
+   depends on the font's ascent and descent, which put them a pixel or two lower on a phone's
+   system font than on the desktop font, while the baseline is where the glyphs are on every font.
+   The marker, a blocked marker's control and the dependency indicator hang from it on the first
+   line however far the title wraps. The metadata column and the delete button keep the line box:
+   they are boxes rather than glyphs, and the column's baseline would depend on its first chip. */
 .abyss-task-card-main-row {
   display: flex;
-  align-items: flex-start;
+  align-items: baseline;
   gap: var(--abyss-task-card-primary-gap);
   width: 100%;
   min-width: 0;
 }
 
-/* Everything that is not the title or the metadata column sits on the title's first line: the
-   card reads as one line at the top however far the title or the chips wrap below it. */
-.abyss-task-card-main-row
-  > :is(.abyss-status-marker, .abyss-status-control, .abyss-dep-indicator, .abyss-task-delete-btn) {
+.abyss-task-card-main-row > :is(.abyss-task-meta-right, .abyss-task-delete-btn) {
+  align-self: flex-start;
+}
+
+.abyss-task-card-main-row > .abyss-task-delete-btn {
   margin-block-start: calc(
     (var(--abyss-task-card-title-line) - var(--abyss-task-card-marker-size)) / 2
   );
 }
 
+/* A marker has no baseline of its own: it holds an icon, a glyph or nothing. Its first grid item
+   is a strut whose bottom edge is half a cap height below the marker's centre, so baseline
+   alignment puts that centre on the title's cap centre. The strut has no width and the columns
+   are centred, so the icon stays in the middle. Under a short title line the marker's bottom dips
+   below the line by up to two pixels; the negative end margin keeps that out of the row height. */
+.abyss-task-card-main-row .abyss-status-marker {
+  grid-auto-flow: column;
+  justify-content: center;
+}
+
+.abyss-task-card-main-row .abyss-status-marker::before {
+  content: '';
+  inline-size: 0;
+  block-size: calc(2 * var(--abyss-task-card-cap-half));
+  align-self: center;
+}
+
+.abyss-task-card-main-row > :is(.abyss-status-marker, .abyss-status-control) {
+  margin-block-end: -2px;
+}
+
+/* The indicator's lock is its first item, and the lock is an inline-flex box whose only item is the
+   icon, so its baseline is the icon's bottom edge. The same strut as the marker's gives the lock a
+   baseline half a cap height below its centre, so the icon centres on the title's caps instead of
+   sitting on the baseline. */
 .abyss-task-card-main-row > .abyss-dep-indicator {
   min-height: var(--abyss-task-card-marker-size);
+}
+
+.abyss-task-card-main-row > .abyss-dep-indicator > .abyss-dep-lock {
+  align-items: center;
+}
+
+.abyss-task-card-main-row > .abyss-dep-indicator > .abyss-dep-lock::before {
+  content: '';
+  inline-size: 0;
+  block-size: calc(2 * var(--abyss-task-card-cap-half));
 }
 
 .abyss-task-card-main-row > .abyss-status-marker,
@@ -2419,29 +2466,33 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 /* The title row is text. Its first line is exactly one --abyss-task-card-title-line tall, the
-   height the marker, the badges and the chips centre on, so the row pins the title size and the
-   tight line height instead of inheriting the host's, which is taller on the phone. Badges are
-   inline boxes at the head of that line, so a wrapped title returns to the column's left edge
-   under them, level with the description. */
+   height the chips centre on, so the row pins the title size and the tight line height instead of
+   inheriting the host's, which is taller on the phone. Badges are inline boxes at the head of that
+   line, so a wrapped title returns to the column's left edge under them, level with the
+   description. */
 .abyss-task-title-row {
   display: block;
   font-size: var(--font-ui-medium);
   line-height: var(--line-height-tight);
 }
 
+/* Badges hang from the title's baseline as the marker does. An inline flex badge takes its
+   baseline from its first item, the icon, whose bottom edge is half the icon below the badge's
+   centre; raising that baseline to half a cap height above the title's puts the badge's centre on
+   the cap centre. Neither badge reaches above the line's ascent, so the line keeps its height. */
 .abyss-task-title-row > :is(.abyss-task-count-badge, .abyss-recurrence-badge) {
-  vertical-align: top;
   margin-inline-end: var(--size-2-3);
 }
 
-/* A count badge is exactly one title line tall, so it sits on that line without growing it. */
 .abyss-task-title-row > .abyss-task-count-badge {
-  block-size: var(--abyss-task-card-title-line);
+  vertical-align: calc(
+    var(--abyss-task-card-cap-half) - var(--abyss-task-count-badge-icon-size) / 2
+  );
 }
 
 .abyss-task-title-row > .abyss-recurrence-badge {
-  margin-block-start: calc(
-    (var(--abyss-task-card-title-line) - var(--abyss-recurrence-badge-height)) / 2
+  vertical-align: calc(
+    var(--abyss-task-card-cap-half) - var(--abyss-recurrence-badge-icon-size) / 2
   );
 }
 
@@ -2617,6 +2668,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-task-count-badge {
+  --abyss-task-count-badge-icon-size: 11px;
+
   font-size: 11px;
   color: var(--text-muted);
   display: inline-flex;
@@ -2626,8 +2679,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-task-count-badge svg {
-  width: 11px;
-  height: 11px;
+  width: var(--abyss-task-count-badge-icon-size);
+  height: var(--abyss-task-count-badge-icon-size);
   flex-shrink: 0;
 }
 
