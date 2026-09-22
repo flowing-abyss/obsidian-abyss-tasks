@@ -3119,6 +3119,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   font-weight: 500;
 }
 
+/* Both pickers are anchored popovers of the center pane; the shared rule places them. */
 .abyss-month-picker,
 .abyss-year-picker {
   display: grid;
@@ -3126,10 +3127,6 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   gap: var(--size-4-1);
   padding: var(--size-4-2);
   min-width: 180px;
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 100;
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;

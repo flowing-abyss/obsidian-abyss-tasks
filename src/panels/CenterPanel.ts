@@ -61,6 +61,7 @@ import {
   type ViewOptionsMultiRow,
   type ViewOptionsSingleRow,
 } from '../ui/ViewOptionsPopover';
+import { openAnchoredPopover, type AnchoredPopover } from '../ui/anchoredPopover';
 import { isImeOwnedEvent } from '../ui/ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
@@ -306,7 +307,7 @@ export class CenterPanel {
   private calDate_abyssPrivate = window.moment().date(1);
   private calViewInstance_abyssPrivate: TodayView | WeekTimeGridView | MonthGridView | null = null;
   private calUnsubscribe_abyssPrivate: (() => void) | null = null;
-  private calendarPickerCleanup_abyssPrivate: ((restoreFocus?: boolean) => void) | null = null;
+  private calendarPicker_abyssPrivate: AnchoredPopover | null = null;
   private taskDatePickerCleanup_abyssPrivate: (() => void) | null = null;
   private taskCardRenderGeneration_abyssPrivate = 0;
   private taskDateFocusContinuityKey_abyssPrivate: string | null = null;
@@ -889,54 +890,43 @@ export class CenterPanel {
   }
 
   private clearCalendarPicker_abyssPrivate(restoreFocus = false): void {
-    this.calendarPickerCleanup_abyssPrivate?.(restoreFocus);
+    this.calendarPicker_abyssPrivate?.close(restoreFocus);
   }
 
-  private armCalendarPicker_abyssPrivate(picker: HTMLElement, anchor: HTMLElement): void {
-    const ownerDocument = this.el.ownerDocument;
-    const ownershipToken = this.interactionOwnership_abyssPrivate.acquire({
-      blocksShortcuts: true,
+  /**
+   * The month and year pickers float from the center pane like every other anchored list, so the
+   * toolbar's scroll strip never clips them. The shared surface owns placement, outside and Escape
+   * dismissal and shortcut ownership; the picker only keeps its anchor's expanded state in step.
+   */
+  private openCalendarPicker_abyssPrivate(
+    anchor: HTMLElement,
+    cls: 'abyss-month-picker' | 'abyss-year-picker',
+    label: string,
+  ): AnchoredPopover {
+    const popover = openAnchoredPopover({
+      owner: this.el,
+      anchor,
+      boundary: this.el,
+      preferred: 'below-start',
+      cls,
+      attr: { role: 'dialog', 'aria-modal': 'false', 'aria-label': label },
+      ownership: this.interactionOwnership_abyssPrivate,
+      onClose: (restoreFocus) => {
+        anchor.setAttribute('aria-expanded', 'false');
+        if (this.calendarPicker_abyssPrivate === popover) this.calendarPicker_abyssPrivate = null;
+        if (restoreFocus && anchor.isConnected) anchor.focus();
+      },
     });
-    let registrationTimer: number | undefined;
-    let listening = false;
-    const dismiss = (event: MouseEvent): void => {
-      if (!picker.contains(event.target as Node) && event.target !== anchor) cleanup();
-    };
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      event.stopPropagation();
-      cleanup(true);
-    };
-    const cleanup = (restoreFocus = false): void => {
-      if (registrationTimer !== undefined) {
-        window.clearTimeout(registrationTimer);
-        registrationTimer = undefined;
-      }
-      if (listening) {
-        ownerDocument.removeEventListener('click', dismiss, true);
-        listening = false;
-      }
-      picker.removeEventListener('keydown', onKeyDown);
-      picker.remove();
-      anchor.setAttribute('aria-expanded', 'false');
-      ownershipToken.release();
-      if (this.calendarPickerCleanup_abyssPrivate === cleanup)
-        this.calendarPickerCleanup_abyssPrivate = null;
-      if (restoreFocus && anchor.isConnected) anchor.focus();
-    };
-    this.calendarPickerCleanup_abyssPrivate = cleanup;
+    this.calendarPicker_abyssPrivate = popover;
     anchor.setAttribute('aria-expanded', 'true');
-    picker.addEventListener('keydown', onKeyDown);
-    const selectedOption = picker.querySelector<HTMLElement>('button.is-active');
-    const firstOption = picker.querySelector<HTMLElement>('button:not(:disabled)');
+    return popover;
+  }
+
+  private seatCalendarPicker_abyssPrivate(popover: AnchoredPopover): void {
+    popover.reposition();
+    const selectedOption = popover.element.querySelector<HTMLElement>('button.is-active');
+    const firstOption = popover.element.querySelector<HTMLElement>('button:not(:disabled)');
     (selectedOption ?? firstOption)?.focus({ preventScroll: true });
-    registrationTimer = window.setTimeout(() => {
-      registrationTimer = undefined;
-      if (this.calendarPickerCleanup_abyssPrivate !== cleanup || !picker.isConnected) return;
-      ownerDocument.addEventListener('click', dismiss, true);
-      listening = true;
-    }, 0);
   }
 
   private render_abyssPrivate(): void {
@@ -1522,15 +1512,17 @@ export class CenterPanel {
     updateTitle: () => void,
     mountView: () => void,
   ): void {
-    if (this.el.querySelector('.abyss-month-picker') != null) {
+    if (this.calendarPicker_abyssPrivate?.element.hasClass('abyss-month-picker') === true) {
       this.clearCalendarPicker_abyssPrivate();
       return;
     }
     this.clearCalendarPicker_abyssPrivate();
-    const picker = this.el.createDiv({
-      cls: 'abyss-month-picker abyss-popover',
-      attr: { role: 'dialog', 'aria-modal': 'false', 'aria-label': 'Select month' },
-    });
+    const popover = this.openCalendarPicker_abyssPrivate(
+      anchor,
+      'abyss-month-picker',
+      'Select month',
+    );
+    const picker = popover.element;
     const names = [
       'Jan',
       'Feb',
@@ -1557,8 +1549,7 @@ export class CenterPanel {
         this.selectCalendarMonth_abyssPrivate(month, updateTitle, mountView);
       });
     });
-    anchor.after(picker);
-    this.armCalendarPicker_abyssPrivate(picker, anchor);
+    this.seatCalendarPicker_abyssPrivate(popover);
   }
 
   private selectCalendarMonth_abyssPrivate(
@@ -1578,21 +1569,22 @@ export class CenterPanel {
     updateTitle: () => void,
     mountView: () => void,
   ): void {
-    if (this.el.querySelector('.abyss-year-picker') != null) {
+    if (this.calendarPicker_abyssPrivate?.element.hasClass('abyss-year-picker') === true) {
       this.clearCalendarPicker_abyssPrivate();
       return;
     }
     this.clearCalendarPicker_abyssPrivate();
-    const picker = this.el.createDiv({
-      cls: 'abyss-year-picker abyss-popover',
-      attr: { role: 'dialog', 'aria-modal': 'false', 'aria-label': 'Select year' },
-    });
+    const popover = this.openCalendarPicker_abyssPrivate(
+      anchor,
+      'abyss-year-picker',
+      'Select year',
+    );
+    const picker = popover.element;
     const currentYear = this.calDate_abyssPrivate.year();
     for (let year = currentYear - 5; year <= currentYear + 5; year++) {
       this.renderYearPickerOption_abyssPrivate(picker, year, currentYear, [updateTitle, mountView]);
     }
-    anchor.after(picker);
-    this.armCalendarPicker_abyssPrivate(picker, anchor);
+    this.seatCalendarPicker_abyssPrivate(popover);
   }
 
   private renderYearPickerOption_abyssPrivate(

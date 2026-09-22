@@ -3817,25 +3817,33 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     ['month', '.abyss-cal-nav-month', '.abyss-month-picker', '.abyss-month-picker-btn'],
     ['year', '.abyss-cal-nav-year', '.abyss-year-picker', '.abyss-year-picker-btn'],
   ] as const)(
-    '%s picker removes its document dismiss listener after selection, toggle-close, and destroy',
+    '%s picker removes its document listeners after selection, toggle-close, and destroy',
     async (_kind, anchorSelector, pickerSelector, optionSelector) => {
       const addSpy = vi.spyOn(activeDocument, 'addEventListener');
       const removeSpy = vi.spyOn(activeDocument, 'removeEventListener');
       const openHarness = async () => {
         const harness = await makeCalendarPanel();
         activeDocument.body.append(harness.el);
+        addSpy.mockClear();
+        removeSpy.mockClear();
         const anchor = expectDefined(harness.el.querySelector<HTMLElement>(anchorSelector));
         anchor.click();
         expect(anchor.getAttribute('aria-expanded')).toBe('true');
-        await flushMicrotasks();
-        const registration = [...addSpy.mock.calls].reverse().find(([type]) => type === 'click');
-        expect(registration).toBeDefined();
-        return { ...harness, anchor, registration };
+        const picker = expectDefined(harness.el.querySelector<HTMLElement>(pickerSelector));
+        // The picker floats from the panel's mount container (the center pane in PanelView),
+        // outside the scrolling toolbar strip.
+        expect(picker.parentElement).toBe(harness.el);
+        expect(addSpy.mock.calls.some(([type]) => type === 'pointerdown')).toBe(true);
+        return { ...harness, anchor };
       };
-      const wasRemoved = (registration: (typeof addSpy.mock.calls)[number]): boolean =>
-        removeSpy.mock.calls.some(
-          ([type, listener, options]) =>
-            type === 'click' && listener === registration[1] && options === registration[2],
+      const allRemoved = (): boolean =>
+        addSpy.mock.calls.every(([type, listener, options]) =>
+          removeSpy.mock.calls.some(
+            ([removedType, removedListener, removedOptions]) =>
+              removedType === type &&
+              removedListener === listener &&
+              (removedOptions ?? false) === (options ?? false),
+          ),
         );
 
       try {
@@ -3843,8 +3851,9 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
         expectDefined(
           selected.el.querySelector<HTMLElement>(`${pickerSelector} ${optionSelector}`),
         ).click();
+        expect(selected.el.querySelector(pickerSelector)).toBeNull();
         expect(selected.anchor.getAttribute('aria-expanded')).toBe('false');
-        expect(wasRemoved(expectDefined(selected.registration))).toBe(true);
+        expect(allRemoved()).toBe(true);
         selected.panel.destroy();
         selected.el.remove();
 
@@ -3852,14 +3861,14 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
         toggled.anchor.click();
         expect(toggled.el.querySelector(pickerSelector)).toBeNull();
         expect(toggled.anchor.getAttribute('aria-expanded')).toBe('false');
-        expect(wasRemoved(expectDefined(toggled.registration))).toBe(true);
+        expect(allRemoved()).toBe(true);
         toggled.panel.destroy();
         toggled.el.remove();
 
         const destroyed = await openHarness();
         destroyed.panel.destroy();
         expect(destroyed.anchor.getAttribute('aria-expanded')).toBe('false');
-        expect(wasRemoved(expectDefined(destroyed.registration))).toBe(true);
+        expect(allRemoved()).toBe(true);
         destroyed.el.remove();
       } finally {
         addSpy.mockRestore();
@@ -3869,25 +3878,32 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
   );
 
   it.each([
-    ['month', '.abyss-cal-nav-month', '.abyss-month-picker-btn'],
-    ['year', '.abyss-cal-nav-year', '.abyss-year-picker-btn'],
+    ['month', '.abyss-cal-nav-month', '.abyss-month-picker'],
+    ['year', '.abyss-cal-nav-year', '.abyss-year-picker'],
   ] as const)(
-    '%s picker selection before deferred registration does not install a stale document listener',
-    async (_kind, anchorSelector, optionSelector) => {
-      const addSpy = vi.spyOn(activeDocument, 'addEventListener');
+    '%s picker closes on a pointer press outside without moving focus to the anchor',
+    async (_kind, anchorSelector, pickerSelector) => {
+      const { panel, el } = await makeCalendarPanel();
+      activeDocument.body.append(el);
       try {
-        const { panel, el } = await makeCalendarPanel();
-        activeDocument.body.append(el);
-        addSpy.mockClear();
-        expectDefined(el.querySelector<HTMLElement>(anchorSelector)).click();
-        expectDefined(el.querySelector<HTMLElement>(optionSelector)).click();
-        await flushMicrotasks();
+        const anchor = expectDefined(el.querySelector<HTMLElement>(anchorSelector));
+        anchor.click();
+        expect(el.querySelector(pickerSelector)).not.toBeNull();
 
-        expect(addSpy.mock.calls.some(([type]) => type === 'click')).toBe(false);
+        anchor.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        expect(
+          el.querySelector(pickerSelector),
+          'a press on the anchor is not outside',
+        ).not.toBeNull();
+
+        const outside = expectDefined(el.querySelector<HTMLElement>('.abyss-cal-body'));
+        outside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        expect(el.querySelector(pickerSelector)).toBeNull();
+        expect(anchor.getAttribute('aria-expanded')).toBe('false');
+        expect(activeDocument.activeElement).not.toBe(anchor);
+      } finally {
         panel.destroy();
         el.remove();
-      } finally {
-        addSpy.mockRestore();
       }
     },
   );
@@ -3898,7 +3914,6 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
   ] as const)(
     '%s picker owns initial focus and Escape dismissal',
     async (_kind, anchorSelector, pickerSelector, optionSelector) => {
-      const addSpy = vi.spyOn(activeDocument, 'addEventListener');
       const documentKeydown = vi.fn();
       activeDocument.addEventListener('keydown', documentKeydown);
       let panel: CenterPanel | undefined;
@@ -3953,17 +3968,10 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
         expect(el.querySelector(pickerSelector)).toBeNull();
         expect(anchor.getAttribute('aria-expanded')).toBe('false');
         expect(activeDocument.activeElement).toBe(anchor);
-
-        await flushMicrotasks();
-        expect(
-          addSpy.mock.calls.filter(([type]) => type === 'click'),
-          'Escape before deferred outside-dismiss registration must not leave a listener',
-        ).toHaveLength(0);
       } finally {
         panel?.destroy();
         el?.remove();
         activeDocument.removeEventListener('keydown', documentKeydown);
-        addSpy.mockRestore();
       }
     },
   );

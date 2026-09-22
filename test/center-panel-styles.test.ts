@@ -301,6 +301,17 @@ describe('CenterPanel task metadata styles', () => {
 });
 
 describe('Shared popover styles', () => {
+  it('lets the anchored popover position the month and year pickers', () => {
+    for (const picker of ['.abyss-month-picker', '.abyss-year-picker']) {
+      const rule = declarationsFor(picker);
+      expect(rule, picker).not.toContain('position:');
+      expect(rule, picker).not.toContain('top:');
+      expect(rule, picker).not.toContain('z-index:');
+      expect(rule, picker).toContain('display: grid');
+    }
+    expect(declarationsFor('.abyss-popover-anchored')).toContain('position: absolute');
+  });
+
   it('base popover sizing uses scalable units', () => {
     const popover = declarationsFor('.abyss-popover');
 
