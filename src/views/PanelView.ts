@@ -50,13 +50,36 @@ import { deviceTrackedTimeContext, type TrackingSurface } from '../ui/timeTracki
 import { TrackingTicker } from '../ui/timeTracking/TrackingTicker';
 import { createTrackingActions } from '../ui/timeTracking/trackingActions';
 import { PanelNavigator } from './panelNavigation';
+import { PANEL_DISPLAY_TEXT, panelTitle } from './panelTitle';
 
 export const PANEL_VIEW_TYPE = 'task-calendar-panel';
-const PANEL_DISPLAY_TEXT = 'Abyss Tasks';
 
 let panelViewInstanceSequence = 0;
 const COMPACT_RIGHT_MAX_REM = 58;
 const COMPACT_LEFT_MAX_REM = 38;
+
+/** Obsidian's leaf refreshes its tab header from getDisplayText, but the call is undocumented. */
+function hasHeaderRefresh(value: unknown): value is { updateHeader(): void } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof Reflect.get(value, 'updateHeader') === 'function'
+  );
+}
+
+function isElementOf(realm: Window & typeof window, value: unknown): value is HTMLElement {
+  return value instanceof realm.HTMLElement;
+}
+
+/** The in-view header title element Obsidian fills once at load, when the view exposes it. */
+function headerTitleElement(
+  value: unknown,
+  realm: Window & typeof window,
+): HTMLElement | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const titleEl: unknown = Reflect.get(value, 'titleEl');
+  return isElementOf(realm, titleEl) ? titleEl : undefined;
+}
 
 type CompactPane = 'left' | 'right';
 
@@ -169,6 +192,7 @@ export class PanelView extends ItemView {
   private queryUnsub_abyssPrivate: (() => void) | undefined;
   private modeUnsub_abyssPrivate: (() => void) | undefined;
   private selectionUnsub_abyssPrivate: (() => void) | undefined;
+  private listUnsub_abyssPrivate: (() => void) | undefined;
   private selectedListRenameUnsub_abyssPrivate: (() => void) | undefined;
   private projectStore_abyssPrivate?: ProjectStore;
   private projectStoreUnsub_abyssPrivate?: () => void;
@@ -229,7 +253,31 @@ export class PanelView extends ItemView {
     return PANEL_VIEW_TYPE;
   }
   override getDisplayText(): string {
-    return PANEL_DISPLAY_TEXT;
+    return Platform.isPhone ? this.panelTitle_abyssPrivate() : PANEL_DISPLAY_TEXT;
+  }
+
+  private panelTitle_abyssPrivate(): string {
+    const selection = this.state_abyssPrivate.get('selectedList');
+    const groups =
+      typeof selection === 'object' && selection.type === 'group'
+        ? resolveEffectiveTagGroups(
+            this.settings_abyssPrivate,
+            collectTaskNodeTags(this.tasks_abyssPrivate.queries.listNodes()),
+          )
+        : [];
+    return panelTitle(this.state_abyssPrivate.get('mode'), selection, groups);
+  }
+
+  /** Obsidian reads getDisplayText once at load; the phone header follows the panel afterwards. */
+  private refreshHostHeader_abyssPrivate(): void {
+    if (!Platform.isPhone) return;
+    const title = this.getDisplayText();
+    const leaf: unknown = this.leaf;
+    if (hasHeaderRefresh(leaf)) leaf.updateHeader();
+    const realm = this.contentEl.ownerDocument.defaultView;
+    if (realm === null) return;
+    const titleEl = headerTitleElement(this, realm);
+    if (titleEl !== undefined && titleEl.textContent !== title) titleEl.setText(title);
   }
   override getIcon(): string {
     return 'calendar-days';
@@ -270,6 +318,7 @@ export class PanelView extends ItemView {
     this.initializeCapture_abyssPrivate(elements, selectionTasks);
     this.subscribeToState_abyssPrivate(elements.layout);
     this.subscribeToQueries_abyssPrivate();
+    this.refreshHostHeader_abyssPrivate();
     return Promise.resolve();
   }
 
@@ -666,9 +715,13 @@ export class PanelView extends ItemView {
       ) {
         this.openCompactPane_abyssPrivate('right', false);
       }
+      this.refreshHostHeader_abyssPrivate();
     });
     this.selectionUnsub_abyssPrivate = this.state_abyssPrivate.on('taskStack', (stack) => {
       this.handleTaskStackChange_abyssPrivate(stack);
+    });
+    this.listUnsub_abyssPrivate = this.state_abyssPrivate.on('selectedList', () => {
+      this.refreshHostHeader_abyssPrivate();
     });
   }
 
@@ -782,6 +835,7 @@ export class PanelView extends ItemView {
   private releaseSubscriptions_abyssPrivate(): void {
     this.modeUnsub_abyssPrivate?.();
     this.selectionUnsub_abyssPrivate?.();
+    this.listUnsub_abyssPrivate?.();
     this.selectedListRenameUnsub_abyssPrivate?.();
     this.queryUnsub_abyssPrivate?.();
     this.projectStoreUnsub_abyssPrivate?.();

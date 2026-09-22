@@ -1,4 +1,4 @@
-import { Notice, TFile, WorkspaceLeaf, type App } from 'obsidian';
+import { Notice, Platform, TFile, WorkspaceLeaf, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type AppState, type ListSelection } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -1931,6 +1931,52 @@ describe('PanelView', () => {
 
     it('getDisplayText returns "Abyss Tasks"', () => {
       expect(view.getDisplayText()).toBe('Abyss Tasks');
+    });
+
+    it('keeps the static tab title on desktop whatever the list', () => {
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      state.set('selectedList', 'upcoming');
+      expect(view.getDisplayText()).toBe('Abyss Tasks');
+    });
+
+    it('names the phone header after the current list and mode', () => {
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      Platform.isPhone = true;
+      try {
+        const titleEl = createDiv();
+        const updateHeader = vi.fn();
+        Object.assign(view, { titleEl });
+        Object.assign(view.leaf, { updateHeader });
+        state.set('selectedList', 'upcoming');
+        expect(view.getDisplayText()).toBe('Upcoming');
+        expect(titleEl.textContent).toBe('Upcoming');
+        expect(updateHeader).toHaveBeenCalled();
+        state.set('mode', 'projects');
+        expect(view.getDisplayText()).toBe('Projects');
+        expect(titleEl.textContent).toBe('Projects');
+        state.set('mode', 'tasks');
+        state.set('selectedList', { type: 'project', path: 'Projects/Launch.md' });
+        expect(titleEl.textContent).toBe('Launch');
+      } finally {
+        Platform.isPhone = false;
+      }
+    });
+
+    it('stops following the list after close', async () => {
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      Platform.isPhone = true;
+      try {
+        const titleEl = createDiv();
+        Object.assign(view, { titleEl });
+        Object.assign(view.leaf, { updateHeader: vi.fn() });
+        state.set('selectedList', 'inbox');
+        expect(titleEl.textContent).toBe('Inbox');
+        await view.onClose();
+        state.set('selectedList', 'upcoming');
+        expect(titleEl.textContent).toBe('Inbox');
+      } finally {
+        Platform.isPhone = false;
+      }
     });
 
     it('getIcon returns calendar-days', () => {
