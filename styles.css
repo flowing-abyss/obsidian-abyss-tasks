@@ -7,6 +7,9 @@
 
   /* One size for every toolbar button and input; Obsidian grows it to the touch size on mobile. */
   --abyss-toolbar-control-size: var(--input-height);
+
+  /* Space the host reserves under the panel for floating navigation; only the phone sets it. */
+  --abyss-shell-bottom-inset: 0px;
   --abyss-priority-a: var(--color-red);
   --abyss-priority-b: var(--color-orange);
   --abyss-priority-c: var(--color-yellow);
@@ -8701,10 +8704,20 @@ body.is-phone .abyss-project-table-controls .abyss-center-search {
   width: auto;
 }
 
+/* Obsidian's floating navigation covers the bottom of the view on phones. Each pane reserves the
+   same inset Obsidian gives its own views, so "Add task" and the settings button stay reachable. */
+body.is-phone .abyss-panel-view {
+  --abyss-shell-bottom-inset: var(--view-bottom-spacing, 0px);
+}
+
+body.is-phone .abyss-layout > :is(.abyss-rail, .abyss-left, .abyss-center-shell, .abyss-right) {
+  padding-block-end: var(--abyss-shell-bottom-inset);
+}
+
 /* Seat global results above Obsidian's floating navigation in either phone orientation. */
-body.is-phone.is-mobile .abyss-creation-feedback {
+body.is-phone .abyss-creation-feedback {
   inset-block-end: calc(
-    env(safe-area-inset-bottom, 0px) + var(--size-4-16, 4rem) + var(--size-4-12, 3rem)
+    var(--abyss-shell-bottom-inset) + var(--size-4-8, 2rem) + var(--size-4-4, 1rem)
   );
 }
 

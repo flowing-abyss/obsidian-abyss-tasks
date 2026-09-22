@@ -135,6 +135,12 @@ Object.assign(core, {
     minimum: false,
     fallback: 'var(--background-primary)',
   },
+  '--view-bottom-spacing': {
+    source:
+      'Obsidian 1.13.7 app.css `.is-phone.is-floating-nav, .is-phone.auto-full-screen` block, 2026-09-22; the reservation Obsidian gives its own views under the floating phone navigation. Absent when the navigation is not floating, so zero is the correct fallback.',
+    minimum: false,
+    fallback: '0px',
+  },
 });
 
 /** @type {import('./css-policy.mjs').CssContracts} */

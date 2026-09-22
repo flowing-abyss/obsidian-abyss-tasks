@@ -157,6 +157,18 @@ describe('CenterPanel task metadata styles', () => {
     );
   });
 
+  it('reserves the phone navigation inset from the host variable', () => {
+    expect(declarationsFor('.abyss-panel-view')).toContain('--abyss-shell-bottom-inset: 0px');
+    expect(declarationsFor('body.is-phone .abyss-panel-view')).toContain(
+      '--abyss-shell-bottom-inset: var(--view-bottom-spacing, 0px)',
+    );
+    for (const pane of ['.abyss-rail', '.abyss-left', '.abyss-center-shell', '.abyss-right']) {
+      expect(declarationsFor(`body.is-phone .abyss-layout > ${pane}`), pane).toContain(
+        'padding-block-end: var(--abyss-shell-bottom-inset)',
+      );
+    }
+  });
+
   it('keeps a usable title track under the observed 292px center metadata pressure', () => {
     const center = declarationsFor('.abyss-center');
     const compact = atRuleBlock('@container abyss-task-list (max-width: 28rem)');

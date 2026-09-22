@@ -646,7 +646,7 @@ describe('CaptureSurface', () => {
       compact,
       '.abyss-center .abyss-calendar-capture-feedback',
     );
-    const globalFeedback = declarationsFor('body.is-phone.is-mobile .abyss-creation-feedback');
+    const globalFeedback = declarationsFor('body.is-phone .abyss-creation-feedback');
 
     expect(nav).toContain('overflow-x: auto');
     expect(nav).toContain('flex-wrap: nowrap');
@@ -655,8 +655,9 @@ describe('CaptureSurface', () => {
     expect(calendarFeedback).toContain('var(--size-4-16');
     expect(calendarFeedback).toContain('var(--size-4-12');
     expect(calendarFeedback).toContain('var(--size-4-4');
-    expect(globalFeedback).toContain('inset-block-end:');
-    expect(globalFeedback).toContain('env(safe-area-inset-bottom');
+    expect(globalFeedback).toContain('inset-block-end: calc(');
+    expect(globalFeedback).toContain('var(--abyss-shell-bottom-inset)');
+    expect(globalFeedback).not.toContain('env(safe-area-inset-bottom');
   });
 
   it('keeps desktop creation feedback above fixed host status UI', () => {
