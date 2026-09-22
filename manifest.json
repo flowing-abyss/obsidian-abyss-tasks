@@ -1,7 +1,7 @@
 {
   "id": "abyss-tasks",
   "name": "Abyss Tasks",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "minAppVersion": "1.7.2",
   "description": "A task management interface for Markdown tasks.",
   "author": "flowing-abyss",
