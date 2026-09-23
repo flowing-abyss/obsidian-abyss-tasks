@@ -30,14 +30,14 @@ reconcile them through the same parsing path as manual edits.
 
 ## Sources of truth
 
-| Concern                                              | Authoritative source                                                                     | Derived or temporary state                   |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------- |
-| Tasks, metadata, and dependencies                    | Vault Markdown                                                                           | TaskIndex snapshots and calendar projections |
-| Tracked time                                         | Vault Markdown time entry lines                                                          | TimeEntryIndex projection and tracked totals |
-| Projects and status                                  | Project Markdown, membership query, configured status property, and literal status names | ProjectStore snapshots and task statistics   |
-| Static preferences                                   | Plugin `data.json`                                                                       | Composed runtime CalendarSettings            |
-| Saved list, section, and project views               | Versioned plugin `state.json`                                                            | Composed runtime CalendarSettings            |
-| Navigation, selection, search, editors, and gestures | AppState or the owning view controller for the current session                           | Rendered DOM                                 |
+| Concern                                              | Authoritative source                                                                                               | Derived or temporary state                   |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| Tasks, metadata, and dependencies                    | Vault Markdown                                                                                                     | TaskIndex snapshots and calendar projections |
+| Tracked time                                         | Vault Markdown time entry lines                                                                                    | TimeEntryIndex projection and tracked totals |
+| Projects and status                                  | Project Markdown, membership query, configured status property, and literal status names                           | ProjectStore snapshots and task statistics   |
+| Static preferences                                   | Plugin `data.json`                                                                                                 | Composed runtime CalendarSettings            |
+| Saved list, section, and project views               | Versioned plugin `state.json`                                                                                      | Composed runtime CalendarSettings            |
+| Navigation, selection, search, editors, and gestures | AppState or the owning view controller for the current session (CalendarMode owns the calendar date and view type) | Rendered DOM                                 |
 
 `TaskIndex` and `ProjectStore` are rebuildable read models. `AppState` coordinates the interface;
 it must not become a persistence layer. Saved view preferences and transient interaction state
@@ -81,6 +81,32 @@ migration subscription and router on close.
 Navigation finishes the active project editor before changing mode. A rejected draft leaves the
 current mode and projection intact. Inspector history stores structural task paths for its session;
 only proven successor references survive writes, and history never becomes persisted task identity.
+
+## Calendar mode
+
+`CenterPanel` routes modes and keeps the task actions, the task modal, the capture session, and
+both recurrence editors. Calendar mode lives in [`src/panels/calendar/`](src/panels/calendar/)
+and never imports `CenterPanel`:
+
+| Module                                                                        | Responsibility                                                                                                                                                                                |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`CalendarMode`](src/panels/calendar/CalendarMode.ts)                         | Calendar date and view type, view lifetime, navigation bar, query subscription for patches, forecast-menu and projection-diagnostic owners; reaches the panel only through `CalendarModeHost` |
+| [`CalendarCommands`](src/panels/calendar/calendarCommands.ts)                 | Turns drag payloads and gestures into `TaskApplicationApi.execute` calls and nothing else                                                                                                     |
+| [`TimedBlockFocusRetention`](src/panels/calendar/timedBlockFocusRetention.ts) | Keyboard queue and deferred focus restoration with the owning window's timer                                                                                                                  |
+| [`calendarViewFactory`](src/panels/calendar/calendarViewFactory.ts)           | The single wiring of view callbacks onto Today, Week, and Month; the place a phone presentation later branches                                                                                |
+| [`CalendarNavigationBar`](src/panels/calendar/CalendarNavigationBar.ts)       | Toolbar DOM, title, month and year pickers, view switcher                                                                                                                                     |
+| [`calendarCapturePlacement`](src/panels/calendar/calendarCapturePlacement.ts) | Resolves capture hosts from the mounted grid; the capture session stays in `CenterPanel`                                                                                                      |
+
+Every file under `src/panels/calendar/` uses owner capabilities: no ambient window, document, or
+timers. The four pure helpers `calendarPolicy`, `calendarDateNavigation`, `visibleCalendarDates`,
+and `calendarContent` receive time and data explicitly. `calendarPolicy.initialCalendarView`
+supplies the phone initial view and `PanelView` applies it.
+
+Regression entry points: [calendar date navigation](test/calendar-date-navigation.test.ts),
+[calendar content](test/calendar-content.test.ts), [calendar commands](test/calendar-commands.test.ts),
+[navigation bar](test/calendar-navigation-bar.test.ts), [view factory](test/calendar-view-factory.test.ts),
+[focus retention](test/timed-block-focus-retention.test.ts), [calendar mode](test/calendar-mode.test.ts),
+and the calendar cases of [the centre panel integration suite](test/center-panel-integration.test.ts).
 
 ## Task commands and reconciliation
 

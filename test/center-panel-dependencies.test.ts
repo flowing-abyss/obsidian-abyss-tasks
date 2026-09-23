@@ -21,6 +21,8 @@ import {
   expectDefined,
   flushMicrotasks,
   resolvedConfig,
+  setCalendarDate,
+  setCalendarView,
   useRealMoment,
 } from './helpers';
 
@@ -384,8 +386,8 @@ describe('strict dependency checkbox surfaces', () => {
     async (view) => {
       const h = await harness(markdownFor(view === 'month' ? 'center' : 'timed'));
       const panel = mountCenter(h);
-      panel['calDate_abyssPrivate'] = window.moment('2026-09-05');
-      panel['calViewType_abyssPrivate'] = view;
+      setCalendarDate(panel, window.moment('2026-09-05'));
+      setCalendarView(panel, view);
       h.state.set('mode', 'calendar');
       const indicator = element(h.el, '.abyss-dep-indicator');
       const control = expectDefined(indicator.previousElementSibling) as HTMLElement;

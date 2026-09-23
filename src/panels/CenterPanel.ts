@@ -91,7 +91,7 @@ import {
   applyTaskPresentationIdentity,
   renderedTaskNodeElements,
 } from '../ui/taskPresentationIdentity';
-import { rootTaskRef, taskNodeLine, taskNodeRef, taskSelectionPath } from '../ui/taskSelection';
+import { rootTaskRef, taskNodeLine, taskNodeRef } from '../ui/taskSelection';
 import type { TrackingSurface } from '../ui/timeTracking/TimeBadge';
 import type { TrackingTickerState } from '../ui/timeTracking/TrackingTicker';
 import { formatTrackedDuration } from '../ui/timeTracking/formatTracked';
@@ -99,11 +99,9 @@ import {
   calendarMutationTarget,
   calendarOccurrenceForTask,
   calendarPatchCommand,
-  calendarRootTaskRef,
   calendarSourcePatchCommand,
   hasOtherCalendarRecurrenceOwner,
   isForecastCalendarTask,
-  type CalendarProjectionIssue,
   type CalendarTaskSource,
 } from '../views/calendarOccurrences';
 import { PanelNavigator, type PanelNavigationActions } from '../views/panelNavigation';
@@ -114,13 +112,7 @@ import {
   groupTasksByStatus,
   groupTasksByTag,
 } from '../views/taskGrouping';
-import {
-  createCalendarProjectionDiagnosticOwner,
-  createForecastContextMenuOwner,
-  type CalendarProjectionDiagnosticOwner,
-  type ForecastContextMenuOwner,
-} from '../views/timegrid/renderTaskMeta';
-import { CalendarNavigationBar } from './calendar/CalendarNavigationBar';
+import { CalendarMode, type CalendarModeHost } from './calendar/CalendarMode';
 import {
   calendarCaptureHost,
   calendarCaptureInputClass,
@@ -128,22 +120,7 @@ import {
   isCalendarCapturePlacement,
   type CalendarCapturePlacement,
 } from './calendar/calendarCapturePlacement';
-import { CalendarCommands } from './calendar/calendarCommands';
-import { calendarContent, type CalendarContent } from './calendar/calendarContent';
-import {
-  calendarScrollKey,
-  dateForView,
-  isoWeekStart,
-  stepCalendarDate,
-} from './calendar/calendarDateNavigation';
-import {
-  createCalendarView,
-  type CalendarHandlers,
-  type CalendarViewInstance,
-} from './calendar/calendarViewFactory';
 import type { CalViewType } from './calendar/calendarViewType';
-import { TimedBlockFocusRetention } from './calendar/timedBlockFocusRetention';
-import { visibleCalendarDates } from './calendar/visibleCalendarDates';
 import { ProjectsPanel } from './projects/ProjectsPanel';
 
 type BarCapturePlacement =
@@ -151,13 +128,6 @@ type BarCapturePlacement =
   | { readonly type: 'project'; readonly path: string };
 
 type PanelCapturePlacement = BarCapturePlacement | CalendarCapturePlacement;
-
-interface CalendarRenderContext {
-  readonly viewContainer: HTMLElement;
-  readonly forecastMenuOwner: ForecastContextMenuOwner;
-  readonly projectionDiagnosticOwner: CalendarProjectionDiagnosticOwner;
-  readonly handlers: CalendarHandlers;
-}
 
 interface PanelCaptureSession {
   readonly requestId: number;
@@ -229,11 +199,6 @@ export class CenterPanel {
   private readonly completionConfirmationAbortController_abyssPrivate = new AbortController();
   private el!: HTMLElement;
   private readonly offs_abyssPrivate: Array<() => void> = [];
-  private calViewType_abyssPrivate: CalViewType = 'month';
-  private calDate_abyssPrivate = window.moment().date(1);
-  private calViewInstance_abyssPrivate: CalendarViewInstance | null = null;
-  private calUnsubscribe_abyssPrivate: (() => void) | null = null;
-  private calendarNavigationBar_abyssPrivate: CalendarNavigationBar | null = null;
   private taskDatePickerCleanup_abyssPrivate: (() => void) | null = null;
   private taskCardRenderGeneration_abyssPrivate = 0;
   private taskDateFocusContinuityKey_abyssPrivate: string | null = null;
@@ -244,16 +209,6 @@ export class CenterPanel {
   } | null = null;
   private recurrenceEditorCleanup_abyssPrivate: (() => void) | null = null;
   private viewStatePopoverCleanup_abyssPrivate: ((restoreFocus?: boolean) => void) | null = null;
-  private forecastMenuOwner_abyssPrivate: ForecastContextMenuOwner | null = null;
-  private projectionDiagnosticOwner_abyssPrivate: CalendarProjectionDiagnosticOwner | null = null;
-  // Full renders replace the view instance, so keep the last scroll-to-now key at panel scope.
-  // Query notifications use the incremental patch path and never consult this state.
-  private lastScrolledCalKey_abyssPrivate: string | null = null;
-  // A deliberate full refresh empties the outer calendar before mountView can inspect its grid.
-  // Carry scrollTop across that boundary; query patches retain the grid node and need no fallback.
-  private pendingCalScrollTop_abyssPrivate: number | undefined = undefined;
-  private readonly focusRetention_abyssPrivate: TimedBlockFocusRetention;
-  private readonly calendarCommands_abyssPrivate: CalendarCommands;
   private taskModal_abyssPrivate: TaskModal | null = null;
   private readonly selectedTaskKeys_abyssPrivate = new Set<string>();
   private lastAnnouncedSelectionCount_abyssPrivate = 0;
@@ -289,6 +244,7 @@ export class CenterPanel {
   } | null = null;
   private activeCapture_abyssPrivate: PanelCaptureSession | null = null;
   private readonly navigation_abyssPrivate: PanelNavigationActions;
+  private readonly calendar_abyssPrivate: CalendarMode;
   private readonly state_abyssPrivate: AppState;
   private readonly app_abyssPrivate: App;
   private readonly settings_abyssPrivate: CalendarSettings;
@@ -362,14 +318,57 @@ export class CenterPanel {
           )
         : null;
     this.navigation_abyssPrivate = this.createNavigation_abyssPrivate(navigation);
-    this.focusRetention_abyssPrivate = new TimedBlockFocusRetention(tasks, {
-      isCalendarActive: () => this.state_abyssPrivate.get('mode') === 'calendar',
-      root: () => ('el' in this ? this.el : null),
-      follow: (updated, nextSegmentDate) => {
-        this.followShiftedTask_abyssPrivate(updated, nextSegmentDate);
-      },
+    this.calendar_abyssPrivate = new CalendarMode({
+      state,
+      app,
+      settings,
+      queries,
+      tasks,
+      statusRegistry,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
+      navigation: this.navigation_abyssPrivate,
+      host: this.createCalendarHost_abyssPrivate(),
     });
-    this.calendarCommands_abyssPrivate = new CalendarCommands({ tasks, queries });
+  }
+
+  private createCalendarHost_abyssPrivate(): CalendarModeHost {
+    return {
+      rerender: () => {
+        this.render_abyssPrivate();
+      },
+      openTask: (task) => {
+        this.taskModal_abyssPrivate?.open(task);
+      },
+      openForecastTask: (source, referenceDate) => {
+        this.openForecastTask_abyssPrivate(source, referenceDate);
+      },
+      toggleTask: (task) => this.toggleTask_abyssPrivate(task),
+      setTaskStatus: (task, symbol) => this.setTaskStatus_abyssPrivate(task, symbol),
+      setPriority: (task, priority) => this.setPriority_abyssPrivate(task, priority),
+      dependenciesFor: (task) => this.dependenciesFor_abyssPrivate(task),
+      tagGroups: () => this.effectiveTagGroups_abyssPrivate(),
+      openForecastRecurrenceEditor: (anchor, source) => {
+        this.openForecastRecurrenceEditor_abyssPrivate(anchor, source);
+      },
+      dismissRecurrenceEditor: () => {
+        this.dismissRecurrenceEditor_abyssPrivate();
+      },
+      openCapture: (placement) => {
+        this.openCapture_abyssPrivate(placement, { type: 'default', source: 'calendar' });
+      },
+      unmountActiveCapture: () => {
+        this.unmountActiveCapture_abyssPrivate();
+      },
+      remountActiveCapture: () => {
+        this.remountActiveCapture_abyssPrivate();
+      },
+      syncTaskStackSelection: () => {
+        this.updateTaskStackSelection_abyssPrivate();
+      },
+      onRenderComplete: (root) => {
+        this.onRenderComplete_abyssPrivate(root);
+      },
+    };
   }
 
   private createNavigation_abyssPrivate(
@@ -394,7 +393,7 @@ export class CenterPanel {
 
   mount(container: HTMLElement): void {
     this.el = container;
-    this.initializeOwnedUi_abyssPrivate(container.ownerDocument);
+    this.initializeOwnedUi_abyssPrivate();
     this.initializeListViewState_abyssPrivate();
     this.subscribeToState_abyssPrivate();
     this.subscribeToTracking_abyssPrivate();
@@ -404,11 +403,7 @@ export class CenterPanel {
     this.mountFocusContinuity_abyssPrivate();
   }
 
-  private initializeOwnedUi_abyssPrivate(ownerDocument: Document): void {
-    this.forecastMenuOwner_abyssPrivate = createForecastContextMenuOwner(
-      ownerDocument,
-      this.interactionOwnership_abyssPrivate,
-    );
+  private initializeOwnedUi_abyssPrivate(): void {
     this.taskModal_abyssPrivate = new TaskModal(
       this.app_abyssPrivate,
       this.statusRegistry_abyssPrivate,
@@ -433,7 +428,7 @@ export class CenterPanel {
       }),
       this.state_abyssPrivate.on('mode', () => {
         this.cancelStaleListCapture_abyssPrivate();
-        this.cancelKeyboardInteraction_abyssPrivate();
+        this.calendar_abyssPrivate.cancelKeyboardInteraction();
       }),
       this.state_abyssPrivate.on('searchQuery', (query) => {
         this.handleSearchQueryChanged_abyssPrivate(query);
@@ -489,7 +484,7 @@ export class CenterPanel {
 
   private handleStateCommit_abyssPrivate(changed: ReadonlySet<string>): void {
     if (changed.size === 0 && this.state_abyssPrivate.get('mode') === 'calendar') {
-      this.cancelKeyboardInteraction_abyssPrivate();
+      this.calendar_abyssPrivate.cancelKeyboardInteraction();
     }
     const renderKeys = ['selectedList', 'centerListViewState', 'centerFilter', 'mode'];
     if (changed.size === 0 || renderKeys.some((key) => changed.has(key)))
@@ -640,8 +635,8 @@ export class CenterPanel {
       )
         return;
       this.abandonTaskDateFocus_abyssPrivate();
-      if (this.focusRetention_abyssPrivate.hasPending())
-        this.cancelKeyboardInteraction_abyssPrivate();
+      if (this.calendar_abyssPrivate.hasPendingTimedBlockFocus())
+        this.calendar_abyssPrivate.cancelKeyboardInteraction();
     };
     ownerWindow?.addEventListener('blur', onOwnerWindowBlur);
     this.offs_abyssPrivate.push(() => {
@@ -655,9 +650,10 @@ export class CenterPanel {
     const ownerDocument = this.el.ownerDocument;
     if (target === ownerDocument.body || target === ownerDocument.documentElement) return;
     const block = target.closest<HTMLElement>('.abyss-tg-block');
-    if (block != null && this.el.contains(block)) this.focusRetention_abyssPrivate.retain(block);
-    else if (this.focusRetention_abyssPrivate.hasPending())
-      this.cancelKeyboardInteraction_abyssPrivate();
+    if (block != null && this.el.contains(block))
+      this.calendar_abyssPrivate.retainTimedBlockFocus(block);
+    else if (this.calendar_abyssPrivate.hasPendingTimedBlockFocus())
+      this.calendar_abyssPrivate.cancelKeyboardInteraction();
   }
 
   private revokeTaskDateFocusOutside_abyssPrivate(target: EventTarget | null): void {
@@ -696,7 +692,7 @@ export class CenterPanel {
   }
 
   calendarView(): CalViewType {
-    return this.calViewType_abyssPrivate;
+    return this.calendar_abyssPrivate.view();
   }
 
   /** The heading of the tasks list for the current selection, as the center header shows it. */
@@ -705,8 +701,7 @@ export class CenterPanel {
   }
 
   setCalendarView(view: CalViewType): void {
-    this.calViewType_abyssPrivate = view;
-    this.calDate_abyssPrivate = dateForView(view, window.moment());
+    this.calendar_abyssPrivate.setView(view);
   }
 
   destroy(): void {
@@ -717,7 +712,7 @@ export class CenterPanel {
     this.endTaskDrag_abyssPrivate?.();
     this.completionConfirmationAbortController_abyssPrivate.abort();
     this.cancelActiveCapture_abyssPrivate();
-    this.cancelKeyboardInteraction_abyssPrivate();
+    this.calendar_abyssPrivate.cancelKeyboardInteraction();
     this.abandonTaskDateFocus_abyssPrivate();
     this.clearSearchShell_abyssPrivate();
     this.clearTaskDatePicker_abyssPrivate();
@@ -728,7 +723,7 @@ export class CenterPanel {
     this.offs_abyssPrivate.forEach((f) => {
       f();
     });
-    this.destroyCalendarView_abyssPrivate();
+    this.calendar_abyssPrivate.destroy();
     this.destroyProjectsPanel_abyssPrivate();
     this.md_abyssPrivate.unload();
     if ('el' in this) this.el.empty();
@@ -756,18 +751,6 @@ export class CenterPanel {
     this.completeTaskCardRender_abyssPrivate();
   }
 
-  private destroyCalendarView_abyssPrivate(): void {
-    this.forecastMenuOwner_abyssPrivate?.dismiss();
-    this.projectionDiagnosticOwner_abyssPrivate?.destroy();
-    this.projectionDiagnosticOwner_abyssPrivate = null;
-    this.calendarNavigationBar_abyssPrivate?.destroy();
-    this.calendarNavigationBar_abyssPrivate = null;
-    this.calUnsubscribe_abyssPrivate?.();
-    this.calUnsubscribe_abyssPrivate = null;
-    this.calViewInstance_abyssPrivate?.destroy();
-    this.calViewInstance_abyssPrivate = null;
-  }
-
   private render_abyssPrivate(): void {
     const mode = this.state_abyssPrivate.get('mode');
     if (this.refreshMountedProjects_abyssPrivate(mode)) return;
@@ -776,7 +759,9 @@ export class CenterPanel {
     this.prepareRender_abyssPrivate(mode, retainTaskShell);
     if (mode !== 'projects') this.destroyProjectsPanel_abyssPrivate();
     if (mode === 'calendar') {
-      this.renderCalendarRoot_abyssPrivate();
+      this.el.removeClass('abyss-center--projects');
+      this.el.addClass('abyss-center--calendar');
+      this.calendar_abyssPrivate.render(this.el);
       return;
     }
     this.prepareNonCalendarRoot_abyssPrivate(retainTaskShell);
@@ -824,20 +809,9 @@ export class CenterPanel {
     this.md_abyssPrivate.load();
   }
 
-  private renderCalendarRoot_abyssPrivate(): void {
-    this.focusRetention_abyssPrivate.captureActiveFocus(this.el);
-    this.pendingCalScrollTop_abyssPrivate =
-      this.el.querySelector<HTMLElement>('.abyss-tg-grid-row')?.scrollTop;
-    this.el.empty();
-    this.el.removeClass('abyss-center--projects');
-    this.el.addClass('abyss-center--calendar');
-    this.destroyCalendarView_abyssPrivate();
-    this.renderCalendarMode_abyssPrivate();
-  }
-
   private prepareNonCalendarRoot_abyssPrivate(retainTaskShell = false): void {
     this.el.removeClass('abyss-center--calendar');
-    this.destroyCalendarView_abyssPrivate();
+    this.calendar_abyssPrivate.unmount();
     if (!retainTaskShell) {
       this.clearTaskShell_abyssPrivate();
       this.el.empty();
@@ -987,320 +961,6 @@ export class CenterPanel {
     return searchInput;
   }
 
-  private renderCalendarMode_abyssPrivate(): void {
-    const forecastMenuOwner =
-      this.forecastMenuOwner_abyssPrivate ??
-      createForecastContextMenuOwner(this.el.ownerDocument, this.interactionOwnership_abyssPrivate);
-    this.forecastMenuOwner_abyssPrivate = forecastMenuOwner;
-    const projectionDiagnosticOwner = createCalendarProjectionDiagnosticOwner(
-      this.el.ownerDocument,
-    );
-    this.projectionDiagnosticOwner_abyssPrivate = projectionDiagnosticOwner;
-    const pending: { mountView: () => void } = { mountView: () => undefined };
-    const navigationBar = this.createCalendarNavigationBar_abyssPrivate(() => {
-      pending.mountView();
-    });
-    this.calendarNavigationBar_abyssPrivate = navigationBar;
-    navigationBar.mount(this.el);
-    const viewContainer = this.el.createDiv({ cls: 'abyss-cal-body' });
-    navigationBar.updateTitle();
-    const handlers = this.createCalendarHandlers_abyssPrivate(viewContainer);
-    const context: CalendarRenderContext = {
-      viewContainer,
-      forecastMenuOwner,
-      projectionDiagnosticOwner,
-      handlers,
-    };
-    const mountView = (): void => {
-      this.mountCalendarView_abyssPrivate(context);
-    };
-    pending.mountView = mountView;
-    const patchView = (): void => {
-      this.patchCalendarView_abyssPrivate(context, mountView);
-    };
-    mountView();
-    this.calUnsubscribe_abyssPrivate = this.queries_abyssPrivate.subscribe(() => {
-      patchView();
-    });
-  }
-
-  private createCalendarNavigationBar_abyssPrivate(mountView: () => void): CalendarNavigationBar {
-    const bar = new CalendarNavigationBar({
-      owner: this.el,
-      interactionOwnership: this.interactionOwnership_abyssPrivate,
-      callbacks: {
-        view: () => this.calViewType_abyssPrivate,
-        date: () => this.calDate_abyssPrivate,
-        onStep: (direction) => {
-          this.cancelKeyboardInteraction_abyssPrivate();
-          this.calDate_abyssPrivate = stepCalendarDate(
-            this.calViewType_abyssPrivate,
-            this.calDate_abyssPrivate,
-            direction,
-          );
-          bar.updateTitle();
-          mountView();
-        },
-        onToday: () => {
-          this.cancelKeyboardInteraction_abyssPrivate();
-          this.calDate_abyssPrivate = dateForView(this.calViewType_abyssPrivate, window.moment());
-          bar.updateTitle();
-          mountView();
-        },
-        onSelectMonth: (month) => {
-          this.cancelKeyboardInteraction_abyssPrivate();
-          bar.closePicker(true);
-          this.calDate_abyssPrivate = this.calDate_abyssPrivate.clone().month(month).date(1);
-          bar.updateTitle();
-          mountView();
-        },
-        onSelectYear: (year) => {
-          this.cancelKeyboardInteraction_abyssPrivate();
-          bar.closePicker(true);
-          this.calDate_abyssPrivate = this.calDate_abyssPrivate.clone().year(year).date(1);
-          bar.updateTitle();
-          mountView();
-        },
-        onSelectView: (view) => {
-          this.navigation_abyssPrivate.openCalendarView(view);
-        },
-      },
-    });
-    return bar;
-  }
-
-  private currentCalendarContent_abyssPrivate(): CalendarContent {
-    return calendarContent({
-      queries: this.queries_abyssPrivate,
-      settings: this.settings_abyssPrivate,
-      view: this.calViewType_abyssPrivate,
-      date: this.calDate_abyssPrivate,
-    });
-  }
-
-  private openCalendarDay_abyssPrivate(date: string): void {
-    this.cancelKeyboardInteraction_abyssPrivate();
-    this.calViewType_abyssPrivate = 'today';
-    this.calDate_abyssPrivate = window.moment(date);
-    this.render_abyssPrivate();
-  }
-
-  private openCalendarWeek_abyssPrivate(week: string, year: string): void {
-    this.cancelKeyboardInteraction_abyssPrivate();
-    this.calViewType_abyssPrivate = 'week';
-    this.calDate_abyssPrivate = isoWeekStart(week, year, window.moment());
-    this.render_abyssPrivate();
-  }
-
-  private mountCalendarView_abyssPrivate(context: CalendarRenderContext): void {
-    this.prepareCalendarViewUpdate_abyssPrivate(context.forecastMenuOwner);
-    this.unmountActiveCapture_abyssPrivate();
-    const renderGeneration = this.focusRetention_abyssPrivate.beginRender();
-    const grid = context.viewContainer.querySelector<HTMLElement>('.abyss-tg-grid-row');
-    const preservedScrollTop = grid?.scrollTop ?? this.pendingCalScrollTop_abyssPrivate;
-    this.pendingCalScrollTop_abyssPrivate = undefined;
-    this.calViewInstance_abyssPrivate?.destroy();
-    context.viewContainer.empty();
-    const { config, issues, tasks } = this.currentCalendarContent_abyssPrivate();
-    // A rebuilt grid with no position to restore would start at midnight, so it scrolls to now
-    // even when this (view, date) pair was visited before. Only a same-date refresh that keeps its
-    // position skips the scroll.
-    const shouldScrollToNow =
-      this.shouldScrollCalendarToNow_abyssPrivate() || preservedScrollTop === undefined;
-    this.calViewInstance_abyssPrivate = createCalendarView(
-      this.calViewType_abyssPrivate,
-      {
-        app: this.app_abyssPrivate,
-        statusRegistry: this.statusRegistry_abyssPrivate,
-        interactionOwnership: this.interactionOwnership_abyssPrivate,
-        dependenciesFor: this.dependenciesFor_abyssPrivate,
-        tagGroups: () => this.effectiveTagGroups_abyssPrivate(),
-        forecastMenuOwner: context.forecastMenuOwner,
-      },
-      context.handlers,
-      {
-        openDay: (date) => {
-          this.openCalendarDay_abyssPrivate(date);
-        },
-        openWeek: (week, year) => {
-          this.openCalendarWeek_abyssPrivate(week, year);
-        },
-      },
-    );
-    this.calViewInstance_abyssPrivate.render(
-      context.viewContainer,
-      tasks,
-      config,
-      shouldScrollToNow,
-      preservedScrollTop,
-    );
-    this.finishCalendarViewUpdate_abyssPrivate(context, issues, renderGeneration);
-  }
-
-  private patchCalendarView_abyssPrivate(
-    context: CalendarRenderContext,
-    mountView: () => void,
-  ): void {
-    if (this.calViewInstance_abyssPrivate == null) {
-      mountView();
-      return;
-    }
-    this.prepareCalendarViewUpdate_abyssPrivate(context.forecastMenuOwner);
-    const renderGeneration = this.focusRetention_abyssPrivate.beginRender();
-    const { config, issues, tasks } = this.currentCalendarContent_abyssPrivate();
-    this.unmountActiveCapture_abyssPrivate();
-    this.calViewInstance_abyssPrivate.patch(context.viewContainer, tasks, config);
-    this.finishCalendarViewUpdate_abyssPrivate(context, issues, renderGeneration);
-  }
-
-  private prepareCalendarViewUpdate_abyssPrivate(
-    forecastMenuOwner: ForecastContextMenuOwner,
-  ): void {
-    this.dismissRecurrenceEditor_abyssPrivate();
-    forecastMenuOwner.dismiss();
-    this.focusRetention_abyssPrivate.captureActiveFocus(this.el);
-    this.focusRetention_abyssPrivate.beforeViewUpdate();
-  }
-
-  private finishCalendarViewUpdate_abyssPrivate(
-    context: CalendarRenderContext,
-    issues: readonly CalendarProjectionIssue[],
-    renderGeneration: number,
-  ): void {
-    context.projectionDiagnosticOwner.update(context.viewContainer, issues);
-    this.remountActiveCapture_abyssPrivate();
-    this.updateTaskStackSelection_abyssPrivate();
-    this.onRenderComplete_abyssPrivate(context.viewContainer);
-    this.focusRetention_abyssPrivate.deferFocus(context.viewContainer, renderGeneration);
-  }
-
-  private shouldScrollCalendarToNow_abyssPrivate(): boolean {
-    const key = calendarScrollKey(this.calViewType_abyssPrivate, this.calDate_abyssPrivate);
-    const shouldScroll = key !== this.lastScrolledCalKey_abyssPrivate;
-    this.lastScrolledCalKey_abyssPrivate = key;
-    return shouldScroll;
-  }
-
-  private createCalendarNavigationHandlers_abyssPrivate(
-    viewContainer: HTMLElement,
-  ): Pick<
-    CalendarHandlers,
-    | 'onTaskClick'
-    | 'onTaskSelect'
-    | 'onForecastClick'
-    | 'onForecastContextMenu'
-    | 'onDrop'
-    | 'onDropTime'
-    | 'onCreateAtTime'
-    | 'onCreateAtDate'
-    | 'onCreateAtDateAllDay'
-  > {
-    return {
-      onTaskClick: (task) => {
-        if (calendarRootTaskRef(task) !== undefined) this.taskModal_abyssPrivate?.open(task);
-      },
-      onTaskSelect: (task) => {
-        const occurrence = calendarOccurrenceForTask(task);
-        if (occurrence?.kind === 'forecast') return;
-        if (occurrence == null) {
-          this.state_abyssPrivate.set('taskStack', [task]);
-          return;
-        }
-        const path = taskSelectionPath(occurrence.source.root, occurrence.source.node);
-        if (path !== undefined) this.state_abyssPrivate.set('taskStack', path);
-      },
-      onForecastClick: (source, referenceDate) => {
-        this.openForecastTask_abyssPrivate(source, referenceDate);
-      },
-      onForecastContextMenu: (source) => {
-        this.openForecastRecurrenceEditor_abyssPrivate(viewContainer, source);
-      },
-      onDrop: (dragData, targetDate) => {
-        runAsyncAction(this.calendarCommands_abyssPrivate.rescheduleFromDrag(dragData, targetDate));
-      },
-      onDropTime: (dragData, date, time) => {
-        runAsyncAction(this.calendarCommands_abyssPrivate.setTimeFromDrag(dragData, date, time));
-      },
-      onCreateAtTime: (date, time) => {
-        this.createCalendarTaskAtTime_abyssPrivate(viewContainer, date, time);
-      },
-      onCreateAtDate: (date) => {
-        this.createCalendarTaskAtDate_abyssPrivate(viewContainer, date, false);
-      },
-      onCreateAtDateAllDay: (date) => {
-        this.createCalendarTaskAtDate_abyssPrivate(viewContainer, date, true);
-      },
-    };
-  }
-
-  private createCalendarHandlers_abyssPrivate(viewContainer: HTMLElement): CalendarHandlers {
-    return {
-      ...this.createCalendarNavigationHandlers_abyssPrivate(viewContainer),
-      onTimeChange: (task, minutes) => {
-        this.runCalendarTaskAction_abyssPrivate(task, () =>
-          this.calendarCommands_abyssPrivate.setTime(task, minutes),
-        );
-      },
-      onDurationChange: (task, minutes) => {
-        this.runCalendarTaskAction_abyssPrivate(task, () =>
-          this.calendarCommands_abyssPrivate.setDuration(task, minutes),
-        );
-      },
-      onTimedMove: (task, target) => {
-        this.runCalendarTaskAction_abyssPrivate(task, () =>
-          this.calendarCommands_abyssPrivate.commitTimedMove(task, target),
-        );
-      },
-      onTimedDuration: (task, target) => {
-        this.runCalendarTaskAction_abyssPrivate(task, () =>
-          this.calendarCommands_abyssPrivate.commitTimedDuration(task, target),
-        );
-      },
-      onTimedBoundary: (task, target) => {
-        this.runCalendarTaskAction_abyssPrivate(task, () =>
-          this.calendarCommands_abyssPrivate.commitTimedBoundary(task, target),
-        );
-      },
-      onSpanMove: (task, target) => {
-        this.runCalendarTaskAction_abyssPrivate(task, () =>
-          this.calendarCommands_abyssPrivate.commitSpanMove(task, target),
-        );
-      },
-      onSpanBoundary: (task, target) => {
-        this.runCalendarTaskAction_abyssPrivate(task, () =>
-          this.calendarCommands_abyssPrivate.commitTimedBoundary(task, target),
-        );
-      },
-      onStartChange: (task, start) => {
-        this.runCalendarTaskAction_abyssPrivate(task, () =>
-          this.calendarCommands_abyssPrivate.setStart(task, start),
-        );
-      },
-      onDueChange: (task, due) => {
-        this.runCalendarTaskAction_abyssPrivate(task, () =>
-          this.calendarCommands_abyssPrivate.setDue(task, due),
-        );
-      },
-      onExtendToSpan: (task, due) => {
-        this.runCalendarTaskAction_abyssPrivate(task, () =>
-          this.calendarCommands_abyssPrivate.extendToSpan(task, due),
-        );
-      },
-      onKeyboardIntent: (task, intent) => {
-        this.focusRetention_abyssPrivate.handleIntent(task, intent);
-      },
-      onToggle: (task) => {
-        runAsyncAction(this.toggleTask_abyssPrivate(task));
-      },
-      onSetStatus: (task, status) => {
-        runAsyncAction(this.setTaskStatus_abyssPrivate(task, status));
-      },
-      onSetPriority: (task, priority) => {
-        runAsyncAction(this.setPriority_abyssPrivate(task, priority));
-      },
-    };
-  }
-
   private openForecastTask_abyssPrivate(
     source: CalendarTaskSource,
     referenceDate: LocalDate,
@@ -1313,72 +973,6 @@ export class CenterPanel {
       text: `Forecast for ${referenceDate}`,
     });
     modal.prepend(context);
-  }
-
-  private runCalendarTaskAction_abyssPrivate(
-    task: TaskSnapshot,
-    action: () => Promise<void>,
-  ): void {
-    if (isForecastCalendarTask(task)) return;
-    runAsyncAction(action());
-  }
-
-  private createCalendarTaskAtTime_abyssPrivate(
-    container: HTMLElement,
-    date: string,
-    time: string,
-  ): void {
-    const day = container.querySelector<HTMLElement>(
-      `.abyss-tg-day-column[data-tg-date="${date}"]`,
-    );
-    const hourColumn = day?.querySelector<HTMLElement>('.abyss-tg-hour-column');
-    if (hourColumn != null) this.showTimeGridQuickAdd_abyssPrivate(hourColumn, date, time);
-  }
-
-  private createCalendarTaskAtDate_abyssPrivate(
-    container: HTMLElement,
-    date: string,
-    allDay: boolean,
-  ): void {
-    const selector = allDay
-      ? `.abyss-tg-allday-cell[data-tg-date="${date}"]`
-      : `[data-mg-date="${date}"]`;
-    const cell = container.querySelector<HTMLElement>(selector);
-    if (cell == null) return;
-    this.showFillCellQuickAdd_abyssPrivate(
-      cell,
-      date,
-      allDay ? 'abyss-tg-allday-quick-add' : 'abyss-mg-quick-add',
-    );
-  }
-
-  private cancelKeyboardInteraction_abyssPrivate(): void {
-    this.focusRetention_abyssPrivate.cancel();
-  }
-
-  private followShiftedTask_abyssPrivate(
-    updated: TaskSnapshot,
-    nextSegmentDate: string | undefined,
-  ): void {
-    const anchor =
-      updated.planning.start != null && updated.planning.due != null
-        ? updated.planning.due
-        : (updated.planning.scheduled ?? updated.planning.due);
-    const followDate = nextSegmentDate ?? anchor;
-    if (followDate === undefined || followDate === '') return;
-    const firstDayOfWeek = this.settings_abyssPrivate.firstDayOfWeek;
-    const outsideWeek = !visibleCalendarDates(
-      'week',
-      this.calDate_abyssPrivate,
-      firstDayOfWeek,
-    ).includes(followDate);
-    if (
-      this.calViewType_abyssPrivate !== 'today' &&
-      (this.calViewType_abyssPrivate !== 'week' || !outsideWeek)
-    )
-      return;
-    this.calDate_abyssPrivate = window.moment(followDate);
-    this.render_abyssPrivate();
   }
 
   private renderSearch_abyssPrivate(): void {
@@ -2844,31 +2438,6 @@ export class CenterPanel {
     this.updateViewState_abyssPrivate(
       groups === undefined ? withoutStatusGroups : { ...viewState, statusGroups: groups },
     );
-  }
-
-  /** Keep the positioned calendar wrapper while delegating capture state and submission. */
-  private showTimeGridQuickAdd_abyssPrivate(
-    _hourColumnEl: HTMLElement,
-    date: string,
-    time: string,
-  ): void {
-    this.openCapture_abyssPrivate(
-      { type: 'calendar-timed', date, time },
-      { type: 'default', source: 'calendar' },
-    );
-  }
-
-  /** Month and all-day cells share capture behavior but retain their existing geometry wrappers. */
-  private showFillCellQuickAdd_abyssPrivate(
-    _cell: HTMLElement,
-    date: string,
-    popCls: string,
-  ): void {
-    const placement: CalendarCapturePlacement =
-      popCls === 'abyss-mg-quick-add'
-        ? { type: 'calendar-month', date }
-        : { type: 'calendar-all-day', date };
-    this.openCapture_abyssPrivate(placement, { type: 'default', source: 'calendar' });
   }
 
   private renderCaptureHost_abyssPrivate(host: HTMLElement, placement: BarCapturePlacement): void {

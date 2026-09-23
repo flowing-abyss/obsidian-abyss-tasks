@@ -35,6 +35,9 @@ import {
 import { PanelNavigator } from '../src/views/panelNavigation';
 import { MIN_BLOCK_HEIGHT_PX } from '../src/views/timegrid/layout';
 import {
+  calendarDateOf,
+  calendarOf,
+  calendarViewInstanceOf,
   configuredTaskApplication,
   createAppWithFiles,
   deferred,
@@ -45,6 +48,8 @@ import {
   methodOf,
   pendingTimedBlockFocusOf,
   seedTaskCache,
+  setCalendarDate,
+  setCalendarView,
   subtask,
   task,
   taskQueryApi,
@@ -54,7 +59,6 @@ import {
 const TODAY = moment().format('YYYY-MM-DD');
 
 type CalendarViewLabel = 'Day' | 'Week' | 'Month';
-type TimeGridViewInstance = TodayView | WeekTimeGridView | null;
 type ExecutedTaskCommand = Parameters<TaskApplicationApi['execute']>[0];
 
 function successfulCapture(title = 'Captured'): TaskCommandResult {
@@ -209,17 +213,16 @@ function call<T>(panel: CenterPanel, method: string, ...args: unknown[]): Promis
   return fn.call(panel, ...args);
 }
 
-/** Bracket-access helper to call the calendar commands the panel owns. */
+/** Bracket-access helper to call the calendar commands the panel's calendar mode owns. */
 function calendarCommand<T>(
   panel: CenterPanel,
   method: string,
   ...args: unknown[]
 ): Promise<T> | T {
-  const commands = (
-    panel as unknown as {
-      readonly calendarCommands_abyssPrivate: Record<string, (...a: unknown[]) => T>;
-    }
-  ).calendarCommands_abyssPrivate;
+  const commands = calendarOf(panel)['commands_abyssPrivate'] as unknown as Record<
+    string,
+    (...a: unknown[]) => T
+  >;
   return expectDefined(commands[method]).call(commands, ...args);
 }
 
@@ -524,16 +527,13 @@ describe('CenterPanel semantic navigation render boundary', () => {
     });
     expect(state.get('mode')).toBe('calendar');
 
-    const cancelKeyboardInteraction = vi.spyOn(
-      panel as unknown as { cancelKeyboardInteraction_abyssPrivate(): void },
-      'cancelKeyboardInteraction_abyssPrivate',
-    );
+    const cancelKeyboardInteraction = vi.spyOn(calendarOf(panel), 'cancelKeyboardInteraction');
     once(() => {
       navigator.openCalendarView('week');
     });
     expect(cancelKeyboardInteraction).toHaveBeenCalledOnce();
     expect(panel.calendarView()).toBe('week');
-    expect(panel['calDate_abyssPrivate'].format('YYYY-MM-DD')).toBe(
+    expect(calendarDateOf(panel).format('YYYY-MM-DD')).toBe(
       window.moment().startOf('isoWeek').format('YYYY-MM-DD'),
     );
 
@@ -2021,7 +2021,7 @@ describe('CenterPanel.deleteTask', () => {
   });
 });
 
-describe('CenterPanel.rescheduleTask', () => {
+describe('CalendarCommands.rescheduleFromDrag', () => {
   it.each([
     {
       name: 'task with due date → 📅 replaced with targetDate',
@@ -3362,8 +3362,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     );
     const el = freshContainer();
     panel.mount(el);
-    (panel as unknown as { calDate_abyssPrivate: moment.Moment }).calDate_abyssPrivate =
-      moment(TODAY);
+    setCalendarDate(panel, moment(TODAY));
     state.set('mode', 'calendar');
 
     const item = (title: string): HTMLElement =>
@@ -3570,8 +3569,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     );
     const el = freshContainer();
     panel.mount(el);
-    (panel as unknown as { calDate_abyssPrivate: moment.Moment }).calDate_abyssPrivate =
-      moment('2026-08-09');
+    setCalendarDate(panel, moment('2026-08-09'));
 
     state.set('mode', 'calendar');
 
@@ -3699,8 +3697,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
         .taskModal_abyssPrivate,
       'open',
     );
-    (panel as unknown as { calDate_abyssPrivate: moment.Moment }).calDate_abyssPrivate =
-      moment('2026-08-09');
+    setCalendarDate(panel, moment('2026-08-09'));
     state.set('mode', 'calendar');
 
     const item = el.querySelector<HTMLElement>('.abyss-mg-block-dot');
@@ -4181,11 +4178,7 @@ describe('CenterPanel calendar mode — preserve scroll position across reactive
     const dayCell = el.querySelector(`[data-tg-date="${TODAY}"].abyss-tg-day-column`);
     const nowLine = el.querySelector('.abyss-tg-now-line');
     const taskNode = el.querySelector('.abyss-tg-plain');
-    const viewInstance = (
-      panel as unknown as {
-        calViewInstance_abyssPrivate: TimeGridViewInstance;
-      }
-    ).calViewInstance_abyssPrivate;
+    const viewInstance = calendarViewInstanceOf(panel);
     expect(gridRowEl).not.toBeNull();
     gridRowEl.scrollTop = 777;
 
@@ -4198,13 +4191,7 @@ describe('CenterPanel calendar mode — preserve scroll position across reactive
 
     expect(el.querySelector('.abyss-cal-nav')).toBe(nav);
     expect(el.querySelector('.abyss-cal-body')).toBe(body);
-    expect(
-      (
-        panel as unknown as {
-          calViewInstance_abyssPrivate: TimeGridViewInstance;
-        }
-      ).calViewInstance_abyssPrivate,
-    ).toBe(viewInstance);
+    expect(calendarViewInstanceOf(panel)).toBe(viewInstance);
     expect(el.querySelector('.abyss-tg-header-row')).toBe(header);
     expect(el.querySelector('.abyss-tg-grid-row')).toBe(gridRowEl);
     expect(el.querySelector('.abyss-tg-hour-row')).toBe(hourRow);
@@ -4597,11 +4584,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     ) as HTMLElement;
     const header = el.querySelector('.abyss-mg-head-row');
     const row = cell.closest('.abyss-mg-row');
-    const viewInstance = (
-      panel as unknown as {
-        calViewInstance_abyssPrivate: TodayView | WeekTimeGridView | null;
-      }
-    ).calViewInstance_abyssPrivate;
+    const viewInstance = calendarViewInstanceOf(panel);
     const date = expectDefined(cell.getAttribute('data-mg-date'));
     const addBtn = cell.querySelector('.abyss-mg-add-btn') as HTMLElement;
     addBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -4618,13 +4601,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     expect(el.querySelector('.abyss-mg-head-row')).toBe(header);
     expect(el.querySelector(`[data-mg-date="${date}"]`)).toBe(cell);
     expect(cell.closest('.abyss-mg-row')).toBe(row);
-    expect(
-      (
-        panel as unknown as {
-          calViewInstance_abyssPrivate: TodayView | WeekTimeGridView | null;
-        }
-      ).calViewInstance_abyssPrivate,
-    ).toBe(viewInstance);
+    expect(calendarViewInstanceOf(panel)).toBe(viewInstance);
     expect(cell.textContent).toContain('water the plants');
   });
 
@@ -5283,12 +5260,8 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       });
       const h = keyboardPanelHarness([original], execute);
       clickCalendarView(h.el, 'Week');
-      const calendar = h.panel as unknown as {
-        calDate_abyssPrivate: ReturnType<typeof moment>;
-        render_abyssPrivate(): void;
-      };
-      calendar.calDate_abyssPrivate = moment('2026-07-06', 'YYYY-MM-DD');
-      calendar.render_abyssPrivate();
+      setCalendarDate(h.panel, moment('2026-07-06', 'YYYY-MM-DD'));
+      (h.panel as unknown as { render_abyssPrivate(): void }).render_abyssPrivate();
 
       const outgoing = h.el.querySelector<HTMLElement>(
         `.abyss-tg-block-continuation[data-tg-segment-date="${focusedDate}"]`,
@@ -5675,12 +5648,8 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     });
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Week');
-    const calendar = h.panel as unknown as {
-      calDate_abyssPrivate: ReturnType<typeof moment>;
-      render_abyssPrivate(): void;
-    };
-    calendar.calDate_abyssPrivate = moment('2025-12-29', 'YYYY-MM-DD');
-    calendar.render_abyssPrivate();
+    setCalendarDate(h.panel, moment('2025-12-29', 'YYYY-MM-DD'));
+    (h.panel as unknown as { render_abyssPrivate(): void }).render_abyssPrivate();
 
     expect(
       Array.from(h.el.querySelectorAll<HTMLElement>('.abyss-tg-day-column')).map(
@@ -5993,12 +5962,8 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       const execute = vi.fn<TaskApplicationApi['execute']>();
       const snapshot = keyboardSnapshot(date);
       const h = keyboardPanelHarness([snapshot], execute);
-      const calendar = h.panel as unknown as {
-        calViewType_abyssPrivate: 'today';
-        calDate_abyssPrivate: ReturnType<typeof moment>;
-      };
-      calendar.calViewType_abyssPrivate = 'today';
-      calendar.calDate_abyssPrivate = moment(date, 'YYYY-MM-DD');
+      setCalendarView(h.panel, 'today');
+      setCalendarDate(h.panel, moment(date, 'YYYY-MM-DD'));
       h.panel.refresh();
 
       const block = timedBlock(h.el);
@@ -6024,12 +5989,8 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
       const snapshot = keyboardSnapshot(date);
       const h = keyboardPanelHarness([snapshot], execute);
-      const calendar = h.panel as unknown as {
-        calViewType_abyssPrivate: 'today';
-        calDate_abyssPrivate: ReturnType<typeof moment>;
-      };
-      calendar.calViewType_abyssPrivate = 'today';
-      calendar.calDate_abyssPrivate = moment(date, 'YYYY-MM-DD');
+      setCalendarView(h.panel, 'today');
+      setCalendarDate(h.panel, moment(date, 'YYYY-MM-DD'));
       h.panel.refresh();
 
       const block = timedBlock(h.el);

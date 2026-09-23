@@ -3,6 +3,10 @@ import { afterEach, beforeEach, expect, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import { NoteTemplateService } from '../src/notes/NoteTemplateService';
 import { moment } from '../src/obsidianMoment';
+import type { CalendarMoment } from '../src/panels/calendar/calendarDateNavigation';
+import type { CalendarMode } from '../src/panels/calendar/CalendarMode';
+import type { CalendarViewInstance } from '../src/panels/calendar/calendarViewFactory';
+import type { CalViewType } from '../src/panels/calendar/calendarViewType';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { LeftPanel } from '../src/panels/LeftPanel';
 import type { ProjectManager } from '../src/projects/ProjectManager';
@@ -316,11 +320,36 @@ export function makeCenterPanelForTest(
   );
 }
 
-/** The timed-block focus the panel is retaining across calendar re-renders, if any. */
+/** The calendar controller a CenterPanel owns; tests reach calendar session state through it. */
+export function calendarOf(panel: CenterPanel): CalendarMode {
+  return panel['calendar_abyssPrivate'];
+}
+
+/** The date the calendar shows, or will show on its next render. */
+export function calendarDateOf(panel: CenterPanel): CalendarMoment {
+  return calendarOf(panel)['date_abyssPrivate'];
+}
+
+/** Sets the calendar date without rendering; the next render or refresh shows it. */
+export function setCalendarDate(panel: CenterPanel, date: CalendarMoment): void {
+  calendarOf(panel)['date_abyssPrivate'] = date;
+}
+
+/** Sets the calendar view type without rendering and without moving the date. */
+export function setCalendarView(panel: CenterPanel, view: CalViewType): void {
+  calendarOf(panel)['viewType_abyssPrivate'] = view;
+}
+
+/** The mounted calendar view instance while calendar mode is rendered. */
+export function calendarViewInstanceOf(panel: CenterPanel): CalendarViewInstance | null {
+  return calendarOf(panel)['viewInstance_abyssPrivate'];
+}
+
+/** The timed-block focus the calendar is retaining across re-renders, if any. */
 export function pendingTimedBlockFocusOf(
   panel: CenterPanel,
 ): { readonly originElement?: HTMLElement } | undefined {
-  return panel['focusRetention_abyssPrivate']['pendingFocus_abyssPrivate'];
+  return calendarOf(panel)['focusRetention_abyssPrivate']['pendingFocus_abyssPrivate'];
 }
 
 type LeftPanelTestArgs = readonly [

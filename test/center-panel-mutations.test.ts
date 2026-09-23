@@ -21,6 +21,7 @@ import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import {
+  calendarOf,
   createAppWithFiles,
   expectDefined,
   flushMicrotasks,
@@ -45,13 +46,12 @@ function callPrivate<T>(panel: CenterPanel, method: string, ...args: unknown[]):
   return fn.call(panel, ...args);
 }
 
-/** Bracket-access helper to call the calendar commands the panel owns. */
+/** Bracket-access helper to call the calendar commands the panel's calendar mode owns. */
 function calendarCommand<T>(panel: CenterPanel, method: string, ...args: unknown[]): T {
-  const commands = (
-    panel as unknown as {
-      readonly calendarCommands_abyssPrivate: Record<string, (...a: unknown[]) => T>;
-    }
-  ).calendarCommands_abyssPrivate;
+  const commands = calendarOf(panel)['commands_abyssPrivate'] as unknown as Record<
+    string,
+    (...a: unknown[]) => T
+  >;
   return expectDefined(commands[method]).call(commands, ...args);
 }
 
@@ -562,7 +562,7 @@ describe('CenterPanel.setPriority', () => {
   });
 });
 
-describe('CenterPanel.rescheduleTask anchor priority', () => {
+describe('CalendarCommands.rescheduleFromDrag anchor priority', () => {
   it('moves scheduled date when both scheduled and due are set (scheduled wins)', async () => {
     const raw = '- [ ] t ⏳ 2026-07-02 📅 2026-07-10';
     const t = task({
@@ -600,7 +600,7 @@ describe('CenterPanel.rescheduleTask anchor priority', () => {
   });
 });
 
-describe('CenterPanel.extendTaskToSpan', () => {
+describe('CalendarCommands.extendToSpan', () => {
   it('freezes the original due as the new start and writes the new due, in one mutation', async () => {
     const raw = '- [ ] t 📅 2026-07-10';
     const t = task({
@@ -667,7 +667,7 @@ describe('CenterPanel.extendTaskToSpan', () => {
   });
 });
 
-describe('CenterPanel.setTaskTimeFromDrop', () => {
+describe('CalendarCommands.setTimeFromDrag', () => {
   it('adds both a new due date and a new time when neither is set (plain task dropped into hour grid)', async () => {
     const raw = '- [ ] t';
     const t = task({
@@ -709,7 +709,7 @@ describe('CenterPanel.setTaskTimeFromDrop', () => {
   });
 });
 
-describe('CenterPanel.updateTaskTime — Task 33 data-safety net (the disappearing-task regression)', () => {
+describe('CalendarCommands.setTime — Task 33 data-safety net (the disappearing-task regression)', () => {
   // This is the exact scenario reproduced live via Obsidian CLI: a Pointer-Events drag on a
   // timed block's body computed newStartMinutes = 2093*60+15 (an extreme delta — the pointer was
   // released far outside the visible grid). Before this task's fix, `updateTaskTime` wrote
