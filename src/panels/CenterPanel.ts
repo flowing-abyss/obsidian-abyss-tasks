@@ -95,9 +95,6 @@ import { rootTaskRef, taskNodeLine, taskNodeRef, taskSelectionPath } from '../ui
 import type { TrackingSurface } from '../ui/timeTracking/TimeBadge';
 import type { TrackingTickerState } from '../ui/timeTracking/TrackingTicker';
 import { formatTrackedDuration } from '../ui/timeTracking/formatTracked';
-import { MonthGridView } from '../views/MonthGridView';
-import { TodayView } from '../views/TodayView';
-import { WeekTimeGridView } from '../views/WeekTimeGridView';
 import {
   calendarMutationTarget,
   calendarOccurrenceForTask,
@@ -111,22 +108,18 @@ import {
 } from '../views/calendarOccurrences';
 import { PanelNavigator, type PanelNavigationActions } from '../views/panelNavigation';
 import { listSelectionTitle } from '../views/panelTitle';
-import type { InteractiveSpanBoundaryTarget, SpanMoveTarget } from '../views/spanInteractions';
 import {
   groupTasksByDate,
   groupTasksByPriority,
   groupTasksByStatus,
   groupTasksByTag,
 } from '../views/taskGrouping';
-import type { TimedDragTarget, TimedVerticalResizeTarget } from '../views/timegrid/dragGeometry';
 import {
   createCalendarProjectionDiagnosticOwner,
   createForecastContextMenuOwner,
   type CalendarProjectionDiagnosticOwner,
   type ForecastContextMenuOwner,
 } from '../views/timegrid/renderTaskMeta';
-import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
-import type { TimedBoundaryTarget } from '../views/timegrid/timedInteractions';
 import { CalendarNavigationBar } from './calendar/CalendarNavigationBar';
 import {
   calendarCaptureHost,
@@ -143,6 +136,11 @@ import {
   isoWeekStart,
   stepCalendarDate,
 } from './calendar/calendarDateNavigation';
+import {
+  createCalendarView,
+  type CalendarHandlers,
+  type CalendarViewInstance,
+} from './calendar/calendarViewFactory';
 import type { CalViewType } from './calendar/calendarViewType';
 import { TimedBlockFocusRetention } from './calendar/timedBlockFocusRetention';
 import { visibleCalendarDates } from './calendar/visibleCalendarDates';
@@ -153,32 +151,6 @@ type BarCapturePlacement =
   | { readonly type: 'project'; readonly path: string };
 
 type PanelCapturePlacement = BarCapturePlacement | CalendarCapturePlacement;
-
-interface CalendarHandlers {
-  readonly onTaskClick: (task: TaskSnapshot) => void;
-  readonly onTaskSelect: (task: TaskSnapshot) => void;
-  readonly onForecastClick: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
-  readonly onForecastContextMenu: (source: CalendarTaskSource) => void;
-  readonly onDrop: (dragData: string, targetDate: string) => void;
-  readonly onDropTime: (dragData: string, date: string, time: string) => void;
-  readonly onCreateAtTime: (date: string, time: string) => void;
-  readonly onCreateAtDate: (date: string) => void;
-  readonly onCreateAtDateAllDay: (date: string) => void;
-  readonly onTimeChange: (task: TaskSnapshot, minutes: number) => void;
-  readonly onDurationChange: (task: TaskSnapshot, minutes: number) => void;
-  readonly onTimedMove: (task: TaskSnapshot, target: TimedDragTarget) => void;
-  readonly onTimedDuration: (task: TaskSnapshot, target: TimedVerticalResizeTarget) => void;
-  readonly onTimedBoundary: (task: TaskSnapshot, target: TimedBoundaryTarget) => void;
-  readonly onSpanMove: (task: TaskSnapshot, target: SpanMoveTarget) => void;
-  readonly onSpanBoundary: (task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void;
-  readonly onStartChange: (task: TaskSnapshot, start: string) => void;
-  readonly onDueChange: (task: TaskSnapshot, due: string) => void;
-  readonly onExtendToSpan: (task: TaskSnapshot, due: string) => void;
-  readonly onKeyboardIntent: (task: TaskSnapshot, intent: TimedBlockKeyboardIntent) => void;
-  readonly onToggle: (task: TaskSnapshot) => void;
-  readonly onSetStatus: (task: TaskSnapshot, status: string) => void;
-  readonly onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;
-}
 
 interface CalendarRenderContext {
   readonly viewContainer: HTMLElement;
@@ -259,7 +231,7 @@ export class CenterPanel {
   private readonly offs_abyssPrivate: Array<() => void> = [];
   private calViewType_abyssPrivate: CalViewType = 'month';
   private calDate_abyssPrivate = window.moment().date(1);
-  private calViewInstance_abyssPrivate: TodayView | WeekTimeGridView | MonthGridView | null = null;
+  private calViewInstance_abyssPrivate: CalendarViewInstance | null = null;
   private calUnsubscribe_abyssPrivate: (() => void) | null = null;
   private calendarNavigationBar_abyssPrivate: CalendarNavigationBar | null = null;
   private taskDatePickerCleanup_abyssPrivate: (() => void) | null = null;
@@ -1106,123 +1078,6 @@ export class CenterPanel {
     });
   }
 
-  private createCalendarView_abyssPrivate(
-    forecastMenuOwner: ForecastContextMenuOwner,
-    handlers: CalendarHandlers,
-  ): TodayView | WeekTimeGridView | MonthGridView {
-    if (this.calViewType_abyssPrivate === 'today')
-      return this.createTodayCalendarView_abyssPrivate(forecastMenuOwner, handlers);
-    if (this.calViewType_abyssPrivate === 'week')
-      return this.createWeekCalendarView_abyssPrivate(forecastMenuOwner, handlers);
-    return this.createMonthCalendarView_abyssPrivate(forecastMenuOwner, handlers);
-  }
-
-  private createTodayCalendarView_abyssPrivate(
-    forecastMenuOwner: ForecastContextMenuOwner,
-    handlers: CalendarHandlers,
-  ): TodayView {
-    return new TodayView({
-      app: this.app_abyssPrivate,
-      forecastMenuOwner,
-      onTaskClick: handlers.onTaskClick,
-      onTaskSelect: handlers.onTaskSelect,
-      onForecastClick: handlers.onForecastClick,
-      onForecastContextMenu: handlers.onForecastContextMenu,
-      onDrop: handlers.onDrop,
-      onDropTime: handlers.onDropTime,
-      onCreateAtTime: handlers.onCreateAtTime,
-      onCreateAtDate: handlers.onCreateAtDateAllDay,
-      onTimeChange: handlers.onTimeChange,
-      onDurationChange: handlers.onDurationChange,
-      onTimedMove: handlers.onTimedMove,
-      onTimedDuration: handlers.onTimedDuration,
-      onTimedBoundary: handlers.onTimedBoundary,
-      onSpanMove: handlers.onSpanMove,
-      onSpanBoundary: handlers.onSpanBoundary,
-      onStartChange: handlers.onStartChange,
-      onDueChange: handlers.onDueChange,
-      onExtendToSpan: handlers.onExtendToSpan,
-      onKeyboardIntent: handlers.onKeyboardIntent,
-      onToggle: handlers.onToggle,
-      dependenciesFor: this.dependenciesFor_abyssPrivate,
-      onSetStatus: handlers.onSetStatus,
-      onSetPriority: handlers.onSetPriority,
-      interactionOwnership: this.interactionOwnership_abyssPrivate,
-      statusRegistry: this.statusRegistry_abyssPrivate,
-      tagGroups: [...this.effectiveTagGroups_abyssPrivate()],
-    });
-  }
-
-  private createWeekCalendarView_abyssPrivate(
-    forecastMenuOwner: ForecastContextMenuOwner,
-    handlers: CalendarHandlers,
-  ): WeekTimeGridView {
-    return new WeekTimeGridView({
-      app: this.app_abyssPrivate,
-      forecastMenuOwner,
-      onTaskClick: handlers.onTaskClick,
-      onTaskSelect: handlers.onTaskSelect,
-      onForecastClick: handlers.onForecastClick,
-      onForecastContextMenu: handlers.onForecastContextMenu,
-      onDrop: handlers.onDrop,
-      onDropTime: handlers.onDropTime,
-      onCreateAtTime: handlers.onCreateAtTime,
-      onCreateAtDate: handlers.onCreateAtDateAllDay,
-      onDayHeaderClick: (date) => {
-        this.openCalendarDay_abyssPrivate(date);
-      },
-      onTimeChange: handlers.onTimeChange,
-      onDurationChange: handlers.onDurationChange,
-      onTimedMove: handlers.onTimedMove,
-      onTimedDuration: handlers.onTimedDuration,
-      onTimedBoundary: handlers.onTimedBoundary,
-      onSpanMove: handlers.onSpanMove,
-      onSpanBoundary: handlers.onSpanBoundary,
-      onStartChange: handlers.onStartChange,
-      onDueChange: handlers.onDueChange,
-      onExtendToSpan: handlers.onExtendToSpan,
-      onKeyboardIntent: handlers.onKeyboardIntent,
-      onToggle: handlers.onToggle,
-      dependenciesFor: this.dependenciesFor_abyssPrivate,
-      onSetStatus: handlers.onSetStatus,
-      onSetPriority: handlers.onSetPriority,
-      interactionOwnership: this.interactionOwnership_abyssPrivate,
-      statusRegistry: this.statusRegistry_abyssPrivate,
-      tagGroups: [...this.effectiveTagGroups_abyssPrivate()],
-    });
-  }
-
-  private createMonthCalendarView_abyssPrivate(
-    forecastMenuOwner: ForecastContextMenuOwner,
-    handlers: CalendarHandlers,
-  ): MonthGridView {
-    return new MonthGridView({
-      app: this.app_abyssPrivate,
-      forecastMenuOwner,
-      onDayClick: (date) => {
-        this.openCalendarDay_abyssPrivate(date);
-      },
-      onCreateAtDate: handlers.onCreateAtDate,
-      onTaskClick: handlers.onTaskClick,
-      onTaskSelect: handlers.onTaskSelect,
-      onForecastClick: handlers.onForecastClick,
-      onForecastContextMenu: handlers.onForecastContextMenu,
-      onDrop: handlers.onDrop,
-      onSpanMove: handlers.onSpanMove,
-      onSpanBoundary: handlers.onSpanBoundary,
-      onToggle: handlers.onToggle,
-      dependenciesFor: this.dependenciesFor_abyssPrivate,
-      onSetStatus: handlers.onSetStatus,
-      onSetPriority: handlers.onSetPriority,
-      onWeekClick: (week, year) => {
-        this.openCalendarWeek_abyssPrivate(week, year);
-      },
-      interactionOwnership: this.interactionOwnership_abyssPrivate,
-      statusRegistry: this.statusRegistry_abyssPrivate,
-      tagGroups: [...this.effectiveTagGroups_abyssPrivate()],
-    });
-  }
-
   private openCalendarDay_abyssPrivate(date: string): void {
     this.cancelKeyboardInteraction_abyssPrivate();
     this.calViewType_abyssPrivate = 'today';
@@ -1252,9 +1107,25 @@ export class CenterPanel {
     // position skips the scroll.
     const shouldScrollToNow =
       this.shouldScrollCalendarToNow_abyssPrivate() || preservedScrollTop === undefined;
-    this.calViewInstance_abyssPrivate = this.createCalendarView_abyssPrivate(
-      context.forecastMenuOwner,
+    this.calViewInstance_abyssPrivate = createCalendarView(
+      this.calViewType_abyssPrivate,
+      {
+        app: this.app_abyssPrivate,
+        statusRegistry: this.statusRegistry_abyssPrivate,
+        interactionOwnership: this.interactionOwnership_abyssPrivate,
+        dependenciesFor: this.dependenciesFor_abyssPrivate,
+        tagGroups: () => this.effectiveTagGroups_abyssPrivate(),
+        forecastMenuOwner: context.forecastMenuOwner,
+      },
       context.handlers,
+      {
+        openDay: (date) => {
+          this.openCalendarDay_abyssPrivate(date);
+        },
+        openWeek: (week, year) => {
+          this.openCalendarWeek_abyssPrivate(week, year);
+        },
+      },
     );
     this.calViewInstance_abyssPrivate.render(
       context.viewContainer,
