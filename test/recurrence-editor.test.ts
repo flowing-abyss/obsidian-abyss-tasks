@@ -1255,6 +1255,7 @@ describe('mountRecurrenceEditor', () => {
     const anchor = activeDocument.body.createEl('button', { text: '+ repeat' });
     anchor.focus();
     const root = task({ planning: { due: '2026-08-09' } });
+    let focusAfterDrop: Element | null = null;
     const { container, onClose } = mount({
       onSubmit: async () => {
         // Chromium moves focus to body when the focused Save button is disabled for the submit.
@@ -1265,6 +1266,7 @@ describe('mountRecurrenceEditor', () => {
           active.blur();
           active.disabled = true;
         }
+        focusAfterDrop = activeDocument.activeElement;
         return { type: 'ok', changed: true, outcome: { type: 'task', task: root } };
       },
     });
@@ -1277,6 +1279,7 @@ describe('mountRecurrenceEditor', () => {
       expect(onClose).toHaveBeenCalledOnce();
     });
 
+    expect(focusAfterDrop).toBe(activeDocument.body);
     expect(activeDocument.activeElement).toBe(anchor);
   });
 
