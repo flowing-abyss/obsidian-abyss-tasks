@@ -191,6 +191,19 @@ describe('TaskModal', () => {
       }
     });
 
+    it('leaves the modal open and the event unconsumed while an IME owns the Escape', () => {
+      modal.open(task());
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+        isComposing: true,
+      });
+      activeDocument.dispatchEvent(escape);
+      expect(activeDocument.body.querySelector('.abyss-modal-backdrop')).not.toBeNull();
+      expect(escape.defaultPrevented).toBe(false);
+    });
+
     it('other keys do not close', () => {
       modal.open(task());
       activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));

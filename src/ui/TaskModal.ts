@@ -12,6 +12,7 @@ import type {
   TaskResolution,
   TaskSnapshot,
 } from '../tasks';
+import { isImeOwnedEvent } from './ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 import { presentTaskCommandResult } from './taskCommandResult';
 import { isDirtyDraftBundle } from './taskDraftContinuity';
@@ -129,7 +130,7 @@ export class TaskModal {
     });
 
     this.keyHandler_abyssPrivate = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      if (e.key !== 'Escape' || e.defaultPrevented || isImeOwnedEvent(e)) return;
       e.preventDefault();
       e.stopPropagation();
       this.close();
