@@ -59,7 +59,7 @@ export interface CalendarViewNavigation {
 }
 
 /** The structural contract the controller drives: render, patch, destroy. */
-export type CalendarViewInstance = BaseView;
+export type CalendarViewInstance = Pick<BaseView, 'render' | 'patch' | 'destroy'>;
 
 function createTodayView(deps: CalendarViewDependencies, handlers: CalendarHandlers): TodayView {
   return new TodayView({

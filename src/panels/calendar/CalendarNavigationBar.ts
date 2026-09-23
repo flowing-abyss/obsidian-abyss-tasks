@@ -9,14 +9,14 @@ export interface CalendarNavigationBarCallbacks {
   readonly date: () => CalendarMoment;
   readonly onStep: (direction: -1 | 1) => void;
   readonly onToday: () => void;
-  /** 0-11. */
+  /** Months are zero-based, as Moment numbers them. */
   readonly onSelectMonth: (month: number) => void;
   readonly onSelectYear: (year: number) => void;
   readonly onSelectView: (view: CalViewType) => void;
 }
 
 export interface CalendarNavigationBarOptions {
-  /** The CenterPanel element: both the positioned owner and the boundary of the pickers. */
+  /** The element that positions the pickers and bounds them. */
   readonly owner: HTMLElement;
   readonly interactionOwnership: InteractionOwnershipPort;
   readonly callbacks: CalendarNavigationBarCallbacks;

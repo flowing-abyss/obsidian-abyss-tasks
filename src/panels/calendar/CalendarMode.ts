@@ -93,7 +93,8 @@ interface CalendarRenderContext {
 /**
  * The calendar mode of the centre panel: the session's date and view type, the mounted view and
  * its patch subscription, the navigation bar, and the keyboard focus retention. It renders into the
- * panel element it is given and reaches the panel only through {@link CalendarModeHost}.
+ * panel element it is given and reaches `CenterPanel` only through {@link CalendarModeHost}; it
+ * shares the `AppState` and the panel navigation port with the shell.
  */
 export class CalendarMode {
   private viewType_abyssPrivate: CalViewType = 'month';
@@ -136,7 +137,7 @@ export class CalendarMode {
     this.date_abyssPrivate = dateForView(view, moment());
   }
 
-  /** Full calendar render into the panel element (spec section 4.1). */
+  /** Full calendar render into the panel element. */
   render(root: HTMLElement): void {
     this.root_abyssPrivate = root;
     this.focusRetention_abyssPrivate.captureActiveFocus(root);
@@ -147,7 +148,7 @@ export class CalendarMode {
     this.renderShell_abyssPrivate(root);
   }
 
-  /** Releases the mounted calendar (spec section 4.2); the owner empties the element. */
+  /** Releases the mounted calendar; the owner empties the element. */
   unmount(): void {
     this.forecastMenuOwner_abyssPrivate?.dismiss();
     this.projectionDiagnosticOwner_abyssPrivate?.destroy();

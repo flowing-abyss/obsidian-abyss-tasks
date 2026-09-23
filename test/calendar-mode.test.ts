@@ -12,7 +12,7 @@ import { expectDefined, taskQueryApi, useRealMoment } from './helpers';
 
 useRealMoment();
 
-/** The host calls one mount or patch makes, in order (spec section 4.3). */
+/** The host calls one mount or patch makes, in order. */
 const VIEW_UPDATE_CALLS = [
   'dismissRecurrenceEditor',
   'unmountActiveCapture',
