@@ -3581,7 +3581,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     );
     const timedBlock = expectDefined(timedForecastBadge.closest<HTMLElement>('.abyss-tg-block'));
     expect(timedBlock.querySelector('.abyss-status-marker')).toBeNull();
-    expect(timedBlock.getAttribute('tabindex')).toBeNull();
+    expect(timedBlock.getAttribute('tabindex')).toBe('-1');
     expect(timedBlock.querySelector('[data-resize-edge]')).toBeNull();
     timedBlock.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(state.get('taskStack')).toEqual([]);

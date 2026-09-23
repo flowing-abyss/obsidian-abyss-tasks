@@ -237,7 +237,8 @@ interface ForecastMenuRequest {
 function focusedElement(ownerDocument: Document): HTMLElement | null {
   const candidate = ownerDocument.activeElement;
   const realm = ownerDocument.defaultView;
-  return realm !== null && candidate instanceof realm.HTMLElement ? candidate : null;
+  if (realm === null || !(candidate instanceof realm.HTMLElement)) return null;
+  return candidate === ownerDocument.body ? null : candidate;
 }
 
 function dismissForecastMenu(
@@ -380,6 +381,9 @@ export function bindForecastInteractions(
   callbacks: ForecastInteractionCallbacks,
 ): void {
   if (occurrence.kind === 'materialized') return;
+  // Programmatically focusable so the menu and the recurrence editor can return focus to the
+  // occurrence; not a tab stop, because focusing a forecast selects nothing and takes no keys.
+  element.setAttribute('tabindex', '-1');
   element.addEventListener('click', (event) => {
     event.stopPropagation();
     callbacks.onForecastClick?.(occurrence.source, occurrence.referenceDate);

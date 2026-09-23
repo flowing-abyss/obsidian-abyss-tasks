@@ -24,6 +24,18 @@ function block(root: HTMLElement, snapshot: TaskSnapshot, segmentDate = '2026-09
   });
 }
 
+// A forecast timed block: the same locator attributes, focusable only programmatically.
+function forecastBlock(
+  root: HTMLElement,
+  snapshot: TaskSnapshot,
+  segmentDate = '2026-09-23',
+): HTMLElement {
+  const element = block(root, snapshot, segmentDate);
+  element.setAttribute('tabindex', '-1');
+  element.setAttribute('data-occurrence-state', 'forecast');
+  return element;
+}
+
 /** The restorations the retention has reserved but not yet run. */
 function restorations(retention: TimedBlockFocusRetention): ReadonlyMap<number, unknown> {
   return retention['pendingRestorations_abyssPrivate'];
@@ -170,6 +182,25 @@ describe('TimedBlockFocusRetention focus capture', () => {
     h.retention.deferFocus(h.root, generation);
     vi.runOnlyPendingTimers();
     expect(document.activeElement).toBe(replacement);
+    expect(replacement.classList.contains('is-selected')).toBe(true);
+    expect(h.retention.hasPending()).toBe(false);
+  });
+
+  it('restores focus onto a rebuilt forecast block without selecting it', () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const snapshot = task();
+    const origin = forecastBlock(h.root, snapshot);
+    origin.focus();
+    h.retention.captureActiveFocus(h.root);
+    expect(h.retention.hasPending()).toBe(true);
+    const generation = h.retention.beginRender();
+    origin.remove();
+    const replacement = forecastBlock(h.root, snapshot);
+    h.retention.deferFocus(h.root, generation);
+    vi.runOnlyPendingTimers();
+    expect(document.activeElement).toBe(replacement);
+    expect(replacement.classList.contains('is-selected')).toBe(false);
     expect(h.retention.hasPending()).toBe(false);
   });
 
