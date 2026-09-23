@@ -270,21 +270,13 @@ describe('CalendarMode navigation', () => {
 
   it('a month week button opens that week through the host', () => {
     const h = harness();
+    h.mode['date_abyssPrivate'] = moment('2026-09-01');
     h.mode.render(h.root);
-    const button = expectDefined(h.root.querySelector<HTMLElement>('.abyss-mg-week-btn'));
-    const week = expectDefined(button.getAttribute('data-week'));
-    const year = expectDefined(button.getAttribute('data-year'));
-    button.click();
+    // The grid labels weeks with the locale week number and the mode resolves it as an ISO week;
+    // ISO week 40 of 2026 starts on Monday 2026-09-28.
+    h.click('.abyss-mg-week-btn[data-week="40"]');
     expect(h.mode.view()).toBe('week');
-    // The grid labels weeks with the locale week number and the mode resolves it as an ISO week,
-    // exactly as `openCalendarWeek_abyssPrivate` did; the test pins that pairing.
-    expect(h.date()).toBe(
-      moment()
-        .isoWeekYear(Number.parseInt(year, 10))
-        .isoWeek(Number.parseInt(week, 10))
-        .startOf('isoWeek')
-        .format('YYYY-MM-DD'),
-    );
+    expect(h.date()).toBe('2026-09-28');
     expect(h.host.rerender).toHaveBeenCalledOnce();
   });
 

@@ -52,7 +52,7 @@ afterEach(() => {
 });
 
 describe('CalendarNavigationBar DOM', () => {
-  it('renders the toolbar exactly as the centre panel did', () => {
+  it('renders the toolbar', () => {
     const h = harness();
     const nav = h.button('.abyss-cal-nav');
     expect(nav.parentElement).toBe(h.owner);
@@ -79,25 +79,10 @@ describe('CalendarNavigationBar DOM', () => {
     expect(harness('week').button('.abyss-cal-view-btn.is-active').textContent).toBe('Week');
   });
 
-  it('writes the title for each view on updateTitle and leaves it empty before', () => {
-    const h = harness('week', moment('2026-09-23'));
-    expect(h.button('.abyss-cal-nav-month').textContent).toBe('');
-    h.bar.updateTitle();
-    expect(h.button('.abyss-cal-nav-month').textContent).toBe(
-      `Week ${moment('2026-09-23').format('w')}`,
-    );
-    expect(h.button('.abyss-cal-nav-year').textContent).toBe('2026');
-    const day = harness('today', moment('2026-09-23'));
-    day.bar.updateTitle();
-    expect(day.button('.abyss-cal-nav-month').textContent).toBe('September 23');
-    const month = harness('month', moment('2026-09-23'));
-    month.bar.updateTitle();
-    expect(month.button('.abyss-cal-nav-month').textContent).toBe('September');
-  });
-
-  it('titles the week view with the locale week number, not the ISO week', () => {
+  it('leaves the title empty until updateTitle writes the primary and the year', () => {
     // 2027-01-01 is locale week 1 and ISO week 53; the toolbar must never read "Week 53".
     const h = harness('week', moment('2027-01-01'));
+    expect(h.button('.abyss-cal-nav-month').textContent).toBe('');
     h.bar.updateTitle();
     expect(h.button('.abyss-cal-nav-month').textContent).toBe('Week 1');
     expect(h.button('.abyss-cal-nav-year').textContent).toBe('2027');

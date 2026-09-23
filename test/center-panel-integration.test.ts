@@ -35,7 +35,7 @@ import {
 import { PanelNavigator } from '../src/views/panelNavigation';
 import { MIN_BLOCK_HEIGHT_PX } from '../src/views/timegrid/layout';
 import {
-  calendarCommandsOf,
+  calendarCommand,
   calendarDateOf,
   calendarOf,
   calendarViewInstanceOf,
@@ -50,7 +50,7 @@ import {
   pendingTimedBlockFocusOf,
   seedTaskCache,
   setCalendarDate,
-  setCalendarView,
+  setCalendarViewType,
   subtask,
   task,
   taskQueryApi,
@@ -212,16 +212,6 @@ function call<T>(panel: CenterPanel, method: string, ...args: unknown[]): Promis
     (panel as unknown as Record<string, (...a: unknown[]) => T>)[`${method}_abyssPrivate`],
   );
   return fn.call(panel, ...args);
-}
-
-/** Bracket-access helper to call the calendar commands the panel's calendar mode owns. */
-function calendarCommand<T>(
-  panel: CenterPanel,
-  method: string,
-  ...args: unknown[]
-): Promise<T> | T {
-  const commands = calendarCommandsOf(panel) as unknown as Record<string, (...a: unknown[]) => T>;
-  return expectDefined(commands[method]).call(commands, ...args);
 }
 
 async function openListCapture(container: HTMLElement): Promise<HTMLInputElement> {
@@ -5960,7 +5950,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       const execute = vi.fn<TaskApplicationApi['execute']>();
       const snapshot = keyboardSnapshot(date);
       const h = keyboardPanelHarness([snapshot], execute);
-      setCalendarView(h.panel, 'today');
+      setCalendarViewType(h.panel, 'today');
       setCalendarDate(h.panel, moment(date, 'YYYY-MM-DD'));
       h.panel.refresh();
 
@@ -5987,7 +5977,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
       const snapshot = keyboardSnapshot(date);
       const h = keyboardPanelHarness([snapshot], execute);
-      setCalendarView(h.panel, 'today');
+      setCalendarViewType(h.panel, 'today');
       setCalendarDate(h.panel, moment(date, 'YYYY-MM-DD'));
       h.panel.refresh();
 

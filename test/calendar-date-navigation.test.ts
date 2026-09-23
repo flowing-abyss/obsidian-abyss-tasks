@@ -76,13 +76,6 @@ describe('isoWeekStart', () => {
 describe('calendarTitle', () => {
   const date = moment('2026-09-23');
 
-  it('labels the week view with the locale week number', () => {
-    expect(calendarTitle('week', date)).toEqual({
-      primary: `Week ${date.format('w')}`,
-      year: '2026',
-    });
-  });
-
   it('labels the week view with the locale week number, not the ISO week', () => {
     // 2027-01-01 is locale week 1 and ISO week 53; the title must never read "Week 53".
     expect(calendarTitle('week', moment('2027-01-01'))).toEqual({

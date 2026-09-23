@@ -327,8 +327,18 @@ export function calendarOf(panel: CenterPanel): CalendarMode {
 }
 
 /** The calendar commands the panel's calendar mode owns; tests drive gestures through them. */
-export function calendarCommandsOf(panel: CenterPanel): CalendarCommands {
+function calendarCommandsOf(panel: CenterPanel): CalendarCommands {
   return calendarOf(panel)['commands_abyssPrivate'];
+}
+
+/** Calls one calendar command by name on the commands the panel's calendar mode owns. */
+export function calendarCommand<T>(
+  panel: CenterPanel,
+  method: string,
+  ...args: unknown[]
+): Promise<T> | T {
+  const commands = calendarCommandsOf(panel) as unknown as Record<string, (...a: unknown[]) => T>;
+  return expectDefined(commands[method]).call(commands, ...args);
 }
 
 /** The date the calendar shows, or will show on its next render. */
@@ -342,7 +352,7 @@ export function setCalendarDate(panel: CenterPanel, date: CalendarMoment): void 
 }
 
 /** Sets the calendar view type without rendering and without moving the date. */
-export function setCalendarView(panel: CenterPanel, view: CalViewType): void {
+export function setCalendarViewType(panel: CenterPanel, view: CalViewType): void {
   calendarOf(panel)['viewType_abyssPrivate'] = view;
 }
 

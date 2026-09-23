@@ -21,7 +21,7 @@ import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import {
-  calendarCommandsOf,
+  calendarCommand,
   createAppWithFiles,
   expectDefined,
   flushMicrotasks,
@@ -44,12 +44,6 @@ function callPrivate<T>(panel: CenterPanel, method: string, ...args: unknown[]):
   const key = method === 'toggleDueToday' ? method : `${method}_abyssPrivate`;
   const fn = expectDefined((panel as unknown as Record<string, (...a: unknown[]) => T>)[key]);
   return fn.call(panel, ...args);
-}
-
-/** Bracket-access helper to call the calendar commands the panel's calendar mode owns. */
-function calendarCommand<T>(panel: CenterPanel, method: string, ...args: unknown[]): T {
-  const commands = calendarCommandsOf(panel) as unknown as Record<string, (...a: unknown[]) => T>;
-  return expectDefined(commands[method]).call(commands, ...args);
 }
 
 async function submitCapture(panel: CenterPanel, value: string): Promise<void> {
@@ -751,7 +745,7 @@ describe('CalendarCommands.setTime — Task 33 data-safety net (the disappearing
   });
 });
 
-describe('CenterPanel timed vertical resize', () => {
+describe('CalendarCommands.commitTimedDuration', () => {
   it('patches time and duration atomically while preserving unrelated Markdown byte-for-byte', async () => {
     const raw = '- [ ] Atomic **label** #work ⏰ 09:00 keep-this ⏱️ 1h 📅 2026-07-06 ^task-anchor';
     const current = task({

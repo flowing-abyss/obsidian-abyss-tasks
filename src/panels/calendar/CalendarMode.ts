@@ -399,7 +399,7 @@ export class CalendarMode {
     this.deps_abyssPrivate.host.rerender();
   }
 
-  private createNavigationHandlers_abyssPrivate(
+  private createSelectionAndCaptureHandlers_abyssPrivate(
     viewContainer: HTMLElement,
   ): Pick<
     CalendarHandlers,
@@ -456,7 +456,7 @@ export class CalendarMode {
     const commands = this.commands_abyssPrivate;
     const { host } = this.deps_abyssPrivate;
     return {
-      ...this.createNavigationHandlers_abyssPrivate(viewContainer),
+      ...this.createSelectionAndCaptureHandlers_abyssPrivate(viewContainer),
       onTimeChange: (task, minutes) => {
         this.runTaskAction_abyssPrivate(task, () => commands.setTime(task, minutes));
       },

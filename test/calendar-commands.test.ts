@@ -23,8 +23,8 @@ function harness(tasks: readonly TaskSnapshot[] = []): {
   const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
     type: 'ok',
     changed: true,
-    outcome: { type: 'task', ref: { filePath: 'f.md', line: 0, revision: 'r' } },
-  } as unknown as Awaited<ReturnType<TaskApplicationApi['execute']>>);
+    outcome: { type: 'task', task: task({ source: { filePath: 'f.md', line: 0 } }) },
+  });
   const queries = taskQueryApi({ list: () => tasks });
   const commands = new CalendarCommands({ tasks: { queries, execute }, queries });
   return { commands, execute, lastCommand: () => execute.mock.lastCall?.[0] };

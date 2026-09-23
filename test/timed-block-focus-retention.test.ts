@@ -24,16 +24,9 @@ function block(root: HTMLElement, snapshot: TaskSnapshot, segmentDate = '2026-09
   });
 }
 
-interface PendingFocus {
-  readonly filePath: string;
-  readonly line: number;
-  readonly queueSequence?: number;
-}
-
 /** The restorations the retention has reserved but not yet run. */
 function restorations(retention: TimedBlockFocusRetention): ReadonlyMap<number, unknown> {
-  return (retention as unknown as { pendingRestorations_abyssPrivate: Map<number, unknown> })
-    .pendingRestorations_abyssPrivate;
+  return retention['pendingRestorations_abyssPrivate'];
 }
 
 function harness(options: { active?: boolean; execute?: TaskApplicationApi['execute'] } = {}): {
@@ -41,7 +34,7 @@ function harness(options: { active?: boolean; execute?: TaskApplicationApi['exec
   retention: TimedBlockFocusRetention;
   follow: ReturnType<typeof vi.fn>;
   execute: TaskApplicationApi['execute'];
-  pending(): PendingFocus | undefined;
+  pending(): TimedBlockFocusRetention['pendingFocus_abyssPrivate'];
 } {
   const root = document.body.createDiv();
   const follow = vi.fn();
@@ -62,9 +55,7 @@ function harness(options: { active?: boolean; execute?: TaskApplicationApi['exec
     retention,
     follow,
     execute,
-    pending: () =>
-      (retention as unknown as { pendingFocus_abyssPrivate?: PendingFocus })
-        .pendingFocus_abyssPrivate,
+    pending: () => retention['pendingFocus_abyssPrivate'],
   };
 }
 

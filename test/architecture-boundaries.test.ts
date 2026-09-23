@@ -13,7 +13,9 @@ const LEGACY_BRIDGE_FILES = [
   'src/mutation/validateMutatedLine.ts',
 ] as const;
 
-const CALENDAR_COMPOSITION_ROOTS = ['src/panels/CenterPanel.ts'] as const;
+// Calendar modules outside `src/panels/calendar/` and `src/views/`, which `calendarModules`
+// scans whole; `CenterPanel` hosts calendar mode from the panel shell.
+const CALENDAR_HOST_MODULES = ['src/panels/CenterPanel.ts'] as const;
 
 const RECURRENCE_EDITOR_WRITE_CONSUMERS = [
   'src/panels/CenterPanel.ts',
@@ -186,11 +188,14 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
 };
 
 const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string[]> = {
-  'TaskApplicationApi.execute': 'src/panels/CenterPanel.ts',
+  'TaskApplicationApi.execute': [
+    'src/panels/CenterPanel.ts',
+    'src/panels/calendar/calendarCommands.ts',
+  ],
   'TaskApplicationApi.planArchive': 'src/panels/CenterPanel.ts',
   'TaskApplicationApi.queries': 'src/ui/TaskMoveRecoveryModal.ts',
   'TaskQueryApi.forCalendarProjection': 'src/panels/calendar/calendarContent.ts',
-  'TaskQueryApi.list': 'src/panels/CenterPanel.ts',
+  'TaskQueryApi.list': ['src/panels/CenterPanel.ts', 'src/panels/calendar/calendarCommands.ts'],
   'TaskQueryApi.resolve': 'src/views/PanelView.ts',
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',
   'TaskQueryApi.subscribeReconciled': 'src/projects/ProjectStore.ts',
@@ -229,7 +234,7 @@ function retiredNamespaceSites(): string[] {
 
 function calendarModules(): string[] {
   return [
-    ...CALENDAR_COMPOSITION_ROOTS,
+    ...CALENDAR_HOST_MODULES,
     ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/panels/calendar`)).map(repoPath),
     ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/views`)).map(repoPath),
   ];
