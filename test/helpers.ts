@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import { NoteTemplateService } from '../src/notes/NoteTemplateService';
 import { moment } from '../src/obsidianMoment';
+import type { CalendarCommands } from '../src/panels/calendar/calendarCommands';
 import type { CalendarMoment } from '../src/panels/calendar/calendarDateNavigation';
 import type { CalendarMode } from '../src/panels/calendar/CalendarMode';
 import type { CalendarViewInstance } from '../src/panels/calendar/calendarViewFactory';
@@ -323,6 +324,11 @@ export function makeCenterPanelForTest(
 /** The calendar controller a CenterPanel owns; tests reach calendar session state through it. */
 export function calendarOf(panel: CenterPanel): CalendarMode {
   return panel['calendar_abyssPrivate'];
+}
+
+/** The calendar commands the panel's calendar mode owns; tests drive gestures through them. */
+export function calendarCommandsOf(panel: CenterPanel): CalendarCommands {
+  return calendarOf(panel)['commands_abyssPrivate'];
 }
 
 /** The date the calendar shows, or will show on its next render. */

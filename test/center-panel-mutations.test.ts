@@ -21,7 +21,7 @@ import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import {
-  calendarOf,
+  calendarCommandsOf,
   createAppWithFiles,
   expectDefined,
   flushMicrotasks,
@@ -48,10 +48,7 @@ function callPrivate<T>(panel: CenterPanel, method: string, ...args: unknown[]):
 
 /** Bracket-access helper to call the calendar commands the panel's calendar mode owns. */
 function calendarCommand<T>(panel: CenterPanel, method: string, ...args: unknown[]): T {
-  const commands = calendarOf(panel)['commands_abyssPrivate'] as unknown as Record<
-    string,
-    (...a: unknown[]) => T
-  >;
+  const commands = calendarCommandsOf(panel) as unknown as Record<string, (...a: unknown[]) => T>;
   return expectDefined(commands[method]).call(commands, ...args);
 }
 

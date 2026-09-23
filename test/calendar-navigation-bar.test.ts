@@ -94,6 +94,14 @@ describe('CalendarNavigationBar DOM', () => {
     month.bar.updateTitle();
     expect(month.button('.abyss-cal-nav-month').textContent).toBe('September');
   });
+
+  it('titles the week view with the locale week number, not the ISO week', () => {
+    // 2027-01-01 is locale week 1 and ISO week 53; the toolbar must never read "Week 53".
+    const h = harness('week', moment('2027-01-01'));
+    h.bar.updateTitle();
+    expect(h.button('.abyss-cal-nav-month').textContent).toBe('Week 1');
+    expect(h.button('.abyss-cal-nav-year').textContent).toBe('2027');
+  });
 });
 
 describe('CalendarNavigationBar callbacks', () => {
@@ -153,7 +161,9 @@ describe('CalendarNavigationBar pickers', () => {
     expect(options.map((option) => option.textContent)).toEqual(
       Array.from({ length: 11 }, (_, index) => String(2021 + index)),
     );
-    expect(h.button('.abyss-year-picker-btn.is-active').textContent).toBe('2026');
+    const active = expectDefined(options.find((option) => option.classList.contains('is-active')));
+    expect(active.textContent).toBe('2026');
+    expect(document.activeElement).toBe(active);
     expectDefined(options[10]).click();
     expect(h.callbacks.onSelectYear).toHaveBeenCalledWith(2031);
   });

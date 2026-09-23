@@ -141,9 +141,14 @@ describe('CalendarCommands timed gestures', () => {
       durationMinutes: 45,
       endMinutes: 585,
     });
-    expect(h.lastCommand()).toMatchObject({ type: 'patch' });
-    expect(JSON.stringify(h.lastCommand())).toContain('"09:00"');
-    expect(JSON.stringify(h.lastCommand())).toContain('45');
+    expect(h.lastCommand()).toMatchObject({
+      type: 'patch',
+      target: { type: 'task', ref: timed.ref },
+      patch: {
+        time: { type: 'set', value: '09:00' },
+        duration: { type: 'set', value: 45 },
+      },
+    });
   });
 
   it('sets a span boundary and a span shift', async () => {
@@ -174,9 +179,17 @@ describe('CalendarCommands field setters', () => {
     const timed = task({ planning: { due: '2026-09-20', time: '09:00' } });
     const h = harness();
     await h.commands.setTime(timed, 630);
-    expect(JSON.stringify(h.lastCommand())).toContain('"10:30"');
+    expect(h.lastCommand()).toMatchObject({
+      type: 'patch',
+      target: { type: 'task', ref: timed.ref },
+      patch: { time: { type: 'set', value: '10:30' } },
+    });
     await h.commands.setDuration(timed, 90);
-    expect(JSON.stringify(h.lastCommand())).toContain('90');
+    expect(h.lastCommand()).toMatchObject({
+      type: 'patch',
+      target: { type: 'task', ref: timed.ref },
+      patch: { duration: { type: 'set', value: 90 } },
+    });
     await h.commands.setStart(timed, '2026-09-18');
     expect(h.lastCommand()).toEqual({
       type: 'set-span-boundary',

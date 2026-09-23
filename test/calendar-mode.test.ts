@@ -297,3 +297,57 @@ describe('CalendarMode navigation', () => {
     expect(h.host.openCapture).toHaveBeenCalledWith({ type: 'calendar-month', date });
   });
 });
+
+describe('CalendarMode week view', () => {
+  function weekHarness(): Harness {
+    const h = harness();
+    h.mode.setView('week');
+    h.mode.render(h.root);
+    return h;
+  }
+
+  it('an hour column asks the host for a timed capture at that date and time', () => {
+    const h = weekHarness();
+    const column = expectDefined(
+      h.root.querySelector<HTMLElement>('.abyss-tg-day-column[data-tg-date]'),
+    );
+    const date = expectDefined(column.dataset['tgDate']);
+    // jsdom reports a zero-height column, so the click snaps to the first slot of the day.
+    expectDefined(column.querySelector<HTMLElement>('.abyss-tg-hour-column')).click();
+    expect(h.host.openCapture).toHaveBeenCalledWith({
+      type: 'calendar-timed',
+      date,
+      time: '00:00',
+    });
+  });
+
+  it('the month picker cancels keyboard work, closes, moves the date, retitles, and remounts', () => {
+    const h = weekHarness();
+    const cancel = vi.spyOn(h.mode, 'cancelKeyboardInteraction');
+    const before = h.mode['date_abyssPrivate'].clone();
+    const title = expectDefined(h.root.querySelector('.abyss-cal-nav-month')).textContent;
+    h.click('.abyss-cal-nav-month');
+    const options = [...h.root.querySelectorAll<HTMLElement>('.abyss-month-picker-btn')];
+    const target = (before.month() + 6) % 12;
+    h.calls.length = 0;
+    expectDefined(options[target]).click();
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(h.root.querySelector('.abyss-month-picker')).toBeNull();
+    expect(h.date()).toBe(before.clone().month(target).date(1).format('YYYY-MM-DD'));
+    expect(expectDefined(h.root.querySelector('.abyss-cal-nav-month')).textContent).not.toBe(title);
+    expect(h.calls).toEqual(VIEW_UPDATE_CALLS);
+    expect(h.host.rerender).not.toHaveBeenCalled();
+  });
+
+  it('Today returns the week view to the current ISO week and remounts', () => {
+    const h = weekHarness();
+    const current = moment().startOf('isoWeek').format('YYYY-MM-DD');
+    h.click('.abyss-cal-nav-btn[aria-label="Next"]');
+    expect(h.date()).not.toBe(current);
+    h.calls.length = 0;
+    h.click('.abyss-cal-nav-today');
+    expect(h.date()).toBe(current);
+    expect(h.calls).toEqual(VIEW_UPDATE_CALLS);
+    expect(h.host.rerender).not.toHaveBeenCalled();
+  });
+});

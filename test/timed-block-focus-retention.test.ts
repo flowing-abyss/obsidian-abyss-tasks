@@ -30,6 +30,12 @@ interface PendingFocus {
   readonly queueSequence?: number;
 }
 
+/** The restorations the retention has reserved but not yet run. */
+function restorations(retention: TimedBlockFocusRetention): ReadonlyMap<number, unknown> {
+  return (retention as unknown as { pendingRestorations_abyssPrivate: Map<number, unknown> })
+    .pendingRestorations_abyssPrivate;
+}
+
 function harness(options: { active?: boolean; execute?: TaskApplicationApi['execute'] } = {}): {
   root: HTMLElement;
   retention: TimedBlockFocusRetention;
@@ -258,5 +264,36 @@ describe('TimedBlockFocusRetention focus capture', () => {
     stale.retention.beginRender();
     vi.runOnlyPendingTimers();
     expect(document.activeElement).not.toBe(staleReplacement);
+  });
+
+  it('reserves nothing when the container has no owning window', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const snapshot = task({ planning: { due: '2026-09-23', time: '09:00' } });
+    const origin = block(h.root, snapshot);
+    origin.focus();
+    h.retention.handleIntent(snapshot, { type: 'move-time', deltaMinutes: 15 });
+    await settle();
+    // A document created through the DOM API has no window, so its elements have no timers.
+    const foreign = document.implementation.createHTMLDocument();
+    expect(foreign.defaultView).toBeNull();
+    const container = document.body.createDiv();
+    block(container, snapshot);
+    foreign.body.append(foreign.adoptNode(container));
+    expect(container.ownerDocument).toBe(foreign);
+    h.retention.beforeViewUpdate();
+    const generation = h.retention.beginRender();
+    origin.remove();
+    const scheduled = vi.getTimerCount();
+    h.retention.deferFocus(container, generation);
+    expect(vi.getTimerCount()).toBe(scheduled);
+    expect(h.retention.hasPending()).toBe(true);
+    expect(restorations(h.retention).size).toBe(0);
+    // The same pending focus against a container with a window does reserve and schedule.
+    const replacement = block(h.root, snapshot);
+    h.retention.deferFocus(h.root, generation);
+    expect(restorations(h.retention).size).toBe(1);
+    vi.runOnlyPendingTimers();
+    expect(document.activeElement).toBe(replacement);
   });
 });

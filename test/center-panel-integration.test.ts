@@ -35,6 +35,7 @@ import {
 import { PanelNavigator } from '../src/views/panelNavigation';
 import { MIN_BLOCK_HEIGHT_PX } from '../src/views/timegrid/layout';
 import {
+  calendarCommandsOf,
   calendarDateOf,
   calendarOf,
   calendarViewInstanceOf,
@@ -219,10 +220,7 @@ function calendarCommand<T>(
   method: string,
   ...args: unknown[]
 ): Promise<T> | T {
-  const commands = calendarOf(panel)['commands_abyssPrivate'] as unknown as Record<
-    string,
-    (...a: unknown[]) => T
-  >;
+  const commands = calendarCommandsOf(panel) as unknown as Record<string, (...a: unknown[]) => T>;
   return expectDefined(commands[method]).call(commands, ...args);
 }
 
