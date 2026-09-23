@@ -153,6 +153,44 @@ describe('TaskModal', () => {
       expect(activeDocument.body.querySelector('.abyss-modal-backdrop')).toBeNull();
     });
 
+    it('Escape closes the modal and consumes the event before it reaches the window', () => {
+      modal.open(task());
+      const windowKeydown = vi.fn();
+      activeWindow.addEventListener('keydown', windowKeydown);
+      try {
+        const escape = new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        });
+        activeDocument.dispatchEvent(escape);
+        expect(activeDocument.body.querySelector('.abyss-modal-backdrop')).toBeNull();
+        expect(escape.defaultPrevented).toBe(true);
+        expect(windowKeydown).not.toHaveBeenCalled();
+      } finally {
+        activeWindow.removeEventListener('keydown', windowKeydown);
+      }
+    });
+
+    // Characterization: passes on master; guards the yield to inner surfaces after the reorder.
+    it('leaves the modal open when an inner surface already consumed the Escape', () => {
+      modal.open(task());
+      const consume = (event: KeyboardEvent): void => {
+        if (event.key === 'Escape') event.preventDefault();
+      };
+      activeDocument.addEventListener('keydown', consume, true);
+      try {
+        expectDefined(
+          activeDocument.body.querySelector<HTMLElement>('.abyss-modal-backdrop'),
+        ).dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+        );
+        expect(activeDocument.body.querySelector('.abyss-modal-backdrop')).not.toBeNull();
+      } finally {
+        activeDocument.removeEventListener('keydown', consume, true);
+      }
+    });
+
     it('other keys do not close', () => {
       modal.open(task());
       activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));

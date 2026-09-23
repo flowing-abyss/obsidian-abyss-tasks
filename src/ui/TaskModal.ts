@@ -129,7 +129,10 @@ export class TaskModal {
     });
 
     this.keyHandler_abyssPrivate = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !e.defaultPrevented) this.close();
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.close();
     };
     this.ownerDoc_abyssPrivate.addEventListener('keydown', this.keyHandler_abyssPrivate);
   }
