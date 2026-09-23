@@ -243,6 +243,7 @@ function focusedElement(ownerDocument: Document): HTMLElement | null {
   const candidate = ownerDocument.activeElement;
   const realm = ownerDocument.defaultView;
   if (realm === null || !(candidate instanceof realm.HTMLElement)) return null;
+  // body is where focus lands when nothing is focused; it is never a restore target.
   return candidate === ownerDocument.body ? null : candidate;
 }
 

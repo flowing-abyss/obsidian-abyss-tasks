@@ -40,7 +40,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) root.remove();
 });
 
-function harness(queryOverrides: Partial<TestTaskQueries> = {}): Harness {
+function harness(queryOverrides: Omit<Partial<TestTaskQueries>, 'subscribe'> = {}): Harness {
   const calls: string[] = [];
   const note = (name: string): void => {
     calls.push(name);

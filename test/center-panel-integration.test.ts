@@ -4883,7 +4883,6 @@ function clickCalendarView(el: HTMLElement, label: CalendarViewLabel): void {
 /** A mounted calendar panel showing one daily forecast on 2026-08-09, attached to the document. */
 function forecastPanelFixture(): {
   panel: CenterPanel;
-  state: AppState;
   el: HTMLElement;
   item: HTMLElement;
 } {
@@ -4921,7 +4920,7 @@ function forecastPanelFixture(): {
     el.querySelector<HTMLElement>('[data-mg-date="2026-08-09"] [data-recurrence-forecast="true"]'),
   );
   const item = expectDefined(badge.closest<HTMLElement>('.abyss-calendar-item'));
-  return { panel, state, el, item };
+  return { panel, el, item };
 }
 
 function timedBlock(el: HTMLElement, filePath?: string): HTMLElement {

@@ -1,17 +1,19 @@
 import type { App } from 'obsidian';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import type { EffectiveTagGroup } from '../../tags/effectiveTagGroups';
-import type { LocalDate, TaskPriority, TaskSnapshot } from '../../tasks';
+import type { TaskPriority, TaskSnapshot } from '../../tasks';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import type { TaskDependencyLookup } from '../../ui/taskDependencyPresentation';
 import type { BaseView } from '../../views/BaseView';
 import { MonthGridView } from '../../views/MonthGridView';
 import { TodayView } from '../../views/TodayView';
 import { WeekTimeGridView } from '../../views/WeekTimeGridView';
-import type { CalendarTaskSource } from '../../views/calendarOccurrences';
 import type { InteractiveSpanBoundaryTarget, SpanMoveTarget } from '../../views/spanInteractions';
 import type { TimedDragTarget, TimedVerticalResizeTarget } from '../../views/timegrid/dragGeometry';
-import type { ForecastContextMenuOwner } from '../../views/timegrid/renderTaskMeta';
+import type {
+  ForecastContextMenuOwner,
+  ForecastInteractionCallbacks,
+} from '../../views/timegrid/renderTaskMeta';
 import type { TimedBlockKeyboardIntent } from '../../views/timegrid/renderTimedBlocks';
 import type { TimedBoundaryTarget } from '../../views/timegrid/timedInteractions';
 import type { CalViewType } from './calendarViewType';
@@ -20,13 +22,11 @@ import type { CalViewType } from './calendarViewType';
 export interface CalendarHandlers {
   readonly onTaskClick: (task: TaskSnapshot) => void;
   readonly onTaskSelect: (task: TaskSnapshot) => void;
-  readonly onForecastClick: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
-  /** "Edit repeat…" from a forecast occurrence; `anchor` is the occurrence element the menu was opened for. */
-  readonly onForecastContextMenu: (
-    source: CalendarTaskSource,
-    referenceDate: LocalDate,
-    anchor: HTMLElement,
-  ) => void;
+  readonly onForecastClick: NonNullable<ForecastInteractionCallbacks['onForecastClick']>;
+  /** "Edit repeat…" from a forecast occurrence; the anchor is the occurrence element. */
+  readonly onForecastContextMenu: NonNullable<
+    ForecastInteractionCallbacks['onForecastContextMenu']
+  >;
   readonly onDrop: (dragData: string, targetDate: string) => void;
   readonly onDropTime: (dragData: string, date: string, time: string) => void;
   readonly onCreateAtTime: (date: string, time: string) => void;
