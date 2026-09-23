@@ -23,7 +23,7 @@ interface PendingTimedBlockRestoration {
 export interface TimedBlockFocusRetentionHost {
   /** Whether the centre panel currently shows the calendar (restorations and commits need it). */
   readonly isCalendarActive: () => boolean;
-  /** The centre panel element while mounted, null before mount and after destroy. */
+  /** The panel element of the last calendar render; null until the first render. */
   readonly root: () => HTMLElement | null;
   /** Re-anchors the calendar on the task a keyboard shift moved out of view. */
   readonly follow: (updated: TaskSnapshot, nextSegmentDate: string | undefined) => void;
@@ -129,7 +129,7 @@ export class TimedBlockFocusRetention {
     this.acceptIntent_abyssPrivate(provisionalFocus, queueSequence, previousQueueSequence);
   }
 
-  /** The former retainTimedBlockFocus: a block inside the panel received focus. */
+  /** Records that a block inside the panel received focus. */
   retain(block: HTMLElement): void {
     const filePath = block.dataset['abyssTaskFile'];
     const lineText = block.dataset['abyssTaskLine'];

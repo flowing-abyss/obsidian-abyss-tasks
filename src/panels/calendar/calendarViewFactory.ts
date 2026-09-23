@@ -167,8 +167,8 @@ function createMonthView(
 }
 
 /**
- * The single place that maps the controller's handler set onto the three view classes. A phone
- * presentation later branches here on a policy input; the controller does not change.
+ * Maps the controller's handler set onto the three view classes. This is the single place that
+ * selects a view class for a view type.
  */
 export function createCalendarView(
   view: CalViewType,
