@@ -208,6 +208,20 @@ function call<T>(panel: CenterPanel, method: string, ...args: unknown[]): Promis
   return fn.call(panel, ...args);
 }
 
+/** Bracket-access helper to call the calendar commands the panel owns. */
+function calendarCommand<T>(
+  panel: CenterPanel,
+  method: string,
+  ...args: unknown[]
+): Promise<T> | T {
+  const commands = (
+    panel as unknown as {
+      readonly calendarCommands_abyssPrivate: Record<string, (...a: unknown[]) => T>;
+    }
+  ).calendarCommands_abyssPrivate;
+  return expectDefined(commands[method]).call(commands, ...args);
+}
+
 async function openListCapture(container: HTMLElement): Promise<HTMLInputElement> {
   container.querySelector<HTMLElement>('.abyss-add-task-trigger')?.click();
   await flushMicrotasks();
@@ -2047,7 +2061,7 @@ describe('CenterPanel.rescheduleTask', () => {
     const target = expectDefined(index.list()[0]);
     const resolvedDragData =
       dragData === 'indexed-task' ? `${target.source.filePath}:::0` : dragData;
-    await call<void>(panel, 'rescheduleTask', resolvedDragData, '2026-06-28');
+    await calendarCommand<void>(panel, 'rescheduleFromDrag', resolvedDragData, '2026-06-28');
     expect(await readMd(app, 't.md')).toBe(expected);
     if (expectedDue !== undefined) {
       expect(index.list()[0]?.planning.due).toBe(expectedDue);
@@ -2066,7 +2080,12 @@ describe('CenterPanel.rescheduleTask', () => {
     );
     const target = expectDefined(index.list()[0]);
     expect(target.planning.time).toBe('09:00');
-    await call<void>(panel, 'rescheduleTask', `${target.source.filePath}:::0`, '2026-06-28');
+    await calendarCommand<void>(
+      panel,
+      'rescheduleFromDrag',
+      `${target.source.filePath}:::0`,
+      '2026-06-28',
+    );
     const content = await readMd(app, 't.md');
     expect(content).toBe('- [ ] task 📅 2026-06-28');
     expect(content).not.toContain('⏰');
@@ -2080,7 +2099,12 @@ describe('CenterPanel.rescheduleTask', () => {
       [{ path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] }],
     );
     const target = expectDefined(index.list()[0]);
-    await call<void>(panel, 'rescheduleTask', `${target.source.filePath}:::0`, '2026-06-28');
+    await calendarCommand<void>(
+      panel,
+      'rescheduleFromDrag',
+      `${target.source.filePath}:::0`,
+      '2026-06-28',
+    );
     const content = await readMd(app, 't.md');
     expect(content).toBe('- [ ] task 📅 2026-06-28');
   });
@@ -2092,7 +2116,12 @@ describe('CenterPanel.rescheduleTask', () => {
       [{ path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] }],
     );
     const target = expectDefined(index.list()[0]);
-    await call<void>(panel, 'rescheduleTask', `${target.source.filePath}:::0`, '2026-06-28');
+    await calendarCommand<void>(
+      panel,
+      'rescheduleFromDrag',
+      `${target.source.filePath}:::0`,
+      '2026-06-28',
+    );
     const content = await readMd(app, 't.md');
     expect(content).toBe('- [ ] task 📅 2026-06-28');
   });
@@ -5046,25 +5075,25 @@ describe('CenterPanel calendar mode — timed pointer command bridge', () => {
     });
     const h = keyboardPanelHarness([t], execute);
 
-    await call<void>(h.panel, 'commitTimedMove', t, {
+    await calendarCommand<void>(h.panel, 'commitTimedMove', t, {
       date: '2026-07-07',
       startMinutes: 600,
       dayDelta: 1,
       destination: 'time-grid',
     });
-    await call<void>(h.panel, 'commitTimedMove', t, {
+    await calendarCommand<void>(h.panel, 'commitTimedMove', t, {
       date: '2026-07-07',
       startMinutes: 540,
       dayDelta: 1,
       destination: 'all-day',
     });
-    await call<void>(h.panel, 'commitTimedDuration', t, {
+    await calendarCommand<void>(h.panel, 'commitTimedDuration', t, {
       edge: 'end',
       startMinutes: 540,
       durationMinutes: 120,
       endMinutes: 660,
     });
-    await call<void>(h.panel, 'commitTimedBoundary', t, {
+    await calendarCommand<void>(h.panel, 'commitTimedBoundary', t, {
       boundary: 'start',
       date: '2026-07-05',
       dayDelta: -1,
@@ -5110,7 +5139,7 @@ describe('CenterPanel calendar mode — timed pointer command bridge', () => {
     });
     const h = keyboardPanelHarness([t], execute);
 
-    await call<void>(h.panel, 'commitTimedBoundary', t, {
+    await calendarCommand<void>(h.panel, 'commitTimedBoundary', t, {
       boundary: 'create-span',
       date: '2026-07-10',
       dayDelta: 2,
@@ -6510,7 +6539,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
 describe('calendar child day gestures persist on the child', () => {
   it.each([
     {
-      method: 'extendTaskToSpan',
+      method: 'extendToSpan',
       planning: '📅 2026-07-08',
       target: '2026-07-10',
       want: ['🛫 2026-07-08', '📅 2026-07-10'],
@@ -6561,7 +6590,7 @@ describe('calendar child day gestures persist on the child', () => {
         planning: child.planning,
         recurring: false,
       });
-      await call<Promise<void>>(h.panel, method, projected, target);
+      await calendarCommand<Promise<void>>(h.panel, method, projected, target);
       const file = h.app.vault.getAbstractFileByPath('child.md');
       if (!(file instanceof TFile)) throw new Error('Missing fixture');
       const lines = (await h.app.vault.read(file)).split('\n');
