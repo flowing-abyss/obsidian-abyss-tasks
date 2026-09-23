@@ -224,6 +224,7 @@ function retiredNamespaceSites(): string[] {
 function calendarModules(): string[] {
   return [
     ...CALENDAR_COMPOSITION_ROOTS,
+    ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/panels/calendar`)).map(repoPath),
     ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/views`)).map(repoPath),
   ];
 }
