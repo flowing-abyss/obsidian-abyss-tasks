@@ -7,9 +7,9 @@ export type CalendarCapturePlacement =
   | { readonly type: 'calendar-all-day'; readonly date: string }
   | { readonly type: 'calendar-month'; readonly date: string };
 
-export function isCalendarCapturePlacement(placement: {
-  readonly type: string;
-}): placement is CalendarCapturePlacement {
+export function isCalendarCapturePlacement<T extends { readonly type: string }>(
+  placement: T,
+): placement is T & CalendarCapturePlacement {
   return placement.type.startsWith('calendar-');
 }
 

@@ -4,6 +4,7 @@ import {
   calendarCaptureInputClass,
   captureTargetForCalendarPlacement,
   isCalendarCapturePlacement,
+  type CalendarCapturePlacement,
 } from '../src/panels/calendar/calendarCapturePlacement';
 import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
 import { minutesToPixels, timeStringToMinutes } from '../src/views/timegrid/layout';
@@ -23,6 +24,9 @@ function timeGridRoot(): { root: HTMLElement; hourColumn: HTMLElement; allDay: H
   return { root, hourColumn, allDay };
 }
 
+type WiderPlacement =
+  CalendarCapturePlacement | { readonly type: 'list'; readonly selectionKey: string };
+
 describe('isCalendarCapturePlacement', () => {
   it('recognises the three calendar placements and nothing else', () => {
     expect(isCalendarCapturePlacement({ type: 'calendar-timed' })).toBe(true);
@@ -30,6 +34,18 @@ describe('isCalendarCapturePlacement', () => {
     expect(isCalendarCapturePlacement({ type: 'calendar-month' })).toBe(true);
     expect(isCalendarCapturePlacement({ type: 'list' })).toBe(false);
     expect(isCalendarCapturePlacement({ type: 'project' })).toBe(false);
+  });
+
+  it('narrows a wider placement union to the calendar variants only', () => {
+    const list: WiderPlacement = { type: 'list', selectionKey: 'inbox' };
+    const calendar: WiderPlacement = {
+      type: 'calendar-timed',
+      date: '2026-09-23',
+      time: '09:30',
+    };
+    expect(isCalendarCapturePlacement(list)).toBe(false);
+    if (!isCalendarCapturePlacement(calendar)) throw new Error('expected a calendar placement');
+    expect(calendar.date).toBe('2026-09-23');
   });
 });
 
