@@ -316,6 +316,13 @@ export function makeCenterPanelForTest(
   );
 }
 
+/** The timed-block focus the panel is retaining across calendar re-renders, if any. */
+export function pendingTimedBlockFocusOf(
+  panel: CenterPanel,
+): { readonly originElement?: HTMLElement } | undefined {
+  return panel['focusRetention_abyssPrivate']['pendingFocus_abyssPrivate'];
+}
+
 type LeftPanelTestArgs = readonly [
   state: AppState,
   taskHarness: TestTaskHarness,

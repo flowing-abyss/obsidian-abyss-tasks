@@ -95,7 +95,6 @@ import { rootTaskRef, taskNodeLine, taskNodeRef, taskSelectionPath } from '../ui
 import type { TrackingSurface } from '../ui/timeTracking/TimeBadge';
 import type { TrackingTickerState } from '../ui/timeTracking/TrackingTicker';
 import { formatTrackedDuration } from '../ui/timeTracking/formatTracked';
-import { TimedBlockKeyboardQueue } from '../ui/timedBlockKeyboardQueue';
 import { MonthGridView } from '../views/MonthGridView';
 import { TodayView } from '../views/TodayView';
 import { WeekTimeGridView } from '../views/WeekTimeGridView';
@@ -145,23 +144,9 @@ import {
   stepCalendarDate,
 } from './calendar/calendarDateNavigation';
 import type { CalViewType } from './calendar/calendarViewType';
+import { TimedBlockFocusRetention } from './calendar/timedBlockFocusRetention';
 import { visibleCalendarDates } from './calendar/visibleCalendarDates';
 import { ProjectsPanel } from './projects/ProjectsPanel';
-
-interface TimedBlockFocusLocator {
-  readonly filePath: string;
-  readonly line: number;
-  readonly segmentDate?: string;
-  readonly sequence: number;
-  readonly queueSequence?: number;
-  readonly originElement?: HTMLElement;
-}
-
-interface PendingTimedBlockRestoration {
-  readonly queueSequence: number;
-  readonly focusSequence: number;
-  readonly renderGeneration: number;
-}
 
 type BarCapturePlacement =
   | { readonly type: 'list'; readonly selectionKey: string }
@@ -295,19 +280,8 @@ export class CenterPanel {
   // A deliberate full refresh empties the outer calendar before mountView can inspect its grid.
   // Carry scrollTop across that boundary; query patches retain the grid node and need no fallback.
   private pendingCalScrollTop_abyssPrivate: number | undefined = undefined;
-  private readonly keyboardQueue_abyssPrivate: TimedBlockKeyboardQueue | null;
+  private readonly focusRetention_abyssPrivate: TimedBlockFocusRetention;
   private readonly calendarCommands_abyssPrivate: CalendarCommands;
-  private pendingTimedBlockFocus_abyssPrivate: TimedBlockFocusLocator | undefined;
-  private readonly settledKeyboardSequences_abyssPrivate = new Set<number>();
-  private readonly restoredKeyboardSequences_abyssPrivate = new Set<number>();
-  private readonly committedKeyboardSequences_abyssPrivate = new Set<number>();
-  private readonly pendingTimedBlockRestorations_abyssPrivate = new Map<
-    number,
-    PendingTimedBlockRestoration
-  >();
-  private nextTimedBlockRestoration_abyssPrivate = 0;
-  private nextTimedBlockFocusSequence_abyssPrivate = 0;
-  private calendarRenderGeneration_abyssPrivate = 0;
   private taskModal_abyssPrivate: TaskModal | null = null;
   private readonly selectedTaskKeys_abyssPrivate = new Set<string>();
   private lastAnnouncedSelectionCount_abyssPrivate = 0;
@@ -416,7 +390,13 @@ export class CenterPanel {
           )
         : null;
     this.navigation_abyssPrivate = this.createNavigation_abyssPrivate(navigation);
-    this.keyboardQueue_abyssPrivate = this.createKeyboardQueue_abyssPrivate(tasks);
+    this.focusRetention_abyssPrivate = new TimedBlockFocusRetention(tasks, {
+      isCalendarActive: () => this.state_abyssPrivate.get('mode') === 'calendar',
+      root: () => ('el' in this ? this.el : null),
+      follow: (updated, nextSegmentDate) => {
+        this.followShiftedTask_abyssPrivate(updated, nextSegmentDate);
+      },
+    });
     this.calendarCommands_abyssPrivate = new CalendarCommands({ tasks, queries });
   }
 
@@ -438,54 +418,6 @@ export class CenterPanel {
         this.onSaveViewState_abyssPrivate,
       )
     );
-  }
-
-  private createKeyboardQueue_abyssPrivate(
-    tasks: TaskApplicationApi | undefined,
-  ): TimedBlockKeyboardQueue | null {
-    if (tasks == null) return null;
-    return new TimedBlockKeyboardQueue(tasks, {
-      onCommitted: (task, intent, sequence, changed) => {
-        this.handleKeyboardCommit_abyssPrivate(task, intent, sequence, changed);
-      },
-      onSettled: (_taskKey, sequence, summary) => {
-        this.handleKeyboardSettled_abyssPrivate(
-          sequence,
-          summary.anyChanged,
-          summary.sourceChanged,
-        );
-      },
-      present: (result) => {
-        presentTaskCommandResult(result);
-        if (result.type !== 'ok' || result.outcome.type !== 'task') {
-          this.clearTimedBlockFocus_abyssPrivate();
-        }
-      },
-    });
-  }
-
-  private handleKeyboardSettled_abyssPrivate(
-    sequence: number,
-    anyChanged: boolean,
-    sourceChanged: boolean,
-  ): void {
-    if (this.pendingTimedBlockFocus_abyssPrivate?.queueSequence !== sequence) return;
-    if (
-      (anyChanged || sourceChanged) &&
-      !this.committedKeyboardSequences_abyssPrivate.has(sequence)
-    ) {
-      this.committedKeyboardSequences_abyssPrivate.add(sequence);
-      this.deferTimedBlockFocus_abyssPrivate(this.el, this.calendarRenderGeneration_abyssPrivate);
-    }
-    const pendingRestoration = this.hasPendingTimedBlockRestoration_abyssPrivate(sequence);
-    if (
-      (!anyChanged && !sourceChanged && !pendingRestoration) ||
-      this.restoredKeyboardSequences_abyssPrivate.has(sequence)
-    ) {
-      this.clearTimedBlockFocus_abyssPrivate(sequence);
-      return;
-    }
-    this.settledKeyboardSequences_abyssPrivate.add(sequence);
   }
 
   mount(container: HTMLElement): void {
@@ -736,7 +668,7 @@ export class CenterPanel {
       )
         return;
       this.abandonTaskDateFocus_abyssPrivate();
-      if (this.pendingTimedBlockFocus_abyssPrivate != null)
+      if (this.focusRetention_abyssPrivate.hasPending())
         this.cancelKeyboardInteraction_abyssPrivate();
     };
     ownerWindow?.addEventListener('blur', onOwnerWindowBlur);
@@ -751,8 +683,8 @@ export class CenterPanel {
     const ownerDocument = this.el.ownerDocument;
     if (target === ownerDocument.body || target === ownerDocument.documentElement) return;
     const block = target.closest<HTMLElement>('.abyss-tg-block');
-    if (block != null && this.el.contains(block)) this.retainTimedBlockFocus_abyssPrivate(block);
-    else if (this.pendingTimedBlockFocus_abyssPrivate != null)
+    if (block != null && this.el.contains(block)) this.focusRetention_abyssPrivate.retain(block);
+    else if (this.focusRetention_abyssPrivate.hasPending())
       this.cancelKeyboardInteraction_abyssPrivate();
   }
 
@@ -921,7 +853,7 @@ export class CenterPanel {
   }
 
   private renderCalendarRoot_abyssPrivate(): void {
-    this.captureActiveTimedBlockFocus_abyssPrivate();
+    this.focusRetention_abyssPrivate.captureActiveFocus(this.el);
     this.pendingCalScrollTop_abyssPrivate =
       this.el.querySelector<HTMLElement>('.abyss-tg-grid-row')?.scrollTop;
     this.el.empty();
@@ -1308,7 +1240,7 @@ export class CenterPanel {
   private mountCalendarView_abyssPrivate(context: CalendarRenderContext): void {
     this.prepareCalendarViewUpdate_abyssPrivate(context.forecastMenuOwner);
     this.unmountActiveCapture_abyssPrivate();
-    const renderGeneration = ++this.calendarRenderGeneration_abyssPrivate;
+    const renderGeneration = this.focusRetention_abyssPrivate.beginRender();
     const grid = context.viewContainer.querySelector<HTMLElement>('.abyss-tg-grid-row');
     const preservedScrollTop = grid?.scrollTop ?? this.pendingCalScrollTop_abyssPrivate;
     this.pendingCalScrollTop_abyssPrivate = undefined;
@@ -1343,7 +1275,7 @@ export class CenterPanel {
       return;
     }
     this.prepareCalendarViewUpdate_abyssPrivate(context.forecastMenuOwner);
-    const renderGeneration = ++this.calendarRenderGeneration_abyssPrivate;
+    const renderGeneration = this.focusRetention_abyssPrivate.beginRender();
     const { config, issues, tasks } = this.currentCalendarContent_abyssPrivate();
     this.unmountActiveCapture_abyssPrivate();
     this.calViewInstance_abyssPrivate.patch(context.viewContainer, tasks, config);
@@ -1355,10 +1287,8 @@ export class CenterPanel {
   ): void {
     this.dismissRecurrenceEditor_abyssPrivate();
     forecastMenuOwner.dismiss();
-    this.captureActiveTimedBlockFocus_abyssPrivate();
-    const queueSequence = this.pendingTimedBlockFocus_abyssPrivate?.queueSequence;
-    if (queueSequence !== undefined)
-      this.restoredKeyboardSequences_abyssPrivate.delete(queueSequence);
+    this.focusRetention_abyssPrivate.captureActiveFocus(this.el);
+    this.focusRetention_abyssPrivate.beforeViewUpdate();
   }
 
   private finishCalendarViewUpdate_abyssPrivate(
@@ -1370,7 +1300,7 @@ export class CenterPanel {
     this.remountActiveCapture_abyssPrivate();
     this.updateTaskStackSelection_abyssPrivate();
     this.onRenderComplete_abyssPrivate(context.viewContainer);
-    this.deferTimedBlockFocus_abyssPrivate(context.viewContainer, renderGeneration);
+    this.focusRetention_abyssPrivate.deferFocus(context.viewContainer, renderGeneration);
   }
 
   private shouldScrollCalendarToNow_abyssPrivate(): boolean {
@@ -1486,7 +1416,7 @@ export class CenterPanel {
         );
       },
       onKeyboardIntent: (task, intent) => {
-        this.handleCalendarKeyboardIntent_abyssPrivate(task, intent);
+        this.focusRetention_abyssPrivate.handleIntent(task, intent);
       },
       onToggle: (task) => {
         runAsyncAction(this.toggleTask_abyssPrivate(task));
@@ -1551,396 +1481,8 @@ export class CenterPanel {
     );
   }
 
-  private handleCalendarKeyboardIntent_abyssPrivate(
-    task: TaskSnapshot,
-    intent: TimedBlockKeyboardIntent,
-  ): void {
-    if (calendarRootTaskRef(task) === undefined || this.keyboardQueue_abyssPrivate == null) return;
-    const active = this.el.ownerDocument.activeElement;
-    const originElement = isRealmHTMLElement(active)
-      ? (active.closest<HTMLElement>('.abyss-tg-block') ?? undefined)
-      : undefined;
-    const previousQueueSequence = this.pendingTimedBlockFocus_abyssPrivate?.queueSequence;
-    const provisionalFocus = this.provisionalTimedBlockFocus_abyssPrivate(task, originElement);
-    this.pendingTimedBlockFocus_abyssPrivate = provisionalFocus;
-    const queueSequence = this.keyboardQueue_abyssPrivate.enqueue(task, intent);
-    if (queueSequence === undefined) {
-      this.handleRejectedKeyboardIntent_abyssPrivate(
-        provisionalFocus.sequence,
-        previousQueueSequence,
-      );
-      return;
-    }
-    this.acceptKeyboardIntent_abyssPrivate(provisionalFocus, queueSequence, previousQueueSequence);
-  }
-
-  private provisionalTimedBlockFocus_abyssPrivate(
-    task: TaskSnapshot,
-    originElement: HTMLElement | undefined,
-  ): TimedBlockFocusLocator {
-    const segmentDate = originElement?.dataset['tgSegmentDate'];
-    return {
-      filePath: task.source.filePath,
-      line: task.source.line,
-      ...(segmentDate !== undefined && { segmentDate }),
-      sequence: ++this.nextTimedBlockFocusSequence_abyssPrivate,
-      ...(originElement !== undefined && { originElement }),
-    };
-  }
-
-  private handleRejectedKeyboardIntent_abyssPrivate(
-    focusSequence: number,
-    previousQueueSequence: number | undefined,
-  ): void {
-    if (this.pendingTimedBlockFocus_abyssPrivate?.sequence === focusSequence)
-      this.clearTimedBlockFocus_abyssPrivate();
-    if (previousQueueSequence !== undefined)
-      this.clearKeyboardSequenceState_abyssPrivate(previousQueueSequence);
-  }
-
-  private acceptKeyboardIntent_abyssPrivate(
-    provisionalFocus: TimedBlockFocusLocator,
-    queueSequence: number,
-    previousQueueSequence: number | undefined,
-  ): void {
-    if (this.pendingTimedBlockFocus_abyssPrivate?.sequence !== provisionalFocus.sequence) return;
-    if (previousQueueSequence !== undefined && previousQueueSequence !== queueSequence) {
-      this.clearKeyboardSequenceState_abyssPrivate(previousQueueSequence);
-    }
-    this.settledKeyboardSequences_abyssPrivate.delete(queueSequence);
-    if (previousQueueSequence !== queueSequence) {
-      this.restoredKeyboardSequences_abyssPrivate.delete(queueSequence);
-      this.committedKeyboardSequences_abyssPrivate.delete(queueSequence);
-    }
-    this.pendingTimedBlockFocus_abyssPrivate = { ...provisionalFocus, queueSequence };
-  }
-
   private cancelKeyboardInteraction_abyssPrivate(): void {
-    this.keyboardQueue_abyssPrivate?.cancel();
-    this.pendingTimedBlockFocus_abyssPrivate = undefined;
-    this.settledKeyboardSequences_abyssPrivate.clear();
-    this.restoredKeyboardSequences_abyssPrivate.clear();
-    this.committedKeyboardSequences_abyssPrivate.clear();
-    this.pendingTimedBlockRestorations_abyssPrivate.clear();
-    this.calendarRenderGeneration_abyssPrivate += 1;
-  }
-
-  private captureActiveTimedBlockFocus_abyssPrivate(): void {
-    if (this.pendingTimedBlockFocus_abyssPrivate?.queueSequence !== undefined) return;
-    const active = this.el.ownerDocument.activeElement;
-    if (!isRealmHTMLElement(active) || !this.el.contains(active)) return;
-    const block = active.closest<HTMLElement>('.abyss-tg-block');
-    if (block == null) return;
-    this.retainTimedBlockFocus_abyssPrivate(block);
-  }
-
-  private retainTimedBlockFocus_abyssPrivate(block: HTMLElement): void {
-    const filePath = block.dataset['abyssTaskFile'];
-    const lineText = block.dataset['abyssTaskLine'];
-    if (filePath === undefined || lineText === undefined) return;
-    const line = Number(lineText);
-    if (!Number.isInteger(line)) return;
-    const segmentDate = block.dataset['tgSegmentDate'];
-
-    const pending = this.pendingTimedBlockFocus_abyssPrivate;
-    if (this.isDifferentPreCommitOrigin_abyssPrivate(block, pending)) {
-      this.replacePreCommitFocus_abyssPrivate(block, pending.queueSequence, {
-        filePath,
-        line,
-        ...(segmentDate !== undefined && { segmentDate }),
-      });
-      return;
-    }
-    if (this.sameTimedBlockFocus_abyssPrivate(pending, filePath, line, segmentDate)) return;
-    if (pending?.queueSequence !== undefined) {
-      this.keyboardQueue_abyssPrivate?.cancel();
-      this.clearKeyboardSequenceState_abyssPrivate(pending.queueSequence);
-    }
-    this.pendingTimedBlockFocus_abyssPrivate = this.createTimedBlockFocus_abyssPrivate(
-      block,
-      filePath,
-      line,
-      segmentDate,
-    );
-  }
-
-  private isDifferentPreCommitOrigin_abyssPrivate(
-    block: HTMLElement,
-    pending: TimedBlockFocusLocator | undefined,
-  ): pending is TimedBlockFocusLocator & { readonly queueSequence: number } {
-    return (
-      pending?.queueSequence !== undefined &&
-      !this.committedKeyboardSequences_abyssPrivate.has(pending.queueSequence) &&
-      pending.originElement !== undefined &&
-      block !== pending.originElement
-    );
-  }
-
-  private replacePreCommitFocus_abyssPrivate(
-    block: HTMLElement,
-    queueSequence: number,
-    locator: Pick<TimedBlockFocusLocator, 'filePath' | 'line' | 'segmentDate'>,
-  ): void {
-    this.keyboardQueue_abyssPrivate?.cancel();
-    this.clearTimedBlockFocus_abyssPrivate(queueSequence);
-    this.pendingTimedBlockFocus_abyssPrivate = this.createTimedBlockFocus_abyssPrivate(
-      block,
-      locator.filePath,
-      locator.line,
-      locator.segmentDate,
-    );
-  }
-
-  private sameTimedBlockFocus_abyssPrivate(
-    pending: TimedBlockFocusLocator | undefined,
-    filePath: string,
-    line: number,
-    segmentDate: string | undefined,
-  ): boolean {
-    return (
-      pending?.filePath === filePath && pending.line === line && pending.segmentDate === segmentDate
-    );
-  }
-
-  private createTimedBlockFocus_abyssPrivate(
-    block: HTMLElement,
-    filePath: string,
-    line: number,
-    segmentDate: string | undefined,
-  ): TimedBlockFocusLocator {
-    return {
-      filePath,
-      line,
-      ...(segmentDate !== undefined && { segmentDate }),
-      sequence: ++this.nextTimedBlockFocusSequence_abyssPrivate,
-      originElement: block,
-    };
-  }
-
-  private deferTimedBlockFocus_abyssPrivate(
-    container: HTMLElement,
-    renderGeneration: number,
-  ): void {
-    const scheduled = this.pendingTimedBlockFocus_abyssPrivate;
-    if (scheduled == null) return;
-    const focusSequence = scheduled.sequence;
-    const queueSequence = scheduled.queueSequence;
-    if (
-      queueSequence !== undefined &&
-      !this.committedKeyboardSequences_abyssPrivate.has(queueSequence)
-    )
-      return;
-
-    const scheduledCandidate = this.findTimedBlock_abyssPrivate(container, scheduled);
-    if (queueSequence !== undefined && scheduledCandidate === scheduled.originElement) return;
-    const restorationId = this.reserveTimedBlockRestoration_abyssPrivate(
-      scheduledCandidate,
-      scheduled,
-      renderGeneration,
-    );
-
-    window.setTimeout(() => {
-      this.restoreDeferredTimedBlockFocus_abyssPrivate(container, {
-        focusSequence,
-        renderGeneration,
-        ...(restorationId !== undefined && { restorationId }),
-      });
-    }, 0);
-  }
-
-  private reserveTimedBlockRestoration_abyssPrivate(
-    candidate: HTMLElement | undefined,
-    scheduled: TimedBlockFocusLocator,
-    renderGeneration: number,
-  ): number | undefined {
-    const queueSequence = scheduled.queueSequence;
-    if (
-      queueSequence === undefined ||
-      candidate?.isConnected !== true ||
-      candidate === scheduled.originElement
-    ) {
-      return undefined;
-    }
-    const restorationId = ++this.nextTimedBlockRestoration_abyssPrivate;
-    this.pendingTimedBlockRestorations_abyssPrivate.set(restorationId, {
-      queueSequence,
-      focusSequence: scheduled.sequence,
-      renderGeneration,
-    });
-    return restorationId;
-  }
-
-  private findTimedBlock_abyssPrivate(
-    container: HTMLElement,
-    locator: Pick<TimedBlockFocusLocator, 'filePath' | 'line' | 'segmentDate'>,
-  ): HTMLElement | undefined {
-    return Array.from(container.querySelectorAll<HTMLElement>('.abyss-tg-block')).find(
-      (block) =>
-        block.dataset['abyssTaskFile'] === locator.filePath &&
-        block.dataset['abyssTaskLine'] === String(locator.line) &&
-        (locator.segmentDate === undefined ||
-          block.dataset['tgSegmentDate'] === locator.segmentDate),
-    );
-  }
-
-  private restoreDeferredTimedBlockFocus_abyssPrivate(
-    container: HTMLElement,
-    options: {
-      readonly focusSequence: number;
-      readonly renderGeneration: number;
-      readonly restorationId?: number;
-    },
-  ): void {
-    if (!this.canRunTimedBlockRestoration_abyssPrivate(options)) return;
-    const pending = this.pendingTimedBlockFocus_abyssPrivate;
-    if (!this.isPendingTimedBlockRestorable_abyssPrivate(pending, options.focusSequence)) return;
-    const candidate = this.findTimedBlock_abyssPrivate(container, pending);
-    if (!this.isRestorableTimedBlock_abyssPrivate(candidate)) return;
-    candidate.focus();
-    candidate.classList.add('is-selected');
-    if (!this.didRestoreTimedBlock_abyssPrivate(candidate, pending.sequence)) return;
-    this.finishTimedBlockRestoration_abyssPrivate(pending.queueSequence);
-  }
-
-  private canRunTimedBlockRestoration_abyssPrivate(options: {
-    readonly renderGeneration: number;
-    readonly restorationId?: number;
-  }): boolean {
-    if (
-      options.restorationId !== undefined &&
-      !this.pendingTimedBlockRestorations_abyssPrivate.delete(options.restorationId)
-    ) {
-      return false;
-    }
-    return options.renderGeneration === this.calendarRenderGeneration_abyssPrivate;
-  }
-
-  private isPendingTimedBlockRestorable_abyssPrivate(
-    pending: TimedBlockFocusLocator | undefined,
-    focusSequence: number,
-  ): pending is TimedBlockFocusLocator {
-    if (pending?.sequence !== focusSequence || this.state_abyssPrivate.get('mode') !== 'calendar')
-      return false;
-    return (
-      pending.queueSequence === undefined ||
-      this.committedKeyboardSequences_abyssPrivate.has(pending.queueSequence)
-    );
-  }
-
-  private isRestorableTimedBlock_abyssPrivate(
-    candidate: HTMLElement | undefined,
-  ): candidate is HTMLElement {
-    return (
-      candidate !== undefined &&
-      candidate.isConnected &&
-      isRealmHTMLElement(candidate) &&
-      candidate.ownerDocument === this.el.ownerDocument
-    );
-  }
-
-  private didRestoreTimedBlock_abyssPrivate(candidate: HTMLElement, sequence: number): boolean {
-    return (
-      candidate.ownerDocument.activeElement === candidate &&
-      this.pendingTimedBlockFocus_abyssPrivate?.sequence === sequence
-    );
-  }
-
-  private finishTimedBlockRestoration_abyssPrivate(queueSequence: number | undefined): void {
-    if (queueSequence === undefined) {
-      this.clearTimedBlockFocus_abyssPrivate();
-      return;
-    }
-    this.restoredKeyboardSequences_abyssPrivate.add(queueSequence);
-    if (this.settledKeyboardSequences_abyssPrivate.has(queueSequence))
-      this.clearTimedBlockFocus_abyssPrivate(queueSequence);
-  }
-
-  private clearTimedBlockFocus_abyssPrivate(queueSequence?: number): void {
-    const pending = this.pendingTimedBlockFocus_abyssPrivate;
-    if (queueSequence !== undefined && pending?.queueSequence !== queueSequence) return;
-    const ownedSequence = pending?.queueSequence ?? queueSequence;
-    if (ownedSequence !== undefined) {
-      this.clearKeyboardSequenceState_abyssPrivate(ownedSequence);
-    }
-    this.pendingTimedBlockFocus_abyssPrivate = undefined;
-  }
-
-  private hasPendingTimedBlockRestoration_abyssPrivate(queueSequence: number): boolean {
-    const pending = this.pendingTimedBlockFocus_abyssPrivate;
-    if (pending?.queueSequence !== queueSequence) return false;
-    return Array.from(this.pendingTimedBlockRestorations_abyssPrivate.values()).some(
-      (restoration) =>
-        restoration.queueSequence === queueSequence &&
-        restoration.focusSequence === pending.sequence &&
-        restoration.renderGeneration === this.calendarRenderGeneration_abyssPrivate,
-    );
-  }
-
-  private clearKeyboardSequenceState_abyssPrivate(queueSequence: number): void {
-    this.settledKeyboardSequences_abyssPrivate.delete(queueSequence);
-    this.restoredKeyboardSequences_abyssPrivate.delete(queueSequence);
-    this.committedKeyboardSequences_abyssPrivate.delete(queueSequence);
-    for (const [id, restoration] of this.pendingTimedBlockRestorations_abyssPrivate) {
-      if (restoration.queueSequence === queueSequence) {
-        this.pendingTimedBlockRestorations_abyssPrivate.delete(id);
-      }
-    }
-  }
-
-  private handleKeyboardCommit_abyssPrivate(
-    updated: TaskSnapshot,
-    intent: TimedBlockKeyboardIntent,
-    queueSequence: number,
-    changed: boolean,
-  ): void {
-    const pending = this.pendingTimedBlockFocus_abyssPrivate;
-    if (!this.acceptsKeyboardCommit_abyssPrivate(pending, queueSequence)) return;
-    this.committedKeyboardSequences_abyssPrivate.add(queueSequence);
-    const sourceChanged =
-      pending.filePath !== updated.source.filePath || pending.line !== updated.source.line;
-    const nextSegmentDate = this.shiftFocusedSegmentDate_abyssPrivate(pending, intent, changed);
-    const segmentChanged = nextSegmentDate !== pending.segmentDate;
-    const identityChanged = [sourceChanged, segmentChanged].includes(true);
-    const presentationChanged = [changed, identityChanged].includes(true);
-    if (presentationChanged) this.restoredKeyboardSequences_abyssPrivate.delete(queueSequence);
-    if (identityChanged) {
-      this.pendingTimedBlockFocus_abyssPrivate = {
-        ...pending,
-        filePath: updated.source.filePath,
-        line: updated.source.line,
-        ...(nextSegmentDate !== undefined && { segmentDate: nextSegmentDate }),
-        sequence: ++this.nextTimedBlockFocusSequence_abyssPrivate,
-      };
-    }
-    if (presentationChanged || !this.restoredKeyboardSequences_abyssPrivate.has(queueSequence)) {
-      this.deferTimedBlockFocus_abyssPrivate(this.el, this.calendarRenderGeneration_abyssPrivate);
-    }
-    if (intent.type === 'shift-schedule')
-      this.followShiftedTask_abyssPrivate(updated, nextSegmentDate);
-  }
-
-  private acceptsKeyboardCommit_abyssPrivate(
-    pending: TimedBlockFocusLocator | undefined,
-    queueSequence: number,
-  ): pending is TimedBlockFocusLocator {
-    return (
-      pending?.queueSequence === queueSequence && this.state_abyssPrivate.get('mode') === 'calendar'
-    );
-  }
-
-  private shiftFocusedSegmentDate_abyssPrivate(
-    pending: TimedBlockFocusLocator,
-    intent: TimedBlockKeyboardIntent,
-    changed: boolean,
-  ): string | undefined {
-    if (!changed || intent.type !== 'shift-schedule' || pending.segmentDate === undefined) {
-      return pending.segmentDate;
-    }
-    try {
-      return shiftLocalDate(localDate(pending.segmentDate), intent.days);
-    } catch {
-      return pending.segmentDate;
-    }
+    this.focusRetention_abyssPrivate.cancel();
   }
 
   private followShiftedTask_abyssPrivate(

@@ -43,6 +43,7 @@ import {
   flushMicrotasks,
   freshContainer,
   methodOf,
+  pendingTimedBlockFocusOf,
   seedTaskCache,
   subtask,
   task,
@@ -5419,11 +5420,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       expect(foreignDocument.activeElement).toBe(block);
       press(block, 'ArrowDown');
       expect(execute).toHaveBeenCalledOnce();
-      const pendingFocus = (
-        h.panel as unknown as {
-          pendingTimedBlockFocus_abyssPrivate?: { readonly originElement?: HTMLElement };
-        }
-      ).pendingTimedBlockFocus_abyssPrivate;
+      const pendingFocus = pendingTimedBlockFocusOf(h.panel);
       expect(pendingFocus?.originElement).toBe(block);
 
       h.setSnapshots([updated]);
