@@ -123,11 +123,7 @@ import {
   type CalendarProjectionIssue,
   type CalendarTaskSource,
 } from '../views/calendarOccurrences';
-import {
-  PanelNavigator,
-  type CalViewType,
-  type PanelNavigationActions,
-} from '../views/panelNavigation';
+import { PanelNavigator, type PanelNavigationActions } from '../views/panelNavigation';
 import { listSelectionTitle } from '../views/panelTitle';
 import type { InteractiveSpanBoundaryTarget, SpanMoveTarget } from '../views/spanInteractions';
 import {
@@ -150,8 +146,16 @@ import {
 } from '../views/timegrid/renderTaskMeta';
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
 import type { TimedBoundaryTarget } from '../views/timegrid/timedInteractions';
+import {
+  calendarScrollKey,
+  calendarTitle,
+  dateForView,
+  isoWeekStart,
+  stepCalendarDate,
+} from './calendar/calendarDateNavigation';
+import type { CalViewType } from './calendar/calendarViewType';
+import { visibleCalendarDates } from './calendar/visibleCalendarDates';
 import { ProjectsPanel } from './projects/ProjectsPanel';
-import { visibleCalendarDates } from './visibleCalendarDates';
 
 interface TimedBlockFocusLocator {
   readonly filePath: string;
@@ -831,9 +835,7 @@ export class CenterPanel {
 
   setCalendarView(view: CalViewType): void {
     this.calViewType_abyssPrivate = view;
-    if (view === 'week') this.calDate_abyssPrivate = window.moment().startOf('isoWeek');
-    else if (view === 'today') this.calDate_abyssPrivate = window.moment();
-    else this.calDate_abyssPrivate = window.moment().date(1);
+    this.calDate_abyssPrivate = dateForView(view, window.moment());
   }
 
   destroy(): void {
@@ -1387,11 +1389,7 @@ export class CenterPanel {
   private openCalendarWeek_abyssPrivate(week: string, year: string): void {
     this.cancelKeyboardInteraction_abyssPrivate();
     this.calViewType_abyssPrivate = 'week';
-    this.calDate_abyssPrivate = window
-      .moment()
-      .isoWeekYear(Number.parseInt(year, 10))
-      .isoWeek(Number.parseInt(week, 10))
-      .startOf('isoWeek');
+    this.calDate_abyssPrivate = isoWeekStart(week, year, window.moment());
     this.render_abyssPrivate();
   }
 
@@ -1409,14 +1407,9 @@ export class CenterPanel {
   }
 
   private updateCalendarTitle_abyssPrivate(navigation: CalendarNavigationElements): void {
-    if (this.calViewType_abyssPrivate === 'week') {
-      navigation.monthButton.textContent = `Week ${this.calDate_abyssPrivate.format('w')}`;
-    } else if (this.calViewType_abyssPrivate === 'today') {
-      navigation.monthButton.textContent = this.calDate_abyssPrivate.format('MMMM D');
-    } else {
-      navigation.monthButton.textContent = this.calDate_abyssPrivate.format('MMMM');
-    }
-    navigation.yearButton.textContent = this.calDate_abyssPrivate.format('YYYY');
+    const title = calendarTitle(this.calViewType_abyssPrivate, this.calDate_abyssPrivate);
+    navigation.monthButton.textContent = title.primary;
+    navigation.yearButton.textContent = title.year;
   }
 
   private mountCalendarView_abyssPrivate(context: CalendarRenderContext): void {
@@ -1488,7 +1481,7 @@ export class CenterPanel {
   }
 
   private shouldScrollCalendarToNow_abyssPrivate(): boolean {
-    const key = `${this.calViewType_abyssPrivate}:${this.calDate_abyssPrivate.format('YYYY-MM-DD')}`;
+    const key = calendarScrollKey(this.calViewType_abyssPrivate, this.calDate_abyssPrivate);
     const shouldScroll = key !== this.lastScrolledCalKey_abyssPrivate;
     this.lastScrolledCalKey_abyssPrivate = key;
     return shouldScroll;
@@ -1624,27 +1617,18 @@ export class CenterPanel {
     mountView: () => void,
   ): void {
     this.cancelKeyboardInteraction_abyssPrivate();
-    const operation = direction === 1 ? 'add' : 'subtract';
-    if (this.calViewType_abyssPrivate === 'week') {
-      this.calDate_abyssPrivate = this.calDate_abyssPrivate
-        .clone()
-        [operation](7, 'days')
-        .startOf('isoWeek');
-    } else if (this.calViewType_abyssPrivate === 'today') {
-      this.calDate_abyssPrivate = this.calDate_abyssPrivate.clone()[operation](1, 'day');
-    } else {
-      this.calDate_abyssPrivate = this.calDate_abyssPrivate.clone()[operation](1, 'months').date(1);
-    }
+    this.calDate_abyssPrivate = stepCalendarDate(
+      this.calViewType_abyssPrivate,
+      this.calDate_abyssPrivate,
+      direction,
+    );
     updateTitle();
     mountView();
   }
 
   private navigateCalendarToday_abyssPrivate(updateTitle: () => void, mountView: () => void): void {
     this.cancelKeyboardInteraction_abyssPrivate();
-    if (this.calViewType_abyssPrivate === 'week')
-      this.calDate_abyssPrivate = window.moment().startOf('isoWeek');
-    else if (this.calViewType_abyssPrivate === 'today') this.calDate_abyssPrivate = window.moment();
-    else this.calDate_abyssPrivate = window.moment().date(1);
+    this.calDate_abyssPrivate = dateForView(this.calViewType_abyssPrivate, window.moment());
     updateTitle();
     mountView();
   }

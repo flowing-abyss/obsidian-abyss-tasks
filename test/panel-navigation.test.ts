@@ -1,13 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AppState, type ListSelection } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
+import type { CalViewType } from '../src/panels/calendar/calendarViewType';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import type { CalendarSettings, ListViewState } from '../src/settings/types';
-import {
-  PanelNavigator,
-  type CalViewType,
-  type PanelNavigationCenterPort,
-} from '../src/views/panelNavigation';
+import { PanelNavigator, type PanelNavigationCenterPort } from '../src/views/panelNavigation';
 import {
   configuredTaskApplication,
   createAppWithFiles,

@@ -388,7 +388,7 @@ export default defineConfig(
     plugins: { 'project-policy': { rules: { ambient: projectAmbientRule } } },
   },
   {
-    files: ['src/panels/projects/**/*.ts'],
+    files: ['src/panels/projects/**/*.ts', 'src/panels/calendar/**/*.ts'],
     rules: { 'project-policy/ambient': ['error', 'owner'] },
   },
   {
@@ -400,6 +400,10 @@ export default defineConfig(
       'src/projects/projectTimelineEdits.ts',
       'src/projects/projectTimelineEndpointEdits.ts',
       'src/panels/projects/projectTableViewport.ts',
+      'src/panels/calendar/calendarPolicy.ts',
+      'src/panels/calendar/calendarDateNavigation.ts',
+      'src/panels/calendar/visibleCalendarDates.ts',
+      'src/panels/calendar/calendarContent.ts',
       'src/views/panelTitle.ts',
     ],
     rules: { 'project-policy/ambient': ['error', 'pure'] },

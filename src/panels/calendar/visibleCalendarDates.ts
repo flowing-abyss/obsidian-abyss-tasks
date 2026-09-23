@@ -1,6 +1,7 @@
-import { firstVisibleWeekDate, weekStartOffset } from '../domain/weekGridOffset';
-
-export type CalViewType = 'today' | 'week' | 'month';
+import { firstVisibleWeekDate, weekStartOffset } from '../../domain/weekGridOffset';
+import { moment } from '../../obsidianMoment';
+import type { CalendarMoment } from './calendarDateNavigation';
+import type { CalViewType } from './calendarViewType';
 
 /**
  * The exact set of dates a calendar view will render for the given
@@ -10,7 +11,7 @@ export type CalViewType = 'today' | 'week' | 'month';
  */
 export function visibleCalendarDates(
   viewType: CalViewType,
-  calDate: ReturnType<typeof window.moment>,
+  calDate: CalendarMoment,
   firstDayOfWeek: number,
 ): string[] {
   if (viewType === 'today') {
@@ -18,7 +19,7 @@ export function visibleCalendarDates(
   }
 
   if (viewType === 'week') {
-    const week = window.moment(firstVisibleWeekDate(calDate, firstDayOfWeek), 'YYYY-MM-DD');
+    const week = moment(firstVisibleWeekDate(calDate, firstDayOfWeek), 'YYYY-MM-DD');
     const dates: string[] = [];
     for (let i = 0; i < 7; i++) {
       dates.push(week.clone().add(i, 'days').format('YYYY-MM-DD'));

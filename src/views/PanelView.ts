@@ -4,6 +4,7 @@ import { CenterPanel } from '../panels/CenterPanel';
 import { LeftPanel } from '../panels/LeftPanel';
 import { RailPanel } from '../panels/RailPanel';
 import { RightPanel } from '../panels/RightPanel';
+import { initialCalendarView } from '../panels/calendar/calendarPolicy';
 import { ProjectManager } from '../projects/ProjectManager';
 import { ProjectStore } from '../projects/ProjectStore';
 import type { ShortcutActionId } from '../settings/shortcuts';
@@ -311,8 +312,7 @@ export class PanelView extends ItemView {
         selectionTasks,
       );
     this.createPanels_abyssPrivate(selectionTasks, projectStore, projectManager);
-    // A phone screen fits one day. The month grid is unreadable there, so Day is the useful start.
-    if (Platform.isPhone) this.center_abyssPrivate.setCalendarView('today');
+    this.center_abyssPrivate.setCalendarView(initialCalendarView({ isPhone: Platform.isPhone }));
     this.registerProjectUpdates_abyssPrivate(projectStore);
     this.registerWorkspaceUpdates_abyssPrivate();
     this.mountPanels_abyssPrivate(elements);

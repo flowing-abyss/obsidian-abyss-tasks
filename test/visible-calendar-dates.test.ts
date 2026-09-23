@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { visibleCalendarDates } from '../src/panels/visibleCalendarDates';
+import { visibleCalendarDates } from '../src/panels/calendar/visibleCalendarDates';
 import { useRealMoment } from './helpers';
 
 useRealMoment();
