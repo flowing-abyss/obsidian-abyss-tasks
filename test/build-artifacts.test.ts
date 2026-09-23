@@ -67,6 +67,10 @@ const privateOwners = new Set([
   'ProjectsTimelineView',
   'ProjectsTableToolbar',
   'ProjectsTableView',
+  'CalendarCommands',
+  'CalendarMode',
+  'CalendarNavigationBar',
+  'TimedBlockFocusRetention',
   'TagPickerModal',
   'TagGroupAppearanceModal',
 ]);

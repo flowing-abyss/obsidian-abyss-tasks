@@ -3,17 +3,19 @@ import type { TaskSnapshot } from '../tasks';
 
 export abstract class BaseView {
   /**
-   * `shouldScrollToNow` (Task 27): TodayView/WeekTimeGridView use this to decide whether to run
-   * their one-time scroll-to-now on this render. It defaults to true so every other caller
-   * (tests, BaseView.patch below, views that don't have a now-line at all) keeps prior behavior
-   * unchanged; only CenterPanel — which owns the (calViewType, calDate) key across full mounts —
-   * ever passes `false`, for an explicit same-date refresh it has already scrolled for.
+   * `shouldScrollToNow` tells TodayView and WeekTimeGridView whether to run their one-time
+   * scroll-to-now on this render. It defaults to true so every other caller (tests, `patch` below,
+   * views without a now-line at all) scrolls to now; only `CalendarMode`, which owns the
+   * `lastScrolledKey_abyssPrivate` pairing of view type and date across full mounts, passes
+   * `false`, for an explicit same-date refresh it has already scrolled for.
    *
-   * `preservedScrollTop` (Task 31): a full CenterPanel refresh recreates the view instance, so a
-   * freshly-created `.abyss-tg-grid-row` starts at `scrollTop = 0`. When `shouldScrollToNow` is
-   * false, TodayView/WeekTimeGridView restore this value onto the new grid-row. Query updates use
-   * `patch()` and retain that grid node directly. Ignored when `shouldScrollToNow` is true — a
-   * genuine fresh navigation takes the scroll-to-now path instead of inheriting stale position.
+   * `preservedScrollTop` carries the outgoing scroll position across a full calendar render, which
+   * recreates the view instance so a freshly created `.abyss-tg-grid-row` starts at
+   * `scrollTop = 0`. `CalendarMode` reads it into `pendingScrollTop_abyssPrivate` before the render
+   * and hands it back here. When `shouldScrollToNow` is false, TodayView and WeekTimeGridView
+   * restore this value onto the new grid-row. Query updates use `patch()` and retain that grid node
+   * directly. It is ignored when `shouldScrollToNow` is true, because a genuine fresh navigation
+   * takes the scroll-to-now path instead of inheriting a stale position.
    */
   abstract render(
     container: HTMLElement,

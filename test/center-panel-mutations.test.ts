@@ -21,6 +21,7 @@ import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import {
+  calendarCommand,
   createAppWithFiles,
   expectDefined,
   flushMicrotasks,
@@ -190,10 +191,10 @@ describe('CenterPanel planning API delegation', () => {
     ]);
     const process = vi.spyOn(app.vault, 'process');
 
-    await callPrivate(panel, 'rescheduleTask', 'f.md:::0', '2026-07-20');
+    await calendarCommand(panel, 'rescheduleFromDrag', 'f.md:::0', '2026-07-20');
     await callPrivate(panel, 'toggleDueToday', current);
-    await callPrivate(panel, 'updateTaskStart', current, '2026-07-18');
-    await callPrivate(panel, 'rescheduleTaskDue', current, '2026-07-22');
+    await calendarCommand(panel, 'setStart', current, '2026-07-18');
+    await calendarCommand(panel, 'setDue', current, '2026-07-22');
     await callPrivate(panel, 'setTaskDue', current, '2026-07-23');
     await callPrivate(panel, 'setTaskDue', current, null);
 
@@ -300,13 +301,13 @@ describe('CenterPanel planning API delegation', () => {
     ]);
     const process = vi.spyOn(app.vault, 'process');
 
-    await callPrivate(panel, 'setTaskTimeFromDrop', 'f.md:::0', '2026-07-21', '10:15');
-    await callPrivate(panel, 'updateTaskTime', current, 11 * 60 + 30);
-    await callPrivate(panel, 'updateTaskDuration', current, 90);
-    await callPrivate(panel, 'updateTaskStart', current, '2026-07-19');
-    await callPrivate(panel, 'rescheduleTaskDue', current, '2026-07-22');
-    await callPrivate(panel, 'extendTaskToSpan', current, '2026-07-23');
-    await callPrivate(panel, 'rescheduleTask', 'f.md:::0', '2026-07-24');
+    await calendarCommand(panel, 'setTimeFromDrag', 'f.md:::0', '2026-07-21', '10:15');
+    await calendarCommand(panel, 'setTime', current, 11 * 60 + 30);
+    await calendarCommand(panel, 'setDuration', current, 90);
+    await calendarCommand(panel, 'setStart', current, '2026-07-19');
+    await calendarCommand(panel, 'setDue', current, '2026-07-22');
+    await calendarCommand(panel, 'extendToSpan', current, '2026-07-23');
+    await calendarCommand(panel, 'rescheduleFromDrag', 'f.md:::0', '2026-07-24');
 
     expect(execute.mock.calls.map(([command]) => command)).toEqual([
       {
@@ -552,7 +553,7 @@ describe('CenterPanel.setPriority', () => {
   });
 });
 
-describe('CenterPanel.rescheduleTask anchor priority', () => {
+describe('CalendarCommands.rescheduleFromDrag anchor priority', () => {
   it('moves scheduled date when both scheduled and due are set (scheduled wins)', async () => {
     const raw = '- [ ] t ⏳ 2026-07-02 📅 2026-07-10';
     const t = task({
@@ -560,7 +561,7 @@ describe('CenterPanel.rescheduleTask anchor priority', () => {
       source: { filePath: 'f.md', line: 0, originalMarkdown: raw, originalBlock: raw },
     });
     const { panel, app } = await makePanel({ 'f.md': `${raw}\n` }, [t]);
-    await callPrivate(panel, 'rescheduleTask', 'f.md:::0', '2026-07-03');
+    await calendarCommand(panel, 'rescheduleFromDrag', 'f.md:::0', '2026-07-03');
     const content = await readMd(app, 'f.md');
     expect(content).toContain('⏳ 2026-07-03');
     expect(content).toContain('📅 2026-07-10'); // due untouched
@@ -573,7 +574,7 @@ describe('CenterPanel.rescheduleTask anchor priority', () => {
       source: { filePath: 'f.md', line: 0, originalMarkdown: raw, originalBlock: raw },
     });
     const { panel, app } = await makePanel({ 'f.md': `${raw}\n` }, [t]);
-    await callPrivate(panel, 'rescheduleTask', 'f.md:::0', '2026-07-11');
+    await calendarCommand(panel, 'rescheduleFromDrag', 'f.md:::0', '2026-07-11');
     const content = await readMd(app, 'f.md');
     expect(content).toContain('📅 2026-07-11');
   });
@@ -584,13 +585,13 @@ describe('CenterPanel.rescheduleTask anchor priority', () => {
       source: { filePath: 'f.md', line: 0, originalMarkdown: raw, originalBlock: raw },
     });
     const { panel, app } = await makePanel({ 'f.md': `${raw}\n` }, [t]);
-    await callPrivate(panel, 'rescheduleTask', 'f.md:::0', '2026-07-12');
+    await calendarCommand(panel, 'rescheduleFromDrag', 'f.md:::0', '2026-07-12');
     const content = await readMd(app, 'f.md');
     expect(content).toContain('📅 2026-07-12');
   });
 });
 
-describe('CenterPanel.extendTaskToSpan', () => {
+describe('CalendarCommands.extendToSpan', () => {
   it('freezes the original due as the new start and writes the new due, in one mutation', async () => {
     const raw = '- [ ] t 📅 2026-07-10';
     const t = task({
@@ -598,7 +599,7 @@ describe('CenterPanel.extendTaskToSpan', () => {
       source: { filePath: 'f.md', line: 0, originalMarkdown: raw, originalBlock: raw },
     });
     const { panel, app } = await makePanel({ 'f.md': `${raw}\n` }, [t]);
-    await callPrivate(panel, 'extendTaskToSpan', t, '2026-07-12');
+    await calendarCommand(panel, 'extendToSpan', t, '2026-07-12');
     const content = await readMd(app, 'f.md');
     expect(content).toContain('🛫 2026-07-10');
     expect(content).toContain('📅 2026-07-12');
@@ -612,7 +613,7 @@ describe('CenterPanel.extendTaskToSpan', () => {
       source: { filePath: 'f.md', line: 0, originalMarkdown: raw, originalBlock: raw },
     });
     const { panel, app } = await makePanel({ 'f.md': `${raw}\n` }, [t]);
-    await callPrivate(panel, 'extendTaskToSpan', t, '2026-07-12');
+    await calendarCommand(panel, 'extendToSpan', t, '2026-07-12');
     const content = await readMd(app, 'f.md');
     // The original scheduled anchor freezes as start; the new date is written as due (a
     // due-centric span is always anchored by `due` once created — see bucketTasksForDate).
@@ -634,7 +635,7 @@ describe('CenterPanel.extendTaskToSpan', () => {
       source: { filePath: 'f.md', line: 0, originalMarkdown: raw, originalBlock: raw },
     });
     const { panel, app } = await makePanel({ 'f.md': `${raw}\n` }, [t]);
-    await callPrivate(panel, 'extendTaskToSpan', t, '2026-07-13');
+    await calendarCommand(panel, 'extendToSpan', t, '2026-07-13');
     const content = await readMd(app, 'f.md');
     expect(content).toContain('🛫 2026-07-12');
     expect(content).toContain('📅 2026-07-13');
@@ -649,7 +650,7 @@ describe('CenterPanel.extendTaskToSpan', () => {
       source: { filePath: 'f.md', line: 0, originalMarkdown: raw, originalBlock: raw },
     });
     const { panel, app } = await makePanel({ 'f.md': `${raw}\n` }, [t]);
-    await callPrivate(panel, 'extendTaskToSpan', t, '2026-07-12');
+    await calendarCommand(panel, 'extendToSpan', t, '2026-07-12');
     const content = await readMd(app, 'f.md');
     expect(content.match(/🛫/gu)).toHaveLength(1);
     expect(content).toContain('🛫 2026-07-08');
@@ -657,14 +658,14 @@ describe('CenterPanel.extendTaskToSpan', () => {
   });
 });
 
-describe('CenterPanel.setTaskTimeFromDrop', () => {
+describe('CalendarCommands.setTimeFromDrag', () => {
   it('adds both a new due date and a new time when neither is set (plain task dropped into hour grid)', async () => {
     const raw = '- [ ] t';
     const t = task({
       source: { filePath: 'f.md', line: 0, originalMarkdown: raw, originalBlock: raw },
     });
     const { panel, app } = await makePanel({ 'f.md': `${raw}\n` }, [t]);
-    await callPrivate(panel, 'setTaskTimeFromDrop', 'f.md:::0', '2026-07-12', '14:30');
+    await calendarCommand(panel, 'setTimeFromDrag', 'f.md:::0', '2026-07-12', '14:30');
     const content = await readMd(app, 'f.md');
     expect(content).toContain('📅 2026-07-12');
     expect(content).toContain('⏰ 14:30');
@@ -677,7 +678,7 @@ describe('CenterPanel.setTaskTimeFromDrop', () => {
       source: { filePath: 'f.md', line: 0, originalMarkdown: raw, originalBlock: raw },
     });
     const { panel, app } = await makePanel({ 'f.md': `${raw}\n` }, [t]);
-    await callPrivate(panel, 'setTaskTimeFromDrop', 'f.md:::0', '2026-07-03', '09:00');
+    await calendarCommand(panel, 'setTimeFromDrag', 'f.md:::0', '2026-07-03', '09:00');
     const content = await readMd(app, 'f.md');
     expect(content).toContain('⏳ 2026-07-03');
     expect(content).toContain('⏰ 09:00');
@@ -690,7 +691,7 @@ describe('CenterPanel.setTaskTimeFromDrop', () => {
       source: { filePath: 'f.md', line: 0, originalMarkdown: raw, originalBlock: raw },
     });
     const { panel, app } = await makePanel({ 'f.md': `${raw}\n` }, [t]);
-    await callPrivate(panel, 'setTaskTimeFromDrop', 'f.md:::0', '2026-07-10', '16:45');
+    await calendarCommand(panel, 'setTimeFromDrag', 'f.md:::0', '2026-07-10', '16:45');
     const content = await readMd(app, 'f.md');
     expect(content).toContain('⏰ 16:45');
     expect(content).not.toContain('⏰ 09:00');
@@ -699,7 +700,7 @@ describe('CenterPanel.setTaskTimeFromDrop', () => {
   });
 });
 
-describe('CenterPanel.updateTaskTime — Task 33 data-safety net (the disappearing-task regression)', () => {
+describe('CalendarCommands.setTime — Task 33 data-safety net (the disappearing-task regression)', () => {
   // This is the exact scenario reproduced live via Obsidian CLI: a Pointer-Events drag on a
   // timed block's body computed newStartMinutes = 2093*60+15 (an extreme delta — the pointer was
   // released far outside the visible grid). Before this task's fix, `updateTaskTime` wrote
@@ -720,7 +721,7 @@ describe('CenterPanel.updateTaskTime — Task 33 data-safety net (the disappeari
     });
     const { panel, app } = await makePanel({ 'f.md': `${raw}\n` }, [t]);
 
-    await callPrivate(panel, 'updateTaskTime', t, 2093 * 60 + 15);
+    await calendarCommand(panel, 'setTime', t, 2093 * 60 + 15);
 
     const content = await readMd(app, 'f.md');
     expect(content).toBe(`${raw}\n`);
@@ -736,7 +737,7 @@ describe('CenterPanel.updateTaskTime — Task 33 data-safety net (the disappeari
     });
     const { panel, app } = await makePanel({ 'f.md': `${raw}\n` }, [t]);
 
-    await callPrivate(panel, 'updateTaskTime', t, 11 * 60 + 30);
+    await calendarCommand(panel, 'setTime', t, 11 * 60 + 30);
 
     const content = await readMd(app, 'f.md');
     expect(content).toContain('⏰ 11:30');
@@ -744,7 +745,7 @@ describe('CenterPanel.updateTaskTime — Task 33 data-safety net (the disappeari
   });
 });
 
-describe('CenterPanel timed vertical resize', () => {
+describe('CalendarCommands.commitTimedDuration', () => {
   it('patches time and duration atomically while preserving unrelated Markdown byte-for-byte', async () => {
     const raw = '- [ ] Atomic **label** #work ⏰ 09:00 keep-this ⏱️ 1h 📅 2026-07-06 ^task-anchor';
     const current = task({
@@ -754,7 +755,7 @@ describe('CenterPanel timed vertical resize', () => {
     });
     const { panel, app } = await makePanel({ 'f.md': `${raw}\n` }, [current]);
 
-    await callPrivate(panel, 'commitTimedDuration', current, {
+    await calendarCommand(panel, 'commitTimedDuration', current, {
       edge: 'start',
       startMinutes: 8 * 60 + 30,
       durationMinutes: 90,

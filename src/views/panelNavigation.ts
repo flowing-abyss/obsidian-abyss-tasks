@@ -1,9 +1,8 @@
 import type { AppState, ListSelection, ViewMode } from '../app/AppState';
 import { listSelectionToKey } from '../app/listViewState';
+import type { CalViewType } from '../panels/calendar/calendarViewType';
 import { getListViewDefaults } from '../settings/defaults';
 import type { CalendarSettings, ListViewState } from '../settings/types';
-
-export type CalViewType = 'today' | 'week' | 'month';
 
 export interface PanelNavigationActions {
   openTasks(): void;

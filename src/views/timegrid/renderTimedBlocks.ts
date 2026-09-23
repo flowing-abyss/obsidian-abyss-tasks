@@ -67,8 +67,8 @@ export interface TimedBlockCallbacks extends ForecastInteractionCallbacks {
    * `⏰`/`⏱️` untouched, which is exactly what preserving the task's time/duration needs. */
   onExtendToSpan: (task: TaskSnapshot, newDue: string) => void;
   /** Task 34: horizontal left-edge drag-resize, moving/adding `start` while `due`/`⏰`/`⏱️`
-   * stay untouched. Same mutation as renderAllDay.ts's onStartChange/CenterPanel's
-   * updateTaskStart — reused as-is: whether the task already has a `start` (moved directly)
+   * stay untouched. Same mutation as renderAllDay.ts's onStartChange/CalendarCommands'
+   * setStart — reused as-is: whether the task already has a `start` (moved directly)
    * or not (a fresh 🛫 is appended, anchored on the task's own unmoved `due`), `due` is never
    * part of this mutation's `build()` closure, so it can't be touched by it either way. */
   onStartChange: (task: TaskSnapshot, newStart: string) => void;

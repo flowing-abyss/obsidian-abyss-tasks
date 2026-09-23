@@ -39,6 +39,7 @@ import {
   methodOf,
   queryApiForTasks,
   resolvedConfig,
+  setCalendarDate,
   subtask,
   task,
   useRealMoment,
@@ -849,8 +850,7 @@ describe('forecast visual system', () => {
     );
     const root = freshContainer();
     panel.mount(root);
-    (panel as unknown as { calDate_abyssPrivate: moment.Moment }).calDate_abyssPrivate =
-      moment('1400-08-01');
+    setCalendarDate(panel, moment('1400-08-01'));
     state.set('mode', 'calendar');
 
     const diagnostics = root.querySelectorAll<HTMLElement>('.abyss-calendar-projection-diagnostic');
@@ -893,8 +893,7 @@ describe('forecast visual system', () => {
     );
     const root = freshContainer();
     panel.mount(root);
-    (panel as unknown as { calDate_abyssPrivate: moment.Moment }).calDate_abyssPrivate =
-      moment('1400-08-01');
+    setCalendarDate(panel, moment('1400-08-01'));
     state.set('mode', 'calendar');
     const diagnostic = expectDefined(
       root.querySelector<HTMLElement>('.abyss-calendar-projection-diagnostic'),
@@ -1405,8 +1404,7 @@ describe('forecast interaction contract', () => {
     );
     const root = freshContainer();
     panel.mount(root);
-    (panel as unknown as { calDate_abyssPrivate: moment.Moment }).calDate_abyssPrivate =
-      moment('2026-08-09');
+    setCalendarDate(panel, moment('2026-08-09'));
     state.set('mode', 'calendar');
     const openMenu = (): void => {
       expectDefined(
@@ -1457,8 +1455,7 @@ describe('forecast interaction contract', () => {
         .taskModal_abyssPrivate,
       'open',
     );
-    (panel as unknown as { calDate_abyssPrivate: moment.Moment }).calDate_abyssPrivate =
-      moment('2026-08-09');
+    setCalendarDate(panel, moment('2026-08-09'));
     state.set('mode', 'calendar');
     const forecast = expectDefined(
       root.querySelector<HTMLElement>(
