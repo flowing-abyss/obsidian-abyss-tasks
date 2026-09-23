@@ -1211,6 +1211,78 @@ describe('mountRecurrenceEditor', () => {
     expect(activeDocument.activeElement).toBe(anchor);
   });
 
+  it('restores the previously focused anchor when a successful save closes the editor', async () => {
+    const anchor = activeDocument.body.createEl('button', { text: '+ repeat' });
+    anchor.focus();
+    const { container, onClose, onSubmit } = mount();
+    activeDocument.body.append(container);
+    button(container, 'Save repeat').focus();
+    expect(activeDocument.activeElement).not.toBe(anchor);
+
+    click(button(container, 'Save repeat'));
+    await vi.waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    expect(onSubmit).toHaveBeenCalledOnce();
+    expect(activeDocument.activeElement).toBe(anchor);
+  });
+
+  it('leaves focus alone when a successful save closes an editor that no longer holds it', async () => {
+    const anchor = activeDocument.body.createEl('button', { text: '+ repeat' });
+    const elsewhere = activeDocument.body.createEl('button', { text: 'Rebuilt block' });
+    anchor.focus();
+    const { container, onClose } = mount();
+    activeDocument.body.append(container);
+    const save = button(container, 'Save repeat');
+    save.focus();
+    let submitted = false;
+    save.addEventListener('click', () => {
+      submitted = true;
+      elsewhere.focus();
+    });
+
+    click(save);
+    await vi.waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    expect(submitted).toBe(true);
+    expect(activeDocument.activeElement).toBe(elsewhere);
+  });
+
+  it('restores the anchor when the submit dropped focus from the disabled Save button', async () => {
+    const anchor = activeDocument.body.createEl('button', { text: '+ repeat' });
+    anchor.focus();
+    const root = task({ planning: { due: '2026-08-09' } });
+    let focusAfterDrop: Element | null = null;
+    const { container, onClose } = mount({
+      onSubmit: async () => {
+        // Chromium moves focus to body when the focused Save button is disabled for the submit.
+        // jsdom neither does that nor blurs a disabled control, so blur Save while it is enabled.
+        const active = activeDocument.activeElement;
+        if (active instanceof HTMLButtonElement) {
+          active.disabled = false;
+          active.blur();
+          active.disabled = true;
+        }
+        focusAfterDrop = activeDocument.activeElement;
+        return { type: 'ok', changed: true, outcome: { type: 'task', task: root } };
+      },
+    });
+    activeDocument.body.append(container);
+    const save = button(container, 'Save repeat');
+    save.focus();
+
+    click(save);
+    await vi.waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    expect(focusAfterDrop).toBe(activeDocument.body);
+    expect(activeDocument.activeElement).toBe(anchor);
+  });
+
   it('restores a connected anchor when an outside click dismisses the anchored editor', () => {
     vi.useFakeTimers();
     const previous = activeDocument.body.createEl('button', { text: 'Previous focus' });

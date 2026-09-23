@@ -376,7 +376,8 @@ export class TimedBlockFocusRetention {
     const candidate = findTimedBlock(container, pending);
     if (!isRestorableTimedBlock(candidate, container)) return;
     candidate.focus();
-    candidate.classList.add('is-selected');
+    // A forecast block is never selected; the selection sync owns the class only for task nodes.
+    if (candidate.dataset['occurrenceState'] !== 'forecast') candidate.classList.add('is-selected');
     if (!this.didRestore_abyssPrivate(candidate, pending.sequence)) return;
     this.finishRestoration_abyssPrivate(pending.queueSequence);
   }

@@ -368,7 +368,8 @@ function expectForecastInert(element: HTMLElement): void {
   expect(element.querySelector('.abyss-status-marker')).toBeNull();
   expect(element.querySelector('[data-resize-edge]')).toBeNull();
   expect(element.getAttribute('draggable')).toBeNull();
-  expect(element.getAttribute('tabindex')).toBeNull();
+  // Focusable for menu and editor dismissal focus, never a tab stop.
+  expect(element.getAttribute('tabindex')).toBe('-1');
 }
 
 afterEach(() => {
@@ -1091,24 +1092,27 @@ describe('forecast interaction contract', () => {
       [expectDefined(forecast).task],
       resolvedConfig({ startPosition: '2026-08' }),
     );
-    expectDefined(
+    const item = expectDefined(
       container.querySelector<HTMLElement>('[data-mg-date="2026-08-09"] .abyss-mg-plain'),
-    ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    );
+    item.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
 
     const menu = expectDefined(
       activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu'),
     );
     const items = Array.from(menu.querySelectorAll<HTMLElement>('button'));
-    expect(items.map((item) => item.textContent)).toEqual(['Edit repeat…', 'Open source task']);
+    expect(items.map((button) => button.textContent)).toEqual(['Edit repeat…', 'Open source task']);
     expect(menu.querySelector('.abyss-status-marker')).toBeNull();
 
     expectDefined(items[0]).click();
-    expect(callbacks.onForecastContextMenu).toHaveBeenCalledWith(source, localDate('2026-08-09'));
+    expect(callbacks.onForecastContextMenu).toHaveBeenCalledWith(
+      source,
+      localDate('2026-08-09'),
+      item,
+    );
     expect(callbacks.onForecastContextMenu.mock.calls[0]?.[0].target).toEqual(source.target);
 
-    expectDefined(
-      container.querySelector<HTMLElement>('[data-mg-date="2026-08-09"] .abyss-mg-plain'),
-    ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    item.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expectDefined(
       activeDocument.querySelectorAll<HTMLElement>('.abyss-forecast-context-menu button')[1],
     ).click();
@@ -1340,8 +1344,48 @@ describe('forecast interaction contract', () => {
     expect(callbacks.onForecastContextMenu).toHaveBeenCalledWith(
       secondSource,
       localDate('2026-08-09'),
+      expectDefined(items[1]),
     );
     trigger.remove();
+  });
+
+  it('returns focus to the occurrence when nothing was focused before the right click', () => {
+    const source = nestedSource();
+    const [forecast] = forecasts(source, '2026-08-09', '2026-08-09');
+    const callbacks = monthCallbacks();
+    const container = activeDocument.body.createDiv();
+    try {
+      new MonthGridView(callbacks).render(
+        container,
+        [expectDefined(forecast).task],
+        resolvedConfig({ startPosition: '2026-08' }),
+      );
+      const item = expectDefined(
+        container.querySelector<HTMLElement>('[data-mg-date="2026-08-09"] .abyss-mg-plain'),
+      );
+      const active = activeDocument.activeElement;
+      if (active instanceof HTMLElement) active.blur();
+      expect(activeDocument.activeElement).toBe(activeDocument.body);
+
+      item.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      expect(activeDocument.querySelector('.abyss-forecast-context-menu')).not.toBeNull();
+      activeDocument.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+      expect(activeDocument.querySelector('.abyss-forecast-context-menu')).toBeNull();
+      expect(activeDocument.activeElement).toBe(item);
+
+      item.blur();
+      expect(activeDocument.activeElement).toBe(activeDocument.body);
+      item.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      activeDocument.body.dispatchEvent(
+        new MouseEvent('mousedown', { bubbles: true, cancelable: true }),
+      );
+      expect(activeDocument.querySelector('.abyss-forecast-context-menu')).toBeNull();
+      expect(activeDocument.activeElement).toBe(item);
+    } finally {
+      container.remove();
+    }
   });
 
   it('acquires one shortcut blocker per forecast menu and releases on replacement/dismiss', () => {

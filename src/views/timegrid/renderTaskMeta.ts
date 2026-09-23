@@ -29,7 +29,12 @@ export type CalendarContinuity = 'single' | 'continuation' | 'terminal';
 export interface ForecastInteractionCallbacks {
   readonly forecastMenuOwner?: ForecastContextMenuOwner;
   readonly onForecastClick?: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
-  readonly onForecastContextMenu?: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
+  /** "Edit repeat…" from the forecast menu; `anchor` is the occurrence element the menu was opened for. */
+  readonly onForecastContextMenu?: (
+    source: CalendarTaskSource,
+    referenceDate: LocalDate,
+    anchor: HTMLElement,
+  ) => void;
   readonly interactionOwnership?: InteractionOwnershipPort;
 }
 
@@ -237,7 +242,9 @@ interface ForecastMenuRequest {
 function focusedElement(ownerDocument: Document): HTMLElement | null {
   const candidate = ownerDocument.activeElement;
   const realm = ownerDocument.defaultView;
-  return realm !== null && candidate instanceof realm.HTMLElement ? candidate : null;
+  if (realm === null || !(candidate instanceof realm.HTMLElement)) return null;
+  // body is where focus lands when nothing is focused; it is never a restore target.
+  return candidate === ownerDocument.body ? null : candidate;
 }
 
 function dismissForecastMenu(
@@ -346,7 +353,7 @@ function openForecastMenu(context: ForecastMenuContext, request: ForecastMenuReq
   edit.addEventListener('click', () => {
     if (state.active !== owned) return;
     dismiss({ restoreFocus: false });
-    callbacks.onForecastContextMenu?.(occurrence.source, occurrence.referenceDate);
+    callbacks.onForecastContextMenu?.(occurrence.source, occurrence.referenceDate, anchor);
   });
   open.addEventListener('click', () => {
     if (state.active !== owned) return;
@@ -380,6 +387,9 @@ export function bindForecastInteractions(
   callbacks: ForecastInteractionCallbacks,
 ): void {
   if (occurrence.kind === 'materialized') return;
+  // Programmatically focusable so the menu and the recurrence editor can return focus to the
+  // occurrence; not a tab stop, because focusing a forecast selects nothing and takes no keys.
+  element.setAttribute('tabindex', '-1');
   element.addEventListener('click', (event) => {
     event.stopPropagation();
     callbacks.onForecastClick?.(occurrence.source, occurrence.referenceDate);
