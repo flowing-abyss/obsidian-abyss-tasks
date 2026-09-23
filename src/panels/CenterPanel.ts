@@ -52,7 +52,6 @@ import {
   type ViewOptionsMultiRow,
   type ViewOptionsSingleRow,
 } from '../ui/ViewOptionsPopover';
-import { openAnchoredPopover, type AnchoredPopover } from '../ui/anchoredPopover';
 import { isRealmHTMLElement } from '../ui/domRealm';
 import { isImeOwnedEvent } from '../ui/ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
@@ -129,6 +128,7 @@ import {
 } from '../views/timegrid/renderTaskMeta';
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
 import type { TimedBoundaryTarget } from '../views/timegrid/timedInteractions';
+import { CalendarNavigationBar } from './calendar/CalendarNavigationBar';
 import {
   calendarCaptureHost,
   calendarCaptureInputClass,
@@ -140,7 +140,6 @@ import { CalendarCommands } from './calendar/calendarCommands';
 import { calendarContent, type CalendarContent } from './calendar/calendarContent';
 import {
   calendarScrollKey,
-  calendarTitle,
   dateForView,
   isoWeekStart,
   stepCalendarDate,
@@ -169,14 +168,6 @@ type BarCapturePlacement =
   | { readonly type: 'project'; readonly path: string };
 
 type PanelCapturePlacement = BarCapturePlacement | CalendarCapturePlacement;
-
-interface CalendarNavigationElements {
-  readonly prevButton: HTMLButtonElement;
-  readonly monthButton: HTMLButtonElement;
-  readonly yearButton: HTMLButtonElement;
-  readonly nextButton: HTMLButtonElement;
-  readonly todayButton: HTMLButtonElement;
-}
 
 interface CalendarHandlers {
   readonly onTaskClick: (task: TaskSnapshot) => void;
@@ -285,7 +276,7 @@ export class CenterPanel {
   private calDate_abyssPrivate = window.moment().date(1);
   private calViewInstance_abyssPrivate: TodayView | WeekTimeGridView | MonthGridView | null = null;
   private calUnsubscribe_abyssPrivate: (() => void) | null = null;
-  private calendarPicker_abyssPrivate: AnchoredPopover | null = null;
+  private calendarNavigationBar_abyssPrivate: CalendarNavigationBar | null = null;
   private taskDatePickerCleanup_abyssPrivate: (() => void) | null = null;
   private taskCardRenderGeneration_abyssPrivate = 0;
   private taskDateFocusContinuityKey_abyssPrivate: string | null = null;
@@ -865,51 +856,12 @@ export class CenterPanel {
     this.forecastMenuOwner_abyssPrivate?.dismiss();
     this.projectionDiagnosticOwner_abyssPrivate?.destroy();
     this.projectionDiagnosticOwner_abyssPrivate = null;
-    this.clearCalendarPicker_abyssPrivate();
+    this.calendarNavigationBar_abyssPrivate?.destroy();
+    this.calendarNavigationBar_abyssPrivate = null;
     this.calUnsubscribe_abyssPrivate?.();
     this.calUnsubscribe_abyssPrivate = null;
     this.calViewInstance_abyssPrivate?.destroy();
     this.calViewInstance_abyssPrivate = null;
-  }
-
-  private clearCalendarPicker_abyssPrivate(restoreFocus = false): void {
-    this.calendarPicker_abyssPrivate?.close(restoreFocus);
-  }
-
-  /**
-   * The month and year pickers float from the center pane like every other anchored list, so the
-   * toolbar's scroll strip never clips them. The shared surface owns placement, outside and Escape
-   * dismissal and shortcut ownership; the picker only keeps its anchor's expanded state in step.
-   */
-  private openCalendarPicker_abyssPrivate(
-    anchor: HTMLElement,
-    cls: 'abyss-month-picker' | 'abyss-year-picker',
-    label: string,
-  ): AnchoredPopover {
-    const popover = openAnchoredPopover({
-      owner: this.el,
-      anchor,
-      boundary: this.el,
-      preferred: 'below-start',
-      cls,
-      attr: { role: 'dialog', 'aria-modal': 'false', 'aria-label': label },
-      ownership: this.interactionOwnership_abyssPrivate,
-      onClose: (restoreFocus) => {
-        anchor.setAttribute('aria-expanded', 'false');
-        if (this.calendarPicker_abyssPrivate === popover) this.calendarPicker_abyssPrivate = null;
-        if (restoreFocus && anchor.isConnected) anchor.focus();
-      },
-    });
-    this.calendarPicker_abyssPrivate = popover;
-    anchor.setAttribute('aria-expanded', 'true');
-    return popover;
-  }
-
-  private seatCalendarPicker_abyssPrivate(popover: AnchoredPopover): void {
-    popover.reposition();
-    const selectedOption = popover.element.querySelector<HTMLElement>('button.is-active');
-    const firstOption = popover.element.querySelector<HTMLElement>('button:not(:disabled)');
-    (selectedOption ?? firstOption)?.focus({ preventScroll: true });
   }
 
   private render_abyssPrivate(): void {
@@ -1140,12 +1092,14 @@ export class CenterPanel {
       this.el.ownerDocument,
     );
     this.projectionDiagnosticOwner_abyssPrivate = projectionDiagnosticOwner;
-    const navigation = this.createCalendarNavigation_abyssPrivate();
+    const pending: { mountView: () => void } = { mountView: () => undefined };
+    const navigationBar = this.createCalendarNavigationBar_abyssPrivate(() => {
+      pending.mountView();
+    });
+    this.calendarNavigationBar_abyssPrivate = navigationBar;
+    navigationBar.mount(this.el);
     const viewContainer = this.el.createDiv({ cls: 'abyss-cal-body' });
-    const updateTitle = (): void => {
-      this.updateCalendarTitle_abyssPrivate(navigation);
-    };
-    updateTitle();
+    navigationBar.updateTitle();
     const handlers = this.createCalendarHandlers_abyssPrivate(viewContainer);
     const context: CalendarRenderContext = {
       viewContainer,
@@ -1156,43 +1110,59 @@ export class CenterPanel {
     const mountView = (): void => {
       this.mountCalendarView_abyssPrivate(context);
     };
+    pending.mountView = mountView;
     const patchView = (): void => {
       this.patchCalendarView_abyssPrivate(context, mountView);
     };
     mountView();
-
-    this.bindCalendarNavigation_abyssPrivate(navigation, updateTitle, mountView);
     this.calUnsubscribe_abyssPrivate = this.queries_abyssPrivate.subscribe(() => {
       patchView();
     });
   }
 
-  private createCalendarNavigation_abyssPrivate(): CalendarNavigationElements {
-    const nav = this.el.createDiv({ cls: 'abyss-cal-nav' });
-    const left = nav.createDiv({ cls: 'abyss-cal-nav-left' });
-    const prevButton = left.createEl('button', {
-      cls: 'abyss-cal-nav-btn',
-      attr: { 'aria-label': 'Previous' },
+  private createCalendarNavigationBar_abyssPrivate(mountView: () => void): CalendarNavigationBar {
+    const bar = new CalendarNavigationBar({
+      owner: this.el,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
+      callbacks: {
+        view: () => this.calViewType_abyssPrivate,
+        date: () => this.calDate_abyssPrivate,
+        onStep: (direction) => {
+          this.cancelKeyboardInteraction_abyssPrivate();
+          this.calDate_abyssPrivate = stepCalendarDate(
+            this.calViewType_abyssPrivate,
+            this.calDate_abyssPrivate,
+            direction,
+          );
+          bar.updateTitle();
+          mountView();
+        },
+        onToday: () => {
+          this.cancelKeyboardInteraction_abyssPrivate();
+          this.calDate_abyssPrivate = dateForView(this.calViewType_abyssPrivate, window.moment());
+          bar.updateTitle();
+          mountView();
+        },
+        onSelectMonth: (month) => {
+          this.cancelKeyboardInteraction_abyssPrivate();
+          bar.closePicker(true);
+          this.calDate_abyssPrivate = this.calDate_abyssPrivate.clone().month(month).date(1);
+          bar.updateTitle();
+          mountView();
+        },
+        onSelectYear: (year) => {
+          this.cancelKeyboardInteraction_abyssPrivate();
+          bar.closePicker(true);
+          this.calDate_abyssPrivate = this.calDate_abyssPrivate.clone().year(year).date(1);
+          bar.updateTitle();
+          mountView();
+        },
+        onSelectView: (view) => {
+          this.navigation_abyssPrivate.openCalendarView(view);
+        },
+      },
     });
-    setIcon(prevButton, 'chevron-left');
-    const title = left.createDiv({ cls: 'abyss-cal-nav-title-group' });
-    const monthButton = title.createEl('button', {
-      cls: 'abyss-cal-nav-month',
-      attr: { 'aria-haspopup': 'dialog', 'aria-expanded': 'false' },
-    });
-    const yearButton = title.createEl('button', {
-      cls: 'abyss-cal-nav-year',
-      attr: { 'aria-haspopup': 'dialog', 'aria-expanded': 'false' },
-    });
-    const nextButton = left.createEl('button', {
-      cls: 'abyss-cal-nav-btn',
-      attr: { 'aria-label': 'Next' },
-    });
-    setIcon(nextButton, 'chevron-right');
-    const right = nav.createDiv({ cls: 'abyss-cal-nav-right' });
-    const todayButton = right.createEl('button', { cls: 'abyss-cal-nav-today', text: 'Today' });
-    this.renderCalendarViewSwitcher_abyssPrivate(right);
-    return { prevButton, monthButton, yearButton, nextButton, todayButton };
+    return bar;
   }
 
   private currentCalendarContent_abyssPrivate(): CalendarContent {
@@ -1335,25 +1305,6 @@ export class CenterPanel {
     this.render_abyssPrivate();
   }
 
-  private renderCalendarViewSwitcher_abyssPrivate(host: HTMLElement): void {
-    const switcher = host.createDiv({ cls: 'abyss-cal-view-switcher' });
-    for (const view of ['today', 'week', 'month'] as const) {
-      const button = switcher.createEl('button', {
-        cls: `abyss-cal-view-btn${this.calViewType_abyssPrivate === view ? ' is-active' : ''}`,
-        text: view === 'today' ? 'Day' : this.capitalize_abyssPrivate(view),
-      });
-      button.addEventListener('click', () => {
-        this.navigation_abyssPrivate.openCalendarView(view);
-      });
-    }
-  }
-
-  private updateCalendarTitle_abyssPrivate(navigation: CalendarNavigationElements): void {
-    const title = calendarTitle(this.calViewType_abyssPrivate, this.calDate_abyssPrivate);
-    navigation.monthButton.textContent = title.primary;
-    navigation.yearButton.textContent = title.year;
-  }
-
   private mountCalendarView_abyssPrivate(context: CalendarRenderContext): void {
     this.prepareCalendarViewUpdate_abyssPrivate(context.forecastMenuOwner);
     this.unmountActiveCapture_abyssPrivate();
@@ -1427,152 +1378,6 @@ export class CenterPanel {
     const shouldScroll = key !== this.lastScrolledCalKey_abyssPrivate;
     this.lastScrolledCalKey_abyssPrivate = key;
     return shouldScroll;
-  }
-
-  private bindCalendarNavigation_abyssPrivate(
-    navigation: CalendarNavigationElements,
-    updateTitle: () => void,
-    mountView: () => void,
-  ): void {
-    navigation.monthButton.addEventListener('click', () => {
-      this.toggleMonthPicker_abyssPrivate(navigation.monthButton, updateTitle, mountView);
-    });
-    navigation.yearButton.addEventListener('click', () => {
-      this.toggleYearPicker_abyssPrivate(navigation.yearButton, updateTitle, mountView);
-    });
-    navigation.prevButton.addEventListener('click', () => {
-      this.navigateCalendar_abyssPrivate(-1, updateTitle, mountView);
-    });
-    navigation.nextButton.addEventListener('click', () => {
-      this.navigateCalendar_abyssPrivate(1, updateTitle, mountView);
-    });
-    navigation.todayButton.addEventListener('click', () => {
-      this.navigateCalendarToday_abyssPrivate(updateTitle, mountView);
-    });
-  }
-
-  private toggleMonthPicker_abyssPrivate(
-    anchor: HTMLElement,
-    updateTitle: () => void,
-    mountView: () => void,
-  ): void {
-    if (this.calendarPicker_abyssPrivate?.element.hasClass('abyss-month-picker') === true) {
-      this.clearCalendarPicker_abyssPrivate();
-      return;
-    }
-    this.clearCalendarPicker_abyssPrivate();
-    const popover = this.openCalendarPicker_abyssPrivate(
-      anchor,
-      'abyss-month-picker',
-      'Select month',
-    );
-    const picker = popover.element;
-    const names = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-    names.forEach((name, month) => {
-      const selected = month === this.calDate_abyssPrivate.month();
-      const button = picker.createEl('button', {
-        cls: 'abyss-month-picker-btn',
-        text: name,
-        attr: { 'aria-pressed': String(selected) },
-      });
-      if (selected) button.addClass('is-active');
-      button.addEventListener('click', () => {
-        this.selectCalendarMonth_abyssPrivate(month, updateTitle, mountView);
-      });
-    });
-    this.seatCalendarPicker_abyssPrivate(popover);
-  }
-
-  private selectCalendarMonth_abyssPrivate(
-    month: number,
-    updateTitle: () => void,
-    mountView: () => void,
-  ): void {
-    this.cancelKeyboardInteraction_abyssPrivate();
-    this.clearCalendarPicker_abyssPrivate(true);
-    this.calDate_abyssPrivate = this.calDate_abyssPrivate.clone().month(month).date(1);
-    updateTitle();
-    mountView();
-  }
-
-  private toggleYearPicker_abyssPrivate(
-    anchor: HTMLElement,
-    updateTitle: () => void,
-    mountView: () => void,
-  ): void {
-    if (this.calendarPicker_abyssPrivate?.element.hasClass('abyss-year-picker') === true) {
-      this.clearCalendarPicker_abyssPrivate();
-      return;
-    }
-    this.clearCalendarPicker_abyssPrivate();
-    const popover = this.openCalendarPicker_abyssPrivate(
-      anchor,
-      'abyss-year-picker',
-      'Select year',
-    );
-    const picker = popover.element;
-    const currentYear = this.calDate_abyssPrivate.year();
-    for (let year = currentYear - 5; year <= currentYear + 5; year++) {
-      this.renderYearPickerOption_abyssPrivate(picker, year, currentYear, [updateTitle, mountView]);
-    }
-    this.seatCalendarPicker_abyssPrivate(popover);
-  }
-
-  private renderYearPickerOption_abyssPrivate(
-    picker: HTMLElement,
-    year: number,
-    currentYear: number,
-    callbacks: readonly [updateTitle: () => void, mountView: () => void],
-  ): void {
-    const selected = year === currentYear;
-    const button = picker.createEl('button', {
-      cls: 'abyss-year-picker-btn',
-      text: String(year),
-      attr: { 'aria-pressed': String(selected) },
-    });
-    if (selected) button.addClass('is-active');
-    button.addEventListener('click', () => {
-      this.cancelKeyboardInteraction_abyssPrivate();
-      this.clearCalendarPicker_abyssPrivate(true);
-      this.calDate_abyssPrivate = this.calDate_abyssPrivate.clone().year(year).date(1);
-      callbacks[0]();
-      callbacks[1]();
-    });
-  }
-
-  private navigateCalendar_abyssPrivate(
-    direction: -1 | 1,
-    updateTitle: () => void,
-    mountView: () => void,
-  ): void {
-    this.cancelKeyboardInteraction_abyssPrivate();
-    this.calDate_abyssPrivate = stepCalendarDate(
-      this.calViewType_abyssPrivate,
-      this.calDate_abyssPrivate,
-      direction,
-    );
-    updateTitle();
-    mountView();
-  }
-
-  private navigateCalendarToday_abyssPrivate(updateTitle: () => void, mountView: () => void): void {
-    this.cancelKeyboardInteraction_abyssPrivate();
-    this.calDate_abyssPrivate = dateForView(this.calViewType_abyssPrivate, window.moment());
-    updateTitle();
-    mountView();
   }
 
   private createCalendarNavigationHandlers_abyssPrivate(
