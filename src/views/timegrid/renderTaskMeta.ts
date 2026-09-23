@@ -29,7 +29,12 @@ export type CalendarContinuity = 'single' | 'continuation' | 'terminal';
 export interface ForecastInteractionCallbacks {
   readonly forecastMenuOwner?: ForecastContextMenuOwner;
   readonly onForecastClick?: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
-  readonly onForecastContextMenu?: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
+  /** "Edit repeat…" from the forecast menu; `anchor` is the occurrence element the menu was opened for. */
+  readonly onForecastContextMenu?: (
+    source: CalendarTaskSource,
+    referenceDate: LocalDate,
+    anchor: HTMLElement,
+  ) => void;
   readonly interactionOwnership?: InteractionOwnershipPort;
 }
 
@@ -347,7 +352,7 @@ function openForecastMenu(context: ForecastMenuContext, request: ForecastMenuReq
   edit.addEventListener('click', () => {
     if (state.active !== owned) return;
     dismiss({ restoreFocus: false });
-    callbacks.onForecastContextMenu?.(occurrence.source, occurrence.referenceDate);
+    callbacks.onForecastContextMenu?.(occurrence.source, occurrence.referenceDate, anchor);
   });
   open.addEventListener('click', () => {
     if (state.active !== owned) return;

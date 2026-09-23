@@ -3602,6 +3602,55 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     panel.destroy();
   });
 
+  it('anchors the forecast recurrence editor to the occurrence and returns focus to it', () => {
+    const { panel, el, item } = forecastPanelFixture();
+    try {
+      vi.spyOn(item, 'getBoundingClientRect').mockReturnValue(new DOMRect(120, 200, 80, 20));
+      item.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      expectDefined(
+        activeDocument.querySelector<HTMLButtonElement>('.abyss-forecast-context-menu-edit-repeat'),
+      ).click();
+
+      const popover = expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-recurrence-popover'),
+      );
+      // AnchoredRecurrenceEditorController: left = clamp(anchor.left, 8, innerWidth - width - 8),
+      // top = anchor.bottom + 4 when it fits below (jsdom: 1024x768 viewport, fallback width 352).
+      expect(popover.style.left).toBe('120px');
+      expect(popover.style.top).toBe('224px');
+
+      expectDefined(popover.querySelector<HTMLElement>('.abyss-recurrence-editor')).dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+      expect(activeDocument.querySelector('.abyss-recurrence-popover')).toBeNull();
+      expect(activeDocument.activeElement).toBe(item);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('dismisses the anchored forecast editor before opening the forecast modal from its occurrence', () => {
+    const { panel, el, item } = forecastPanelFixture();
+    try {
+      item.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      expectDefined(
+        activeDocument.querySelector<HTMLButtonElement>('.abyss-forecast-context-menu-edit-repeat'),
+      ).click();
+      expect(activeDocument.querySelector('.abyss-recurrence-popover')).not.toBeNull();
+
+      item.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+      expect(activeDocument.querySelector('.abyss-recurrence-popover')).toBeNull();
+      expect(
+        activeDocument.querySelector('.abyss-modal .abyss-forecast-source-context')?.textContent,
+      ).toBe('Forecast for 2026-08-09');
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
   it('keeps a projected forecast non-draggable when rendered through the shared center card', () => {
     const root = task({
       title: 'Forecast',
@@ -4829,6 +4878,50 @@ function clickCalendarView(el: HTMLElement, label: CalendarViewLabel): void {
   );
   if (button == null) throw new Error(`missing ${label} calendar view button`);
   button.click();
+}
+
+/** A mounted calendar panel showing one daily forecast on 2026-08-09, attached to the document. */
+function forecastPanelFixture(): {
+  panel: CenterPanel;
+  state: AppState;
+  el: HTMLElement;
+  item: HTMLElement;
+} {
+  const root = task({
+    title: 'Repeat source',
+    recurrence: 'every day',
+    planning: { due: '2026-08-08' },
+  });
+  const source = { root, target: { type: 'task' as const, ref: root.ref }, node: root };
+  const queries = taskQueryApi({
+    list: () => [root],
+    forCalendarProjection: () => ({ materialized: [], recurringSources: [source] }),
+  });
+  const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+    type: 'invalid',
+    issues: [{ code: 'invalid-target' }],
+  });
+  const state = new AppState();
+  const panel = new CenterPanel(
+    state,
+    {} as App,
+    DEFAULT_SETTINGS,
+    queries,
+    new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    undefined,
+    null,
+    null,
+    { queries, execute },
+  );
+  const el = activeDocument.body.createDiv();
+  panel.mount(el);
+  setCalendarDate(panel, moment('2026-08-09'));
+  state.set('mode', 'calendar');
+  const badge = expectDefined(
+    el.querySelector<HTMLElement>('[data-mg-date="2026-08-09"] [data-recurrence-forecast="true"]'),
+  );
+  const item = expectDefined(badge.closest<HTMLElement>('.abyss-calendar-item'));
+  return { panel, state, el, item };
 }
 
 function timedBlock(el: HTMLElement, filePath?: string): HTMLElement {

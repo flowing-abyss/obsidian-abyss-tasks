@@ -1092,24 +1092,27 @@ describe('forecast interaction contract', () => {
       [expectDefined(forecast).task],
       resolvedConfig({ startPosition: '2026-08' }),
     );
-    expectDefined(
+    const item = expectDefined(
       container.querySelector<HTMLElement>('[data-mg-date="2026-08-09"] .abyss-mg-plain'),
-    ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    );
+    item.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
 
     const menu = expectDefined(
       activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu'),
     );
     const items = Array.from(menu.querySelectorAll<HTMLElement>('button'));
-    expect(items.map((item) => item.textContent)).toEqual(['Edit repeat…', 'Open source task']);
+    expect(items.map((button) => button.textContent)).toEqual(['Edit repeat…', 'Open source task']);
     expect(menu.querySelector('.abyss-status-marker')).toBeNull();
 
     expectDefined(items[0]).click();
-    expect(callbacks.onForecastContextMenu).toHaveBeenCalledWith(source, localDate('2026-08-09'));
+    expect(callbacks.onForecastContextMenu).toHaveBeenCalledWith(
+      source,
+      localDate('2026-08-09'),
+      item,
+    );
     expect(callbacks.onForecastContextMenu.mock.calls[0]?.[0].target).toEqual(source.target);
 
-    expectDefined(
-      container.querySelector<HTMLElement>('[data-mg-date="2026-08-09"] .abyss-mg-plain'),
-    ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    item.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expectDefined(
       activeDocument.querySelectorAll<HTMLElement>('.abyss-forecast-context-menu button')[1],
     ).click();
@@ -1341,6 +1344,7 @@ describe('forecast interaction contract', () => {
     expect(callbacks.onForecastContextMenu).toHaveBeenCalledWith(
       secondSource,
       localDate('2026-08-09'),
+      expectDefined(items[1]),
     );
     trigger.remove();
   });

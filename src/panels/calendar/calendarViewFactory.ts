@@ -21,7 +21,12 @@ export interface CalendarHandlers {
   readonly onTaskClick: (task: TaskSnapshot) => void;
   readonly onTaskSelect: (task: TaskSnapshot) => void;
   readonly onForecastClick: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
-  readonly onForecastContextMenu: (source: CalendarTaskSource) => void;
+  /** "Edit repeat…" from a forecast occurrence; `anchor` is the occurrence element the menu was opened for. */
+  readonly onForecastContextMenu: (
+    source: CalendarTaskSource,
+    referenceDate: LocalDate,
+    anchor: HTMLElement,
+  ) => void;
   readonly onDrop: (dragData: string, targetDate: string) => void;
   readonly onDropTime: (dragData: string, date: string, time: string) => void;
   readonly onCreateAtTime: (date: string, time: string) => void;

@@ -8,7 +8,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import type { TaskIndexEvent } from '../src/tasks';
 import { noInteractionOwnership } from '../src/ui/interactionOwnership';
-import { expectDefined, taskQueryApi, useRealMoment } from './helpers';
+import { expectDefined, task, taskQueryApi, useRealMoment, type TestTaskQueries } from './helpers';
 
 useRealMoment();
 
@@ -40,7 +40,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) root.remove();
 });
 
-function harness(): Harness {
+function harness(queryOverrides: Partial<TestTaskQueries> = {}): Harness {
   const calls: string[] = [];
   const note = (name: string): void => {
     calls.push(name);
@@ -93,6 +93,7 @@ function harness(): Harness {
   };
   const listeners = new Set<(event: TaskIndexEvent) => void>();
   const queries = taskQueryApi({
+    ...queryOverrides,
     subscribe: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -341,5 +342,38 @@ describe('CalendarMode week view', () => {
     expect(h.date()).toBe(current);
     expect(h.calls).toEqual(VIEW_UPDATE_CALLS);
     expect(h.host.rerender).not.toHaveBeenCalled();
+  });
+});
+
+describe('CalendarMode forecast menu', () => {
+  it('opens the forecast recurrence editor anchored to the occurrence element', () => {
+    const root = task({
+      title: 'Repeat source',
+      recurrence: 'every day',
+      planning: { due: '2026-09-01' },
+    });
+    const source = { root, target: { type: 'task' as const, ref: root.ref }, node: root };
+    const h = harness({
+      list: () => [root],
+      forCalendarProjection: () => ({ materialized: [], recurringSources: [source] }),
+    });
+    h.mode['date_abyssPrivate'] = moment('2026-09-01');
+    h.mode.render(h.root);
+    const item = expectDefined(
+      h.root.querySelector<HTMLElement>('.abyss-calendar-item[data-occurrence-state="forecast"]'),
+    );
+    item.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expectDefined(
+      document.querySelector<HTMLButtonElement>('.abyss-forecast-context-menu-edit-repeat'),
+    ).click();
+
+    expect(h.host.openForecastRecurrenceEditor).toHaveBeenCalledOnce();
+    const [anchor, calledSource] = expectDefined(
+      vi.mocked(h.host.openForecastRecurrenceEditor).mock.calls[0],
+    );
+    expect(anchor).toBe(item);
+    expect(anchor).not.toBe(h.root.querySelector('.abyss-cal-body'));
+    expect(calledSource.root.ref).toEqual(root.ref);
+    expect(document.querySelector('.abyss-forecast-context-menu')).toBeNull();
   });
 });

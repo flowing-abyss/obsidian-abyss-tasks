@@ -965,6 +965,8 @@ export class CenterPanel {
     source: CalendarTaskSource,
     referenceDate: LocalDate,
   ): void {
+    // The anchored editor ignores presses on its own anchor, so close it before the modal opens.
+    this.dismissRecurrenceEditor_abyssPrivate();
     this.taskModal_abyssPrivate?.open(source.root);
     const modal = activeDocument.querySelector<HTMLElement>('.abyss-modal');
     if (modal == null) return;

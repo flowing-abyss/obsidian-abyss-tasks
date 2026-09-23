@@ -431,8 +431,8 @@ export class CalendarMode {
       onForecastClick: (source, referenceDate) => {
         host.openForecastTask(source, referenceDate);
       },
-      onForecastContextMenu: (source) => {
-        host.openForecastRecurrenceEditor(viewContainer, source);
+      onForecastContextMenu: (source, _referenceDate, anchor) => {
+        host.openForecastRecurrenceEditor(anchor, source);
       },
       onDrop: (dragData, targetDate) => {
         runAsyncAction(this.commands_abyssPrivate.rescheduleFromDrag(dragData, targetDate));
