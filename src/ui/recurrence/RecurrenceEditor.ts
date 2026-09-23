@@ -628,7 +628,12 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
 
   private finishSubmission_abyssPrivate(succeeded: boolean, failure: string): void {
     if (succeeded) {
+      // Closing removes the editor; return focus to the anchor only when the editor still held it,
+      // so a re-render that already restored focus elsewhere keeps its target.
+      const active = this.options_abyssPrivate.container.ownerDocument.activeElement;
+      const heldFocus = active != null && this.options_abyssPrivate.container.contains(active);
       this.options_abyssPrivate.onClose();
+      if (heldFocus) this.restoreFocus_abyssPrivate();
       return;
     }
     this.state_abyssPrivate.submissionError = failure;

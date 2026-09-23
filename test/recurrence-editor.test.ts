@@ -1211,6 +1211,46 @@ describe('mountRecurrenceEditor', () => {
     expect(activeDocument.activeElement).toBe(anchor);
   });
 
+  it('restores the previously focused anchor when a successful save closes the editor', async () => {
+    const anchor = activeDocument.body.createEl('button', { text: '+ repeat' });
+    anchor.focus();
+    const { container, onClose, onSubmit } = mount();
+    activeDocument.body.append(container);
+    button(container, 'Save repeat').focus();
+    expect(activeDocument.activeElement).not.toBe(anchor);
+
+    click(button(container, 'Save repeat'));
+    await vi.waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    expect(onSubmit).toHaveBeenCalledOnce();
+    expect(activeDocument.activeElement).toBe(anchor);
+  });
+
+  it('leaves focus alone when a successful save closes an editor that no longer holds it', async () => {
+    const anchor = activeDocument.body.createEl('button', { text: '+ repeat' });
+    const elsewhere = activeDocument.body.createEl('button', { text: 'Rebuilt block' });
+    anchor.focus();
+    const { container, onClose } = mount();
+    activeDocument.body.append(container);
+    const save = button(container, 'Save repeat');
+    save.focus();
+    let submitted = false;
+    save.addEventListener('click', () => {
+      submitted = true;
+      elsewhere.focus();
+    });
+
+    click(save);
+    await vi.waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    expect(submitted).toBe(true);
+    expect(activeDocument.activeElement).toBe(elsewhere);
+  });
+
   it('restores a connected anchor when an outside click dismisses the anchored editor', () => {
     vi.useFakeTimers();
     const previous = activeDocument.body.createEl('button', { text: 'Previous focus' });
