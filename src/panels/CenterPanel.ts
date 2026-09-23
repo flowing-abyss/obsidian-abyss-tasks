@@ -6,18 +6,12 @@ import {
   normalizeStatusGroups,
   statusGroupsEqual,
 } from '../app/listViewState';
-import { firstVisibleWeekDate } from '../domain/weekGridOffset';
 import type { LinkToken } from '../markdown/links';
 import { PRIORITY_LEVELS } from '../priority';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
 import { getListViewDefaults } from '../settings/defaults';
-import type {
-  CalendarSettings,
-  ListViewState,
-  PropertyFilter,
-  ResolvedConfig,
-} from '../settings/types';
+import type { CalendarSettings, ListViewState, PropertyFilter } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import { ACTIVE_STATUS_GROUPS, ALL_STATUS_GROUPS, TYPE_LABELS } from '../status/statusConstants';
 import {
@@ -62,6 +56,7 @@ import {
   type ViewOptionsSingleRow,
 } from '../ui/ViewOptionsPopover';
 import { openAnchoredPopover, type AnchoredPopover } from '../ui/anchoredPopover';
+import { isRealmHTMLElement } from '../ui/domRealm';
 import { isImeOwnedEvent } from '../ui/ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
@@ -118,8 +113,6 @@ import {
   calendarSpanBoundaryCommand,
   hasOtherCalendarRecurrenceOwner,
   isForecastCalendarTask,
-  projectCalendarOccurrences,
-  taskSnapshotForCalendarOccurrence,
   type CalendarProjectionIssue,
   type CalendarTaskSource,
 } from '../views/calendarOccurrences';
@@ -133,11 +126,7 @@ import {
   groupTasksByTag,
 } from '../views/taskGrouping';
 import type { TimedDragTarget, TimedVerticalResizeTarget } from '../views/timegrid/dragGeometry';
-import {
-  minutesToPixels,
-  minutesToTimeString,
-  timeStringToMinutes,
-} from '../views/timegrid/layout';
+import { minutesToTimeString } from '../views/timegrid/layout';
 import {
   createCalendarProjectionDiagnosticOwner,
   createForecastContextMenuOwner,
@@ -146,6 +135,14 @@ import {
 } from '../views/timegrid/renderTaskMeta';
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
 import type { TimedBoundaryTarget } from '../views/timegrid/timedInteractions';
+import {
+  calendarCaptureHost,
+  calendarCaptureInputClass,
+  captureTargetForCalendarPlacement,
+  isCalendarCapturePlacement,
+  type CalendarCapturePlacement,
+} from './calendar/calendarCapturePlacement';
+import { calendarContent, type CalendarContent } from './calendar/calendarContent';
 import {
   calendarScrollKey,
   calendarTitle,
@@ -172,11 +169,6 @@ interface PendingTimedBlockRestoration {
   readonly renderGeneration: number;
 }
 
-type CalendarCapturePlacement =
-  | { readonly type: 'calendar-timed'; readonly date: string; readonly time: string }
-  | { readonly type: 'calendar-all-day'; readonly date: string }
-  | { readonly type: 'calendar-month'; readonly date: string };
-
 type BarCapturePlacement =
   | { readonly type: 'list'; readonly selectionKey: string }
   | { readonly type: 'project'; readonly path: string };
@@ -189,12 +181,6 @@ interface CalendarNavigationElements {
   readonly yearButton: HTMLButtonElement;
   readonly nextButton: HTMLButtonElement;
   readonly todayButton: HTMLButtonElement;
-}
-
-interface CalendarContent {
-  readonly config: ResolvedConfig;
-  readonly issues: readonly CalendarProjectionIssue[];
-  readonly tasks: TaskSnapshot[];
 }
 
 interface CalendarHandlers {
@@ -276,13 +262,6 @@ interface RunningCardBadge {
 /** How a card badge names the root a running entry belongs to, for the tick that repaints it. */
 function trackingRootAddress(ref: TaskRef): string {
   return taskNodeAddress({ type: 'task', ref });
-}
-
-function isRealmHTMLElement(target: EventTarget | null): target is HTMLElement {
-  if (target == null || !('ownerDocument' in target)) return false;
-  const ownerDocument = (target as { readonly ownerDocument?: Document }).ownerDocument;
-  const realm = ownerDocument?.defaultView;
-  return realm !== null && realm !== undefined && target instanceof realm.HTMLElement;
 }
 
 /**
@@ -1220,46 +1199,12 @@ export class CenterPanel {
   }
 
   private currentCalendarContent_abyssPrivate(): CalendarContent {
-    const config = this.calendarConfig_abyssPrivate();
-    const visibleDates = visibleCalendarDates(
-      this.calViewType_abyssPrivate,
-      this.calDate_abyssPrivate,
-      config.firstDayOfWeek,
-    );
-    const firstVisibleDate = visibleDates[0];
-    const lastVisibleDate = visibleDates[visibleDates.length - 1];
-    if (firstVisibleDate === undefined || lastVisibleDate === undefined) {
-      return { config, issues: [], tasks: [] };
-    }
-    const projection = this.queries_abyssPrivate.forCalendarProjection(
-      visibleDates as unknown as readonly LocalDate[],
-    );
-    const occurrences = projectCalendarOccurrences(
-      projection,
-      { from: localDate(firstVisibleDate), to: localDate(lastVisibleDate) },
-      { removeScheduledDate: this.settings_abyssPrivate.recurrence.removeScheduledDate },
-    );
-    return {
-      config,
-      issues: occurrences.issues,
-      tasks: occurrences.occurrences.map(taskSnapshotForCalendarOccurrence),
-    };
-  }
-
-  private calendarConfig_abyssPrivate(): ResolvedConfig {
-    const firstDayOfWeek = this.settings_abyssPrivate.firstDayOfWeek;
-    return {
-      firstDayOfWeek,
-      startPosition: this.calendarStartPosition_abyssPrivate(firstDayOfWeek),
-    };
-  }
-
-  private calendarStartPosition_abyssPrivate(firstDayOfWeek: number): string {
-    if (this.calViewType_abyssPrivate === 'week')
-      return firstVisibleWeekDate(this.calDate_abyssPrivate, firstDayOfWeek);
-    if (this.calViewType_abyssPrivate === 'today')
-      return this.calDate_abyssPrivate.format('YYYY-MM-DD');
-    return this.calDate_abyssPrivate.format('YYYY-MM');
+    return calendarContent({
+      queries: this.queries_abyssPrivate,
+      settings: this.settings_abyssPrivate,
+      view: this.calViewType_abyssPrivate,
+      date: this.calDate_abyssPrivate,
+    });
   }
 
   private createCalendarView_abyssPrivate(
@@ -3784,8 +3729,8 @@ export class CenterPanel {
     const active = this.activeCapture_abyssPrivate;
     if (active == null) return;
     const placement = active.placement;
-    if (this.isCalendarCapturePlacement_abyssPrivate(placement)) {
-      const host = this.calendarCaptureHost_abyssPrivate(placement);
+    if (isCalendarCapturePlacement(placement)) {
+      const host = calendarCaptureHost(this.el, placement);
       if (host != null) this.mountCaptureSurface_abyssPrivate(active, host);
       return;
     }
@@ -3804,62 +3749,8 @@ export class CenterPanel {
     target: CaptureTarget,
     placement: PanelCapturePlacement,
   ): CaptureTarget {
-    if (!this.isCalendarCapturePlacement_abyssPrivate(placement)) return target;
-    const label =
-      placement.type === 'calendar-timed'
-        ? `${placement.date} · ${placement.time}`
-        : `${placement.date} · all day`;
-    const initial = {
-      ...target.initial,
-      due: { type: 'set' as const, value: localDate(placement.date) },
-      ...(placement.type === 'calendar-timed'
-        ? { time: { type: 'set' as const, value: localTime(placement.time) } }
-        : {}),
-    };
-    return { ...target, label, initial };
-  }
-
-  private calendarCaptureHost_abyssPrivate(
-    placement: CalendarCapturePlacement,
-  ): HTMLElement | null {
-    if (placement.type === 'calendar-timed') {
-      const day = [...this.el.querySelectorAll<HTMLElement>('.abyss-tg-day-column')].find(
-        (candidate) => candidate.dataset['tgDate'] === placement.date,
-      );
-      const hourColumn = day?.querySelector<HTMLElement>('.abyss-tg-hour-column');
-      if (hourColumn == null) return null;
-      const host = this.captureWrapper_abyssPrivate(hourColumn, 'abyss-tg-quick-add');
-      host.style.top = `${minutesToPixels(timeStringToMinutes(placement.time))}px`;
-      host.dataset['abyssCaptureHost'] = placement.type;
-      host.dataset['abyssCaptureDate'] = placement.date;
-      host.dataset['abyssCaptureTime'] = placement.time;
-      return host;
-    }
-
-    const selector =
-      placement.type === 'calendar-month' ? '.abyss-mg-cell' : '.abyss-tg-allday-cell';
-    const dateKey = placement.type === 'calendar-month' ? 'mgDate' : 'tgDate';
-    const cell = [...this.el.querySelectorAll<HTMLElement>(selector)].find(
-      (candidate) => candidate.dataset[dateKey] === placement.date,
-    );
-    if (cell == null) return null;
-    const wrapperClass =
-      placement.type === 'calendar-month' ? 'abyss-mg-quick-add' : 'abyss-tg-allday-quick-add';
-    const host = this.captureWrapper_abyssPrivate(cell, wrapperClass);
-    host.dataset['abyssCaptureHost'] = placement.type;
-    host.dataset['abyssCaptureDate'] = placement.date;
-    return host;
-  }
-
-  private captureWrapper_abyssPrivate(parent: HTMLElement, className: string): HTMLElement {
-    const ownerWindow = parent.ownerDocument.defaultView;
-    const current = [...parent.children].find(
-      (candidate): candidate is HTMLElement =>
-        ownerWindow != null &&
-        candidate.instanceOf(ownerWindow.HTMLElement) &&
-        candidate.classList.contains(className),
-    );
-    return current ?? parent.createDiv({ cls: className });
+    if (!isCalendarCapturePlacement(placement)) return target;
+    return captureTargetForCalendarPlacement(target, placement);
   }
 
   private mountCaptureSurface_abyssPrivate(active: PanelCaptureSession, host: HTMLElement): void {
@@ -3899,7 +3790,7 @@ export class CenterPanel {
     surface: CaptureSurface,
     placement: PanelCapturePlacement,
   ): void {
-    const className = this.calendarCaptureInputClass_abyssPrivate(placement);
+    const className = calendarCaptureInputClass(placement);
     if (className !== undefined && className !== '') surface.input.addClass(className);
   }
 
@@ -3916,7 +3807,7 @@ export class CenterPanel {
     active: PanelCaptureSession,
     host: HTMLElement,
   ): HTMLElement | undefined {
-    if (this.isCalendarCapturePlacement_abyssPrivate(active.placement)) {
+    if (isCalendarCapturePlacement(active.placement)) {
       host.empty();
       const feedbackHost = this.el.createDiv({ cls: 'abyss-calendar-capture-feedback' });
       active.feedbackHost = feedbackHost;
@@ -3989,7 +3880,7 @@ export class CenterPanel {
     placement: PanelCapturePlacement,
   ): void {
     if (host?.isConnected !== true) return;
-    if (this.isCalendarCapturePlacement_abyssPrivate(placement)) {
+    if (isCalendarCapturePlacement(placement)) {
       host.remove();
       return;
     }
@@ -4031,21 +3922,6 @@ export class CenterPanel {
     ) {
       this.cancelActiveCapture_abyssPrivate();
     }
-  }
-
-  private isCalendarCapturePlacement_abyssPrivate(
-    placement: PanelCapturePlacement,
-  ): placement is CalendarCapturePlacement {
-    return placement.type.startsWith('calendar-');
-  }
-
-  private calendarCaptureInputClass_abyssPrivate(
-    placement: PanelCapturePlacement,
-  ): string | undefined {
-    if (placement.type === 'calendar-timed') return 'abyss-tg-quick-add-input';
-    if (placement.type === 'calendar-all-day') return 'abyss-tg-allday-quick-add-input';
-    if (placement.type === 'calendar-month') return 'abyss-mg-quick-add-input';
-    return undefined;
   }
 
   private currentCaptureFocusOrigin_abyssPrivate(): HTMLElement | null {

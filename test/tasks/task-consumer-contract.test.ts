@@ -63,7 +63,7 @@ const PARSER_GRAMMAR_TESTS = new Set([
   'test/task-parser-deep.test.ts',
 ]);
 
-const CALENDAR_PROJECTION_CONSUMERS = new Set(['src/panels/CenterPanel.ts']);
+const CALENDAR_PROJECTION_CONSUMERS = new Set(['src/panels/calendar/calendarContent.ts']);
 
 function source(path: string): string {
   return node.fs.readFileSync(resolve(ROOT, path), 'utf8');
