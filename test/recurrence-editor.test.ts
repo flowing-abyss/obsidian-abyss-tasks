@@ -6,11 +6,13 @@ import {
   type RecurrenceEditorHandle,
 } from '../src/ui/recurrence/RecurrenceEditor';
 import { draftPlainText, type RightPanelDraftState } from '../src/ui/taskDraftContinuity';
+import { cssDeclarationText, cssValue } from './cssHelpers';
 import {
   dispatchImeKey,
   expectDefined,
   flushMicrotasks,
   freshContainer,
+  loadPluginStyles,
   methodOf,
   task,
 } from './helpers';
@@ -98,6 +100,8 @@ afterEach(() => {
   for (const handle of mounted.splice(0)) handle.destroy();
   activeDocument.body.empty();
 });
+
+const css = await loadPluginStyles();
 
 describe('mountRecurrenceEditor', () => {
   it('presents presets and Custom as one pressed-state mode group', () => {
@@ -1371,4 +1375,36 @@ describe('mountRecurrenceEditor', () => {
       expect(onClose).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('Clear repeat styling', () => {
+  it('outranks the host button fill with the same quiet declarations', () => {
+    const repeating = task({ recurrence: 'every day', planning: { due: '2026-08-09' } });
+    const { container } = mount({
+      source: { root: repeating, target: { type: 'task', ref: repeating.ref } },
+    });
+    const clear = button(container, 'Clear repeat');
+    const base = cssDeclarationText(css, '.abyss-recurrence-actions button.abyss-recurrence-clear');
+    const hover = cssDeclarationText(
+      css,
+      '.abyss-recurrence-actions button.abyss-recurrence-clear:hover',
+    );
+
+    // A class-only selector (0,1,0) loses to the host `button:not(.clickable-icon)` (0,1,1).
+    expect(cssDeclarationText(css, '.abyss-recurrence-clear')).toBe('');
+    expect(cssDeclarationText(css, '.abyss-recurrence-clear:hover')).toBe('');
+    expect(clear.matches('.abyss-recurrence-actions button.abyss-recurrence-clear')).toBe(true);
+    expect(cssValue(base, 'padding-inline')).toBe('0');
+    expect(cssValue(base, 'border-color')).toBe('transparent');
+    expect(cssValue(base, 'background')).toBe('transparent');
+    expect(cssValue(base, 'color')).toBe('var(--text-muted)');
+    expect(cssValue(base, 'box-shadow')).toBe('none');
+    expect(cssValue(base, 'outline')).toBeUndefined();
+    expect(cssValue(hover, 'color')).toBe('var(--text-normal)');
+    // The editor's own keyboard ring still reaches the button.
+    expect(clear.matches('.abyss-recurrence-editor button')).toBe(true);
+    expect(
+      cssValue(cssDeclarationText(css, '.abyss-recurrence-editor button:focus-visible'), 'outline'),
+    ).toBe('2px solid var(--interactive-accent)');
+  });
 });
