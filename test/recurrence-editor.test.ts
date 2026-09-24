@@ -1425,6 +1425,39 @@ describe('mountRecurrenceEditor', () => {
     vi.useRealTimers();
   });
 
+  it('returns focus to the element focused when the anchored editor opened once its anchor is gone', () => {
+    vi.useFakeTimers();
+    const previous = activeDocument.body.createEl('button', { text: 'Previous focus' });
+    const anchor = activeDocument.body.createEl('button', { text: 'Repeat marker' });
+    previous.focus();
+    const root = task({ planning: { due: '2026-08-09' } });
+    const handle = mountAnchoredRecurrenceEditor({
+      anchor,
+      source: { root, target: { type: 'task', ref: root.ref } },
+      policy,
+      ownershipConflict: false,
+      onSubmit: vi.fn().mockResolvedValue({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'task', task: root },
+      }),
+    });
+    mounted.push(handle);
+    vi.runAllTimers();
+    const popover = expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-recurrence-popover'),
+    );
+    expect(popover.contains(activeDocument.activeElement)).toBe(true);
+    anchor.remove();
+
+    handle.dismiss();
+
+    expect(activeDocument.querySelector('.abyss-recurrence-popover')).toBeNull();
+    // An anchored controller that resolves only its anchor would drop the fallback it had.
+    expect(activeDocument.activeElement).toBe(previous);
+    vi.useRealTimers();
+  });
+
   it.each(['composing', 'legacy'] as const)(
     'leaves IME-owned Escape, Enter, and Cmd+Enter to the IME (%s)',
     async (ime) => {

@@ -31,7 +31,12 @@ export interface RecurrenceEditorOptions {
   readonly ownershipConflict: boolean;
   readonly onSubmit: (patch: TaskPatch) => Promise<TaskCommandResult>;
   readonly onClose: () => void;
-  /** Read when the editor closes, so a control rebuilt while it was open can take focus back. */
+  /**
+   * Read when the editor closes, so a control rebuilt while it was open can take focus back. When
+   * passed, only its result counts: a connected element takes focus, and `undefined` or a
+   * disconnected element moves nothing. Without it, focus returns to the element that held it when
+   * the editor opened, if that element is still connected.
+   */
   readonly dismissalFocus?: () => HTMLElement | undefined;
 }
 
@@ -374,17 +379,9 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
   }
 
   private restoreFocus_abyssPrivate(): void {
-    const target = this.options_abyssPrivate.dismissalFocus?.();
-    if (target?.isConnected === true) {
-      target.focus();
-      return;
-    }
-    if (
-      this.previousFocus_abyssPrivate instanceof HTMLElement &&
-      this.previousFocus_abyssPrivate.isConnected
-    ) {
-      this.previousFocus_abyssPrivate.focus();
-    }
+    const resolve = this.options_abyssPrivate.dismissalFocus;
+    const target = resolve === undefined ? this.previousFocus_abyssPrivate : resolve();
+    if (target instanceof HTMLElement && target.isConnected) target.focus();
   }
 
   private textInput_abyssPrivate(
@@ -675,12 +672,17 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
     this.recoverFailureFocus_abyssPrivate();
   }
 
-  /** A failed Save stays enabled for a retry, so it takes back the focus the submit dropped. */
+  /**
+   * A failed Save stays enabled for a retry, so it takes back the focus the submit dropped. An
+   * editor that a rebuild emptied has no Save left, so its dismissal focus decides instead.
+   */
   private recoverFailureFocus_abyssPrivate(): void {
     if (!focusDropped(this.options_abyssPrivate.container.ownerDocument)) return;
-    this.options_abyssPrivate.container
-      .querySelector<HTMLButtonElement>('.abyss-recurrence-save:not(:disabled)')
-      ?.focus();
+    const save = this.options_abyssPrivate.container.querySelector<HTMLButtonElement>(
+      '.abyss-recurrence-save:not(:disabled)',
+    );
+    if (save === null) this.restoreFocus_abyssPrivate();
+    else save.focus();
   }
 
   private onCompletionPatch_abyssPrivate(): Pick<TaskPatch, 'onCompletion'> {
@@ -1275,10 +1277,14 @@ class AnchoredRecurrenceEditorController implements RecurrenceEditorHandle {
   }
 
   mount(): void {
+    const anchor = this.options_abyssPrivate.anchor;
+    // The editor records this same element as its opening focus; nothing moves focus in between.
+    const active = this.ownerDocument_abyssPrivate.activeElement;
+    const opened = active instanceof HTMLElement ? active : undefined;
     this.editor_abyssPrivate = mountRecurrenceEditor({
       ...this.options_abyssPrivate,
       container: this.popover_abyssPrivate,
-      dismissalFocus: () => this.options_abyssPrivate.anchor,
+      dismissalFocus: () => (anchor.isConnected ? anchor : opened),
       onClose: () => {
         this.destroy();
       },
