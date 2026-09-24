@@ -3408,9 +3408,7 @@ export class RightPanel {
     priority: TaskPriority,
     previous: string,
   ): Promise<void> {
-    const result = await this.executePlanningPatch_abyssPrivate(task, {
-      priority: { type: 'set', value: priority },
-    });
+    const result = await this.updatePriority_abyssPrivate(task, priority);
     if (result.type === 'ok' || !chip.isConnected) return;
     applyPriorityChipPresentation(chip, previous);
     const popover = this.el_abyssPrivate.querySelector<HTMLElement>('.abyss-priority-popover');
@@ -3980,12 +3978,12 @@ export class RightPanel {
     await this.executeOwnedCommand_abyssPrivate(command, command.target);
   }
 
-  private async updatePriority_abyssPrivate(task: TaskLike, priority: string): Promise<void> {
-    if (!['A', 'B', 'C', 'D', 'E', 'F'].includes(priority)) return;
-    const patch: SubtaskPatch = {
-      priority: { type: 'set', value: priority as TaskPriority },
-    };
-    await this.executePlanningPatch_abyssPrivate(task, patch);
+  private updatePriority_abyssPrivate(
+    task: TaskLike,
+    priority: TaskPriority,
+  ): Promise<TaskCommandResult> {
+    const patch: SubtaskPatch = { priority: { type: 'set', value: priority } };
+    return this.executePlanningPatch_abyssPrivate(task, patch);
   }
 
   private async removeTag_abyssPrivate(task: TaskLike, tag: string): Promise<void> {

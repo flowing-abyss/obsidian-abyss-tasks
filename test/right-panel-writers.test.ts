@@ -1543,7 +1543,9 @@ describe('RightPanel.updatePriority', () => {
         originalBlock: '- [ ] x',
       },
     });
-    await expect(call<Promise<void>>(panel, 'updatePriority', t, 'A')).resolves.toBeUndefined();
+    await expect(
+      call<Promise<TaskCommandResult>>(panel, 'updatePriority', t, 'A'),
+    ).resolves.toMatchObject({ type: 'not-found' });
   });
 });
 
