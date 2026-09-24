@@ -39,10 +39,14 @@ export function isProjectCreationError(error: unknown): error is ProjectCreation
   return error instanceof ProjectCreationError;
 }
 
-/** The user-facing cause of a failed create: a partial create reports the step's own error. */
+/**
+ * The user-facing cause of a failed create: a partial create reports the step's own error. An
+ * `Error` gives its message and a string stays as it is; any other value has no text.
+ */
 export function creationFailureMessage(error: unknown): string {
   const cause = isProjectCreationError(error) ? error.cause : error;
-  return cause instanceof Error ? cause.message : String(cause);
+  if (cause instanceof Error) return cause.message;
+  return typeof cause === 'string' ? cause : '';
 }
 
 /** Appends the failure's cause to a sentence when the cause has text. */

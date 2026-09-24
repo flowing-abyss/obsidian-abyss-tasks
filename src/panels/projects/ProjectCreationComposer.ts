@@ -29,6 +29,12 @@ interface RetainedDraft {
   error: string | undefined;
 }
 
+/** The draft's error line text; a failure without a message leaves the line hidden. */
+function draftErrorText(error: unknown): string | undefined {
+  const message = creationFailureMessage(error);
+  return message.trim().length > 0 ? message : undefined;
+}
+
 /** Owns the single retained project-name composer and its in-flight command. */
 export class ProjectCreationComposer {
   private surface_abyssPrivate: HTMLElement | undefined;
@@ -264,7 +270,7 @@ export class ProjectCreationComposer {
       },
       (error: unknown) => {
         this.submitting_abyssPrivate = false;
-        this.draft_abyssPrivate.error = creationFailureMessage(error);
+        this.draft_abyssPrivate.error = draftErrorText(error);
         if (isProjectCreationError(error)) {
           if (error.phase === 'status') this.draft_abyssPrivate.recoveryPath = error.createdPath;
           else this.draft_abyssPrivate.blockedPath = error.createdPath;

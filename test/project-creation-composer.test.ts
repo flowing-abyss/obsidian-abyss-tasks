@@ -151,6 +151,19 @@ describe('ProjectCreationComposer', () => {
     expect(create).toHaveBeenLastCalledWith({ name: 'Different', statusId: 'planned' });
   });
 
+  it('keeps the error line hidden when a create fails without a message', async () => {
+    const h = harness(vi.fn().mockRejectedValue(undefined));
+    h.composer.open({ anchor: h.anchor });
+    submit(h.host, 'New');
+    await flushMicrotasks();
+
+    const error = expectDefined(h.host.querySelector<HTMLElement>('.abyss-project-creation-error'));
+    // Storing the empty cause as the error text would show a blank or "undefined" error line.
+    expect(error.hidden).toBe(true);
+    expect(error.textContent).toBe('');
+    expect(h.failed).toHaveBeenCalledExactlyOnceWith(undefined);
+  });
+
   it('removes a retained recovery status label for a fresh draft without status context', async () => {
     const create = vi.fn().mockRejectedValue(
       new ProjectCreationError('template failed', {
