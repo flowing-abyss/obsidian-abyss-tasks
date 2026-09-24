@@ -141,6 +141,9 @@ submitted text with the prefix, Inbox, and creation-date policy captured before 
 Only that proven successor can receive an empty focused continuation; newer text stays intact.
 Escape, outside interaction, navigation, and teardown end the session. Dependency search keeps its
 ownership lease across successful writes, then resets the query and reads current candidates.
+Inspector planning controls, the tracked-time badge, and the recurrence editor keep keyboard focus
+across a rebuild of the same selection or its proven successor, unless the user moved focus
+elsewhere.
 
 Vault and metadata events reconcile external and plugin edits through the same index path.
 `TaskIndexEvent.changed` identifies changed task projections. A separate reconciled-file signal

@@ -297,6 +297,76 @@ describe('RightPanel recurrence editor integration', () => {
       replacementAdd.mockRestore();
     }
   });
+
+  it('leaves focus on the control an outside click focused while the editor was open', async () => {
+    const { panel, state, el } = await makePanel();
+    activeDocument.body.append(el);
+    state.set('taskStack', [task({ title: 'Repeat me', planning: { due: '2026-08-09' } })]);
+    const outside = activeDocument.body.createEl('button', { text: 'Outside' });
+    const chip = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-repeat-chip'));
+
+    try {
+      click(chip);
+      await tick();
+      outside.focus();
+      click(outside);
+
+      expect(el.querySelector('.abyss-recurrence-popover')).toBeNull();
+      expect(activeDocument.activeElement).toBe(outside);
+    } finally {
+      panel.destroy();
+      el.remove();
+      outside.remove();
+    }
+  });
+
+  it('returns focus to the repeat chip after a click on blank inspector space', async () => {
+    const { panel, state, el } = await makePanel();
+    activeDocument.body.append(el);
+    state.set('taskStack', [task({ title: 'Repeat me', planning: { due: '2026-08-09' } })]);
+    const chip = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-repeat-chip'));
+
+    try {
+      click(chip);
+      await tick();
+      // The sidebar inspector region takes focus on a click on its blank space.
+      el.tabIndex = -1;
+      el.focus();
+      click(el);
+
+      expect(el.querySelector('.abyss-recurrence-popover')).toBeNull();
+      // Treating the inspector container as another control would strand focus on the panel.
+      expect(activeDocument.activeElement).toBe(chip);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('returns focus to the repeat chip after a click that left focus on the body', async () => {
+    const { panel, state, el } = await makePanel();
+    activeDocument.body.append(el);
+    state.set('taskStack', [task({ title: 'Repeat me', planning: { due: '2026-08-09' } })]);
+    const rail = activeDocument.body.createDiv();
+    const chip = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-repeat-chip'));
+
+    try {
+      click(chip);
+      await tick();
+      rail.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      // Chromium moves focus to body after a press on a non-focusable target.
+      (activeDocument.activeElement as HTMLElement | null)?.blur();
+      click(rail);
+
+      expect(el.querySelector('.abyss-recurrence-popover')).toBeNull();
+      // Removing the editor without the restore whenever focus left it would strand focus here.
+      expect(activeDocument.activeElement).toBe(chip);
+    } finally {
+      panel.destroy();
+      el.remove();
+      rail.remove();
+    }
+  });
 });
 
 /** Read a markdown file's current content via the vault. */

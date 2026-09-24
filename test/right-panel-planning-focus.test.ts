@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { deferred, expectDefined, flushMicrotasks, useRealMoment } from './helpers';
+import {
+  deferred,
+  dropFocusFromDisabledButton,
+  expectDefined,
+  flushMicrotasks,
+  useRealMoment,
+} from './helpers';
 import {
   inspectorCleanups,
   inspectorHarness,
@@ -83,6 +89,24 @@ function editorButton(h: InspectorHarness, label: string): HTMLButtonElement {
     ),
     `Missing ${label}`,
   );
+}
+
+function menuItem(h: InspectorHarness, label: string): HTMLElement {
+  return expectDefined(
+    Array.from(
+      h.el.querySelectorAll<HTMLElement>('.abyss-task-context-menu .abyss-context-item'),
+    ).find((item) => item.textContent === label),
+    `Missing ${label}`,
+  );
+}
+
+/** Every write first drops focus the way Chromium does when the submit disables Save. */
+function dropSaveFocusOnWrite(h: InspectorHarness) {
+  const execute = h.api.execute.bind(h.api);
+  return vi.spyOn(h.api, 'execute').mockImplementation(async (command) => {
+    dropFocusFromDisabledButton();
+    return execute(command);
+  });
 }
 
 /** Holds the next write until `release`, so a test can act while it is in flight. */
@@ -383,5 +407,76 @@ describe('inspector planning focus continuity', () => {
     expect(await h.read()).toBe('- [ ] Current\n');
     expect(chip.isConnected).toBe(true);
     expect(activeDocument.activeElement).toBe(chip);
+  });
+});
+
+describe('inspector repeat editor focus continuity', () => {
+  it('returns focus to the rebuilt repeat chip after Save', async () => {
+    const h = await hosted('- [ ] Current 📅 2026-09-23\n');
+    const chip = control(h, '.abyss-repeat-chip');
+    dropSaveFocusOnWrite(h);
+
+    activate(chip);
+    await flushMicrotasks();
+    activate(editorButton(h, 'Daily'));
+    activate(editorButton(h, 'Save repeat'));
+    await flushMicrotasks();
+
+    expect(await h.read()).toBe('- [ ] Current 🔁 every day 📅 2026-09-23\n');
+    expect(h.el.querySelector('.abyss-recurrence-editor')).toBeNull();
+    expectRebuiltFocus(chip, control(h, '.abyss-repeat-chip'));
+  });
+
+  it('returns focus to the rebuilt actions button after Save from Edit repeat…', async () => {
+    const h = await hosted('- [ ] Current 📅 2026-09-23\n');
+    const actions = control(h, '[aria-label="More actions"]');
+    dropSaveFocusOnWrite(h);
+
+    activate(actions);
+    const item = menuItem(h, 'Edit repeat…');
+    item.focus();
+    key(item, 'Enter');
+    await flushMicrotasks();
+    activate(editorButton(h, 'Daily'));
+    activate(editorButton(h, 'Save repeat'));
+    await flushMicrotasks();
+
+    expect(await h.read()).toBe('- [ ] Current 🔁 every day 📅 2026-09-23\n');
+    expectRebuiltFocus(actions, control(h, '[aria-label="More actions"]'));
+  });
+
+  it('closes the repeat editor and refocuses the chip after a Save that changes nothing', async () => {
+    const h = await hosted('- [ ] Current 🔁 every day 📅 2026-09-23\n');
+    const chip = control(h, '.abyss-repeat-chip');
+    const spy = dropSaveFocusOnWrite(h);
+
+    activate(chip);
+    await flushMicrotasks();
+    activate(editorButton(h, 'Weekly'));
+    activate(editorButton(h, 'Daily'));
+    activate(editorButton(h, 'Save repeat'));
+    await flushMicrotasks();
+
+    expect(await spy.mock.results[0]?.value).toMatchObject({ type: 'ok', changed: false });
+    expect(await h.read()).toBe('- [ ] Current 🔁 every day 📅 2026-09-23\n');
+    // Restoring the submitted editor draft after an unchanged result would reopen the editor.
+    expect(h.el.querySelector('.abyss-recurrence-editor')).toBeNull();
+    expectRebuiltFocus(chip, control(h, '.abyss-repeat-chip'));
+  });
+
+  it('returns focus to the rebuilt repeat chip of a drilled-in sub-task after Save', async () => {
+    const h = await hosted('- [ ] Current\n  - [ ] Child 📅 2026-09-23\n', 'Child');
+    const chip = control(h, '.abyss-repeat-chip');
+    dropSaveFocusOnWrite(h);
+
+    activate(chip);
+    await flushMicrotasks();
+    activate(editorButton(h, 'Daily'));
+    activate(editorButton(h, 'Save repeat'));
+    await flushMicrotasks();
+
+    expect(await h.read()).toBe('- [ ] Current\n  - [ ] Child 🔁 every day 📅 2026-09-23\n');
+    expect(selectedTitle(h)).toBe('Child');
+    expectRebuiltFocus(chip, control(h, '.abyss-repeat-chip'));
   });
 });

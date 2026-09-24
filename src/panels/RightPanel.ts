@@ -409,6 +409,26 @@ function planningReturnKeys(
   return [key];
 }
 
+/** A result's submission token, with whether the result changed the note. */
+interface PlanningResultSubmission {
+  readonly token: object;
+  readonly changed: boolean;
+}
+
+function planningResultSubmission(
+  token: object | undefined,
+  changed: boolean,
+): PlanningResultSubmission | undefined {
+  return token === undefined ? undefined : { token, changed };
+}
+
+/** The new sub-task and new comment inputs, whose no-op insertion leaves the typed text. */
+function isEntryDraft(
+  draft: RightPanelDraftState,
+): draft is Extract<RightPanelDraftState, { readonly kind: 'new-subtask' | 'new-comment' }> {
+  return draft.kind === 'new-subtask' || draft.kind === 'new-comment';
+}
+
 export class RightPanel {
   private readonly undo_abyssPrivate = createInlineTaskUndo();
   private selectionEpoch_abyssPrivate = 0;
@@ -547,6 +567,7 @@ export class RightPanel {
       if (!continuesOwnedSelection) {
         this.dependencySearch_abyssPrivate?.destroy();
         this.dependencySearch_abyssPrivate = undefined;
+        this.recurrenceIntent_abyssPrivate = undefined;
       }
     }
     if (this.undoConvergence_abyssPrivate !== undefined) {
@@ -602,6 +623,7 @@ export class RightPanel {
     this.timeBadge_abyssPrivate = undefined;
     this.mounted_abyssPrivate = false;
     this.resetRenderedControls_abyssPrivate();
+    this.recurrenceIntent_abyssPrivate = undefined;
     this.endTaskDrag_abyssPrivate?.();
     this.completionConfirmationAbortController_abyssPrivate.abort();
     this.off_abyssPrivate?.();
@@ -786,8 +808,7 @@ export class RightPanel {
     submitted: SubmittedDraft,
   ): RightPanelDraftState[] {
     const matches = this.sameDraftPayload_abyssPrivate(candidate, submittedDraft);
-    if (candidate.kind !== 'new-subtask' && candidate.kind !== 'new-comment')
-      return matches ? [] : [candidate];
+    if (!isEntryDraft(candidate)) return matches ? [] : [candidate];
     const parent = this.successorDraftParent_abyssPrivate(candidate.parent, submitted);
     if (!matches) return [{ ...candidate, parent: parent ?? candidate.parent }];
     if (!candidate.hadFocus || submitted.dismissed === true || parent === undefined) return [];
@@ -1045,8 +1066,8 @@ export class RightPanel {
     stack: readonly TaskLike[],
     origin?: RightPanelDraftBundle['origin'],
   ): HTMLElement | undefined {
-    const chip = this.el_abyssPrivate.querySelector<HTMLElement>('.abyss-repeat-chip');
-    if (chip == null) {
+    const chip = this.planningControls_abyssPrivate.get('repeat');
+    if (chip === undefined) {
       this.preserveDirtyDraft_abyssPrivate(draft, origin);
       return undefined;
     }
@@ -1579,6 +1600,8 @@ export class RightPanel {
   private readonly surfaceOpeners_abyssPrivate = new Map<HTMLElement, HTMLElement>();
   /** The field of the date popover "+ date" opened, until the next render. */
   private addDateField_abyssPrivate: 'start' | 'scheduled' | undefined;
+  /** The control that opened the repeat editor, while that editor is the current one. */
+  private recurrenceIntent_abyssPrivate: { readonly key: PlanningControlKey } | undefined;
 
   private registerPlanningControl_abyssPrivate(
     key: PlanningControlKey,
@@ -1635,6 +1658,40 @@ export class RightPanel {
       control.focus({ preventScroll: true });
       return;
     }
+  }
+
+  /** Records which control opened the repeat editor and resolves its rebuilt twin at close time. */
+  private recurrenceReturnTarget_abyssPrivate(anchor: HTMLElement): () => HTMLElement | undefined {
+    const intent: { readonly key: PlanningControlKey } = {
+      key: this.planningControlKeys_abyssPrivate.get(anchor) ?? 'repeat',
+    };
+    this.recurrenceIntent_abyssPrivate = intent;
+    return () =>
+      this.mounted_abyssPrivate && this.recurrenceIntent_abyssPrivate === intent
+        ? this.planningControls_abyssPrivate.get(intent.key)
+        : undefined;
+  }
+
+  /**
+   * An outside click closes the repeat editor. Focus goes back to its opener only when the click
+   * left focus on the body, on the inspector container, or inside the editor.
+   */
+  private dismissRecurrencePopover_abyssPrivate(
+    popover: HTMLElement,
+    handle: RecurrenceEditorHandle,
+  ): void {
+    const ownerDocument = this.el_abyssPrivate.ownerDocument;
+    const active = ownerDocument.activeElement;
+    if (
+      active === null ||
+      active === ownerDocument.body ||
+      active === this.el_abyssPrivate ||
+      popover.contains(active)
+    ) {
+      handle.dismiss();
+      return;
+    }
+    this.removeAnchoredSurface_abyssPrivate(popover);
   }
 
   private statusFocusTarget_abyssPrivate(stack: readonly TaskLike[]): TaskNodeRef | undefined {
@@ -3054,6 +3111,7 @@ export class RightPanel {
       onClose: () => {
         this.removeAnchoredSurface_abyssPrivate(popover);
       },
+      dismissalFocus: this.recurrenceReturnTarget_abyssPrivate(anchor),
     });
     this.recurrenceDraftEditor_abyssPrivate = { target, handle, surface: popover };
     const title = popover.querySelector<HTMLElement>('.abyss-recurrence-title');
@@ -3071,7 +3129,7 @@ export class RightPanel {
     };
     this.anchoredSurfaceCleanups_abyssPrivate.set(popover, editorCleanup);
     this.dismissMenuOnOutsideClick_abyssPrivate(popover, anchor, () => {
-      handle.dismiss();
+      this.dismissRecurrencePopover_abyssPrivate(popover, handle);
     });
     if (autofocus) this.deferRecurrenceFocus_abyssPrivate(handle);
   }
@@ -3727,7 +3785,7 @@ export class RightPanel {
           result.outcome.task,
           target,
           stack,
-          result.changed ? submission : undefined,
+          planningResultSubmission(submission, result.changed),
         );
       }
       if (result.changed) this.onSuccessfulMutation_abyssPrivate?.(result.outcome.task.ref);
@@ -3739,24 +3797,46 @@ export class RightPanel {
     root: TaskSnapshot,
     target: PlanningTarget,
     stack: readonly TaskLike[],
-    submission: object | undefined,
+    submission: PlanningResultSubmission | undefined,
   ): void {
+    const owned = submission?.changed === true ? submission.token : undefined;
     const ownedSelection =
-      submission === undefined
+      owned === undefined
         ? undefined
         : this.selectionForOwnedTransition(rootRefForPlanningTarget(target), root, stack);
-    const draft =
-      submission === undefined
-        ? this.captureDraftState()
-        : this.captureDraftStateForOwnedTransition(
-            rootRefForPlanningTarget(target),
-            root.ref,
-            submission,
-          );
+    const draft = this.resultDraftState_abyssPrivate(root, target, submission);
     this.state_abyssPrivate.updateInspectorSelection(
-      ownedSelection ?? this.resultSelection_abyssPrivate(root, target, stack, submission),
+      ownedSelection ?? this.resultSelection_abyssPrivate(root, target, stack, owned),
     );
     this.restoreDraftState(draft, root);
+  }
+
+  private resultDraftState_abyssPrivate(
+    root: TaskSnapshot,
+    target: PlanningTarget,
+    submission: PlanningResultSubmission | undefined,
+  ): RightPanelDraftBundle | undefined {
+    if (submission === undefined) return this.captureDraftState();
+    if (!submission.changed)
+      return this.captureDraftStateWithoutSubmittedEditor_abyssPrivate(submission.token);
+    return this.captureDraftStateForOwnedTransition(
+      rootRefForPlanningTarget(target),
+      root.ref,
+      submission.token,
+    );
+  }
+
+  /** A save that changed nothing still consumes the editor draft it submitted, so it closes. */
+  private captureDraftStateWithoutSubmittedEditor_abyssPrivate(
+    token: object,
+  ): RightPanelDraftBundle | undefined {
+    const bundle = this.captureDraftState();
+    const submitted = this.submittedDrafts_abyssPrivate.get(token)?.draft;
+    if (bundle === undefined || submitted === undefined || isEntryDraft(submitted)) return bundle;
+    const entries = bundle.entries.filter(
+      (candidate) => !this.sameDraftPayload_abyssPrivate(candidate, submitted),
+    );
+    return entries.length > 0 ? { ...bundle, entries } : undefined;
   }
 
   private resultSelection_abyssPrivate(

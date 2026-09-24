@@ -1421,6 +1421,44 @@ describe('RightPanel block editing', () => {
     panel.destroy();
   });
 
+  it('closes the description editor after a save that changes nothing', async () => {
+    const initial = snapshot('old');
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'ok',
+      changed: false,
+      outcome: { type: 'task', task: initial },
+    });
+    const { panel } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    const outside = activeDocument.body.createEl('button');
+    try {
+      expectDefined(container.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
+      await flushMicrotasks();
+      const textarea = expectDefined(
+        container.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+      );
+      // The editor focuses its textarea on the next task; the blur below is real only then.
+      expect(activeDocument.activeElement).toBe(textarea);
+      textarea.value = 'old description ';
+      outside.focus();
+      await flushMicrotasks(20);
+
+      expect(execute).toHaveBeenCalledWith({
+        type: 'set-description',
+        target: { type: 'task', ref: initial.ref },
+        text: 'old description ',
+      });
+      // Restoring the submitted editor draft after an unchanged result would reopen the editor.
+      expect(container.querySelector('.abyss-right-desc-edit')).toBeNull();
+    } finally {
+      panel.destroy();
+      outside.remove();
+      container.remove();
+    }
+  });
+
   it('keeps a comment textarea open when its exact comment ref conflicts', async () => {
     const initial = snapshot('old');
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({

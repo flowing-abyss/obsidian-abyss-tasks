@@ -779,6 +779,18 @@ export function loseFocusOnRemoval(
   });
 }
 
+/**
+ * Chromium moves focus to body when a submit disables the focused button; jsdom neither does that
+ * nor blurs a disabled control, so the button is re-enabled, blurred, and disabled again.
+ */
+export function dropFocusFromDisabledButton(): void {
+  const active = activeDocument.activeElement;
+  if (!(active instanceof HTMLButtonElement) || !active.disabled) return;
+  active.disabled = false;
+  active.blur();
+  active.disabled = true;
+}
+
 /** Seed a file's metadata cache with task listItems + optional frontmatter (parent=-1 for root items). */
 export function seedTaskCache(
   app: ObsidianApp,

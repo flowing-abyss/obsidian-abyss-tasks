@@ -9,6 +9,7 @@ import { draftPlainText, type RightPanelDraftState } from '../src/ui/taskDraftCo
 import { cssDeclarationText, cssValue } from './cssHelpers';
 import {
   dispatchImeKey,
+  dropFocusFromDisabledButton,
   expectDefined,
   flushMicrotasks,
   freshContainer,
@@ -66,6 +67,7 @@ function mount(
     policy: RecurrencePolicy;
     ownershipConflict: boolean;
     onSubmit: (patch: TaskPatch) => Promise<TaskCommandResult>;
+    dismissalFocus: () => HTMLElement | undefined;
   }> = {},
 ): MountedEditor {
   const root = task({ planning: { due: '2026-08-09' } });
@@ -1295,14 +1297,7 @@ describe('mountRecurrenceEditor', () => {
     let focusAfterDrop: Element | null = null;
     const { container, onClose } = mount({
       onSubmit: async () => {
-        // Chromium moves focus to body when the focused Save button is disabled for the submit.
-        // jsdom neither does that nor blurs a disabled control, so blur Save while it is enabled.
-        const active = activeDocument.activeElement;
-        if (active instanceof HTMLButtonElement) {
-          active.disabled = false;
-          active.blur();
-          active.disabled = true;
-        }
+        dropFocusFromDisabledButton();
         focusAfterDrop = activeDocument.activeElement;
         return { type: 'ok', changed: true, outcome: { type: 'task', task: root } };
       },
@@ -1318,6 +1313,87 @@ describe('mountRecurrenceEditor', () => {
 
     expect(focusAfterDrop).toBe(activeDocument.body);
     expect(activeDocument.activeElement).toBe(anchor);
+  });
+
+  it('reads the dismissal focus resolver only when the editor closes', () => {
+    const opener = activeDocument.body.createEl('button', { text: '+ repeat' });
+    const rebuilt = activeDocument.body.createEl('button', { text: 'Rebuilt repeat' });
+    opener.focus();
+    let target: HTMLElement = opener;
+    const resolver = vi.fn(() => target);
+    const { handle } = mount({ dismissalFocus: resolver });
+
+    expect(resolver).not.toHaveBeenCalled();
+    target = rebuilt;
+    handle.dismiss();
+
+    // An element captured at mount would return focus to the opener the rebuild replaced.
+    expect(resolver).toHaveBeenCalledOnce();
+    expect(activeDocument.activeElement).toBe(rebuilt);
+  });
+
+  it('returns the focus a failed save dropped to an enabled Save', async () => {
+    const { container, onClose, onSubmit } = mount();
+    activeDocument.body.append(container);
+    onSubmit.mockImplementation(async () => {
+      dropFocusFromDisabledButton();
+      return { type: 'io-error', cause: 'test', contentState: 'unchanged' };
+    });
+    button(container, 'Save repeat').focus();
+
+    click(button(container, 'Save repeat'));
+    await vi.waitFor(() => {
+      expect(container.querySelector('.abyss-recurrence-status')?.textContent).toBe(
+        'Could not save the repeat.',
+      );
+    });
+
+    const save = button(container, 'Save repeat');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(save.disabled).toBe(false);
+    expect(activeDocument.activeElement).toBe(save);
+  });
+
+  it('keeps focus on Clear repeat after a failed clear', async () => {
+    const root = task({ planning: { due: '2026-08-09' }, recurrence: 'every day' });
+    const { container, onClose, onSubmit } = mount({
+      source: { root, target: { type: 'task', ref: root.ref } },
+    });
+    activeDocument.body.append(container);
+    onSubmit.mockResolvedValue({ type: 'io-error', cause: 'test', contentState: 'unchanged' });
+    button(container, 'Clear repeat').focus();
+
+    click(button(container, 'Clear repeat'));
+    await vi.waitFor(() => {
+      expect(container.querySelector('.abyss-recurrence-status')?.textContent).toBe(
+        'Could not clear the repeat.',
+      );
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+    // A failure rule that moves focus to Save after every failure would pull it off Clear repeat.
+    expect(activeDocument.activeElement).toBe(button(container, 'Clear repeat'));
+  });
+
+  it('lets a failed save be retried at once', async () => {
+    const { container, onClose, onSubmit } = mount();
+    activeDocument.body.append(container);
+    onSubmit.mockResolvedValueOnce({ type: 'io-error', cause: 'test', contentState: 'unchanged' });
+    button(container, 'Save repeat').focus();
+
+    click(button(container, 'Save repeat'));
+    await vi.waitFor(() => {
+      expect(container.querySelector('.abyss-recurrence-status')?.textContent).toBe(
+        'Could not save the repeat.',
+      );
+    });
+    submitShortcut(button(container, 'Save repeat'), { metaKey: true });
+    await vi.waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    // Ignoring the error only in the button state would leave the submit guard refusing this.
+    expect(onSubmit).toHaveBeenCalledTimes(2);
   });
 
   it('restores a connected anchor when an outside click dismisses the anchored editor', () => {
