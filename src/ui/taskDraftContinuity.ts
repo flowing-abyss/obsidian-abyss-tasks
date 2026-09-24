@@ -23,6 +23,10 @@ interface TextDraftBase {
   readonly dirty: boolean;
 }
 
+/**
+ * A repeat editor's draft. Its focus fields are `focusedControl`, `selectionStart`, and
+ * `selectionEnd`; a new focus field must also be removed in `unfocusedDraft`.
+ */
 export interface RecurrenceEditorDraft {
   readonly mode: 'structured' | 'custom';
   readonly preset?: Preset;
@@ -71,6 +75,31 @@ export interface RightPanelDraftBundle {
     readonly filePath: string;
     readonly line: number;
   };
+}
+
+/** The new sub-task and new comment inputs, whose no-op insertion leaves the typed text. */
+export function isEntryDraft(
+  draft: RightPanelDraftState,
+): draft is Extract<RightPanelDraftState, { readonly kind: 'new-subtask' | 'new-comment' }> {
+  return draft.kind === 'new-subtask' || draft.kind === 'new-comment';
+}
+
+/** A repeat editor's state without the control and text selection it had focused. */
+function unfocusedRecurrenceEditor({
+  focusedControl: _focusedControl,
+  selectionStart: _selectionStart,
+  selectionEnd: _selectionEnd,
+  ...editor
+}: RecurrenceEditorDraft): RecurrenceEditorDraft {
+  return editor;
+}
+
+/** The draft without its focus: `hadFocus` off, and no focused repeat control or selection. */
+export function unfocusedDraft(draft: RightPanelDraftState): RightPanelDraftState {
+  if (draft.kind === 'recurrence-editor') {
+    return { ...draft, editor: unfocusedRecurrenceEditor(draft.editor), hadFocus: false };
+  }
+  return { ...draft, hadFocus: false };
 }
 
 type TaskNode = TaskSnapshot | SubtaskSnapshot;

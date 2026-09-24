@@ -92,8 +92,9 @@ import {
   draftIdentity,
   draftPlainText,
   isDirtyDraft,
+  isEntryDraft,
   rebaseRightPanelDraft,
-  type RecurrenceEditorDraft,
+  unfocusedDraft,
   type RightPanelDraftBundle,
   type RightPanelDraftState,
 } from '../ui/taskDraftContinuity';
@@ -428,31 +429,6 @@ function planningResultSubmission(
   changed: boolean,
 ): PlanningResultSubmission | undefined {
   return token === undefined ? undefined : { token, changed };
-}
-
-/** The new sub-task and new comment inputs, whose no-op insertion leaves the typed text. */
-function isEntryDraft(
-  draft: RightPanelDraftState,
-): draft is Extract<RightPanelDraftState, { readonly kind: 'new-subtask' | 'new-comment' }> {
-  return draft.kind === 'new-subtask' || draft.kind === 'new-comment';
-}
-
-/** A repeat editor's state without the control and text selection it had focused. */
-function unfocusedRecurrenceEditor({
-  focusedControl: _focusedControl,
-  selectionStart: _selectionStart,
-  selectionEnd: _selectionEnd,
-  ...editor
-}: RecurrenceEditorDraft): RecurrenceEditorDraft {
-  return editor;
-}
-
-/** The draft without its focus: `hadFocus` off, and no focused repeat control or selection. */
-function unfocusedDraft(draft: RightPanelDraftState): RightPanelDraftState {
-  if (draft.kind === 'recurrence-editor') {
-    return { ...draft, editor: unfocusedRecurrenceEditor(draft.editor), hadFocus: false };
-  }
-  return { ...draft, hadFocus: false };
 }
 
 const PRIORITY_CHIP_LABELS: Readonly<Record<string, string>> = {
