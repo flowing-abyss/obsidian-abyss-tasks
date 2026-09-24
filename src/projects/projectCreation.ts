@@ -1,6 +1,5 @@
 export interface ProjectCreateOptions {
   readonly statusId?: string;
-  readonly openFile?: boolean;
 }
 
 export interface ProjectCreateRequest {

@@ -266,9 +266,10 @@ See [service tests](test/tasks/time-tracking-service.test.ts) and
 evaluates membership against paths, tags, and frontmatter, combines task snapshots into statistics,
 and updates from vault and task-index events. It adds no persisted cache.
 
-[ProjectManager](src/projects/ProjectManager.ts) creates notes, edits project frontmatter, and moves
-tasks through `TaskApplicationApi`. Membership comes from the configured query. Status uses one configured
-frontmatter property and literal status-definition names; project tags do not carry status.
+[ProjectManager](src/projects/ProjectManager.ts) creates notes without opening them, edits project
+frontmatter, and moves tasks through `TaskApplicationApi`. Membership comes from the configured
+query. Status uses one configured frontmatter property and literal status-definition names; project
+tags do not carry status.
 
 `projectFields` owns case-insensitive field lookup and the shared catalog. Status, start, and end
 have configured source properties; description uses `description`. Name comes from the filename,
@@ -441,6 +442,10 @@ relaxes obstructing filters, and reuses selection/reveal.
 `ProjectCreationError` identifies the owned path and failed phase. Status recovery writes only that
 file. Template recovery offers the owned note and requires a fresh draft before another create;
 collision or retry must not silently duplicate a project.
+
+Sidebar inline creation calls the same manager path without a recovery session. It opens the
+created note itself, retries only while no note exists, and reports a `ProjectCreationError` with
+the note's path. `projectCreation` owns the failure sentences both surfaces show.
 
 Status-definition renames share per-App metadata serialization with assignments and batches. A
 rename rechecks role, membership, and expected literal against fresh source, tracks owned note edits,

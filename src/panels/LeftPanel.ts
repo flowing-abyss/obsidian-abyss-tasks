@@ -360,7 +360,7 @@ export class LeftPanel {
   private async createProject_abyssPrivate(name: string): Promise<void> {
     if (this.projectManager_abyssPrivate == null) return;
     // The panel opens the note itself, so an open failure cannot look like a failed create.
-    const file = await this.projectManager_abyssPrivate.create(name, { openFile: false });
+    const file = await this.projectManager_abyssPrivate.create(name);
     if (file !== null) await this.openCreatedProject_abyssPrivate(file);
     this.projectStore_abyssPrivate?.refresh();
   }

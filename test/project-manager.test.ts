@@ -561,7 +561,7 @@ describe('ProjectManager.create', () => {
     const settings = clone();
     const pm = new ProjectManager(app, settings, new NoteTemplateService(app), {} as never);
 
-    const file = expectDefined(await pm.create('My Project', { openFile: false }));
+    const file = expectDefined(await pm.create('My Project'));
 
     expect(file.path).toBe('projects/My Project.md');
     expect(await app.vault.cachedRead(file)).toBe('---\nstatus: inbox\n---\n# Tasks\n');
@@ -588,7 +588,7 @@ describe('ProjectManager.create', () => {
     const createFolder = vi.spyOn(app.vault, 'createFolder');
     const pm = new ProjectManager(app, settings, new NoteTemplateService(app), {} as never);
 
-    const file = expectDefined(await pm.create('Case compatible', { openFile: false }));
+    const file = expectDefined(await pm.create('Case compatible'));
 
     expect(file.path).toBe('Projects/Case compatible.md');
     expect(createFolder).not.toHaveBeenCalledWith('projects');
@@ -597,7 +597,7 @@ describe('ProjectManager.create', () => {
     ).toBe(true);
   });
 
-  it('builds a path under createFolder, applies default status, opens the note', async () => {
+  it('builds a path under createFolder and applies the default status', async () => {
     const app = await createAppWithFiles({});
     const settings = clone();
     const noteTemplates = new NoteTemplateService(app);
@@ -608,6 +608,18 @@ describe('ProjectManager.create', () => {
     expect(expectDefined(file).path).toBe('projects/My Project.md');
     const fm = await readFm(app, 'projects/My Project.md');
     expect(fm['status']).toBe('inbox');
+  });
+
+  it('never opens the created note', async () => {
+    const app = await createAppWithFiles({});
+    const getLeaf = vi.spyOn(app.workspace, 'getLeaf');
+    const pm = new ProjectManager(app, clone(), new NoteTemplateService(app), {} as never);
+
+    const file = expectDefined(await pm.create('Quiet project'));
+
+    expect(file.path).toBe('projects/Quiet project.md');
+    // Opening in `create` makes an open failure after the note exists look like a failed create.
+    expect(getLeaf).not.toHaveBeenCalled();
   });
 
   it('dedupes the path when a note already exists', async () => {
@@ -646,7 +658,7 @@ describe('ProjectManager.create', () => {
     vi.spyOn(app.workspace, 'getLeaf').mockReturnValue({ openFile } as never);
     const pm = new ProjectManager(app, settings, resolver, {} as never);
 
-    const creating = pm.create('Template target', { statusId: done.id, openFile: false });
+    const creating = pm.create('Template target', { statusId: done.id });
     await flushMicrotasks();
     expect((await readFm(app, file.path))['status']).toBe('planned');
     expect(openFile).not.toHaveBeenCalled();
@@ -666,7 +678,7 @@ describe('ProjectManager.create', () => {
     vi.spyOn(pm, 'setStatus').mockRejectedValueOnce(new Error('disk full'));
 
     const error = await pm
-      .create('Owned project', { statusId: done.id, openFile: false })
+      .create('Owned project', { statusId: done.id })
       .catch((cause: unknown) => cause);
 
     expect(error).toBeInstanceOf(ProjectCreationError);
@@ -712,7 +724,7 @@ describe('ProjectManager.create', () => {
     const create = vi.spyOn(app.vault, 'create');
     const pm = new ProjectManager(app, settings, new NoteTemplateService(app), {} as never);
 
-    await expect(pm.create('Invalid', { statusId: 'missing', openFile: false })).rejects.toThrow(
+    await expect(pm.create('Invalid', { statusId: 'missing' })).rejects.toThrow(
       /Unknown project status/u,
     );
     expect(create).not.toHaveBeenCalled();
