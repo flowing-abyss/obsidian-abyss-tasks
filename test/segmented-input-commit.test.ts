@@ -154,14 +154,14 @@ describe('bindSegmentedInputCommit', () => {
     expect(commit.mock.calls).toEqual([['enter'], ['enter']]);
   });
 
-  it('ends a draft on a pointer press, so the picker change commits at once', () => {
+  it('commits a picker change during a draft after a pointer press', () => {
     const { input, commit } = field();
 
     key(input, '1');
-    input.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    press(input);
     change(input);
 
-    // Without the pointer reset, the typed draft would hold back the picker's change.
+    // A press that marks nothing would hold the picker's choice back as a typed draft.
     expect(commit.mock.calls).toEqual([['change']]);
   });
 
@@ -212,14 +212,15 @@ describe('bindSegmentedInputCommit', () => {
     expect(commit).not.toHaveBeenCalled();
   });
 
-  it('commits a picker choice made during a typed draft at once', () => {
+  it('keeps the pointer mark through Shift, which types nothing', () => {
     const { input, commit } = field();
     key(input, '1');
     press(input);
+    key(input, 'Shift');
 
     change(input);
 
-    // A press that marks nothing would hold the picker's choice back as a typed draft.
+    // A pointer mark that any keydown clears would hold this picker change back as a typed draft.
     expect(commit.mock.calls).toEqual([['change']]);
   });
 
