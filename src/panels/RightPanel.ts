@@ -409,6 +409,11 @@ function planningReturnKeys(
   return [key];
 }
 
+/** The control that opened a repeat editor: one object per open, which a restore carries on. */
+interface RecurrenceIntent {
+  readonly key: PlanningControlKey;
+}
+
 /** A result's submission token, with whether the result changed the note. */
 interface PlanningResultSubmission {
   readonly token: object;
@@ -1071,7 +1076,9 @@ export class RightPanel {
       this.preserveDirtyDraft_abyssPrivate(draft, origin);
       return undefined;
     }
-    this.showRecurrencePopover_abyssPrivate(chip, task, stack, false);
+    this.showRecurrencePopover_abyssPrivate(chip, task, stack, {
+      intent: this.recurrenceIntent_abyssPrivate,
+    });
     const editor = this.recurrenceDraftEditor_abyssPrivate;
     if (editor == null) return undefined;
     editor.handle.restoreDraftState(draft.editor);
@@ -1600,8 +1607,11 @@ export class RightPanel {
   private readonly surfaceOpeners_abyssPrivate = new Map<HTMLElement, HTMLElement>();
   /** The field of the date popover "+ date" opened, until the next render. */
   private addDateField_abyssPrivate: 'start' | 'scheduled' | undefined;
-  /** The control that opened the repeat editor, while that editor is the current one. */
-  private recurrenceIntent_abyssPrivate: { readonly key: PlanningControlKey } | undefined;
+  /**
+   * The control that opened the latest repeat editor. It is kept until the next open, a selection
+   * change that does not continue the owned selection, or destroy. A restore continues it.
+   */
+  private recurrenceIntent_abyssPrivate: RecurrenceIntent | undefined;
 
   private registerPlanningControl_abyssPrivate(
     key: PlanningControlKey,
@@ -1660,9 +1670,15 @@ export class RightPanel {
     }
   }
 
-  /** Records which control opened the repeat editor and resolves its rebuilt twin at close time. */
-  private recurrenceReturnTarget_abyssPrivate(anchor: HTMLElement): () => HTMLElement | undefined {
-    const intent: { readonly key: PlanningControlKey } = {
+  /**
+   * Records which control opened the repeat editor, or carries on the live intent a restore passes,
+   * and resolves its rebuilt twin at close time.
+   */
+  private recurrenceReturnTarget_abyssPrivate(
+    anchor: HTMLElement,
+    live?: RecurrenceIntent,
+  ): () => HTMLElement | undefined {
+    const intent: RecurrenceIntent = live ?? {
       key: this.planningControlKeys_abyssPrivate.get(anchor) ?? 'repeat',
     };
     this.recurrenceIntent_abyssPrivate = intent;
@@ -1673,8 +1689,9 @@ export class RightPanel {
   }
 
   /**
-   * An outside click closes the repeat editor. Focus goes back to its opener only when the click
-   * left focus on the body, on the inspector container, or inside the editor.
+   * An outside click or Escape closes the repeat editor. After an outside click, focus goes back to
+   * its opener only when the click left focus on the body, on the inspector container, or inside
+   * the editor. Escape's anchor focus follows either branch.
    */
   private dismissRecurrencePopover_abyssPrivate(
     popover: HTMLElement,
@@ -3086,12 +3103,13 @@ export class RightPanel {
     anchor: HTMLElement,
     task: TaskLike,
     stack: readonly TaskLike[],
-    autofocus = true,
+    restoring?: { readonly intent: RecurrenceIntent | undefined },
   ): void {
     const existing = this.el_abyssPrivate.querySelector<HTMLElement>('.abyss-recurrence-popover');
     this.clearPopovers_abyssPrivate();
     if (existing != null) return;
-    anchor.focus();
+    // A restore leaves focus where it is; a restored draft that held focus refocuses its control.
+    if (restoring === undefined) anchor.focus();
     const root = stack[0];
     const target = taskNodeRef(task);
     if (root == null || !('source' in root)) return;
@@ -3111,7 +3129,7 @@ export class RightPanel {
       onClose: () => {
         this.removeAnchoredSurface_abyssPrivate(popover);
       },
-      dismissalFocus: this.recurrenceReturnTarget_abyssPrivate(anchor),
+      dismissalFocus: this.recurrenceReturnTarget_abyssPrivate(anchor, restoring?.intent),
     });
     this.recurrenceDraftEditor_abyssPrivate = { target, handle, surface: popover };
     const title = popover.querySelector<HTMLElement>('.abyss-recurrence-title');
@@ -3131,7 +3149,7 @@ export class RightPanel {
     this.dismissMenuOnOutsideClick_abyssPrivate(popover, anchor, () => {
       this.dismissRecurrencePopover_abyssPrivate(popover, handle);
     });
-    if (autofocus) this.deferRecurrenceFocus_abyssPrivate(handle);
+    if (restoring === undefined) this.deferRecurrenceFocus_abyssPrivate(handle);
   }
 
   private deferRecurrenceFocus_abyssPrivate(handle: RecurrenceEditorHandle): void {

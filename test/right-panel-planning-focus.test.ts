@@ -125,6 +125,22 @@ function holdNextWrite(h: InspectorHarness) {
   };
 }
 
+/** Holds the next write until `release`, after its submit dropped focus from the disabled Save. */
+function holdNextSave(h: InspectorHarness) {
+  const gate = deferred<void>();
+  const execute = h.api.execute.bind(h.api);
+  vi.spyOn(h.api, 'execute').mockImplementationOnce(async (command) => {
+    dropFocusFromDisabledButton();
+    await gate.promise;
+    return execute(command);
+  });
+  return {
+    release: () => {
+      gate.resolve();
+    },
+  };
+}
+
 describe('inspector planning focus continuity', () => {
   it('returns focus to the rebuilt priority chip after an option is chosen', async () => {
     const h = await hosted('- [ ] Current\n');
@@ -482,13 +498,7 @@ describe('inspector repeat editor focus continuity', () => {
 
   it('moves no focus when another task is selected while a repeat save is pending', async () => {
     const h = await hosted('- [ ] Current 📅 2026-09-23\n- [ ] Other\n');
-    const gate = deferred<void>();
-    const execute = h.api.execute.bind(h.api);
-    vi.spyOn(h.api, 'execute').mockImplementationOnce(async (command) => {
-      dropFocusFromDisabledButton();
-      await gate.promise;
-      return execute(command);
-    });
+    const held = holdNextSave(h);
 
     activate(control(h, '.abyss-repeat-chip'));
     await flushMicrotasks();
@@ -498,12 +508,104 @@ describe('inspector repeat editor focus continuity', () => {
     expect(activeDocument.activeElement).toBe(activeDocument.body);
     const other = h.node('Other');
     h.state.set('taskStack', [other.root, ...other.path]);
-    gate.resolve();
+    held.release();
     await flushMicrotasks();
 
     expect(await h.read()).toBe('- [ ] Current 🔁 every day 📅 2026-09-23\n- [ ] Other\n');
     expect(selectedTitle(h)).toBe('Other');
     // Keeping the repeat intent across a selection change would focus the other task's repeat chip.
     expect(activeDocument.activeElement).toBe(activeDocument.body);
+  });
+
+  it('returns focus to the rebuilt repeat chip when the note changes elsewhere during a repeat save', async () => {
+    const h = await hosted('- [ ] Current 📅 2026-09-23\n- [ ] Other\n');
+    const chip = control(h, '.abyss-repeat-chip');
+    const held = holdNextSave(h);
+
+    activate(chip);
+    await flushMicrotasks();
+    activate(editorButton(h, 'Daily'));
+    activate(editorButton(h, 'Save repeat'));
+    await flushMicrotasks();
+    const editor = control<HTMLElement>(h, '.abyss-recurrence-editor');
+    await h.app.vault.modify(h.file, '\n- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
+    await flushMicrotasks(40);
+    expect(editor.isConnected).toBe(false);
+    expect(h.el.querySelector('.abyss-recurrence-editor')).not.toBeNull();
+    held.release();
+    await flushMicrotasks();
+
+    expect(await h.read()).toBe('- [ ] Current 🔁 every day 📅 2026-09-23\n- [ ] Other edited\n');
+    expect(h.el.querySelector('.abyss-recurrence-editor')).toBeNull();
+    // A restore that records a new intent orphans the pending editor's resolver, which leaves focus on body.
+    expectRebuiltFocus(chip, control(h, '.abyss-repeat-chip'));
+  });
+
+  it('returns focus to the rebuilt actions button after a rebuild restored the editor Edit repeat… opened', async () => {
+    const h = await hosted('- [ ] Current 📅 2026-09-23\n- [ ] Other\n');
+    const actions = control(h, '[aria-label="More actions"]');
+    dropSaveFocusOnWrite(h);
+
+    activate(actions);
+    const item = menuItem(h, 'Edit repeat…');
+    item.focus();
+    key(item, 'Enter');
+    await flushMicrotasks();
+    activate(editorButton(h, 'Daily'));
+    const editor = control<HTMLElement>(h, '.abyss-recurrence-editor');
+    await h.app.vault.modify(h.file, '\n- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
+    await flushMicrotasks(40);
+    expect(editor.isConnected).toBe(false);
+    expect(h.el.querySelector('.abyss-recurrence-editor')).not.toBeNull();
+    activate(editorButton(h, 'Save repeat'));
+    await flushMicrotasks();
+
+    expect(await h.read()).toBe('- [ ] Current 🔁 every day 📅 2026-09-23\n- [ ] Other edited\n');
+    // A restore that records its intent from the repeat chip sends focus to the chip instead of the ⋯ that opened the editor.
+    expectRebuiltFocus(actions, control(h, '[aria-label="More actions"]'));
+  });
+
+  it('returns focus to the rebuilt actions button when a rebuild restores the editor during a pending Save opened from Edit repeat…', async () => {
+    const h = await hosted('- [ ] Current 📅 2026-09-23\n- [ ] Other\n');
+    const actions = control(h, '[aria-label="More actions"]');
+    const held = holdNextSave(h);
+
+    activate(actions);
+    const item = menuItem(h, 'Edit repeat…');
+    item.focus();
+    key(item, 'Enter');
+    await flushMicrotasks();
+    activate(editorButton(h, 'Daily'));
+    activate(editorButton(h, 'Save repeat'));
+    await flushMicrotasks();
+    const editor = control<HTMLElement>(h, '.abyss-recurrence-editor');
+    await h.app.vault.modify(h.file, '\n- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
+    await flushMicrotasks(40);
+    expect(editor.isConnected).toBe(false);
+    expect(h.el.querySelector('.abyss-recurrence-editor')).not.toBeNull();
+    held.release();
+    await flushMicrotasks();
+
+    expect(await h.read()).toBe('- [ ] Current 🔁 every day 📅 2026-09-23\n- [ ] Other edited\n');
+    // A restore that focuses its anchor would leave focus on the repeat chip instead of the ⋯ that opened the editor.
+    expectRebuiltFocus(actions, control(h, '[aria-label="More actions"]'));
+  });
+
+  it('keeps focus where the user moved it when a rebuild restores an edited repeat editor', async () => {
+    const h = await hosted('- [ ] Current 📅 2026-09-23\n- [ ] Other\n');
+    const outside = activeDocument.body.createEl('button', { text: 'Outside' });
+
+    activate(control(h, '.abyss-repeat-chip'));
+    await flushMicrotasks();
+    activate(editorButton(h, 'Daily'));
+    const editor = control<HTMLElement>(h, '.abyss-recurrence-editor');
+    outside.focus();
+    await h.app.vault.modify(h.file, '\n- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
+    await flushMicrotasks(40);
+
+    expect(editor.isConnected).toBe(false);
+    expect(h.el.querySelector('.abyss-recurrence-editor')).not.toBeNull();
+    // A restore that focuses its anchor would pull focus back to the repeat chip.
+    expect(activeDocument.activeElement).toBe(outside);
   });
 });
