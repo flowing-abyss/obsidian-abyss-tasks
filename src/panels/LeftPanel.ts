@@ -113,7 +113,8 @@ export class LeftPanel {
   private readonly explicitlyCollapsed_abyssPrivate = new Set<string>();
   private showAllProjects_abyssPrivate = false;
   private inlineAdd_abyssPrivate: InlineAddSession | undefined;
-  // Every session that has not ended, including one a newer "+" replaced as the record.
+  // Every session that has not ended, including one a newer "+" replaced as the record and one an
+  // Escape dismissed while its create runs.
   private readonly inlineAddSessions_abyssPrivate = new Set<InlineAddSession>();
   // When a tag is opened from the Pinned section, don't auto-expand the group
   // that contains it in the Tags tree — the pin exists precisely to avoid that.
@@ -512,7 +513,8 @@ export class LeftPanel {
     if (event.key !== 'Escape') return;
     event.preventDefault();
     event.stopPropagation();
-    this.finishInlineAdd_abyssPrivate(session);
+    if (session.phase === 'committing') this.dismissInlineAdd_abyssPrivate(session);
+    else this.finishInlineAdd_abyssPrivate(session);
   }
 
   private commitInlineAdd_abyssPrivate(session: InlineAddSession): void {
@@ -553,13 +555,27 @@ export class LeftPanel {
   }
 
   /**
-   * Ends the session and removes its input; focus the input held moves to the panel. A session
-   * that already ended leaves the panel alone: destroy() ends every live session, and Escape
-   * during a create or a render that could not place the input ends that one.
+   * Ends the session and releases its input. A session that already ended leaves the panel alone:
+   * destroy() ends every live session, and a render that could not place a focused input ends
+   * that one.
    */
   private finishInlineAdd_abyssPrivate(session: InlineAddSession): void {
     if (session.phase === 'ended') return;
     this.closeInlineAdd_abyssPrivate(session);
+    this.releaseInlineAdd_abyssPrivate(session);
+  }
+
+  /**
+   * An Escape while a create is pending. The create cannot be withdrawn, so only the input goes:
+   * the session stays committing and live until its create settles, which ends it and re-renders.
+   */
+  private dismissInlineAdd_abyssPrivate(session: InlineAddSession): void {
+    if (this.inlineAdd_abyssPrivate === session) this.inlineAdd_abyssPrivate = undefined;
+    this.releaseInlineAdd_abyssPrivate(session);
+  }
+
+  /** Focus the input holds moves to the panel, then the re-render removes the input. */
+  private releaseInlineAdd_abyssPrivate(session: InlineAddSession): void {
     const { input } = session;
     if (input.ownerDocument.activeElement === input && this.el_abyssPrivate.isConnected)
       this.el_abyssPrivate.focus({ preventScroll: true });

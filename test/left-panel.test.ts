@@ -2070,6 +2070,68 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     }
   });
 
+  it('removes a rolled-back tag group when its save fails after an Escape', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { el, save } = makeFull({ attached: true });
+    let rejectSave!: (error: Error) => void;
+    save.mockReturnValueOnce(
+      new Promise<void>((_resolve, fail) => {
+        rejectSave = fail;
+      }),
+    );
+    const tagLabels = (): Array<string | null> =>
+      Array.from(
+        el.querySelectorAll('.abyss-left-section--tags .abyss-left-label'),
+        (label) => label.textContent,
+      );
+    try {
+      const input = openInlineAdd(el, 'tags');
+      input.value = 'Focus';
+      keydown(input, 'Enter');
+      keydown(input, 'Escape');
+      expect(tagLabels()).toContain('Focus');
+
+      rejectSave(new Error('Settings could not be saved.'));
+      await flushMicrotasks();
+
+      // Ending the session at Escape leaves the rolled-back group on screen.
+      expect(tagLabels()).not.toContain('Focus');
+      expect(Notice).toHaveBeenCalledExactlyOnceWith(
+        'Could not add the tag group. Settings could not be saved.',
+      );
+      expect(activeDocument.activeElement).toBe(el);
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('keeps a destroyed panel empty when a create dismissed with Escape fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    let reject!: (error: Error) => void;
+    const { panel, el, tm } = makeFull({ attached: true });
+    vi.spyOn(tm, 'createManualGroup').mockImplementation(
+      () =>
+        new Promise<void>((_resolve, fail) => {
+          reject = fail;
+        }),
+    );
+    try {
+      const input = openInlineAdd(el, 'tags');
+      input.value = 'Focus';
+      keydown(input, 'Enter');
+      keydown(input, 'Escape');
+      panel.destroy();
+      reject(new Error('Disk full.'));
+      await flushMicrotasks();
+
+      // Dropping a dismissed session from the live set would let its failure rebuild the panel.
+      expect(el.childElementCount).toBe(0);
+      expect(Notice).toHaveBeenCalledExactlyOnceWith('Could not add the tag group. Disk full.');
+    } finally {
+      el.remove();
+    }
+  });
+
   it('keeps a second inline add open when the first create settles', async () => {
     let settle!: () => void;
     const { el } = makeFull({
