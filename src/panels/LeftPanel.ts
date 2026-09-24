@@ -537,7 +537,11 @@ export class LeftPanel {
     );
   }
 
-  /** A failed create stays retryable only while nothing was created and the input holds focus. */
+  /**
+   * A failed create stays retryable only while nothing was created and the input holds focus. The
+   * retry re-renders, since a render during the pending save may have drawn a group the failure
+   * rolled back; the held input keeps its focus, value, and caret.
+   */
   private failInlineAdd_abyssPrivate(session: InlineAddSession, error: unknown): void {
     console.error('[abyss-tasks] Could not finish the inline add', error);
     new Notice(inlineAddFailureNotice(session.key, error));
@@ -549,6 +553,7 @@ export class LeftPanel {
       input.ownerDocument.activeElement === input
     ) {
       session.phase = 'editing';
+      this.render_abyssPrivate();
       return;
     }
     this.finishInlineAdd_abyssPrivate(session);

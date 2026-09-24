@@ -1528,6 +1528,13 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     return event;
   }
 
+  function tagLabels(el: HTMLElement): Array<string | null> {
+    return Array.from(
+      el.querySelectorAll('.abyss-left-section--tags .abyss-left-label'),
+      (label) => label.textContent,
+    );
+  }
+
   function simulateBlurDuringEmpty(el: HTMLElement, input: HTMLInputElement): void {
     // jsdom fires nothing when a focused element is removed; Chromium blurs it.
     const empty = el.empty.bind(el);
@@ -2103,27 +2110,61 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
         rejectSave = fail;
       }),
     );
-    const tagLabels = (): Array<string | null> =>
-      Array.from(
-        el.querySelectorAll('.abyss-left-section--tags .abyss-left-label'),
-        (label) => label.textContent,
-      );
     try {
       const input = openInlineAdd(el, 'tags');
       input.value = 'Focus';
       keydown(input, 'Enter');
       keydown(input, 'Escape');
-      expect(tagLabels()).toContain('Focus');
+      expect(tagLabels(el)).toContain('Focus');
 
       rejectSave(new Error('Settings could not be saved.'));
       await flushMicrotasks();
 
       // Ending the session at Escape leaves the rolled-back group on screen.
-      expect(tagLabels()).not.toContain('Focus');
+      expect(tagLabels(el)).not.toContain('Focus');
       expect(Notice).toHaveBeenCalledExactlyOnceWith(
         'Could not add the tag group. Settings could not be saved.',
       );
       expect(activeDocument.activeElement).toBe(el);
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('removes a rolled-back tag group a refresh drew and keeps the input for a retry', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { panel, el, tm, save } = makeFull({ attached: true });
+    const create = vi.spyOn(tm, 'createManualGroup');
+    let rejectSave!: (error: Error) => void;
+    save.mockReturnValueOnce(
+      new Promise<void>((_resolve, fail) => {
+        rejectSave = fail;
+      }),
+    );
+    try {
+      const input = openInlineAdd(el, 'tags');
+      // Run the input's own focus task now, so only the failure's render can refocus it later.
+      await flushMicrotasks();
+      input.value = 'Focus';
+      keydown(input, 'Enter');
+      panel.refresh();
+      expect(tagLabels(el)).toContain('Focus');
+
+      rejectSave(new Error('Settings could not be saved.'));
+      await flushMicrotasks();
+
+      // A retry branch that returns without rendering leaves the rolled-back group on screen.
+      expect(tagLabels(el)).not.toContain('Focus');
+      expect(Notice).toHaveBeenCalledExactlyOnceWith(
+        'Could not add the tag group. Settings could not be saved.',
+      );
+      expect(el.querySelector('.abyss-left-section--tags .abyss-left-add-input')).toBe(input);
+      expect(input.value).toBe('Focus');
+      expect(activeDocument.activeElement).toBe(input);
+
+      keydown(input, 'Enter');
+      await flushMicrotasks();
+      expect(create.mock.calls).toEqual([['Focus'], ['Focus']]);
     } finally {
       el.remove();
     }
