@@ -2,6 +2,7 @@ import { anchoredPlacement } from './anchoredPlacement';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 import {
   bindSegmentedInputCommit,
+  DATE_INPUT_MAX,
   type SegmentedCommitReason,
   type SegmentedInputCommitHandle,
 } from './segmentedInputCommit';
@@ -94,7 +95,7 @@ class DatePickerLifecycle {
   };
 
   private commitDraft_abyssPrivate(reason: SegmentedCommitReason): void {
-    if (this.input_abyssPrivate.validity.badInput) return;
+    if (!this.input_abyssPrivate.validity.valid) return;
     // Enter and a native change close as a change always has; leaving the picker keeps focus where
     // the user sent it.
     const returnFocus = reason === 'change' || reason === 'enter';
@@ -196,6 +197,7 @@ export function showDatePickerPopover(options: DatePickerPopoverOptions): () => 
   const input = row.createEl('input');
   input.className = 'abyss-date-input';
   input.type = 'date';
+  input.max = DATE_INPUT_MAX;
   input.setAttribute('aria-label', 'Set date');
   input.value = options.initialValue ?? '';
 

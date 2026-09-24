@@ -409,7 +409,10 @@ describe('showDatePickerPopover', () => {
     try {
       vi.runAllTimers();
       const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
-      vi.spyOn(input, 'validity', 'get').mockReturnValue({ badInput: true } as ValidityState);
+      vi.spyOn(input, 'validity', 'get').mockReturnValue({
+        badInput: true,
+        valid: false,
+      } as ValidityState);
 
       input.dispatchEvent(
         new KeyboardEvent('keydown', { key: '2', bubbles: true, cancelable: true }),
@@ -421,6 +424,39 @@ describe('showDatePickerPopover', () => {
       // A pick that ignores bad input would close the picker on a date still being typed.
       expect(onPick).not.toHaveBeenCalled();
       expect(owner.querySelector('.abyss-date-picker-popover')).not.toBeNull();
+    } finally {
+      close();
+      owner.remove();
+    }
+  });
+
+  it('keeps a keyboard date past year 9999 open as an unusable draft on Enter', () => {
+    vi.useFakeTimers();
+    const { anchor, boundary, owner } = host();
+    const onPick = vi.fn();
+    const close = showDatePickerPopover({ owner, anchor, boundary, onPick });
+
+    try {
+      vi.runAllTimers();
+      const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '4', bubbles: true, cancelable: true }),
+      );
+      input.value = '42026-09-24';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      // jsdom keeps a five-digit year as a valid date string, as Chromium does.
+      expect(input.value).toBe('42026-09-24');
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+
+      // A pick that refuses only bad input closes the picker on a year no task date can hold.
+      expect(owner.querySelector('.abyss-date-picker-popover')).not.toBeNull();
+      expect(onPick).not.toHaveBeenCalled();
+      expect(input.value).toBe('42026-09-24');
+      expect(input.max).toBe('9999-12-31');
+      expect(input.validity.rangeOverflow).toBe(true);
     } finally {
       close();
       owner.remove();

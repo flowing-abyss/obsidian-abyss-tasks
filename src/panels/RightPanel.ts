@@ -24,6 +24,7 @@ import {
   type CommentTimeContextProvider,
   type CreateDependencySubtaskCommand,
   type DependencyDirection,
+  type LocalDate,
   type PlanningTarget,
   type SubtaskPatch,
   type SubtaskRef,
@@ -70,7 +71,7 @@ import {
 } from '../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText } from '../ui/renderTaskText';
 import { runAsyncAction } from '../ui/runAsyncAction';
-import { bindSegmentedInputCommit } from '../ui/segmentedInputCommit';
+import { bindSegmentedInputCommit, DATE_INPUT_MAX } from '../ui/segmentedInputCommit';
 import { renderStatusMarker, setStatusMarkerCompletionBlocked } from '../ui/StatusMarker';
 import { showStatusMenuAt, type StatusMenuHandle } from '../ui/statusMenu';
 import { showTagDropdown } from '../ui/tagDropdown';
@@ -3324,14 +3325,14 @@ export class RightPanel {
     const inputRow = pop.createDiv({ cls: 'abyss-popover-input-row' });
     const input = inputRow.createEl('input', {
       cls: 'abyss-date-input',
-      attr: { type: 'date', value: datePopoverValue(task, field) ?? '' },
+      attr: { type: 'date', max: DATE_INPUT_MAX, value: datePopoverValue(task, field) ?? '' },
     });
     const draft = bindSegmentedInputCommit({
       input,
       boundary: pop,
       commit: () => {
-        if (input.value === '' || input.validity.badInput) return;
-        runAsyncAction(this.updateDate_abyssPrivate(task, field, input.value));
+        if (input.value === '' || !input.validity.valid) return;
+        runAsyncAction(this.updateDate_abyssPrivate(task, field, localDate(input.value)));
         this.removeAnchoredSurface_abyssPrivate(pop);
       },
     });
@@ -3789,11 +3790,9 @@ export class RightPanel {
   private async updateDate_abyssPrivate(
     task: TaskLike,
     field: SchedulingDateField,
-    date: string,
+    date: LocalDate,
   ): Promise<void> {
-    await this.executePlanningPatch_abyssPrivate(task, {
-      [field]: { type: 'set', value: localDate(date) },
-    });
+    await this.executePlanningPatch_abyssPrivate(task, { [field]: { type: 'set', value: date } });
   }
 
   private async clearDate_abyssPrivate(task: TaskLike): Promise<void> {

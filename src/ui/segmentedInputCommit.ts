@@ -3,6 +3,12 @@ import { isImeOwnedEvent } from './ime';
 /** Why a segmented field commits: its own change, Enter, focus leaving it, or its owner closing. */
 export type SegmentedCommitReason = 'change' | 'enter' | 'departure' | 'flush';
 
+/**
+ * The `max` of a task date field. A task date has a four-digit year, so the field reports a later
+ * year invalid instead of offering it to the commit.
+ */
+export const DATE_INPUT_MAX = '9999-12-31';
+
 export interface SegmentedInputCommitHandle {
   /** Commits a keyboard draft now; without one it does nothing. */
   flush(): void;

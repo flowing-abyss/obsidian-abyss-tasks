@@ -1931,6 +1931,64 @@ describe('RightPanel popovers', () => {
     panel.destroy();
   });
 
+  it('keeps a keyboard date past year 9999 open as an unusable draft on Enter', async () => {
+    const selected = task({ title: 'Five-digit year', planning: { due: '2026-09-20' } });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'io-error',
+      cause: 'test',
+      contentState: 'unchanged',
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { panel, state, el } = await makePanel(
+      {},
+      { queries: queryApiForTasks(() => [selected]), execute },
+    );
+    activeDocument.body.append(el);
+    // An error thrown out of a key handler reaches the window as an `error` event.
+    const uncaught = vi.fn();
+    activeWindow.addEventListener('error', uncaught);
+    try {
+      state.set('taskStack', [selected]);
+      const chip = expectDefined(
+        Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button')).find(
+          (candidate) => candidate.textContent.startsWith('📅'),
+        ),
+      );
+      click(chip);
+      await tick();
+      const input = expectDefined(
+        el.querySelector<HTMLInputElement>('.abyss-date-popover .abyss-date-input'),
+      );
+      input.focus();
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '4', bubbles: true, cancelable: true }),
+      );
+      input.value = '42026-09-24';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      // jsdom keeps a five-digit year as a valid date string, as Chromium does.
+      expect(input.value).toBe('42026-09-24');
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+
+      // A commit that refuses only bad input logs `invalid-date` as it closes, or throws it on Enter.
+      expect(el.querySelector('.abyss-date-popover')).not.toBeNull();
+      expect(consoleError).not.toHaveBeenCalled();
+      expect(uncaught).not.toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
+      expect(input.value).toBe('42026-09-24');
+      expect(activeDocument.activeElement).toBe(input);
+      expect(input.max).toBe('9999-12-31');
+      expect(input.validity.rangeOverflow).toBe(true);
+    } finally {
+      activeWindow.removeEventListener('error', uncaught);
+      panel.destroy();
+      el.remove();
+    }
+  });
+
   it('cancels an incomplete keyboard date after focus leaves the whole popover', async () => {
     const selected = task({ title: 'Cancel incomplete', planning: { due: '2026-09-20' } });
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
