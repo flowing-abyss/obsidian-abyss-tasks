@@ -1,3 +1,4 @@
+import { addIcon, removeIcon } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TaskCommandResult } from '../src/tasks';
 import {
@@ -113,13 +114,16 @@ function dropSaveFocusOnWrite(h: InspectorHarness) {
   });
 }
 
-/** Holds the next write until `release`, so a test can act while it is in flight. */
-function holdNextWrite(h: InspectorHarness) {
+/**
+ * Holds the next write until `release`, so a test can act while it is in flight. With an
+ * `outcome`, the held write returns it instead of running.
+ */
+function holdNextWrite(h: InspectorHarness, outcome?: TaskCommandResult) {
   const gate = deferred<void>();
   const execute = h.api.execute.bind(h.api);
   const spy = vi.spyOn(h.api, 'execute').mockImplementationOnce(async (command) => {
     await gate.promise;
-    return execute(command);
+    return outcome ?? execute(command);
   });
   return {
     spy,
@@ -823,6 +827,42 @@ describe('inspector write outcomes', () => {
     expect(chip.getAttribute('data-priority')).toBe('D');
     expect(chip.classList.contains('abyss-chip-empty')).toBe(true);
     expect(activeDocument.activeElement).toBe(chip);
+  });
+
+  it('re-marks a priority popover reopened during a change that fails', async () => {
+    addIcon('check', '<path d="M20 6 9 17l-5-5" />');
+    inspectorCleanups.push(() => {
+      removeIcon('check');
+    });
+    const h = await hosted('- [ ] Current\n');
+    const messages: string[] = [];
+    notices(messages);
+    const held = holdNextWrite(h, { type: 'io-error', cause: 'test', contentState: 'unchanged' });
+    const chip = control(h, '.abyss-priority-chip');
+
+    activate(chip);
+    activate(control(h, '.abyss-priority-option[data-priority="A"]'));
+    activate(chip);
+    const highest = control(h, '.abyss-priority-option[data-priority="A"]');
+    expect([
+      highest.classList.contains('is-active'),
+      highest.getAttribute('aria-selected'),
+    ]).toEqual([true, 'true']);
+    held.release();
+    await flushMicrotasks();
+
+    const none = control(h, '.abyss-priority-option[data-priority="D"]');
+    expect(messages).toEqual(['Failed to update task. Please try again.']);
+    expect(chip.textContent).toBe('Priority');
+    expect(chip.getAttribute('data-priority')).toBe('D');
+    // A rollback that updates only the chip leaves the open popover marking Highest.
+    expect(none.classList.contains('is-active')).toBe(true);
+    expect(none.getAttribute('aria-selected')).toBe('true');
+    expect(none.querySelector('.abyss-priority-option-check svg.check')).not.toBeNull();
+    expect(highest.classList.contains('is-active')).toBe(false);
+    expect(highest.getAttribute('aria-selected')).toBe('false');
+    expect(highest.querySelector('.abyss-priority-option-check')?.childElementCount).toBe(0);
+    expect(activeDocument.activeElement).toBe(highest);
   });
 
   it('rolls a failed change back to the priority shown at its click, not at the popover opening', async () => {

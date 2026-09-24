@@ -470,6 +470,22 @@ function applyPriorityChipPresentation(chip: HTMLElement, priority: string): voi
   chip.className = `abyss-chip abyss-priority-chip abyss-priority-chip--${priority}${priority === 'D' ? ' abyss-chip-empty' : ''}`;
 }
 
+/**
+ * Marks the option for `priority` in a priority popover and clears the others: `is-active`,
+ * `aria-selected`, and the check. The build and a rollback share it, so they cannot disagree.
+ */
+function markPriorityOptions(popover: HTMLElement, priority: string): void {
+  popover.querySelectorAll<HTMLElement>('.abyss-priority-option').forEach((option) => {
+    const active = option.getAttribute('data-priority') === priority;
+    option.toggleClass('is-active', active);
+    option.setAttribute('aria-selected', String(active));
+    const check = option.querySelector<HTMLElement>('.abyss-priority-option-check');
+    if (check === null) return;
+    if (active) setIcon(check, 'check');
+    else check.empty();
+  });
+}
+
 export class RightPanel {
   private readonly undo_abyssPrivate = createInlineTaskUndo();
   private selectionEpoch_abyssPrivate = 0;
@@ -3350,7 +3366,6 @@ export class RightPanel {
       attr: { role: 'listbox', 'aria-label': 'Priority' },
     });
 
-    const currentPriority = anchor.getAttribute('data-priority') ?? task.priority;
     const options: Array<{ value: TaskPriority; label: string }> = [
       { value: 'A', label: 'Highest' },
       { value: 'B', label: 'High' },
@@ -3359,20 +3374,12 @@ export class RightPanel {
       { value: 'E', label: 'Low' },
       { value: 'F', label: 'Lowest' },
     ];
-    let selectedOption: HTMLButtonElement | undefined;
     for (const opt of options) {
-      const isActive = currentPriority === opt.value;
       const btn = pop.createEl('button', {
-        cls: `abyss-priority-option${isActive ? ' is-active' : ''}`,
-        attr: {
-          'data-priority': opt.value,
-          role: 'option',
-          'aria-selected': String(isActive),
-        },
+        cls: 'abyss-priority-option',
+        attr: { 'data-priority': opt.value, role: 'option' },
       });
-      if (isActive) selectedOption = btn;
-      const checkEl = btn.createSpan({ cls: 'abyss-priority-option-check' });
-      if (isActive) setIcon(checkEl, 'check');
+      btn.createSpan({ cls: 'abyss-priority-option-check' });
       const flagEl = btn.createSpan({ cls: 'abyss-priority-option-flag' });
       setIcon(flagEl, 'flag');
       btn.createSpan({ cls: 'abyss-priority-option-label', text: opt.label });
@@ -3383,12 +3390,18 @@ export class RightPanel {
         runAsyncAction(this.commitPriorityChoice_abyssPrivate(anchor, task, opt.value, previous));
       });
     }
+    markPriorityOptions(pop, anchor.getAttribute('data-priority') ?? task.priority);
     this.positionAnchoredSurface_abyssPrivate(pop, anchor, 'below-start');
     this.dismissMenuOnOutsideClick_abyssPrivate(pop, anchor);
-    selectedOption?.focus({ preventScroll: true });
+    pop
+      .querySelector<HTMLElement>('.abyss-priority-option.is-active')
+      ?.focus({ preventScroll: true });
   }
 
-  /** Writes a chosen priority; a failure or a refusal puts back the priority the chip showed. */
+  /**
+   * Writes a chosen priority; a failure or a refusal puts back the priority the chip showed. A
+   * popover opened again while the write was pending marks that priority again, and focus stays.
+   */
   private async commitPriorityChoice_abyssPrivate(
     chip: HTMLElement,
     task: TaskLike,
@@ -3398,7 +3411,10 @@ export class RightPanel {
     const result = await this.executePlanningPatch_abyssPrivate(task, {
       priority: { type: 'set', value: priority },
     });
-    if (result.type !== 'ok' && chip.isConnected) applyPriorityChipPresentation(chip, previous);
+    if (result.type === 'ok' || !chip.isConnected) return;
+    applyPriorityChipPresentation(chip, previous);
+    const popover = this.el_abyssPrivate.querySelector<HTMLElement>('.abyss-priority-popover');
+    if (popover !== null) markPriorityOptions(popover, previous);
   }
 
   private positionAnchoredSurface_abyssPrivate(
