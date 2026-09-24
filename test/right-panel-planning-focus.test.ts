@@ -105,47 +105,24 @@ function menuItem(h: InspectorHarness, label: string): HTMLElement {
   );
 }
 
-/** Every write first drops focus the way Chromium does when the submit disables Save. */
-function dropSaveFocusOnWrite(h: InspectorHarness) {
-  const execute = h.api.execute.bind(h.api);
-  return vi.spyOn(h.api, 'execute').mockImplementation(async (command) => {
-    dropFocusFromDisabledButton();
-    return execute(command);
-  });
+interface HeldWriteOptions {
+  /** The result the held write returns instead of running. */
+  readonly outcome?: TaskCommandResult;
+  /** The write first drops focus the way Chromium does when the submit disables Save. */
+  readonly dropSaveFocus?: boolean;
 }
 
-/**
- * Holds the next write until `release`, so a test can act while it is in flight. With an
- * `outcome`, the held write returns it instead of running.
- */
-function holdNextWrite(h: InspectorHarness, outcome?: TaskCommandResult) {
+/** Holds the next write until `release`, so a test can act while it is in flight. */
+function holdNextWrite(h: InspectorHarness, { outcome, dropSaveFocus }: HeldWriteOptions = {}) {
   const gate = deferred<void>();
   const execute = h.api.execute.bind(h.api);
   const spy = vi.spyOn(h.api, 'execute').mockImplementationOnce(async (command) => {
+    if (dropSaveFocus === true) dropFocusFromDisabledButton();
     await gate.promise;
     return outcome ?? execute(command);
   });
   return {
     spy,
-    release: () => {
-      gate.resolve();
-    },
-  };
-}
-
-/**
- * Holds the next write until `release`, after its submit dropped focus from the disabled Save. With
- * an `outcome`, the held write returns it instead of running.
- */
-function holdNextSave(h: InspectorHarness, outcome?: TaskCommandResult) {
-  const gate = deferred<void>();
-  const execute = h.api.execute.bind(h.api);
-  vi.spyOn(h.api, 'execute').mockImplementationOnce(async (command) => {
-    dropFocusFromDisabledButton();
-    await gate.promise;
-    return outcome ?? execute(command);
-  });
-  return {
     release: () => {
       gate.resolve();
     },
@@ -441,12 +418,13 @@ describe('inspector repeat editor focus continuity', () => {
   it('returns focus to the rebuilt repeat chip after Save', async () => {
     const h = await hosted('- [ ] Current 📅 2026-09-23\n');
     const chip = control(h, '.abyss-repeat-chip');
-    dropSaveFocusOnWrite(h);
+    const held = holdNextWrite(h, { dropSaveFocus: true });
 
     activate(chip);
     await flushMicrotasks();
     activate(editorButton(h, 'Daily'));
     activate(editorButton(h, 'Save repeat'));
+    held.release();
     await flushMicrotasks();
 
     expect(await h.read()).toBe('- [ ] Current 🔁 every day 📅 2026-09-23\n');
@@ -457,7 +435,7 @@ describe('inspector repeat editor focus continuity', () => {
   it('returns focus to the rebuilt actions button after Save from Edit repeat…', async () => {
     const h = await hosted('- [ ] Current 📅 2026-09-23\n');
     const actions = control(h, '[aria-label="More actions"]');
-    dropSaveFocusOnWrite(h);
+    const held = holdNextWrite(h, { dropSaveFocus: true });
 
     activate(actions);
     const item = menuItem(h, 'Edit repeat…');
@@ -466,6 +444,7 @@ describe('inspector repeat editor focus continuity', () => {
     await flushMicrotasks();
     activate(editorButton(h, 'Daily'));
     activate(editorButton(h, 'Save repeat'));
+    held.release();
     await flushMicrotasks();
 
     expect(await h.read()).toBe('- [ ] Current 🔁 every day 📅 2026-09-23\n');
@@ -475,16 +454,17 @@ describe('inspector repeat editor focus continuity', () => {
   it('closes the repeat editor and refocuses the chip after a Save that changes nothing', async () => {
     const h = await hosted('- [ ] Current 🔁 every day 📅 2026-09-23\n');
     const chip = control(h, '.abyss-repeat-chip');
-    const spy = dropSaveFocusOnWrite(h);
+    const held = holdNextWrite(h, { dropSaveFocus: true });
 
     activate(chip);
     await flushMicrotasks();
     activate(editorButton(h, 'Weekly'));
     activate(editorButton(h, 'Daily'));
     activate(editorButton(h, 'Save repeat'));
+    held.release();
     await flushMicrotasks();
 
-    expect(await spy.mock.results[0]?.value).toMatchObject({ type: 'ok', changed: false });
+    expect(await held.spy.mock.results[0]?.value).toMatchObject({ type: 'ok', changed: false });
     expect(await h.read()).toBe('- [ ] Current 🔁 every day 📅 2026-09-23\n');
     // Restoring the submitted editor draft after an unchanged result would reopen the editor.
     expect(h.el.querySelector('.abyss-recurrence-editor')).toBeNull();
@@ -494,12 +474,13 @@ describe('inspector repeat editor focus continuity', () => {
   it('returns focus to the rebuilt repeat chip of a drilled-in sub-task after Save', async () => {
     const h = await hosted('- [ ] Current\n  - [ ] Child 📅 2026-09-23\n', 'Child');
     const chip = control(h, '.abyss-repeat-chip');
-    dropSaveFocusOnWrite(h);
+    const held = holdNextWrite(h, { dropSaveFocus: true });
 
     activate(chip);
     await flushMicrotasks();
     activate(editorButton(h, 'Daily'));
     activate(editorButton(h, 'Save repeat'));
+    held.release();
     await flushMicrotasks();
 
     expect(await h.read()).toBe('- [ ] Current\n  - [ ] Child 🔁 every day 📅 2026-09-23\n');
@@ -509,7 +490,7 @@ describe('inspector repeat editor focus continuity', () => {
 
   it('moves no focus when another task is selected while a repeat save is pending', async () => {
     const h = await hosted('- [ ] Current 📅 2026-09-23\n- [ ] Other\n');
-    const held = holdNextSave(h);
+    const held = holdNextWrite(h, { dropSaveFocus: true });
 
     activate(control(h, '.abyss-repeat-chip'));
     await flushMicrotasks();
@@ -531,7 +512,7 @@ describe('inspector repeat editor focus continuity', () => {
   it('returns focus to the rebuilt repeat chip when the note changes elsewhere during a repeat save', async () => {
     const h = await hosted('- [ ] Current 📅 2026-09-23\n- [ ] Other\n');
     const chip = control(h, '.abyss-repeat-chip');
-    const held = holdNextSave(h);
+    const held = holdNextWrite(h, { dropSaveFocus: true });
 
     activate(chip);
     await flushMicrotasks();
@@ -555,7 +536,7 @@ describe('inspector repeat editor focus continuity', () => {
   it('returns focus to the rebuilt actions button after a rebuild restored the editor Edit repeat… opened', async () => {
     const h = await hosted('- [ ] Current 📅 2026-09-23\n- [ ] Other\n');
     const actions = control(h, '[aria-label="More actions"]');
-    dropSaveFocusOnWrite(h);
+    const held = holdNextWrite(h, { dropSaveFocus: true });
 
     activate(actions);
     const item = menuItem(h, 'Edit repeat…');
@@ -569,6 +550,7 @@ describe('inspector repeat editor focus continuity', () => {
     expect(editor.isConnected).toBe(false);
     expect(h.el.querySelector('.abyss-recurrence-editor')).not.toBeNull();
     activate(editorButton(h, 'Save repeat'));
+    held.release();
     await flushMicrotasks();
 
     expect(await h.read()).toBe('- [ ] Current 🔁 every day 📅 2026-09-23\n- [ ] Other edited\n');
@@ -579,7 +561,7 @@ describe('inspector repeat editor focus continuity', () => {
   it('returns focus to the rebuilt actions button when a rebuild restores the editor during a pending Save opened from Edit repeat…', async () => {
     const h = await hosted('- [ ] Current 📅 2026-09-23\n- [ ] Other\n');
     const actions = control(h, '[aria-label="More actions"]');
-    const held = holdNextSave(h);
+    const held = holdNextWrite(h, { dropSaveFocus: true });
 
     activate(actions);
     const item = menuItem(h, 'Edit repeat…');
@@ -625,7 +607,10 @@ describe('inspector repeat editor focus continuity', () => {
     const messages: string[] = [];
     notices(messages);
     const chip = control(h, '.abyss-repeat-chip');
-    const held = holdNextSave(h, { type: 'io-error', cause: 'test', contentState: 'unchanged' });
+    const held = holdNextWrite(h, {
+      dropSaveFocus: true,
+      outcome: { type: 'io-error', cause: 'test', contentState: 'unchanged' },
+    });
 
     activate(chip);
     await flushMicrotasks();
@@ -659,7 +644,7 @@ describe('inspector repeat editor focus continuity', () => {
     await flushMicrotasks(40);
     expect(h.el.querySelector('.abyss-recurrence-editor')).not.toBeNull();
     expect(activeDocument.activeElement).toBe(outside);
-    const held = holdNextSave(h);
+    const held = holdNextWrite(h, { dropSaveFocus: true });
     activate(editorButton(h, 'Save repeat'));
     await flushMicrotasks();
     expect(activeDocument.activeElement).toBe(activeDocument.body);
@@ -837,7 +822,9 @@ describe('inspector write outcomes', () => {
     const h = await hosted('- [ ] Current\n');
     const messages: string[] = [];
     notices(messages);
-    const held = holdNextWrite(h, { type: 'io-error', cause: 'test', contentState: 'unchanged' });
+    const held = holdNextWrite(h, {
+      outcome: { type: 'io-error', cause: 'test', contentState: 'unchanged' },
+    });
     const chip = control(h, '.abyss-priority-chip');
 
     activate(chip);

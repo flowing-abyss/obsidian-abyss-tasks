@@ -1476,19 +1476,7 @@ describe('mountRecurrenceEditor', () => {
     const previous = activeDocument.body.createEl('button', { text: 'Previous focus' });
     const anchor = activeDocument.body.createEl('button', { text: 'Repeat marker' });
     previous.focus();
-    const root = task({ planning: { due: '2026-08-09' } });
-    const handle = mountAnchoredRecurrenceEditor({
-      anchor,
-      source: { root, target: { type: 'task', ref: root.ref } },
-      policy,
-      ownershipConflict: false,
-      onSubmit: vi.fn().mockResolvedValue({
-        type: 'ok',
-        changed: true,
-        outcome: { type: 'task', task: root },
-      }),
-    });
-    mounted.push(handle);
+    const handle = mountAnchored(anchor);
     vi.runAllTimers();
     const popover = expectDefined(
       activeDocument.querySelector<HTMLElement>('.abyss-recurrence-popover'),
