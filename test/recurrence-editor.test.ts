@@ -97,6 +97,47 @@ function button(container: HTMLElement, label: string): HTMLButtonElement {
   return match;
 }
 
+/** A popout window's realm: an iframe whose elements carry the Obsidian DOM helpers. */
+function popoutRealm(): {
+  readonly frame: HTMLIFrameElement;
+  readonly document: Document;
+  readonly window: Window & typeof window;
+} {
+  const frame = activeDocument.body.createEl('iframe');
+  const ownerWindow = frame.contentWindow as Window & typeof window;
+  for (const method of ['createDiv', 'createEl', 'createSpan', 'empty'] as const) {
+    Object.defineProperty(ownerWindow.HTMLElement.prototype, method, {
+      configurable: true,
+      value: methodOf(HTMLElement.prototype, method),
+    });
+  }
+  return { frame, document: expectDefined(frame.contentDocument), window: ownerWindow };
+}
+
+/** A button created by the popout's own document, so it belongs to the popout realm. */
+function popoutButton(popout: ReturnType<typeof popoutRealm>): HTMLElement {
+  const element = popout.document.createElementNS('http://www.w3.org/1999/xhtml', 'button');
+  popout.document.body.append(element);
+  return element;
+}
+
+function mountAnchored(anchor: HTMLElement): RecurrenceEditorHandle {
+  const root = task({ planning: { due: '2026-08-09' } });
+  const handle = mountAnchoredRecurrenceEditor({
+    anchor,
+    source: { root, target: { type: 'task', ref: root.ref } },
+    policy,
+    ownershipConflict: false,
+    onSubmit: vi.fn().mockResolvedValue({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'task', task: root },
+    }),
+  });
+  mounted.push(handle);
+  return handle;
+}
+
 afterEach(() => {
   vi.useRealTimers();
   for (const handle of mounted.splice(0)) handle.destroy();
@@ -805,17 +846,9 @@ describe('mountRecurrenceEditor', () => {
   });
 
   it('owns submit shortcuts in the editor owner realm', async () => {
-    const frame = activeDocument.body.createEl('iframe');
-    const ownerDocument = expectDefined(frame.contentDocument);
-    const ownerWindow = frame.contentWindow as Window & typeof window;
-    for (const method of ['createDiv', 'createEl', 'createSpan', 'empty'] as const) {
-      Object.defineProperty(ownerWindow.HTMLElement.prototype, method, {
-        configurable: true,
-        value: methodOf(HTMLElement.prototype, method),
-      });
-    }
+    const popout = popoutRealm();
     const root = task({ planning: { due: '2026-08-09' } });
-    const container = ownerDocument.body.createDiv();
+    const container = popout.document.body.createDiv();
     const onSubmit = vi
       .fn<(patch: TaskPatch) => Promise<TaskCommandResult>>()
       .mockResolvedValue({ type: 'ok', changed: true, outcome: { type: 'task', task: root } });
@@ -834,13 +867,13 @@ describe('mountRecurrenceEditor', () => {
     const shortcut = submitShortcut(button(container, 'Weekdays'), { metaKey: true });
     await flushMicrotasks();
 
-    expect(shortcut).toBeInstanceOf(ownerWindow.KeyboardEvent);
+    expect(shortcut).toBeInstanceOf(popout.window.KeyboardEvent);
     expect(shortcut.defaultPrevented).toBe(true);
     expect(onSubmit).toHaveBeenCalledWith({
       recurrence: { type: 'set', value: 'every weekday' },
     });
     expect(onClose).toHaveBeenCalledOnce();
-    frame.remove();
+    popout.frame.remove();
   });
 
   it('removes the exact owner-window capture listener on destroy', async () => {
@@ -1455,6 +1488,57 @@ describe('mountRecurrenceEditor', () => {
     expect(activeDocument.querySelector('.abyss-recurrence-popover')).toBeNull();
     // An anchored controller that resolves only its anchor would drop the fallback it had.
     expect(activeDocument.activeElement).toBe(previous);
+    vi.useRealTimers();
+  });
+
+  it('returns focus to a popout anchor when the anchored editor is dismissed', () => {
+    vi.useFakeTimers();
+    const popout = popoutRealm();
+    try {
+      const anchor = popoutButton(popout);
+      expect(anchor).not.toBeInstanceOf(HTMLElement);
+      anchor.focus();
+      const handle = mountAnchored(anchor);
+      vi.runAllTimers();
+      const popover = expectDefined(
+        popout.document.querySelector<HTMLElement>('.abyss-recurrence-popover'),
+      );
+      expect(popover.contains(popout.document.activeElement)).toBe(true);
+
+      handle.dismiss();
+
+      expect(popover.isConnected).toBe(false);
+      // A main-window instanceof check rejects the popout anchor and leaves focus on the body.
+      expect(popout.document.activeElement).toBe(anchor);
+    } finally {
+      popout.frame.remove();
+    }
+    vi.useRealTimers();
+  });
+
+  it('returns focus to the popout element focused when the anchored editor opened once its anchor is gone', () => {
+    vi.useFakeTimers();
+    const popout = popoutRealm();
+    try {
+      const previous = popoutButton(popout);
+      const anchor = popoutButton(popout);
+      previous.focus();
+      const handle = mountAnchored(anchor);
+      vi.runAllTimers();
+      const popover = expectDefined(
+        popout.document.querySelector<HTMLElement>('.abyss-recurrence-popover'),
+      );
+      expect(popover.contains(popout.document.activeElement)).toBe(true);
+      anchor.remove();
+
+      handle.dismiss();
+
+      expect(popover.isConnected).toBe(false);
+      // A main-window instanceof check drops the popout element the editor opened from.
+      expect(popout.document.activeElement).toBe(previous);
+    } finally {
+      popout.frame.remove();
+    }
     vi.useRealTimers();
   });
 

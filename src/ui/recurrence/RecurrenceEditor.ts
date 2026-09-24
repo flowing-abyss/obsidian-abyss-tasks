@@ -8,6 +8,7 @@ import {
   type TaskOccurrenceResult,
   type TaskPatch,
 } from '../../tasks';
+import { isRealmHTMLElement } from '../domRealm';
 import { isImeOwnedEvent } from '../ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
@@ -380,8 +381,8 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
 
   private restoreFocus_abyssPrivate(): void {
     const resolve = this.options_abyssPrivate.dismissalFocus;
-    const target = resolve === undefined ? this.previousFocus_abyssPrivate : resolve();
-    if (target instanceof HTMLElement && target.isConnected) target.focus();
+    const target = (resolve === undefined ? this.previousFocus_abyssPrivate : resolve()) ?? null;
+    if (isRealmHTMLElement(target) && target.isConnected) target.focus();
   }
 
   private textInput_abyssPrivate(
@@ -1280,7 +1281,7 @@ class AnchoredRecurrenceEditorController implements RecurrenceEditorHandle {
     const anchor = this.options_abyssPrivate.anchor;
     // The editor records this same element as its opening focus; nothing moves focus in between.
     const active = this.ownerDocument_abyssPrivate.activeElement;
-    const opened = active instanceof HTMLElement ? active : undefined;
+    const opened = isRealmHTMLElement(active) ? active : undefined;
     this.editor_abyssPrivate = mountRecurrenceEditor({
       ...this.options_abyssPrivate,
       container: this.popover_abyssPrivate,
