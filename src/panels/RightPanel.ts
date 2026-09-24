@@ -91,6 +91,7 @@ import {
   draftPlainText,
   isDirtyDraft,
   rebaseRightPanelDraft,
+  type RecurrenceEditorDraft,
   type RightPanelDraftBundle,
   type RightPanelDraftState,
 } from '../ui/taskDraftContinuity';
@@ -432,6 +433,24 @@ function isEntryDraft(
   draft: RightPanelDraftState,
 ): draft is Extract<RightPanelDraftState, { readonly kind: 'new-subtask' | 'new-comment' }> {
   return draft.kind === 'new-subtask' || draft.kind === 'new-comment';
+}
+
+/** A repeat editor's state without the control and text selection it had focused. */
+function unfocusedRecurrenceEditor({
+  focusedControl: _focusedControl,
+  selectionStart: _selectionStart,
+  selectionEnd: _selectionEnd,
+  ...editor
+}: RecurrenceEditorDraft): RecurrenceEditorDraft {
+  return editor;
+}
+
+/** The draft without its focus: `hadFocus` off, and no focused repeat control or selection. */
+function unfocusedDraft(draft: RightPanelDraftState): RightPanelDraftState {
+  if (draft.kind === 'recurrence-editor') {
+    return { ...draft, editor: unfocusedRecurrenceEditor(draft.editor), hadFocus: false };
+  }
+  return { ...draft, hadFocus: false };
 }
 
 export class RightPanel {
@@ -975,9 +994,14 @@ export class RightPanel {
     this.onMutationLifecycle_abyssPrivate?.({ phase: 'settled', ref: { ...submitted.ref }, token });
   }
 
+  /**
+   * Reopens or preserves a consumed submission's draft after its write failed. The draft keeps the
+   * focus it had at submit time only while no control holds focus now.
+   */
   private recoverSubmittedDraft_abyssPrivate(submitted: SubmittedDraft): void {
-    const draft = submitted.draft;
-    if (draft == null || submitted.dismissed === true) return;
+    const submittedDraft = submitted.draft;
+    if (submittedDraft == null || submitted.dismissed === true) return;
+    const draft = this.recoverableDraft_abyssPrivate(submittedDraft);
     const currentSameKey = this.captureDraftState()?.entries.find(
       (candidate) => draftIdentity(candidate) === draftIdentity(draft),
     );
@@ -1697,18 +1721,26 @@ export class RightPanel {
     popover: HTMLElement,
     handle: RecurrenceEditorHandle,
   ): void {
-    const ownerDocument = this.el_abyssPrivate.ownerDocument;
-    const active = ownerDocument.activeElement;
     if (
-      active === null ||
-      active === ownerDocument.body ||
-      active === this.el_abyssPrivate ||
-      popover.contains(active)
+      this.focusIsNeutral_abyssPrivate() ||
+      popover.contains(this.el_abyssPrivate.ownerDocument.activeElement)
     ) {
       handle.dismiss();
       return;
     }
     this.removeAnchoredSurface_abyssPrivate(popover);
+  }
+
+  /** A submitted draft as recovery restores it: without its focus once a control holds focus. */
+  private recoverableDraft_abyssPrivate(draft: RightPanelDraftState): RightPanelDraftState {
+    return this.focusIsNeutral_abyssPrivate() ? draft : unfocusedDraft(draft);
+  }
+
+  /** Whether focus is nowhere, on the body, or on the inspector container: no control holds it. */
+  private focusIsNeutral_abyssPrivate(): boolean {
+    const ownerDocument = this.el_abyssPrivate.ownerDocument;
+    const active = ownerDocument.activeElement;
+    return active === null || active === ownerDocument.body || active === this.el_abyssPrivate;
   }
 
   private statusFocusTarget_abyssPrivate(stack: readonly TaskLike[]): TaskNodeRef | undefined {
