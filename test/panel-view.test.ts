@@ -255,6 +255,56 @@ describe('PanelView dependency command convergence', () => {
   );
 });
 
+describe('PanelView inspector focus continuity', () => {
+  it('returns focus to the rebuilt priority chip after the sidebar applies the index change', async () => {
+    const app = await createAppWithFiles({ 'tasks.md': '\n- [ ] Current\n' });
+    const application = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
+    await application.index.initialize();
+    const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+    const view = new PanelView(
+      leaf,
+      DEFAULT_SETTINGS,
+      makeTagManager(app),
+      application.index,
+      application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+      application.statusRegistry,
+    );
+    await view.onOpen();
+    activeDocument.body.appendChild(view.containerEl);
+    try {
+      const internals = view as unknown as { state_abyssPrivate: AppState };
+      internals.state_abyssPrivate.set('taskStack', [expectDefined(application.index.list()[0])]);
+      const chip = expectDefined(
+        view.contentEl.querySelector<HTMLButtonElement>('.abyss-right .abyss-priority-chip'),
+      );
+
+      chip.focus();
+      chip.click();
+      const option = expectDefined(
+        view.contentEl.querySelector<HTMLButtonElement>(
+          '.abyss-right .abyss-priority-option[data-priority="A"]',
+        ),
+      );
+      option.focus();
+      option.click();
+      await flushMicrotasks(20);
+
+      const file = app.vault.getAbstractFileByPath('tasks.md');
+      if (!(file instanceof TFile)) throw new Error('Missing fixture');
+      expect(await app.vault.read(file)).toBe('\n- [ ] Current 🔺\n');
+      const rebuilt = expectDefined(
+        view.contentEl.querySelector<HTMLButtonElement>('.abyss-right .abyss-priority-chip'),
+      );
+      expect(rebuilt).not.toBe(chip);
+      expect(activeDocument.activeElement).toBe(rebuilt);
+    } finally {
+      await view.onClose();
+      view.containerEl.remove();
+      application.index.destroy();
+    }
+  });
+});
+
 type TaskApplication = ReturnType<typeof configuredTaskApplication>;
 
 describe('PanelView', () => {

@@ -488,6 +488,72 @@ describe('inspector tracked time badge', () => {
     expect(await stack.read()).toContain(`  - ${NOW_ATOM} →\n`);
     expect(badge(el).classList.contains('is-tracking')).toBe(true);
   });
+
+  it('keeps keyboard focus on the toggle it starts and pauses from', async () => {
+    const harness = await inspector(UNTRACKED);
+    const control = toggle(harness.el);
+
+    control.focus();
+    control.click();
+    await flushMicrotasks();
+
+    expect(await harness.read()).toBe(`- [ ] Current\n\t- ${NOW_ATOM} →\n`);
+    expect(toggle(harness.el)).toBe(control);
+    expect(activeDocument.activeElement).toBe(control);
+
+    harness.advance(2 * MINUTE);
+    control.click();
+    await flushMicrotasks();
+
+    expect(await harness.read()).toBe(
+      `- [ ] Current\n\t- ${NOW_ATOM} → 2026-09-18T14:07:32+03:00\n`,
+    );
+    expect(activeDocument.activeElement).toBe(control);
+  });
+
+  it('moves keyboard focus to the badge body when a pause disables the toggle', async () => {
+    const harness = await inspector(
+      ['- [x] Current', '  - [ ] Child', '    - 2026-09-18T12:30:32+03:00 →', ''].join('\n'),
+    );
+    const control = toggle(harness.el);
+    expect(control.disabled).toBe(false);
+
+    control.focus();
+    control.click();
+    await flushMicrotasks();
+
+    expect(await harness.read()).toContain('→ 2026-09-18T14:05:32+03:00');
+    expect(control.disabled).toBe(true);
+    // A restore that ignores `:disabled` would focus the disabled toggle, which takes no focus.
+    expect(activeDocument.activeElement).toBe(body(harness.el));
+  });
+
+  it('returns keyboard focus to the actions button after Start tracking from its menu', async () => {
+    const harness = await inspector(UNTRACKED);
+    const actions = expectDefined(
+      harness.el.querySelector<HTMLButtonElement>('[aria-label="More actions"]'),
+    );
+
+    actions.focus();
+    actions.click();
+    const item = expectDefined(
+      Array.from(
+        harness.el.querySelectorAll<HTMLElement>('.abyss-task-context-menu .abyss-context-item'),
+      ).find((candidate) => candidate.textContent === 'Start tracking'),
+    );
+    item.focus();
+    item.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+
+    expect(await harness.read()).toBe(`- [ ] Current\n\t- ${NOW_ATOM} →\n`);
+    const rebuilt = expectDefined(
+      harness.el.querySelector<HTMLButtonElement>('[aria-label="More actions"]'),
+    );
+    expect(rebuilt).not.toBe(actions);
+    expect(activeDocument.activeElement).toBe(rebuilt);
+  });
 });
 
 /**

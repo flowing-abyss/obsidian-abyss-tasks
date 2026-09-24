@@ -2983,6 +2983,41 @@ describe('RightPanel popovers', () => {
     panel.destroy();
     el.remove();
   });
+
+  it('returns focus to the rebuilt priority chip after an unchanged priority result', async () => {
+    const selected = task({ title: 'Unchanged priority', priority: 'B' });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'ok',
+      changed: false,
+      outcome: { type: 'task', task: selected },
+    });
+    const { panel, state, el } = await makePanel(
+      {},
+      { queries: queryApiForTasks(() => [selected]), execute },
+    );
+    activeDocument.body.append(el);
+    state.set('taskStack', [selected]);
+    const chip = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-priority-chip'));
+
+    try {
+      chip.focus();
+      click(chip);
+      const option = expectDefined(
+        el.querySelector<HTMLButtonElement>('.abyss-priority-option[data-priority="B"]'),
+      );
+      option.focus();
+      click(option);
+      await flushMicrotasks();
+
+      const rebuilt = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-priority-chip'));
+      expect(execute).toHaveBeenCalledOnce();
+      expect(rebuilt).not.toBe(chip);
+      expect(activeDocument.activeElement).toBe(rebuilt);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
 });
 
 describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priority)', () => {

@@ -1430,4 +1430,72 @@ describe('TaskModal with real RightPanel', () => {
     expect(activeDocument.querySelector(`.abyss-modal ${entry.ownedSelector}`)).toBeNull();
     expect(activeDocument.querySelector('.abyss-modal-backdrop')).not.toBeNull();
   });
+
+  it('returns focus to the rebuilt priority chip after an owned priority change', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] observed\n' });
+    const observed = task({
+      title: 'observed',
+      ref: { filePath: 'f.md', line: 0, revision: 'old' },
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] observed',
+        originalBlock: '- [ ] observed',
+      },
+    });
+    const current = task({
+      ...observed,
+      priority: 'A',
+      ref: { filePath: 'f.md', line: 0, revision: 'new' },
+      source: {
+        ...observed.source,
+        originalMarkdown: '- [ ] observed 🔺',
+        originalBlock: '- [ ] observed 🔺',
+      },
+    });
+    const events = queryEvents();
+    let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
+    const queries = taskQueryApi({
+      resolve: () => resolution,
+      subscribe: events.subscribe,
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async () => {
+      resolution = {
+        type: 'rebased',
+        previous: observed,
+        current,
+        evidence: 'authority-transition',
+        basis: { observed },
+      };
+      events.publish({ type: 'changed', files: ['f.md'] });
+      return { type: 'ok', changed: true, outcome: { type: 'task', task: current } };
+    });
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute,
+    });
+    modal.open(observed);
+    const chip = expectDefined(
+      activeDocument.querySelector<HTMLButtonElement>('.abyss-modal .abyss-priority-chip'),
+    );
+
+    chip.focus();
+    click(chip);
+    click(
+      expectDefined(
+        activeDocument.querySelector<HTMLButtonElement>(
+          '.abyss-modal .abyss-priority-option[data-priority="A"]',
+        ),
+      ),
+    );
+    await flushMicrotasks();
+
+    const rebuilt = expectDefined(
+      activeDocument.querySelector<HTMLButtonElement>('.abyss-modal .abyss-priority-chip'),
+    );
+    expect(execute).toHaveBeenCalledOnce();
+    expect(rebuilt).not.toBe(chip);
+    expect(rebuilt.getAttribute('data-priority')).toBe('A');
+    expect(activeDocument.activeElement).toBe(rebuilt);
+  });
 });

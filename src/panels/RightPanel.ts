@@ -384,6 +384,31 @@ function restorePopupRole(anchor: HTMLElement, previous: string | null): void {
   else anchor.removeAttribute('aria-haspopup');
 }
 
+type PlanningControlKey =
+  | 'date'
+  | 'time'
+  | 'priority'
+  | 'repeat'
+  | 'scheduled'
+  | 'start'
+  | 'add-date'
+  | 'add-tag'
+  | 'more-actions'
+  | 'tracking-toggle'
+  | 'tracking-sessions';
+
+/** The controls to focus after a rebuild, in order, for focus that was on (or opened from) `key`. */
+function planningReturnKeys(
+  key: PlanningControlKey,
+  addDateField: 'start' | 'scheduled' | undefined,
+): readonly PlanningControlKey[] {
+  if (key === 'scheduled' || key === 'start') return [key, 'add-date', 'date'];
+  if (key === 'add-date')
+    return addDateField === undefined ? ['add-date', 'date'] : ['add-date', addDateField, 'date'];
+  if (key === 'tracking-toggle') return ['tracking-toggle', 'tracking-sessions'];
+  return [key];
+}
+
 export class RightPanel {
   private readonly undo_abyssPrivate = createInlineTaskUndo();
   private selectionEpoch_abyssPrivate = 0;
@@ -476,13 +501,12 @@ export class RightPanel {
         selected !== undefined &&
         sameTaskNodeRef(taskNodeRef(prior), taskNodeRef(selected));
       const continuesOwnedSelection = this.consumeOwnedSelection_abyssPrivate(next);
-      this.updateDependencyDisclosureSelection_abyssPrivate(
-        next,
-        sameSelection || continuesOwnedSelection,
-      );
+      const continuesSelection = sameSelection || continuesOwnedSelection;
+      this.updateDependencyDisclosureSelection_abyssPrivate(next, continuesSelection);
       const statusFocus = sameSelection ? this.statusFocusTarget_abyssPrivate(previous) : undefined;
+      const controls = continuesSelection ? this.planningFocusKeys_abyssPrivate() : undefined;
       this.advanceSelectionEpoch_abyssPrivate(sameSelection, continuesOwnedSelection);
-      this.render_abyssPrivate(statusFocus);
+      this.render_abyssPrivate(statusFocus, controls);
     });
     const offHistory = this.state_abyssPrivate.onCommit((changed) => {
       if (
@@ -491,7 +515,7 @@ export class RightPanel {
         (this.el_abyssPrivate.querySelector('.abyss-inspector-back') !== null) !==
           this.state_abyssPrivate.get('inspectorBackStack').length > 0
       )
-        this.render_abyssPrivate();
+        this.render_abyssPrivate(undefined, this.planningFocusKeys_abyssPrivate());
     });
     const offDrag = this.state_abyssPrivate.on('draggingTaskNode', (next, previous) => {
       if (next?.source === 'center-card' || previous?.source === 'center-card')
@@ -577,7 +601,7 @@ export class RightPanel {
     this.timeBadge_abyssPrivate?.destroy();
     this.timeBadge_abyssPrivate = undefined;
     this.mounted_abyssPrivate = false;
-    this.dependencyStatusMarkers_abyssPrivate.clear();
+    this.resetRenderedControls_abyssPrivate();
     this.endTaskDrag_abyssPrivate?.();
     this.completionConfirmationAbortController_abyssPrivate.abort();
     this.off_abyssPrivate?.();
@@ -1193,14 +1217,17 @@ export class RightPanel {
     this.el_abyssPrivate.prepend(tray);
   }
 
-  private render_abyssPrivate(statusFocus?: TaskNodeRef): void {
+  private render_abyssPrivate(
+    statusFocus?: TaskNodeRef,
+    controls?: readonly PlanningControlKey[],
+  ): void {
     clearOptionalTimer(
       this.el_abyssPrivate.ownerDocument.defaultView,
       this.restoredFocusTimer_abyssPrivate,
     );
     this.restoredFocusTimer_abyssPrivate = undefined;
     this.undo_abyssPrivate.detach();
-    this.dependencyStatusMarkers_abyssPrivate.clear();
+    this.resetRenderedControls_abyssPrivate();
     const search = this.dependencySearch_abyssPrivate;
     const focused = this.el_abyssPrivate.ownerDocument.activeElement as HTMLElement | null;
     const searchFocus = search?.element.contains(focused) === true ? focused : null;
@@ -1230,7 +1257,7 @@ export class RightPanel {
       search.refresh();
       this.positionDependencySearch_abyssPrivate(search.element, searchFocus);
     }
-    this.restoreStatusFocus_abyssPrivate(statusFocus);
+    this.restoreRenderFocus_abyssPrivate(statusFocus, controls);
   }
 
   /** Wire clipboard paste-to-attach onto an editable textarea, inserting links at the caret. */
@@ -1535,6 +1562,7 @@ export class RightPanel {
         'aria-expanded': 'false',
       },
     });
+    this.registerPlanningControl_abyssPrivate('more-actions', menuBtn);
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this.renderContextMenu_abyssPrivate(task, menuBtn);
@@ -1544,6 +1572,70 @@ export class RightPanel {
 
   private readonly dependencyStatusMarkers_abyssPrivate = new Map<HTMLElement, TaskLike>();
   private dependencyStatusMenu_abyssPrivate: StatusMenuHandle | undefined;
+  /** The planning controls of the current render, both ways, so a rebuild can refocus one. */
+  private readonly planningControls_abyssPrivate = new Map<PlanningControlKey, HTMLElement>();
+  private readonly planningControlKeys_abyssPrivate = new Map<Element, PlanningControlKey>();
+  /** The control each open anchored surface was opened from, while the surface is open. */
+  private readonly surfaceOpeners_abyssPrivate = new Map<HTMLElement, HTMLElement>();
+  /** The field of the date popover "+ date" opened, until the next render. */
+  private addDateField_abyssPrivate: 'start' | 'scheduled' | undefined;
+
+  private registerPlanningControl_abyssPrivate(
+    key: PlanningControlKey,
+    control: HTMLElement,
+  ): void {
+    this.planningControls_abyssPrivate.set(key, control);
+    this.planningControlKeys_abyssPrivate.set(control, key);
+  }
+
+  /** The badge keeps its buttons across renders, so each render registers the same elements. */
+  private registerTrackingControls_abyssPrivate(): void {
+    const controls = this.timeBadge_abyssPrivate?.controls();
+    if (controls === undefined) return;
+    this.registerPlanningControl_abyssPrivate('tracking-toggle', controls.toggle);
+    this.registerPlanningControl_abyssPrivate('tracking-sessions', controls.body);
+  }
+
+  private resetRenderedControls_abyssPrivate(): void {
+    this.dependencyStatusMarkers_abyssPrivate.clear();
+    this.planningControls_abyssPrivate.clear();
+    this.planningControlKeys_abyssPrivate.clear();
+    this.addDateField_abyssPrivate = undefined;
+  }
+
+  /** The planning control that holds focus, or that opened the surface holding it. */
+  private focusedPlanningKey_abyssPrivate(): PlanningControlKey | undefined {
+    const focused = this.el_abyssPrivate.ownerDocument.activeElement;
+    if (focused === null) return undefined;
+    const direct = this.planningControlKeys_abyssPrivate.get(focused);
+    if (direct !== undefined) return direct;
+    for (const [surface, opener] of this.surfaceOpeners_abyssPrivate) {
+      if (surface.contains(focused)) return this.planningControlKeys_abyssPrivate.get(opener);
+    }
+    return undefined;
+  }
+
+  private planningFocusKeys_abyssPrivate(): readonly PlanningControlKey[] | undefined {
+    const key = this.focusedPlanningKey_abyssPrivate();
+    return key === undefined ? undefined : planningReturnKeys(key, this.addDateField_abyssPrivate);
+  }
+
+  /** Refocuses the status marker that held focus, or else the first rebuilt control still usable. */
+  private restoreRenderFocus_abyssPrivate(
+    statusFocus: TaskNodeRef | undefined,
+    controls: readonly PlanningControlKey[] | undefined,
+  ): void {
+    if (statusFocus !== undefined) {
+      this.restoreStatusFocus_abyssPrivate(statusFocus);
+      return;
+    }
+    for (const key of controls ?? []) {
+      const control = this.planningControls_abyssPrivate.get(key);
+      if (control?.isConnected !== true || control.matches(':disabled')) continue;
+      control.focus({ preventScroll: true });
+      return;
+    }
+  }
 
   private statusFocusTarget_abyssPrivate(stack: readonly TaskLike[]): TaskNodeRef | undefined {
     const focused = this.el_abyssPrivate.ownerDocument.activeElement;
@@ -1602,6 +1694,7 @@ export class RightPanel {
       // Tracked time reads with the chips that plan the task, so it leads the dependency badge.
       // Both are placed by the order of these calls, which is the order they keep in the row.
       this.timeBadge_abyssPrivate?.render(chips);
+      this.registerTrackingControls_abyssPrivate();
       chips.createSpan({ cls: 'abyss-chip abyss-dep-badge' });
       this.updateDependencyBadge_abyssPrivate();
     }
@@ -1620,6 +1713,7 @@ export class RightPanel {
         'aria-expanded': 'false',
       },
     });
+    this.registerPlanningControl_abyssPrivate('add-tag', addTagBtn);
     addTagBtn.addEventListener('click', (event) => {
       event.stopPropagation();
       this.showTagInput_abyssPrivate(chips, task, addTagBtn);
@@ -2185,6 +2279,7 @@ export class RightPanel {
         'aria-expanded': 'false',
       },
     });
+    this.registerPlanningControl_abyssPrivate('time', chip);
     chip.addEventListener('click', (event) => {
       event.stopPropagation();
       this.showTimePopover_abyssPrivate(chip, task);
@@ -2742,6 +2837,7 @@ export class RightPanel {
       cls: `abyss-chip${d != null ? '' : ' abyss-chip-empty'}`,
       text: d != null ? `📅 ${this.formatDate_abyssPrivate(d)}` : '📅 Date',
     });
+    this.registerPlanningControl_abyssPrivate('date', chip);
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
       this.showDatePopover_abyssPrivate(chip, task, field);
@@ -2756,6 +2852,7 @@ export class RightPanel {
       text: value != null ? `⏳ ${this.formatDate_abyssPrivate(value)}` : '⏳ Plan',
       attr: { title: 'Set plan date' },
     });
+    this.registerPlanningControl_abyssPrivate('scheduled', chip);
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
       this.showDatePopover_abyssPrivate(chip, task, 'scheduled');
@@ -2770,6 +2867,7 @@ export class RightPanel {
       text: value != null ? `🛫 ${this.formatDate_abyssPrivate(value)}` : '🛫 Start',
       attr: { title: 'Set start date' },
     });
+    this.registerPlanningControl_abyssPrivate('start', chip);
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
       this.showDatePopover_abyssPrivate(chip, task, 'start');
@@ -2798,6 +2896,7 @@ export class RightPanel {
         'aria-expanded': 'false',
       },
     });
+    this.registerPlanningControl_abyssPrivate('add-date', addBtn);
     addBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this.showAddDateMenu_abyssPrivate(addBtn, task, options);
@@ -2834,6 +2933,7 @@ export class RightPanel {
         'abyss-context-item abyss-add-date-menu-item',
         opt.label,
         () => {
+          this.addDateField_abyssPrivate = opt.field;
           this.removeAnchoredSurface_abyssPrivate(menu);
           this.showDatePopover_abyssPrivate(anchor, task, opt.field);
         },
@@ -2894,6 +2994,7 @@ export class RightPanel {
         'aria-expanded': 'false',
       },
     });
+    this.registerPlanningControl_abyssPrivate('priority', chip);
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
       this.showPriorityPopover_abyssPrivate(chip, task);
@@ -2911,6 +3012,7 @@ export class RightPanel {
       cls: `abyss-chip abyss-repeat-chip${hasRecurrence ? '' : ' abyss-chip-add abyss-chip-empty'}`,
       attr: { title: hasRecurrence ? 'Edit repeat' : 'Add repeat' },
     });
+    this.registerPlanningControl_abyssPrivate('repeat', chip);
     if (hasRecurrence) {
       renderRecurrenceBadge(chip, recurrenceBadgeInput(recurrence));
       chip.createSpan({ cls: 'abyss-repeat-chip-label', text: recurrence });
@@ -3003,6 +3105,7 @@ export class RightPanel {
     }
     chip.createSpan({ text: tag });
     const x = chip.createEl('button', { cls: 'abyss-chip-remove', text: '×' });
+    this.planningControlKeys_abyssPrivate.set(x, 'add-tag');
     x.addEventListener('click', (e) => {
       e.stopPropagation();
       runAsyncAction(this.removeTag_abyssPrivate(task, tag));
@@ -3024,9 +3127,13 @@ export class RightPanel {
   }
 
   private removeAnchoredSurface_abyssPrivate(surface: HTMLElement): void {
+    // Read before the cleanup: the recurrence cleanup empties the editor and drops focus to body.
+    const heldFocus = surface.contains(surface.ownerDocument.activeElement);
+    const opener = this.surfaceOpeners_abyssPrivate.get(surface);
     if (surface === this.dependencySearch_abyssPrivate?.element)
       this.dependencySearch_abyssPrivate.close(false);
     this.anchoredSurfaceCleanups_abyssPrivate.get(surface)?.();
+    if (heldFocus && opener?.isConnected === true) opener.focus({ preventScroll: true });
     surface.remove();
   }
 
@@ -3168,7 +3275,6 @@ export class RightPanel {
         anchor.setAttribute('data-priority', opt.value);
         anchor.className = `abyss-chip abyss-priority-chip abyss-priority-chip--${opt.value}${opt.value === 'D' ? ' abyss-chip-empty' : ''}`;
         this.removeAnchoredSurface_abyssPrivate(pop);
-        anchor.focus({ preventScroll: true });
         runAsyncAction(this.updatePriority_abyssPrivate(task, opt.value));
       });
     }
@@ -4012,9 +4118,11 @@ export class RightPanel {
       options.onCleanup?.();
       if (this.anchoredSurfaceCleanups_abyssPrivate.get(menu) === cleanup) {
         this.anchoredSurfaceCleanups_abyssPrivate.delete(menu);
+        this.surfaceOpeners_abyssPrivate.delete(menu);
       }
     };
     this.anchoredSurfaceCleanups_abyssPrivate.set(menu, cleanup);
+    this.surfaceOpeners_abyssPrivate.set(menu, anchor);
   }
 
   private async deleteTask_abyssPrivate(task: TaskLike): Promise<void> {
