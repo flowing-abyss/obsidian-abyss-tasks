@@ -1789,8 +1789,7 @@ export class RightPanel {
     return undefined;
   }
 
-  private restoreStatusFocus_abyssPrivate(target: TaskNodeRef | undefined): void {
-    if (target === undefined) return;
+  private restoreStatusFocus_abyssPrivate(target: TaskNodeRef): void {
     for (const [marker, task] of this.dependencyStatusMarkers_abyssPrivate) {
       if (!sameTaskNodeRef(taskNodeRef(task), target)) continue;
       (marker.closest<HTMLElement>('.abyss-status-control') ?? marker).focus({
