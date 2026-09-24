@@ -935,6 +935,32 @@ describe('mountRecurrenceEditor', () => {
     });
   });
 
+  it.each([
+    ['a checkbox Enter', '.abyss-recurrence-when-done', {}],
+    ['Shift+Enter', '[aria-label="Recurrence rule"]', { shiftKey: true }],
+    ['Alt+Enter', '[aria-label="Recurrence rule"]', { altKey: true }],
+  ] as const)('does not submit from %s', async (_name, selector, modifiers) => {
+    const { container, onSubmit } = mount();
+    click(button(container, 'Custom'));
+    input(
+      expectDefined(container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')),
+      'every month on the last Friday',
+    );
+    const enter = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      ...modifiers,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    expectDefined(container.querySelector<HTMLInputElement>(selector)).dispatchEvent(enter);
+    await flushMicrotasks();
+
+    // A helper that submits on every Enter in an input would save the rule for each of these keys.
+    expect(enter.defaultPrevented).toBe(false);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it('keeps the completion-date checkbox and advanced raw rule in one state', async () => {
     const { container, onSubmit } = mount();
     click(button(container, 'Custom'));

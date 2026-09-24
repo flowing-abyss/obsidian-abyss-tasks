@@ -1736,6 +1736,7 @@ describe('RightPanel IME-owned keys', () => {
         editor.value = 'かな';
         const keys = ['Enter', 'Escape'].map((key) => dispatchImeKey(editor, key, ime));
 
+        // Guarding only Escape still lets an IME Enter blur the editor, which saves the draft.
         expect(keys.map((event) => event.defaultPrevented)).toEqual([false, false]);
         expect(editor.isConnected).toBe(true);
         expect(activeDocument.activeElement).toBe(editor);
@@ -1780,6 +1781,7 @@ describe('RightPanel IME-owned keys', () => {
         const menu = expectDefined(container.querySelector('.abyss-task-context-menu'));
         const escape = dispatchImeKey(expectDefined(activeDocument.activeElement), 'Escape', ime);
 
+        // Guarding only field keydown handlers leaves the surface's Escape listener to dismiss it.
         expect(escape.defaultPrevented).toBe(false);
         expect(menu.isConnected).toBe(true);
       } finally {

@@ -129,8 +129,8 @@ describe('inline tag dropdown', () => {
         showTagDropdown(container, ['#alpha', '#beta'], () => undefined, commit, close);
         const input = expectDefined(container.querySelector<HTMLInputElement>('.abyss-tag-input'));
         input.value = '#al';
-        const events = ['ArrowDown', 'Enter', 'Escape'].map((key) =>
-          dispatchImeKey(input, key, ime),
+        const events = ['ArrowDown', 'Enter', 'Escape'].map((name) =>
+          dispatchImeKey(input, name, ime),
         );
 
         // A guard on Enter alone still lets a composing arrow move the active option.
