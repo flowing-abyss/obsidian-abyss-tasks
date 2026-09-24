@@ -2133,7 +2133,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
 
   it('removes a rolled-back tag group a refresh drew and keeps the input for a retry', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { panel, el, tm, save } = makeFull({ attached: true });
+    const { panel, el, tm, save, taskList } = makeFull({ attached: true });
     const create = vi.spyOn(tm, 'createManualGroup');
     let rejectSave!: (error: Error) => void;
     save.mockReturnValueOnce(
@@ -2149,12 +2149,15 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       keydown(input, 'Enter');
       panel.refresh();
       expect(tagLabels(el)).toContain('Focus');
+      taskList.mockClear();
 
       rejectSave(new Error('Settings could not be saved.'));
       await flushMicrotasks();
 
       // A retry branch that returns without rendering leaves the rolled-back group on screen.
       expect(tagLabels(el)).not.toContain('Focus');
+      // Each render reads the task list once; the retry renders exactly once.
+      expect(taskList).toHaveBeenCalledOnce();
       expect(Notice).toHaveBeenCalledExactlyOnceWith(
         'Could not add the tag group. Settings could not be saved.',
       );
@@ -2165,6 +2168,162 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       keydown(input, 'Enter');
       await flushMicrotasks();
       expect(create.mock.calls).toEqual([['Focus'], ['Focus']]);
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('keeps a failed tag group input for a retry without a render when none ran', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { el, tm, save, taskList } = makeFull({ attached: true });
+    const create = vi.spyOn(tm, 'createManualGroup');
+    let rejectSave!: (error: Error) => void;
+    save.mockReturnValueOnce(
+      new Promise<void>((_resolve, fail) => {
+        rejectSave = fail;
+      }),
+    );
+    try {
+      const input = openInlineAdd(el, 'tags');
+      // Run the input's own focus task now, so only a render can refocus it later.
+      await flushMicrotasks();
+      input.value = 'Focus';
+      input.setSelectionRange(1, 3);
+      keydown(input, 'Enter');
+      taskList.mockClear();
+
+      rejectSave(new Error('Settings could not be saved.'));
+      await flushMicrotasks();
+
+      // A retry that renders every time costs a full panel pass for each failed Enter.
+      expect(taskList).not.toHaveBeenCalled();
+      expect(Notice).toHaveBeenCalledExactlyOnceWith(
+        'Could not add the tag group. Settings could not be saved.',
+      );
+      expect(el.querySelector('.abyss-left-section--tags .abyss-left-add-input')).toBe(input);
+      expect(input.value).toBe('Focus');
+      expect([input.selectionStart, input.selectionEnd]).toEqual([1, 3]);
+      expect(activeDocument.activeElement).toBe(input);
+      expect(tagLabels(el)).not.toContain('Focus');
+
+      keydown(input, 'Enter');
+      await flushMicrotasks();
+      expect(create.mock.calls).toEqual([['Focus'], ['Focus']]);
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('ends a failed tag group add that a newer settings save kept', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { el, tm, save, merged } = makeFull({ attached: true });
+    const create = vi.spyOn(tm, 'createManualGroup');
+    let rejectSave!: (error: Error) => void;
+    let markSaveStarted!: () => void;
+    const saveStarted = new Promise<void>((resolve) => {
+      markSaveStarted = resolve;
+    });
+    save.mockImplementationOnce(() => {
+      markSaveStarted();
+      return new Promise<void>((_resolve, fail) => {
+        rejectSave = fail;
+      });
+    });
+    try {
+      const input = openInlineAdd(el, 'tags');
+      await flushMicrotasks();
+      input.value = 'Focus';
+      keydown(input, 'Enter');
+      await saveStarted;
+      await tm.pinTag('#newer');
+      rejectSave(new Error('older save rejected'));
+      await flushMicrotasks();
+      keydown(input, 'Enter');
+      await flushMicrotasks();
+
+      // A failure that retries whenever the input holds focus adds the kept group a second time.
+      expect(merged.tagGroups.filter((group) => group.tags?.includes('#focus') === true)).toEqual([
+        { id: 'group-focus', name: 'Focus', mode: 'manual', tags: ['#focus'] },
+      ]);
+      expect(Notice).toHaveBeenCalledExactlyOnceWith(
+        'Could not save an earlier tag group. Newer changes were kept.',
+      );
+      expect(input.isConnected).toBe(false);
+      expect(create).toHaveBeenCalledOnce();
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('ends a failed tag group add whose input a second inline add replaced as the record', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { el, tm, save } = makeFull({
+      attached: true,
+      projects: [{ path: 'Projects/A.md', name: 'A' }],
+    });
+    const create = vi.spyOn(tm, 'createManualGroup');
+    let rejectSave!: (error: Error) => void;
+    save.mockReturnValueOnce(
+      new Promise<void>((_resolve, fail) => {
+        rejectSave = fail;
+      }),
+    );
+    try {
+      const tag = openInlineAdd(el, 'tags');
+      tag.value = 'Focus';
+      keydown(tag, 'Enter');
+      openInlineAdd(el, 'projects');
+      tag.focus();
+      simulateBlurDuringEmpty(el, tag);
+
+      rejectSave(new Error('Settings could not be saved.'));
+      // Every 150 ms blur check runs, including one that a later render's blur starts.
+      await vi.runAllTimersAsync();
+
+      // Without the record check the failed session stays open while a render drops its input,
+      // and its blur check creates the group again.
+      expect(create).toHaveBeenCalledOnce();
+      expect(Notice).toHaveBeenCalledExactlyOnceWith(
+        'Could not add the tag group. Settings could not be saved.',
+      );
+      expect(tag.isConnected).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      el.remove();
+    }
+  });
+
+  it('ignores a held Enter after a failed tag group add', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { el, tm } = makeFull({ attached: true });
+    const create = vi
+      .spyOn(tm, 'createManualGroup')
+      .mockRejectedValueOnce(new Error('Settings could not be saved.'))
+      .mockResolvedValue();
+    try {
+      const input = openInlineAdd(el, 'tags');
+      input.value = 'Focus';
+      keydown(input, 'Enter');
+      expect(create).toHaveBeenCalledOnce();
+      await flushMicrotasks();
+      expect(activeDocument.activeElement).toBe(input);
+
+      const held = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        repeat: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(held);
+      await flushMicrotasks();
+
+      // A handler that ignores `event.repeat` loops create, failure, and Notice while Enter is held.
+      expect(create).toHaveBeenCalledOnce();
+      expect(held.defaultPrevented).toBe(true);
+      expect(input.isConnected).toBe(true);
+      expect(Notice).toHaveBeenCalledOnce();
+      expect(log).toHaveBeenCalledOnce();
     } finally {
       el.remove();
     }
