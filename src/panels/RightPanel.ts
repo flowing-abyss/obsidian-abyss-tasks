@@ -55,6 +55,7 @@ import {
   type DependencyPickerCommitResult,
   type DependencySearchHandle,
 } from '../ui/dependencySearch';
+import { isImeOwnedEvent } from '../ui/ime';
 import { createInlineTaskUndo, type InlineUndoPosition } from '../ui/inlineTaskUndo';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { LinkEditModal } from '../ui/LinkEditModal';
@@ -1343,7 +1344,7 @@ export class RightPanel {
       runAsyncAction(finish(true));
     });
     textarea.addEventListener('keydown', (event) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || isImeOwnedEvent(event)) return;
       event.preventDefault();
       runAsyncAction(finish(false));
     });
@@ -2247,7 +2248,7 @@ export class RightPanel {
     );
     this.md_abyssPrivate.register(close);
     input.addEventListener('keydown', (event: KeyboardEvent) => {
-      if (event.key === 'Enter' && !event.isComposing) {
+      if (event.key === 'Enter' && !isImeOwnedEvent(event)) {
         event.preventDefault();
         runAsyncAction(commit());
       }
@@ -2293,7 +2294,7 @@ export class RightPanel {
     };
     const escape = (raw: Event): void => {
       const event = raw as KeyboardEvent;
-      if (event.key !== 'Escape' || event.isComposing) return;
+      if (event.key !== 'Escape' || isImeOwnedEvent(event)) return;
       event.preventDefault();
       event.stopPropagation();
       dismiss();
@@ -2348,7 +2349,7 @@ export class RightPanel {
       commentInput.blur();
     });
     commentInput.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      if (e.key === 'Enter' && !e.shiftKey && !isImeOwnedEvent(e)) {
         e.preventDefault();
         const text = commentInput.value.trim();
         if (text !== '') {
@@ -2437,6 +2438,7 @@ export class RightPanel {
       runAsyncAction(finish(true));
     });
     ta.addEventListener('keydown', (e) => {
+      if (isImeOwnedEvent(e)) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         runAsyncAction(finish(true));
@@ -2703,6 +2705,7 @@ export class RightPanel {
       }, 150);
     });
     textarea.addEventListener('keydown', (event: KeyboardEvent) => {
+      if (isImeOwnedEvent(event)) return;
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
         textarea.blur();
@@ -3968,7 +3971,7 @@ export class RightPanel {
       }
     };
     const dismissOnEscape = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return;
+      if (e.key !== 'Escape' || isImeOwnedEvent(e)) return;
       e.preventDefault();
       e.stopPropagation();
       dismissSurface();

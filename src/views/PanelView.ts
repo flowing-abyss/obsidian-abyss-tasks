@@ -27,6 +27,7 @@ import type {
 } from '../tasks';
 import { taskCommandRootRef, taskNodeAddress } from '../tasks';
 import { CreationPresentationController } from '../ui/creation/CreationPresentationController';
+import { isImeOwnedEvent } from '../ui/ime';
 import { InteractionRegistry } from '../ui/interactionOwnership';
 import { nativeInteractionBlocksPanelShortcuts } from '../ui/nativeInteractionBlocker';
 import { PanelShortcutRouter } from '../ui/panelShortcutRouter';
@@ -144,11 +145,6 @@ function intersectsOwnerViewport(bounds: DOMRect, ownerWindow: Window | null): b
 function hasPresentedPanelGeometry(element: HTMLElement, ownerWindow: Window | null): boolean {
   const bounds = positiveRenderedArea(element);
   return bounds !== null && intersectsOwnerViewport(bounds, ownerWindow);
-}
-
-function isImeKeyboardEvent(event: KeyboardEvent): boolean {
-  const legacyCode = (event as unknown as { readonly keyCode?: number }).keyCode;
-  return event.isComposing || legacyCode === 229;
 }
 
 function hasVisibleAncestors(element: HTMLElement, ownerWindow: Window | null): boolean {
@@ -974,7 +970,7 @@ export class PanelView extends ItemView {
     const pane = this.compactPaneOpen_abyssPrivate;
     if (
       event.key !== 'Escape' ||
-      isImeKeyboardEvent(event) ||
+      isImeOwnedEvent(event) ||
       event.defaultPrevented ||
       pane === null ||
       !this.isCompactPaneCollapsed_abyssPrivate(pane) ||

@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildTaskDependencyGraph, enumerateTaskNodes } from '../src/tasks/domain/taskDependencies';
 import { dependencySearchOptions, mountDependencySearch } from '../src/ui/dependencySearch';
-import { canonicalStatusCatalog, deferred, expectDefined, flushMicrotasks, task } from './helpers';
+import {
+  canonicalStatusCatalog,
+  deferred,
+  dispatchImeKey,
+  expectDefined,
+  flushMicrotasks,
+  task,
+} from './helpers';
 
 afterEach(() => {
   activeDocument.body.empty();
@@ -653,6 +660,46 @@ describe('dependency search keyboard controller', () => {
     expect(handle.element.isConnected).toBe(true);
     handle.destroy();
   });
+
+  it.each(['composing', 'legacy'] as const)(
+    'leaves IME-owned arrows, Enter, and Escape to the IME (%s)',
+    async (ime) => {
+      const submissions: string[] = [];
+      const onClose = vi.fn();
+      const handle = mountDependencySearch(activeDocument.body, {
+        direction: 'blocked-by',
+        canChangeDirection: true,
+        options: (query, direction) => dependencySearchOptions({ ...fixture(), query, direction }),
+        selectExisting: async () => {
+          submissions.push('existing');
+          return { type: 'committed' };
+        },
+        createNew: async () => {
+          submissions.push('new');
+          return { type: 'committed' };
+        },
+        onClose,
+      });
+      try {
+        const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
+        input.value = 'Candidate';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        const events = ['ArrowDown', 'Enter', 'Escape'].map((key) =>
+          dispatchImeKey(input, key, ime),
+        );
+        await flushMicrotasks();
+
+        // Checking only `isComposing` misses the legacy keyCode 229 Enter, and the surface
+        // Escape handler had no guard at all.
+        expect(events.map((event) => event.defaultPrevented)).toEqual([false, false, false]);
+        expect(submissions).toEqual([]);
+        expect(onClose).not.toHaveBeenCalled();
+        expect(handle.element.isConnected).toBe(true);
+      } finally {
+        handle.destroy();
+      }
+    },
+  );
 
   it('prevents duplicate submission while a commit is busy', async () => {
     let finish: ((result: { readonly type: 'failed' }) => void) | undefined;

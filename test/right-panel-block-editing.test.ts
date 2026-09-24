@@ -12,6 +12,7 @@ import {
   canonicalStatusCatalog,
   createAppWithFiles,
   deferred,
+  dispatchImeKey,
   expectDefined,
   flushMicrotasks,
   freshContainer,
@@ -531,6 +532,7 @@ describe('RightPanel block editing', () => {
         input.dispatchEvent(
           new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true }),
         );
+        dispatchImeKey(input, 'Enter', 'legacy');
         input.value = '   ';
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
         input.value = 'Unfinished';
@@ -1660,6 +1662,129 @@ describe('RightPanel block editing', () => {
       await pending;
 
       expect(state.get('taskStack')).toEqual([root, sibling]);
+    },
+  );
+});
+
+describe('RightPanel IME-owned keys', () => {
+  async function mounted() {
+    const initial = snapshot('old');
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    const { panel } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    return { panel, container, execute };
+  }
+
+  it.each(['composing', 'legacy'] as const)(
+    'keeps the title editor open on IME keys (%s)',
+    async (ime) => {
+      const { panel, container, execute } = await mounted();
+      try {
+        expectDefined(container.querySelector<HTMLElement>('.abyss-right-title-view')).click();
+        await flushMicrotasks();
+        const title = expectDefined(
+          container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+        );
+        title.value = 'かな';
+        const keys = ['Enter', 'Escape'].map((key) => dispatchImeKey(title, key, ime));
+        await flushMicrotasks();
+
+        // Guarding only Enter still lets a composing Escape cancel the editor.
+        expect(keys.map((event) => event.defaultPrevented)).toEqual([false, false]);
+        expect(title.isConnected).toBe(true);
+        expect(execute).not.toHaveBeenCalled();
+      } finally {
+        panel.destroy();
+      }
+    },
+  );
+
+  it.each(['composing', 'legacy'] as const)(
+    'keeps the description editor open on an IME Escape (%s)',
+    async (ime) => {
+      const { panel, container, execute } = await mounted();
+      try {
+        expectDefined(container.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
+        await flushMicrotasks();
+        const description = expectDefined(
+          container.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+        );
+        const escape = dispatchImeKey(description, 'Escape', ime);
+        await flushMicrotasks();
+
+        // Guarding only Enter handlers misses the description, whose keydown knows only Escape.
+        expect(escape.defaultPrevented).toBe(false);
+        expect(description.isConnected).toBe(true);
+        expect(execute).not.toHaveBeenCalled();
+      } finally {
+        panel.destroy();
+      }
+    },
+  );
+
+  it.each(['composing', 'legacy'] as const)(
+    'keeps an existing comment editor open on IME keys (%s)',
+    async (ime) => {
+      const { panel, container, execute } = await mounted();
+      try {
+        expectDefined(container.querySelector<HTMLElement>('.abyss-comment-text')).click();
+        const editor = expectDefined(
+          container.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input'),
+        );
+        editor.value = 'かな';
+        const keys = ['Enter', 'Escape'].map((key) => dispatchImeKey(editor, key, ime));
+
+        expect(keys.map((event) => event.defaultPrevented)).toEqual([false, false]);
+        expect(editor.isConnected).toBe(true);
+        expect(activeDocument.activeElement).toBe(editor);
+        expect(execute).not.toHaveBeenCalled();
+      } finally {
+        panel.destroy();
+      }
+    },
+  );
+
+  it('keeps a new sub-task entry open on a legacy IME Escape', async () => {
+    const { panel, container } = await mounted();
+    try {
+      expectDefined(
+        container.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
+      ).click();
+      const input = expectDefined(
+        container.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
+      );
+      input.value = 'かな';
+      // The entry Escape checked only `isComposing`.
+      const escape = dispatchImeKey(input, 'Escape', 'legacy');
+
+      expect(escape.defaultPrevented).toBe(false);
+      expect(input.isConnected).toBe(true);
+      expect(activeDocument.activeElement).toBe(input);
+    } finally {
+      panel.destroy();
+    }
+  });
+
+  it.each(['composing', 'legacy'] as const)(
+    'keeps an anchored surface open on an IME Escape (%s)',
+    async (ime) => {
+      const { panel, container } = await mounted();
+      try {
+        expectDefined(
+          container.querySelector<HTMLElement>(
+            '.abyss-right-action-btn[aria-label="More actions"]',
+          ),
+        ).click();
+        const menu = expectDefined(container.querySelector('.abyss-task-context-menu'));
+        const escape = dispatchImeKey(expectDefined(activeDocument.activeElement), 'Escape', ime);
+
+        expect(escape.defaultPrevented).toBe(false);
+        expect(menu.isConnected).toBe(true);
+      } finally {
+        panel.destroy();
+      }
     },
   );
 });

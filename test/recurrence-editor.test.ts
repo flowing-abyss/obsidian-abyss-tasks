@@ -6,7 +6,14 @@ import {
   type RecurrenceEditorHandle,
 } from '../src/ui/recurrence/RecurrenceEditor';
 import { draftPlainText, type RightPanelDraftState } from '../src/ui/taskDraftContinuity';
-import { expectDefined, flushMicrotasks, freshContainer, methodOf, task } from './helpers';
+import {
+  dispatchImeKey,
+  expectDefined,
+  flushMicrotasks,
+  freshContainer,
+  methodOf,
+  task,
+} from './helpers';
 
 function click(element: Element): void {
   element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -1311,4 +1318,31 @@ describe('mountRecurrenceEditor', () => {
     expect(activeDocument.activeElement).toBe(anchor);
     vi.useRealTimers();
   });
+
+  it.each(['composing', 'legacy'] as const)(
+    'leaves IME-owned Escape, Enter, and Cmd+Enter to the IME (%s)',
+    async (ime) => {
+      const { container, onSubmit, onClose } = mount();
+      activeDocument.body.appendChild(container);
+      click(button(container, 'Custom'));
+      const raw = expectDefined(
+        container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]'),
+      );
+      input(raw, 'every month on the last Friday');
+
+      const escape = dispatchImeKey(raw, 'Escape', ime);
+      const enter = dispatchImeKey(raw, 'Enter', ime);
+      const shortcut = dispatchImeKey(raw, 'Enter', ime, { metaKey: true });
+      await flushMicrotasks();
+
+      // A guard in the container handler alone still lets the owner-window Cmd+Enter capture submit.
+      expect([escape, enter, shortcut].map((event) => event.defaultPrevented)).toEqual([
+        false,
+        false,
+        false,
+      ]);
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+    },
+  );
 });

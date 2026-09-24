@@ -8,6 +8,7 @@ import {
   type TaskOccurrenceResult,
   type TaskPatch,
 } from '../../tasks';
+import { isImeOwnedEvent } from '../ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
 import type { RecurrenceEditorDraft } from '../taskDraftContinuity';
@@ -250,6 +251,18 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
   const controller = new RecurrenceEditorController(options);
   controller.mount();
   return controller;
+}
+
+/** Enter in a text-like field submits; a checkbox, Shift+Enter, and Alt+Enter keep the key. */
+function isPlainInputEnter(event: KeyboardEvent): boolean {
+  const target = event.target;
+  return (
+    event.key === 'Enter' &&
+    target instanceof HTMLInputElement &&
+    target.type !== 'checkbox' &&
+    !event.shiftKey &&
+    !event.altKey
+  );
 }
 
 class RecurrenceEditorController implements RecurrenceEditorHandle {
@@ -1176,20 +1189,14 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
   }
 
   private readonly keyHandler_abyssPrivate = (event: KeyboardEvent): void => {
+    if (isImeOwnedEvent(event)) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
       this.dismiss();
       return;
     }
-    const target = event.target;
-    const plainInputEnter =
-      event.key === 'Enter' &&
-      target instanceof HTMLInputElement &&
-      target.type !== 'checkbox' &&
-      !event.shiftKey &&
-      !event.altKey;
-    if ((event.key === 'Enter' && (event.metaKey || event.ctrlKey)) || plainInputEnter) {
+    if ((event.key === 'Enter' && (event.metaKey || event.ctrlKey)) || isPlainInputEnter(event)) {
       event.preventDefault();
       runAsyncAction(this.submit_abyssPrivate(), 'Could not save recurrence');
     }
@@ -1198,6 +1205,7 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
   private readonly submitShortcutHandler_abyssPrivate = (event: KeyboardEvent): void => {
     if (
       event.key !== 'Enter' ||
+      isImeOwnedEvent(event) ||
       (!event.metaKey && !event.ctrlKey) ||
       event.target == null ||
       !this.options_abyssPrivate.container.contains(event.target as Node)

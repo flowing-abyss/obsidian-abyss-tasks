@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { showTagDropdown } from '../src/ui/tagDropdown';
-import { expectDefined, freshContainer } from './helpers';
+import { dispatchImeKey, expectDefined, freshContainer } from './helpers';
 
 function key(target: HTMLElement, value: string): KeyboardEvent {
   const KeyboardEventConstructor = expectDefined(target.ownerDocument.defaultView).KeyboardEvent;
@@ -117,4 +117,31 @@ describe('inline tag dropdown', () => {
     expect(input.value).toBe('##work #home work');
     expect(input.getAttribute('aria-invalid')).toBe('true');
   });
+
+  it.each(['composing', 'legacy'] as const)(
+    'leaves IME-owned arrows, Enter, and Escape to the IME (%s)',
+    (ime) => {
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      const commit = vi.fn<(tags: readonly string[]) => 'committed'>(() => 'committed');
+      const close = vi.fn();
+      try {
+        showTagDropdown(container, ['#alpha', '#beta'], () => undefined, commit, close);
+        const input = expectDefined(container.querySelector<HTMLInputElement>('.abyss-tag-input'));
+        input.value = '#al';
+        const events = ['ArrowDown', 'Enter', 'Escape'].map((key) =>
+          dispatchImeKey(input, key, ime),
+        );
+
+        // A guard on Enter alone still lets a composing arrow move the active option.
+        expect(events.map((event) => event.defaultPrevented)).toEqual([false, false, false]);
+        expect(container.querySelector('.abyss-tag-dropdown-opt.is-active')).toBeNull();
+        expect(commit).not.toHaveBeenCalled();
+        expect(close).not.toHaveBeenCalled();
+        expect(input.isConnected).toBe(true);
+      } finally {
+        container.remove();
+      }
+    },
+  );
 });

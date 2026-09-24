@@ -5,6 +5,7 @@ import {
   type TaskNodeRef,
   type TaskNodeSnapshot,
 } from '../tasks';
+import { isImeOwnedEvent } from './ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 import { runAsyncAction } from './runAsyncAction';
 import { dependencyDirectionLabel } from './taskDependencyPresentation';
@@ -237,7 +238,7 @@ export function mountDependencySearch(
   input.addEventListener('keydown', actions.key);
   createAffordance.addEventListener('click', actions.create);
   element.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') return;
+    if (event.key !== 'Escape' || isImeOwnedEvent(event)) return;
     event.preventDefault();
     event.stopPropagation();
     close();
@@ -364,7 +365,7 @@ function createSearchActions(
     reset();
   };
   const key = (event: KeyboardEvent): void => {
-    if (commit.busy() || event.isComposing) return;
+    if (commit.busy() || isImeOwnedEvent(event)) return;
     if (!['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) return;
     event.preventDefault();
     event.stopPropagation();
