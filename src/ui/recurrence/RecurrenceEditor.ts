@@ -675,9 +675,9 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
   }
 
   /**
-   * A failed Save stays enabled for a retry, so it takes back the focus the submit dropped. An
-   * editor that a rebuild emptied has no Save left, so its dismissal focus decides instead. It is
-   * also read after a failed save that leaves no enabled Save to take focus.
+   * A failed Save stays enabled for a retry, so it takes back the focus the submit dropped. When no
+   * enabled Save is left, for example after a rebuild emptied the editor, its dismissal focus
+   * decides instead.
    */
   private recoverFailureFocus_abyssPrivate(): void {
     if (!focusDropped(this.options_abyssPrivate.container.ownerDocument)) return;
