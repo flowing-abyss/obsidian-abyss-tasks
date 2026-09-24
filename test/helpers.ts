@@ -758,6 +758,27 @@ export function dispatchImeKey(
   return event;
 }
 
+/**
+ * Chromium fires `blur` and `focusout` on a focused field while it removes the surface holding
+ * it; jsdom fires nothing, so the first removal of `surface` dispatches both first.
+ */
+export function loseFocusOnRemoval(
+  surface: HTMLElement,
+  field: HTMLElement,
+  relatedTarget: HTMLElement,
+): void {
+  const remove = surface.remove.bind(surface);
+  let removed = false;
+  vi.spyOn(surface, 'remove').mockImplementation(() => {
+    if (!removed) {
+      removed = true;
+      field.dispatchEvent(new FocusEvent('blur', { relatedTarget }));
+      field.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget }));
+    }
+    remove();
+  });
+}
+
 /** Seed a file's metadata cache with task listItems + optional frontmatter (parent=-1 for root items). */
 export function seedTaskCache(
   app: ObsidianApp,

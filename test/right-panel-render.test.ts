@@ -5,7 +5,12 @@ import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import type { StatusRegistry } from '../src/status/StatusRegistry';
-import type { SubtaskSnapshot, TaskApplicationApi, TaskSnapshot } from '../src/tasks';
+import type {
+  SubtaskSnapshot,
+  TaskApplicationApi,
+  TaskCommandResult,
+  TaskSnapshot,
+} from '../src/tasks';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import type { CommentTimeContextProvider } from '../src/tasks/domain/commentTimeLabel';
@@ -21,9 +26,11 @@ import { InteractionRegistry, type InteractionOwnershipPort } from '../src/ui/in
 import { rootTaskRef, taskNodeLine } from '../src/ui/taskSelection';
 import {
   createAppWithFiles,
+  deferred,
   expectDefined,
   flushMicrotasks,
   freshContainer,
+  loseFocusOnRemoval,
   methodOf,
   queryApiForTasks,
   subtask,
@@ -1333,7 +1340,7 @@ describe('RightPanel.renderTask', () => {
 describe('RightPanel.renderSubTask', () => {
   it('reads status choices from the injected live registry without replacing the selection', async () => {
     const registry = testStatusRegistry();
-    const { state, el } = await makePanel({}, undefined, registry);
+    const { panel, state, el } = await makePanel({}, undefined, registry);
     const root = task({
       title: 'Parent',
       subtasks: [subtask({ title: 'Child', ref: { originalBlock: '  - [ ] Child' } })],
@@ -1341,25 +1348,29 @@ describe('RightPanel.renderSubTask', () => {
     state.set('taskStack', [root]);
     const observedStack = state.get('taskStack');
 
-    registry.replace([
-      ...registry.all(),
-      {
-        id: 'status-waiting',
-        symbol: 'w',
-        name: 'Waiting',
-        type: 'in-progress',
-        icon: 'pause',
-        core: false,
-      },
-    ]);
-    expectDefined(
-      el.querySelector<HTMLElement>('.abyss-subtask-row .abyss-status-marker'),
-    ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    try {
+      registry.replace([
+        ...registry.all(),
+        {
+          id: 'status-waiting',
+          symbol: 'w',
+          name: 'Waiting',
+          type: 'in-progress',
+          icon: 'pause',
+          core: false,
+        },
+      ]);
+      expectDefined(
+        el.querySelector<HTMLElement>('.abyss-subtask-row .abyss-status-marker'),
+      ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
 
-    expect(activeDocument.body.querySelector('.abyss-status-popover')?.textContent).toContain(
-      'Waiting',
-    );
-    expect(state.get('taskStack')).toBe(observedStack);
+      expect(activeDocument.body.querySelector('.abyss-status-popover')?.textContent).toContain(
+        'Waiting',
+      );
+      expect(state.get('taskStack')).toBe(observedStack);
+    } finally {
+      panel.destroy();
+    }
   });
 
   it('subtask row renders status marker + label text', async () => {
@@ -1486,6 +1497,32 @@ describe('RightPanel.renderComment', () => {
     expect(el.querySelector('.abyss-comment-text')).toBeNull();
   });
 });
+
+/** Opens the time popover from the focused chip and types into the field without committing. */
+async function openTimeDraft(key = '1', value = '01:30') {
+  const selected = task({ title: 'Keyboard time', planning: { time: '09:30' } });
+  const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+    type: 'ok',
+    changed: false,
+    outcome: { type: 'task', task: selected },
+  });
+  const { panel, state, el } = await makePanel(
+    {},
+    { queries: queryApiForTasks(() => [selected]), execute },
+  );
+  activeDocument.body.append(el);
+  state.set('taskStack', [selected]);
+  const chip = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-chip-time'));
+  chip.focus();
+  click(chip);
+  await tick();
+  const popover = expectDefined(el.querySelector<HTMLElement>('.abyss-time-popover'));
+  const input = expectDefined(popover.querySelector<HTMLInputElement>('.abyss-time-input'));
+  input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  input.value = value;
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  return { selected, execute, panel, state, el, chip, popover, input };
+}
 
 describe('RightPanel popovers', () => {
   it('opens a selected nested task at its absolute source line', async () => {
@@ -2174,6 +2211,206 @@ describe('RightPanel popovers', () => {
       panel.destroy();
       el.remove();
       frame.remove();
+    }
+  });
+
+  it('writes a keyboard time draft once, on Enter', async () => {
+    const { selected, execute, panel, el, input } = await openTimeDraft();
+
+    try {
+      // Chromium fires change after every typed segment, so the change alone must not write.
+      expect(execute).not.toHaveBeenCalled();
+      const enter = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(enter);
+      await flushMicrotasks();
+
+      expect(enter.defaultPrevented).toBe(true);
+      expect(execute).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledWith({
+        type: 'patch',
+        target: { type: 'task', ref: selected.ref },
+        patch: { time: { type: 'set', value: '01:30' } },
+      });
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('writes nothing when Escape cancels a keyboard time draft', async () => {
+    const { execute, panel, el, chip, popover, input } = await openTimeDraft();
+
+    try {
+      loseFocusOnRemoval(popover, input, chip);
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+
+      // Committing on the focusout that the removal fires would write the partial time.
+      expect(execute).not.toHaveBeenCalled();
+      expect(el.querySelector('.abyss-time-popover')).toBeNull();
+      expect(activeDocument.activeElement).toBe(chip);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('clears the time once when Clear time ends a keyboard draft', async () => {
+    const { selected, execute, panel, el, popover, input } = await openTimeDraft();
+    const held = deferred<TaskCommandResult>();
+    execute.mockReturnValueOnce(held.promise);
+
+    try {
+      click(expectDefined(popover.querySelector<HTMLButtonElement>('[aria-label="Clear time"]')));
+      // The clear is still being written, so the field keeps focus and the popover stays open.
+      const enter = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(enter);
+      held.resolve({ type: 'ok', changed: false, outcome: { type: 'task', task: selected } });
+      await flushMicrotasks();
+
+      // A draft still armed after Clear would take this Enter and try to write the partial time.
+      expect(enter.defaultPrevented).toBe(false);
+      expect(execute).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledWith({
+        type: 'patch',
+        target: { type: 'task', ref: selected.ref },
+        patch: { time: { type: 'clear' } },
+      });
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('writes nothing when a re-render removes a keyboard time draft', async () => {
+    const { selected, execute, panel, state, el, chip, popover, input } = await openTimeDraft();
+
+    try {
+      loseFocusOnRemoval(popover, input, chip);
+      state.set('taskStack', [{ ...selected }]);
+      await flushMicrotasks();
+
+      // Committing on the focusout that the rebuild's removal fires would write the partial time.
+      expect(execute).not.toHaveBeenCalled();
+      expect(popover.isConnected).toBe(false);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('writes nothing when destroy removes a keyboard time draft', async () => {
+    const { execute, panel, el, chip, popover, input } = await openTimeDraft();
+
+    try {
+      loseFocusOnRemoval(popover, input, chip);
+      panel.destroy();
+      await flushMicrotasks();
+
+      // Committing on the focusout that the teardown's removal fires would write the partial time.
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('keeps a keyboard time draft open when the window loses focus', async () => {
+    const { execute, panel, el, popover, input } = await openTimeDraft();
+
+    try {
+      // A window switch fires focusout without a related target and keeps the field active.
+      input.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+      expect(activeDocument.activeElement).toBe(input);
+      await tick(250);
+
+      // Treating every focusout without a related target as a departure would write the time.
+      expect(execute).not.toHaveBeenCalled();
+      expect(el.querySelector('.abyss-time-popover')).toBe(popover);
+      expect(input.value).toBe('01:30');
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('writes nothing when Escape follows an edited duration', async () => {
+    const selected = task({
+      title: 'Keyboard duration',
+      planning: { time: '09:30', duration: 45 },
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'ok',
+      changed: false,
+      outcome: { type: 'task', task: selected },
+    });
+    const { panel, state, el } = await makePanel(
+      {},
+      { queries: queryApiForTasks(() => [selected]), execute },
+    );
+    activeDocument.body.append(el);
+    state.set('taskStack', [selected]);
+    const chip = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-chip-time'));
+
+    try {
+      chip.focus();
+      click(chip);
+      await tick();
+      const popover = expectDefined(el.querySelector<HTMLElement>('.abyss-time-popover'));
+      const duration = expectDefined(
+        popover.querySelector<HTMLInputElement>('.abyss-duration-input'),
+      );
+      duration.focus();
+      duration.value = 'x';
+      // Chromium fires change for an edited text field when it loses focus.
+      duration.addEventListener('blur', () => {
+        duration.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      loseFocusOnRemoval(popover, duration, chip);
+
+      duration.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+
+      // A duration field still listening after the close would clear the duration.
+      expect(execute).not.toHaveBeenCalled();
+      expect(el.querySelector('.abyss-time-popover')).toBeNull();
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('clears the time on Enter after every segment is cleared', async () => {
+    const { selected, execute, panel, el, input } = await openTimeDraft('Backspace', '');
+
+    try {
+      expect(execute).not.toHaveBeenCalled();
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+
+      // Refusing an empty value, as the date commit does, would never write the cleared time.
+      expect(execute).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledWith({
+        type: 'patch',
+        target: { type: 'task', ref: selected.ref },
+        patch: { time: { type: 'clear' } },
+      });
+    } finally {
+      panel.destroy();
+      el.remove();
     }
   });
 

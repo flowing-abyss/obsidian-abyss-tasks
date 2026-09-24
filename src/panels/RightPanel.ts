@@ -70,6 +70,7 @@ import {
 } from '../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText } from '../ui/renderTaskText';
 import { runAsyncAction } from '../ui/runAsyncAction';
+import { bindSegmentedInputCommit } from '../ui/segmentedInputCommit';
 import { renderStatusMarker, setStatusMarkerCompletionBlocked } from '../ui/StatusMarker';
 import { showStatusMenuAt, type StatusMenuHandle } from '../ui/statusMenu';
 import { showTagDropdown } from '../ui/tagDropdown';
@@ -105,6 +106,7 @@ import {
 } from '../ui/timeTracking/TimeBadge';
 
 type TaskLike = TaskSnapshot | SubtaskSnapshot;
+type SchedulingDateField = 'due' | 'scheduled' | 'start';
 
 interface DependencyDisclosureState {
   readonly selectionKey: string;
@@ -370,6 +372,16 @@ function subtaskUndoPosition(
         index,
         title: sub.title,
       };
+}
+
+function datePopoverValue(task: TaskLike, field: SchedulingDateField): string | undefined {
+  if (field === 'due') return task.planning.due ?? task.planning.scheduled;
+  return field === 'scheduled' ? task.planning.scheduled : task.planning.start;
+}
+
+function restorePopupRole(anchor: HTMLElement, previous: string | null): void {
+  if (previous !== null && previous !== '') anchor.setAttribute('aria-haspopup', previous);
+  else anchor.removeAttribute('aria-haspopup');
 }
 
 export class RightPanel {
@@ -3059,7 +3071,7 @@ export class RightPanel {
   private showDatePopover_abyssPrivate(
     anchor: HTMLElement,
     task: TaskLike,
-    field: 'due' | 'scheduled' | 'start' = 'due',
+    field: SchedulingDateField = 'due',
   ): void {
     const already = this.el_abyssPrivate.querySelector('.abyss-date-popover');
     this.clearPopovers_abyssPrivate();
@@ -3072,57 +3084,26 @@ export class RightPanel {
       attr: { role: 'dialog', 'aria-label': `Set ${field === 'scheduled' ? 'plan' : field} date` },
     });
 
-    let currentValue: string | undefined;
-    if (field === 'due') currentValue = task.planning.due ?? task.planning.scheduled;
-    else if (field === 'scheduled') currentValue = task.planning.scheduled;
-    else currentValue = task.planning.start;
-
     const inputRow = pop.createDiv({ cls: 'abyss-popover-input-row' });
     const input = inputRow.createEl('input', {
       cls: 'abyss-date-input',
-      attr: { type: 'date', value: currentValue ?? '' },
+      attr: { type: 'date', value: datePopoverValue(task, field) ?? '' },
     });
-    let keyboardDraft = false;
-    let committed = false;
-    const commit = (): void => {
-      if (committed || input.value === '' || input.validity.badInput) return;
-      committed = true;
-      runAsyncAction(this.updateDate_abyssPrivate(task, field, input.value));
-      this.removeAnchoredSurface_abyssPrivate(pop);
-    };
-    input.addEventListener('pointerdown', () => {
-      keyboardDraft = false;
-    });
-    input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && keyboardDraft) {
-        event.preventDefault();
-        event.stopPropagation();
-        commit();
-        return;
-      }
-      if (!['Alt', 'Control', 'Enter', 'Escape', 'Meta', 'Shift', 'Tab'].includes(event.key)) {
-        keyboardDraft = true;
-      }
-    });
-    input.addEventListener('change', () => {
-      if (!keyboardDraft) commit();
-    });
-    pop.addEventListener('focusout', (event) => {
-      const next = event.relatedTarget;
-      const remainsInPopover =
-        next !== null &&
-        typeof (next as { nodeType?: unknown }).nodeType === 'number' &&
-        pop.contains(next as Node);
-      if (keyboardDraft && pop.isConnected && !remainsInPopover) {
-        commit();
-      }
+    const draft = bindSegmentedInputCommit({
+      input,
+      boundary: pop,
+      commit: () => {
+        if (input.value === '' || input.validity.badInput) return;
+        runAsyncAction(this.updateDate_abyssPrivate(task, field, input.value));
+        this.removeAnchoredSurface_abyssPrivate(pop);
+      },
     });
     this.el_abyssPrivate.ownerDocument.defaultView?.setTimeout(() => {
       input.focus();
     }, 0);
 
     this.renderPopoverClear_abyssPrivate(inputRow, 'Clear date', () => {
-      committed = true;
+      draft.cancel();
       if (field === 'due') runAsyncAction(this.clearDate_abyssPrivate(task));
       else runAsyncAction(this.clearPlanningDate_abyssPrivate(task, field));
       this.removeAnchoredSurface_abyssPrivate(pop);
@@ -3131,10 +3112,8 @@ export class RightPanel {
     this.dismissMenuOnOutsideClick_abyssPrivate(pop, anchor, undefined, {
       focusLeaveDelay: 200,
       onCleanup: () => {
-        committed = true;
-        if (previousPopupRole !== null && previousPopupRole !== '') {
-          anchor.setAttribute('aria-haspopup', previousPopupRole);
-        } else anchor.removeAttribute('aria-haspopup');
+        draft.cancel();
+        restorePopupRole(anchor, previousPopupRole);
       },
     });
   }
@@ -3568,7 +3547,7 @@ export class RightPanel {
 
   private async updateDate_abyssPrivate(
     task: TaskLike,
-    field: 'due' | 'scheduled' | 'start',
+    field: SchedulingDateField,
     date: string,
   ): Promise<void> {
     await this.executePlanningPatch_abyssPrivate(task, {
@@ -3776,21 +3755,37 @@ export class RightPanel {
     this.el_abyssPrivate.ownerDocument.defaultView?.setTimeout(() => {
       input.focus();
     }, 0);
-    input.addEventListener('change', () => {
-      this.finishPopoverUpdate_abyssPrivate(pop, this.updateTime_abyssPrivate(task, input.value));
+    // The popover stays open while its write runs, so one keyboard value is written once.
+    let written = false;
+    const draft = bindSegmentedInputCommit({
+      input,
+      boundary: inputRow,
+      commit: () => {
+        if (written || input.validity.badInput) return;
+        written = true;
+        this.finishPopoverUpdate_abyssPrivate(pop, this.updateTime_abyssPrivate(task, input.value));
+      },
     });
 
     this.renderPopoverClear_abyssPrivate(inputRow, 'Clear time', () => {
+      draft.cancel();
       this.finishPopoverUpdate_abyssPrivate(pop, this.updateTime_abyssPrivate(task, ''));
     });
 
-    if ('source' in task) this.renderDurationInputs_abyssPrivate(pop, task);
+    const disarmDuration =
+      'source' in task ? this.renderDurationInputs_abyssPrivate(pop, task) : undefined;
 
     this.positionAnchoredSurface_abyssPrivate(pop, anchor, 'below-start');
-    this.dismissMenuOnOutsideClick_abyssPrivate(pop, anchor, undefined, { focusLeaveDelay: 200 });
+    this.dismissMenuOnOutsideClick_abyssPrivate(pop, anchor, undefined, {
+      focusLeaveDelay: 200,
+      onCleanup: () => {
+        draft.cancel();
+        disarmDuration?.();
+      },
+    });
   }
 
-  private renderDurationInputs_abyssPrivate(popover: HTMLElement, task: TaskSnapshot): void {
+  private renderDurationInputs_abyssPrivate(popover: HTMLElement, task: TaskSnapshot): () => void {
     const row = popover.createDiv({ cls: 'abyss-popover-input-row' });
     const input = row.createEl('input', {
       cls: 'abyss-duration-input',
@@ -3802,7 +3797,10 @@ export class RightPanel {
           task.planning.duration == null ? '' : formatDurationFromMinutes(task.planning.duration),
       },
     });
+    let armed = true;
     input.addEventListener('change', () => {
+      // Chromium fires change for an edited field it removes; a closed popover writes nothing.
+      if (!armed) return;
       const minutes = parseDurationToMinutes(input.value);
       const update =
         minutes === undefined || minutes === 0
@@ -3813,6 +3811,9 @@ export class RightPanel {
     this.renderPopoverClear_abyssPrivate(row, 'Clear duration', () => {
       this.finishPopoverUpdate_abyssPrivate(popover, this.clearDuration_abyssPrivate(task));
     });
+    return () => {
+      armed = false;
+    };
   }
 
   private finishPopoverUpdate_abyssPrivate(popover: HTMLElement, update: Promise<void>): void {

@@ -1,12 +1,18 @@
 import { anchoredPlacement } from './anchoredPlacement';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
+import {
+  bindSegmentedInputCommit,
+  type SegmentedCommitReason,
+  type SegmentedInputCommitHandle,
+} from './segmentedInputCommit';
 
 export interface DatePickerPopoverOptions {
   readonly owner: HTMLElement;
   readonly anchor: HTMLElement;
   readonly boundary: HTMLElement;
   readonly initialValue?: string;
-  readonly onPick: (value: string) => void;
+  /** `returnFocus` is false for a pick made by leaving the picker, which keeps focus where it went. */
+  readonly onPick: (value: string, pick: { readonly returnFocus: boolean }) => void;
   readonly onClose?: () => void;
   readonly restoreFocus?: () => void;
   readonly interactionOwnership?: InteractionOwnershipPort;
@@ -19,6 +25,7 @@ class DatePickerLifecycle {
   private readonly ownerWindow_abyssPrivate: NonNullable<Document['defaultView']> | null;
   private readonly timerWindow_abyssPrivate: Window;
   private readonly ownershipToken_abyssPrivate: { release(): void };
+  private readonly draft_abyssPrivate: SegmentedInputCommitHandle;
   private registrationTimer_abyssPrivate: number | undefined;
   private focusTimer_abyssPrivate: number | undefined;
   private blurTimer_abyssPrivate: number | undefined;
@@ -39,13 +46,19 @@ class DatePickerLifecycle {
     ).acquire({
       blocksShortcuts: true,
     });
+    this.draft_abyssPrivate = bindSegmentedInputCommit({
+      input: input_abyssPrivate,
+      boundary: popover_abyssPrivate,
+      commit: (reason) => {
+        this.commitDraft_abyssPrivate(reason);
+      },
+    });
   }
 
   mount(): () => void {
     ownerCleanups.set(this.options_abyssPrivate.owner, this.cleanup_abyssPrivate);
     this.ownerWindow_abyssPrivate?.addEventListener('resize', this.position_abyssPrivate);
     this.ownerDocument_abyssPrivate.addEventListener('scroll', this.position_abyssPrivate, true);
-    this.input_abyssPrivate.addEventListener('change', this.onChange_abyssPrivate);
     this.input_abyssPrivate.addEventListener('blur', this.onBlur_abyssPrivate);
     this.registrationTimer_abyssPrivate = this.setTimer_abyssPrivate(
       this.beginListening_abyssPrivate,
@@ -69,6 +82,7 @@ class DatePickerLifecycle {
     ) {
       return;
     }
+    this.draft_abyssPrivate.flush();
     this.cleanup_abyssPrivate();
   };
 
@@ -79,13 +93,17 @@ class DatePickerLifecycle {
     this.cleanup_abyssPrivate();
   };
 
-  private readonly onChange_abyssPrivate = (): void => {
+  private commitDraft_abyssPrivate(reason: SegmentedCommitReason): void {
+    if (this.input_abyssPrivate.validity.badInput) return;
+    // Enter and a native change close as a change always has; leaving the picker keeps focus where
+    // the user sent it.
+    const returnFocus = reason === 'change' || reason === 'enter';
     try {
-      this.options_abyssPrivate.onPick(this.input_abyssPrivate.value);
+      this.options_abyssPrivate.onPick(this.input_abyssPrivate.value, { returnFocus });
     } finally {
-      this.cleanup_abyssPrivate();
+      this.cleanup_abyssPrivate(returnFocus);
     }
-  };
+  }
 
   private readonly onBlur_abyssPrivate = (): void => {
     if (this.closed_abyssPrivate) return;
@@ -116,6 +134,7 @@ class DatePickerLifecycle {
   private readonly cleanup_abyssPrivate = (restoreFocus = true): void => {
     if (this.closed_abyssPrivate) return;
     this.closed_abyssPrivate = true;
+    this.draft_abyssPrivate.cancel();
     this.clearTimers_abyssPrivate();
     this.removeListeners_abyssPrivate();
     this.popover_abyssPrivate.remove();

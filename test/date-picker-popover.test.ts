@@ -97,7 +97,7 @@ describe('showDatePickerPopover', () => {
     input.dispatchEvent(new Event('change', { bubbles: true }));
 
     expect(onPick).toHaveBeenCalledOnce();
-    expect(onPick).toHaveBeenCalledWith('2026-08-02');
+    expect(onPick).toHaveBeenCalledWith('2026-08-02', { returnFocus: true });
     expect(onClose).toHaveBeenCalledOnce();
     expect(owner.querySelector('.abyss-date-picker-popover')).toBeNull();
     expect(owner.ownerDocument.activeElement).toBe(anchor);
@@ -398,5 +398,73 @@ describe('showDatePickerPopover', () => {
       expect(removeSpy.mock.calls).toContainEqual(registration);
     }
     owner.remove();
+  });
+
+  it('keeps an incomplete keyboard date open on Enter', () => {
+    vi.useFakeTimers();
+    const { anchor, boundary, owner } = host();
+    const onPick = vi.fn();
+    const close = showDatePickerPopover({ owner, anchor, boundary, onPick });
+
+    try {
+      vi.runAllTimers();
+      const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
+      vi.spyOn(input, 'validity', 'get').mockReturnValue({ badInput: true } as ValidityState);
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '2', bubbles: true, cancelable: true }),
+      );
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+
+      // A pick that ignores bad input would close the picker on a date still being typed.
+      expect(onPick).not.toHaveBeenCalled();
+      expect(owner.querySelector('.abyss-date-picker-popover')).not.toBeNull();
+    } finally {
+      close();
+      owner.remove();
+    }
+  });
+
+  it.each([
+    ['Enter', true],
+    ['a focus departure', false],
+    ['an outside press', false],
+  ] as const)('picks a keyboard date once, on %s', (ending, returnFocus) => {
+    vi.useFakeTimers();
+    const { anchor, boundary, owner } = host();
+    const next = owner.createEl('button', { text: 'Next control' });
+    const onPick = vi.fn();
+    anchor.focus();
+    const close = showDatePickerPopover({ owner, anchor, boundary, onPick });
+
+    try {
+      vi.runAllTimers();
+      const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '2', bubbles: true, cancelable: true }),
+      );
+      input.value = '2026-08-02';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      // Chromium fires change after every typed segment, so the change alone picks nothing.
+      expect(onPick).not.toHaveBeenCalled();
+
+      if (ending === 'Enter') {
+        input.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+        );
+      } else if (ending === 'a focus departure') next.focus();
+      else owner.ownerDocument.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+
+      // A fixed returnFocus would drop focus after Enter or pull it back after leaving.
+      expect(onPick).toHaveBeenCalledOnce();
+      expect(onPick).toHaveBeenCalledWith('2026-08-02', { returnFocus });
+      expect(owner.querySelector('.abyss-date-picker-popover')).toBeNull();
+    } finally {
+      close();
+      owner.remove();
+    }
   });
 });

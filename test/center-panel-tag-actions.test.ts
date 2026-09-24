@@ -8,6 +8,7 @@ import { localDate, type TaskApplicationApi, type TaskSnapshot } from '../src/ta
 import {
   expectDefined,
   flushMicrotasks,
+  loseFocusOnRemoval,
   makeCenterPanelForTest,
   makeStubStore,
   methodOf,
@@ -278,6 +279,21 @@ async function settleChangedCustomDate(
   input.dispatchEvent(ownerEvent(ownerWindow, 'change', { bubbles: true }));
   await flushMicrotasks();
   return card;
+}
+
+/** Opens "Set date…" from the focused card and types a date without committing it. */
+async function openCustomDateDraft(el: HTMLElement, items: readonly CapturedMenuItem[]) {
+  const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
+  card.focus();
+  openMenu(card);
+  items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+  await flushMicrotasks();
+  const popover = expectDefined(el.querySelector<HTMLElement>('.abyss-date-picker-popover'));
+  const input = expectDefined(popover.querySelector<HTMLInputElement>('input[type="date"]'));
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: '2', bubbles: true, cancelable: true }));
+  input.value = '2026-08-02';
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  return { card, popover, input };
 }
 
 describe('CenterPanel drag source', () => {
@@ -1297,6 +1313,139 @@ describe('CenterPanel task date context menus', () => {
     input.dispatchEvent(new Event('change', { bubbles: true }));
 
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('picks a keyboard custom date once, on Enter', async () => {
+    const items = captureMenu();
+    const { el, execute, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+
+    try {
+      execute.mockResolvedValue(changedTaskResult(first));
+      const { card, input } = await openCustomDateDraft(el, items);
+      // Chromium fires change after every typed segment, so the change alone must not pick.
+      expect(execute).not.toHaveBeenCalled();
+
+      const enter = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(enter);
+      await flushMicrotasks();
+      panel.refresh();
+
+      const replacement = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
+      expect(enter.defaultPrevented).toBe(true);
+      expect(execute).toHaveBeenCalledOnce();
+      expect(card.isConnected).toBe(false);
+      expect(activeDocument.activeElement).toBe(replacement);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('picks nothing when Escape cancels a keyboard custom date', async () => {
+    const items = captureMenu();
+    const { el, execute, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+
+    try {
+      const { card, popover, input } = await openCustomDateDraft(el, items);
+      loseFocusOnRemoval(popover, input, card);
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+
+      // Picking on the focusout that the removal fires would write the typed date.
+      expect(execute).not.toHaveBeenCalled();
+      expect(popover.isConnected).toBe(false);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('picks nothing when a render removes a keyboard custom date', async () => {
+    const items = captureMenu();
+    const { el, execute, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+
+    try {
+      const { card, popover, input } = await openCustomDateDraft(el, items);
+      loseFocusOnRemoval(popover, input, card);
+
+      panel.refresh();
+      await flushMicrotasks();
+
+      // Picking on the focusout that the render's removal fires would write the typed date.
+      expect(execute).not.toHaveBeenCalled();
+      expect(popover.isConnected).toBe(false);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('picks a keyboard custom date on an outside press and leaves focus where the press put it', async () => {
+    const items = captureMenu();
+    const { el, execute, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+    const rail = activeDocument.body.createDiv();
+
+    try {
+      execute.mockResolvedValue(changedTaskResult(first));
+      const { card } = await openCustomDateDraft(el, items);
+      expect(execute).not.toHaveBeenCalled();
+
+      rail.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+      rail.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      // Chromium moves focus to body after a press on a non-focusable target.
+      (activeDocument.activeElement as HTMLElement | null)?.blur();
+      await flushMicrotasks();
+      panel.refresh();
+
+      // CenterPanel revokes its focus continuity on pointerdown, so a flush that armed it after
+      // the press would pull focus back to the card.
+      expect(execute).toHaveBeenCalledOnce();
+      expect(card.isConnected).toBe(false);
+      expect(activeDocument.activeElement).toBe(activeDocument.body);
+    } finally {
+      panel.destroy();
+      el.remove();
+      rail.remove();
+    }
+  });
+
+  it('picks a keyboard custom date when focus departs and keeps focus where it went', async () => {
+    const items = captureMenu();
+    const { el, execute, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+    const next = activeDocument.body.createEl('button', { text: 'Next' });
+    const cardFocus = vi.fn();
+
+    try {
+      execute.mockResolvedValue(changedTaskResult(first));
+      const { card } = await openCustomDateDraft(el, items);
+      card.addEventListener('focus', cardFocus);
+      expect(execute).not.toHaveBeenCalled();
+
+      next.focus();
+      await flushMicrotasks();
+      panel.refresh();
+
+      // A departure pick that returned focus would focus the card, where Chromium keeps it.
+      expect(cardFocus).not.toHaveBeenCalled();
+      expect(execute).toHaveBeenCalledOnce();
+      expect(activeDocument.activeElement).toBe(next);
+    } finally {
+      panel.destroy();
+      el.remove();
+      next.remove();
+    }
   });
 
   it.each(['refresh', 'destroy'] as const)(
