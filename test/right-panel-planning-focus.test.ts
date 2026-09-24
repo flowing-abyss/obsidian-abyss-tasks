@@ -479,4 +479,31 @@ describe('inspector repeat editor focus continuity', () => {
     expect(selectedTitle(h)).toBe('Child');
     expectRebuiltFocus(chip, control(h, '.abyss-repeat-chip'));
   });
+
+  it('moves no focus when another task is selected while a repeat save is pending', async () => {
+    const h = await hosted('- [ ] Current 📅 2026-09-23\n- [ ] Other\n');
+    const gate = deferred<void>();
+    const execute = h.api.execute.bind(h.api);
+    vi.spyOn(h.api, 'execute').mockImplementationOnce(async (command) => {
+      dropFocusFromDisabledButton();
+      await gate.promise;
+      return execute(command);
+    });
+
+    activate(control(h, '.abyss-repeat-chip'));
+    await flushMicrotasks();
+    activate(editorButton(h, 'Daily'));
+    activate(editorButton(h, 'Save repeat'));
+    await flushMicrotasks();
+    expect(activeDocument.activeElement).toBe(activeDocument.body);
+    const other = h.node('Other');
+    h.state.set('taskStack', [other.root, ...other.path]);
+    gate.resolve();
+    await flushMicrotasks();
+
+    expect(await h.read()).toBe('- [ ] Current 🔁 every day 📅 2026-09-23\n- [ ] Other\n');
+    expect(selectedTitle(h)).toBe('Other');
+    // Keeping the repeat intent across a selection change would focus the other task's repeat chip.
+    expect(activeDocument.activeElement).toBe(activeDocument.body);
+  });
 });
