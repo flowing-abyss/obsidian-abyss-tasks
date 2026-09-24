@@ -1566,7 +1566,7 @@ describe('mountProjectCellEditor', () => {
       const container = document.body.createDiv();
       const save = vi.fn().mockResolvedValue(undefined);
       const onClose = vi.fn();
-      mountProjectCellEditor({
+      const handle = mountProjectCellEditor({
         app: new App(),
         container,
         field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
@@ -1575,17 +1575,21 @@ describe('mountProjectCellEditor', () => {
         save,
         onClose,
       });
-      const input = expectDefined(container.querySelector('input'));
-      input.value = 'かな';
+      try {
+        const input = expectDefined(container.querySelector('input'));
+        input.value = 'かな';
 
-      const keys = ['Enter', 'Escape'].map((key) => dispatchImeKey(input, key, ime));
-      await settle();
+        const keys = ['Enter', 'Escape'].map((key) => dispatchImeKey(input, key, ime));
+        await settle();
 
-      // An IME check in editorKeyboardNavigation alone still lets handleEscape cancel the edit.
-      expect(keys.map((event) => event.defaultPrevented)).toEqual([false, false]);
-      expect(save).not.toHaveBeenCalled();
-      expect(onClose).not.toHaveBeenCalled();
-      container.remove();
+        // An IME check in editorKeyboardNavigation alone still lets handleEscape cancel the edit.
+        expect(keys.map((event) => event.defaultPrevented)).toEqual([false, false]);
+        expect(save).not.toHaveBeenCalled();
+        expect(onClose).not.toHaveBeenCalled();
+      } finally {
+        handle.destroy();
+        container.remove();
+      }
     },
   );
 });

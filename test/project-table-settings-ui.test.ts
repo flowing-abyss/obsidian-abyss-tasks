@@ -1471,26 +1471,29 @@ describe('renderProjectTableSettings', () => {
     (ime) => {
       const projects = buildDefaultProjectsSettings();
       const container = document.body.createDiv();
-      renderProjectTableSettings({
-        app: new App(),
-        container,
-        projects,
-        catalog: { ...catalog([]), list: () => null },
-        saveStatic: async () => {},
-        saveViewState: async () => {},
-        refresh: vi.fn(),
-      });
-      const input = expectDefined(
-        container.querySelector<HTMLInputElement>('.abyss-project-column-add-input'),
-      );
-      input.value = 'Novel';
+      try {
+        renderProjectTableSettings({
+          app: new App(),
+          container,
+          projects,
+          catalog: { ...catalog([]), list: () => null },
+          saveStatic: async () => {},
+          saveViewState: async () => {},
+          refresh: vi.fn(),
+        });
+        const input = expectDefined(
+          container.querySelector<HTMLInputElement>('.abyss-project-column-add-input'),
+        );
+        input.value = 'Novel';
 
-      const enter = dispatchImeKey(input, 'Enter', ime);
+        const enter = dispatchImeKey(input, 'Enter', ime);
 
-      // Checking only `isComposing` lets a legacy keyCode 229 Enter add the half-composed name.
-      expect(enter.defaultPrevented).toBe(false);
-      expect(projects.propertyDefinitions['property:Novel']).toBeUndefined();
-      container.remove();
+        // Checking only `isComposing` lets a legacy keyCode 229 Enter add the half-composed name.
+        expect(enter.defaultPrevented).toBe(false);
+        expect(projects.propertyDefinitions['property:Novel']).toBeUndefined();
+      } finally {
+        container.remove();
+      }
     },
   );
 });

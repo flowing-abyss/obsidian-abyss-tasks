@@ -1,4 +1,4 @@
-import { Notice, requireApiVersion } from 'obsidian';
+import { requireApiVersion } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
@@ -533,6 +533,7 @@ describe('RightPanel block editing', () => {
         input.dispatchEvent(
           new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true }),
         );
+        // Checking only `isComposing` lets a legacy keyCode 229 Enter add the entry.
         dispatchImeKey(input, 'Enter', 'legacy');
         input.value = '   ';
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -705,16 +706,7 @@ describe('RightPanel block editing', () => {
         changed: true,
         outcome: { type: 'task', task: restored },
       });
-    const notices: Notice[] = [];
-    const prototype = Notice.prototype as unknown as {
-      constructor__(this: Notice, message: string | DocumentFragment, duration?: number): void;
-    };
-    const constructor = vi.spyOn(prototype, 'constructor__').mockImplementation(function (
-      this: Notice,
-    ) {
-      notices.push(this);
-      if (requireApiVersion('1.8.7')) activeDocument.body.append(this.containerEl);
-    });
+    const shown = notices();
     const { panel, state } = await panelWith(initial, execute);
     const container = freshContainer();
     activeDocument.body.append(container);
@@ -722,16 +714,16 @@ describe('RightPanel block editing', () => {
     try {
       await call<Promise<void>>(panel, 'deleteTask', expectDefined(initial.subtasks[0]));
       expect(state.get('taskStack')[0]?.subtasks.map((child) => child.title)).toEqual(['sibling']);
-      expect(notices).toHaveLength(0);
+      expect(shown).toHaveLength(0);
       expectDefined(container.querySelector<HTMLButtonElement>('.abyss-undo-row button')).click();
       await flushMicrotasks(20);
       expect(execute).toHaveBeenLastCalledWith({ type: 'restore-subtask', ...recovery });
       expect(state.get('taskStack')[0]).toEqual(restored);
-      expect(constructor).not.toHaveBeenCalled();
+      expect(shown).toHaveLength(0);
     } finally {
       panel.destroy();
       container.remove();
-      notices.forEach((notice) => {
+      shown.forEach((notice) => {
         if (requireApiVersion('1.8.7')) notice.containerEl.remove();
       });
     }
