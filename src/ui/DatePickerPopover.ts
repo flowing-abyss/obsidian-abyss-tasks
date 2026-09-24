@@ -3,6 +3,7 @@ import { noInteractionOwnership, type InteractionOwnershipPort } from './interac
 import {
   bindSegmentedInputCommit,
   DATE_INPUT_MAX,
+  DATE_INPUT_MIN,
   type SegmentedCommitReason,
   type SegmentedInputCommitHandle,
 } from './segmentedInputCommit';
@@ -197,6 +198,7 @@ export function showDatePickerPopover(options: DatePickerPopoverOptions): () => 
   const input = row.createEl('input');
   input.className = 'abyss-date-input';
   input.type = 'date';
+  input.min = DATE_INPUT_MIN;
   input.max = DATE_INPUT_MAX;
   input.setAttribute('aria-label', 'Set date');
   input.value = options.initialValue ?? '';

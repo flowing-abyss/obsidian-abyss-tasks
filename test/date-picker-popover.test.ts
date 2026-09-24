@@ -463,6 +463,40 @@ describe('showDatePickerPopover', () => {
     }
   });
 
+  it('keeps a keyboard date before year 1000 open as an unusable draft on Enter', () => {
+    vi.useFakeTimers();
+    const { anchor, boundary, owner } = host();
+    const onPick = vi.fn();
+    const close = showDatePickerPopover({ owner, anchor, boundary, onPick });
+
+    try {
+      vi.runAllTimers();
+      const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
+      // A stray fifth digit: with `max`, Chromium's year segment keeps the last four, `0266`.
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '6', bubbles: true, cancelable: true }),
+      );
+      input.value = '0266-09-24';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      // jsdom keeps a year before 1000 as a valid date string, as Chromium does.
+      expect(input.value).toBe('0266-09-24');
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+
+      // A field without `min` lets Enter pick the shifted year and close the picker.
+      expect(onPick).not.toHaveBeenCalled();
+      expect(owner.querySelector('.abyss-date-picker-popover')).not.toBeNull();
+      expect(input.value).toBe('0266-09-24');
+      expect(input.min).toBe('1000-01-01');
+      expect(input.validity.rangeUnderflow).toBe(true);
+    } finally {
+      close();
+      owner.remove();
+    }
+  });
+
   it.each([
     ['Enter', true],
     ['a focus departure', false],

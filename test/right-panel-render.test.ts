@@ -1989,6 +1989,60 @@ describe('RightPanel popovers', () => {
     }
   });
 
+  it('keeps a keyboard date before year 1000 open as an unusable draft on Enter', async () => {
+    const selected = task({ title: 'Shifted year', planning: { due: '2026-09-20' } });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'io-error',
+      cause: 'test',
+      contentState: 'unchanged',
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { panel, state, el } = await makePanel(
+      {},
+      { queries: queryApiForTasks(() => [selected]), execute },
+    );
+    activeDocument.body.append(el);
+    try {
+      state.set('taskStack', [selected]);
+      const chip = expectDefined(
+        Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button')).find(
+          (candidate) => candidate.textContent.startsWith('📅'),
+        ),
+      );
+      click(chip);
+      await tick();
+      const input = expectDefined(
+        el.querySelector<HTMLInputElement>('.abyss-date-popover .abyss-date-input'),
+      );
+      input.focus();
+      // A stray fifth digit: with `max`, Chromium's year segment keeps the last four, `0266`.
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '6', bubbles: true, cancelable: true }),
+      );
+      input.value = '0266-09-24';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      // jsdom keeps a year before 1000 as a valid date string, as Chromium does.
+      expect(input.value).toBe('0266-09-24');
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+
+      // A field without `min` offers the shifted year to the commit, which writes it and closes.
+      expect(execute).not.toHaveBeenCalled();
+      expect(el.querySelector('.abyss-date-popover')).not.toBeNull();
+      expect(input.value).toBe('0266-09-24');
+      expect(activeDocument.activeElement).toBe(input);
+      expect(consoleError).not.toHaveBeenCalled();
+      expect(input.min).toBe('1000-01-01');
+      expect(input.validity.rangeUnderflow).toBe(true);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
   it('cancels an incomplete keyboard date after focus leaves the whole popover', async () => {
     const selected = task({ title: 'Cancel incomplete', planning: { due: '2026-09-20' } });
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({

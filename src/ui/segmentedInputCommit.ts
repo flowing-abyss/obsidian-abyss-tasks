@@ -4,6 +4,13 @@ import { isImeOwnedEvent } from './ime';
 export type SegmentedCommitReason = 'change' | 'enter' | 'departure' | 'flush';
 
 /**
+ * The `min` of a task date field. A year before 1000 is never a task date: the year segment shows
+ * one only for a stray digit or a year still being typed, so the field reports it invalid instead
+ * of offering it to the commit.
+ */
+export const DATE_INPUT_MIN = '1000-01-01';
+
+/**
  * The `max` of a task date field. A task date has a four-digit year, so the field reports a later
  * year invalid instead of offering it to the commit.
  */
