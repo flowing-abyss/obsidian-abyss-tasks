@@ -1459,6 +1459,88 @@ describe('RightPanel block editing', () => {
     }
   });
 
+  it('closes the title editor after a save that changes nothing', async () => {
+    const initial = snapshot('old');
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'ok',
+      changed: false,
+      outcome: { type: 'task', task: initial },
+    });
+    const { panel } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    const outside = activeDocument.body.createEl('button');
+    try {
+      expectDefined(container.querySelector<HTMLElement>('.abyss-right-title-view')).click();
+      await flushMicrotasks();
+      const textarea = expectDefined(
+        container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+      );
+      // The editor focuses its textarea on the next task; the blur below is real only then.
+      expect(activeDocument.activeElement).toBe(textarea);
+      textarea.value = 'root ';
+      outside.focus();
+      await flushMicrotasks(20);
+
+      expect(execute).toHaveBeenCalledWith({
+        type: 'patch',
+        target: { type: 'task', ref: initial.ref },
+        patch: { markdownTitle: { type: 'set', value: 'root' } },
+      });
+      // Restoring the submitted editor draft after an unchanged result would reopen the editor.
+      expect(container.querySelector('.abyss-right-title-edit')).toBeNull();
+    } finally {
+      panel.destroy();
+      outside.remove();
+      container.remove();
+    }
+  });
+
+  it('keeps a comment typed while a description save that changes nothing is pending', async () => {
+    const initial = snapshot('old');
+    const pending = deferred<TaskCommandResult>();
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+    const { panel } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      expectDefined(container.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
+      await flushMicrotasks();
+      const textarea = expectDefined(
+        container.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+      );
+      // The editor focuses its textarea on the next task; the blur below is real only then.
+      expect(activeDocument.activeElement).toBe(textarea);
+      textarea.value = 'old description ';
+      const typed = expectDefined(
+        container.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
+      typed.focus();
+      await flushMicrotasks();
+      expect(execute).toHaveBeenCalledWith({
+        type: 'set-description',
+        target: { type: 'task', ref: initial.ref },
+        text: 'old description ',
+      });
+      typed.value = 'typed during the save';
+      pending.resolve({ type: 'ok', changed: false, outcome: { type: 'task', task: initial } });
+      await flushMicrotasks(20);
+
+      expect(container.querySelector('.abyss-right-desc-edit')).toBeNull();
+      const comment = expectDefined(
+        container.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
+      // Dropping every draft on an unchanged result would lose the typed comment.
+      expect(comment.value).toBe('typed during the save');
+      expect(activeDocument.activeElement).toBe(comment);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
   it('keeps a comment textarea open when its exact comment ref conflicts', async () => {
     const initial = snapshot('old');
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
