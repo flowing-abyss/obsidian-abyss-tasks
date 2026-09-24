@@ -33,10 +33,11 @@ export interface RecurrenceEditorOptions {
   readonly onSubmit: (patch: TaskPatch) => Promise<TaskCommandResult>;
   readonly onClose: () => void;
   /**
-   * Read when the editor closes, so a control rebuilt while it was open can take focus back. When
-   * passed, only its result counts: a connected element takes focus, and `undefined` or a
-   * disconnected element moves nothing. Without it, focus returns to the element that held it when
-   * the editor opened, if that element is still connected.
+   * Read when the editor closes, so a control rebuilt while it was open can take focus back. It is
+   * also read after a failed save that leaves no enabled Save to take focus. When passed, only its
+   * result counts: a connected element takes focus, and `undefined` or a disconnected element
+   * moves nothing. Without it, focus returns to the element that held it when the editor opened,
+   * if that element is still connected.
    */
   readonly dismissalFocus?: () => HTMLElement | undefined;
 }
@@ -457,7 +458,7 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
     return candidates.find(([, rule]) => parsed.canonical === rule)?.[0];
   }
 
-  /** What keeps Save disabled before any submission; a failed submission is not among them. */
+  /** What keeps Save disabled; a failed submission is not among them, so a retry stays possible. */
   private blockingMessage_abyssPrivate(): string {
     if (this.options_abyssPrivate.ownershipConflict)
       return 'Remove the nested repeat conflict first.';
@@ -675,7 +676,8 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
 
   /**
    * A failed Save stays enabled for a retry, so it takes back the focus the submit dropped. An
-   * editor that a rebuild emptied has no Save left, so its dismissal focus decides instead.
+   * editor that a rebuild emptied has no Save left, so its dismissal focus decides instead. It is
+   * also read after a failed save that leaves no enabled Save to take focus.
    */
   private recoverFailureFocus_abyssPrivate(): void {
     if (!focusDropped(this.options_abyssPrivate.container.ownerDocument)) return;

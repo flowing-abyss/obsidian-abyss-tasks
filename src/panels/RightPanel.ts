@@ -4208,7 +4208,10 @@ export class RightPanel {
     return rebuildPlanningTargetStack(root, target);
   }
 
-  /** Shared outside-click dismissal for small anchored menus (context menu, add-date menu). */
+  /**
+   * Registers an anchored surface's dismissal (outside click, Escape, focus departure) and records
+   * its opener, so a close or a rebuild can return focus to it.
+   */
   private dismissMenuOnOutsideClick_abyssPrivate(
     menu: HTMLElement,
     anchor: HTMLElement,

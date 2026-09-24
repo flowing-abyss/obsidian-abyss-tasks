@@ -30,7 +30,7 @@ interface SegmentedInputCommitOptions {
   readonly commit: (reason: SegmentedCommitReason) => void;
 }
 
-/** Keys that move, confirm, or cancel rather than edit a segment. */
+/** Modifier, confirm, cancel, and Tab keys, which edit no segment. */
 const NON_EDITING_KEYS: readonly string[] = [
   'Alt',
   'Control',
