@@ -1131,7 +1131,7 @@ export class RightPanel {
     origin?: RightPanelDraftBundle['origin'],
   ): HTMLElement | undefined {
     const intent = this.recurrenceIntent_abyssPrivate;
-    const anchor = this.planningControls_abyssPrivate.get(intent?.key ?? 'repeat');
+    const anchor = this.planningControl_abyssPrivate(intent?.key ?? 'repeat');
     if (anchor === undefined) {
       this.preserveDirtyDraft_abyssPrivate(draft, origin);
       return undefined;
@@ -1658,7 +1658,12 @@ export class RightPanel {
 
   private readonly dependencyStatusMarkers_abyssPrivate = new Map<HTMLElement, TaskLike>();
   private dependencyStatusMenu_abyssPrivate: StatusMenuHandle | undefined;
-  /** The planning controls of the current render, both ways, so a rebuild can refocus one. */
+  /**
+   * The planning controls of the current render, so a rebuild can refocus one. A control that
+   * `registerPlanningControl_abyssPrivate` records maps both ways, key to control and control to
+   * key. A tag's × maps one way, control to `add-tag`, through
+   * `registerTagRemoveControl_abyssPrivate`.
+   */
   private readonly planningControls_abyssPrivate = new Map<PlanningControlKey, HTMLElement>();
   private readonly planningControlKeys_abyssPrivate = new Map<Element, PlanningControlKey>();
   /** The control each open anchored surface was opened from, while the surface is open. */
@@ -1679,6 +1684,11 @@ export class RightPanel {
     this.planningControlKeys_abyssPrivate.set(control, key);
   }
 
+  /** A tag's × hands focus to + tag after the rebuild; it is not a return target itself. */
+  private registerTagRemoveControl_abyssPrivate(remove: HTMLElement): void {
+    this.planningControlKeys_abyssPrivate.set(remove, 'add-tag');
+  }
+
   /** The badge keeps its buttons across renders, so each render registers the same elements. */
   private registerTrackingControls_abyssPrivate(): void {
     const controls = this.timeBadge_abyssPrivate?.controls();
@@ -1692,6 +1702,11 @@ export class RightPanel {
     this.planningControls_abyssPrivate.clear();
     this.planningControlKeys_abyssPrivate.clear();
     this.addDateField_abyssPrivate = undefined;
+  }
+
+  /** The control the current render registered for `key`. */
+  private planningControl_abyssPrivate(key: PlanningControlKey): HTMLElement | undefined {
+    return this.planningControls_abyssPrivate.get(key);
   }
 
   /** The planning control that holds focus, or that opened the surface holding it. */
@@ -1732,7 +1747,7 @@ export class RightPanel {
    * Records which control opened the repeat editor, or carries on the live intent a restore passes,
    * and resolves its rebuilt twin at close time.
    */
-  private recurrenceReturnTarget_abyssPrivate(
+  private beginRecurrenceIntent_abyssPrivate(
     anchor: HTMLElement,
     live?: RecurrenceIntent,
   ): () => HTMLElement | undefined {
@@ -3173,6 +3188,7 @@ export class RightPanel {
       cls: 'abyss-popover abyss-recurrence-popover abyss-popover-anchored',
       attr: { role: 'dialog', 'aria-modal': 'false' },
     });
+    const dismissalFocus = this.beginRecurrenceIntent_abyssPrivate(anchor, restoring?.intent);
     const handle = mountRecurrenceEditor({
       container: popover,
       source: { root, target },
@@ -3184,7 +3200,7 @@ export class RightPanel {
       onClose: () => {
         this.removeAnchoredSurface_abyssPrivate(popover);
       },
-      dismissalFocus: this.recurrenceReturnTarget_abyssPrivate(anchor, restoring?.intent),
+      dismissalFocus,
     });
     this.recurrenceDraftEditor_abyssPrivate = { target, handle, surface: popover };
     const title = popover.querySelector<HTMLElement>('.abyss-recurrence-title');
@@ -3236,7 +3252,7 @@ export class RightPanel {
     }
     chip.createSpan({ text: tag });
     const x = chip.createEl('button', { cls: 'abyss-chip-remove', text: '×' });
-    this.planningControlKeys_abyssPrivate.set(x, 'add-tag');
+    this.registerTagRemoveControl_abyssPrivate(x);
     x.addEventListener('click', (e) => {
       e.stopPropagation();
       runAsyncAction(this.removeTag_abyssPrivate(task, tag));
