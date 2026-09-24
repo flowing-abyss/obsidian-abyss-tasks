@@ -19,6 +19,7 @@ import {
   tagMatchesGroup,
   type EffectiveTagGroup,
 } from '../tags/effectiveTagGroups';
+import { tagSettingsFailureNotice } from '../tags/tagSettingsFailure';
 import { collectTaskNodeTags } from '../tags/taskTagCatalog';
 import {
   normalizeTaskTagInput,
@@ -73,13 +74,6 @@ interface InlineAddHold {
   readonly selectionStart: number | null;
   readonly selectionEnd: number | null;
   readonly selectionDirection: 'forward' | 'backward' | 'none' | null;
-}
-
-/** The Notice for a failed tag settings save: rolled back, or kept by a newer save. */
-function tagSettingsFailureNotice(description: string, rolledBack: boolean): string {
-  return rolledBack
-    ? `Could not ${description}. Your changes were rolled back.`
-    : `Could not save an earlier ${description}. Newer changes were kept.`;
 }
 
 type LeftPanelConstructorArgs = [
