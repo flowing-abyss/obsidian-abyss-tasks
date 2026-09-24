@@ -113,6 +113,8 @@ export class LeftPanel {
   private readonly explicitlyCollapsed_abyssPrivate = new Set<string>();
   private showAllProjects_abyssPrivate = false;
   private inlineAdd_abyssPrivate: InlineAddSession | undefined;
+  // Every session that has not ended, including one a newer "+" replaced as the record.
+  private readonly inlineAddSessions_abyssPrivate = new Set<InlineAddSession>();
   // When a tag is opened from the Pinned section, don't auto-expand the group
   // that contains it in the Tags tree — the pin exists precisely to avoid that.
   private tagSelectedFromPinned_abyssPrivate = false;
@@ -205,9 +207,11 @@ export class LeftPanel {
     }
   }
 
+  /** Ends every live inline add first, so no pending create or blur check touches the panel. */
   destroy(): void {
-    const session = this.inlineAdd_abyssPrivate;
-    if (session !== undefined) this.closeInlineAdd_abyssPrivate(session);
+    for (const session of [...this.inlineAddSessions_abyssPrivate]) {
+      this.closeInlineAdd_abyssPrivate(session);
+    }
     this.offs_abyssPrivate.forEach((f) => {
       f();
     });
@@ -484,6 +488,7 @@ export class LeftPanel {
     body.insertBefore(input, body.firstChild);
     const session: InlineAddSession = { key, input, onCommit, phase: 'editing' };
     this.inlineAdd_abyssPrivate = session;
+    this.inlineAddSessions_abyssPrivate.add(session);
     input.addEventListener('keydown', (event) => {
       this.handleInlineAddKey_abyssPrivate(session, event);
     });
@@ -549,8 +554,8 @@ export class LeftPanel {
 
   /**
    * Ends the session and removes its input; focus the input held moves to the panel. A session
-   * that already ended (destroy, Escape during its create, or a render that could not place it)
-   * leaves the panel alone.
+   * that already ended leaves the panel alone: destroy() ends every live session, and Escape
+   * during a create or a render that could not place the input ends that one.
    */
   private finishInlineAdd_abyssPrivate(session: InlineAddSession): void {
     if (session.phase === 'ended') return;
@@ -561,9 +566,13 @@ export class LeftPanel {
     this.render_abyssPrivate();
   }
 
-  /** Ends the session without touching the DOM; a pending blur check then commits nothing. */
+  /**
+   * Ends the session and drops it from the live set without touching the DOM; a pending blur check
+   * or create then leaves the panel alone. The record clears only while it is still this session.
+   */
   private closeInlineAdd_abyssPrivate(session: InlineAddSession): void {
     session.phase = 'ended';
+    this.inlineAddSessions_abyssPrivate.delete(session);
     if (this.inlineAdd_abyssPrivate === session) this.inlineAdd_abyssPrivate = undefined;
   }
 

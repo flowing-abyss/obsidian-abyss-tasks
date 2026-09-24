@@ -1524,7 +1524,11 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     const state = new AppState();
     const store = makeStubStore(opts.tasks ?? []);
     const taskList = vi.spyOn(store.queries, 'list');
-    const merged: CalendarSettings = { ...DEFAULT_SETTINGS, ...opts.settings };
+    const merged: CalendarSettings = {
+      ...DEFAULT_SETTINGS,
+      sectionCollapse: { ...DEFAULT_SETTINGS.sectionCollapse },
+      ...opts.settings,
+    };
     const save = vi.fn().mockResolvedValue(undefined);
     const saveViewState = vi.fn().mockResolvedValue(undefined);
     const tm = new TagManager(null as never, merged, save);
@@ -2010,6 +2014,58 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       // A settle that re-renders every session it finishes would rebuild the destroyed panel.
       expect(el.childElementCount).toBe(0);
     } finally {
+      el.remove();
+    }
+  });
+
+  it('keeps a destroyed panel empty when a create settles after another inline add opened', async () => {
+    let settle!: () => void;
+    const { panel, el } = makeFull({
+      attached: true,
+      projects: [{ path: 'Projects/A.md', name: 'A' }],
+      create: () =>
+        new Promise((resolve) => {
+          settle = () => {
+            resolve(null);
+          };
+        }),
+    });
+    try {
+      const name = openInlineAdd(el, 'projects');
+      name.value = 'New';
+      keydown(name, 'Enter');
+      openInlineAdd(el, 'tags');
+      panel.destroy();
+      settle();
+      await flushMicrotasks();
+
+      // Ending only the recorded session would let the earlier project create rebuild the panel.
+      expect(el.childElementCount).toBe(0);
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('never commits a blurred tag name after destroy when another inline add took focus', () => {
+    vi.useFakeTimers();
+    const { panel, el, tm } = makeFull({
+      attached: true,
+      projects: [{ path: 'Projects/A.md', name: 'A' }],
+    });
+    const spy = vi.spyOn(tm, 'createManualGroup').mockResolvedValue();
+    try {
+      const tag = openInlineAdd(el, 'tags');
+      tag.value = 'Draft';
+      const name = openInlineAdd(el, 'projects');
+      expect(activeDocument.activeElement).toBe(name);
+
+      panel.destroy();
+      vi.advanceTimersByTime(150);
+
+      // Ending only the recorded session would let the blurred tag name commit after teardown.
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
       el.remove();
     }
   });
