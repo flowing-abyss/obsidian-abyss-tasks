@@ -40,6 +40,8 @@ import { PanelNavigator, type PanelNavigationActions } from '../views/panelNavig
 
 const PROJECTS_CAP = 10;
 
+/** A sidebar section; each keeps its collapse state under this key in `sectionCollapse`. */
+type SectionKey = keyof CalendarSettings['sectionCollapse'];
 type InlineAddKey = 'tags' | 'projects';
 
 /** A section's reading of its failed create: whether it left nothing behind, and the Notice. */
@@ -399,7 +401,7 @@ export class LeftPanel {
    * optional "+" add action. Collapse toggles `settings.sectionCollapse[key]`.
    */
   private renderCollapsibleSection_abyssPrivate(
-    key: 'pinned' | 'projects' | 'tags',
+    key: SectionKey,
     title: string,
     options: {
       readonly addAction: (() => void) | null;
@@ -686,10 +688,7 @@ export class LeftPanel {
     };
   }
 
-  private placeInlineAdd_abyssPrivate(
-    key: 'pinned' | 'projects' | 'tags',
-    body: HTMLElement,
-  ): void {
+  private placeInlineAdd_abyssPrivate(key: SectionKey, body: HTMLElement): void {
     const session = this.inlineAdd_abyssPrivate;
     if (session?.key === key) body.insertBefore(session.input, body.firstChild);
   }

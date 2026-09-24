@@ -111,6 +111,8 @@ import {
 
 type TaskLike = TaskSnapshot | SubtaskSnapshot;
 type SchedulingDateField = 'due' | 'scheduled' | 'start';
+/** A date that "+ date" adds: the start or the plan date. */
+type AddDateField = Exclude<SchedulingDateField, 'due'>;
 
 interface DependencyDisclosureState {
   readonly selectionKey: string;
@@ -404,7 +406,7 @@ type PlanningControlKey =
 /** The controls to focus after a rebuild, in order, for focus that was on (or opened from) `key`. */
 function planningReturnKeys(
   key: PlanningControlKey,
-  addDateField: 'start' | 'scheduled' | undefined,
+  addDateField: AddDateField | undefined,
 ): readonly PlanningControlKey[] {
   if (key === 'scheduled' || key === 'start') return [key, 'add-date', 'date'];
   if (key === 'add-date')
@@ -445,6 +447,14 @@ function applyPriorityChipPresentation(chip: HTMLElement, priority: string): voi
   chip.textContent = PRIORITY_CHIP_LABELS[priority] ?? 'Priority';
   chip.setAttribute('data-priority', priority);
   chip.className = `abyss-chip abyss-priority-chip abyss-priority-chip--${priority}${priority === 'D' ? ' abyss-chip-empty' : ''}`;
+}
+
+/**
+ * The priority the chip shows, including a choice whose write is still pending. A popover marks it,
+ * and a failed or refused choice rolls the chip back to the priority shown at its click.
+ */
+function shownPriority(chip: HTMLElement, task: TaskLike): string {
+  return chip.getAttribute('data-priority') ?? task.priority;
 }
 
 /**
@@ -1645,7 +1655,7 @@ export class RightPanel {
   /** The control each open anchored surface was opened from, while the surface is open. */
   private readonly surfaceOpeners_abyssPrivate = new Map<HTMLElement, HTMLElement>();
   /** The field of the date popover "+ date" opened, until the next render. */
-  private addDateField_abyssPrivate: 'start' | 'scheduled' | undefined;
+  private addDateField_abyssPrivate: AddDateField | undefined;
   /**
    * The control that opened the latest repeat editor. It is kept until the next open, a selection
    * change that does not continue the owned selection, or destroy. A restore continues it.
@@ -3014,7 +3024,7 @@ export class RightPanel {
    * to offer), and remains extensible for future addable properties (e.g. recurrence).
    */
   private renderAddDateMenu_abyssPrivate(container: HTMLElement, task: TaskLike): void {
-    const options: Array<{ field: 'start' | 'scheduled'; label: string }> = [];
+    const options: Array<{ field: AddDateField; label: string }> = [];
     if (task.planning.start == null) options.push({ field: 'start', label: '🛫 Start' });
     if (task.planning.scheduled == null) options.push({ field: 'scheduled', label: '⏳ Plan' });
     if (options.length === 0) return;
@@ -3040,7 +3050,7 @@ export class RightPanel {
   private showAddDateMenu_abyssPrivate(
     anchor: HTMLElement,
     task: TaskLike,
-    options: Array<{ field: 'start' | 'scheduled'; label: string }>,
+    options: Array<{ field: AddDateField; label: string }>,
   ): void {
     const existing = this.el_abyssPrivate.querySelector('.abyss-add-date-menu');
     if (existing != null) {
@@ -3376,13 +3386,13 @@ export class RightPanel {
       setIcon(flagEl, 'flag');
       btn.createSpan({ cls: 'abyss-priority-option-label', text: opt.label });
       btn.addEventListener('click', () => {
-        const previous = anchor.getAttribute('data-priority') ?? task.priority;
+        const previous = shownPriority(anchor, task);
         applyPriorityChipPresentation(anchor, opt.value);
         this.removeAnchoredSurface_abyssPrivate(pop);
         runAsyncAction(this.commitPriorityChoice_abyssPrivate(anchor, task, opt.value, previous));
       });
     }
-    markPriorityOptions(pop, anchor.getAttribute('data-priority') ?? task.priority);
+    markPriorityOptions(pop, shownPriority(anchor, task));
     this.positionAnchoredSurface_abyssPrivate(pop, anchor, 'below-start');
     this.dismissMenuOnOutsideClick_abyssPrivate(pop, anchor);
     pop
@@ -3794,10 +3804,7 @@ export class RightPanel {
     );
   }
 
-  private async clearPlanningDate_abyssPrivate(
-    task: TaskLike,
-    field: 'scheduled' | 'start',
-  ): Promise<void> {
+  private async clearPlanningDate_abyssPrivate(task: TaskLike, field: AddDateField): Promise<void> {
     await this.executePlanningPatch_abyssPrivate(task, { [field]: { type: 'clear' } });
   }
 

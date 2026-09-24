@@ -40,18 +40,21 @@ export function isProjectCreationError(error: unknown): error is ProjectCreation
 
 /**
  * The user-facing cause of a failed create: a partial create reports the step's own error. An
- * `Error` gives its message and a string stays as it is; any other value has no text.
+ * `Error` gives its message and a string stays as it is. A cause without text gives `''`, whether
+ * it is blank or any other value, so a failure shows its cause exactly when this is not empty.
  */
 export function creationFailureMessage(error: unknown): string {
   const cause = isProjectCreationError(error) ? error.cause : error;
-  if (cause instanceof Error) return cause.message;
-  return typeof cause === 'string' ? cause : '';
+  let text = '';
+  if (cause instanceof Error) text = cause.message;
+  else if (typeof cause === 'string') text = cause;
+  return text.trim().length > 0 ? text : '';
 }
 
 /** Appends the failure's cause to a sentence when the cause has text. */
 export function withCreationFailureCause(sentence: string, error: unknown): string {
-  const cause = creationFailureMessage(error).trim();
-  return cause.length > 0 ? `${sentence} ${cause}` : sentence;
+  const cause = creationFailureMessage(error);
+  return cause.length > 0 ? `${sentence} ${cause.trim()}` : sentence;
 }
 
 const PARTIAL_CREATE_STEPS: Readonly<Record<ProjectCreationPhase, string>> = {

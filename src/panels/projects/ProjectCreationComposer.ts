@@ -33,7 +33,7 @@ interface RetainedDraft {
 /** The draft's error line text; a failure without a message leaves the line hidden. */
 function draftErrorText(error: unknown): string | undefined {
   const message = creationFailureMessage(error);
-  return message.trim().length > 0 ? message : undefined;
+  return message.length > 0 ? message : undefined;
 }
 
 /** Owns the single retained project-name composer and its in-flight command. */

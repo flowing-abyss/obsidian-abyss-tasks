@@ -99,7 +99,6 @@ export function bindSegmentedInputCommit(
     },
     cancel: () => {
       draft = false;
-      pointerChoice = false;
       input.removeEventListener('keydown', onKeyDown);
       input.removeEventListener('pointerdown', onPointerDown);
       input.removeEventListener('change', onChange);
