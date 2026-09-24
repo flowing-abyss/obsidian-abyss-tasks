@@ -739,6 +739,25 @@ export async function flushMicrotasks(ms = 10): Promise<void> {
   });
 }
 
+/** Dispatches a keydown an IME owns: `isComposing`, or the legacy `keyCode` 229 without it. */
+export function dispatchImeKey(
+  target: EventTarget,
+  key: string,
+  ime: 'composing' | 'legacy',
+  init: KeyboardEventInit = {},
+): KeyboardEvent {
+  const event = new KeyboardEvent('keydown', {
+    ...init,
+    key,
+    bubbles: true,
+    cancelable: true,
+    isComposing: ime === 'composing',
+  });
+  if (ime === 'legacy') Object.defineProperty(event, 'keyCode', { value: 229 });
+  target.dispatchEvent(event);
+  return event;
+}
+
 /** Seed a file's metadata cache with task listItems + optional frontmatter (parent=-1 for root items). */
 export function seedTaskCache(
   app: ObsidianApp,

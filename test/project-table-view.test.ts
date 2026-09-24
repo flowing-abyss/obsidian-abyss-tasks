@@ -4398,6 +4398,8 @@ describe('ProjectsTableView', () => {
   });
 
   it('keeps creation failure feedback inside the absolute composer', async () => {
+    const noticeSpy = spyOnNotices();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     const createProject = vi.fn().mockRejectedValue(
       new ProjectCreationError('status failed', {
         createdPath: 'Projects/Fresh project.md',
@@ -4417,6 +4419,11 @@ describe('ProjectsTableView', () => {
 
     expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
     expect(host.querySelector('.abyss-project-creation-error')?.textContent).toBe('disk full');
+    // The overview's old "Could not create project: {cause}" copy fails this.
+    expect(noticeSpy).toHaveBeenCalledOnce();
+    expect(noticeSpy.mock.calls[0]?.[0]).toBe(
+      'Created Projects/Fresh project.md, but could not set its status. disk full',
+    );
   });
 
   it('opens a typed editor, saves with the captured value, and rerenders after commit', async () => {

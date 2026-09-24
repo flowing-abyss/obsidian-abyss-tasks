@@ -2,6 +2,7 @@ import type * as ObsidianModule from 'obsidian';
 import { Menu, Notice, type MenuItem } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import { ProjectCreationError, type ProjectCreateOptions } from '../src/projects/projectCreation';
 import type { ProjectStats } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
@@ -11,6 +12,7 @@ import { discoveredPrefixGroupId, discoveredTagGroupId } from '../src/tags/effec
 import type { TaskApplicationApi, TaskSnapshot } from '../src/tasks';
 import { TagGroupAppearanceModal } from '../src/ui/TagGroupAppearanceModal';
 import {
+  dispatchImeKey,
   expectDefined,
   flushMicrotasks,
   freshContainer,
@@ -1481,14 +1483,43 @@ describe('LeftPanel drop zones', () => {
 });
 
 describe('LeftPanel collapsible sections, projects, and tags +', () => {
+  function openInlineAdd(el: HTMLElement, section: 'tags' | 'projects'): HTMLInputElement {
+    expectDefined(
+      el.querySelector<HTMLElement>(`.abyss-left-section--${section} .abyss-left-add`),
+    ).click();
+    // Scoped to the section: while one create is pending, another section can hold its own input.
+    const input = expectDefined(
+      el.querySelector<HTMLInputElement>(`.abyss-left-section--${section} .abyss-left-add-input`),
+    );
+    // The panel focuses a new input on the next task; under fake timers run it now, or a later
+    // timer advance would pull focus back into the input.
+    if (vi.isFakeTimers()) vi.advanceTimersByTime(0);
+    input.focus();
+    return input;
+  }
+
+  function keydown(target: HTMLElement, key: string): KeyboardEvent {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+    target.dispatchEvent(event);
+    return event;
+  }
+
+  function simulateBlurDuringEmpty(el: HTMLElement, input: HTMLInputElement): void {
+    // jsdom fires nothing when a focused element is removed; Chromium blurs it.
+    const empty = el.empty.bind(el);
+    vi.spyOn(el, 'empty').mockImplementation(() => {
+      if (input.ownerDocument.activeElement === input) input.dispatchEvent(new FocusEvent('blur'));
+      empty();
+    });
+  }
+
   function makeFull(opts: {
     tasks?: TaskSnapshot[];
     settings?: Partial<CalendarSettings>;
-    projects?: Array<{
-      path: string;
-      name: string;
-      stats?: ProjectStats;
-    }>;
+    projects?: Array<{ path: string; name: string; stats?: ProjectStats }>;
+    create?: (name: string, options?: ProjectCreateOptions) => Promise<unknown>;
+    app?: unknown;
+    attached?: boolean;
   }) {
     const state = new AppState();
     const store = makeStubStore(opts.tasks ?? []);
@@ -1511,18 +1542,21 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       },
       ...p,
     }));
+    const refreshStore = vi.fn();
+    let activeProjects = fullProjects;
     const projectStore = {
-      activeForLeftPanel: () => fullProjects,
-      refresh: vi.fn(),
+      activeForLeftPanel: () => activeProjects,
+      refresh: refreshStore,
       onUpdate: () => () => {},
     } as never;
-    const projectManager = { create: vi.fn().mockResolvedValue(null) } as never;
+    const create = vi.fn(opts.create ?? (() => Promise.resolve(null)));
+    const projectManager = { create } as never;
     const panel = makeLeftPanelForTest(
       state,
       store,
       merged,
       tm,
-      null as never,
+      (opts.app ?? null) as never,
       save,
       projectStore,
       projectManager,
@@ -1530,8 +1564,27 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       saveViewState,
     );
     const el = freshContainer();
+    if (opts.attached === true) {
+      el.tabIndex = -1;
+      activeDocument.body.append(el);
+    }
     panel.mount(el);
-    return { panel, state, el, tm, save, saveViewState, merged, taskList };
+    const setActiveProjects = (next: typeof fullProjects): void => {
+      activeProjects = next;
+    };
+    return {
+      panel,
+      state,
+      el,
+      tm,
+      save,
+      saveViewState,
+      merged,
+      taskList,
+      create,
+      refreshStore,
+      setActiveProjects,
+    };
   }
 
   it('renders once for a batched navigation commit and once for a standalone relevant change', () => {
@@ -1716,5 +1769,384 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       '.abyss-left-section--tags .abyss-left-section-body',
     ) as HTMLElement;
     expect(body.firstElementChild?.classList.contains('abyss-left-add-input')).toBe(true);
+  });
+
+  it('consumes Escape in the inline add and moves focus to the left panel', () => {
+    const { el, tm } = makeFull({ attached: true });
+    const spy = vi.spyOn(tm, 'createManualGroup').mockResolvedValue();
+    const bubbled = vi.fn();
+    activeDocument.addEventListener('keydown', bubbled);
+    try {
+      const input = openInlineAdd(el, 'tags');
+      input.value = 'Draft';
+      const escape = keydown(input, 'Escape');
+
+      // A handler that only re-renders leaves the event unprevented and lets PanelView see it.
+      expect(escape.defaultPrevented).toBe(true);
+      expect(bubbled).not.toHaveBeenCalled();
+      expect(input.isConnected).toBe(false);
+      expect(activeDocument.activeElement).toBe(el);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      activeDocument.removeEventListener('keydown', bubbled);
+      el.remove();
+    }
+  });
+
+  it('moves focus to the left panel after Enter creates a tag group or cancels an empty name', async () => {
+    const { el, tm } = makeFull({ attached: true });
+    const spy = vi.spyOn(tm, 'createManualGroup').mockResolvedValue();
+    try {
+      const input = openInlineAdd(el, 'tags');
+      input.value = 'Focus';
+      keydown(input, 'Enter');
+      await flushMicrotasks();
+      expect(spy).toHaveBeenCalledExactlyOnceWith('Focus');
+      expect(activeDocument.activeElement).toBe(el);
+
+      const empty = openInlineAdd(el, 'tags');
+      keydown(empty, 'Enter');
+      expect(empty.isConnected).toBe(false);
+      expect(activeDocument.activeElement).toBe(el);
+      expect(spy).toHaveBeenCalledOnce();
+    } finally {
+      el.remove();
+    }
+  });
+
+  it.each(['composing', 'legacy'] as const)(
+    'leaves an IME-owned Enter and Escape to the IME (%s)',
+    (ime) => {
+      const { el, tm } = makeFull({ attached: true });
+      const spy = vi.spyOn(tm, 'createManualGroup').mockResolvedValue();
+      try {
+        const input = openInlineAdd(el, 'tags');
+        input.value = 'かな';
+        const enter = dispatchImeKey(input, 'Enter', ime);
+        const escape = dispatchImeKey(input, 'Escape', ime);
+
+        // A handler that checks only `isComposing` fails the legacy keyCode 229 case.
+        expect(spy).not.toHaveBeenCalled();
+        expect(input.isConnected).toBe(true);
+        expect(enter.defaultPrevented).toBe(false);
+        expect(escape.defaultPrevented).toBe(false);
+      } finally {
+        el.remove();
+      }
+    },
+  );
+
+  it('keeps focus where the user put it when the blur commit runs', async () => {
+    vi.useFakeTimers();
+    const { el, tm } = makeFull({ attached: true });
+    const spy = vi.spyOn(tm, 'createManualGroup').mockResolvedValue();
+    const outside = activeDocument.body.createEl('button');
+    try {
+      const input = openInlineAdd(el, 'tags');
+      input.value = 'Later';
+      outside.focus();
+      // The async advance also settles the commit, whose focus handling runs after `onCommit`.
+      await vi.advanceTimersByTimeAsync(150);
+
+      // A commit that always focuses the panel would steal focus from the outside button.
+      expect(spy).toHaveBeenCalledExactlyOnceWith('Later');
+      expect(activeDocument.activeElement).toBe(outside);
+    } finally {
+      vi.useRealTimers();
+      outside.remove();
+      el.remove();
+    }
+  });
+
+  it('keeps a failed tag group name editable, says why, and retries on Enter', async () => {
+    const { el, tm } = makeFull({ attached: true });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const spy = vi
+      .spyOn(tm, 'createManualGroup')
+      .mockRejectedValueOnce(new Error('Settings could not be saved.'))
+      .mockResolvedValueOnce();
+    try {
+      const input = openInlineAdd(el, 'tags');
+      input.value = 'Focus';
+      keydown(input, 'Enter');
+      await flushMicrotasks();
+
+      expect(Notice).toHaveBeenCalledExactlyOnceWith(
+        'Could not add the tag group. Settings could not be saved.',
+      );
+      expect(log).toHaveBeenCalledOnce();
+      expect(input.isConnected).toBe(true);
+      expect(input.value).toBe('Focus');
+      expect(activeDocument.activeElement).toBe(input);
+
+      keydown(input, 'Enter');
+      await flushMicrotasks();
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(input.isConnected).toBe(false);
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('ends the session instead of retrying when a create fails after focus left', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    let reject!: (error: Error) => void;
+    const { el, tm } = makeFull({ attached: true });
+    const spy = vi.spyOn(tm, 'createManualGroup').mockImplementation(
+      () =>
+        new Promise<void>((_resolve, fail) => {
+          reject = fail;
+        }),
+    );
+    const outside = activeDocument.body.createEl('button');
+    try {
+      const input = openInlineAdd(el, 'tags');
+      input.value = 'Focus';
+      keydown(input, 'Enter');
+      outside.focus();
+      reject(new Error('Disk full.'));
+      await vi.advanceTimersByTimeAsync(150);
+
+      // Resetting `committed` while focus is elsewhere would let the blur check retry on its own.
+      expect(spy).toHaveBeenCalledOnce();
+      expect(Notice).toHaveBeenCalledExactlyOnceWith('Could not add the tag group. Disk full.');
+      expect(el.querySelector('.abyss-left-add-input')).toBeNull();
+      expect(activeDocument.activeElement).toBe(outside);
+    } finally {
+      vi.useRealTimers();
+      outside.remove();
+      el.remove();
+    }
+  });
+
+  it('ends a partial project create without a retry and names the created note', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { el, create, refreshStore } = makeFull({
+      attached: true,
+      projects: [{ path: 'Projects/A.md', name: 'A' }],
+      create: () =>
+        Promise.reject(
+          new ProjectCreationError('Could not set the status for Projects/New.md.', {
+            createdPath: 'Projects/New.md',
+            phase: 'status',
+            statusId: 'active',
+            cause: new Error('Status property is missing.'),
+          }),
+        ),
+    });
+    try {
+      const input = openInlineAdd(el, 'projects');
+      input.value = 'New';
+      keydown(input, 'Enter');
+      await flushMicrotasks();
+      keydown(input, 'Enter');
+      await flushMicrotasks();
+
+      expect(create).toHaveBeenCalledOnce();
+      expect(refreshStore).toHaveBeenCalledOnce();
+      expect(Notice).toHaveBeenCalledExactlyOnceWith(
+        'Created Projects/New.md, but could not set its status. Status property is missing.',
+      );
+      expect(el.querySelector('.abyss-left-add-input')).toBeNull();
+      expect(activeDocument.activeElement).toBe(el);
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('names the created note when it cannot be opened and never creates it twice', async () => {
+    const file = { path: 'Projects/New.md' };
+    const openFile = vi.fn(() => Promise.reject(new Error('Leaf is gone.')));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { el, create, refreshStore } = makeFull({
+      attached: true,
+      projects: [{ path: 'Projects/A.md', name: 'A' }],
+      create: () => Promise.resolve(file),
+      app: { workspace: { getLeaf: () => ({ openFile }) } },
+    });
+    try {
+      const input = openInlineAdd(el, 'projects');
+      input.value = 'New';
+      keydown(input, 'Enter');
+      await flushMicrotasks();
+      keydown(input, 'Enter');
+      await flushMicrotasks();
+
+      // Letting `create` open the note turns an open failure into a failed create and a retry.
+      expect(create).toHaveBeenCalledExactlyOnceWith('New', { openFile: false });
+      expect(openFile).toHaveBeenCalledExactlyOnceWith(file);
+      expect(refreshStore).toHaveBeenCalledOnce();
+      expect(Notice).toHaveBeenCalledExactlyOnceWith(
+        'Created Projects/New.md, but could not open it. Leaf is gone.',
+      );
+      expect(log).toHaveBeenCalledOnce();
+      expect(el.querySelector('.abyss-left-add-input')).toBeNull();
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('keeps a destroyed panel empty when its create settles', async () => {
+    let settle!: () => void;
+    const { panel, el } = makeFull({
+      attached: true,
+      projects: [{ path: 'Projects/A.md', name: 'A' }],
+      create: () =>
+        new Promise((resolve) => {
+          settle = () => {
+            resolve(null);
+          };
+        }),
+    });
+    try {
+      const input = openInlineAdd(el, 'projects');
+      input.value = 'New';
+      keydown(input, 'Enter');
+      panel.destroy();
+      settle();
+      await flushMicrotasks();
+
+      // A settle that re-renders every session it finishes would rebuild the destroyed panel.
+      expect(el.childElementCount).toBe(0);
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('keeps a second inline add open when the first create settles', async () => {
+    let settle!: () => void;
+    const { el } = makeFull({
+      attached: true,
+      projects: [{ path: 'Projects/A.md', name: 'A' }],
+      create: () =>
+        new Promise((resolve) => {
+          settle = () => {
+            resolve(null);
+          };
+        }),
+    });
+    try {
+      const name = openInlineAdd(el, 'projects');
+      name.value = 'New';
+      keydown(name, 'Enter');
+      const tag = openInlineAdd(el, 'tags');
+      tag.value = 'Draft';
+      settle();
+      await flushMicrotasks();
+
+      // Ending a session by clearing the panel's record unconditionally would drop this input.
+      expect(el.querySelector('.abyss-left-section--tags .abyss-left-add-input')).toBe(tag);
+      expect(tag.value).toBe('Draft');
+      expect(activeDocument.activeElement).toBe(tag);
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('keeps the typed name, caret, and focus across a refresh without committing it', () => {
+    vi.useFakeTimers();
+    const { panel, el, tm } = makeFull({ attached: true });
+    const spy = vi.spyOn(tm, 'createManualGroup').mockResolvedValue();
+    try {
+      const input = openInlineAdd(el, 'tags');
+      input.value = 'Partial name';
+      input.setSelectionRange(3, 7);
+      simulateBlurDuringEmpty(el, input);
+
+      panel.refresh();
+      vi.advanceTimersByTime(150);
+
+      expect(el.querySelector('.abyss-left-add-input')).toBe(input);
+      expect(input.value).toBe('Partial name');
+      expect([input.selectionStart, input.selectionEnd]).toEqual([3, 7]);
+      expect(activeDocument.activeElement).toBe(input);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      el.remove();
+    }
+  });
+
+  it('keeps a project name input across a project settings refresh', () => {
+    const { panel, el } = makeFull({
+      attached: true,
+      projects: [{ path: 'Projects/A.md', name: 'A' }],
+    });
+    try {
+      const input = openInlineAdd(el, 'projects');
+      input.value = 'Draft';
+
+      panel.refreshProjectSettings();
+
+      const section = expectDefined(el.querySelector('.abyss-left-section--projects'));
+      expect(section.querySelector('.abyss-left-add-input')).toBe(input);
+      expect(activeDocument.activeElement).toBe(input);
+    } finally {
+      el.remove();
+    }
+  });
+
+  it('still creates a blurred name when a header click collapses its section', () => {
+    vi.useFakeTimers();
+    const { el, tm } = makeFull({ attached: true });
+    const spy = vi.spyOn(tm, 'createManualGroup').mockResolvedValue();
+    try {
+      const input = openInlineAdd(el, 'tags');
+      input.value = 'Blurred';
+      el.focus();
+      expectDefined(
+        el.querySelector<HTMLElement>('.abyss-left-section--tags .abyss-left-section-header'),
+      ).click();
+      vi.advanceTimersByTime(150);
+
+      // A render that discards every session it cannot place would drop this blur commit.
+      expect(spy).toHaveBeenCalledExactlyOnceWith('Blurred');
+    } finally {
+      vi.useRealTimers();
+      el.remove();
+    }
+  });
+
+  it('ends a focused session without committing when its section disappears', () => {
+    vi.useFakeTimers();
+    const { panel, el, create, setActiveProjects } = makeFull({
+      attached: true,
+      projects: [{ path: 'Projects/A.md', name: 'A' }],
+    });
+    try {
+      const input = openInlineAdd(el, 'projects');
+      input.value = 'Partial';
+      simulateBlurDuringEmpty(el, input);
+      setActiveProjects([]);
+
+      panel.refresh();
+      vi.advanceTimersByTime(150);
+
+      expect(el.querySelector('.abyss-left-section--projects')).toBeNull();
+      expect(create).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      el.remove();
+    }
+  });
+
+  it('never commits a typed name after destroy', () => {
+    vi.useFakeTimers();
+    const { panel, el, tm } = makeFull({ attached: true });
+    const spy = vi.spyOn(tm, 'createManualGroup').mockResolvedValue();
+    try {
+      const input = openInlineAdd(el, 'tags');
+      input.value = 'Partial';
+      simulateBlurDuringEmpty(el, input);
+
+      panel.destroy();
+      vi.advanceTimersByTime(150);
+
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      el.remove();
+    }
   });
 });

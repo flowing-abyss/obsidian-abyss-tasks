@@ -1,4 +1,8 @@
-import { isProjectCreationError, type ProjectCreateRequest } from '../../projects/projectCreation';
+import {
+  creationFailureMessage,
+  isProjectCreationError,
+  type ProjectCreateRequest,
+} from '../../projects/projectCreation';
 import { mountProjectCellEditorPosition } from './projectCellEditorPosition';
 
 interface ProjectCreationComposerOpenOptions {
@@ -23,11 +27,6 @@ interface RetainedDraft {
   recoveryPath: string | undefined;
   blockedPath: string | undefined;
   error: string | undefined;
-}
-
-function failureMessage(error: unknown): string {
-  const cause = isProjectCreationError(error) ? error.cause : error;
-  return cause instanceof Error ? cause.message : String(cause);
 }
 
 /** Owns the single retained project-name composer and its in-flight command. */
@@ -265,7 +264,7 @@ export class ProjectCreationComposer {
       },
       (error: unknown) => {
         this.submitting_abyssPrivate = false;
-        this.draft_abyssPrivate.error = failureMessage(error);
+        this.draft_abyssPrivate.error = creationFailureMessage(error);
         if (isProjectCreationError(error)) {
           if (error.phase === 'status') this.draft_abyssPrivate.recoveryPath = error.createdPath;
           else this.draft_abyssPrivate.blockedPath = error.createdPath;

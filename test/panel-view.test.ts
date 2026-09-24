@@ -530,6 +530,46 @@ describe('PanelView', () => {
       expect(details.closest('.abyss-center-header')).toBe(refreshedHeader);
     });
 
+    it('lets one Escape cancel the compact inline add and a second close the pane', async () => {
+      activeDocument.body.appendChild(view.containerEl);
+      const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+      const left = expectDefined(layout.querySelector<HTMLElement>('.abyss-left'));
+      const lists = expectDefined(
+        layout.querySelector<HTMLButtonElement>('[aria-label="Show task lists"]'),
+      );
+      setGeometry(layout, rect(0, 0, 390, 480));
+      window.dispatchEvent(new Event('resize'));
+      lists.click();
+      expect(left.classList.contains('is-compact-open')).toBe(true);
+      expectDefined(
+        left.querySelector<HTMLElement>('.abyss-left-section--tags .abyss-left-add'),
+      ).click();
+      await flushMicrotasks();
+      const input = expectDefined(left.querySelector<HTMLInputElement>('.abyss-left-add-input'));
+      expect(activeDocument.activeElement).toBe(input);
+
+      const first = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(first);
+
+      expect(first.defaultPrevented).toBe(true);
+      expect(left.classList.contains('is-compact-open')).toBe(true);
+      expect(activeDocument.activeElement).toBe(left);
+
+      const second = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      left.dispatchEvent(second);
+
+      expect(second.defaultPrevented).toBe(true);
+      expect(left.classList.contains('is-compact-open')).toBe(false);
+    });
+
     it.each(['resolving', 'open'] as const)(
       'does not destroy a %s Quick Capture generation when a compact pane is requested',
       (phase) => {

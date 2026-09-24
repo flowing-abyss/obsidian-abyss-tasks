@@ -3,6 +3,11 @@ import type { AppState, ListSelection } from '../app/AppState';
 import { isListViewCustomized, listSelectionToKey } from '../app/listViewState';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
+import {
+  isProjectCreationError,
+  projectCreationFailureNotice,
+  withCreationFailureCause,
+} from '../projects/projectCreation';
 import { projectStatusDisplayName } from '../projects/status';
 import type { CalendarSettings } from '../settings/types';
 import { RenameTagModal } from '../tags/RenameTagModal';
@@ -26,6 +31,7 @@ import {
   TagGroupAppearanceModal,
   type TagGroupAppearanceResult,
 } from '../ui/TagGroupAppearanceModal';
+import { isImeOwnedEvent } from '../ui/ime';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
 import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
 import { runAsyncAction } from '../ui/runAsyncAction';
@@ -33,6 +39,31 @@ import { presentTaskCommandResult } from '../ui/taskCommandResult';
 import { PanelNavigator, type PanelNavigationActions } from '../views/panelNavigation';
 
 const PROJECTS_CAP = 10;
+
+type InlineAddKey = 'tags' | 'projects';
+
+/** One open "+" name input; it outlives re-renders until it commits, cancels, or is dropped. */
+interface InlineAddSession {
+  readonly key: InlineAddKey;
+  readonly input: HTMLInputElement;
+  readonly onCommit: (name: string) => Promise<void>;
+  phase: 'editing' | 'committing' | 'ended';
+}
+
+/** The session's focus and caret, read before a render detaches its input. */
+interface InlineAddHold {
+  readonly session: InlineAddSession;
+  readonly hadFocus: boolean;
+  readonly selectionStart: number | null;
+  readonly selectionEnd: number | null;
+  readonly selectionDirection: 'forward' | 'backward' | 'none' | null;
+}
+
+function inlineAddFailureNotice(key: InlineAddKey, error: unknown): string {
+  return key === 'projects'
+    ? projectCreationFailureNotice(error)
+    : withCreationFailureCause('Could not add the tag group.', error);
+}
 
 type LeftPanelConstructorArgs = [
   state: AppState,
@@ -81,6 +112,7 @@ export class LeftPanel {
   private readonly expandedGroups_abyssPrivate = new Set<string>();
   private readonly explicitlyCollapsed_abyssPrivate = new Set<string>();
   private showAllProjects_abyssPrivate = false;
+  private inlineAdd_abyssPrivate: InlineAddSession | undefined;
   // When a tag is opened from the Pinned section, don't auto-expand the group
   // that contains it in the Tags tree — the pin exists precisely to avoid that.
   private tagSelectedFromPinned_abyssPrivate = false;
@@ -147,6 +179,12 @@ export class LeftPanel {
   refreshProjectSettings(): void {
     const mode = this.state_abyssPrivate.get('mode');
     if (mode === 'search' || mode === 'projects') return;
+    const hold = this.holdInlineAdd_abyssPrivate();
+    this.replaceProjectsSection_abyssPrivate();
+    this.settleInlineAdd_abyssPrivate(hold);
+  }
+
+  private replaceProjectsSection_abyssPrivate(): void {
     const existing = this.el_abyssPrivate.querySelector<HTMLElement>(
       '.abyss-left-section--projects',
     );
@@ -168,6 +206,8 @@ export class LeftPanel {
   }
 
   destroy(): void {
+    const session = this.inlineAdd_abyssPrivate;
+    if (session !== undefined) this.closeInlineAdd_abyssPrivate(session);
     this.offs_abyssPrivate.forEach((f) => {
       f();
     });
@@ -188,7 +228,13 @@ export class LeftPanel {
   }
 
   private render_abyssPrivate(): void {
+    const hold = this.holdInlineAdd_abyssPrivate();
     this.el_abyssPrivate.empty();
+    this.renderSections_abyssPrivate();
+    this.settleInlineAdd_abyssPrivate(hold);
+  }
+
+  private renderSections_abyssPrivate(): void {
     const mode = this.state_abyssPrivate.get('mode');
     // The projects mode is a self-contained deep view; search hides the left panel too.
     if (mode === 'search' || mode === 'projects') return;
@@ -259,8 +305,20 @@ export class LeftPanel {
 
   private async createProject_abyssPrivate(name: string): Promise<void> {
     if (this.projectManager_abyssPrivate == null) return;
-    await this.projectManager_abyssPrivate.create(name);
+    // The panel opens the note itself, so an open failure cannot look like a failed create.
+    const file = await this.projectManager_abyssPrivate.create(name, { openFile: false });
+    if (file !== null) await this.openCreatedProject_abyssPrivate(file);
     this.projectStore_abyssPrivate?.refresh();
+  }
+
+  /** Opens a created project note; a failure names the note, which already exists. */
+  private async openCreatedProject_abyssPrivate(file: TFile): Promise<void> {
+    try {
+      await this.app_abyssPrivate.workspace.getLeaf(false).openFile(file);
+    } catch (error) {
+      console.error('[abyss-tasks] Could not open the created project', { path: file.path, error });
+      new Notice(withCreationFailureCause(`Created ${file.path}, but could not open it.`, error));
+    }
   }
 
   private renderProjectsSection_abyssPrivate(root: HTMLElement): void {
@@ -329,6 +387,7 @@ export class LeftPanel {
     if (!collapsed) {
       const bodyEl = section.createDiv({ cls: 'abyss-left-section-body' });
       body(bodyEl);
+      this.placeInlineAdd_abyssPrivate(key, bodyEl);
     }
   }
 
@@ -392,13 +451,12 @@ export class LeftPanel {
   }
 
   /**
-   * Shows an inline text input directly under a section header (not at the
-   * bottom, which breaks with many rows). Used for both tag and project entry so
-   * the "+" affordance behaves identically everywhere. A `committed` guard
-   * prevents the Enter→re-render→blur sequence from firing twice.
+   * Shows an inline text input directly under a section header (not at the bottom, which breaks
+   * with many rows). Used for both tag and project entry so the "+" affordance behaves identically
+   * everywhere. The session keeps the input across re-renders until it commits or cancels.
    */
   private startInlineAdd_abyssPrivate(
-    key: 'tags' | 'projects',
+    key: InlineAddKey,
     placeholder: string,
     onCommit: (name: string) => Promise<void>,
   ): void {
@@ -410,9 +468,9 @@ export class LeftPanel {
     }
     const section = this.el_abyssPrivate.querySelector(`.abyss-left-section--${key}`);
     if (section == null) return;
-    const existing = section.querySelector('.abyss-left-add-input');
+    const existing = section.querySelector<HTMLInputElement>('.abyss-left-add-input');
     if (existing != null) {
-      (existing as HTMLInputElement).focus();
+      existing.focus();
       return;
     }
     const body =
@@ -424,38 +482,130 @@ export class LeftPanel {
     });
     // Place it directly under the header, above existing rows.
     body.insertBefore(input, body.firstChild);
-
-    let committed = false;
-    const commit = (): void => {
-      if (committed) return;
-      committed = true;
-      const value = input.value.trim();
-      if (value.length > 0)
-        runAsyncAction(
-          onCommit(value).then(() => {
-            this.render_abyssPrivate();
-          }),
-        );
-      else this.render_abyssPrivate();
-    };
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        commit();
-      }
-      if (e.key === 'Escape') {
-        committed = true;
-        this.render_abyssPrivate();
-      }
+    const session: InlineAddSession = { key, input, onCommit, phase: 'editing' };
+    this.inlineAdd_abyssPrivate = session;
+    input.addEventListener('keydown', (event) => {
+      this.handleInlineAddKey_abyssPrivate(session, event);
     });
     input.addEventListener('blur', () => {
       window.setTimeout(() => {
-        if (activeDocument.activeElement !== input) commit();
+        if (activeDocument.activeElement !== input) this.commitInlineAdd_abyssPrivate(session);
       }, 150);
     });
     window.setTimeout(() => {
       input.focus();
     }, 0);
+  }
+
+  private handleInlineAddKey_abyssPrivate(session: InlineAddSession, event: KeyboardEvent): void {
+    if (isImeOwnedEvent(event)) return;
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      this.commitInlineAdd_abyssPrivate(session);
+      return;
+    }
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.finishInlineAdd_abyssPrivate(session);
+  }
+
+  private commitInlineAdd_abyssPrivate(session: InlineAddSession): void {
+    if (session.phase !== 'editing') return;
+    const value = session.input.value.trim();
+    if (value.length === 0) {
+      this.finishInlineAdd_abyssPrivate(session);
+      return;
+    }
+    session.phase = 'committing';
+    runAsyncAction(
+      session.onCommit(value).then(
+        () => {
+          this.finishInlineAdd_abyssPrivate(session);
+        },
+        (error: unknown) => {
+          this.failInlineAdd_abyssPrivate(session, error);
+        },
+      ),
+    );
+  }
+
+  /** A failed create stays retryable only while nothing was created and the input holds focus. */
+  private failInlineAdd_abyssPrivate(session: InlineAddSession, error: unknown): void {
+    console.error('[abyss-tasks] Could not finish the inline add', error);
+    new Notice(inlineAddFailureNotice(session.key, error));
+    const { input } = session;
+    if (isProjectCreationError(error)) this.projectStore_abyssPrivate?.refresh();
+    else if (
+      session.phase === 'committing' &&
+      input.isConnected &&
+      input.ownerDocument.activeElement === input
+    ) {
+      session.phase = 'editing';
+      return;
+    }
+    this.finishInlineAdd_abyssPrivate(session);
+  }
+
+  /**
+   * Ends the session and removes its input; focus the input held moves to the panel. A session
+   * that already ended (destroy, Escape during its create, or a render that could not place it)
+   * leaves the panel alone.
+   */
+  private finishInlineAdd_abyssPrivate(session: InlineAddSession): void {
+    if (session.phase === 'ended') return;
+    this.closeInlineAdd_abyssPrivate(session);
+    const { input } = session;
+    if (input.ownerDocument.activeElement === input && this.el_abyssPrivate.isConnected)
+      this.el_abyssPrivate.focus({ preventScroll: true });
+    this.render_abyssPrivate();
+  }
+
+  /** Ends the session without touching the DOM; a pending blur check then commits nothing. */
+  private closeInlineAdd_abyssPrivate(session: InlineAddSession): void {
+    session.phase = 'ended';
+    if (this.inlineAdd_abyssPrivate === session) this.inlineAdd_abyssPrivate = undefined;
+  }
+
+  private holdInlineAdd_abyssPrivate(): InlineAddHold | undefined {
+    const session = this.inlineAdd_abyssPrivate;
+    if (session === undefined) return undefined;
+    const { input } = session;
+    return {
+      session,
+      hadFocus: input.ownerDocument.activeElement === input,
+      selectionStart: input.selectionStart,
+      selectionEnd: input.selectionEnd,
+      selectionDirection: input.selectionDirection,
+    };
+  }
+
+  private placeInlineAdd_abyssPrivate(
+    key: 'pinned' | 'projects' | 'tags',
+    body: HTMLElement,
+  ): void {
+    const session = this.inlineAdd_abyssPrivate;
+    if (session?.key === key) body.insertBefore(session.input, body.firstChild);
+  }
+
+  /**
+   * A rebuilt panel gives the held input back its focus and caret. When the rebuilt panel has no
+   * place for it, a focused session ends without a commit; a blurred one keeps its blur commit.
+   */
+  private settleInlineAdd_abyssPrivate(hold: InlineAddHold | undefined): void {
+    if (hold === undefined || this.inlineAdd_abyssPrivate !== hold.session) return;
+    const { input } = hold.session;
+    if (!input.isConnected) {
+      if (hold.hadFocus) this.closeInlineAdd_abyssPrivate(hold.session);
+      return;
+    }
+    if (!hold.hadFocus || input.ownerDocument.activeElement === input) return;
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(
+      hold.selectionStart,
+      hold.selectionEnd,
+      hold.selectionDirection ?? undefined,
+    );
   }
 
   private showProjectMenu_abyssPrivate(
