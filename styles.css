@@ -3935,7 +3935,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-recurrence-actions button.abyss-recurrence-clear {
-  padding-inline: 0;
+  padding-inline: var(--size-4-1);
+  margin-inline: calc(var(--size-4-1) * -1);
   border-color: transparent;
   background: transparent;
   color: var(--text-muted);

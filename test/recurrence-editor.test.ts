@@ -1691,7 +1691,6 @@ describe('Clear repeat styling', () => {
     expect(cssDeclarationText(css, '.abyss-recurrence-clear')).toBe('');
     expect(cssDeclarationText(css, '.abyss-recurrence-clear:hover')).toBe('');
     expect(clear.matches('.abyss-recurrence-actions button.abyss-recurrence-clear')).toBe(true);
-    expect(cssValue(base, 'padding-inline')).toBe('0');
     expect(cssValue(base, 'border-color')).toBe('transparent');
     expect(cssValue(base, 'background')).toBe('transparent');
     expect(cssValue(base, 'color')).toBe('var(--text-muted)');
@@ -1703,5 +1702,13 @@ describe('Clear repeat styling', () => {
     expect(
       cssValue(cssDeclarationText(css, '.abyss-recurrence-editor button:focus-visible'), 'outline'),
     ).toBe('2px solid var(--interactive-accent)');
+  });
+
+  it('gives the keyboard ring room at the sides and keeps the text in place', () => {
+    const base = cssDeclarationText(css, '.abyss-recurrence-actions button.abyss-recurrence-clear');
+
+    // Padding alone moves the text off the content edge; a margin alone leaves the ring cramped.
+    expect(cssValue(base, 'padding-inline')).toBe('var(--size-4-1)');
+    expect(cssValue(base, 'margin-inline')).toBe('calc(var(--size-4-1) * -1)');
   });
 });
