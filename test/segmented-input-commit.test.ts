@@ -3,7 +3,7 @@ import {
   bindSegmentedInputCommit,
   type SegmentedCommitReason,
 } from '../src/ui/segmentedInputCommit';
-import { dispatchImeKey } from './helpers';
+import { dispatchImeKey, expectDefined } from './helpers';
 
 afterEach(() => {
   activeDocument.body.empty();
@@ -16,7 +16,7 @@ function field() {
   const outside = activeDocument.body.createEl('button', { text: 'Outside' });
   const commit = vi.fn<(reason: SegmentedCommitReason) => void>();
   const handle = bindSegmentedInputCommit({ input, boundary, commit });
-  return { input, clear, outside, commit, handle };
+  return { boundary, input, clear, outside, commit, handle };
 }
 
 function key(target: HTMLElement, value: string): KeyboardEvent {
@@ -27,6 +27,10 @@ function key(target: HTMLElement, value: string): KeyboardEvent {
 
 function change(input: HTMLInputElement): void {
   input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function press(input: HTMLInputElement): void {
+  input.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
 }
 
 describe('bindSegmentedInputCommit', () => {
@@ -59,6 +63,24 @@ describe('bindSegmentedInputCommit', () => {
     // Committing without preventDefault would let the owner act on this Enter as well.
     expect(enter.defaultPrevented).toBe(true);
     expect(commit.mock.calls).toEqual([['enter']]);
+  });
+
+  it('stops a committed Enter before it reaches the element around the field', () => {
+    const { boundary, input, commit } = field();
+    const owner = expectDefined(boundary.parentElement);
+    const ownerKeydown = vi.fn();
+    key(input, '1');
+    owner.addEventListener('keydown', ownerKeydown);
+
+    try {
+      key(input, 'Enter');
+
+      // A commit that only prevents the Enter lets it reach the panel's own Enter handling.
+      expect(ownerKeydown).not.toHaveBeenCalled();
+      expect(commit.mock.calls).toEqual([['enter']]);
+    } finally {
+      owner.removeEventListener('keydown', ownerKeydown);
+    }
   });
 
   it('leaves Enter without a draft to the owner', () => {
@@ -140,6 +162,64 @@ describe('bindSegmentedInputCommit', () => {
     change(input);
 
     // Without the pointer reset, the typed draft would hold back the picker's change.
+    expect(commit.mock.calls).toEqual([['change']]);
+  });
+
+  it('commits a typed draft on departure after a press that changes nothing', () => {
+    const { input, outside, commit } = field();
+    input.focus();
+    key(input, '1');
+    press(input);
+
+    outside.focus();
+
+    // A press that ends the draft would drop the typed value the field still shows.
+    expect(commit.mock.calls).toEqual([['departure']]);
+  });
+
+  it('commits a typed draft on Enter after a press that changes nothing', () => {
+    const { input, commit } = field();
+    key(input, '1');
+    press(input);
+
+    const enter = key(input, 'Enter');
+
+    // A press that ends the draft would leave this Enter to owners that ignore it.
+    expect(enter.defaultPrevented).toBe(true);
+    expect(commit.mock.calls).toEqual([['enter']]);
+  });
+
+  it('flushes a typed draft after a press that changes nothing', () => {
+    const { input, commit, handle } = field();
+    key(input, '1');
+    press(input);
+
+    handle.flush();
+
+    // A press that ends the draft would let an outside press close the field without its value.
+    expect(commit.mock.calls).toEqual([['flush']]);
+  });
+
+  it('holds a typed change back again once a key follows the press', () => {
+    const { input, commit } = field();
+    key(input, '1');
+    press(input);
+    key(input, '2');
+
+    change(input);
+
+    // A pointer mark that a later key leaves in place would commit this typed segment.
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('commits a picker choice made during a typed draft at once', () => {
+    const { input, commit } = field();
+    key(input, '1');
+    press(input);
+
+    change(input);
+
+    // A press that marks nothing would hold the picker's choice back as a typed draft.
     expect(commit.mock.calls).toEqual([['change']]);
   });
 

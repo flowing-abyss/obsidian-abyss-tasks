@@ -47,6 +47,9 @@ export function bindSegmentedInputCommit(
 ): SegmentedInputCommitHandle {
   const { input, boundary, commit } = options;
   let draft = false;
+  // A press can open the native picker, so the next change may be its choice. A press that picks
+  // nothing keeps the typed draft.
+  let pointerChoice = false;
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === 'Enter' && !isImeOwnedEvent(event)) {
       if (!draft) return;
@@ -56,13 +59,16 @@ export function bindSegmentedInputCommit(
       return;
     }
     // An IME can stay on over a native field, so its keys still type into the segments.
-    if (!NON_EDITING_KEYS.includes(event.key)) draft = true;
+    if (!NON_EDITING_KEYS.includes(event.key)) {
+      draft = true;
+      pointerChoice = false;
+    }
   };
   const onPointerDown = (): void => {
-    draft = false;
+    pointerChoice = true;
   };
   const onChange = (): void => {
-    if (!draft) commit('change');
+    if (!draft || pointerChoice) commit('change');
   };
   const onFocusOut = (event: FocusEvent): void => {
     if (!draft || !boundary.isConnected || isNodeInside(boundary, event.relatedTarget)) return;
@@ -81,6 +87,7 @@ export function bindSegmentedInputCommit(
     },
     cancel: () => {
       draft = false;
+      pointerChoice = false;
       input.removeEventListener('keydown', onKeyDown);
       input.removeEventListener('pointerdown', onPointerDown);
       input.removeEventListener('change', onChange);
