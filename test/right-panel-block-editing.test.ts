@@ -754,7 +754,7 @@ describe('RightPanel block editing', () => {
     panel.mount(container);
     try {
       await call<Promise<void>>(panel, 'deleteTask', expectDefined(initial.subtasks[0]));
-      const pending = call<Promise<void>>(panel, 'updatePriority', afterDelete, 'A');
+      const pending = call<Promise<TaskCommandResult>>(panel, 'updatePriority', afterDelete, 'A');
       expectDefined(container.querySelector<HTMLButtonElement>('.abyss-undo-row button')).click();
       await flushMicrotasks(20);
 

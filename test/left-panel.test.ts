@@ -2008,7 +2008,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       keydown(input, 'Enter');
       await flushMicrotasks();
 
-      // Letting `create` open the note turns an open failure into a failed create and a retry.
+      // Letting the open failure reach the session turns it into a failed create and a retry.
       expect(create).toHaveBeenCalledExactlyOnceWith('New');
       expect(openFile).toHaveBeenCalledExactlyOnceWith(file);
       expect(refreshStore).toHaveBeenCalledOnce();

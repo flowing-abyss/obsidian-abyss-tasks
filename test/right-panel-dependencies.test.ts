@@ -3,7 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import type { RightPanel } from '../src/panels/RightPanel';
 import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { type SubtaskSnapshot, type TaskCommandResult, type TaskResolution } from '../src/tasks';
+import {
+  type SubtaskSnapshot,
+  type TaskCommandResult,
+  type TaskPriority,
+  type TaskResolution,
+} from '../src/tasks';
 import { TaskModal } from '../src/ui/TaskModal';
 import { rebuildTaskSelection, rootTaskRef } from '../src/ui/taskSelection';
 import {
@@ -1274,7 +1279,10 @@ describe('owned dependency destination editing', () => {
         innerState_abyssPrivate: AppState;
         innerPanel_abyssPrivate: {
           updateDescription_abyssPrivate(task: SubtaskSnapshot, text: string): Promise<boolean>;
-          updatePriority_abyssPrivate(task: SubtaskSnapshot, priority: string): Promise<void>;
+          updatePriority_abyssPrivate(
+            task: SubtaskSnapshot,
+            priority: TaskPriority,
+          ): Promise<TaskCommandResult>;
           commitStatus_abyssPrivate(task: SubtaskSnapshot, symbol: string): Promise<void>;
         };
       };

@@ -1467,7 +1467,7 @@ describe('RightPanel.updatePriority', () => {
         originalBlock: '- [ ] task',
       },
     });
-    await call<Promise<void>>(panel, 'updatePriority', t, priority);
+    await call<Promise<TaskCommandResult>>(panel, 'updatePriority', t, priority);
     const after = await readMd(app, 't.md');
     expect(after).toContain(marker);
   });
@@ -1484,7 +1484,7 @@ describe('RightPanel.updatePriority', () => {
         originalBlock: '- [ ] task 🔺',
       },
     });
-    await call<Promise<void>>(panel, 'updatePriority', t, 'C');
+    await call<Promise<TaskCommandResult>>(panel, 'updatePriority', t, 'C');
     const after = await readMd(app, 't.md');
     // C maps to 🔼 (Medium). The old 🔺 should be stripped and 🔼 appended.
     expect(after).not.toContain('🔺');
@@ -1503,7 +1503,7 @@ describe('RightPanel.updatePriority', () => {
         originalBlock: '- [ ] task 🔺',
       },
     });
-    await call<Promise<void>>(panel, 'updatePriority', t, 'D');
+    await call<Promise<TaskCommandResult>>(panel, 'updatePriority', t, 'D');
     const after = await readMd(app, 't.md');
     // FU-30: D is not in PRIORITY_MAP, so no emoji is appended
     expect(after).not.toContain('🔺');
@@ -1526,7 +1526,7 @@ describe('RightPanel.updatePriority', () => {
         originalBlock: '- [ ] task 🔺',
       },
     });
-    await call<Promise<void>>(panel, 'updatePriority', t, 'F');
+    await call<Promise<TaskCommandResult>>(panel, 'updatePriority', t, 'F');
     const after = await readMd(app, 't.md');
     expect(after).not.toContain('🔺');
     expect(after).toContain('⏬');
