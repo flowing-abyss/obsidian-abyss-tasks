@@ -75,6 +75,7 @@ import { renderStatusMarker, setStatusMarkerCompletionBlocked } from '../ui/Stat
 import { showStatusMenuAt, type StatusMenuHandle } from '../ui/statusMenu';
 import { showTagDropdown } from '../ui/tagDropdown';
 import {
+  PENDING_TASK_EDIT_RESULT,
   presentTaskArchiveResult,
   presentTaskCommandResult,
   requestTaskCompletion,
@@ -451,6 +452,22 @@ function unfocusedDraft(draft: RightPanelDraftState): RightPanelDraftState {
     return { ...draft, editor: unfocusedRecurrenceEditor(draft.editor), hadFocus: false };
   }
   return { ...draft, hadFocus: false };
+}
+
+const PRIORITY_CHIP_LABELS: Readonly<Record<string, string>> = {
+  A: '🚩 Highest',
+  B: '🚩 High',
+  C: '🚩 Medium',
+  D: 'Priority',
+  E: '🚩 Low',
+  F: '🚩 Lowest',
+};
+
+/** The priority chip's label, `data-priority`, and classes, for a render and a pending change. */
+function applyPriorityChipPresentation(chip: HTMLElement, priority: string): void {
+  chip.textContent = PRIORITY_CHIP_LABELS[priority] ?? 'Priority';
+  chip.setAttribute('data-priority', priority);
+  chip.className = `abyss-chip abyss-priority-chip abyss-priority-chip--${priority}${priority === 'D' ? ' abyss-chip-empty' : ''}`;
 }
 
 export class RightPanel {
@@ -2290,7 +2307,10 @@ export class RightPanel {
       text,
     };
     const submission = this.beginDraftSubmission_abyssPrivate(command.current, undefined, command);
-    if (submission === undefined) return { type: 'failed' };
+    if (submission === undefined) {
+      presentTaskCommandResult(PENDING_TASK_EDIT_RESULT);
+      return { type: 'failed' };
+    }
     let result: TaskCommandResult;
     try {
       result = await this.tasks_abyssPrivate.execute(command);
@@ -3083,23 +3103,10 @@ export class RightPanel {
   }
 
   private renderPriorityChip_abyssPrivate(container: HTMLElement, task: TaskLike): void {
-    const labels: Record<string, string> = {
-      A: '🚩 Highest',
-      B: '🚩 High',
-      C: '🚩 Medium',
-      D: 'Priority',
-      E: '🚩 Low',
-      F: '🚩 Lowest',
-    };
     const chip = container.createEl('button', {
-      cls: `abyss-chip abyss-priority-chip abyss-priority-chip--${task.priority}${task.priority === 'D' ? ' abyss-chip-empty' : ''}`,
-      text: labels[task.priority] ?? 'Priority',
-      attr: {
-        'data-priority': task.priority,
-        'aria-haspopup': 'listbox',
-        'aria-expanded': 'false',
-      },
+      attr: { 'aria-haspopup': 'listbox', 'aria-expanded': 'false' },
     });
+    applyPriorityChipPresentation(chip, task.priority);
     this.registerPlanningControl_abyssPrivate('priority', chip);
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -3344,7 +3351,7 @@ export class RightPanel {
     });
 
     const currentPriority = anchor.getAttribute('data-priority') ?? task.priority;
-    const options: Array<{ value: string; label: string }> = [
+    const options: Array<{ value: TaskPriority; label: string }> = [
       { value: 'A', label: 'Highest' },
       { value: 'B', label: 'High' },
       { value: 'C', label: 'Medium' },
@@ -3370,25 +3377,28 @@ export class RightPanel {
       setIcon(flagEl, 'flag');
       btn.createSpan({ cls: 'abyss-priority-option-label', text: opt.label });
       btn.addEventListener('click', () => {
-        // Optimistic update on the chip
-        const chipLabels: Record<string, string> = {
-          A: '🚩 Highest',
-          B: '🚩 High',
-          C: '🚩 Medium',
-          D: 'Priority',
-          E: '🚩 Low',
-          F: '🚩 Lowest',
-        };
-        anchor.textContent = chipLabels[opt.value] ?? 'Priority';
-        anchor.setAttribute('data-priority', opt.value);
-        anchor.className = `abyss-chip abyss-priority-chip abyss-priority-chip--${opt.value}${opt.value === 'D' ? ' abyss-chip-empty' : ''}`;
+        const previous = anchor.getAttribute('data-priority') ?? task.priority;
+        applyPriorityChipPresentation(anchor, opt.value);
         this.removeAnchoredSurface_abyssPrivate(pop);
-        runAsyncAction(this.updatePriority_abyssPrivate(task, opt.value));
+        runAsyncAction(this.commitPriorityChoice_abyssPrivate(anchor, task, opt.value, previous));
       });
     }
     this.positionAnchoredSurface_abyssPrivate(pop, anchor, 'below-start');
     this.dismissMenuOnOutsideClick_abyssPrivate(pop, anchor);
     selectedOption?.focus({ preventScroll: true });
+  }
+
+  /** Writes a chosen priority; a failure or a refusal puts back the priority the chip showed. */
+  private async commitPriorityChoice_abyssPrivate(
+    chip: HTMLElement,
+    task: TaskLike,
+    priority: TaskPriority,
+    previous: string,
+  ): Promise<void> {
+    const result = await this.executePlanningPatch_abyssPrivate(task, {
+      priority: { type: 'set', value: priority },
+    });
+    if (result.type !== 'ok' && chip.isConnected) applyPriorityChipPresentation(chip, previous);
   }
 
   private positionAnchoredSurface_abyssPrivate(
@@ -3682,7 +3692,10 @@ export class RightPanel {
   ): Promise<TaskCommandResult | undefined> {
     if (this.tasks_abyssPrivate === undefined) return undefined;
     const submission = this.beginDraftSubmission_abyssPrivate(target, matchesDraft, command);
-    if (submission === undefined) return undefined;
+    if (submission === undefined) {
+      presentTaskCommandResult(PENDING_TASK_EDIT_RESULT);
+      return undefined;
+    }
     const owner = this.submittedDrafts_abyssPrivate.get(submission);
     const result = await executeTaskCommand(this.tasks_abyssPrivate, command);
     this.applyPlanningResult_abyssPrivate(result, target, initiatingStack, submission);
@@ -3725,8 +3738,7 @@ export class RightPanel {
           undefined,
           command,
         );
-        if (submission === undefined)
-          return { type: 'io-error', cause: 'pending-task-edit', contentState: 'unchanged' };
+        if (submission === undefined) return PENDING_TASK_EDIT_RESULT;
         const restored = await executeTaskCommand(tasks, command);
         if (restored.type === 'ok')
           this.applyPlanningResult_abyssPrivate(
@@ -3803,7 +3815,8 @@ export class RightPanel {
       command,
     );
     if (submission == null) {
-      return { type: 'io-error', cause: 'repository-error', contentState: 'unchanged' };
+      presentTaskCommandResult(PENDING_TASK_EDIT_RESULT);
+      return PENDING_TASK_EDIT_RESULT;
     }
     let result: TaskCommandResult;
     try {

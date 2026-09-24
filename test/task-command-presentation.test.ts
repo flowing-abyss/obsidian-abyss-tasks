@@ -6,6 +6,7 @@ import type { TaskApplicationApi, TaskCommandResult, TaskSnapshot } from '../src
 import type { InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import {
   describeTaskCreationResult,
+  PENDING_TASK_EDIT_RESULT,
   presentTaskCommandResult,
   presentTaskCreationResult,
   presentTaskMoveResult,
@@ -482,6 +483,17 @@ describe('task command result presentation', () => {
     });
 
     expect(noticeCalls()).toEqual([['Failed to update task. Please try again.']]);
+  });
+
+  it('names a pending task edit apart from every other io error', () => {
+    presentTaskCommandResult(PENDING_TASK_EDIT_RESULT);
+    presentTaskCommandResult({ type: 'io-error', cause: 'read-error', contentState: 'unchanged' });
+
+    // Mapping every io-error to the pending sentence would hide real write failures.
+    expect(noticeCalls()).toEqual([
+      ['Another change to this task is still being saved. Try again in a moment.'],
+      ['Failed to update task. Please try again.'],
+    ]);
   });
 
   it('announces a successful task creation with only its destination filename', () => {

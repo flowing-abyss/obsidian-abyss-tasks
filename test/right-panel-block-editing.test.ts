@@ -20,6 +20,7 @@ import {
   testStatusRegistry,
   useRealMoment,
 } from './helpers';
+import { notices } from './support/inspectorHarness';
 
 useRealMoment();
 
@@ -731,6 +732,54 @@ describe('RightPanel block editing', () => {
       panel.destroy();
       container.remove();
       notices.forEach((notice) => {
+        if (requireApiVersion('1.8.7')) notice.containerEl.remove();
+      });
+    }
+  });
+
+  it('presents a removal Undo refused by a pending write as a pending edit', async () => {
+    const initial = snapshotWithChildren('old', ['selected', 'sibling']);
+    const afterDelete = snapshotWithChildren('deleted', ['sibling']);
+    const recovery = {
+      parent: { type: 'task' as const, ref: afterDelete.ref },
+      markdown: '  - [ ] selected\n',
+      placement: { relativeLine: 1, before: expectDefined(afterDelete.subtasks[0]).ref },
+    };
+    const held = deferred<TaskCommandResult>();
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockResolvedValueOnce({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'task', task: afterDelete, subtaskRemovalRecovery: recovery },
+      })
+      .mockReturnValueOnce(held.promise);
+    const messages: string[] = [];
+    const captured = notices(messages);
+    const { panel } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      await call<Promise<void>>(panel, 'deleteTask', expectDefined(initial.subtasks[0]));
+      const pending = call<Promise<void>>(panel, 'updatePriority', afterDelete, 'A');
+      expectDefined(container.querySelector<HTMLButtonElement>('.abyss-undo-row button')).click();
+      await flushMicrotasks(20);
+
+      expect(messages).toEqual([
+        'Another change to this task is still being saved. Try again in a moment.',
+      ]);
+      // The refused Undo runs no restore, which would race the priority write still in flight.
+      expect(execute.mock.calls.map(([command]) => command.type)).toEqual([
+        'delete-subtask',
+        'patch',
+      ]);
+      held.resolve({ type: 'ok', changed: true, outcome: { type: 'task', task: afterDelete } });
+      await pending;
+    } finally {
+      panel.destroy();
+      container.remove();
+      captured.forEach((notice) => {
         if (requireApiVersion('1.8.7')) notice.containerEl.remove();
       });
     }

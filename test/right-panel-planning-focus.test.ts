@@ -17,6 +17,9 @@ import {
 
 useRealMoment();
 
+const PENDING_EDIT_NOTICE =
+  'Another change to this task is still being saved. Try again in a moment.';
+
 afterEach(() => {
   for (const cleanup of inspectorCleanups.splice(0)) cleanup();
   activeDocument.body.empty();
@@ -716,5 +719,170 @@ describe('inspector repeat editor focus continuity', () => {
     expect(await h.read()).toBe('- [ ] Current 🔁 every day 📅 2026-09-23\n- [ ] Other edited\n');
     // A restore anchored on the repeat chip maps a focus inside the editor to the chip.
     expectRebuiltFocus(actions, control(h, '[aria-label="More actions"]'));
+  });
+});
+
+describe('inspector write outcomes', () => {
+  it('presents a refused concurrent priority change and restores the label from before it', async () => {
+    const h = await hosted('- [ ] Current\n');
+    const messages: string[] = [];
+    notices(messages);
+    const held = holdNextWrite(h);
+
+    activate(control(h, '.abyss-priority-chip'));
+    activate(control(h, '.abyss-priority-option[data-priority="A"]'));
+    activate(control(h, '.abyss-priority-chip'));
+    activate(control(h, '.abyss-priority-option[data-priority="C"]'));
+    await flushMicrotasks();
+
+    const chip = control(h, '.abyss-priority-chip');
+    expect(messages).toEqual([PENDING_EDIT_NOTICE]);
+    // Keeping the optimistic label would show Medium, a priority that is never written.
+    expect(chip.textContent).toBe('🚩 Highest');
+    expect(chip.getAttribute('data-priority')).toBe('A');
+    expect(held.spy).toHaveBeenCalledOnce();
+
+    held.release();
+    await flushMicrotasks();
+    expect(await h.read()).toBe('- [ ] Current 🔺\n');
+  });
+
+  it('presents a refused dependency sub-task', async () => {
+    const h = await hosted('- [ ] Current\n');
+    const messages: string[] = [];
+    notices(messages);
+    const held = holdNextWrite(h);
+    activate(control(h, '.abyss-priority-chip'));
+    activate(control(h, '.abyss-priority-option[data-priority="A"]'));
+
+    activate(control(h, '.abyss-dep-badge-body'));
+    const input = control<HTMLInputElement>(h, '.abyss-dep-search input');
+    input.value = 'Blocker';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    activate(control(h, '.abyss-dep-search-create'));
+    await flushMicrotasks();
+
+    expect(messages).toEqual([PENDING_EDIT_NOTICE]);
+    expect(held.spy).toHaveBeenCalledOnce();
+    // A refusal answered as a validation error would show an inline error instead.
+    expect(control<HTMLElement>(h, '.abyss-dep-search-error').hidden).toBe(true);
+    expect(input.value).toBe('Blocker');
+    expect(input.readOnly).toBe(false);
+
+    held.release();
+    await flushMicrotasks();
+    expect(await h.read()).toBe('- [ ] Current 🔺\n');
+  });
+
+  it('presents a refused description save and keeps its text', async () => {
+    const h = await hosted('- [ ] Current\n');
+    const messages: string[] = [];
+    notices(messages);
+    const held = holdNextWrite(h);
+    activate(control(h, '.abyss-priority-chip'));
+    activate(control(h, '.abyss-priority-option[data-priority="A"]'));
+
+    control<HTMLElement>(h, '.abyss-right-desc-view').click();
+    await flushMicrotasks();
+    const textarea = control<HTMLTextAreaElement>(h, '.abyss-right-desc-edit');
+    // The editor focuses its textarea on the next task; the blur below is real only then.
+    expect(activeDocument.activeElement).toBe(textarea);
+    textarea.value = 'Refused text';
+    // The module afterEach empties the body, which removes this button as well.
+    activeDocument.body.createEl('button', { text: 'Outside' }).focus();
+    await flushMicrotasks();
+
+    expect(messages).toEqual([PENDING_EDIT_NOTICE]);
+    expect(held.spy).toHaveBeenCalledOnce();
+    expect(control<HTMLTextAreaElement>(h, '.abyss-right-desc-edit')).toBe(textarea);
+    expect(textarea.value).toBe('Refused text');
+
+    held.release();
+    await flushMicrotasks();
+    expect(await h.read()).toBe('- [ ] Current 🔺\n');
+  });
+
+  it('shows the recorded priority again when the change fails', async () => {
+    const h = await hosted('- [ ] Current\n');
+    const messages: string[] = [];
+    notices(messages);
+    vi.spyOn(h.api, 'execute').mockResolvedValueOnce({
+      type: 'io-error',
+      cause: 'test',
+      contentState: 'unchanged',
+    });
+    const chip = control(h, '.abyss-priority-chip');
+
+    activate(chip);
+    activate(control(h, '.abyss-priority-option[data-priority="A"]'));
+    await flushMicrotasks();
+
+    expect(messages).toEqual(['Failed to update task. Please try again.']);
+    expect(await h.read()).toBe('- [ ] Current\n');
+    expect(chip.textContent).toBe('Priority');
+    expect(chip.getAttribute('data-priority')).toBe('D');
+    expect(chip.classList.contains('abyss-chip-empty')).toBe(true);
+    expect(activeDocument.activeElement).toBe(chip);
+  });
+
+  it('rolls a failed change back to the priority shown at its click, not at the popover opening', async () => {
+    const h = await hosted('- [ ] Current\n');
+    const messages: string[] = [];
+    notices(messages);
+    const gate = deferred<void>();
+    const failure: TaskCommandResult = {
+      type: 'io-error',
+      cause: 'test',
+      contentState: 'unchanged',
+    };
+    vi.spyOn(h.api, 'execute')
+      .mockImplementationOnce(async () => {
+        await gate.promise;
+        return failure;
+      })
+      .mockResolvedValueOnce(failure);
+    const chip = control(h, '.abyss-priority-chip');
+
+    activate(chip);
+    activate(control(h, '.abyss-priority-option[data-priority="A"]'));
+    activate(chip);
+    gate.resolve();
+    await flushMicrotasks();
+    expect(chip.textContent).toBe('Priority');
+    activate(control(h, '.abyss-priority-option[data-priority="C"]'));
+    await flushMicrotasks();
+
+    expect(messages).toEqual([
+      'Failed to update task. Please try again.',
+      'Failed to update task. Please try again.',
+    ]);
+    expect(await h.read()).toBe('- [ ] Current\n');
+    // Recording the priority when the popover opened would show Highest, which was never written.
+    expect(chip.textContent).toBe('Priority');
+    expect(chip.getAttribute('data-priority')).toBe('D');
+  });
+
+  it('writes a typed time once when focus leaves during its Enter write', async () => {
+    const h = await hosted('- [ ] Current\n');
+    const messages: string[] = [];
+    notices(messages);
+    const held = holdNextWrite(h);
+
+    activate(control(h, '.abyss-chip-time'));
+    await flushMicrotasks();
+    const input = control<HTMLInputElement>(h, '.abyss-time-popover .abyss-time-input');
+    key(input, '1');
+    change(input, '10:45');
+    key(input, 'Enter');
+    activeDocument.body.createEl('button', { text: 'Outside' }).focus();
+    await flushMicrotasks();
+
+    // Dropping the written flag would submit the departure too, which the pending write refuses with a Notice.
+    expect(messages).toEqual([]);
+    expect(held.spy).toHaveBeenCalledOnce();
+
+    held.release();
+    await flushMicrotasks();
+    expect(await h.read()).toBe('- [ ] Current ⏰ 10:45\n');
   });
 });
