@@ -63,6 +63,7 @@ const mounted: RecurrenceEditorHandle[] = [];
 
 function mount(
   overrides: Partial<{
+    container: HTMLElement;
     source: Parameters<typeof mountRecurrenceEditor>[0]['source'];
     policy: RecurrencePolicy;
     ownershipConflict: boolean;
@@ -71,7 +72,7 @@ function mount(
   }> = {},
 ): MountedEditor {
   const root = task({ planning: { due: '2026-08-09' } });
-  const container = freshContainer();
+  const container = overrides.container ?? freshContainer();
   const onSubmit = vi
     .fn<(patch: TaskPatch) => Promise<TaskCommandResult>>()
     .mockResolvedValue({ type: 'ok', changed: true, outcome: { type: 'task', task: root } });
@@ -114,11 +115,23 @@ function popoutRealm(): {
   return { frame, document: expectDefined(frame.contentDocument), window: ownerWindow };
 }
 
-/** A button created by the popout's own document, so it belongs to the popout realm. */
+/**
+ * A button the host built with the popout document's own `createElementNS`, so it belongs to the
+ * popout realm. The plugin never builds this way; its elements come from `pluginPopoutButton`.
+ */
 function popoutButton(popout: ReturnType<typeof popoutRealm>): HTMLElement {
   const element = popout.document.createElementNS('http://www.w3.org/1999/xhtml', 'button');
   popout.document.body.append(element);
   return element;
+}
+
+/**
+ * A button the plugin builds in the popout. Unlike `popoutButton`, `createEl` builds it through the
+ * main document, and the append moves it into the popout document, as in Obsidian. So it stays a
+ * main-window object whose owner document is the popout's.
+ */
+function pluginPopoutButton(popout: ReturnType<typeof popoutRealm>): HTMLElement {
+  return popout.document.body.createEl('button');
 }
 
 function mountAnchored(anchor: HTMLElement): RecurrenceEditorHandle {
@@ -1508,7 +1521,7 @@ describe('mountRecurrenceEditor', () => {
       handle.dismiss();
 
       expect(popover.isConnected).toBe(false);
-      // A main-window instanceof check rejects the popout anchor and leaves focus on the body.
+      // A helper that accepts only the main window's realm rejects this host-built anchor.
       expect(popout.document.activeElement).toBe(anchor);
     } finally {
       popout.frame.remove();
@@ -1534,12 +1547,103 @@ describe('mountRecurrenceEditor', () => {
       handle.dismiss();
 
       expect(popover.isConnected).toBe(false);
-      // A main-window instanceof check drops the popout element the editor opened from.
+      // A helper that accepts only the main window's realm drops this host-built opener.
       expect(popout.document.activeElement).toBe(previous);
     } finally {
       popout.frame.remove();
     }
     vi.useRealTimers();
+  });
+
+  it('returns focus to a plugin-built popout anchor when Escape closes the anchored editor', () => {
+    vi.useFakeTimers();
+    const popout = popoutRealm();
+    try {
+      const anchor = pluginPopoutButton(popout);
+      expect(anchor.ownerDocument).toBe(popout.document);
+      expect(anchor).not.toBeInstanceOf(popout.window.HTMLElement);
+      anchor.focus();
+      mountAnchored(anchor);
+      vi.runAllTimers();
+      const popover = expectDefined(
+        popout.document.querySelector<HTMLElement>('.abyss-recurrence-popover'),
+      );
+      const focused = expectDefined(popout.document.activeElement);
+      expect(popover.contains(focused)).toBe(true);
+
+      focused.dispatchEvent(
+        new popout.window.KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      expect(popover.isConnected).toBe(false);
+      // A helper that accepts only the owner document's realm rejects the plugin's own anchor.
+      expect(popout.document.activeElement).toBe(anchor);
+    } finally {
+      popout.frame.remove();
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns focus to the plugin-built popout opener once the anchored editor anchor is gone', () => {
+    vi.useFakeTimers();
+    const popout = popoutRealm();
+    try {
+      const opener = pluginPopoutButton(popout);
+      const anchor = pluginPopoutButton(popout);
+      opener.focus();
+      const handle = mountAnchored(anchor);
+      vi.runAllTimers();
+      const popover = expectDefined(
+        popout.document.querySelector<HTMLElement>('.abyss-recurrence-popover'),
+      );
+      expect(popover.contains(popout.document.activeElement)).toBe(true);
+      anchor.remove();
+
+      handle.dismiss();
+
+      expect(popover.isConnected).toBe(false);
+      // A helper that accepts only the owner document's realm drops the opener the plugin built.
+      expect(popout.document.activeElement).toBe(opener);
+    } finally {
+      popout.frame.remove();
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns focus to the plugin-built popout element the host resolver names after a save', async () => {
+    const popout = popoutRealm();
+    try {
+      const root = task({ planning: { due: '2026-08-09' } });
+      const rebuilt = pluginPopoutButton(popout);
+      let focusAfterDrop: Element | null = null;
+      const { container, onClose } = mount({
+        container: popout.document.body.createDiv(),
+        dismissalFocus: () => rebuilt,
+        onSubmit: async () => {
+          dropFocusFromDisabledButton(popout.document);
+          focusAfterDrop = popout.document.activeElement;
+          return { type: 'ok', changed: true, outcome: { type: 'task', task: root } };
+        },
+      });
+      const save = button(container, 'Save repeat');
+      save.focus();
+      expect(popout.document.activeElement).toBe(save);
+
+      click(save);
+      await vi.waitFor(() => {
+        expect(onClose).toHaveBeenCalledOnce();
+      });
+
+      expect(focusAfterDrop).toBe(popout.document.body);
+      // A helper that accepts only the owner document's realm rejects the resolver's element.
+      expect(popout.document.activeElement).toBe(rebuilt);
+    } finally {
+      popout.frame.remove();
+    }
   });
 
   it.each(['composing', 'legacy'] as const)(

@@ -665,4 +665,33 @@ describe('CenterPanel multi-selection', () => {
     expect(state.get('taskStack')).toEqual([]);
     expect(selectedLines(el)).toEqual([]);
   });
+
+  it('leaves the task selection alone for ArrowDown in a centre input inside a popout', () => {
+    const { el, state } = makeCenter([t1, t2, t3]);
+    const frame = activeDocument.body.createEl('iframe');
+    try {
+      const popoutDocument = expectDefined(frame.contentDocument);
+      const popoutWindow = expectDefined(frame.contentWindow) as Window & typeof window;
+      // The panel's elements are main-window objects; the append moves them, as in Obsidian.
+      popoutDocument.body.append(el);
+      const filter = expectDefined(el.querySelector<HTMLInputElement>('.abyss-center-search'));
+      expect(filter.ownerDocument).toBe(popoutDocument);
+      expect(filter).not.toBeInstanceOf(popoutWindow.HTMLElement);
+      filter.focus();
+
+      const event = new popoutWindow.KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        bubbles: true,
+        cancelable: true,
+      });
+      filter.dispatchEvent(event);
+
+      // A helper that accepts only the owner document's realm reads the input as a card target.
+      expect(state.get('taskStack')).toEqual([]);
+      expect(event.defaultPrevented).toBe(false);
+      expect(popoutDocument.activeElement).toBe(filter);
+    } finally {
+      frame.remove();
+    }
+  });
 });
