@@ -1,4 +1,5 @@
 import { Modal, Notice, type App } from 'obsidian';
+import { isImeOwnedEvent } from '../ui/ime';
 import type { TagManager, VaultTagRenameResult } from './TagManager';
 
 type RenameScope = 'exact' | 'prefix';
@@ -130,6 +131,7 @@ export class RenameTagModal extends Modal {
     });
     this.input.addEventListener('input', updateConfirmation);
     this.input.addEventListener('keydown', (e) => {
+      if (isImeOwnedEvent(e)) return;
       if (e.key === 'Enter') doRename();
       if (e.key === 'Escape' && !pending) this.close();
     });

@@ -6,6 +6,7 @@ import type {
   ProjectFieldCatalogItem,
   ProjectPropertyType,
 } from '../../projects/projectFields';
+import { isImeOwnedEvent } from '../../ui/ime';
 import { showProjectColumnMenu } from './projectColumnMenu';
 
 export interface VisibleProjectColumn {
@@ -99,6 +100,7 @@ function beginRename(
     else button.focus();
   };
   input.addEventListener('keydown', (event) => {
+    if (isImeOwnedEvent(event)) return;
     if (event.key === 'Enter') {
       event.preventDefault();
       finish(true);

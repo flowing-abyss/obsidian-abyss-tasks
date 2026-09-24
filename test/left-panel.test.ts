@@ -1145,6 +1145,30 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(modal.contentEl.querySelector('input')).not.toBeNull();
   });
 
+  it.each(['composing', 'legacy'] as const)(
+    'leaves IME-owned Enter and Escape in the tag rename field to the IME (%s)',
+    async (ime) => {
+      renderOpenedModalsInDocument();
+      const { tm } = makePanel();
+      const rename = vi
+        .spyOn(tm, 'renameTagExact')
+        .mockResolvedValue({ type: 'invalid', reason: 'invalid-tag' });
+      const modal = new RenameTagModal(null as never, tm, '#work', vi.fn());
+      modal.open();
+      const close = vi.spyOn(modal, 'close');
+      const input = expectDefined(modal.contentEl.querySelector<HTMLInputElement>('input'));
+      input.value = '#focus';
+
+      dispatchImeKey(input, 'Enter', ime);
+      dispatchImeKey(input, 'Escape', ime);
+      await flushMicrotasks();
+
+      // A guard on Enter alone still lets an IME Escape close the modal.
+      expect(rename).not.toHaveBeenCalled();
+      expect(close).not.toHaveBeenCalled();
+    },
+  );
+
   it('child and pinned tag menus use explicit across-vault wording', () => {
     const items = captureMenu();
     const tasks = [

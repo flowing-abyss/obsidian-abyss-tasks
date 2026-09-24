@@ -8,7 +8,7 @@ import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProp
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import type { ProjectPropertyType } from '../src/projects/projectFields';
 import { ProjectPropertySuggest } from '../src/ui/ProjectPropertySuggest';
-import { expectDefined, freshContainer } from './helpers';
+import { dispatchImeKey, expectDefined, freshContainer } from './helpers';
 
 function catalog(
   values: readonly string[] = [],
@@ -1559,6 +1559,35 @@ describe('mountProjectCellEditor', () => {
       'configuration changed',
     );
   });
+
+  it.each(['composing', 'legacy'] as const)(
+    'leaves IME-owned Enter and Escape in a text cell to the IME (%s)',
+    async (ime) => {
+      const container = document.body.createDiv();
+      const save = vi.fn().mockResolvedValue(undefined);
+      const onClose = vi.fn();
+      mountProjectCellEditor({
+        app: new App(),
+        container,
+        field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+        value: 'draft',
+        catalog: catalog(),
+        save,
+        onClose,
+      });
+      const input = expectDefined(container.querySelector('input'));
+      input.value = 'かな';
+
+      const keys = ['Enter', 'Escape'].map((key) => dispatchImeKey(input, key, ime));
+      await settle();
+
+      // An IME check in editorKeyboardNavigation alone still lets handleEscape cancel the edit.
+      expect(keys.map((event) => event.defaultPrevented)).toEqual([false, false]);
+      expect(save).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+      container.remove();
+    },
+  );
 });
 
 describe('ProjectPropertySuggest', () => {

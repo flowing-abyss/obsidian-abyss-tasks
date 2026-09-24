@@ -9,6 +9,7 @@ import { projectTableLinkTargetParts } from '../../projects/projectTableLinkTarg
 import { projectStatusDisplayName } from '../../projects/status';
 import type { ProjectStatus } from '../../settings/types';
 import { normalizeTag } from '../../tags/markdownTagRename';
+import { isImeOwnedEvent } from '../../ui/ime';
 import type { ProjectPropertySuggestion } from '../../ui/ProjectPropertySuggest';
 import {
   projectPropertyValuePresentation,
@@ -641,6 +642,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   }
 
   private readonly onKeyDown_abyssPrivate = (event: KeyboardEvent): void => {
+    if (isImeOwnedEvent(event)) return;
     if (this.handleEscape_abyssPrivate(event)) return;
     const navigation = editorKeyboardNavigation(event);
     if (navigation === undefined) return;
