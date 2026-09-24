@@ -502,6 +502,7 @@ export class CenterPanel {
   }
 
   private handlePanelKeyDown_abyssPrivate(event: KeyboardEvent): void {
+    if (isImeOwnedEvent(event)) return;
     if (event.key === 'Escape' && this.hasTaskSelection_abyssPrivate()) {
       this.clearTaskSelection_abyssPrivate();
       return;
@@ -2914,45 +2915,9 @@ export class CenterPanel {
       boundary: this.el,
       interactionOwnership: this.interactionOwnership_abyssPrivate,
       ...(initialValue !== undefined && { initialValue }),
-      onPick: (inputValue) => {
-        try {
-          const value = localDate(inputValue);
-          const pendingFocus =
-            focusKey !== undefined && focusKey !== ''
-              ? {
-                  key: focusKey,
-                  armedRenderGeneration: this.taskCardRenderGeneration_abyssPrivate,
-                  changed: false,
-                }
-              : undefined;
-          if (pendingFocus != null) {
-            this.pendingTaskDateFocus_abyssPrivate = pendingFocus;
-            this.taskDateFocusContinuityKey_abyssPrivate = pendingFocus.key;
-          }
-          const firstTask = tasks[0];
-          if (firstTask === undefined) return;
-          const update =
-            tasks.length === 1
-              ? this.setTaskDue_abyssPrivate(firstTask, value)
-              : this.applyDueInOrder_abyssPrivate(tasks, value);
-          if (pendingFocus != null) {
-            const settleFocus = (changed: boolean): void => {
-              if (this.pendingTaskDateFocus_abyssPrivate !== pendingFocus) return;
-              if (!changed) {
-                this.clearTaskDateFocusContinuity_abyssPrivate(pendingFocus.key);
-                return;
-              }
-              pendingFocus.changed = true;
-              this.releaseSettledTaskDateFocus_abyssPrivate(pendingFocus);
-            };
-            const abandonFocus = (): void => {
-              settleFocus(false);
-            };
-            void update.then(settleFocus, abandonFocus);
-          }
-        } catch {
-          // Native date inputs are normally valid; malformed programmatic values remain a no-op.
-        }
+      onPick: (inputValue, pick) => {
+        // A pick made by leaving the picker arms no focus continuity: focus stays where it went.
+        this.pickTaskDate_abyssPrivate(tasks, inputValue, pick.returnFocus ? focusKey : undefined);
       },
       onClose: () => {
         this.taskDatePickerCleanup_abyssPrivate = null;
@@ -2962,6 +2927,51 @@ export class CenterPanel {
       }),
     });
     this.taskDatePickerCleanup_abyssPrivate = cleanup;
+  }
+
+  private pickTaskDate_abyssPrivate(
+    tasks: readonly TaskSnapshot[],
+    inputValue: string,
+    focusKey: string | undefined,
+  ): void {
+    try {
+      const value = localDate(inputValue);
+      const pendingFocus =
+        focusKey !== undefined && focusKey !== ''
+          ? {
+              key: focusKey,
+              armedRenderGeneration: this.taskCardRenderGeneration_abyssPrivate,
+              changed: false,
+            }
+          : undefined;
+      if (pendingFocus != null) {
+        this.pendingTaskDateFocus_abyssPrivate = pendingFocus;
+        this.taskDateFocusContinuityKey_abyssPrivate = pendingFocus.key;
+      }
+      const firstTask = tasks[0];
+      if (firstTask === undefined) return;
+      const update =
+        tasks.length === 1
+          ? this.setTaskDue_abyssPrivate(firstTask, value)
+          : this.applyDueInOrder_abyssPrivate(tasks, value);
+      if (pendingFocus != null) {
+        const settleFocus = (changed: boolean): void => {
+          if (this.pendingTaskDateFocus_abyssPrivate !== pendingFocus) return;
+          if (!changed) {
+            this.clearTaskDateFocusContinuity_abyssPrivate(pendingFocus.key);
+            return;
+          }
+          pendingFocus.changed = true;
+          this.releaseSettledTaskDateFocus_abyssPrivate(pendingFocus);
+        };
+        const abandonFocus = (): void => {
+          settleFocus(false);
+        };
+        void update.then(settleFocus, abandonFocus);
+      }
+    } catch {
+      // Native date inputs are normally valid; malformed programmatic values remain a no-op.
+    }
   }
 
   private clearTaskDatePicker_abyssPrivate(): void {

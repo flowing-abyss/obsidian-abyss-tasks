@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TagManager } from '../src/tags/TagManager';
 import type { TaskApplicationApi, TaskCommandResult, TaskRef, TaskSnapshot } from '../src/tasks';
 import {
+  dispatchImeKey,
   expectDefined,
   freshContainer,
   makeCenterPanelForTest,
@@ -401,6 +402,26 @@ describe('CenterPanel multi-selection', () => {
     expect(expectDefined(cards[0]).classList.contains('abyss-multi-selected')).toBe(false);
   });
 
+  it.each(['composing', 'legacy'] as const)(
+    'leaves IME-owned Escape and arrows to the IME (%s)',
+    (ime) => {
+      const { el, state } = makeCenter([t1, t2, t3]);
+      attach(el);
+      const first = expectDefined(cards(el)[0]);
+      click(first, { ctrlKey: true });
+      const stack = state.get('taskStack');
+
+      const escape = dispatchImeKey(el, 'Escape', ime);
+      const arrow = dispatchImeKey(el, 'ArrowDown', ime);
+
+      // A guard on the arrow branch alone still lets a composing Escape clear the selection.
+      expect(first.classList.contains('abyss-multi-selected')).toBe(true);
+      expect([escape.defaultPrevented, arrow.defaultPrevented]).toEqual([false, false]);
+      expect(state.get('taskStack')).toBe(stack);
+      el.remove();
+    },
+  );
+
   it('Shift+Click selects range', () => {
     const { el } = makeCenter([t1, t2, t3]);
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
@@ -643,5 +664,34 @@ describe('CenterPanel multi-selection', () => {
     }
     expect(state.get('taskStack')).toEqual([]);
     expect(selectedLines(el)).toEqual([]);
+  });
+
+  it('leaves the task selection alone for ArrowDown in a centre input inside a popout', () => {
+    const { el, state } = makeCenter([t1, t2, t3]);
+    const frame = activeDocument.body.createEl('iframe');
+    try {
+      const popoutDocument = expectDefined(frame.contentDocument);
+      const popoutWindow = expectDefined(frame.contentWindow) as Window & typeof window;
+      // The panel's elements are main-window objects; the append moves them, as in Obsidian.
+      popoutDocument.body.append(el);
+      const filter = expectDefined(el.querySelector<HTMLInputElement>('.abyss-center-search'));
+      expect(filter.ownerDocument).toBe(popoutDocument);
+      expect(filter).not.toBeInstanceOf(popoutWindow.HTMLElement);
+      filter.focus();
+
+      const event = new popoutWindow.KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        bubbles: true,
+        cancelable: true,
+      });
+      filter.dispatchEvent(event);
+
+      // A helper that accepts only the owner document's realm reads the input as a card target.
+      expect(state.get('taskStack')).toEqual([]);
+      expect(event.defaultPrevented).toBe(false);
+      expect(popoutDocument.activeElement).toBe(filter);
+    } finally {
+      frame.remove();
+    }
   });
 });

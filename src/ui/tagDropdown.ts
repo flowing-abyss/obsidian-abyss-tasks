@@ -1,4 +1,5 @@
 import { normalizeTaskTagInput } from '../tasks';
+import { isImeOwnedEvent } from './ime';
 import { runAsyncAction } from './runAsyncAction';
 
 let nextTagDropdownId = 0;
@@ -99,6 +100,7 @@ function bindInput(context: TagDropdownContext, close: () => void): void {
     renderOptions(context, context.input.value);
   });
   context.input.addEventListener('keydown', (event) => {
+    if (isImeOwnedEvent(event)) return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       updateActive(context, event.key === 'ArrowDown' ? 1 : -1);

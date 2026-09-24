@@ -1,30 +1,14 @@
-import { Notice, Platform, requireApiVersion, TFile } from 'obsidian';
+import { Platform } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AppState } from '../src/app/AppState';
-import { RightPanel } from '../src/panels/RightPanel';
+import type { AppState } from '../src/app/AppState';
+import type { RightPanel } from '../src/panels/RightPanel';
 import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { toStatusRules } from '../src/settings/statusCatalogAdapter';
-import type { TaskStatusDef } from '../src/settings/types';
-import { StatusRegistry } from '../src/status/StatusRegistry';
 import {
   type SubtaskSnapshot,
-  type TaskApplicationApi,
   type TaskCommandResult,
+  type TaskPriority,
   type TaskResolution,
 } from '../src/tasks';
-import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
-import {
-  TaskDependencyService,
-  type TaskDiagnosticSink,
-} from '../src/tasks/application/TaskDependencyService';
-import { clockFrom } from '../src/tasks/domain/clock';
-import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
-import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
-import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
-import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
-import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
-import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
-import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
 import { TaskModal } from '../src/ui/TaskModal';
 import { rebuildTaskSelection, rootTaskRef } from '../src/ui/taskSelection';
 import {
@@ -33,7 +17,6 @@ import {
   cssValue as cssDeclarationValue,
 } from './cssHelpers';
 import {
-  createAppWithFiles,
   deferred,
   expectDefined,
   flushMicrotasks,
@@ -42,9 +25,14 @@ import {
   useRealMoment,
 } from './helpers';
 import { expandCompoundSelectorLists } from './support/expandedCss';
+import {
+  inspectorCleanups as cleanups,
+  inspectorHarness as harness,
+  notices,
+  subscribeInspectorReconciliation,
+} from './support/inspectorHarness';
 
 useRealMoment();
-const cleanups: Array<() => void> = [];
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) {
     cleanup();
@@ -52,99 +40,6 @@ afterEach(() => {
   activeDocument.body.empty();
   vi.restoreAllMocks();
 });
-
-async function harness(
-  markdown: string,
-  selected = 'Current',
-  additionalFiles = {},
-  statusDefinitions: readonly TaskStatusDef[] = buildDefaultTaskStatuses(),
-) {
-  // The mock metadata parser uses -0 for a root list beginning on line zero.
-  const app = await createAppWithFiles({ 'tasks.md': `\n${markdown}`, ...additionalFiles });
-  const statuses = new StatusCatalog(toStatusRules(statusDefinitions));
-  const authority = new TaskRefAuthority('inspector-dependencies');
-  const index = new TaskIndex(app, {
-    statusCatalog: statuses,
-
-    refAuthority: authority,
-  });
-  await index.initialize();
-  const repository = new ObsidianTaskRepository(app, {
-    codec: new TaskMarkdownCodec(statuses),
-    editor: new TaskBlockEditor(),
-    locator: new TaskLocator(authority),
-    snapshotsFromContent: (path, content) => index.snapshotsFromContent(path, content),
-    refAuthority: authority,
-    snapshotState: index,
-  });
-  const diagnostics = vi.fn<TaskDiagnosticSink>();
-  let generated = 0;
-  const application = new TaskApplicationService(
-    index,
-    repository,
-    statuses,
-    clockFrom(Date.parse('2026-09-05T12:00:00Z'), 0),
-    undefined,
-    undefined,
-    new TaskDependencyService(
-      index,
-      repository,
-      () => (++generated === 1 ? 'generate' : `gen${String(generated).padStart(5, '0')}`),
-      diagnostics,
-    ),
-    diagnostics,
-  );
-  const api: TaskApplicationApi = {
-    queries: index,
-    execute: (command) => application.execute(command),
-  };
-  const node = (title: string) =>
-    expectDefined(
-      index.listNodes().find(({ node: candidate }) => candidate.title === title),
-      `Missing ${title}; nodes: ${index
-        .listNodes()
-        .map(({ node: item }) => item.title)
-        .join(', ')}`,
-    );
-  const state = new AppState();
-  const location = node(selected);
-  state.set('taskStack', [location.root, ...location.path]);
-  const el = activeDocument.body.createDiv();
-  const panel = new RightPanel(
-    state,
-    app,
-    new StatusRegistry([...statusDefinitions]),
-    DEFAULT_SETTINGS,
-    undefined,
-    api,
-  );
-  panel.mount(el);
-  cleanups.push(() => {
-    panel.destroy();
-    index.destroy();
-  });
-  const file = app.vault.getAbstractFileByPath('tasks.md');
-  if (!(file instanceof TFile)) throw new Error('Missing fixture');
-  const read = async () => {
-    const content = await app.vault.read(file);
-    expect(content.startsWith('\n')).toBe(true);
-    return content.slice(1);
-  };
-  return { app, file, panel, el, state, index, node, api, read, repository, diagnostics };
-}
-
-function notices(messages?: string[]): Notice[] {
-  const captured: Notice[] = [];
-  const prototype = Notice.prototype as unknown as {
-    constructor__(this: Notice, message: string | DocumentFragment): void;
-  };
-  vi.spyOn(prototype, 'constructor__').mockImplementation(function (this: Notice, message) {
-    captured.push(this);
-    messages?.push(typeof message === 'string' ? message : message.textContent);
-    if (requireApiVersion('1.8.7')) activeDocument.body.append(this.containerEl);
-  });
-  return captured;
-}
 
 function labels(el: HTMLElement): Array<string | null> {
   return [...el.querySelectorAll('.abyss-right-section-label')].map(
@@ -1384,7 +1279,10 @@ describe('owned dependency destination editing', () => {
         innerState_abyssPrivate: AppState;
         innerPanel_abyssPrivate: {
           updateDescription_abyssPrivate(task: SubtaskSnapshot, text: string): Promise<boolean>;
-          updatePriority_abyssPrivate(task: SubtaskSnapshot, priority: string): Promise<void>;
+          updatePriority_abyssPrivate(
+            task: SubtaskSnapshot,
+            priority: TaskPriority,
+          ): Promise<TaskCommandResult>;
           commitStatus_abyssPrivate(task: SubtaskSnapshot, symbol: string): Promise<void>;
         };
       };
@@ -2566,30 +2464,6 @@ describe('RightPanel dependency inspector', () => {
     expect(h.el.querySelectorAll('.abyss-dep-row')).toHaveLength(0);
   });
 });
-
-function subscribeInspectorReconciliation(h: Awaited<ReturnType<typeof harness>>): () => void {
-  return h.index.subscribe(() => {
-    const stack = h.state.get('taskStack');
-    const root = expectDefined(stack[0]);
-    const resolution = h.index.resolve(rootTaskRef(root));
-    if (resolution.type !== 'exact' && resolution.type !== 'rebased') return;
-    const current = resolution.type === 'exact' ? resolution.task : resolution.current;
-    const ownedRef =
-      resolution.type === 'rebased' && resolution.evidence === 'authority-transition'
-        ? resolution.previous.ref
-        : undefined;
-    const ownedSelection = h.panel.selectionForOwnedTransition(ownedRef, current, stack);
-    const draft =
-      ownedRef === undefined
-        ? h.panel.captureDraftState()
-        : h.panel.captureDraftStateForOwnedTransition(ownedRef, current.ref);
-    h.state.updateInspectorSelection(
-      ownedSelection ??
-        rebuildTaskSelection(current, stack, { preserveDependencyChanges: ownedRef !== undefined }),
-    );
-    h.panel.restoreDraftState(draft, current);
-  });
-}
 
 describe('continuous dependency entry', () => {
   it.each(

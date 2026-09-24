@@ -739,6 +739,59 @@ export async function flushMicrotasks(ms = 10): Promise<void> {
   });
 }
 
+/** Dispatches a keydown an IME owns: `isComposing`, or the legacy `keyCode` 229 without it. */
+export function dispatchImeKey(
+  target: EventTarget,
+  key: string,
+  ime: 'composing' | 'legacy',
+  init: KeyboardEventInit = {},
+): KeyboardEvent {
+  const event = new KeyboardEvent('keydown', {
+    ...init,
+    key,
+    bubbles: true,
+    cancelable: true,
+    isComposing: ime === 'composing',
+  });
+  if (ime === 'legacy') Object.defineProperty(event, 'keyCode', { value: 229 });
+  target.dispatchEvent(event);
+  return event;
+}
+
+/**
+ * Chromium fires `blur` and `focusout` on a focused field while it removes the surface holding
+ * it; jsdom fires nothing, so the first removal of `surface` dispatches both first.
+ */
+export function loseFocusOnRemoval(
+  surface: HTMLElement,
+  field: HTMLElement,
+  relatedTarget: HTMLElement,
+): void {
+  const remove = surface.remove.bind(surface);
+  let removed = false;
+  vi.spyOn(surface, 'remove').mockImplementation(() => {
+    if (!removed) {
+      removed = true;
+      field.dispatchEvent(new FocusEvent('blur', { relatedTarget }));
+      field.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget }));
+    }
+    remove();
+  });
+}
+
+/**
+ * Chromium moves focus to body when a submit disables the focused button; jsdom neither does that
+ * nor blurs a disabled control, so the button is re-enabled, blurred, and disabled again. A popout
+ * editor passes its own document.
+ */
+export function dropFocusFromDisabledButton(ownerDocument: Document = activeDocument): void {
+  const active = ownerDocument.activeElement;
+  if (!(active instanceof HTMLButtonElement) || !active.disabled) return;
+  active.disabled = false;
+  active.blur();
+  active.disabled = true;
+}
+
 /** Seed a file's metadata cache with task listItems + optional frontmatter (parent=-1 for root items). */
 export function seedTaskCache(
   app: ObsidianApp,

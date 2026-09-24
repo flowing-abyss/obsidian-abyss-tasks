@@ -24,6 +24,7 @@ import {
   type CommentTimeContextProvider,
   type CreateDependencySubtaskCommand,
   type DependencyDirection,
+  type LocalDate,
   type PlanningTarget,
   type SubtaskPatch,
   type SubtaskRef,
@@ -55,6 +56,7 @@ import {
   type DependencyPickerCommitResult,
   type DependencySearchHandle,
 } from '../ui/dependencySearch';
+import { isImeOwnedEvent } from '../ui/ime';
 import { createInlineTaskUndo, type InlineUndoPosition } from '../ui/inlineTaskUndo';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { LinkEditModal } from '../ui/LinkEditModal';
@@ -69,10 +71,12 @@ import {
 } from '../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText } from '../ui/renderTaskText';
 import { runAsyncAction } from '../ui/runAsyncAction';
+import { bindSegmentedInputCommit, isUsableDateInputValue } from '../ui/segmentedInputCommit';
 import { renderStatusMarker, setStatusMarkerCompletionBlocked } from '../ui/StatusMarker';
 import { showStatusMenuAt, type StatusMenuHandle } from '../ui/statusMenu';
 import { showTagDropdown } from '../ui/tagDropdown';
 import {
+  PENDING_TASK_EDIT_RESULT,
   presentTaskArchiveResult,
   presentTaskCommandResult,
   requestTaskCompletion,
@@ -88,7 +92,9 @@ import {
   draftIdentity,
   draftPlainText,
   isDirtyDraft,
+  isEntryDraft,
   rebaseRightPanelDraft,
+  unfocusedDraft,
   type RightPanelDraftBundle,
   type RightPanelDraftState,
 } from '../ui/taskDraftContinuity';
@@ -104,6 +110,9 @@ import {
 } from '../ui/timeTracking/TimeBadge';
 
 type TaskLike = TaskSnapshot | SubtaskSnapshot;
+type SchedulingDateField = 'due' | 'scheduled' | 'start';
+/** A date that "+ date" adds: the start or the plan date. */
+type AddDateField = Exclude<SchedulingDateField, 'due'>;
 
 interface DependencyDisclosureState {
   readonly selectionKey: string;
@@ -371,6 +380,99 @@ function subtaskUndoPosition(
       };
 }
 
+function datePopoverValue(task: TaskLike, field: SchedulingDateField): string | undefined {
+  if (field === 'due') return task.planning.due ?? task.planning.scheduled;
+  return field === 'scheduled' ? task.planning.scheduled : task.planning.start;
+}
+
+function restorePopupRole(anchor: HTMLElement, previous: string | null): void {
+  if (previous !== null && previous !== '') anchor.setAttribute('aria-haspopup', previous);
+  else anchor.removeAttribute('aria-haspopup');
+}
+
+type PlanningControlKey =
+  | 'date'
+  | 'time'
+  | 'priority'
+  | 'repeat'
+  | 'scheduled'
+  | 'start'
+  | 'add-date'
+  | 'add-tag'
+  | 'more-actions'
+  | 'tracking-toggle'
+  | 'tracking-sessions';
+
+/** The controls to focus after a rebuild, in order, for focus that was on (or opened from) `key`. */
+function planningReturnKeys(
+  key: PlanningControlKey,
+  addDateField: AddDateField | undefined,
+): readonly PlanningControlKey[] {
+  if (key === 'scheduled' || key === 'start') return [key, 'add-date', 'date'];
+  if (key === 'add-date')
+    return addDateField === undefined ? ['add-date', 'date'] : ['add-date', addDateField, 'date'];
+  if (key === 'tracking-toggle') return ['tracking-toggle', 'tracking-sessions'];
+  return [key];
+}
+
+/** The control that opened a repeat editor: one object per open, which a restore carries on. */
+interface RecurrenceIntent {
+  readonly key: PlanningControlKey;
+}
+
+/** A result's submission token, with whether the result changed the note. */
+interface PlanningResultSubmission {
+  readonly token: object;
+  readonly changed: boolean;
+}
+
+function planningResultSubmission(
+  token: object | undefined,
+  changed: boolean,
+): PlanningResultSubmission | undefined {
+  return token === undefined ? undefined : { token, changed };
+}
+
+const PRIORITY_CHIP_LABELS: Readonly<Record<string, string>> = {
+  A: '🚩 Highest',
+  B: '🚩 High',
+  C: '🚩 Medium',
+  D: 'Priority',
+  E: '🚩 Low',
+  F: '🚩 Lowest',
+};
+
+/** The priority chip's label, `data-priority`, and classes, for a render and a pending change. */
+function applyPriorityChipPresentation(chip: HTMLElement, priority: string): void {
+  chip.textContent = PRIORITY_CHIP_LABELS[priority] ?? 'Priority';
+  chip.setAttribute('data-priority', priority);
+  chip.className = `abyss-chip abyss-priority-chip abyss-priority-chip--${priority}${priority === 'D' ? ' abyss-chip-empty' : ''}`;
+}
+
+/**
+ * The priority the chip shows, including a choice whose write is still pending. A popover marks it,
+ * and a failed or refused choice rolls the chip back to the priority shown at its click.
+ */
+function shownPriority(chip: HTMLElement, task: TaskLike): string {
+  return chip.getAttribute('data-priority') ?? task.priority;
+}
+
+/**
+ * Marks the option for `priority` in a priority popover and clears the others: `is-active`,
+ * `aria-selected`, and the check. The build and a rollback share it, so they cannot disagree.
+ */
+function markPriorityOptions(popover: HTMLElement, priority: string): void {
+  popover.querySelectorAll<HTMLElement>('.abyss-priority-option').forEach((option) => {
+    const active = option.getAttribute('data-priority') === priority;
+    option.toggleClass('is-active', active);
+    option.setAttribute('aria-selected', String(active));
+    const check = option.querySelector<HTMLElement>('.abyss-priority-option-check');
+    if (check === null) return;
+    if (active) setIcon(check, 'check');
+    else check.empty();
+  });
+}
+
 export class RightPanel {
   private readonly undo_abyssPrivate = createInlineTaskUndo();
   private selectionEpoch_abyssPrivate = 0;
@@ -463,13 +565,12 @@ export class RightPanel {
         selected !== undefined &&
         sameTaskNodeRef(taskNodeRef(prior), taskNodeRef(selected));
       const continuesOwnedSelection = this.consumeOwnedSelection_abyssPrivate(next);
-      this.updateDependencyDisclosureSelection_abyssPrivate(
-        next,
-        sameSelection || continuesOwnedSelection,
-      );
+      const continuesSelection = sameSelection || continuesOwnedSelection;
+      this.updateDependencyDisclosureSelection_abyssPrivate(next, continuesSelection);
       const statusFocus = sameSelection ? this.statusFocusTarget_abyssPrivate(previous) : undefined;
+      const controls = continuesSelection ? this.planningFocusKeys_abyssPrivate() : undefined;
       this.advanceSelectionEpoch_abyssPrivate(sameSelection, continuesOwnedSelection);
-      this.render_abyssPrivate(statusFocus);
+      this.render_abyssPrivate(statusFocus, controls);
     });
     const offHistory = this.state_abyssPrivate.onCommit((changed) => {
       if (
@@ -478,7 +579,7 @@ export class RightPanel {
         (this.el_abyssPrivate.querySelector('.abyss-inspector-back') !== null) !==
           this.state_abyssPrivate.get('inspectorBackStack').length > 0
       )
-        this.render_abyssPrivate();
+        this.render_abyssPrivate(undefined, this.planningFocusKeys_abyssPrivate());
     });
     const offDrag = this.state_abyssPrivate.on('draggingTaskNode', (next, previous) => {
       if (next?.source === 'center-card' || previous?.source === 'center-card')
@@ -510,6 +611,7 @@ export class RightPanel {
       if (!continuesOwnedSelection) {
         this.dependencySearch_abyssPrivate?.destroy();
         this.dependencySearch_abyssPrivate = undefined;
+        this.recurrenceIntent_abyssPrivate = undefined;
       }
     }
     if (this.undoConvergence_abyssPrivate !== undefined) {
@@ -564,7 +666,8 @@ export class RightPanel {
     this.timeBadge_abyssPrivate?.destroy();
     this.timeBadge_abyssPrivate = undefined;
     this.mounted_abyssPrivate = false;
-    this.dependencyStatusMarkers_abyssPrivate.clear();
+    this.resetRenderedControls_abyssPrivate();
+    this.recurrenceIntent_abyssPrivate = undefined;
     this.endTaskDrag_abyssPrivate?.();
     this.completionConfirmationAbortController_abyssPrivate.abort();
     this.off_abyssPrivate?.();
@@ -749,8 +852,7 @@ export class RightPanel {
     submitted: SubmittedDraft,
   ): RightPanelDraftState[] {
     const matches = this.sameDraftPayload_abyssPrivate(candidate, submittedDraft);
-    if (candidate.kind !== 'new-subtask' && candidate.kind !== 'new-comment')
-      return matches ? [] : [candidate];
+    if (!isEntryDraft(candidate)) return matches ? [] : [candidate];
     const parent = this.successorDraftParent_abyssPrivate(candidate.parent, submitted);
     if (!matches) return [{ ...candidate, parent: parent ?? candidate.parent }];
     if (!candidate.hadFocus || submitted.dismissed === true || parent === undefined) return [];
@@ -912,9 +1014,14 @@ export class RightPanel {
     this.onMutationLifecycle_abyssPrivate?.({ phase: 'settled', ref: { ...submitted.ref }, token });
   }
 
+  /**
+   * Reopens or preserves a consumed submission's draft after its write failed. The draft keeps the
+   * focus it had at submit time only while no control holds focus now.
+   */
   private recoverSubmittedDraft_abyssPrivate(submitted: SubmittedDraft): void {
-    const draft = submitted.draft;
-    if (draft == null || submitted.dismissed === true) return;
+    const submittedDraft = submitted.draft;
+    if (submittedDraft == null || submitted.dismissed === true) return;
+    const draft = this.recoverableDraft_abyssPrivate(submittedDraft);
     const currentSameKey = this.captureDraftState()?.entries.find(
       (candidate) => draftIdentity(candidate) === draftIdentity(draft),
     );
@@ -1002,18 +1109,20 @@ export class RightPanel {
     if (isDirtyDraft(draft)) this.appendDetachedDraft_abyssPrivate(draft, origin);
   }
 
+  /** Reopens a captured repeat editor on the control that opened it, carrying its intent on. */
   private restoreRecurrenceDraft_abyssPrivate(
     draft: Extract<RightPanelDraftState, { readonly kind: 'recurrence-editor' }>,
     task: TaskLike,
     stack: readonly TaskLike[],
     origin?: RightPanelDraftBundle['origin'],
   ): HTMLElement | undefined {
-    const chip = this.el_abyssPrivate.querySelector<HTMLElement>('.abyss-repeat-chip');
-    if (chip == null) {
+    const intent = this.recurrenceIntent_abyssPrivate;
+    const anchor = this.planningControl_abyssPrivate(intent?.key ?? 'repeat');
+    if (anchor === undefined) {
       this.preserveDirtyDraft_abyssPrivate(draft, origin);
       return undefined;
     }
-    this.showRecurrencePopover_abyssPrivate(chip, task, stack, false);
+    this.showRecurrencePopover_abyssPrivate(anchor, task, stack, { intent });
     const editor = this.recurrenceDraftEditor_abyssPrivate;
     if (editor == null) return undefined;
     editor.handle.restoreDraftState(draft.editor);
@@ -1180,14 +1289,17 @@ export class RightPanel {
     this.el_abyssPrivate.prepend(tray);
   }
 
-  private render_abyssPrivate(statusFocus?: TaskNodeRef): void {
+  private render_abyssPrivate(
+    statusFocus?: TaskNodeRef,
+    controls?: readonly PlanningControlKey[],
+  ): void {
     clearOptionalTimer(
       this.el_abyssPrivate.ownerDocument.defaultView,
       this.restoredFocusTimer_abyssPrivate,
     );
     this.restoredFocusTimer_abyssPrivate = undefined;
     this.undo_abyssPrivate.detach();
-    this.dependencyStatusMarkers_abyssPrivate.clear();
+    this.resetRenderedControls_abyssPrivate();
     const search = this.dependencySearch_abyssPrivate;
     const focused = this.el_abyssPrivate.ownerDocument.activeElement as HTMLElement | null;
     const searchFocus = search?.element.contains(focused) === true ? focused : null;
@@ -1217,7 +1329,7 @@ export class RightPanel {
       search.refresh();
       this.positionDependencySearch_abyssPrivate(search.element, searchFocus);
     }
-    this.restoreStatusFocus_abyssPrivate(statusFocus);
+    this.restoreRenderFocus_abyssPrivate(statusFocus, controls);
   }
 
   /** Wire clipboard paste-to-attach onto an editable textarea, inserting links at the caret. */
@@ -1343,7 +1455,7 @@ export class RightPanel {
       runAsyncAction(finish(true));
     });
     textarea.addEventListener('keydown', (event) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || isImeOwnedEvent(event)) return;
       event.preventDefault();
       runAsyncAction(finish(false));
     });
@@ -1522,6 +1634,7 @@ export class RightPanel {
         'aria-expanded': 'false',
       },
     });
+    this.registerPlanningControl_abyssPrivate('more-actions', menuBtn);
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this.renderContextMenu_abyssPrivate(task, menuBtn);
@@ -1531,6 +1644,139 @@ export class RightPanel {
 
   private readonly dependencyStatusMarkers_abyssPrivate = new Map<HTMLElement, TaskLike>();
   private dependencyStatusMenu_abyssPrivate: StatusMenuHandle | undefined;
+  /**
+   * The planning controls of the current render, so a rebuild can refocus one. A control that
+   * `registerPlanningControl_abyssPrivate` records maps both ways, key to control and control to
+   * key. A tag's × maps one way, control to `add-tag`, through
+   * `registerTagRemoveControl_abyssPrivate`.
+   */
+  private readonly planningControls_abyssPrivate = new Map<PlanningControlKey, HTMLElement>();
+  private readonly planningControlKeys_abyssPrivate = new Map<Element, PlanningControlKey>();
+  /** The control each open anchored surface was opened from, while the surface is open. */
+  private readonly surfaceOpeners_abyssPrivate = new Map<HTMLElement, HTMLElement>();
+  /** The field of the date popover "+ date" opened, until the next render. */
+  private addDateField_abyssPrivate: AddDateField | undefined;
+  /**
+   * The control that opened the latest repeat editor. It is kept until the next open, a selection
+   * change that does not continue the owned selection, or destroy. A restore continues it.
+   */
+  private recurrenceIntent_abyssPrivate: RecurrenceIntent | undefined;
+
+  private registerPlanningControl_abyssPrivate(
+    key: PlanningControlKey,
+    control: HTMLElement,
+  ): void {
+    this.planningControls_abyssPrivate.set(key, control);
+    this.planningControlKeys_abyssPrivate.set(control, key);
+  }
+
+  /** A tag's × hands focus to + tag after the rebuild; it is not a return target itself. */
+  private registerTagRemoveControl_abyssPrivate(remove: HTMLElement): void {
+    this.planningControlKeys_abyssPrivate.set(remove, 'add-tag');
+  }
+
+  /** The badge keeps its buttons across renders, so each render registers the same elements. */
+  private registerTrackingControls_abyssPrivate(): void {
+    const controls = this.timeBadge_abyssPrivate?.controls();
+    if (controls === undefined) return;
+    this.registerPlanningControl_abyssPrivate('tracking-toggle', controls.toggle);
+    this.registerPlanningControl_abyssPrivate('tracking-sessions', controls.body);
+  }
+
+  private resetRenderedControls_abyssPrivate(): void {
+    this.dependencyStatusMarkers_abyssPrivate.clear();
+    this.planningControls_abyssPrivate.clear();
+    this.planningControlKeys_abyssPrivate.clear();
+    this.addDateField_abyssPrivate = undefined;
+  }
+
+  /** The control the current render registered for `key`. */
+  private planningControl_abyssPrivate(key: PlanningControlKey): HTMLElement | undefined {
+    return this.planningControls_abyssPrivate.get(key);
+  }
+
+  /** The planning control that holds focus, or that opened the surface holding it. */
+  private focusedPlanningKey_abyssPrivate(): PlanningControlKey | undefined {
+    const focused = this.el_abyssPrivate.ownerDocument.activeElement;
+    if (focused === null) return undefined;
+    const direct = this.planningControlKeys_abyssPrivate.get(focused);
+    if (direct !== undefined) return direct;
+    for (const [surface, opener] of this.surfaceOpeners_abyssPrivate) {
+      if (surface.contains(focused)) return this.planningControlKeys_abyssPrivate.get(opener);
+    }
+    return undefined;
+  }
+
+  private planningFocusKeys_abyssPrivate(): readonly PlanningControlKey[] | undefined {
+    const key = this.focusedPlanningKey_abyssPrivate();
+    return key === undefined ? undefined : planningReturnKeys(key, this.addDateField_abyssPrivate);
+  }
+
+  /** Refocuses the status marker that held focus, or else the first rebuilt control still usable. */
+  private restoreRenderFocus_abyssPrivate(
+    statusFocus: TaskNodeRef | undefined,
+    controls: readonly PlanningControlKey[] | undefined,
+  ): void {
+    if (statusFocus !== undefined) {
+      this.restoreStatusFocus_abyssPrivate(statusFocus);
+      return;
+    }
+    for (const key of controls ?? []) {
+      const control = this.planningControls_abyssPrivate.get(key);
+      if (control?.isConnected !== true || control.matches(':disabled')) continue;
+      control.focus({ preventScroll: true });
+      return;
+    }
+  }
+
+  /**
+   * Records which control opened the repeat editor, or carries on the live intent a restore passes,
+   * and resolves its rebuilt twin at close time.
+   */
+  private beginRecurrenceIntent_abyssPrivate(
+    anchor: HTMLElement,
+    live?: RecurrenceIntent,
+  ): () => HTMLElement | undefined {
+    const intent: RecurrenceIntent = live ?? {
+      key: this.planningControlKeys_abyssPrivate.get(anchor) ?? 'repeat',
+    };
+    this.recurrenceIntent_abyssPrivate = intent;
+    return () =>
+      this.mounted_abyssPrivate && this.recurrenceIntent_abyssPrivate === intent
+        ? this.planningControls_abyssPrivate.get(intent.key)
+        : undefined;
+  }
+
+  /**
+   * An outside click or Escape closes the repeat editor. After an outside click, focus goes back to
+   * its opener only when the click left focus on the body, on the inspector container, or inside
+   * the editor. Escape's anchor focus follows either branch.
+   */
+  private dismissRecurrencePopover_abyssPrivate(
+    popover: HTMLElement,
+    handle: RecurrenceEditorHandle,
+  ): void {
+    if (
+      this.focusIsNeutral_abyssPrivate() ||
+      popover.contains(this.el_abyssPrivate.ownerDocument.activeElement)
+    ) {
+      handle.dismiss();
+      return;
+    }
+    this.removeAnchoredSurface_abyssPrivate(popover);
+  }
+
+  /** A submitted draft as recovery restores it: without its focus once a control holds focus. */
+  private recoverableDraft_abyssPrivate(draft: RightPanelDraftState): RightPanelDraftState {
+    return this.focusIsNeutral_abyssPrivate() ? draft : unfocusedDraft(draft);
+  }
+
+  /** Whether focus is nowhere, on the body, or on the inspector container: no control holds it. */
+  private focusIsNeutral_abyssPrivate(): boolean {
+    const ownerDocument = this.el_abyssPrivate.ownerDocument;
+    const active = ownerDocument.activeElement;
+    return active === null || active === ownerDocument.body || active === this.el_abyssPrivate;
+  }
 
   private statusFocusTarget_abyssPrivate(stack: readonly TaskLike[]): TaskNodeRef | undefined {
     const focused = this.el_abyssPrivate.ownerDocument.activeElement;
@@ -1545,8 +1791,7 @@ export class RightPanel {
     return undefined;
   }
 
-  private restoreStatusFocus_abyssPrivate(target: TaskNodeRef | undefined): void {
-    if (target === undefined) return;
+  private restoreStatusFocus_abyssPrivate(target: TaskNodeRef): void {
     for (const [marker, task] of this.dependencyStatusMarkers_abyssPrivate) {
       if (!sameTaskNodeRef(taskNodeRef(task), target)) continue;
       (marker.closest<HTMLElement>('.abyss-status-control') ?? marker).focus({
@@ -1589,6 +1834,7 @@ export class RightPanel {
       // Tracked time reads with the chips that plan the task, so it leads the dependency badge.
       // Both are placed by the order of these calls, which is the order they keep in the row.
       this.timeBadge_abyssPrivate?.render(chips);
+      this.registerTrackingControls_abyssPrivate();
       chips.createSpan({ cls: 'abyss-chip abyss-dep-badge' });
       this.updateDependencyBadge_abyssPrivate();
     }
@@ -1607,6 +1853,7 @@ export class RightPanel {
         'aria-expanded': 'false',
       },
     });
+    this.registerPlanningControl_abyssPrivate('add-tag', addTagBtn);
     addTagBtn.addEventListener('click', (event) => {
       event.stopPropagation();
       this.showTagInput_abyssPrivate(chips, task, addTagBtn);
@@ -2077,7 +2324,10 @@ export class RightPanel {
       text,
     };
     const submission = this.beginDraftSubmission_abyssPrivate(command.current, undefined, command);
-    if (submission === undefined) return { type: 'failed' };
+    if (submission === undefined) {
+      presentTaskCommandResult(PENDING_TASK_EDIT_RESULT);
+      return { type: 'failed' };
+    }
     let result: TaskCommandResult;
     try {
       result = await this.tasks_abyssPrivate.execute(command);
@@ -2172,6 +2422,7 @@ export class RightPanel {
         'aria-expanded': 'false',
       },
     });
+    this.registerPlanningControl_abyssPrivate('time', chip);
     chip.addEventListener('click', (event) => {
       event.stopPropagation();
       this.showTimePopover_abyssPrivate(chip, task);
@@ -2247,7 +2498,7 @@ export class RightPanel {
     );
     this.md_abyssPrivate.register(close);
     input.addEventListener('keydown', (event: KeyboardEvent) => {
-      if (event.key === 'Enter' && !event.isComposing) {
+      if (event.key === 'Enter' && !isImeOwnedEvent(event)) {
         event.preventDefault();
         runAsyncAction(commit());
       }
@@ -2293,7 +2544,7 @@ export class RightPanel {
     };
     const escape = (raw: Event): void => {
       const event = raw as KeyboardEvent;
-      if (event.key !== 'Escape' || event.isComposing) return;
+      if (event.key !== 'Escape' || isImeOwnedEvent(event)) return;
       event.preventDefault();
       event.stopPropagation();
       dismiss();
@@ -2348,7 +2599,7 @@ export class RightPanel {
       commentInput.blur();
     });
     commentInput.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      if (e.key === 'Enter' && !e.shiftKey && !isImeOwnedEvent(e)) {
         e.preventDefault();
         const text = commentInput.value.trim();
         if (text !== '') {
@@ -2437,6 +2688,7 @@ export class RightPanel {
       runAsyncAction(finish(true));
     });
     ta.addEventListener('keydown', (e) => {
+      if (isImeOwnedEvent(e)) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         runAsyncAction(finish(true));
@@ -2703,6 +2955,7 @@ export class RightPanel {
       }, 150);
     });
     textarea.addEventListener('keydown', (event: KeyboardEvent) => {
+      if (isImeOwnedEvent(event)) return;
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
         textarea.blur();
@@ -2727,6 +2980,7 @@ export class RightPanel {
       cls: `abyss-chip${d != null ? '' : ' abyss-chip-empty'}`,
       text: d != null ? `📅 ${this.formatDate_abyssPrivate(d)}` : '📅 Date',
     });
+    this.registerPlanningControl_abyssPrivate('date', chip);
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
       this.showDatePopover_abyssPrivate(chip, task, field);
@@ -2741,6 +2995,7 @@ export class RightPanel {
       text: value != null ? `⏳ ${this.formatDate_abyssPrivate(value)}` : '⏳ Plan',
       attr: { title: 'Set plan date' },
     });
+    this.registerPlanningControl_abyssPrivate('scheduled', chip);
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
       this.showDatePopover_abyssPrivate(chip, task, 'scheduled');
@@ -2755,6 +3010,7 @@ export class RightPanel {
       text: value != null ? `🛫 ${this.formatDate_abyssPrivate(value)}` : '🛫 Start',
       attr: { title: 'Set start date' },
     });
+    this.registerPlanningControl_abyssPrivate('start', chip);
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
       this.showDatePopover_abyssPrivate(chip, task, 'start');
@@ -2768,7 +3024,7 @@ export class RightPanel {
    * to offer), and remains extensible for future addable properties (e.g. recurrence).
    */
   private renderAddDateMenu_abyssPrivate(container: HTMLElement, task: TaskLike): void {
-    const options: Array<{ field: 'start' | 'scheduled'; label: string }> = [];
+    const options: Array<{ field: AddDateField; label: string }> = [];
     if (task.planning.start == null) options.push({ field: 'start', label: '🛫 Start' });
     if (task.planning.scheduled == null) options.push({ field: 'scheduled', label: '⏳ Plan' });
     if (options.length === 0) return;
@@ -2783,6 +3039,7 @@ export class RightPanel {
         'aria-expanded': 'false',
       },
     });
+    this.registerPlanningControl_abyssPrivate('add-date', addBtn);
     addBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this.showAddDateMenu_abyssPrivate(addBtn, task, options);
@@ -2793,7 +3050,7 @@ export class RightPanel {
   private showAddDateMenu_abyssPrivate(
     anchor: HTMLElement,
     task: TaskLike,
-    options: Array<{ field: 'start' | 'scheduled'; label: string }>,
+    options: Array<{ field: AddDateField; label: string }>,
   ): void {
     const existing = this.el_abyssPrivate.querySelector('.abyss-add-date-menu');
     if (existing != null) {
@@ -2819,6 +3076,7 @@ export class RightPanel {
         'abyss-context-item abyss-add-date-menu-item',
         opt.label,
         () => {
+          this.addDateField_abyssPrivate = opt.field;
           this.removeAnchoredSurface_abyssPrivate(menu);
           this.showDatePopover_abyssPrivate(anchor, task, opt.field);
         },
@@ -2862,23 +3120,11 @@ export class RightPanel {
   }
 
   private renderPriorityChip_abyssPrivate(container: HTMLElement, task: TaskLike): void {
-    const labels: Record<string, string> = {
-      A: '🚩 Highest',
-      B: '🚩 High',
-      C: '🚩 Medium',
-      D: 'Priority',
-      E: '🚩 Low',
-      F: '🚩 Lowest',
-    };
     const chip = container.createEl('button', {
-      cls: `abyss-chip abyss-priority-chip abyss-priority-chip--${task.priority}${task.priority === 'D' ? ' abyss-chip-empty' : ''}`,
-      text: labels[task.priority] ?? 'Priority',
-      attr: {
-        'data-priority': task.priority,
-        'aria-haspopup': 'listbox',
-        'aria-expanded': 'false',
-      },
+      attr: { 'aria-haspopup': 'listbox', 'aria-expanded': 'false' },
     });
+    applyPriorityChipPresentation(chip, task.priority);
+    this.registerPlanningControl_abyssPrivate('priority', chip);
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
       this.showPriorityPopover_abyssPrivate(chip, task);
@@ -2896,6 +3142,7 @@ export class RightPanel {
       cls: `abyss-chip abyss-repeat-chip${hasRecurrence ? '' : ' abyss-chip-add abyss-chip-empty'}`,
       attr: { title: hasRecurrence ? 'Edit repeat' : 'Add repeat' },
     });
+    this.registerPlanningControl_abyssPrivate('repeat', chip);
     if (hasRecurrence) {
       renderRecurrenceBadge(chip, recurrenceBadgeInput(recurrence));
       chip.createSpan({ cls: 'abyss-repeat-chip-label', text: recurrence });
@@ -2912,12 +3159,13 @@ export class RightPanel {
     anchor: HTMLElement,
     task: TaskLike,
     stack: readonly TaskLike[],
-    autofocus = true,
+    restoring?: { readonly intent: RecurrenceIntent | undefined },
   ): void {
     const existing = this.el_abyssPrivate.querySelector<HTMLElement>('.abyss-recurrence-popover');
     this.clearPopovers_abyssPrivate();
     if (existing != null) return;
-    anchor.focus();
+    // A restore leaves focus where it is; a restored draft that held focus refocuses its control.
+    if (restoring === undefined) anchor.focus();
     const root = stack[0];
     const target = taskNodeRef(task);
     if (root == null || !('source' in root)) return;
@@ -2926,6 +3174,7 @@ export class RightPanel {
       cls: 'abyss-popover abyss-recurrence-popover abyss-popover-anchored',
       attr: { role: 'dialog', 'aria-modal': 'false' },
     });
+    const dismissalFocus = this.beginRecurrenceIntent_abyssPrivate(anchor, restoring?.intent);
     const handle = mountRecurrenceEditor({
       container: popover,
       source: { root, target },
@@ -2937,6 +3186,7 @@ export class RightPanel {
       onClose: () => {
         this.removeAnchoredSurface_abyssPrivate(popover);
       },
+      dismissalFocus,
     });
     this.recurrenceDraftEditor_abyssPrivate = { target, handle, surface: popover };
     const title = popover.querySelector<HTMLElement>('.abyss-recurrence-title');
@@ -2954,9 +3204,9 @@ export class RightPanel {
     };
     this.anchoredSurfaceCleanups_abyssPrivate.set(popover, editorCleanup);
     this.dismissMenuOnOutsideClick_abyssPrivate(popover, anchor, () => {
-      handle.dismiss();
+      this.dismissRecurrencePopover_abyssPrivate(popover, handle);
     });
-    if (autofocus) this.deferRecurrenceFocus_abyssPrivate(handle);
+    if (restoring === undefined) this.deferRecurrenceFocus_abyssPrivate(handle);
   }
 
   private deferRecurrenceFocus_abyssPrivate(handle: RecurrenceEditorHandle): void {
@@ -2988,6 +3238,7 @@ export class RightPanel {
     }
     chip.createSpan({ text: tag });
     const x = chip.createEl('button', { cls: 'abyss-chip-remove', text: '×' });
+    this.registerTagRemoveControl_abyssPrivate(x);
     x.addEventListener('click', (e) => {
       e.stopPropagation();
       runAsyncAction(this.removeTag_abyssPrivate(task, tag));
@@ -3009,9 +3260,13 @@ export class RightPanel {
   }
 
   private removeAnchoredSurface_abyssPrivate(surface: HTMLElement): void {
+    // Read before the cleanup: the recurrence cleanup empties the editor and drops focus to body.
+    const heldFocus = surface.contains(surface.ownerDocument.activeElement);
+    const opener = this.surfaceOpeners_abyssPrivate.get(surface);
     if (surface === this.dependencySearch_abyssPrivate?.element)
       this.dependencySearch_abyssPrivate.close(false);
     this.anchoredSurfaceCleanups_abyssPrivate.get(surface)?.();
+    if (heldFocus && opener?.isConnected === true) opener.focus({ preventScroll: true });
     surface.remove();
   }
 
@@ -3056,7 +3311,7 @@ export class RightPanel {
   private showDatePopover_abyssPrivate(
     anchor: HTMLElement,
     task: TaskLike,
-    field: 'due' | 'scheduled' | 'start' = 'due',
+    field: SchedulingDateField = 'due',
   ): void {
     const already = this.el_abyssPrivate.querySelector('.abyss-date-popover');
     this.clearPopovers_abyssPrivate();
@@ -3069,57 +3324,26 @@ export class RightPanel {
       attr: { role: 'dialog', 'aria-label': `Set ${field === 'scheduled' ? 'plan' : field} date` },
     });
 
-    let currentValue: string | undefined;
-    if (field === 'due') currentValue = task.planning.due ?? task.planning.scheduled;
-    else if (field === 'scheduled') currentValue = task.planning.scheduled;
-    else currentValue = task.planning.start;
-
     const inputRow = pop.createDiv({ cls: 'abyss-popover-input-row' });
     const input = inputRow.createEl('input', {
       cls: 'abyss-date-input',
-      attr: { type: 'date', value: currentValue ?? '' },
+      attr: { type: 'date', value: datePopoverValue(task, field) ?? '' },
     });
-    let keyboardDraft = false;
-    let committed = false;
-    const commit = (): void => {
-      if (committed || input.value === '' || input.validity.badInput) return;
-      committed = true;
-      runAsyncAction(this.updateDate_abyssPrivate(task, field, input.value));
-      this.removeAnchoredSurface_abyssPrivate(pop);
-    };
-    input.addEventListener('pointerdown', () => {
-      keyboardDraft = false;
-    });
-    input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && keyboardDraft) {
-        event.preventDefault();
-        event.stopPropagation();
-        commit();
-        return;
-      }
-      if (!['Alt', 'Control', 'Enter', 'Escape', 'Meta', 'Shift', 'Tab'].includes(event.key)) {
-        keyboardDraft = true;
-      }
-    });
-    input.addEventListener('change', () => {
-      if (!keyboardDraft) commit();
-    });
-    pop.addEventListener('focusout', (event) => {
-      const next = event.relatedTarget;
-      const remainsInPopover =
-        next !== null &&
-        typeof (next as { nodeType?: unknown }).nodeType === 'number' &&
-        pop.contains(next as Node);
-      if (keyboardDraft && pop.isConnected && !remainsInPopover) {
-        commit();
-      }
+    const draft = bindSegmentedInputCommit({
+      input,
+      boundary: pop,
+      commit: () => {
+        if (!isUsableDateInputValue(input.value)) return;
+        runAsyncAction(this.updateDate_abyssPrivate(task, field, localDate(input.value)));
+        this.removeAnchoredSurface_abyssPrivate(pop);
+      },
     });
     this.el_abyssPrivate.ownerDocument.defaultView?.setTimeout(() => {
       input.focus();
     }, 0);
 
     this.renderPopoverClear_abyssPrivate(inputRow, 'Clear date', () => {
-      committed = true;
+      draft.cancel();
       if (field === 'due') runAsyncAction(this.clearDate_abyssPrivate(task));
       else runAsyncAction(this.clearPlanningDate_abyssPrivate(task, field));
       this.removeAnchoredSurface_abyssPrivate(pop);
@@ -3128,10 +3352,8 @@ export class RightPanel {
     this.dismissMenuOnOutsideClick_abyssPrivate(pop, anchor, undefined, {
       focusLeaveDelay: 200,
       onCleanup: () => {
-        committed = true;
-        if (previousPopupRole !== null && previousPopupRole !== '') {
-          anchor.setAttribute('aria-haspopup', previousPopupRole);
-        } else anchor.removeAttribute('aria-haspopup');
+        draft.cancel();
+        restorePopupRole(anchor, previousPopupRole);
       },
     });
   }
@@ -3146,8 +3368,7 @@ export class RightPanel {
       attr: { role: 'listbox', 'aria-label': 'Priority' },
     });
 
-    const currentPriority = anchor.getAttribute('data-priority') ?? task.priority;
-    const options: Array<{ value: string; label: string }> = [
+    const options: Array<{ value: TaskPriority; label: string }> = [
       { value: 'A', label: 'Highest' },
       { value: 'B', label: 'High' },
       { value: 'C', label: 'Medium' },
@@ -3155,44 +3376,45 @@ export class RightPanel {
       { value: 'E', label: 'Low' },
       { value: 'F', label: 'Lowest' },
     ];
-    let selectedOption: HTMLButtonElement | undefined;
     for (const opt of options) {
-      const isActive = currentPriority === opt.value;
       const btn = pop.createEl('button', {
-        cls: `abyss-priority-option${isActive ? ' is-active' : ''}`,
-        attr: {
-          'data-priority': opt.value,
-          role: 'option',
-          'aria-selected': String(isActive),
-        },
+        cls: 'abyss-priority-option',
+        attr: { 'data-priority': opt.value, role: 'option' },
       });
-      if (isActive) selectedOption = btn;
-      const checkEl = btn.createSpan({ cls: 'abyss-priority-option-check' });
-      if (isActive) setIcon(checkEl, 'check');
+      btn.createSpan({ cls: 'abyss-priority-option-check' });
       const flagEl = btn.createSpan({ cls: 'abyss-priority-option-flag' });
       setIcon(flagEl, 'flag');
       btn.createSpan({ cls: 'abyss-priority-option-label', text: opt.label });
       btn.addEventListener('click', () => {
-        // Optimistic update on the chip
-        const chipLabels: Record<string, string> = {
-          A: '🚩 Highest',
-          B: '🚩 High',
-          C: '🚩 Medium',
-          D: 'Priority',
-          E: '🚩 Low',
-          F: '🚩 Lowest',
-        };
-        anchor.textContent = chipLabels[opt.value] ?? 'Priority';
-        anchor.setAttribute('data-priority', opt.value);
-        anchor.className = `abyss-chip abyss-priority-chip abyss-priority-chip--${opt.value}${opt.value === 'D' ? ' abyss-chip-empty' : ''}`;
+        const previous = shownPriority(anchor, task);
+        applyPriorityChipPresentation(anchor, opt.value);
         this.removeAnchoredSurface_abyssPrivate(pop);
-        anchor.focus({ preventScroll: true });
-        runAsyncAction(this.updatePriority_abyssPrivate(task, opt.value));
+        runAsyncAction(this.commitPriorityChoice_abyssPrivate(anchor, task, opt.value, previous));
       });
     }
+    markPriorityOptions(pop, shownPriority(anchor, task));
     this.positionAnchoredSurface_abyssPrivate(pop, anchor, 'below-start');
     this.dismissMenuOnOutsideClick_abyssPrivate(pop, anchor);
-    selectedOption?.focus({ preventScroll: true });
+    pop
+      .querySelector<HTMLElement>('.abyss-priority-option.is-active')
+      ?.focus({ preventScroll: true });
+  }
+
+  /**
+   * Writes a chosen priority; a failure or a refusal puts back the priority the chip showed. A
+   * popover opened again while the write was pending marks that priority again, and focus stays.
+   */
+  private async commitPriorityChoice_abyssPrivate(
+    chip: HTMLElement,
+    task: TaskLike,
+    priority: TaskPriority,
+    previous: string,
+  ): Promise<void> {
+    const result = await this.updatePriority_abyssPrivate(task, priority);
+    if (result.type === 'ok' || !chip.isConnected) return;
+    applyPriorityChipPresentation(chip, previous);
+    const popover = this.el_abyssPrivate.querySelector<HTMLElement>('.abyss-priority-popover');
+    if (popover !== null) markPriorityOptions(popover, previous);
   }
 
   private positionAnchoredSurface_abyssPrivate(
@@ -3486,7 +3708,10 @@ export class RightPanel {
   ): Promise<TaskCommandResult | undefined> {
     if (this.tasks_abyssPrivate === undefined) return undefined;
     const submission = this.beginDraftSubmission_abyssPrivate(target, matchesDraft, command);
-    if (submission === undefined) return undefined;
+    if (submission === undefined) {
+      presentTaskCommandResult(PENDING_TASK_EDIT_RESULT);
+      return undefined;
+    }
     const owner = this.submittedDrafts_abyssPrivate.get(submission);
     const result = await executeTaskCommand(this.tasks_abyssPrivate, command);
     this.applyPlanningResult_abyssPrivate(result, target, initiatingStack, submission);
@@ -3529,8 +3754,7 @@ export class RightPanel {
           undefined,
           command,
         );
-        if (submission === undefined)
-          return { type: 'io-error', cause: 'pending-task-edit', contentState: 'unchanged' };
+        if (submission === undefined) return PENDING_TASK_EDIT_RESULT;
         const restored = await executeTaskCommand(tasks, command);
         if (restored.type === 'ok')
           this.applyPlanningResult_abyssPrivate(
@@ -3565,12 +3789,10 @@ export class RightPanel {
 
   private async updateDate_abyssPrivate(
     task: TaskLike,
-    field: 'due' | 'scheduled' | 'start',
-    date: string,
+    field: SchedulingDateField,
+    date: LocalDate,
   ): Promise<void> {
-    await this.executePlanningPatch_abyssPrivate(task, {
-      [field]: { type: 'set', value: localDate(date) },
-    });
+    await this.executePlanningPatch_abyssPrivate(task, { [field]: { type: 'set', value: date } });
   }
 
   private async clearDate_abyssPrivate(task: TaskLike): Promise<void> {
@@ -3582,10 +3804,7 @@ export class RightPanel {
     );
   }
 
-  private async clearPlanningDate_abyssPrivate(
-    task: TaskLike,
-    field: 'scheduled' | 'start',
-  ): Promise<void> {
+  private async clearPlanningDate_abyssPrivate(task: TaskLike, field: AddDateField): Promise<void> {
     await this.executePlanningPatch_abyssPrivate(task, { [field]: { type: 'clear' } });
   }
 
@@ -3607,7 +3826,8 @@ export class RightPanel {
       command,
     );
     if (submission == null) {
-      return { type: 'io-error', cause: 'repository-error', contentState: 'unchanged' };
+      presentTaskCommandResult(PENDING_TASK_EDIT_RESULT);
+      return PENDING_TASK_EDIT_RESULT;
     }
     let result: TaskCommandResult;
     try {
@@ -3639,7 +3859,7 @@ export class RightPanel {
           result.outcome.task,
           target,
           stack,
-          result.changed ? submission : undefined,
+          planningResultSubmission(submission, result.changed),
         );
       }
       if (result.changed) this.onSuccessfulMutation_abyssPrivate?.(result.outcome.task.ref);
@@ -3651,24 +3871,46 @@ export class RightPanel {
     root: TaskSnapshot,
     target: PlanningTarget,
     stack: readonly TaskLike[],
-    submission: object | undefined,
+    submission: PlanningResultSubmission | undefined,
   ): void {
+    const owned = submission?.changed === true ? submission.token : undefined;
     const ownedSelection =
-      submission === undefined
+      owned === undefined
         ? undefined
         : this.selectionForOwnedTransition(rootRefForPlanningTarget(target), root, stack);
-    const draft =
-      submission === undefined
-        ? this.captureDraftState()
-        : this.captureDraftStateForOwnedTransition(
-            rootRefForPlanningTarget(target),
-            root.ref,
-            submission,
-          );
+    const draft = this.resultDraftState_abyssPrivate(root, target, submission);
     this.state_abyssPrivate.updateInspectorSelection(
-      ownedSelection ?? this.resultSelection_abyssPrivate(root, target, stack, submission),
+      ownedSelection ?? this.resultSelection_abyssPrivate(root, target, stack, owned),
     );
     this.restoreDraftState(draft, root);
+  }
+
+  private resultDraftState_abyssPrivate(
+    root: TaskSnapshot,
+    target: PlanningTarget,
+    submission: PlanningResultSubmission | undefined,
+  ): RightPanelDraftBundle | undefined {
+    if (submission === undefined) return this.captureDraftState();
+    if (!submission.changed)
+      return this.captureDraftStateWithoutSubmittedEditor_abyssPrivate(submission.token);
+    return this.captureDraftStateForOwnedTransition(
+      rootRefForPlanningTarget(target),
+      root.ref,
+      submission.token,
+    );
+  }
+
+  /** A save that changed nothing still consumes the editor draft it submitted, so it closes. */
+  private captureDraftStateWithoutSubmittedEditor_abyssPrivate(
+    token: object,
+  ): RightPanelDraftBundle | undefined {
+    const bundle = this.captureDraftState();
+    const submitted = this.submittedDrafts_abyssPrivate.get(token)?.draft;
+    if (bundle === undefined || submitted === undefined || isEntryDraft(submitted)) return bundle;
+    const entries = bundle.entries.filter(
+      (candidate) => !this.sameDraftPayload_abyssPrivate(candidate, submitted),
+    );
+    return entries.length > 0 ? { ...bundle, entries } : undefined;
   }
 
   private resultSelection_abyssPrivate(
@@ -3735,12 +3977,12 @@ export class RightPanel {
     await this.executeOwnedCommand_abyssPrivate(command, command.target);
   }
 
-  private async updatePriority_abyssPrivate(task: TaskLike, priority: string): Promise<void> {
-    if (!['A', 'B', 'C', 'D', 'E', 'F'].includes(priority)) return;
-    const patch: SubtaskPatch = {
-      priority: { type: 'set', value: priority as TaskPriority },
-    };
-    await this.executePlanningPatch_abyssPrivate(task, patch);
+  private updatePriority_abyssPrivate(
+    task: TaskLike,
+    priority: TaskPriority,
+  ): Promise<TaskCommandResult> {
+    const patch: SubtaskPatch = { priority: { type: 'set', value: priority } };
+    return this.executePlanningPatch_abyssPrivate(task, patch);
   }
 
   private async removeTag_abyssPrivate(task: TaskLike, tag: string): Promise<void> {
@@ -3773,21 +4015,37 @@ export class RightPanel {
     this.el_abyssPrivate.ownerDocument.defaultView?.setTimeout(() => {
       input.focus();
     }, 0);
-    input.addEventListener('change', () => {
-      this.finishPopoverUpdate_abyssPrivate(pop, this.updateTime_abyssPrivate(task, input.value));
+    // The popover stays open while its write runs, so one keyboard value is written once.
+    let written = false;
+    const draft = bindSegmentedInputCommit({
+      input,
+      boundary: inputRow,
+      commit: () => {
+        if (written || input.validity.badInput) return;
+        written = true;
+        this.finishPopoverUpdate_abyssPrivate(pop, this.updateTime_abyssPrivate(task, input.value));
+      },
     });
 
     this.renderPopoverClear_abyssPrivate(inputRow, 'Clear time', () => {
+      draft.cancel();
       this.finishPopoverUpdate_abyssPrivate(pop, this.updateTime_abyssPrivate(task, ''));
     });
 
-    if ('source' in task) this.renderDurationInputs_abyssPrivate(pop, task);
+    const disarmDuration =
+      'source' in task ? this.renderDurationInputs_abyssPrivate(pop, task) : undefined;
 
     this.positionAnchoredSurface_abyssPrivate(pop, anchor, 'below-start');
-    this.dismissMenuOnOutsideClick_abyssPrivate(pop, anchor, undefined, { focusLeaveDelay: 200 });
+    this.dismissMenuOnOutsideClick_abyssPrivate(pop, anchor, undefined, {
+      focusLeaveDelay: 200,
+      onCleanup: () => {
+        draft.cancel();
+        disarmDuration?.();
+      },
+    });
   }
 
-  private renderDurationInputs_abyssPrivate(popover: HTMLElement, task: TaskSnapshot): void {
+  private renderDurationInputs_abyssPrivate(popover: HTMLElement, task: TaskSnapshot): () => void {
     const row = popover.createDiv({ cls: 'abyss-popover-input-row' });
     const input = row.createEl('input', {
       cls: 'abyss-duration-input',
@@ -3799,7 +4057,10 @@ export class RightPanel {
           task.planning.duration == null ? '' : formatDurationFromMinutes(task.planning.duration),
       },
     });
+    let armed = true;
     input.addEventListener('change', () => {
+      // Chromium fires change for an edited field it removes; a closed popover writes nothing.
+      if (!armed) return;
       const minutes = parseDurationToMinutes(input.value);
       const update =
         minutes === undefined || minutes === 0
@@ -3810,6 +4071,9 @@ export class RightPanel {
     this.renderPopoverClear_abyssPrivate(row, 'Clear duration', () => {
       this.finishPopoverUpdate_abyssPrivate(popover, this.clearDuration_abyssPrivate(task));
     });
+    return () => {
+      armed = false;
+    };
   }
 
   private finishPopoverUpdate_abyssPrivate(popover: HTMLElement, update: Promise<void>): void {
@@ -3943,7 +4207,10 @@ export class RightPanel {
     return rebuildPlanningTargetStack(root, target);
   }
 
-  /** Shared outside-click dismissal for small anchored menus (context menu, add-date menu). */
+  /**
+   * Registers an anchored surface's dismissal (outside click, Escape, focus departure) and records
+   * its opener, so a close or a rebuild can return focus to it.
+   */
   private dismissMenuOnOutsideClick_abyssPrivate(
     menu: HTMLElement,
     anchor: HTMLElement,
@@ -3968,7 +4235,7 @@ export class RightPanel {
       }
     };
     const dismissOnEscape = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return;
+      if (e.key !== 'Escape' || isImeOwnedEvent(e)) return;
       e.preventDefault();
       e.stopPropagation();
       dismissSurface();
@@ -4008,9 +4275,11 @@ export class RightPanel {
       options.onCleanup?.();
       if (this.anchoredSurfaceCleanups_abyssPrivate.get(menu) === cleanup) {
         this.anchoredSurfaceCleanups_abyssPrivate.delete(menu);
+        this.surfaceOpeners_abyssPrivate.delete(menu);
       }
     };
     this.anchoredSurfaceCleanups_abyssPrivate.set(menu, cleanup);
+    this.surfaceOpeners_abyssPrivate.set(menu, anchor);
   }
 
   private async deleteTask_abyssPrivate(task: TaskLike): Promise<void> {

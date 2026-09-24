@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectCreationComposer } from '../src/panels/projects/ProjectCreationComposer';
 import { ProjectCreationError } from '../src/projects/projectCreation';
-import { expectDefined, flushMicrotasks, freshContainer } from './helpers';
+import { dispatchImeKey, expectDefined, flushMicrotasks, freshContainer } from './helpers';
 
 afterEach(() => {
   activeDocument.body.empty();
@@ -151,6 +151,19 @@ describe('ProjectCreationComposer', () => {
     expect(create).toHaveBeenLastCalledWith({ name: 'Different', statusId: 'planned' });
   });
 
+  it('keeps the error line hidden when a create fails without a message', async () => {
+    const h = harness(vi.fn().mockRejectedValue(undefined));
+    h.composer.open({ anchor: h.anchor });
+    submit(h.host, 'New');
+    await flushMicrotasks();
+
+    const error = expectDefined(h.host.querySelector<HTMLElement>('.abyss-project-creation-error'));
+    // Storing the empty cause as the error text would show a blank or "undefined" error line.
+    expect(error.hidden).toBe(true);
+    expect(error.textContent).toBe('');
+    expect(h.failed).toHaveBeenCalledExactlyOnceWith(undefined);
+  });
+
   it('removes a retained recovery status label for a fresh draft without status context', async () => {
     const create = vi.fn().mockRejectedValue(
       new ProjectCreationError('template failed', {
@@ -262,4 +275,23 @@ describe('ProjectCreationComposer', () => {
     expect(h.host.childElementCount).toBe(childCount + 1);
     expect(h.anchor.parentElement).toBe(h.host);
   });
+
+  it.each(['composing', 'legacy'] as const)(
+    'leaves IME-owned Enter and Escape in the name field to the IME (%s)',
+    async (ime) => {
+      const h = harness();
+      h.composer.open({ anchor: h.anchor });
+      const input = expectDefined(
+        h.host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+      );
+      input.value = 'かな';
+      const keys = ['Enter', 'Escape'].map((key) => dispatchImeKey(input, key, ime));
+      await flushMicrotasks();
+
+      // A guard on the surface Enter alone still lets the document Escape capture close it.
+      expect(keys.map((event) => event.defaultPrevented)).toEqual([false, false]);
+      expect(h.create).not.toHaveBeenCalled();
+      expect(h.host.querySelector('.abyss-project-creation-composer')).not.toBeNull();
+    },
+  );
 });

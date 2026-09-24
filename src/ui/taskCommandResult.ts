@@ -204,6 +204,24 @@ interface CommandErrorDescription {
   readonly requiresRecovery: boolean;
 }
 
+const PENDING_TASK_EDIT_CAUSE = 'pending-task-edit';
+
+/** A write refused because another change to the same task is still being saved. */
+export const PENDING_TASK_EDIT_RESULT: TaskCommandResult = {
+  type: 'io-error',
+  cause: PENDING_TASK_EDIT_CAUSE,
+  contentState: 'unchanged',
+};
+
+function describeIoError(cause: string): CommandErrorDescription {
+  if (cause === PENDING_TASK_EDIT_CAUSE)
+    return {
+      message: 'Another change to this task is still being saved. Try again in a moment.',
+      requiresRecovery: false,
+    };
+  return { message: 'Failed to update task. Please try again.', requiresRecovery: true };
+}
+
 function describeBlocked(result: Extract<TaskCommandResult, { readonly type: 'blocked' }>): string {
   const first = result.blockers[0];
   if (first === undefined) return 'Complete the prerequisites or remove the dependencies first.';
@@ -240,7 +258,7 @@ function describeCommandError(
     case 'invalid':
       return { message: 'The task update is invalid and was not saved.', requiresRecovery: false };
     case 'io-error':
-      return { message: 'Failed to update task. Please try again.', requiresRecovery: true };
+      return describeIoError(result.cause);
     case 'partial':
       return {
         message: 'The task was copied, but the original could not be removed.',

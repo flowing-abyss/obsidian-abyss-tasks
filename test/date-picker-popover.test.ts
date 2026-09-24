@@ -97,7 +97,7 @@ describe('showDatePickerPopover', () => {
     input.dispatchEvent(new Event('change', { bubbles: true }));
 
     expect(onPick).toHaveBeenCalledOnce();
-    expect(onPick).toHaveBeenCalledWith('2026-08-02');
+    expect(onPick).toHaveBeenCalledWith('2026-08-02', { returnFocus: true });
     expect(onClose).toHaveBeenCalledOnce();
     expect(owner.querySelector('.abyss-date-picker-popover')).toBeNull();
     expect(owner.ownerDocument.activeElement).toBe(anchor);
@@ -398,5 +398,177 @@ describe('showDatePickerPopover', () => {
       expect(removeSpy.mock.calls).toContainEqual(registration);
     }
     owner.remove();
+  });
+
+  it('keeps an incomplete keyboard date open on Enter', () => {
+    vi.useFakeTimers();
+    const { anchor, boundary, owner } = host();
+    const onPick = vi.fn();
+    const close = showDatePickerPopover({ owner, anchor, boundary, onPick });
+
+    try {
+      vi.runAllTimers();
+      const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
+      vi.spyOn(input, 'validity', 'get').mockReturnValue({
+        badInput: true,
+        valid: false,
+      } as ValidityState);
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '2', bubbles: true, cancelable: true }),
+      );
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+
+      // A pick that ignores bad input would close the picker on a date still being typed.
+      expect(onPick).not.toHaveBeenCalled();
+      expect(owner.querySelector('.abyss-date-picker-popover')).not.toBeNull();
+    } finally {
+      close();
+      owner.remove();
+    }
+  });
+
+  it('keeps a keyboard date past year 9999 open as an unusable draft on Enter', () => {
+    vi.useFakeTimers();
+    const { anchor, boundary, owner } = host();
+    const onPick = vi.fn();
+    const close = showDatePickerPopover({ owner, anchor, boundary, onPick });
+
+    try {
+      vi.runAllTimers();
+      const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '4', bubbles: true, cancelable: true }),
+      );
+      input.value = '42026-09-24';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      // jsdom keeps a five-digit year as a valid date string, as Chromium does.
+      expect(input.value).toBe('42026-09-24');
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+
+      // A pick that refuses only bad input closes the picker on a year no task date can hold.
+      expect(owner.querySelector('.abyss-date-picker-popover')).not.toBeNull();
+      expect(onPick).not.toHaveBeenCalled();
+      expect(input.value).toBe('42026-09-24');
+      // A field with `min` or `max` moves Chromium's arrow-key year to the edge of the range.
+      expect(input.hasAttribute('min')).toBe(false);
+      expect(input.hasAttribute('max')).toBe(false);
+    } finally {
+      close();
+      owner.remove();
+    }
+  });
+
+  it('keeps a keyboard date before year 1000 open as an unusable draft on Enter', () => {
+    vi.useFakeTimers();
+    const { anchor, boundary, owner } = host();
+    const onPick = vi.fn();
+    const close = showDatePickerPopover({ owner, anchor, boundary, onPick });
+
+    try {
+      vi.runAllTimers();
+      const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
+      // A year still being typed: after `2 6 6` the year segment shows `0266`.
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '6', bubbles: true, cancelable: true }),
+      );
+      input.value = '0266-09-24';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      // jsdom keeps a year before 1000 as a valid date string, as Chromium does.
+      expect(input.value).toBe('0266-09-24');
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+
+      // A pick that takes any four-digit year picks `0266-09-24` and closes the picker.
+      expect(onPick).not.toHaveBeenCalled();
+      expect(owner.querySelector('.abyss-date-picker-popover')).not.toBeNull();
+      expect(input.value).toBe('0266-09-24');
+    } finally {
+      close();
+      owner.remove();
+    }
+  });
+
+  it('still picks a date emptied by the keyboard on Enter', () => {
+    vi.useFakeTimers();
+    const { anchor, boundary, owner } = host();
+    const onPick = vi.fn();
+    const close = showDatePickerPopover({
+      owner,
+      anchor,
+      boundary,
+      initialValue: '2026-09-24',
+      onPick,
+    });
+
+    try {
+      vi.runAllTimers();
+      const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
+      // Every segment cleared: the value is empty, without bad input.
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }),
+      );
+      input.value = '';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+
+      // A pick that refuses every value the predicate rejects keeps an emptied picker open.
+      expect(onPick.mock.calls).toEqual([['', { returnFocus: true }]]);
+      expect(owner.querySelector('.abyss-date-picker-popover')).toBeNull();
+    } finally {
+      close();
+      owner.remove();
+    }
+  });
+
+  it.each([
+    ['Enter', true],
+    ['a focus departure', false],
+    ['an outside press', false],
+  ] as const)('picks a keyboard date once, on %s', (ending, returnFocus) => {
+    vi.useFakeTimers();
+    const { anchor, boundary, owner } = host();
+    const next = owner.createEl('button', { text: 'Next control' });
+    const onPick = vi.fn();
+    anchor.focus();
+    const close = showDatePickerPopover({ owner, anchor, boundary, onPick });
+
+    try {
+      vi.runAllTimers();
+      const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '2', bubbles: true, cancelable: true }),
+      );
+      input.value = '2026-08-02';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      // Chromium fires change after every typed segment, so the change alone picks nothing.
+      expect(onPick).not.toHaveBeenCalled();
+
+      if (ending === 'Enter') {
+        input.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+        );
+      } else if (ending === 'a focus departure') next.focus();
+      else owner.ownerDocument.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+
+      // A fixed returnFocus would drop focus after Enter or pull it back after leaving.
+      expect(onPick).toHaveBeenCalledOnce();
+      expect(onPick).toHaveBeenCalledWith('2026-08-02', { returnFocus });
+      expect(owner.querySelector('.abyss-date-picker-popover')).toBeNull();
+    } finally {
+      close();
+      owner.remove();
+    }
   });
 });

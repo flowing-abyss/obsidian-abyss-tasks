@@ -3,7 +3,10 @@ import type { AppState } from '../../app/AppState';
 import { exactLinkToken, parseLinks } from '../../markdown/links';
 import { moment } from '../../obsidianMoment';
 import type { ProjectPropertyCatalog } from '../../projects/ObsidianProjectProperties';
-import { isProjectCreationError, type ProjectCreateRequest } from '../../projects/projectCreation';
+import {
+  projectCreationFailureNotice,
+  type ProjectCreateRequest,
+} from '../../projects/projectCreation';
 import {
   isProjectEditValidationError,
   ProjectEditValidationError,
@@ -1356,10 +1359,8 @@ export class ProjectsTableView {
   }
 
   private reportProjectCreationFailure_abyssPrivate(error: unknown): void {
-    const cause = isProjectCreationError(error) ? error.cause : error;
-    const message = cause instanceof Error ? cause.message : String(cause);
-    console.error('[abyss-tasks] Could not create project', { cause, error });
-    new Notice(`Could not create project: ${message}`);
+    console.error('[abyss-tasks] Could not create project', { error });
+    new Notice(projectCreationFailureNotice(error));
   }
 
   private showExcludedCreatedProject_abyssPrivate(path: string): void {

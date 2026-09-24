@@ -8,6 +8,8 @@ import {
   type TaskOccurrenceResult,
   type TaskPatch,
 } from '../../tasks';
+import { isRealmHTMLElement } from '../domRealm';
+import { isImeOwnedEvent } from '../ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
 import type { RecurrenceEditorDraft } from '../taskDraftContinuity';
@@ -30,7 +32,14 @@ export interface RecurrenceEditorOptions {
   readonly ownershipConflict: boolean;
   readonly onSubmit: (patch: TaskPatch) => Promise<TaskCommandResult>;
   readonly onClose: () => void;
-  readonly dismissalFocus?: HTMLElement;
+  /**
+   * Read when the editor closes, so a control rebuilt while it was open can take focus back. It is
+   * also read after a failed save that leaves no enabled Save to take focus. When passed, only its
+   * result counts: a connected element takes focus, and `undefined` or a disconnected element
+   * moves nothing. Without it, focus returns to the element that held it when the editor opened,
+   * if that element is still connected.
+   */
+  readonly dismissalFocus?: () => HTMLElement | undefined;
 }
 
 export interface RecurrenceEditorHandle {
@@ -239,6 +248,12 @@ function selectionState(
   };
 }
 
+/** Chromium drops focus to the body once a submit disables the focused Save button. */
+function focusDropped(ownerDocument: Document): boolean {
+  const active = ownerDocument.activeElement;
+  return active === null || active === ownerDocument.body;
+}
+
 function monthlyChoiceFromValue(value: string): MonthlyChoice {
   if (value === 'day') return { type: 'day', day: 1 };
   if (value === 'first' || value === 'last') return { type: 'edge', edge: value };
@@ -250,6 +265,18 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
   const controller = new RecurrenceEditorController(options);
   controller.mount();
   return controller;
+}
+
+/** Enter in a text-like field submits; a checkbox, Shift+Enter, and Alt+Enter keep the key. */
+function isPlainInputEnter(event: KeyboardEvent): boolean {
+  const target = event.target;
+  return (
+    event.key === 'Enter' &&
+    target instanceof HTMLInputElement &&
+    target.type !== 'checkbox' &&
+    !event.shiftKey &&
+    !event.altKey
+  );
 }
 
 class RecurrenceEditorController implements RecurrenceEditorHandle {
@@ -354,16 +381,9 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
   }
 
   private restoreFocus_abyssPrivate(): void {
-    if (this.options_abyssPrivate.dismissalFocus?.isConnected === true) {
-      this.options_abyssPrivate.dismissalFocus.focus();
-      return;
-    }
-    if (
-      this.previousFocus_abyssPrivate instanceof HTMLElement &&
-      this.previousFocus_abyssPrivate.isConnected
-    ) {
-      this.previousFocus_abyssPrivate.focus();
-    }
+    const resolve = this.options_abyssPrivate.dismissalFocus;
+    const target = (resolve === undefined ? this.previousFocus_abyssPrivate : resolve()) ?? null;
+    if (isRealmHTMLElement(target) && target.isConnected) target.focus();
   }
 
   private textInput_abyssPrivate(
@@ -438,18 +458,27 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
     return candidates.find(([, rule]) => parsed.canonical === rule)?.[0];
   }
 
-  private validationMessage_abyssPrivate(parsed: RecurrenceParseResult): string {
+  /** What keeps Save disabled; a failed submission is not among them, so a retry stays possible. */
+  private blockingMessage_abyssPrivate(): string {
     if (this.options_abyssPrivate.ownershipConflict)
       return 'Remove the nested repeat conflict first.';
     if (this.reference_abyssPrivate == null) return 'Add a date before setting a repeat.';
     if (this.hasInvalidInterval_abyssPrivate()) return 'Use a whole number greater than zero.';
-    if (
-      this.state_abyssPrivate.submissionError !== undefined &&
-      this.state_abyssPrivate.submissionError.length > 0
-    ) {
-      return this.state_abyssPrivate.submissionError;
-    }
+    return '';
+  }
+
+  private validationMessage_abyssPrivate(parsed: RecurrenceParseResult): string {
+    const blocking = this.blockingMessage_abyssPrivate();
+    if (blocking.length > 0) return blocking;
     return parsed.type === 'invalid' ? recurrenceIssueText(parsed.code) : '';
+  }
+
+  /** The status line shows a failed submission unless a blocking reason outranks it. */
+  private statusMessage_abyssPrivate(parsed: RecurrenceParseResult): string {
+    const error = this.state_abyssPrivate.submissionError ?? '';
+    if (error.length === 0 || this.blockingMessage_abyssPrivate().length > 0)
+      return this.validationMessage_abyssPrivate(parsed);
+    return error;
   }
 
   private hasInvalidInterval_abyssPrivate(): boolean {
@@ -468,7 +497,7 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
     }
     const message = this.validationMessage_abyssPrivate(parsed);
     this.refreshPreview_abyssPrivate(parsed);
-    this.refreshStatus_abyssPrivate(message);
+    this.refreshStatus_abyssPrivate(this.statusMessage_abyssPrivate(parsed));
     this.refreshDeleteWarning_abyssPrivate();
     this.refreshWhenDone_abyssPrivate(parsed);
     this.refreshSaveButton_abyssPrivate(parsed, message);
@@ -627,16 +656,14 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
   }
 
   private finishSubmission_abyssPrivate(succeeded: boolean, failure: string): void {
+    const ownerDocument = this.options_abyssPrivate.container.ownerDocument;
     if (succeeded) {
       // Closing removes the editor. Focus returns to the anchor when the editor held it or when it
       // was already lost to the body (Chromium drops focus from the Save button once the submit
       // disables it); a re-render that retained focus on another element keeps it there.
-      const ownerDocument = this.options_abyssPrivate.container.ownerDocument;
-      const active = ownerDocument.activeElement;
       const heldFocus =
-        active === null ||
-        active === ownerDocument.body ||
-        this.options_abyssPrivate.container.contains(active);
+        focusDropped(ownerDocument) ||
+        this.options_abyssPrivate.container.contains(ownerDocument.activeElement);
       this.options_abyssPrivate.onClose();
       if (heldFocus) this.restoreFocus_abyssPrivate();
       return;
@@ -644,6 +671,21 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
     this.state_abyssPrivate.submissionError = failure;
     this.state_abyssPrivate.submitting = false;
     this.refresh_abyssPrivate();
+    this.recoverFailureFocus_abyssPrivate();
+  }
+
+  /**
+   * A failed Save stays enabled for a retry, so it takes back the focus the submit dropped. When no
+   * enabled Save is left, for example after a rebuild emptied the editor, its dismissal focus
+   * decides instead.
+   */
+  private recoverFailureFocus_abyssPrivate(): void {
+    if (!focusDropped(this.options_abyssPrivate.container.ownerDocument)) return;
+    const save = this.options_abyssPrivate.container.querySelector<HTMLButtonElement>(
+      '.abyss-recurrence-save:not(:disabled)',
+    );
+    if (save === null) this.restoreFocus_abyssPrivate();
+    else save.focus();
   }
 
   private onCompletionPatch_abyssPrivate(): Pick<TaskPatch, 'onCompletion'> {
@@ -1176,20 +1218,14 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
   }
 
   private readonly keyHandler_abyssPrivate = (event: KeyboardEvent): void => {
+    if (isImeOwnedEvent(event)) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
       this.dismiss();
       return;
     }
-    const target = event.target;
-    const plainInputEnter =
-      event.key === 'Enter' &&
-      target instanceof HTMLInputElement &&
-      target.type !== 'checkbox' &&
-      !event.shiftKey &&
-      !event.altKey;
-    if ((event.key === 'Enter' && (event.metaKey || event.ctrlKey)) || plainInputEnter) {
+    if ((event.key === 'Enter' && (event.metaKey || event.ctrlKey)) || isPlainInputEnter(event)) {
       event.preventDefault();
       runAsyncAction(this.submit_abyssPrivate(), 'Could not save recurrence');
     }
@@ -1198,6 +1234,7 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
   private readonly submitShortcutHandler_abyssPrivate = (event: KeyboardEvent): void => {
     if (
       event.key !== 'Enter' ||
+      isImeOwnedEvent(event) ||
       (!event.metaKey && !event.ctrlKey) ||
       event.target == null ||
       !this.options_abyssPrivate.container.contains(event.target as Node)
@@ -1243,10 +1280,14 @@ class AnchoredRecurrenceEditorController implements RecurrenceEditorHandle {
   }
 
   mount(): void {
+    const anchor = this.options_abyssPrivate.anchor;
+    // The editor records this same element as its opening focus; nothing moves focus in between.
+    const active = this.ownerDocument_abyssPrivate.activeElement;
+    const opened = isRealmHTMLElement(active) ? active : undefined;
     this.editor_abyssPrivate = mountRecurrenceEditor({
       ...this.options_abyssPrivate,
       container: this.popover_abyssPrivate,
-      dismissalFocus: this.options_abyssPrivate.anchor,
+      dismissalFocus: () => (anchor.isConnected ? anchor : opened),
       onClose: () => {
         this.destroy();
       },

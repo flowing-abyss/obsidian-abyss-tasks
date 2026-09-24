@@ -14,6 +14,7 @@ import {
 import {
   cssDeclarationsFor,
   cssRuleParts,
+  dispatchImeKey,
   editSettingControl,
   expectDefined,
   loadPluginStyles,
@@ -1464,4 +1465,35 @@ describe('renderProjectTableSettings', () => {
     );
     expect(projects.table.columns.some(({ id }) => id === 'property:Start')).toBe(false);
   });
+
+  it.each(['composing', 'legacy'] as const)(
+    'leaves an IME-owned Enter in the add-property field to the IME (%s)',
+    (ime) => {
+      const projects = buildDefaultProjectsSettings();
+      const container = document.body.createDiv();
+      try {
+        renderProjectTableSettings({
+          app: new App(),
+          container,
+          projects,
+          catalog: { ...catalog([]), list: () => null },
+          saveStatic: async () => {},
+          saveViewState: async () => {},
+          refresh: vi.fn(),
+        });
+        const input = expectDefined(
+          container.querySelector<HTMLInputElement>('.abyss-project-column-add-input'),
+        );
+        input.value = 'Novel';
+
+        const enter = dispatchImeKey(input, 'Enter', ime);
+
+        // Checking only `isComposing` lets a legacy keyCode 229 Enter add the half-composed name.
+        expect(enter.defaultPrevented).toBe(false);
+        expect(projects.propertyDefinitions['property:Novel']).toBeUndefined();
+      } finally {
+        container.remove();
+      }
+    },
+  );
 });

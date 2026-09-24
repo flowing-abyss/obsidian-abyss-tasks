@@ -1080,7 +1080,6 @@ export class ProjectManager {
     const path = this.uniqueProjectPath(resolvedFolder, clean);
     const file = await this.createProjectFile(path, clean);
     await this.applyCreationStatus(file, targetStatusId);
-    if (options.openFile !== false) await this.app.workspace.getLeaf(false).openFile(file);
     return file;
   }
 

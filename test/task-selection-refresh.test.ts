@@ -13,6 +13,8 @@ import type { TaskRef } from '../src/tasks/domain/types';
 import {
   createRightPanelDraftRebaseContext,
   rebaseRightPanelDraft,
+  unfocusedDraft,
+  type RecurrenceEditorDraft,
   type RightPanelDraftState,
 } from '../src/ui/taskDraftContinuity';
 import { rebuildTaskSelection, taskNodeLine } from '../src/ui/taskSelection';
@@ -569,5 +571,59 @@ describe('revision-aware nested selection rebuild', () => {
     }
 
     expect(pathReads).toBeLessThan(depth * 2);
+  });
+});
+
+describe('draft focus transforms', () => {
+  it('drops the focus of a recovered draft and keeps the rest of it', () => {
+    const target: TaskNodeRef = { type: 'task', ref: snapshot('fresh').ref };
+    const editor: RecurrenceEditorDraft = {
+      mode: 'structured',
+      preset: 'weekly',
+      intervalText: '2',
+      unit: 'weeks',
+      weekdays: ['Monday', 'Thursday'],
+      monthly: { type: 'day', day: 12 },
+      yearly: { type: 'date', month: 9, day: 24 },
+      whenDone: true,
+      onCompletion: 'delete',
+      customDraft: 'every 2 weeks',
+      focusedControl: 'interval',
+      selectionStart: 0,
+      selectionEnd: 1,
+      dirty: true,
+    };
+    const title: RightPanelDraftState = {
+      kind: 'title',
+      target: { type: 'title', target },
+      value: 'Draft title',
+      selectionStart: 2,
+      selectionEnd: 5,
+      hadFocus: true,
+      dirty: true,
+    };
+
+    // A transform that keeps a focus field reopens a recovered draft on the control the user left.
+    expect(
+      unfocusedDraft({ kind: 'recurrence-editor', target, editor, hadFocus: true }),
+    ).toStrictEqual({
+      kind: 'recurrence-editor',
+      target,
+      editor: {
+        mode: 'structured',
+        preset: 'weekly',
+        intervalText: '2',
+        unit: 'weeks',
+        weekdays: ['Monday', 'Thursday'],
+        monthly: { type: 'day', day: 12 },
+        yearly: { type: 'date', month: 9, day: 24 },
+        whenDone: true,
+        onCompletion: 'delete',
+        customDraft: 'every 2 weeks',
+        dirty: true,
+      },
+      hadFocus: false,
+    });
+    expect(unfocusedDraft(title)).toStrictEqual({ ...title, hadFocus: false });
   });
 });

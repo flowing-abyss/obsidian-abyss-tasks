@@ -6,7 +6,17 @@ import {
   type RecurrenceEditorHandle,
 } from '../src/ui/recurrence/RecurrenceEditor';
 import { draftPlainText, type RightPanelDraftState } from '../src/ui/taskDraftContinuity';
-import { expectDefined, flushMicrotasks, freshContainer, methodOf, task } from './helpers';
+import { cssDeclarationText, cssValue } from './cssHelpers';
+import {
+  dispatchImeKey,
+  dropFocusFromDisabledButton,
+  expectDefined,
+  flushMicrotasks,
+  freshContainer,
+  loadPluginStyles,
+  methodOf,
+  task,
+} from './helpers';
 
 function click(element: Element): void {
   element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -53,14 +63,16 @@ const mounted: RecurrenceEditorHandle[] = [];
 
 function mount(
   overrides: Partial<{
+    container: HTMLElement;
     source: Parameters<typeof mountRecurrenceEditor>[0]['source'];
     policy: RecurrencePolicy;
     ownershipConflict: boolean;
     onSubmit: (patch: TaskPatch) => Promise<TaskCommandResult>;
+    dismissalFocus: () => HTMLElement | undefined;
   }> = {},
 ): MountedEditor {
   const root = task({ planning: { due: '2026-08-09' } });
-  const container = freshContainer();
+  const container = overrides.container ?? freshContainer();
   const onSubmit = vi
     .fn<(patch: TaskPatch) => Promise<TaskCommandResult>>()
     .mockResolvedValue({ type: 'ok', changed: true, outcome: { type: 'task', task: root } });
@@ -86,11 +98,66 @@ function button(container: HTMLElement, label: string): HTMLButtonElement {
   return match;
 }
 
+/** A popout window's realm: an iframe whose elements carry the Obsidian DOM helpers. */
+function popoutRealm(): {
+  readonly frame: HTMLIFrameElement;
+  readonly document: Document;
+  readonly window: Window & typeof window;
+} {
+  const frame = activeDocument.body.createEl('iframe');
+  const ownerWindow = frame.contentWindow as Window & typeof window;
+  for (const method of ['createDiv', 'createEl', 'createSpan', 'empty'] as const) {
+    Object.defineProperty(ownerWindow.HTMLElement.prototype, method, {
+      configurable: true,
+      value: methodOf(HTMLElement.prototype, method),
+    });
+  }
+  return { frame, document: expectDefined(frame.contentDocument), window: ownerWindow };
+}
+
+/**
+ * A button the host built with the popout document's own `createElementNS`, so it belongs to the
+ * popout realm. The plugin never builds this way; its elements come from `pluginPopoutButton`.
+ */
+function popoutButton(popout: ReturnType<typeof popoutRealm>): HTMLElement {
+  const element = popout.document.createElementNS('http://www.w3.org/1999/xhtml', 'button');
+  popout.document.body.append(element);
+  return element;
+}
+
+/**
+ * A button the plugin builds in the popout. Unlike `popoutButton`, `createEl` builds it through the
+ * main document, and the append moves it into the popout document, as in Obsidian. So it stays a
+ * main-window object whose owner document is the popout's.
+ */
+function pluginPopoutButton(popout: ReturnType<typeof popoutRealm>): HTMLElement {
+  return popout.document.body.createEl('button');
+}
+
+function mountAnchored(anchor: HTMLElement): RecurrenceEditorHandle {
+  const root = task({ planning: { due: '2026-08-09' } });
+  const handle = mountAnchoredRecurrenceEditor({
+    anchor,
+    source: { root, target: { type: 'task', ref: root.ref } },
+    policy,
+    ownershipConflict: false,
+    onSubmit: vi.fn().mockResolvedValue({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'task', task: root },
+    }),
+  });
+  mounted.push(handle);
+  return handle;
+}
+
 afterEach(() => {
   vi.useRealTimers();
   for (const handle of mounted.splice(0)) handle.destroy();
   activeDocument.body.empty();
 });
+
+const css = await loadPluginStyles();
 
 describe('mountRecurrenceEditor', () => {
   it('presents presets and Custom as one pressed-state mode group', () => {
@@ -792,17 +859,9 @@ describe('mountRecurrenceEditor', () => {
   });
 
   it('owns submit shortcuts in the editor owner realm', async () => {
-    const frame = activeDocument.body.createEl('iframe');
-    const ownerDocument = expectDefined(frame.contentDocument);
-    const ownerWindow = frame.contentWindow as Window & typeof window;
-    for (const method of ['createDiv', 'createEl', 'createSpan', 'empty'] as const) {
-      Object.defineProperty(ownerWindow.HTMLElement.prototype, method, {
-        configurable: true,
-        value: methodOf(HTMLElement.prototype, method),
-      });
-    }
+    const popout = popoutRealm();
     const root = task({ planning: { due: '2026-08-09' } });
-    const container = ownerDocument.body.createDiv();
+    const container = popout.document.body.createDiv();
     const onSubmit = vi
       .fn<(patch: TaskPatch) => Promise<TaskCommandResult>>()
       .mockResolvedValue({ type: 'ok', changed: true, outcome: { type: 'task', task: root } });
@@ -821,13 +880,13 @@ describe('mountRecurrenceEditor', () => {
     const shortcut = submitShortcut(button(container, 'Weekdays'), { metaKey: true });
     await flushMicrotasks();
 
-    expect(shortcut).toBeInstanceOf(ownerWindow.KeyboardEvent);
+    expect(shortcut).toBeInstanceOf(popout.window.KeyboardEvent);
     expect(shortcut.defaultPrevented).toBe(true);
     expect(onSubmit).toHaveBeenCalledWith({
       recurrence: { type: 'set', value: 'every weekday' },
     });
     expect(onClose).toHaveBeenCalledOnce();
-    frame.remove();
+    popout.frame.remove();
   });
 
   it('removes the exact owner-window capture listener on destroy', async () => {
@@ -926,6 +985,32 @@ describe('mountRecurrenceEditor', () => {
     expect(onSubmit).toHaveBeenCalledWith({
       recurrence: { type: 'set', value: 'every month on the last Friday' },
     });
+  });
+
+  it.each([
+    ['a checkbox Enter', '.abyss-recurrence-when-done', {}],
+    ['Shift+Enter', '[aria-label="Recurrence rule"]', { shiftKey: true }],
+    ['Alt+Enter', '[aria-label="Recurrence rule"]', { altKey: true }],
+  ] as const)('does not submit from %s', async (_name, selector, modifiers) => {
+    const { container, onSubmit } = mount();
+    click(button(container, 'Custom'));
+    input(
+      expectDefined(container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')),
+      'every month on the last Friday',
+    );
+    const enter = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      ...modifiers,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    expectDefined(container.querySelector<HTMLInputElement>(selector)).dispatchEvent(enter);
+    await flushMicrotasks();
+
+    // A helper that submits on every Enter in an input would save the rule for each of these keys.
+    expect(enter.defaultPrevented).toBe(false);
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it('keeps the completion-date checkbox and advanced raw rule in one state', async () => {
@@ -1258,14 +1343,7 @@ describe('mountRecurrenceEditor', () => {
     let focusAfterDrop: Element | null = null;
     const { container, onClose } = mount({
       onSubmit: async () => {
-        // Chromium moves focus to body when the focused Save button is disabled for the submit.
-        // jsdom neither does that nor blurs a disabled control, so blur Save while it is enabled.
-        const active = activeDocument.activeElement;
-        if (active instanceof HTMLButtonElement) {
-          active.disabled = false;
-          active.blur();
-          active.disabled = true;
-        }
+        dropFocusFromDisabledButton();
         focusAfterDrop = activeDocument.activeElement;
         return { type: 'ok', changed: true, outcome: { type: 'task', task: root } };
       },
@@ -1281,6 +1359,87 @@ describe('mountRecurrenceEditor', () => {
 
     expect(focusAfterDrop).toBe(activeDocument.body);
     expect(activeDocument.activeElement).toBe(anchor);
+  });
+
+  it('reads the dismissal focus resolver only when the editor closes', () => {
+    const opener = activeDocument.body.createEl('button', { text: '+ repeat' });
+    const rebuilt = activeDocument.body.createEl('button', { text: 'Rebuilt repeat' });
+    opener.focus();
+    let target: HTMLElement = opener;
+    const resolver = vi.fn(() => target);
+    const { handle } = mount({ dismissalFocus: resolver });
+
+    expect(resolver).not.toHaveBeenCalled();
+    target = rebuilt;
+    handle.dismiss();
+
+    // An element captured at mount would return focus to the opener the rebuild replaced.
+    expect(resolver).toHaveBeenCalledOnce();
+    expect(activeDocument.activeElement).toBe(rebuilt);
+  });
+
+  it('returns the focus a failed save dropped to an enabled Save', async () => {
+    const { container, onClose, onSubmit } = mount();
+    activeDocument.body.append(container);
+    onSubmit.mockImplementation(async () => {
+      dropFocusFromDisabledButton();
+      return { type: 'io-error', cause: 'test', contentState: 'unchanged' };
+    });
+    button(container, 'Save repeat').focus();
+
+    click(button(container, 'Save repeat'));
+    await vi.waitFor(() => {
+      expect(container.querySelector('.abyss-recurrence-status')?.textContent).toBe(
+        'Could not save the repeat.',
+      );
+    });
+
+    const save = button(container, 'Save repeat');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(save.disabled).toBe(false);
+    expect(activeDocument.activeElement).toBe(save);
+  });
+
+  it('keeps focus on Clear repeat after a failed clear', async () => {
+    const root = task({ planning: { due: '2026-08-09' }, recurrence: 'every day' });
+    const { container, onClose, onSubmit } = mount({
+      source: { root, target: { type: 'task', ref: root.ref } },
+    });
+    activeDocument.body.append(container);
+    onSubmit.mockResolvedValue({ type: 'io-error', cause: 'test', contentState: 'unchanged' });
+    button(container, 'Clear repeat').focus();
+
+    click(button(container, 'Clear repeat'));
+    await vi.waitFor(() => {
+      expect(container.querySelector('.abyss-recurrence-status')?.textContent).toBe(
+        'Could not clear the repeat.',
+      );
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+    // A failure rule that moves focus to Save after every failure would pull it off Clear repeat.
+    expect(activeDocument.activeElement).toBe(button(container, 'Clear repeat'));
+  });
+
+  it('lets a failed save be retried at once', async () => {
+    const { container, onClose, onSubmit } = mount();
+    activeDocument.body.append(container);
+    onSubmit.mockResolvedValueOnce({ type: 'io-error', cause: 'test', contentState: 'unchanged' });
+    button(container, 'Save repeat').focus();
+
+    click(button(container, 'Save repeat'));
+    await vi.waitFor(() => {
+      expect(container.querySelector('.abyss-recurrence-status')?.textContent).toBe(
+        'Could not save the repeat.',
+      );
+    });
+    submitShortcut(button(container, 'Save repeat'), { metaKey: true });
+    await vi.waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    // Ignoring the error only in the button state would leave the submit guard refusing this.
+    expect(onSubmit).toHaveBeenCalledTimes(2);
   });
 
   it('restores a connected anchor when an outside click dismisses the anchored editor', () => {
@@ -1310,5 +1469,234 @@ describe('mountRecurrenceEditor', () => {
     expect(activeDocument.querySelector('.abyss-recurrence-popover')).toBeNull();
     expect(activeDocument.activeElement).toBe(anchor);
     vi.useRealTimers();
+  });
+
+  it('returns focus to the element focused when the anchored editor opened once its anchor is gone', () => {
+    vi.useFakeTimers();
+    const previous = activeDocument.body.createEl('button', { text: 'Previous focus' });
+    const anchor = activeDocument.body.createEl('button', { text: 'Repeat marker' });
+    previous.focus();
+    const handle = mountAnchored(anchor);
+    vi.runAllTimers();
+    const popover = expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-recurrence-popover'),
+    );
+    expect(popover.contains(activeDocument.activeElement)).toBe(true);
+    anchor.remove();
+
+    handle.dismiss();
+
+    expect(activeDocument.querySelector('.abyss-recurrence-popover')).toBeNull();
+    // An anchored controller that resolves only its anchor would drop the fallback it had.
+    expect(activeDocument.activeElement).toBe(previous);
+    vi.useRealTimers();
+  });
+
+  it('returns focus to a popout anchor when the anchored editor is dismissed', () => {
+    vi.useFakeTimers();
+    const popout = popoutRealm();
+    try {
+      const anchor = popoutButton(popout);
+      expect(anchor).not.toBeInstanceOf(HTMLElement);
+      anchor.focus();
+      const handle = mountAnchored(anchor);
+      vi.runAllTimers();
+      const popover = expectDefined(
+        popout.document.querySelector<HTMLElement>('.abyss-recurrence-popover'),
+      );
+      expect(popover.contains(popout.document.activeElement)).toBe(true);
+
+      handle.dismiss();
+
+      expect(popover.isConnected).toBe(false);
+      // A helper that accepts only the main window's realm rejects this host-built anchor.
+      expect(popout.document.activeElement).toBe(anchor);
+    } finally {
+      popout.frame.remove();
+    }
+    vi.useRealTimers();
+  });
+
+  it('returns focus to the popout element focused when the anchored editor opened once its anchor is gone', () => {
+    vi.useFakeTimers();
+    const popout = popoutRealm();
+    try {
+      const previous = popoutButton(popout);
+      const anchor = popoutButton(popout);
+      previous.focus();
+      const handle = mountAnchored(anchor);
+      vi.runAllTimers();
+      const popover = expectDefined(
+        popout.document.querySelector<HTMLElement>('.abyss-recurrence-popover'),
+      );
+      expect(popover.contains(popout.document.activeElement)).toBe(true);
+      anchor.remove();
+
+      handle.dismiss();
+
+      expect(popover.isConnected).toBe(false);
+      // A helper that accepts only the main window's realm drops this host-built opener.
+      expect(popout.document.activeElement).toBe(previous);
+    } finally {
+      popout.frame.remove();
+    }
+    vi.useRealTimers();
+  });
+
+  it('returns focus to a plugin-built popout anchor when Escape closes the anchored editor', () => {
+    vi.useFakeTimers();
+    const popout = popoutRealm();
+    try {
+      const anchor = pluginPopoutButton(popout);
+      expect(anchor.ownerDocument).toBe(popout.document);
+      expect(anchor).not.toBeInstanceOf(popout.window.HTMLElement);
+      anchor.focus();
+      mountAnchored(anchor);
+      vi.runAllTimers();
+      const popover = expectDefined(
+        popout.document.querySelector<HTMLElement>('.abyss-recurrence-popover'),
+      );
+      const focused = expectDefined(popout.document.activeElement);
+      expect(popover.contains(focused)).toBe(true);
+
+      focused.dispatchEvent(
+        new popout.window.KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      expect(popover.isConnected).toBe(false);
+      // A helper that accepts only the owner document's realm rejects the plugin's own anchor.
+      expect(popout.document.activeElement).toBe(anchor);
+    } finally {
+      popout.frame.remove();
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns focus to the plugin-built popout opener once the anchored editor anchor is gone', () => {
+    vi.useFakeTimers();
+    const popout = popoutRealm();
+    try {
+      const opener = pluginPopoutButton(popout);
+      const anchor = pluginPopoutButton(popout);
+      opener.focus();
+      const handle = mountAnchored(anchor);
+      vi.runAllTimers();
+      const popover = expectDefined(
+        popout.document.querySelector<HTMLElement>('.abyss-recurrence-popover'),
+      );
+      expect(popover.contains(popout.document.activeElement)).toBe(true);
+      anchor.remove();
+
+      handle.dismiss();
+
+      expect(popover.isConnected).toBe(false);
+      // A helper that accepts only the owner document's realm drops the opener the plugin built.
+      expect(popout.document.activeElement).toBe(opener);
+    } finally {
+      popout.frame.remove();
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns focus to the plugin-built popout element the host resolver names after a save', async () => {
+    const popout = popoutRealm();
+    try {
+      const root = task({ planning: { due: '2026-08-09' } });
+      const rebuilt = pluginPopoutButton(popout);
+      let focusAfterDrop: Element | null = null;
+      const { container, onClose } = mount({
+        container: popout.document.body.createDiv(),
+        dismissalFocus: () => rebuilt,
+        onSubmit: async () => {
+          dropFocusFromDisabledButton(popout.document);
+          focusAfterDrop = popout.document.activeElement;
+          return { type: 'ok', changed: true, outcome: { type: 'task', task: root } };
+        },
+      });
+      const save = button(container, 'Save repeat');
+      save.focus();
+      expect(popout.document.activeElement).toBe(save);
+
+      click(save);
+      await vi.waitFor(() => {
+        expect(onClose).toHaveBeenCalledOnce();
+      });
+
+      expect(focusAfterDrop).toBe(popout.document.body);
+      // A helper that accepts only the owner document's realm rejects the resolver's element.
+      expect(popout.document.activeElement).toBe(rebuilt);
+    } finally {
+      popout.frame.remove();
+    }
+  });
+
+  it.each(['composing', 'legacy'] as const)(
+    'leaves IME-owned Escape, Enter, and Cmd+Enter to the IME (%s)',
+    async (ime) => {
+      const { container, onSubmit, onClose } = mount();
+      activeDocument.body.appendChild(container);
+      click(button(container, 'Custom'));
+      const raw = expectDefined(
+        container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]'),
+      );
+      input(raw, 'every month on the last Friday');
+
+      const escape = dispatchImeKey(raw, 'Escape', ime);
+      const enter = dispatchImeKey(raw, 'Enter', ime);
+      const shortcut = dispatchImeKey(raw, 'Enter', ime, { metaKey: true });
+      await flushMicrotasks();
+
+      // A guard in the container handler alone still lets the owner-window Cmd+Enter capture submit.
+      expect([escape, enter, shortcut].map((event) => event.defaultPrevented)).toEqual([
+        false,
+        false,
+        false,
+      ]);
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe('Clear repeat styling', () => {
+  it('outranks the host button fill with the same quiet declarations', () => {
+    const repeating = task({ recurrence: 'every day', planning: { due: '2026-08-09' } });
+    const { container } = mount({
+      source: { root: repeating, target: { type: 'task', ref: repeating.ref } },
+    });
+    const clear = button(container, 'Clear repeat');
+    const base = cssDeclarationText(css, '.abyss-recurrence-actions button.abyss-recurrence-clear');
+    const hover = cssDeclarationText(
+      css,
+      '.abyss-recurrence-actions button.abyss-recurrence-clear:hover',
+    );
+
+    // A class-only selector (0,1,0) loses to the host `button:not(.clickable-icon)` (0,1,1).
+    expect(cssDeclarationText(css, '.abyss-recurrence-clear')).toBe('');
+    expect(cssDeclarationText(css, '.abyss-recurrence-clear:hover')).toBe('');
+    expect(clear.matches('.abyss-recurrence-actions button.abyss-recurrence-clear')).toBe(true);
+    expect(cssValue(base, 'border-color')).toBe('transparent');
+    expect(cssValue(base, 'background')).toBe('transparent');
+    expect(cssValue(base, 'color')).toBe('var(--text-muted)');
+    expect(cssValue(base, 'box-shadow')).toBe('none');
+    expect(cssValue(base, 'outline')).toBeUndefined();
+    expect(cssValue(hover, 'color')).toBe('var(--text-normal)');
+    // The editor's own keyboard ring still reaches the button.
+    expect(clear.matches('.abyss-recurrence-editor button')).toBe(true);
+    expect(
+      cssValue(cssDeclarationText(css, '.abyss-recurrence-editor button:focus-visible'), 'outline'),
+    ).toBe('2px solid var(--interactive-accent)');
+  });
+
+  it('gives the keyboard ring room at the sides and keeps the text in place', () => {
+    const base = cssDeclarationText(css, '.abyss-recurrence-actions button.abyss-recurrence-clear');
+
+    // Padding alone moves the text off the content edge; a margin alone leaves the ring cramped.
+    expect(cssValue(base, 'padding-inline')).toBe('var(--size-4-1)');
+    expect(cssValue(base, 'margin-inline')).toBe('calc(var(--size-4-1) * -1)');
   });
 });

@@ -1,4 +1,4 @@
-import { Notice, requireApiVersion } from 'obsidian';
+import { requireApiVersion } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
@@ -12,6 +12,7 @@ import {
   canonicalStatusCatalog,
   createAppWithFiles,
   deferred,
+  dispatchImeKey,
   expectDefined,
   flushMicrotasks,
   freshContainer,
@@ -19,6 +20,7 @@ import {
   testStatusRegistry,
   useRealMoment,
 } from './helpers';
+import { notices } from './support/inspectorHarness';
 
 useRealMoment();
 
@@ -531,6 +533,8 @@ describe('RightPanel block editing', () => {
         input.dispatchEvent(
           new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true }),
         );
+        // Checking only `isComposing` lets a legacy keyCode 229 Enter add the entry.
+        dispatchImeKey(input, 'Enter', 'legacy');
         input.value = '   ';
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
         input.value = 'Unfinished';
@@ -702,16 +706,7 @@ describe('RightPanel block editing', () => {
         changed: true,
         outcome: { type: 'task', task: restored },
       });
-    const notices: Notice[] = [];
-    const prototype = Notice.prototype as unknown as {
-      constructor__(this: Notice, message: string | DocumentFragment, duration?: number): void;
-    };
-    const constructor = vi.spyOn(prototype, 'constructor__').mockImplementation(function (
-      this: Notice,
-    ) {
-      notices.push(this);
-      if (requireApiVersion('1.8.7')) activeDocument.body.append(this.containerEl);
-    });
+    const shown = notices();
     const { panel, state } = await panelWith(initial, execute);
     const container = freshContainer();
     activeDocument.body.append(container);
@@ -719,16 +714,64 @@ describe('RightPanel block editing', () => {
     try {
       await call<Promise<void>>(panel, 'deleteTask', expectDefined(initial.subtasks[0]));
       expect(state.get('taskStack')[0]?.subtasks.map((child) => child.title)).toEqual(['sibling']);
-      expect(notices).toHaveLength(0);
+      expect(shown).toHaveLength(0);
       expectDefined(container.querySelector<HTMLButtonElement>('.abyss-undo-row button')).click();
       await flushMicrotasks(20);
       expect(execute).toHaveBeenLastCalledWith({ type: 'restore-subtask', ...recovery });
       expect(state.get('taskStack')[0]).toEqual(restored);
-      expect(constructor).not.toHaveBeenCalled();
+      expect(shown).toHaveLength(0);
     } finally {
       panel.destroy();
       container.remove();
-      notices.forEach((notice) => {
+      shown.forEach((notice) => {
+        if (requireApiVersion('1.8.7')) notice.containerEl.remove();
+      });
+    }
+  });
+
+  it('presents a removal Undo refused by a pending write as a pending edit', async () => {
+    const initial = snapshotWithChildren('old', ['selected', 'sibling']);
+    const afterDelete = snapshotWithChildren('deleted', ['sibling']);
+    const recovery = {
+      parent: { type: 'task' as const, ref: afterDelete.ref },
+      markdown: '  - [ ] selected\n',
+      placement: { relativeLine: 1, before: expectDefined(afterDelete.subtasks[0]).ref },
+    };
+    const held = deferred<TaskCommandResult>();
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockResolvedValueOnce({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'task', task: afterDelete, subtaskRemovalRecovery: recovery },
+      })
+      .mockReturnValueOnce(held.promise);
+    const messages: string[] = [];
+    const captured = notices(messages);
+    const { panel } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      await call<Promise<void>>(panel, 'deleteTask', expectDefined(initial.subtasks[0]));
+      const pending = call<Promise<TaskCommandResult>>(panel, 'updatePriority', afterDelete, 'A');
+      expectDefined(container.querySelector<HTMLButtonElement>('.abyss-undo-row button')).click();
+      await flushMicrotasks(20);
+
+      expect(messages).toEqual([
+        'Another change to this task is still being saved. Try again in a moment.',
+      ]);
+      // The refused Undo runs no restore, which would race the priority write still in flight.
+      expect(execute.mock.calls.map(([command]) => command.type)).toEqual([
+        'delete-subtask',
+        'patch',
+      ]);
+      held.resolve({ type: 'ok', changed: true, outcome: { type: 'task', task: afterDelete } });
+      await pending;
+    } finally {
+      panel.destroy();
+      container.remove();
+      captured.forEach((notice) => {
         if (requireApiVersion('1.8.7')) notice.containerEl.remove();
       });
     }
@@ -1419,6 +1462,126 @@ describe('RightPanel block editing', () => {
     panel.destroy();
   });
 
+  it('closes the description editor after a save that changes nothing', async () => {
+    const initial = snapshot('old');
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'ok',
+      changed: false,
+      outcome: { type: 'task', task: initial },
+    });
+    const { panel } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    const outside = activeDocument.body.createEl('button');
+    try {
+      expectDefined(container.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
+      await flushMicrotasks();
+      const textarea = expectDefined(
+        container.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+      );
+      // The editor focuses its textarea on the next task; the blur below is real only then.
+      expect(activeDocument.activeElement).toBe(textarea);
+      textarea.value = 'old description ';
+      outside.focus();
+      await flushMicrotasks(20);
+
+      expect(execute).toHaveBeenCalledWith({
+        type: 'set-description',
+        target: { type: 'task', ref: initial.ref },
+        text: 'old description ',
+      });
+      // Restoring the submitted editor draft after an unchanged result would reopen the editor.
+      expect(container.querySelector('.abyss-right-desc-edit')).toBeNull();
+    } finally {
+      panel.destroy();
+      outside.remove();
+      container.remove();
+    }
+  });
+
+  it('closes the title editor after a save that changes nothing', async () => {
+    const initial = snapshot('old');
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'ok',
+      changed: false,
+      outcome: { type: 'task', task: initial },
+    });
+    const { panel } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    const outside = activeDocument.body.createEl('button');
+    try {
+      expectDefined(container.querySelector<HTMLElement>('.abyss-right-title-view')).click();
+      await flushMicrotasks();
+      const textarea = expectDefined(
+        container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+      );
+      // The editor focuses its textarea on the next task; the blur below is real only then.
+      expect(activeDocument.activeElement).toBe(textarea);
+      textarea.value = 'root ';
+      outside.focus();
+      await flushMicrotasks(20);
+
+      expect(execute).toHaveBeenCalledWith({
+        type: 'patch',
+        target: { type: 'task', ref: initial.ref },
+        patch: { markdownTitle: { type: 'set', value: 'root' } },
+      });
+      // Restoring the submitted editor draft after an unchanged result would reopen the editor.
+      expect(container.querySelector('.abyss-right-title-edit')).toBeNull();
+    } finally {
+      panel.destroy();
+      outside.remove();
+      container.remove();
+    }
+  });
+
+  it('keeps a comment typed while a description save that changes nothing is pending', async () => {
+    const initial = snapshot('old');
+    const pending = deferred<TaskCommandResult>();
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+    const { panel } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      expectDefined(container.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
+      await flushMicrotasks();
+      const textarea = expectDefined(
+        container.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+      );
+      // The editor focuses its textarea on the next task; the blur below is real only then.
+      expect(activeDocument.activeElement).toBe(textarea);
+      textarea.value = 'old description ';
+      const typed = expectDefined(
+        container.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
+      typed.focus();
+      await flushMicrotasks();
+      expect(execute).toHaveBeenCalledWith({
+        type: 'set-description',
+        target: { type: 'task', ref: initial.ref },
+        text: 'old description ',
+      });
+      typed.value = 'typed during the save';
+      pending.resolve({ type: 'ok', changed: false, outcome: { type: 'task', task: initial } });
+      await flushMicrotasks(20);
+
+      expect(container.querySelector('.abyss-right-desc-edit')).toBeNull();
+      const comment = expectDefined(
+        container.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
+      // Dropping every draft on an unchanged result would lose the typed comment.
+      expect(comment.value).toBe('typed during the save');
+      expect(activeDocument.activeElement).toBe(comment);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
   it('keeps a comment textarea open when its exact comment ref conflicts', async () => {
     const initial = snapshot('old');
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
@@ -1660,6 +1823,131 @@ describe('RightPanel block editing', () => {
       await pending;
 
       expect(state.get('taskStack')).toEqual([root, sibling]);
+    },
+  );
+});
+
+describe('RightPanel IME-owned keys', () => {
+  async function mounted() {
+    const initial = snapshot('old');
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    const { panel } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    return { panel, container, execute };
+  }
+
+  it.each(['composing', 'legacy'] as const)(
+    'keeps the title editor open on IME keys (%s)',
+    async (ime) => {
+      const { panel, container, execute } = await mounted();
+      try {
+        expectDefined(container.querySelector<HTMLElement>('.abyss-right-title-view')).click();
+        await flushMicrotasks();
+        const title = expectDefined(
+          container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+        );
+        title.value = 'かな';
+        const keys = ['Enter', 'Escape'].map((key) => dispatchImeKey(title, key, ime));
+        await flushMicrotasks();
+
+        // Guarding only Enter still lets a composing Escape cancel the editor.
+        expect(keys.map((event) => event.defaultPrevented)).toEqual([false, false]);
+        expect(title.isConnected).toBe(true);
+        expect(execute).not.toHaveBeenCalled();
+      } finally {
+        panel.destroy();
+      }
+    },
+  );
+
+  it.each(['composing', 'legacy'] as const)(
+    'keeps the description editor open on an IME Escape (%s)',
+    async (ime) => {
+      const { panel, container, execute } = await mounted();
+      try {
+        expectDefined(container.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
+        await flushMicrotasks();
+        const description = expectDefined(
+          container.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+        );
+        const escape = dispatchImeKey(description, 'Escape', ime);
+        await flushMicrotasks();
+
+        // Guarding only Enter handlers misses the description, whose keydown knows only Escape.
+        expect(escape.defaultPrevented).toBe(false);
+        expect(description.isConnected).toBe(true);
+        expect(execute).not.toHaveBeenCalled();
+      } finally {
+        panel.destroy();
+      }
+    },
+  );
+
+  it.each(['composing', 'legacy'] as const)(
+    'keeps an existing comment editor open on IME keys (%s)',
+    async (ime) => {
+      const { panel, container, execute } = await mounted();
+      try {
+        expectDefined(container.querySelector<HTMLElement>('.abyss-comment-text')).click();
+        const editor = expectDefined(
+          container.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input'),
+        );
+        editor.value = 'かな';
+        const keys = ['Enter', 'Escape'].map((key) => dispatchImeKey(editor, key, ime));
+
+        // Guarding only Escape still lets an IME Enter blur the editor, which saves the draft.
+        expect(keys.map((event) => event.defaultPrevented)).toEqual([false, false]);
+        expect(editor.isConnected).toBe(true);
+        expect(activeDocument.activeElement).toBe(editor);
+        expect(execute).not.toHaveBeenCalled();
+      } finally {
+        panel.destroy();
+      }
+    },
+  );
+
+  it('keeps a new sub-task entry open on a legacy IME Escape', async () => {
+    const { panel, container } = await mounted();
+    try {
+      expectDefined(
+        container.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
+      ).click();
+      const input = expectDefined(
+        container.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
+      );
+      input.value = 'かな';
+      // The entry Escape checked only `isComposing`.
+      const escape = dispatchImeKey(input, 'Escape', 'legacy');
+
+      expect(escape.defaultPrevented).toBe(false);
+      expect(input.isConnected).toBe(true);
+      expect(activeDocument.activeElement).toBe(input);
+    } finally {
+      panel.destroy();
+    }
+  });
+
+  it.each(['composing', 'legacy'] as const)(
+    'keeps an anchored surface open on an IME Escape (%s)',
+    async (ime) => {
+      const { panel, container } = await mounted();
+      try {
+        expectDefined(
+          container.querySelector<HTMLElement>(
+            '.abyss-right-action-btn[aria-label="More actions"]',
+          ),
+        ).click();
+        const menu = expectDefined(container.querySelector('.abyss-task-context-menu'));
+        const escape = dispatchImeKey(expectDefined(activeDocument.activeElement), 'Escape', ime);
+
+        // Guarding only field keydown handlers leaves the surface's Escape listener to dismiss it.
+        expect(escape.defaultPrevented).toBe(false);
+        expect(menu.isConnected).toBe(true);
+      } finally {
+        panel.destroy();
+      }
     },
   );
 });

@@ -20,6 +20,7 @@ import { StatusRegistry } from '../status/StatusRegistry';
 import { TYPE_LABELS, TYPE_ORDER } from '../status/statusConstants';
 import { type TagGroupUpdate, type TagManager } from '../tags/TagManager';
 import { type EffectiveTagGroup, resolveEffectiveTagGroups } from '../tags/effectiveTagGroups';
+import { tagSettingsFailureNotice } from '../tags/tagSettingsFailure';
 import { collectTaskNodeTags } from '../tags/taskTagCatalog';
 import { normalizeTaskTagInput, type TaskDependencyQueryApi, type TaskStatusType } from '../tasks';
 import { renderStatusMarker } from '../ui/StatusMarker';
@@ -1221,7 +1222,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
           (candidate) => candidate.id === group.id,
         );
         const rolledBack = JSON.stringify(current) === JSON.stringify(previousSnapshot);
-        new Notice(this.tagSettingsFailureMessage_abyssPrivate('update tag group', rolledBack));
+        new Notice(tagSettingsFailureNotice('update tag group', rolledBack));
         this.render_abyssPrivate();
       }
       return;
@@ -1245,16 +1246,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
       callbacks.onSuccess?.();
     } catch (error) {
       console.error(`[abyss-tasks] Could not ${description}`, error);
-      new Notice(this.tagSettingsFailureMessage_abyssPrivate(description, rolledBack()));
+      new Notice(tagSettingsFailureNotice(description, rolledBack()));
       callbacks.onFailure?.();
     }
     this.render_abyssPrivate();
-  }
-
-  private tagSettingsFailureMessage_abyssPrivate(description: string, rolledBack: boolean): string {
-    return rolledBack
-      ? `Could not ${description}. Your changes were rolled back.`
-      : `Could not save an earlier ${description}. Newer changes were kept.`;
   }
 
   private renderProjectsSettings_abyssPrivate(containerEl: HTMLElement): void {

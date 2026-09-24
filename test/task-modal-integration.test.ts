@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type {
   TaskApplicationApi,
@@ -12,6 +12,7 @@ import type {
 import { TaskModal } from '../src/ui/TaskModal';
 import {
   createAppWithFiles,
+  dropFocusFromDisabledButton,
   expectDefined,
   flushMicrotasks,
   methodOf,
@@ -71,6 +72,109 @@ function statusSymbolAfterCommand(command: TaskCommand, current: TaskSnapshot): 
   if (command.type === 'toggle-completion') return 'x';
   if (command.type === 'set-status') return command.symbol;
   return current.statusSymbol;
+}
+
+/**
+ * Opens a modal on a dated task whose next write is held. The held write drops focus from the
+ * disabled Save the way Chromium does. `transition` publishes the early owned transition that
+ * consumes the submitted repeat editor, and `fail` settles the write as a conflict.
+ */
+async function openHeldRepeatSave(): Promise<{
+  readonly modal: TaskModal;
+  readonly execute: Mock<TaskApplicationApi['execute']>;
+  readonly transition: () => void;
+  readonly fail: () => void;
+}> {
+  const app = await createAppWithFiles({ 'f.md': '- [ ] observed 📅 2026-08-13\n' });
+  const observed = task({
+    title: 'observed',
+    planning: { due: '2026-08-13' },
+    ref: { filePath: 'f.md', line: 0, revision: 'old' },
+    source: {
+      filePath: 'f.md',
+      line: 0,
+      originalMarkdown: '- [ ] observed 📅 2026-08-13',
+      originalBlock: '- [ ] observed 📅 2026-08-13',
+    },
+  });
+  const candidate = task({
+    ...observed,
+    recurrence: 'every day',
+    ref: { filePath: 'f.md', line: 0, revision: 'candidate' },
+    source: {
+      ...observed.source,
+      originalMarkdown: '- [ ] observed 🔁 every day 📅 2026-08-13',
+      originalBlock: '- [ ] observed 🔁 every day 📅 2026-08-13',
+    },
+  });
+  const events = queryEvents();
+  let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
+  let finish!: (result: Awaited<ReturnType<TaskApplicationApi['execute']>>) => void;
+  const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(
+    () =>
+      new Promise((resolvePromise) => {
+        dropFocusFromDisabledButton();
+        finish = resolvePromise;
+      }),
+  );
+  const queries = taskQueryApi({
+    resolve: () => resolution,
+    subscribe: events.subscribe,
+  });
+  const modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    queries,
+    execute,
+  });
+  modal.open(observed);
+  return {
+    modal,
+    execute,
+    transition: () => {
+      resolution = {
+        type: 'rebased',
+        previous: observed,
+        current: candidate,
+        evidence: 'authority-transition',
+        basis: { observed },
+      };
+      events.publish({ type: 'changed', files: ['f.md'] });
+    },
+    fail: () => {
+      finish({ type: 'conflict', current: observed });
+    },
+  };
+}
+
+/**
+ * Opens the modal's repeat editor from its chip, lets its deferred focus land, chooses Daily, and
+ * submits it from Save.
+ */
+async function submitDailyRepeat(): Promise<HTMLButtonElement> {
+  const chip = expectDefined(
+    activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-repeat-chip'),
+  );
+  chip.focus();
+  click(chip);
+  await flushMicrotasks();
+  const daily = expectDefined(
+    activeDocument.querySelector<HTMLButtonElement>(
+      '.abyss-modal [data-recurrence-preset="daily"]',
+    ),
+  );
+  daily.focus();
+  click(daily);
+  const save = expectDefined(
+    activeDocument.querySelector<HTMLButtonElement>('.abyss-modal .abyss-recurrence-save'),
+  );
+  save.focus();
+  click(save);
+  return save;
+}
+
+function pressedDailyPreset(): string | null | undefined {
+  return activeDocument
+    .querySelector('.abyss-modal .abyss-recurrence-editor [data-recurrence-preset="daily"]')
+    ?.getAttribute('aria-pressed');
 }
 
 describe('TaskModal with real RightPanel', () => {
@@ -531,6 +635,52 @@ describe('TaskModal with real RightPanel', () => {
     expect(`${recoveredInput?.value ?? ''}${recoveredTray?.textContent ?? ''}`).toContain(
       'rollback me',
     );
+  });
+
+  it('keeps moved focus on an outside button when it recovers a consumed repeat draft', async () => {
+    const held = await openHeldRepeatSave();
+    modal = held.modal;
+    const outside = activeDocument.body.createEl('button', { text: 'Outside' });
+    try {
+      const save = await submitDailyRepeat();
+      await flushMicrotasks();
+      held.transition();
+      expect(held.execute).toHaveBeenCalledOnce();
+      expect(save.isConnected).toBe(false);
+      expect(activeDocument.querySelector('.abyss-modal .abyss-recurrence-editor')).toBeNull();
+      outside.focus();
+
+      held.fail();
+      await flushMicrotasks();
+
+      expect(pressedDailyPreset()).toBe('true');
+      // Restoring the submit-time focus wherever focus is now would move it to the reopened Save.
+      expect(activeDocument.activeElement).toBe(outside);
+    } finally {
+      outside.remove();
+    }
+  });
+
+  it('focuses the reopened Save when it recovers a consumed repeat draft with focus on body', async () => {
+    const held = await openHeldRepeatSave();
+    modal = held.modal;
+    const save = await submitDailyRepeat();
+    await flushMicrotasks();
+    held.transition();
+    expect(held.execute).toHaveBeenCalledOnce();
+    expect(save.isConnected).toBe(false);
+    expect(activeDocument.querySelector('.abyss-modal .abyss-recurrence-editor')).toBeNull();
+    expect(activeDocument.activeElement).toBe(activeDocument.body);
+
+    held.fail();
+    await flushMicrotasks();
+
+    expect(pressedDailyPreset()).toBe('true');
+    const reopenedSave = expectDefined(
+      activeDocument.querySelector<HTMLButtonElement>('.abyss-modal .abyss-recurrence-save'),
+    );
+    // A recovery that always drops the draft's focus lets the resolver focus the rebuilt chip.
+    expect(activeDocument.activeElement).toBe(reopenedSave);
   });
 
   it('serializes overlapping same-root submissions and retains the second draft', async () => {
@@ -1429,5 +1579,73 @@ describe('TaskModal with real RightPanel', () => {
     expect(escape.defaultPrevented).toBe(true);
     expect(activeDocument.querySelector(`.abyss-modal ${entry.ownedSelector}`)).toBeNull();
     expect(activeDocument.querySelector('.abyss-modal-backdrop')).not.toBeNull();
+  });
+
+  it('returns focus to the rebuilt priority chip after an owned priority change', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] observed\n' });
+    const observed = task({
+      title: 'observed',
+      ref: { filePath: 'f.md', line: 0, revision: 'old' },
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] observed',
+        originalBlock: '- [ ] observed',
+      },
+    });
+    const current = task({
+      ...observed,
+      priority: 'A',
+      ref: { filePath: 'f.md', line: 0, revision: 'new' },
+      source: {
+        ...observed.source,
+        originalMarkdown: '- [ ] observed 🔺',
+        originalBlock: '- [ ] observed 🔺',
+      },
+    });
+    const events = queryEvents();
+    let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
+    const queries = taskQueryApi({
+      resolve: () => resolution,
+      subscribe: events.subscribe,
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async () => {
+      resolution = {
+        type: 'rebased',
+        previous: observed,
+        current,
+        evidence: 'authority-transition',
+        basis: { observed },
+      };
+      events.publish({ type: 'changed', files: ['f.md'] });
+      return { type: 'ok', changed: true, outcome: { type: 'task', task: current } };
+    });
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute,
+    });
+    modal.open(observed);
+    const chip = expectDefined(
+      activeDocument.querySelector<HTMLButtonElement>('.abyss-modal .abyss-priority-chip'),
+    );
+
+    chip.focus();
+    click(chip);
+    click(
+      expectDefined(
+        activeDocument.querySelector<HTMLButtonElement>(
+          '.abyss-modal .abyss-priority-option[data-priority="A"]',
+        ),
+      ),
+    );
+    await flushMicrotasks();
+
+    const rebuilt = expectDefined(
+      activeDocument.querySelector<HTMLButtonElement>('.abyss-modal .abyss-priority-chip'),
+    );
+    expect(execute).toHaveBeenCalledOnce();
+    expect(rebuilt).not.toBe(chip);
+    expect(rebuilt.getAttribute('data-priority')).toBe('A');
+    expect(activeDocument.activeElement).toBe(rebuilt);
   });
 });

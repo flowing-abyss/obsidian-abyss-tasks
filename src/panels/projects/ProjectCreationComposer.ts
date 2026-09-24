@@ -1,4 +1,9 @@
-import { isProjectCreationError, type ProjectCreateRequest } from '../../projects/projectCreation';
+import {
+  creationFailureMessage,
+  isProjectCreationError,
+  type ProjectCreateRequest,
+} from '../../projects/projectCreation';
+import { isImeOwnedEvent } from '../../ui/ime';
 import { mountProjectCellEditorPosition } from './projectCellEditorPosition';
 
 interface ProjectCreationComposerOpenOptions {
@@ -25,9 +30,10 @@ interface RetainedDraft {
   error: string | undefined;
 }
 
-function failureMessage(error: unknown): string {
-  const cause = isProjectCreationError(error) ? error.cause : error;
-  return cause instanceof Error ? cause.message : String(cause);
+/** The draft's error line text; a failure without a message leaves the line hidden. */
+function draftErrorText(error: unknown): string | undefined {
+  const message = creationFailureMessage(error);
+  return message.length > 0 ? message : undefined;
 }
 
 /** Owns the single retained project-name composer and its in-flight command. */
@@ -113,7 +119,7 @@ export class ProjectCreationComposer {
     error.hidden = this.draft_abyssPrivate.error === undefined;
     this.renderActions_abyssPrivate(surface, input);
     surface.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && event.target === input) {
+      if (event.key === 'Enter' && event.target === input && !isImeOwnedEvent(event)) {
         event.preventDefault();
         this.submit_abyssPrivate(input);
       }
@@ -200,7 +206,7 @@ export class ProjectCreationComposer {
 
   private readonly handleDocumentKeyDown_abyssPrivate = (event: KeyboardEvent): void => {
     const surface = this.surface_abyssPrivate;
-    if (event.key !== 'Escape' || surface === undefined) return;
+    if (event.key !== 'Escape' || surface === undefined || isImeOwnedEvent(event)) return;
     const active = surface.ownerDocument.activeElement;
     const restoreFocus =
       active === surface.ownerDocument.body || (active instanceof Node && surface.contains(active));
@@ -265,7 +271,7 @@ export class ProjectCreationComposer {
       },
       (error: unknown) => {
         this.submitting_abyssPrivate = false;
-        this.draft_abyssPrivate.error = failureMessage(error);
+        this.draft_abyssPrivate.error = draftErrorText(error);
         if (isProjectCreationError(error)) {
           if (error.phase === 'status') this.draft_abyssPrivate.recoveryPath = error.createdPath;
           else this.draft_abyssPrivate.blockedPath = error.createdPath;

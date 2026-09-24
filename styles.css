@@ -3934,15 +3934,16 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   font-size: inherit;
 }
 
-.abyss-recurrence-clear {
-  padding-inline: 0;
+.abyss-recurrence-actions button.abyss-recurrence-clear {
+  padding-inline: var(--size-4-1);
+  margin-inline: calc(var(--size-4-1) * -1);
   border-color: transparent;
   background: transparent;
   color: var(--text-muted);
   box-shadow: none;
 }
 
-.abyss-recurrence-clear:hover {
+.abyss-recurrence-actions button.abyss-recurrence-clear:hover {
   color: var(--text-normal);
 }
 

@@ -3,6 +3,11 @@ import type { AppState, ListSelection } from '../app/AppState';
 import { isListViewCustomized, listSelectionToKey } from '../app/listViewState';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
+import {
+  isProjectCreationError,
+  projectCreationFailureNotice,
+  withCreationFailureCause,
+} from '../projects/projectCreation';
 import { projectStatusDisplayName } from '../projects/status';
 import type { CalendarSettings } from '../settings/types';
 import { RenameTagModal } from '../tags/RenameTagModal';
@@ -14,6 +19,7 @@ import {
   tagMatchesGroup,
   type EffectiveTagGroup,
 } from '../tags/effectiveTagGroups';
+import { tagSettingsFailureNotice } from '../tags/tagSettingsFailure';
 import { collectTaskNodeTags } from '../tags/taskTagCatalog';
 import {
   normalizeTaskTagInput,
@@ -26,6 +32,7 @@ import {
   TagGroupAppearanceModal,
   type TagGroupAppearanceResult,
 } from '../ui/TagGroupAppearanceModal';
+import { isImeOwnedEvent } from '../ui/ime';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
 import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
 import { runAsyncAction } from '../ui/runAsyncAction';
@@ -33,6 +40,41 @@ import { presentTaskCommandResult } from '../ui/taskCommandResult';
 import { PanelNavigator, type PanelNavigationActions } from '../views/panelNavigation';
 
 const PROJECTS_CAP = 10;
+
+/** A sidebar section; each keeps its collapse state under this key in `sectionCollapse`. */
+type SectionKey = keyof CalendarSettings['sectionCollapse'];
+type InlineAddKey = 'tags' | 'projects';
+
+/** A section's reading of its failed create: whether it left nothing behind, and the Notice. */
+interface InlineAddFailure {
+  readonly retryable: boolean;
+  readonly notice: string;
+}
+
+/** One create a commit started, with the failure policy of the section that owns it. */
+interface InlineAddAttempt {
+  readonly created: Promise<void>;
+  readonly failure: (error: unknown) => InlineAddFailure;
+}
+
+/** One open "+" name input; it outlives re-renders until it commits, cancels, or is dropped. */
+interface InlineAddSession {
+  readonly key: InlineAddKey;
+  readonly input: HTMLInputElement;
+  readonly attempt: (name: string) => InlineAddAttempt;
+  phase: 'editing' | 'committing' | 'ended';
+  /** The panel's render count when the create started; a retry renders only if it moved. */
+  rendersAtCommit: number;
+}
+
+/** The session's focus and caret, read before a render detaches its input. */
+interface InlineAddHold {
+  readonly session: InlineAddSession;
+  readonly hadFocus: boolean;
+  readonly selectionStart: number | null;
+  readonly selectionEnd: number | null;
+  readonly selectionDirection: 'forward' | 'backward' | 'none' | null;
+}
 
 type LeftPanelConstructorArgs = [
   state: AppState,
@@ -81,6 +123,12 @@ export class LeftPanel {
   private readonly expandedGroups_abyssPrivate = new Set<string>();
   private readonly explicitlyCollapsed_abyssPrivate = new Set<string>();
   private showAllProjects_abyssPrivate = false;
+  private inlineAdd_abyssPrivate: InlineAddSession | undefined;
+  // Every session that has not ended, including one a newer "+" replaced as the record and one an
+  // Escape dismissed while its create runs.
+  private readonly inlineAddSessions_abyssPrivate = new Set<InlineAddSession>();
+  // Advanced by every full render, so a failed create can tell whether one ran while it was pending.
+  private renderCount_abyssPrivate = 0;
   // When a tag is opened from the Pinned section, don't auto-expand the group
   // that contains it in the Tags tree — the pin exists precisely to avoid that.
   private tagSelectedFromPinned_abyssPrivate = false;
@@ -147,6 +195,12 @@ export class LeftPanel {
   refreshProjectSettings(): void {
     const mode = this.state_abyssPrivate.get('mode');
     if (mode === 'search' || mode === 'projects') return;
+    const hold = this.holdInlineAdd_abyssPrivate();
+    this.replaceProjectsSection_abyssPrivate();
+    this.settleInlineAdd_abyssPrivate(hold);
+  }
+
+  private replaceProjectsSection_abyssPrivate(): void {
     const existing = this.el_abyssPrivate.querySelector<HTMLElement>(
       '.abyss-left-section--projects',
     );
@@ -167,7 +221,11 @@ export class LeftPanel {
     }
   }
 
+  /** Ends every live inline add first, so no pending create or blur check touches the panel. */
   destroy(): void {
+    for (const session of [...this.inlineAddSessions_abyssPrivate]) {
+      this.closeInlineAdd_abyssPrivate(session);
+    }
     this.offs_abyssPrivate.forEach((f) => {
       f();
     });
@@ -188,7 +246,14 @@ export class LeftPanel {
   }
 
   private render_abyssPrivate(): void {
+    this.renderCount_abyssPrivate += 1;
+    const hold = this.holdInlineAdd_abyssPrivate();
     this.el_abyssPrivate.empty();
+    this.renderSections_abyssPrivate();
+    this.settleInlineAdd_abyssPrivate(hold);
+  }
+
+  private renderSections_abyssPrivate(): void {
     const mode = this.state_abyssPrivate.get('mode');
     // The projects mode is a self-contained deep view; search hides the left panel too.
     if (mode === 'search' || mode === 'projects') return;
@@ -246,7 +311,7 @@ export class LeftPanel {
     this.renderCollapsibleSection_abyssPrivate('tags', 'Tags', {
       addAction: (): void => {
         this.startInlineAdd_abyssPrivate('tags', 'Tag name…', (name) =>
-          this.tagManager_abyssPrivate.createManualGroup(name),
+          this.addTagGroup_abyssPrivate(name),
         );
       },
       body: (body) => {
@@ -257,10 +322,53 @@ export class LeftPanel {
     });
   }
 
+  /**
+   * `addGroup` rolls back a failed save only when no newer settings save started after it. So the
+   * array read just before the create means the add left nothing behind; any other array means a
+   * newer save kept the group, and a retry would add it a second time.
+   */
+  private addTagGroup_abyssPrivate(name: string): InlineAddAttempt {
+    const before = this.settings_abyssPrivate.tagGroups;
+    return {
+      created: this.tagManager_abyssPrivate.createManualGroup(name),
+      failure: (error) =>
+        this.settings_abyssPrivate.tagGroups === before
+          ? {
+              retryable: true,
+              notice: withCreationFailureCause('Could not add the tag group.', error),
+            }
+          : { retryable: false, notice: tagSettingsFailureNotice('tag group', false) },
+    };
+  }
+
+  /** A `ProjectCreationError` means the note exists: the store rescans, and a retry is unsafe. */
+  private addProject_abyssPrivate(name: string): InlineAddAttempt {
+    return {
+      created: this.createProject_abyssPrivate(name),
+      failure: (error) => {
+        const created = isProjectCreationError(error);
+        if (created) this.projectStore_abyssPrivate?.refresh();
+        return { retryable: !created, notice: projectCreationFailureNotice(error) };
+      },
+    };
+  }
+
   private async createProject_abyssPrivate(name: string): Promise<void> {
     if (this.projectManager_abyssPrivate == null) return;
-    await this.projectManager_abyssPrivate.create(name);
+    // The panel opens the note itself, so an open failure cannot look like a failed create.
+    const file = await this.projectManager_abyssPrivate.create(name);
+    if (file !== null) await this.openCreatedProject_abyssPrivate(file);
     this.projectStore_abyssPrivate?.refresh();
+  }
+
+  /** Opens a created project note; a failure names the note, which already exists. */
+  private async openCreatedProject_abyssPrivate(file: TFile): Promise<void> {
+    try {
+      await this.app_abyssPrivate.workspace.getLeaf(false).openFile(file);
+    } catch (error) {
+      console.error('[abyss-tasks] Could not open the created project', { path: file.path, error });
+      new Notice(withCreationFailureCause(`Created ${file.path}, but could not open it.`, error));
+    }
   }
 
   private renderProjectsSection_abyssPrivate(root: HTMLElement): void {
@@ -271,7 +379,7 @@ export class LeftPanel {
         this.projectManager_abyssPrivate != null
           ? (): void => {
               this.startInlineAdd_abyssPrivate('projects', 'Project name…', (name) =>
-                this.createProject_abyssPrivate(name),
+                this.addProject_abyssPrivate(name),
               );
             }
           : null,
@@ -287,7 +395,7 @@ export class LeftPanel {
    * optional "+" add action. Collapse toggles `settings.sectionCollapse[key]`.
    */
   private renderCollapsibleSection_abyssPrivate(
-    key: 'pinned' | 'projects' | 'tags',
+    key: SectionKey,
     title: string,
     options: {
       readonly addAction: (() => void) | null;
@@ -329,6 +437,7 @@ export class LeftPanel {
     if (!collapsed) {
       const bodyEl = section.createDiv({ cls: 'abyss-left-section-body' });
       body(bodyEl);
+      this.placeInlineAdd_abyssPrivate(key, bodyEl);
     }
   }
 
@@ -392,15 +501,14 @@ export class LeftPanel {
   }
 
   /**
-   * Shows an inline text input directly under a section header (not at the
-   * bottom, which breaks with many rows). Used for both tag and project entry so
-   * the "+" affordance behaves identically everywhere. A `committed` guard
-   * prevents the Enter→re-render→blur sequence from firing twice.
+   * Shows an inline text input directly under a section header (not at the bottom, which breaks
+   * with many rows). Used for both tag and project entry so the "+" affordance behaves identically
+   * everywhere. The session keeps the input across re-renders until it commits or cancels.
    */
   private startInlineAdd_abyssPrivate(
-    key: 'tags' | 'projects',
+    key: InlineAddKey,
     placeholder: string,
-    onCommit: (name: string) => Promise<void>,
+    attempt: (name: string) => InlineAddAttempt,
   ): void {
     // Ensure the section is expanded so the input is visible.
     if (this.settings_abyssPrivate.sectionCollapse[key]) {
@@ -410,9 +518,9 @@ export class LeftPanel {
     }
     const section = this.el_abyssPrivate.querySelector(`.abyss-left-section--${key}`);
     if (section == null) return;
-    const existing = section.querySelector('.abyss-left-add-input');
+    const existing = section.querySelector<HTMLInputElement>('.abyss-left-add-input');
     if (existing != null) {
-      (existing as HTMLInputElement).focus();
+      existing.focus();
       return;
     }
     const body =
@@ -424,38 +532,179 @@ export class LeftPanel {
     });
     // Place it directly under the header, above existing rows.
     body.insertBefore(input, body.firstChild);
-
-    let committed = false;
-    const commit = (): void => {
-      if (committed) return;
-      committed = true;
-      const value = input.value.trim();
-      if (value.length > 0)
-        runAsyncAction(
-          onCommit(value).then(() => {
-            this.render_abyssPrivate();
-          }),
-        );
-      else this.render_abyssPrivate();
+    const session: InlineAddSession = {
+      key,
+      input,
+      attempt,
+      phase: 'editing',
+      rendersAtCommit: this.renderCount_abyssPrivate,
     };
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        commit();
-      }
-      if (e.key === 'Escape') {
-        committed = true;
-        this.render_abyssPrivate();
-      }
+    this.inlineAdd_abyssPrivate = session;
+    this.inlineAddSessions_abyssPrivate.add(session);
+    input.addEventListener('keydown', (event) => {
+      this.handleInlineAddKey_abyssPrivate(session, event);
     });
     input.addEventListener('blur', () => {
       window.setTimeout(() => {
-        if (activeDocument.activeElement !== input) commit();
+        if (activeDocument.activeElement !== input) this.commitInlineAdd_abyssPrivate(session);
       }, 150);
     });
     window.setTimeout(() => {
       input.focus();
     }, 0);
+  }
+
+  private handleInlineAddKey_abyssPrivate(session: InlineAddSession, event: KeyboardEvent): void {
+    if (isImeOwnedEvent(event)) return;
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      // A held Enter repeats its keydown; only the first press commits or cancels.
+      if (!event.repeat) this.commitInlineAdd_abyssPrivate(session);
+      return;
+    }
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (session.phase === 'committing') this.dismissInlineAdd_abyssPrivate(session);
+    else this.finishInlineAdd_abyssPrivate(session);
+  }
+
+  private commitInlineAdd_abyssPrivate(session: InlineAddSession): void {
+    if (session.phase !== 'editing') return;
+    const value = session.input.value.trim();
+    if (value.length === 0) {
+      this.finishInlineAdd_abyssPrivate(session);
+      return;
+    }
+    session.phase = 'committing';
+    session.rendersAtCommit = this.renderCount_abyssPrivate;
+    const attempt = session.attempt(value);
+    runAsyncAction(
+      attempt.created.then(
+        () => {
+          this.finishInlineAdd_abyssPrivate(session);
+        },
+        (error: unknown) => {
+          this.failInlineAdd_abyssPrivate(session, attempt.failure(error), error);
+        },
+      ),
+    );
+  }
+
+  /**
+   * A failed create that may be retried keeps its input. It re-renders only when a render ran while
+   * the create was pending, since that render may have drawn a group the failure rolled back. The
+   * held input keeps its focus, value, and caret either way. Any other failure ends the session.
+   */
+  private failInlineAdd_abyssPrivate(
+    session: InlineAddSession,
+    failure: InlineAddFailure,
+    error: unknown,
+  ): void {
+    console.error('[abyss-tasks] Could not finish the inline add', error);
+    new Notice(failure.notice);
+    if (!this.canRetryInlineAdd_abyssPrivate(session, failure)) {
+      this.finishInlineAdd_abyssPrivate(session);
+      return;
+    }
+    session.phase = 'editing';
+    if (session.rendersAtCommit !== this.renderCount_abyssPrivate) this.render_abyssPrivate();
+  }
+
+  /**
+   * A retry is safe only while the session is still the panel's committing record, its input is
+   * connected and focused, and its section says the create left nothing behind. Otherwise a retry
+   * would repeat a kept create, or the blur check of an input that the user left or a render
+   * dropped would create on its own.
+   */
+  private canRetryInlineAdd_abyssPrivate(
+    session: InlineAddSession,
+    failure: InlineAddFailure,
+  ): boolean {
+    const { input } = session;
+    return (
+      this.inlineAdd_abyssPrivate === session &&
+      session.phase === 'committing' &&
+      input.isConnected &&
+      input.ownerDocument.activeElement === input &&
+      failure.retryable
+    );
+  }
+
+  /**
+   * Ends the session and releases its input. A session that already ended leaves the panel alone:
+   * destroy() ends every live session, and a render that could not place a focused input ends
+   * that one.
+   */
+  private finishInlineAdd_abyssPrivate(session: InlineAddSession): void {
+    if (session.phase === 'ended') return;
+    this.closeInlineAdd_abyssPrivate(session);
+    this.releaseInlineAdd_abyssPrivate(session);
+  }
+
+  /**
+   * An Escape while a create is pending. The create cannot be withdrawn, so only the input goes:
+   * the session stays committing and live until its create settles, which ends it and re-renders.
+   */
+  private dismissInlineAdd_abyssPrivate(session: InlineAddSession): void {
+    if (this.inlineAdd_abyssPrivate === session) this.inlineAdd_abyssPrivate = undefined;
+    this.releaseInlineAdd_abyssPrivate(session);
+  }
+
+  /** Focus the input holds moves to the panel, then the re-render removes the input. */
+  private releaseInlineAdd_abyssPrivate(session: InlineAddSession): void {
+    const { input } = session;
+    if (input.ownerDocument.activeElement === input && this.el_abyssPrivate.isConnected)
+      this.el_abyssPrivate.focus({ preventScroll: true });
+    this.render_abyssPrivate();
+  }
+
+  /**
+   * Ends the session and drops it from the live set without touching the DOM; a pending blur check
+   * or create then leaves the panel alone. The record clears only while it is still this session.
+   */
+  private closeInlineAdd_abyssPrivate(session: InlineAddSession): void {
+    session.phase = 'ended';
+    this.inlineAddSessions_abyssPrivate.delete(session);
+    if (this.inlineAdd_abyssPrivate === session) this.inlineAdd_abyssPrivate = undefined;
+  }
+
+  private holdInlineAdd_abyssPrivate(): InlineAddHold | undefined {
+    const session = this.inlineAdd_abyssPrivate;
+    if (session === undefined) return undefined;
+    const { input } = session;
+    return {
+      session,
+      hadFocus: input.ownerDocument.activeElement === input,
+      selectionStart: input.selectionStart,
+      selectionEnd: input.selectionEnd,
+      selectionDirection: input.selectionDirection,
+    };
+  }
+
+  private placeInlineAdd_abyssPrivate(key: SectionKey, body: HTMLElement): void {
+    const session = this.inlineAdd_abyssPrivate;
+    if (session?.key === key) body.insertBefore(session.input, body.firstChild);
+  }
+
+  /**
+   * A rebuilt panel gives the held input back its focus and caret. When the rebuilt panel has no
+   * place for it, a focused session ends without a commit; a blurred one keeps its blur commit.
+   */
+  private settleInlineAdd_abyssPrivate(hold: InlineAddHold | undefined): void {
+    if (hold === undefined || this.inlineAdd_abyssPrivate !== hold.session) return;
+    const { input } = hold.session;
+    if (!input.isConnected) {
+      if (hold.hadFocus) this.closeInlineAdd_abyssPrivate(hold.session);
+      return;
+    }
+    if (!hold.hadFocus || input.ownerDocument.activeElement === input) return;
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(
+      hold.selectionStart,
+      hold.selectionEnd,
+      hold.selectionDirection ?? undefined,
+    );
   }
 
   private showProjectMenu_abyssPrivate(
@@ -931,11 +1180,7 @@ export class LeftPanel {
       return true;
     } catch (error) {
       console.error(`[abyss-tasks] Could not ${description}`, error);
-      new Notice(
-        rolledBack()
-          ? `Could not ${description}. Your changes were rolled back.`
-          : `Could not save an earlier ${description}. Newer changes were kept.`,
-      );
+      new Notice(tagSettingsFailureNotice(description, rolledBack()));
       return false;
     }
   }

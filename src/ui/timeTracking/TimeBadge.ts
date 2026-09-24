@@ -50,6 +50,8 @@ export interface TimeBadgeHandle {
   update(): void;
   /** Dismisses the sessions popover, for an owner tearing its surfaces down. Idempotent. */
   closePopover(): void;
+  /** The badge's buttons, so an owner can return keyboard focus to them; undefined before the first render. */
+  controls(): Pick<BadgeElements, 'body' | 'toggle'> | undefined;
   destroy(): void;
 }
 
@@ -281,6 +283,9 @@ export function mountTimeBadge(options: TimeBadgeOptions): TimeBadgeHandle {
     },
     closePopover(): void {
       session.popover?.close(false);
+    },
+    controls(): Pick<BadgeElements, 'body' | 'toggle'> | undefined {
+      return session.elements;
     },
     destroy(): void {
       if (session.destroyed) return;

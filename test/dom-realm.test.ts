@@ -21,4 +21,24 @@ describe('isRealmHTMLElement', () => {
     expect(isRealmHTMLElement(foreign)).toBe(true);
     iframe.remove();
   });
+
+  it('accepts a plugin element that a popout document holds', () => {
+    const iframe = document.body.createEl('iframe');
+    try {
+      const popoutDocument = iframe.contentDocument;
+      const popoutWindow = iframe.contentWindow as (Window & typeof window) | null;
+      if (popoutDocument == null || popoutWindow == null) throw new Error('missing iframe realm');
+      // `createDiv` builds through the main document; the append moves the element, as in Obsidian.
+      const plugin = document.body.createDiv();
+      popoutDocument.body.append(plugin);
+
+      expect(plugin.ownerDocument).toBe(popoutDocument);
+      expect(plugin).toBeInstanceOf(HTMLElement);
+      expect(plugin).not.toBeInstanceOf(popoutWindow.HTMLElement);
+      // A helper that accepts only the owner document's realm rejects the plugin's own element.
+      expect(isRealmHTMLElement(plugin)).toBe(true);
+    } finally {
+      iframe.remove();
+    }
+  });
 });

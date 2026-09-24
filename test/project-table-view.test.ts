@@ -30,6 +30,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import {
   createAppWithFiles,
+  dispatchImeKey,
   expectDefined,
   flushMicrotasks,
   freshContainer,
@@ -3202,6 +3203,32 @@ describe('ProjectsTableView', () => {
     expect(saveSettings).toHaveBeenCalledOnce();
   });
 
+  it.each(['composing', 'legacy'] as const)(
+    'keeps a header rename open on IME Enter and Escape (%s)',
+    async (ime) => {
+      const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+      const { host, config, saveSettings } = mount([project({})]);
+      const header = expectDefined(
+        host.querySelector<HTMLElement>('.abyss-project-table-header-cell[data-column-id="end"]'),
+      );
+      header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      activateMenuItem(lastShownMenu(show), 'Rename column');
+      const input = expectDefined(
+        header.querySelector<HTMLInputElement>('.abyss-project-column-rename'),
+      );
+      input.value = 'かな';
+
+      const keys = ['Enter', 'Escape'].map((key) => dispatchImeKey(input, key, ime));
+      await flushMicrotasks();
+
+      // Guarding only Enter still lets an IME Escape cancel the rename and drop the typed label.
+      expect(keys.map((event) => event.defaultPrevented)).toEqual([false, false]);
+      expect(input.isConnected).toBe(true);
+      expect(config.projects.table.columns.find(({ id }) => id === 'end')?.label).toBeUndefined();
+      expect(saveSettings).not.toHaveBeenCalled();
+    },
+  );
+
   it('returns focus to the selected table cell when the column menu closes', () => {
     const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
     const { host } = mount([project({})]);
@@ -4398,6 +4425,8 @@ describe('ProjectsTableView', () => {
   });
 
   it('keeps creation failure feedback inside the absolute composer', async () => {
+    const noticeSpy = spyOnNotices();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     const createProject = vi.fn().mockRejectedValue(
       new ProjectCreationError('status failed', {
         createdPath: 'Projects/Fresh project.md',
@@ -4417,6 +4446,11 @@ describe('ProjectsTableView', () => {
 
     expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
     expect(host.querySelector('.abyss-project-creation-error')?.textContent).toBe('disk full');
+    // The overview's old "Could not create project: {cause}" copy fails this.
+    expect(noticeSpy).toHaveBeenCalledOnce();
+    expect(noticeSpy.mock.calls[0]?.[0]).toBe(
+      'Created Projects/Fresh project.md, but could not set its status. disk full',
+    );
   });
 
   it('opens a typed editor, saves with the captured value, and rerenders after commit', async () => {

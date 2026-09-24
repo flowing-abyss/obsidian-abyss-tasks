@@ -255,6 +255,56 @@ describe('PanelView dependency command convergence', () => {
   );
 });
 
+describe('PanelView inspector focus continuity', () => {
+  it('returns focus to the rebuilt priority chip after the sidebar applies the index change', async () => {
+    const app = await createAppWithFiles({ 'tasks.md': '\n- [ ] Current\n' });
+    const application = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
+    await application.index.initialize();
+    const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+    const view = new PanelView(
+      leaf,
+      DEFAULT_SETTINGS,
+      makeTagManager(app),
+      application.index,
+      application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+      application.statusRegistry,
+    );
+    await view.onOpen();
+    activeDocument.body.appendChild(view.containerEl);
+    try {
+      const internals = view as unknown as { state_abyssPrivate: AppState };
+      internals.state_abyssPrivate.set('taskStack', [expectDefined(application.index.list()[0])]);
+      const chip = expectDefined(
+        view.contentEl.querySelector<HTMLButtonElement>('.abyss-right .abyss-priority-chip'),
+      );
+
+      chip.focus();
+      chip.click();
+      const option = expectDefined(
+        view.contentEl.querySelector<HTMLButtonElement>(
+          '.abyss-right .abyss-priority-option[data-priority="A"]',
+        ),
+      );
+      option.focus();
+      option.click();
+      await flushMicrotasks(20);
+
+      const file = app.vault.getAbstractFileByPath('tasks.md');
+      if (!(file instanceof TFile)) throw new Error('Missing fixture');
+      expect(await app.vault.read(file)).toBe('\n- [ ] Current 🔺\n');
+      const rebuilt = expectDefined(
+        view.contentEl.querySelector<HTMLButtonElement>('.abyss-right .abyss-priority-chip'),
+      );
+      expect(rebuilt).not.toBe(chip);
+      expect(activeDocument.activeElement).toBe(rebuilt);
+    } finally {
+      await view.onClose();
+      view.containerEl.remove();
+      application.index.destroy();
+    }
+  });
+});
+
 type TaskApplication = ReturnType<typeof configuredTaskApplication>;
 
 describe('PanelView', () => {
@@ -528,6 +578,46 @@ describe('PanelView', () => {
       );
       expect(lists.closest('.abyss-center-header')).toBe(refreshedHeader);
       expect(details.closest('.abyss-center-header')).toBe(refreshedHeader);
+    });
+
+    it('lets one Escape cancel the compact inline add and a second close the pane', async () => {
+      activeDocument.body.appendChild(view.containerEl);
+      const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+      const left = expectDefined(layout.querySelector<HTMLElement>('.abyss-left'));
+      const lists = expectDefined(
+        layout.querySelector<HTMLButtonElement>('[aria-label="Show task lists"]'),
+      );
+      setGeometry(layout, rect(0, 0, 390, 480));
+      window.dispatchEvent(new Event('resize'));
+      lists.click();
+      expect(left.classList.contains('is-compact-open')).toBe(true);
+      expectDefined(
+        left.querySelector<HTMLElement>('.abyss-left-section--tags .abyss-left-add'),
+      ).click();
+      await flushMicrotasks();
+      const input = expectDefined(left.querySelector<HTMLInputElement>('.abyss-left-add-input'));
+      expect(activeDocument.activeElement).toBe(input);
+
+      const first = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(first);
+
+      expect(first.defaultPrevented).toBe(true);
+      expect(left.classList.contains('is-compact-open')).toBe(true);
+      expect(activeDocument.activeElement).toBe(left);
+
+      const second = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      left.dispatchEvent(second);
+
+      expect(second.defaultPrevented).toBe(true);
+      expect(left.classList.contains('is-compact-open')).toBe(false);
     });
 
     it.each(['resolving', 'open'] as const)(

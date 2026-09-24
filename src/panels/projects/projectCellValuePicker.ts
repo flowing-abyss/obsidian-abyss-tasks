@@ -1,4 +1,5 @@
 import { Component, setIcon, type App } from 'obsidian';
+import { isImeOwnedEvent } from '../../ui/ime';
 import type { ProjectPropertySuggestion } from '../../ui/ProjectPropertySuggest';
 import { renderProjectPropertySuggestion } from '../../ui/ProjectPropertySuggest';
 import {
@@ -80,10 +81,6 @@ function genericSuggestion(
     ...(presentation.detail === undefined ? {} : { detail: presentation.detail }),
     ...(appearance === undefined ? {} : { appearance }),
   };
-}
-
-function isCompositionKey(event: KeyboardEvent): boolean {
-  return event.isComposing || Reflect.get(event, 'keyCode') === 229;
 }
 
 class ProjectCellValuePicker implements ProjectCellValuePickerControl {
@@ -474,7 +471,7 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
   }
 
   private readonly onKeyDown_abyssPrivate = (event: KeyboardEvent): void => {
-    if (isCompositionKey(event)) {
+    if (isImeOwnedEvent(event)) {
       if (event.key === 'Enter') event.stopPropagation();
       return;
     }

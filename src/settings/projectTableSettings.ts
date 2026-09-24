@@ -18,6 +18,7 @@ import {
 import { sameProjectPropertyName } from '../projects/projectPropertyNames';
 import { buildDefaultProjectTableSettings } from '../projects/projectTableSettings';
 import { buildDefaultProjectTimelineSettings } from '../projects/projectTimelineSettings';
+import { isImeOwnedEvent } from '../ui/ime';
 import { ProjectPropertySuggest } from '../ui/ProjectPropertySuggest';
 import { renderProjectPropertyOptions } from './projectPropertyOptions';
 import { renderSettingsCard } from './settingsCard';
@@ -580,7 +581,7 @@ function renderAddPropertyControl(context: AddPropertyContext): () => void {
     choose(input.value);
   });
   input.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return;
+    if (event.key !== 'Enter' || isImeOwnedEvent(event)) return;
     event.preventDefault();
     choose(input.value);
   });

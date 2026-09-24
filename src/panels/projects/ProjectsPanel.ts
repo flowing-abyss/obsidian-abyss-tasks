@@ -154,10 +154,10 @@ export class ProjectsPanel {
       this.projectStore_abyssPrivate.refresh();
       return request.recoveryPath;
     }
-    const file = await this.projectManager_abyssPrivate.create(request.name, {
-      ...(request.statusId === undefined ? {} : { statusId: request.statusId }),
-      openFile: false,
-    });
+    const file = await this.projectManager_abyssPrivate.create(
+      request.name,
+      request.statusId === undefined ? {} : { statusId: request.statusId },
+    );
     this.projectStore_abyssPrivate.refresh();
     return file?.path ?? null;
   }

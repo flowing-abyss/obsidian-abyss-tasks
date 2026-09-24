@@ -1,3 +1,5 @@
+import { isImeOwnedEvent } from '../ui/ime';
+
 export interface SettingsValueCommitRegistrar {
   register(control: HTMLInputElement, commit: () => boolean | void): void;
   synchronize(control: HTMLInputElement): void;
@@ -50,7 +52,7 @@ export class SettingsValueCommit implements SettingsValueCommitRegistrar, EventL
     if (event.type === 'keydown') {
       if (registration.control.type === 'color') return;
       const keyboardEvent = event as KeyboardEvent;
-      if (keyboardEvent.key !== 'Enter' || keyboardEvent.isComposing) return;
+      if (keyboardEvent.key !== 'Enter' || isImeOwnedEvent(keyboardEvent)) return;
       keyboardEvent.preventDefault();
     }
     this.commit_abyssPrivate(registration);
