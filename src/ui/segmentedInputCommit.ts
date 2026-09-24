@@ -4,17 +4,16 @@ import { isImeOwnedEvent } from './ime';
 export type SegmentedCommitReason = 'change' | 'enter' | 'departure' | 'flush';
 
 /**
- * The `min` of a task date field. A year before 1000 is never a task date: the year segment shows
- * one only for a stray digit or a year still being typed, so the field reports it invalid instead
- * of offering it to the commit.
+ * Whether a date field's value can become a task date: its year has exactly four digits and is at
+ * least 1000. A native date field holds `''` or a valid date string with a year of four or more
+ * digits. Chromium accepts years up to 275760, and while a year is typed its segment shows `0002`,
+ * `0020`, then `0202`. The rule lives here, not in the field's `min` or `max`: either attribute
+ * moves the year's arrow keys to the edge of the range, and a `max` makes a fifth digit shift the
+ * year.
  */
-export const DATE_INPUT_MIN = '1000-01-01';
-
-/**
- * The `max` of a task date field. A task date has a four-digit year, so the field reports a later
- * year invalid instead of offering it to the commit.
- */
-export const DATE_INPUT_MAX = '9999-12-31';
+export function isUsableDateInputValue(value: string): boolean {
+  return /^[1-9]\d{3}-\d{2}-\d{2}$/u.test(value);
+}
 
 export interface SegmentedInputCommitHandle {
   /** Commits a keyboard draft now; without one it does nothing. */

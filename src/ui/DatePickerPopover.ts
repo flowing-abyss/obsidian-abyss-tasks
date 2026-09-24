@@ -2,8 +2,7 @@ import { anchoredPlacement } from './anchoredPlacement';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 import {
   bindSegmentedInputCommit,
-  DATE_INPUT_MAX,
-  DATE_INPUT_MIN,
+  isUsableDateInputValue,
   type SegmentedCommitReason,
   type SegmentedInputCommitHandle,
 } from './segmentedInputCommit';
@@ -96,12 +95,14 @@ class DatePickerLifecycle {
   };
 
   private commitDraft_abyssPrivate(reason: SegmentedCommitReason): void {
-    if (!this.input_abyssPrivate.validity.valid) return;
+    const { validity, value } = this.input_abyssPrivate;
+    // Bad input and a year no task date can hold stay a draft; an empty field still picks.
+    if (validity.badInput || (value !== '' && !isUsableDateInputValue(value))) return;
     // Enter and a native change close as a change always has; leaving the picker keeps focus where
     // the user sent it.
     const returnFocus = reason === 'change' || reason === 'enter';
     try {
-      this.options_abyssPrivate.onPick(this.input_abyssPrivate.value, { returnFocus });
+      this.options_abyssPrivate.onPick(value, { returnFocus });
     } finally {
       this.cleanup_abyssPrivate(returnFocus);
     }
@@ -198,8 +199,6 @@ export function showDatePickerPopover(options: DatePickerPopoverOptions): () => 
   const input = row.createEl('input');
   input.className = 'abyss-date-input';
   input.type = 'date';
-  input.min = DATE_INPUT_MIN;
-  input.max = DATE_INPUT_MAX;
   input.setAttribute('aria-label', 'Set date');
   input.value = options.initialValue ?? '';
 

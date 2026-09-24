@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   bindSegmentedInputCommit,
+  isUsableDateInputValue,
   type SegmentedCommitReason,
 } from '../src/ui/segmentedInputCommit';
 import { dispatchImeKey, expectDefined } from './helpers';
@@ -250,5 +251,18 @@ describe('bindSegmentedInputCommit', () => {
     // Clearing only the draft would let the change commit; unhooking only would let flush commit.
     expect(enter.defaultPrevented).toBe(false);
     expect(commit).not.toHaveBeenCalled();
+  });
+});
+
+describe('isUsableDateInputValue', () => {
+  it('accepts only a four-digit year from 1000', () => {
+    const values = ['', '0999-12-31', '1000-01-01', '2026-09-24', '9999-12-31', '42026-09-24'];
+
+    // Any four digits would take a year still being typed; four or more would take a fifth digit.
+    expect(values.filter((value) => isUsableDateInputValue(value))).toEqual([
+      '1000-01-01',
+      '2026-09-24',
+      '9999-12-31',
+    ]);
   });
 });

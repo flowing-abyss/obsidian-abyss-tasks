@@ -71,11 +71,7 @@ import {
 } from '../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText } from '../ui/renderTaskText';
 import { runAsyncAction } from '../ui/runAsyncAction';
-import {
-  bindSegmentedInputCommit,
-  DATE_INPUT_MAX,
-  DATE_INPUT_MIN,
-} from '../ui/segmentedInputCommit';
+import { bindSegmentedInputCommit, isUsableDateInputValue } from '../ui/segmentedInputCommit';
 import { renderStatusMarker, setStatusMarkerCompletionBlocked } from '../ui/StatusMarker';
 import { showStatusMenuAt, type StatusMenuHandle } from '../ui/statusMenu';
 import { showTagDropdown } from '../ui/tagDropdown';
@@ -3329,18 +3325,13 @@ export class RightPanel {
     const inputRow = pop.createDiv({ cls: 'abyss-popover-input-row' });
     const input = inputRow.createEl('input', {
       cls: 'abyss-date-input',
-      attr: {
-        type: 'date',
-        min: DATE_INPUT_MIN,
-        max: DATE_INPUT_MAX,
-        value: datePopoverValue(task, field) ?? '',
-      },
+      attr: { type: 'date', value: datePopoverValue(task, field) ?? '' },
     });
     const draft = bindSegmentedInputCommit({
       input,
       boundary: pop,
       commit: () => {
-        if (input.value === '' || !input.validity.valid) return;
+        if (!isUsableDateInputValue(input.value)) return;
         runAsyncAction(this.updateDate_abyssPrivate(task, field, localDate(input.value)));
         this.removeAnchoredSurface_abyssPrivate(pop);
       },

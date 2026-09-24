@@ -455,8 +455,9 @@ describe('showDatePickerPopover', () => {
       expect(owner.querySelector('.abyss-date-picker-popover')).not.toBeNull();
       expect(onPick).not.toHaveBeenCalled();
       expect(input.value).toBe('42026-09-24');
-      expect(input.max).toBe('9999-12-31');
-      expect(input.validity.rangeOverflow).toBe(true);
+      // A field with `min` or `max` moves Chromium's arrow-key year to the edge of the range.
+      expect(input.hasAttribute('min')).toBe(false);
+      expect(input.hasAttribute('max')).toBe(false);
     } finally {
       close();
       owner.remove();
@@ -472,7 +473,7 @@ describe('showDatePickerPopover', () => {
     try {
       vi.runAllTimers();
       const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
-      // A stray fifth digit: with `max`, Chromium's year segment keeps the last four, `0266`.
+      // A year still being typed: after `2 6 6` the year segment shows `0266`.
       input.dispatchEvent(
         new KeyboardEvent('keydown', { key: '6', bubbles: true, cancelable: true }),
       );
@@ -485,12 +486,45 @@ describe('showDatePickerPopover', () => {
         new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
       );
 
-      // A field without `min` lets Enter pick the shifted year and close the picker.
+      // A pick that takes any four-digit year picks `0266-09-24` and closes the picker.
       expect(onPick).not.toHaveBeenCalled();
       expect(owner.querySelector('.abyss-date-picker-popover')).not.toBeNull();
       expect(input.value).toBe('0266-09-24');
-      expect(input.min).toBe('1000-01-01');
-      expect(input.validity.rangeUnderflow).toBe(true);
+    } finally {
+      close();
+      owner.remove();
+    }
+  });
+
+  it('still picks a date emptied by the keyboard on Enter', () => {
+    vi.useFakeTimers();
+    const { anchor, boundary, owner } = host();
+    const onPick = vi.fn();
+    const close = showDatePickerPopover({
+      owner,
+      anchor,
+      boundary,
+      initialValue: '2026-09-24',
+      onPick,
+    });
+
+    try {
+      vi.runAllTimers();
+      const input = expectDefined(owner.querySelector<HTMLInputElement>('input[type="date"]'));
+      // Every segment cleared: the value is empty, without bad input.
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }),
+      );
+      input.value = '';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+
+      // A pick that refuses every value the predicate rejects keeps an emptied picker open.
+      expect(onPick.mock.calls).toEqual([['', { returnFocus: true }]]);
+      expect(owner.querySelector('.abyss-date-picker-popover')).toBeNull();
     } finally {
       close();
       owner.remove();

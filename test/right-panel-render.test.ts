@@ -1683,12 +1683,13 @@ describe('RightPanel popovers', () => {
     );
 
     input.dispatchEvent(new KeyboardEvent('keydown', { key: '2', bubbles: true }));
-    input.value = '0002-09-21';
+    // The day segment after its first digit: a usable date, which a change during a draft writes.
+    input.value = '2026-09-02';
     input.dispatchEvent(new Event('change', { bubbles: true }));
 
     expect(execute).not.toHaveBeenCalled();
     expect(el.querySelector('.abyss-date-popover')).not.toBeNull();
-    expect(input.value).toBe('0002-09-21');
+    expect(input.value).toBe('2026-09-02');
 
     input.value = '2026-09-21';
     const enter = new KeyboardEvent('keydown', {
@@ -1980,8 +1981,9 @@ describe('RightPanel popovers', () => {
       expect(execute).not.toHaveBeenCalled();
       expect(input.value).toBe('42026-09-24');
       expect(activeDocument.activeElement).toBe(input);
-      expect(input.max).toBe('9999-12-31');
-      expect(input.validity.rangeOverflow).toBe(true);
+      // A field with `min` or `max` moves Chromium's arrow-key year to the edge of the range.
+      expect(input.hasAttribute('min')).toBe(false);
+      expect(input.hasAttribute('max')).toBe(false);
     } finally {
       activeWindow.removeEventListener('error', uncaught);
       panel.destroy();
@@ -2015,7 +2017,7 @@ describe('RightPanel popovers', () => {
         el.querySelector<HTMLInputElement>('.abyss-date-popover .abyss-date-input'),
       );
       input.focus();
-      // A stray fifth digit: with `max`, Chromium's year segment keeps the last four, `0266`.
+      // A year still being typed: after `2 6 6` the year segment shows `0266`.
       input.dispatchEvent(
         new KeyboardEvent('keydown', { key: '6', bubbles: true, cancelable: true }),
       );
@@ -2029,14 +2031,12 @@ describe('RightPanel popovers', () => {
       );
       await flushMicrotasks();
 
-      // A field without `min` offers the shifted year to the commit, which writes it and closes.
+      // A commit that takes any four-digit year writes `0266-09-24` and closes the popover.
       expect(execute).not.toHaveBeenCalled();
       expect(el.querySelector('.abyss-date-popover')).not.toBeNull();
       expect(input.value).toBe('0266-09-24');
       expect(activeDocument.activeElement).toBe(input);
       expect(consoleError).not.toHaveBeenCalled();
-      expect(input.min).toBe('1000-01-01');
-      expect(input.validity.rangeUnderflow).toBe(true);
     } finally {
       panel.destroy();
       el.remove();
