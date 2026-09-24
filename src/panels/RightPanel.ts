@@ -1065,20 +1065,20 @@ export class RightPanel {
     if (isDirtyDraft(draft)) this.appendDetachedDraft_abyssPrivate(draft, origin);
   }
 
+  /** Reopens a captured repeat editor on the control that opened it, carrying its intent on. */
   private restoreRecurrenceDraft_abyssPrivate(
     draft: Extract<RightPanelDraftState, { readonly kind: 'recurrence-editor' }>,
     task: TaskLike,
     stack: readonly TaskLike[],
     origin?: RightPanelDraftBundle['origin'],
   ): HTMLElement | undefined {
-    const chip = this.planningControls_abyssPrivate.get('repeat');
-    if (chip === undefined) {
+    const intent = this.recurrenceIntent_abyssPrivate;
+    const anchor = this.planningControls_abyssPrivate.get(intent?.key ?? 'repeat');
+    if (anchor === undefined) {
       this.preserveDirtyDraft_abyssPrivate(draft, origin);
       return undefined;
     }
-    this.showRecurrencePopover_abyssPrivate(chip, task, stack, {
-      intent: this.recurrenceIntent_abyssPrivate,
-    });
+    this.showRecurrencePopover_abyssPrivate(anchor, task, stack, { intent });
     const editor = this.recurrenceDraftEditor_abyssPrivate;
     if (editor == null) return undefined;
     editor.handle.restoreDraftState(draft.editor);

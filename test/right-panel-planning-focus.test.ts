@@ -666,4 +666,55 @@ describe('inspector repeat editor focus continuity', () => {
     // An editor restored while focus was elsewhere would fall back to that element after its intent ended.
     expect(activeDocument.activeElement).toBe(activeDocument.body);
   });
+
+  it('returns focus to the rebuilt actions button on Escape after a rebuild restored the editor Edit repeat… opened', async () => {
+    const h = await hosted('- [ ] Current 📅 2026-09-23\n- [ ] Other\n');
+    const actions = control(h, '[aria-label="More actions"]');
+
+    activate(actions);
+    const item = menuItem(h, 'Edit repeat…');
+    item.focus();
+    key(item, 'Enter');
+    await flushMicrotasks();
+    activate(editorButton(h, 'Daily'));
+    const editor = control<HTMLElement>(h, '.abyss-recurrence-editor');
+    await h.app.vault.modify(h.file, '\n- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
+    await flushMicrotasks(40);
+    expect(editor.isConnected).toBe(false);
+    const daily = editorButton(h, 'Daily');
+    expect(activeDocument.activeElement).toBe(daily);
+    key(daily, 'Escape');
+
+    expect(h.el.querySelector('.abyss-recurrence-editor')).toBeNull();
+    // A restore anchored on the repeat chip would send Escape's focus to the chip.
+    expectRebuiltFocus(actions, control(h, '[aria-label="More actions"]'));
+  });
+
+  it('returns focus to the rebuilt actions button after a submit from inside an editor restored from Edit repeat…', async () => {
+    const h = await hosted('- [ ] Current 📅 2026-09-23\n- [ ] Other\n');
+    const actions = control(h, '[aria-label="More actions"]');
+
+    activate(actions);
+    const item = menuItem(h, 'Edit repeat…');
+    item.focus();
+    key(item, 'Enter');
+    await flushMicrotasks();
+    activate(editorButton(h, 'Daily'));
+    const editor = control<HTMLElement>(h, '.abyss-recurrence-editor');
+    await h.app.vault.modify(h.file, '\n- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
+    await flushMicrotasks(40);
+    expect(editor.isConnected).toBe(false);
+    expect(h.el.querySelector('.abyss-recurrence-editor')).not.toBeNull();
+    const interval = control<HTMLInputElement>(
+      h,
+      '.abyss-recurrence-editor [aria-label="Repeat interval"]',
+    );
+    interval.focus();
+    key(interval, 'Enter');
+    await flushMicrotasks();
+
+    expect(await h.read()).toBe('- [ ] Current 🔁 every day 📅 2026-09-23\n- [ ] Other edited\n');
+    // A restore anchored on the repeat chip maps a focus inside the editor to the chip.
+    expectRebuiltFocus(actions, control(h, '[aria-label="More actions"]'));
+  });
 });
