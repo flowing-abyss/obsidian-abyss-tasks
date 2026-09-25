@@ -77,6 +77,7 @@ interface PluginLike {
   saveViewState: () => Promise<void>;
   saveViewStateWithNotice: () => Promise<void>;
   refreshProjectTableSettings: () => void;
+  refreshProjectSettings: () => void;
   openPanel: () => Promise<void>;
 }
 
@@ -243,6 +244,22 @@ describe('TaskCalendarPlugin saveSettings', () => {
     expect(refreshProjectSettings).toHaveBeenCalledOnce();
   });
 
+  it('leaves open panels to the caller when a static save fails', async () => {
+    const plugin = makePlugin();
+    await plugin.loadSettings();
+    const refreshProjectSettings = vi.fn();
+    const view = Object.create(PanelView.prototype) as PanelView;
+    view.refreshProjectSettings = refreshProjectSettings;
+    plugin.app.workspace.getLeavesOfType = vi.fn(() => [{ view }]);
+    const error = new Error('disk full');
+    vi.spyOn(plugin, 'saveData').mockRejectedValue(error);
+    plugin.settings.taskPrefix = '#changed';
+
+    await expect(plugin.saveSettings()).rejects.toBe(error);
+
+    expect(refreshProjectSettings).not.toHaveBeenCalled();
+  });
+
   it('saves view state without advancing static revision or refreshing every project panel', async () => {
     const plugin = makePlugin();
     await plugin.loadSettings();
@@ -321,6 +338,23 @@ describe('TaskCalendarPlugin saveSettings', () => {
     expect(plugin.app.workspace.getLeavesOfType).toHaveBeenCalledWith(PANEL_VIEW_TYPE);
     expect(refreshProjectTableSettings).toHaveBeenCalledOnce();
     expect(refreshProjectSettings).not.toHaveBeenCalled();
+  });
+
+  it('refreshes project settings in every open panel on request', async () => {
+    const plugin = makePlugin();
+    await plugin.loadSettings();
+    const refreshProjectTableSettings = vi.fn();
+    const refreshProjectSettings = vi.fn();
+    const view = Object.create(PanelView.prototype) as PanelView;
+    view.refreshProjectTableSettings = refreshProjectTableSettings;
+    view.refreshProjectSettings = refreshProjectSettings;
+    plugin.app.workspace.getLeavesOfType = vi.fn(() => [{ view }]);
+
+    plugin.refreshProjectSettings();
+
+    expect(plugin.app.workspace.getLeavesOfType).toHaveBeenCalledWith(PANEL_VIEW_TYPE);
+    expect(refreshProjectSettings).toHaveBeenCalledOnce();
+    expect(refreshProjectTableSettings).not.toHaveBeenCalled();
   });
 });
 

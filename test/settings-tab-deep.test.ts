@@ -2,7 +2,8 @@ import type * as ObsidianModule from 'obsidian';
 import { App, Notice, Setting } from 'obsidian';
 import { describe, expect, it, vi, type Mock } from 'vitest';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
-import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { buildDefaultProjectsSettings, DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { addProjectPropertyColumn } from '../src/settings/projectTableSettings';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import { SHORTCUT_ACTION_IDS } from '../src/settings/shortcuts';
 import type { CalendarSettings } from '../src/settings/types';
@@ -44,6 +45,7 @@ interface StubPlugin {
   saveSettings: Mock<() => Promise<void>>;
   saveViewState: Mock<() => Promise<void>>;
   refreshProjectTableSettings: Mock<() => void>;
+  refreshProjectSettings: Mock<() => void>;
   renameProjectStatus: Mock<(id: string, name: string, expectedName: string) => Promise<void>>;
   rebuildTaskStatusSemantics: Mock<() => void>;
   tagManager?: TagManager;
@@ -155,6 +157,7 @@ function makeTab(
   const saveViewState =
     opts.saveViewState ?? vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
   const refreshProjectTableSettings = vi.fn<() => void>();
+  const refreshProjectSettings = vi.fn<() => void>();
   const renameProjectStatus = vi.fn<
     (id: string, name: string, expectedName: string) => Promise<void>
   >(async (id: string, name: string, expectedName: string): Promise<void> => {
@@ -169,6 +172,7 @@ function makeTab(
     saveSettings,
     saveViewState,
     refreshProjectTableSettings,
+    refreshProjectSettings,
     renameProjectStatus,
     rebuildTaskStatusSemantics: vi.fn<() => void>(),
   };
@@ -2396,6 +2400,57 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expect(plugin.saveViewState).toHaveBeenCalledOnce();
     expect(plugin.refreshProjectTableSettings).toHaveBeenCalledOnce();
     expect(Notice).toHaveBeenCalledOnce();
+  });
+
+  it('refreshes open panels once after a failed project property removal', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const projects = buildDefaultProjectsSettings();
+    addProjectPropertyColumn(projects, [], 'Novel');
+    const { tab, plugin } = makeTab(
+      { projects },
+      {
+        saveSettings: vi.fn<() => Promise<void>>().mockRejectedValue(new Error('disk unavailable')),
+      },
+    );
+    const projectsHeader = Array.from(
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
+    ).find((header) => header.textContent.includes('Projects'));
+    expectDefined(projectsHeader).click();
+
+    expectDefined(
+      tab.containerEl.querySelector<HTMLButtonElement>('[aria-label="Remove Novel property"]'),
+    ).click();
+    await flushMicrotasks();
+
+    expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    expect(plugin.saveViewState).not.toHaveBeenCalled();
+    expect(plugin.refreshProjectSettings).toHaveBeenCalledOnce();
+    expect(plugin.refreshProjectTableSettings).not.toHaveBeenCalled();
+    expect(Notice).toHaveBeenCalledOnce();
+    expect(
+      tab.containerEl.querySelector('[data-card-id="project-property:property:Novel"]'),
+    ).toBeNull();
+  });
+
+  it('leaves the open panel refresh to a successful project property save', async () => {
+    const projects = buildDefaultProjectsSettings();
+    addProjectPropertyColumn(projects, [], 'Novel');
+    const { tab, plugin } = makeTab({ projects });
+    const projectsHeader = Array.from(
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
+    ).find((header) => header.textContent.includes('Projects'));
+    expectDefined(projectsHeader).click();
+
+    expectDefined(
+      tab.containerEl.querySelector<HTMLButtonElement>('[aria-label="Remove Novel property"]'),
+    ).click();
+    await flushMicrotasks();
+
+    expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    expect(plugin.saveViewState).toHaveBeenCalledOnce();
+    expect(plugin.refreshProjectSettings).not.toHaveBeenCalled();
+    expect(plugin.refreshProjectTableSettings).toHaveBeenCalledOnce();
+    expect(Notice).not.toHaveBeenCalled();
   });
 
   it('keeps the project toolbar contained at constrained panel widths', () => {

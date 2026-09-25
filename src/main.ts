@@ -310,9 +310,7 @@ export default class TaskCalendarPlugin extends Plugin {
   async saveSettings(): Promise<void> {
     beginSettingsSave(this.settings);
     await this.settingsPersistence.saveSettings(this.settings);
-    for (const leaf of this.app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)) {
-      if (leaf.view instanceof PanelView) leaf.view.refreshProjectSettings();
-    }
+    this.refreshProjectSettings();
   }
 
   async saveTaskStorageSettings(draft: TaskStorageSettings): Promise<void> {
@@ -393,6 +391,13 @@ export default class TaskCalendarPlugin extends Plugin {
       console.error('[abyss-tasks] saved view state write failed', error);
       new Notice('Could not save view preferences. Your current session is unchanged.');
       throw error;
+    }
+  }
+
+  /** Brings every open panel's project settings in line with the settings in memory. */
+  refreshProjectSettings(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)) {
+      if (leaf.view instanceof PanelView) leaf.view.refreshProjectSettings();
     }
   }
 

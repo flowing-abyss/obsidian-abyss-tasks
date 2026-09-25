@@ -503,14 +503,16 @@ callbacks cannot recreate deleted definitions. Unknown marker versions preserve 
 disable schema editing with an update notice; malformed definition recovery remains intact.
 
 Schema Add and Remove save static definitions and the marker before view state. Static failure
-prevents the view write. A failed view cleanup leaves durable deletion authoritative and offers a
-retry against the current draft. After restart, stale references may remain because the scalar
-marker cannot distinguish deleted fields from unresolved legacy fields. Version-1 Settings cards
-come from configured definitions; active views filter through the configured catalog and derive
-safe grouping/sorting without erasing those references. Freeform Add can explicitly repair a name.
-A retained deletion draft retries cleanup; no two-file transaction or restart cleanup is implied.
-Rollback to an older binary preserves deletion after both saves, but may recapture from stale views
-after partial failure because old binaries ignore the marker.
+prevents the view write. A failed static save from Settings' project properties keeps the change in
+the session and still refreshes project settings in open panels. A failed view cleanup leaves
+durable deletion authoritative and offers a retry against the current draft. After restart, stale
+references may remain because the scalar marker cannot distinguish deleted fields from unresolved
+legacy fields. Version-1 Settings cards come from configured definitions; active views filter
+through the configured catalog and derive safe grouping/sorting without erasing those references.
+Freeform Add can explicitly repair a name. A retained deletion draft retries cleanup; no two-file
+transaction or restart cleanup is implied. Rollback to an older binary preserves deletion after both
+saves, but may recapture from stale views after partial failure because old binaries ignore the
+marker.
 
 Failed saves retain the current draft for Retry, including later user edits. Settings UI lifecycles
 preserve active drafts across rebuilds and dispose listeners.
