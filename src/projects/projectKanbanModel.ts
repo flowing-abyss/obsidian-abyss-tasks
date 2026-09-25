@@ -65,6 +65,67 @@ export function reorderProjectPaths(
   return unique;
 }
 
+function ranksPath(manualOrder: Readonly<Record<string, string[]>>, path: string): boolean {
+  for (const key in manualOrder) {
+    if (manualOrder[key]?.includes(path) === true) return true;
+  }
+  return false;
+}
+
+/**
+ * The manual order without `path`: drops a bucket it empties and keeps already-empty buckets.
+ * Undefined when no bucket ranks `path`.
+ */
+export function forgetProjectPath(
+  manualOrder: Readonly<Record<string, string[]>>,
+  path: string,
+): Record<string, string[]> | undefined {
+  if (!ranksPath(manualOrder, path)) return undefined;
+  const next: Record<string, string[]> = {};
+  for (const key in manualOrder) {
+    const bucket = manualOrder[key] ?? [];
+    if (!bucket.includes(path)) {
+      next[key] = bucket;
+      continue;
+    }
+    const kept = bucket.filter((candidate) => candidate !== path);
+    if (kept.length > 0) next[key] = kept;
+  }
+  return next;
+}
+
+/**
+ * The manual order with `newPath` at `oldPath`'s rank in every bucket and no stale `newPath`.
+ * Undefined when nothing changes.
+ */
+export function renameProjectPath(
+  manualOrder: Readonly<Record<string, string[]>>,
+  oldPath: string,
+  newPath: string,
+): Record<string, string[]> | undefined {
+  if (oldPath === newPath) return undefined;
+  if (!ranksPath(manualOrder, oldPath) && !ranksPath(manualOrder, newPath)) return undefined;
+  const next: Record<string, string[]> = {};
+  for (const key in manualOrder) {
+    const bucket = manualOrder[key] ?? [];
+    next[key] =
+      bucket.includes(oldPath) || bucket.includes(newPath)
+        ? renamedBucket(bucket, oldPath, newPath)
+        : bucket;
+  }
+  return next;
+}
+
+/** A path that exists at rename time is never its destination, so a bucket's `newPath` is stale. */
+function renamedBucket(bucket: readonly string[], oldPath: string, newPath: string): string[] {
+  const renamed: string[] = [];
+  for (const path of bucket) {
+    if (path === oldPath) renamed.push(newPath);
+    else if (path !== newPath) renamed.push(path);
+  }
+  return renamed;
+}
+
 function tableSettings(settings: ProjectKanbanSettings): ProjectTableSettings {
   return {
     columns: settings.fields.map((field) => ({ ...field })),

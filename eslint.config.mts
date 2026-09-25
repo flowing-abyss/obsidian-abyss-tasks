@@ -409,6 +409,7 @@ export default defineConfig(
       'src/panels/calendar/visibleCalendarDates.ts',
       'src/panels/calendar/calendarContent.ts',
       'src/views/panelTitle.ts',
+      'src/settings/viewStatePaths.ts',
     ],
     rules: { 'project-policy/ambient': ['error', 'pure'] },
   },

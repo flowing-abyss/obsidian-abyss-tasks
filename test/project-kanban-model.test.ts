@@ -3,6 +3,8 @@ import type { ProjectField, ProjectTableSettings } from '../src/projects/project
 import {
   applyProjectPathOrder,
   buildProjectKanbanModel,
+  forgetProjectPath,
+  renameProjectPath,
   reorderProjectPaths,
 } from '../src/projects/projectKanbanModel';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
@@ -256,5 +258,58 @@ describe('project path ordering', () => {
 
     expect(ordered.map(({ name }) => name)).toEqual(['Saved A', 'Saved B', 'New B', 'New A']);
     expect(projects.map(({ name }) => name)).toEqual(['New B', 'Saved B', 'New A', 'Saved A']);
+  });
+
+  it('forgets a path in every bucket, drops emptied buckets, and keeps already-empty ones', () => {
+    const planned = ['Projects/B.md'];
+    const empty: string[] = [];
+    const order = {
+      'id:active': ['Projects/A.md', 'Projects/B.md'],
+      'id:done': ['Projects/A.md'],
+      'id:planned': planned,
+      'id:empty': empty,
+    };
+    const before = structuredClone(order);
+
+    const next = forgetProjectPath(order, 'Projects/A.md');
+
+    expect(next).toEqual({
+      'id:active': ['Projects/B.md'],
+      'id:planned': ['Projects/B.md'],
+      'id:empty': [],
+    });
+    expect(next?.['id:planned']).toBe(planned);
+    expect(next?.['id:empty']).toBe(empty);
+    expect(order).toEqual(before);
+    expect(forgetProjectPath(order, 'Projects/Unranked.md')).toBeUndefined();
+  });
+
+  it('renames a path at its rank in every bucket and drops a stale destination everywhere', () => {
+    const untouched = ['Projects/C.md'];
+    const order = {
+      'id:active': ['Projects/A.md', 'Projects/New.md', 'Projects/B.md'],
+      'id:done': ['Projects/B.md', 'Projects/A.md'],
+      'id:planned': ['Projects/New.md', 'Projects/C.md'],
+      'id:other': untouched,
+    };
+    const before = structuredClone(order);
+
+    const next = renameProjectPath(order, 'Projects/A.md', 'Projects/New.md');
+
+    expect(next).toEqual({
+      'id:active': ['Projects/New.md', 'Projects/B.md'],
+      'id:done': ['Projects/B.md', 'Projects/New.md'],
+      'id:planned': ['Projects/C.md'],
+      'id:other': ['Projects/C.md'],
+    });
+    expect(next?.['id:other']).toBe(untouched);
+    expect(order).toEqual(before);
+    expect(
+      renameProjectPath({ 'id:x': ['Projects/New.md'] }, 'Projects/A.md', 'Projects/New.md'),
+    ).toEqual({ 'id:x': [] });
+    expect(renameProjectPath(order, 'Projects/A.md', 'Projects/A.md')).toBeUndefined();
+    expect(
+      renameProjectPath({ 'id:x': ['Projects/C.md'] }, 'Projects/A.md', 'Projects/New.md'),
+    ).toBeUndefined();
   });
 });
