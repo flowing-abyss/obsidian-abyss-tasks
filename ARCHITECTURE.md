@@ -496,7 +496,9 @@ uses temporary defaults. Missing or unavailable state derives fresh Table column
 configured inventory; recognized views retain their own normalized order and visibility without
 appending schema-only fields. Static saves preserve unmarked legacy view fields until recovery is
 verified. Unknown static/nested view values survive; detached write snapshots queue in order,
-unchanged writes deduplicate, and rejection does not stop later operations.
+unchanged writes deduplicate, and rejection does not stop later operations. A list state moved to a
+renamed note's key keeps only its recognized fields, and a stale raw entry at the new key lends it
+its unknown fields.
 
 Static and view-state saves use separate callbacks. Static durability advances the rollback revision
 and refreshes project settings; view-state writes do neither and narrowly refresh the existing view
@@ -527,7 +529,8 @@ transaction or restart cleanup is implied. Rollback to an older binary preserves
 saves, but may recapture from stale views after partial failure because old binaries ignore the
 marker.
 
-Failed saves retain the current draft for Retry, including later user edits. Settings UI lifecycles
+A failed save that can succeed later keeps the current draft for Retry, including later user
+edits; a suspended view-state write is reported once, without Retry. Settings UI lifecycles
 preserve active drafts across rebuilds and dispose listeners.
 Legacy project status migration preserves recoverable conflicts and requires explicit source
 selection or discard; loading never rewrites vault notes. Any persisted-contract change needs a
