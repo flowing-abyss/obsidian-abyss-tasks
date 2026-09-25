@@ -49,6 +49,19 @@ describe('evaluateQuery', () => {
     // A list that appears twice without being nested in itself is read in full each time.
     expect(evaluateQuery('tags=x,y,x,y', 'A.md', [], fm({ tags: [shared, shared] }))).toBe(true);
   });
+  it('reads a flat list of primitives as join() does, and a list holding a list or an object item by item', () => {
+    const flat = [null, undefined, 'a', 1, true, 2n];
+
+    expect(evaluateQuery('tags=,,a,1,true,2', 'A.md', [], fm({ tags: flat }))).toBe(true);
+    expect(evaluateQuery('tags=a,b,c', 'A.md', [], fm({ tags: ['a', ['b', 'c']] }))).toBe(true);
+    expect(evaluateQuery('tags=a,[object Object]', 'A.md', [], fm({ tags: ['a', { b: 1 }] }))).toBe(
+      true,
+    );
+    // join() cannot read an object whose toString is not a function; the helper still reads it.
+    expect(
+      evaluateQuery('tags=a,[object Object]', 'A.md', [], fm({ tags: ['a', { toString: 'x' }] })),
+    ).toBe(true);
+  });
   it('reads YAML binary bytes as String() does', () => {
     const bytes = new Uint8Array([104, 105]);
 

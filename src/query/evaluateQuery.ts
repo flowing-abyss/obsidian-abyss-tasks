@@ -326,8 +326,23 @@ function objectEqualityText(value: unknown): string {
 function listEqualityText(list: readonly unknown[], joining: readonly unknown[]): string {
   // Like Array.prototype.join, a list inside itself reads as empty there.
   if (joining.includes(list)) return '';
+  if (list.every(isJoinablePrimitive)) return list.join(',');
   const path = [...joining, list];
   return list.map((item) => frontmatterEqualityText(item, path)).join(',');
+}
+
+/** A list item that `join(',')` reads as `frontmatterEqualityText` reads it. */
+function isJoinablePrimitive(
+  item: unknown,
+): item is null | undefined | string | number | boolean | bigint {
+  return (
+    item === null ||
+    item === undefined ||
+    typeof item === 'string' ||
+    typeof item === 'number' ||
+    typeof item === 'boolean' ||
+    typeof item === 'bigint'
+  );
 }
 
 function evaluateAtom(
