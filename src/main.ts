@@ -392,7 +392,10 @@ export default class TaskCalendarPlugin extends Plugin {
     await this.settingsPersistence.saveViewState(this.settings);
   }
 
-  /** The panel's route: one log and one Notice per failed write, and nothing while writes are suspended. */
+  /**
+   * The panel's route. A failed write gets this route's log and one Notice, then rejects, so the
+   * caller may log its own context; a write refused while writes are suspended resolves silently.
+   */
   private async saveViewStateWithNotice(): Promise<void> {
     try {
       await this.saveViewState();
