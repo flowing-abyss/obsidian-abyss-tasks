@@ -1666,3 +1666,42 @@ describe('TaskMarkdownCodec', () => {
     expect(parse('- [?] Unknown but compatible').statusSymbol).toBe('?');
   });
 });
+
+describe('task line tag and link boundaries', () => {
+  const modelOf = (line: string) => expectDefined(parseTaskLineSourceModel(line));
+  const mathBoldA = String.fromCodePoint(0x1d400);
+  const partyPopper = String.fromCodePoint(0x1f389);
+
+  it.each([
+    ['skips tags attached to a word', '- [ ] Pay x#y and é#x #ok', ['#ok']],
+    ['skips a tag after an astral letter', `- [ ] ${mathBoldA}#x #ok`, ['#ok']],
+    ['skips a tag after an emoji', `- [ ] Pay x#y and ${partyPopper}#party #ok/sub`, ['#ok/sub']],
+    ['reads a tag inside a wiki embed', '- [ ] ![[Note #tag]]', ['#tag']],
+    ['reads a tag inside a Markdown image', '- [ ] ![alt #tag](img.png)', ['#tag']],
+    ['hides a tag in a wiki link right after an image opener', '- [ ] ![[[Note #tag]]', []],
+    ['hides a tag in a Markdown link right after an image opener', '- [ ] ![[a #t](b)', []],
+  ])('%s', (_case, line, tags) => {
+    expect(modelOf(line).tags).toEqual(tags);
+  });
+
+  it('does not make an image opener a link range', () => {
+    expect(modelOf('- [ ] ![alt #tag](img.png)').carriers).toEqual([
+      { kind: 'tag', from: 12, to: 16 },
+    ]);
+  });
+
+  it('stays linear on many unclosed images', () => {
+    const small = `- [ ] ${'![a](b '.repeat(1_000)}`;
+    const large = `- [ ] ${'![a](b '.repeat(4_000)}`;
+
+    // Four times the openers cost about 4x; a scan from every image opener costs 16x. The
+    // threshold is their geometric mean, and interleaved pairs keep a CPU speed change to the
+    // pair it splits.
+    expect(
+      medianInterleavedRatio({
+        small: () => parseTaskLineSourceModel(small),
+        large: () => parseTaskLineSourceModel(large),
+      }),
+    ).toBeLessThan(8);
+  });
+});

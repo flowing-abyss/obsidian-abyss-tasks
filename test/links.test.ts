@@ -226,3 +226,45 @@ describe('pairAnchorsToTokens', () => {
     expect(pairAnchorsToTokens(anchors, tokens)).toEqual([0]);
   });
 });
+
+describe('image and embed openers', () => {
+  it('skips a wiki embed and keeps the link after it', () => {
+    expect(parseLinks('![[img.png]] [[Note|Alias]]')).toEqual([
+      { raw: '[[Note|Alias]]', type: 'wiki', target: 'Note', display: 'Alias', index: 13 },
+    ]);
+  });
+
+  it('skips a Markdown image and keeps the link after it', () => {
+    expect(parseLinks('![alt](a.png) [site](https://x.y)')).toEqual([
+      { raw: '[site](https://x.y)', type: 'md', target: 'https://x.y', display: 'site', index: 14 },
+    ]);
+  });
+
+  it('skips only the image opener before a wiki link', () => {
+    expect(parseLinks('![[[a]]')).toEqual([
+      { raw: '[[a]]', type: 'wiki', target: 'a', display: 'a', index: 2 },
+    ]);
+  });
+
+  it('skips only the image opener before a Markdown link', () => {
+    expect(parseLinks('![[a](b)')).toEqual([
+      { raw: '[a](b)', type: 'md', target: 'b', display: 'a', index: 2 },
+    ]);
+  });
+
+  it('counts links but not embeds or images', () => {
+    expect(countLinksIn(['![[a]] [[b]] ![c](d) [e](f)'])).toBe(2);
+  });
+
+  it('stays linear on many unclosed images', () => {
+    const small = '![a](b '.repeat(1_000);
+    const large = '![a](b '.repeat(4_000);
+
+    // Four times the openers cost about 4x; a scan from every image opener costs 16x. The
+    // threshold is their geometric mean, and interleaved pairs keep a CPU speed change to the
+    // pair it splits.
+    expect(
+      medianInterleavedRatio({ small: () => parseLinks(small), large: () => parseLinks(large) }),
+    ).toBeLessThan(8);
+  });
+});
