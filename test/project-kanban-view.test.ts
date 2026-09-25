@@ -2487,7 +2487,7 @@ describe('project Kanban overview', () => {
     },
   );
 
-  it('keeps committed manual order and offers Retry when its settings save fails', async () => {
+  it('keeps committed manual order and leaves a failed settings save to the injected route', async () => {
     const planned = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
     const active = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
     const source = project({
@@ -2500,18 +2500,18 @@ describe('project Kanban overview', () => {
       frontmatter: { status: active.name, start: '2026-09-01', end: '2026-09-30' },
       statusId: active.id,
     });
-    const saveViewState = vi.fn().mockRejectedValue(new Error('disk full'));
+    const error = new Error('disk full');
+    const saveViewState = vi.fn().mockRejectedValue(error);
     const { host, settings, applyEdits } = mountView([source, targetProject], { saveViewState });
     settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
     settings.projects.kanban.sortBy = { field: 'none', dir: 'asc' };
-    let noticeContent: unknown;
-    vi.spyOn(
-      Notice.prototype as unknown as { constructor__(message: unknown): void },
-      'constructor__',
-    ).mockImplementation((message) => {
-      noticeContent = message;
-    });
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const notices = vi
+      .spyOn(
+        Notice.prototype as unknown as { constructor__(message: unknown): void },
+        'constructor__',
+      )
+      .mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     clickView(host, 'Kanban');
     const card = expectDefined(
       host.querySelector<HTMLElement>(
@@ -2533,9 +2533,8 @@ describe('project Kanban overview', () => {
       'Projects/B.md',
       'Projects/A.md',
     ]);
-    const notice = noticeContent as DocumentFragment;
-    expect(notice.textContent).toContain('Could not save project view settings: disk full');
-    expect(notice.querySelector('button')?.textContent).toBe('Retry');
+    expect(notices).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith('[abyss-tasks] Could not save project view settings', error);
   });
 
   it('opens an out-of-flow actual-card preview for a compact column and cleans it on Escape', () => {

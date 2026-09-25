@@ -490,7 +490,10 @@ Static and view-state saves use separate callbacks. Static durability advances t
 and refreshes project settings; view-state writes do neither and narrowly refresh the existing view
 controller when needed. Task-status changes rebuild the catalog, registry, and index interpretation
 together. ProjectStore rescans only for membership/status inputs; presentation changes reuse its
-snapshots and update retained views.
+snapshots and update retained views. Panel view-state saves raise one Notice through the plugin's
+panel route. `saveViewState()` itself is a plain write, and Settings reports its failure through the
+draft Notice. After a suspended load, rejected panel view writes raise nothing further, and a
+Settings change reports the suspension once, without a Retry.
 
 Initial custom-property type capture fills only supported missing static definitions, before view
 registration, with bounded metadata/layout follow-ups. Available discovery, including an empty

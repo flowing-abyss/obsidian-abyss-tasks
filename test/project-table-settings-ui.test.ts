@@ -17,6 +17,7 @@ import {
   dispatchImeKey,
   editSettingControl,
   expectDefined,
+  flushMicrotasks,
   loadPluginStyles,
   methodOf,
 } from './helpers';
@@ -505,6 +506,69 @@ describe('renderProjectTableSettings', () => {
 
     expect(projects.propertyDefinitions['property:Effort']).toEqual({ type: 'number' });
     expect(saveStatic).toHaveBeenCalledOnce();
+  });
+
+  it('refreshes after a failed property removal and a failed property add', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const projects = buildDefaultProjectsSettings();
+    addProjectPropertyColumn(projects, [], 'Novel');
+    const container = document.body.createDiv();
+    const refresh = vi.fn();
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog([
+        { name: 'Novel', type: 'text' },
+        { name: 'Budget', type: 'number' },
+      ]),
+      saveStatic: vi.fn().mockResolvedValue(undefined),
+      saveViewState: vi.fn().mockRejectedValue(new Error('state unavailable')),
+      refresh,
+    });
+
+    expectDefined(
+      container.querySelector<HTMLButtonElement>('[aria-label="Remove Novel property"]'),
+    ).click();
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledOnce();
+
+    refresh.mockClear();
+    expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-project-column-add-input'),
+    ).value = 'Budget';
+    expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-column-add')).click();
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledExactlyOnceWith('project-property:property:Budget');
+  });
+
+  it('refreshes after a failed type change saved through the shared persist', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const projects = buildDefaultProjectsSettings();
+    projects.table.columns.push({ id: 'property:Effort', visible: true });
+    const container = document.body.createDiv();
+    const refresh = vi.fn();
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog([{ name: 'Effort', type: null }]),
+      saveStatic: vi.fn().mockRejectedValue(new Error('static unavailable')),
+      saveViewState: vi.fn().mockResolvedValue(undefined),
+      renderStatusSettings: () => {},
+      refresh,
+    });
+    expandProperty(container, 'property:Effort');
+    refresh.mockClear();
+    const type = expectDefined(
+      container.querySelector<HTMLSelectElement>('[aria-label="Type for Effort"]'),
+    );
+
+    type.value = 'number';
+    type.dispatchEvent(new Event('change', { bubbles: true }));
+    await flushMicrotasks();
+
+    expect(refresh).toHaveBeenCalledExactlyOnceWith(undefined);
   });
 
   it('retains sequential predefined-value edits without an enable control', async () => {

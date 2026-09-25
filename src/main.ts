@@ -10,6 +10,7 @@ import { ProjectManager } from './projects/ProjectManager';
 import { evaluateQuery } from './query/evaluateQuery';
 import { DEFAULT_SETTINGS } from './settings/defaults';
 import {
+  isViewStateWritesSuspended,
   SettingsPersistenceCoordinator,
   type SettingsPersistencePort,
 } from './settings/persistence';
@@ -187,7 +188,7 @@ export default class TaskCalendarPlugin extends Plugin {
           this.statusRegistry,
           () => this.saveSettings(),
           commentTimeContext,
-          () => this.saveViewState(),
+          () => this.saveViewStateWithNotice(),
           this.projectManager,
         ),
     );
@@ -378,10 +379,17 @@ export default class TaskCalendarPlugin extends Plugin {
     return parent == null ? filePath : `${parent.path}/${filePath.slice(slash + 1)}`;
   }
 
+  /** A plain view-state write, like `saveSettings()`: it rethrows without presenting the failure. */
   async saveViewState(): Promise<void> {
+    await this.settingsPersistence.saveViewState(this.settings);
+  }
+
+  /** The panel's route: one log and one Notice per failed write, and nothing while writes are suspended. */
+  private async saveViewStateWithNotice(): Promise<void> {
     try {
-      await this.settingsPersistence.saveViewState(this.settings);
+      await this.saveViewState();
     } catch (error) {
+      if (isViewStateWritesSuspended(error)) return;
       console.error('[abyss-tasks] saved view state write failed', error);
       new Notice('Could not save view preferences. Your current session is unchanged.');
       throw error;

@@ -1,10 +1,11 @@
 import { App, Notice } from 'obsidian';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import TaskCalendarPlugin from '../src/main';
 import { DEFAULT_SETTINGS, buildDefaultProjectsSettings } from '../src/settings/defaults';
 import {
   SAVED_VIEW_STATE_SCHEMA_VERSION,
   STATIC_SAVED_VIEW_STATE_MARKER,
+  ViewStateWritesSuspendedError,
 } from '../src/settings/persistence';
 import { latestSettingsSaveRevision } from '../src/settings/settingsSaveRevision';
 import type { TaskStorageSettings } from '../src/settings/taskStorageSettings';
@@ -20,6 +21,25 @@ const MANIFEST = {
   name: 'Abyss Tasks',
   version: '1.0.0',
 } as ConstructorParameters<typeof TaskCalendarPlugin>[1];
+
+const STATE_PATH = '.test-config/plugins/abyss-tasks/state.json';
+
+interface StateAdapterLike {
+  readonly exists: Mock<(path: string) => Promise<boolean>>;
+  readonly read: Mock<(path: string) => Promise<string>>;
+  readonly write: Mock<(path: string, value: string) => Promise<void>>;
+}
+
+function spyOnNotices() {
+  return vi.spyOn(
+    Notice.prototype as unknown as { constructor__(message: unknown, duration?: number): void },
+    'constructor__',
+  );
+}
+
+function noticeMessages(notices: ReturnType<typeof spyOnNotices>): unknown[] {
+  return notices.mock.calls.map(([message]) => message);
+}
 
 interface WorkspaceLike {
   layoutReady: boolean;
@@ -42,6 +62,7 @@ interface PluginLike {
   settings: CalendarSettings;
   data__: unknown;
   stateFiles__: Map<string, string>;
+  stateAdapter__: StateAdapterLike;
   commands__: Map<string, { id: string; name: string }>;
   views__: Map<string, (...args: unknown[]) => unknown>;
   markdownCodeBlockProcessors__: Map<string, (...args: unknown[]) => unknown>;
@@ -54,6 +75,7 @@ interface PluginLike {
   saveSettings: () => Promise<void>;
   saveTaskStorageSettings: (draft: TaskStorageSettings) => Promise<void>;
   saveViewState: () => Promise<void>;
+  saveViewStateWithNotice: () => Promise<void>;
   refreshProjectTableSettings: () => void;
   openPanel: () => Promise<void>;
 }
@@ -81,6 +103,7 @@ function makePlugin(data: Record<string, unknown> | null = null): PluginLike {
   // loadData() returns this.data__; seed it so loadSettings merges persisted values.
   plugin.data__ = data ?? {};
   plugin.stateFiles__ = stateFiles;
+  plugin.stateAdapter__ = adapter;
   return plugin;
 }
 
@@ -237,6 +260,50 @@ describe('TaskCalendarPlugin saveSettings', () => {
     expect(latestSettingsSaveRevision(plugin.settings)).toBe(revisionBefore);
     expect(plugin.app.workspace.getLeavesOfType).not.toHaveBeenCalled();
     expect(refreshProjectSettings).not.toHaveBeenCalled();
+  });
+
+  it('keeps the plain view-state save silent and presents a failed panel write once', async () => {
+    const plugin = makePlugin();
+    await plugin.loadSettings();
+    const error = new Error('disk full');
+    plugin.stateAdapter__.write.mockRejectedValue(error);
+    const notices = spyOnNotices();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    plugin.settings.sectionCollapse.tags = true;
+
+    await expect(plugin.saveViewState()).rejects.toBe(error);
+    expect(notices).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+
+    await expect(plugin.saveViewStateWithNotice()).rejects.toBe(error);
+    expect(noticeMessages(notices)).toEqual([
+      'Could not save view preferences. Your current session is unchanged.',
+    ]);
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] saved view state write failed',
+      error,
+    );
+  });
+
+  it('keeps the panel route silent after a suspended load and refuses plain writes by type', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const notices = spyOnNotices();
+    const plugin = makePlugin({
+      [STATIC_SAVED_VIEW_STATE_MARKER]: SAVED_VIEW_STATE_SCHEMA_VERSION,
+    });
+    plugin.stateFiles__.set(STATE_PATH, JSON.stringify({ schemaVersion: 99, views: {} }));
+    await plugin.loadSettings();
+    expect(noticeMessages(notices)).toEqual([
+      'Saved view state could not be loaded. View preferences are using temporary defaults; view preference writes are suspended to preserve the existing file.',
+    ]);
+    notices.mockClear();
+    log.mockClear();
+    plugin.settings.sectionCollapse.tags = true;
+
+    await expect(plugin.saveViewStateWithNotice()).resolves.toBeUndefined();
+    expect(notices).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+    await expect(plugin.saveViewState()).rejects.toBeInstanceOf(ViewStateWritesSuspendedError);
   });
 
   it('refreshes only mounted project-table projections when settings request it', async () => {

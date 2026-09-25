@@ -2375,6 +2375,29 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expect(plugin.refreshProjectTableSettings).toHaveBeenCalledTimes(2);
   });
 
+  it('refreshes a mounted project table after a failed description save', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { tab, plugin, captured } = makeTab(
+      {},
+      {
+        saveViewState: vi
+          .fn<() => Promise<void>>()
+          .mockRejectedValue(new Error('disk unavailable')),
+      },
+    );
+    const projectsHeader = Array.from(
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
+    ).find((header) => header.textContent.includes('Projects'));
+    expectDefined(projectsHeader).click();
+
+    expectDefined(findComp(captured, 'Show description', 'toggle')).comp.onClick();
+    await flushMicrotasks();
+
+    expect(plugin.saveViewState).toHaveBeenCalledOnce();
+    expect(plugin.refreshProjectTableSettings).toHaveBeenCalledOnce();
+    expect(Notice).toHaveBeenCalledOnce();
+  });
+
   it('keeps the project toolbar contained at constrained panel widths', () => {
     expect(css).toContain('--abyss-center-toolbar-height: 60px');
     expect(css).toMatch(

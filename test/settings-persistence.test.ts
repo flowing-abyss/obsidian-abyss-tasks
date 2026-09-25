@@ -9,6 +9,7 @@ import {
   SAVED_VIEW_STATE_SCHEMA_VERSION,
   STATIC_SAVED_VIEW_STATE_MARKER,
   SettingsPersistenceCoordinator,
+  ViewStateWritesSuspendedError,
   type SettingsPersistencePort,
 } from '../src/settings/persistence';
 import { removeConfiguredProjectProperty } from '../src/settings/projectTableSettings';
@@ -141,7 +142,9 @@ describe('SettingsPersistenceCoordinator migration', () => {
         id: 'property:Novel',
         visible: true,
       });
-      await expect(coordinator.saveViewState(settings)).rejects.toThrow('suspended');
+      const refusal = coordinator.saveViewState(settings);
+      await expect(refusal).rejects.toThrow('suspended');
+      await expect(refusal).rejects.toBeInstanceOf(ViewStateWritesSuspendedError);
       expect(port.stateText).toBe(raw);
       expect(port.writes).toEqual([]);
     },
@@ -854,7 +857,9 @@ describe('SettingsPersistenceCoordinator migration', () => {
     loaded.settings.sectionCollapse.tags = true;
 
     expect(loaded.issues).toHaveLength(1);
-    await expect(coordinator.saveViewState(loaded.settings)).rejects.toThrow(/suspended/u);
+    const refusal = coordinator.saveViewState(loaded.settings);
+    await expect(refusal).rejects.toThrow(/suspended/u);
+    await expect(refusal).rejects.toBeInstanceOf(ViewStateWritesSuspendedError);
     loaded.settings.taskPrefix = '#static-still-writable';
     await expect(coordinator.saveSettings(loaded.settings)).resolves.toBeUndefined();
     expect(port.stateText).toBe(stateText);
@@ -872,7 +877,9 @@ describe('SettingsPersistenceCoordinator migration', () => {
     const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
 
     expect(loaded.issues[0]?.message).toMatch(/read saved view state/u);
-    await expect(coordinator.saveViewState(loaded.settings)).rejects.toThrow(/suspended/u);
+    const refusal = coordinator.saveViewState(loaded.settings);
+    await expect(refusal).rejects.toThrow(/suspended/u);
+    await expect(refusal).rejects.toBeInstanceOf(ViewStateWritesSuspendedError);
     expect(port.writes).toEqual([]);
   });
 

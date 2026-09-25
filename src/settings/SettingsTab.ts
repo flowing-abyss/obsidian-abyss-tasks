@@ -1263,8 +1263,11 @@ export class CalendarSettingsTab extends PluginSettingTab {
       catalog: this.projectProperties_abyssPrivate,
       saveStatic: () => this.plugin_abyssPrivate.saveSettings(),
       saveViewState: async () => {
-        await this.plugin_abyssPrivate.saveViewState();
-        this.plugin_abyssPrivate.refreshProjectTableSettings();
+        try {
+          await this.plugin_abyssPrivate.saveViewState();
+        } finally {
+          this.plugin_abyssPrivate.refreshProjectTableSettings();
+        }
       },
       expandedCards: this.expandedCards_abyssPrivate,
       renderStatusSettings: (host) => {

@@ -285,6 +285,21 @@ function materializeColumn(context: ColumnRowContext): void {
   }
 }
 
+/** Saves the schema, then view state, and refreshes the section whatever the outcome. */
+function saveSchemaThenRefresh(
+  options: RenderProjectTableSettingsOptions,
+  refresh: () => void,
+): () => Promise<void> {
+  return async () => {
+    try {
+      await options.saveStatic();
+      await options.saveViewState();
+    } finally {
+      refresh();
+    }
+  };
+}
+
 function renderColumnSummary(summary: HTMLElement, context: ColumnRenderContext): void {
   const { column, options, persist, source, display, cardId, expanded } = context;
   const sourceElement = summary.createDiv({ cls: 'abyss-project-column-source' });
@@ -338,11 +353,9 @@ function renderColumnSummary(summary: HTMLElement, context: ColumnRenderContext)
       expanded.delete(cardId);
       saveSettingsDraft({
         action: 'remove project property',
-        save: async () => {
-          await options.saveStatic();
-          await options.saveViewState();
+        save: saveSchemaThenRefresh(options, () => {
           options.refresh();
-        },
+        }),
       });
     },
     !schemaEditable(options.projects),
@@ -563,11 +576,9 @@ function renderAddPropertyControl(context: AddPropertyContext): () => void {
       input.value = '';
       saveSettingsDraft({
         action: 'add project property',
-        save: async () => {
-          await options.saveStatic();
-          await options.saveViewState();
+        save: saveSchemaThenRefresh(options, () => {
           options.refresh(`project-property:property:${selected?.name ?? property.trim()}`);
-        },
+        }),
       });
     } else if (result === 'duplicate') {
       feedback.setText('That property is already configured.');
@@ -670,9 +681,12 @@ export function renderProjectTableSettings(options: RenderProjectTableSettingsOp
     saveSettingsDraft({
       action: 'save project table settings',
       save: async () => {
-        await save();
-        if (refresh !== false) {
-          options.refresh(typeof refresh === 'string' ? refresh : undefined);
+        try {
+          await save();
+        } finally {
+          if (refresh !== false) {
+            options.refresh(typeof refresh === 'string' ? refresh : undefined);
+          }
         }
       },
     });

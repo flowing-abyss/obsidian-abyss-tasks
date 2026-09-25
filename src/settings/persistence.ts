@@ -691,6 +691,19 @@ function staticRecord(value: unknown): Record<string, unknown> {
   return detached(value);
 }
 
+/** A saved view state write refused because the load suspended writes for this session. */
+export class ViewStateWritesSuspendedError extends Error {
+  constructor() {
+    super('Saved view state writes are suspended.');
+    this.name = 'ViewStateWritesSuspendedError';
+  }
+}
+
+/** True for the refusal of a view state write while writes are suspended. */
+export function isViewStateWritesSuspended(error: unknown): error is ViewStateWritesSuspendedError {
+  return error instanceof ViewStateWritesSuspendedError;
+}
+
 /** Owns the two settings documents and serializes every durable write. */
 export class SettingsPersistenceCoordinator {
   private queue: Promise<void> = Promise.resolve();
@@ -748,8 +761,7 @@ export class SettingsPersistenceCoordinator {
   }
 
   saveViewState(settings: CalendarSettings): Promise<void> {
-    if (this.stateWritesSuspended)
-      return Promise.reject(new Error('Saved view state writes are suspended.'));
+    if (this.stateWritesSuspended) return Promise.reject(new ViewStateWritesSuspendedError());
     const payload = createStateEnvelope(settings, this.rawStateEnvelope, this.stateRecovery);
     const serialized = serialize(payload);
     return this.enqueue(async () => {

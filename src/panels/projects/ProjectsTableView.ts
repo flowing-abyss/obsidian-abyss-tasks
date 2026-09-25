@@ -108,6 +108,7 @@ import {
   projectTagLabel,
 } from '../../ui/projectPropertyValuePresentation';
 import { renderTaskText } from '../../ui/renderTaskText';
+import { runAsyncAction } from '../../ui/runAsyncAction';
 import {
   mountProjectCellEditor,
   type ProjectCellEditorHandle,
@@ -234,6 +235,7 @@ export interface ProjectsTableViewContext {
   readonly state: AppState;
   readonly settings: CalendarSettings;
   readonly catalog: ProjectPropertyCatalog;
+  /** Writes view state; the injected save presents its own failure. */
   readonly saveViewState: () => Promise<void>;
   readonly saveStatic?: () => Promise<void>;
   readonly applyEdits: (changes: readonly ProjectCellChange[]) => Promise<ProjectEditResult>;
@@ -1307,10 +1309,10 @@ export class ProjectsTableView {
 
   private persistSettings_abyssPrivate(): void {
     this.feedback_abyssPrivate.empty();
-    saveSettingsDraft({
-      action: 'save project view settings',
-      save: this.context_abyssPrivate.saveViewState,
-    });
+    runAsyncAction(
+      this.context_abyssPrivate.saveViewState(),
+      'Could not save project view settings',
+    );
   }
 
   private toggleStatus_abyssPrivate(key: string): void {
