@@ -1,5 +1,5 @@
 import { Notice, Platform, TFile, WorkspaceLeaf, type App } from 'obsidian';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { type AppState, type ListSelection } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
@@ -308,6 +308,21 @@ describe('PanelView inspector focus continuity', () => {
 type TaskApplication = ReturnType<typeof configuredTaskApplication>;
 
 describe('PanelView', () => {
+  // jsdom has no `scrollIntoView`, and creation feedback scrolls a created card into view.
+  let scrollIntoView: Mock<HTMLElement['scrollIntoView']>;
+
+  beforeEach(() => {
+    scrollIntoView = vi.fn<HTMLElement['scrollIntoView']>();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+  });
+
   describe('empty vault suite', () => {
     let app: Awaited<ReturnType<typeof createAppWithFiles>>;
     let taskApplication: TaskApplication;
@@ -1046,11 +1061,10 @@ describe('PanelView', () => {
       vi.spyOn(scroll, 'cloneNode').mockImplementation((deep) =>
         destination.document.adoptNode(document.importNode(scroll, deep)),
       );
-      (
-        internals.creationPresentation_abyssPrivate as unknown as {
-          options: { reducedMotion: () => boolean };
-        }
-      ).options.reducedMotion = () => false;
+      // The main window has no `matchMedia`; only the window the view moved to answers.
+      expect(typeof window.matchMedia).toBe('undefined');
+      const ownerMotion = vi.fn(() => ({ matches: true }));
+      Object.defineProperty(destination, 'matchMedia', { configurable: true, value: ownerMotion });
       let nextTimer = 1;
       let now = Date.now();
       vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -1067,10 +1081,6 @@ describe('PanelView', () => {
       });
       vi.spyOn(destination, 'clearTimeout').mockImplementation((id) => {
         if (id !== undefined) timers.delete(id);
-      });
-      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
-        configurable: true,
-        value: vi.fn(),
       });
       try {
         destination.document.body.append(view.containerEl);
@@ -1107,17 +1117,18 @@ describe('PanelView', () => {
         const card = expectDefined(
           view.contentEl.querySelector('.abyss-task-card.is-just-created'),
         );
+        expect(ownerMotion).toHaveBeenCalledWith('(prefers-reduced-motion: reduce)');
         const highlight = expectDefined(
-          [...timers.entries()].find(([, timer]) => timer.delay === 1100),
+          [...timers.entries()].find(([, timer]) => timer.delay === 800),
         );
         const announcement = expectDefined(
           [...timers.entries()].find(([, timer]) => timer.delay === 4000),
         );
-        now += 1100;
+        now += 800;
         timers.delete(highlight[0]);
         highlight[1].run();
         expect(card.classList.contains('is-just-created')).toBe(false);
-        now += 2900;
+        now += 3200;
         timers.delete(announcement[0]);
         announcement[1].run();
         expect(feedback.textContent).toBe('');
@@ -1134,7 +1145,7 @@ describe('PanelView', () => {
         );
         await flushMicrotasks();
         expect(execute).toHaveBeenCalledTimes(2);
-        expect([...timers.values()].some((timer) => timer.delay === 1100)).toBe(true);
+        expect([...timers.values()].some((timer) => timer.delay === 800)).toBe(true);
         expect([...timers.values()].some((timer) => timer.delay === 4000)).toBe(true);
         await view.onClose();
         expect(timers.size).toBe(0);
@@ -1522,6 +1533,7 @@ describe('PanelView', () => {
     ])(
       'selects a $name task created from Center and routes feedback without a Notice',
       async (scenario) => {
+        const consoleError = vi.spyOn(console, 'error');
         const { selection } = scenario;
         const suffix = 'dated' in scenario ? ` 📅 ${window.moment().format('YYYY-MM-DD')}` : '';
         const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
@@ -1577,8 +1589,57 @@ describe('PanelView', () => {
           ],
         ).toBe(created == null ? undefined : taskPresentationKey(created.ref));
         expect(notice).not.toHaveBeenCalled();
+        expect(consoleError).not.toHaveBeenCalled();
       },
     );
+
+    it('reveals a created task without smooth scrolling and with the short highlight under reduced motion', async () => {
+      const consoleError = vi.spyOn(console, 'error');
+      const matchMedia = vi.fn(() => ({ matches: true }));
+      vi.stubGlobal('matchMedia', matchMedia);
+      const setTimeout = vi.spyOn(window, 'setTimeout');
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      state.set('selectedList', 'inbox');
+      const captureApplication = taskApplication.tasks as TaskApplicationApi &
+        TaskCaptureApplicationApi;
+      vi.spyOn(captureApplication, 'planCreate').mockResolvedValue({
+        type: 'ready',
+        destination: { filePath: 'capture.md', insertion: { type: 'append' } },
+        execute: async () => ({
+          type: 'ok',
+          changed: true,
+          outcome: {
+            type: 'task',
+            task: expectDefined(
+              taskApplication.index.installCommittedContent('capture.md', '- [ ] Captured\n')[0],
+            ),
+          },
+        }),
+      });
+      view.contentEl.querySelector<HTMLElement>('.abyss-add-task-trigger')?.click();
+      await flushMicrotasks();
+      const input = expectDefined(
+        view.contentEl.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+      );
+      input.value = 'Captured';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+
+      expect(view.contentEl.querySelector('.abyss-task-card.is-just-created')).not.toBeNull();
+      expect(matchMedia).toHaveBeenCalledWith('(prefers-reduced-motion: reduce)');
+      expect(scrollIntoView).toHaveBeenCalledWith({
+        behavior: 'auto',
+        block: 'nearest',
+        inline: 'nearest',
+      });
+      const delays = setTimeout.mock.calls.map(([, delay]) => delay);
+      expect(delays).toContain(800);
+      expect(delays).not.toContain(1100);
+      expect(consoleError).not.toHaveBeenCalled();
+    });
 
     it('keeps a captured calendar task selected after a later calendar patch', async () => {
       document.body.appendChild(view.containerEl);
@@ -1586,17 +1647,7 @@ describe('PanelView', () => {
       const internals = view as unknown as {
         state_abyssPrivate: AppState;
         quickCapture_abyssPrivate: QuickCaptureCoordinator;
-        creationPresentation_abyssPrivate: CreationPresentationController;
       };
-      (
-        internals.creationPresentation_abyssPrivate as unknown as {
-          options: { reducedMotion: () => boolean };
-        }
-      ).options.reducedMotion = () => false;
-      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
-        configurable: true,
-        value: vi.fn(),
-      });
       const today = window.moment().format('YYYY-MM-DD');
       const previous = expectDefined(
         taskApplication.index.installCommittedContent(
@@ -2359,6 +2410,7 @@ describe('PanelView', () => {
     });
 
     it('selects a project task created by Q and preserves capture input focus', async () => {
+      const consoleError = vi.spyOn(console, 'error');
       const internals = view as unknown as {
         state_abyssPrivate: AppState;
         quickCapture_abyssPrivate: QuickCaptureCoordinator;
@@ -2420,6 +2472,7 @@ describe('PanelView', () => {
         created == null ? undefined : taskPresentationKey(created.ref),
       );
       expect(document.activeElement).toBe(input);
+      expect(consoleError).not.toHaveBeenCalled();
     });
 
     it('leaves Q in a project cell editor instead of opening Quick Capture', () => {

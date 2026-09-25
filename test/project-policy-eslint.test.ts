@@ -110,6 +110,24 @@ describe('project lexical policy', () => {
     ]);
   });
 
+  it('rejects a bare matchMedia call in a project surface', async () => {
+    expect(
+      await check(
+        'src/panels/projects/ProjectCellEditor.ts',
+        "matchMedia('(prefers-reduced-motion: reduce)').matches;",
+      ),
+    ).toEqual([
+      {
+        ruleId: 'project-policy/ambient',
+        messageId: 'owner',
+        line: 1,
+        column: 1,
+        endLine: 1,
+        endColumn: 11,
+      },
+    ]);
+  });
+
   it.each(['fetch', 'XMLHttpRequest', 'WebSocket', 'performance', 'globalThis', 'self', 'Date'])(
     'rejects pure capability escapes %s',
     async (name) => {
@@ -177,6 +195,7 @@ describe('project lexical policy', () => {
         `
       function schedule(ownerWindow: Window, window: Window) {
         ownerWindow.setTimeout(() => {}, 0); window.requestAnimationFrame(() => {});
+        ownerWindow.matchMedia('(prefers-reduced-motion: reduce)');
       }
       type Types = [Window, Document, ResizeObserver];
     `,

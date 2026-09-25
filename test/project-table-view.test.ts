@@ -6617,6 +6617,31 @@ describe('ProjectsTableView', () => {
     expect(activeDocument.activeElement?.getAttribute('data-column-id')).toBe('name');
   });
 
+  it("highlights a created project for the short time when the overview's window prefers reduced motion", async () => {
+    const matchMedia = vi.fn(() => ({ matches: true }));
+    vi.stubGlobal('matchMedia', matchMedia);
+    const setTimeout = vi.spyOn(window, 'setTimeout');
+    const createProject = vi.fn().mockResolvedValue('Projects/Calm.md');
+    const { host, view } = mount([], { createProject });
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
+    const input = expectDefined(
+      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
+    input.value = 'Calm';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    view.update([project({ path: 'Projects/Calm.md', name: 'Calm' })]);
+
+    expect(host.querySelector('[data-project-path="Projects/Calm.md"]')?.classList).toContain(
+      'is-just-created',
+    );
+    expect(matchMedia).toHaveBeenCalledWith('(prefers-reduced-motion: reduce)');
+    const delays = setTimeout.mock.calls.map(([, delay]) => delay);
+    expect(delays).toContain(800);
+    expect(delays).not.toContain(1100);
+  });
+
   it('keeps external focus when delayed creation finishes in a connected overview', async () => {
     let finishCreate: ((path: string) => void) | undefined;
     const createProject = vi.fn(

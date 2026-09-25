@@ -36,6 +36,7 @@ import { isImeOwnedEvent } from '../ui/ime';
 import { InteractionRegistry } from '../ui/interactionOwnership';
 import { nativeInteractionBlocksPanelShortcuts } from '../ui/nativeInteractionBlocker';
 import { PanelShortcutRouter } from '../ui/panelShortcutRouter';
+import { prefersReducedMotion } from '../ui/reducedMotion';
 import {
   CaptureTargetResolver,
   type CaptureContext,
@@ -462,9 +463,7 @@ export class PanelView extends ItemView {
     this.creationPresentation_abyssPrivate = new CreationPresentationController({
       host: creationFeedback,
       queries: this.queries_abyssPrivate,
-      reducedMotion: () =>
-        creationFeedback.ownerDocument.defaultView?.matchMedia('(prefers-reduced-motion: reduce)')
-          .matches ?? false,
+      reducedMotion: () => prefersReducedMotion(creationFeedback.ownerDocument.defaultView),
       now: () => Date.now(),
     });
     return {

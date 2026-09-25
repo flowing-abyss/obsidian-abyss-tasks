@@ -107,6 +107,7 @@ import {
   projectPropertyValuePresentation,
   projectTagLabel,
 } from '../../ui/projectPropertyValuePresentation';
+import { prefersReducedMotion } from '../../ui/reducedMotion';
 import { renderTaskText } from '../../ui/renderTaskText';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import {
@@ -828,9 +829,7 @@ export class ProjectsTableView {
       inaccessible: (path) => {
         this.showExcludedCreatedProject_abyssPrivate(path);
       },
-      reducedMotion: () =>
-        typeof this.ownerWindow_abyssPrivate?.matchMedia === 'function' &&
-        this.ownerWindow_abyssPrivate.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      reducedMotion: () => prefersReducedMotion(this.ownerWindow_abyssPrivate),
       now: () => Date.now(),
     });
   }

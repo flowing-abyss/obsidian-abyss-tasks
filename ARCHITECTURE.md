@@ -548,7 +548,7 @@ static/view split and preservation of unknown extensions. New write acquisitions
 must extend these checks without creating another persistence path.
 
 [Project ESLint policy](eslint-project-policy.mts) rejects ambient capabilities in the pure-module
-roster in [eslint.config.mts](eslint.config.mts) and global document/window scheduling in project
+roster in [eslint.config.mts](eslint.config.mts) and global document/window capabilities in project
 and calendar surfaces and in the shared [project actions](src/ui/projectActions.ts), which join by
 a per-file entry. Enroll new pure modules in that roster and supply explicit time; native surfaces
 retain their owning window and dispose pending work. These lexical checks complement
