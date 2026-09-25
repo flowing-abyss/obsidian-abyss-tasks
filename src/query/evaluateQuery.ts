@@ -308,7 +308,13 @@ function frontmatterEqualityText(value: unknown, joining: readonly unknown[] = [
     return `${value}`;
   }
   if (Array.isArray(value)) return listEqualityText(value, joining);
+  return objectEqualityText(value);
+}
+
+/** Any other frontmatter value as String() reads it; YAML `!!binary` gives a Uint8Array. */
+function objectEqualityText(value: unknown): string {
   if (value instanceof Date) return value.toString();
+  if (value instanceof Uint8Array) return value.join(',');
   return Object.prototype.toString.call(value);
 }
 

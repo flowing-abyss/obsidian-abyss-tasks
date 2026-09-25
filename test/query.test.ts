@@ -49,6 +49,14 @@ describe('evaluateQuery', () => {
     // A list that appears twice without being nested in itself is read in full each time.
     expect(evaluateQuery('tags=x,y,x,y', 'A.md', [], fm({ tags: [shared, shared] }))).toBe(true);
   });
+  it('reads YAML binary bytes as String() does', () => {
+    const bytes = new Uint8Array([104, 105]);
+
+    expect(evaluateQuery('bin=104,105', 'A.md', [], fm({ bin: bytes }))).toBe(true);
+    expect(evaluateQuery('bin=', 'A.md', [], fm({ bin: new Uint8Array([]) }))).toBe(true);
+    expect(evaluateQuery('bin=a,104,105', 'A.md', [], fm({ bin: ['a', bytes] }))).toBe(true);
+    expect(evaluateQuery('bin=[object Uint8Array]', 'A.md', [], fm({ bin: bytes }))).toBe(false);
+  });
 
   it('preserves whitespace and quoted values in frontmatter equality expressions', () => {
     expect(evaluateQuery('status = done', 'A.md', [], fm({ status: 'done' }))).toBe(true);
