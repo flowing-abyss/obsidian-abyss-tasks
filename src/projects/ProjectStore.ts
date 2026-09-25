@@ -125,7 +125,8 @@ export class ProjectStore {
     this.recomputeAll_abyssPrivate();
     this.settingsSignature_abyssPrivate = this.projectEntrySettingsSignature_abyssPrivate();
     // A single note edit re-evaluates only that note (O(1) note + its tasks).
-    // Create/delete/rename change the membership set → full rescan (rare events).
+    // A create, delete, or rename re-evaluates only its paths too, at the flush. The index's first
+    // scan, `refresh()`, and a change to the project settings rescan every note.
     const metadataRef = this.app_abyssPrivate.metadataCache.on('changed', (file, data, cache) => {
       if (
         file.extension === 'md' &&
@@ -165,7 +166,7 @@ export class ProjectStore {
         this.pendingCreates_abyssPrivate.delete(oldPath);
         this.recordSourceObservation_abyssPrivate(oldPath, undefined, undefined);
         const project = this.byPath_abyssPrivate.get(oldPath);
-        // Otherwise the index's event releases both paths once the index has re-read the note.
+        // Otherwise the index's rename event releases both paths.
         if (
           (project === undefined || project.stats.total === 0) &&
           !this.hasIndexedTasks_abyssPrivate(oldPath, file.path)
@@ -219,9 +220,10 @@ export class ProjectStore {
    * Moves a listed note's entry to its new path at once, or drops it for a delete or a rename away
    * from Markdown, so that no render pairs an old path with saved view state that the plugin has
    * already rebased. Only the path and name change; the flush re-reads the note and publishes the
-   * move. The vault event and the index's delivery both call this. The index delivers a rename
-   * after a read, so the store follows it only while no note sits at the old path. A later rename
-   * that reused that path has already moved its own entry from its vault event.
+   * move. The vault event and the index's delivery both call this. The index can deliver a rename
+   * after a read, by which time a later rename may have reused the old path and moved its own
+   * entry, so the store follows the index only while nothing sits at the old path. Inside the
+   * vault's rename event the old path is always empty.
    */
   private followNote_abyssPrivate(oldPath: string, newPath?: string): void {
     const project = this.byPath_abyssPrivate.get(oldPath);
@@ -368,7 +370,10 @@ export class ProjectStore {
     for (const cb of this.listeners_abyssPrivate) cb();
   }
 
-  /** Full O(N + T) rescan of every markdown file. Used on init, create/delete/rename, refresh(). */
+  /**
+   * Full O(N + T) rescan of every markdown file. Used by `initialize()`, the index's `initialized`
+   * event, `refresh()`, and a change to the project settings.
+   */
   private recomputeAll_abyssPrivate(): void {
     const tasksByPath = this.groupTasksByPath_abyssPrivate();
     this.byPath_abyssPrivate = new Map();
