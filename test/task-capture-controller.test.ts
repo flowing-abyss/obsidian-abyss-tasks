@@ -365,7 +365,7 @@ describe('TaskCaptureController', () => {
     expect(controller.snapshot()).toMatchObject({ phase: 'closed', draft: '' });
     expect(onRequestClose).toHaveBeenCalledOnce();
     expect(log).toHaveBeenCalledExactlyOnceWith(
-      '[abyss-tasks] Could not show the created task',
+      '[abyss-tasks] Could not show the capture result',
       failure,
     );
   });

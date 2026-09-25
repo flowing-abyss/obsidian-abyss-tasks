@@ -930,7 +930,7 @@ describe('PanelView', () => {
       expect(internals.quickCapture_abyssPrivate.phase).toBe('closed');
       expect(right.classList.contains('is-compact-open')).toBe(true);
       expect(log).toHaveBeenCalledExactlyOnceWith(
-        '[abyss-tasks] Could not show the created task',
+        '[abyss-tasks] Could not show the capture result',
         failure,
       );
     });

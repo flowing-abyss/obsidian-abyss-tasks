@@ -127,12 +127,15 @@ export class TaskCaptureController {
     }
   }
 
-  /** The task is written by now, so a failure to show it is logged and does not fail the capture. */
+  /**
+   * The command has finished by now, so a failure to show its result is logged and does not fail
+   * the capture.
+   */
   private presentResult(result: TaskCommandResult, description: CreationResultDescription): void {
     try {
       this.onResult(result, description);
     } catch (error) {
-      console.error('[abyss-tasks] Could not show the created task', error);
+      console.error('[abyss-tasks] Could not show the capture result', error);
     }
   }
 
