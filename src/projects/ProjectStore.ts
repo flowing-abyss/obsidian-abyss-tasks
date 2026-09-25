@@ -207,7 +207,9 @@ export class ProjectStore {
     } else if (event.type === 'initialized') {
       this.releaseFull_abyssPrivate();
     } else if (event.type === 'renamed') {
-      this.followNote_abyssPrivate(event.oldPath, event.newPath);
+      if (this.app_abyssPrivate.vault.getAbstractFileByPath(event.oldPath) === null) {
+        this.followNote_abyssPrivate(event.oldPath, event.newPath);
+      }
       this.pendingCreates_abyssPrivate.delete(event.oldPath);
       this.pendingCreates_abyssPrivate.delete(event.newPath);
       this.releasePath_abyssPrivate(event.oldPath, event.newPath);
@@ -222,7 +224,9 @@ export class ProjectStore {
    * Moves a listed note's entry to its new path at once, or drops it for a delete or a rename away
    * from Markdown, so that no render pairs an old path with saved view state that the plugin has
    * already rebased. Only the path and name change; the flush re-reads the note and publishes the
-   * move. The vault event and the index's delivery both call this, and the second finds nothing.
+   * move. The vault event and the index's delivery both call this. The index delivers a rename
+   * after a read, so the store follows it only while no note sits at the old path. A later rename
+   * that reused that path has already moved its own entry from its vault event.
    */
   private followNote_abyssPrivate(oldPath: string, newPath?: string): void {
     const project = this.byPath_abyssPrivate.get(oldPath);

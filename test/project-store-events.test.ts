@@ -76,7 +76,8 @@ function harness() {
   const app = {
     vault: {
       getMarkdownFiles,
-      getAbstractFileByPath: (path: string) => files.find((candidate) => candidate.path === path),
+      getAbstractFileByPath: (path: string) =>
+        files.find((candidate) => candidate.path === path) ?? null,
       read: vi.fn(async () => currentData),
       on,
       offref,
@@ -678,4 +679,31 @@ describe('ProjectStore follows a listed note', () => {
       store.destroy();
     },
   );
+
+  it('keeps a swapped pair apart when the index reports a rename whose old path was reused', () => {
+    const { h, store, listener, listed } = listedStore();
+    const other = expectDefined(store.get('Projects/C.md'));
+    // The vault holds the swap's end state: the second note at A, the first note at C.
+    h.setFiles([tfile('Projects/A.md'), tfile('Projects/C.md'), tfile('Projects/E.md')]);
+
+    h.vault('rename', tfile('Projects/T.md'), 'Projects/A.md');
+    h.vault('rename', tfile('Projects/A.md'), 'Projects/C.md');
+    h.vault('rename', tfile('Projects/C.md'), 'Projects/T.md');
+    // The index has read both notes at their new paths; its rename from C to A arrives last.
+    h.setTasks([taskAt('Projects/C.md', 'open')]);
+    h.index({ type: 'renamed', oldPath: 'Projects/C.md', newPath: 'Projects/A.md' });
+
+    expect(listedPaths(store)).toEqual(['Projects/A.md', 'Projects/C.md', 'Projects/E.md']);
+    expect(store.get('Projects/A.md')).toEqual({ ...other, path: 'Projects/A.md', name: 'A' });
+    expect(store.get('Projects/C.md')).toEqual({ ...listed, path: 'Projects/C.md', name: 'C' });
+    for (const entry of store.list()) expect(store.get(entry.path)).toBe(entry);
+    expect(listener).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(150);
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listedPaths(store)).toEqual(['Projects/A.md', 'Projects/C.md', 'Projects/E.md']);
+    expect(store.get('Projects/C.md')?.stats.total).toBe(1);
+    expect(store.get('Projects/A.md')?.stats.total).toBe(0);
+    store.destroy();
+  });
 });
