@@ -967,7 +967,8 @@ async function pluginWithOpenPanel() {
   );
   const openPanel = expectDefined(command.callback);
   await openPanel();
-  const view = expectDefined(app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)[0]).view;
+  const leaf = expectDefined(app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)[0]);
+  const view = leaf.view;
   if (!(view instanceof PanelView)) throw new Error('The panel did not open');
   const internals = view as unknown as {
     state_abyssPrivate: AppState;
@@ -976,6 +977,7 @@ async function pluginWithOpenPanel() {
   return {
     app,
     plugin,
+    leaf,
     state: internals.state_abyssPrivate,
     navigation: internals.panelNavigation_abyssPrivate,
     statePath: `${app.vault.configDir}/plugins/${MANIFEST.id}/state.json`,
@@ -998,7 +1000,7 @@ async function kanbanOverview() {
 
 describe('TaskCalendarPlugin note path lifecycle', () => {
   it('writes once and raises one Notice when the selected project leaves its status empty', async () => {
-    const { app, plugin, navigation, state, statePath, note } = await kanbanOverview();
+    const { app, plugin, leaf, navigation, state, statePath, note } = await kanbanOverview();
     try {
       navigation.openList({ type: 'project', path: 'projects/D.md' });
       navigation.openProjects();
@@ -1021,16 +1023,19 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
       ]);
       expect(state.get('selectedList')).toBe('today');
       expect(state.get('mode')).toBe('projects');
+      expect(plugin.settings.listViewStates).not.toHaveProperty(['project:projects/D.md']);
       expect(plugin.settings.projects.kanban?.manualOrder).toEqual({
         [WIP]: ['projects/A.md', 'projects/B.md', 'projects/C.md'],
       });
     } finally {
+      await leaf.setViewState({ type: 'empty' });
+      leaf.detach();
       plugin.onunload();
     }
   });
 
   it('keeps the list on screen under a renamed selected project and drops the old key', async () => {
-    const { app, plugin, navigation, state, note } = await pluginWithOpenPanel();
+    const { app, plugin, leaf, navigation, state, note } = await pluginWithOpenPanel();
     const errors = vi.spyOn(console, 'error');
     try {
       navigation.openList({ type: 'project', path: 'projects/A.md' });
@@ -1044,12 +1049,14 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
       expect(plugin.settings.listViewStates).not.toHaveProperty(['project:projects/A.md']);
       expect(errors).not.toHaveBeenCalled();
     } finally {
+      await leaf.setViewState({ type: 'empty' });
+      leaf.detach();
       plugin.onunload();
     }
   });
 
   it('forgets a deleted ranked note with tasks and saves the state without it', async () => {
-    const { app, plugin, statePath, note } = await kanbanOverview();
+    const { app, plugin, leaf, statePath, note } = await kanbanOverview();
     const errors = vi.spyOn(console, 'error');
     try {
       await app.fileManager.trashFile(note('projects/A.md'));
@@ -1063,12 +1070,14 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
       expect(saved.views.projects.kanban.manualOrder).toEqual(expected);
       expect(errors).not.toHaveBeenCalled();
     } finally {
+      await leaf.setViewState({ type: 'empty' });
+      leaf.detach();
       plugin.onunload();
     }
   });
 
   it('keeps a renamed ranked note with tasks at its rank', async () => {
-    const { app, plugin, note } = await kanbanOverview();
+    const { app, plugin, leaf, note } = await kanbanOverview();
     const errors = vi.spyOn(console, 'error');
     try {
       const renamed = note('projects/B.md');
@@ -1083,12 +1092,14 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
       });
       expect(errors).not.toHaveBeenCalled();
     } finally {
+      await leaf.setViewState({ type: 'empty' });
+      leaf.detach();
       plugin.onunload();
     }
   });
 
   it('forgets a deleted note without tasks while its dashboard is open', async () => {
-    const { app, plugin, state, note } = await kanbanOverview();
+    const { app, plugin, leaf, state, note } = await kanbanOverview();
     const errors = vi.spyOn(console, 'error');
     try {
       state.set('projectsPanel', { view: 'dashboard', path: 'projects/C.md' });
@@ -1103,12 +1114,14 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
       });
       expect(errors).not.toHaveBeenCalled();
     } finally {
+      await leaf.setViewState({ type: 'empty' });
+      leaf.detach();
       plugin.onunload();
     }
   });
 
   it('leaves no bucket for the only ranked project of a status and no overview save', async () => {
-    const { app, plugin, statePath, note } = await kanbanOverview();
+    const { app, plugin, leaf, statePath, note } = await kanbanOverview();
     const panelRoute = vi.spyOn(
       plugin as unknown as { saveViewStateWithNotice: () => Promise<void> },
       'saveViewStateWithNotice',
@@ -1126,6 +1139,8 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
       expect(writes.mock.calls.filter(([path]) => path === statePath)).toHaveLength(1);
       expect(errors).not.toHaveBeenCalled();
     } finally {
+      await leaf.setViewState({ type: 'empty' });
+      leaf.detach();
       plugin.onunload();
     }
   });
