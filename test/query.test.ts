@@ -22,6 +22,18 @@ describe('evaluateQuery', () => {
     expect(evaluateQuery('status=active', 'A.md', [], fm({ status: 'done' }))).toBe(false);
     expect(evaluateQuery('status=', 'A.md', [], fm())).toBe(true); // unset === ''
   });
+  it('reads numbers, booleans, lists, objects, and null as text in a frontmatter key=value', () => {
+    expect(evaluateQuery('priority=3', 'A.md', [], fm({ priority: 3 }))).toBe(true);
+    expect(evaluateQuery('done=true', 'A.md', [], fm({ done: true }))).toBe(true);
+    expect(evaluateQuery('done=false', 'A.md', [], fm({ done: false }))).toBe(true);
+    expect(evaluateQuery('tags=a,b', 'A.md', [], fm({ tags: ['a', 'b'] }))).toBe(true);
+    expect(evaluateQuery('tags=a', 'A.md', [], fm({ tags: ['a', 'b'] }))).toBe(false);
+    expect(evaluateQuery('tags=', 'A.md', [], fm({ tags: [] }))).toBe(true);
+    expect(evaluateQuery('owner=[object Object]', 'A.md', [], fm({ owner: { name: 'Ann' } }))).toBe(
+      true,
+    );
+    expect(evaluateQuery('status=', 'A.md', [], fm({ status: null }))).toBe(true);
+  });
 
   it('preserves whitespace and quoted values in frontmatter equality expressions', () => {
     expect(evaluateQuery('status = done', 'A.md', [], fm({ status: 'done' }))).toBe(true);

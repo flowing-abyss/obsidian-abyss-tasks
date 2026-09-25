@@ -21,13 +21,12 @@ export interface ParsedCommentTimestampPrefix {
 }
 
 const LIST_PREFIX_RE = /^([\s>]*- )(.+)$/u;
-// Fixed-width date prefix is bounded; the lint heuristic cannot infer that here.
-// eslint-disable-next-line sonarjs/super-linear-regex -- fixed-width grammar has bounded backtracking
-const DAY_PREFIX_RE = /^(\d{4}-\d{2}-\d{2}):([ \t]*)(.*)$/u;
+const DAY_PREFIX_RE = /^(\d{4}-\d{2}-\d{2}):/u;
 const INSTANT_PREFIX_RE =
-  // Fixed-width timestamp grammar is bounded; the lint heuristic cannot infer that here.
-  // eslint-disable-next-line sonarjs/super-linear-regex -- fixed-width grammar has bounded backtracking
-  /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(\.\d+)?(Z|[+-]\d{2}:\d{2}):([ \t]*)(.*)$/u;
+  /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(\.\d+)?(Z|[+-]\d{2}:\d{2}):/u;
+// The text starts after the whole blank run, so the run and the text never compete for a character.
+// Like `.`, the text never contains a line terminator.
+const PREFIX_TAIL_RE = /^([ \t]*)((?:[^ \t\n\r\u2028\u2029].*)?)$/u;
 
 export function atomDateTime(value: string): AtomDateTime {
   return value as AtomDateTime;
@@ -122,6 +121,17 @@ function epochForInstant(match: RegExpExecArray): number | undefined {
   return Number.isFinite(epochMs) ? epochMs : undefined;
 }
 
+/** Splits what follows a timestamp's colon into its blank run and the comment text. */
+function prefixTail(
+  body: string,
+  headLength: number,
+): { readonly whitespace: string; readonly text: string } | undefined {
+  const tail = PREFIX_TAIL_RE.exec(body.slice(headLength));
+  const whitespace = tail?.[1];
+  const text = tail?.[2];
+  return whitespace === undefined || text === undefined ? undefined : { whitespace, text };
+}
+
 function parseInstantPrefix(
   listPrefix: string,
   body: string,
@@ -129,10 +139,10 @@ function parseInstantPrefix(
   const instant = INSTANT_PREFIX_RE.exec(body);
   if (instant == null) return undefined;
   const epochMs = epochForInstant(instant);
-  const whitespace = instant[7];
-  const text = instant[8];
-  if (epochMs === undefined || whitespace === undefined || text === undefined) return undefined;
-  const raw = body.slice(0, body.length - text.length - whitespace.length - 1);
+  const tail = prefixTail(body, instant[0].length);
+  if (epochMs === undefined || tail === undefined) return undefined;
+  const { whitespace, text } = tail;
+  const raw = instant[0].slice(0, -1);
   return {
     prefix: `${listPrefix}${raw}:${whitespace}`,
     timestamp: { precision: 'instant', atom: atomDateTime(raw), epochMs, raw },
@@ -147,9 +157,9 @@ function parseDayPrefix(
   const day = DAY_PREFIX_RE.exec(body);
   if (day == null) return undefined;
   const rawDate = day[1];
-  const whitespace = day[2];
-  const text = day[3];
-  if (rawDate === undefined || whitespace === undefined || text === undefined) return undefined;
+  const tail = prefixTail(body, day[0].length);
+  if (rawDate === undefined || tail === undefined) return undefined;
+  const { whitespace, text } = tail;
   try {
     const value = localDate(rawDate);
     return {

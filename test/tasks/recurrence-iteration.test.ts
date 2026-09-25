@@ -10,7 +10,7 @@ import type { TaskPlanning } from '../../src/tasks/domain/types';
 import { localDate, localTime } from '../../src/tasks/domain/validation';
 import { stripTerminalBlockId } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
-import { canonicalStatusCatalog } from '../helpers';
+import { canonicalStatusCatalog, medianInterleavedRatio } from '../helpers';
 
 const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
 
@@ -570,5 +570,36 @@ describe('stripTerminalBlockId', () => {
     );
     expect(stripTerminalBlockId('  - prose^not-a-block')).toBe('  - prose^not-a-block');
     expect(stripTerminalBlockId('  - prose ^middle remains')).toBe('  - prose ^middle remains');
+  });
+
+  it.each([
+    ['tabs', '  - task\t\t^abc', '  - task'],
+    ['mixed blanks', '  - task \t ^abc', '  - task'],
+    ['a no-break space and an em space', '  - task\u00A0\u2003^abc', '  - task'],
+    ['nothing but blanks', ' \t ^abc', ''],
+    ['text and a carriage return after the ID', '  - task  ^abc\r', '  - task\r'],
+  ])('removes the whole blank run before a terminal block ID after %s', (_name, line, expected) => {
+    expect(stripTerminalBlockId(line)).toBe(expected);
+  });
+
+  it('keeps a long blank run that no block ID ends', () => {
+    const line = `  - task${' '.repeat(5_000)}x`;
+
+    expect(stripTerminalBlockId(line)).toBe(line);
+  });
+
+  it('strips a terminal block ID in time linear in the blank run', () => {
+    const small = `- [ ] Task${' '.repeat(2_000)}x`;
+    const large = `- [ ] Task${' '.repeat(8_000)}x`;
+
+    // Four times the blanks cost about 4x; a scan that restarts at every blank costs 16x. The
+    // threshold is their geometric mean, and interleaved pairs keep a CPU speed change to the
+    // pair it splits.
+    expect(
+      medianInterleavedRatio({
+        small: () => stripTerminalBlockId(small),
+        large: () => stripTerminalBlockId(large),
+      }),
+    ).toBeLessThan(8);
   });
 });

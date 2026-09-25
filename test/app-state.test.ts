@@ -312,7 +312,7 @@ describe('AppState', () => {
     const cb = vi.fn();
     s.on('taskStack', cb);
     s.set('taskStack', []);
-    // eslint-disable-next-line sonarjs/no-element-overwrite -- repeated assignment is the behavior under test
+    expect(cb).toHaveBeenCalledTimes(1);
     s.set('taskStack', []); // new ref, empty
     expect(cb).toHaveBeenCalledTimes(2);
   });
@@ -323,7 +323,7 @@ describe('AppState', () => {
     const arr: never[] = [];
     s.on('taskStack', cb);
     s.set('taskStack', arr);
-    // eslint-disable-next-line sonarjs/no-element-overwrite -- identical-reference assignment is the behavior under test
+    expect(cb).toHaveBeenCalledTimes(1);
     s.set('taskStack', arr); // same ref
     expect(cb).toHaveBeenCalledTimes(1);
   });

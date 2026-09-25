@@ -35,6 +35,42 @@ describe('comment timestamp codec', () => {
     });
   });
 
+  it.each([
+    ['2026-08-11', 'day'],
+    ['2026-08-11T09:32:10Z', 'instant'],
+  ] as const)('keeps the blank run after a %s head in the prefix', (raw, precision) => {
+    expect(parseCommentTimestampPrefix(`  - ${raw}:\t\tbody \t`)).toMatchObject({
+      prefix: `  - ${raw}:\t\t`,
+      timestamp: { precision, raw },
+      text: 'body \t',
+    });
+    expect(parseCommentTimestampPrefix(`  - ${raw}: \t body`)).toMatchObject({
+      prefix: `  - ${raw}: \t `,
+      text: 'body',
+    });
+    expect(parseCommentTimestampPrefix(`  - ${raw}:`)).toMatchObject({
+      prefix: `  - ${raw}:`,
+      timestamp: { precision, raw },
+      text: '',
+    });
+    expect(parseCommentTimestampPrefix(`  - ${raw}:   `)).toMatchObject({
+      prefix: `  - ${raw}:   `,
+      timestamp: { precision, raw },
+      text: '',
+    });
+  });
+
+  it.each(['2026-08-11', '2026-08-11T09:32:10Z'])(
+    'reads a no-break space after a %s head as comment text',
+    (raw) => {
+      expect(parseCommentTimestampPrefix(`  - ${raw}:\u00A0body`)).toMatchObject({
+        prefix: `  - ${raw}:`,
+        timestamp: { raw },
+        text: '\u00A0body',
+      });
+    },
+  );
+
   it('returns an undated comment without consuming colon-bearing prose', () => {
     expect(parseCommentTimestampPrefix('>   - Meet at 12:30: bring notes')).toEqual({
       prefix: '>   - ',

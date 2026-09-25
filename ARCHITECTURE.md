@@ -557,6 +557,11 @@ retain their owning window and dispose pending work. These lexical checks comple
 [owner-lifecycle tests](test/project-owner-lifecycle.test.ts); they do not establish transitive
 purity or native popout behavior.
 
+Linted files carry no ESLint or TypeScript directive comments. The
+[lint parity test](test/obsidian-lint-parity.test.ts) holds every rule that
+eslint-plugin-obsidianmd's recommended config enables for plugin source at the same or a higher
+severity with the same options, apart from exact reviewed differences.
+
 Authored and shipped CSS share the [CSS policy](tooling/css-policy.mjs) and Stylelint correctness
 rules. Styles stay scoped to plugin-owned surfaces and use semantic host tokens.
 [CSS contracts](tooling/css-contracts.mjs) record token provenance, required compatibility

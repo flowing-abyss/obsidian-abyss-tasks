@@ -239,11 +239,13 @@ export function recurrenceOwnedSubtree(
   return { fromLine: ownerRelativeLine, toLine, taskLines };
 }
 
+const TERMINAL_BLOCK_ID_RE = /\s\^[A-Za-z0-9-]+(?=\r?$)/u;
+
 /** Removes only a whitespace-delimited terminal Obsidian block ID. */
 export function stripRecurrenceTerminalBlockId(line: string): string {
-  // The brief requires this exact line-safe terminal-only expression.
-  // eslint-disable-next-line sonarjs/super-linear-regex -- terminal-only bounded line grammar
-  return line.replace(/\s+\^[A-Za-z0-9-]+(?=\r?$)/u, '');
+  const match = TERMINAL_BLOCK_ID_RE.exec(line);
+  if (match === null) return line;
+  return line.slice(0, match.index).trimEnd() + line.slice(match.index + match[0].length);
 }
 
 function calendarDate(value: string): boolean {

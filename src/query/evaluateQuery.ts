@@ -300,6 +300,18 @@ function decodeEqualityValue(value: string): string {
   }
 }
 
+/** Frontmatter as query equality reads it: lists comma-joined, a missing value empty. */
+function frontmatterEqualityText(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return `${value}`;
+  }
+  if (Array.isArray(value)) return value.map(frontmatterEqualityText).join(',');
+  if (value instanceof Date) return value.toString();
+  return Object.prototype.toString.call(value);
+}
+
 function evaluateAtom(
   term: string,
   filePath: string,
@@ -317,9 +329,7 @@ function evaluateAtom(
   if (equality >= 0) {
     const key = term.slice(0, equality).trim();
     const expected = decodeEqualityValue(term.slice(equality + 1));
-    const value = frontmatter[key];
-    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- Query equality follows Obsidian frontmatter string coercion.
-    return (value === null || value === undefined ? '' : String(value)) === expected;
+    return frontmatterEqualityText(frontmatter[key]) === expected;
   }
   return term.endsWith('/') && filePath.toLocaleLowerCase().startsWith(term.toLocaleLowerCase());
 }
