@@ -50,10 +50,31 @@ function isMarkdownFile(file: TAbstractFile): file is TFile {
   return file instanceof TFile && file.extension === 'md';
 }
 
-function wasMarkdown(path: string): boolean {
+function isMarkdownPath(path: string): boolean {
   const name = path.replace(/^.*\//u, '');
   const dot = name.lastIndexOf('.');
   return dot >= 0 && name.slice(dot + 1) === 'md';
+}
+
+/** The store's list order: by name, ignoring case and accents. */
+function compareProjectNames(a: Project, b: Project): number {
+  return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+}
+
+/**
+ * The upper bound of `project` in a list sorted by name: after every entry whose name sorts before
+ * or equal to its name, which is where a stable sort puts an entry that comes last.
+ */
+function sortedInsertionIndex(projects: readonly Project[], project: Project): number {
+  let low = 0;
+  let high = projects.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const entry = projects[middle];
+    if (entry !== undefined && compareProjectNames(entry, project) <= 0) low = middle + 1;
+    else high = middle;
+  }
+  return low;
 }
 
 function metadataMayContainTasks(data: string, cache: CachedMetadata): boolean {
@@ -66,11 +87,14 @@ function metadataMayContainTasks(data: string, cache: CachedMetadata): boolean {
  * query), computing per-note task stats. Registers its own vault/metadata
  * listeners — it must NOT depend only on task-index events, because a project
  * note with no tasks is never in the task map and its create/delete/rename
- * would be missed.
+ * would be missed. A rename or delete moves or drops the note's entry at once,
+ * and the debounced flush then re-reads the note.
  */
 export class ProjectStore {
   private cache_abyssPrivate: Project[] = [];
   private byPath_abyssPrivate = new Map<string, Project>();
+  /** Set when the list changed without a notification; the next publication clears it. */
+  private unpublished_abyssPrivate = false;
   private listeners_abyssPrivate: Array<() => void> = [];
   private sourceListeners_abyssPrivate: Array<(observation: ProjectSourceObservation) => void> = [];
   private eventUnsubs_abyssPrivate: Array<() => void> = [];
@@ -138,9 +162,10 @@ export class ProjectStore {
       } else {
         this.awaitBarrier_abyssPrivate(file.path);
       }
+      this.followNote_abyssPrivate(file.path);
     });
     const renameRef = this.app_abyssPrivate.vault.on('rename', (file, oldPath) => {
-      if (file instanceof TFile && (file.extension === 'md' || wasMarkdown(oldPath))) {
+      if (file instanceof TFile && (file.extension === 'md' || isMarkdownPath(oldPath))) {
         this.pendingCreates_abyssPrivate.delete(oldPath);
         this.recordSourceObservation_abyssPrivate(oldPath, undefined, undefined);
         const project = this.byPath_abyssPrivate.get(oldPath);
@@ -152,6 +177,7 @@ export class ProjectStore {
         } else {
           this.awaitBarrier_abyssPrivate(oldPath, file.path);
         }
+        this.followNote_abyssPrivate(oldPath, file.path);
       }
     });
     this.eventUnsubs_abyssPrivate.push(
@@ -181,13 +207,35 @@ export class ProjectStore {
     } else if (event.type === 'initialized') {
       this.releaseFull_abyssPrivate();
     } else if (event.type === 'renamed') {
+      this.followNote_abyssPrivate(event.oldPath, event.newPath);
       this.pendingCreates_abyssPrivate.delete(event.oldPath);
       this.pendingCreates_abyssPrivate.delete(event.newPath);
       this.releasePath_abyssPrivate(event.oldPath, event.newPath);
     } else {
+      this.followNote_abyssPrivate(event.path);
       this.pendingCreates_abyssPrivate.delete(event.path);
       this.releasePath_abyssPrivate(event.path);
     }
+  }
+
+  /**
+   * Moves a listed note's entry to its new path at once, or drops it for a delete or a rename away
+   * from Markdown, so that no render pairs an old path with saved view state that the plugin has
+   * already rebased. Only the path and name change; the flush re-reads the note and publishes the
+   * move. The vault event and the index's delivery both call this, and the second finds nothing.
+   */
+  private followNote_abyssPrivate(oldPath: string, newPath?: string): void {
+    const project = this.byPath_abyssPrivate.get(oldPath);
+    if (project === undefined || newPath === oldPath) return;
+    this.byPath_abyssPrivate.delete(oldPath);
+    const listed = this.cache_abyssPrivate.filter((entry) => entry.path !== oldPath);
+    if (newPath !== undefined && isMarkdownPath(newPath)) {
+      const moved: Project = { ...project, path: newPath, name: basename(newPath) };
+      this.byPath_abyssPrivate.set(newPath, moved);
+      listed.splice(sortedInsertionIndex(listed, moved), 0, moved);
+    }
+    this.cache_abyssPrivate = listed;
+    this.unpublished_abyssPrivate = true;
   }
 
   private releaseChangedPaths_abyssPrivate(files: readonly string[]): void {
@@ -226,7 +274,8 @@ export class ProjectStore {
   }
 
   private flush_abyssPrivate(): void {
-    const before = this.cacheSignature_abyssPrivate();
+    // A move that no listener has heard of publishes whatever the flush finds.
+    const before = this.unpublished_abyssPrivate ? undefined : this.cacheSignature_abyssPrivate();
     const observedPaths = new Set(this.readyPaths_abyssPrivate);
     if (this.readyFull_abyssPrivate) {
       this.recomputeAll_abyssPrivate();
@@ -317,8 +366,15 @@ export class ProjectStore {
     return JSON.stringify(this.cache_abyssPrivate);
   }
 
-  private notifyIfChanged_abyssPrivate(before: string): void {
-    if (this.cacheSignature_abyssPrivate() === before) return;
+  /** Publishes unless `before`, the list's signature at the flush's start, still matches. */
+  private notifyIfChanged_abyssPrivate(before: string | undefined): void {
+    if (before !== undefined && this.cacheSignature_abyssPrivate() === before) return;
+    this.publish_abyssPrivate();
+  }
+
+  /** Notifies every update listener, which also publishes any earlier move. */
+  private publish_abyssPrivate(): void {
+    this.unpublished_abyssPrivate = false;
     for (const cb of this.listeners_abyssPrivate) cb();
   }
 
@@ -382,8 +438,8 @@ export class ProjectStore {
   }
 
   private rebuildCache_abyssPrivate(): void {
-    this.cache_abyssPrivate = Array.from(this.byPath_abyssPrivate.values()).sort((a, b) =>
-      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+    this.cache_abyssPrivate = Array.from(this.byPath_abyssPrivate.values()).sort(
+      compareProjectNames,
     );
   }
 
@@ -405,7 +461,7 @@ export class ProjectStore {
   refresh(): void {
     this.recomputeAll_abyssPrivate();
     this.settingsSignature_abyssPrivate = this.projectEntrySettingsSignature_abyssPrivate();
-    for (const cb of this.listeners_abyssPrivate) cb();
+    this.publish_abyssPrivate();
   }
 
   private projectEntrySettingsSignature_abyssPrivate(): string {
@@ -423,7 +479,7 @@ export class ProjectStore {
     if (signature !== this.settingsSignature_abyssPrivate) {
       this.recomputeAll_abyssPrivate();
       this.settingsSignature_abyssPrivate = signature;
-      for (const cb of this.listeners_abyssPrivate) cb();
+      this.publish_abyssPrivate();
       return 'rescanned';
     }
     return 'presentation';

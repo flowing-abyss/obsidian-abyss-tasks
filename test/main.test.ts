@@ -1011,6 +1011,14 @@ async function kanbanOverview() {
   return harness;
 }
 
+/** The cards of one Kanban status column, in screen order. */
+function kanbanCards(panel: HTMLElement, statusKey: string): HTMLElement[] {
+  const column = panel.querySelector(
+    `.abyss-project-kanban-column[data-status-key="${statusKey}"]`,
+  );
+  return Array.from(column?.querySelectorAll<HTMLElement>('.abyss-project-kanban-card') ?? []);
+}
+
 describe('TaskCalendarPlugin note path lifecycle', () => {
   it('writes once and raises one Notice when the selected project leaves its status empty', async () => {
     const { app, plugin, leaf, navigation, state, statePath, note } = await kanbanOverview();
@@ -1119,6 +1127,63 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
         [WIP]: ['projects/A.md', 'projects/B2.md', 'projects/C.md'],
         [TODO]: ['projects/D.md'],
       });
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      await leaf.setViewState({ type: 'empty' });
+      leaf.detach();
+      plugin.onunload();
+    }
+  });
+
+  it("keeps a renamed ranked card in its column slot before and after the store's flush", async () => {
+    const { app, plugin, leaf, note } = await kanbanOverview();
+    vi.useFakeTimers();
+    const errors = vi.spyOn(console, 'error');
+    try {
+      // Ranks order the cards only while the board is in manual order.
+      expectDefined(plugin.settings.projects.kanban).sortBy = { field: 'none', dir: 'asc' };
+      plugin.refreshProjectTableSettings();
+      const renamed = note('projects/B.md');
+      const wipPaths = (): Array<string | undefined> =>
+        kanbanCards(leaf.view.containerEl, WIP).map((card) => card.dataset['projectPath']);
+
+      await app.vault.rename(renamed, 'projects/B2.md');
+      // Well short of the store's flush: the index has read the note and published `renamed`.
+      await vi.advanceTimersByTimeAsync(SETTLE_STEP_MS);
+
+      expect(wipPaths()).toEqual(['projects/A.md', 'projects/B2.md', 'projects/C.md']);
+      const card = kanbanCards(leaf.view.containerEl, WIP).find(
+        (candidate) => candidate.dataset['projectPath'] === 'projects/B2.md',
+      );
+      expect(card?.querySelector('.abyss-project-kanban-title')?.textContent).toBe('B2');
+
+      // The mock metadata cache does not follow a rename; a same-content write re-indexes it.
+      await app.vault.modify(renamed, LIFECYCLE_NOTES['projects/B.md']);
+      await vi.advanceTimersByTimeAsync(PAST_TRAILING_WORK_MS);
+      expect(wipPaths()).toEqual(['projects/A.md', 'projects/B2.md', 'projects/C.md']);
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      await leaf.setViewState({ type: 'empty' });
+      leaf.detach();
+      plugin.onunload();
+    }
+  });
+
+  it("shows a renamed project on its open dashboard before the store's flush", async () => {
+    const { app, plugin, leaf, state, note } = await kanbanOverview();
+    vi.useFakeTimers();
+    const errors = vi.spyOn(console, 'error');
+    try {
+      state.set('projectsPanel', { view: 'dashboard', path: 'projects/B.md' });
+
+      await app.vault.rename(note('projects/B.md'), 'projects/B2.md');
+
+      expect(state.get('projectsPanel')).toEqual({ view: 'dashboard', path: 'projects/B2.md' });
+      const panel = leaf.view.containerEl;
+      expect(panel.querySelector('.abyss-projects-empty')).toBeNull();
+      expect(panel.querySelector('.abyss-project-dashboard-title')?.textContent).toBe('B2');
       expect(errors).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();

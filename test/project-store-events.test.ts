@@ -525,7 +525,7 @@ describe('ProjectStore event convergence', () => {
     h.setFiles([attachment]);
     h.vault('rename', attachment, 'Projects/A.md');
     vi.advanceTimersByTime(1_000);
-    expect(store.get('Projects/A.md')).toBeDefined();
+    expect(store.get('Projects/A.md')).toBeUndefined();
     expect(listener).not.toHaveBeenCalled();
     expect(h.getMarkdownFiles).toHaveBeenCalledOnce();
     h.index({ type: 'renamed', oldPath: 'Projects/A.md', newPath: 'Projects/A.png' });
@@ -535,4 +535,147 @@ describe('ProjectStore event convergence', () => {
     expect(h.getMarkdownFiles).toHaveBeenCalledOnce();
     store.destroy();
   });
+});
+
+/** A store that lists `Projects/A.md`, the one note with a task, beside `others`. */
+function listedStore(others: readonly string[] = ['Projects/C.md', 'Projects/E.md']) {
+  vi.useFakeTimers();
+  const h = harness();
+  const otherFiles = others.map((path) => tfile(path));
+  h.setFiles([h.file, ...otherFiles]);
+  const store = new ProjectStore(h.app, h.queries, DEFAULT_SETTINGS);
+  store.initialize();
+  const listener = vi.fn();
+  store.onUpdate(listener);
+  return { h, otherFiles, store, listener, listed: expectDefined(store.get('Projects/A.md')) };
+}
+
+function listedPaths(store: ProjectStore): string[] {
+  return store.list().map(({ path }) => path);
+}
+
+describe('ProjectStore follows a listed note', () => {
+  it.each([
+    ['vault', 'index'],
+    ['index', 'vault'],
+  ] as const)(
+    'moves a renamed note at once when the %s reports it, and the flush publishes the move once',
+    (first, second) => {
+      const { h, otherFiles, store, listener, listed } = listedStore();
+      const renamed = tfile('Projects/D.md');
+      h.setFiles([renamed, ...otherFiles]);
+      const report = {
+        vault: () => {
+          h.vault('rename', renamed, 'Projects/A.md');
+        },
+        index: () => {
+          h.setTasks([taskAt(renamed.path, 'open')]);
+          h.index({ type: 'renamed', oldPath: 'Projects/A.md', newPath: renamed.path });
+        },
+      };
+      const moved = { ...listed, path: 'Projects/D.md', name: 'D' };
+
+      report[first]();
+      expect(store.get('Projects/A.md')).toBeUndefined();
+      expect(store.get('Projects/D.md')).toEqual(moved);
+      expect(listedPaths(store)).toEqual(['Projects/C.md', 'Projects/D.md', 'Projects/E.md']);
+      expect(listener).not.toHaveBeenCalled();
+
+      report[second]();
+      expect(store.get('Projects/D.md')).toEqual(moved);
+      expect(listedPaths(store)).toEqual(['Projects/C.md', 'Projects/D.md', 'Projects/E.md']);
+      expect(listener).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(150);
+      // The flush finds the moved entry unchanged and still publishes, because no one heard of it.
+      expect(store.get('Projects/D.md')).toEqual(moved);
+      expect(listener).toHaveBeenCalledOnce();
+      store.destroy();
+    },
+  );
+
+  it('moves a renamed note after the names it equals, where the flush sorts it too', () => {
+    const { h, otherFiles, store } = listedStore(['Projects/d.md', 'Projects/x/D.md']);
+    const renamed = tfile('Projects/y/d.md');
+    h.setFiles([renamed, ...otherFiles]);
+    const sorted = ['Projects/d.md', 'Projects/x/D.md', 'Projects/y/d.md'];
+
+    h.vault('rename', renamed, 'Projects/A.md');
+    expect(listedPaths(store)).toEqual(sorted);
+
+    h.setTasks([taskAt(renamed.path, 'open')]);
+    h.index({ type: 'renamed', oldPath: 'Projects/A.md', newPath: renamed.path });
+    vi.advanceTimersByTime(150);
+    expect(listedPaths(store)).toEqual(sorted);
+    store.destroy();
+  });
+
+  it.each([
+    ['vault', 'delete'],
+    ['index', 'delete'],
+    ['vault', 'rename away from Markdown'],
+    ['index', 'rename away from Markdown'],
+  ] as const)(
+    'drops a note at once when the %s reports its %s, and the flush publishes the drop once',
+    (first, change) => {
+      const { h, otherFiles, store, listener } = listedStore();
+      const attachment = tfile('Projects/A.png', 'png');
+      const deleted = change === 'delete';
+      h.setFiles(deleted ? otherFiles : [attachment, ...otherFiles]);
+      const report = {
+        vault: () => {
+          if (deleted) h.vault('delete', h.file);
+          else h.vault('rename', attachment, 'Projects/A.md');
+        },
+        index: () => {
+          h.setTasks([]);
+          h.index(
+            deleted
+              ? { type: 'deleted', path: 'Projects/A.md' }
+              : { type: 'renamed', oldPath: 'Projects/A.md', newPath: attachment.path },
+          );
+        },
+      };
+
+      report[first]();
+      expect(store.get('Projects/A.md')).toBeUndefined();
+      expect(store.get('Projects/A.png')).toBeUndefined();
+      expect(listedPaths(store)).toEqual(['Projects/C.md', 'Projects/E.md']);
+      expect(listener).not.toHaveBeenCalled();
+
+      report[first === 'vault' ? 'index' : 'vault']();
+      expect(listedPaths(store)).toEqual(['Projects/C.md', 'Projects/E.md']);
+      expect(listener).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(150);
+      expect(listedPaths(store)).toEqual(['Projects/C.md', 'Projects/E.md']);
+      expect(listener).toHaveBeenCalledOnce();
+      store.destroy();
+    },
+  );
+
+  it.each(['rename', 'delete'] as const)(
+    'leaves the list and its listeners alone when an unlisted note has a %s',
+    (change) => {
+      const { h, otherFiles, store, listener } = listedStore();
+      const unlisted = tfile('Notes/X.md');
+      const renamed = tfile('Notes/Y.md');
+      h.setFiles(change === 'rename' ? [h.file, ...otherFiles, renamed] : [h.file, ...otherFiles]);
+      const before = store.list();
+
+      if (change === 'rename') {
+        h.vault('rename', renamed, unlisted.path);
+        h.index({ type: 'renamed', oldPath: unlisted.path, newPath: renamed.path });
+      } else {
+        h.vault('delete', unlisted);
+        h.index({ type: 'deleted', path: unlisted.path });
+      }
+      expect(store.list()).toBe(before);
+
+      vi.advanceTimersByTime(150);
+      expect(listedPaths(store)).toEqual(['Projects/A.md', 'Projects/C.md', 'Projects/E.md']);
+      expect(listener).not.toHaveBeenCalled();
+      store.destroy();
+    },
+  );
 });

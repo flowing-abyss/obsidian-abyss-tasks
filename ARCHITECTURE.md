@@ -266,7 +266,9 @@ See [service tests](test/tasks/time-tracking-service.test.ts) and
 
 [`src/projects/`](src/projects/) treats qualifying Markdown notes as projects. `ProjectStore`
 evaluates membership against paths, tags, and frontmatter, combines task snapshots into statistics,
-and updates from vault and task-index events. It adds no persisted cache.
+and updates from vault and task-index events. A rename or delete moves or drops the note's snapshot
+at once, before any render the change causes, so the paths on screen agree with saved view state;
+the debounced refresh then re-reads the note. It adds no persisted cache.
 
 [ProjectManager](src/projects/ProjectManager.ts) creates notes without opening them, edits project
 frontmatter, and moves tasks through `TaskApplicationApi`. Membership comes from the configured

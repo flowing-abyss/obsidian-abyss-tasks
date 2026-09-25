@@ -1003,7 +1003,7 @@ export class ProjectsTableView {
     return changed;
   }
 
-  /** Whether a project's note still exists; the store's list stays stale until its flush. */
+  /** Whether a project's note exists; an appender never ranks a path whose note is gone. */
   private isLiveProjectPath_abyssPrivate(path: string): boolean {
     return this.context_abyssPrivate.app.vault.getAbstractFileByPath(path) instanceof TFile;
   }
