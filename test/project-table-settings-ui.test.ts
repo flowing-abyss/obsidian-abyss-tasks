@@ -262,11 +262,13 @@ describe('renderProjectTableSettings', () => {
       const order: string[] = [];
       let failed = false;
       let persistedDefinitions: unknown;
+      const staticError = new Error('static unavailable');
+      const viewError = new Error('state unavailable');
       const saveStatic = async (): Promise<void> => {
         order.push('static');
         if (failure === 'static' && !failed) {
           failed = true;
-          throw new Error('static unavailable');
+          throw staticError;
         }
         persistedDefinitions = structuredClone(projects.propertyDefinitions);
       };
@@ -274,7 +276,7 @@ describe('renderProjectTableSettings', () => {
         order.push('view');
         if (failure === 'view' && !failed) {
           failed = true;
-          throw new Error('state unavailable');
+          throw viewError;
         }
       };
       vi.mocked(Notice).mockClear();
@@ -287,6 +289,7 @@ describe('renderProjectTableSettings', () => {
         saveViewState,
         refresh: vi.fn(),
       });
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       expectDefined(
         container.querySelector<HTMLButtonElement>('[aria-label="Remove Novel property"]'),
       ).click();
@@ -302,6 +305,10 @@ describe('renderProjectTableSettings', () => {
       await settle();
       expect(order.slice(-2)).toEqual(['static', 'view']);
       expect(persistedDefinitions).toEqual({ 'property:Later': { type: 'number' } });
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        '[abyss-tasks] Could not remove project property',
+        { cause: failure === 'static' ? staticError : viewError },
+      );
     },
   );
 
@@ -868,7 +875,8 @@ describe('renderProjectTableSettings', () => {
 
   it('does not save view state when the definition save for a new column fails', async () => {
     const projects = buildDefaultProjectsSettings();
-    const saveStatic = vi.fn().mockRejectedValue(new Error('static unavailable'));
+    const failure = new Error('static unavailable');
+    const saveStatic = vi.fn().mockRejectedValue(failure);
     const saveViewState = vi.fn().mockResolvedValue(undefined);
     const container = document.body.createDiv();
     renderProjectTableSettings({
@@ -885,6 +893,7 @@ describe('renderProjectTableSettings', () => {
       container.querySelector<HTMLInputElement>('.abyss-project-column-add-input'),
     );
     input.value = 'Budget';
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-column-add')).click();
     await settle();
 
@@ -892,6 +901,9 @@ describe('renderProjectTableSettings', () => {
     expect(saveViewState).not.toHaveBeenCalled();
     expect(projects.propertyDefinitions['property:Budget']).toEqual({ type: 'number' });
     expect(projects.table.columns.some(({ id }) => id === 'property:Budget')).toBe(true);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not add project property', {
+      cause: failure,
+    });
   });
 
   it('persists Show description through the view-state channel outside column rows', async () => {
@@ -1247,7 +1259,8 @@ describe('renderProjectTableSettings', () => {
 
   it('shows exactly one Notice when a curated date source static save fails', async () => {
     const projects = buildDefaultProjectsSettings();
-    const saveStatic = vi.fn().mockRejectedValue(new Error('disk full'));
+    const failure = new Error('disk full');
+    const saveStatic = vi.fn().mockRejectedValue(failure);
     const saveViewState = vi.fn().mockResolvedValue(undefined);
     const container = document.body.createDiv();
     const dropdowns: DropdownComponent[] = [];
@@ -1277,6 +1290,7 @@ describe('renderProjectTableSettings', () => {
         refresh: vi.fn(),
       });
       expandProperty(container, 'start');
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
       editSettingControl(expectDefined(dropdowns[0]).selectEl, 'Kickoff');
       await settle();
@@ -1287,6 +1301,10 @@ describe('renderProjectTableSettings', () => {
       expect((vi.mocked(Notice).mock.calls[0]?.[0] as DocumentFragment).textContent).toContain(
         'Could not save project table settings: disk full. Changes are kept in this session.',
       );
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        '[abyss-tasks] Could not save project table settings',
+        { cause: failure },
+      );
     } finally {
       dropdownSpy.mockRestore();
     }
@@ -1294,7 +1312,8 @@ describe('renderProjectTableSettings', () => {
 
   it('offers a retry for a failed view-state save', async () => {
     const projects = buildDefaultProjectsSettings();
-    const saveViewState = vi.fn().mockRejectedValue(new Error('state unavailable'));
+    const failure = new Error('state unavailable');
+    const saveViewState = vi.fn().mockRejectedValue(failure);
     const container = document.body.createDiv();
     vi.mocked(Notice).mockClear();
     renderProjectTableSettings({
@@ -1306,6 +1325,7 @@ describe('renderProjectTableSettings', () => {
       saveViewState,
       refresh: vi.fn(),
     });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     expectDefined(
       container.querySelector<HTMLInputElement>('[data-column-id="status"] input[type="checkbox"]'),
@@ -1317,14 +1337,16 @@ describe('renderProjectTableSettings', () => {
     expect(
       (vi.mocked(Notice).mock.calls[0]?.[0] as DocumentFragment).querySelector('button'),
     ).not.toBeNull();
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not save project table settings',
+      { cause: failure },
+    );
   });
 
   it('keeps a failed column addition once and retries the current draft', async () => {
     const projects = buildDefaultProjectsSettings();
-    const saveViewState = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('state unavailable'))
-      .mockResolvedValue(undefined);
+    const failure = new Error('state unavailable');
+    const saveViewState = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue(undefined);
     const container = document.body.createDiv();
     renderProjectTableSettings({
       app: new App(),
@@ -1339,6 +1361,7 @@ describe('renderProjectTableSettings', () => {
       container.querySelector<HTMLInputElement>('.abyss-project-column-add-input'),
     );
     input.value = 'Budget';
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-column-add')).click();
     await settle();
@@ -1349,6 +1372,9 @@ describe('renderProjectTableSettings', () => {
     await settle();
     expect(saveViewState).toHaveBeenCalledTimes(2);
     expect(projects.table.columns.filter(({ id }) => id === 'property:Budget')).toHaveLength(1);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not add project property', {
+      cause: failure,
+    });
   });
 
   it('changes a display label without changing the custom property source key', async () => {

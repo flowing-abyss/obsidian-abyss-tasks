@@ -1,9 +1,9 @@
 import * as obsidian from 'obsidian';
 import { Platform } from 'obsidian';
 import ts from 'typescript';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type TaskCalendarPlugin from '../src/main';
-import { useRealMoment } from './helpers';
+import { appWithFiles, useRealMoment } from './helpers';
 
 const loadNodeTools = async () => {
   if (!Platform.isDesktop) throw new Error('Artifact tests require a desktop runtime');
@@ -263,8 +263,14 @@ describe('production JavaScript artifact', () => {
       if (id !== 'obsidian') throw new Error(`Unexpected runtime dependency: ${id}`);
       return obsidian;
     });
-    const app = new obsidian.App();
+    const app = appWithFiles({});
     (app.workspace as unknown as { layoutReady: boolean }).layoutReady = false;
+    const notices = vi.spyOn(
+      obsidian.Notice.prototype as unknown as {
+        constructor__(message: unknown, duration?: number): void;
+      },
+      'constructor__',
+    );
     const plugin = new module.exports.default(app, {
       id: 'abyss-tasks',
       name: 'Abyss Tasks',
@@ -275,6 +281,7 @@ describe('production JavaScript artifact', () => {
     });
     try {
       await plugin.onload();
+      expect(notices).not.toHaveBeenCalled();
       expect(plugin.queries.list()).toEqual([]);
       expect(plugin.queries.listNodes()).toEqual([]);
       expect(plugin.settings.taskStatuses.length).toBeGreaterThan(0);

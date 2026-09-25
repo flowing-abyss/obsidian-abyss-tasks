@@ -35,6 +35,7 @@ import {
   flushMicrotasks,
   freshContainer,
   loadPluginStyles,
+  objectMatching,
 } from './helpers';
 
 interface TestTransfer {
@@ -2818,6 +2819,7 @@ describe('ProjectsTableView', () => {
       catalog: catalog([{ name: 'Tags', type: 'tags' }]),
       applyEdits,
     });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     expectDefined(
       host.querySelector<HTMLButtonElement>(
@@ -2832,6 +2834,13 @@ describe('ProjectsTableView', () => {
       expectedValue: '#work',
       expectedExists: true,
     });
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not update project list property',
+      {
+        property: 'Tags',
+        cause: objectMatching<Error>({ name: 'Error', message: 'Could not update Tags' }),
+      },
+    );
   });
 
   it('finishes an active editor before delegating native tag activation', async () => {
@@ -2907,7 +2916,8 @@ describe('ProjectsTableView', () => {
   it('toggles an unset checkbox through history and restores native DOM after rejection', async () => {
     const config = settings();
     config.projects.table.columns.push({ id: 'property:Flag', visible: true });
-    const applyEdits = vi.fn().mockRejectedValue(new Error('disk full'));
+    const failure = new Error('disk full');
+    const applyEdits = vi.fn().mockRejectedValue(failure);
     const { host } = mount([project({ frontmatter: {} })], {
       settings: config,
       catalog: catalog([{ name: 'Flag', type: 'checkbox' }]),
@@ -2918,6 +2928,7 @@ describe('ProjectsTableView', () => {
         '[data-column-id="property:Flag"] input.metadata-input-checkbox',
       ),
     );
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     checkbox.click();
     await flushMicrotasks();
@@ -2928,6 +2939,10 @@ describe('ProjectsTableView', () => {
     expect(checkbox.checked).toBe(false);
     expect(checkbox.indeterminate).toBe(false);
     expect(checkbox.dataset['indeterminate']).toBe('true');
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not update project checkbox property',
+      { property: 'Flag', cause: failure },
+    );
   });
 
   it('clears a false checkbox through the shared mutation and history path', async () => {
@@ -3410,9 +3425,10 @@ describe('ProjectsTableView', () => {
     config.projects.table.columns.push({ id: 'property:Priority', visible: true });
     config.projects.propertyDefinitions['property:Priority'] = { type: 'text' };
     const savedTypes: string[] = [];
+    const failure = new Error('disk full');
     const saveStatic = vi.fn(async () => {
       savedTypes.push(config.projects.propertyDefinitions['property:Priority']?.type ?? 'missing');
-      if (savedTypes.length === 1) throw new Error('disk full');
+      if (savedTypes.length === 1) throw failure;
     });
     let noticeContent: DocumentFragment | undefined;
     const noticePrototype = Notice.prototype as unknown as {
@@ -3432,6 +3448,7 @@ describe('ProjectsTableView', () => {
         '.abyss-project-table-header-cell[data-column-id="property:Priority"]',
       ),
     ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     activateMenuItem(submenu(lastShownMenu(show), 'Property type'), 'Number');
     await flushMicrotasks();
 
@@ -3448,6 +3465,10 @@ describe('ProjectsTableView', () => {
     await flushMicrotasks();
 
     expect(savedTypes).toEqual(['number', 'date']);
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not save project property type',
+      { cause: failure },
+    );
   });
 
   it('keeps sorting separate from column drag and resize gestures', async () => {

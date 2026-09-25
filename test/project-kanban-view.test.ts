@@ -20,7 +20,13 @@ import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTime
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { ProjectsSettings } from '../src/settings/types';
-import { appWithFiles, expectDefined, flushMicrotasks, freshContainer } from './helpers';
+import {
+  appWithFiles,
+  expectDefined,
+  flushMicrotasks,
+  freshContainer,
+  objectMatching,
+} from './helpers';
 
 interface TestTransfer {
   readonly types: string[];
@@ -707,6 +713,7 @@ describe('project Kanban overview', () => {
         host.querySelectorAll<HTMLButtonElement>('.abyss-project-timeline-scale-control button'),
       ).find(({ textContent }) => textContent === 'Day'),
     );
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     day.click();
     await flushMicrotasks();
@@ -714,6 +721,10 @@ describe('project Kanban overview', () => {
     expect(settings.projects.timeline?.scale).toBe('month');
     expect(host.querySelector('.abyss-project-timeline-axis-range')?.textContent).toBe(before);
     expect(input.isConnected).toBe(true);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not save project property', {
+      property: 'start',
+      cause: objectMatching<Error>({ name: 'Error', message: 'Source changed' }),
+    });
   });
 
   it('labels the Timeline option Unscheduled with a supported calendar icon', () => {
@@ -2432,6 +2443,7 @@ describe('project Kanban overview', () => {
 
     view.update([{ ...initial, frontmatter: { ...initial.frontmatter, Budget: 99 } }]);
     expect(card.isConnected).toBe(true);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     target.dispatchEvent(dragEvent('drop', data));
     await flushMicrotasks();
 
@@ -2441,6 +2453,12 @@ describe('project Kanban overview', () => {
     expect(
       host.querySelector('.abyss-projects-table')?.classList.contains('is-project-dragging'),
     ).toBe(false);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not move project card', {
+      cause: objectMatching<Error>({
+        name: 'Error',
+        message: 'Project group changed while the card was being dragged',
+      }),
+    });
   });
 
   it('revalidates the captured source inside the queued drop', async () => {
@@ -2474,6 +2492,7 @@ describe('project Kanban overview', () => {
         `.abyss-project-kanban-column[data-status-key="id:${active.id}"]`,
       ),
     );
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     target.dispatchEvent(dragEvent('drop', data));
     await flushMicrotasks();
@@ -2484,6 +2503,12 @@ describe('project Kanban overview', () => {
     expect(
       host.querySelector('.abyss-projects-table')?.classList.contains('is-project-dragging'),
     ).toBe(false);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not move project card', {
+      cause: objectMatching<Error>({
+        name: 'Error',
+        message: 'Project status changed while the project was being dragged',
+      }),
+    });
   });
 
   it.each(['settings', 'status field'] as const)(
@@ -2521,6 +2546,7 @@ describe('project Kanban overview', () => {
         settings.projects.statusProperty = 'phase';
         view.refreshFields();
       }
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       releaseQueue?.();
       await held;
       await flushMicrotasks();
@@ -2531,6 +2557,15 @@ describe('project Kanban overview', () => {
       expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain('changed');
       expect(host.querySelector('.is-dragging, .is-drop-target')).toBeNull();
       expect(activeDocument.querySelector('.abyss-project-kanban-drag-image')).toBeNull();
+      expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not move project card', {
+        cause: objectMatching<Error>({
+          name: 'Error',
+          message:
+            stale === 'settings'
+              ? 'Project board settings changed during drag'
+              : 'Status source changed during drag',
+        }),
+      });
     },
   );
 
@@ -3726,6 +3761,7 @@ describe('project Kanban overview', () => {
       host.querySelector<HTMLButtonElement>('.abyss-project-kanban-group-header'),
     );
     const groupBody = expectDefined(groupHeader.nextElementSibling as HTMLElement | null);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     groupHeader.click();
     expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
@@ -3749,6 +3785,10 @@ describe('project Kanban overview', () => {
         )
         ?.getAttribute('aria-pressed'),
     ).toBe('true');
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not save project property', {
+      property: 'start',
+      cause: objectMatching<Error>({ name: 'Error', message: 'Source changed' }),
+    });
   });
 
   it('excludes collapsed group cells from selection and renders structured group content', async () => {
@@ -3896,6 +3936,7 @@ describe('project Kanban overview', () => {
     const header = expectDefined(
       host.querySelector<HTMLButtonElement>('.abyss-project-timeline-group-header'),
     );
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     header.click();
     await flushMicrotasks();
@@ -3903,6 +3944,10 @@ describe('project Kanban overview', () => {
     expect(header.getAttribute('aria-expanded')).toBe('true');
     expect(start.contains(input)).toBe(true);
     expect(input.value).toBe('2026-10-02');
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not save project property', {
+      property: 'start',
+      cause: objectMatching<Error>({ name: 'Error', message: 'Source changed' }),
+    });
   });
 
   it.each(['Kanban', 'Timeline'] as const)(
@@ -3924,6 +3969,7 @@ describe('project Kanban overview', () => {
       const input = expectDefined(end.querySelector<HTMLInputElement>('input[type="date"]'));
       input.value = '2026-10-02';
       input.dispatchEvent(new Event('input', { bubbles: true }));
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       clickView(host, mode);
       await flushMicrotasks();
 
@@ -3931,6 +3977,10 @@ describe('project Kanban overview', () => {
       expect(host.querySelector(`.abyss-project-${mode.toLocaleLowerCase()}`)).toBeNull();
       expect(end.contains(input)).toBe(true);
       expect(input.value).toBe('2026-10-02');
+      expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not save project property', {
+        property: 'end',
+        cause: objectMatching<Error>({ name: 'Error', message: 'Source changed' }),
+      });
     },
   );
 

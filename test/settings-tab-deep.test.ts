@@ -929,6 +929,7 @@ describe('CalendarSettingsTab project value commits', () => {
     const pendingRename = new Promise<void>((_resolve, reject) => {
       rejectRename = reject;
     });
+    const failure = new Error('status changed externally');
     const { tab, plugin } = makeTab();
     document.body.append(tab.containerEl);
     plugin.renameProjectStatus.mockImplementation(() => pendingRename);
@@ -944,8 +945,9 @@ describe('CalendarSettingsTab project value commits', () => {
       input.dispatchEvent(new Event('input', { bubbles: true }));
       expectDefined(tab.containerEl.ownerDocument.defaultView).dispatchEvent(new Event('blur'));
       (tab as unknown as { display(): void }).display();
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-      rejectRename(new Error('status changed externally'));
+      rejectRename(failure);
       await flushMicrotasks();
 
       const current = expectDefined(
@@ -956,6 +958,12 @@ describe('CalendarSettingsTab project value commits', () => {
       expect(current.value).toBe('inbox');
       expect(current.disabled).toBe(false);
       expect(plugin.renameProjectStatus).toHaveBeenCalledOnce();
+      expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not rename project status', {
+        statusId: 'status-1',
+        expectedName: 'inbox',
+        requestedName: 'running',
+        cause: failure,
+      });
     } finally {
       tab.hide();
       tab.containerEl.remove();
@@ -2219,6 +2227,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     const firstSave = new Promise<void>((_resolve, reject) => {
       rejectFirst = reject;
     });
+    const failure = new Error('older write failed');
     const saveSettings = vi
       .fn()
       .mockImplementationOnce(() => firstSave)
@@ -2233,7 +2242,8 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
 
     dragProjectValueRow(secondRow, projectStatusRowNamed(body, firstStatus.name));
     dragProjectValueRow(secondRow, projectStatusRowNamed(body, thirdStatus.name));
-    rejectFirst(new Error('older write failed'));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    rejectFirst(failure);
     await Promise.resolve();
     await Promise.resolve();
 
@@ -2243,6 +2253,10 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       secondStatus.id,
     ]);
     expect(projectStatusOrder(tab)).toEqual(plugin.settings.projects.statuses.map(({ id }) => id));
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not reorder project statuses',
+      { cause: failure },
+    );
   });
 
   it('renders a tag-group addition immediately and rolls back the latest failed save', async () => {
@@ -2331,12 +2345,14 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       icon: 'alert-triangle',
       core: false,
     };
+    const failure = new Error('disk unavailable');
     const { tab, plugin, captured } = makeTab(
       { taskStatuses: [...structuredClone(DEFAULT_SETTINGS.taskStatuses), custom] },
-      { saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')) },
+      { saveSettings: vi.fn().mockRejectedValue(failure) },
     );
     openSection(tab, 4);
     attachSettingsScroller(tab, 513);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     capturedButton(captured, '+ add status', 'Custom statuses').click();
     expect(cardNamed(tab.containerEl, 'New status').isConnected).toBe(true);
@@ -2352,6 +2368,13 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(Notice).toHaveBeenCalled();
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenNthCalledWith(1, '[abyss-tasks] Could not add task status', {
+      cause: failure,
+    });
+    expect(log).toHaveBeenNthCalledWith(2, '[abyss-tasks] Could not delete task status', {
+      cause: failure,
+    });
   });
 
   it('refreshes a mounted project table after description and column view saves', async () => {

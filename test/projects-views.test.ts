@@ -381,14 +381,13 @@ describe('ProjectsPanel dispatch', () => {
   it('retries only the owned status write after partial project creation', async () => {
     const state = new AppState();
     const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
-    const create = vi.fn().mockRejectedValueOnce(
-      new ProjectCreationError('status failed', {
-        createdPath: 'Projects/Owned.md',
-        phase: 'status',
-        statusId: status.id,
-        cause: new Error('disk full'),
-      }),
-    );
+    const failure = new ProjectCreationError('status failed', {
+      createdPath: 'Projects/Owned.md',
+      phase: 'status',
+      statusId: status.id,
+      cause: new Error('disk full'),
+    });
+    const create = vi.fn().mockRejectedValueOnce(failure);
     const setStatus = vi.fn().mockResolvedValue(undefined);
     const refresh = vi.fn();
     const store = {
@@ -419,6 +418,7 @@ describe('ProjectsPanel dispatch', () => {
     expectDefined(el.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
     const input = expectDefined(el.querySelector<HTMLInputElement>('.abyss-project-creation-name'));
     input.value = 'Owned';
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await flushMicrotasks();
     expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-creation-submit')).click();
@@ -427,6 +427,9 @@ describe('ProjectsPanel dispatch', () => {
     expect(create).toHaveBeenCalledOnce();
     expect(setStatus).toHaveBeenCalledWith('Projects/Owned.md', status.id);
     expect(refresh).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not create project', {
+      error: failure,
+    });
     panel.destroy();
     el.remove();
   });
