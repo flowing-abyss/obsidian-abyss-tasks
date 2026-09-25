@@ -963,6 +963,8 @@ const TODO = `id:${expectDefined(DEFAULT_SETTINGS.projects.statuses[1]).id}`;
 const WIP = `id:${expectDefined(DEFAULT_SETTINGS.projects.statuses[2]).id}`;
 /** Past ProjectStore's 150 ms flush and the note-path owner's 150 ms trailing save. */
 const PAST_TRAILING_WORK_MS = 300;
+/** A step well short of both debounces that lets reads, index deliveries, and saves settle. */
+const SETTLE_STEP_MS = 10;
 
 /** The plugin's own owner, index, and panel over the lifecycle notes, with the panel open. */
 async function pluginWithOpenPanel() {
@@ -1012,12 +1014,13 @@ async function kanbanOverview() {
 describe('TaskCalendarPlugin note path lifecycle', () => {
   it('writes once and raises one Notice when the selected project leaves its status empty', async () => {
     const { app, plugin, leaf, navigation, state, statePath, note } = await kanbanOverview();
+    vi.useFakeTimers();
     const failure = new Error('disk full');
     const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       navigation.openList({ type: 'project', path: 'projects/D.md' });
       navigation.openProjects();
-      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(SETTLE_STEP_MS);
       const adapter = app.vault.adapter;
       const write = adapter.write.bind(adapter);
       const writes = vi.spyOn(adapter, 'write').mockImplementation(async (path, data, options) => {
@@ -1027,7 +1030,7 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
       const notices = spyOnNotices();
 
       await app.fileManager.trashFile(note('projects/D.md'));
-      await flushMicrotasks(PAST_TRAILING_WORK_MS);
+      await vi.advanceTimersByTimeAsync(PAST_TRAILING_WORK_MS);
 
       expect(writes.mock.calls.filter(([path]) => path === statePath)).toHaveLength(1);
       expect(noticeMessages(notices)).toEqual([
@@ -1040,6 +1043,7 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
         [WIP]: ['projects/A.md', 'projects/B.md', 'projects/C.md'],
       });
     } finally {
+      vi.useRealTimers();
       await leaf.setViewState({ type: 'empty' });
       leaf.detach();
       plugin.onunload();
@@ -1056,6 +1060,7 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
 
   it('keeps the list on screen under a renamed selected project and drops the old key', async () => {
     const { app, plugin, leaf, navigation, state, note } = await pluginWithOpenPanel();
+    vi.useFakeTimers();
     const errors = vi.spyOn(console, 'error');
     try {
       navigation.openList({ type: 'project', path: 'projects/A.md' });
@@ -1069,6 +1074,7 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
       expect(plugin.settings.listViewStates).not.toHaveProperty(['project:projects/A.md']);
       expect(errors).not.toHaveBeenCalled();
     } finally {
+      vi.useRealTimers();
       await leaf.setViewState({ type: 'empty' });
       leaf.detach();
       plugin.onunload();
@@ -1077,10 +1083,11 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
 
   it('forgets a deleted ranked note with tasks and saves the state without it', async () => {
     const { app, plugin, leaf, statePath, note } = await kanbanOverview();
+    vi.useFakeTimers();
     const errors = vi.spyOn(console, 'error');
     try {
       await app.fileManager.trashFile(note('projects/A.md'));
-      await flushMicrotasks(PAST_TRAILING_WORK_MS);
+      await vi.advanceTimersByTimeAsync(PAST_TRAILING_WORK_MS);
 
       const expected = { [WIP]: ['projects/B.md', 'projects/C.md'], [TODO]: ['projects/D.md'] };
       expect(plugin.settings.projects.kanban?.manualOrder).toEqual(expected);
@@ -1090,6 +1097,7 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
       expect(saved.views.projects.kanban.manualOrder).toEqual(expected);
       expect(errors).not.toHaveBeenCalled();
     } finally {
+      vi.useRealTimers();
       await leaf.setViewState({ type: 'empty' });
       leaf.detach();
       plugin.onunload();
@@ -1098,13 +1106,14 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
 
   it('keeps a renamed ranked note with tasks at its rank', async () => {
     const { app, plugin, leaf, note } = await kanbanOverview();
+    vi.useFakeTimers();
     const errors = vi.spyOn(console, 'error');
     try {
       const renamed = note('projects/B.md');
       await app.vault.rename(renamed, 'projects/B2.md');
       // The mock metadata cache does not follow a rename; a same-content write re-indexes it.
       await app.vault.modify(renamed, LIFECYCLE_NOTES['projects/B.md']);
-      await flushMicrotasks(PAST_TRAILING_WORK_MS);
+      await vi.advanceTimersByTimeAsync(PAST_TRAILING_WORK_MS);
 
       expect(plugin.settings.projects.kanban?.manualOrder).toEqual({
         [WIP]: ['projects/A.md', 'projects/B2.md', 'projects/C.md'],
@@ -1112,6 +1121,7 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
       });
       expect(errors).not.toHaveBeenCalled();
     } finally {
+      vi.useRealTimers();
       await leaf.setViewState({ type: 'empty' });
       leaf.detach();
       plugin.onunload();
@@ -1120,6 +1130,7 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
 
   it('forgets a deleted note without tasks while its dashboard is open', async () => {
     const { app, plugin, leaf, state, note } = await kanbanOverview();
+    vi.useFakeTimers();
     const errors = vi.spyOn(console, 'error');
     try {
       state.set('projectsPanel', { view: 'dashboard', path: 'projects/C.md' });
@@ -1127,13 +1138,14 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
       await app.fileManager.trashFile(note('projects/C.md'));
 
       expect(state.get('projectsPanel')).toEqual({ view: 'table' });
-      await flushMicrotasks(PAST_TRAILING_WORK_MS);
+      await vi.advanceTimersByTimeAsync(PAST_TRAILING_WORK_MS);
       expect(plugin.settings.projects.kanban?.manualOrder).toEqual({
         [WIP]: ['projects/A.md', 'projects/B.md'],
         [TODO]: ['projects/D.md'],
       });
       expect(errors).not.toHaveBeenCalled();
     } finally {
+      vi.useRealTimers();
       await leaf.setViewState({ type: 'empty' });
       leaf.detach();
       plugin.onunload();
@@ -1142,6 +1154,7 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
 
   it('leaves no bucket for the only ranked project of a status and no overview save', async () => {
     const { app, plugin, leaf, statePath, note } = await kanbanOverview();
+    vi.useFakeTimers();
     const panelRoute = vi.spyOn(
       plugin as unknown as { saveViewStateWithNotice: () => Promise<void> },
       'saveViewStateWithNotice',
@@ -1150,7 +1163,7 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
     const errors = vi.spyOn(console, 'error');
     try {
       await app.fileManager.trashFile(note('projects/D.md'));
-      await flushMicrotasks(PAST_TRAILING_WORK_MS);
+      await vi.advanceTimersByTimeAsync(PAST_TRAILING_WORK_MS);
 
       expect(plugin.settings.projects.kanban?.manualOrder).toEqual({
         [WIP]: ['projects/A.md', 'projects/B.md', 'projects/C.md'],
@@ -1159,6 +1172,7 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
       expect(writes.mock.calls.filter(([path]) => path === statePath)).toHaveLength(1);
       expect(errors).not.toHaveBeenCalled();
     } finally {
+      vi.useRealTimers();
       await leaf.setViewState({ type: 'empty' });
       leaf.detach();
       plugin.onunload();
