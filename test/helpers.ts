@@ -1013,3 +1013,39 @@ export function fixedToday(dateStr: string): void {
     vi.useRealTimers();
   });
 }
+
+/**
+ * The median of `pairs` large/small time ratios. It first doubles `repeat` from 1 (at most
+ * 65536) until one batch of `small` takes at least `minSampleMs`. Each pair then runs `small` and
+ * `large` back to back, `repeat` times each, alternating which goes first, after `warmup`
+ * unrecorded pairs, so a CPU speed change biases only the pair it splits.
+ */
+export function medianInterleavedRatio(options: {
+  readonly small: () => void;
+  readonly large: () => void;
+  readonly pairs?: number;
+  readonly warmup?: number;
+  readonly minSampleMs?: number;
+}): number {
+  const { small, large, pairs = 41, warmup = 5, minSampleMs = 0.1 } = options;
+  let repeat = 1;
+  const batchMs = (run: () => void): number => {
+    const startedAt = performance.now();
+    for (let index = 0; index < repeat; index++) run();
+    return performance.now() - startedAt;
+  };
+  while (batchMs(small) < minSampleMs && repeat < 65_536) repeat *= 2;
+  const pairRatio = (index: number): number => {
+    if (index % 2 === 0) {
+      const smallMs = batchMs(small);
+      return batchMs(large) / smallMs;
+    }
+    const largeMs = batchMs(large);
+    return largeMs / batchMs(small);
+  };
+  for (let index = 0; index < warmup; index++) pairRatio(index);
+  const ratios = Array.from({ length: pairs }, (_, index) => pairRatio(index)).sort(
+    (left, right) => left - right,
+  );
+  return expectDefined(ratios[Math.floor(ratios.length / 2)]);
+}

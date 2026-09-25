@@ -8,7 +8,7 @@ import {
   type ParsedTaskLine,
   type TaskSpanKind,
 } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
-import { canonicalStatusCatalog } from '../helpers';
+import { canonicalStatusCatalog, medianInterleavedRatio } from '../helpers';
 import { expectDefined } from './../helpers';
 
 const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
@@ -1057,37 +1057,17 @@ describe('TaskMarkdownCodec', () => {
     it('avoids quadratic growth for dense ID/dependency markers', () => {
       const denseSource = (count: number): string =>
         `- [ ] Head${Array.from({ length: count }, () => ' 🆔 . ⛔ .').join('')}`;
-      const perIterationMs = (source: string): number => {
-        const startedAt = performance.now();
-        let iterations = 0;
-        let elapsedMs = 0;
-        do {
-          codec.parseLine(source, location);
-          iterations++;
-          elapsedMs = performance.now() - startedAt;
-        } while (elapsedMs < 50);
-        return elapsedMs / iterations;
-      };
-      const small = denseSource(1_000);
+      const small = denseSource(500);
       const large = denseSource(2_000);
-      codec.parseLine(small, location);
-      codec.parseLine(large, location);
 
-      const pairedRatio = (largeFirst: boolean): number => {
-        if (largeFirst) {
-          const largeMs = perIterationMs(large);
-          const smallMs = perIterationMs(small);
-          return largeMs / smallMs;
-        }
-        const smallMs = perIterationMs(small);
-        const largeMs = perIterationMs(large);
-        return largeMs / smallMs;
-      };
-      const ratios = Array.from({ length: 5 }, (_, run) => pairedRatio(run % 2 === 1)).sort(
-        (left, right) => left - right,
-      );
-
-      expect(ratios[2]).toBeLessThan(3.6);
+      // Four times the markers cost about 4x; quadratic work costs 16x. The threshold is their
+      // geometric mean, and interleaved pairs keep a CPU speed change to the pair it splits.
+      expect(
+        medianInterleavedRatio({
+          small: () => codec.parseLine(small, location),
+          large: () => codec.parseLine(large, location),
+        }),
+      ).toBeLessThan(8);
     });
 
     it('preserves all valid source-owned carriers and CRLF byte-exactly', () => {
