@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CONSOLE_GUARD, guardConsole } from './setup/consoleGuard';
+import {
+  CONSOLE_GUARD,
+  failOnPluginLogs,
+  guardConsole,
+  releaseConsoleStubs,
+} from './setup/consoleGuard';
 
 type Marked = { [CONSOLE_GUARD]?: string[] };
 
@@ -38,5 +43,51 @@ describe('plugin log guard', () => {
       [' [abyss-tasks] after a space'],
     ]);
     expect(guardConsole(target)).toBe(record);
+  });
+
+  it('fails once for recorded plugin logs, then clears them', () => {
+    const record = ['console.error: [abyss-tasks] first', 'console.warn: [abyss-tasks] second'];
+
+    expect(() => {
+      failOnPluginLogs(record, 'in this row');
+    }).toThrow(
+      new Error(
+        'Unexpected plugin log in this row: console.error: [abyss-tasks] first; ' +
+          'console.warn: [abyss-tasks] second. A row that expects one stubs console.error or ' +
+          'console.warn with mockImplementation and asserts the call. A log that lands after its ' +
+          'row ends is blamed on the next row.',
+      ),
+    );
+    expect(record).toEqual([]);
+    expect(() => {
+      failOnPluginLogs(record, 'in this row');
+    }).not.toThrow();
+  });
+
+  it('releases a console stub a row left behind, so a later plugin log reaches the guard', () => {
+    const target = { error: vi.fn(), warn: vi.fn() };
+    const record = guardConsole(target);
+    vi.spyOn(target, 'error').mockImplementation(() => undefined);
+    vi.spyOn(target, 'warn').mockImplementation(() => undefined);
+
+    target.error('[abyss-tasks] stubbed error');
+    target.warn('[abyss-tasks] stubbed warning');
+    expect(record).toEqual([]);
+
+    releaseConsoleStubs(target);
+    target.error('[abyss-tasks] later error');
+    target.warn('[abyss-tasks] later warning');
+
+    expect(record).toEqual([
+      'console.error: [abyss-tasks] later error',
+      'console.warn: [abyss-tasks] later warning',
+    ]);
+    expect(vi.isMockFunction(target.error)).toBe(false);
+    expect(vi.isMockFunction(target.warn)).toBe(false);
+    const { error, warn } = target;
+    releaseConsoleStubs(target);
+    expect(target.error).toBe(error);
+    expect(target.warn).toBe(warn);
+    expect(record).toHaveLength(2);
   });
 });

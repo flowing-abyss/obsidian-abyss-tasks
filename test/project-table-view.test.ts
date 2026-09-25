@@ -35,7 +35,6 @@ import {
   flushMicrotasks,
   freshContainer,
   loadPluginStyles,
-  objectMatching,
 } from './helpers';
 
 interface TestTransfer {
@@ -2809,8 +2808,17 @@ describe('ProjectsTableView', () => {
     const config = settings();
     config.projects.table.columns.push({ id: 'property:Tags', visible: true });
     const applyEdits = vi.fn(
-      async (_changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> => ({
-        applied: [],
+      async (changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> => ({
+        // The writer clears a list emptied by its last removal, so the property no longer exists.
+        applied: changes.map((change): AppliedProjectCellChange => ({
+          ...change,
+          value: undefined,
+          sourceProperty: change.sourceProperty ?? expectDefined(change.field.property),
+          sourceKey: change.sourceKey ?? expectDefined(change.field.property),
+          previousValue: change.expectedValue,
+          previousExists: change.expectedExists ?? false,
+          appliedExists: false,
+        })),
         failed: [],
       }),
     );
@@ -2819,7 +2827,6 @@ describe('ProjectsTableView', () => {
       catalog: catalog([{ name: 'Tags', type: 'tags' }]),
       applyEdits,
     });
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     expectDefined(
       host.querySelector<HTMLButtonElement>(
@@ -2834,13 +2841,6 @@ describe('ProjectsTableView', () => {
       expectedValue: '#work',
       expectedExists: true,
     });
-    expect(log).toHaveBeenCalledExactlyOnceWith(
-      '[abyss-tasks] Could not update project list property',
-      {
-        property: 'Tags',
-        cause: objectMatching<Error>({ name: 'Error', message: 'Could not update Tags' }),
-      },
-    );
   });
 
   it('finishes an active editor before delegating native tag activation', async () => {

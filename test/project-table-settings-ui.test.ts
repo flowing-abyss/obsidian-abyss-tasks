@@ -1275,6 +1275,7 @@ describe('renderProjectTableSettings', () => {
       return this;
     });
     vi.mocked(Notice).mockClear();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       renderProjectTableSettings({
         app: new App(),
@@ -1290,7 +1291,6 @@ describe('renderProjectTableSettings', () => {
         refresh: vi.fn(),
       });
       expandProperty(container, 'start');
-      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
       editSettingControl(expectDefined(dropdowns[0]).selectEl, 'Kickoff');
       await settle();
@@ -1301,13 +1301,13 @@ describe('renderProjectTableSettings', () => {
       expect((vi.mocked(Notice).mock.calls[0]?.[0] as DocumentFragment).textContent).toContain(
         'Could not save project table settings: disk full. Changes are kept in this session.',
       );
-      expect(log).toHaveBeenCalledExactlyOnceWith(
-        '[abyss-tasks] Could not save project table settings',
-        { cause: failure },
-      );
     } finally {
       dropdownSpy.mockRestore();
     }
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not save project table settings',
+      { cause: failure },
+    );
   });
 
   it('offers a retry for a failed view-state save', async () => {

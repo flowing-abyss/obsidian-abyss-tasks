@@ -933,6 +933,7 @@ describe('CalendarSettingsTab project value commits', () => {
     const { tab, plugin } = makeTab();
     document.body.append(tab.containerEl);
     plugin.renameProjectStatus.mockImplementation(() => pendingRename);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       const body = openSection(tab, 3);
       const input = expectDefined(
@@ -945,7 +946,6 @@ describe('CalendarSettingsTab project value commits', () => {
       input.dispatchEvent(new Event('input', { bubbles: true }));
       expectDefined(tab.containerEl.ownerDocument.defaultView).dispatchEvent(new Event('blur'));
       (tab as unknown as { display(): void }).display();
-      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
       rejectRename(failure);
       await flushMicrotasks();
@@ -958,16 +958,16 @@ describe('CalendarSettingsTab project value commits', () => {
       expect(current.value).toBe('inbox');
       expect(current.disabled).toBe(false);
       expect(plugin.renameProjectStatus).toHaveBeenCalledOnce();
-      expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not rename project status', {
-        statusId: 'status-1',
-        expectedName: 'inbox',
-        requestedName: 'running',
-        cause: failure,
-      });
     } finally {
       tab.hide();
       tab.containerEl.remove();
     }
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not rename project status', {
+      statusId: 'status-1',
+      expectedName: 'inbox',
+      requestedName: 'running',
+      cause: failure,
+    });
   });
 });
 

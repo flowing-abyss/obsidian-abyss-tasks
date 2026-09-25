@@ -427,11 +427,11 @@ describe('ProjectsPanel dispatch', () => {
     expect(create).toHaveBeenCalledOnce();
     expect(setStatus).toHaveBeenCalledWith('Projects/Owned.md', status.id);
     expect(refresh).toHaveBeenCalledOnce();
+    panel.destroy();
+    el.remove();
     expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not create project', {
       error: failure,
     });
-    panel.destroy();
-    el.remove();
   });
 
   it.each([
