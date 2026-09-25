@@ -231,9 +231,13 @@ function immutableEvent(event: TaskIndexEvent): TaskIndexEvent {
 }
 
 /** Runs one subscriber; a throw is reported and does not stop delivery to the others. */
-function deliverIsolated(event: TaskIndexEvent['type'] | 'reconciled', deliver: () => void): void {
+function deliverIsolated<T>(
+  event: TaskIndexEvent['type'] | 'reconciled',
+  listener: (value: T) => void,
+  value: T,
+): void {
   try {
-    deliver();
+    listener(value);
   } catch (error) {
     console.error('[abyss-tasks] task index listener failed', { event, error });
   }
@@ -1789,9 +1793,7 @@ export class TaskIndex
       return;
     const detached = immutableEvent(event);
     for (const listener of [...this.listeners_abyssPrivate]) {
-      deliverIsolated(event.type, () => {
-        listener(detached);
-      });
+      deliverIsolated(event.type, listener, detached);
     }
   }
 
@@ -1799,9 +1801,7 @@ export class TaskIndex
     if (this.destroyed_abyssPrivate || !this.initialized_abyssPrivate) return;
     const detached = Object.freeze([...files]);
     for (const listener of [...this.reconciledListeners_abyssPrivate]) {
-      deliverIsolated('reconciled', () => {
-        listener(detached);
-      });
+      deliverIsolated('reconciled', listener, detached);
     }
   }
 }
