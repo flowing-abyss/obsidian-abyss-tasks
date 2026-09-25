@@ -3,6 +3,7 @@ import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanban
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings, ListViewState, PropertyFilter } from '../src/settings/types';
 import {
+  type NotePathChange,
   noteDeleteChange,
   noteRenameChange,
   rebaseSavedNotePath,
@@ -112,6 +113,82 @@ describe('rebaseSavedNotePath', () => {
     expect(settings.listViewStates).toBe(listViewStates);
     expect(settings.listViewStates?.['today']).toBe(today);
   });
+
+  it('reports a change that touches only ranks or only list state', () => {
+    const deleted: NotePathChange = { type: 'deleted', path: 'Projects/A.md' };
+    const renamed: NotePathChange = {
+      type: 'renamed',
+      oldPath: 'Projects/A.md',
+      path: 'Projects/New.md',
+    };
+
+    const ranksOnly = settingsWith({
+      manualOrder: { 'id:active': ['Projects/B.md', 'Projects/A.md'] },
+    });
+    expect(rebaseSavedNotePath(ranksOnly, renamed)).toBe(true);
+    expect(ranksOnly.projects.kanban?.manualOrder).toEqual({
+      'id:active': ['Projects/B.md', 'Projects/New.md'],
+    });
+    expect(ranksOnly.listViewStates).toBeUndefined();
+
+    const stateToForget = settingsWith({
+      listViewStates: { 'project:Projects/A.md': listState() },
+    });
+    expect(rebaseSavedNotePath(stateToForget, deleted)).toBe(true);
+    expect(stateToForget.listViewStates).toEqual({});
+    expect(stateToForget.projects.kanban).toBeUndefined();
+
+    const moved = listState();
+    const stateToMove = settingsWith({ listViewStates: { 'project:Projects/A.md': moved } });
+    expect(rebaseSavedNotePath(stateToMove, renamed)).toBe(true);
+    expect(stateToMove.listViewStates).toEqual({ 'project:Projects/New.md': moved });
+    expect(stateToMove.listViewStates?.['project:Projects/New.md']).toBe(moved);
+
+    const filterOnly = settingsWith({
+      listViewStates: { today: listState([{ type: 'file', filePath: 'Projects/A.md' }]) },
+    });
+    expect(rebaseSavedNotePath(filterOnly, renamed)).toBe(true);
+    expect(filterOnly.listViewStates).toEqual({
+      today: listState([{ type: 'file', filePath: 'Projects/New.md' }]),
+    });
+  });
+
+  it('removes a stale destination state when the renamed note had none', () => {
+    const settings = settingsWith({
+      listViewStates: { 'project:Projects/New.md': listState([{ type: 'tag', value: '#stale' }]) },
+    });
+
+    expect(
+      rebaseSavedNotePath(settings, {
+        type: 'renamed',
+        oldPath: 'Projects/A.md',
+        path: 'Projects/New.md',
+      }),
+    ).toBe(true);
+
+    expect(settings.listViewStates).toEqual({});
+  });
+
+  it('changes nothing for a rename to the same path', () => {
+    const manualOrder = { 'id:active': ['Projects/A.md'] };
+    const projectState = listState();
+    const today = listState([{ type: 'file', filePath: 'Projects/A.md' }]);
+    const listViewStates = { 'project:Projects/A.md': projectState, today };
+    const settings = settingsWith({ manualOrder, listViewStates });
+
+    expect(
+      rebaseSavedNotePath(settings, {
+        type: 'renamed',
+        oldPath: 'Projects/A.md',
+        path: 'Projects/A.md',
+      }),
+    ).toBe(false);
+
+    expect(settings.projects.kanban?.manualOrder).toBe(manualOrder);
+    expect(settings.listViewStates).toBe(listViewStates);
+    expect(settings.listViewStates?.['project:Projects/A.md']).toBe(projectState);
+    expect(settings.listViewStates?.['today']).toBe(today);
+  });
 });
 
 describe('renameFileFilters', () => {
@@ -122,18 +199,20 @@ describe('renameFileFilters', () => {
   });
 
   it('keeps the filter order and collapses a duplicate file filter into the first', () => {
+    const oldFilter = { type: 'file', filePath: 'Notes/Old.md' } satisfies PropertyFilter;
     const state = listState([
+      oldFilter,
       { type: 'tag', value: '#a' },
       { type: 'file', filePath: 'Notes/New.md' },
-      { type: 'file', filePath: 'Notes/Old.md' },
       { type: 'status', value: 'x' },
     ]);
 
     expect(renameFileFilters(state, 'Notes/Old.md', 'Notes/New.md')?.filters).toEqual([
-      { type: 'tag', value: '#a' },
       { type: 'file', filePath: 'Notes/New.md' },
+      { type: 'tag', value: '#a' },
       { type: 'status', value: 'x' },
     ]);
+    expect(oldFilter.filePath).toBe('Notes/Old.md');
     expect(state.filters).toHaveLength(4);
   });
 });
