@@ -560,10 +560,10 @@ retain their owning window and dispose pending work. These lexical checks comple
 purity or native popout behavior.
 
 Linted files carry no ESLint or TypeScript directive comments, and the
-[lint parity test](test/obsidian-lint-parity.test.ts) holds the rules that ban them. It also holds
-every rule that eslint-plugin-obsidianmd's recommended config enables for plugin source at the same
-or a higher severity with the same options, apart from exact reviewed differences. A
-restricted-globals rule may name more globals than obsidianmd's.
+[lint parity test](test/obsidian-lint-parity.test.ts) checks that every linted file resolves the
+rules that ban them. It also holds every rule that eslint-plugin-obsidianmd's recommended config
+enables for plugin source at the same or a higher severity with the same options, apart from exact
+reviewed differences. A restricted-globals rule may name more globals than obsidianmd's.
 
 Authored and shipped CSS share the [CSS policy](tooling/css-policy.mjs) and Stylelint correctness
 rules. Styles stay scoped to plugin-owned surfaces and use semantic host tokens.

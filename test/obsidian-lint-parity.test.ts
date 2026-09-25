@@ -1,18 +1,40 @@
 import { ESLint, type Linter } from 'eslint';
 import obsidianmd from 'eslint-plugin-obsidianmd';
+import { Platform } from 'obsidian';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+
+const loadChildProcess = async () => {
+  if (!Platform.isDesktop) throw new Error('The lint parity test requires a desktop runtime');
+  return import('node:child_process');
+};
+const { execFileSync } = await loadChildProcess();
 
 const ROOT = ts.sys.resolvePath(`${import.meta.dirname}/..`);
 const PROJECT_CONFIG = ts.sys.resolvePath(`${ROOT}/eslint.config.mts`);
 const ESLINT_COLD_START_TIMEOUT_MS = 30_000;
 const SOURCE_FILES = ts.sys.readDirectory(ts.sys.resolvePath(`${ROOT}/src`), ['.ts']);
+const CODE_EXTENSIONS = ['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs'];
 const obsidianmdOnly = new ESLint({
   cwd: ROOT,
   overrideConfigFile: true,
   overrideConfig: obsidianmd.configs.recommendedWithLocalesEn,
 });
 const projectLint = new ESLint({ cwd: ROOT, overrideConfigFile: PROJECT_CONFIG });
+
+/** Every tracked code file that the project config lints, as absolute paths. */
+async function lintedFiles(): Promise<string[]> {
+  const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' })
+    .split('\0')
+    .filter((file) => CODE_EXTENSIONS.some((extension) => file.endsWith(extension)))
+    .map((file) => ts.sys.resolvePath(`${ROOT}/${file}`));
+  const linted: string[] = [];
+  for (const file of tracked) {
+    if (!(await projectLint.isPathIgnored(file))) linted.push(file);
+  }
+  return linted;
+}
+const LINTED_FILES = await lintedFiles();
 
 /**
  * The directive ban every linted code file resolves: no ESLint directive at all, and no TypeScript
@@ -126,6 +148,19 @@ async function parityProblems(project: ESLint, files: readonly string[]): Promis
   return [...reported, ...unused].sort((left, right) => left.localeCompare(right));
 }
 
+/** Each rule of the directive ban that a file resolves otherwise, per file, sorted. */
+async function directiveBanProblems(eslint: ESLint, files: readonly string[]): Promise<string[]> {
+  const problems: string[] = [];
+  for (const file of files) {
+    const rules = await effectiveRules(eslint, file);
+    for (const rule of DIRECTIVE_BAN_RULES) {
+      if (JSON.stringify(rules[rule]) === JSON.stringify(DIRECTIVE_BAN[rule])) continue;
+      problems.push(`${rule} is not banned in ${file.slice(ROOT.length + 1)}`);
+    }
+  }
+  return problems.sort((left, right) => left.localeCompare(right));
+}
+
 describe('eslint-plugin-obsidianmd parity for plugin source', () => {
   it(
     'holds every obsidianmd rule at the same or a higher severity with the same options',
@@ -203,14 +238,49 @@ describe('eslint-plugin-obsidianmd parity for plugin source', () => {
 });
 
 describe('directive comment ban', () => {
-  it.each(['src/main.ts', 'test/obsidian-lint-parity.test.ts', 'tooling/check-css.mjs'])(
-    'bans every directive comment in %s',
-    async (file) => {
-      const rules = await effectiveRules(projectLint, ts.sys.resolvePath(`${ROOT}/${file}`));
+  it(
+    'bans every directive comment in every linted file',
+    async () => {
+      const samples = ['src/main.ts', 'test/obsidian-lint-parity.test.ts', 'tooling/check-css.mjs'];
 
-      expect(Object.fromEntries(DIRECTIVE_BAN_RULES.map((rule) => [rule, rules[rule]]))).toEqual(
-        DIRECTIVE_BAN,
+      expect(LINTED_FILES).toEqual(
+        expect.arrayContaining(samples.map((file) => ts.sys.resolvePath(`${ROOT}/${file}`))),
       );
+      expect(LINTED_FILES.length).toBeGreaterThan(SOURCE_FILES.length);
+      expect(await directiveBanProblems(projectLint, LINTED_FILES)).toEqual([]);
+    },
+    ESLINT_COLD_START_TIMEOUT_MS,
+  );
+
+  it.each<[string, Linter.RulesRecord, string]>([
+    [
+      'no-use turned off',
+      { 'eslint-comments/no-use': 'off' },
+      'eslint-comments/no-use is not banned in src/tasks/domain/StatusCatalog.ts',
+    ],
+    [
+      'ban-ts-comment allowing a described expect-error',
+      {
+        '@typescript-eslint/ban-ts-comment': [
+          'error',
+          { 'ts-expect-error': 'allow-with-description' },
+        ],
+      },
+      '@typescript-eslint/ban-ts-comment is not banned in src/tasks/domain/StatusCatalog.ts',
+    ],
+  ])(
+    'reports %s for one source folder, in that folder only',
+    async (_relaxation, rules, problem) => {
+      const weakened = new ESLint({
+        cwd: ROOT,
+        overrideConfigFile: PROJECT_CONFIG,
+        overrideConfig: { files: ['src/tasks/domain/**/*.ts'], rules },
+      });
+      const files = ['src/main.ts', 'src/tasks/domain/StatusCatalog.ts'].map((file) =>
+        ts.sys.resolvePath(`${ROOT}/${file}`),
+      );
+
+      expect(await directiveBanProblems(weakened, files)).toEqual([problem]);
     },
     ESLINT_COLD_START_TIMEOUT_MS,
   );
