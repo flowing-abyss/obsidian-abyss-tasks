@@ -34,6 +34,21 @@ describe('evaluateQuery', () => {
     );
     expect(evaluateQuery('status=', 'A.md', [], fm({ status: null }))).toBe(true);
   });
+  it('reads a list inside itself as empty, as String() does', () => {
+    const cyclic: unknown[] = ['a'];
+    cyclic.push(cyclic);
+    const selfOnly: unknown[] = [];
+    selfOnly.push(selfOnly);
+    const nested: unknown[] = ['a'];
+    nested.push(['b', nested], 'c');
+    const shared = ['x', 'y'];
+
+    expect(evaluateQuery('tags=a,', 'A.md', [], fm({ tags: cyclic }))).toBe(true);
+    expect(evaluateQuery('tags=', 'A.md', [], fm({ tags: selfOnly }))).toBe(true);
+    expect(evaluateQuery('tags=a,b,,c', 'A.md', [], fm({ tags: nested }))).toBe(true);
+    // A list that appears twice without being nested in itself is read in full each time.
+    expect(evaluateQuery('tags=x,y,x,y', 'A.md', [], fm({ tags: [shared, shared] }))).toBe(true);
+  });
 
   it('preserves whitespace and quoted values in frontmatter equality expressions', () => {
     expect(evaluateQuery('status = done', 'A.md', [], fm({ status: 'done' }))).toBe(true);

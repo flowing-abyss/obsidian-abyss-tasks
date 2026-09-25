@@ -301,15 +301,23 @@ function decodeEqualityValue(value: string): string {
 }
 
 /** Frontmatter as query equality reads it: lists comma-joined, a missing value empty. */
-function frontmatterEqualityText(value: unknown): string {
+function frontmatterEqualityText(value: unknown, joining: readonly unknown[] = []): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
     return `${value}`;
   }
-  if (Array.isArray(value)) return value.map(frontmatterEqualityText).join(',');
+  if (Array.isArray(value)) return listEqualityText(value, joining);
   if (value instanceof Date) return value.toString();
   return Object.prototype.toString.call(value);
+}
+
+/** A frontmatter list as query equality reads it; `joining` holds the lists it sits inside. */
+function listEqualityText(list: readonly unknown[], joining: readonly unknown[]): string {
+  // Like Array.prototype.join, a list inside itself reads as empty there.
+  if (joining.includes(list)) return '';
+  const path = [...joining, list];
+  return list.map((item) => frontmatterEqualityText(item, path)).join(',');
 }
 
 function evaluateAtom(
