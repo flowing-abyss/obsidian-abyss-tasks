@@ -1,6 +1,7 @@
 import { App, Notice } from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import TaskCalendarPlugin from '../src/main';
+import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
 import { DEFAULT_SETTINGS, buildDefaultProjectsSettings } from '../src/settings/defaults';
 import {
   SAVED_VIEW_STATE_SCHEMA_VERSION,
@@ -28,6 +29,8 @@ interface StateAdapterLike {
   readonly exists: Mock<(path: string) => Promise<boolean>>;
   readonly read: Mock<(path: string) => Promise<string>>;
   readonly write: Mock<(path: string, value: string) => Promise<void>>;
+  readonly trashSystem: Mock<(path: string) => Promise<boolean>>;
+  readonly rename: Mock<(from: string, to: string) => Promise<void>>;
 }
 
 function spyOnNotices() {
@@ -53,6 +56,8 @@ interface PluginLike {
   app: {
     workspace: WorkspaceLike;
     metadataCache: { trigger: (event: string, ...args: unknown[]) => void };
+    vault: App['vault'];
+    fileManager: App['fileManager'];
   };
   taskIndex: {
     initialize: () => Promise<void>;
@@ -70,6 +75,7 @@ interface PluginLike {
   loadData: () => Promise<unknown>;
   saveData: (data: unknown) => Promise<void>;
   onload: () => Promise<void>;
+  registerView: (type: string, factory: unknown) => void;
   onunload: () => void;
   loadSettings: () => Promise<void>;
   saveSettings: () => Promise<void>;
@@ -96,6 +102,13 @@ function makePlugin(data: Record<string, unknown> | null = null): PluginLike {
     }),
     write: vi.fn(async (path: string, value: string) => {
       stateFiles.set(path, value);
+    }),
+    trashSystem: vi.fn(async (path: string) => stateFiles.delete(path)),
+    rename: vi.fn(async (from: string, to: string) => {
+      const value = stateFiles.get(from);
+      if (value === undefined) throw new Error(`Missing ${from}`);
+      stateFiles.delete(from);
+      stateFiles.set(to, value);
     }),
   };
   Object.assign(app.vault, { adapter, configDir: '.test-config' });
@@ -600,6 +613,125 @@ describe('TaskCalendarPlugin onload', () => {
     const plugin = makePlugin();
     await plugin.onload();
     expect((window as unknown as Record<string, unknown>)['renderCalendar']).toBeUndefined();
+  });
+
+  it('follows a note rename during the property capture before any panel exists', async () => {
+    const projects = buildDefaultProjectsSettings();
+    const table = structuredClone(projects.table);
+    table.columns.push({ id: 'property:Effort', visible: true });
+    delete (projects as unknown as Record<string, unknown>)['table'];
+    const plugin = makePlugin({
+      projects,
+      [STATIC_SAVED_VIEW_STATE_MARKER]: SAVED_VIEW_STATE_SCHEMA_VERSION,
+    });
+    plugin.stateFiles__.set(
+      STATE_PATH,
+      JSON.stringify({
+        schemaVersion: SAVED_VIEW_STATE_SCHEMA_VERSION,
+        views: {
+          sectionCollapse: DEFAULT_SETTINGS.sectionCollapse,
+          projects: {
+            table,
+            kanban: {
+              ...buildDefaultProjectKanbanSettings(table),
+              manualOrder: { 'raw:active': ['Projects/A.md'] },
+            },
+          },
+        },
+      }),
+    );
+    Object.defineProperty(plugin.app, 'metadataTypeManager', {
+      configurable: true,
+      value: {
+        getAllProperties: () => ({ effort: { name: 'Effort' } }),
+        getTypeInfo: () => ({ expected: { type: 'text' } }),
+        getAssignedWidget: () => null,
+        on: () => ({ id: 'property-capture' }),
+        offref: () => {},
+      },
+    });
+    const note = await plugin.app.vault.create('Projects/A.md', '---\nstatus: active\n---\n');
+    const on = vi.spyOn(
+      plugin.app.vault as unknown as {
+        on(name: string, callback: (...args: unknown[]) => unknown): unknown;
+      },
+      'on',
+    );
+    const registerView = vi.spyOn(plugin, 'registerView');
+    vi.spyOn(plugin, 'saveData').mockImplementation(async (data: unknown) => {
+      plugin.data__ = data;
+      await plugin.app.vault.rename(note, 'Projects/B.md');
+    });
+
+    try {
+      await plugin.onload();
+
+      expect(plugin.settings.projects.kanban?.manualOrder).toEqual({
+        'raw:active': ['Projects/B.md'],
+      });
+      const listenerOrder = on.mock.calls
+        .map(([name], index) => ({ name, order: on.mock.invocationCallOrder[index] ?? 0 }))
+        .filter(({ name }) => name === 'delete' || name === 'rename')
+        .map(({ order }) => order);
+      expect(listenerOrder).toHaveLength(2);
+      expect(Math.max(...listenerOrder)).toBeLessThan(
+        expectDefined(registerView.mock.invocationCallOrder[0]),
+      );
+    } finally {
+      plugin.onunload();
+    }
+  });
+
+  it('writes a pending note change once through a view-state save', async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const note = await plugin.app.vault.create('Projects/A.md', '');
+    const kanban = {
+      ...buildDefaultProjectKanbanSettings(plugin.settings.projects.table),
+      manualOrder: { 'raw:active': ['Projects/A.md'] },
+    };
+    plugin.settings.projects.kanban = kanban;
+    vi.useFakeTimers();
+    try {
+      const save = vi.spyOn(plugin, 'saveViewState');
+      const stateWrites = (): number =>
+        plugin.stateAdapter__.write.mock.calls.filter(([path]) => path === STATE_PATH).length;
+      const writesBefore = stateWrites();
+
+      await plugin.app.fileManager.trashFile(note);
+      expect(kanban.manualOrder).toEqual({});
+      await plugin.saveViewState();
+      expect(stateWrites()).toBe(writesBefore + 1);
+      await vi.advanceTimersByTimeAsync(150);
+
+      expect(save).toHaveBeenCalledOnce();
+      expect(stateWrites()).toBe(writesBefore + 1);
+    } finally {
+      vi.useRealTimers();
+      plugin.onunload();
+    }
+  });
+
+  it('starts a pending note change write at unload and leaves no timer behind', async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const note = await plugin.app.vault.create('Projects/A.md', '');
+    plugin.settings.projects.kanban = {
+      ...buildDefaultProjectKanbanSettings(plugin.settings.projects.table),
+      manualOrder: { 'raw:active': ['Projects/A.md'] },
+    };
+    vi.useFakeTimers();
+    try {
+      const save = vi.spyOn(plugin, 'saveViewState');
+      await plugin.app.fileManager.trashFile(note);
+
+      plugin.onunload();
+      expect(save).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(150);
+      expect(save).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

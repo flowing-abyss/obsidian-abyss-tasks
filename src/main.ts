@@ -24,6 +24,7 @@ import {
   type TaskStorageSettings,
 } from './settings/taskStorageSettings';
 import type { CalendarSettings } from './settings/types';
+import { ViewStatePathOwner } from './settings/ViewStatePathOwner';
 import { StatusRegistry } from './status/StatusRegistry';
 import { TagManager } from './tags/TagManager';
 import {
@@ -83,11 +84,13 @@ export default class TaskCalendarPlugin extends Plugin {
   private projectManager!: ProjectManager;
   private projectProperties!: ProjectPropertyCatalog;
   private settingsPersistence!: SettingsPersistenceCoordinator;
+  private viewStatePaths!: ViewStatePathOwner;
   private effectiveTaskStorage!: TaskStorageSettings;
   private projectPropertyCaptureQueue: Promise<void> = Promise.resolve();
 
   override async onload(): Promise<void> {
     await this.loadSettings();
+    for (const ref of this.viewStatePaths.listen(this.app.vault)) this.registerEvent(ref);
     this.projectProperties = new ObsidianProjectProperties(this.app);
     this.registerProjectPropertyCaptureOpportunities();
     await this.captureProjectPropertyDefinitions();
@@ -281,6 +284,7 @@ export default class TaskCalendarPlugin extends Plugin {
   }
 
   override onunload(): void {
+    this.viewStatePaths.flushPendingSave();
     this.taskIndex.destroy();
   }
 
@@ -289,6 +293,7 @@ export default class TaskCalendarPlugin extends Plugin {
     try {
       const loaded = await this.settingsPersistence.loadSettings(DEFAULT_SETTINGS);
       this.settings = loaded.settings;
+      this.viewStatePaths = new ViewStatePathOwner(this.settings, () => this.saveViewState());
       for (const message of loaded.notices) new Notice(message);
       if (loaded.issues.length > 0) {
         for (const issue of loaded.issues) {
@@ -377,8 +382,13 @@ export default class TaskCalendarPlugin extends Plugin {
     return parent == null ? filePath : `${parent.path}/${filePath.slice(slash + 1)}`;
   }
 
-  /** A plain view-state write, like `saveSettings()`: it rethrows without presenting the failure. */
+  /**
+   * A plain view-state write, like `saveSettings()`: it rethrows without presenting the failure.
+   * The coordinator snapshots the whole runtime settings, so this write carries the note-path
+   * owner's pending change and cancels that save.
+   */
   async saveViewState(): Promise<void> {
+    this.viewStatePaths.cancelPendingSave();
     await this.settingsPersistence.saveViewState(this.settings);
   }
 

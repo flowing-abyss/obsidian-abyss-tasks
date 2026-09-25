@@ -472,6 +472,12 @@ Obsidian's public vault adapter. `data.json` owns static configuration; adjacent
 One composed `CalendarSettings` object remains the runtime authority. Panels do not receive separate
 settings copies.
 
+[`ViewStatePathOwner`](src/settings/ViewStatePathOwner.ts), created by `src/main.ts` when settings
+load, keeps saved view state that names a note path in step with vault deletes and renames: Kanban
+ranks, project list states, and `file` filters. A delete forgets the note's own ranks and list
+state; a rename moves them and rewrites the filters. One trailing save follows a burst, and any
+view-state save carries it.
+
 Archive-path and source-exclusion settings commit as one validated draft. Changing the archive path
 adds the previous path to the ignore expression. Only a successful save replaces the effective
 predicate and rebuilds task projections; a rejected save restores the prior configuration through
@@ -493,7 +499,8 @@ together. ProjectStore rescans only for membership/status inputs; presentation c
 snapshots and update retained views. Panel view-state saves raise one Notice through the plugin's
 panel route. `saveViewState()` itself is a plain write, and Settings reports its failure through the
 draft Notice. After a suspended load, rejected panel view writes raise nothing further, and a
-Settings change reports the suspension once, without a Retry.
+Settings change reports the suspension once, without a Retry. The note-path owner logs a failed
+write.
 
 Initial custom-property type capture fills only supported missing static definitions, before view
 registration, with bounded metadata/layout follow-ups. Available discovery, including an empty
