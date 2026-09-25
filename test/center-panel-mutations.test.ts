@@ -1,5 +1,5 @@
 import { TFile, type App } from 'obsidian';
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { moment } from '../src/obsidianMoment';
 import { CenterPanel } from '../src/panels/CenterPanel';
@@ -147,17 +147,6 @@ async function makePanel(
   );
   return { panel, app };
 }
-
-// No row logs a failure; a panel a row leaves mounted can submit a capture through reset mocks.
-let consoleError: MockInstance<typeof console.error>;
-
-beforeEach(() => {
-  consoleError = vi.spyOn(console, 'error');
-});
-
-afterEach(() => {
-  expect(consoleError).not.toHaveBeenCalled();
-});
 
 describe('CenterPanel planning API delegation', () => {
   it('sends reschedule through TaskApplicationApi without touching the vault directly', async () => {

@@ -1,4 +1,4 @@
-import { afterAll, afterEach } from 'vitest';
+import { afterAll, beforeEach } from 'vitest';
 import { failOnPluginLogs, guardConsole, releaseConsoleStubs } from './consoleGuard';
 
 // The plugin reports many failures only in the console, and isolation keeps a throwing subscriber
@@ -7,10 +7,15 @@ import { failOnPluginLogs, guardConsole, releaseConsoleStubs } from './consoleGu
 // so before a test file's `vi.mock` applies.
 const record = guardConsole(console);
 
-afterEach(() => {
-  // Vitest restores spies only when the next row starts, so a row's stub would swallow later logs.
-  releaseConsoleStubs(console);
-  failOnPluginLogs(record, 'in this row');
+// Before each row, this file registers the row's check as an `onTestFinished` callback. Vitest runs
+// it after every `afterEach` of the row's file, even when one of them throws, and keeps its error
+// beside theirs, so a log made during a row fails that row, not the next one.
+beforeEach(({ onTestFinished }) => {
+  onTestFinished(() => {
+    // Vitest restores spies only when the next row starts, so a row's stub would swallow later logs.
+    releaseConsoleStubs(console);
+    failOnPluginLogs(record, 'in this row');
+  });
 });
 
 afterAll(() => {
