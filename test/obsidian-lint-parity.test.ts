@@ -12,6 +12,20 @@ const obsidianmdOnly = new ESLint({
   overrideConfigFile: true,
   overrideConfig: obsidianmd.configs.recommendedWithLocalesEn,
 });
+const projectLint = new ESLint({ cwd: ROOT, overrideConfigFile: PROJECT_CONFIG });
+
+/**
+ * The directive ban every linted code file resolves: no ESLint directive at all, and no TypeScript
+ * directive that silences a finding (`@ts-check` silences nothing).
+ */
+const DIRECTIVE_BAN: Readonly<Record<string, readonly unknown[]>> = {
+  'eslint-comments/no-use': [2, { allow: [] }],
+  '@typescript-eslint/ban-ts-comment': [
+    2,
+    { 'ts-check': false, 'ts-expect-error': true, 'ts-ignore': true, 'ts-nocheck': true },
+  ],
+};
+const DIRECTIVE_BAN_RULES = Object.keys(DIRECTIVE_BAN);
 
 /**
  * Reviewed differences from eslint-plugin-obsidianmd's recommended config, each pinned on both
@@ -116,9 +130,7 @@ describe('eslint-plugin-obsidianmd parity for plugin source', () => {
   it(
     'holds every obsidianmd rule at the same or a higher severity with the same options',
     async () => {
-      const project = new ESLint({ cwd: ROOT, overrideConfigFile: PROJECT_CONFIG });
-
-      expect(await parityProblems(project, SOURCE_FILES)).toEqual([]);
+      expect(await parityProblems(projectLint, SOURCE_FILES)).toEqual([]);
     },
     ESLINT_COLD_START_TIMEOUT_MS,
   );
@@ -134,6 +146,96 @@ describe('eslint-plugin-obsidianmd parity for plugin source', () => {
 
       expect(await parityProblems(weakened, [ts.sys.resolvePath(`${ROOT}/src/main.ts`)])).toEqual([
         'no-self-compare is weaker than obsidianmd sets it in src/main.ts',
+      ]);
+    },
+    ESLINT_COLD_START_TIMEOUT_MS,
+  );
+
+  it.each<[string, string, Linter.RulesRecord, string]>([
+    [
+      'a reviewed difference that a project block sets otherwise',
+      'src/main.ts',
+      {
+        '@typescript-eslint/no-floating-promises': [
+          'error',
+          { ignoreIIFE: true, ignoreVoid: false },
+        ],
+      },
+      '@typescript-eslint/no-floating-promises no longer matches its reviewed difference in src/main.ts',
+    ],
+    [
+      "a task domain block without obsidianmd's restricted globals",
+      'src/tasks/domain/StatusCatalog.ts',
+      // A bare severity keeps the domain block's options, so the block names only its own globals.
+      { 'no-restricted-globals': ['error', 'window', 'document'] },
+      "no-restricted-globals lacks some of obsidianmd's restricted globals in src/tasks/domain/StatusCatalog.ts",
+    ],
+    [
+      'an obsidianmd rule that a project block gives other options',
+      'src/main.ts',
+      { 'no-empty': ['error', { allowEmptyCatch: true }] },
+      "no-empty has other options than obsidianmd's in src/main.ts",
+    ],
+  ])(
+    'reports %s for one source file',
+    async (_weakening, file, rules, problem) => {
+      const weakened = new ESLint({
+        cwd: ROOT,
+        overrideConfigFile: PROJECT_CONFIG,
+        overrideConfig: { files: [file], rules },
+      });
+
+      expect(await parityProblems(weakened, [ts.sys.resolvePath(`${ROOT}/${file}`)])).toEqual([
+        problem,
+      ]);
+    },
+    ESLINT_COLD_START_TIMEOUT_MS,
+  );
+
+  it('reports each reviewed difference that no source file uses', async () => {
+    expect(await parityProblems(projectLint, [])).toEqual([
+      '@typescript-eslint/no-floating-promises is a reviewed difference that no source file uses',
+      '@typescript-eslint/no-misused-promises is a reviewed difference that no source file uses',
+      '@typescript-eslint/no-unused-vars is a reviewed difference that no source file uses',
+      '@typescript-eslint/restrict-template-expressions is a reviewed difference that no source file uses',
+    ]);
+  });
+});
+
+describe('directive comment ban', () => {
+  it.each(['src/main.ts', 'test/obsidian-lint-parity.test.ts', 'tooling/check-css.mjs'])(
+    'bans every directive comment in %s',
+    async (file) => {
+      const rules = await effectiveRules(projectLint, ts.sys.resolvePath(`${ROOT}/${file}`));
+
+      expect(Object.fromEntries(DIRECTIVE_BAN_RULES.map((rule) => [rule, rules[rule]]))).toEqual(
+        DIRECTIVE_BAN,
+      );
+    },
+    ESLINT_COLD_START_TIMEOUT_MS,
+  );
+
+  it(
+    'reports a described directive of each kind in a tooling script',
+    async () => {
+      const source = [
+        "// eslint-disable-next-line no-empty -- obsidianmd's own directive rules allow this one",
+        "try { JSON.parse('{}'); } catch {}",
+        '// @ts-expect-error allow-with-description would allow this one',
+        'export const value = 1;',
+        '',
+      ].join('\n');
+      const [result] = await projectLint.lintText(source, {
+        filePath: ts.sys.resolvePath(`${ROOT}/tooling/check-css.mjs`),
+      });
+
+      expect(
+        result?.messages
+          .filter(({ ruleId }) => ruleId !== null && DIRECTIVE_BAN_RULES.includes(ruleId))
+          .map(({ ruleId, line }) => [ruleId, line]),
+      ).toEqual([
+        ['eslint-comments/no-use', 1],
+        ['@typescript-eslint/ban-ts-comment', 3],
       ]);
     },
     ESLINT_COLD_START_TIMEOUT_MS,
