@@ -101,6 +101,7 @@ export interface ProjectsKanbanViewContext<TCell extends ProjectKanbanCellContex
   readonly applyChanges: (changes: readonly ProjectCellChange[]) => Promise<ProjectEditResult>;
   readonly projectSnapshot: (path: string) => Project | undefined;
   readonly projectsSnapshot: () => readonly Project[];
+  readonly isLiveProjectPath: (path: string) => boolean;
   readonly statusProperty: () => string;
   readonly membershipQuery: () => string;
   readonly tagsReliable: (path: string, groupFieldId: string) => boolean;
@@ -315,6 +316,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
       ),
       search: this.search_abyssPrivate,
       rebase: this.context_abyssPrivate.rebaseGroupValue,
+      isLiveProjectPath: this.context_abyssPrivate.isLiveProjectPath,
     });
   }
 

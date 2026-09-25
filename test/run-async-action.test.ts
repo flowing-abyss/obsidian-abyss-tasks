@@ -16,7 +16,7 @@ describe('asynchronous UI rejection boundary', () => {
   });
 
   it('does not log fulfilled actions', async () => {
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'error');
     const action = Promise.resolve('completed');
     runAsyncAction(action, 'Could not complete UI action');
     expect(await action).toBe('completed');

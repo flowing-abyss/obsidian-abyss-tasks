@@ -75,6 +75,15 @@ async function submitCapture(panel: CenterPanel, value: string): Promise<void> {
   throw new Error('capture submission did not settle');
 }
 
+/**
+ * Destroys a panel and removes the container `submitCapture` mounted. A row calls it from `finally`,
+ * so it also accepts a panel that never mounted and cannot hide the row's own failure.
+ */
+function unmountCapturePanel(panel: CenterPanel): void {
+  panel.destroy();
+  (panel as unknown as { el?: HTMLElement }).el?.remove();
+}
+
 async function makePanel(
   files: Record<string, string>,
   extraTasks: TaskSnapshot[] = [],
@@ -389,30 +398,34 @@ describe('CenterPanel root lifecycle API delegation', () => {
     );
     const process = vi.spyOn(app.vault, 'process');
 
-    state.set('selectedList', 'today');
-    await submitCapture(panel, 'buy milk');
-    expect(planCreate).toHaveBeenLastCalledWith({ type: 'configured-default' });
-    const [todayRequest] = expectDefined(sessionExecute.mock.lastCall);
-    expect(todayRequest.markdownBody).toBe('buy milk');
-    const due = todayRequest.initial?.due;
-    expect(due?.type).toBe('set');
-    if (due?.type !== 'set') throw new Error('Expected a due date for the Today capture');
-    expect(due.value).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
+    try {
+      state.set('selectedList', 'today');
+      await submitCapture(panel, 'buy milk');
+      expect(planCreate).toHaveBeenLastCalledWith({ type: 'configured-default' });
+      const [todayRequest] = expectDefined(sessionExecute.mock.lastCall);
+      expect(todayRequest.markdownBody).toBe('buy milk');
+      const due = todayRequest.initial?.due;
+      expect(due?.type).toBe('set');
+      if (due?.type !== 'set') throw new Error('Expected a due date for the Today capture');
+      expect(due.value).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
 
-    state.set('selectedList', { type: 'project', path: 'Projects/A.md' });
-    await submitCapture(panel, 'project task');
-    expect(planCreate).toHaveBeenLastCalledWith({
-      type: 'explicit',
-      destination: {
-        filePath: 'Projects/A.md',
-        insertion: { type: 'section', heading: '# Tasks', position: 'top' },
-      },
-    });
-    expect(sessionExecute).toHaveBeenLastCalledWith({
-      markdownBody: 'project task',
-    });
-    expect(execute).not.toHaveBeenCalled();
-    expect(process).not.toHaveBeenCalled();
+      state.set('selectedList', { type: 'project', path: 'Projects/A.md' });
+      await submitCapture(panel, 'project task');
+      expect(planCreate).toHaveBeenLastCalledWith({
+        type: 'explicit',
+        destination: {
+          filePath: 'Projects/A.md',
+          insertion: { type: 'section', heading: '# Tasks', position: 'top' },
+        },
+      });
+      expect(sessionExecute).toHaveBeenLastCalledWith({
+        markdownBody: 'project task',
+      });
+      expect(execute).not.toHaveBeenCalled();
+      expect(process).not.toHaveBeenCalled();
+    } finally {
+      unmountCapturePanel(panel);
+    }
   });
 
   it.each([
@@ -461,14 +474,21 @@ describe('CenterPanel root lifecycle API delegation', () => {
         tasks,
       );
 
-      await submitCapture(panel, 'captured');
+      try {
+        await submitCapture(panel, 'captured');
 
-      expect(planCreate).toHaveBeenCalledWith({ type: 'configured-default' }, { intent: 'inbox' });
-      expect(sessionExecute).toHaveBeenCalledWith({
-        markdownBody: 'captured',
-      });
-      expect(execute).not.toHaveBeenCalled();
-      expect(lookup).not.toHaveBeenCalled();
+        expect(planCreate).toHaveBeenCalledWith(
+          { type: 'configured-default' },
+          { intent: 'inbox' },
+        );
+        expect(sessionExecute).toHaveBeenCalledWith({
+          markdownBody: 'captured',
+        });
+        expect(execute).not.toHaveBeenCalled();
+        expect(lookup).not.toHaveBeenCalled();
+      } finally {
+        unmountCapturePanel(panel);
+      }
     },
   );
 

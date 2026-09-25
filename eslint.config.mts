@@ -9,6 +9,7 @@ import tseslint from 'typescript-eslint';
 import { projectAmbientRule } from './eslint-project-policy.mts';
 
 const testFiles = ['test/**/*.ts', 'vitest.config.ts', 'vitest.bench.config.ts'];
+const codeFiles = ['**/*.{ts,cts,mts,tsx,js,cjs,mjs,jsx}'];
 const metadataIncompatibleRules = Object.fromEntries(
   [
     ...new Set(
@@ -19,6 +20,18 @@ const metadataIncompatibleRules = Object.fromEntries(
     ...Object.keys(sonarjs.configs.recommended.rules as Readonly<Record<string, unknown>>),
   ].map((rule) => [rule, 'off'] as const),
 );
+
+/** The options eslint-plugin-obsidianmd's recommended config gives a rule, without its severity. */
+function obsidianRuleOptions(rule: string): unknown[] {
+  for (const config of obsidianmd.configs.recommendedWithLocalesEn) {
+    const entry = config.rules?.[rule];
+    if (Array.isArray(entry)) return entry.slice(1);
+  }
+  throw new Error(`eslint-plugin-obsidianmd no longer configures ${rule}.`);
+}
+
+// Copied verbatim, including the stray 'warn' entry between obsidianmd's globals.
+const obsidianRestrictedGlobals = obsidianRuleOptions('no-restricted-globals');
 
 export default defineConfig(
   globalIgnores([
@@ -101,16 +114,6 @@ export default defineConfig(
       'require-atomic-updates': 'error',
 
       '@typescript-eslint/array-type': ['error', { default: 'array-simple' }],
-      '@typescript-eslint/ban-ts-comment': [
-        'error',
-        {
-          'ts-check': false,
-          'ts-expect-error': 'allow-with-description',
-          'ts-ignore': true,
-          'ts-nocheck': true,
-          minimumDescriptionLength: 12,
-        },
-      ],
       '@typescript-eslint/consistent-type-exports': 'error',
       '@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],
       '@typescript-eslint/explicit-function-return-type': [
@@ -151,6 +154,17 @@ export default defineConfig(
         { allowString: false, allowNumber: false, allowNullableObject: false },
       ],
       '@typescript-eslint/switch-exhaustiveness-check': 'error',
+    },
+  },
+  {
+    // A finding is fixed where it is reported, never silenced in place.
+    files: codeFiles,
+    rules: {
+      'eslint-comments/no-use': ['error', { allow: [] }],
+      '@typescript-eslint/ban-ts-comment': [
+        'error',
+        { 'ts-check': false, 'ts-expect-error': true, 'ts-ignore': true, 'ts-nocheck': true },
+      ],
     },
   },
   {
@@ -196,6 +210,7 @@ export default defineConfig(
       ],
       'no-restricted-globals': [
         'error',
+        ...obsidianRestrictedGlobals,
         { name: 'window', message: 'Task domain cannot depend on browser ambient state.' },
         { name: 'document', message: 'Task domain cannot depend on browser ambient state.' },
       ],
@@ -266,6 +281,7 @@ export default defineConfig(
       ],
       'no-restricted-globals': [
         'error',
+        ...obsidianRestrictedGlobals,
         { name: 'window', message: 'Task application cannot depend on browser ambient state.' },
         { name: 'document', message: 'Task application cannot depend on browser ambient state.' },
       ],
@@ -388,7 +404,11 @@ export default defineConfig(
     plugins: { 'project-policy': { rules: { ambient: projectAmbientRule } } },
   },
   {
-    files: ['src/panels/projects/**/*.ts', 'src/panels/calendar/**/*.ts'],
+    files: [
+      'src/panels/projects/**/*.ts',
+      'src/panels/calendar/**/*.ts',
+      'src/ui/projectActions.ts',
+    ],
     rules: { 'project-policy/ambient': ['error', 'owner'] },
   },
   {
@@ -405,6 +425,7 @@ export default defineConfig(
       'src/panels/calendar/visibleCalendarDates.ts',
       'src/panels/calendar/calendarContent.ts',
       'src/views/panelTitle.ts',
+      'src/settings/viewStatePaths.ts',
     ],
     rules: { 'project-policy/ambient': ['error', 'pure'] },
   },
@@ -415,4 +436,10 @@ export default defineConfig(
     },
   },
   prettier,
+  {
+    // eslint-config-prettier turns this off because Prettier may split an expression so that it
+    // fires. Lint and format run as separate steps, so a conflict is fixed in the code instead.
+    files: codeFiles,
+    rules: { 'no-unexpected-multiline': 'error' },
+  },
 );

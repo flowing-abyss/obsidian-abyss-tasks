@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import type { TaskBehaviorSettingsProvider } from '../../src/tasks/application/TaskBehaviorSettings';
 import type {
@@ -10,6 +10,7 @@ import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import { clockFrom } from '../../src/tasks/domain/clock';
 import type { TaskResolution } from '../../src/tasks/domain/taskReconciliation';
 import type {
+  LocalDate,
   SubtaskSnapshot,
   TaskNodeRef,
   TaskRef,
@@ -171,14 +172,21 @@ describe('TaskApplicationService planning commands', () => {
   });
 
   it('does not permit an enabled subtask stamp without its explicit day', () => {
-    // @ts-expect-error enabled created-date stamping requires an explicit day
-    const invalid: TaskEditCommand = {
-      type: 'add-subtask',
-      parent: { type: 'task', ref },
-      text: 'child',
-      addCreatedDate: true,
-    };
-    expect(invalid).toBeDefined();
+    // The stamped shape without its day is not a command.
+    expectTypeOf<{
+      type: 'add-subtask';
+      parent: { type: 'task'; ref: TaskRef };
+      text: string;
+      addCreatedDate: true;
+    }>().not.toExtend<TaskEditCommand>();
+    // The same shape with its day is an add-subtask command.
+    expectTypeOf<{
+      type: 'add-subtask';
+      parent: { type: 'task'; ref: TaskRef };
+      text: string;
+      today: LocalDate;
+      addCreatedDate: true;
+    }>().toExtend<Extract<TaskEditCommand, { type: 'add-subtask' }>>();
   });
 
   it.each([

@@ -11,6 +11,7 @@ const pureFiles = [
   'src/projects/projectTimelineAxis.ts',
   'src/projects/projectTimelineEdits.ts',
   'src/panels/projects/projectTableViewport.ts',
+  'src/settings/viewStatePaths.ts',
 ];
 async function check(file: string, source: string) {
   const [result] = await eslint.lintText(source, { filePath: `${root}/${file}` });
@@ -96,6 +97,37 @@ describe('project lexical policy', () => {
     ]);
   });
 
+  it('rejects a bare window in the shared project actions', async () => {
+    expect(await check('src/ui/projectActions.ts', 'void window;')).toEqual([
+      {
+        ruleId: 'project-policy/ambient',
+        messageId: 'owner',
+        line: 1,
+        column: 6,
+        endLine: 1,
+        endColumn: 12,
+      },
+    ]);
+  });
+
+  it('rejects a bare matchMedia call in a project surface', async () => {
+    expect(
+      await check(
+        'src/panels/projects/ProjectCellEditor.ts',
+        "matchMedia('(prefers-reduced-motion: reduce)').matches;",
+      ),
+    ).toEqual([
+      {
+        ruleId: 'project-policy/ambient',
+        messageId: 'owner',
+        line: 1,
+        column: 1,
+        endLine: 1,
+        endColumn: 11,
+      },
+    ]);
+  });
+
   it.each(['fetch', 'XMLHttpRequest', 'WebSocket', 'performance', 'globalThis', 'self', 'Date'])(
     'rejects pure capability escapes %s',
     async (name) => {
@@ -163,6 +195,7 @@ describe('project lexical policy', () => {
         `
       function schedule(ownerWindow: Window, window: Window) {
         ownerWindow.setTimeout(() => {}, 0); window.requestAnimationFrame(() => {});
+        ownerWindow.matchMedia('(prefers-reduced-motion: reduce)');
       }
       type Types = [Window, Document, ResizeObserver];
     `,

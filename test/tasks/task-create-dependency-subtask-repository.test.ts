@@ -112,7 +112,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
           throw new Error('private note content must not enter diagnostics');
         return parse(filePath, content);
       });
-      const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       await expect(h.repository.createDependencySubtask(h.request)).resolves.toMatchObject({
         type: 'io-error',
         cause: 'linked-subtask-postcondition',

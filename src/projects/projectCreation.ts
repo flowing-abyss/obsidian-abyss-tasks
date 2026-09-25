@@ -51,8 +51,8 @@ export function creationFailureMessage(error: unknown): string {
   return text.trim().length > 0 ? text : '';
 }
 
-/** Appends the failure's cause to a sentence when the cause has text. */
-export function withCreationFailureCause(sentence: string, error: unknown): string {
+/** The shared sentence-plus-cause helper. A project creation error contributes its cause. */
+export function withFailureCause(sentence: string, error: unknown): string {
   const cause = creationFailureMessage(error);
   return cause.length > 0 ? `${sentence} ${cause.trim()}` : sentence;
 }
@@ -67,5 +67,5 @@ export function projectCreationFailureNotice(error: unknown): string {
   const sentence = isProjectCreationError(error)
     ? `Created ${error.createdPath}, but could not ${PARTIAL_CREATE_STEPS[error.phase]}.`
     : 'Could not create the project.';
-  return withCreationFailureCause(sentence, error);
+  return withFailureCause(sentence, error);
 }

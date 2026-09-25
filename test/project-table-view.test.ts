@@ -1838,30 +1838,39 @@ describe('ProjectsTableView', () => {
       'unexpected',
       new Error('disk stopped'),
       'Could not update project Timeline dates: disk stopped',
+      'cause',
     ],
     [
       'partial',
       { applied: [], failed: [{ path: 'Projects/A.md', message: 'source changed' }] },
       'Could not update project Timeline dates: 0 updated; 1 failed: source changed',
+      'result',
     ],
-  ] as const)('logs and notifies once for an %s Timeline failure', (_kind, failure, message) => {
-    const noticeSpy = spyOnNotices();
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const config = settings();
-    config.projects.overviewView = 'timeline';
-    const { host, view } = mount([], { settings: config });
+  ] as const)(
+    'logs and notifies once for an %s Timeline failure',
+    (_kind, failure, message, key) => {
+      const noticeSpy = spyOnNotices();
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const config = settings();
+      config.projects.overviewView = 'timeline';
+      const { host, view } = mount([], { settings: config });
 
-    (
-      view as unknown as {
-        reportTimelineRangeFailure_abyssPrivate(value: unknown): void;
-      }
-    ).reportTimelineRangeFailure_abyssPrivate(failure);
+      (
+        view as unknown as {
+          reportTimelineRangeFailure_abyssPrivate(value: unknown): void;
+        }
+      ).reportTimelineRangeFailure_abyssPrivate(failure);
 
-    expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
-    expect(errorSpy).toHaveBeenCalledOnce();
-    expect(noticeSpy).toHaveBeenCalledOnce();
-    expect(noticeSpy.mock.calls[0]?.[0]).toBe(message);
-  });
+      expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
+      expect(noticeSpy).toHaveBeenCalledOnce();
+      expect(noticeSpy.mock.calls[0]?.[0]).toBe(message);
+      // An unexpected error is the cause; a partial edit result is logged whole.
+      expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
+        '[abyss-tasks] Could not update project Timeline dates',
+        { [key]: failure },
+      );
+    },
+  );
 
   it('exposes reversed Timeline ranges as disabled with a field-recovery explanation', () => {
     const config = settings();
@@ -2808,8 +2817,17 @@ describe('ProjectsTableView', () => {
     const config = settings();
     config.projects.table.columns.push({ id: 'property:Tags', visible: true });
     const applyEdits = vi.fn(
-      async (_changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> => ({
-        applied: [],
+      async (changes: readonly ProjectCellChange[]): Promise<ProjectEditResult> => ({
+        // The writer clears a list emptied by its last removal, so the property no longer exists.
+        applied: changes.map((change): AppliedProjectCellChange => ({
+          ...change,
+          value: undefined,
+          sourceProperty: change.sourceProperty ?? expectDefined(change.field.property),
+          sourceKey: change.sourceKey ?? expectDefined(change.field.property),
+          previousValue: change.expectedValue,
+          previousExists: change.expectedExists ?? false,
+          appliedExists: false,
+        })),
         failed: [],
       }),
     );
@@ -2907,7 +2925,8 @@ describe('ProjectsTableView', () => {
   it('toggles an unset checkbox through history and restores native DOM after rejection', async () => {
     const config = settings();
     config.projects.table.columns.push({ id: 'property:Flag', visible: true });
-    const applyEdits = vi.fn().mockRejectedValue(new Error('disk full'));
+    const failure = new Error('disk full');
+    const applyEdits = vi.fn().mockRejectedValue(failure);
     const { host } = mount([project({ frontmatter: {} })], {
       settings: config,
       catalog: catalog([{ name: 'Flag', type: 'checkbox' }]),
@@ -2918,6 +2937,7 @@ describe('ProjectsTableView', () => {
         '[data-column-id="property:Flag"] input.metadata-input-checkbox',
       ),
     );
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     checkbox.click();
     await flushMicrotasks();
@@ -2928,6 +2948,10 @@ describe('ProjectsTableView', () => {
     expect(checkbox.checked).toBe(false);
     expect(checkbox.indeterminate).toBe(false);
     expect(checkbox.dataset['indeterminate']).toBe('true');
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not update project checkbox property',
+      { property: 'Flag', cause: failure },
+    );
   });
 
   it('clears a false checkbox through the shared mutation and history path', async () => {
@@ -3410,9 +3434,10 @@ describe('ProjectsTableView', () => {
     config.projects.table.columns.push({ id: 'property:Priority', visible: true });
     config.projects.propertyDefinitions['property:Priority'] = { type: 'text' };
     const savedTypes: string[] = [];
+    const failure = new Error('disk full');
     const saveStatic = vi.fn(async () => {
       savedTypes.push(config.projects.propertyDefinitions['property:Priority']?.type ?? 'missing');
-      if (savedTypes.length === 1) throw new Error('disk full');
+      if (savedTypes.length === 1) throw failure;
     });
     let noticeContent: DocumentFragment | undefined;
     const noticePrototype = Notice.prototype as unknown as {
@@ -3432,6 +3457,7 @@ describe('ProjectsTableView', () => {
         '.abyss-project-table-header-cell[data-column-id="property:Priority"]',
       ),
     ).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     activateMenuItem(submenu(lastShownMenu(show), 'Property type'), 'Number');
     await flushMicrotasks();
 
@@ -3448,6 +3474,10 @@ describe('ProjectsTableView', () => {
     await flushMicrotasks();
 
     expect(savedTypes).toEqual(['number', 'date']);
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not save project property type',
+      { cause: failure },
+    );
   });
 
   it('keeps sorting separate from column drag and resize gestures', async () => {
@@ -4426,15 +4456,14 @@ describe('ProjectsTableView', () => {
 
   it('keeps creation failure feedback inside the absolute composer', async () => {
     const noticeSpy = spyOnNotices();
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const createProject = vi.fn().mockRejectedValue(
-      new ProjectCreationError('status failed', {
-        createdPath: 'Projects/Fresh project.md',
-        phase: 'status',
-        statusId: active.id,
-        cause: new Error('disk full'),
-      }),
-    );
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new ProjectCreationError('status failed', {
+      createdPath: 'Projects/Fresh project.md',
+      phase: 'status',
+      statusId: active.id,
+      cause: new Error('disk full'),
+    });
+    const createProject = vi.fn().mockRejectedValue(failure);
     const { host } = mount([project({})], { createProject });
     expectDefined(host.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
     const input = expectDefined(
@@ -4451,6 +4480,9 @@ describe('ProjectsTableView', () => {
     expect(noticeSpy.mock.calls[0]?.[0]).toBe(
       'Created Projects/Fresh project.md, but could not set its status. disk full',
     );
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not create project', {
+      error: failure,
+    });
   });
 
   it('opens a typed editor, saves with the captured value, and rerenders after commit', async () => {
@@ -6102,21 +6134,25 @@ describe('ProjectsTableView', () => {
   it('publishes partial paste receipts and reports the exact applied and failed counts', async () => {
     const config = settings();
     config.projects.table.columns.push({ id: 'property:Owner', visible: true });
-    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => ({
-      applied: [
-        {
-          ...expectDefined(changes[0]),
-          sourceProperty: 'Owner',
-          sourceKey: 'Owner',
-          previousValue: 'A',
-          previousExists: true,
-          appliedExists: true,
-        },
-      ],
-      failed: [{ path: 'Projects/B.md', message: 'disk full' }],
-    }));
+    let pasted: ProjectEditResult | undefined;
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => {
+      pasted = {
+        applied: [
+          {
+            ...expectDefined(changes[0]),
+            sourceProperty: 'Owner',
+            sourceKey: 'Owner',
+            previousValue: 'A',
+            previousExists: true,
+            appliedExists: true,
+          },
+        ],
+        failed: [{ path: 'Projects/B.md', message: 'disk full' }],
+      };
+      return pasted;
+    });
     const history = new ProjectEditHistory(applyEdits);
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { host } = mount(
       [
         project({ path: 'Projects/A.md', frontmatter: { Owner: 'A' } }),
@@ -6145,6 +6181,9 @@ describe('ProjectsTableView', () => {
     expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe(
       '1 updated; 1 failed: disk full',
     );
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not paste project cells', {
+      result: pasted,
+    });
   });
 
   it('unpins only an oversized saved Name column when the actual table pane is constrained', () => {
@@ -6615,6 +6654,31 @@ describe('ProjectsTableView', () => {
     );
     expect(row.classList).toContain('is-just-created');
     expect(activeDocument.activeElement?.getAttribute('data-column-id')).toBe('name');
+  });
+
+  it("highlights a created project for the short time when the overview's window prefers reduced motion", async () => {
+    const matchMedia = vi.fn(() => ({ matches: true }));
+    vi.stubGlobal('matchMedia', matchMedia);
+    const setTimeout = vi.spyOn(window, 'setTimeout');
+    const createProject = vi.fn().mockResolvedValue('Projects/Calm.md');
+    const { host, view } = mount([], { createProject });
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
+    const input = expectDefined(
+      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
+    input.value = 'Calm';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    view.update([project({ path: 'Projects/Calm.md', name: 'Calm' })]);
+
+    expect(host.querySelector('[data-project-path="Projects/Calm.md"]')?.classList).toContain(
+      'is-just-created',
+    );
+    expect(matchMedia).toHaveBeenCalledWith('(prefers-reduced-motion: reduce)');
+    const delays = setTimeout.mock.calls.map(([, delay]) => delay);
+    expect(delays).toContain(800);
+    expect(delays).not.toContain(1100);
   });
 
   it('keeps external focus when delayed creation finishes in a connected overview', async () => {

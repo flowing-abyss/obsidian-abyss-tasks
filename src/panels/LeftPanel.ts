@@ -1,4 +1,4 @@
-import { Menu, Notice, setIcon, TFile, type App } from 'obsidian';
+import { Menu, Notice, setIcon, type App, type TFile } from 'obsidian';
 import type { AppState, ListSelection } from '../app/AppState';
 import { isListViewCustomized, listSelectionToKey } from '../app/listViewState';
 import type { ProjectManager } from '../projects/ProjectManager';
@@ -6,7 +6,7 @@ import type { ProjectStore } from '../projects/ProjectStore';
 import {
   isProjectCreationError,
   projectCreationFailureNotice,
-  withCreationFailureCause,
+  withFailureCause,
 } from '../projects/projectCreation';
 import { projectStatusDisplayName } from '../projects/status';
 import type { CalendarSettings } from '../settings/types';
@@ -35,6 +35,7 @@ import {
 import { isImeOwnedEvent } from '../ui/ime';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
 import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
+import { changeProjectStatus, openProjectNote } from '../ui/projectActions';
 import { runAsyncAction } from '../ui/runAsyncAction';
 import { presentTaskCommandResult } from '../ui/taskCommandResult';
 import { PanelNavigator, type PanelNavigationActions } from '../views/panelNavigation';
@@ -335,9 +336,9 @@ export class LeftPanel {
         this.settings_abyssPrivate.tagGroups === before
           ? {
               retryable: true,
-              notice: withCreationFailureCause('Could not add the tag group.', error),
+              notice: withFailureCause('Could not add the tag group.', error),
             }
-          : { retryable: false, notice: tagSettingsFailureNotice('tag group', false) },
+          : { retryable: false, notice: tagSettingsFailureNotice('add tag group', false) },
     };
   }
 
@@ -367,7 +368,7 @@ export class LeftPanel {
       await this.app_abyssPrivate.workspace.getLeaf(false).openFile(file);
     } catch (error) {
       console.error('[abyss-tasks] Could not open the created project', { path: file.path, error });
-      new Notice(withCreationFailureCause(`Created ${file.path}, but could not open it.`, error));
+      new Notice(withFailureCause(`Created ${file.path}, but could not open it.`, error));
     }
   }
 
@@ -745,7 +746,7 @@ export class LeftPanel {
     const projectManager = this.projectManager_abyssPrivate;
     if (projectManager === null) return;
     runAsyncAction(
-      projectManager.setStatus(path, statusId).then(() => {
+      changeProjectStatus(projectManager, { path, statusId }, () => {
         this.projectStore_abyssPrivate?.refresh();
         this.render_abyssPrivate();
       }),
@@ -753,9 +754,7 @@ export class LeftPanel {
   }
 
   private openProjectNote_abyssPrivate(path: string): void {
-    const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
-    if (file instanceof TFile)
-      runAsyncAction(this.app_abyssPrivate.workspace.getLeaf(false).openFile(file));
+    runAsyncAction(openProjectNote(this.app_abyssPrivate, path));
   }
 
   private renderPinnedTag_abyssPrivate(
@@ -1012,7 +1011,7 @@ export class LeftPanel {
       item
         .setTitle('Unpin')
         .setIcon('pin-off')
-        .onClick(this.makeTagOp_abyssPrivate(() => this.tagManager_abyssPrivate.unpinTag(tag))),
+        .onClick(this.makeTagOp_abyssPrivate(() => this.setTagPinned_abyssPrivate(tag, false))),
     );
     menu.addItem((item) =>
       item
@@ -1040,13 +1039,7 @@ export class LeftPanel {
       item
         .setTitle(isPinned ? 'Unpin' : 'Pin')
         .setIcon(isPinned ? 'pin-off' : 'pin')
-        .onClick(
-          this.makeTagOp_abyssPrivate(() =>
-            isPinned
-              ? this.tagManager_abyssPrivate.unpinTag(tag)
-              : this.tagManager_abyssPrivate.pinTag(tag),
-          ),
-        ),
+        .onClick(this.makeTagOp_abyssPrivate(() => this.setTagPinned_abyssPrivate(tag, !isPinned))),
     );
     menu.addItem((item) =>
       item
@@ -1126,9 +1119,7 @@ export class LeftPanel {
           .setIcon(isPinned ? 'pin-off' : 'pin')
           .onClick(
             this.makeTagOp_abyssPrivate(() =>
-              isPinned
-                ? this.tagManager_abyssPrivate.unpinTag(flattenedTag)
-                : this.tagManager_abyssPrivate.pinTag(flattenedTag),
+              this.setTagPinned_abyssPrivate(flattenedTag, !isPinned),
             ),
           ),
       );
@@ -1142,6 +1133,22 @@ export class LeftPanel {
         ),
     );
     showMenuAtMouseEventWithFocus(menu, e);
+  }
+
+  /**
+   * Pin and Unpin share the tag settings failure policy. `pinTag` and `unpinTag` restore exactly
+   * the array they replaced, and only when no newer save started, so the array read just before
+   * the change means the rollback ran; any other array means a newer save kept the change.
+   */
+  private async setTagPinned_abyssPrivate(tag: string, pinned: boolean): Promise<void> {
+    const before = this.settings_abyssPrivate.pinnedTags;
+    await this.runTagSettingsAction_abyssPrivate(
+      pinned
+        ? this.tagManager_abyssPrivate.pinTag(tag)
+        : this.tagManager_abyssPrivate.unpinTag(tag),
+      pinned ? 'pin tag' : 'unpin tag',
+      () => this.settings_abyssPrivate.pinnedTags === before,
+    );
   }
 
   private async archiveTagNavigation_abyssPrivate(tag: string): Promise<void> {
@@ -1247,7 +1254,7 @@ export class LeftPanel {
     runAsyncAction(
       this.runTagSettingsAction_abyssPrivate(
         this.tagManager_abyssPrivate.updateGroup(group, update),
-        'save tag group appearance',
+        'update tag group',
         () => {
           const current = this.settings_abyssPrivate.tagGroups.find(
             (candidate) => candidate.id === group.id,

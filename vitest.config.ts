@@ -7,7 +7,7 @@ export default defineConfig({
     mockReset: true,
     include: ['test/**/*.test.ts'],
     exclude: ['test/perf/**'],
-    setupFiles: ['obsidian-test-mocks/vitest-setup'],
+    setupFiles: ['obsidian-test-mocks/vitest-setup', 'test/setup/isolatedFailures.ts'],
     passWithNoTests: false,
     environment: 'jsdom',
     testTimeout: 5_000,

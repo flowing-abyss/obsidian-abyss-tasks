@@ -345,6 +345,31 @@ describe('TaskCaptureController', () => {
     expect(onRequestClose).not.toHaveBeenCalled();
   });
 
+  it('closes a blur capture and logs a presentation failure without failing the capture', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('presentation failed');
+    const base = harness();
+    const onRequestClose = vi.fn();
+    const controller = new TaskCaptureController({
+      target: base.controller.target,
+      describe: describeTaskCreationResult,
+      onResult: () => {
+        throw failure;
+      },
+      onRequestClose,
+    });
+    controller.setDraft('written');
+
+    await expect(controller.submit('blur')).resolves.toBeUndefined();
+
+    expect(controller.snapshot()).toMatchObject({ phase: 'closed', draft: '' });
+    expect(onRequestClose).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not show the capture result',
+      failure,
+    );
+  });
+
   it('does not request close after a closed-state observer destroys the controller', () => {
     const { controller, execute, onRequestClose } = harness();
     controller.subscribe((snapshot) => {

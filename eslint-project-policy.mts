@@ -15,6 +15,7 @@ const ownerGlobals = new Set([
   'cancelIdleCallback',
   'queueMicrotask',
   'ResizeObserver',
+  'matchMedia',
 ]);
 const pureGlobals = new Set([
   ...ownerGlobals,

@@ -1,5 +1,5 @@
 import { Notice, Platform, TFile, WorkspaceLeaf, type App } from 'obsidian';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { type AppState, type ListSelection } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
@@ -308,6 +308,21 @@ describe('PanelView inspector focus continuity', () => {
 type TaskApplication = ReturnType<typeof configuredTaskApplication>;
 
 describe('PanelView', () => {
+  // jsdom has no `scrollIntoView`, and creation feedback scrolls a created card into view.
+  let scrollIntoView: Mock<HTMLElement['scrollIntoView']>;
+
+  beforeEach(() => {
+    scrollIntoView = vi.fn<HTMLElement['scrollIntoView']>();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+  });
+
   describe('empty vault suite', () => {
     let app: Awaited<ReturnType<typeof createAppWithFiles>>;
     let taskApplication: TaskApplication;
@@ -394,9 +409,12 @@ describe('PanelView', () => {
 
       expect(notice).toHaveBeenCalledOnce();
       expect(noticeMessage).toBe('That tracked task is no longer in its note');
-      expect(log).toHaveBeenCalledOnce();
       // A click that reaches nothing leaves the reader in the mode they were in.
       expect(openTasks).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        '[abyss-tasks] The tracked task is no longer in its note',
+        '["gone.md",4,[]]',
+      );
     });
 
     it('owns one stable out-of-flow creation feedback host inside the layout', () => {
@@ -867,6 +885,59 @@ describe('PanelView', () => {
       expect(right.classList.contains('is-compact-open')).toBe(true);
     });
 
+    it('opens the requested compact pane after a capture whose presentation fails', async () => {
+      activeDocument.body.appendChild(view.containerEl);
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const internals = view as unknown as {
+        quickCapture_abyssPrivate: QuickCaptureCoordinator;
+        creationPresentation_abyssPrivate: CreationPresentationController;
+        pendingCompactPane_abyssPrivate: unknown;
+      };
+      const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+      const right = expectDefined(layout.querySelector<HTMLElement>('.abyss-right'));
+      const details = expectDefined(
+        layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right'),
+      );
+      setGeometry(layout, rect(0, 0, 390, 480));
+      window.dispatchEvent(new Event('resize'));
+      const pending = deferred<TaskCommandResult>();
+      const execute = vi.fn(() => pending.promise);
+      const options = (
+        internals.quickCapture_abyssPrivate as unknown as {
+          options: { resolveTarget: () => Promise<CaptureTarget> };
+        }
+      ).options;
+      options.resolveTarget = async () => panelCaptureTarget(execute);
+      const failure = new Error('presentation failed');
+      vi.spyOn(internals.creationPresentation_abyssPrivate, 'present').mockImplementation(() => {
+        throw failure;
+      });
+
+      internals.quickCapture_abyssPrivate.openOrFocus();
+      await flushMicrotasks(0);
+      const input = expectDefined(
+        layout.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+      );
+      input.value = 'captured once';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      details.dispatchEvent(
+        new Event('pointerdown', { bubbles: true, cancelable: true, composed: true }),
+      );
+      details.click();
+      expect(internals.pendingCompactPane_abyssPrivate).toBeDefined();
+
+      pending.resolve(successfulCaptureResult());
+      await flushMicrotasks(0);
+
+      expect(internals.pendingCompactPane_abyssPrivate).toBeUndefined();
+      expect(internals.quickCapture_abyssPrivate.phase).toBe('closed');
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        '[abyss-tasks] Could not show the capture result',
+        failure,
+      );
+    });
+
     it('routes shortcuts only for its connected visible active leaf and detaches on close', async () => {
       const internals = view as unknown as { panelNavigation_abyssPrivate: PanelNavigator };
       const openQuickCapture = vi
@@ -1046,11 +1117,10 @@ describe('PanelView', () => {
       vi.spyOn(scroll, 'cloneNode').mockImplementation((deep) =>
         destination.document.adoptNode(document.importNode(scroll, deep)),
       );
-      (
-        internals.creationPresentation_abyssPrivate as unknown as {
-          options: { reducedMotion: () => boolean };
-        }
-      ).options.reducedMotion = () => false;
+      // The main window has no `matchMedia`; only the window the view moved to answers.
+      expect(typeof window.matchMedia).toBe('undefined');
+      const ownerMotion = vi.fn(() => ({ matches: true }));
+      Object.defineProperty(destination, 'matchMedia', { configurable: true, value: ownerMotion });
       let nextTimer = 1;
       let now = Date.now();
       vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -1067,10 +1137,6 @@ describe('PanelView', () => {
       });
       vi.spyOn(destination, 'clearTimeout').mockImplementation((id) => {
         if (id !== undefined) timers.delete(id);
-      });
-      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
-        configurable: true,
-        value: vi.fn(),
       });
       try {
         destination.document.body.append(view.containerEl);
@@ -1107,17 +1173,18 @@ describe('PanelView', () => {
         const card = expectDefined(
           view.contentEl.querySelector('.abyss-task-card.is-just-created'),
         );
+        expect(ownerMotion).toHaveBeenCalledWith('(prefers-reduced-motion: reduce)');
         const highlight = expectDefined(
-          [...timers.entries()].find(([, timer]) => timer.delay === 1100),
+          [...timers.entries()].find(([, timer]) => timer.delay === 800),
         );
         const announcement = expectDefined(
           [...timers.entries()].find(([, timer]) => timer.delay === 4000),
         );
-        now += 1100;
+        now += 800;
         timers.delete(highlight[0]);
         highlight[1].run();
         expect(card.classList.contains('is-just-created')).toBe(false);
-        now += 2900;
+        now += 3200;
         timers.delete(announcement[0]);
         announcement[1].run();
         expect(feedback.textContent).toBe('');
@@ -1134,7 +1201,7 @@ describe('PanelView', () => {
         );
         await flushMicrotasks();
         expect(execute).toHaveBeenCalledTimes(2);
-        expect([...timers.values()].some((timer) => timer.delay === 1100)).toBe(true);
+        expect([...timers.values()].some((timer) => timer.delay === 800)).toBe(true);
         expect([...timers.values()].some((timer) => timer.delay === 4000)).toBe(true);
         await view.onClose();
         expect(timers.size).toBe(0);
@@ -1522,6 +1589,7 @@ describe('PanelView', () => {
     ])(
       'selects a $name task created from Center and routes feedback without a Notice',
       async (scenario) => {
+        const consoleError = vi.spyOn(console, 'error');
         const { selection } = scenario;
         const suffix = 'dated' in scenario ? ` 📅 ${window.moment().format('YYYY-MM-DD')}` : '';
         const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
@@ -1577,8 +1645,57 @@ describe('PanelView', () => {
           ],
         ).toBe(created == null ? undefined : taskPresentationKey(created.ref));
         expect(notice).not.toHaveBeenCalled();
+        expect(consoleError).not.toHaveBeenCalled();
       },
     );
+
+    it('reveals a created task without smooth scrolling and with the short highlight under reduced motion', async () => {
+      const consoleError = vi.spyOn(console, 'error');
+      const matchMedia = vi.fn(() => ({ matches: true }));
+      vi.stubGlobal('matchMedia', matchMedia);
+      const setTimeout = vi.spyOn(window, 'setTimeout');
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      state.set('selectedList', 'inbox');
+      const captureApplication = taskApplication.tasks as TaskApplicationApi &
+        TaskCaptureApplicationApi;
+      vi.spyOn(captureApplication, 'planCreate').mockResolvedValue({
+        type: 'ready',
+        destination: { filePath: 'capture.md', insertion: { type: 'append' } },
+        execute: async () => ({
+          type: 'ok',
+          changed: true,
+          outcome: {
+            type: 'task',
+            task: expectDefined(
+              taskApplication.index.installCommittedContent('capture.md', '- [ ] Captured\n')[0],
+            ),
+          },
+        }),
+      });
+      view.contentEl.querySelector<HTMLElement>('.abyss-add-task-trigger')?.click();
+      await flushMicrotasks();
+      const input = expectDefined(
+        view.contentEl.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+      );
+      input.value = 'Captured';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+
+      expect(view.contentEl.querySelector('.abyss-task-card.is-just-created')).not.toBeNull();
+      expect(matchMedia).toHaveBeenCalledWith('(prefers-reduced-motion: reduce)');
+      expect(scrollIntoView).toHaveBeenCalledWith({
+        behavior: 'auto',
+        block: 'nearest',
+        inline: 'nearest',
+      });
+      const delays = setTimeout.mock.calls.map(([, delay]) => delay);
+      expect(delays).toContain(800);
+      expect(delays).not.toContain(1100);
+      expect(consoleError).not.toHaveBeenCalled();
+    });
 
     it('keeps a captured calendar task selected after a later calendar patch', async () => {
       document.body.appendChild(view.containerEl);
@@ -1586,17 +1703,7 @@ describe('PanelView', () => {
       const internals = view as unknown as {
         state_abyssPrivate: AppState;
         quickCapture_abyssPrivate: QuickCaptureCoordinator;
-        creationPresentation_abyssPrivate: CreationPresentationController;
       };
-      (
-        internals.creationPresentation_abyssPrivate as unknown as {
-          options: { reducedMotion: () => boolean };
-        }
-      ).options.reducedMotion = () => false;
-      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
-        configurable: true,
-        value: vi.fn(),
-      });
       const today = window.moment().format('YYYY-MM-DD');
       const previous = expectDefined(
         taskApplication.index.installCommittedContent(
@@ -1817,6 +1924,10 @@ describe('PanelView', () => {
           panelNavigation_abyssPrivate: PanelNavigator;
         };
         const rebase = vi.spyOn(internals.panelNavigation_abyssPrivate, 'rebaseListIdentity');
+        const followNoteDelete = vi.spyOn(
+          internals.panelNavigation_abyssPrivate,
+          'followNoteDelete',
+        );
         let expected: ListSelection;
 
         if (event === 'tag rename') {
@@ -1843,11 +1954,64 @@ describe('PanelView', () => {
           }
         }
 
-        expect(rebase).toHaveBeenCalledWith(expected);
+        if (event === 'project delete') {
+          expect(followNoteDelete).toHaveBeenCalledExactlyOnceWith('Project.md');
+          expect(rebase).not.toHaveBeenCalled();
+        } else {
+          expect(rebase).toHaveBeenCalledWith(expected);
+        }
         expect(internals.state_abyssPrivate.get('mode')).toBe(mode);
         expect(internals.state_abyssPrivate.get('selectedList')).toEqual(expected);
       },
     );
+
+    it('treats a rename away from Markdown as a delete of the selected project', async () => {
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        panelNavigation_abyssPrivate: PanelNavigator;
+      };
+      const followNoteDelete = vi.spyOn(internals.panelNavigation_abyssPrivate, 'followNoteDelete');
+      const file = await app.vault.create('Project.md', '');
+      internals.panelNavigation_abyssPrivate.openList({ type: 'project', path: file.path });
+      internals.panelNavigation_abyssPrivate.openProjects();
+      internals.state_abyssPrivate.set('projectsPanel', { view: 'dashboard', path: file.path });
+
+      await app.vault.rename(file, 'Project.txt');
+
+      expect(followNoteDelete).toHaveBeenCalledExactlyOnceWith('Project.md');
+      expect(internals.state_abyssPrivate.get('selectedList')).toBe('today');
+      expect(internals.state_abyssPrivate.get('mode')).toBe('projects');
+      expect(internals.state_abyssPrivate.get('projectsPanel')).toEqual({ view: 'table' });
+    });
+
+    it('keeps a file filter chip on the list on screen in step with a note rename', async () => {
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        panelNavigation_abyssPrivate: PanelNavigator;
+      };
+      await app.vault.create('Source.md', '- [ ] Alpha #work\n');
+      await app.vault.create('Other.md', '- [ ] Beta #work\n');
+      await flushMicrotasks();
+      internals.panelNavigation_abyssPrivate.openList({ type: 'tag', tag: '#work' });
+      internals.state_abyssPrivate.set('centerListViewState', {
+        ...internals.state_abyssPrivate.get('centerListViewState'),
+        filters: [{ type: 'file', filePath: 'Source.md' }],
+      });
+      const center = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+      const chips = (): string[] =>
+        Array.from(center.querySelectorAll('.abyss-filter-chip-label'), (chip) => chip.textContent);
+      const titles = (): string[] =>
+        Array.from(center.querySelectorAll('.abyss-task-title'), (title) => title.textContent);
+      await flushMicrotasks();
+      expect(chips()).toEqual(['📄 Source']);
+      expect(titles()).toEqual(['Alpha']);
+
+      await app.vault.rename(expectDefined(app.vault.getFileByPath('Source.md')), 'Renamed.md');
+      await flushMicrotasks();
+
+      expect(chips()).toEqual(['📄 Renamed']);
+      expect(titles()).toEqual(['Alpha']);
+    });
 
     it('does not change an active group selection during a prefix rename', async () => {
       const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
@@ -2302,6 +2466,7 @@ describe('PanelView', () => {
     });
 
     it('selects a project task created by Q and preserves capture input focus', async () => {
+      const consoleError = vi.spyOn(console, 'error');
       const internals = view as unknown as {
         state_abyssPrivate: AppState;
         quickCapture_abyssPrivate: QuickCaptureCoordinator;
@@ -2363,6 +2528,7 @@ describe('PanelView', () => {
         created == null ? undefined : taskPresentationKey(created.ref),
       );
       expect(document.activeElement).toBe(input);
+      expect(consoleError).not.toHaveBeenCalled();
     });
 
     it('leaves Q in a project cell editor instead of opening Quick Capture', () => {

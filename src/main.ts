@@ -10,6 +10,7 @@ import { ProjectManager } from './projects/ProjectManager';
 import { evaluateQuery } from './query/evaluateQuery';
 import { DEFAULT_SETTINGS } from './settings/defaults';
 import {
+  isViewStateWritesSuspended,
   SettingsPersistenceCoordinator,
   type SettingsPersistencePort,
 } from './settings/persistence';
@@ -23,6 +24,7 @@ import {
   type TaskStorageSettings,
 } from './settings/taskStorageSettings';
 import type { CalendarSettings } from './settings/types';
+import { ViewStatePathOwner } from './settings/ViewStatePathOwner';
 import { StatusRegistry } from './status/StatusRegistry';
 import { TagManager } from './tags/TagManager';
 import {
@@ -82,11 +84,13 @@ export default class TaskCalendarPlugin extends Plugin {
   private projectManager!: ProjectManager;
   private projectProperties!: ProjectPropertyCatalog;
   private settingsPersistence!: SettingsPersistenceCoordinator;
+  private viewStatePaths!: ViewStatePathOwner;
   private effectiveTaskStorage!: TaskStorageSettings;
   private projectPropertyCaptureQueue: Promise<void> = Promise.resolve();
 
   override async onload(): Promise<void> {
     await this.loadSettings();
+    for (const ref of this.viewStatePaths.listen(this.app.vault)) this.registerEvent(ref);
     this.projectProperties = new ObsidianProjectProperties(this.app);
     this.registerProjectPropertyCaptureOpportunities();
     await this.captureProjectPropertyDefinitions();
@@ -187,7 +191,7 @@ export default class TaskCalendarPlugin extends Plugin {
           this.statusRegistry,
           () => this.saveSettings(),
           commentTimeContext,
-          () => this.saveViewState(),
+          () => this.saveViewStateWithNotice(),
           this.projectManager,
         ),
     );
@@ -280,6 +284,7 @@ export default class TaskCalendarPlugin extends Plugin {
   }
 
   override onunload(): void {
+    this.viewStatePaths.flushPendingSave();
     this.taskIndex.destroy();
   }
 
@@ -288,6 +293,7 @@ export default class TaskCalendarPlugin extends Plugin {
     try {
       const loaded = await this.settingsPersistence.loadSettings(DEFAULT_SETTINGS);
       this.settings = loaded.settings;
+      this.viewStatePaths = new ViewStatePathOwner(this.settings, () => this.saveViewState());
       for (const message of loaded.notices) new Notice(message);
       if (loaded.issues.length > 0) {
         for (const issue of loaded.issues) {
@@ -309,9 +315,7 @@ export default class TaskCalendarPlugin extends Plugin {
   async saveSettings(): Promise<void> {
     beginSettingsSave(this.settings);
     await this.settingsPersistence.saveSettings(this.settings);
-    for (const leaf of this.app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)) {
-      if (leaf.view instanceof PanelView) leaf.view.refreshProjectSettings();
-    }
+    this.refreshProjectSettings();
   }
 
   async saveTaskStorageSettings(draft: TaskStorageSettings): Promise<void> {
@@ -378,13 +382,35 @@ export default class TaskCalendarPlugin extends Plugin {
     return parent == null ? filePath : `${parent.path}/${filePath.slice(slash + 1)}`;
   }
 
+  /**
+   * A plain view-state write, like `saveSettings()`: it rethrows without presenting the failure.
+   * The coordinator snapshots the whole runtime settings, so this write carries the note-path
+   * owner's pending change and cancels that save.
+   */
   async saveViewState(): Promise<void> {
+    this.viewStatePaths.cancelPendingSave();
+    await this.settingsPersistence.saveViewState(this.settings);
+  }
+
+  /**
+   * The panel's route. A failed write gets this route's log and one Notice, then rejects, so the
+   * caller may log its own context; a write refused while writes are suspended resolves silently.
+   */
+  private async saveViewStateWithNotice(): Promise<void> {
     try {
-      await this.settingsPersistence.saveViewState(this.settings);
+      await this.saveViewState();
     } catch (error) {
+      if (isViewStateWritesSuspended(error)) return;
       console.error('[abyss-tasks] saved view state write failed', error);
       new Notice('Could not save view preferences. Your current session is unchanged.');
       throw error;
+    }
+  }
+
+  /** Brings every open panel's project settings in line with the settings in memory. */
+  refreshProjectSettings(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)) {
+      if (leaf.view instanceof PanelView) leaf.view.refreshProjectSettings();
     }
   }
 

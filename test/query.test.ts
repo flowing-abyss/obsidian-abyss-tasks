@@ -22,6 +22,69 @@ describe('evaluateQuery', () => {
     expect(evaluateQuery('status=active', 'A.md', [], fm({ status: 'done' }))).toBe(false);
     expect(evaluateQuery('status=', 'A.md', [], fm())).toBe(true); // unset === ''
   });
+  it('reads numbers, booleans, lists, objects, and null as text in a frontmatter key=value', () => {
+    expect(evaluateQuery('priority=3', 'A.md', [], fm({ priority: 3 }))).toBe(true);
+    expect(evaluateQuery('done=true', 'A.md', [], fm({ done: true }))).toBe(true);
+    expect(evaluateQuery('done=false', 'A.md', [], fm({ done: false }))).toBe(true);
+    expect(evaluateQuery('tags=a,b', 'A.md', [], fm({ tags: ['a', 'b'] }))).toBe(true);
+    expect(evaluateQuery('tags=a', 'A.md', [], fm({ tags: ['a', 'b'] }))).toBe(false);
+    expect(evaluateQuery('tags=', 'A.md', [], fm({ tags: [] }))).toBe(true);
+    expect(evaluateQuery('owner=[object Object]', 'A.md', [], fm({ owner: { name: 'Ann' } }))).toBe(
+      true,
+    );
+    expect(evaluateQuery('status=', 'A.md', [], fm({ status: null }))).toBe(true);
+  });
+  it('reads a list inside itself as empty, as String() does', () => {
+    const cyclic: unknown[] = ['a'];
+    cyclic.push(cyclic);
+    const selfOnly: unknown[] = [];
+    selfOnly.push(selfOnly);
+    const nested: unknown[] = ['a'];
+    nested.push(['b', nested], 'c');
+    const shared = ['x', 'y'];
+
+    expect(evaluateQuery('tags=a,', 'A.md', [], fm({ tags: cyclic }))).toBe(true);
+    expect(evaluateQuery('tags=', 'A.md', [], fm({ tags: selfOnly }))).toBe(true);
+    expect(evaluateQuery('tags=a,b,,c', 'A.md', [], fm({ tags: nested }))).toBe(true);
+    // A list that appears twice without being nested in itself is read in full each time.
+    expect(evaluateQuery('tags=x,y,x,y', 'A.md', [], fm({ tags: [shared, shared] }))).toBe(true);
+  });
+  it('reads a flat list of primitives as join() does, and a list holding a list or an object item by item', () => {
+    const flat = [null, undefined, 'a', 1, true, 2n];
+
+    expect(evaluateQuery('tags=,,a,1,true,2', 'A.md', [], fm({ tags: flat }))).toBe(true);
+    expect(evaluateQuery('tags=a,b,c', 'A.md', [], fm({ tags: ['a', ['b', 'c']] }))).toBe(true);
+    expect(evaluateQuery('tags=a,[object Object]', 'A.md', [], fm({ tags: ['a', { b: 1 }] }))).toBe(
+      true,
+    );
+    // join() cannot read an object whose toString is not a function; the helper still reads it.
+    expect(
+      evaluateQuery('tags=a,[object Object]', 'A.md', [], fm({ tags: ['a', { toString: 'x' }] })),
+    ).toBe(true);
+  });
+  it('reads YAML binary bytes as String() does', () => {
+    const bytes = new Uint8Array([104, 105]);
+
+    expect(evaluateQuery('bin=104,105', 'A.md', [], fm({ bin: bytes }))).toBe(true);
+    expect(evaluateQuery('bin=', 'A.md', [], fm({ bin: new Uint8Array([]) }))).toBe(true);
+    expect(evaluateQuery('bin=a,104,105', 'A.md', [], fm({ bin: ['a', bytes] }))).toBe(true);
+    expect(evaluateQuery('bin=[object Uint8Array]', 'A.md', [], fm({ bin: bytes }))).toBe(false);
+  });
+  it('reads a date as String() does', () => {
+    const due = new Date(2026, 0, 2);
+
+    expect(evaluateQuery(`due="${String(due)}"`, 'A.md', [], fm({ due }))).toBe(true);
+    expect(evaluateQuery('due=2026-01-02', 'A.md', [], fm({ due }))).toBe(false);
+  });
+  it('reads a key naming an inherited member as String() does', () => {
+    const frontmatter = fm({ status: 'x' });
+    // A string key reads the member as evaluateQuery does: Object.prototype.toString, a function.
+    const key: string = 'toString';
+    const query = `toString="${String(frontmatter[key])}"`;
+
+    expect(evaluateQuery(query, 'A.md', [], frontmatter)).toBe(true);
+    expect(evaluateQuery('toString=[object Function]', 'A.md', [], frontmatter)).toBe(false);
+  });
 
   it('preserves whitespace and quoted values in frontmatter equality expressions', () => {
     expect(evaluateQuery('status = done', 'A.md', [], fm({ status: 'done' }))).toBe(true);

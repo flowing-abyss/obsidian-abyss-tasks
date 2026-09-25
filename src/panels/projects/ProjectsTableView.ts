@@ -107,7 +107,9 @@ import {
   projectPropertyValuePresentation,
   projectTagLabel,
 } from '../../ui/projectPropertyValuePresentation';
+import { prefersReducedMotion } from '../../ui/reducedMotion';
 import { renderTaskText } from '../../ui/renderTaskText';
+import { runAsyncAction } from '../../ui/runAsyncAction';
 import {
   mountProjectCellEditor,
   type ProjectCellEditorHandle,
@@ -234,6 +236,7 @@ export interface ProjectsTableViewContext {
   readonly state: AppState;
   readonly settings: CalendarSettings;
   readonly catalog: ProjectPropertyCatalog;
+  /** Writes view state; the injected save presents its own failure. */
   readonly saveViewState: () => Promise<void>;
   readonly saveStatic?: () => Promise<void>;
   readonly applyEdits: (changes: readonly ProjectCellChange[]) => Promise<ProjectEditResult>;
@@ -826,9 +829,7 @@ export class ProjectsTableView {
       inaccessible: (path) => {
         this.showExcludedCreatedProject_abyssPrivate(path);
       },
-      reducedMotion: () =>
-        typeof this.ownerWindow_abyssPrivate?.matchMedia === 'function' &&
-        this.ownerWindow_abyssPrivate.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      reducedMotion: () => prefersReducedMotion(this.ownerWindow_abyssPrivate),
       now: () => Date.now(),
     });
   }
@@ -989,7 +990,10 @@ export class ProjectsTableView {
     const settings = projectsSettings.kanban;
     if (settings === undefined) return false;
     let changed = created;
-    for (const [key, paths] of projectPathsByStatus(this.projects_abyssPrivate)) {
+    const live = this.projects_abyssPrivate.filter(({ path }) =>
+      this.isLiveProjectPath_abyssPrivate(path),
+    );
+    for (const [key, paths] of projectPathsByStatus(live)) {
       const existing = settings.manualOrder[key] ?? [];
       const sequence = appendUnrankedProjectPaths(existing, paths);
       if (sequence.length === existing.length && settings.manualOrder[key] !== undefined) continue;
@@ -997,6 +1001,11 @@ export class ProjectsTableView {
       changed = true;
     }
     return changed;
+  }
+
+  /** Whether a project's note exists; an appender never ranks a path whose note is gone. */
+  private isLiveProjectPath_abyssPrivate(path: string): boolean {
+    return this.context_abyssPrivate.app.vault.getAbstractFileByPath(path) instanceof TFile;
   }
 
   private switchOverviewMode_abyssPrivate(mode: ProjectOverviewMode): void {
@@ -1307,10 +1316,10 @@ export class ProjectsTableView {
 
   private persistSettings_abyssPrivate(): void {
     this.feedback_abyssPrivate.empty();
-    saveSettingsDraft({
-      action: 'save project view settings',
-      save: this.context_abyssPrivate.saveViewState,
-    });
+    runAsyncAction(
+      this.context_abyssPrivate.saveViewState(),
+      'Could not save project view settings',
+    );
   }
 
   private toggleStatus_abyssPrivate(key: string): void {
@@ -1840,6 +1849,7 @@ export class ProjectsTableView {
       projectSnapshot: (path) =>
         this.projectedProjects_abyssPrivate().find((project) => project.path === path),
       projectsSnapshot: () => this.projectedProjects_abyssPrivate(),
+      isLiveProjectPath: (path) => this.isLiveProjectPath_abyssPrivate(path),
       statusProperty: () => this.context_abyssPrivate.settings.projects.statusProperty,
       membershipQuery: () => this.context_abyssPrivate.settings.projects.membershipQuery,
       tagsReliable: (path, fieldId) => this.boardTagsReliable_abyssPrivate(path, fieldId),

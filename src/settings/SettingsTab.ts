@@ -56,6 +56,7 @@ interface TaskCalendarPlugin extends Plugin {
   saveTaskStorageSettings?(draft: TaskStorageSettings): Promise<void>;
   saveViewState(): Promise<void>;
   refreshProjectTableSettings(): void;
+  refreshProjectSettings(): void;
   renameProjectStatus(id: string, name: string, expectedName: string): Promise<void>;
 }
 
@@ -1261,10 +1262,22 @@ export class CalendarSettingsTab extends PluginSettingTab {
       container: containerEl,
       projects: this.plugin_abyssPrivate.settings.projects,
       catalog: this.projectProperties_abyssPrivate,
-      saveStatic: () => this.plugin_abyssPrivate.saveSettings(),
+      // saveSettings() refreshes open panels after a durable write. A failed save keeps the change
+      // in the session, so the panels are brought in line here.
+      saveStatic: async () => {
+        try {
+          await this.plugin_abyssPrivate.saveSettings();
+        } catch (error) {
+          this.plugin_abyssPrivate.refreshProjectSettings();
+          throw error;
+        }
+      },
       saveViewState: async () => {
-        await this.plugin_abyssPrivate.saveViewState();
-        this.plugin_abyssPrivate.refreshProjectTableSettings();
+        try {
+          await this.plugin_abyssPrivate.saveViewState();
+        } finally {
+          this.plugin_abyssPrivate.refreshProjectTableSettings();
+        }
       },
       expandedCards: this.expandedCards_abyssPrivate,
       renderStatusSettings: (host) => {

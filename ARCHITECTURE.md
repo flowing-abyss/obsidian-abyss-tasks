@@ -149,6 +149,8 @@ Vault and metadata events reconcile external and plugin edits through the same i
 `TaskIndexEvent.changed` identifies changed task projections. A separate reconciled-file signal
 also covers accepted metadata events with unchanged tasks, including notes without tasks.
 `ProjectStore` waits for these barriers before combining frontmatter with matching task statistics.
+Every index subscriber receives each event; a throwing subscriber is reported and does not stop
+later subscribers or the reconciled signal.
 
 Task creation freezes its destination, local date, template, insertion policy, prefix, tags, and
 lifecycle settings in a retained `TaskCaptureApplicationApi` session. Sidebar capture reuses that
@@ -264,7 +266,9 @@ See [service tests](test/tasks/time-tracking-service.test.ts) and
 
 [`src/projects/`](src/projects/) treats qualifying Markdown notes as projects. `ProjectStore`
 evaluates membership against paths, tags, and frontmatter, combines task snapshots into statistics,
-and updates from vault and task-index events. It adds no persisted cache.
+and updates from vault and task-index events. A rename or delete moves or drops the note's snapshot
+at once, before any render the change causes, so the paths on screen agree with saved view state;
+the debounced refresh then re-reads the note. It adds no persisted cache.
 
 [ProjectManager](src/projects/ProjectManager.ts) creates notes without opening them, edits project
 frontmatter, and moves tasks through `TaskApplicationApi`. Membership comes from the configured
@@ -355,6 +359,8 @@ cells. Clipboard payloads preserve raw types and source context, rebase links, a
 history capabilities.
 
 Kanban manual path ranks are saved view state. Filtering or sorting does not discard hidden ranks.
+A deleted note's ranks are forgotten and a renamed note keeps its rank. Overview appenders add ranks
+only for notes that exist, and absence from a scan never prunes a rank.
 `projectKanbanDrop` revalidates captured source capabilities and current target/group meaning inside
 the shared mutation queue, batches metadata assignments, and updates manual rank only after success.
 Native drag presentation owns payload and cleanup, not metadata or settings writes.
@@ -445,7 +451,9 @@ collision or retry must not silently duplicate a project.
 
 Sidebar inline creation calls the same manager path without a recovery session. It opens the
 created note itself, retries only while no note exists, and reports a `ProjectCreationError` with
-the note's path. `projectCreation` owns the failure sentences both surfaces show.
+the note's path. `projectCreation` owns the failure sentences both surfaces show. `projectActions`
+owns the status-change and open-note failure sentences that the sidebar's project menu and the
+Projects view share. The overview's cell edits keep their own reporting.
 
 Status-definition renames share per-App metadata serialization with assignments and batches. A
 rename rechecks role, membership, and expected literal against fresh source, tracks owned note edits,
@@ -470,6 +478,12 @@ Obsidian's public vault adapter. `data.json` owns static configuration; adjacent
 One composed `CalendarSettings` object remains the runtime authority. Panels do not receive separate
 settings copies.
 
+[`ViewStatePathOwner`](src/settings/ViewStatePathOwner.ts), created by `src/main.ts` when settings
+load, keeps saved view state that names a note path in step with vault deletes and renames: Kanban
+ranks, project list states, and `file` filters. A delete forgets the note's own ranks and list
+state; a rename moves them and rewrites the filters. One trailing save follows a burst, and any
+view-state save carries it. Panels bring their session state in line through `PanelNavigator`.
+
 Archive-path and source-exclusion settings commit as one validated draft. Changing the archive path
 adds the previous path to the ignore expression. Only a successful save replaces the effective
 predicate and rebuilds task projections; a rejected save restores the prior configuration through
@@ -482,13 +496,19 @@ uses temporary defaults. Missing or unavailable state derives fresh Table column
 configured inventory; recognized views retain their own normalized order and visibility without
 appending schema-only fields. Static saves preserve unmarked legacy view fields until recovery is
 verified. Unknown static/nested view values survive; detached write snapshots queue in order,
-unchanged writes deduplicate, and rejection does not stop later operations.
+unchanged writes deduplicate, and rejection does not stop later operations. A list state moved to a
+renamed note's key keeps only its recognized fields, and a stale raw entry at the new key lends it
+its unknown fields.
 
 Static and view-state saves use separate callbacks. Static durability advances the rollback revision
 and refreshes project settings; view-state writes do neither and narrowly refresh the existing view
 controller when needed. Task-status changes rebuild the catalog, registry, and index interpretation
 together. ProjectStore rescans only for membership/status inputs; presentation changes reuse its
-snapshots and update retained views.
+snapshots and update retained views. Panel view-state saves raise one Notice through the plugin's
+panel route. `saveViewState()` itself is a plain write, and Settings reports its failure through the
+draft Notice. After a suspended load, rejected panel view writes raise nothing further, and a
+Settings change reports the suspension once, without a Retry. The note-path owner logs a failed
+write.
 
 Initial custom-property type capture fills only supported missing static definitions, before view
 registration, with bounded metadata/layout follow-ups. Available discovery, including an empty
@@ -498,16 +518,19 @@ callbacks cannot recreate deleted definitions. Unknown marker versions preserve 
 disable schema editing with an update notice; malformed definition recovery remains intact.
 
 Schema Add and Remove save static definitions and the marker before view state. Static failure
-prevents the view write. A failed view cleanup leaves durable deletion authoritative and offers a
-retry against the current draft. After restart, stale references may remain because the scalar
-marker cannot distinguish deleted fields from unresolved legacy fields. Version-1 Settings cards
-come from configured definitions; active views filter through the configured catalog and derive
-safe grouping/sorting without erasing those references. Freeform Add can explicitly repair a name.
-A retained deletion draft retries cleanup; no two-file transaction or restart cleanup is implied.
-Rollback to an older binary preserves deletion after both saves, but may recapture from stale views
-after partial failure because old binaries ignore the marker.
+prevents the view write. A failed static save from Settings' project properties keeps the change in
+the session and still refreshes project settings in open panels. A failed view cleanup leaves
+durable deletion authoritative and offers a retry against the current draft. After restart, stale
+references may remain because the scalar marker cannot distinguish deleted fields from unresolved
+legacy fields. Version-1 Settings cards come from configured definitions; active views filter
+through the configured catalog and derive safe grouping/sorting without erasing those references.
+Freeform Add can explicitly repair a name. A retained deletion draft retries cleanup; no two-file
+transaction or restart cleanup is implied. Rollback to an older binary preserves deletion after both
+saves, but may recapture from stale views after partial failure because old binaries ignore the
+marker.
 
-Failed saves retain the current draft for Retry, including later user edits. Settings UI lifecycles
+A failed save that can succeed later keeps the current draft for Retry, including later user
+edits; a suspended view-state write is reported once, without Retry. Settings UI lifecycles
 preserve active drafts across rebuilds and dispose listeners.
 Legacy project status migration preserves recoverable conflicts and requires explicit source
 selection or discard; loading never rewrites vault notes. Any persisted-contract change needs a
@@ -532,11 +555,18 @@ static/view split and preservation of unknown extensions. New write acquisitions
 must extend these checks without creating another persistence path.
 
 [Project ESLint policy](eslint-project-policy.mts) rejects ambient capabilities in the pure-module
-roster in [eslint.config.mts](eslint.config.mts) and global document/window scheduling in project
-and calendar surfaces. Enroll new pure modules in that roster and supply explicit time; native
-surfaces retain their owning window and dispose pending work. These lexical checks complement
+roster in [eslint.config.mts](eslint.config.mts) and global document/window capabilities in project
+and calendar surfaces and in the shared [project actions](src/ui/projectActions.ts), which join by
+a per-file entry. Enroll new pure modules in that roster and supply explicit time; native surfaces
+retain their owning window and dispose pending work. These lexical checks complement
 [owner-lifecycle tests](test/project-owner-lifecycle.test.ts); they do not establish transitive
 purity or native popout behavior.
+
+Linted files carry no ESLint or TypeScript directive comments, and the
+[lint parity test](test/obsidian-lint-parity.test.ts) checks that every linted file resolves the
+rules that ban them. It also holds every rule that eslint-plugin-obsidianmd's recommended config
+enables for plugin source at the same or a higher severity with the same options, apart from exact
+reviewed differences. A restricted-globals rule may name more globals than obsidianmd's.
 
 Authored and shipped CSS share the [CSS policy](tooling/css-policy.mjs) and Stylelint correctness
 rules. Styles stay scoped to plugin-owned surfaces and use semantic host tokens.

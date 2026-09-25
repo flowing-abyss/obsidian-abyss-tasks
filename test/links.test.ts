@@ -6,7 +6,7 @@ import {
   parseLinks,
   type LinkToken,
 } from '../src/markdown/links';
-import { expectDefined } from './helpers';
+import { expectDefined, medianInterleavedRatio } from './helpers';
 
 function insecureUrl(host: string): string {
   return ['http:', '', host].join('/');
@@ -159,36 +159,14 @@ describe('parseLinks', () => {
           ` \`[[hidden-${index}]] [hidden-${index}](hidden-${index})\`` +
           ` [[wiki-${index}]] [md-${index}](target-${index})`,
       ).join('');
-    const median = (values: readonly number[]): number => {
-      const ordered = [...values].sort((left, right) => left - right);
-      return expectDefined(ordered[Math.floor(ordered.length / 2)]);
-    };
     const small = denseSource(1_500);
     const large = denseSource(6_000);
-    parseLinks(small);
-    parseLinks(large);
-    const batchDuration = (source: string): number => {
-      const startedAt = performance.now();
-      for (let iteration = 0; iteration < 20; iteration++) parseLinks(source);
-      return performance.now() - startedAt;
-    };
-    const ratios = Array.from({ length: 7 }, (_, round) => {
-      let smallMs: number;
-      let largeMs: number;
-      if (round % 2 === 0) {
-        smallMs = batchDuration(small);
-        largeMs = batchDuration(large);
-      } else {
-        largeMs = batchDuration(large);
-        smallMs = batchDuration(small);
-      }
-      return largeMs / smallMs;
-    });
 
-    // A four-times larger dense source should remain far below the ~16x
-    // signature of quadratic work. The median paired ratio resists isolated
-    // JIT, GC, and full-suite scheduling outliers.
-    expect(median(ratios)).toBeLessThan(9);
+    // Four times the candidates cost about 4x; quadratic work costs 16x. The threshold is their
+    // geometric mean, and interleaved pairs keep a CPU speed change to the pair it splits.
+    expect(
+      medianInterleavedRatio({ small: () => parseLinks(small), large: () => parseLinks(large) }),
+    ).toBeLessThan(8);
   });
 });
 

@@ -1444,7 +1444,7 @@ describe('mountProjectCellEditor', () => {
     const error = new Error('disk full');
     const save = vi.fn().mockRejectedValue(error);
     const onClose = vi.fn();
-    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const notice = vi.spyOn(
       Notice.prototype as unknown as { constructor__(message: unknown, duration?: number): void },
       'constructor__',
@@ -1469,9 +1469,12 @@ describe('mountProjectCellEditor', () => {
       'disk full',
     );
     expect(onClose).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledOnce();
     expect(notice).toHaveBeenCalledOnce();
     expect(save).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not save project property', {
+      property: 'Custom',
+      cause: error,
+    });
   });
 
   it('keeps validation failures inline without an I/O diagnostic or Notice', async () => {
@@ -1479,7 +1482,7 @@ describe('mountProjectCellEditor', () => {
     const save = vi
       .fn()
       .mockRejectedValue(new ProjectEditValidationError('Start must be before End.'));
-    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error');
     const notice = vi.spyOn(
       Notice.prototype as unknown as { constructor__(message: unknown, duration?: number): void },
       'constructor__',

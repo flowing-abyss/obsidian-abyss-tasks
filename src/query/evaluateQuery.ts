@@ -300,6 +300,51 @@ function decodeEqualityValue(value: string): string {
   }
 }
 
+/** Frontmatter as query equality reads it: lists comma-joined, a missing value empty. */
+function frontmatterEqualityText(value: unknown, joining: readonly unknown[] = []): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return `${value}`;
+  }
+  if (Array.isArray(value)) return listEqualityText(value, joining);
+  return objectEqualityText(value);
+}
+
+/**
+ * Any other frontmatter value as String() reads it; YAML `!!binary` gives a Uint8Array, and a key
+ * naming an inherited member such as `toString` reads a function.
+ */
+function objectEqualityText(value: unknown): string {
+  if (value instanceof Date) return value.toString();
+  if (value instanceof Uint8Array) return value.join(',');
+  if (typeof value === 'function') return Function.prototype.toString.call(value);
+  return Object.prototype.toString.call(value);
+}
+
+/** A frontmatter list as query equality reads it; `joining` holds the lists it sits inside. */
+function listEqualityText(list: readonly unknown[], joining: readonly unknown[]): string {
+  // Like Array.prototype.join, a list inside itself reads as empty there.
+  if (joining.includes(list)) return '';
+  if (list.every(isJoinablePrimitive)) return list.join(',');
+  const path = [...joining, list];
+  return list.map((item) => frontmatterEqualityText(item, path)).join(',');
+}
+
+/** A list item that `join(',')` reads as `frontmatterEqualityText` reads it. */
+function isJoinablePrimitive(
+  item: unknown,
+): item is null | undefined | string | number | boolean | bigint {
+  return (
+    item === null ||
+    item === undefined ||
+    typeof item === 'string' ||
+    typeof item === 'number' ||
+    typeof item === 'boolean' ||
+    typeof item === 'bigint'
+  );
+}
+
 function evaluateAtom(
   term: string,
   filePath: string,
@@ -317,9 +362,7 @@ function evaluateAtom(
   if (equality >= 0) {
     const key = term.slice(0, equality).trim();
     const expected = decodeEqualityValue(term.slice(equality + 1));
-    const value = frontmatter[key];
-    // eslint-disable-next-line @typescript-eslint/no-base-to-string -- Query equality follows Obsidian frontmatter string coercion.
-    return (value === null || value === undefined ? '' : String(value)) === expected;
+    return frontmatterEqualityText(frontmatter[key]) === expected;
   }
   return term.endsWith('/') && filePath.toLocaleLowerCase().startsWith(term.toLocaleLowerCase());
 }

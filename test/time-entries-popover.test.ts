@@ -1007,7 +1007,7 @@ describe('tracked sessions popover', () => {
 
   it('drops a row whose line the note no longer holds', async () => {
     const harness = await inspector();
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     open(harness.el);
     const stale = expectDefined(
       rows(harness.el)[2]?.querySelector<HTMLButtonElement>('.abyss-time-row-remove'),
@@ -1026,10 +1026,10 @@ describe('tracked sessions popover', () => {
     await flushMicrotasks();
 
     expect(rows(harness.el)).toHaveLength(4);
-    expect(error).toHaveBeenCalledWith(
+    expect(harness.reported).toEqual([]);
+    expect(error).toHaveBeenCalledExactlyOnceWith(
       '[abyss-tasks] The tracked session to remove is no longer in the note',
     );
-    expect(harness.reported).toEqual([]);
   });
 
   it('files a second undo row under the day its own row came from', async () => {
@@ -1239,24 +1239,20 @@ describe('tracked sessions popover', () => {
    */
   it('lets go of the day a removal that threw was holding', async () => {
     const harness = await inspector();
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const unreportable = new Error('nowhere to report');
     vi.useFakeTimers();
     try {
       open(harness.el);
       vi.spyOn(harness.app.vault, 'process').mockRejectedValueOnce(new Error('disk full'));
       // The refused write is reported, and the reader of that report is what breaks here.
       vi.spyOn(harness.reported, 'push').mockImplementationOnce(() => {
-        throw new Error('nowhere to report');
+        throw unreportable;
       });
       const yesterday = expectDefined(rows(harness.el)[3], 'Missing the Yesterday row');
       expect(rowShape(yesterday).range).toBe('18:40 → 18:55');
       expectDefined(yesterday.querySelector<HTMLButtonElement>('.abyss-time-row-remove')).click();
       await vi.advanceTimersByTimeAsync(10);
-
-      expect(error).toHaveBeenCalledWith(
-        '[abyss-tasks] Could not remove a tracked session',
-        expect.any(Error),
-      );
 
       // The same row goes for good on the next attempt, whose own hold is the only one left.
       expectDefined(
@@ -1273,6 +1269,10 @@ describe('tracked sessions popover', () => {
       vi.restoreAllMocks();
       vi.useRealTimers();
     }
+    expect(error).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not remove a tracked session',
+      unreportable,
+    );
   });
 
   /**
@@ -1440,7 +1440,7 @@ describe('tracked sessions popover', () => {
   it('reports a row that has lost its day instead of doing nothing about it', async () => {
     const harness = await inspector();
     const before = await harness.read();
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     open(harness.el);
     const stray = expectDefined(rows(harness.el)[1], 'Missing the row to strand');
     // Whatever moved it, the row is no longer under a day and cannot say where to file an undo.
@@ -1449,9 +1449,6 @@ describe('tracked sessions popover', () => {
     expectDefined(stray.querySelector<HTMLButtonElement>('.abyss-time-row-remove')).click();
     await flushMicrotasks();
 
-    expect(error).toHaveBeenCalledWith(
-      '[abyss-tasks] The tracked session to remove is no longer under a day',
-    );
     expect(await harness.read()).toBe(before);
     expect(rows(harness.el)).toHaveLength(5);
     expect(
@@ -1459,6 +1456,9 @@ describe('tracked sessions popover', () => {
         (row) => row.parentElement?.classList.contains('abyss-time-day') === true,
       ),
     ).toBe(true);
+    expect(error).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] The tracked session to remove is no longer under a day',
+    );
   });
 
   it('lets an emptied day go once its undo offer is over', async () => {

@@ -1,14 +1,16 @@
+import { Menu, Notice } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboardView';
 import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
 import { renderProgressBar } from '../src/panels/projects/progressBar';
 import { ProjectCreationError } from '../src/projects/projectCreation';
+import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { expectDefined, flushMicrotasks, freshContainer } from './helpers';
+import { createAppWithFiles, expectDefined, flushMicrotasks, freshContainer } from './helpers';
 
 const ACTIVE_ID = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]).id;
 
@@ -29,6 +31,15 @@ function proj(over: Partial<Project>): Project {
     },
     ...over,
   };
+}
+
+const STATUS_VALIDATION = 'Choose a project Status property in settings before changing statuses.';
+
+function spyOnNotices() {
+  return vi.spyOn(
+    Notice.prototype as unknown as { constructor__(message: unknown, duration?: number): void },
+    'constructor__',
+  );
 }
 
 describe('renderProgressBar', () => {
@@ -255,12 +266,13 @@ describe('ProjectsPanel dispatch', () => {
     expect(scroll.scrollTop).toBe(33);
   });
 
-  it('keeps the selected Kanban card and board scroll positions when returning from a dashboard', () => {
+  it('keeps the selected Kanban card and board scroll positions when returning from a dashboard', async () => {
     const state = new AppState();
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
     settings.projects.overviewView = 'kanban';
-    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, null as never, {
+    const app = await createAppWithFiles({ 'Projects/A.md': '' });
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, app, {
       projectProperties,
     });
     const el = freshContainer();
@@ -369,14 +381,13 @@ describe('ProjectsPanel dispatch', () => {
   it('retries only the owned status write after partial project creation', async () => {
     const state = new AppState();
     const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
-    const create = vi.fn().mockRejectedValueOnce(
-      new ProjectCreationError('status failed', {
-        createdPath: 'Projects/Owned.md',
-        phase: 'status',
-        statusId: status.id,
-        cause: new Error('disk full'),
-      }),
-    );
+    const failure = new ProjectCreationError('status failed', {
+      createdPath: 'Projects/Owned.md',
+      phase: 'status',
+      statusId: status.id,
+      cause: new Error('disk full'),
+    });
+    const create = vi.fn().mockRejectedValueOnce(failure);
     const setStatus = vi.fn().mockResolvedValue(undefined);
     const refresh = vi.fn();
     const store = {
@@ -407,6 +418,7 @@ describe('ProjectsPanel dispatch', () => {
     expectDefined(el.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
     const input = expectDefined(el.querySelector<HTMLInputElement>('.abyss-project-creation-name'));
     input.value = 'Owned';
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await flushMicrotasks();
     expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-creation-submit')).click();
@@ -417,5 +429,107 @@ describe('ProjectsPanel dispatch', () => {
     expect(refresh).toHaveBeenCalledOnce();
     panel.destroy();
     el.remove();
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not create project', {
+      error: failure,
+    });
+  });
+
+  const WRITE_FAILURE = new Error('disk full');
+  const SECOND_STATUS_ID = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]).id;
+
+  /** Chooses the second status from the dashboard's status pill and returns the store's refresh. */
+  async function chooseDashboardStatus(setStatus: (path: string, statusId: string) => unknown) {
+    const refresh = vi.fn();
+    const store = Object.assign({}, stubStore, { refresh });
+    const manager = { create: vi.fn(), setStatus, setProperty: vi.fn() } as never;
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const panel = new ProjectsPanel(state, store, manager, DEFAULT_SETTINGS, null as never, {
+      projectProperties,
+    });
+    const el = freshContainer();
+    panel.mount(el);
+    try {
+      const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+      expectDefined(el.querySelector<HTMLButtonElement>('.abyss-status-pill')).click();
+      const menu = expectDefined(show.mock.instances[0]) as {
+        menuItems__: Array<{ onClick__: ((event: MouseEvent) => void) | null }>;
+      };
+      expectDefined(expectDefined(menu.menuItems__[1]).onClick__)(new MouseEvent('click'));
+      await flushMicrotasks();
+    } finally {
+      panel.destroy();
+    }
+    return refresh;
+  }
+
+  it.each([
+    ['validation', new ProjectEditValidationError(STATUS_VALIDATION), STATUS_VALIDATION, []],
+    [
+      'write',
+      WRITE_FAILURE,
+      'Could not change the project status. disk full',
+      [
+        [
+          '[abyss-tasks] Could not change the project status',
+          { path: 'Projects/A.md', statusId: SECOND_STATUS_ID, cause: WRITE_FAILURE },
+        ],
+      ],
+    ],
+  ])('reports a %s failure from the dashboard status pill', async (_kind, error, message, logs) => {
+    // A case that expects no log calls through, so the console guard also fails a stray one.
+    const log = vi.spyOn(console, 'error');
+    if (logs.length > 0) log.mockImplementation(() => undefined);
+    const notices = spyOnNotices();
+
+    const refresh = await chooseDashboardStatus(vi.fn().mockRejectedValue(error));
+
+    expect(notices.mock.calls.map(([text]) => text)).toEqual([message]);
+    expect(refresh).not.toHaveBeenCalled();
+    expect(log.mock.calls).toEqual(logs);
+  });
+
+  it('refreshes the project store once after a dashboard status change', async () => {
+    const log = vi.spyOn(console, 'error');
+    const notices = spyOnNotices();
+    const setStatus = vi.fn().mockResolvedValue(undefined);
+
+    const refresh = await chooseDashboardStatus(setStatus);
+
+    expect(setStatus).toHaveBeenCalledExactlyOnceWith('Projects/A.md', SECOND_STATUS_ID);
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(notices).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed open from the dashboard open button', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('leaf closed');
+    const notices = spyOnNotices();
+    const app = await createAppWithFiles({ 'Projects/A.md': '' });
+    vi.spyOn(app.workspace, 'getLeaf').mockReturnValue({
+      openFile: vi.fn().mockRejectedValue(failure),
+    } as never);
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, app, {
+      projectProperties,
+    });
+    const el = freshContainer();
+    panel.mount(el);
+    try {
+      expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-open-btn')).click();
+      await flushMicrotasks();
+
+      expect(notices.mock.calls.map(([text]) => text)).toEqual([
+        'Could not open Projects/A.md. leaf closed',
+      ]);
+    } finally {
+      panel.destroy();
+    }
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not open the project note', {
+      path: 'Projects/A.md',
+      error: failure,
+    });
   });
 });

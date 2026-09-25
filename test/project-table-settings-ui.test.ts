@@ -17,6 +17,7 @@ import {
   dispatchImeKey,
   editSettingControl,
   expectDefined,
+  flushMicrotasks,
   loadPluginStyles,
   methodOf,
 } from './helpers';
@@ -261,11 +262,13 @@ describe('renderProjectTableSettings', () => {
       const order: string[] = [];
       let failed = false;
       let persistedDefinitions: unknown;
+      const staticError = new Error('static unavailable');
+      const viewError = new Error('state unavailable');
       const saveStatic = async (): Promise<void> => {
         order.push('static');
         if (failure === 'static' && !failed) {
           failed = true;
-          throw new Error('static unavailable');
+          throw staticError;
         }
         persistedDefinitions = structuredClone(projects.propertyDefinitions);
       };
@@ -273,7 +276,7 @@ describe('renderProjectTableSettings', () => {
         order.push('view');
         if (failure === 'view' && !failed) {
           failed = true;
-          throw new Error('state unavailable');
+          throw viewError;
         }
       };
       vi.mocked(Notice).mockClear();
@@ -286,6 +289,7 @@ describe('renderProjectTableSettings', () => {
         saveViewState,
         refresh: vi.fn(),
       });
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       expectDefined(
         container.querySelector<HTMLButtonElement>('[aria-label="Remove Novel property"]'),
       ).click();
@@ -301,6 +305,10 @@ describe('renderProjectTableSettings', () => {
       await settle();
       expect(order.slice(-2)).toEqual(['static', 'view']);
       expect(persistedDefinitions).toEqual({ 'property:Later': { type: 'number' } });
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        '[abyss-tasks] Could not remove project property',
+        { cause: failure === 'static' ? staticError : viewError },
+      );
     },
   );
 
@@ -505,6 +513,82 @@ describe('renderProjectTableSettings', () => {
 
     expect(projects.propertyDefinitions['property:Effort']).toEqual({ type: 'number' });
     expect(saveStatic).toHaveBeenCalledOnce();
+  });
+
+  it('refreshes after a failed property removal and a failed property add', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('state unavailable');
+    const projects = buildDefaultProjectsSettings();
+    addProjectPropertyColumn(projects, [], 'Novel');
+    const container = document.body.createDiv();
+    const refresh = vi.fn();
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog([
+        { name: 'Novel', type: 'text' },
+        { name: 'Budget', type: 'number' },
+      ]),
+      saveStatic: vi.fn().mockResolvedValue(undefined),
+      saveViewState: vi.fn().mockRejectedValue(failure),
+      refresh,
+    });
+
+    expectDefined(
+      container.querySelector<HTMLButtonElement>('[aria-label="Remove Novel property"]'),
+    ).click();
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledOnce();
+
+    refresh.mockClear();
+    expectDefined(
+      container.querySelector<HTMLInputElement>('.abyss-project-column-add-input'),
+    ).value = 'Budget';
+    expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-column-add')).click();
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledExactlyOnceWith('project-property:property:Budget');
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenNthCalledWith(1, '[abyss-tasks] Could not remove project property', {
+      cause: failure,
+    });
+    expect(log).toHaveBeenNthCalledWith(2, '[abyss-tasks] Could not add project property', {
+      cause: failure,
+    });
+  });
+
+  it('refreshes after a failed type change saved through the shared persist', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('static unavailable');
+    const projects = buildDefaultProjectsSettings();
+    projects.table.columns.push({ id: 'property:Effort', visible: true });
+    const container = document.body.createDiv();
+    const refresh = vi.fn();
+    renderProjectTableSettings({
+      app: new App(),
+      container,
+      projects,
+      catalog: catalog([{ name: 'Effort', type: null }]),
+      saveStatic: vi.fn().mockRejectedValue(failure),
+      saveViewState: vi.fn().mockResolvedValue(undefined),
+      renderStatusSettings: () => {},
+      refresh,
+    });
+    expandProperty(container, 'property:Effort');
+    refresh.mockClear();
+    const type = expectDefined(
+      container.querySelector<HTMLSelectElement>('[aria-label="Type for Effort"]'),
+    );
+
+    type.value = 'number';
+    type.dispatchEvent(new Event('change', { bubbles: true }));
+    await flushMicrotasks();
+
+    expect(refresh).toHaveBeenCalledExactlyOnceWith(undefined);
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not save project table settings',
+      { cause: failure },
+    );
   });
 
   it('retains sequential predefined-value edits without an enable control', async () => {
@@ -804,7 +888,8 @@ describe('renderProjectTableSettings', () => {
 
   it('does not save view state when the definition save for a new column fails', async () => {
     const projects = buildDefaultProjectsSettings();
-    const saveStatic = vi.fn().mockRejectedValue(new Error('static unavailable'));
+    const failure = new Error('static unavailable');
+    const saveStatic = vi.fn().mockRejectedValue(failure);
     const saveViewState = vi.fn().mockResolvedValue(undefined);
     const container = document.body.createDiv();
     renderProjectTableSettings({
@@ -821,6 +906,7 @@ describe('renderProjectTableSettings', () => {
       container.querySelector<HTMLInputElement>('.abyss-project-column-add-input'),
     );
     input.value = 'Budget';
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-column-add')).click();
     await settle();
 
@@ -828,6 +914,9 @@ describe('renderProjectTableSettings', () => {
     expect(saveViewState).not.toHaveBeenCalled();
     expect(projects.propertyDefinitions['property:Budget']).toEqual({ type: 'number' });
     expect(projects.table.columns.some(({ id }) => id === 'property:Budget')).toBe(true);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not add project property', {
+      cause: failure,
+    });
   });
 
   it('persists Show description through the view-state channel outside column rows', async () => {
@@ -1183,7 +1272,8 @@ describe('renderProjectTableSettings', () => {
 
   it('shows exactly one Notice when a curated date source static save fails', async () => {
     const projects = buildDefaultProjectsSettings();
-    const saveStatic = vi.fn().mockRejectedValue(new Error('disk full'));
+    const failure = new Error('disk full');
+    const saveStatic = vi.fn().mockRejectedValue(failure);
     const saveViewState = vi.fn().mockResolvedValue(undefined);
     const container = document.body.createDiv();
     const dropdowns: DropdownComponent[] = [];
@@ -1198,6 +1288,7 @@ describe('renderProjectTableSettings', () => {
       return this;
     });
     vi.mocked(Notice).mockClear();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       renderProjectTableSettings({
         app: new App(),
@@ -1226,11 +1317,16 @@ describe('renderProjectTableSettings', () => {
     } finally {
       dropdownSpy.mockRestore();
     }
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not save project table settings',
+      { cause: failure },
+    );
   });
 
   it('offers a retry for a failed view-state save', async () => {
     const projects = buildDefaultProjectsSettings();
-    const saveViewState = vi.fn().mockRejectedValue(new Error('state unavailable'));
+    const failure = new Error('state unavailable');
+    const saveViewState = vi.fn().mockRejectedValue(failure);
     const container = document.body.createDiv();
     vi.mocked(Notice).mockClear();
     renderProjectTableSettings({
@@ -1242,6 +1338,7 @@ describe('renderProjectTableSettings', () => {
       saveViewState,
       refresh: vi.fn(),
     });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     expectDefined(
       container.querySelector<HTMLInputElement>('[data-column-id="status"] input[type="checkbox"]'),
@@ -1253,14 +1350,16 @@ describe('renderProjectTableSettings', () => {
     expect(
       (vi.mocked(Notice).mock.calls[0]?.[0] as DocumentFragment).querySelector('button'),
     ).not.toBeNull();
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not save project table settings',
+      { cause: failure },
+    );
   });
 
   it('keeps a failed column addition once and retries the current draft', async () => {
     const projects = buildDefaultProjectsSettings();
-    const saveViewState = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('state unavailable'))
-      .mockResolvedValue(undefined);
+    const failure = new Error('state unavailable');
+    const saveViewState = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue(undefined);
     const container = document.body.createDiv();
     renderProjectTableSettings({
       app: new App(),
@@ -1275,6 +1374,7 @@ describe('renderProjectTableSettings', () => {
       container.querySelector<HTMLInputElement>('.abyss-project-column-add-input'),
     );
     input.value = 'Budget';
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-column-add')).click();
     await settle();
@@ -1285,6 +1385,9 @@ describe('renderProjectTableSettings', () => {
     await settle();
     expect(saveViewState).toHaveBeenCalledTimes(2);
     expect(projects.table.columns.filter(({ id }) => id === 'property:Budget')).toHaveLength(1);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not add project property', {
+      cause: failure,
+    });
   });
 
   it('changes a display label without changing the custom property source key', async () => {

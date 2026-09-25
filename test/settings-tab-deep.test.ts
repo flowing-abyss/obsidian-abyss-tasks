@@ -2,7 +2,8 @@ import type * as ObsidianModule from 'obsidian';
 import { App, Notice, Setting } from 'obsidian';
 import { describe, expect, it, vi, type Mock } from 'vitest';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
-import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { buildDefaultProjectsSettings, DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { addProjectPropertyColumn } from '../src/settings/projectTableSettings';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import { SHORTCUT_ACTION_IDS } from '../src/settings/shortcuts';
 import type { CalendarSettings } from '../src/settings/types';
@@ -17,7 +18,6 @@ import {
   flushMicrotasks,
   loadPluginStyles,
   methodOf,
-  objectMatching,
   queryApiForTasks,
   task,
   useRealMoment,
@@ -44,6 +44,7 @@ interface StubPlugin {
   saveSettings: Mock<() => Promise<void>>;
   saveViewState: Mock<() => Promise<void>>;
   refreshProjectTableSettings: Mock<() => void>;
+  refreshProjectSettings: Mock<() => void>;
   renameProjectStatus: Mock<(id: string, name: string, expectedName: string) => Promise<void>>;
   rebuildTaskStatusSemantics: Mock<() => void>;
   tagManager?: TagManager;
@@ -155,6 +156,7 @@ function makeTab(
   const saveViewState =
     opts.saveViewState ?? vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
   const refreshProjectTableSettings = vi.fn<() => void>();
+  const refreshProjectSettings = vi.fn<() => void>();
   const renameProjectStatus = vi.fn<
     (id: string, name: string, expectedName: string) => Promise<void>
   >(async (id: string, name: string, expectedName: string): Promise<void> => {
@@ -169,6 +171,7 @@ function makeTab(
     saveSettings,
     saveViewState,
     refreshProjectTableSettings,
+    refreshProjectSettings,
     renameProjectStatus,
     rebuildTaskStatusSemantics: vi.fn<() => void>(),
   };
@@ -925,9 +928,11 @@ describe('CalendarSettingsTab project value commits', () => {
     const pendingRename = new Promise<void>((_resolve, reject) => {
       rejectRename = reject;
     });
+    const failure = new Error('status changed externally');
     const { tab, plugin } = makeTab();
     document.body.append(tab.containerEl);
     plugin.renameProjectStatus.mockImplementation(() => pendingRename);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       const body = openSection(tab, 3);
       const input = expectDefined(
@@ -941,7 +946,7 @@ describe('CalendarSettingsTab project value commits', () => {
       expectDefined(tab.containerEl.ownerDocument.defaultView).dispatchEvent(new Event('blur'));
       (tab as unknown as { display(): void }).display();
 
-      rejectRename(new Error('status changed externally'));
+      rejectRename(failure);
       await flushMicrotasks();
 
       const current = expectDefined(
@@ -956,6 +961,12 @@ describe('CalendarSettingsTab project value commits', () => {
       tab.hide();
       tab.containerEl.remove();
     }
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not rename project status', {
+      statusId: 'status-1',
+      expectedName: 'inbox',
+      requestedName: 'running',
+      cause: failure,
+    });
   });
 });
 
@@ -1355,21 +1366,21 @@ describe('CalendarSettingsTab Hotkeys', () => {
         }),
     );
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    try {
-      const { tab } = makeTab({}, { saveSettings });
-      const input = shortcutInput(hotkeysBody(tab), 'openQuickCapture');
+    const failure = new Error('storage failed');
+    const { tab } = makeTab({}, { saveSettings });
+    const input = shortcutInput(hotkeysBody(tab), 'openQuickCapture');
 
-      input.value = 'W';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      tab.hide();
-      rejectSave(new Error('storage failed'));
-      await Promise.resolve();
-      await Promise.resolve();
+    input.value = 'W';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    tab.hide();
+    rejectSave(failure);
+    await Promise.resolve();
+    await Promise.resolve();
 
-      expect(error).toHaveBeenCalled();
-    } finally {
-      error.mockRestore();
-    }
+    expect(error).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not save shortcut settings',
+      failure,
+    );
   });
 
   it('retains a failed save and exposes a retry that clears the unsaved state on success', async () => {
@@ -1382,34 +1393,35 @@ describe('CalendarSettingsTab Hotkeys', () => {
       .mockImplementationOnce(() => first)
       .mockResolvedValueOnce(undefined);
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    try {
-      const { tab } = makeTab({}, { saveSettings });
-      const body = hotkeysBody(tab);
-      const input = shortcutInput(body, 'openQuickCapture');
-      input.value = 'Q | shift 7';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      rejectFirst(new Error('storage failed'));
-      await Promise.resolve();
-      await Promise.resolve();
+    const failure = new Error('storage failed');
+    const { tab } = makeTab({}, { saveSettings });
+    const body = hotkeysBody(tab);
+    const input = shortcutInput(body, 'openQuickCapture');
+    input.value = 'Q | shift 7';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    rejectFirst(failure);
+    await Promise.resolve();
+    await Promise.resolve();
 
-      const status = expectDefined(body.querySelector<HTMLElement>('.abyss-shortcut-save-status'));
-      const retry = expectDefined(
-        body.querySelector<HTMLButtonElement>('.abyss-shortcut-save-retry'),
-      );
-      expect(status.textContent).toContain('not saved');
-      expect(retry.hidden).toBe(false);
-      expect(input.value).toBe('Q | shift 7');
+    const status = expectDefined(body.querySelector<HTMLElement>('.abyss-shortcut-save-status'));
+    const retry = expectDefined(
+      body.querySelector<HTMLButtonElement>('.abyss-shortcut-save-retry'),
+    );
+    expect(status.textContent).toContain('not saved');
+    expect(retry.hidden).toBe(false);
+    expect(input.value).toBe('Q | shift 7');
 
-      retry.click();
-      await Promise.resolve();
-      await Promise.resolve();
+    retry.click();
+    await Promise.resolve();
+    await Promise.resolve();
 
-      expect(saveSettings).toHaveBeenCalledTimes(2);
-      expect(status.textContent).toBe('');
-      expect(retry.hidden).toBe(true);
-    } finally {
-      error.mockRestore();
-    }
+    expect(saveSettings).toHaveBeenCalledTimes(2);
+    expect(status.textContent).toBe('');
+    expect(retry.hidden).toBe(true);
+    expect(error).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not save shortcut settings',
+      failure,
+    );
   });
 });
 
@@ -1647,14 +1659,15 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
 
   it('reports a failed automatic-group promotion once and renders the rolled-back state', async () => {
     vi.mocked(Notice).mockClear();
-    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('disk unavailable');
     const id = discoveredTagGroupId('#auto');
     const { tab, plugin, captured } = makeTab(
       { tagGroups: [] },
       {
         tasks: [task({ tags: ['#auto'] })],
         expandedTagGroupIds: [id],
-        saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')),
+        saveSettings: vi.fn().mockRejectedValue(failure),
       },
     );
     openSection(tab, 2);
@@ -1668,8 +1681,10 @@ describe('CalendarSettingsTab renderTagGroupSettings', () => {
     expect(plugin.settings.tagGroups).toEqual([]);
     expect(Notice).toHaveBeenCalledOnce();
     expect(vi.mocked(Notice).mock.calls[0]?.[0]).toContain('rolled back');
-    expect(errorLog).toHaveBeenCalledOnce();
-    errorLog.mockRestore();
+    expect(errorLog).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not update tag group',
+      failure,
+    );
   });
 });
 
@@ -2167,11 +2182,9 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
 
   it('keeps the reordered draft and offers a current-state retry after save failure', async () => {
     vi.mocked(Notice).mockClear();
-    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const saveSettings = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('disk unavailable'))
-      .mockResolvedValue(undefined);
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('disk unavailable');
+    const saveSettings = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue(undefined);
     const { tab, plugin } = makeTab({}, { saveSettings });
     const body = openSection(tab, 3);
     const before = plugin.settings.projects.statuses.map(({ id }) => id);
@@ -2203,11 +2216,10 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expectDefined((noticeContent as DocumentFragment).querySelector('button')).click();
     await Promise.resolve();
     expect(saveSettings).toHaveBeenCalledTimes(2);
-    expect(errorLog).toHaveBeenCalledWith(
+    expect(errorLog).toHaveBeenCalledExactlyOnceWith(
       '[abyss-tasks] Could not reorder project statuses',
-      objectMatching<{ cause: unknown }>({ cause: expect.any(Error) as unknown }),
+      { cause: failure },
     );
-    errorLog.mockRestore();
   });
 
   it('does not let an older failed reorder overwrite a newer project-status order', async () => {
@@ -2215,6 +2227,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     const firstSave = new Promise<void>((_resolve, reject) => {
       rejectFirst = reject;
     });
+    const failure = new Error('older write failed');
     const saveSettings = vi
       .fn()
       .mockImplementationOnce(() => firstSave)
@@ -2229,7 +2242,8 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
 
     dragProjectValueRow(secondRow, projectStatusRowNamed(body, firstStatus.name));
     dragProjectValueRow(secondRow, projectStatusRowNamed(body, thirdStatus.name));
-    rejectFirst(new Error('older write failed'));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    rejectFirst(failure);
     await Promise.resolve();
     await Promise.resolve();
 
@@ -2239,14 +2253,19 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       secondStatus.id,
     ]);
     expect(projectStatusOrder(tab)).toEqual(plugin.settings.projects.statuses.map(({ id }) => id));
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not reorder project statuses',
+      { cause: failure },
+    );
   });
 
   it('renders a tag-group addition immediately and rolls back the latest failed save', async () => {
     vi.mocked(Notice).mockClear();
-    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('disk unavailable');
     const { tab, plugin, captured } = makeTab(
       { tagGroups: [] },
-      { tasks: [], saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')) },
+      { tasks: [], saveSettings: vi.fn().mockRejectedValue(failure) },
     );
     openSection(tab, 2);
     attachSettingsScroller(tab, 513);
@@ -2259,16 +2278,19 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expect(plugin.settings.tagGroups).toEqual([]);
     expect(tab.containerEl.textContent).not.toContain('New group');
     expect(vi.mocked(Notice).mock.calls[0]?.[0]).toContain('rolled back');
-    expect(errorLog).toHaveBeenCalledOnce();
-    errorLog.mockRestore();
+    expect(errorLog).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not add tag group',
+      failure,
+    );
   });
 
   it('renders a tag-group deletion immediately and rolls back the latest failed save', async () => {
     vi.mocked(Notice).mockClear();
-    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('disk unavailable');
     const { tab, plugin, captured } = makeTab(
       { tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }] },
-      { tasks: [], saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')) },
+      { tasks: [], saveSettings: vi.fn().mockRejectedValue(failure) },
     );
     openSection(tab, 2);
     attachSettingsScroller(tab, 513);
@@ -2283,8 +2305,10 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     ]);
     expect(tab.containerEl.textContent).toContain('Work');
     expect(vi.mocked(Notice).mock.calls[0]?.[0]).toContain('rolled back');
-    expect(errorLog).toHaveBeenCalledOnce();
-    errorLog.mockRestore();
+    expect(errorLog).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not delete tag group',
+      failure,
+    );
   });
 
   it('renders project-status add and delete drafts before persistence settles', async () => {
@@ -2327,12 +2351,14 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       icon: 'alert-triangle',
       core: false,
     };
+    const failure = new Error('disk unavailable');
     const { tab, plugin, captured } = makeTab(
       { taskStatuses: [...structuredClone(DEFAULT_SETTINGS.taskStatuses), custom] },
-      { saveSettings: vi.fn().mockRejectedValue(new Error('disk unavailable')) },
+      { saveSettings: vi.fn().mockRejectedValue(failure) },
     );
     openSection(tab, 4);
     attachSettingsScroller(tab, 513);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     capturedButton(captured, '+ add status', 'Custom statuses').click();
     expect(cardNamed(tab.containerEl, 'New status').isConnected).toBe(true);
@@ -2348,6 +2374,13 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(Notice).toHaveBeenCalled();
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenNthCalledWith(1, '[abyss-tasks] Could not add task status', {
+      cause: failure,
+    });
+    expect(log).toHaveBeenNthCalledWith(2, '[abyss-tasks] Could not delete task status', {
+      cause: failure,
+    });
   });
 
   it('refreshes a mounted project table after description and column view saves', async () => {
@@ -2373,6 +2406,83 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     expect(plugin.saveViewState).toHaveBeenCalledTimes(2);
     expect(plugin.refreshProjectTableSettings).toHaveBeenCalledTimes(2);
+  });
+
+  it('refreshes a mounted project table after a failed description save', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('disk unavailable');
+    const { tab, plugin, captured } = makeTab(
+      {},
+      { saveViewState: vi.fn<() => Promise<void>>().mockRejectedValue(failure) },
+    );
+    const projectsHeader = Array.from(
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
+    ).find((header) => header.textContent.includes('Projects'));
+    expectDefined(projectsHeader).click();
+
+    expectDefined(findComp(captured, 'Show description', 'toggle')).comp.onClick();
+    await flushMicrotasks();
+
+    expect(plugin.saveViewState).toHaveBeenCalledOnce();
+    expect(plugin.refreshProjectTableSettings).toHaveBeenCalledOnce();
+    expect(Notice).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not save project table settings',
+      { cause: failure },
+    );
+  });
+
+  it('refreshes open panels once after a failed project property removal', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('disk unavailable');
+    const projects = buildDefaultProjectsSettings();
+    addProjectPropertyColumn(projects, [], 'Novel');
+    const { tab, plugin } = makeTab(
+      { projects },
+      { saveSettings: vi.fn<() => Promise<void>>().mockRejectedValue(failure) },
+    );
+    const projectsHeader = Array.from(
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
+    ).find((header) => header.textContent.includes('Projects'));
+    expectDefined(projectsHeader).click();
+
+    expectDefined(
+      tab.containerEl.querySelector<HTMLButtonElement>('[aria-label="Remove Novel property"]'),
+    ).click();
+    await flushMicrotasks();
+
+    expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    expect(plugin.saveViewState).not.toHaveBeenCalled();
+    expect(plugin.refreshProjectSettings).toHaveBeenCalledOnce();
+    expect(plugin.refreshProjectTableSettings).not.toHaveBeenCalled();
+    expect(Notice).toHaveBeenCalledOnce();
+    expect(
+      tab.containerEl.querySelector('[data-card-id="project-property:property:Novel"]'),
+    ).toBeNull();
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not remove project property', {
+      cause: failure,
+    });
+  });
+
+  it('leaves the open panel refresh to a successful project property save', async () => {
+    const projects = buildDefaultProjectsSettings();
+    addProjectPropertyColumn(projects, [], 'Novel');
+    const { tab, plugin } = makeTab({ projects });
+    const projectsHeader = Array.from(
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
+    ).find((header) => header.textContent.includes('Projects'));
+    expectDefined(projectsHeader).click();
+
+    expectDefined(
+      tab.containerEl.querySelector<HTMLButtonElement>('[aria-label="Remove Novel property"]'),
+    ).click();
+    await flushMicrotasks();
+
+    expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    expect(plugin.saveViewState).toHaveBeenCalledOnce();
+    expect(plugin.refreshProjectSettings).not.toHaveBeenCalled();
+    expect(plugin.refreshProjectTableSettings).toHaveBeenCalledOnce();
+    expect(Notice).not.toHaveBeenCalled();
   });
 
   it('keeps the project toolbar contained at constrained panel widths', () => {

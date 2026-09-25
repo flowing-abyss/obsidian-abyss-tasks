@@ -3,6 +3,7 @@ import { listSelectionToKey } from '../app/listViewState';
 import type { CalViewType } from '../panels/calendar/calendarViewType';
 import { getListViewDefaults } from '../settings/defaults';
 import type { CalendarSettings, ListViewState } from '../settings/types';
+import { renameFileFilters } from '../settings/viewStatePaths';
 
 export interface PanelNavigationActions {
   openTasks(): void;
@@ -85,6 +86,34 @@ export class PanelNavigator implements PanelNavigationActions {
       this.state.set('centerFilter', '');
       this.saveViewState();
     });
+  }
+
+  /** Leaves a deleted project list for Today without storing its state under the deleted key. */
+  followNoteDelete(path: string): void {
+    if (!this.isSelectedProject(path)) return;
+    this.state.batch(() => {
+      this.lastTasksList = 'today';
+      this.state.set('selectedList', 'today');
+      this.state.set('centerListViewState', this.listState('today'));
+      this.state.set('centerFilter', '');
+      this.saveViewState();
+    });
+  }
+
+  /** The list on screen follows a rename: its `file` filters, and a renamed project's selection. */
+  followNoteRename(oldPath: string, newPath: string): void {
+    const renamed = renameFileFilters(this.state.get('centerListViewState'), oldPath, newPath);
+    const selected = this.isSelectedProject(oldPath);
+    if (renamed === undefined && !selected) return;
+    this.state.batch(() => {
+      if (renamed !== undefined) this.state.set('centerListViewState', renamed);
+      if (selected) this.rebaseListIdentity({ type: 'project', path: newPath });
+    });
+  }
+
+  private isSelectedProject(path: string): boolean {
+    const selected = this.state.get('selectedList');
+    return typeof selected === 'object' && selected.type === 'project' && selected.path === path;
   }
 
   private openMode(mode: ViewMode, prepare: () => void = () => {}): void {

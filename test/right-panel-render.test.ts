@@ -1900,7 +1900,7 @@ describe('RightPanel popovers', () => {
       cause: 'test',
       contentState: 'unchanged',
     });
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, 'error');
     const { panel, state, el } = await makePanel(
       {},
       { queries: queryApiForTasks(() => [selected]), execute },
@@ -1939,7 +1939,7 @@ describe('RightPanel popovers', () => {
       cause: 'test',
       contentState: 'unchanged',
     });
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, 'error');
     const { panel, state, el } = await makePanel(
       {},
       { queries: queryApiForTasks(() => [selected]), execute },
@@ -1998,7 +1998,7 @@ describe('RightPanel popovers', () => {
       cause: 'test',
       contentState: 'unchanged',
     });
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, 'error');
     const { panel, state, el } = await makePanel(
       {},
       { queries: queryApiForTasks(() => [selected]), execute },
@@ -2050,7 +2050,7 @@ describe('RightPanel popovers', () => {
       cause: 'test',
       contentState: 'unchanged',
     });
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, 'error');
     const { panel, state, el } = await makePanel(
       {},
       { queries: queryApiForTasks(() => [selected]), execute },
