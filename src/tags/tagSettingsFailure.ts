@@ -1,6 +1,9 @@
-/** The Notice for a failed tag settings save: rolled back, or kept by a newer save. */
+/**
+ * The Notice for a failed tag settings save. `description` is a verb phrase ("archive tag"): rolled
+ * back, the action failed; kept, an earlier request's save failed while a newer save kept its change.
+ */
 export function tagSettingsFailureNotice(description: string, rolledBack: boolean): string {
   return rolledBack
     ? `Could not ${description}. Your changes were rolled back.`
-    : `Could not save an earlier ${description}. Newer changes were kept.`;
+    : `An earlier request to ${description} was not saved. Newer changes were kept.`;
 }

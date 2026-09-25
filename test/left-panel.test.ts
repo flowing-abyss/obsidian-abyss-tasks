@@ -1,6 +1,6 @@
 import type * as ObsidianModule from 'obsidian';
 import { Menu, Notice, type MenuItem } from 'obsidian';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { ProjectCreationError, type ProjectCreateOptions } from '../src/projects/projectCreation';
 import type { ProjectStats } from '../src/projects/types';
@@ -29,6 +29,12 @@ function firstNoticeText(): string {
   const message = vi.mocked(Notice).mock.calls[0]?.[0];
   if (typeof message === 'string') return message;
   return message?.textContent ?? '';
+}
+
+function noticeTexts(): string[] {
+  return vi
+    .mocked(Notice)
+    .mock.calls.map(([message]) => (typeof message === 'string' ? message : message.textContent));
 }
 
 vi.mock('obsidian', async () => {
@@ -874,10 +880,9 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(merged.tagGroups[0]?.name).toBe('Work');
     expect(merged.tagGroups[0]?.color).toBe('#ff0000');
     expect(Notice).toHaveBeenCalledOnce();
-    expect(firstNoticeText()).toContain('Could not save');
-    expect(firstNoticeText()).toContain('rolled back');
+    expect(firstNoticeText()).toBe('Could not update tag group. Your changes were rolled back.');
     expect(errorLog).toHaveBeenCalledWith(
-      '[abyss-tasks] Could not save tag group appearance',
+      '[abyss-tasks] Could not update tag group',
       expect.any(Error),
     );
     errorLog.mockRestore();
@@ -1291,6 +1296,181 @@ describe('LeftPanel Pinned section', () => {
     item.click();
     const sel = state.get('selectedList');
     expect(typeof sel === 'object' && sel.type === 'tag' && sel.tag).toBe('#task/next');
+  });
+});
+
+describe('LeftPanel Pin and Unpin failures', () => {
+  const WORK_GROUP: Partial<CalendarSettings> = {
+    tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
+  };
+  const SAVE_FAILURE = 'settings storage unavailable';
+
+  function workTasks(): TaskSnapshot[] {
+    return [task({ tags: ['#work/dev'] })];
+  }
+
+  function pinnedLabels(el: HTMLElement): string[] {
+    return Array.from(el.querySelectorAll('.abyss-pinned-tag .abyss-left-label')).map(
+      (label) => label.textContent,
+    );
+  }
+
+  function openChildMenu(el: HTMLElement): void {
+    expectDefined(el.querySelector<HTMLElement>('.abyss-group-arrow')).click();
+    openContextMenu(expectDefined(el.querySelector('.abyss-tag-child')));
+  }
+
+  function clickItem(items: readonly CapturedMenuItem[], title: string): void {
+    expectDefined(items.find((item) => item.title === title)).click();
+  }
+
+  /** Holds the next settings save open until the row rejects it. */
+  function pendingSave(save: Mock): {
+    readonly started: Promise<void>;
+    readonly reject: (error: Error) => void;
+  } {
+    let rejectSave!: (error: Error) => void;
+    let markSaveStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markSaveStarted = resolve;
+    });
+    save.mockImplementationOnce(() => {
+      markSaveStarted();
+      return new Promise<void>((_resolve, fail) => {
+        rejectSave = fail;
+      });
+    });
+    return {
+      started,
+      reject: (error) => {
+        rejectSave(error);
+      },
+    };
+  }
+
+  it('reports a failed child Pin and keeps the rolled-back list', async () => {
+    const items = captureMenu();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { el, merged, save } = makePanel(workTasks(), WORK_GROUP);
+    save.mockRejectedValueOnce(new Error(SAVE_FAILURE));
+
+    openChildMenu(el);
+    clickItem(items, 'Pin');
+    await flushMicrotasks();
+
+    expect(noticeTexts()).toEqual(['Could not pin tag. Your changes were rolled back.']);
+    expect(merged.pinnedTags).toEqual([]);
+  });
+
+  it('reports a failed pinned-section Unpin and keeps the pinned row', async () => {
+    const items = captureMenu();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { el, merged, save } = makePanel([], {}, ['#pinned']);
+    save.mockRejectedValueOnce(new Error(SAVE_FAILURE));
+
+    openContextMenu(expectDefined(el.querySelector('.abyss-pinned-tag')));
+    clickItem(items, 'Unpin');
+    await flushMicrotasks();
+
+    expect(noticeTexts()).toEqual(['Could not unpin tag. Your changes were rolled back.']);
+    expect(merged.pinnedTags).toEqual(['#pinned']);
+    expect(pinnedLabels(el)).toEqual(['#pinned']);
+  });
+
+  it('reports a failed Pin from a flattened one-tag group', async () => {
+    const items = captureMenu();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { el, merged, save } = makePanel([], {
+      tagGroups: [{ id: 'g1', name: 'Next', mode: 'manual', tags: ['#next'] }],
+    });
+    save.mockRejectedValueOnce(new Error(SAVE_FAILURE));
+
+    openContextMenu(expectDefined(el.querySelector('.abyss-tag-leaf')));
+    clickItem(items, 'Pin');
+    await flushMicrotasks();
+
+    expect(noticeTexts()).toEqual(['Could not pin tag. Your changes were rolled back.']);
+    expect(merged.pinnedTags).toEqual([]);
+  });
+
+  it('redraws after a rollback that a refresh drew as pinned', async () => {
+    const items = captureMenu();
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { el, panel, merged, save } = makePanel(workTasks(), WORK_GROUP);
+    const failure = new Error(SAVE_FAILURE);
+    const pending = pendingSave(save);
+
+    openChildMenu(el);
+    clickItem(items, 'Pin');
+    await pending.started;
+    panel.refresh();
+    const drawn = pinnedLabels(el);
+    pending.reject(failure);
+    await flushMicrotasks();
+
+    expect(drawn).toEqual(['#work/dev']);
+    expect(merged.pinnedTags).toEqual([]);
+    expect(pinnedLabels(el)).toEqual([]);
+    expect(errorLog).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not pin tag', failure);
+  });
+
+  it('words a Pin that a newer unrelated save kept', async () => {
+    const items = captureMenu();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { el, tm, merged, save } = makePanel(workTasks(), WORK_GROUP);
+    const pending = pendingSave(save);
+
+    openChildMenu(el);
+    clickItem(items, 'Pin');
+    await pending.started;
+    await tm.archiveTag('#other');
+    pending.reject(new Error(SAVE_FAILURE));
+    await flushMicrotasks();
+
+    expect(noticeTexts()).toEqual([
+      'An earlier request to pin tag was not saved. Newer changes were kept.',
+    ]);
+    expect(merged.pinnedTags).toEqual(['#work/dev']);
+  });
+
+  it('words a Pin that an Unpin of the same tag superseded', async () => {
+    const items = captureMenu();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { el, merged, save } = makePanel(workTasks(), WORK_GROUP);
+    const pending = pendingSave(save);
+
+    openChildMenu(el);
+    clickItem(items, 'Pin');
+    await pending.started;
+    items.splice(0);
+    openContextMenu(expectDefined(el.querySelector('.abyss-tag-child')));
+    clickItem(items, 'Unpin');
+    await flushMicrotasks();
+    pending.reject(new Error(SAVE_FAILURE));
+    await flushMicrotasks();
+
+    expect(noticeTexts()).toEqual([
+      'An earlier request to pin tag was not saved. Newer changes were kept.',
+    ]);
+    expect(pinnedLabels(el)).toEqual([]);
+    expect(merged.pinnedTags).toEqual([]);
+  });
+
+  it('pins without a Notice and redraws once', async () => {
+    const items = captureMenu();
+    const { el, panel, merged } = makePanel(workTasks(), WORK_GROUP);
+    openChildMenu(el);
+    const render = vi.spyOn(
+      panel as unknown as { render_abyssPrivate(): void },
+      'render_abyssPrivate',
+    );
+
+    clickItem(items, 'Pin');
+    await flushMicrotasks();
+
+    expect(Notice).not.toHaveBeenCalled();
+    expect(render).toHaveBeenCalledOnce();
+    expect(merged.pinnedTags).toEqual(['#work/dev']);
   });
 });
 
@@ -2246,7 +2426,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
         { id: 'group-focus', name: 'Focus', mode: 'manual', tags: ['#focus'] },
       ]);
       expect(Notice).toHaveBeenCalledExactlyOnceWith(
-        'Could not save an earlier tag group. Newer changes were kept.',
+        'An earlier request to add tag group was not saved. Newer changes were kept.',
       );
       expect(input.isConnected).toBe(false);
       expect(create).toHaveBeenCalledOnce();

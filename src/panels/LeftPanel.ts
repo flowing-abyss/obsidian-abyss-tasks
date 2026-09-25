@@ -337,7 +337,7 @@ export class LeftPanel {
               retryable: true,
               notice: withCreationFailureCause('Could not add the tag group.', error),
             }
-          : { retryable: false, notice: tagSettingsFailureNotice('tag group', false) },
+          : { retryable: false, notice: tagSettingsFailureNotice('add tag group', false) },
     };
   }
 
@@ -1012,7 +1012,7 @@ export class LeftPanel {
       item
         .setTitle('Unpin')
         .setIcon('pin-off')
-        .onClick(this.makeTagOp_abyssPrivate(() => this.tagManager_abyssPrivate.unpinTag(tag))),
+        .onClick(this.makeTagOp_abyssPrivate(() => this.setTagPinned_abyssPrivate(tag, false))),
     );
     menu.addItem((item) =>
       item
@@ -1040,13 +1040,7 @@ export class LeftPanel {
       item
         .setTitle(isPinned ? 'Unpin' : 'Pin')
         .setIcon(isPinned ? 'pin-off' : 'pin')
-        .onClick(
-          this.makeTagOp_abyssPrivate(() =>
-            isPinned
-              ? this.tagManager_abyssPrivate.unpinTag(tag)
-              : this.tagManager_abyssPrivate.pinTag(tag),
-          ),
-        ),
+        .onClick(this.makeTagOp_abyssPrivate(() => this.setTagPinned_abyssPrivate(tag, !isPinned))),
     );
     menu.addItem((item) =>
       item
@@ -1126,9 +1120,7 @@ export class LeftPanel {
           .setIcon(isPinned ? 'pin-off' : 'pin')
           .onClick(
             this.makeTagOp_abyssPrivate(() =>
-              isPinned
-                ? this.tagManager_abyssPrivate.unpinTag(flattenedTag)
-                : this.tagManager_abyssPrivate.pinTag(flattenedTag),
+              this.setTagPinned_abyssPrivate(flattenedTag, !isPinned),
             ),
           ),
       );
@@ -1142,6 +1134,22 @@ export class LeftPanel {
         ),
     );
     showMenuAtMouseEventWithFocus(menu, e);
+  }
+
+  /**
+   * Pin and Unpin share the tag settings failure policy. `pinTag` and `unpinTag` restore exactly
+   * the array they replaced, and only when no newer save started, so the array read just before
+   * the change means the rollback ran; any other array means a newer save kept the change.
+   */
+  private async setTagPinned_abyssPrivate(tag: string, pinned: boolean): Promise<void> {
+    const before = this.settings_abyssPrivate.pinnedTags;
+    await this.runTagSettingsAction_abyssPrivate(
+      pinned
+        ? this.tagManager_abyssPrivate.pinTag(tag)
+        : this.tagManager_abyssPrivate.unpinTag(tag),
+      pinned ? 'pin tag' : 'unpin tag',
+      () => this.settings_abyssPrivate.pinnedTags === before,
+    );
   }
 
   private async archiveTagNavigation_abyssPrivate(tag: string): Promise<void> {
@@ -1247,7 +1255,7 @@ export class LeftPanel {
     runAsyncAction(
       this.runTagSettingsAction_abyssPrivate(
         this.tagManager_abyssPrivate.updateGroup(group, update),
-        'save tag group appearance',
+        'update tag group',
         () => {
           const current = this.settings_abyssPrivate.tagGroups.find(
             (candidate) => candidate.id === group.id,
