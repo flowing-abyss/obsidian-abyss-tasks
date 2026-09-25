@@ -1817,6 +1817,10 @@ describe('PanelView', () => {
           panelNavigation_abyssPrivate: PanelNavigator;
         };
         const rebase = vi.spyOn(internals.panelNavigation_abyssPrivate, 'rebaseListIdentity');
+        const followNoteDelete = vi.spyOn(
+          internals.panelNavigation_abyssPrivate,
+          'followNoteDelete',
+        );
         let expected: ListSelection;
 
         if (event === 'tag rename') {
@@ -1843,11 +1847,64 @@ describe('PanelView', () => {
           }
         }
 
-        expect(rebase).toHaveBeenCalledWith(expected);
+        if (event === 'project delete') {
+          expect(followNoteDelete).toHaveBeenCalledExactlyOnceWith('Project.md');
+          expect(rebase).not.toHaveBeenCalled();
+        } else {
+          expect(rebase).toHaveBeenCalledWith(expected);
+        }
         expect(internals.state_abyssPrivate.get('mode')).toBe(mode);
         expect(internals.state_abyssPrivate.get('selectedList')).toEqual(expected);
       },
     );
+
+    it('treats a rename away from Markdown as a delete of the selected project', async () => {
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        panelNavigation_abyssPrivate: PanelNavigator;
+      };
+      const followNoteDelete = vi.spyOn(internals.panelNavigation_abyssPrivate, 'followNoteDelete');
+      const file = await app.vault.create('Project.md', '');
+      internals.panelNavigation_abyssPrivate.openList({ type: 'project', path: file.path });
+      internals.panelNavigation_abyssPrivate.openProjects();
+      internals.state_abyssPrivate.set('projectsPanel', { view: 'dashboard', path: file.path });
+
+      await app.vault.rename(file, 'Project.txt');
+
+      expect(followNoteDelete).toHaveBeenCalledExactlyOnceWith('Project.md');
+      expect(internals.state_abyssPrivate.get('selectedList')).toBe('today');
+      expect(internals.state_abyssPrivate.get('mode')).toBe('projects');
+      expect(internals.state_abyssPrivate.get('projectsPanel')).toEqual({ view: 'table' });
+    });
+
+    it('keeps a file filter chip on the list on screen in step with a note rename', async () => {
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        panelNavigation_abyssPrivate: PanelNavigator;
+      };
+      await app.vault.create('Source.md', '- [ ] Alpha #work\n');
+      await app.vault.create('Other.md', '- [ ] Beta #work\n');
+      await flushMicrotasks();
+      internals.panelNavigation_abyssPrivate.openList({ type: 'tag', tag: '#work' });
+      internals.state_abyssPrivate.set('centerListViewState', {
+        ...internals.state_abyssPrivate.get('centerListViewState'),
+        filters: [{ type: 'file', filePath: 'Source.md' }],
+      });
+      const center = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+      const chips = (): string[] =>
+        Array.from(center.querySelectorAll('.abyss-filter-chip-label'), (chip) => chip.textContent);
+      const titles = (): string[] =>
+        Array.from(center.querySelectorAll('.abyss-task-title'), (title) => title.textContent);
+      await flushMicrotasks();
+      expect(chips()).toEqual(['📄 Source']);
+      expect(titles()).toEqual(['Alpha']);
+
+      await app.vault.rename(expectDefined(app.vault.getFileByPath('Source.md')), 'Renamed.md');
+      await flushMicrotasks();
+
+      expect(chips()).toEqual(['📄 Renamed']);
+      expect(titles()).toEqual(['Alpha']);
+    });
 
     it('does not change an active group selection during a prefix rename', async () => {
       const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;

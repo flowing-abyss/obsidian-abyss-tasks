@@ -9,6 +9,11 @@ import { ProjectManager } from '../projects/ProjectManager';
 import { ProjectStore } from '../projects/ProjectStore';
 import type { ShortcutActionId } from '../settings/shortcuts';
 import type { CalendarSettings } from '../settings/types';
+import {
+  noteDeleteChange,
+  noteRenameChange,
+  type NotePathChange,
+} from '../settings/viewStatePaths';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TagManager } from '../tags/TagManager';
 import { prefixForDiscoveredGroupId, resolveEffectiveTagGroups } from '../tags/effectiveTagGroups';
@@ -571,35 +576,38 @@ export class PanelView extends ItemView {
       }),
     );
 
-    // Keep project selection / dashboard path valid across note rename & delete.
+    // Keep the session's project selection, dashboard path, and file filters valid across note
+    // renames and deletes. The plugin's owner has already rebased the saved view state.
     this.registerEvent(
       this.app.vault.on('rename', (file, oldPath) => {
         if (!(file instanceof TFile)) return;
-        const sel = this.state_abyssPrivate.get('selectedList');
-        if (typeof sel === 'object' && sel.type === 'project' && sel.path === oldPath) {
-          this.panelNavigation_abyssPrivate.rebaseListIdentity({
-            type: 'project',
-            path: file.path,
-          });
-        }
-        const panel = this.state_abyssPrivate.get('projectsPanel');
-        if (panel.view === 'dashboard' && panel.path === oldPath) {
-          this.state_abyssPrivate.set('projectsPanel', { view: 'dashboard', path: file.path });
-        }
+        const change = noteRenameChange(oldPath, file.path, file.extension);
+        if (change !== undefined) this.followNoteChange_abyssPrivate(change);
       }),
     );
     this.registerEvent(
       this.app.vault.on('delete', (file) => {
-        const sel = this.state_abyssPrivate.get('selectedList');
-        if (typeof sel === 'object' && sel.type === 'project' && sel.path === file.path) {
-          this.panelNavigation_abyssPrivate.rebaseListIdentity('today');
-        }
-        const panel = this.state_abyssPrivate.get('projectsPanel');
-        if (panel.view === 'dashboard' && panel.path === file.path) {
-          this.state_abyssPrivate.set('projectsPanel', { view: 'table' });
-        }
+        if (!(file instanceof TFile)) return;
+        const change = noteDeleteChange(file.path, file.extension);
+        if (change !== undefined) this.followNoteChange_abyssPrivate(change);
       }),
     );
+  }
+
+  private followNoteChange_abyssPrivate(change: NotePathChange): void {
+    if (change.type === 'renamed') {
+      this.panelNavigation_abyssPrivate.followNoteRename(change.oldPath, change.path);
+      const panel = this.state_abyssPrivate.get('projectsPanel');
+      if (panel.view === 'dashboard' && panel.path === change.oldPath) {
+        this.state_abyssPrivate.set('projectsPanel', { view: 'dashboard', path: change.path });
+      }
+      return;
+    }
+    this.panelNavigation_abyssPrivate.followNoteDelete(change.path);
+    const panel = this.state_abyssPrivate.get('projectsPanel');
+    if (panel.view === 'dashboard' && panel.path === change.path) {
+      this.state_abyssPrivate.set('projectsPanel', { view: 'table' });
+    }
   }
 
   private mountPanels_abyssPrivate(elements: PanelLayoutElements): void {

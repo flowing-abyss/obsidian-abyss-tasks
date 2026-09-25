@@ -1,5 +1,6 @@
 import { App, Notice } from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
+import type { AppState } from '../src/app/AppState';
 import TaskCalendarPlugin from '../src/main';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
 import { DEFAULT_SETTINGS, buildDefaultProjectsSettings } from '../src/settings/defaults';
@@ -12,6 +13,7 @@ import { latestSettingsSaveRevision } from '../src/settings/settingsSaveRevision
 import type { TaskStorageSettings } from '../src/settings/taskStorageSettings';
 import type { CalendarSettings } from '../src/settings/types';
 import { taskNodeAddress, type TrackedEntry } from '../src/tasks';
+import type { PanelNavigator } from '../src/views/panelNavigation';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
 import { createAppWithFiles, expectDefined, flushMicrotasks, useRealMoment } from './helpers';
 
@@ -937,5 +939,194 @@ describe('TaskCalendarPlugin openPanel', () => {
     expect(workspace.getLeaf).toHaveBeenCalledWith('tab');
     expect(setViewState).toHaveBeenCalledWith({ type: PANEL_VIEW_TYPE, active: true });
     expect(revealSpy).toHaveBeenCalledWith(fakeLeaf);
+  });
+});
+
+const LIFECYCLE_NOTES = {
+  'projects/A.md': '---\nstatus: wip\n---\n- [ ] Alpha\n',
+  'projects/B.md': '---\nstatus: wip\n---\n- [ ] Beta\n',
+  'projects/C.md': '---\nstatus: wip\n---\n',
+  'projects/D.md': '---\nstatus: todo\n---\n- [ ] Delta\n',
+};
+const TODO = `id:${expectDefined(DEFAULT_SETTINGS.projects.statuses[1]).id}`;
+const WIP = `id:${expectDefined(DEFAULT_SETTINGS.projects.statuses[2]).id}`;
+/** Past ProjectStore's 150 ms flush and the note-path owner's 150 ms trailing save. */
+const PAST_TRAILING_WORK_MS = 300;
+
+/** The plugin's own owner, index, and panel over the lifecycle notes, with the panel open. */
+async function pluginWithOpenPanel() {
+  const app = await createAppWithFiles(LIFECYCLE_NOTES);
+  const plugin = new TaskCalendarPlugin(app, MANIFEST);
+  vi.spyOn(plugin, 'loadData').mockResolvedValue(null);
+  const registerCommand = vi.spyOn(plugin, 'addCommand');
+  await plugin.onload();
+  (app.workspace as unknown as WorkspaceLike).setLayoutReady__();
+  await flushMicrotasks();
+  const command = expectDefined(
+    registerCommand.mock.calls.find(([entry]) => entry.id === 'open-panel')?.[0],
+  );
+  const openPanel = expectDefined(command.callback);
+  await openPanel();
+  const view = expectDefined(app.workspace.getLeavesOfType(PANEL_VIEW_TYPE)[0]).view;
+  if (!(view instanceof PanelView)) throw new Error('The panel did not open');
+  const internals = view as unknown as {
+    state_abyssPrivate: AppState;
+    panelNavigation_abyssPrivate: PanelNavigator;
+  };
+  return {
+    app,
+    plugin,
+    state: internals.state_abyssPrivate,
+    navigation: internals.panelNavigation_abyssPrivate,
+    statePath: `${app.vault.configDir}/plugins/${MANIFEST.id}/state.json`,
+    note: (path: string) => expectDefined(app.vault.getFileByPath(path)),
+  };
+}
+
+/** The same harness with the Projects overview in Kanban mode and every note ranked. */
+async function kanbanOverview() {
+  const harness = await pluginWithOpenPanel();
+  harness.plugin.settings.projects.overviewView = 'kanban';
+  harness.navigation.openProjects();
+  await flushMicrotasks();
+  expect(harness.plugin.settings.projects.kanban?.manualOrder).toEqual({
+    [WIP]: ['projects/A.md', 'projects/B.md', 'projects/C.md'],
+    [TODO]: ['projects/D.md'],
+  });
+  return harness;
+}
+
+describe('TaskCalendarPlugin note path lifecycle', () => {
+  it('writes once and raises one Notice when the selected project leaves its status empty', async () => {
+    const { app, plugin, navigation, state, statePath, note } = await kanbanOverview();
+    try {
+      navigation.openList({ type: 'project', path: 'projects/D.md' });
+      navigation.openProjects();
+      await flushMicrotasks();
+      const adapter = app.vault.adapter;
+      const write = adapter.write.bind(adapter);
+      const writes = vi.spyOn(adapter, 'write').mockImplementation(async (path, data, options) => {
+        if (path === statePath) throw new Error('disk full');
+        await write(path, data, options);
+      });
+      const notices = spyOnNotices();
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      await app.fileManager.trashFile(note('projects/D.md'));
+      await flushMicrotasks(PAST_TRAILING_WORK_MS);
+
+      expect(writes.mock.calls.filter(([path]) => path === statePath)).toHaveLength(1);
+      expect(noticeMessages(notices)).toEqual([
+        'Could not save view preferences. Your current session is unchanged.',
+      ]);
+      expect(state.get('selectedList')).toBe('today');
+      expect(state.get('mode')).toBe('projects');
+      expect(plugin.settings.projects.kanban?.manualOrder).toEqual({
+        [WIP]: ['projects/A.md', 'projects/B.md', 'projects/C.md'],
+      });
+    } finally {
+      plugin.onunload();
+    }
+  });
+
+  it('keeps the list on screen under a renamed selected project and drops the old key', async () => {
+    const { app, plugin, navigation, state, note } = await pluginWithOpenPanel();
+    const errors = vi.spyOn(console, 'error');
+    try {
+      navigation.openList({ type: 'project', path: 'projects/A.md' });
+      const onScreen = { ...state.get('centerListViewState'), groupBy: 'priority' as const };
+      state.set('centerListViewState', onScreen);
+
+      await app.vault.rename(note('projects/A.md'), 'projects/A2.md');
+
+      expect(state.get('selectedList')).toEqual({ type: 'project', path: 'projects/A2.md' });
+      expect(plugin.settings.listViewStates?.['project:projects/A2.md']).toBe(onScreen);
+      expect(plugin.settings.listViewStates).not.toHaveProperty(['project:projects/A.md']);
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      plugin.onunload();
+    }
+  });
+
+  it('forgets a deleted ranked note with tasks and saves the state without it', async () => {
+    const { app, plugin, statePath, note } = await kanbanOverview();
+    const errors = vi.spyOn(console, 'error');
+    try {
+      await app.fileManager.trashFile(note('projects/A.md'));
+      await flushMicrotasks(PAST_TRAILING_WORK_MS);
+
+      const expected = { [WIP]: ['projects/B.md', 'projects/C.md'], [TODO]: ['projects/D.md'] };
+      expect(plugin.settings.projects.kanban?.manualOrder).toEqual(expected);
+      const saved = JSON.parse(await app.vault.adapter.read(statePath)) as {
+        views: { projects: { kanban: { manualOrder: unknown } } };
+      };
+      expect(saved.views.projects.kanban.manualOrder).toEqual(expected);
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      plugin.onunload();
+    }
+  });
+
+  it('keeps a renamed ranked note with tasks at its rank', async () => {
+    const { app, plugin, note } = await kanbanOverview();
+    const errors = vi.spyOn(console, 'error');
+    try {
+      const renamed = note('projects/B.md');
+      await app.vault.rename(renamed, 'projects/B2.md');
+      // The mock metadata cache does not follow a rename; a same-content write re-indexes it.
+      await app.vault.modify(renamed, LIFECYCLE_NOTES['projects/B.md']);
+      await flushMicrotasks(PAST_TRAILING_WORK_MS);
+
+      expect(plugin.settings.projects.kanban?.manualOrder).toEqual({
+        [WIP]: ['projects/A.md', 'projects/B2.md', 'projects/C.md'],
+        [TODO]: ['projects/D.md'],
+      });
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      plugin.onunload();
+    }
+  });
+
+  it('forgets a deleted note without tasks while its dashboard is open', async () => {
+    const { app, plugin, state, note } = await kanbanOverview();
+    const errors = vi.spyOn(console, 'error');
+    try {
+      state.set('projectsPanel', { view: 'dashboard', path: 'projects/C.md' });
+
+      await app.fileManager.trashFile(note('projects/C.md'));
+
+      expect(state.get('projectsPanel')).toEqual({ view: 'table' });
+      await flushMicrotasks(PAST_TRAILING_WORK_MS);
+      expect(plugin.settings.projects.kanban?.manualOrder).toEqual({
+        [WIP]: ['projects/A.md', 'projects/B.md'],
+        [TODO]: ['projects/D.md'],
+      });
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      plugin.onunload();
+    }
+  });
+
+  it('leaves no bucket for the only ranked project of a status and no overview save', async () => {
+    const { app, plugin, statePath, note } = await kanbanOverview();
+    const panelRoute = vi.spyOn(
+      plugin as unknown as { saveViewStateWithNotice: () => Promise<void> },
+      'saveViewStateWithNotice',
+    );
+    const writes = vi.spyOn(app.vault.adapter, 'write');
+    const errors = vi.spyOn(console, 'error');
+    try {
+      await app.fileManager.trashFile(note('projects/D.md'));
+      await flushMicrotasks(PAST_TRAILING_WORK_MS);
+
+      expect(plugin.settings.projects.kanban?.manualOrder).toEqual({
+        [WIP]: ['projects/A.md', 'projects/B.md', 'projects/C.md'],
+      });
+      expect(panelRoute).not.toHaveBeenCalled();
+      expect(writes.mock.calls.filter(([path]) => path === statePath)).toHaveLength(1);
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      plugin.onunload();
+    }
   });
 });

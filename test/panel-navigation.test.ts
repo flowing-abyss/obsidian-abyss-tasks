@@ -321,25 +321,123 @@ describe('PanelNavigator', () => {
     expect(save).toHaveBeenCalledOnce();
   });
 
-  it('restores the fallback list state instead of migrating a deleted project state', () => {
+  it('leaves a deleted project list for Today without storing its state under the deleted key', () => {
     const project = { type: 'project', path: 'Projects/Gone.md' } as const;
     const projectState = listState('priority');
     const todayState = listState('date');
-    const calendarSettings = settings({ listViewStates: { today: todayState } });
-    const { state, navigator } = harness({
+    const sentinel = listState('status');
+    const calendarSettings = settings({
+      listViewStates: { today: todayState, 'project:Projects/Gone.md': sentinel },
+    });
+    const { state, navigator, save } = harness({
       mode: 'calendar',
       selection: project,
       settings: calendarSettings,
     });
     state.set('centerListViewState', projectState);
+    state.set('centerFilter', 'needle');
+    const commits = vi.fn();
+    state.onCommit(commits);
 
-    navigator.rebaseListIdentity('today');
+    navigator.followNoteDelete('Projects/Gone.md');
 
     expect(state.get('mode')).toBe('calendar');
     expect(state.get('selectedList')).toBe('today');
     expect(state.get('centerListViewState')).toBe(todayState);
-    expect(calendarSettings.listViewStates?.['project:Projects/Gone.md']).toBe(projectState);
-    expect(calendarSettings.listViewStates?.['today']).toBe(todayState);
+    expect(state.get('centerFilter')).toBe('');
+    expect(calendarSettings.listViewStates?.['project:Projects/Gone.md']).toBe(sentinel);
+    expect(save).toHaveBeenCalledOnce();
+    expect(commits).toHaveBeenCalledOnce();
+
+    state.set('mode', 'projects');
+    navigator.openTasks();
+
+    expect(state.get('mode')).toBe('tasks');
+    expect(state.get('selectedList')).toBe('today');
+    expect(calendarSettings.listViewStates?.['project:Projects/Gone.md']).toBe(sentinel);
+  });
+
+  it('ignores a deleted note that is not the selected project', () => {
+    const selection = { type: 'project', path: 'Projects/Kept.md' } as const;
+    const { state, navigator, save } = harness({ selection });
+    const commits = vi.fn();
+    state.onCommit(commits);
+
+    navigator.followNoteDelete('Projects/Gone.md');
+
+    expect(state.get('selectedList')).toBe(selection);
+    expect(commits).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('rewrites the file filters on screen in one commit without a save', () => {
+    const onScreen: ListViewState = {
+      ...listState('priority'),
+      filters: [
+        { type: 'file', filePath: 'Notes/Before.md' },
+        { type: 'tag', value: '#work' },
+      ],
+    };
+    const { state, navigator, save } = harness({ selection: 'inbox' });
+    state.set('centerListViewState', onScreen);
+    const commits = vi.fn();
+    state.onCommit(commits);
+
+    navigator.followNoteRename('Notes/Before.md', 'Notes/After.md');
+
+    expect(state.get('centerListViewState').filters).toEqual([
+      { type: 'file', filePath: 'Notes/After.md' },
+      { type: 'tag', value: '#work' },
+    ]);
+    expect(state.get('selectedList')).toBe('inbox');
+    expect(commits).toHaveBeenCalledOnce();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('moves a renamed selected project with its filters to the new key and saves once', () => {
+    const before = 'Projects/Before.md';
+    const after = 'Projects/After.md';
+    const onScreen: ListViewState = {
+      ...listState('priority'),
+      filters: [{ type: 'file', filePath: before }],
+    };
+    const calendarSettings = settings({
+      listViewStates: { [`project:${after}`]: listState('date') },
+    });
+    const { state, navigator, save } = harness({
+      mode: 'projects',
+      selection: { type: 'project', path: before },
+      settings: calendarSettings,
+    });
+    state.set('centerListViewState', onScreen);
+    const commits = vi.fn();
+    state.onCommit(commits);
+
+    navigator.followNoteRename(before, after);
+
+    const moved = state.get('centerListViewState');
+    expect(moved.filters).toEqual([{ type: 'file', filePath: after }]);
+    expect(moved.groupBy).toBe('priority');
+    expect(state.get('selectedList')).toEqual({ type: 'project', path: after });
+    expect(state.get('mode')).toBe('projects');
+    expect(calendarSettings.listViewStates?.[`project:${after}`]).toBe(moved);
+    expect(calendarSettings.listViewStates).not.toHaveProperty([`project:${before}`]);
+    expect(save).toHaveBeenCalledOnce();
+    expect(commits).toHaveBeenCalledOnce();
+  });
+
+  it('delivers no commit and no save for an unrelated rename', () => {
+    const { state, navigator, save } = harness({
+      selection: { type: 'project', path: 'Projects/Kept.md' },
+    });
+    state.set('centerListViewState', listState('priority'));
+    const commits = vi.fn();
+    state.onCommit(commits);
+
+    navigator.followNoteRename('Notes/Other.md', 'Notes/Renamed.md');
+
+    expect(commits).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
   });
 
   it.each([

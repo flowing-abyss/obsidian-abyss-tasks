@@ -355,6 +355,8 @@ cells. Clipboard payloads preserve raw types and source context, rebase links, a
 history capabilities.
 
 Kanban manual path ranks are saved view state. Filtering or sorting does not discard hidden ranks.
+A deleted note's ranks are forgotten and a renamed note keeps its rank. Overview appenders add ranks
+only for notes that exist, and absence from a scan never prunes a rank.
 `projectKanbanDrop` revalidates captured source capabilities and current target/group meaning inside
 the shared mutation queue, batches metadata assignments, and updates manual rank only after success.
 Native drag presentation owns payload and cleanup, not metadata or settings writes.
@@ -476,7 +478,7 @@ settings copies.
 load, keeps saved view state that names a note path in step with vault deletes and renames: Kanban
 ranks, project list states, and `file` filters. A delete forgets the note's own ranks and list
 state; a rename moves them and rewrites the filters. One trailing save follows a burst, and any
-view-state save carries it.
+view-state save carries it. Panels bring their session state in line through `PanelNavigator`.
 
 Archive-path and source-exclusion settings commit as one validated draft. Changing the archive path
 adds the previous path to the ignore expression. Only a successful save replaces the effective

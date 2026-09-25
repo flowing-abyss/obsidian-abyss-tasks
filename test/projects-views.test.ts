@@ -266,12 +266,13 @@ describe('ProjectsPanel dispatch', () => {
     expect(scroll.scrollTop).toBe(33);
   });
 
-  it('keeps the selected Kanban card and board scroll positions when returning from a dashboard', () => {
+  it('keeps the selected Kanban card and board scroll positions when returning from a dashboard', async () => {
     const state = new AppState();
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
     settings.projects.overviewView = 'kanban';
-    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, null as never, {
+    const app = await createAppWithFiles({ 'Projects/A.md': '' });
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, app, {
       projectProperties,
     });
     const el = freshContainer();

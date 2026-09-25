@@ -1,4 +1,4 @@
-import { App, MarkdownRenderer, Menu, Notice } from 'obsidian';
+import { MarkdownRenderer, Menu, Notice } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { isProjectKanbanCustomized } from '../src/panels/projects/ProjectKanbanOptions';
@@ -20,7 +20,7 @@ import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTime
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { ProjectsSettings } from '../src/settings/types';
-import { expectDefined, flushMicrotasks, freshContainer } from './helpers';
+import { appWithFiles, expectDefined, flushMicrotasks, freshContainer } from './helpers';
 
 interface TestTransfer {
   readonly types: string[];
@@ -137,8 +137,10 @@ function mountView(
     failed: [],
   });
   const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => successful(changes));
+  // The overview ranks only projects whose notes exist, so the vault holds each project's note.
+  const app = appWithFiles(Object.fromEntries(projects.map(({ path }) => [path, ''])));
   const view = new ProjectsTableView(host, {
-    app: new App(),
+    app,
     state: new AppState(),
     settings,
     catalog: catalog(),
@@ -152,7 +154,7 @@ function mountView(
   });
   mounted.add(view);
   view.mount(projects);
-  return { host, view, settings, applyEdits };
+  return { host, view, settings, applyEdits, app };
 }
 
 function installObsidianDomExtensions(ownerWindow: Window & typeof window): void {
@@ -2226,7 +2228,7 @@ describe('project Kanban overview', () => {
     const c = project({ path: 'Projects/C.md', name: 'C' });
     const a = project({ path: 'Projects/A.md', name: 'A' });
     const saveViewState = vi.fn().mockResolvedValue(undefined);
-    const { host, view, settings } = mountView([b, c], { saveViewState });
+    const { host, view, settings, app } = mountView([b, c], { saveViewState });
     settings.projects.table.sortBy = { field: 'none', dir: 'asc' };
 
     clickView(host, 'Kanban');
@@ -2237,6 +2239,7 @@ describe('project Kanban overview', () => {
     ]);
     saveViewState.mockClear();
 
+    await app.vault.create(a.path, '');
     view.update([a, b, c]);
     await flushMicrotasks();
 
@@ -2259,17 +2262,61 @@ describe('project Kanban overview', () => {
     expect(saveViewState).not.toHaveBeenCalled();
   });
 
+  it('appends an observed project to Manual order only while its note exists', async () => {
+    const first = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const second = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const a = project({ path: 'Projects/A.md', name: 'A' });
+    const b = project({ path: 'Projects/B.md', name: 'B' });
+    const c = project({ path: 'Projects/C.md', name: 'C', statusId: second.id });
+    const saveViewState = vi.fn().mockResolvedValue(undefined);
+    const { host, view, settings, app } = mountView([a, b, c], { saveViewState });
+    settings.projects.table.sortBy = { field: 'none', dir: 'asc' };
+    clickView(host, 'Kanban');
+    await flushMicrotasks();
+    const kanban = expectDefined(settings.projects.kanban);
+    await app.fileManager.trashFile(expectDefined(app.vault.getFileByPath(a.path)));
+    await app.fileManager.trashFile(expectDefined(app.vault.getFileByPath(c.path)));
+    kanban.manualOrder = { [`id:${first.id}`]: ['Projects/B.md'] };
+    saveViewState.mockClear();
+
+    view.update([a, b, c]);
+    await flushMicrotasks();
+
+    expect(kanban.manualOrder).toEqual({ [`id:${first.id}`]: ['Projects/B.md'] });
+    expect(saveViewState).not.toHaveBeenCalled();
+  });
+
+  it('keeps the ranks of a project that leaves the list or changes status', () => {
+    const first = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const second = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const a = project({ path: 'Projects/A.md', name: 'A' });
+    const b = project({ path: 'Projects/B.md', name: 'B' });
+    const { host, view, settings } = mountView([a, b]);
+    settings.projects.table.sortBy = { field: 'none', dir: 'asc' };
+    clickView(host, 'Kanban');
+    const kanban = expectDefined(settings.projects.kanban);
+
+    view.update([b]);
+    expect(kanban.manualOrder[`id:${first.id}`]).toEqual(['Projects/A.md', 'Projects/B.md']);
+
+    view.update([{ ...a, statusId: second.id }, b]);
+    expect(kanban.manualOrder[`id:${first.id}`]).toEqual(['Projects/A.md', 'Projects/B.md']);
+    expect(kanban.manualOrder[`id:${second.id}`]).toEqual(['Projects/A.md']);
+  });
+
   it('records hidden newcomers during field sorting and preserves their Manual order on reload', async () => {
     const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
     const b = project({ path: 'Projects/B.md', name: 'B' });
     const c = project({ path: 'Projects/C.md', name: 'C' });
     const a = project({ path: 'Projects/A.md', name: 'A' });
     const aa = project({ path: 'Projects/AA.md', name: 'AA' });
-    const { host, view, settings } = mountView([b, c]);
+    const { host, view, settings, app } = mountView([b, c]);
     settings.projects.table.sortBy = { field: 'name', dir: 'asc' };
     clickView(host, 'Kanban');
     const kanban = expectDefined(settings.projects.kanban);
     kanban.hiddenStatuses = [`id:${status.id}`];
+    await app.vault.create(a.path, '');
+    await app.vault.create(aa.path, '');
 
     view.update([a, b, c]);
     view.update([a, aa, b, c]);

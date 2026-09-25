@@ -991,7 +991,10 @@ export class ProjectsTableView {
     const settings = projectsSettings.kanban;
     if (settings === undefined) return false;
     let changed = created;
-    for (const [key, paths] of projectPathsByStatus(this.projects_abyssPrivate)) {
+    const live = this.projects_abyssPrivate.filter(({ path }) =>
+      this.isLiveProjectPath_abyssPrivate(path),
+    );
+    for (const [key, paths] of projectPathsByStatus(live)) {
       const existing = settings.manualOrder[key] ?? [];
       const sequence = appendUnrankedProjectPaths(existing, paths);
       if (sequence.length === existing.length && settings.manualOrder[key] !== undefined) continue;
@@ -999,6 +1002,11 @@ export class ProjectsTableView {
       changed = true;
     }
     return changed;
+  }
+
+  /** Whether a project's note still exists; the store's list stays stale until its flush. */
+  private isLiveProjectPath_abyssPrivate(path: string): boolean {
+    return this.context_abyssPrivate.app.vault.getAbstractFileByPath(path) instanceof TFile;
   }
 
   private switchOverviewMode_abyssPrivate(mode: ProjectOverviewMode): void {
@@ -1842,6 +1850,7 @@ export class ProjectsTableView {
       projectSnapshot: (path) =>
         this.projectedProjects_abyssPrivate().find((project) => project.path === path),
       projectsSnapshot: () => this.projectedProjects_abyssPrivate(),
+      isLiveProjectPath: (path) => this.isLiveProjectPath_abyssPrivate(path),
       statusProperty: () => this.context_abyssPrivate.settings.projects.statusProperty,
       membershipQuery: () => this.context_abyssPrivate.settings.projects.membershipQuery,
       tagsReliable: (path, fieldId) => this.boardTagsReliable_abyssPrivate(path, fieldId),

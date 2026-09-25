@@ -79,6 +79,7 @@ function planInput(
       status: { key: 'id:active', value: 'active' },
       group: { key: 'all', value: null },
     },
+    isLiveProjectPath: () => true,
   };
 }
 
@@ -176,6 +177,27 @@ describe('project Kanban drop planning', () => {
     expect(result.manualOrder).toEqual({
       statusKey: 'id:active',
       paths: ['Projects/SavedHidden.md', 'Projects/Hidden.md', 'Projects/A.md', 'Projects/B.md'],
+    });
+  });
+
+  it('appends only live observed paths to the destination order and keeps every saved rank', () => {
+    const moving = project('Projects/A.md', 'Planned', '2026-09-30');
+    const deleted = project('Projects/Deleted.md', 'Active', '2026-09-01');
+    const before = project('Projects/B.md', 'Active', '2026-09-02');
+    const board = settings({
+      manualOrder: { 'id:active': ['Projects/NotSynced.md'] },
+    });
+    const input = planInput(moving, [moving, deleted, before], board);
+    input.isLiveProjectPath = (path) => path === moving.path || path === before.path;
+    input.target.beforePath = before.path;
+
+    const result = planProjectKanbanDrop(input);
+
+    expect(result.allowed).toBe(true);
+    if (!result.allowed) return;
+    expect(result.manualOrder).toEqual({
+      statusKey: 'id:active',
+      paths: ['Projects/NotSynced.md', 'Projects/A.md', 'Projects/B.md'],
     });
   });
 

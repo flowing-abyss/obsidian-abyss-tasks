@@ -709,13 +709,17 @@ export function taskComment(overrides: TaskCommentFixtureInput = {}): TaskCommen
 }
 
 /** Create a fresh App whose configured files have synchronously parsed metadata. */
-export function createAppWithFiles(files: Record<string, string>): Promise<ObsidianApp> {
-  const app = (
+export function appWithFiles(files: Record<string, string>): ObsidianApp {
+  return (
     ObsidianApp as unknown as {
       createConfigured__: (params: { files: Record<string, string> }) => ObsidianApp;
     }
   ).createConfigured__({ files });
-  return Promise.resolve(app);
+}
+
+/** The same App for setup code that awaits it. */
+export function createAppWithFiles(files: Record<string, string>): Promise<ObsidianApp> {
+  return Promise.resolve(appWithFiles(files));
 }
 
 /** Edit a native settings control through its owning window's user-input event. */

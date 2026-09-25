@@ -64,6 +64,7 @@ export interface ProjectKanbanDropInput extends Omit<
   tagsReliable?: boolean;
   search?: string;
   rebase?: (value: unknown, sourcePath: string, destinationPath: string) => unknown;
+  isLiveProjectPath: (path: string) => boolean;
 }
 
 type ProjectKanbanInsertion =
@@ -295,7 +296,11 @@ function forecastGroupKey(model: ProjectKanbanModel, input: ProjectKanbanDropInp
 function destinationOrder(input: ProjectKanbanDropInput): string[] {
   const saved = input.settings.manualOrder[input.target.status.key] ?? [];
   const destination = input.projects
-    .filter((project) => currentStatusKey(project) === input.target.status.key)
+    .filter(
+      (project) =>
+        currentStatusKey(project) === input.target.status.key &&
+        input.isLiveProjectPath(project.path),
+    )
     .map(({ path }) => path);
   return [...new Set([...saved, ...destination])];
 }
