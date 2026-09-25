@@ -101,7 +101,6 @@ export class ProjectStore {
   private queryUnsub_abyssPrivate: (() => void) | undefined;
   private reconciliationUnsub_abyssPrivate: (() => void) | undefined;
   private debounce_abyssPrivate: number | undefined;
-  private readonly waitingPaths_abyssPrivate = new Set<string>();
   private readonly readyPaths_abyssPrivate = new Set<string>();
   private readyFull_abyssPrivate = false;
   private readonly pendingCreates_abyssPrivate = new Set<string>();
@@ -133,17 +132,15 @@ export class ProjectStore {
         this.app_abyssPrivate.vault.getAbstractFileByPath(file.path) === file
       ) {
         this.recordSourceObservation_abyssPrivate(file.path, data, cache);
-        if (this.pendingCreates_abyssPrivate.has(file.path)) {
-          if (
-            !metadataMayContainTasks(data, cache) &&
-            !this.hasIndexedTasks_abyssPrivate(file.path)
-          ) {
-            this.pendingCreates_abyssPrivate.delete(file.path);
-            this.releasePath_abyssPrivate(file.path);
-            return;
-          }
+        // Otherwise the index's event releases the path once the index has re-read the note.
+        if (
+          this.pendingCreates_abyssPrivate.has(file.path) &&
+          !metadataMayContainTasks(data, cache) &&
+          !this.hasIndexedTasks_abyssPrivate(file.path)
+        ) {
+          this.pendingCreates_abyssPrivate.delete(file.path);
+          this.releasePath_abyssPrivate(file.path);
         }
-        this.awaitBarrier_abyssPrivate(file.path);
       }
     });
     this.eventUnsubs_abyssPrivate.push(() => {
@@ -157,10 +154,9 @@ export class ProjectStore {
       this.pendingCreates_abyssPrivate.delete(file.path);
       this.recordSourceObservation_abyssPrivate(file.path, undefined, undefined);
       const project = this.byPath_abyssPrivate.get(file.path);
+      // Otherwise the index's event releases the path once the index has dropped the note.
       if (project?.stats.total === 0 && !this.hasIndexedTasks_abyssPrivate(file.path)) {
         this.releasePath_abyssPrivate(file.path);
-      } else {
-        this.awaitBarrier_abyssPrivate(file.path);
       }
       this.followNote_abyssPrivate(file.path);
     });
@@ -169,13 +165,12 @@ export class ProjectStore {
         this.pendingCreates_abyssPrivate.delete(oldPath);
         this.recordSourceObservation_abyssPrivate(oldPath, undefined, undefined);
         const project = this.byPath_abyssPrivate.get(oldPath);
+        // Otherwise the index's event releases both paths once the index has re-read the note.
         if (
           (project === undefined || project.stats.total === 0) &&
           !this.hasIndexedTasks_abyssPrivate(oldPath, file.path)
         ) {
           this.releasePath_abyssPrivate(oldPath, file.path);
-        } else {
-          this.awaitBarrier_abyssPrivate(oldPath, file.path);
         }
         this.followNote_abyssPrivate(oldPath, file.path);
       }
@@ -249,23 +244,14 @@ export class ProjectStore {
     }
   }
 
-  private awaitBarrier_abyssPrivate(...paths: string[]): void {
-    if (this.readyFull_abyssPrivate) return;
-    for (const path of paths) {
-      if (!this.readyPaths_abyssPrivate.has(path)) this.waitingPaths_abyssPrivate.add(path);
-    }
-  }
-
   private releasePath_abyssPrivate(...paths: string[]): void {
     for (const path of paths) {
-      this.waitingPaths_abyssPrivate.delete(path);
       this.readyPaths_abyssPrivate.add(path);
     }
     this.scheduleFlush_abyssPrivate();
   }
 
   private releaseFull_abyssPrivate(): void {
-    this.waitingPaths_abyssPrivate.clear();
     this.readyFull_abyssPrivate = true;
     this.scheduleFlush_abyssPrivate();
   }
@@ -539,7 +525,6 @@ export class ProjectStore {
     this.reconciliationUnsub_abyssPrivate = undefined;
     for (const unsubscribe of this.eventUnsubs_abyssPrivate) unsubscribe();
     this.eventUnsubs_abyssPrivate = [];
-    this.waitingPaths_abyssPrivate.clear();
     this.readyPaths_abyssPrivate.clear();
     this.pendingCreates_abyssPrivate.clear();
     this.pendingSourceObservations_abyssPrivate.clear();
