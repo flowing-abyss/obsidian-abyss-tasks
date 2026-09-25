@@ -230,6 +230,15 @@ function immutableEvent(event: TaskIndexEvent): TaskIndexEvent {
   return Object.freeze({ ...event });
 }
 
+/** Runs one subscriber; a throw is reported and does not stop delivery to the others. */
+function deliverIsolated(event: TaskIndexEvent['type'] | 'reconciled', deliver: () => void): void {
+  try {
+    deliver();
+  } catch (error) {
+    console.error('[abyss-tasks] task index listener failed', { event, error });
+  }
+}
+
 interface FallbackListItem {
   readonly task?: string;
   readonly parent: number;
@@ -1767,7 +1776,9 @@ export class TaskIndex
         if (files.length > 0) this.publish_abyssPrivate({ type: 'changed', files });
         if (reconciledFiles.length > 0) this.publishReconciled_abyssPrivate(reconciledFiles);
       })
-      .catch(() => undefined);
+      .catch((error: unknown) => {
+        console.error('[abyss-tasks] task index publication failed', error);
+      });
   }
 
   private publish_abyssPrivate(event: TaskIndexEvent): void {
@@ -1777,12 +1788,20 @@ export class TaskIndex
     )
       return;
     const detached = immutableEvent(event);
-    for (const listener of [...this.listeners_abyssPrivate]) listener(detached);
+    for (const listener of [...this.listeners_abyssPrivate]) {
+      deliverIsolated(event.type, () => {
+        listener(detached);
+      });
+    }
   }
 
   private publishReconciled_abyssPrivate(files: readonly string[]): void {
     if (this.destroyed_abyssPrivate || !this.initialized_abyssPrivate) return;
     const detached = Object.freeze([...files]);
-    for (const listener of [...this.reconciledListeners_abyssPrivate]) listener(detached);
+    for (const listener of [...this.reconciledListeners_abyssPrivate]) {
+      deliverIsolated('reconciled', () => {
+        listener(detached);
+      });
+    }
   }
 }

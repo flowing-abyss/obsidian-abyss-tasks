@@ -149,6 +149,8 @@ Vault and metadata events reconcile external and plugin edits through the same i
 `TaskIndexEvent.changed` identifies changed task projections. A separate reconciled-file signal
 also covers accepted metadata events with unchanged tasks, including notes without tasks.
 `ProjectStore` waits for these barriers before combining frontmatter with matching task statistics.
+Every index subscriber receives each event; a throwing subscriber is reported and does not stop
+later subscribers or the reconciled signal.
 
 Task creation freezes its destination, local date, template, insertion policy, prefix, tags, and
 lifecycle settings in a retained `TaskCaptureApplicationApi` session. Sidebar capture reuses that

@@ -882,6 +882,59 @@ describe('PanelView', () => {
       expect(right.classList.contains('is-compact-open')).toBe(true);
     });
 
+    it('opens the requested compact pane after a capture whose presentation fails', async () => {
+      activeDocument.body.appendChild(view.containerEl);
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const internals = view as unknown as {
+        quickCapture_abyssPrivate: QuickCaptureCoordinator;
+        creationPresentation_abyssPrivate: CreationPresentationController;
+        pendingCompactPane_abyssPrivate: unknown;
+      };
+      const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+      const right = expectDefined(layout.querySelector<HTMLElement>('.abyss-right'));
+      const details = expectDefined(
+        layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right'),
+      );
+      setGeometry(layout, rect(0, 0, 390, 480));
+      window.dispatchEvent(new Event('resize'));
+      const pending = deferred<TaskCommandResult>();
+      const execute = vi.fn(() => pending.promise);
+      const options = (
+        internals.quickCapture_abyssPrivate as unknown as {
+          options: { resolveTarget: () => Promise<CaptureTarget> };
+        }
+      ).options;
+      options.resolveTarget = async () => panelCaptureTarget(execute);
+      const failure = new Error('presentation failed');
+      vi.spyOn(internals.creationPresentation_abyssPrivate, 'present').mockImplementation(() => {
+        throw failure;
+      });
+
+      internals.quickCapture_abyssPrivate.openOrFocus();
+      await flushMicrotasks(0);
+      const input = expectDefined(
+        layout.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
+      );
+      input.value = 'captured once';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      details.dispatchEvent(
+        new Event('pointerdown', { bubbles: true, cancelable: true, composed: true }),
+      );
+      details.click();
+      expect(internals.pendingCompactPane_abyssPrivate).toBeDefined();
+
+      pending.resolve(successfulCaptureResult());
+      await flushMicrotasks(0);
+
+      expect(internals.pendingCompactPane_abyssPrivate).toBeUndefined();
+      expect(internals.quickCapture_abyssPrivate.phase).toBe('closed');
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        '[abyss-tasks] Could not show the created task',
+        failure,
+      );
+    });
+
     it('routes shortcuts only for its connected visible active leaf and detaches on close', async () => {
       const internals = view as unknown as { panelNavigation_abyssPrivate: PanelNavigator };
       const openQuickCapture = vi

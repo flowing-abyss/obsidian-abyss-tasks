@@ -121,9 +121,18 @@ export class TaskCaptureController {
     this.closeAfterSuccess = false;
     this.emit();
     if (this.isSubmissionObsolete(submission.token)) return;
-    this.onResult(result, description);
+    this.presentResult(result, description);
     if (shouldRequestClose && !this.isSubmissionObsolete(submission.token)) {
       this.onRequestClose();
+    }
+  }
+
+  /** The task is written by now, so a failure to show it is logged and does not fail the capture. */
+  private presentResult(result: TaskCommandResult, description: CreationResultDescription): void {
+    try {
+      this.onResult(result, description);
+    } catch (error) {
+      console.error('[abyss-tasks] Could not show the created task', error);
     }
   }
 

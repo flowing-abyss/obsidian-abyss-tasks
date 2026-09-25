@@ -686,11 +686,15 @@ export class PanelView extends ItemView {
       resolveTarget: (context) => captureTargets.resolve(context),
       interactionOwnership: interactionRegistry,
       onResult: (result, description) => {
-        this.presentCreationResult_abyssPrivate(result, description);
+        // Taken before presenting, so a presentation failure cannot leave it for a later capture.
         const pendingPane = this.pendingCompactPane_abyssPrivate;
         this.pendingCompactPane_abyssPrivate = undefined;
-        if (description.kind === 'success' && pendingPane != null) {
-          this.scheduleCompactPaneOpen_abyssPrivate(pendingPane);
+        try {
+          this.presentCreationResult_abyssPrivate(result, description);
+        } finally {
+          if (description.kind === 'success' && pendingPane != null) {
+            this.scheduleCompactPaneOpen_abyssPrivate(pendingPane);
+          }
         }
       },
     });

@@ -881,6 +881,102 @@ describe('TaskIndex lifecycle and events', () => {
     index.destroy();
   });
 
+  it('delivers a change to every subscriber and the reconciled signal when one subscriber throws', async () => {
+    const { app, index, fireChanged } = await setup({ 'a.md': '- [ ] a', 'b.md': '- [ ] b' });
+    await index.initialize();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('subscriber failed');
+    const first = vi.fn();
+    const later = vi.fn();
+    const reconciled = vi.fn();
+    index.subscribe(first);
+    index.subscribe(() => {
+      throw failure;
+    });
+    index.subscribe(later);
+    index.subscribeReconciled(reconciled);
+
+    fireChanged(mdFile(app, 'a.md'), '- [ ] a2', taskCache(0));
+    fireChanged(mdFile(app, 'b.md'), '- [ ] b', taskCache(0, { budget: 140 }));
+    await flushMicrotasks();
+
+    const changed = { type: 'changed', files: ['a.md'] };
+    expect(first).toHaveBeenCalledExactlyOnceWith(changed);
+    expect(later).toHaveBeenCalledExactlyOnceWith(changed);
+    expect(reconciled).toHaveBeenCalledExactlyOnceWith(['b.md']);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] task index listener failed', {
+      event: 'changed',
+      error: failure,
+    });
+    index.destroy();
+  });
+
+  it('delivers the reconciled signal to every subscriber when one throws', async () => {
+    const source = '- [ ] unchanged';
+    const { app, index, fireChanged } = await setup({ 'project.md': source });
+    await index.initialize();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('subscriber failed');
+    const later = vi.fn();
+    index.subscribeReconciled(() => {
+      throw failure;
+    });
+    index.subscribeReconciled(later);
+
+    fireChanged(mdFile(app, 'project.md'), source, taskCache(0, { budget: 140 }));
+    await flushMicrotasks();
+
+    expect(later).toHaveBeenCalledExactlyOnceWith(['project.md']);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] task index listener failed', {
+      event: 'reconciled',
+      error: failure,
+    });
+    index.destroy();
+  });
+
+  it('finishes initialization when an initialized subscriber throws', async () => {
+    const { index } = await setup({ 'a.md': '- [ ] a' });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('subscriber failed');
+    const later = vi.fn();
+    index.subscribe(() => {
+      throw failure;
+    });
+    index.subscribe(later);
+
+    await expect(index.initialize()).resolves.toBeUndefined();
+
+    expect(later).toHaveBeenCalledExactlyOnceWith({ type: 'initialized' });
+    expect(index.list({ filePath: 'a.md' }).map(({ title }) => title)).toEqual(['a']);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] task index listener failed', {
+      event: 'initialized',
+      error: failure,
+    });
+    index.destroy();
+  });
+
+  it('logs a failure in a scheduled publication instead of dropping it', async () => {
+    const { app, index, fireChanged } = await setup({ 'a.md': '- [ ] a' });
+    await index.initialize();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('publication failed');
+    vi.spyOn(
+      index as unknown as { publish_abyssPrivate: (event: unknown) => void },
+      'publish_abyssPrivate',
+    ).mockImplementation(() => {
+      throw failure;
+    });
+
+    fireChanged(mdFile(app, 'a.md'), '- [ ] a2', taskCache(0));
+    await flushMicrotasks();
+
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] task index publication failed',
+      failure,
+    );
+    index.destroy();
+  });
+
   it('publishes an accepted metadata observation when task snapshots are unchanged', async () => {
     const source = '- [ ] unchanged';
     const { app, index, fireChanged } = await setup({ 'project.md': source });
