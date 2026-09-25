@@ -74,6 +74,21 @@ describe('ViewStatePathOwner', () => {
     expect(Object.keys(settings.listViewStates ?? {})).toEqual(['project:Projects/B2.md']);
   });
 
+  it('forgets a note renamed to another extension, as for a delete, and saves once', async () => {
+    const settings = rankedSettings();
+    const { app, save } = await ownerFor(settings);
+
+    await app.vault.rename(file(app, 'Projects/A.md'), 'Projects/A.txt');
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(settings.projects.kanban?.manualOrder).toEqual({
+      'id:active': ['Projects/B.md'],
+      'id:planned': ['Projects/C.md'],
+    });
+    expect(Object.keys(settings.listViewStates ?? {})).toEqual(['project:Projects/B.md']);
+  });
+
   it('saves once for a burst in one turn and across turns inside 150 ms', async () => {
     const { app, save } = await ownerFor(rankedSettings());
 

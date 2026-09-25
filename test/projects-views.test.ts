@@ -435,36 +435,13 @@ describe('ProjectsPanel dispatch', () => {
   });
 
   const WRITE_FAILURE = new Error('disk full');
+  const SECOND_STATUS_ID = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]).id;
 
-  it.each([
-    ['validation', new ProjectEditValidationError(STATUS_VALIDATION), STATUS_VALIDATION, []],
-    [
-      'write',
-      WRITE_FAILURE,
-      'Could not change the project status. disk full',
-      [
-        [
-          '[abyss-tasks] Could not change the project status',
-          {
-            path: 'Projects/A.md',
-            statusId: expectDefined(DEFAULT_SETTINGS.projects.statuses[1]).id,
-            cause: WRITE_FAILURE,
-          },
-        ],
-      ],
-    ],
-  ])('reports a %s failure from the dashboard status pill', async (_kind, error, message, logs) => {
-    // A case that expects no log calls through, so the console guard also fails a stray one.
-    const log = vi.spyOn(console, 'error');
-    if (logs.length > 0) log.mockImplementation(() => undefined);
-    const notices = spyOnNotices();
+  /** Chooses the second status from the dashboard's status pill and returns the store's refresh. */
+  async function chooseDashboardStatus(setStatus: (path: string, statusId: string) => unknown) {
     const refresh = vi.fn();
     const store = Object.assign({}, stubStore, { refresh });
-    const manager = {
-      create: vi.fn(),
-      setStatus: vi.fn().mockRejectedValue(error),
-      setProperty: vi.fn(),
-    } as never;
+    const manager = { create: vi.fn(), setStatus, setProperty: vi.fn() } as never;
     const state = new AppState();
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
     const panel = new ProjectsPanel(state, store, manager, DEFAULT_SETTINGS, null as never, {
@@ -480,13 +457,49 @@ describe('ProjectsPanel dispatch', () => {
       };
       expectDefined(expectDefined(menu.menuItems__[1]).onClick__)(new MouseEvent('click'));
       await flushMicrotasks();
-
-      expect(notices.mock.calls.map(([text]) => text)).toEqual([message]);
-      expect(refresh).not.toHaveBeenCalled();
     } finally {
       panel.destroy();
     }
+    return refresh;
+  }
+
+  it.each([
+    ['validation', new ProjectEditValidationError(STATUS_VALIDATION), STATUS_VALIDATION, []],
+    [
+      'write',
+      WRITE_FAILURE,
+      'Could not change the project status. disk full',
+      [
+        [
+          '[abyss-tasks] Could not change the project status',
+          { path: 'Projects/A.md', statusId: SECOND_STATUS_ID, cause: WRITE_FAILURE },
+        ],
+      ],
+    ],
+  ])('reports a %s failure from the dashboard status pill', async (_kind, error, message, logs) => {
+    // A case that expects no log calls through, so the console guard also fails a stray one.
+    const log = vi.spyOn(console, 'error');
+    if (logs.length > 0) log.mockImplementation(() => undefined);
+    const notices = spyOnNotices();
+
+    const refresh = await chooseDashboardStatus(vi.fn().mockRejectedValue(error));
+
+    expect(notices.mock.calls.map(([text]) => text)).toEqual([message]);
+    expect(refresh).not.toHaveBeenCalled();
     expect(log.mock.calls).toEqual(logs);
+  });
+
+  it('refreshes the project store once after a dashboard status change', async () => {
+    const log = vi.spyOn(console, 'error');
+    const notices = spyOnNotices();
+    const setStatus = vi.fn().mockResolvedValue(undefined);
+
+    const refresh = await chooseDashboardStatus(setStatus);
+
+    expect(setStatus).toHaveBeenCalledExactlyOnceWith('Projects/A.md', SECOND_STATUS_ID);
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(notices).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
   });
 
   it('reports a failed open from the dashboard open button', async () => {

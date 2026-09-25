@@ -214,6 +214,27 @@ describe('renameFileFilters', () => {
     ]);
     expect(oldFilter.filePath).toBe('Notes/Old.md');
     expect(state.filters).toHaveLength(4);
+    expect(state.filters[0]).toBe(oldFilter);
+  });
+
+  it('keeps status groups and an unknown saved key when a rename rewrites a file filter', () => {
+    const saved: ListViewState & { readonly unknownKey: string } = {
+      ...listState([{ type: 'file', filePath: 'Notes/Old.md' }]),
+      statusGroups: ['todo', 'done'],
+      unknownKey: 'kept',
+    };
+    const renamed = { ...saved, filters: [{ type: 'file', filePath: 'Notes/New.md' }] };
+    const settings = settingsWith({ listViewStates: { today: saved } });
+
+    expect(renameFileFilters(saved, 'Notes/Old.md', 'Notes/New.md')).toEqual(renamed);
+    expect(
+      rebaseSavedNotePath(settings, {
+        type: 'renamed',
+        oldPath: 'Notes/Old.md',
+        path: 'Notes/New.md',
+      }),
+    ).toBe(true);
+    expect(settings.listViewStates).toEqual({ today: renamed });
   });
 });
 
