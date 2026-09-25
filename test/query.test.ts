@@ -57,6 +57,21 @@ describe('evaluateQuery', () => {
     expect(evaluateQuery('bin=a,104,105', 'A.md', [], fm({ bin: ['a', bytes] }))).toBe(true);
     expect(evaluateQuery('bin=[object Uint8Array]', 'A.md', [], fm({ bin: bytes }))).toBe(false);
   });
+  it('reads a date as String() does', () => {
+    const due = new Date(2026, 0, 2);
+
+    expect(evaluateQuery(`due="${String(due)}"`, 'A.md', [], fm({ due }))).toBe(true);
+    expect(evaluateQuery('due=2026-01-02', 'A.md', [], fm({ due }))).toBe(false);
+  });
+  it('reads a key naming an inherited member as String() does', () => {
+    const frontmatter = fm({ status: 'x' });
+    // A string key reads the member as evaluateQuery does: Object.prototype.toString, a function.
+    const key: string = 'toString';
+    const query = `toString="${String(frontmatter[key])}"`;
+
+    expect(evaluateQuery(query, 'A.md', [], frontmatter)).toBe(true);
+    expect(evaluateQuery('toString=[object Function]', 'A.md', [], frontmatter)).toBe(false);
+  });
 
   it('preserves whitespace and quoted values in frontmatter equality expressions', () => {
     expect(evaluateQuery('status = done', 'A.md', [], fm({ status: 'done' }))).toBe(true);

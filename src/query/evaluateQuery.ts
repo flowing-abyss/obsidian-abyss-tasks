@@ -311,10 +311,14 @@ function frontmatterEqualityText(value: unknown, joining: readonly unknown[] = [
   return objectEqualityText(value);
 }
 
-/** Any other frontmatter value as String() reads it; YAML `!!binary` gives a Uint8Array. */
+/**
+ * Any other frontmatter value as String() reads it; YAML `!!binary` gives a Uint8Array, and a key
+ * naming an inherited member such as `toString` reads a function.
+ */
 function objectEqualityText(value: unknown): string {
   if (value instanceof Date) return value.toString();
   if (value instanceof Uint8Array) return value.join(',');
+  if (typeof value === 'function') return Function.prototype.toString.call(value);
   return Object.prototype.toString.call(value);
 }
 
