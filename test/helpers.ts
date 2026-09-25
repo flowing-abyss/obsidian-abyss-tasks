@@ -1015,10 +1015,10 @@ export function fixedToday(dateStr: string): void {
 }
 
 /**
- * The median of `pairs` large/small time ratios. It first doubles `repeat` from 1 (at most
- * 65536) until one batch of `small` takes at least `minSampleMs`. Each pair then runs `small` and
- * `large` back to back, `repeat` times each, alternating which goes first, after `warmup`
- * unrecorded pairs, so a CPU speed change biases only the pair it splits.
+ * The median of `pairs` large/small time ratios. After one unrecorded call of each, it doubles
+ * `repeat` from 1 (at most 65536) until one batch of `small` takes at least `minSampleMs`. Each
+ * pair then runs `small` and `large` back to back, `repeat` times each, alternating which goes
+ * first, after `warmup` unrecorded pairs, so a CPU speed change biases only the pair it splits.
  */
 export function medianInterleavedRatio(options: {
   readonly small: () => void;
@@ -1034,6 +1034,8 @@ export function medianInterleavedRatio(options: {
     for (let index = 0; index < repeat; index++) run();
     return performance.now() - startedAt;
   };
+  small();
+  large();
   while (batchMs(small) < minSampleMs && repeat < 65_536) repeat *= 2;
   const pairRatio = (index: number): number => {
     if (index % 2 === 0) {
