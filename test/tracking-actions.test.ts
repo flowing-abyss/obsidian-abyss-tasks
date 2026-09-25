@@ -135,8 +135,9 @@ describe('createTrackingActions', () => {
   });
 
   it('converts a rejected command into a reported repository failure', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { actions, report } = harness(() => Promise.reject(new Error('vault exploded')));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const rejection = new Error('vault exploded');
+    const { actions, report } = harness(() => Promise.reject(rejection));
 
     await expect(actions.start(parent)).resolves.toBeUndefined();
 
@@ -145,18 +146,32 @@ describe('createTrackingActions', () => {
       cause: 'repository-error',
       contentState: 'unknown',
     });
-    expect(error).toHaveBeenCalled();
+    expect(error).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not complete a time tracking command',
+      rejection,
+    );
   });
 
   it('converts a rejected removal too, and reports no recovery', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { actions, report } = harness(() => Promise.reject(new Error('vault exploded')));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const rejection = new Error('vault exploded');
+    const { actions, report } = harness(() => Promise.reject(rejection));
 
     await expect(actions.remove(entryRef)).resolves.toBeUndefined();
     await expect(actions.restore(recovery)).resolves.toMatchObject({ type: 'io-error' });
 
     expect(report).toHaveBeenCalledTimes(2);
     expect(error).toHaveBeenCalledTimes(2);
+    expect(error).toHaveBeenNthCalledWith(
+      1,
+      '[abyss-tasks] Could not complete a time tracking command',
+      rejection,
+    );
+    expect(error).toHaveBeenNthCalledWith(
+      2,
+      '[abyss-tasks] Could not complete a time tracking command',
+      rejection,
+    );
   });
 
   it('says a discarded sub-minute session was not saved when a stop discards it', async () => {

@@ -626,9 +626,12 @@ describe('cross-file reversal compensation', () => {
       expect(h.index.list({ filePath: 'a.md' }).map((root) => root.title)).toEqual(['External']);
     },
   );
-  it.each([false, true])(
+  it.each([
+    [false, ['second-write']],
+    [true, ['second-write', 'second-rollback', 'restoration-proof']],
+  ])(
     'finishes compensation even if diagnostics throw (rollback failure: %s)',
-    async (rollbackFails) => {
+    async (rollbackFails, phases) => {
       const source = { 'a.md': '- [ ] A 🆔 a\n', 'b.md': '- [ ] B 🆔 b ⛔ a\n' };
       const h = await harness(source);
       const process = h.app.vault.process.bind(h.app.vault);
@@ -649,6 +652,13 @@ describe('cross-file reversal compensation', () => {
       expect(calls).toBe(4);
       if (!rollbackFails) expect(await h.contents()).toEqual(source);
       expect(JSON.stringify(fallback.mock.calls)).not.toContain('private');
+      // One fallback line for each diagnostic that threw, in phase order.
+      expect(fallback.mock.calls).toEqual(
+        phases.map((phase) => [
+          '[abyss-tasks] Dependency reversal diagnostic failed',
+          { phase, cause: 'diagnostic-error' },
+        ]),
+      );
     },
   );
 

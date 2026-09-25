@@ -1853,7 +1853,7 @@ describe('project Kanban overview', () => {
   });
 
   it('releases provisional state on missing transfer, capture failure, Escape, and destroy', () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { host, view } = mountView();
     clickView(host, 'Kanban');
     const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
@@ -1885,8 +1885,9 @@ describe('project Kanban overview', () => {
 
     card.dataset['projectPath'] = 'Projects/A.md';
     const setupFailureData = transfer();
+    const dragImageFailure = new Error('Could not install drag image');
     setupFailureData.setDragImage = vi.fn(() => {
-      throw new Error('Could not install drag image');
+      throw dragImageFailure;
     });
     start.dispatchEvent(
       new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 33 }),
@@ -1914,6 +1915,17 @@ describe('project Kanban overview', () => {
     mounted.delete(view);
     expect(card.classList.contains('is-drag-armed')).toBe(false);
     expect(card.getAttribute('tabindex')).toBe('0');
+    // The capture failure and the setup failure each log once; a missing transfer does not.
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenNthCalledWith(1, '[abyss-tasks] Could not move project card', {
+      cause: objectMatching<Error>({
+        name: 'Error',
+        message: 'Project card is no longer available',
+      }),
+    });
+    expect(log).toHaveBeenNthCalledWith(2, '[abyss-tasks] Could not move project card', {
+      cause: dragImageFailure,
+    });
   });
 
   it('keeps a re-entered collapsed target through an ambiguous stale leave and drops there', async () => {
@@ -2583,7 +2595,7 @@ describe('project Kanban overview', () => {
       statusId: active.id,
     });
     const error = new Error('disk full');
-    const saveViewState = vi.fn().mockRejectedValue(error);
+    const saveViewState = vi.fn().mockResolvedValue(undefined);
     const { host, settings, applyEdits } = mountView([source, targetProject], { saveViewState });
     settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
     settings.projects.kanban.sortBy = { field: 'none', dir: 'asc' };
@@ -2603,6 +2615,8 @@ describe('project Kanban overview', () => {
     const data = transfer();
     card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     card.dispatchEvent(dragEvent('dragstart', data));
+    // Only the drop's settings save fails; the view switch before it saved.
+    saveViewState.mockRejectedValueOnce(error);
     expectDefined(
       host.querySelector<HTMLElement>(
         `.abyss-project-kanban-column[data-status-key="id:${active.id}"]`,
@@ -2616,7 +2630,10 @@ describe('project Kanban overview', () => {
       'Projects/A.md',
     ]);
     expect(notices).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith('[abyss-tasks] Could not save project view settings', error);
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not save project view settings',
+      error,
+    );
   });
 
   it('opens an out-of-flow actual-card preview for a compact column and cleans it on Escape', () => {

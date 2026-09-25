@@ -409,9 +409,12 @@ describe('PanelView', () => {
 
       expect(notice).toHaveBeenCalledOnce();
       expect(noticeMessage).toBe('That tracked task is no longer in its note');
-      expect(log).toHaveBeenCalledOnce();
       // A click that reaches nothing leaves the reader in the mode they were in.
       expect(openTasks).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        '[abyss-tasks] The tracked task is no longer in its note',
+        '["gone.md",4,[]]',
+      );
     });
 
     it('owns one stable out-of-flow creation feedback host inside the layout', () => {

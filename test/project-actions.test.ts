@@ -43,11 +43,11 @@ describe('changeProjectStatus', () => {
     await changeProjectStatus({ setStatus }, CHANGE, onChanged);
 
     expect(messages(notices)).toEqual(['Could not change the project status. disk full']);
+    expect(onChanged).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledExactlyOnceWith(
       '[abyss-tasks] Could not change the project status',
       { path: 'Projects/A.md', statusId: 'active', cause },
     );
-    expect(onChanged).not.toHaveBeenCalled();
   });
 
   it('shows a validation refusal as it is without a log', async () => {

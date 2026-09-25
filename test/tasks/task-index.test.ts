@@ -904,11 +904,11 @@ describe('TaskIndex lifecycle and events', () => {
     expect(first).toHaveBeenCalledExactlyOnceWith(changed);
     expect(later).toHaveBeenCalledExactlyOnceWith(changed);
     expect(reconciled).toHaveBeenCalledExactlyOnceWith(['b.md']);
+    index.destroy();
     expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] task index listener failed', {
       event: 'changed',
       error: failure,
     });
-    index.destroy();
   });
 
   it('delivers the reconciled signal to every subscriber when one throws', async () => {
@@ -927,11 +927,11 @@ describe('TaskIndex lifecycle and events', () => {
     await flushMicrotasks();
 
     expect(later).toHaveBeenCalledExactlyOnceWith(['project.md']);
+    index.destroy();
     expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] task index listener failed', {
       event: 'reconciled',
       error: failure,
     });
-    index.destroy();
   });
 
   it('finishes initialization when an initialized subscriber throws', async () => {
@@ -948,11 +948,11 @@ describe('TaskIndex lifecycle and events', () => {
 
     expect(later).toHaveBeenCalledExactlyOnceWith({ type: 'initialized' });
     expect(index.list({ filePath: 'a.md' }).map(({ title }) => title)).toEqual(['a']);
+    index.destroy();
     expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] task index listener failed', {
       event: 'initialized',
       error: failure,
     });
-    index.destroy();
   });
 
   it('logs a failure in a scheduled publication instead of dropping it', async () => {
@@ -969,12 +969,12 @@ describe('TaskIndex lifecycle and events', () => {
 
     fireChanged(mdFile(app, 'a.md'), '- [ ] a2', taskCache(0));
     await flushMicrotasks();
+    index.destroy();
 
     expect(log).toHaveBeenCalledExactlyOnceWith(
       '[abyss-tasks] task index publication failed',
       failure,
     );
-    index.destroy();
   });
 
   it('publishes an accepted metadata observation when task snapshots are unchanged', async () => {

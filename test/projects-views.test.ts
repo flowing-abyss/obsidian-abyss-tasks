@@ -434,11 +434,29 @@ describe('ProjectsPanel dispatch', () => {
     });
   });
 
+  const WRITE_FAILURE = new Error('disk full');
+
   it.each([
-    ['validation', new ProjectEditValidationError(STATUS_VALIDATION), STATUS_VALIDATION],
-    ['write', new Error('disk full'), 'Could not change the project status. disk full'],
-  ])('reports a %s failure from the dashboard status pill', async (_kind, error, message) => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    ['validation', new ProjectEditValidationError(STATUS_VALIDATION), STATUS_VALIDATION, []],
+    [
+      'write',
+      WRITE_FAILURE,
+      'Could not change the project status. disk full',
+      [
+        [
+          '[abyss-tasks] Could not change the project status',
+          {
+            path: 'Projects/A.md',
+            statusId: expectDefined(DEFAULT_SETTINGS.projects.statuses[1]).id,
+            cause: WRITE_FAILURE,
+          },
+        ],
+      ],
+    ],
+  ])('reports a %s failure from the dashboard status pill', async (_kind, error, message, logs) => {
+    // A case that expects no log calls through, so the console guard also fails a stray one.
+    const log = vi.spyOn(console, 'error');
+    if (logs.length > 0) log.mockImplementation(() => undefined);
     const notices = spyOnNotices();
     const refresh = vi.fn();
     const store = Object.assign({}, stubStore, { refresh });
@@ -468,14 +486,16 @@ describe('ProjectsPanel dispatch', () => {
     } finally {
       panel.destroy();
     }
+    expect(log.mock.calls).toEqual(logs);
   });
 
   it('reports a failed open from the dashboard open button', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('leaf closed');
     const notices = spyOnNotices();
     const app = await createAppWithFiles({ 'Projects/A.md': '' });
     vi.spyOn(app.workspace, 'getLeaf').mockReturnValue({
-      openFile: vi.fn().mockRejectedValue(new Error('leaf closed')),
+      openFile: vi.fn().mockRejectedValue(failure),
     } as never);
     const state = new AppState();
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
@@ -494,5 +514,9 @@ describe('ProjectsPanel dispatch', () => {
     } finally {
       panel.destroy();
     }
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not open the project note', {
+      path: 'Projects/A.md',
+      error: failure,
+    });
   });
 });

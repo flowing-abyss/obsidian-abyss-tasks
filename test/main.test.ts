@@ -15,7 +15,13 @@ import type { CalendarSettings } from '../src/settings/types';
 import { taskNodeAddress, type TrackedEntry } from '../src/tasks';
 import type { PanelNavigator } from '../src/views/panelNavigation';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
-import { createAppWithFiles, expectDefined, flushMicrotasks, useRealMoment } from './helpers';
+import {
+  createAppWithFiles,
+  expectDefined,
+  flushMicrotasks,
+  objectMatching,
+  useRealMoment,
+} from './helpers';
 
 useRealMoment();
 
@@ -329,13 +335,17 @@ describe('TaskCalendarPlugin saveSettings', () => {
       'Saved view state could not be loaded. View preferences are using temporary defaults; view preference writes are suspended to preserve the existing file.',
     ]);
     notices.mockClear();
-    log.mockClear();
     plugin.settings.sectionCollapse.tags = true;
 
     await expect(plugin.saveViewStateWithNotice()).resolves.toBeUndefined();
     expect(notices).not.toHaveBeenCalled();
-    expect(log).not.toHaveBeenCalled();
     await expect(plugin.saveViewState()).rejects.toBeInstanceOf(ViewStateWritesSuspendedError);
+    // Only the suspended load logs; neither write route adds a line.
+    const unsupported = 'Saved view state uses unsupported future schema 99.';
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] saved view state is unavailable', {
+      message: unsupported,
+      cause: objectMatching<Error>({ name: 'Error', message: unsupported }),
+    });
   });
 
   it('refreshes only mounted project-table projections when settings request it', async () => {
@@ -472,10 +482,6 @@ describe('TaskCalendarPlugin onload', () => {
       'property:Effort': { type: 'text' },
     });
     expect(notice).toHaveBeenCalledOnce();
-    expect(log).toHaveBeenCalledWith(
-      '[abyss-tasks] Could not save captured project property types',
-      { cause: error },
-    );
     plugin.settings.projects.propertyDefinitions['property:Effort'] = { type: 'number' };
     const retry = (noticeContent as DocumentFragment).querySelector<HTMLButtonElement>('button');
     expect(retry?.textContent).toBe('Retry');
@@ -487,6 +493,11 @@ describe('TaskCalendarPlugin onload', () => {
       'property:Effort': { type: 'number' },
     });
     expect(save).toHaveBeenCalledTimes(2);
+    // The successful retry adds no second log.
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not save captured project property types',
+      { cause: error },
+    );
   });
 
   it.each(['startup', 'layout', 'resolved'] as const)(
@@ -1001,6 +1012,8 @@ async function kanbanOverview() {
 describe('TaskCalendarPlugin note path lifecycle', () => {
   it('writes once and raises one Notice when the selected project leaves its status empty', async () => {
     const { app, plugin, leaf, navigation, state, statePath, note } = await kanbanOverview();
+    const failure = new Error('disk full');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
       navigation.openList({ type: 'project', path: 'projects/D.md' });
       navigation.openProjects();
@@ -1008,11 +1021,10 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
       const adapter = app.vault.adapter;
       const write = adapter.write.bind(adapter);
       const writes = vi.spyOn(adapter, 'write').mockImplementation(async (path, data, options) => {
-        if (path === statePath) throw new Error('disk full');
+        if (path === statePath) throw failure;
         await write(path, data, options);
       });
       const notices = spyOnNotices();
-      vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
       await app.fileManager.trashFile(note('projects/D.md'));
       await flushMicrotasks(PAST_TRAILING_WORK_MS);
@@ -1032,6 +1044,14 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
       leaf.detach();
       plugin.onunload();
     }
+    // Main's panel route logs the write it presents, and the navigator logs the rejection.
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenNthCalledWith(1, '[abyss-tasks] saved view state write failed', failure);
+    expect(log).toHaveBeenNthCalledWith(
+      2,
+      '[abyss-tasks] failed to persist list view settings',
+      failure,
+    );
   });
 
   it('keeps the list on screen under a renamed selected project and drops the old key', async () => {

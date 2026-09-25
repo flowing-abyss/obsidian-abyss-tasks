@@ -164,7 +164,11 @@ describe('ViewStatePathOwner', () => {
     await vi.advanceTimersByTimeAsync(150);
     await vi.advanceTimersByTimeAsync(0);
     expect(save).toHaveBeenCalledTimes(2);
-    expect(log).toHaveBeenCalledOnce();
     expect(notices).not.toHaveBeenCalled();
+    // The suspended write adds no second log.
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not save view state after a note change',
+      error,
+    );
   });
 });

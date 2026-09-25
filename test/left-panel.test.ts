@@ -879,11 +879,12 @@ describe('LeftPanel top-level tag group menus', () => {
   it('rolls back appearance and reports a rejected settings save', async () => {
     renderOpenedModalsInDocument();
     const items = captureMenu();
-    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { el, merged, save } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#ff0000' }],
     });
-    save.mockRejectedValueOnce(new Error('settings storage unavailable'));
+    const failure = new Error('settings storage unavailable');
+    save.mockRejectedValueOnce(failure);
 
     openContextMenu(expectDefined(el.querySelector('.abyss-tag-group-header')));
     expectDefined(items.find((item) => item.title === 'Rename display name…')).click();
@@ -903,15 +904,14 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(merged.tagGroups[0]?.color).toBe('#ff0000');
     expect(Notice).toHaveBeenCalledOnce();
     expect(firstNoticeText()).toBe('Could not update tag group. Your changes were rolled back.');
-    expect(errorLog).toHaveBeenCalledWith(
+    expect(errorLog).toHaveBeenCalledExactlyOnceWith(
       '[abyss-tasks] Could not update tag group',
-      expect.any(Error),
+      failure,
     );
-    errorLog.mockRestore();
   });
 
   it('does not let an older rejected appearance save overwrite a newer saved appearance', async () => {
-    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { panel, merged, save } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#ff0000' }],
     });
@@ -938,12 +938,13 @@ describe('LeftPanel top-level tag group menus', () => {
         ): void;
       }
     ).applyTagGroupAppearance_abyssPrivate.bind(panel);
+    const failure = new Error('older save rejected');
 
     applyAppearance(group, { name: 'First edit' });
     await firstStarted;
     applyAppearance(group, { name: 'Newer edit', color: '#00ff00' });
     await flushMicrotasks();
-    rejectFirst(new Error('older save rejected'));
+    rejectFirst(failure);
     await flushMicrotasks();
 
     expect(group.name).toBe('Newer edit');
@@ -952,14 +953,17 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(Notice).toHaveBeenCalledOnce();
     expect(firstNoticeText()).toContain('Newer changes were kept');
     expect(firstNoticeText()).not.toContain('rolled back');
-    expect(errorLog).toHaveBeenCalledOnce();
-    errorLog.mockRestore();
+    expect(errorLog).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not update tag group',
+      failure,
+    );
   });
 
   it('reports a failed reorder once and renders the rolled-back order', async () => {
-    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { panel, merged, save } = makePanel([task({ tags: ['#a'] }), task({ tags: ['#b'] })]);
-    save.mockRejectedValueOnce(new Error('settings storage unavailable'));
+    const failure = new Error('settings storage unavailable');
+    save.mockRejectedValueOnce(failure);
     const reorder = (
       panel as unknown as {
         reorderTagGroups_abyssPrivate(draggedId: string, targetId: string): Promise<void>;
@@ -971,16 +975,15 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(merged.tagGroups).toEqual([]);
     expect(Notice).toHaveBeenCalledOnce();
     expect(firstNoticeText()).toContain('rolled back');
-    expect(errorLog).toHaveBeenCalledWith(
+    expect(errorLog).toHaveBeenCalledExactlyOnceWith(
       '[abyss-tasks] Could not reorder tag groups',
-      expect.any(Error),
+      failure,
     );
-    errorLog.mockRestore();
   });
 
   it('reports a failed archive truthfully when a newer settings edit is preserved', async () => {
     const items = captureMenu();
-    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     let rejectArchive!: (error: Error) => void;
     let markArchiveStarted!: () => void;
     const archiveStarted = new Promise<void>((resolve) => {
@@ -998,12 +1001,13 @@ describe('LeftPanel top-level tag group menus', () => {
         return archiveSave;
       })
       .mockResolvedValueOnce(undefined);
+    const failure = new Error('older archive save rejected');
 
     openContextMenu(expectDefined(el.querySelector('.abyss-tag-group-header')));
     expectDefined(items.find((item) => item.title === 'Archive')).click();
     await archiveStarted;
     await tm.pinTag('#newer');
-    rejectArchive(new Error('older archive save rejected'));
+    rejectArchive(failure);
     await flushMicrotasks();
 
     expect(merged.tagGroups[0]?.archived).toBe(true);
@@ -1012,11 +1016,10 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(firstNoticeText()).toContain('Newer changes were kept');
     expect(firstNoticeText()).not.toContain('rolled back');
     expect(el.textContent).not.toContain('Work');
-    expect(errorLog).toHaveBeenCalledWith(
+    expect(errorLog).toHaveBeenCalledExactlyOnceWith(
       '[abyss-tasks] Could not archive tag group',
-      expect.any(Error),
+      failure,
     );
-    errorLog.mockRestore();
   });
 
   it('prefix vault rename confirmation shows both scopes and reports the changed-file count', async () => {
@@ -1372,9 +1375,10 @@ describe('LeftPanel Pin and Unpin failures', () => {
 
   it('reports a failed child Pin and keeps the rolled-back list', async () => {
     const items = captureMenu();
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { el, merged, save } = makePanel(workTasks(), WORK_GROUP);
-    save.mockRejectedValueOnce(new Error(SAVE_FAILURE));
+    const failure = new Error(SAVE_FAILURE);
+    save.mockRejectedValueOnce(failure);
 
     openChildMenu(el);
     clickItem(items, 'Pin');
@@ -1382,13 +1386,15 @@ describe('LeftPanel Pin and Unpin failures', () => {
 
     expect(noticeTexts()).toEqual(['Could not pin tag. Your changes were rolled back.']);
     expect(merged.pinnedTags).toEqual([]);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not pin tag', failure);
   });
 
   it('reports a failed pinned-section Unpin and keeps the pinned row', async () => {
     const items = captureMenu();
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { el, merged, save } = makePanel([], {}, ['#pinned']);
-    save.mockRejectedValueOnce(new Error(SAVE_FAILURE));
+    const failure = new Error(SAVE_FAILURE);
+    save.mockRejectedValueOnce(failure);
 
     openContextMenu(expectDefined(el.querySelector('.abyss-pinned-tag')));
     clickItem(items, 'Unpin');
@@ -1397,15 +1403,17 @@ describe('LeftPanel Pin and Unpin failures', () => {
     expect(noticeTexts()).toEqual(['Could not unpin tag. Your changes were rolled back.']);
     expect(merged.pinnedTags).toEqual(['#pinned']);
     expect(pinnedLabels(el)).toEqual(['#pinned']);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not unpin tag', failure);
   });
 
   it('reports a failed Pin from a flattened one-tag group', async () => {
     const items = captureMenu();
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { el, merged, save } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Next', mode: 'manual', tags: ['#next'] }],
     });
-    save.mockRejectedValueOnce(new Error(SAVE_FAILURE));
+    const failure = new Error(SAVE_FAILURE);
+    save.mockRejectedValueOnce(failure);
 
     openContextMenu(expectDefined(el.querySelector('.abyss-tag-leaf')));
     clickItem(items, 'Pin');
@@ -1413,6 +1421,7 @@ describe('LeftPanel Pin and Unpin failures', () => {
 
     expect(noticeTexts()).toEqual(['Could not pin tag. Your changes were rolled back.']);
     expect(merged.pinnedTags).toEqual([]);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not pin tag', failure);
   });
 
   it('redraws after a rollback that a refresh drew as pinned', async () => {
@@ -1438,28 +1447,31 @@ describe('LeftPanel Pin and Unpin failures', () => {
 
   it('words a Pin that a newer unrelated save kept', async () => {
     const items = captureMenu();
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { el, tm, merged, save } = makePanel(workTasks(), WORK_GROUP);
     const pending = pendingSave(save);
+    const failure = new Error(SAVE_FAILURE);
 
     openChildMenu(el);
     clickItem(items, 'Pin');
     await pending.started;
     await tm.archiveTag('#other');
-    pending.reject(new Error(SAVE_FAILURE));
+    pending.reject(failure);
     await flushMicrotasks();
 
     expect(noticeTexts()).toEqual([
       'An earlier request to pin tag was not saved. Newer changes were kept.',
     ]);
     expect(merged.pinnedTags).toEqual(['#work/dev']);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not pin tag', failure);
   });
 
   it('words a Pin that an Unpin of the same tag superseded', async () => {
     const items = captureMenu();
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { el, merged, save } = makePanel(workTasks(), WORK_GROUP);
     const pending = pendingSave(save);
+    const failure = new Error(SAVE_FAILURE);
 
     openChildMenu(el);
     clickItem(items, 'Pin');
@@ -1468,7 +1480,7 @@ describe('LeftPanel Pin and Unpin failures', () => {
     openContextMenu(expectDefined(el.querySelector('.abyss-tag-child')));
     clickItem(items, 'Unpin');
     await flushMicrotasks();
-    pending.reject(new Error(SAVE_FAILURE));
+    pending.reject(failure);
     await flushMicrotasks();
 
     expect(noticeTexts()).toEqual([
@@ -1476,6 +1488,7 @@ describe('LeftPanel Pin and Unpin failures', () => {
     ]);
     expect(pinnedLabels(el)).toEqual([]);
     expect(merged.pinnedTags).toEqual([]);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not pin tag', failure);
   });
 
   it('pins without a Notice and redraws once', async () => {
@@ -2100,10 +2113,11 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
 
   it('keeps a failed tag group name editable, says why, and retries on Enter', async () => {
     const { el, tm } = makeFull({ attached: true });
-    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('Settings could not be saved.');
     const spy = vi
       .spyOn(tm, 'createManualGroup')
-      .mockRejectedValueOnce(new Error('Settings could not be saved.'))
+      .mockRejectedValueOnce(failure)
       .mockResolvedValueOnce();
     try {
       const input = openInlineAdd(el, 'tags');
@@ -2126,11 +2140,16 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     } finally {
       el.remove();
     }
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not finish the inline add',
+      failure,
+    );
   });
 
   it('ends the session instead of retrying when a create fails after focus left', async () => {
     vi.useFakeTimers();
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('Disk full.');
     let reject!: (error: Error) => void;
     const { el, tm } = makeFull({ attached: true });
     const spy = vi.spyOn(tm, 'createManualGroup').mockImplementation(
@@ -2145,7 +2164,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       input.value = 'Focus';
       keydown(input, 'Enter');
       outside.focus();
-      reject(new Error('Disk full.'));
+      reject(failure);
       await vi.advanceTimersByTimeAsync(150);
 
       // Resetting `committed` while focus is elsewhere would let the blur check retry on its own.
@@ -2158,22 +2177,24 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       outside.remove();
       el.remove();
     }
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not finish the inline add',
+      failure,
+    );
   });
 
   it('ends a partial project create without a retry and names the created note', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new ProjectCreationError('Could not set the status for Projects/New.md.', {
+      createdPath: 'Projects/New.md',
+      phase: 'status',
+      statusId: 'active',
+      cause: new Error('Status property is missing.'),
+    });
     const { el, create, refreshStore } = makeFull({
       attached: true,
       projects: [{ path: 'Projects/A.md', name: 'A' }],
-      create: () =>
-        Promise.reject(
-          new ProjectCreationError('Could not set the status for Projects/New.md.', {
-            createdPath: 'Projects/New.md',
-            phase: 'status',
-            statusId: 'active',
-            cause: new Error('Status property is missing.'),
-          }),
-        ),
+      create: () => Promise.reject(failure),
     });
     try {
       const input = openInlineAdd(el, 'projects');
@@ -2193,12 +2214,17 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     } finally {
       el.remove();
     }
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not finish the inline add',
+      failure,
+    );
   });
 
   it('names the created note when it cannot be opened and never creates it twice', async () => {
     const file = { path: 'Projects/New.md' };
-    const openFile = vi.fn(() => Promise.reject(new Error('Leaf is gone.')));
-    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const failure = new Error('Leaf is gone.');
+    const openFile = vi.fn(() => Promise.reject(failure));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { el, create, refreshStore } = makeFull({
       attached: true,
       projects: [{ path: 'Projects/A.md', name: 'A' }],
@@ -2220,11 +2246,17 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       expect(Notice).toHaveBeenCalledExactlyOnceWith(
         'Created Projects/New.md, but could not open it. Leaf is gone.',
       );
-      expect(log).toHaveBeenCalledOnce();
       expect(el.querySelector('.abyss-left-add-input')).toBeNull();
     } finally {
       el.remove();
     }
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not open the created project',
+      {
+        path: 'Projects/New.md',
+        error: failure,
+      },
+    );
   });
 
   it('keeps a destroyed panel empty when its create settles', async () => {
@@ -2307,7 +2339,8 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
   });
 
   it('removes a rolled-back tag group when its save fails after an Escape', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('Settings could not be saved.');
     const { el, save } = makeFull({ attached: true });
     let rejectSave!: (error: Error) => void;
     save.mockReturnValueOnce(
@@ -2322,7 +2355,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       keydown(input, 'Escape');
       expect(tagLabels(el)).toContain('Focus');
 
-      rejectSave(new Error('Settings could not be saved.'));
+      rejectSave(failure);
       await flushMicrotasks();
 
       // Ending the session at Escape leaves the rolled-back group on screen.
@@ -2334,10 +2367,15 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     } finally {
       el.remove();
     }
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not finish the inline add',
+      failure,
+    );
   });
 
   it('removes a rolled-back tag group a refresh drew and keeps the input for a retry', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('Settings could not be saved.');
     const { panel, el, tm, save, taskList } = makeFull({ attached: true });
     const create = vi.spyOn(tm, 'createManualGroup');
     let rejectSave!: (error: Error) => void;
@@ -2356,7 +2394,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       expect(tagLabels(el)).toContain('Focus');
       taskList.mockClear();
 
-      rejectSave(new Error('Settings could not be saved.'));
+      rejectSave(failure);
       await flushMicrotasks();
 
       // A retry branch that returns without rendering leaves the rolled-back group on screen.
@@ -2376,10 +2414,15 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     } finally {
       el.remove();
     }
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not finish the inline add',
+      failure,
+    );
   });
 
   it('keeps a failed tag group input for a retry without a render when none ran', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('Settings could not be saved.');
     const { el, tm, save, taskList } = makeFull({ attached: true });
     const create = vi.spyOn(tm, 'createManualGroup');
     let rejectSave!: (error: Error) => void;
@@ -2397,7 +2440,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       keydown(input, 'Enter');
       taskList.mockClear();
 
-      rejectSave(new Error('Settings could not be saved.'));
+      rejectSave(failure);
       await flushMicrotasks();
 
       // A retry that renders every time costs a full panel pass for each failed Enter.
@@ -2417,10 +2460,15 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     } finally {
       el.remove();
     }
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not finish the inline add',
+      failure,
+    );
   });
 
   it('ends a failed tag group add that a newer settings save kept', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('older save rejected');
     const { el, tm, save, merged } = makeFull({ attached: true });
     const create = vi.spyOn(tm, 'createManualGroup');
     let rejectSave!: (error: Error) => void;
@@ -2441,7 +2489,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       keydown(input, 'Enter');
       await saveStarted;
       await tm.pinTag('#newer');
-      rejectSave(new Error('older save rejected'));
+      rejectSave(failure);
       await flushMicrotasks();
       keydown(input, 'Enter');
       await flushMicrotasks();
@@ -2458,11 +2506,16 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     } finally {
       el.remove();
     }
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not finish the inline add',
+      failure,
+    );
   });
 
   it('ends a failed tag group add whose input a second inline add replaced as the record', async () => {
     vi.useFakeTimers();
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('Settings could not be saved.');
     const { el, tm, save } = makeFull({
       attached: true,
       projects: [{ path: 'Projects/A.md', name: 'A' }],
@@ -2482,7 +2535,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       tag.focus();
       simulateBlurDuringEmpty(el, tag);
 
-      rejectSave(new Error('Settings could not be saved.'));
+      rejectSave(failure);
       // Every 150 ms blur check runs, including one that a later render's blur starts.
       await vi.runAllTimersAsync();
 
@@ -2497,14 +2550,19 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       vi.useRealTimers();
       el.remove();
     }
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not finish the inline add',
+      failure,
+    );
   });
 
   it('ignores a held Enter after a failed tag group add', async () => {
-    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('Settings could not be saved.');
     const { el, tm } = makeFull({ attached: true });
     const create = vi
       .spyOn(tm, 'createManualGroup')
-      .mockRejectedValueOnce(new Error('Settings could not be saved.'))
+      .mockRejectedValueOnce(failure)
       .mockResolvedValue();
     try {
       const input = openInlineAdd(el, 'tags');
@@ -2528,14 +2586,18 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       expect(held.defaultPrevented).toBe(true);
       expect(input.isConnected).toBe(true);
       expect(Notice).toHaveBeenCalledOnce();
-      expect(log).toHaveBeenCalledOnce();
     } finally {
       el.remove();
     }
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not finish the inline add',
+      failure,
+    );
   });
 
   it('keeps a destroyed panel empty when a create dismissed with Escape fails', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('Disk full.');
     let reject!: (error: Error) => void;
     const { panel, el, tm } = makeFull({ attached: true });
     vi.spyOn(tm, 'createManualGroup').mockImplementation(
@@ -2550,7 +2612,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       keydown(input, 'Enter');
       keydown(input, 'Escape');
       panel.destroy();
-      reject(new Error('Disk full.'));
+      reject(failure);
       await flushMicrotasks();
 
       // Dropping a dismissed session from the live set would let its failure rebuild the panel.
@@ -2559,6 +2621,10 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     } finally {
       el.remove();
     }
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not finish the inline add',
+      failure,
+    );
   });
 
   it('keeps a second inline add open when the first create settles', async () => {
@@ -2760,10 +2826,11 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
   });
 
   it('reports a failed Open note from the sidebar project menu', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('leaf closed');
     const app = await createAppWithFiles({ 'Projects/A.md': '' });
     vi.spyOn(app.workspace, 'getLeaf').mockReturnValue({
-      openFile: vi.fn().mockRejectedValue(new Error('leaf closed')),
+      openFile: vi.fn().mockRejectedValue(failure),
     } as never);
     const { el } = makeFull({ projects: [{ path: 'Projects/A.md', name: 'A' }], app });
 
@@ -2771,5 +2838,9 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     await flushMicrotasks();
 
     expect(noticeTexts()).toEqual(['Could not open Projects/A.md. leaf closed']);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Could not open the project note', {
+      path: 'Projects/A.md',
+      error: failure,
+    });
   });
 });

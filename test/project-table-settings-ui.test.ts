@@ -516,7 +516,8 @@ describe('renderProjectTableSettings', () => {
   });
 
   it('refreshes after a failed property removal and a failed property add', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('state unavailable');
     const projects = buildDefaultProjectsSettings();
     addProjectPropertyColumn(projects, [], 'Novel');
     const container = document.body.createDiv();
@@ -530,7 +531,7 @@ describe('renderProjectTableSettings', () => {
         { name: 'Budget', type: 'number' },
       ]),
       saveStatic: vi.fn().mockResolvedValue(undefined),
-      saveViewState: vi.fn().mockRejectedValue(new Error('state unavailable')),
+      saveViewState: vi.fn().mockRejectedValue(failure),
       refresh,
     });
 
@@ -547,10 +548,18 @@ describe('renderProjectTableSettings', () => {
     expectDefined(container.querySelector<HTMLButtonElement>('.abyss-project-column-add')).click();
     await flushMicrotasks();
     expect(refresh).toHaveBeenCalledExactlyOnceWith('project-property:property:Budget');
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenNthCalledWith(1, '[abyss-tasks] Could not remove project property', {
+      cause: failure,
+    });
+    expect(log).toHaveBeenNthCalledWith(2, '[abyss-tasks] Could not add project property', {
+      cause: failure,
+    });
   });
 
   it('refreshes after a failed type change saved through the shared persist', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('static unavailable');
     const projects = buildDefaultProjectsSettings();
     projects.table.columns.push({ id: 'property:Effort', visible: true });
     const container = document.body.createDiv();
@@ -560,7 +569,7 @@ describe('renderProjectTableSettings', () => {
       container,
       projects,
       catalog: catalog([{ name: 'Effort', type: null }]),
-      saveStatic: vi.fn().mockRejectedValue(new Error('static unavailable')),
+      saveStatic: vi.fn().mockRejectedValue(failure),
       saveViewState: vi.fn().mockResolvedValue(undefined),
       renderStatusSettings: () => {},
       refresh,
@@ -576,6 +585,10 @@ describe('renderProjectTableSettings', () => {
     await flushMicrotasks();
 
     expect(refresh).toHaveBeenCalledExactlyOnceWith(undefined);
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not save project table settings',
+      { cause: failure },
+    );
   });
 
   it('retains sequential predefined-value edits without an enable control', async () => {

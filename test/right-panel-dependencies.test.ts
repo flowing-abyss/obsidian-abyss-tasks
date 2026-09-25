@@ -703,19 +703,21 @@ describe('inspector subtask row removal', () => {
     const captured = notices();
     button(h.el, '.abyss-dep-remove').click();
     await flushMicrotasks(40);
-    vi.spyOn(h.api, 'execute').mockRejectedValueOnce(new Error('write unavailable'));
+    const failure = new Error('write unavailable');
+    vi.spyOn(h.api, 'execute').mockRejectedValueOnce(failure);
     const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const undo = button(h.el, '.abyss-undo-row button');
     undo.click();
     undo.click();
     await flushMicrotasks(40);
     expect(captured).toHaveLength(1);
-    expect(log).toHaveBeenCalledOnce();
     expect(button(h.el, '.abyss-undo-row button').disabled).toBe(false);
     button(h.el, '.abyss-undo-row button').click();
     await flushMicrotasks(40);
     expect(await h.read()).toBe('- [ ] Current ⛔ missing\n');
     expect(h.el.querySelector('.abyss-undo-row')).toBeNull();
+    // The double click and the successful retry add no second log.
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Undo failed', failure);
   });
 
   it.each(['timeout', 'selection', 'destroy'] as const)(
@@ -1222,7 +1224,7 @@ describe('owned dependency destination editing', () => {
   it('presents rejected committed evidence once without duplicating the application diagnostic', async () => {
     const h = await harness('- [ ] Current\n');
     const captured = notices();
-    const consoleDiagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleDiagnostic = vi.spyOn(console, 'error');
     const write = h.repository.createDependencySubtask.bind(h.repository);
     vi.spyOn(h.repository, 'createDependencySubtask').mockImplementationOnce(async (request) => {
       const result = await write(request);
@@ -1250,19 +1252,22 @@ describe('owned dependency destination editing', () => {
   it('keeps the creation draft with one Notice and diagnostic after an unexpected API throw', async () => {
     const h = await harness('- [ ] Current\n');
     const captured = notices();
-    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.spyOn(h.api, 'execute').mockRejectedValueOnce(new Error('private content'));
     button(h.el, '.abyss-dep-badge-body').click();
     const input = search(h.el, 'Draft child');
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await flushMicrotasks();
     expect(captured).toHaveLength(1);
-    expect(diagnostic).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private content');
     expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
     expect(input.value).toBe('Draft child');
     expect(input.disabled).toBe(false);
     expect(await h.read()).toBe('- [ ] Current\n');
+    // The diagnostic names the operation, never the error that carries the draft.
+    expect(diagnostic).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Dependency action failed', {
+      operation: 'create-dependency-subtask',
+      cause: 'repository-error',
+    });
   });
   it.each(['description', 'planning', 'status'] as const)(
     'keeps a related nested selection and Back after %s editing',
@@ -2449,19 +2454,19 @@ describe('RightPanel dependency inspector', () => {
 
   it('logs one unexpected handler failure and keeps the search and authoritative relations', async () => {
     const captured = notices();
-    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('Unexpected');
     const h = await harness('- [ ] Current\n- [ ] Candidate\n');
-    vi.spyOn(h.api, 'execute').mockRejectedValue(new Error('Unexpected'));
+    vi.spyOn(h.api, 'execute').mockRejectedValue(failure);
     button(h.el, '.abyss-dep-badge-body').click();
     search(h.el, 'Candidate');
     button(h.el, '[data-direction="blocks"]').click();
     button(h.el, '[role="option"]').click();
     await flushMicrotasks(20);
-    expect(log).toHaveBeenCalledOnce();
-    expect(log.mock.calls[0]?.[0]).toContain('[abyss-tasks]');
     expect(captured).toHaveLength(1);
     expect(h.el.querySelector('.abyss-dep-search input')).toHaveProperty('value', 'Candidate');
     expect(h.el.querySelectorAll('.abyss-dep-row')).toHaveLength(0);
+    expect(log).toHaveBeenCalledExactlyOnceWith('[abyss-tasks] Dependency action failed', failure);
   });
 });
 
