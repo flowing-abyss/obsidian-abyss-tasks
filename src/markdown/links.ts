@@ -62,11 +62,16 @@ function nonOverlappingTokens(candidates: readonly LinkToken[]): LinkToken[] {
 
 function wikiLinkTokens(input: string, inlineCode: readonly SourceRange[]): LinkToken[] {
   const tokens: LinkToken[] = [];
-  const wiki = /(?<!!)\[\[((?:\\.|[^|[\]])+)(?:\|((?:\\.|[^[\]])+))?\]\]/gu;
+  // `![` opens an image or embed, never a link; group 3 passes over it.
+  const wiki = /\[\[((?:\\.|[^|[\]])+)(?:\|((?:\\.|[^[\]])+))?\]\]|(!\[)/gu;
   const rangeCursor = { index: 0 };
   let match: RegExpExecArray | null;
   while ((match = wiki.exec(input)) !== null) {
-    if (isEscaped(input, match.index) || insideOrderedRange(match.index, inlineCode, rangeCursor)) {
+    if (
+      match[3] !== undefined ||
+      isEscaped(input, match.index) ||
+      insideOrderedRange(match.index, inlineCode, rangeCursor)
+    ) {
       continue;
     }
     const target = match[1] ?? '';
@@ -84,11 +89,16 @@ function wikiLinkTokens(input: string, inlineCode: readonly SourceRange[]): Link
 
 function markdownLinkTokens(input: string, inlineCode: readonly SourceRange[]): LinkToken[] {
   const tokens: LinkToken[] = [];
-  const markdown = /(?<!!)\[((?:\\.|[^[\]])+)\]\(((?:\\.|[^)])+)\)/gu;
+  // `![` opens an image or embed, never a link; group 3 passes over it.
+  const markdown = /\[((?:\\.|[^[\]])+)\]\(((?:\\.|[^)])+)\)|(!\[)/gu;
   const rangeCursor = { index: 0 };
   let match: RegExpExecArray | null;
   while ((match = markdown.exec(input)) !== null) {
-    if (isEscaped(input, match.index) || insideOrderedRange(match.index, inlineCode, rangeCursor)) {
+    if (
+      match[3] !== undefined ||
+      isEscaped(input, match.index) ||
+      insideOrderedRange(match.index, inlineCode, rangeCursor)
+    ) {
       continue;
     }
     tokens.push({
@@ -104,6 +114,7 @@ function markdownLinkTokens(input: string, inlineCode: readonly SourceRange[]): 
 
 /** Parse [[wiki]], [[wiki|alias]] and [md](url) links in document order. */
 export function parseLinks(input: string): LinkToken[] {
+  if (!input.includes('[')) return [];
   const inlineCode = inlineCodeRanges(input);
   return nonOverlappingTokens([
     ...wikiLinkTokens(input, inlineCode),
