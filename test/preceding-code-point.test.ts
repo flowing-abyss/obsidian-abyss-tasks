@@ -1,8 +1,10 @@
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import {
   matchesUnlessPreceded as markdownMatchesUnlessPreceded,
   replaceUnlessPreceded,
 } from '../src/markdown/precedingCodePoint';
+import { matchesUnlessPreceded as domainMatchesUnlessPreceded } from '../src/tasks/domain/precedingCodePoint';
 
 type Refusal = (previous: string) => boolean;
 type MatchesUnlessPreceded = typeof markdownMatchesUnlessPreceded;
@@ -128,8 +130,13 @@ function helperMatches(
   return matchesUnlessPreceded(regex, text, bounded(text, refuses)).map(found);
 }
 
+function sourceText(path: string): string {
+  return ts.sys.readFile(ts.sys.resolvePath(`${import.meta.dirname}/../${path}`)) ?? '';
+}
+
 describe.each<readonly [string, MatchesUnlessPreceded]>([
   ['markdown', markdownMatchesUnlessPreceded],
+  ['task domain', domainMatchesUnlessPreceded],
 ])('matchesUnlessPreceded in the %s copy', (_copy, matchesUnlessPreceded) => {
   it.each(ORACLE_CASES)(
     'finds the matches of the lookbehind form for %s refusing %s',
@@ -249,5 +256,16 @@ describe('replaceUnlessPreceded', () => {
 
   it('inserts the replacement literally', () => {
     expect(replaceUnlessPreceded(/b/gu, 'abc', refusesNothing, () => '$&$1')).toBe('a$&$1c');
+  });
+});
+
+describe('precedingCodePoint copies', () => {
+  it('keeps the task domain copy identical to the start of the markdown module', () => {
+    const markdown = sourceText('src/markdown/precedingCodePoint.ts');
+    const domain = sourceText('src/tasks/domain/precedingCodePoint.ts');
+
+    expect(domain).toContain('export function matchesUnlessPreceded(');
+    expect(markdown.slice(0, domain.length)).toBe(domain);
+    expect(markdown.slice(domain.length)).toContain('export function replaceUnlessPreceded(');
   });
 });

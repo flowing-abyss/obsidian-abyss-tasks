@@ -1,3 +1,4 @@
+import { matchesUnlessPreceded } from './precedingCodePoint';
 import type { OnCompletion, TaskPriority } from './types';
 
 type TaskLineSourceSpanKind =
@@ -81,10 +82,9 @@ const TASK_LINE_RE = /^[\s>]*- \[(.)\]/u;
 const TASK_TAG_BODY = String.raw`[\w-]+(?:\/[\w-]+)*`;
 const TASK_TAG_ADJACENT = String.raw`(?:[#\p{L}\p{M}\p{N}\p{Pc}/-]|\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier}|\uFE0F|\u200D)`;
 const TASK_TAG_RE = new RegExp(String.raw`^#${TASK_TAG_BODY}$`, 'u');
-const TAG_RE = new RegExp(
-  String.raw`(?<!${TASK_TAG_ADJACENT})#${TASK_TAG_BODY}(?!${TASK_TAG_ADJACENT})`,
-  'gu',
-);
+// `isTaskTagAdjacent` refuses a match that continues a word, a path, another tag, or an emoji.
+const TAG_RE = new RegExp(String.raw`#${TASK_TAG_BODY}(?!${TASK_TAG_ADJACENT})`, 'gu');
+const TASK_TAG_ADJACENT_RE = new RegExp(`^${TASK_TAG_ADJACENT}$`, 'u');
 const PRIORITY_RE = /[🔺⏫🔼🔽⏬]/gu;
 const DATE_PATTERNS: ReadonlyArray<{
   kind: 'created' | 'start' | 'scheduled' | 'due' | 'completion' | 'cancelled';
@@ -148,6 +148,11 @@ function isEscaped(source: string, at: number): boolean {
   return slashes % 2 === 1;
 }
 
+/** A tag must not continue a word, a path, another tag, or an emoji sequence. */
+function isTaskTagAdjacent(previous: string): boolean {
+  return TASK_TAG_ADJACENT_RE.test(previous);
+}
+
 function closingBacktick(source: string, open: number, runLength: number): number {
   const delimiter = '`'.repeat(runLength);
   let close = source.indexOf(delimiter, open + runLength);
@@ -190,29 +195,20 @@ function insideOrderedRange(
   return range !== undefined && at >= range.from && at < range.to;
 }
 
-function parseLinkRanges(input: string): readonly LinkRange[] {
-  const candidates: LinkRange[] = [];
-  const inlineCode = inlineCodeRanges(input);
-  const wiki = /(?<!!)\[\[((?:\\.|[^|[\]])+)(?:\|((?:\\.|[^[\]])+))?\]\]/gu;
-  const markdown = /(?<!!)\[((?:\\.|[^[\]])+)\]\(((?:\\.|[^)])+)\)/gu;
+/** Pushes the unescaped links outside inline code; group 3 of `link` passes over an image opener. */
+function pushLinkRanges(
+  candidates: LinkRange[],
+  input: string,
+  link: RegExp,
+  inlineCode: readonly SourceRange[],
+): void {
+  const cursor = { index: 0 };
   let match: RegExpExecArray | null;
-  const wikiCursor = { index: 0 };
-  while ((match = wiki.exec(input)) !== null) {
-    if (isEscaped(input, match.index) || insideOrderedRange(match.index, inlineCode, wikiCursor)) {
-      continue;
-    }
-    candidates.push({
-      from: match.index,
-      to: match.index + match[0].length,
-      index: match.index,
-      raw: match[0],
-    });
-  }
-  const markdownCursor = { index: 0 };
-  while ((match = markdown.exec(input)) !== null) {
+  while ((match = link.exec(input)) !== null) {
     if (
+      match[3] !== undefined ||
       isEscaped(input, match.index) ||
-      insideOrderedRange(match.index, inlineCode, markdownCursor)
+      insideOrderedRange(match.index, inlineCode, cursor)
     ) {
       continue;
     }
@@ -223,6 +219,20 @@ function parseLinkRanges(input: string): readonly LinkRange[] {
       raw: match[0],
     });
   }
+}
+
+function parseLinkRanges(input: string): readonly LinkRange[] {
+  if (!input.includes('[')) return [];
+  const candidates: LinkRange[] = [];
+  const inlineCode = inlineCodeRanges(input);
+  // `![` opens an image or embed, never a link; group 3 passes over it.
+  pushLinkRanges(
+    candidates,
+    input,
+    /\[\[((?:\\.|[^|[\]])+)(?:\|((?:\\.|[^[\]])+))?\]\]|(!\[)/gu,
+    inlineCode,
+  );
+  pushLinkRanges(candidates, input, /\[((?:\\.|[^[\]])+)\]\(((?:\\.|[^)])+)\)|(!\[)/gu, inlineCode);
   candidates.sort((left, right) => {
     const indexOrder = left.index - right.index;
     return indexOrder !== 0 ? indexOrder : right.raw.length - left.raw.length;
@@ -328,7 +338,7 @@ function includesExactCandidate(
 }
 
 function pushTagCandidates(candidates: Candidate[], body: string, bodyFrom: number): void {
-  for (const match of matches(TAG_RE, body)) {
+  for (const match of matchesUnlessPreceded(TAG_RE, body, isTaskTagAdjacent)) {
     candidates.push({
       kind: 'tag',
       from: bodyFrom + match.index,

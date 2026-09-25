@@ -75,22 +75,3 @@ export function matchesUnlessPreceded(
   }
   return matches;
 }
-
-/**
- * `text.replace(regex, replace)` over the matches that `matchesUnlessPreceded` returns. What
- * `replace` returns is inserted literally, as with a replacement function.
- */
-export function replaceUnlessPreceded(
-  regex: RegExp,
-  text: string,
-  refuses: (previous: string) => boolean,
-  replace: (match: RegExpExecArray) => string,
-): string {
-  let output = '';
-  let copiedTo = 0;
-  for (const match of matchesUnlessPreceded(regex, text, refuses)) {
-    output += text.slice(copiedTo, match.index) + replace(match);
-    copiedTo = match.index + match[0].length;
-  }
-  return output + text.slice(copiedTo);
-}
