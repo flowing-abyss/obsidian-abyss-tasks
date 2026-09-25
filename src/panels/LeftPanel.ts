@@ -1,4 +1,4 @@
-import { Menu, Notice, setIcon, TFile, type App } from 'obsidian';
+import { Menu, Notice, setIcon, type App, type TFile } from 'obsidian';
 import type { AppState, ListSelection } from '../app/AppState';
 import { isListViewCustomized, listSelectionToKey } from '../app/listViewState';
 import type { ProjectManager } from '../projects/ProjectManager';
@@ -6,7 +6,7 @@ import type { ProjectStore } from '../projects/ProjectStore';
 import {
   isProjectCreationError,
   projectCreationFailureNotice,
-  withCreationFailureCause,
+  withFailureCause,
 } from '../projects/projectCreation';
 import { projectStatusDisplayName } from '../projects/status';
 import type { CalendarSettings } from '../settings/types';
@@ -35,6 +35,7 @@ import {
 import { isImeOwnedEvent } from '../ui/ime';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
 import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
+import { changeProjectStatus, openProjectNote } from '../ui/projectActions';
 import { runAsyncAction } from '../ui/runAsyncAction';
 import { presentTaskCommandResult } from '../ui/taskCommandResult';
 import { PanelNavigator, type PanelNavigationActions } from '../views/panelNavigation';
@@ -335,7 +336,7 @@ export class LeftPanel {
         this.settings_abyssPrivate.tagGroups === before
           ? {
               retryable: true,
-              notice: withCreationFailureCause('Could not add the tag group.', error),
+              notice: withFailureCause('Could not add the tag group.', error),
             }
           : { retryable: false, notice: tagSettingsFailureNotice('add tag group', false) },
     };
@@ -367,7 +368,7 @@ export class LeftPanel {
       await this.app_abyssPrivate.workspace.getLeaf(false).openFile(file);
     } catch (error) {
       console.error('[abyss-tasks] Could not open the created project', { path: file.path, error });
-      new Notice(withCreationFailureCause(`Created ${file.path}, but could not open it.`, error));
+      new Notice(withFailureCause(`Created ${file.path}, but could not open it.`, error));
     }
   }
 
@@ -745,7 +746,7 @@ export class LeftPanel {
     const projectManager = this.projectManager_abyssPrivate;
     if (projectManager === null) return;
     runAsyncAction(
-      projectManager.setStatus(path, statusId).then(() => {
+      changeProjectStatus(projectManager, { path, statusId }, () => {
         this.projectStore_abyssPrivate?.refresh();
         this.render_abyssPrivate();
       }),
@@ -753,9 +754,7 @@ export class LeftPanel {
   }
 
   private openProjectNote_abyssPrivate(path: string): void {
-    const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
-    if (file instanceof TFile)
-      runAsyncAction(this.app_abyssPrivate.workspace.getLeaf(false).openFile(file));
+    runAsyncAction(openProjectNote(this.app_abyssPrivate, path));
   }
 
   private renderPinnedTag_abyssPrivate(

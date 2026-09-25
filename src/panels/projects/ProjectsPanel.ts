@@ -1,15 +1,16 @@
-import { TFile, type App } from 'obsidian';
+import type { App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import {
   ObsidianProjectProperties,
   type ProjectPropertyCatalog,
 } from '../../projects/ObsidianProjectProperties';
-import type { ExpectedProjectStatus, ProjectManager } from '../../projects/ProjectManager';
+import type { ProjectManager } from '../../projects/ProjectManager';
 import type { ProjectStore } from '../../projects/ProjectStore';
 import type { ProjectCreateRequest } from '../../projects/projectCreation';
 import { ProjectEditHistory } from '../../projects/projectEditHistory';
 import type { ProjectCellChange, ProjectEditResult } from '../../projects/projectEdits';
 import type { CalendarSettings } from '../../settings/types';
+import { changeProjectStatus, openProjectNote } from '../../ui/projectActions';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { refreshProjectDashboardStatus, renderProjectDashboard } from './ProjectsDashboardView';
 import { ProjectsTableView } from './ProjectsTableView';
@@ -162,15 +163,6 @@ export class ProjectsPanel {
     return file?.path ?? null;
   }
 
-  private async saveStatus_abyssPrivate(
-    path: string,
-    statusId: string,
-    expectedStatus?: ExpectedProjectStatus,
-  ): Promise<void> {
-    await this.projectManager_abyssPrivate.setStatus(path, statusId, expectedStatus);
-    this.projectStore_abyssPrivate.refresh();
-  }
-
   private async applyProjectEdits_abyssPrivate(
     changes: readonly ProjectCellChange[],
   ): Promise<ProjectEditResult> {
@@ -178,12 +170,7 @@ export class ProjectsPanel {
   }
 
   private openNote_abyssPrivate(path: string): void {
-    const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) return;
-    runAsyncAction(
-      this.app_abyssPrivate.workspace.getLeaf(false).openFile(file),
-      'Could not open project note',
-    );
+    runAsyncAction(openProjectNote(this.app_abyssPrivate, path), 'Could not open project note');
   }
 
   private syncView_abyssPrivate(tableAlreadyCurrent = false): void {
@@ -216,7 +203,13 @@ export class ProjectsPanel {
       settings: this.settings_abyssPrivate,
       onSetStatus: (projectPath, statusId) => {
         runAsyncAction(
-          this.saveStatus_abyssPrivate(projectPath, statusId),
+          changeProjectStatus(
+            this.projectManager_abyssPrivate,
+            { path: projectPath, statusId },
+            () => {
+              this.projectStore_abyssPrivate.refresh();
+            },
+          ),
           'Could not update project status',
         );
       },

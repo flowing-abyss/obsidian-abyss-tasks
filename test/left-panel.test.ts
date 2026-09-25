@@ -3,6 +3,7 @@ import { Menu, Notice, type MenuItem } from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { ProjectCreationError, type ProjectCreateOptions } from '../src/projects/projectCreation';
+import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import type { ProjectStats } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
@@ -12,6 +13,7 @@ import { discoveredPrefixGroupId, discoveredTagGroupId } from '../src/tags/effec
 import type { TaskApplicationApi, TaskSnapshot } from '../src/tasks';
 import { TagGroupAppearanceModal } from '../src/ui/TagGroupAppearanceModal';
 import {
+  createAppWithFiles,
   dispatchImeKey,
   expectDefined,
   flushMicrotasks,
@@ -35,6 +37,26 @@ function noticeTexts(): string[] {
   return vi
     .mocked(Notice)
     .mock.calls.map(([message]) => (typeof message === 'string' ? message : message.textContent));
+}
+
+const STATUS_VALIDATION = 'Choose a project Status property in settings before changing statuses.';
+
+interface NativeMenuItem {
+  readonly title__: string;
+  readonly submenu: Menu | null;
+  readonly onClick__: ((event: MouseEvent | KeyboardEvent) => void) | null;
+}
+
+function nativeMenuItems(menu: Menu | null | undefined): NativeMenuItem[] {
+  return (expectDefined(menu) as unknown as { menuItems__: NativeMenuItem[] }).menuItems__;
+}
+
+function nativeMenuItem(menu: Menu | null | undefined, title: string): NativeMenuItem {
+  return expectDefined(nativeMenuItems(menu).find(({ title__ }) => title__ === title));
+}
+
+function clickNativeItem(item: NativeMenuItem | undefined): void {
+  expectDefined(expectDefined(item).onClick__)(new MouseEvent('click'));
 }
 
 vi.mock('obsidian', async () => {
@@ -1729,6 +1751,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     settings?: Partial<CalendarSettings>;
     projects?: Array<{ path: string; name: string; stats?: ProjectStats }>;
     create?: (name: string, options?: ProjectCreateOptions) => Promise<unknown>;
+    setStatus?: (path: string, statusId: string) => Promise<void>;
     app?: unknown;
     attached?: boolean;
   }) {
@@ -1765,7 +1788,8 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       onUpdate: () => () => {},
     } as never;
     const create = vi.fn(opts.create ?? (() => Promise.resolve(null)));
-    const projectManager = { create } as never;
+    const setStatus = vi.fn(opts.setStatus ?? (() => Promise.resolve()));
+    const projectManager = { create, setStatus } as never;
     const panel = makeLeftPanelForTest(
       state,
       store,
@@ -1797,6 +1821,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       merged,
       taskList,
       create,
+      setStatus,
       refreshStore,
       setActiveProjects,
     };
@@ -2670,5 +2695,81 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       vi.useRealTimers();
       el.remove();
     }
+  });
+
+  function openProjectMenu(el: HTMLElement): Menu {
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+    openContextMenu(expectDefined(el.querySelector('.abyss-project-item')));
+    return expectDefined(show.mock.instances[0]) as Menu;
+  }
+
+  function chooseStatus(menu: Menu, index: number): void {
+    clickNativeItem(nativeMenuItems(nativeMenuItem(menu, 'Change status').submenu)[index]);
+  }
+
+  it('shows the validation message when a sidebar status change is refused', async () => {
+    const consoleError = vi.spyOn(console, 'error');
+    const { el } = makeFull({
+      projects: [{ path: 'Projects/A.md', name: 'A' }],
+      setStatus: () => Promise.reject(new ProjectEditValidationError(STATUS_VALIDATION)),
+    });
+
+    chooseStatus(openProjectMenu(el), 1);
+    await flushMicrotasks();
+
+    expect(noticeTexts()).toEqual([STATUS_VALIDATION]);
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed sidebar status write once with its cause', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const cause = new Error('disk full');
+    const { el, setStatus } = makeFull({
+      projects: [{ path: 'Projects/A.md', name: 'A' }],
+      setStatus: () => Promise.reject(cause),
+    });
+    const statusId = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]).id;
+
+    chooseStatus(openProjectMenu(el), 1);
+    await flushMicrotasks();
+
+    expect(setStatus).toHaveBeenCalledExactlyOnceWith('Projects/A.md', statusId);
+    expect(noticeTexts()).toEqual(['Could not change the project status. disk full']);
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Could not change the project status',
+      { path: 'Projects/A.md', statusId, cause },
+    );
+  });
+
+  it('refreshes and redraws after a sidebar status change without a Notice', async () => {
+    const { el, panel, refreshStore } = makeFull({
+      projects: [{ path: 'Projects/A.md', name: 'A' }],
+    });
+    const menu = openProjectMenu(el);
+    const render = vi.spyOn(
+      panel as unknown as { render_abyssPrivate(): void },
+      'render_abyssPrivate',
+    );
+
+    chooseStatus(menu, 1);
+    await flushMicrotasks();
+
+    expect(refreshStore).toHaveBeenCalledOnce();
+    expect(render).toHaveBeenCalledOnce();
+    expect(Notice).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed Open note from the sidebar project menu', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const app = await createAppWithFiles({ 'Projects/A.md': '' });
+    vi.spyOn(app.workspace, 'getLeaf').mockReturnValue({
+      openFile: vi.fn().mockRejectedValue(new Error('leaf closed')),
+    } as never);
+    const { el } = makeFull({ projects: [{ path: 'Projects/A.md', name: 'A' }], app });
+
+    clickNativeItem(nativeMenuItem(openProjectMenu(el), 'Open note'));
+    await flushMicrotasks();
+
+    expect(noticeTexts()).toEqual(['Could not open Projects/A.md. leaf closed']);
   });
 });

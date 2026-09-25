@@ -3,7 +3,7 @@ import {
   creationFailureMessage,
   ProjectCreationError,
   projectCreationFailureNotice,
-  withCreationFailureCause,
+  withFailureCause,
 } from '../src/projects/projectCreation';
 
 function partial(phase: 'status' | 'template', cause: unknown): ProjectCreationError {
@@ -25,10 +25,10 @@ describe('project creation wording', () => {
   });
 
   it('appends a cause only when it has text', () => {
-    expect(withCreationFailureCause('Could not add the tag group.', new Error('Disk full.'))).toBe(
+    expect(withFailureCause('Could not add the tag group.', new Error('Disk full.'))).toBe(
       'Could not add the tag group. Disk full.',
     );
-    expect(withCreationFailureCause('Could not add the tag group.', new Error('  '))).toBe(
+    expect(withFailureCause('Could not add the tag group.', new Error('  '))).toBe(
       'Could not add the tag group.',
     );
   });
@@ -48,13 +48,13 @@ describe('project creation wording', () => {
 
   it('adds no cause for a failure without text and keeps a string cause as it is', () => {
     // Turning any cause into text would end the sentence with "undefined" or "[object Object]".
-    expect(withCreationFailureCause('Could not add the tag group.', undefined)).toBe(
+    expect(withFailureCause('Could not add the tag group.', undefined)).toBe(
       'Could not add the tag group.',
     );
-    expect(withCreationFailureCause('Could not add the tag group.', {})).toBe(
+    expect(withFailureCause('Could not add the tag group.', {})).toBe(
       'Could not add the tag group.',
     );
-    expect(withCreationFailureCause('Could not add the tag group.', 'Disk full.')).toBe(
+    expect(withFailureCause('Could not add the tag group.', 'Disk full.')).toBe(
       'Could not add the tag group. Disk full.',
     );
     expect(projectCreationFailureNotice(undefined)).toBe('Could not create the project.');

@@ -388,7 +388,11 @@ export default defineConfig(
     plugins: { 'project-policy': { rules: { ambient: projectAmbientRule } } },
   },
   {
-    files: ['src/panels/projects/**/*.ts', 'src/panels/calendar/**/*.ts'],
+    files: [
+      'src/panels/projects/**/*.ts',
+      'src/panels/calendar/**/*.ts',
+      'src/ui/projectActions.ts',
+    ],
     rules: { 'project-policy/ambient': ['error', 'owner'] },
   },
   {

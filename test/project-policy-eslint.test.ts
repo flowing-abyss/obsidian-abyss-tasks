@@ -96,6 +96,19 @@ describe('project lexical policy', () => {
     ]);
   });
 
+  it('rejects a bare window in the shared project actions', async () => {
+    expect(await check('src/ui/projectActions.ts', 'void window;')).toEqual([
+      {
+        ruleId: 'project-policy/ambient',
+        messageId: 'owner',
+        line: 1,
+        column: 6,
+        endLine: 1,
+        endColumn: 12,
+      },
+    ]);
+  });
+
   it.each(['fetch', 'XMLHttpRequest', 'WebSocket', 'performance', 'globalThis', 'self', 'Date'])(
     'rejects pure capability escapes %s',
     async (name) => {

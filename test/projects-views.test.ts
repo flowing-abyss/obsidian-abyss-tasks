@@ -1,14 +1,16 @@
+import { Menu, Notice } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboardView';
 import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
 import { renderProgressBar } from '../src/panels/projects/progressBar';
 import { ProjectCreationError } from '../src/projects/projectCreation';
+import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { expectDefined, flushMicrotasks, freshContainer } from './helpers';
+import { createAppWithFiles, expectDefined, flushMicrotasks, freshContainer } from './helpers';
 
 const ACTIVE_ID = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]).id;
 
@@ -29,6 +31,15 @@ function proj(over: Partial<Project>): Project {
     },
     ...over,
   };
+}
+
+const STATUS_VALIDATION = 'Choose a project Status property in settings before changing statuses.';
+
+function spyOnNotices() {
+  return vi.spyOn(
+    Notice.prototype as unknown as { constructor__(message: unknown, duration?: number): void },
+    'constructor__',
+  );
 }
 
 describe('renderProgressBar', () => {
@@ -417,5 +428,67 @@ describe('ProjectsPanel dispatch', () => {
     expect(refresh).toHaveBeenCalledOnce();
     panel.destroy();
     el.remove();
+  });
+
+  it.each([
+    ['validation', new ProjectEditValidationError(STATUS_VALIDATION), STATUS_VALIDATION],
+    ['write', new Error('disk full'), 'Could not change the project status. disk full'],
+  ])('reports a %s failure from the dashboard status pill', async (_kind, error, message) => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const notices = spyOnNotices();
+    const refresh = vi.fn();
+    const store = Object.assign({}, stubStore, { refresh });
+    const manager = {
+      create: vi.fn(),
+      setStatus: vi.fn().mockRejectedValue(error),
+      setProperty: vi.fn(),
+    } as never;
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const panel = new ProjectsPanel(state, store, manager, DEFAULT_SETTINGS, null as never, {
+      projectProperties,
+    });
+    const el = freshContainer();
+    panel.mount(el);
+    try {
+      const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+      expectDefined(el.querySelector<HTMLButtonElement>('.abyss-status-pill')).click();
+      const menu = expectDefined(show.mock.instances[0]) as {
+        menuItems__: Array<{ onClick__: ((event: MouseEvent) => void) | null }>;
+      };
+      expectDefined(expectDefined(menu.menuItems__[1]).onClick__)(new MouseEvent('click'));
+      await flushMicrotasks();
+
+      expect(notices.mock.calls.map(([text]) => text)).toEqual([message]);
+      expect(refresh).not.toHaveBeenCalled();
+    } finally {
+      panel.destroy();
+    }
+  });
+
+  it('reports a failed open from the dashboard open button', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const notices = spyOnNotices();
+    const app = await createAppWithFiles({ 'Projects/A.md': '' });
+    vi.spyOn(app.workspace, 'getLeaf').mockReturnValue({
+      openFile: vi.fn().mockRejectedValue(new Error('leaf closed')),
+    } as never);
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, app, {
+      projectProperties,
+    });
+    const el = freshContainer();
+    panel.mount(el);
+    try {
+      expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-open-btn')).click();
+      await flushMicrotasks();
+
+      expect(notices.mock.calls.map(([text]) => text)).toEqual([
+        'Could not open Projects/A.md. leaf closed',
+      ]);
+    } finally {
+      panel.destroy();
+    }
   });
 });

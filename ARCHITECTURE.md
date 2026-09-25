@@ -445,7 +445,9 @@ collision or retry must not silently duplicate a project.
 
 Sidebar inline creation calls the same manager path without a recovery session. It opens the
 created note itself, retries only while no note exists, and reports a `ProjectCreationError` with
-the note's path. `projectCreation` owns the failure sentences both surfaces show.
+the note's path. `projectCreation` owns the failure sentences both surfaces show. `projectActions`
+owns the status-change and open-note failure sentences that the sidebar's project menu and the
+Projects view share. The overview's cell edits keep their own reporting.
 
 Status-definition renames share per-App metadata serialization with assignments and batches. A
 rename rechecks role, membership, and expected literal against fresh source, tracks owned note edits,
@@ -533,8 +535,9 @@ must extend these checks without creating another persistence path.
 
 [Project ESLint policy](eslint-project-policy.mts) rejects ambient capabilities in the pure-module
 roster in [eslint.config.mts](eslint.config.mts) and global document/window scheduling in project
-and calendar surfaces. Enroll new pure modules in that roster and supply explicit time; native
-surfaces retain their owning window and dispose pending work. These lexical checks complement
+and calendar surfaces and in the shared [project actions](src/ui/projectActions.ts), which join by
+a per-file entry. Enroll new pure modules in that roster and supply explicit time; native surfaces
+retain their owning window and dispose pending work. These lexical checks complement
 [owner-lifecycle tests](test/project-owner-lifecycle.test.ts); they do not establish transitive
 purity or native popout behavior.
 
