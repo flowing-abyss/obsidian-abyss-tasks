@@ -197,7 +197,7 @@ function oneLine(text: string): string {
 
 /**
  * One `path:line rule message` line per finding: each ESLint message, parse errors included, and
- * each stylelint warning and invalid option. A finding without a line takes line 0.
+ * each stylelint warning, parse error, and invalid option. A finding without a line takes line 0.
  */
 export function reviewFindings(
   eslintResults: readonly LintedFile[],
@@ -212,10 +212,13 @@ export function reviewFindings(
           `${relative(filePath)}:${line} ${ruleId ?? 'parse-error'} ${oneLine(message)}`,
       ),
     ),
-    ...stylelintResults.flatMap(({ source, warnings, invalidOptionWarnings }) => {
+    ...stylelintResults.flatMap(({ source, warnings, parseErrors, invalidOptionWarnings }) => {
       const file = source === undefined ? '<input>' : relative(source);
       return [
         ...warnings.map(({ line, rule, text }) => `${file}:${line} ${rule} ${oneLine(text)}`),
+        ...parseErrors.map(
+          ({ line, stylelintType, text }) => `${file}:${line} ${stylelintType} ${oneLine(text)}`,
+        ),
         ...invalidOptionWarnings.map(({ text }) => `${file}:0 invalid-option ${oneLine(text)}`),
       ];
     }),

@@ -229,12 +229,14 @@ describe('Store review configuration', () => {
         },
       ];
       const { results: stylelintResults } = await stylelint.lint({
-        code: '.abyss-a {\n  padding: 0 !important;\n}\n',
+        code: '.abyss-a {\n  padding: 0 !important;\n}\n.abyss-b : .abyss-c {\n  padding: 0;\n}\n',
         codeFilename: `${ROOT}/fixture.css`,
         config: {
           rules: {
             'declaration-no-important': true,
             'color-named': ['never', { unknownOption: true }],
+            // A rule that parses selectors, so stylelint reports the one it cannot parse.
+            'selector-pseudo-class-no-unknown': true,
           },
         },
       });
@@ -244,6 +246,7 @@ describe('Store review configuration', () => {
         'noisy.js:1 no-console Unexpected console statement.',
         '.ai/example.ts:0 parse-error Parsing error: .ai/example.ts was not found by the project service. See why.',
         'fixture.css:2 declaration-no-important Disallowed !important (declaration-no-important)',
+        'fixture.css:4 parseError Cannot parse selector (Error: Expected a pseudo-class or pseudo-element.)',
         'fixture.css:0 invalid-option Invalid option name "unknownOption" for rule "color-named"',
       ]);
     },
