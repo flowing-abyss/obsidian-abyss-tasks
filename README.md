@@ -4,7 +4,7 @@ A task management interface for Markdown tasks in Obsidian.
 
 Abyss Tasks reads the tasks written in your notes and brings them into one view. Pick a list or a
 tag on the left, work through its tasks in the middle, and edit the selected task on the right.
-Every change is written back to the task's own line in the note it came from.
+Every change is written back to your notes.
 
 ## Features
 
@@ -33,7 +33,7 @@ Abyss Tasks also comes with the
 
 1. Open the command palette and run **Abyss Tasks: Open view**. The view opens in a new tab, or
    comes forward if it is already open. You can drag its tab into a sidebar.
-2. Write tasks as Markdown checkboxes in any note, for example `- [ ] Call the bank 📅 2026-10-01`.
+2. Write tasks as `- [ ]` checkboxes in any note, for example `- [ ] Call the bank 📅 2026-10-01`.
    Dates, priorities, and repeat rules use the emoji format of the Tasks plugin.
 3. Switch between Tasks, Calendar, Projects, and Search with the buttons on the left edge.
 4. Add a task with the **Add task** button below the list, and select a task to edit its details.
