@@ -18,7 +18,15 @@ export function collapseLinks(input: string): string {
 export interface LinkToken {
   raw: string;
   type: 'wiki' | 'md';
+  /**
+   * A wiki target is trimmed, drops one trailing backslash, and can be empty (`[[\|b]]`). A
+   * Markdown target is the destination as written.
+   */
   target: string;
+  /**
+   * The wiki alias, trimmed, which can be empty (`[[a|]]`), or else the target without folder and
+   * extension. A Markdown display is the link text as written.
+   */
   display: string;
   index: number;
 }
@@ -29,97 +37,131 @@ function isEscaped(input: string, index: number): boolean {
   return slashCount % 2 === 1;
 }
 
+/** A Markdown link ends at an unescaped `)`, so none can start after the last one. */
+function markdownLinkScope(input: string): string {
+  let close = input.lastIndexOf(')');
+  while (close >= 0 && isEscaped(input, close)) close = input.lastIndexOf(')', close - 1);
+  return input.slice(0, close + 1);
+}
+
 function insideOrderedRange(
   at: number,
   ranges: readonly SourceRange[],
   cursor: { index: number },
 ): boolean {
-  while (cursor.index < ranges.length) {
-    const range = ranges[cursor.index];
-    if (range === undefined || range.to > at) break;
-    cursor.index++;
-  }
+  while ((ranges[cursor.index]?.to ?? Number.POSITIVE_INFINITY) <= at) cursor.index++;
   const range = ranges[cursor.index];
   return range !== undefined && at >= range.from && at < range.to;
 }
 
-function nonOverlappingTokens(candidates: readonly LinkToken[]): LinkToken[] {
-  const ordered = [...candidates].sort((left, right) => {
-    const indexOrder = left.index - right.index;
-    if (indexOrder !== 0) return indexOrder;
-    const lengthOrder = right.raw.length - left.raw.length;
-    return lengthOrder !== 0 ? lengthOrder : left.type.localeCompare(right.type);
-  });
+/** One match of a search; an embed or image has no token, because it is not a link. */
+interface LinkMatch {
+  readonly from: number;
+  readonly to: number;
+  readonly token: LinkToken | undefined;
+}
+
+/**
+ * Keeps each match that does not start inside an earlier kept match, and returns the links among
+ * them, so no link starts inside an embed or image. No two matches start at one index, because a
+ * wiki match starts with `[[` or `![[` and a Markdown link's text cannot start with `[`.
+ */
+function nonOverlappingTokens(matches: LinkMatch[]): LinkToken[] {
+  matches.sort((left, right) => left.from - right.from);
   const accepted: LinkToken[] = [];
   let acceptedTo = 0;
-  for (const candidate of ordered) {
-    if (candidate.index < acceptedTo) continue;
-    accepted.push(candidate);
-    acceptedTo = candidate.index + candidate.raw.length;
+  for (const match of matches) {
+    if (match.from < acceptedTo) continue;
+    acceptedTo = match.to;
+    if (match.token !== undefined) accepted.push(match.token);
   }
   return accepted;
 }
 
-function wikiLinkTokens(input: string, inlineCode: readonly SourceRange[]): LinkToken[] {
-  const tokens: LinkToken[] = [];
-  // `![` opens an image or embed, never a link; group 3 passes over it.
-  const wiki = /\[\[((?:\\.|[^|[\]])+)(?:\|((?:\\.|[^[\]])+))?\]\]|(!\[)/gu;
+/**
+ * Reads a wiki link's content as Obsidian does: the first `|` splits the target from the alias
+ * unless nothing comes before it, both parts are trimmed, and one backslash at the end of the
+ * target is dropped, which is how the table form `[[Note\|Alias]]` works.
+ */
+function wikiToken(raw: string, content: string, index: number): LinkToken {
+  const text = content.trim();
+  const pipe = text.indexOf('|');
+  const written = pipe > 0 ? text.slice(0, pipe).trim() : text;
+  const target = written.endsWith('\\') ? written.slice(0, -1).trim() : written;
+  const alias = pipe > 0 ? text.slice(pipe + 1).trim() : undefined;
+  return {
+    raw,
+    type: 'wiki',
+    target,
+    display: alias ?? target.replace(/\.[^.]*$/u, '').replace(/^.*\//u, ''),
+    index,
+  };
+}
+
+function markdownToken(raw: string, text: string, destination: string, index: number): LinkToken {
+  return { raw, type: 'md', target: destination, display: text, index };
+}
+
+function pushWikiMatches(
+  matches: LinkMatch[],
+  input: string,
+  inlineCode: readonly SourceRange[],
+): void {
+  // A wiki link runs to the first `]]` on its line and holds no `[[`; group 1 marks an embed.
+  // Group 3 passes over an escaped `\`, `[`, or `!`. The pattern is global and never matches
+  // empty text, so each search starts where the previous match ended.
+  const wiki = /(!?)\[\[((?:(?!\[\[)[^\r\n])+?)\]\]|(\\[\\[!])/gu;
   const rangeCursor = { index: 0 };
   let match: RegExpExecArray | null;
   while ((match = wiki.exec(input)) !== null) {
-    if (
-      match[3] !== undefined ||
-      isEscaped(input, match.index) ||
-      insideOrderedRange(match.index, inlineCode, rangeCursor)
-    ) {
+    if (match[3] !== undefined || insideOrderedRange(match.index, inlineCode, rangeCursor)) {
       continue;
     }
-    const target = match[1] ?? '';
-    const alias = match[2];
-    tokens.push({
-      raw: match[0],
-      type: 'wiki',
-      target,
-      display: alias ?? target.replace(/\.[^.]*$/u, '').replace(/^.*\//u, ''),
-      index: match.index,
+    matches.push({
+      from: match.index,
+      to: match.index + match[0].length,
+      token: match[1] === '!' ? undefined : wikiToken(match[0], match[2] ?? '', match.index),
     });
   }
-  return tokens;
 }
 
-function markdownLinkTokens(input: string, inlineCode: readonly SourceRange[]): LinkToken[] {
-  const tokens: LinkToken[] = [];
-  // `![` opens an image or embed, never a link; group 3 passes over it.
-  const markdown = /\[((?:\\.|[^[\]])+)\]\(((?:\\.|[^)])+)\)|(!\[)/gu;
+function pushMarkdownMatches(
+  matches: LinkMatch[],
+  input: string,
+  inlineCode: readonly SourceRange[],
+): void {
+  // A backslash always takes the next character, and a match that starts with `!` is an image.
+  // Group 3 passes over an escaped `\`, `[`, or `!`. The pattern is global and never matches
+  // empty text, so each search starts where the previous match ended.
+  const markdown = /!?\[((?:[^\\[\]]|\\[^])+)\]\(((?:[^\\)]|\\[^])+)\)|(\\[\\[!])/gu;
+  const scope = markdownLinkScope(input);
   const rangeCursor = { index: 0 };
   let match: RegExpExecArray | null;
-  while ((match = markdown.exec(input)) !== null) {
-    if (
-      match[3] !== undefined ||
-      isEscaped(input, match.index) ||
-      insideOrderedRange(match.index, inlineCode, rangeCursor)
-    ) {
+  while ((match = markdown.exec(scope)) !== null) {
+    if (match[3] !== undefined || insideOrderedRange(match.index, inlineCode, rangeCursor)) {
       continue;
     }
-    tokens.push({
-      raw: match[0],
-      type: 'md',
-      target: match[2] ?? '',
-      display: match[1] ?? '',
-      index: match.index,
+    matches.push({
+      from: match.index,
+      to: match.index + match[0].length,
+      token: match[0].startsWith('!')
+        ? undefined
+        : markdownToken(match[0], match[1] ?? '', match[2] ?? '', match.index),
     });
   }
-  return tokens;
 }
 
-/** Parse [[wiki]], [[wiki|alias]] and [md](url) links in document order. */
+/**
+ * Parse [[wiki]], [[wiki|alias]] and [md](url) links in document order. Embeds and images are not
+ * links, and no link starts inside one.
+ */
 export function parseLinks(input: string): LinkToken[] {
   if (!input.includes('[')) return [];
   const inlineCode = inlineCodeRanges(input);
-  return nonOverlappingTokens([
-    ...wikiLinkTokens(input, inlineCode),
-    ...markdownLinkTokens(input, inlineCode),
-  ]);
+  const matches: LinkMatch[] = [];
+  pushWikiMatches(matches, input, inlineCode);
+  pushMarkdownMatches(matches, input, inlineCode);
+  return nonOverlappingTokens(matches);
 }
 
 /** Return a link only when its markup occupies the complete value. */

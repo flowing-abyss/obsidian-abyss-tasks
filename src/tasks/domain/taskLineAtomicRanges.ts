@@ -42,7 +42,10 @@ export function inlineCodeRanges(source: string): readonly SourceRange[] {
   return ranges;
 }
 
-/** A link the task line reads; no task field may start inside it. */
+/**
+ * A link, embed, or image that no task field may start inside. The `raw` of an embed or image
+ * starts with `!`.
+ */
 export interface LinkRange extends SourceRange {
   readonly index: number;
   readonly raw: string;
@@ -58,7 +61,18 @@ function insideOrderedRange(
   return range !== undefined && at >= range.from && at < range.to;
 }
 
-/** Pushes the unescaped links outside inline code; group 3 of `link` passes over an image opener. */
+/** A Markdown link ends at an unescaped `)`, so none can start after the last one. */
+function markdownLinkScope(source: string): string {
+  let close = source.lastIndexOf(')');
+  while (close >= 0 && isEscaped(source, close)) close = source.lastIndexOf(')', close - 1);
+  return source.slice(0, close + 1);
+}
+
+/**
+ * Pushes each link, embed, and image that does not start in inline code. Group 3 passes over an
+ * escaped `\`, `[`, or `!`. The pattern is global and never matches empty text, so each search
+ * starts where the previous match ended.
+ */
 function pushLinkRanges(
   candidates: LinkRange[],
   input: string,
@@ -68,11 +82,7 @@ function pushLinkRanges(
   const cursor = { index: 0 };
   let match: RegExpExecArray | null;
   while ((match = link.exec(input)) !== null) {
-    if (
-      match[3] !== undefined ||
-      isEscaped(input, match.index) ||
-      insideOrderedRange(match.index, inlineCode, cursor)
-    ) {
+    if (match[3] !== undefined || insideOrderedRange(match.index, inlineCode, cursor)) {
       continue;
     }
     candidates.push({
@@ -84,27 +94,29 @@ function pushLinkRanges(
   }
 }
 
-/** Reads the links that no task field may start inside, in source order. */
+/**
+ * Reads the links, embeds, and images that no task field may start inside, in source order: each
+ * one that does not start inside an earlier one.
+ */
 export function parseLinkRanges(input: string): readonly LinkRange[] {
   if (!input.includes('[')) return [];
   const candidates: LinkRange[] = [];
   const inlineCode = inlineCodeRanges(input);
-  // `![` opens an image or embed, never a link; group 3 passes over it.
+  // A wiki link or embed runs to the first `]]` on its line and holds no `[[`.
+  pushLinkRanges(candidates, input, /(!?)\[\[((?:(?!\[\[)[^\r\n])+?)\]\]|(\\[\\[!])/gu, inlineCode);
+  // A backslash always takes the next character, and a Markdown link or image ends at a `)`.
   pushLinkRanges(
     candidates,
-    input,
-    /\[\[((?:\\.|[^|[\]])+)(?:\|((?:\\.|[^[\]])+))?\]\]|(!\[)/gu,
+    markdownLinkScope(input),
+    /!?\[((?:[^\\[\]]|\\[^])+)\]\(((?:[^\\)]|\\[^])+)\)|(\\[\\[!])/gu,
     inlineCode,
   );
-  pushLinkRanges(candidates, input, /\[((?:\\.|[^[\]])+)\]\(((?:\\.|[^)])+)\)|(!\[)/gu, inlineCode);
-  candidates.sort((left, right) => {
-    const indexOrder = left.index - right.index;
-    return indexOrder !== 0 ? indexOrder : right.raw.length - left.raw.length;
-  });
-  const ordered = candidates;
+  // No two ranges start at one index, because a wiki range starts with `[[` or `![[` and a
+  // Markdown link's text cannot start with `[`.
+  candidates.sort((left, right) => left.index - right.index);
   const accepted: LinkRange[] = [];
   let acceptedTo = 0;
-  for (const candidate of ordered) {
+  for (const candidate of candidates) {
     if (candidate.index < acceptedTo) continue;
     accepted.push(candidate);
     acceptedTo = candidate.to;

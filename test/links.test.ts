@@ -240,12 +240,6 @@ describe('image and embed openers', () => {
     ]);
   });
 
-  it('skips only the image opener before a wiki link', () => {
-    expect(parseLinks('![[[a]]')).toEqual([
-      { raw: '[[a]]', type: 'wiki', target: 'a', display: 'a', index: 2 },
-    ]);
-  });
-
   it('skips only the image opener before a Markdown link', () => {
     expect(parseLinks('![[a](b)')).toEqual([
       { raw: '[a](b)', type: 'md', target: 'b', display: 'a', index: 2 },
@@ -263,6 +257,309 @@ describe('image and embed openers', () => {
     // Four times the openers cost about 4x; a scan from every image opener costs 16x. The
     // threshold is their geometric mean, and interleaved pairs keep a CPU speed change to the
     // pair it splits.
+    expect(
+      medianInterleavedRatio({ small: () => parseLinks(small), large: () => parseLinks(large) }),
+    ).toBeLessThan(8);
+  });
+});
+
+function wikiToken(raw: string, target: string, display: string, index = 0): LinkToken {
+  return { raw, type: 'wiki', target, display, index };
+}
+
+function markdownToken(raw: string, target: string, display: string, index = 0): LinkToken {
+  return { raw, type: 'md', target, display, index };
+}
+
+const BACKSLASH = '\\';
+const LATEX_ALPHA = String.raw`\alpha`;
+const LATEX_BRACKETS = String.raw`\[x\] `;
+const escapes = (count: number, escaped: string): string => (BACKSLASH + escaped).repeat(count);
+const latexCommands = (count: number): string =>
+  Array.from({ length: count }, () => LATEX_ALPHA).join(' + ');
+
+describe('parseLinks reads wiki links as Obsidian does', () => {
+  // Obsidian 1.13.7 metadataCache readings from the SP1m probes (W: probe 1, V: probe 2, P3:
+  // probe 3). A wiki link runs to the first `]]` on its line and holds no `[[`. The display is the
+  // alias, or the target's basename when there is no alias. Each comment names the wrong reading
+  // the row catches.
+  it.each([
+    // W1: today an escaped `|` does not split (target and display `a\|b`).
+    [String.raw`[[a\|b]]`, [wikiToken(String.raw`[[a\|b]]`, 'a', 'b')]],
+    // W2: today the target keeps its trailing backslash (`a\\`).
+    [String.raw`[[a\\|b]]`, [wikiToken(String.raw`[[a\\|b]]`, 'a\\', 'b')]],
+    // W3: today the second `|` splits (target `a\|`, display `b`).
+    [String.raw`[[a\||b]]`, [wikiToken(String.raw`[[a\||b]]`, 'a', '|b')]],
+    // W4: today the target is `a\`; CommonMark escapes find no link.
+    [String.raw`[[a\]]`, [wikiToken(String.raw`[[a\]]`, 'a', 'a')]],
+    // W5: CommonMark escapes find no link; dropping the backslash from the alias gives `b`.
+    [String.raw`[[a|b\]]`, [wikiToken(String.raw`[[a|b\]]`, 'a', 'b\\')]],
+    // W6: today an empty alias does not split (target `a\\|`).
+    [String.raw`[[a\\|]]`, [wikiToken(String.raw`[[a\\|]]`, 'a\\', '')]],
+    // W7: CommonMark escapes stop at the single `[` and find no link.
+    [
+      String.raw`[[a\\[b]]`,
+      [wikiToken(String.raw`[[a\\[b]]`, String.raw`a\\[b`, String.raw`a\\[b`)],
+    ],
+    // W8: treating any backslash before `[[` as an escape finds no link.
+    [String.raw`\\[[x]]`, [wikiToken('[[x]]', 'x', 'x', 2)]],
+    // W9: not passing over the escaped `[` finds `[[x]]` at 1.
+    [String.raw`\[[x]]`, []],
+    // W10, W11: unescaping the content gives `x]y` and `a[b`.
+    [String.raw`[[x\]y]]`, [wikiToken(String.raw`[[x\]y]]`, String.raw`x\]y`, String.raw`x\]y`)]],
+    [String.raw`[[a\[b]]`, [wikiToken(String.raw`[[a\[b]]`, String.raw`a\[b`, String.raw`a\[b`)]],
+    // W12, V4: splitting at the last `|` gives the display `c`.
+    [String.raw`[[a|b\|c]]`, [wikiToken(String.raw`[[a|b\|c]]`, 'a', String.raw`b\|c`)]],
+    ['[[a|b|c]]', [wikiToken('[[a|b|c]]', 'a', 'b|c')]],
+    // V1, V2: today a single `]` or `[` stops the scan and finds no link.
+    ['[[a]b]]', [wikiToken('[[a]b]]', 'a]b', 'a]b')]],
+    ['[[a[b]]', [wikiToken('[[a[b]]', 'a[b', 'a[b')]],
+    // V3: letting the content hold `[[` reads `[[a [[b]]`.
+    ['[[a [[b]] c]]', [wikiToken('[[b]]', 'b', 'b', 4)]],
+    // V5: allowing empty content reads a link to nothing.
+    ['[[]]', []],
+    // V6: today nothing before the first `|` finds no link; splitting there gives target ``.
+    ['[[|b]]', [wikiToken('[[|b]]', '|b', '|b')]],
+    // V7: today an empty alias finds no link.
+    ['[[a|]]', [wikiToken('[[a|]]', 'a', '')]],
+    // V8: dropping every backslash gives `ab`.
+    [String.raw`[[a\b]]`, [wikiToken(String.raw`[[a\b]]`, String.raw`a\b`, String.raw`a\b`)]],
+    // V9: today an escaped `|` does not split (target `a\\\|b`).
+    [String.raw`[[a\\\|b]]`, [wikiToken(String.raw`[[a\\\|b]]`, String.raw`a\\`, 'b')]],
+    // V10: today the target keeps its trailing backslash (`a\\`).
+    [String.raw`[[a\\]]`, [wikiToken(String.raw`[[a\\]]`, 'a\\', 'a\\')]],
+    // V11: dropping every trailing backslash gives `a`; CommonMark escapes find no link.
+    [String.raw`[[a\\\]]`, [wikiToken(String.raw`[[a\\\]]`, String.raw`a\\`, String.raw`a\\`)]],
+    // V12, V38: a greedy scan runs to a later `]]`.
+    ['[[a]]]', [wikiToken('[[a]]', 'a', 'a')]],
+    ['[[a]]]]', [wikiToken('[[a]]', 'a', 'a')]],
+    // V13, V39: today the link starts at the last `[[` (`[[a]]`).
+    ['[[[a]]', [wikiToken('[[[a]]', '[a', '[a')]],
+    ['[[[[a]]]]', [wikiToken('[[[a]]', '[a', '[a', 1)]],
+    // V14: letting the content hold `[[` reads one link to `a]] [[b`.
+    ['[[a]] [[b]]', [wikiToken('[[a]]', 'a', 'a'), wikiToken('[[b]]', 'b', 'b', 6)]],
+    // V15, V40: a greedy scan runs to the last `]]` (display `b]]c`, `b]] `).
+    ['[[a|b]]c]]', [wikiToken('[[a|b]]', 'a', 'b')]],
+    ['[[a|b]] ]]', [wikiToken('[[a|b]]', 'a', 'b')]],
+    // V16: today an escaped `|` does not split (target `a\|b\|c`).
+    [String.raw`[[a\|b\|c]]`, [wikiToken(String.raw`[[a\|b\|c]]`, 'a', String.raw`b\|c`)]],
+    // V17: cutting the heading gives the target `a`.
+    ['[[a#h|b]]', [wikiToken('[[a#h|b]]', 'a#h', 'b')]],
+    // V18: today an escaped `|` does not split (target `a\|`).
+    [String.raw`[[a\|]]`, [wikiToken(String.raw`[[a\|]]`, 'a', '')]],
+    // V19, P3: today nothing is trimmed (target ` a `, display ` a`).
+    ['[[ a ]]', [wikiToken('[[ a ]]', 'a', 'a')]],
+    [String.raw`[[\.| a]]`, [wikiToken(String.raw`[[\.| a]]`, String.raw`\.`, 'a')]],
+    // V20: dropping the alias's trailing backslash too gives `b\`.
+    [String.raw`[[a\\|b\\]]`, [wikiToken(String.raw`[[a\\|b\\]]`, 'a\\', String.raw`b\\`)]],
+    // V21 to V23: today a single bracket in the alias finds no link.
+    ['[[a|[b]]', [wikiToken('[[a|[b]]', 'a', '[b')]],
+    ['[[a|b]c]]', [wikiToken('[[a|b]c]]', 'a', 'b]c')]],
+    ['[[a|b[c]]', [wikiToken('[[a|b[c]]', 'a', 'b[c')]],
+    // V24: dropping the backslash before testing for a blank target keeps `\|b` whole.
+    [String.raw`[[\|b]]`, [wikiToken(String.raw`[[\|b]]`, '', 'b')]],
+    // V25: today the target keeps its trailing backslash (`a\\\\`).
+    [String.raw`[[a\\\\|b]]`, [wikiToken(String.raw`[[a\\\\|b]]`, 'a\\\\\\', 'b')]],
+    // V26, V27: an escaped `]` does not close today, so the link runs on or is not found.
+    [String.raw`[[a]\]]`, [wikiToken(String.raw`[[a]\]]`, 'a]', 'a]')]],
+    [String.raw`[[a\]\]]]`, [wikiToken(String.raw`[[a\]\]]`, String.raw`a\]`, String.raw`a\]`)]],
+    // V28: preferring the wiki link reads `[[a]]` at 4.
+    ['[x]([[a]])', [markdownToken('[x]([[a]])', '[[a]]', 'x')]],
+    // V29: reading the Markdown form first loses the wiki link.
+    ['[[a]](b)', [wikiToken('[[a]]', 'a', 'a')]],
+    // V30: letting inline code hide the first `]]` reads `[[a \`]]\` b]]`.
+    ['[[a `]]` b]]', [wikiToken('[[a `]]', 'a `', 'a `')]],
+    // V31, V33, V35: unescaping the alias gives `b ] c`, `b[c`, and `b|`.
+    [String.raw`[[a|b \] c]]`, [wikiToken(String.raw`[[a|b \] c]]`, 'a', String.raw`b \] c`)]],
+    [String.raw`[[a|b\[c]]`, [wikiToken(String.raw`[[a|b\[c]]`, 'a', String.raw`b\[c`)]],
+    [String.raw`[[a|b\|]]`, [wikiToken(String.raw`[[a|b\|]]`, 'a', String.raw`b\|`)]],
+    // V32: unescaping gives `a[`.
+    [String.raw`[[a\[]]`, [wikiToken(String.raw`[[a\[]]`, String.raw`a\[`, String.raw`a\[`)]],
+    // V34: today the second `|` splits (target `a\|b`, display `c`).
+    [String.raw`[[a\|b|c]]`, [wikiToken(String.raw`[[a\|b|c]]`, 'a', 'b|c')]],
+    // V36, V37: unescaping gives `a.md` and `a#h`.
+    [String.raw`[[a\.md]]`, [wikiToken(String.raw`[[a\.md]]`, String.raw`a\.md`, 'a\\')]],
+    [String.raw`[[a\#h]]`, [wikiToken(String.raw`[[a\#h]]`, String.raw`a\#h`, String.raw`a\#h`)]],
+    // V41: today the link runs over the line break.
+    ['[[a\nb]]', []],
+    // P3: today a Markdown link `[( ]()` is read inside the wiki link.
+    ['[[[( ]()]]', [wikiToken('[[[( ]()]]', '[( ]()', '[( ]()')]],
+    // P3: the first `]]` closes; today the link runs to `[[\]]]`.
+    [String.raw`[[\]]]`, [wikiToken(String.raw`[[\]]`, '', '')]],
+    // P3: the target is trimmed again after the backslash drop; without that it is `a `.
+    [String.raw`[[a \| /]]`, [wikiToken(String.raw`[[a \| /]]`, 'a', '/')]],
+    // P3: the target is trimmed before the drop; without that it is `a! `.
+    ['[[a! |]]', [wikiToken('[[a! |]]', 'a!', '')]],
+    // P3: the `|` is found after trimming; finding it before splits at 1 and empties the target.
+    ['[[ |[]]', [wikiToken('[[ |[]]', '|[', '|[')]],
+    // Unprobed: the content refuses a carriage return as well as a line feed; master reads a link.
+    ['[[a\rb]]', []],
+  ])('reads %j', (source, expected) => {
+    expect(parseLinks(source)).toEqual(expected);
+  });
+});
+
+describe('parseLinks reads embeds as Obsidian does', () => {
+  it.each([
+    // W13: reading an embed as a link gives target `a`.
+    [String.raw`![[a\|b]]`, []],
+    // P3 `![[[)aa]]`: today skipping only `![` reads `[[a]]` at 2.
+    ['![[[a]]', []],
+    // P3 `[[![[b]]`: letting the content hold `[[` reads `[[![[b]]`.
+    ['[[![[b]]', []],
+    // P18: an escaped `!` opens no embed (probe 1 M7 for Markdown); today the `![` skip hides the
+    // link.
+    [String.raw`\![[a]]`, [wikiToken('[[a]]', 'a', 'a', 2)]],
+    // P19: a backslash pair before `!` leaves the embed; skipping only `\!` reads `[[a]]` at 3.
+    [String.raw`\\![[a]]`, []],
+    // P20: an escaped `[` opens nothing; not passing over it reads `[[a]]` at 2.
+    [String.raw`!\[[a]]`, []],
+    // SP1k's hand-over: the code span ends where the link starts, so the link is read, and the
+    // `![` inside the span opens nothing.
+    ['`![`[[a]]', [wikiToken('[[a]]', 'a', 'a', 4)]],
+  ])('reads %j', (source, expected) => {
+    expect(parseLinks(source)).toEqual(expected);
+  });
+
+  it('counts wiki links that single brackets and empty aliases no longer hide', () => {
+    expect(countLinksIn(['[[a]b]] [[a|]] ![[c]] [[d\nd]]'])).toBe(2);
+  });
+});
+
+describe('parseLinks reads Markdown links as Obsidian does', () => {
+  // Probe 1 (M): Markdown links follow CommonMark backslash escapes.
+  it.each([
+    // M1: today an escaped `]` closes the text (text `a\`).
+    [String.raw`[a\](b)`, []],
+    // M2: today an escaped `)` closes the destination (target `b\`).
+    [String.raw`[a](b\)`, []],
+    // M4: ignoring the parity of a backslash run finds no link.
+    [String.raw`[a\\](b)`, [markdownToken(String.raw`[a\\](b)`, 'b', String.raw`a\\`)]],
+    // M5: today the escaped lookalike `\[x](...)` hides the link.
+    [String.raw`\[x](a [y](b) c)`, [markdownToken('[y](b)', 'b', 'y', 7)]],
+    // M6: today one link runs to the destination `y [z](w`.
+    [String.raw`[x\](y [z](w)`, [markdownToken('[z](w)', 'w', 'z', 7)]],
+    // M7, P21: today and under part 1's option B, the `![` skip ignores the escaped `!`.
+    [String.raw`\![a](b)`, [markdownToken('[a](b)', 'b', 'a', 2)]],
+    // M9: today an escaped `)` closes the destination (target `u\\\`).
+    [String.raw`[t](u\\\)`, []],
+    // M10: today the text crosses an unescaped `]` (text `a\\]x`).
+    [String.raw`[a\\]x](b)`, []],
+    // Unprobed: a backslash pair escapes nothing after it; skipping only `\[` reads nothing.
+    [String.raw`\\[a](b)`, [markdownToken('[a](b)', 'b', 'a', 2)]],
+    // P22: a backslash pair before `!` leaves the image; skipping only `\!` reads `[a](b)` at 3.
+    [String.raw`\\![a](b)`, []],
+    // An image is never a link; reading its opener as a skip finds `[b](c)` in the destination.
+    // SP1q: CommonMark needs balanced parentheses in the destination, so this is no image there
+    // (the probe 4 P12 class).
+    ['![a]([b](c)', []],
+  ])('reads %j', (source, expected) => {
+    expect(parseLinks(source)).toEqual(expected);
+  });
+
+  // Obsidian reads these destinations differently (M3 and M8 hold a space; M11 and M12 decode to
+  // `b c`). The plugin keeps its destination grammar until SP1q, so a change here must be
+  // deliberate.
+  it.each([
+    [String.raw`[a](b\) c)`, [markdownToken(String.raw`[a](b\) c)`, String.raw`b\) c`, 'a')]],
+    ['[a](b c)', [markdownToken('[a](b c)', 'b c', 'a')]],
+    ['[a](<b c>)', [markdownToken('[a](<b c>)', '<b c>', 'a')]],
+    ['[a](b%20c)', [markdownToken('[a](b%20c)', 'b%20c', 'a')]],
+  ])('keeps the destination grammar of %j', (source, expected) => {
+    expect(parseLinks(source)).toEqual(expected);
+  });
+
+  // Obsidian reads a link with empty text, and CommonMark also one with an empty destination.
+  // The plugin reads neither until SP1q, which owns the Markdown link grammar.
+  it.each(['[](b)', '[a]()'])('reads no link in %j until SP1q', (source) => {
+    expect(parseLinks(source)).toEqual([]);
+  });
+});
+
+describe('parseLinks reads no link inside an embed or image', () => {
+  // Obsidian 1.13.7 readings from probe 4.
+  it.each([
+    // P11: an image's destination holds no link; master reads `[t](u)` at 6.
+    ['![a](x[t](u)y)', []],
+    // P14: master reads `[[b]]` at 5.
+    ['![a]([[b]])', []],
+    // P15: an embed holds no link; master reads `[a](b)` at 5.
+    ['![[x [a](b) y]]', []],
+    // P16, P17: a link after an image, whose alt text can be empty.
+    ['![a](b) [c](d)', [markdownToken('[c](d)', 'd', 'c', 8)]],
+    ['![](a.png) [c](d)', [markdownToken('[c](d)', 'd', 'c', 11)]],
+  ])('reads %j', (source, expected) => {
+    expect(parseLinks(source)).toEqual(expected);
+  });
+
+  it.each([
+    // P12: Obsidian reads no image, because the destination's `(` is unbalanced, and so reads
+    // `[t](u)` at 6.
+    [String.raw`![\[]([t](u)`, []],
+    // P13: Obsidian reads an image whose alt text holds brackets, and so no link.
+    ['![a [b](c) d](e.png)', [markdownToken('[b](c)', 'c', 'b', 4)]],
+  ])('reads %j as it is until SP1q', (source, expected) => {
+    expect(parseLinks(source)).toEqual(expected);
+  });
+});
+
+describe('pairAnchorsToTokens with Obsidian anchors', () => {
+  // Anchor text and data-href as Obsidian renders each probe case; today none of them pairs.
+  it.each([
+    [String.raw`[[a\|b]]`, { text: 'b', href: 'a' }],
+    [String.raw`[[a\||b]]`, { text: '|b', href: 'a' }],
+    ['[[ a ]]', { text: 'a', href: 'a' }],
+    ['[[[a]]', { text: '[a', href: '[a' }],
+    [String.raw`\![a](b)`, { text: 'a', href: 'b' }],
+  ])('pairs the anchor of %j to its token', (source, anchor) => {
+    expect(pairAnchorsToTokens([anchor], parseLinks(source))).toEqual([0]);
+  });
+});
+
+describe('parseLinks growth', () => {
+  it.each([
+    ['wiki target', (count: number) => `[[${escapes(count, 'a')}`],
+    ['wiki alias', (count: number) => `[[a|${escapes(count, 'a')}`],
+    ['Markdown text', (count: number) => `[${escapes(count, 'a')}`],
+    ['Markdown destination', (count: number) => `[a](${escapes(count, 'a')}`],
+    ['wiki pipe', (count: number) => `[[a${escapes(count, '|b')}`],
+    ['Markdown closer', (count: number) => `[a${escapes(count, '](b')}`],
+    ['interval', (count: number) => `Prove it on $[0, 1)$ with ${latexCommands(count)}`],
+  ] as const)('keeps escapes after an unclosed %s linear', (_case, source) => {
+    // Each further escape doubled the old work, so a regression fails within a few seconds.
+    const small = source(6);
+    const large = source(14);
+
+    expect(
+      medianInterleavedRatio({
+        small: () => countLinksIn([small]),
+        large: () => countLinksIn([large]),
+      }),
+    ).toBeLessThan(8);
+  });
+
+  it.each([
+    ['unclosed Markdown links', (count: number) => '[a](b '.repeat(count)],
+    [
+      'unclosed links before an escaped parenthesis',
+      (count: number) => `${'[a](b '.repeat(count)}${BACKSLASH})`,
+    ],
+    // The closing parenthesis keeps the escaped openers inside the searched text.
+    ['escaped openers', (count: number) => `[${escapes(count, '[')})`],
+    ['LaTeX brackets', (count: number) => `[${LATEX_BRACKETS.repeat(count)})`],
+    // A wiki scan stops at the next `[[` and at a line break, so each start scans a short way.
+    ['unclosed wiki links', (count: number) => '[[a'.repeat(count)],
+    ['unclosed embeds', (count: number) => '![['.repeat(count)],
+    ['unclosed wiki links on separate lines', (count: number) => '[[a]\n'.repeat(count)],
+    ['escaped brackets in a wiki link', (count: number) => `[[${escapes(count, '[')}`],
+    ['single closers in a wiki link', (count: number) => `[[${'a]'.repeat(count)}]`],
+    // Probe 4 P15: every link inside an embed is found and then dropped.
+    ['embeds that hold a link', (count: number) => '![[x [a](b) y]] '.repeat(count)],
+  ] as const)('avoids quadratic growth for repeated %s', (_case, source) => {
+    const small = source(500);
+    const large = source(2_000);
+
+    // Four times the text costs about 4x; quadratic work costs 16x.
     expect(
       medianInterleavedRatio({ small: () => parseLinks(small), large: () => parseLinks(large) }),
     ).toBeLessThan(8);

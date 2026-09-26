@@ -265,12 +265,18 @@ const WIKILINK_RE = /\[\[([^[\]]+)\]\]/gu;
 const MD_LINK_RE = /\[([^[\]]+)\]\(([^)]+)\)/gu;
 const BRACKETS_RE = /\[([^[\]]*)\]/gu;
 
+/** A Markdown link ends at a `)`, so the search stops at the last one. */
+function collapseMarkdownLinks(input: string): string {
+  const end = input.lastIndexOf(')') + 1;
+  return input.slice(0, end).replace(MD_LINK_RE, '🌐 $1') + input.slice(end);
+}
+
 function collapseLinks(input: string): string {
-  return input
-    .replace(WIKILINK_ALIAS_RE, '🔗$1')
-    .replace(WIKILINK_RE, (_match, link: string) => `🔗 ${link.replace(/\.[^.]*$/u, '')}`)
-    .replace(MD_LINK_RE, '🌐 $1')
-    .replace(BRACKETS_RE, '$1');
+  return collapseMarkdownLinks(
+    input
+      .replace(WIKILINK_ALIAS_RE, '🔗$1')
+      .replace(WIKILINK_RE, (_match, link: string) => `🔗 ${link.replace(/\.[^.]*$/u, '')}`),
+  ).replace(BRACKETS_RE, '$1');
 }
 
 function spliceSource(source: string, from: number, to: number, replacement: string): string {

@@ -1676,18 +1676,11 @@ describe('task line tag and link boundaries', () => {
     ['skips tags attached to a word', '- [ ] Pay x#y and é#x #ok', ['#ok']],
     ['skips a tag after an astral letter', `- [ ] ${mathBoldA}#x #ok`, ['#ok']],
     ['skips a tag after an emoji', `- [ ] Pay x#y and ${partyPopper}#party #ok/sub`, ['#ok/sub']],
-    ['reads a tag inside a wiki embed', '- [ ] ![[Note #tag]]', ['#tag']],
-    ['reads a tag inside a Markdown image', '- [ ] ![alt #tag](img.png)', ['#tag']],
-    ['hides a tag in a wiki link right after an image opener', '- [ ] ![[[Note #tag]]', []],
+    ['hides a tag in an embed whose content starts with `[`', '- [ ] ![[[Note #tag]]', []],
+    // Obsidian reads a tag inside Markdown link text (probe 4 P9); the tag grammar is SP1i's.
     ['hides a tag in a Markdown link right after an image opener', '- [ ] ![[a #t](b)', []],
   ])('%s', (_case, line, tags) => {
     expect(modelOf(line).tags).toEqual(tags);
-  });
-
-  it('does not make an image opener a link range', () => {
-    expect(modelOf('- [ ] ![alt #tag](img.png)').carriers).toEqual([
-      { kind: 'tag', from: 12, to: 16 },
-    ]);
   });
 
   it('stays linear on many unclosed images', () => {
@@ -1701,6 +1694,170 @@ describe('task line tag and link boundaries', () => {
       medianInterleavedRatio({
         small: () => parseTaskLineSourceModel(small),
         large: () => parseTaskLineSourceModel(large),
+      }),
+    ).toBeLessThan(8);
+  });
+});
+
+const BACKSLASH = '\\';
+const LATEX_ALPHA = String.raw`\alpha`;
+const LATEX_BRACKETS = String.raw`\[x\] `;
+const escapes = (count: number, escaped: string): string => (BACKSLASH + escaped).repeat(count);
+const latexCommands = (count: number): string =>
+  Array.from({ length: count }, () => LATEX_ALPHA).join(' + ');
+
+describe('task line embeds and images', () => {
+  const modelOf = (line: string) => expectDefined(parseTaskLineSourceModel(line));
+
+  // SP1k UI QA defect 3 and probe 4: today the tag becomes a task tag and is cut out of the title.
+  it.each([
+    ['a wiki embed (probe 4 P1, P3)', '- [ ] ![[Note #tag]]'],
+    ['a Markdown image (P2, P4)', '- [ ] ![alt #tag](img.png)'],
+    ['an embed alias', '- [ ] ![[Note|alias #tag]]'],
+    ['an embed alias in a table (P5)', String.raw`- [ ] ![[Note\|alias #tag]]`],
+    ['an image destination in angle brackets (P7)', '- [ ] ![alt](<img #tag.png>)'],
+    ['an embed that starts with `[`', '- [ ] ![[[Note #tag]]'],
+  ])('keeps a tag inside %s in the title', (_case, line) => {
+    const model = modelOf(line);
+
+    expect(model.tags).toEqual([]);
+    expect(model.markdownTitle).toBe(line.slice('- [ ] '.length));
+  });
+
+  // Probe 4: Obsidian reads these tags the same way.
+  it.each([
+    ['after an embed (P8)', '- [ ] ![[a]] #tag', ['#tag']],
+    ['in a wiki link to a heading (P10)', '- [ ] [[Note #tag]]', []],
+    // The plugin reads no image here because the alt text is empty, and Obsidian none because
+    // the destination holds a space. If SP1q accepts empty alt text, it must refuse the space.
+    ['in an image destination with a space (P6)', '- [ ] ![](a #tag.png)', ['#tag']],
+  ])('reads the tag %s as Obsidian does', (_case, line, tags) => {
+    expect(modelOf(line).tags).toEqual(tags);
+  });
+
+  // Today each field is read from inside the embed or image, and editing it rewrites the embed.
+  it.each([
+    ['due date', '- [ ] ![[Note 📅 2026-09-30]]', 'due'],
+    ['due date in alt text', '- [ ] ![alt 📅 2026-09-30](img.png)', 'due'],
+    ['priority', '- [ ] ![[Note ⏫]]', 'priority'],
+    ['duration', '- [ ] ![[Note ⏱️ 1h30m]]', 'duration'],
+    ['recurrence', '- [ ] ![alt 🔁 every day](img.png)', 'recurrence'],
+    ['task id', '- [ ] ![[Note 🆔 abc123]]', 'malformed-known'],
+  ] as const)('reads no %s inside an embed or image', (_case, line, kind) => {
+    const parsed = parse(line);
+
+    expect(spanText(parsed, kind)).toEqual([]);
+    expect(parsed.markdownTitle).toBe(line.slice('- [ ] '.length));
+    expectLosslessPartition(parsed);
+  });
+
+  it('still reads the tag and date after an embed', () => {
+    const parsed = parse('- [ ] Task ![[Note]] #tag 📅 2026-09-30');
+
+    expect(parsed.tags).toEqual(['#tag']);
+    expect(parsed.planning.due).toBe('2026-09-30');
+  });
+
+  it('ends a recurrence at an embed as it does at a link', () => {
+    // Today the recurrence runs over the embed and the rest of the title.
+    const parsed = parse('- [ ] 🔁 every day ![[image.png]] rest');
+
+    expect(parsed.recurrence).toBe('every day');
+    expect(parsed.markdownTitle).toBe('![[image.png]] rest');
+  });
+
+  it('makes an image one atomic title range', () => {
+    // Today the tag is a carrier inside the image.
+    expect(modelOf('- [ ] ![alt #tag](img.png)').carriers).toEqual([
+      { kind: 'title', from: 6, to: 26 },
+    ]);
+  });
+
+  it('removes no tag from inside an embed', () => {
+    // Today the edit rewrites the embed to `![[Note]]`.
+    expect(
+      codec.applyLineEdit('- [ ] ![[Note #tag]]', {
+        type: 'change-tags',
+        add: [],
+        remove: ['#tag'],
+      }),
+    ).toEqual({ type: 'unchanged', content: '- [ ] ![[Note #tag]]' });
+  });
+
+  it('adds a due date instead of rewriting one inside an embed', () => {
+    // Today the edit rewrites the embed to `![[Note 📅 2026-10-01]]`.
+    expect(
+      codec.applyLineEdit('- [ ] ![[Note 📅 2026-09-30]]', {
+        type: 'set-date',
+        field: 'due',
+        value: '2026-10-01',
+      }),
+    ).toEqual({ type: 'changed', content: '- [ ] ![[Note 📅 2026-09-30]] 📅 2026-10-01' });
+  });
+
+  it('keeps the whole embed in the title', () => {
+    const parsed = parse('- [ ] Review ![[Note #tag]] #real');
+
+    expect(parsed.title).toBe('Review !🔗 Note #tag');
+    expect(parsed.markdownTitle).toBe('Review ![[Note #tag]]');
+    expect(parsed.tags).toEqual(['#real']);
+  });
+});
+
+describe('TaskMarkdownCodec link reading', () => {
+  it.each([
+    ['a due date', String.raw`- [ ] Read [notes\](📅 2026-09-30)`, 'due', ['📅 2026-09-30']],
+    ['a tag', String.raw`- [ ] see [a\](b #tag)`, 'tag', ['#tag']],
+    // Today a wiki link to `a]b` is not read, so its tag is a task tag.
+    ['no tag inside a wiki link with a single `]`', '- [ ] [[a]b #tag]]', 'tag', []],
+  ] as const)('reads %s as Obsidian reads the links around it', (_case, source, kind, expected) => {
+    expect(spanText(parse(source), kind)).toEqual(expected);
+  });
+
+  it('keeps a due date inside a link that an escaped lookalike no longer hides', () => {
+    // SP1q: this relies on a destination with a space being a link, which Obsidian refuses.
+    expect(spanText(parse(String.raw`- [ ] \[x](a [y](📅 2026-09-30) c)`), 'due')).toEqual([]);
+  });
+
+  it.each([
+    ['a wiki target', (count: number) => `[[${escapes(count, 'a')}`],
+    ['a wiki alias', (count: number) => `[[a|${escapes(count, 'a')}`],
+    ['a Markdown text', (count: number) => `[${escapes(count, 'a')}`],
+    ['a Markdown destination', (count: number) => `[a](${escapes(count, 'a')}`],
+    ['an interval', (count: number) => `Prove it on $[0, 1)$ with ${latexCommands(count)}`],
+  ] as const)('keeps escapes after %s in a task line linear', (_case, body) => {
+    // A line has a fixed parse cost, so these sizes are larger than in test/links.test.ts.
+    const small = `- [ ] ${body(10)}`;
+    const large = `- [ ] ${body(18)}`;
+
+    expect(
+      medianInterleavedRatio({
+        small: () => codec.parseLine(small, location),
+        large: () => codec.parseLine(large, location),
+      }),
+    ).toBeLessThan(8);
+  });
+
+  it.each([
+    ['unclosed Markdown links', (count: number) => '[a](b '.repeat(count)],
+    [
+      'unclosed links before an escaped parenthesis',
+      (count: number) => `${'[a](b '.repeat(count)}${BACKSLASH})`,
+    ],
+    // The closing parenthesis keeps the escaped openers inside the searched text.
+    ['escaped openers', (count: number) => `[${escapes(count, '[')})`],
+    ['LaTeX brackets', (count: number) => `[${LATEX_BRACKETS.repeat(count)})`],
+    ['unclosed wiki links', (count: number) => '[[a'.repeat(count)],
+    ['unclosed embeds', (count: number) => '![['.repeat(count)],
+    ['escaped brackets in a wiki link', (count: number) => `[[${escapes(count, '[')}`],
+  ] as const)('avoids quadratic growth for repeated %s in a task line', (_case, body) => {
+    const small = `- [ ] ${body(500)}`;
+    const large = `- [ ] ${body(2_000)}`;
+
+    expect(
+      medianInterleavedRatio({
+        small: () => codec.parseLine(small, location),
+        large: () => codec.parseLine(large, location),
       }),
     ).toBeLessThan(8);
   });
