@@ -62,6 +62,7 @@ indentation.
 | [Task domain](src/tasks/domain/)                 | Immutable values, references, commands, status, recurrence, dates, and time                 | Domain and deterministic `rrule` boundary only                           |
 | [Task application](src/tasks/application/)       | Resolve and validate use cases; coordinate repository and destination ports                 | Domain and application ports; no concrete infrastructure or presentation |
 | [Task infrastructure](src/tasks/infrastructure/) | Obsidian adapters, index, canonical codec, block editing, location, and reference authority | Application, domain, shared Markdown helpers, and Obsidian; no UI        |
+| [Shared Markdown helpers](src/markdown/)         | Links, tags, inline code, note path patterns, and the preceding code point search           | Itself and the host Moment boundary; no task layer                       |
 | [Sidebar shell](src/views/PanelView.ts)          | AppState, responsive panels, navigation, shortcuts, and collaborator lifetimes              | Public task capabilities                                                 |
 
 The public task capabilities are `TaskQueryApi`, `TaskDependencyQueryApi`, `TimeTrackingQueryApi`,
@@ -578,9 +579,10 @@ would track, whether ESLint lints it or not; the
 negative lookbehind becomes an alternative that passes over the refused character or a check on
 the code point before the match, and an inner one becomes a class on the content's last
 character. The code point check lives in
-[`src/markdown/precedingCodePoint.ts`](src/markdown/precedingCodePoint.ts); the task domain keeps
-an identical copy of the search because it imports only its own modules and `rrule`, and
-[one suite](test/preceding-code-point.test.ts) runs both.
+[`src/markdown/precedingCodePoint.ts`](src/markdown/precedingCodePoint.ts). The task domain keeps
+an identical copy of the search because neither layer may import the other: the domain imports
+only its own modules and `rrule`, and shared Markdown helpers import no task layer.
+[One suite](test/preceding-code-point.test.ts) runs both.
 
 Authored and shipped CSS share the [CSS policy](tooling/css-policy.mjs) and Stylelint correctness
 rules. Styles stay scoped to plugin-owned surfaces and use semantic host tokens.
