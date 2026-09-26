@@ -249,7 +249,7 @@ describe('center dependency indicator DOM', () => {
     },
   );
 
-  it('names both columns on a selected card that shows an indicator and the delete button', async () => {
+  it("marks a selected card's main row for both the indicator and the delete button", async () => {
     const h = await harness('- [ ] Current ⛔ a\n- [ ] Schema 🆔 a\n');
     h.state.set('taskStack', [h.node('Current').root]);
     mountCenter(h);
