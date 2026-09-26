@@ -192,7 +192,7 @@ describe('CenterPanel task metadata styles', () => {
     expect(name).toContain('color: var(--text-muted)');
     expect(name).not.toContain('text-decoration');
     expect(name).not.toContain('text-underline');
-    expect(declarationsFor('.abyss-task-source-note--clickable:hover').trim()).toBe(
+    expect(declarationsFor('.abyss-task-source-note--clickable:hover')).toBe(
       'color: var(--text-muted);',
     );
     expect(
@@ -425,14 +425,14 @@ describe('CenterPanel task metadata styles', () => {
   it('keeps active dependency indicators between the checkbox and title at constrained widths', () => {
     const compact = atRuleBlock('@container abyss-task-list (max-width: 28rem)');
     const withIndicator = '.abyss-task-card-main-row--has-dep';
-    expect(declarationsForSource(compact, withIndicator).trim()).toBe(
+    expect(declarationsForSource(compact, withIndicator)).toBe(
       'grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr);',
     );
     expect(
       declarationsForSource(
         compact,
         '.abyss-task-card-main-row--has-dep.abyss-task-card-main-row--has-delete',
-      ).trim(),
+      ),
     ).toBe('grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr) 24px;');
     expect(
       declarationsForSource(compact, '.abyss-task-card-main-row > .abyss-status-control'),
