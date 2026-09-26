@@ -37,7 +37,7 @@
     "lint:css:artifact": "node tooling/check-css.mjs --artifact dist/styles.css"
   },
   "nano-staged": {
-    "*.{ts,mts,cts,js,mjs,cjs}": [
+    "*.{ts,cts,mts,tsx,js,cjs,mjs,jsx}": [
       "eslint --max-warnings 0 --no-warn-ignored --fix",
       "prettier --write"
     ],
