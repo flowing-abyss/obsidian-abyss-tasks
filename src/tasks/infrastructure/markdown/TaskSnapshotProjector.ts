@@ -19,12 +19,11 @@ import type {
   TaskSnapshot,
 } from '../../domain/types';
 import { durationMinutes, localDate, localTime } from '../../domain/validation';
-import { isTaskBlockBlankLine } from './taskBlockSyntax';
+import { isTaskBlockBlankLine, readTaskDescriptionLine } from './taskBlockSyntax';
 import type { TaskMarkdownCodec } from './TaskMarkdownCodec';
 
 const PREFIX_RE = /^([\s>]*)/u;
 const SUBTASK_RE = /^([\s>]*)- \[(.)\]\s+(.*)/u;
-const DESCRIPTION_RE = /^([\s>]*)- > (.*)/u;
 const ENTRY_ARROW = '→';
 const NO_TIME_ENTRIES: readonly TimeEntrySnapshot[] = Object.freeze([]);
 
@@ -213,9 +212,9 @@ function appendProjectedTimeEntry(target: ProjectedContentTarget): boolean {
 }
 
 function appendProjectedContent(target: ProjectedContentTarget): void {
-  const description = DESCRIPTION_RE.exec(target.source);
-  if (description != null) {
-    target.descriptions.push((description[2] ?? '').trim());
+  const description = readTaskDescriptionLine(target.source);
+  if (description !== undefined) {
+    target.descriptions.push(description.text);
     return;
   }
   if (appendProjectedTimeEntry(target)) return;

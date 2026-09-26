@@ -1,5 +1,6 @@
 import { TFile } from 'obsidian';
 import { describe, expect, it } from 'vitest';
+import { parseLinks } from '../../src/markdown/links';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import type { TaskEditCommand, TaskRepository } from '../../src/tasks/application/TaskRepository';
@@ -7,7 +8,12 @@ import { MINIMUM_TRACKED_MS } from '../../src/tasks/application/TimeTrackingServ
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import { atomDateTime } from '../../src/tasks/domain/commentTimestamp';
 import { timeEntryRef } from '../../src/tasks/domain/timeTracking';
-import type { TaskRef, TaskSnapshot } from '../../src/tasks/domain/types';
+import type {
+  SubtaskSnapshot,
+  TaskNodeRef,
+  TaskRef,
+  TaskSnapshot,
+} from '../../src/tasks/domain/types';
 import { durationMinutes, localDate, localTime } from '../../src/tasks/domain/validation';
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
@@ -71,6 +77,51 @@ async function makeHarness(adapter: Adapter, source: string): Promise<ContractHa
 function rootRef(harness: ContractHarness, source: string): TaskRef {
   return expectDefined(harness.snapshots(source)[0]).ref;
 }
+
+interface TaskNode {
+  readonly node: TaskSnapshot | SubtaskSnapshot;
+  readonly target: TaskNodeRef;
+}
+
+/** The root and every subtask of the first task in `content`, in source order. */
+function taskNodes(harness: ContractHarness, content: string): readonly TaskNode[] {
+  const root = expectDefined(harness.snapshots(content)[0]);
+  const nodes: TaskNode[] = [{ node: root, target: { type: 'task', ref: root.ref } }];
+  const visit = (subtasks: readonly SubtaskSnapshot[]): void => {
+    for (const subtask of subtasks) {
+      nodes.push({ node: subtask, target: { type: 'subtask', ref: subtask.ref } });
+      visit(subtask.subtasks);
+    }
+  };
+  visit(root.subtasks);
+  return nodes;
+}
+
+/** A task whose description holds `lines`. */
+function describedTask(lines: readonly string[]): string {
+  return ['- [ ] task', ...lines.map((line) => `  - > ${line}`), ''].join('\n');
+}
+
+// Description layouts: each link the panel numbers in them is edited in its own line, or refused
+// when it crosses a line break.
+const DESCRIPTION_LAYOUTS = [
+  ['a quoted task', '> - [ ] task\n>   - > one [[a]]\n>   - > two [b](c)\n'],
+  ['CRLF lines', '- [ ] task\r\n  - > one [[a]]\r\n  - > two [b](c)\r\n'],
+  ['lines around a subtask', '- [ ] task\n  - > one [[a]]\n  - [ ] child\n  - > two [[b]]\n'],
+  [
+    'a subtask with its own description',
+    '- [ ] task\n  - > root [[a]]\n  - [ ] child\n    - > one [[b]]\n    - > two [c](d)\n',
+  ],
+  ['a blank line between lines', '- [ ] task\n  - > one [[a]]\n\n  - > two [[b]]\n'],
+  [
+    'lines around a comment',
+    '- [ ] task\n  - > one [[a]]\n  - 2026-07-14: comment [[x]]\n  - > two [[b]]\n',
+  ],
+  ['tabs and extra spaces', '- [ ] task\n\t- >   one [[a]]   \n\t- > two [b](c)\n'],
+  ['an empty line', '- [ ] task\n  - > one [[a]]\n  - > \n  - > three [[b]]\n'],
+  ['a link across lines', '- [ ] task\n  - > see [a\n  - > b](c) and [[d]]\n'],
+  ['a task after a heading', '# Notes\n\n- [ ] task\n  - > one [[a]]\n  - > two [b](c)\n'],
+] as const;
 
 for (const adapter of ['in-memory', 'obsidian'] as const) {
   describe(`${adapter} TaskRepository shared contract`, () => {
@@ -1173,6 +1224,115 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         ],
       });
       expect(await h.read()).toBe(source);
+    });
+
+    describe('description link edits', () => {
+      // The panel numbers description links over the whole description, so a construct that
+      // crosses a line break must not shift which link an edit rewrites.
+      it.each([
+        [
+          'after inline code across lines',
+          ['`code', '[a](b)` [c](d)'],
+          0,
+          ['`code', '[a](b)` [[changed]]'],
+        ],
+        [
+          'after Markdown link text across lines',
+          ['[x](y)', '[a', 'b](c) [d](e)'],
+          2,
+          ['[x](y)', '[a', 'b](c) [[changed]]'],
+        ],
+        // A wiki link ends at its line, so these lines hold no wiki link.
+        [
+          'after a wiki link cut by a line break',
+          ['[[a', 'b]] [c](d)'],
+          0,
+          ['[[a', 'b]] [[changed]]'],
+        ],
+        [
+          'after an image across lines with a link in its destination',
+          ['![a', 'b](x[c](d)) [e](f)'],
+          0,
+          ['![a', 'b](x[c](d)) [[changed]]'],
+        ],
+        [
+          'on one of several lines',
+          ['one [[a]]', 'two [[b]] and [c](d)', 'three'],
+          2,
+          ['one [[a]]', 'two [[b]] and [[changed]]', 'three'],
+        ],
+        ['on the last line', ['one', 'two', 'three [[a]]'], 0, ['one', 'two', 'three [[changed]]']],
+      ])('edits the link %s', async (_case, lines, occurrence, expected) => {
+        const source = describedTask(lines);
+        const h = await makeHarness(adapter, source);
+
+        await expect(
+          h.repository.edit({
+            type: 'edit-link',
+            target: { type: 'description', target: { type: 'task', ref: rootRef(h, source) } },
+            occurrence,
+            replacement: '[[changed]]',
+          }),
+        ).resolves.toMatchObject({ type: 'committed', changed: true });
+        expect(await h.read()).toBe(describedTask(expected));
+      });
+
+      it('refuses a link that crosses a line break', async () => {
+        const source = describedTask(['[x](y)', '[a', 'b](c) [d](e)']);
+        const h = await makeHarness(adapter, source);
+
+        await expect(
+          h.repository.edit({
+            type: 'edit-link',
+            target: { type: 'description', target: { type: 'task', ref: rootRef(h, source) } },
+            occurrence: 1,
+            replacement: '[[changed]]',
+          }),
+        ).resolves.toEqual({
+          type: 'invalid',
+          issues: [{ code: 'invalid-target', field: 'link' }],
+        });
+        expect(await h.read()).toBe(source);
+      });
+
+      it.each(DESCRIPTION_LAYOUTS)(
+        'edits each link of %s where the panel shows it',
+        async (_layout, source) => {
+          const links = taskNodes(await makeHarness(adapter, source), source).flatMap(
+            ({ node }, nodeIndex) =>
+              parseLinks(node.description ?? '').map((link, occurrence) => ({
+                nodeIndex,
+                occurrence,
+                link,
+                description: node.description ?? '',
+              })),
+          );
+          expect(links).not.toEqual([]);
+          for (const { nodeIndex, occurrence, link, description } of links) {
+            const h = await makeHarness(adapter, source);
+            const result = await h.repository.edit({
+              type: 'edit-link',
+              target: {
+                type: 'description',
+                target: expectDefined(taskNodes(h, source)[nodeIndex]).target,
+              },
+              occurrence,
+              replacement: '[[changed]]',
+            });
+            if (link.raw.includes('\n')) {
+              expect(result).toMatchObject({ type: 'invalid' });
+              expect(await h.read()).toBe(source);
+              continue;
+            }
+            const before = description.slice(0, link.index);
+            const after = description.slice(link.index + link.raw.length);
+            expect(result).toMatchObject({ type: 'committed', changed: true });
+            expect(taskNodes(h, await h.read())[nodeIndex]?.node.description).toBe(
+              `${before}[[changed]]${after}`,
+            );
+          }
+        },
+      );
     });
 
     it('applies status stamps and reopening losslessly', async () => {

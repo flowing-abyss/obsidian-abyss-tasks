@@ -67,6 +67,12 @@ export type LineEditResult =
   | { readonly type: 'unchanged'; readonly content: string }
   | { readonly type: 'invalid'; readonly issues: readonly TaskIssue[] };
 
+/** A link in a line, named by the column it starts at and its text. */
+export interface LinkAtColumn {
+  readonly column: number;
+  readonly raw: string;
+}
+
 type PreparedLineEdit =
   | {
       readonly type: 'prepared';
@@ -622,6 +628,12 @@ function editTitleLink(
   return invalidTaskTarget('link');
 }
 
+/** Replaces the link text `link.raw` that starts at `link.column`. */
+function replaceLinkText(source: string, link: LinkAtColumn, replacement: string): LineEditResult {
+  const content = spliceSource(source, link.column, link.column + link.raw.length, replacement);
+  return content === source ? { type: 'unchanged', content: source } : { type: 'changed', content };
+}
+
 function statusTransitionIssues(parsed: ParsedTaskLine): readonly TaskIssue[] {
   const issues: TaskIssue[] = [];
   for (const field of ['completion', 'cancelled'] as const) {
@@ -1053,10 +1065,21 @@ export class TaskMarkdownCodec {
     if (!Number.isInteger(occurrence) || occurrence < 0) return invalidTaskTarget('link');
     const link = parseLinks(source)[occurrence];
     if (link == null) return invalidTaskTarget('link');
-    const content = spliceSource(source, link.index, link.index + link.raw.length, replacement);
-    return content === source
-      ? { type: 'unchanged', content: source }
-      : { type: 'changed', content };
+    return replaceLinkText(source, { column: link.index, raw: link.raw }, replacement);
+  }
+
+  /**
+   * Replaces the link that starts at `link.column`. A line that does not hold `link.raw` there is
+   * a conflict, so a link found in other text never rewrites another one.
+   */
+  editTextLinkAt(
+    source: string,
+    link: LinkAtColumn,
+    replacement: string,
+  ): LineEditResult | { readonly type: 'conflict' } {
+    if (!isSingleLineText(replacement)) return invalidTaskTarget('link');
+    if (!source.startsWith(link.raw, link.column)) return { type: 'conflict' };
+    return replaceLinkText(source, link, replacement);
   }
 
   /** Validates a complete candidate line before task creation writes it to the vault. */

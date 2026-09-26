@@ -480,6 +480,42 @@ describe('TaskMarkdownCodec', () => {
     });
   });
 
+  describe('editTextLinkAt', () => {
+    const source = '  - > see [[a]] and [b](c)';
+
+    it('replaces the link that starts at the column', () => {
+      expect(codec.editTextLinkAt(source, { column: 20, raw: '[b](c)' }, '[[d]]')).toEqual({
+        type: 'changed',
+        content: '  - > see [[a]] and [[d]]',
+      });
+    });
+
+    it('leaves the line unchanged when the replacement is the link', () => {
+      expect(codec.editTextLinkAt(source, { column: 10, raw: '[[a]]' }, '[[a]]')).toEqual({
+        type: 'unchanged',
+        content: source,
+      });
+    });
+
+    it.each([
+      ['a column one to the left', { column: 19, raw: '[b](c)' }],
+      ['a column one to the right', { column: 21, raw: '[b](c)' }],
+      ['a link the line does not hold', { column: 10, raw: '[[x]]' }],
+      ['a column past the end of the line', { column: 40, raw: '[b](c)' }],
+    ])('reports a conflict for %s', (_case, link) => {
+      expect(codec.editTextLinkAt(source, link, '[[d]]')).toEqual({ type: 'conflict' });
+    });
+
+    it('rejects a multiline replacement', () => {
+      expect(codec.editTextLinkAt(source, { column: 10, raw: '[[a]]' }, '[[d]]\ninjected')).toEqual(
+        {
+          type: 'invalid',
+          issues: [{ code: 'invalid-target', field: 'link' }],
+        },
+      );
+    });
+  });
+
   describe('full-line validation used by task creation', () => {
     it.each([
       ['ordinary metadata', '- [ ] Gym ⏰ 10:00 ⏱️ 1h 📅 2026-07-11'],

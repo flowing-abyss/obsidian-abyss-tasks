@@ -685,6 +685,40 @@ describe('TaskBlockEditor', () => {
   });
 });
 
+describe('TaskBlockEditor description links', () => {
+  const editor = new TaskBlockEditor();
+  const content = '- [ ] task\n  - > see [a\n  - > b](c) and [[d]]\n';
+  const block = expectDefined(editor.rootBlocks(content)[0]);
+  const target = {
+    relativeLine: 0,
+    lineCount: 3,
+    childRanges: [],
+    description: 'see [a\nb](c) and [[d]]',
+  };
+
+  it('finds a link in the line that holds it', () => {
+    expect(editor.descriptionLink(content, block, target, 1)).toEqual({
+      type: 'ready',
+      relativeLine: 2,
+      column: 16,
+      raw: '[[d]]',
+    });
+  });
+
+  it.each([
+    ['a link that crosses a line break', 0],
+    ['an occurrence past the last link', 2],
+  ])('refuses %s', (_case, occurrence) => {
+    expect(editor.descriptionLink(content, block, target, occurrence)).toEqual({ type: 'invalid' });
+  });
+
+  it("reports a conflict when the lines do not read as the target's description", () => {
+    expect(
+      editor.descriptionLink(content, block, { ...target, description: 'see [[d]]' }, 0),
+    ).toEqual({ type: 'conflict' });
+  });
+});
+
 describe('TaskLocator', () => {
   it('disambiguates identical blocks only with a matching current authority ref', () => {
     const authority = new TaskRefAuthority('duplicate-locator');
