@@ -108,7 +108,14 @@ describe('Store review configuration', () => {
     expect(isReviewCode(file)).toBe(code);
   });
 
-  it.each(['src/main.ts', 'vitest.config.ts', 'vitest.store.config.ts', 'package.json'])(
+  it.each([
+    'src/main.ts',
+    'vitest.config.ts',
+    'vitest.store.config.ts',
+    'package.json',
+    'src/build/example.ts',
+    'src/automation/example.ts',
+  ])(
     'lints %s',
     async (file) => {
       expect(await scanner.isPathIgnored(`${ROOT}/${file}`)).toBe(false);
@@ -124,6 +131,8 @@ describe('Store review configuration', () => {
     '.ai/scripts/pi/pnpm-policy.ts',
     '.ai/skills/writing-skills/render-graphs.cjs',
     'docs/example.ts',
+    'build/example.ts',
+    'automation/example.ts',
   ])(
     'skips %s',
     async (file) => {

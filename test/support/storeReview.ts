@@ -13,9 +13,9 @@ const [{ readFileSync, realpathSync }, path] = await loadNodeTools();
 
 /**
  * The names the community directory's review skips, from its FAQ
- * (https://docs.obsidian.md/community-directory/faq). A bare name is a file or a folder at any
- * depth, and a name with a wildcard is a file pattern at any depth. The vault configuration folder
- * is left out: no tracked path holds one, and leaving a skip out only makes the check stricter.
+ * (https://docs.obsidian.md/community-directory/faq). A bare name is a file or a folder, and a name
+ * with a wildcard is a file pattern. The vault configuration folder is left out: no tracked path
+ * holds one, and leaving a skip out only makes the check stricter.
  */
 const SCANNER_SKIPPED_NAMES = [
   'node_modules',
@@ -53,8 +53,29 @@ const SCANNER_SKIPPED_NAMES = [
   'l10n',
 ];
 
+/**
+ * The names the scanner skips at the repository root only, as eslint-plugin-obsidianmd's guide
+ * shows the scanner's configuration (docs/configuration.md at 0.4.2, "Community plugin scanner
+ * configuration"). It skips every other name at any depth. A name read more narrowly than the
+ * scanner reads it only makes the check stricter.
+ */
+const ROOT_SKIPPED_NAMES = new Set([
+  'node_modules',
+  'dist',
+  'build',
+  'pkg',
+  'test-vault',
+  '.pnpm-store',
+  'esbuild.config.mjs',
+  'version-bump.mjs',
+  'automation',
+  'e2e-tests',
+]);
+
 /** The review's skips as ESLint ignore patterns. ESLint skips everything inside a matched folder. */
-const SCANNER_IGNORES = SCANNER_SKIPPED_NAMES.map((name) => `**/${name}`);
+const SCANNER_IGNORES = SCANNER_SKIPPED_NAMES.map((name) =>
+  ROOT_SKIPPED_NAMES.has(name) ? name : `**/${name}`,
+);
 
 /**
  * The review's ESLint configuration: eslint-plugin-obsidianmd's recommended config as published,
