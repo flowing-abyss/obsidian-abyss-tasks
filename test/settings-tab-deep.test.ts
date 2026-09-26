@@ -1280,6 +1280,8 @@ describe('CalendarSettingsTab Hotkeys', () => {
     expect(screenReaderOnly).toContain('clip-path: inset(50%)');
     expect(screenReaderOnly).not.toContain('display: none');
     expect(screenReaderOnly).not.toContain('visibility: hidden');
+    expect(declarationsFor('.abyss-shortcut-validation-status:empty').trim()).toBe('margin: 0;');
+    expect(declarationsFor('.abyss-shortcut-save-feedback')).not.toContain('margin');
   });
 
   it.each([

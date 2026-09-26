@@ -631,6 +631,29 @@ describe('mountRecurrenceEditor', () => {
     expect(activeDocument.activeElement?.getAttribute('data-recurrence-focus-key')).toBe('clear');
   });
 
+  it('marks the label of each checked weekday, at render and on every change', () => {
+    const { container } = mount();
+    activeDocument.body.append(container);
+    click(button(container, 'Weekly'));
+    const checkedLabels = (): string[] =>
+      Array.from(
+        container.querySelectorAll<HTMLElement>('.abyss-recurrence-weekday.is-checked'),
+        (label) => expectDefined(label.querySelector('input')).value,
+      );
+    const monday = expectDefined(
+      container.querySelector<HTMLInputElement>('[name="recurrence-weekday"][value="Monday"]'),
+    );
+
+    expect(checkedLabels()).toEqual(['Sunday']);
+    monday.click();
+    expect(monday.checked).toBe(true);
+    expect(checkedLabels()).toEqual(['Monday', 'Sunday']);
+    monday.click();
+    expect(monday.checked).toBe(false);
+    expect(checkedLabels()).toEqual(['Sunday']);
+    expect(container.querySelector('input.is-checked')).toBeNull();
+  });
+
   it('turns presets into adaptive controls and one canonical preview line', () => {
     const { container } = mount();
 

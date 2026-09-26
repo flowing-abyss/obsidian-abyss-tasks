@@ -2056,8 +2056,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   padding: var(--size-4-3);
 }
 
-.abyss-shortcut-validation-status:empty,
-.abyss-shortcut-save-feedback:has(.abyss-shortcut-save-status:empty) {
+.abyss-shortcut-validation-status:empty {
   margin: 0;
 }
 
@@ -2789,11 +2788,11 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
     justify-content: flex-start;
   }
 
-  .abyss-task-card-main-row:has(> .abyss-dep-indicator) {
+  .abyss-task-card-main-row--has-dep {
     grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr);
   }
 
-  .abyss-task-card-main-row--has-delete:has(> .abyss-dep-indicator) {
+  .abyss-task-card-main-row--has-dep.abyss-task-card-main-row--has-delete {
     grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr) 24px;
   }
 
@@ -2802,15 +2801,15 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
     grid-row: 1;
   }
 
-  .abyss-task-card-main-row:has(> .abyss-dep-indicator) > .abyss-task-body {
+  .abyss-task-card-main-row--has-dep > .abyss-task-body {
     grid-column: 3;
   }
 
-  .abyss-task-card-main-row:has(> .abyss-dep-indicator) > .abyss-task-meta-right {
+  .abyss-task-card-main-row--has-dep > .abyss-task-meta-right {
     grid-column: 3 / -1;
   }
 
-  .abyss-task-card-main-row:has(> .abyss-dep-indicator) > .abyss-task-delete-btn {
+  .abyss-task-card-main-row--has-dep > .abyss-task-delete-btn {
     grid-column: 4;
   }
 
@@ -3843,7 +3842,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   cursor: pointer;
 }
 
-.abyss-recurrence-weekday:has(input:checked) {
+.abyss-recurrence-weekday.is-checked {
   background: var(--background-modifier-active-hover);
   color: var(--text-normal);
 }

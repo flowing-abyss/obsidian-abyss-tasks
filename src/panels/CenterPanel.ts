@@ -1199,7 +1199,10 @@ export class CenterPanel {
         this.openStatusMenu_abyssPrivate(event, task);
       },
     });
-    renderDependencyIndicator(mainRow, projection);
+    mainRow.toggleClass(
+      'abyss-task-card-main-row--has-dep',
+      renderDependencyIndicator(mainRow, projection) !== undefined,
+    );
   }
 
   private readonly dependenciesFor_abyssPrivate: TaskDependencyLookup = (task) => {
