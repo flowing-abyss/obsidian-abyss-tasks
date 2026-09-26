@@ -156,7 +156,9 @@ function checkMainJs(manifest) {
   }
 
   if (manifest?.isDesktopOnly === false) {
-    checkNoDesktopOnlyRequires(readFileSync('main.js', 'utf8'));
+    const mainJs = readFileSync('main.js', 'utf8');
+    checkNoDesktopOnlyRequires(mainJs);
+    checkNoLookbehinds(mainJs);
   }
 }
 
@@ -175,6 +177,15 @@ function checkNoDesktopOnlyRequires(mainJsContent) {
     errors.push(
       `main.js requires Node built-in module(s) [${[...found].join(', ')}] but manifest.json sets ` +
         '"isDesktopOnly": false — this will crash on mobile. Check for a desktop-only dependency that got bundled.',
+    );
+  }
+}
+
+function checkNoLookbehinds(mainJsContent) {
+  if (/\(\?<[=!]/u.test(mainJsContent)) {
+    errors.push(
+      'main.js contains a regular-expression lookbehind, which iOS before 16.4 cannot compile, ' +
+        'but manifest.json sets "isDesktopOnly": false.',
     );
   }
 }

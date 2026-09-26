@@ -1,14 +1,21 @@
 import { inlineCodeRanges, type SourceRange } from './inlineCode';
+import { matchesUnlessPreceded, replaceUnlessPreceded } from './precedingCodePoint';
 
 export type TagRenameScope = 'exact' | 'prefix';
 
 const TAG_CHARACTER = String.raw`(?:[\p{L}\p{M}\p{N}\p{Pc}-]|\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier}|\uFE0F|\u200D)`;
 const VALID_TAG = new RegExp(String.raw`^#${TAG_CHARACTER}+(?:/${TAG_CHARACTER}+)*$`, 'u');
 const ALL_NUMERIC = /^\p{N}+$/u;
+// `isHashMark` refuses a match right after another hash mark.
 const MARKDOWN_TAG = new RegExp(
-  String.raw`(?<!#)#${TAG_CHARACTER}+(?:/${TAG_CHARACTER}+)*(?!${TAG_CHARACTER}|/)`,
+  String.raw`#${TAG_CHARACTER}+(?:/${TAG_CHARACTER}+)*(?!${TAG_CHARACTER}|/)`,
   'gu',
 );
+
+/** A tag never starts right after another hash mark. */
+function isHashMark(previous: string): boolean {
+  return previous === '#';
+}
 
 export function normalizeTag(value: string): string | null {
   const trimmed = value.trim();
@@ -23,7 +30,8 @@ function escapeRegExp(value: string): string {
 
 function replacementPattern(tag: string, scope: TagRenameScope): RegExp {
   const suffix = scope === 'exact' ? `(?!${TAG_CHARACTER}|/)` : `(?=/|(?!${TAG_CHARACTER}|/))`;
-  return new RegExp(`(?<!#)${escapeRegExp(tag)}${suffix}`, 'gu');
+  // `transformBodyTags` passes `isHashMark`, which refuses a match right after another hash mark.
+  return new RegExp(`${escapeRegExp(tag)}${suffix}`, 'gu');
 }
 
 function replaceCanonicalTag(
@@ -1356,7 +1364,7 @@ export function extractMarkdownBodyTags(source: string): readonly string[] {
   const body = source.slice(frontmatter?.bodyFrom ?? 0);
   const excluded = markdownSemanticLiteralRanges(body);
   const tags = new Set<string>();
-  for (const match of body.matchAll(MARKDOWN_TAG)) {
+  for (const match of matchesUnlessPreceded(MARKDOWN_TAG, body, isHashMark)) {
     const tag = visibleMarkdownTag(body, match, excluded);
     if (tag !== null) tags.add(tag);
   }
@@ -1377,11 +1385,12 @@ function transformBodyTags(
 ): string {
   const excluded = markdownSemanticLiteralRanges(source);
   let rangeIndex = 0;
-  return source.replace(replacementPattern(oldTag, scope), (match, offset: number) => {
+  return replaceUnlessPreceded(replacementPattern(oldTag, scope), source, isHashMark, (match) => {
+    const offset = match.index;
     while (excluded[rangeIndex] != null && (excluded[rangeIndex]?.to ?? 0) <= offset) rangeIndex++;
     const range = excluded[rangeIndex];
     if ((range != null && range.from <= offset && offset < range.to) || isEscaped(source, offset)) {
-      return match;
+      return match[0];
     }
     return newTag;
   });

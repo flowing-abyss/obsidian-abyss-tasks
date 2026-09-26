@@ -20,6 +20,8 @@ it('rejects each task boundary by its stable rule name', async () => {
       .map(({ rule }) => rule.name)
       .sort((left, right) => left.localeCompare(right)),
   ).toEqual([
+    'markdown-imports-no-task-layer',
+    'markdown-imports-no-task-layer',
     'task-application-depends-inward',
     'task-domain-is-pure',
     'task-infrastructure-depends-inward',
@@ -31,12 +33,14 @@ it('rejects each task boundary by its stable rule name', async () => {
       .map(({ rule, from, to }) => `${rule.name}:${from}->${to}`)
       .sort((left, right) => left.localeCompare(right)),
   ).toEqual([
+    'markdown-imports-no-task-layer:src/markdown/invalid-task-entry.ts->src/tasks/index.ts',
+    'markdown-imports-no-task-layer:src/markdown/invalid-task-layer.ts->src/tasks/domain/value.ts',
     'task-application-depends-inward:src/tasks/application/invalid-outward.ts->src/tasks/infrastructure/valid.ts',
     'task-domain-is-pure:src/tasks/domain/invalid-external.ts->src/settings/value.ts',
     'task-infrastructure-depends-inward:src/tasks/infrastructure/invalid-outward.ts->src/settings/value.ts',
     'task-presentation-uses-public-entry:src/panels/invalid-deep-dynamic.ts->src/tasks/domain/value.ts',
     'task-presentation-uses-public-entry:src/panels/invalid-deep-type.ts->src/tasks/domain/value.ts',
   ]);
-  expect(graph.summary.error).toBe(5);
+  expect(graph.summary.error).toBe(7);
   expect(graph.summary.warn).toBe(0);
 });

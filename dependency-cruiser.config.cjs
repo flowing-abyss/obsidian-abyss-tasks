@@ -64,6 +64,14 @@ module.exports = {
       },
       to: { path: '^src/tasks/', pathNot: '^src/tasks/index\\.ts$' },
     },
+    {
+      name: 'markdown-imports-no-task-layer',
+      comment:
+        'Markdown helpers serve task infrastructure and presentation, so they import no task layer.',
+      severity: 'error',
+      from: { path: '^src/markdown/' },
+      to: { path: '^src/tasks/' },
+    },
   ],
   options: {
     doNotFollow: { path: 'node_modules' },

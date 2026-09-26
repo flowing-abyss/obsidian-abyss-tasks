@@ -62,6 +62,7 @@ indentation.
 | [Task domain](src/tasks/domain/)                 | Immutable values, references, commands, status, recurrence, dates, and time                 | Domain and deterministic `rrule` boundary only                           |
 | [Task application](src/tasks/application/)       | Resolve and validate use cases; coordinate repository and destination ports                 | Domain and application ports; no concrete infrastructure or presentation |
 | [Task infrastructure](src/tasks/infrastructure/) | Obsidian adapters, index, canonical codec, block editing, location, and reference authority | Application, domain, shared Markdown helpers, and Obsidian; no UI        |
+| [Shared Markdown helpers](src/markdown/)         | Links, tags, inline code, note path patterns, and the preceding code point search           | Itself and the host Moment boundary; no task layer                       |
 | [Sidebar shell](src/views/PanelView.ts)          | AppState, responsive panels, navigation, shortcuts, and collaborator lifetimes              | Public task capabilities                                                 |
 
 The public task capabilities are `TaskQueryApi`, `TaskDependencyQueryApi`, `TimeTrackingQueryApi`,
@@ -567,6 +568,21 @@ Linted files carry no ESLint or TypeScript directive comments, and the
 rules that ban them. It also holds every rule that eslint-plugin-obsidianmd's recommended config
 enables for plugin source at the same or a higher severity with the same options, apart from exact
 reviewed differences. A restricted-globals rule may name more globals than obsidianmd's.
+
+Repository code and the shipped bundle contain no regular-expression lookbehind, which iOS before
+16.4 cannot compile. These checks do not rely on eslint-plugin-obsidianmd's lookbehind rule, which
+misses negative lookbehinds in regex literals and every pattern built from a template. The
+[lint parity test](test/obsidian-lint-parity.test.ts) scans every code file that git tracks or
+would track, whether ESLint lints it or not; the
+[production artifact test](test/build-artifacts.test.ts) scans a fresh production build, and the
+[release check](release-check.mjs) scans the built `main.js` of a mobile manifest. A leading
+negative lookbehind becomes an alternative that passes over the refused character or a check on
+the code point before the match, and an inner one becomes a class on the content's last
+character. The code point check lives in
+[`src/markdown/precedingCodePoint.ts`](src/markdown/precedingCodePoint.ts). The task domain keeps
+an identical copy of the search because neither layer may import the other: the domain imports
+only its own modules and `rrule`, and shared Markdown helpers import no task layer.
+[One suite](test/preceding-code-point.test.ts) runs both.
 
 Authored and shipped CSS share the [CSS policy](tooling/css-policy.mjs) and Stylelint correctness
 rules. Styles stay scoped to plugin-owned surfaces and use semantic host tokens.

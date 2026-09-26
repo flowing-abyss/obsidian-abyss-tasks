@@ -50,7 +50,13 @@ function writeProducerFixture(budget: number, stylesheet: string): void {
   writeFileSync(path.join(fixtureDirectory, 'dist/styles.css'), 'stale');
 }
 
-function writeCheckerFixture(budget: number): void {
+interface CheckerFixtureOptions {
+  readonly isDesktopOnly?: boolean;
+  readonly mainJs?: string;
+}
+
+function writeCheckerFixture(budget: number, options: CheckerFixtureOptions = {}): void {
+  const { isDesktopOnly = true, mainJs = 'void 0;\n' } = options;
   writeFileSync(
     path.join(fixtureDirectory, 'package.json'),
     JSON.stringify({
@@ -68,14 +74,20 @@ function writeCheckerFixture(budget: number): void {
       version: '1.0.0',
       minAppVersion: '1.0.0',
       description: 'Fixture manifest for release checks.',
-      isDesktopOnly: true,
+      isDesktopOnly,
     }),
   );
   writeFileSync(path.join(fixtureDirectory, 'versions.json'), '{"1.0.0":"1.0.0"}');
-  writeFileSync(path.join(fixtureDirectory, 'main.js'), 'void 0;\n');
+  writeFileSync(path.join(fixtureDirectory, 'main.js'), mainJs);
   writeFileSync(path.join(fixtureDirectory, 'styles.css'), '.alpha { color: red; }\n');
   writeFileSync(path.join(fixtureDirectory, 'README.md'), '# Fixture\n');
   writeFileSync(path.join(fixtureDirectory, 'LICENSE'), 'Fixture license\n');
+}
+
+function writeAcceptedFixture(options: CheckerFixtureOptions = {}): void {
+  writeCheckerFixture(128, options);
+  mkdirSync(path.join(fixtureDirectory, 'dist'));
+  writeFileSync(path.join(fixtureDirectory, 'dist/styles.css'), '.a{}\n');
 }
 
 describe('release stylesheet producer', () => {
@@ -229,12 +241,6 @@ describe('release stylesheet checker', () => {
 });
 
 describe('release tag checker', () => {
-  function writeAcceptedFixture(): void {
-    writeCheckerFixture(128);
-    mkdirSync(path.join(fixtureDirectory, 'dist'));
-    writeFileSync(path.join(fixtureDirectory, 'dist/styles.css'), '.a{}\n');
-  }
-
   function releaseRef(tag: string): NodeJS.ProcessEnv {
     return {
       ...withoutAmbientReleaseRef(process.env),
@@ -261,6 +267,51 @@ describe('release tag checker', () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('release:check passed.');
+  });
+});
+
+describe('release main.js checker', () => {
+  const lookbehindMessage =
+    'main.js contains a regular-expression lookbehind, which iOS before 16.4 cannot compile, ' +
+    'but manifest.json sets "isDesktopOnly": false.';
+  const negativeLookbehind = `const pattern = /${['(?', '<!a)b'].join('')}/u;\n`;
+  const positiveLookbehind = `const pattern = /${['(?', '<=a)b'].join('')}/u;\n`;
+
+  it.each([
+    ['a negative', negativeLookbehind],
+    ['a positive', positiveLookbehind],
+  ])('rejects %s lookbehind in a mobile bundle', (_kind, mainJs) => {
+    writeAcceptedFixture({ isDesktopOnly: false, mainJs });
+
+    const result = runScript(CHECKER_PATH);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(lookbehindMessage);
+  });
+
+  it('rejects a Node built-in require in a mobile bundle', () => {
+    writeAcceptedFixture({ isDesktopOnly: false, mainJs: 'require("fs");\n' });
+
+    const result = runScript(CHECKER_PATH);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      'main.js requires Node built-in module(s) [fs] but manifest.json sets "isDesktopOnly": ' +
+        'false — this will crash on mobile. Check for a desktop-only dependency that got bundled.',
+    );
+  });
+
+  it.each([
+    ['a lookbehind in a desktop-only bundle', true, negativeLookbehind],
+    ['a named group in a mobile bundle', false, 'const pattern = /(?<name>a)/u;\n'],
+  ])('accepts %s', (_case, isDesktopOnly, mainJs) => {
+    writeAcceptedFixture({ isDesktopOnly, mainJs });
+
+    const result = runScript(CHECKER_PATH);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('release:check passed.');
+    expect(result.stderr).toBe('');
   });
 });
 
