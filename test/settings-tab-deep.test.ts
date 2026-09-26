@@ -11,6 +11,7 @@ import { discoveredPrefixGroupId, discoveredTagGroupId } from '../src/tags/effec
 import { TagManager } from '../src/tags/TagManager';
 import type { TaskSnapshot } from '../src/tasks';
 import {
+  cssDeclarationsFor,
   DataTransferStub,
   deferred,
   editSettingControl,
@@ -2512,11 +2513,22 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
   });
 
   it('lets the sorted drop marker override the group perimeter', () => {
+    const allowedEnd = '.abyss-project-table-row.is-drop-target.is-drop-end > td';
+    const refusedEnd = '.abyss-project-table-row.is-drop-disabled.is-drop-end > td';
+    for (const runEnd of [allowedEnd, refusedEnd]) {
+      expect(cssDeclarationsFor(css, runEnd).trim()).toBe(
+        'box-shadow: inset 0 -1px var(--abyss-project-drop-color, var(--interactive-accent));',
+      );
+    }
     expect(
       declarationsFor('.abyss-project-table-row.is-drop-target.is-drop-before > td'),
     ).toContain('inset 0 2px');
     expect(declarationsFor('.abyss-project-table-row.is-drop-target.is-drop-after > td')).toContain(
       'inset 0 -2px',
+    );
+    // The markers have the run end's specificity, so they come after it.
+    expect(css.indexOf(refusedEnd)).toBeLessThan(
+      css.indexOf('.abyss-project-table-row.is-drop-target.is-drop-before > td'),
     );
   });
 

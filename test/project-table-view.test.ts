@@ -114,6 +114,23 @@ function describedText(element: HTMLElement): string {
   return expectDefined(element.ownerDocument.getElementById(id)).textContent;
 }
 
+/**
+ * The rows that draw a drop run's bottom edge by the rule's original test: a project row with a drop
+ * state whose next row lacks that state.
+ */
+function dropRunEnds(host: HTMLElement): HTMLElement[] {
+  return Array.from(host.querySelectorAll<HTMLElement>('.abyss-project-table-row')).filter((row) =>
+    ['is-drop-target', 'is-drop-disabled'].some(
+      (state) =>
+        row.classList.contains(state) && row.nextElementSibling?.classList.contains(state) !== true,
+    ),
+  );
+}
+
+function markedDropEnds(host: HTMLElement): HTMLElement[] {
+  return Array.from(host.querySelectorAll<HTMLElement>('.is-drop-end'));
+}
+
 function rectangle(left: number, top: number, right: number, bottom: number): DOMRect {
   return { left, top, right, bottom, width: right - left, height: bottom - top } as DOMRect;
 }
@@ -330,7 +347,8 @@ describe('ProjectsTableView', () => {
     return { ...fixture, scroll, projects };
   }
 
-  it('fills a zero-size viewport on owner resize and does no work after destroy', () => {
+  /** Replaces `ResizeObserver` with one the test fires, and returns the function that fires it. */
+  function stubResizeObserver(): () => void {
     let resize: (() => void) | undefined;
     class TestResizeObserver {
       constructor(callback: ResizeObserverCallback) {
@@ -342,19 +360,26 @@ describe('ProjectsTableView', () => {
       disconnect(): void {}
     }
     vi.stubGlobal('ResizeObserver', TestResizeObserver);
+    return () => {
+      resize?.();
+    };
+  }
+
+  it('fills a zero-size viewport on owner resize and does no work after destroy', () => {
+    const resize = stubResizeObserver();
     const { host, view, projects, scroll } = largeTable();
     Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 0 });
     view.update(projects);
     expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
     Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 1700 });
-    resize?.();
+    resize();
     expect(host.querySelector('[data-project-path="Projects/P0049.md"]')).not.toBeNull();
     const table = expectDefined(host.querySelector('table'));
     destroyMountedView(view);
     const html = table.outerHTML;
     scroll.scrollTop = 10000;
     scroll.dispatchEvent(new Event('scroll'));
-    resize?.();
+    resize();
     expect(table.outerHTML).toBe(html);
     expect(table.querySelectorAll('.abyss-project-table-row')).toHaveLength(0);
   });
@@ -404,6 +429,58 @@ describe('ProjectsTableView', () => {
     scroll.dispatchEvent(new Event('scroll'));
     expect(host.querySelector('[data-project-path="Projects/P0499.md"]')).not.toBeNull();
     expect(scroll.scrollTop).toBeLessThan(18000);
+  });
+
+  it('keeps each drop run end where the original rule drew it while the window changes', () => {
+    const resize = stubResizeObserver();
+    const { host, scroll, view, config, projects } = largeTable(true);
+    const second = expectDefined(config.projects.statuses[1]).id;
+    view.update(
+      projects.map((candidate, index) =>
+        index < 3 ? candidate : { ...candidate, statusId: second },
+      ),
+    );
+    const expectRunEndsOfTheRule = (): void => {
+      expect(markedDropEnds(host)).toEqual(dropRunEnds(host));
+    };
+    const row = (name: string): HTMLElement =>
+      expectDefined(
+        host.querySelector<HTMLElement>(
+          `.abyss-project-table-row[data-project-path="Projects/${name}.md"]`,
+        ),
+      );
+    // The dragged row stays mounted while the window moves, so its own group shows two runs.
+    const source = row('P0003');
+    const data = transfer();
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    source.dispatchEvent(dragEvent('dragstart', data));
+    scroll.scrollTop = 3400;
+    scroll.dispatchEvent(new Event('scroll'));
+    row('P0100').dispatchEvent(dragEvent('dragover', data));
+    const ends = markedDropEnds(host);
+    expect(ends).toEqual([source, row('P0113')]);
+    for (const end of ends) {
+      expect(end.nextElementSibling?.classList.contains('abyss-project-table-spacer')).toBe(true);
+    }
+    expect(host.querySelector('.abyss-project-table-group-row')).toBeNull();
+    expectRunEndsOfTheRule();
+
+    // A taller window only adds rows, which carry no drop state, so the ends stay.
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 1700 });
+    resize();
+    expect(markedDropEnds(host)).toEqual(ends);
+    expectRunEndsOfTheRule();
+    // A window change that removes a row clears the whole preview until the next dragover.
+    scroll.scrollTop = 6800;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(host.querySelector('.is-drop-target, .is-drop-end')).toBeNull();
+    expectRunEndsOfTheRule();
+    row('P0200').dispatchEvent(dragEvent('dragover', data));
+    expect(markedDropEnds(host)).toHaveLength(2);
+    expectRunEndsOfTheRule();
+    source.dispatchEvent(dragEvent('dragend', data));
+    expect(host.querySelector('.is-drop-end')).toBeNull();
+    expectRunEndsOfTheRule();
   });
 
   it('clamps the viewport immediately when filtering from 500 projects to two', () => {
@@ -6523,6 +6600,7 @@ describe('ProjectsTableView', () => {
     expect(targetRows.every((row) => row.classList.contains('is-drop-target'))).toBe(true);
     expect(originalB.classList.contains('is-drop-after')).toBe(true);
     expect(originalC.classList.contains('is-drop-after')).toBe(false);
+    expect(markedDropEnds(host)).toEqual([originalB]);
 
     const observer = new MutationObserver(() => {});
     for (const row of [targetHeader, ...targetRows]) {
@@ -6543,6 +6621,7 @@ describe('ProjectsTableView', () => {
     );
     expect(host.querySelector('.is-drop-target')).toBeNull();
     expect(host.querySelector('.is-drop-before, .is-drop-after')).toBeNull();
+    expect(markedDropEnds(host)).toEqual([]);
     targetCell.dispatchEvent(dragEvent('dragover', data));
     view.refreshFields();
     expect(host.querySelector('.is-drop-target')).toBeNull();
@@ -6622,9 +6701,41 @@ describe('ProjectsTableView', () => {
     expect(targetGroup.classList.contains('is-drop-disabled')).toBe(true);
     expect(targetRows.every((row) => row.classList.contains('is-drop-disabled'))).toBe(true);
     expect(host.querySelector('.is-drop-before, .is-drop-after')).toBeNull();
+    expect(targetRows).toHaveLength(2);
+    expect(markedDropEnds(host)).toEqual([targetRows[1]]);
     destroyMountedView(view);
     expect(targetGroup.classList.contains('is-drop-disabled')).toBe(false);
     expect(targetRows.some((row) => row.classList.contains('is-drop-disabled'))).toBe(false);
+    expect(targetRows.some((row) => row.classList.contains('is-drop-end'))).toBe(false);
+  });
+
+  it('ends no run on a target group that shows no rows', () => {
+    const config = settings();
+    config.projects.table.groupBy = 'property:Owners';
+    config.projects.table.columns.push({ id: 'property:Owners', visible: true });
+    const { host } = mount(
+      [
+        project({ path: 'Projects/A.md', frontmatter: { Owners: ['A'] } }),
+        project({ path: 'Projects/B.md', frontmatter: { Owners: ['B'] } }),
+      ],
+      { settings: config, catalog: catalog([{ name: 'Owners', type: 'list' }]) },
+    );
+    const groupRow = (key: string): HTMLElement =>
+      expectDefined(
+        host.querySelector<HTMLElement>(`.abyss-project-table-group-row[data-group-key="${key}"]`),
+      );
+    expectDefined(groupRow('value:b').querySelector('td')).click();
+    expect(host.querySelector('.abyss-project-table-row[data-group-key="value:b"]')).toBeNull();
+    const source = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-row[data-group-key="value:a"]'),
+    );
+    const data = transfer();
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    source.dispatchEvent(dragEvent('dragstart', data));
+    groupRow('value:b').dispatchEvent(dragEvent('dragover', data));
+
+    expect(groupRow('value:b').classList.contains('is-drop-target')).toBe(true);
+    expect(markedDropEnds(host)).toEqual([]);
   });
 
   it('presents a project published before the background create promise resolves', async () => {
