@@ -30,7 +30,7 @@ function escapeRegExp(value: string): string {
 
 function replacementPattern(tag: string, scope: TagRenameScope): RegExp {
   const suffix = scope === 'exact' ? `(?!${TAG_CHARACTER}|/)` : `(?=/|(?!${TAG_CHARACTER}|/))`;
-  // `transformBodyTags` refuses a match right after another hash mark.
+  // `transformBodyTags` passes `isHashMark`, which refuses a match right after another hash mark.
   return new RegExp(`${escapeRegExp(tag)}${suffix}`, 'gu');
 }
 

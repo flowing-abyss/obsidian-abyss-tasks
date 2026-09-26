@@ -45,7 +45,8 @@ const LOOKBEHIND_TEXT = /\?<[=!]/u;
 
 /**
  * Every code file that git tracks or would track, linted or not, because the Store's review may
- * lint what the project config ignores. The directive ban keeps to tracked files, as before.
+ * lint what the project config ignores. The directive ban lists only the tracked code files that
+ * the project config lints (`lintedFiles`).
  */
 function repositoryCodeFiles(): string[] {
   return execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
@@ -265,7 +266,8 @@ describe('eslint-plugin-obsidianmd parity for plugin source', () => {
 });
 
 // eslint-plugin-obsidianmd's lookbehind rule misses negative lookbehind literals and every pattern
-// built from a template, so this row holds the rule's intent for every code file.
+// built from a template, so the first row holds the rule's intent for every code file, and the
+// second pins which lines the scan reports.
 describe('lookbehind-free code', () => {
   it('keeps regular-expression lookbehinds out of every code file', () => {
     // Named samples, two of them ignored by ESLint, prove that the scan listed and read files, and

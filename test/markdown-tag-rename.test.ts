@@ -6,7 +6,7 @@ describe('Markdown body tags after a hash mark', () => {
     expect(extractMarkdownBodyTags('##a #b')).toEqual(['#b']);
   });
 
-  it('keeps code, word, and tag neighbours on their own rules', () => {
+  it('reads a tag right after a letter or another tag, and skips one in inline code', () => {
     expect(extractMarkdownBodyTags('##a #b `#c` C#d #e#f')).toEqual(['#b', '#d', '#e', '#f']);
   });
 

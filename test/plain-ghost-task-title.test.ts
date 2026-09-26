@@ -12,7 +12,11 @@ describe('plainGhostTaskTitle', () => {
     ['keeps an escaped strike opener as text', '\\~~a~~', '~~a~~'],
     ['keeps an escaped code opener as text', '\\`a`', '`a`'],
     ['does not close a strong pair on an escaped delimiter', '**a\\** b**', 'a** b'],
-    ['applies both strong checks in one title', 'a \\**b** **c** `d\\` e`', 'a **b c** d` e'],
+    [
+      'keeps an escaped strong opener and does not close a code pair on an escaped delimiter',
+      'a \\**b** **c** `d\\` e`',
+      'a **b c** d` e',
+    ],
     ['keeps an escaped emphasis opener as text', '\\*a*', '*a*'],
     ['does not close an emphasis pair on an escaped delimiter', '*a\\* b*', '*a* b*'],
     [
