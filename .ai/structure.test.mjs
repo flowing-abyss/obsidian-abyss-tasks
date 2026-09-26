@@ -4,9 +4,9 @@
 // broken links, dangling formal skill references, and the specific hook
 // registrations this template actually depends on. It does not generally
 // check Markdown prose, workflow explanations, or hardcoded skill lists.
-// Only the setup.mjs rows about links it must replace or refuse use
-// fixtures: they build a small temporary checkout and leave this one's
-// links alone.
+// Only the setup.mjs rows about links it must replace or refuse build a
+// fixture checkout, a small temporary one that leaves this checkout's links
+// alone.
 
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
