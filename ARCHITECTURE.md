@@ -568,6 +568,20 @@ rules that ban them. It also holds every rule that eslint-plugin-obsidianmd's re
 enables for plugin source at the same or a higher severity with the same options, apart from exact
 reviewed differences. A restricted-globals rule may name more globals than obsidianmd's.
 
+Repository code and the shipped bundle contain no regular-expression lookbehind, which iOS before
+16.4 cannot compile. These checks do not rely on eslint-plugin-obsidianmd's lookbehind rule, which
+misses negative lookbehinds in regex literals and every pattern built from a template. The
+[lint parity test](test/obsidian-lint-parity.test.ts) scans every code file that git tracks or
+would track, whether ESLint lints it or not; the
+[production artifact test](test/build-artifacts.test.ts) scans a fresh production build, and the
+[release check](release-check.mjs) scans the built `main.js` of a mobile manifest. A leading
+negative lookbehind becomes an alternative that passes over the refused character or a check on
+the code point before the match, and an inner one becomes a class on the content's last
+character. The code point check lives in
+[`src/markdown/precedingCodePoint.ts`](src/markdown/precedingCodePoint.ts); the task domain keeps
+an identical copy of the search because it imports only itself, and
+[one suite](test/preceding-code-point.test.ts) runs both.
+
 Authored and shipped CSS share the [CSS policy](tooling/css-policy.mjs) and Stylelint correctness
 rules. Styles stay scoped to plugin-owned surfaces and use semantic host tokens.
 [CSS contracts](tooling/css-contracts.mjs) record token provenance, required compatibility

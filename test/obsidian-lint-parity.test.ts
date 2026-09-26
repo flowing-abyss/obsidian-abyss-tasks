@@ -36,6 +36,29 @@ async function lintedFiles(): Promise<string[]> {
 }
 const LINTED_FILES = await lintedFiles();
 
+/** A regular-expression lookbehind opener, which iOS before 16.4 cannot compile. */
+const LOOKBEHIND_OPENER = /\(\?<[=!]/u;
+
+/**
+ * Every code file that git tracks or would track, linted or not, because the Store's review may
+ * lint what the project config ignores. The directive ban keeps to tracked files, as before.
+ */
+function repositoryCodeFiles(): string[] {
+  return execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  })
+    .split('\0')
+    .filter((file) => CODE_EXTENSIONS.some((extension) => file.endsWith(extension)));
+}
+
+/** The 1-based `path:line` of each line of `text` that opens a lookbehind. */
+function lookbehindLines(path: string, text: string): string[] {
+  return text
+    .split(/\r?\n/u)
+    .flatMap((line, index) => (LOOKBEHIND_OPENER.test(line) ? [`${path}:${index + 1}`] : []));
+}
+
 /**
  * The directive ban every linted code file resolves: no ESLint directive at all, and no TypeScript
  * directive that silences a finding (`@ts-check` silences nothing).
@@ -234,6 +257,38 @@ describe('eslint-plugin-obsidianmd parity for plugin source', () => {
       '@typescript-eslint/no-unused-vars is a reviewed difference that no source file uses',
       '@typescript-eslint/restrict-template-expressions is a reviewed difference that no source file uses',
     ]);
+  });
+});
+
+// eslint-plugin-obsidianmd's lookbehind rule misses negative lookbehind literals and every pattern
+// built from a template, so this row holds the rule's intent for every code file.
+describe('lookbehind-free code', () => {
+  it('keeps regular-expression lookbehinds out of every code file', () => {
+    // Named samples, two of them ignored by ESLint, prove that the scan listed and read files.
+    const samples = [
+      'src/markdown/links.ts',
+      'test/obsidian-lint-parity.test.ts',
+      'release-check.mjs',
+      'esbuild.config.mjs',
+      '.ai/setup.mjs',
+    ];
+    const read = repositoryCodeFiles().flatMap((file) => {
+      const text = ts.sys.readFile(ts.sys.resolvePath(`${ROOT}/${file}`));
+      return text === undefined ? [] : [{ file, text }];
+    });
+
+    expect(read.map(({ file }) => file)).toEqual(expect.arrayContaining(samples));
+    expect(read.flatMap(({ file, text }) => lookbehindLines(file, text))).toEqual([]);
+  });
+
+  it('reports each line that opens a lookbehind and no other group', () => {
+    const text = [
+      `const negative = /${['(?', '<!a)b'].join('')}/u;`,
+      'const others = /(?<name>a)(?=b)(?!c)(?:d)/u;',
+      `const positive = /${['(?', '<=a)b'].join('')}/u;`,
+    ].join('\r\n');
+
+    expect(lookbehindLines('fixture.ts', text)).toEqual(['fixture.ts:1', 'fixture.ts:3']);
   });
 });
 

@@ -184,6 +184,13 @@ describe('production private member boundary', () => {
   );
 });
 
+/** Each lookbehind opener in `code` with the text around it, so a failure names its origin. */
+function lookbehindOpeners(code: string): string[] {
+  return [...code.matchAll(/\(\?<[=!]/gu)].map((match) =>
+    code.slice(Math.max(0, match.index - 40), match.index + 40),
+  );
+}
+
 describe('production JavaScript artifact', () => {
   let directory: string;
   let code: string;
@@ -224,6 +231,19 @@ describe('production JavaScript artifact', () => {
     expect(buildStatus, buildError).toBe(0);
     expect(Buffer.byteLength(code)).toBeLessThanOrEqual(pkg.release.mainJsBudgetBytes);
     expect(code).not.toContain(suffix);
+  });
+
+  it('ships no lookbehind, which iOS before 16.4 cannot compile', () => {
+    expect(lookbehindOpeners(code)).toEqual([]);
+  });
+
+  it('finds each lookbehind opener and no other group', () => {
+    const negative = ['(?', '<!a)'].join('');
+    const positive = ['(?', '<=b)'].join('');
+
+    expect(
+      lookbehindOpeners(`x=/${negative}c/u;y=/(?<name>d)(?=e)(?!f)(?:g)/u;z=/${positive}h/u`),
+    ).toHaveLength(2);
   });
 
   it('keeps lifecycle, task API, and persisted property names in the bundle', () => {
