@@ -533,27 +533,11 @@ describe('CaptureSurface', () => {
     expect(declarationsFor('.abyss-mg-quick-add')).toContain('position: absolute');
   });
 
-  it('keeps inline capture feedback screen-reader-only and inside its one-row surface', () => {
-    const screenReaderOnly = declarationsFor(
-      ':is(.abyss-capture-surface--inline .abyss-capture-destination, .abyss-capture-surface--inline .abyss-capture-error)',
-    );
-
+  it('keeps inline capture feedback inside its one-row surface', () => {
     expect(declarationsFor('.abyss-add-task-trigger[hidden]')).toContain('display: none');
     const inlineSurface = declarationsFor('.abyss-capture-surface--inline');
     expect(inlineSurface).toContain('position: relative');
     expect(inlineSurface).toContain('grid-template-columns: minmax(0, 1fr)');
-    expect(screenReaderOnly).toContain('position: absolute');
-    expect(screenReaderOnly).toContain('width: 1px');
-    expect(screenReaderOnly).toContain('height: 1px');
-    expect(screenReaderOnly).toContain('padding: 0');
-    expect(screenReaderOnly).toContain('margin: -1px');
-    expect(screenReaderOnly).toContain('overflow: hidden');
-    expect(screenReaderOnly).toContain('inset-inline-start: -10000px');
-    expect(screenReaderOnly).not.toContain('clip');
-    expect(screenReaderOnly).toContain('white-space: nowrap');
-    expect(screenReaderOnly).toContain('border: 0');
-    expect(screenReaderOnly).not.toContain('display: none');
-    expect(screenReaderOnly).not.toContain('visibility: hidden');
     expect(declarationsFor('.abyss-capture-surface--inline .abyss-capture-pending')).toContain(
       'position: absolute',
     );

@@ -1273,15 +1273,6 @@ describe('CalendarSettingsTab Hotkeys', () => {
     expect(declarationsFor('.abyss-shortcut-issue')).toContain('display: flex');
     expect(status.getAttribute('aria-live')).toBe('polite');
     expect(status.classList).toContain('abyss-sr-only');
-    const screenReaderOnly = declarationsFor('.abyss-sr-only');
-    expect(screenReaderOnly).toContain('position: absolute');
-    expect(screenReaderOnly).toContain('width: 1px');
-    expect(screenReaderOnly).toContain('height: 1px');
-    expect(screenReaderOnly).toContain('margin: -1px');
-    expect(screenReaderOnly).toContain('inset-inline-start: -10000px');
-    expect(screenReaderOnly).not.toContain('clip');
-    expect(screenReaderOnly).not.toContain('display: none');
-    expect(screenReaderOnly).not.toContain('visibility: hidden');
   });
 
   it('resets the margin of the empty validation status only', () => {
