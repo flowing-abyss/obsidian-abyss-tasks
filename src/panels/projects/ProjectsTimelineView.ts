@@ -292,6 +292,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   private scaleContextOrdinal_abyssPrivate: number | undefined;
   private fittedWindow_abyssPrivate: ProjectTimelineWindow | undefined;
   private selectedPath_abyssPrivate: string | undefined;
+  private editingMarks_abyssPrivate: HTMLElement[] = [];
   private hiddenScrollPosition_abyssPrivate: TimelineScrollPosition | undefined;
   private readonly scaleButtons_abyssPrivate = new Map<
     ProjectTimelineSettings['scale'],
@@ -427,6 +428,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     this.axisFrame_abyssPrivate = undefined;
     this.groups_abyssPrivate.clear();
     this.visibleCells_abyssPrivate = [];
+    this.editingMarks_abyssPrivate = [];
     this.root.remove();
   }
 
@@ -454,6 +456,23 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   syncSelectedProjectPath(path: string | undefined): void {
     this.selectedPath_abyssPrivate = path;
     this.syncSelectedRows_abyssPrivate();
+  }
+
+  /**
+   * Raises the row and the summary that hold an edited cell above their neighbours, so its editor
+   * can overlap them, and lowers the ones raised for the previous cell. A cell outside this
+   * timeline raises nothing.
+   */
+  setEditingCell(cell: HTMLElement | undefined): void {
+    for (const element of this.editingMarks_abyssPrivate) element.removeClass('is-cell-editing');
+    this.editingMarks_abyssPrivate = [];
+    if (cell === undefined || !this.root.contains(cell)) return;
+    for (const holder of ['.abyss-project-timeline-row', '.abyss-project-timeline-summary']) {
+      const element = cell.closest<HTMLElement>(holder);
+      if (element === null) continue;
+      element.addClass('is-cell-editing');
+      this.editingMarks_abyssPrivate.push(element);
+    }
   }
 
   retainedViewportState(): ProjectTimelineViewportState {

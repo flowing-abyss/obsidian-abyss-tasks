@@ -4718,6 +4718,7 @@ export class ProjectsTableView {
     anchor.prepend(editorHost);
     editorHost.toggleClass('is-expanded', field.id === 'description');
     cell.addClass('is-editing');
+    this.timelineView_abyssPrivate?.setEditingCell(cell);
     anchor.addClass('is-editor-anchor');
     let positionCleanup = (): void => {};
     const presets = this.editorPresets_abyssPrivate(field);
@@ -4777,6 +4778,7 @@ export class ProjectsTableView {
     anchor.removeClass('is-editor-anchor');
     if (anchor.hasClass('abyss-project-description-editor-anchor')) anchor.remove();
     cell.removeClass('is-editing');
+    this.timelineView_abyssPrivate?.setEditingCell(undefined);
   }
 
   private async saveEditorValue_abyssPrivate(

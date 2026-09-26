@@ -7595,12 +7595,12 @@ button.abyss-project-table-status-pill {
   white-space: normal;
 }
 
-.abyss-project-timeline-row:has(.abyss-project-timeline-cell.is-editing) {
+.abyss-project-timeline-row.is-cell-editing {
   position: relative;
   z-index: 6;
 }
 
-.abyss-project-timeline-summary:has(.abyss-project-timeline-cell.is-editing) {
+.abyss-project-timeline-summary.is-cell-editing {
   z-index: 7;
   overflow: visible;
 }
@@ -7706,10 +7706,6 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-timeline-progress .abyss-project-table-progress {
   gap: var(--size-2-3);
-}
-
-.abyss-project-timeline-progress:has(.abyss-project-progress-value:only-child) {
-  display: none;
 }
 
 .abyss-project-timeline-track {
