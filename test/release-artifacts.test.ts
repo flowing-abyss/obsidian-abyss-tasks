@@ -289,6 +289,18 @@ describe('release main.js checker', () => {
     expect(result.stderr).toContain(lookbehindMessage);
   });
 
+  it('rejects a Node built-in require in a mobile bundle', () => {
+    writeAcceptedFixture({ isDesktopOnly: false, mainJs: 'require("fs");\n' });
+
+    const result = runScript(CHECKER_PATH);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      'main.js requires Node built-in module(s) [fs] but manifest.json sets "isDesktopOnly": ' +
+        'false — this will crash on mobile. Check for a desktop-only dependency that got bundled.',
+    );
+  });
+
   it.each([
     ['a lookbehind in a desktop-only bundle', true, negativeLookbehind],
     ['a named group in a mobile bundle', false, 'const pattern = /(?<name>a)/u;\n'],
