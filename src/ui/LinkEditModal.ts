@@ -66,13 +66,13 @@ export class LinkEditModal extends Modal {
         .setButtonText('Save')
         .setCta()
         .onClick(() => {
-          this.onSave_abyssPrivate(
-            buildLinkRaw(
-              token.type,
-              this.target_abyssPrivate.trim(),
-              this.display_abyssPrivate.trim(),
-            ),
-          );
+          const target = this.target_abyssPrivate.trim();
+          const display = this.display_abyssPrivate.trim();
+          // A link rebuilt from unchanged fields can differ from its source, as `[[Note\|Alias]]`
+          // becomes `[[Note|Alias]]`, so Save writes only a link whose fields changed.
+          if (target !== token.target.trim() || display !== token.display.trim()) {
+            this.onSave_abyssPrivate(buildLinkRaw(token.type, target, display));
+          }
           this.close();
         }),
     );
