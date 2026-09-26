@@ -14,7 +14,7 @@ const ROOT = ts.sys.resolvePath(`${import.meta.dirname}/..`);
 const PROJECT_CONFIG = ts.sys.resolvePath(`${ROOT}/eslint.config.mts`);
 const ESLINT_COLD_START_TIMEOUT_MS = 30_000;
 const SOURCE_FILES = ts.sys.readDirectory(ts.sys.resolvePath(`${ROOT}/src`), ['.ts']);
-const CODE_EXTENSIONS = ['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs'];
+const CODE_EXTENSIONS = ['.ts', '.mts', '.cts', '.tsx', '.js', '.mjs', '.cjs', '.jsx'];
 const obsidianmdOnly = new ESLint({
   cwd: ROOT,
   overrideConfigFile: true,
