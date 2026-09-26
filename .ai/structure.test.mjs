@@ -307,11 +307,28 @@ for (const [what, place] of [
     'a dangling link to a path outside .ai/',
     (root) => placeLink(root, '.opencode/plugins/pnpm-policy.js', '../../outside/pnpm-policy.js'),
   ],
+  [
+    'a dangling link into a sibling .ai-old/',
+    (root) => placeLink(root, '.opencode/plugins/pnpm-policy.js', '../../.ai-old/configs/x'),
+  ],
+  [
+    'a dangling link that lives outside the checkout through a linked .opencode',
+    (root, t) => {
+      const outside = mkdtempSync(path.join(tmpdir(), 'ai-setup-outside-'));
+      t.after(() => rmSync(outside, { recursive: true, force: true }));
+      symlinkSync(outside, path.join(root, '.opencode'), 'dir');
+      placeLink(
+        outside,
+        'plugins/pnpm-policy.js',
+        '../../.ai/configs/.opencode/plugins/pnpm-policy.js',
+      );
+    },
+  ],
 ]) {
   test(`setup.mjs keeps ${what} at a link path as a conflict`, posixLinksOnly, (t) => {
     const root = makeCheckout(t);
     const linkPath = '.opencode/plugins/pnpm-policy.js';
-    place(root);
+    place(root, t);
     const before = describePath(root, linkPath);
 
     const result = runSetup(root);
