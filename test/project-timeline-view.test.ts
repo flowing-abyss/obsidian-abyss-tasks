@@ -596,7 +596,7 @@ describe('ProjectsTimelineView', () => {
     expect(hiddenStyle.position).toBe('absolute');
     expect(hiddenStyle.width).toBe('1px');
     expect(hiddenStyle.height).toBe('1px');
-    expect(hiddenStyle.clipPath).toBe('inset(50%)');
+    expect(hiddenStyle.insetInlineStart).toBe('-10000px');
     sheet.remove();
   });
 

@@ -2333,7 +2333,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip-path: inset(50%);
+  inset-inline-start: -10000px;
   white-space: nowrap;
   border: 0;
 }
@@ -2639,9 +2639,12 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   opacity: 1;
 }
 
+/* The chip's colour is its underline's colour. The icon and the name draw in the muted colour. */
 .abyss-task-source-note {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-faint);
+  text-decoration: underline;
+  text-underline-offset: 2px;
   display: inline-flex;
   align-items: center;
   gap: var(--size-2-1);
@@ -2652,6 +2655,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-task-source-note-icon {
+  color: var(--text-muted);
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -2667,10 +2671,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   max-width: 12rem;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-decoration: underline;
-  text-decoration-color: var(--text-faint);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
+  color: var(--text-muted);
 }
 
 .abyss-task-progress {
@@ -2972,7 +2973,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip-path: inset(50%);
+  inset-inline-start: -10000px;
   white-space: nowrap;
   border: 0;
 }
@@ -3641,7 +3642,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   grid-template-columns: 0.8em 0.9em max-content;
   align-items: center;
   justify-content: start;
-  column-gap: 0.35em;
+  gap: 0 0.35em;
   width: 100%;
   text-align: left;
   background: transparent;
@@ -5531,9 +5532,8 @@ body.abyss-modal-open .popover.hover-popover {
   opacity: 0.9;
 }
 
-.abyss-task-source-note--clickable:hover .abyss-task-source-note-name {
-  text-decoration: underline;
-  text-decoration-color: var(--text-muted);
+.abyss-task-source-note--clickable:hover {
+  color: var(--text-muted);
 }
 
 .abyss-cursor-pointer {
@@ -8725,7 +8725,7 @@ button.abyss-project-table-status-pill {
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip-path: inset(50%);
+  inset-inline-start: -10000px;
   white-space: nowrap;
   border: 0;
 }

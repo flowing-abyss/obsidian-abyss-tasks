@@ -548,7 +548,8 @@ describe('CaptureSurface', () => {
     expect(screenReaderOnly).toContain('padding: 0');
     expect(screenReaderOnly).toContain('margin: -1px');
     expect(screenReaderOnly).toContain('overflow: hidden');
-    expect(screenReaderOnly).toContain('clip-path: inset(50%)');
+    expect(screenReaderOnly).toContain('inset-inline-start: -10000px');
+    expect(screenReaderOnly).not.toContain('clip');
     expect(screenReaderOnly).toContain('white-space: nowrap');
     expect(screenReaderOnly).toContain('border: 0');
     expect(screenReaderOnly).not.toContain('display: none');

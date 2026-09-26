@@ -181,6 +181,25 @@ describe('CenterPanel task metadata styles', () => {
     expect(columnTag).toContain('line-height: var(--abyss-task-card-title-line)');
   });
 
+  it('underlines the source note name in the chip colour and draws the name muted', () => {
+    const chip = declarationsFor('.abyss-task-source-note');
+
+    expect(chip).toContain('color: var(--text-faint)');
+    expect(chip).toContain('text-decoration: underline');
+    expect(chip).toContain('text-underline-offset: 2px');
+    expect(declarationsFor('.abyss-task-source-note-icon')).toContain('color: var(--text-muted)');
+    const name = declarationsFor('.abyss-task-source-note-name');
+    expect(name).toContain('color: var(--text-muted)');
+    expect(name).not.toContain('text-decoration');
+    expect(name).not.toContain('text-underline');
+    expect(declarationsFor('.abyss-task-source-note--clickable:hover').trim()).toBe(
+      'color: var(--text-muted);',
+    );
+    expect(
+      declarationsFor('.abyss-task-source-note--clickable:hover .abyss-task-source-note-name'),
+    ).toBe('');
+  });
+
   it('keeps the description inside the title column without widening it', () => {
     const description = declarationsFor('.abyss-task-body > .abyss-task-desc');
     const body = declarationsFor('.abyss-task-body');
@@ -516,7 +535,8 @@ describe('Shared popover styles', () => {
     expect(priorityPopover).toContain('box-shadow: var(--shadow-s, none)');
     expect(priorityOption).toContain('grid-template-columns: 0.8em 0.9em max-content');
     expect(priorityOption).toContain('justify-content: start');
-    expect(priorityOption).toContain('column-gap: 0.35em');
+    expect(priorityOption).toContain('gap: 0 0.35em');
+    expect(priorityOption).not.toContain('column-gap');
     expect(priorityOption).toContain('padding: 0.5em 0.65em 0.5em 0.45em');
     expect(priorityOptionFlag).toContain('width: 0.9em');
     expect(priorityOptionFlag).toContain('justify-content: center');
