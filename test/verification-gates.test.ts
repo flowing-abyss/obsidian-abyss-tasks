@@ -83,6 +83,14 @@ describe('verification gates', () => {
     expect(result.commands).not.toContain('test');
   });
 
+  it('stops the full gate when the Store review lint fails', () => {
+    const result = runGate(scripts['verify'] ?? '', 'lint:store');
+
+    expect(result.status).not.toBe(0);
+    expect(result.commands).toContain('lint:store');
+    expect(result.commands).not.toContain('typecheck');
+  });
+
   it('stops when artifact CSS fails after fresh generation', () => {
     const result = runGate(scripts['verify'] ?? '', 'lint:css:artifact');
     expect(result.status).not.toBe(0);
@@ -99,6 +107,7 @@ describe('verification gates', () => {
       'format:check',
       'lint',
       'lint:css',
+      'lint:store',
       'typecheck',
       'arch',
       'deadcode',

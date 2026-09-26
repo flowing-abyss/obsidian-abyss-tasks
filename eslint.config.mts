@@ -8,7 +8,12 @@ import * as globals from 'globals';
 import tseslint from 'typescript-eslint';
 import { projectAmbientRule } from './eslint-project-policy.mts';
 
-const testFiles = ['test/**/*.ts', 'vitest.config.ts', 'vitest.bench.config.ts'];
+const testFiles = [
+  'test/**/*.ts',
+  'vitest.config.ts',
+  'vitest.bench.config.ts',
+  'vitest.store.config.ts',
+];
 const codeFiles = ['**/*.{ts,cts,mts,tsx,js,cjs,mjs,jsx}'];
 const metadataIncompatibleRules = Object.fromEntries(
   [

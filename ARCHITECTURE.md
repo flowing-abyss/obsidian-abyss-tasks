@@ -584,6 +584,19 @@ an identical copy of the search because neither layer may import the other: the 
 only its own modules and `rrule`, and shared Markdown helpers import no task layer.
 [One suite](test/preceding-code-point.test.ts) runs both.
 
+`pnpm lint:store` runs the community directory's published review rules in the full gate, as a
+[Vitest file](test/store/review-lint.test.ts) under its own config, outside the unit suite and its
+coverage: eslint-plugin-obsidianmd's recommended config, with the parser options its maintainers
+document for the scanner, over every code file that git tracks or would track and `package.json`,
+except the review's skip list, and stylelint-config-obsidianmd's rules at the browser baseline of
+the manifest's `minAppVersion` over every CSS file. Every message fails, parse errors included. It
+holds the review's published rules, not its private scanner, whose verdicts it can drift from. The
+[review configuration test](test/store-review.test.ts) pins that configuration, lints `styles.css`
+with the review's CSS rules, and checks the README's installation and usage sections and the rrule
+notice in the fast gate. The file lists come from one module,
+[`test/support/repositoryFiles.ts`](test/support/repositoryFiles.ts), which the lint parity test
+shares.
+
 Authored and shipped CSS share the [CSS policy](tooling/css-policy.mjs) and Stylelint correctness
 rules. Styles stay scoped to plugin-owned surfaces and use semantic host tokens.
 [CSS contracts](tooling/css-contracts.mjs) record token provenance, required compatibility
@@ -591,6 +604,9 @@ fallbacks, runtime-variable families, and exact reasoned exceptions. New dynamic
 consumers need finite contracts and tests tied to their source owners. Historical documentation
 supports minimum-version token decisions; it is not evidence of running that Obsidian version.
 The checks cover declared contracts, not computed inheritance, theme contrast, or native layout.
+Authored CSS also meets the review's CSS rules: no `:has()`, no `!important`, and no feature that
+the manifest's baseline supports only in part. Where a selector would read state from the DOM, the
+TypeScript that owns the state sets a state class.
 
 Update this document in the implementing commit when ownership, a public boundary, dependency
 direction, a critical data flow, persisted authority/migration, or a compatibility seam changes.
@@ -605,8 +621,9 @@ pnpm verify
 `pnpm verify` is the authoritative local, CI, and pre-push gate for architecture, formatting,
 lint, types, coverage, artifacts, release metadata, and dependency health. `pnpm verify:task`
 provides the fast lint, source CSS, types, architecture, and unit checks. The full gate checks
-authored `styles.css` with `pnpm lint:css`, then checks freshly generated `dist/styles.css` with
-`pnpm lint:css:artifact` after build and artifact generation. UI changes also require native
+authored `styles.css` with `pnpm lint:css` and the repository with the review's rules through
+`pnpm lint:store`, then checks freshly generated `dist/styles.css` with `pnpm lint:css:artifact`
+after build and artifact generation. UI changes also require native
 `dev-vault-tasks` interaction,
 screenshots, DOM evidence, and captured runtime errors, including constrained widths for layout
 changes. Follow [AGENTS.md](AGENTS.md) for the development-vault and integration workflow.
