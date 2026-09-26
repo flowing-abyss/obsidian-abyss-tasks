@@ -1989,6 +1989,7 @@ describe('PanelView', () => {
         state_abyssPrivate: AppState;
         panelNavigation_abyssPrivate: PanelNavigator;
       };
+      activeDocument.body.appendChild(view.containerEl);
       await app.vault.create('Source.md', '- [ ] Alpha #work\n');
       await flushMicrotasks();
       internals.panelNavigation_abyssPrivate.openList({ type: 'tag', tag: '#work' });
