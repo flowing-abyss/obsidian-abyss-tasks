@@ -436,21 +436,20 @@ describe('CenterPanel task metadata styles', () => {
     ).toBe('grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr) 24px;');
     expect(
       declarationsForSource(compact, '.abyss-task-card-main-row > .abyss-status-control'),
-    ).toContain('grid-column: 1');
+    ).toBe(['grid-column: 1;', 'grid-row: 1;'].join('\n'));
     const indicator = declarationsForSource(
       compact,
       '.abyss-task-card-main-row > .abyss-dep-indicator',
     );
-    expect(indicator).toContain('grid-column: 2');
-    expect(indicator).toContain('grid-row: 1');
-    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-body`)).toContain(
-      'grid-column: 3',
+    expect(indicator).toBe(['grid-column: 2;', 'grid-row: 1;'].join('\n'));
+    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-body`)).toBe(
+      'grid-column: 3;',
     );
-    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-meta-right`)).toContain(
-      'grid-column: 3 / -1',
+    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-meta-right`)).toBe(
+      'grid-column: 3 / -1;',
     );
-    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-delete-btn`)).toContain(
-      'grid-column: 4',
+    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-delete-btn`)).toBe(
+      'grid-column: 4;',
     );
   });
 

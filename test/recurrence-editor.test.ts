@@ -183,6 +183,31 @@ describe('mountRecurrenceEditor', () => {
     ]);
   });
 
+  it('keeps the reduced-motion rule for the repeat chip after every chip transition', () => {
+    const root = postcss.parse(css);
+    const offset = (rule: postcss.Rule): number => expectDefined(rule.source?.start).offset;
+    const chipTransitions: number[] = [];
+    root.walkRules((rule) => {
+      const transition = rule.nodes.some(
+        (node) => node.type === 'decl' && node.prop.startsWith('transition'),
+      );
+      if (transition && rule.selectors.includes('.abyss-chip')) chipTransitions.push(offset(rule));
+    });
+    const repeatChipStops: number[] = [];
+    root.walkAtRules('media', (media) => {
+      if (media.params !== '(prefers-reduced-motion: reduce)') return;
+      media.walkRules((rule) => {
+        if (rule.selectors.includes('.abyss-repeat-chip')) repeatChipStops.push(offset(rule));
+      });
+    });
+
+    // Both selectors are one class, so the rule that comes later sets the repeat chip's transition.
+    expect(chipTransitions).not.toEqual([]);
+    expect(repeatChipStops).toHaveLength(1);
+    const stop = expectDefined(repeatChipStops[0]);
+    for (const chip of chipTransitions) expect(chip).toBeLessThan(stop);
+  });
+
   it('presents presets and Custom as one pressed-state mode group', () => {
     const { container } = mount();
     const group = expectDefined(container.querySelector<HTMLElement>('.abyss-recurrence-presets'));
