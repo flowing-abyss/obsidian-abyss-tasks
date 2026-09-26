@@ -1282,6 +1282,9 @@ describe('CalendarSettingsTab Hotkeys', () => {
     expect(screenReaderOnly).not.toContain('clip');
     expect(screenReaderOnly).not.toContain('display: none');
     expect(screenReaderOnly).not.toContain('visibility: hidden');
+  });
+
+  it('resets the margin of the empty validation status only', () => {
     expect(declarationsFor('.abyss-shortcut-validation-status:empty').trim()).toBe('margin: 0;');
     expect(declarationsFor('.abyss-shortcut-save-feedback')).not.toContain('margin');
   });
