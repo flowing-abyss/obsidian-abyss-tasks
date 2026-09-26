@@ -1984,6 +1984,51 @@ describe('PanelView', () => {
       expect(internals.state_abyssPrivate.get('projectsPanel')).toEqual({ view: 'table' });
     });
 
+    it('places the filter chips right before the view-state button, in filter order', async () => {
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        panelNavigation_abyssPrivate: PanelNavigator;
+      };
+      await app.vault.create('Source.md', '- [ ] Alpha #work\n');
+      await flushMicrotasks();
+      internals.panelNavigation_abyssPrivate.openList({ type: 'tag', tag: '#work' });
+      internals.state_abyssPrivate.set('centerListViewState', {
+        ...internals.state_abyssPrivate.get('centerListViewState'),
+        filters: [
+          { type: 'file', filePath: 'Source.md' },
+          { type: 'tag', value: '#work' },
+        ],
+      });
+      await flushMicrotasks();
+      const controls = (): HTMLElement =>
+        expectDefined(
+          view.contentEl.querySelector<HTMLElement>('.abyss-center .abyss-center-controls'),
+        );
+      const chips = (): HTMLElement[] =>
+        Array.from(controls().querySelectorAll<HTMLElement>(':scope > .abyss-filter-chip'));
+      // The chips run in filter order straight into the view-state button.
+      const expectChipsBeforeViewButton = (labels: readonly string[]): void => {
+        const found = chips();
+        expect(
+          found.map((chip) => chip.querySelector('.abyss-filter-chip-label')?.textContent),
+        ).toEqual(labels);
+        for (const [index, chip] of found.entries()) {
+          expect(chip.nextElementSibling).toBe(
+            found[index + 1] ?? controls().querySelector(':scope > .abyss-view-state-btn'),
+          );
+        }
+      };
+
+      expectChipsBeforeViewButton(['📄 Source', '#work']);
+      expectDefined(
+        expectDefined(chips()[0]).querySelector<HTMLButtonElement>('.abyss-filter-chip-x'),
+      ).click();
+      await flushMicrotasks();
+
+      expectChipsBeforeViewButton(['#work']);
+      expect(view.contentEl.querySelector('.abyss-task-filter-chips')).toBeNull();
+    });
+
     it('keeps a file filter chip on the list on screen in step with a note rename', async () => {
       const internals = view as unknown as {
         state_abyssPrivate: AppState;

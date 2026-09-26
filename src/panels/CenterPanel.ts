@@ -220,7 +220,8 @@ export class CenterPanel {
     readonly key: string;
     readonly header: HTMLElement;
     readonly title: HTMLElement;
-    readonly chips: HTMLElement;
+    readonly controls: HTMLElement;
+    filterChips: HTMLElement[];
     readonly viewButton: HTMLButtonElement;
     readonly filterInput: HTMLInputElement;
     readonly scroll: HTMLElement;
@@ -891,17 +892,17 @@ export class CenterPanel {
     const header = this.el.createDiv({ cls: 'abyss-center-header' });
     const title = header.createEl('h2', { cls: 'abyss-center-title' });
     const controls = header.createDiv({ cls: 'abyss-center-controls' });
-    const chips = controls.createSpan({ cls: 'abyss-task-filter-chips' });
     const viewButton = this.renderViewStateButton_abyssPrivate(controls);
     const filterInput = this.renderTaskFilterInput_abyssPrivate(controls);
     this.onRenderTaskHeaderActions_abyssPrivate?.(header, title, controls);
     const scroll = this.el.createDiv({ cls: 'abyss-center-scroll' });
     const addBar = this.el.createDiv({ cls: 'abyss-add-task-bar' });
-    const shell = {
+    const shell: NonNullable<CenterPanel['taskShell_abyssPrivate']> = {
       key: this.activeListKey_abyssPrivate(),
       header,
       title,
-      chips,
+      controls,
+      filterChips: [],
       viewButton,
       filterInput,
       scroll,
@@ -915,8 +916,8 @@ export class CenterPanel {
     shell: NonNullable<CenterPanel['taskShell_abyssPrivate']>,
   ): void {
     shell.title.setText(this.getTitle_abyssPrivate());
-    shell.chips.empty();
-    this.renderPropertyChips_abyssPrivate(shell.chips);
+    for (const chip of shell.filterChips) chip.remove();
+    shell.filterChips = this.renderPropertyChips_abyssPrivate(shell.controls, shell.viewButton);
     const viewState = this.state_abyssPrivate.get('centerListViewState');
     shell.viewButton.toggleClass(
       'abyss-view-state-btn--active',
@@ -2179,11 +2180,17 @@ export class CenterPanel {
     );
   }
 
-  private renderPropertyChips_abyssPrivate(container: HTMLElement): void {
+  /** Renders one chip per filter right before the view-state button and returns them in order. */
+  private renderPropertyChips_abyssPrivate(
+    controls: HTMLElement,
+    viewButton: HTMLElement,
+  ): HTMLElement[] {
     const vs = this.state_abyssPrivate.get('centerListViewState');
+    const chips: HTMLElement[] = [];
     for (const [i, f] of vs.filters.entries()) {
       const label = this.filterChipLabel_abyssPrivate(f);
-      const chip = container.createSpan({ cls: 'abyss-filter-chip' });
+      const chip = controls.createSpan({ cls: 'abyss-filter-chip' });
+      viewButton.before(chip);
       chip.createSpan({ cls: 'abyss-filter-chip-label', text: label });
       const x = chip.createEl('button', { cls: 'abyss-filter-chip-x', text: '×' });
       const idx = i;
@@ -2191,7 +2198,9 @@ export class CenterPanel {
         e.stopPropagation();
         this.removePropertyFilter_abyssPrivate(idx);
       });
+      chips.push(chip);
     }
+    return chips;
   }
 
   private filterChipLabel_abyssPrivate(f: PropertyFilter): string {

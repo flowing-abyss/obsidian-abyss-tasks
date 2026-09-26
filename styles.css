@@ -5297,10 +5297,6 @@ body.abyss-modal-open .popover.hover-popover {
   position: relative;
 }
 
-.abyss-task-filter-chips {
-  display: contents;
-}
-
 /* ── Property filter chips ──────────────────────────────────── */
 .abyss-filter-chip {
   display: inline-flex;
