@@ -468,6 +468,7 @@ describe('ProjectsTableView', () => {
     // A taller window only adds rows, which carry no drop state, so the ends stay.
     Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 1700 });
     resize();
+    expect(row('P0113').nextElementSibling).toBe(row('P0114'));
     expect(markedDropEnds(host)).toEqual(ends);
     expectRunEndsOfTheRule();
     // A window change that removes a row clears the whole preview until the next dragover.
