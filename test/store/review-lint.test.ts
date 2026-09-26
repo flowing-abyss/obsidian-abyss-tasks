@@ -29,8 +29,12 @@ describe('Community directory review', () => {
       FILES.filter(isReviewCode).map((file) => `${ROOT}/${file}`),
     );
 
-    // A named sample proves that the pass listed and read the plugin's source.
-    expect(results.map(({ filePath }) => filePath)).toContain(`${ROOT}/src/main.ts`);
+    // Ignored files drop out of the results silently, so the files the pass must read are named
+    // without the configuration: every plugin source file and package.json.
+    const required = FILES.filter(
+      (file) => isReviewCode(file) && (file.startsWith('src/') || file === 'package.json'),
+    ).map((file) => `${ROOT}/${file}`);
+    expect(results.map(({ filePath }) => filePath)).toEqual(expect.arrayContaining(required));
     expect(reviewFindings(results, [], ROOT)).toEqual([]);
   });
 
