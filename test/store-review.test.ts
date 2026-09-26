@@ -115,6 +115,11 @@ describe('Store review configuration', () => {
     'package.json',
     'src/build/example.ts',
     'src/automation/example.ts',
+    'src/dist/example.ts',
+    'src/pkg/example.ts',
+    'src/test-vault/example.ts',
+    'src/.pnpm-store/example.ts',
+    'src/e2e-tests/example.ts',
   ])(
     'lints %s',
     async (file) => {
