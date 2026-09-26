@@ -1,3 +1,4 @@
+import { Platform } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { moment } from '../src/obsidianMoment';
 import {
@@ -66,12 +67,33 @@ describe('CalendarNavigationBar DOM', () => {
     expect(monthButton.getAttribute('aria-haspopup')).toBe('dialog');
     expect(monthButton.getAttribute('aria-expanded')).toBe('false');
     expect(h.button('.abyss-cal-nav-year').getAttribute('aria-haspopup')).toBe('dialog');
-    const right = expectDefined(nav.querySelector('.abyss-cal-nav-right'));
-    expect(expectDefined(right.querySelector('.abyss-cal-nav-today')).textContent).toBe('Today');
+    expect(h.button(':scope > .abyss-cal-nav > .abyss-cal-nav-today').textContent).toBe('Today');
     expect(
-      [...right.querySelectorAll('.abyss-cal-view-btn')].map((button) => button.textContent),
+      [...nav.querySelectorAll(':scope > .abyss-cal-view-switcher > .abyss-cal-view-btn')].map(
+        (button) => button.textContent,
+      ),
     ).toEqual(['Day', 'Week', 'Month']);
     expect(h.button('.abyss-cal-view-btn.is-active').textContent).toBe('Month');
+  });
+
+  // Obsidian flips the phone flag and its body class while the app runs, so the toolbar is one
+  // DOM everywhere and CSS lays it out.
+  it.each([false, true])('builds the same flat toolbar when the phone flag is %s', (phone) => {
+    Platform.isPhone = phone;
+    document.body.toggleClass('is-phone', phone);
+    try {
+      const nav = harness().button('.abyss-cal-nav');
+
+      expect([...nav.children].map((child) => child.className)).toEqual([
+        'abyss-cal-nav-left',
+        'abyss-cal-nav-today',
+        'abyss-cal-view-switcher',
+      ]);
+      expect(nav.querySelector('.abyss-cal-nav-right')).toBeNull();
+    } finally {
+      Platform.isPhone = false;
+      document.body.removeClass('is-phone');
+    }
   });
 
   it('marks the active view button for each view', () => {

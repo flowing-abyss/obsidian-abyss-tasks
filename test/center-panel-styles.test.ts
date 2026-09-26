@@ -267,17 +267,32 @@ describe('CenterPanel task metadata styles', () => {
     expect(nav).toContain('display: grid');
     expect(nav).toContain('grid-template-columns: minmax(0, 1fr) auto');
     expect(nav).toContain('overflow: visible');
-    expect(declarationsFor('body.is-phone .abyss-cal-nav-right')).toContain('display: contents');
     expect(declarationsFor('body.is-phone .abyss-cal-nav-left')).toContain('min-width: 0');
     // Scoped to the toolbar: the project timeline reuses these classes in its own control.
-    expect(declarationsFor('body.is-phone .abyss-cal-nav .abyss-cal-view-switcher')).toContain(
-      'grid-column: 1 / -1',
+    expect(declarationsFor('body.is-phone .abyss-cal-nav .abyss-cal-view-switcher')).toBe(
+      ['grid-column: 1 / -1;', 'margin-inline-start: 0;'].join('\n'),
+    );
+    // The phone grid places Today and the switcher itself, so neither keeps a desktop margin.
+    expect(declarationsFor('body.is-phone .abyss-cal-nav .abyss-cal-nav-today')).toContain(
+      ['padding: 0 var(--size-4-3);', 'margin-inline-start: 0;'].join('\n'),
     );
     expect(declarationsFor('body.is-phone .abyss-cal-nav .abyss-cal-view-btn')).toContain(
       'flex: 1 1 0',
     );
     expect(declarationsFor('body.is-phone .abyss-cal-view-switcher')).toBe('');
     expect(declarationsFor('body.is-phone .abyss-panel-view .abyss-cal-nav-today')).toBe('');
+  });
+
+  it('ends the desktop calendar toolbar with Today and the switcher as one group', () => {
+    expect(declarationsFor('.abyss-cal-nav > .abyss-cal-nav-today')).toBe(
+      'margin-inline-start: auto;',
+    );
+    expect(declarationsFor('.abyss-cal-nav > .abyss-cal-view-switcher')).toBe(
+      'margin-inline-start: calc(var(--size-4-1) - var(--size-4-2));',
+    );
+    const narrow = atRuleBlock('@container abyss-task-list (max-width: 30rem)');
+    expect(declarationsForSource(narrow, '.abyss-cal-nav-left')).toBe('max-width: 100%;');
+    expect(css).not.toContain('abyss-cal-nav-right');
   });
 
   it('dresses standalone phone controls as switcher cells', () => {

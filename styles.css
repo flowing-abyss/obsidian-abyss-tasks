@@ -3082,12 +3082,6 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   gap: var(--size-2-1);
 }
 
-.abyss-cal-nav-right {
-  display: flex;
-  align-items: center;
-  gap: var(--size-4-1);
-}
-
 .abyss-cal-nav-title-group {
   display: flex;
   align-items: center;
@@ -3152,6 +3146,16 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-cal-nav-today:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
+}
+
+/* Today and the view switcher end the toolbar as one group. Today's start margin takes the free
+   space, and the switcher sits one step closer to Today than the toolbar gap. */
+.abyss-cal-nav > .abyss-cal-nav-today {
+  margin-inline-start: auto;
+}
+
+.abyss-cal-nav > .abyss-cal-view-switcher {
+  margin-inline-start: calc(var(--size-4-1) - var(--size-4-2));
 }
 
 :is(.abyss-cal-view-switcher, .abyss-project-overview-switcher) {
@@ -8734,13 +8738,8 @@ button.abyss-project-table-status-pill {
     scrollbar-width: none;
   }
 
-  .abyss-cal-nav-left,
-  .abyss-cal-nav-right {
+  .abyss-cal-nav-left {
     max-width: 100%;
-  }
-
-  .abyss-cal-nav-right {
-    margin-inline-start: auto;
   }
 
   .abyss-center .abyss-calendar-capture-feedback {
@@ -8787,10 +8786,6 @@ body.is-phone .abyss-layout--calendar > .abyss-center-shell > .abyss-center > .a
   padding-top: calc(var(--size-4-3) + min(var(--abyss-shell-top-inset), 5px));
 }
 
-body.is-phone .abyss-cal-nav-right {
-  display: contents;
-}
-
 body.is-phone .abyss-cal-nav-left {
   min-width: 0;
 }
@@ -8799,6 +8794,7 @@ body.is-phone .abyss-cal-nav-left {
    inside its own segmented control and keeps its own layout. */
 body.is-phone .abyss-cal-nav .abyss-cal-view-switcher {
   grid-column: 1 / -1;
+  margin-inline-start: 0;
 }
 
 body.is-phone .abyss-cal-nav .abyss-cal-view-btn {
@@ -8823,6 +8819,7 @@ body.is-phone .abyss-cal-nav .abyss-cal-nav-today:hover {
 
 body.is-phone .abyss-cal-nav .abyss-cal-nav-today {
   padding: 0 var(--size-4-3);
+  margin-inline-start: 0;
 }
 
 /* The date is the toolbar's heading. Its buttons stay flat on the phone whatever the host paints
