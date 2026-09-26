@@ -181,6 +181,25 @@ describe('CenterPanel task metadata styles', () => {
     expect(columnTag).toContain('line-height: var(--abyss-task-card-title-line)');
   });
 
+  it('underlines the source note name in the chip colour and draws the name muted', () => {
+    const chip = declarationsFor('.abyss-task-source-note');
+
+    expect(chip).toContain('color: var(--text-faint)');
+    expect(chip).toContain('text-decoration: underline');
+    expect(chip).toContain('text-underline-offset: 2px');
+    expect(declarationsFor('.abyss-task-source-note-icon')).toContain('color: var(--text-muted)');
+    const name = declarationsFor('.abyss-task-source-note-name');
+    expect(name).toContain('color: var(--text-muted)');
+    expect(name).not.toContain('text-decoration');
+    expect(name).not.toContain('text-underline');
+    expect(declarationsFor('.abyss-task-source-note--clickable:hover')).toBe(
+      'color: var(--text-muted);',
+    );
+    expect(
+      declarationsFor('.abyss-task-source-note--clickable:hover .abyss-task-source-note-name'),
+    ).toBe('');
+  });
+
   it('keeps the description inside the title column without widening it', () => {
     const description = declarationsFor('.abyss-task-body > .abyss-task-desc');
     const body = declarationsFor('.abyss-task-body');
@@ -248,17 +267,32 @@ describe('CenterPanel task metadata styles', () => {
     expect(nav).toContain('display: grid');
     expect(nav).toContain('grid-template-columns: minmax(0, 1fr) auto');
     expect(nav).toContain('overflow: visible');
-    expect(declarationsFor('body.is-phone .abyss-cal-nav-right')).toContain('display: contents');
     expect(declarationsFor('body.is-phone .abyss-cal-nav-left')).toContain('min-width: 0');
     // Scoped to the toolbar: the project timeline reuses these classes in its own control.
-    expect(declarationsFor('body.is-phone .abyss-cal-nav .abyss-cal-view-switcher')).toContain(
-      'grid-column: 1 / -1',
+    expect(declarationsFor('body.is-phone .abyss-cal-nav .abyss-cal-view-switcher')).toBe(
+      ['grid-column: 1 / -1;', 'margin-inline-start: 0;'].join('\n'),
+    );
+    // The phone grid places Today and the switcher itself, so neither keeps a desktop margin.
+    expect(declarationsFor('body.is-phone .abyss-cal-nav .abyss-cal-nav-today')).toContain(
+      ['padding: 0 var(--size-4-3);', 'margin-inline-start: 0;'].join('\n'),
     );
     expect(declarationsFor('body.is-phone .abyss-cal-nav .abyss-cal-view-btn')).toContain(
       'flex: 1 1 0',
     );
     expect(declarationsFor('body.is-phone .abyss-cal-view-switcher')).toBe('');
     expect(declarationsFor('body.is-phone .abyss-panel-view .abyss-cal-nav-today')).toBe('');
+  });
+
+  it('ends the desktop calendar toolbar with Today and the switcher as one group', () => {
+    expect(declarationsFor('.abyss-cal-nav > .abyss-cal-nav-today')).toBe(
+      'margin-inline-start: auto;',
+    );
+    expect(declarationsFor('.abyss-cal-nav > .abyss-cal-view-switcher')).toBe(
+      'margin-inline-start: calc(var(--size-4-1) - var(--size-4-2));',
+    );
+    const narrow = atRuleBlock('@container abyss-task-list (max-width: 30rem)');
+    expect(declarationsForSource(narrow, '.abyss-cal-nav-left')).toBe('max-width: 100%;');
+    expect(css).not.toContain('abyss-cal-nav-right');
   });
 
   it('dresses standalone phone controls as switcher cells', () => {
@@ -390,33 +424,32 @@ describe('CenterPanel task metadata styles', () => {
 
   it('keeps active dependency indicators between the checkbox and title at constrained widths', () => {
     const compact = atRuleBlock('@container abyss-task-list (max-width: 28rem)');
-    const withIndicator = '.abyss-task-card-main-row:has(> .abyss-dep-indicator)';
-    expect(declarationsForSource(compact, withIndicator)).toContain(
-      'grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr)',
+    const withIndicator = '.abyss-task-card-main-row--has-dep';
+    expect(declarationsForSource(compact, withIndicator)).toBe(
+      'grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr);',
     );
     expect(
       declarationsForSource(
         compact,
-        '.abyss-task-card-main-row--has-delete:has(> .abyss-dep-indicator)',
+        '.abyss-task-card-main-row--has-dep.abyss-task-card-main-row--has-delete',
       ),
-    ).toContain('auto minmax(0, 1fr) 24px');
+    ).toBe('grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr) 24px;');
     expect(
       declarationsForSource(compact, '.abyss-task-card-main-row > .abyss-status-control'),
-    ).toContain('grid-column: 1');
+    ).toBe(['grid-column: 1;', 'grid-row: 1;'].join('\n'));
     const indicator = declarationsForSource(
       compact,
       '.abyss-task-card-main-row > .abyss-dep-indicator',
     );
-    expect(indicator).toContain('grid-column: 2');
-    expect(indicator).toContain('grid-row: 1');
-    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-body`)).toContain(
-      'grid-column: 3',
+    expect(indicator).toBe(['grid-column: 2;', 'grid-row: 1;'].join('\n'));
+    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-body`)).toBe(
+      'grid-column: 3;',
     );
-    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-meta-right`)).toContain(
-      'grid-column: 3 / -1',
+    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-meta-right`)).toBe(
+      'grid-column: 3 / -1;',
     );
-    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-delete-btn`)).toContain(
-      'grid-column: 4',
+    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-delete-btn`)).toBe(
+      'grid-column: 4;',
     );
   });
 
@@ -516,7 +549,8 @@ describe('Shared popover styles', () => {
     expect(priorityPopover).toContain('box-shadow: var(--shadow-s, none)');
     expect(priorityOption).toContain('grid-template-columns: 0.8em 0.9em max-content');
     expect(priorityOption).toContain('justify-content: start');
-    expect(priorityOption).toContain('column-gap: 0.35em');
+    expect(priorityOption).toContain('gap: 0 0.35em');
+    expect(priorityOption).not.toContain('column-gap');
     expect(priorityOption).toContain('padding: 0.5em 0.65em 0.5em 0.45em');
     expect(priorityOptionFlag).toContain('width: 0.9em');
     expect(priorityOptionFlag).toContain('justify-content: center');

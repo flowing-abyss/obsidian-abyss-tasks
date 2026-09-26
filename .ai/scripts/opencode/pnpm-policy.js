@@ -1,15 +1,13 @@
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { isToolCallEventType } from '@earendil-works/pi-coding-agent';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// This file lives under `.ai/configs/.pi/extensions/` and is symlinked
-// into `.pi/extensions/`. Walk up from its real (symlink-resolved) location to
+// This file lives under `.ai/scripts/opencode/` and is symlinked into
+// `.opencode/plugins/`. Walk up from its real (symlink-resolved) location to
 // find the `.ai` root, so this keeps working no matter how deep it's nested.
 const hooksDir = path.join(findAiRoot(fileURLToPath(import.meta.url)), 'hooks');
 
-function findAiRoot(fromPath: string): string {
+function findAiRoot(fromPath) {
   let dir = path.dirname(fromPath);
 
   while (path.basename(dir) !== '.ai') {
@@ -23,23 +21,23 @@ function findAiRoot(fromPath: string): string {
   return dir;
 }
 
-export default function (pi: ExtensionAPI): void {
-  pi.on('tool_call', async (event) => {
-    if (!isToolCallEventType('bash', event)) {
+export const PnpmPolicy = async () => ({
+  'tool.execute.before': async (input, output) => {
+    if (input.tool !== 'bash') {
       return;
     }
 
     const result = runHook('block-npm-commands.mjs', {
-      tool_input: { command: event.input.command },
+      tool_input: { command: output.args?.command },
     });
 
     if (result?.hookSpecificOutput?.permissionDecision === 'deny') {
-      return { block: true, reason: result.hookSpecificOutput.permissionDecisionReason };
+      throw new Error(result.hookSpecificOutput.permissionDecisionReason);
     }
-  });
-}
+  },
+});
 
-function runHook(scriptName: string, payload: unknown): any {
+function runHook(scriptName, payload) {
   const child = spawnSync('node', [path.join(hooksDir, scriptName)], {
     input: JSON.stringify(payload),
     encoding: 'utf8',

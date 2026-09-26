@@ -185,3 +185,26 @@ describe('Global search field geometry', () => {
     expect(globalSearch).not.toMatch(/transition:[^;]*\bwidth\b/);
   });
 });
+
+describe('Visually hidden text', () => {
+  it.each([
+    '.abyss-sr-only',
+    ':is(.abyss-capture-surface--inline .abyss-capture-destination, .abyss-capture-surface--inline .abyss-capture-error)',
+    ".abyss-detached-draft > [aria-live='polite']",
+    '.abyss-detached-drafts-status',
+  ])('keeps %s one pixel in size past the start edge, without clipping', (selector) => {
+    expect(declarationsFor(selector)).toBe(
+      [
+        'position: absolute;',
+        'width: 1px;',
+        'height: 1px;',
+        'padding: 0;',
+        'margin: -1px;',
+        'overflow: hidden;',
+        'inset-inline-start: -10000px;',
+        'white-space: nowrap;',
+        'border: 0;',
+      ].join('\n'),
+    );
+  });
+});

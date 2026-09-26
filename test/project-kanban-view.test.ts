@@ -924,6 +924,71 @@ describe('project Kanban overview', () => {
     expect(start.querySelector('.abyss-project-cell-editor')).toBeNull();
   });
 
+  it('raises the edited Timeline row and summary until the editor closes', async () => {
+    const { host, view, settings } = mountView();
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    clickView(host, 'Timeline');
+    const start = (): HTMLElement =>
+      expectDefined(
+        host.querySelector<HTMLElement>('.abyss-project-timeline [data-column-id="start"]'),
+      );
+    const edit = (): HTMLInputElement => {
+      start().dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      return expectDefined(start().querySelector<HTMLInputElement>('input[type="date"]'));
+    };
+    const raised = (): Element[] => Array.from(host.querySelectorAll('.is-cell-editing'));
+    // What the old rules matched: a row or a summary that holds an edited timeline cell.
+    const holdersOfTheEdit = (): Element[] =>
+      Array.from(
+        host.querySelectorAll('.abyss-project-timeline-row, .abyss-project-timeline-summary'),
+      ).filter(
+        (element) => element.querySelector('.abyss-project-timeline-cell.is-editing') !== null,
+      );
+
+    let input = edit();
+    const holders = [
+      start().closest('.abyss-project-timeline-row'),
+      start().closest('.abyss-project-timeline-summary'),
+    ];
+    expect(raised()).toEqual(holders);
+    expect(raised()).toEqual(holdersOfTheEdit());
+    view.update([project()]);
+    expect(raised()).toEqual(holders);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flushMicrotasks();
+    expect(raised()).toEqual([]);
+
+    input = edit();
+    input.value = '2026-09-02';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    expect(raised()).toEqual([]);
+
+    input = edit();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    await flushMicrotasks();
+    expect(start().classList).not.toContain('is-editing');
+    expect(raised()).toEqual(holdersOfTheEdit());
+    expect(raised()).toEqual([]);
+  });
+
+  it.each([
+    ['Table', '.abyss-project-table-row [data-column-id="start"]'],
+    ['Kanban', '.abyss-project-kanban-card [data-column-id="start"]'],
+  ] as const)('raises no Timeline row for a %s edit', (mode, cellSelector) => {
+    const { host, settings } = mountView();
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    clickView(host, 'Timeline');
+    clickView(host, mode);
+    const start = expectDefined(host.querySelector<HTMLElement>(cellSelector));
+
+    start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+
+    expect(start.classList).toContain('is-editing');
+    expect(host.querySelector('.is-cell-editing')).toBeNull();
+  });
+
   it('edits a visible Timeline description without changing the Table preference', async () => {
     const initial = project({ frontmatter: { description: 'Current description' } });
     const { host, settings, applyEdits } = mountView([initial]);

@@ -17,6 +17,7 @@
     "format:check": "prettier --check .",
     "lint": "eslint . --max-warnings 0",
     "lint:css": "stylelint styles.css && node tooling/check-css.mjs styles.css",
+    "lint:store": "vitest run --config vitest.store.config.ts",
     "typecheck": "tsc -noEmit --skipLibCheck && tsc --project tooling/tsconfig.json",
     "test": "vitest run",
     "test:unit": "pnpm test",
@@ -31,13 +32,13 @@
     "release:check": "node release-check.mjs",
     "verify:task": "pnpm lint && pnpm lint:css && pnpm typecheck && pnpm arch && pnpm test",
     "test:ai": "node --test \".ai/**/*.test.mjs\"",
-    "verify": "pnpm format:check && pnpm lint && pnpm lint:css && pnpm typecheck && pnpm arch && pnpm deadcode && pnpm test:ai && pnpm test:coverage && pnpm build && pnpm release:artifacts && pnpm lint:css:artifact && pnpm release:check && pnpm audit:dependencies",
+    "verify": "pnpm format:check && pnpm lint && pnpm lint:css && pnpm lint:store && pnpm typecheck && pnpm arch && pnpm deadcode && pnpm test:ai && pnpm test:coverage && pnpm build && pnpm release:artifacts && pnpm lint:css:artifact && pnpm release:check && pnpm audit:dependencies",
     "ci": "pnpm verify",
     "prepare": "husky && node .ai/setup.mjs",
     "lint:css:artifact": "node tooling/check-css.mjs --artifact dist/styles.css"
   },
   "nano-staged": {
-    "*.{ts,mts,cts,js,mjs,cjs}": [
+    "*.{ts,cts,mts,tsx,js,cjs,mjs,jsx}": [
       "eslint --max-warnings 0 --no-warn-ignored --fix",
       "prettier --write"
     ],
@@ -105,6 +106,7 @@
     "prettier": "3.9.8",
     "prettier-plugin-organize-imports": "^4.3.0",
     "stylelint": "17.15.0",
+    "stylelint-config-obsidianmd": "0.1.0",
     "stylelint-config-standard": "^40.0.0",
     "stylelint-declaration-block-no-ignored-properties": "3.0.0",
     "typescript": "6.0.3",

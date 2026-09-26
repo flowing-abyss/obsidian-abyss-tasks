@@ -181,6 +181,79 @@ function mockTimelineGeometry(
 }
 
 describe('ProjectsTimelineView', () => {
+  it('raises the row and summary that hold the edited cell, one cell at a time', () => {
+    const { host, view } = mount([
+      project('Projects/A.md', '2026-09-10', '2026-09-12'),
+      project('Projects/B.md', '2026-09-14', '2026-09-16'),
+    ]);
+    const holders = (index: number) => {
+      const row = expectDefined(
+        host.querySelectorAll<HTMLElement>('.abyss-project-timeline-row')[index],
+      );
+      const summary = expectDefined(
+        row.querySelector<HTMLElement>('.abyss-project-timeline-summary'),
+      );
+      const cell = expectDefined(summary.querySelector<HTMLElement>('[data-field-id="name"]'));
+      return { row, summary, cell };
+    };
+    const first = holders(0);
+    const second = holders(1);
+    const raised = (): Element[] => Array.from(host.querySelectorAll('.is-cell-editing'));
+
+    view.setEditingCell(first.cell);
+    expect(raised()).toEqual([first.row, first.summary]);
+    view.setEditingCell(second.cell);
+    expect(raised()).toEqual([second.row, second.summary]);
+    view.setEditingCell(undefined);
+    expect(raised()).toEqual([]);
+  });
+
+  it('stacks the edited row and summary above their neighbours with the plugin styles', async () => {
+    const styles = await loadPluginStyles();
+    const sheet = createEl('style');
+    sheet.textContent = styles;
+    activeDocument.head.append(sheet);
+    // The page keeps a stylesheet across rows, so a failed assertion must not leave this one behind.
+    try {
+      const { host, view } = mount([project('Projects/A.md', '2026-09-01', '2026-09-03')]);
+      const row = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-row'));
+      const summary = expectDefined(
+        row.querySelector<HTMLElement>('.abyss-project-timeline-summary'),
+      );
+      const stacking = (): string[] => {
+        const rowStyle = activeWindow.getComputedStyle(row);
+        const summaryStyle = activeWindow.getComputedStyle(summary);
+        return [rowStyle.position, rowStyle.zIndex, summaryStyle.zIndex, summaryStyle.overflow];
+      };
+      const resting = stacking();
+
+      view.setEditingCell(
+        expectDefined(summary.querySelector<HTMLElement>('[data-field-id="name"]')),
+      );
+      expect(stacking()).toEqual(['relative', '6', '7', 'visible']);
+      view.setEditingCell(undefined);
+      expect(stacking()).toEqual(resting);
+    } finally {
+      sheet.remove();
+    }
+  });
+
+  it('raises nothing for a cell outside its rows', () => {
+    const { host, view } = mount([project('Projects/A.md', '2026-09-10', '2026-09-12')]);
+    const other = mount([project('Projects/B.md', '2026-09-14', '2026-09-16')]);
+    const foreign = expectDefined(
+      other.host.querySelector<HTMLElement>('.abyss-project-timeline-row [data-field-id="name"]'),
+    );
+    const axis = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline-axis-summary'),
+    );
+
+    view.setEditingCell(foreign);
+    expect(activeDocument.querySelector('.is-cell-editing')).toBeNull();
+    view.setEditingCell(axis);
+    expect(activeDocument.querySelector('.is-cell-editing')).toBeNull();
+  });
+
   it('names simultaneous Timeline scroll surfaces without native hover labels', () => {
     const first = mount([]);
     const second = mount([]);
@@ -523,7 +596,7 @@ describe('ProjectsTimelineView', () => {
     expect(hiddenStyle.position).toBe('absolute');
     expect(hiddenStyle.width).toBe('1px');
     expect(hiddenStyle.height).toBe('1px');
-    expect(hiddenStyle.clipPath).toBe('inset(50%)');
+    expect(hiddenStyle.insetInlineStart).toBe('-10000px');
     sheet.remove();
   });
 

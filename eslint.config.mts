@@ -8,7 +8,12 @@ import * as globals from 'globals';
 import tseslint from 'typescript-eslint';
 import { projectAmbientRule } from './eslint-project-policy.mts';
 
-const testFiles = ['test/**/*.ts', 'vitest.config.ts', 'vitest.bench.config.ts'];
+const testFiles = [
+  'test/**/*.ts',
+  'vitest.config.ts',
+  'vitest.bench.config.ts',
+  'vitest.store.config.ts',
+];
 const codeFiles = ['**/*.{ts,cts,mts,tsx,js,cjs,mjs,jsx}'];
 const metadataIncompatibleRules = Object.fromEntries(
   [
@@ -346,7 +351,9 @@ export default defineConfig(
     },
   },
   {
-    // Node-only tooling scripts are not part of the browser-context plugin bundle.
+    // Node programs outside the plugin bundle. The community directory's review skips them, and
+    // eslint-plugin-obsidianmd's configuration guide turns no-nodejs-modules off for scripts that
+    // are not plugin code. They print through process streams, so every other rule still applies.
     files: [
       '*.cjs',
       'release-check.mjs',
@@ -354,17 +361,12 @@ export default defineConfig(
       'tooling/check-css.mjs',
       'tooling/css-policy.mjs',
       'tooling/css-contracts.mjs',
-      'test/dependency-rules.test.ts',
-      'test/release-artifacts.test.ts',
     ],
     languageOptions: {
       globals: { ...globals.node },
     },
     rules: {
       'obsidianmd/no-nodejs-modules': 'off',
-      'obsidianmd/rule-custom-message': 'off',
-      'no-console': 'off',
-      'no-undef': 'off',
     },
   },
   {

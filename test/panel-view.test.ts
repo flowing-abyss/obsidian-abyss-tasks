@@ -27,12 +27,14 @@ import { taskNodeLine, type TaskSelectionNode } from '../src/ui/taskSelection';
 import { MonthGridView } from '../src/views/MonthGridView';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
 import type { PanelNavigator } from '../src/views/panelNavigation';
+import { cssDeclarations, cssDeclarationText } from './cssHelpers';
 import {
   configuredTaskApplication,
   createAppWithFiles,
   deferred,
   expectDefined,
   flushMicrotasks,
+  loadPluginStyles,
   seedTaskCache,
   task,
   useRealMoment,
@@ -119,6 +121,22 @@ function computedStyleWithFontSize(
       property === 'fontSize' ? fontSize : Reflect.get(target, property, target),
   });
 }
+
+describe('PanelView host styles', () => {
+  it('clears the host padding and scrolling on its own content element only', async () => {
+    const css = await loadPluginStyles();
+
+    expect(
+      cssDeclarationText(
+        css,
+        `.workspace-leaf-content[data-type='${PANEL_VIEW_TYPE}'] > .view-content.abyss-panel-view`,
+      ),
+    ).toBe(['padding: 0;', 'overflow: hidden;'].join('\n'));
+    const panelProperties = cssDeclarations(css, '.abyss-panel-view').map(({ prop }) => prop);
+    expect(panelProperties).not.toContain('padding');
+    expect(panelProperties).not.toContain('overflow');
+  });
+});
 
 describe('PanelView dependency command convergence', () => {
   it('converges a restored subtree through the committed parent root', async () => {
@@ -1982,6 +2000,52 @@ describe('PanelView', () => {
       expect(internals.state_abyssPrivate.get('selectedList')).toBe('today');
       expect(internals.state_abyssPrivate.get('mode')).toBe('projects');
       expect(internals.state_abyssPrivate.get('projectsPanel')).toEqual({ view: 'table' });
+    });
+
+    it('places the filter chips right before the view-state button, in filter order, and again after one is removed', async () => {
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        panelNavigation_abyssPrivate: PanelNavigator;
+      };
+      activeDocument.body.appendChild(view.containerEl);
+      await app.vault.create('Source.md', '- [ ] Alpha #work\n');
+      await flushMicrotasks();
+      internals.panelNavigation_abyssPrivate.openList({ type: 'tag', tag: '#work' });
+      internals.state_abyssPrivate.set('centerListViewState', {
+        ...internals.state_abyssPrivate.get('centerListViewState'),
+        filters: [
+          { type: 'file', filePath: 'Source.md' },
+          { type: 'tag', value: '#work' },
+        ],
+      });
+      await flushMicrotasks();
+      const controls = (): HTMLElement =>
+        expectDefined(
+          view.contentEl.querySelector<HTMLElement>('.abyss-center .abyss-center-controls'),
+        );
+      const chips = (): HTMLElement[] =>
+        Array.from(controls().querySelectorAll<HTMLElement>(':scope > .abyss-filter-chip'));
+      // The chips run in filter order straight into the view-state button.
+      const expectChipsBeforeViewButton = (labels: readonly string[]): void => {
+        const found = chips();
+        expect(
+          found.map((chip) => chip.querySelector('.abyss-filter-chip-label')?.textContent),
+        ).toEqual(labels);
+        for (const [index, chip] of found.entries()) {
+          expect(chip.nextElementSibling).toBe(
+            found[index + 1] ?? controls().querySelector(':scope > .abyss-view-state-btn'),
+          );
+        }
+      };
+
+      expectChipsBeforeViewButton(['📄 Source', '#work']);
+      expectDefined(
+        expectDefined(chips()[0]).querySelector<HTMLButtonElement>('.abyss-filter-chip-x'),
+      ).click();
+      await flushMicrotasks();
+
+      expectChipsBeforeViewButton(['#work']);
+      expect(view.contentEl.querySelector('.abyss-task-filter-chips')).toBeNull();
     });
 
     it('keeps a file filter chip on the list on screen in step with a note rename', async () => {

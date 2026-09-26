@@ -77,9 +77,14 @@
    Abyss Tasks — Three-Panel Layout
    ============================================================ */
 
+/* Obsidian's own full-bleed views clear the host padding and scrolling the same way; every pane
+   of the panel scrolls itself. */
+.workspace-leaf-content[data-type='task-calendar-panel'] > .view-content.abyss-panel-view {
+  padding: 0;
+  overflow: hidden;
+}
+
 .abyss-panel-view {
-  padding: 0 !important;
-  overflow: hidden !important;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
@@ -2056,8 +2061,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   padding: var(--size-4-3);
 }
 
-.abyss-shortcut-validation-status:empty,
-.abyss-shortcut-save-feedback:has(.abyss-shortcut-save-status:empty) {
+.abyss-shortcut-validation-status:empty {
   margin: 0;
 }
 
@@ -2334,7 +2338,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip-path: inset(50%);
+  inset-inline-start: -10000px;
   white-space: nowrap;
   border: 0;
 }
@@ -2640,9 +2644,12 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   opacity: 1;
 }
 
+/* The chip's colour is its underline's colour. The icon and the name draw in the muted colour. */
 .abyss-task-source-note {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-faint);
+  text-decoration: underline;
+  text-underline-offset: 2px;
   display: inline-flex;
   align-items: center;
   gap: var(--size-2-1);
@@ -2653,6 +2660,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-task-source-note-icon {
+  color: var(--text-muted);
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -2668,10 +2676,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   max-width: 12rem;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-decoration: underline;
-  text-decoration-color: var(--text-faint);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
+  color: var(--text-muted);
 }
 
 .abyss-task-progress {
@@ -2789,11 +2794,11 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
     justify-content: flex-start;
   }
 
-  .abyss-task-card-main-row:has(> .abyss-dep-indicator) {
+  .abyss-task-card-main-row--has-dep {
     grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr);
   }
 
-  .abyss-task-card-main-row--has-delete:has(> .abyss-dep-indicator) {
+  .abyss-task-card-main-row--has-dep.abyss-task-card-main-row--has-delete {
     grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr) 24px;
   }
 
@@ -2802,15 +2807,15 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
     grid-row: 1;
   }
 
-  .abyss-task-card-main-row:has(> .abyss-dep-indicator) > .abyss-task-body {
+  .abyss-task-card-main-row--has-dep > .abyss-task-body {
     grid-column: 3;
   }
 
-  .abyss-task-card-main-row:has(> .abyss-dep-indicator) > .abyss-task-meta-right {
+  .abyss-task-card-main-row--has-dep > .abyss-task-meta-right {
     grid-column: 3 / -1;
   }
 
-  .abyss-task-card-main-row:has(> .abyss-dep-indicator) > .abyss-task-delete-btn {
+  .abyss-task-card-main-row--has-dep > .abyss-task-delete-btn {
     grid-column: 4;
   }
 
@@ -2973,7 +2978,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip-path: inset(50%);
+  inset-inline-start: -10000px;
   white-space: nowrap;
   border: 0;
 }
@@ -3082,12 +3087,6 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   gap: var(--size-2-1);
 }
 
-.abyss-cal-nav-right {
-  display: flex;
-  align-items: center;
-  gap: var(--size-4-1);
-}
-
 .abyss-cal-nav-title-group {
   display: flex;
   align-items: center;
@@ -3152,6 +3151,16 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-cal-nav-today:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
+}
+
+/* Today and the view switcher end the toolbar as one group. Today's start margin takes the free
+   space, and the switcher sits one step closer to Today than the toolbar gap. */
+.abyss-cal-nav > .abyss-cal-nav-today {
+  margin-inline-start: auto;
+}
+
+.abyss-cal-nav > .abyss-cal-view-switcher {
+  margin-inline-start: calc(var(--size-4-1) - var(--size-4-2));
 }
 
 :is(.abyss-cal-view-switcher, .abyss-project-overview-switcher) {
@@ -3642,7 +3651,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   grid-template-columns: 0.8em 0.9em max-content;
   align-items: center;
   justify-content: start;
-  column-gap: 0.35em;
+  gap: 0 0.35em;
   width: 100%;
   text-align: left;
   background: transparent;
@@ -3843,7 +3852,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   cursor: pointer;
 }
 
-.abyss-recurrence-weekday:has(input:checked) {
+.abyss-recurrence-weekday.is-checked {
   background: var(--background-modifier-active-hover);
   color: var(--text-normal);
 }
@@ -3991,7 +4000,14 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   .abyss-recurrence-editor *,
   .abyss-repeat-chip {
     scroll-behavior: auto;
-    transition: none !important;
+    transition: none;
+  }
+
+  /* Obsidian's transitions on checkboxes and on hovered text and number fields are more specific
+     than the editor-wide rule above. */
+  .abyss-recurrence-editor input[type='checkbox'],
+  .abyss-recurrence-editor input:is([type='text'], [type='number']):not(:disabled):hover {
+    transition: none;
   }
 }
 
@@ -5297,10 +5313,6 @@ body.abyss-modal-open .popover.hover-popover {
   position: relative;
 }
 
-.abyss-task-filter-chips {
-  display: contents;
-}
-
 /* ── Property filter chips ──────────────────────────────────── */
 .abyss-filter-chip {
   display: inline-flex;
@@ -5532,9 +5544,8 @@ body.abyss-modal-open .popover.hover-popover {
   opacity: 0.9;
 }
 
-.abyss-task-source-note--clickable:hover .abyss-task-source-note-name {
-  text-decoration: underline;
-  text-decoration-color: var(--text-muted);
+.abyss-task-source-note--clickable:hover {
+  color: var(--text-muted);
 }
 
 .abyss-cursor-pointer {
@@ -6151,8 +6162,7 @@ table.abyss-project-table {
   box-shadow: inset 0 1px var(--abyss-project-drop-color, var(--interactive-accent));
 }
 
-.abyss-project-table-row.is-drop-target:not(:has(+ .is-drop-target)) > td,
-.abyss-project-table-row.is-drop-disabled:not(:has(+ .is-drop-disabled)) > td {
+.abyss-project-table-row:is(.is-drop-target, .is-drop-disabled).is-drop-end > td {
   box-shadow: inset 0 -1px var(--abyss-project-drop-color, var(--interactive-accent));
 }
 
@@ -7597,12 +7607,12 @@ button.abyss-project-table-status-pill {
   white-space: normal;
 }
 
-.abyss-project-timeline-row:has(.abyss-project-timeline-cell.is-editing) {
+.abyss-project-timeline-row.is-cell-editing {
   position: relative;
   z-index: 6;
 }
 
-.abyss-project-timeline-summary:has(.abyss-project-timeline-cell.is-editing) {
+.abyss-project-timeline-summary.is-cell-editing {
   z-index: 7;
   overflow: visible;
 }
@@ -7708,10 +7718,6 @@ button.abyss-project-table-status-pill {
 
 .abyss-project-timeline-progress .abyss-project-table-progress {
   gap: var(--size-2-3);
-}
-
-.abyss-project-timeline-progress:has(.abyss-project-progress-value:only-child) {
-  display: none;
 }
 
 .abyss-project-timeline-track {
@@ -8731,7 +8737,7 @@ button.abyss-project-table-status-pill {
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip-path: inset(50%);
+  inset-inline-start: -10000px;
   white-space: nowrap;
   border: 0;
 }
@@ -8744,13 +8750,8 @@ button.abyss-project-table-status-pill {
     scrollbar-width: none;
   }
 
-  .abyss-cal-nav-left,
-  .abyss-cal-nav-right {
+  .abyss-cal-nav-left {
     max-width: 100%;
-  }
-
-  .abyss-cal-nav-right {
-    margin-inline-start: auto;
   }
 
   .abyss-center .abyss-calendar-capture-feedback {
@@ -8797,10 +8798,6 @@ body.is-phone .abyss-layout--calendar > .abyss-center-shell > .abyss-center > .a
   padding-top: calc(var(--size-4-3) + min(var(--abyss-shell-top-inset), 5px));
 }
 
-body.is-phone .abyss-cal-nav-right {
-  display: contents;
-}
-
 body.is-phone .abyss-cal-nav-left {
   min-width: 0;
 }
@@ -8809,6 +8806,7 @@ body.is-phone .abyss-cal-nav-left {
    inside its own segmented control and keeps its own layout. */
 body.is-phone .abyss-cal-nav .abyss-cal-view-switcher {
   grid-column: 1 / -1;
+  margin-inline-start: 0;
 }
 
 body.is-phone .abyss-cal-nav .abyss-cal-view-btn {
@@ -8833,6 +8831,7 @@ body.is-phone .abyss-cal-nav .abyss-cal-nav-today:hover {
 
 body.is-phone .abyss-cal-nav .abyss-cal-nav-today {
   padding: 0 var(--size-4-3);
+  margin-inline-start: 0;
 }
 
 /* The date is the toolbar's heading. Its buttons stay flat on the phone whatever the host paints

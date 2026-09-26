@@ -36,12 +36,13 @@ export function dependencyCompletionBlocked(
   return (projection?.activeBlockedByCount ?? 0) > 0;
 }
 
+/** Renders the indicator into `parent` and returns it, or returns `undefined` for `none`. */
 export function renderDependencyIndicator(
   parent: HTMLElement,
   projection: TaskDependencyProjection | undefined,
-): void {
+): HTMLElement | undefined {
   const presentation = dependencyIndicatorPresentation(projection);
-  if (presentation.type === 'none') return;
+  if (presentation.type === 'none') return undefined;
   const group = parent.createSpan({
     cls: 'abyss-dep-indicator',
     attr: { role: 'img', 'aria-label': presentation.ariaLabel, title: presentation.ariaLabel },
@@ -63,6 +64,7 @@ export function renderDependencyIndicator(
       attr: { 'aria-hidden': 'true' },
     });
   if ('blocks' in presentation) renderIndicatorCount(group, 'blocks', presentation.blocks);
+  return group;
 }
 
 function renderIndicatorCount(

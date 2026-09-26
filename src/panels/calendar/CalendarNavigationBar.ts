@@ -73,9 +73,8 @@ export class CalendarNavigationBar {
       attr: { 'aria-label': 'Next' },
     });
     setIcon(nextButton, 'chevron-right');
-    const right = nav.createDiv({ cls: 'abyss-cal-nav-right' });
-    const todayButton = right.createEl('button', { cls: 'abyss-cal-nav-today', text: 'Today' });
-    this.renderViewSwitcher_abyssPrivate(right);
+    const todayButton = nav.createEl('button', { cls: 'abyss-cal-nav-today', text: 'Today' });
+    this.renderViewSwitcher_abyssPrivate(nav);
     this.elements_abyssPrivate = { monthButton, yearButton };
 
     monthButton.addEventListener('click', () => {

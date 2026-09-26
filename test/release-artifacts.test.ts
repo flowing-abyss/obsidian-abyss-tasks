@@ -1,12 +1,25 @@
 import { selectorSpecificity } from '@csstools/selector-specificity';
-import { execFileSync, spawnSync, type SpawnSyncReturns } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
+import { Platform } from 'obsidian';
 import postcss from 'postcss';
 import selectorParser from 'postcss-selector-parser';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+const loadNodeTools = async () => {
+  if (!Platform.isDesktop) throw new Error('Release artifact tests require a desktop runtime');
+  return Promise.all([
+    import('node:child_process'),
+    import('node:fs'),
+    import('node:os'),
+    import('node:path'),
+  ]);
+};
+const [
+  { execFileSync, spawnSync },
+  { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync },
+  { tmpdir },
+  path,
+] = await loadNodeTools();
 
 const REPOSITORY_ROOT = process.cwd();
 const PRODUCER_PATH = path.join(REPOSITORY_ROOT, 'release-artifacts.mjs');
@@ -23,16 +36,13 @@ afterEach(() => {
 });
 
 // A tag-triggered workflow exports its own ref, which the checker compares with the fixture manifest.
-function withoutAmbientReleaseRef(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function withoutAmbientReleaseRef(env: typeof process.env): typeof process.env {
   return Object.fromEntries(
     Object.entries(env).filter(([key]) => key !== 'GITHUB_REF_TYPE' && key !== 'GITHUB_REF_NAME'),
   );
 }
 
-function runScript(
-  scriptPath: string,
-  env = withoutAmbientReleaseRef(process.env),
-): SpawnSyncReturns<string> {
+function runScript(scriptPath: string, env = withoutAmbientReleaseRef(process.env)) {
   return spawnSync(process.execPath, [scriptPath], {
     cwd: fixtureDirectory,
     encoding: 'utf8',
@@ -213,7 +223,9 @@ describe('release stylesheet checker', () => {
     const result = runScript(CHECKER_PATH);
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain('dist/styles.css is empty.');
+    expect(result.stderr).toBe(
+      'release:check failed with 1 problem(s):\n\n  ✖ dist/styles.css is empty.\n',
+    );
   });
 
   it('fails when the generated stylesheet exceeds the shared budget', () => {
@@ -235,13 +247,13 @@ describe('release stylesheet checker', () => {
     const result = runScript(CHECKER_PATH);
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('release:check passed.');
+    expect(result.stdout).toBe('release:check passed.\n');
     expect(result.stderr).toBe('');
   });
 });
 
 describe('release tag checker', () => {
-  function releaseRef(tag: string): NodeJS.ProcessEnv {
+  function releaseRef(tag: string): typeof process.env {
     return {
       ...withoutAmbientReleaseRef(process.env),
       GITHUB_REF_TYPE: 'tag',

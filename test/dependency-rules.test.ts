@@ -1,7 +1,13 @@
 import { cruise, type ICruiseResult } from 'dependency-cruiser';
 import extractDepcruiseOptions from 'dependency-cruiser/config-utl/extract-depcruise-options';
-import path from 'node:path';
+import { Platform } from 'obsidian';
 import { expect, it } from 'vitest';
+
+const loadPath = async () => {
+  if (!Platform.isDesktop) throw new Error('Dependency rule tests require a desktop runtime');
+  return import('node:path');
+};
+const path = await loadPath();
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const FIXTURE_ROOT = path.join(ROOT, 'test/fixtures/task-architecture');

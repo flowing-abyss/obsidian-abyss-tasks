@@ -556,6 +556,13 @@ function sameRowDragPayload(left: ProjectRowDragPayload, right: ProjectRowDragPa
   );
 }
 
+/** Marks the last row of each run of drop target rows, which draws the run's bottom edge. */
+function markDropRunEnds(rows: readonly RenderedProjectRow[], state: string): void {
+  for (const { element } of rows) {
+    element.toggleClass('is-drop-end', element.nextElementSibling?.hasClass(state) !== true);
+  }
+}
+
 function nearestViewportDelta(
   start: number,
   end: number,
@@ -4380,6 +4387,7 @@ export class ProjectsTableView {
       row.addClass(state);
       row.setAttribute('title', result.message);
     }
+    markDropRunEnds(targetRows, state);
     groupRow?.dropHint.setText(result.message);
     const insertion =
       result.plan === undefined
@@ -4532,7 +4540,7 @@ export class ProjectsTableView {
     if (preview === undefined) return;
     this.groupDropPreview_abyssPrivate = undefined;
     for (const row of preview.rows) {
-      row.removeClass('is-drop-target', 'is-drop-disabled');
+      row.removeClass('is-drop-target', 'is-drop-disabled', 'is-drop-end');
       row.removeAttribute('title');
     }
     preview.line?.removeClass('is-drop-before', 'is-drop-after');
@@ -4710,6 +4718,7 @@ export class ProjectsTableView {
     anchor.prepend(editorHost);
     editorHost.toggleClass('is-expanded', field.id === 'description');
     cell.addClass('is-editing');
+    this.timelineView_abyssPrivate?.setEditingCell(cell);
     anchor.addClass('is-editor-anchor');
     let positionCleanup = (): void => {};
     const presets = this.editorPresets_abyssPrivate(field);
@@ -4769,6 +4778,7 @@ export class ProjectsTableView {
     anchor.removeClass('is-editor-anchor');
     if (anchor.hasClass('abyss-project-description-editor-anchor')) anchor.remove();
     cell.removeClass('is-editing');
+    this.timelineView_abyssPrivate?.setEditingCell(undefined);
   }
 
   private async saveEditorValue_abyssPrivate(

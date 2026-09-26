@@ -3,8 +3,9 @@ import { buildTaskDependencyGraph, enumerateTaskNodes } from '../src/tasks/domai
 import {
   dependencyCountPresentation,
   dependencyIndicatorPresentation,
+  renderDependencyIndicator,
 } from '../src/ui/taskDependencyPresentation';
-import { canonicalStatusCatalog, task } from './helpers';
+import { canonicalStatusCatalog, freshContainer, task } from './helpers';
 
 describe('dependency count presentation', () => {
   it('names both active directions without counting satisfied or missing relations', () => {
@@ -87,6 +88,18 @@ describe('active dependency indicator', () => {
         catalog.statusForSymbol(symbol),
       ).dependencies({ type: 'task', ref: current.ref });
       expect(dependencyIndicatorPresentation(projection)).toEqual(expected);
+      const parent = freshContainer();
+      const rendered = renderDependencyIndicator(parent, projection);
+      if (expected.type === 'none') {
+        expect(rendered).toBeUndefined();
+        expect(parent.childElementCount).toBe(0);
+      } else {
+        expect(rendered?.parentElement).toBe(parent);
+        expect(parent.querySelectorAll('.abyss-dep-indicator')).toEqual(
+          parent.querySelectorAll(':scope > *'),
+        );
+        expect(rendered?.classList.contains('abyss-dep-indicator')).toBe(true);
+      }
     },
   );
 });

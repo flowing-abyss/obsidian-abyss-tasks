@@ -1,3 +1,4 @@
+import postcss from 'postcss';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RecurrencePolicy, TaskCommandResult, TaskPatch } from '../src/tasks';
 import {
@@ -160,6 +161,53 @@ afterEach(() => {
 const css = await loadPluginStyles();
 
 describe('mountRecurrenceEditor', () => {
+  it('stops the transitions that reach the editor when motion is reduced', () => {
+    const rules: string[] = [];
+    postcss.parse(css).walkAtRules('media', (media) => {
+      if (media.params !== '(prefers-reduced-motion: reduce)') return;
+      media.walkRules((rule) => {
+        if (!rule.selector.includes('abyss-recurrence-editor')) return;
+        const declarations = rule.nodes.filter((node) => node.type === 'decl').map(String);
+        rules.push(`${rule.selectors.join(', ')} { ${declarations.join('; ')} }`);
+      });
+    });
+
+    // The second rule outranks Obsidian's checkbox transition and its hovered field transition.
+    expect(rules).toEqual([
+      '.abyss-recurrence-editor *, .abyss-repeat-chip { scroll-behavior: auto; transition: none }',
+      [
+        ".abyss-recurrence-editor input[type='checkbox'],",
+        ".abyss-recurrence-editor input[type='text']:not(:disabled):hover,",
+        ".abyss-recurrence-editor input[type='number']:not(:disabled):hover { transition: none }",
+      ].join(' '),
+    ]);
+  });
+
+  it('keeps the reduced-motion rule for the repeat chip after every chip transition', () => {
+    const root = postcss.parse(css);
+    const offset = (rule: postcss.Rule): number => expectDefined(rule.source?.start).offset;
+    const chipTransitions: number[] = [];
+    root.walkRules((rule) => {
+      const transition = rule.nodes.some(
+        (node) => node.type === 'decl' && node.prop.startsWith('transition'),
+      );
+      if (transition && rule.selectors.includes('.abyss-chip')) chipTransitions.push(offset(rule));
+    });
+    const repeatChipStops: number[] = [];
+    root.walkAtRules('media', (media) => {
+      if (media.params !== '(prefers-reduced-motion: reduce)') return;
+      media.walkRules((rule) => {
+        if (rule.selectors.includes('.abyss-repeat-chip')) repeatChipStops.push(offset(rule));
+      });
+    });
+
+    // Both selectors are one class, so the rule that comes later sets the repeat chip's transition.
+    expect(chipTransitions).not.toEqual([]);
+    expect(repeatChipStops).toHaveLength(1);
+    const stop = expectDefined(repeatChipStops[0]);
+    for (const chip of chipTransitions) expect(chip).toBeLessThan(stop);
+  });
+
   it('presents presets and Custom as one pressed-state mode group', () => {
     const { container } = mount();
     const group = expectDefined(container.querySelector<HTMLElement>('.abyss-recurrence-presets'));
@@ -629,6 +677,29 @@ describe('mountRecurrenceEditor', () => {
     activeDocument.body.append(second.container);
     second.handle.restoreDraftState(draft);
     expect(activeDocument.activeElement?.getAttribute('data-recurrence-focus-key')).toBe('clear');
+  });
+
+  it('marks the label of each checked weekday, at render and on every change', () => {
+    const { container } = mount();
+    activeDocument.body.append(container);
+    click(button(container, 'Weekly'));
+    const checkedLabels = (): string[] =>
+      Array.from(
+        container.querySelectorAll<HTMLElement>('.abyss-recurrence-weekday.is-checked'),
+        (label) => expectDefined(label.querySelector('input')).value,
+      );
+    const monday = expectDefined(
+      container.querySelector<HTMLInputElement>('[name="recurrence-weekday"][value="Monday"]'),
+    );
+
+    expect(checkedLabels()).toEqual(['Sunday']);
+    monday.click();
+    expect(monday.checked).toBe(true);
+    expect(checkedLabels()).toEqual(['Monday', 'Sunday']);
+    monday.click();
+    expect(monday.checked).toBe(false);
+    expect(checkedLabels()).toEqual(['Sunday']);
+    expect(container.querySelector('input.is-checked')).toBeNull();
   });
 
   it('turns presets into adaptive controls and one canonical preview line', () => {

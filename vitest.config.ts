@@ -6,7 +6,7 @@ export default defineConfig({
     restoreMocks: true,
     mockReset: true,
     include: ['test/**/*.test.ts'],
-    exclude: ['test/perf/**'],
+    exclude: ['test/perf/**', 'test/store/**'],
     setupFiles: ['obsidian-test-mocks/vitest-setup', 'test/setup/isolatedFailures.ts'],
     passWithNoTests: false,
     environment: 'jsdom',

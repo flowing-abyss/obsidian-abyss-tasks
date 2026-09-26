@@ -801,11 +801,13 @@ class RecurrenceEditorController implements RecurrenceEditorHandle {
       },
     });
     checkbox.checked = this.state_abyssPrivate.weekdays.includes(weekday);
+    label.toggleClass('is-checked', checkbox.checked);
     label.createSpan({ text: weekday.slice(0, 2) });
     checkbox.addEventListener('change', () => {
       this.state_abyssPrivate.weekdays = checkbox.checked
         ? [...this.state_abyssPrivate.weekdays, weekday]
         : this.state_abyssPrivate.weekdays.filter((candidate) => candidate !== weekday);
+      label.toggleClass('is-checked', checkbox.checked);
       this.markDirty_abyssPrivate();
       this.refresh_abyssPrivate();
     });

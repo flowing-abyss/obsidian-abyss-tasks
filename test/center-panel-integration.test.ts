@@ -991,6 +991,48 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
     }
   });
 
+  it('renders the filter chips again in a kept header, right before the view-state button', async () => {
+    const settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as CalendarSettings;
+    const state = new AppState();
+    state.set('selectedList', 'today');
+    const panel = makeStaticPanel(state, [], settings);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    const chips = (): HTMLElement[] =>
+      Array.from(
+        container.querySelectorAll<HTMLElement>('.abyss-center-controls > .abyss-filter-chip'),
+      );
+    const labels = (): Array<string | null | undefined> =>
+      chips().map((chip) => chip.querySelector('.abyss-filter-chip-label')?.textContent);
+
+    try {
+      panel.mount(container);
+      state.set('centerListViewState', {
+        ...state.get('centerListViewState'),
+        filters: [
+          { type: 'tag', value: '#work' },
+          { type: 'tag', value: '#home' },
+        ],
+      });
+      await flushMicrotasks();
+      const header = expectDefined(container.querySelector<HTMLElement>('.abyss-center-header'));
+      expect(labels()).toEqual(['#work', '#home']);
+
+      state.set('centerListViewState', { ...state.get('centerListViewState'), groupBy: 'none' });
+      await flushMicrotasks();
+
+      expect(container.querySelector('.abyss-center-header')).toBe(header);
+      expect(labels()).toEqual(['#work', '#home']);
+      const last = chips()[chips().length - 1];
+      expect(last?.nextElementSibling).toBe(
+        container.querySelector('.abyss-center-controls > .abyss-view-state-btn'),
+      );
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
   /**
    * A running entry is only worth anything against a clock, and the panel is the one that owns it,
    * so this pins the instant the render reads travelling into the sort rather than into the badges

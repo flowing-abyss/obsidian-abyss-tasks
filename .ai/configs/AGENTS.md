@@ -11,6 +11,7 @@ An Obsidian sidebar plugin that renders vault tasks in month, week, and list vie
 | `pnpm lint`                    | Type-aware ESLint + Obsidian rules             |
 | `pnpm lint:css`                | Authored CSS correctness, scope, and tokens    |
 | `pnpm lint:css:artifact`       | Shipped CSS policy after artifact generation   |
+| `pnpm lint:store`              | Community directory review lint                |
 | `pnpm test`                    | Vitest unit suite                              |
 | `pnpm verify:task`             | Fast lint + CSS + types + architecture + tests |
 | `pnpm verify`                  | Canonical full local/CI/pre-push quality gate  |

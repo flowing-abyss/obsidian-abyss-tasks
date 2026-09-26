@@ -215,6 +215,10 @@ describe('center dependency indicator DOM', () => {
       );
       const row = element(expectDefined(card), '.abyss-task-card-main-row');
       const indicator = row.querySelector<HTMLElement>('.abyss-dep-indicator');
+      expect(row.classList.contains('abyss-task-card-main-row--has-dep')).toBe(type !== 'none');
+      expect(expectDefined(card).classList.contains('abyss-task-card-main-row--has-dep')).toBe(
+        false,
+      );
       if (type === 'none') {
         expect(indicator).toBeNull();
         expect(
@@ -244,6 +248,18 @@ describe('center dependency indicator DOM', () => {
       expect(expectDefined(card).querySelector('.abyss-task-desc')).toBeNull();
     },
   );
+
+  it("marks a selected card's main row for both the indicator and the delete button", async () => {
+    const h = await harness('- [ ] Current ⛔ a\n- [ ] Schema 🆔 a\n');
+    h.state.set('taskStack', [h.node('Current').root]);
+    mountCenter(h);
+    const row = element(h.el, '.abyss-task-card.is-selected .abyss-task-card-main-row');
+
+    expect(row.querySelector(':scope > .abyss-dep-indicator')).not.toBeNull();
+    expect(row.querySelector(':scope > .abyss-task-delete-btn')).not.toBeNull();
+    expect(row.classList.contains('abyss-task-card-main-row--has-dep')).toBe(true);
+    expect(row.classList.contains('abyss-task-card-main-row--has-delete')).toBe(true);
+  });
 
   it('uses a slash between simultaneous center counts without reusing the inspector divider', async () => {
     const h = await harness(
