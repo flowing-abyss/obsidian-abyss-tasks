@@ -1,14 +1,8 @@
 import { ESLint, type Linter } from 'eslint';
 import obsidianmd from 'eslint-plugin-obsidianmd';
-import { Platform } from 'obsidian';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-
-const loadChildProcess = async () => {
-  if (!Platform.isDesktop) throw new Error('The lint parity test requires a desktop runtime');
-  return import('node:child_process');
-};
-const { execFileSync } = await loadChildProcess();
+import { repositoryFiles, trackedFiles } from './support/repositoryFiles';
 
 const ROOT = ts.sys.resolvePath(`${import.meta.dirname}/..`);
 const PROJECT_CONFIG = ts.sys.resolvePath(`${ROOT}/eslint.config.mts`);
@@ -24,8 +18,7 @@ const projectLint = new ESLint({ cwd: ROOT, overrideConfigFile: PROJECT_CONFIG }
 
 /** Every tracked code file that the project config lints, as absolute paths. */
 async function lintedFiles(): Promise<string[]> {
-  const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' })
-    .split('\0')
+  const tracked = trackedFiles(ROOT)
     .filter((file) => CODE_EXTENSIONS.some((extension) => file.endsWith(extension)))
     .map((file) => ts.sys.resolvePath(`${ROOT}/${file}`));
   const linted: string[] = [];
@@ -49,12 +42,9 @@ const LOOKBEHIND_TEXT = /\?<[=!]/u;
  * the project config lints (`lintedFiles`).
  */
 function repositoryCodeFiles(): string[] {
-  return execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
-    cwd: ROOT,
-    encoding: 'utf8',
-  })
-    .split('\0')
-    .filter((file) => CODE_EXTENSIONS.some((extension) => file.endsWith(extension)));
+  return repositoryFiles(ROOT).filter((file) =>
+    CODE_EXTENSIONS.some((extension) => file.endsWith(extension)),
+  );
 }
 
 /** The 1-based `path:line` of each line of `text` that holds lookbehind text. */
