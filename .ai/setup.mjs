@@ -8,13 +8,18 @@
 //
 //   node .ai/setup.mjs
 //
-// Safe to re-run: existing correct links are left alone, and anything that isn't
+// Safe to re-run: existing correct links are left alone. A symlink that no longer
+// resolves and points into `.ai/` can only be one this script made before its
+// source moved, so it is replaced with the expected link. Anything else that isn't
 // already the expected link is reported and skipped rather than overwritten.
 //
 // `.ai/configs/` is laid out as a literal mirror of the repo root — e.g.
 // `.ai/configs/.codex/hooks.json` becomes `<repo-root>/.codex/hooks.json`.
 // To wire up a new agent config, just add the file at its real repo-root-relative
-// path under `.ai/configs/` and re-run this script; nothing else to edit.
+// path under `.ai/configs/` and re-run this script; nothing else to edit. The one
+// exception is a harness plugin in JavaScript or TypeScript, which the Obsidian
+// community directory's review would read as plugin code: it lives in
+// `.ai/scripts/`, which the review skips, and is linked explicitly below.
 //
 // Real symlinks require Administrator privileges or Windows Developer Mode,
 // so `pnpm install` would fail on an ordinary Windows account. Directory
@@ -34,6 +39,7 @@ import {
   realpathSync,
   statSync,
   symlinkSync,
+  unlinkSync,
 } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
@@ -57,6 +63,11 @@ const links = [
   ['.pi/skills', '.ai/skills'],
   ['.agents/skills', '.ai/skills'],
 
+  // Harness plugins live outside the configs mirror, in `.ai/scripts/`, so the
+  // community directory's review doesn't read them as plugin code.
+  ['.opencode/plugins/pnpm-policy.js', '.ai/scripts/opencode/pnpm-policy.js'],
+  ['.pi/extensions/pnpm-policy.ts', '.ai/scripts/pi/pnpm-policy.ts'],
+
   // Claude Code's local CodeGraph installer writes project instructions here.
   // Keep it on the same canonical source as every other agent instruction file.
   ['.claude/CLAUDE.md', path.join('.ai/configs', 'AGENTS.md')],
@@ -78,17 +89,21 @@ const links = [
 ];
 
 let created = 0;
+let replaced = 0;
 let skipped = 0;
 let conflicts = 0;
 
 for (const [linkPath, targetPath] of links) {
   const result = ensureLink(linkPath, targetPath);
   if (result === 'created') created += 1;
+  if (result === 'replaced') replaced += 1;
   if (result === 'skipped') skipped += 1;
   if (result === 'conflict') conflicts += 1;
 }
 
-console.log(`\n${created} created, ${skipped} already OK, ${conflicts} conflicts.`);
+console.log(
+  `\n${created} created, ${replaced} replaced, ${skipped} already OK, ${conflicts} conflicts.`,
+);
 if (conflicts > 0) {
   console.log('Resolve conflicts above manually, then re-run this script.');
   process.exitCode = 1;
@@ -115,6 +130,7 @@ function ensureLink(linkPath, targetPath) {
 
   mkdirSync(path.dirname(linkPath), { recursive: true });
 
+  let staleTarget;
   if (existsSync(linkPath) || isBrokenSymlink(linkPath)) {
     const check = isExistingLinkCorrect(linkPath, targetPath, relativeTarget, linkKind);
     if (check.ok) {
@@ -122,10 +138,14 @@ function ensureLink(linkPath, targetPath) {
       return 'skipped';
     }
 
-    console.log(
-      `conflict ${linkPath} (exists and is not the expected link to ${relativeTarget}: ${check.reason})`,
-    );
-    return 'conflict';
+    staleTarget = ownStaleLinkTarget(linkPath);
+    if (staleTarget === undefined) {
+      console.log(
+        `conflict ${linkPath} (exists and is not the expected link to ${relativeTarget}: ${check.reason})`,
+      );
+      return 'conflict';
+    }
+    unlinkSync(linkPath);
   }
 
   try {
@@ -137,8 +157,28 @@ function ensureLink(linkPath, targetPath) {
     return 'conflict';
   }
 
+  if (staleTarget !== undefined) {
+    console.log(
+      `replaced ${linkPath} -> ${relativeTarget} (the old link pointed to "${staleTarget}")`,
+    );
+    return 'replaced';
+  }
   console.log(`created  ${linkPath} -> ${relativeTarget}`);
   return 'created';
+}
+
+// Only this script makes links into `.ai/`, so a symlink that no longer resolves
+// and whose stored target, resolved the way the filesystem does against the
+// link's own directory, lies inside `.ai/` is one it made before its source
+// moved. Returns that stored target, or undefined for anything else.
+function ownStaleLinkTarget(linkPath) {
+  if (existsSync(linkPath) || !isBrokenSymlink(linkPath)) return undefined;
+  const storedTarget = readlinkSync(linkPath);
+  const resolved = path.resolve(realpathSync(path.dirname(linkPath)), storedTarget);
+  const fromAiRoot = path.relative(realpathSync(aiRoot), resolved);
+  const insideAiRoot =
+    fromAiRoot !== '' && !path.isAbsolute(fromAiRoot) && fromAiRoot.split(path.sep)[0] !== '..';
+  return insideAiRoot ? storedTarget : undefined;
 }
 
 function createLink(linkPath, targetPath, relativeTarget, isDirTarget) {
