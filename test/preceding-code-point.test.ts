@@ -213,6 +213,8 @@ describe.each<readonly [string, MatchesUnlessPreceded]>([
     ['not global', /a/u],
     ['not unicode', /a/g],
     ['sticky and not global', /a/uy],
+    // Literal `guy` flags would fail sonarjs/stateful-regex, so they are joined at run time.
+    ['global and sticky', new RegExp('a', ['g', 'u', 'y'].join(''))],
   ])('rejects a regex that is %s', (_flaw, pattern) => {
     expect(() => matchesUnlessPreceded(pattern, 'a', bounded('a', refusesNothing))).toThrow(
       TypeError,

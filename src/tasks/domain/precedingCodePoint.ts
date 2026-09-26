@@ -34,10 +34,10 @@ function codePointBefore(text: string, index: number): string {
   return index > 0 ? text.charAt(index - 1) : '';
 }
 
-/** The search moves `lastIndex` itself and reads code points, which needs a global `u` regex. */
+/** Only a global `u` regex that is not sticky searches on past a refused match by code point. */
 function assertSearchable(regex: RegExp): void {
-  if (!regex.global || !regex.unicode) {
-    throw new TypeError(`${String(regex)} must be global and unicode.`);
+  if (!regex.global || !regex.unicode || regex.sticky) {
+    throw new TypeError(`${String(regex)} must be global, unicode, and not sticky.`);
   }
 }
 
