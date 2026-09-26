@@ -184,40 +184,6 @@ export const contracts = {
       reason:
         'Fixed contrast anchor for runtime luminance-based tag text choice, independent of theme text colors.',
     },
-    {
-      ruleId: 'abyss/important',
-      selector: '.abyss-panel-view',
-      property: 'padding',
-      value: '0',
-      context: [],
-      reason:
-        'Override Obsidian ItemView host padding/overflow to keep scrolling inside the retained panels.',
-    },
-    {
-      ruleId: 'abyss/important',
-      selector: '.abyss-panel-view',
-      property: 'overflow',
-      value: 'hidden',
-      context: [],
-      reason:
-        'Override Obsidian ItemView host padding/overflow to keep scrolling inside the retained panels.',
-    },
-    {
-      ruleId: 'abyss/important',
-      selector: '.abyss-recurrence-editor *',
-      property: 'transition',
-      value: 'none',
-      context: ['@media (prefers-reduced-motion: reduce)'],
-      reason: 'Reduced motion must override control transition declarations.',
-    },
-    {
-      ruleId: 'abyss/important',
-      selector: '.abyss-repeat-chip',
-      property: 'transition',
-      value: 'none',
-      context: ['@media (prefers-reduced-motion: reduce)'],
-      reason: 'Reduced motion must override control transition declarations.',
-    },
   ],
 };
 // Finite wrappers, scoped to their source owners. Contract tests execute/discover each family.

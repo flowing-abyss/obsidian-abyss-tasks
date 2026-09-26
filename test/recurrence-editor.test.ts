@@ -1,3 +1,4 @@
+import postcss from 'postcss';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RecurrencePolicy, TaskCommandResult, TaskPatch } from '../src/tasks';
 import {
@@ -160,6 +161,28 @@ afterEach(() => {
 const css = await loadPluginStyles();
 
 describe('mountRecurrenceEditor', () => {
+  it('stops the transitions that reach the editor when motion is reduced', () => {
+    const rules: string[] = [];
+    postcss.parse(css).walkAtRules('media', (media) => {
+      if (media.params !== '(prefers-reduced-motion: reduce)') return;
+      media.walkRules((rule) => {
+        if (!rule.selector.includes('abyss-recurrence-editor')) return;
+        const declarations = rule.nodes.filter((node) => node.type === 'decl').map(String);
+        rules.push(`${rule.selectors.join(', ')} { ${declarations.join('; ')} }`);
+      });
+    });
+
+    // The second rule outranks Obsidian's checkbox transition and its hovered field transition.
+    expect(rules).toEqual([
+      '.abyss-recurrence-editor *, .abyss-repeat-chip { scroll-behavior: auto; transition: none }',
+      [
+        ".abyss-recurrence-editor input[type='checkbox'],",
+        ".abyss-recurrence-editor input[type='text']:not(:disabled):hover,",
+        ".abyss-recurrence-editor input[type='number']:not(:disabled):hover { transition: none }",
+      ].join(' '),
+    ]);
+  });
+
   it('presents presets and Custom as one pressed-state mode group', () => {
     const { container } = mount();
     const group = expectDefined(container.querySelector<HTMLElement>('.abyss-recurrence-presets'));

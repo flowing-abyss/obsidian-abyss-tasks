@@ -27,12 +27,14 @@ import { taskNodeLine, type TaskSelectionNode } from '../src/ui/taskSelection';
 import { MonthGridView } from '../src/views/MonthGridView';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
 import type { PanelNavigator } from '../src/views/panelNavigation';
+import { cssDeclarations, cssDeclarationText } from './cssHelpers';
 import {
   configuredTaskApplication,
   createAppWithFiles,
   deferred,
   expectDefined,
   flushMicrotasks,
+  loadPluginStyles,
   seedTaskCache,
   task,
   useRealMoment,
@@ -119,6 +121,22 @@ function computedStyleWithFontSize(
       property === 'fontSize' ? fontSize : Reflect.get(target, property, target),
   });
 }
+
+describe('PanelView host styles', () => {
+  it('clears the host padding and scrolling on its own content element only', async () => {
+    const css = await loadPluginStyles();
+
+    expect(
+      cssDeclarationText(
+        css,
+        `.workspace-leaf-content[data-type='${PANEL_VIEW_TYPE}'] > .view-content.abyss-panel-view`,
+      ),
+    ).toBe(['padding: 0;', 'overflow: hidden;'].join('\n'));
+    const panelProperties = cssDeclarations(css, '.abyss-panel-view').map(({ prop }) => prop);
+    expect(panelProperties).not.toContain('padding');
+    expect(panelProperties).not.toContain('overflow');
+  });
+});
 
 describe('PanelView dependency command convergence', () => {
   it('converges a restored subtree through the committed parent root', async () => {

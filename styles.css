@@ -77,9 +77,14 @@
    Abyss Tasks — Three-Panel Layout
    ============================================================ */
 
+/* Obsidian's own full-bleed views clear the host padding and scrolling the same way; every pane
+   of the panel scrolls itself. */
+.workspace-leaf-content[data-type='task-calendar-panel'] > .view-content.abyss-panel-view {
+  padding: 0;
+  overflow: hidden;
+}
+
 .abyss-panel-view {
-  padding: 0 !important;
-  overflow: hidden !important;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
@@ -3995,7 +4000,14 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   .abyss-recurrence-editor *,
   .abyss-repeat-chip {
     scroll-behavior: auto;
-    transition: none !important;
+    transition: none;
+  }
+
+  /* Obsidian's transitions on checkboxes and on hovered text and number fields are more specific
+     than the editor-wide rule above. */
+  .abyss-recurrence-editor input[type='checkbox'],
+  .abyss-recurrence-editor input:is([type='text'], [type='number']):not(:disabled):hover {
+    transition: none;
   }
 }
 
