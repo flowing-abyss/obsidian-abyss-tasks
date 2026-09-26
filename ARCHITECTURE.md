@@ -579,7 +579,7 @@ negative lookbehind becomes an alternative that passes over the refused characte
 the code point before the match, and an inner one becomes a class on the content's last
 character. The code point check lives in
 [`src/markdown/precedingCodePoint.ts`](src/markdown/precedingCodePoint.ts); the task domain keeps
-an identical copy of the search because it imports only itself, and
+an identical copy of the search because it imports only its own modules and `rrule`, and
 [one suite](test/preceding-code-point.test.ts) runs both.
 
 Authored and shipped CSS share the [CSS policy](tooling/css-policy.mjs) and Stylelint correctness

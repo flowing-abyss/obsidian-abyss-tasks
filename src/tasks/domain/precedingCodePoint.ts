@@ -3,8 +3,8 @@
  * A pattern checks the code point before each match instead. A refused match resumes the search
  * at the next code point after its start, which is where the engine would have tried next.
  * `src/markdown/precedingCodePoint.ts` and `src/tasks/domain/precedingCodePoint.ts` hold the same
- * text through the end of `matchesUnlessPreceded`, because the task domain imports only itself;
- * `test/preceding-code-point.test.ts` runs both and compares their text.
+ * text through the end of `matchesUnlessPreceded`, because the task domain imports only its own
+ * modules and `rrule`; `test/preceding-code-point.test.ts` runs both and compares their text.
  */
 
 function isHighSurrogate(code: number): boolean {

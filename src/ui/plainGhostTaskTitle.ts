@@ -3,8 +3,8 @@ import type { TaskSnapshot } from '../tasks';
 
 // Pair content never ends in a backslash: its last character class excludes it, and for inline
 // pairs also the line terminators that `.` excludes. Group 3 is an escaped inline delimiter, which
-// `$2$3` keeps, so no pair starts right after a backslash. An emphasis pair is checked on the code
-// point before it.
+// `$2$3` keeps, so no pair starts right after a backslash. `isEmphasisNeighbour` refuses an
+// emphasis pair right after a backslash, an asterisk, or an underscore.
 const PAIRED_INLINE_DELIMITER_RE = /(\*\*|__|~~|`+)((?:.*?[^\\\n\r\u2028\u2029])??)\1|(\\[*_~`])/gu;
 const PAIRED_EMPHASIS_RE = /([*_])([^*_]*?[^*_\\])\1/gu;
 const PAIR_DELIMITER_RE = /[*_~`]/u;
