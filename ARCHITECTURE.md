@@ -588,8 +588,9 @@ only its own modules and `rrule`, and shared Markdown helpers import no task lay
 [Vitest file](test/store/review-lint.test.ts) under its own config, outside the unit suite and its
 coverage: eslint-plugin-obsidianmd's recommended config, with the parser options its maintainers
 document for the scanner, over every code file that git tracks or would track and `package.json`,
-except the review's skip list, and stylelint-config-obsidianmd's rules at the browser baseline of
-the manifest's `minAppVersion` over every CSS file. Every message fails, parse errors included. It
+except the review's skip list, and stylelint-config-obsidianmd's own rules, without the
+stylelint-config-standard base that no review report shows, at the browser baseline of the
+manifest's `minAppVersion` over every CSS file. Every message fails, parse errors included. It
 holds the review's published rules, not its private scanner, whose verdicts it can drift from. The
 [review configuration test](test/store-review.test.ts) pins that configuration, lints `styles.css`
 with the review's CSS rules, and checks the README's installation and usage sections and the rrule

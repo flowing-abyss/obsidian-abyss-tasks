@@ -54,10 +54,10 @@ const SCANNER_SKIPPED_NAMES = [
 ];
 
 /**
- * The names the scanner skips at the repository root only, as eslint-plugin-obsidianmd's guide
- * shows the scanner's configuration (docs/configuration.md at 0.4.2, "Community plugin scanner
- * configuration"). It skips every other name at any depth. A name read more narrowly than the
- * scanner reads it only makes the check stricter.
+ * The names that eslint-plugin-obsidianmd's guide anchors at the repository root in the scanner's
+ * configuration (docs/configuration.md at 0.4.2, "Community plugin scanner configuration"). The
+ * check matches them there only, and every other name at any depth. A name read more narrowly
+ * than the scanner reads it only makes the check stricter.
  */
 const ROOT_SKIPPED_NAMES = new Set([
   'node_modules',
