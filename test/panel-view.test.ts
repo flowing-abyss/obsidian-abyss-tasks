@@ -2002,7 +2002,7 @@ describe('PanelView', () => {
       expect(internals.state_abyssPrivate.get('projectsPanel')).toEqual({ view: 'table' });
     });
 
-    it('places the filter chips right before the view-state button, in filter order', async () => {
+    it('places the filter chips right before the view-state button, in filter order, and again after one is removed', async () => {
       const internals = view as unknown as {
         state_abyssPrivate: AppState;
         panelNavigation_abyssPrivate: PanelNavigator;
