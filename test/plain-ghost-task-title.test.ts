@@ -3,15 +3,23 @@ import { plainGhostTaskTitle } from '../src/ui/plainGhostTaskTitle';
 import { medianInterleavedRatio, task } from './helpers';
 
 const LINE_SEPARATOR = String.fromCodePoint(0x2028);
+const PARAGRAPH_SEPARATOR = String.fromCodePoint(0x2029);
 
 describe('plainGhostTaskTitle', () => {
   it.each([
     ['keeps an escaped strong opener as text', '\\**a**', '**a**'],
+    ['keeps an escaped underscore opener as text', '\\__a__', '__a__'],
+    ['keeps an escaped strike opener as text', '\\~~a~~', '~~a~~'],
+    ['keeps an escaped code opener as text', '\\`a`', '`a`'],
     ['does not close a strong pair on an escaped delimiter', '**a\\** b**', 'a** b'],
     ['applies both strong checks in one title', 'a \\**b** **c** `d\\` e`', 'a **b c** d` e'],
     ['keeps an escaped emphasis opener as text', '\\*a*', '*a*'],
     ['does not close an emphasis pair on an escaped delimiter', '*a\\* b*', '*a* b*'],
-    ['applies both emphasis checks in one title', '\\*a* *b\\* c* _d_ **e*', '*a b* c d e'],
+    [
+      'strips emphasis pairs over repeated passes and keeps escaped delimiters',
+      '\\*a* *b\\* c* _d_ **e*',
+      '*a b* c d e',
+    ],
     ['unescapes a title without pair delimiters', 'a \\\\ b', 'a \\ b'],
     ['strips an underscore pair', '_a_', 'a'],
     ['strips a strike pair', '~~a~~', 'a'],
@@ -21,6 +29,11 @@ describe('plainGhostTaskTitle', () => {
       'keeps a strong pair around a line separator',
       `**${LINE_SEPARATOR}**`,
       `**${LINE_SEPARATOR}**`,
+    ],
+    [
+      'keeps a strong pair around a paragraph separator',
+      `**${PARAGRAPH_SEPARATOR}**`,
+      `**${PARAGRAPH_SEPARATOR}**`,
     ],
     ['keeps one escaped delimiter at a time', '\\*****', '*'],
     ['does not open emphasis right after an underscore', '_*a*', '_*a*'],
