@@ -8,6 +8,7 @@ import {
   TaskMarkdownCodec,
   type LineEditResult,
   type ParsedTaskLine,
+  type SourceSpan,
   type TaskSpanKind,
 } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { canonicalStatusCatalog, medianInterleavedRatio, seededRandom } from '../helpers';
@@ -2156,7 +2157,8 @@ const TITLE_FRAGMENTS = [
 const TITLE_REPLACEMENT = '[[@Z@]]';
 
 interface TitleEditTally {
-  refusals: number;
+  linkRefusals: number;
+  otherRefusals: number;
   refusedLinesWithCr: number;
   rewrites: number;
 }
@@ -2173,52 +2175,188 @@ function seededTitleLines(count: number): string[] {
   });
 }
 
+interface TitleFragment {
+  readonly from: number;
+  readonly to: number;
+}
+
+/** How a span takes part in the title fragments, by the rules the domain joins them with. */
+function titleSpanRole(
+  span: SourceSpan,
+  contentEnd: number,
+): 'extends' | 'continues' | 'ends' | 'skipped' {
+  if (span.kind === 'prefix' || (span.kind === 'separator' && span.from === contentEnd)) {
+    return 'skipped';
+  }
+  if (span.kind === 'title' || span.kind === 'unknown') return 'extends';
+  return span.kind === 'separator' ? 'continues' : 'ends';
+}
+
 /**
- * The source text that the edit of title link `occurrence` rewrites, found where the replacement
- * starts and as long as the text it replaced, or nothing when the edit is refused.
+ * The title fragments of a line, rebuilt from its spans as the domain joins them: title and
+ * unknown spans extend a fragment, a separator inside one continues it, any other span ends it,
+ * and the prefix and the line's final separator are skipped.
  */
-function rewrittenTitleText(line: string, occurrence: number): string | undefined {
-  const result = codec.applyLineEdit(line, {
+function titleFragmentsOf(parsed: ParsedTaskLine): TitleFragment[] {
+  const contentEnd = parsed.original.length - parsed.lineEnding.length;
+  const fragments: TitleFragment[] = [];
+  let open: TitleFragment | undefined;
+  for (const span of parsed.spans) {
+    const role = titleSpanRole(span, contentEnd);
+    if (role === 'extends') {
+      open = { from: open?.from ?? span.from, to: span.to };
+    } else if (role === 'ends') {
+      if (open !== undefined) fragments.push(open);
+      open = undefined;
+    }
+  }
+  if (open !== undefined) fragments.push(open);
+  return fragments;
+}
+
+interface RenderedTitle {
+  readonly text: string;
+  /** The source index that each character of `text` comes from, or -1 for the join's space. */
+  readonly sources: readonly number[];
+}
+
+/**
+ * The title the panel renders for a line, rebuilt without the codec: the title fragments joined
+ * with one space, each run of two or more whitespace characters collapsed to one space that comes
+ * from the run's first source index, and the ends trimmed.
+ */
+function renderedTitle(parsed: ParsedTaskLine): RenderedTitle {
+  const joined: number[] = [];
+  for (const [index, fragment] of titleFragmentsOf(parsed).entries()) {
+    if (index > 0) joined.push(-1);
+    for (let at = fragment.from; at < fragment.to; at++) joined.push(at);
+  }
+  const joinedText = joined.map((at) => (at < 0 ? ' ' : (parsed.original[at] ?? ''))).join('');
+  let text = '';
+  const sources: number[] = [];
+  let copied = 0;
+  const runs = /\s{2,}/gu;
+  let run: RegExpExecArray | null;
+  while ((run = runs.exec(joinedText)) !== null) {
+    text += `${joinedText.slice(copied, run.index)} `;
+    sources.push(...joined.slice(copied, run.index), joined[run.index] ?? -1);
+    copied = run.index + run[0].length;
+  }
+  text += joinedText.slice(copied);
+  sources.push(...joined.slice(copied));
+  const from = text.length - text.trimStart().length;
+  const to = text.trimEnd().length;
+  return { text: text.slice(from, to), sources: sources.slice(from, to) };
+}
+
+/**
+ * Whether the source holds a link at source index `at` that renders as `raw`: a link that
+ * `parseLinks` reads over the title fragment holding `at` starts there, and its text, with each
+ * run of two or more whitespace characters collapsed to one space, is `raw`.
+ */
+function sourceHoldsLinkAt(parsed: ParsedTaskLine, at: number, raw: string): boolean {
+  const fragment = titleFragmentsOf(parsed).find(({ from, to }) => from <= at && at < to);
+  if (fragment === undefined) return false;
+  return parseLinks(parsed.original.slice(fragment.from, fragment.to)).some(
+    (link) => fragment.from + link.index === at && link.raw.replace(/\s{2,}/gu, ' ') === raw,
+  );
+}
+
+function editSeededTitleLink(line: string, occurrence: number): LineEditResult {
+  return codec.applyLineEdit(line, {
     type: 'edit-link',
     occurrence,
     replacement: TITLE_REPLACEMENT,
   });
-  if (result.type === 'invalid') return undefined;
-  const from = result.content.indexOf(TITLE_REPLACEMENT);
-  return line.slice(from, from + line.length + TITLE_REPLACEMENT.length - result.content.length);
+}
+
+function isLinkRefusal(result: LineEditResult): boolean {
+  return (
+    result.type === 'invalid' &&
+    result.issues.length === 1 &&
+    result.issues[0]?.code === 'invalid-target' &&
+    result.issues[0].field === 'link'
+  );
+}
+
+/** A title link the panel shows, with the source index its first character comes from. */
+interface ShownTitleLink {
+  readonly raw: string;
+  readonly at: number;
 }
 
 /**
- * Edits each title link the panel shows on `line`, and the occurrence after the last. Each edit
- * is refused or rewrites source text that renders as the link the panel shows, and the one after
- * the last is refused. Returns the first edit that is not.
+ * Judges the edit of shown title link `occurrence`. A rewrite must start at the source index of
+ * the link's first character and replace text that collapses to the link's text. A refusal with
+ * `invalid-target` on `link` must concern a link that the source does not hold there. A refusal
+ * with another issue, a title edit that would add a field, is counted and not judged. Returns the
+ * edit when it is wrong.
+ */
+function shownLinkEditSlip(
+  parsed: ParsedTaskLine,
+  occurrence: number,
+  shown: ShownTitleLink,
+  tally: TitleEditTally,
+): string | undefined {
+  const line = parsed.original;
+  const result = editSeededTitleLink(line, occurrence);
+  if (result.type === 'changed') {
+    const from = result.content.indexOf(TITLE_REPLACEMENT);
+    const length = line.length + TITLE_REPLACEMENT.length - result.content.length;
+    const written = line.slice(from, from + length);
+    if (from === shown.at && written.replace(/\s{2,}/gu, ' ') === shown.raw) {
+      tally.rewrites++;
+      return undefined;
+    }
+  } else if (result.type === 'invalid' && !isLinkRefusal(result)) {
+    tally.otherRefusals++;
+    return undefined;
+  } else if (isLinkRefusal(result) && !sourceHoldsLinkAt(parsed, shown.at, shown.raw)) {
+    tally.linkRefusals++;
+    return undefined;
+  }
+  return JSON.stringify({ line, occurrence, shown, result });
+}
+
+/**
+ * Checks that the title rebuilt from the spans equals the codec's, judges the edit of each title
+ * link the panel shows on `line`, and checks that the edit of the occurrence after the last does
+ * not change the line. Returns the first wrong result.
  */
 function titleEditSlip(line: string, tally: TitleEditTally): string | undefined {
-  const shown = parseLinks(parse(line).markdownTitle).map((link) => link.raw);
-  const refusalsBefore = tally.refusals;
-  for (const [occurrence, raw] of shown.entries()) {
-    const rewritten = rewrittenTitleText(line, occurrence);
-    if (rewritten === undefined) tally.refusals++;
-    else if (rewritten.replace(/\s{2,}/gu, ' ') === raw) tally.rewrites++;
-    else return JSON.stringify({ line, occurrence, shown: raw, rewritten });
+  const parsed = parse(line);
+  const title = renderedTitle(parsed);
+  if (title.text !== parsed.markdownTitle) return JSON.stringify({ line, rebuilt: title.text });
+  const shown = parseLinks(parsed.markdownTitle);
+  const linkRefusalsBefore = tally.linkRefusals;
+  for (const [occurrence, link] of shown.entries()) {
+    const at = title.sources[link.index] ?? -1;
+    const slip = shownLinkEditSlip(parsed, occurrence, { raw: link.raw, at }, tally);
+    if (slip !== undefined) return slip;
   }
-  if (tally.refusals > refusalsBefore && line.includes(CR)) tally.refusedLinesWithCr++;
-  const rewritten = rewrittenTitleText(line, shown.length);
-  return rewritten === undefined
-    ? undefined
-    : JSON.stringify({ line, occurrence: shown.length, rewritten });
+  if (tally.linkRefusals > linkRefusalsBefore && line.includes(CR)) tally.refusedLinesWithCr++;
+  const past = editSeededTitleLink(line, shown.length);
+  return past.type === 'changed'
+    ? JSON.stringify({ line, occurrence: shown.length, past })
+    : undefined;
 }
 
 describe('title link edits and the panel numbering', () => {
-  it('rewrites the title link the panel numbers or refuses the edit, on seeded lines', () => {
-    const tally: TitleEditTally = { refusals: 0, refusedLinesWithCr: 0, rewrites: 0 };
+  it('rewrites each title link where the panel shows it, or refuses one the source does not hold there, on seeded lines', () => {
+    const tally: TitleEditTally = {
+      linkRefusals: 0,
+      otherRefusals: 0,
+      refusedLinesWithCr: 0,
+      rewrites: 0,
+    };
     let slip: string | undefined;
     for (const line of seededTitleLines(3_000)) slip ??= titleEditSlip(line, tally);
 
     expect(slip).toBeUndefined();
-    // Measured on these lines: the panel shows 3,772 links on 2,011 of them, and the edits rewrite
-    // 2,934 and refuse 838, on 717 lines, each of which holds a CR.
+    // Measured on these lines: 1,056 hold a CR, and the panel shows 3,772 links on 2,011 of them.
+    // The edits rewrite 2,934 and refuse 838 as links the source does not hold there, on 717
+    // lines, each of which holds a CR. None is refused for another issue.
     expect(tally.refusedLinesWithCr).toBeGreaterThan(0);
-    expect(tally.rewrites).toBeGreaterThanOrEqual(2_000);
+    expect(tally.rewrites).toBeGreaterThanOrEqual(2_900);
   });
 });
