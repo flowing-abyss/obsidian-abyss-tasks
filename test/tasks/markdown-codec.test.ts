@@ -870,7 +870,7 @@ describe('TaskMarkdownCodec', () => {
 
     // The panel numbers the links of the rendered title, where each run of two or more whitespace
     // characters is one space, so it shows a wiki link that a lone CR hides from the source. Only
-    // that link's edit is refused.
+    // that link's edit is refused; each other link on the line is matched on its own.
     it.each([
       // Numbered by the fragments, occurrence 0 rewrites `[[Target]]`.
       [

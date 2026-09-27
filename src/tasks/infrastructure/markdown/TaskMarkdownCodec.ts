@@ -639,10 +639,10 @@ function sourceTitleLinks(parsed: ParsedTaskLine): TitleLink[] {
  * whose text, with each run of two or more whitespace characters collapsed to one space, is that
  * link's text. When the source holds no such link, for example because a lone CR in a whitespace
  * run hides a wiki link from the source, or because the join makes a link across a removed field,
- * only this edit is refused, and the other links on the line still edit. Today a source link that
- * renders at that place always reads as that link. The text comparison stays because a grammar
- * change that reads a link's end from its context (SP1q) could make the two readings differ, and
- * the comparison then refuses the edit rather than rewriting other text.
+ * only this edit is refused; each other link on the line is matched on its own. Today a source
+ * link that renders at that place always reads as that link. The text comparison stays because a
+ * grammar change that reads a link's end from its context (SP1q) could make the two readings
+ * differ, and the comparison then refuses the edit rather than rewriting other text.
  */
 function editTitleLink(
   parsed: ParsedTaskLine,
