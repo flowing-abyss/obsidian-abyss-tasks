@@ -19,6 +19,7 @@ import { buildProjectTimelineModel } from '../src/projects/projectTimelineModel'
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import type { ProjectStatus } from '../src/settings/types';
+import { projectPropertyValuePresentation } from '../src/ui/projectPropertyValuePresentation';
 import { expectDefined } from './helpers';
 
 const statuses: ProjectStatus[] = [
@@ -731,4 +732,61 @@ it('requires one explicit instant across Table, Kanban and Timeline tracked sort
   } finally {
     ambient.mockRestore();
   }
+});
+
+describe('project link labels', () => {
+  // Obsidian reads `[[Zeta|]]` with an empty alias; every label shows the note name instead.
+  const owners = expectDefined(fields.find(({ id }) => id === 'property:owners'));
+  const resolveLink = (target: string): string | undefined =>
+    target === 'Zeta' ? 'Zeta.md' : undefined;
+
+  it('labels a group, a cell, and a suggestion with the note name', () => {
+    const alpha = project('Alpha', { frontmatter: { owners: '[[Zeta|]]' } });
+    const grouped = buildProjectTableModel({
+      nowMs: NOW_MS,
+      projects: [alpha],
+      fields,
+      statuses,
+      settings: table({ groupBy: 'property:owners' }),
+      resolveLink,
+    });
+
+    expect(grouped.groups.map(({ label }) => label)).toEqual(['Zeta']);
+    expect(projectTableDisplayValues(alpha, owners, statuses, NOW_MS)).toEqual(['Zeta']);
+    expect(projectPropertyValuePresentation('[[Zeta|]]').label).toBe('Zeta');
+  });
+
+  it('searches and sorts by the note name', () => {
+    const projects = [
+      project('Alpha', { frontmatter: { owners: '[[Zeta|]]' } }),
+      project('Beta', { frontmatter: { owners: 'Mike' } }),
+    ];
+    const sorted = model(projects, table({ sortBy: { field: 'property:owners', dir: 'asc' } }));
+
+    expect(model(projects, table(), 'zeta').groups[0]?.projects.map(({ name }) => name)).toEqual([
+      'Alpha',
+    ]);
+    expect(sorted.groups[0]?.projects.map(({ name }) => name)).toEqual(['Beta', 'Alpha']);
+  });
+
+  // They link to the same note, so they share a group.
+  it.each(['[[Zeta|]]', '[[ Zeta ]]', String.raw`[[Zeta\|b]]`])(
+    'groups %s with [[Zeta]]',
+    (value) => {
+      const result = buildProjectTableModel({
+        nowMs: NOW_MS,
+        projects: [
+          project('Alpha', { frontmatter: { owners: '[[Zeta]]' } }),
+          project('Beta', { frontmatter: { owners: value } }),
+        ],
+        fields,
+        statuses,
+        settings: table({ groupBy: 'property:owners', sortBy: { field: 'name', dir: 'asc' } }),
+        resolveLink,
+      });
+
+      expect(result.groups.map(({ key }) => key)).toEqual(['link:zeta.md']);
+      expect(result.groups[0]?.projects.map(({ name }) => name)).toEqual(['Alpha', 'Beta']);
+    },
+  );
 });

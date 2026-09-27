@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildLinkRaw,
   countLinksIn,
+  linkValueLabel,
   pairAnchorsToTokens,
   parseLinks,
   type LinkToken,
@@ -170,6 +171,26 @@ describe('parseLinks', () => {
   });
 });
 
+describe('linkValueLabel', () => {
+  it.each([
+    ['[[a|b]]', 'b'],
+    ['[[Folder/a.md]]', 'a'],
+    ['[x](y)', 'x'],
+    ['plain text', 'plain text'],
+    ['a [[b]]', 'a [[b]]'],
+    // Obsidian reads an empty alias, and a label falls back to the note name.
+    ['[[a|]]', 'a'],
+    ['[[Folder/a.md|]]', 'a'],
+    // With no name to show, or only spaces, the label is the link as written.
+    [String.raw`[[\]]`, String.raw`[[\]]`],
+    [String.raw`[[\|]]`, String.raw`[[\|]]`],
+    ['[ ](b)', '[ ](b)'],
+    ['[[a/ .md]]', '[[a/ .md]]'],
+  ])('labels %s as %s', (value, label) => {
+    expect(linkValueLabel(value)).toBe(label);
+  });
+});
+
 describe('buildLinkRaw', () => {
   it('omits the alias when display equals target basename', () => {
     expect(buildLinkRaw('wiki', 'Note', 'Note')).toBe('[[Note]]');
@@ -223,6 +244,12 @@ describe('pairAnchorsToTokens', () => {
   it('matches a wiki alias anchor by href against the token target', () => {
     const tokens = [mkWiki('Sources', 'secondary sources')];
     const anchors = [{ text: 'secondary sources', href: 'Sources' }];
+    expect(pairAnchorsToTokens(anchors, tokens)).toEqual([0]);
+  });
+
+  it('matches a wiki anchor whose href leaves out the folder and extension', () => {
+    const tokens = [mkWiki('Folder/Note.md', 'Alias')];
+    const anchors = [{ text: 'Note', href: 'Note' }];
     expect(pairAnchorsToTokens(anchors, tokens)).toEqual([0]);
   });
 });

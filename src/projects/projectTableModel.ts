@@ -1,4 +1,4 @@
-import { exactLinkToken, linkValueLabel } from '../markdown/links';
+import { exactLinkToken, linkLabel, linkValueLabel } from '../markdown/links';
 import type { ProjectStatus } from '../settings/types';
 import { formatTrackedDuration, totalMs } from '../tasks';
 import {
@@ -340,7 +340,7 @@ function propertyValueGroup(
   const presentation = compiledProjectPropertyPresentation(compiledPresets, value);
   return {
     key,
-    label: displayNameOr(presentation?.displayName, link?.display ?? text),
+    label: displayNameOr(presentation?.displayName, link === undefined ? text : linkLabel(link)),
     value,
     sourcePath: project.path,
     ...(presentation === undefined ? {} : { presentation }),

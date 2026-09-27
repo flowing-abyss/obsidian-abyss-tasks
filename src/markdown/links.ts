@@ -78,6 +78,11 @@ function nonOverlappingTokens(matches: LinkMatch[]): LinkToken[] {
   return accepted;
 }
 
+/** A wiki link's display without an alias: the target without folder and extension. */
+function unaliasedDisplay(target: string): string {
+  return target.replace(/\.[^.]*$/u, '').replace(/^.*\//u, '');
+}
+
 /**
  * Reads a wiki link's content as Obsidian does: the first `|` splits the target from the alias
  * unless nothing comes before it, both parts are trimmed, and one backslash at the end of the
@@ -93,7 +98,7 @@ function wikiToken(raw: string, content: string, index: number): LinkToken {
     raw,
     type: 'wiki',
     target,
-    display: alias ?? target.replace(/\.[^.]*$/u, '').replace(/^.*\//u, ''),
+    display: alias ?? unaliasedDisplay(target),
     index,
   };
 }
@@ -171,9 +176,20 @@ export function exactLinkToken(value: string): LinkToken | undefined {
   return tokens.length === 1 && token?.raw === value ? token : undefined;
 }
 
-/** Present complete links by their readable alias while retaining all other text exactly. */
+/**
+ * The text that labels a link, never blank: its display, else a wiki link's target without folder
+ * and extension, else the link as written.
+ */
+export function linkLabel(token: LinkToken): string {
+  if (token.display.trim() !== '') return token.display;
+  const unaliased = token.type === 'wiki' ? unaliasedDisplay(token.target) : '';
+  return unaliased.trim() === '' ? token.raw : unaliased;
+}
+
+/** Present complete links by their label while retaining all other text exactly. */
 export function linkValueLabel(value: string): string {
-  return exactLinkToken(value)?.display ?? value;
+  const token = exactLinkToken(value);
+  return token === undefined ? value : linkLabel(token);
 }
 
 /** Total number of links (wiki + markdown) across the given texts. */
@@ -188,7 +204,7 @@ export function countLinksIn(texts: Array<string | undefined>): number {
 /** Build the raw markup for a link, omitting the wiki alias when it equals the basename. */
 export function buildLinkRaw(type: 'wiki' | 'md', target: string, display: string): string {
   if (type === 'md') return `[${display}](${target})`;
-  const basename = target.replace(/\.[^.]*$/u, '').replace(/^.*\//u, '');
+  const basename = unaliasedDisplay(target);
   return Boolean(display) && display !== basename ? `[[${target}|${display}]]` : `[[${target}]]`;
 }
 
@@ -224,8 +240,7 @@ function anchorMatchesToken(a: AnchorDescriptor, token: LinkToken): boolean {
   if (Boolean(text) && text === token.display) return true;
   if (a.href.length === 0) return false;
   if (token.type === 'wiki') {
-    const base = (s: string): string => s.replace(/\.[^.]*$/u, '').replace(/^.*\//u, '');
-    return a.href === token.target || base(a.href) === base(token.target);
+    return a.href === token.target || unaliasedDisplay(a.href) === unaliasedDisplay(token.target);
   }
   return a.href === token.target;
 }
