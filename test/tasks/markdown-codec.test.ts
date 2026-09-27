@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parseLinks } from '../../src/markdown/links';
 import { parseTaskLineSourceModel } from '../../src/tasks/domain/taskLineSourceModel';
 import type { TaskRef } from '../../src/tasks/domain/types';
 import { localDate, localTime } from '../../src/tasks/domain/validation';
@@ -8,7 +9,7 @@ import {
   type ParsedTaskLine,
   type TaskSpanKind,
 } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
-import { canonicalStatusCatalog, medianInterleavedRatio } from '../helpers';
+import { canonicalStatusCatalog, medianInterleavedRatio, seededRandom } from '../helpers';
 import { expectDefined } from './../helpers';
 
 const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
@@ -834,6 +835,68 @@ describe('TaskMarkdownCodec', () => {
         type: 'invalid',
         issues: [{ code: 'invalid-target', field: 'link' }],
       });
+    });
+
+    // The panel numbers the links of the rendered title, where a whitespace run is one space, so
+    // it shows a wiki link that a lone CR hides from the source.
+    it.each([
+      // Without the check, occurrence 0 rewrites `[[Target]]`.
+      [
+        'a lone CR in a wiki link shifts the next link',
+        '- [ ] see [[Note \r Other]] and [[Target]]',
+        ['[[Note Other]]', '[[Target]]'],
+      ],
+      // Without the check, occurrences 0 and 1 rewrite the first and the second `[[c]]`.
+      [
+        'a lone CR in a wiki link shifts two equal links',
+        '- [ ] [[a \r b]] [[c]] [[c]]',
+        ['[[a b]]', '[[c]]', '[[c]]'],
+      ],
+      // The source holds as many links as the title shows, but not the same ones, so a check of
+      // the counts alone lets occurrence 0 rewrite `[x](y)`.
+      [
+        'a lone CR in a wiki link leaves a Markdown link in its place',
+        '- [ ] [[a \r [x](y) b]]',
+        ['[[a [x](y) b]]'],
+      ],
+    ])('refuses every title link edit when %s', (_case, source, shown) => {
+      expect(parseLinks(parse(source).markdownTitle).map((link) => link.raw)).toEqual(shown);
+      for (let occurrence = 0; occurrence <= shown.length; occurrence++) {
+        expect(
+          codec.applyLineEdit(source, { type: 'edit-link', occurrence, replacement: '[[X]]' }),
+        ).toEqual({ type: 'invalid', issues: [{ code: 'invalid-target', field: 'link' }] });
+      }
+    });
+
+    // A check that compares the links without collapsing their whitespace runs refuses these.
+    it.each([
+      [
+        'a double space',
+        '- [ ] [[a  b]] and [[c]]',
+        ['- [ ] [[X]] and [[c]]', '- [ ] [[a  b]] and [[X]]'],
+      ],
+      [
+        'a space, a tab, and a space',
+        '- [ ] [[a \t b]] [[c]]',
+        ['- [ ] [[X]] [[c]]', '- [ ] [[a \t b]] [[X]]'],
+      ],
+    ])('edits each title link when a wiki link holds %s', (_case, source, edited) => {
+      expect(parseLinks(parse(source).markdownTitle).map((link) => link.raw)).toEqual([
+        '[[a b]]',
+        '[[c]]',
+      ]);
+      edited.forEach((content, occurrence) => {
+        expect(
+          codec.applyLineEdit(source, { type: 'edit-link', occurrence, replacement: '[[X]]' }),
+        ).toEqual({ type: 'changed', content });
+      });
+      expect(
+        codec.applyLineEdit(source, {
+          type: 'edit-link',
+          occurrence: edited.length,
+          replacement: '[[X]]',
+        }),
+      ).toEqual({ type: 'invalid', issues: [{ code: 'invalid-target', field: 'link' }] });
     });
 
     it('sets the title fragment after a repository-leading tag without retaining the old title', () => {
@@ -1897,5 +1960,129 @@ describe('TaskMarkdownCodec link reading', () => {
         large: () => codec.parseLine(large, location),
       }),
     ).toBeLessThan(8);
+  });
+});
+
+// Title fragments for seeded task lines: links of each kind, whitespace runs, openers, closers,
+// escapes, a tag, and task fields. The two wiki links with a lone CR in a whitespace run render as
+// links that the source does not hold. Characters that do not show are built from their codes.
+const CR = String.fromCharCode(13);
+const TAB = String.fromCharCode(9);
+const NO_BREAK_SPACE = String.fromCharCode(0xa0);
+const LINE_SEPARATOR = String.fromCharCode(0x2028);
+const TITLE_FRAGMENTS = [
+  '[[a]]',
+  '[[a b]]',
+  '[[c]]',
+  '[[a|b]]',
+  `[[a${BACKSLASH}|b]]`,
+  `[[a ${CR} b]]`,
+  `[[a ${CR} [x](y) b]]`,
+  '[a](b)',
+  '[x y](z)',
+  '![[e]]',
+  '![i](j)',
+  '`k`',
+  '``',
+  ' ',
+  '  ',
+  TAB,
+  CR,
+  NO_BREAK_SPACE,
+  LINE_SEPARATOR,
+  BACKSLASH,
+  BACKSLASH + BACKSLASH,
+  `${BACKSLASH}[`,
+  `${BACKSLASH}!`,
+  '[',
+  ']',
+  '(',
+  ')',
+  '[[',
+  ']]',
+  '](',
+  '![[',
+  '![',
+  '!',
+  '|',
+  'x',
+  '#t',
+  ' #t ',
+  ' 📅 2026-09-30 ',
+  ' ⏫ ',
+  ' 🔁 every day ',
+  ' 🆔 abc ',
+  ' ⏰ 10:00 ',
+  ' ^blk',
+];
+// The replacement appears nowhere in the fragments, so an edit that is not refused changes the
+// line, and the replacement marks where.
+const TITLE_REPLACEMENT = '[[@Z@]]';
+
+interface TitleEditTally {
+  refusals: number;
+  refusedLinesWithCr: number;
+  rewrites: number;
+}
+
+/** `count` task lines of 1 to 12 seeded title fragments, the same on every run. */
+function seededTitleLines(count: number): string[] {
+  const next = seededRandom(20_260_927);
+  return Array.from({ length: count }, () => {
+    const fragments = Array.from(
+      { length: 1 + next(12) },
+      () => TITLE_FRAGMENTS[next(TITLE_FRAGMENTS.length)] ?? '',
+    );
+    return `- [ ] ${fragments.join('')}`;
+  });
+}
+
+/**
+ * The source text that the edit of title link `occurrence` rewrites, found where the replacement
+ * starts and as long as the text it replaced, or nothing when the edit is refused.
+ */
+function rewrittenTitleText(line: string, occurrence: number): string | undefined {
+  const result = codec.applyLineEdit(line, {
+    type: 'edit-link',
+    occurrence,
+    replacement: TITLE_REPLACEMENT,
+  });
+  if (result.type === 'invalid') return undefined;
+  const from = result.content.indexOf(TITLE_REPLACEMENT);
+  return line.slice(from, from + line.length + TITLE_REPLACEMENT.length - result.content.length);
+}
+
+/**
+ * Edits each title link the panel shows on `line`, and the occurrence after the last. Each edit
+ * is refused or rewrites source text that renders as the link the panel shows, and the one after
+ * the last is refused. Returns the first edit that is not.
+ */
+function titleEditSlip(line: string, tally: TitleEditTally): string | undefined {
+  const shown = parseLinks(parse(line).markdownTitle).map((link) => link.raw);
+  const refusalsBefore = tally.refusals;
+  for (const [occurrence, raw] of shown.entries()) {
+    const rewritten = rewrittenTitleText(line, occurrence);
+    if (rewritten === undefined) tally.refusals++;
+    else if (rewritten.replace(/\s{2,}/gu, ' ') === raw) tally.rewrites++;
+    else return JSON.stringify({ line, occurrence, shown: raw, rewritten });
+  }
+  if (tally.refusals > refusalsBefore && line.includes(CR)) tally.refusedLinesWithCr++;
+  const rewritten = rewrittenTitleText(line, shown.length);
+  return rewritten === undefined
+    ? undefined
+    : JSON.stringify({ line, occurrence: shown.length, rewritten });
+}
+
+describe('title link edits and the panel numbering', () => {
+  it('rewrites the title link the panel numbers or refuses the edit, on seeded lines', () => {
+    const tally: TitleEditTally = { refusals: 0, refusedLinesWithCr: 0, rewrites: 0 };
+    let slip: string | undefined;
+    for (const line of seededTitleLines(3_000)) slip ??= titleEditSlip(line, tally);
+
+    expect(slip).toBeUndefined();
+    // Measured on these lines: the panel shows 3,772 links on 2,011 of them, and the edits rewrite
+    // 2,086 and refuse 1,686, on 727 lines, each of which holds a CR.
+    expect(tally.refusedLinesWithCr).toBeGreaterThan(0);
+    expect(tally.rewrites).toBeGreaterThanOrEqual(2_000);
   });
 });

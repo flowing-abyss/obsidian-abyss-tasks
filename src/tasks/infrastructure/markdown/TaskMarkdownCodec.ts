@@ -598,34 +598,42 @@ function appendTitle(parsed: ParsedTaskLine, markdown: string): string {
   return spliceSource(parsed.original, last.to, last.to, ` ${markdown}`);
 }
 
+/** The links in the title fragments of the source, in order, each at its column in the line. */
+function sourceTitleLinks(parsed: ParsedTaskLine): LinkAtColumn[] {
+  return editableTitleFragments(parsed).flatMap((fragment) =>
+    parseLinks(parsed.original.slice(fragment.from, fragment.to)).map((link) => ({
+      column: fragment.from + link.index,
+      raw: link.raw,
+    })),
+  );
+}
+
+/**
+ * Replaces title link `occurrence`, numbered as the panel numbers it. The panel numbers the links
+ * of the rendered title, which joins the title fragments and collapses each whitespace run to one
+ * space, while the edit is applied per fragment over the source. When the two readings disagree,
+ * for example on a lone CR in a whitespace run inside a wiki link, the edit is refused rather than
+ * rewriting another link. A link starts with `[` or `!` and ends with `]` or `)`, so its whitespace
+ * runs collapse in the title as they do on their own.
+ */
 function editTitleLink(
   parsed: ParsedTaskLine,
   occurrence: number,
   replacement: string,
 ): PreparedLineEdit {
   if (!Number.isInteger(occurrence) || occurrence < 0) return invalidTaskTarget('link');
-  let remaining = occurrence;
-  for (const fragment of editableTitleFragments(parsed)) {
-    const source = parsed.original.slice(fragment.from, fragment.to);
-    const links = parseLinks(source);
-    if (remaining >= links.length) {
-      remaining -= links.length;
-      continue;
-    }
-    const link = links[remaining];
-    if (link == null) return invalidTaskTarget('link');
-    return {
-      type: 'prepared',
-      content: spliceSource(
-        parsed.original,
-        fragment.from + link.index,
-        fragment.from + link.index + link.raw.length,
-        replacement,
-      ),
-      fields: ['title'],
-    };
-  }
-  return invalidTaskTarget('link');
+  const links = sourceTitleLinks(parsed);
+  const shown = parseLinks(parsed.markdownTitle);
+  const agree =
+    shown.length === links.length &&
+    shown.every((link, index) => link.raw === links[index]?.raw.replace(/\s{2,}/gu, ' '));
+  const link = links[occurrence];
+  if (!agree || link == null) return invalidTaskTarget('link');
+  return {
+    type: 'prepared',
+    content: spliceSource(parsed.original, link.column, link.column + link.raw.length, replacement),
+    fields: ['title'],
+  };
 }
 
 /** Replaces the link text `link.raw` that starts at `link.column`. */

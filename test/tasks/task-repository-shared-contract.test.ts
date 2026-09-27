@@ -1143,6 +1143,28 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       expect(await h.read()).toBe(source);
     });
 
+    it('refuses a title link edit when a lone CR hides the link from the source', async () => {
+      // Lines split at line feeds only, so the lone CR stays inside the task line. The panel
+      // numbers `[[Note Other]]` first; without the check, the edit rewrites `[[Target]]`.
+      const source = '- [ ] see [[Note \r Other]] and [[Target]]\n';
+      const h = await makeHarness(adapter, source);
+      const root = expectDefined(h.snapshots(source)[0]);
+
+      expect(root.markdownTitle).toBe('see [[Note Other]] and [[Target]]');
+      await expect(
+        h.repository.edit({
+          type: 'edit-link',
+          target: { type: 'title', target: { type: 'task', ref: root.ref } },
+          occurrence: 0,
+          replacement: '[[Changed]]',
+        }),
+      ).resolves.toEqual({
+        type: 'invalid',
+        issues: [{ code: 'invalid-target', field: 'link' }],
+      });
+      expect(await h.read()).toBe(source);
+    });
+
     it('rejects multiline title and link inputs without changing bytes', async () => {
       const source =
         '- [ ] root [[Title]]\r\n' +
