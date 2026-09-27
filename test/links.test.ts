@@ -530,6 +530,25 @@ describe('parseLinks reads no link inside an embed or image', () => {
   });
 });
 
+describe('parseLinks keeps each match that does not start inside an earlier kept match', () => {
+  // In each row the first link is kept, the match that starts inside it is dropped, and the
+  // second link starts inside the dropped match but after the kept one, so it is kept.
+  it.each([
+    // Unprobed: skipping a match that starts inside the dropped wiki match loses `[c](d)`.
+    [
+      '[a]([[b) [c](d)]]',
+      [markdownToken('[a]([[b)', '[[b', 'a'), markdownToken('[c](d)', 'd', 'c', 9)],
+    ],
+    // Unprobed: skipping a match that starts inside the dropped Markdown match loses `[[d]]`.
+    [
+      '[[a[b](c]] [[d]])',
+      [wikiToken('[[a[b](c]]', 'a[b](c', 'a[b](c'), wikiToken('[[d]]', 'd', 'd', 11)],
+    ],
+  ])('reads %j', (source, expected) => {
+    expect(parseLinks(source)).toEqual(expected);
+  });
+});
+
 describe('pairAnchorsToTokens with Obsidian anchors', () => {
   // Anchor text and data-href as Obsidian renders each probe case; today none of them pairs.
   it.each([

@@ -1782,6 +1782,18 @@ describe('task line tag and link boundaries', () => {
     expect(modelOf(line).tags).toEqual(tags);
   });
 
+  // The tag sits in a link that starts inside a dropped match but after the kept link before it.
+  // Skipping every match that starts inside a dropped match reads the tag `#tag`.
+  it.each(['- [ ] [a]([[b) [c](#tag)]]', '- [ ] [[a[b](c]] [[#tag]])'])(
+    'reads no tag in a link that starts inside a dropped match in %j',
+    (line) => {
+      const model = modelOf(line);
+
+      expect(model.tags).toEqual([]);
+      expect(model.markdownTitle).toBe(line.slice('- [ ] '.length));
+    },
+  );
+
   it('stays linear on many unclosed images', () => {
     const small = `- [ ] ${'![a](b '.repeat(1_000)}`;
     const large = `- [ ] ${'![a](b '.repeat(4_000)}`;

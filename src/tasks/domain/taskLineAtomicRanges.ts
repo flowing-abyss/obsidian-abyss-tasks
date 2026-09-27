@@ -96,7 +96,7 @@ function pushLinkRanges(
 
 /**
  * Reads the links, embeds, and images that no task field may start inside, in source order: each
- * one that does not start inside an earlier one.
+ * match that does not start inside an earlier kept match.
  */
 export function parseLinkRanges(input: string): readonly LinkRange[] {
   if (!input.includes('[')) return [];

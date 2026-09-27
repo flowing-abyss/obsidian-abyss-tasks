@@ -596,11 +596,12 @@ links in [`src/tasks/domain/taskLineAtomicRanges.ts`](src/tasks/domain/taskLineA
 where links, embeds, and images are ranges that no task field may start inside, while
 [`src/markdown/links.ts`](src/markdown/links.ts) returns link tokens for rendering, counts,
 edits, and project values. Both link readings use the same wiki and Markdown patterns, search
-Markdown links only up to the last unescaped `)`, drop matches that start in inline code found by
-the same scan, and keep no match that starts inside an earlier one, so nothing starts inside an
-embed or image. [One suite](test/preceding-code-point.test.ts) runs both code point searches,
-and [another](test/link-reading-layers.test.ts) holds the link readings equal and checks that
-the copied text is the same.
+Markdown links only up to the last unescaped `)`, and keep no match that starts inside an earlier
+kept match, so nothing starts inside an embed or image. The domain module starts with the verbatim
+text of [`src/markdown/inlineCode.ts`](src/markdown/inlineCode.ts), so both drop matches that
+start in inline code found by the same scan. [One suite](test/preceding-code-point.test.ts) runs
+both code point searches, and [another](test/link-reading-layers.test.ts) holds the link readings
+equal and checks that the copied text is the same.
 
 `pnpm lint:store` runs the community directory's published review rules in the full gate, as a
 [Vitest file](test/store/review-lint.test.ts) under its own config, outside the unit suite and its
