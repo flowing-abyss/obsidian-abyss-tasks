@@ -6,6 +6,7 @@ import { localDate, localTime } from '../../src/tasks/domain/validation';
 import { applyTaskCommand } from '../../src/tasks/infrastructure/markdown/applyTaskCommand';
 import {
   TaskMarkdownCodec,
+  type LineEditResult,
   type ParsedTaskLine,
   type TaskSpanKind,
 } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
@@ -70,6 +71,35 @@ function authoritativePartition(parsed: AuthoritativePartition): readonly unknow
     parsed.onCompletion,
     parsed.onCompletionExplicit,
   ];
+}
+
+const REFUSED_LINK_EDIT: LineEditResult = {
+  type: 'invalid',
+  issues: [{ code: 'invalid-target', field: 'link' }],
+};
+
+function changedLine(content: string): LineEditResult {
+  return { type: 'changed', content };
+}
+
+/**
+ * Checks the links the panel shows in the title of `source`, as their text and index, and the
+ * edit of each one and of the occurrence after the last, with the replacement `[[X]]`.
+ */
+function expectTitleLinkEdits(
+  source: string,
+  shown: ReadonlyArray<readonly [string, number]>,
+  edits: readonly LineEditResult[],
+): void {
+  expect(parseLinks(parse(source).markdownTitle).map((link) => [link.raw, link.index])).toEqual(
+    shown,
+  );
+  expect(edits).toHaveLength(shown.length + 1);
+  expect(
+    edits.map((_edit, occurrence) =>
+      codec.applyLineEdit(source, { type: 'edit-link', occurrence, replacement: '[[X]]' }),
+    ),
+  ).toEqual(edits);
 }
 
 describe('TaskMarkdownCodec', () => {
@@ -837,36 +867,53 @@ describe('TaskMarkdownCodec', () => {
       });
     });
 
-    // The panel numbers the links of the rendered title, where a whitespace run is one space, so
-    // it shows a wiki link that a lone CR hides from the source.
+    // The panel numbers the links of the rendered title, where each run of two or more whitespace
+    // characters is one space, so it shows a wiki link that a lone CR hides from the source. Only
+    // that link's edit is refused.
     it.each([
-      // Without the check, occurrence 0 rewrites `[[Target]]`.
+      // Numbered by the fragments, occurrence 0 rewrites `[[Target]]`.
       [
-        'a lone CR in a wiki link shifts the next link',
+        'a lone CR in a wiki link hides it before another link',
         '- [ ] see [[Note \r Other]] and [[Target]]',
-        ['[[Note Other]]', '[[Target]]'],
+        [
+          ['[[Note Other]]', 4],
+          ['[[Target]]', 23],
+        ],
+        [
+          REFUSED_LINK_EDIT,
+          changedLine('- [ ] see [[Note \r Other]] and [[X]]'),
+          REFUSED_LINK_EDIT,
+        ],
       ],
-      // Without the check, occurrences 0 and 1 rewrite the first and the second `[[c]]`.
+      // Matched by text alone, occurrence 2 rewrites the first `[[c]]`.
       [
-        'a lone CR in a wiki link shifts two equal links',
+        'a lone CR in a wiki link hides it before two equal links',
         '- [ ] [[a \r b]] [[c]] [[c]]',
-        ['[[a b]]', '[[c]]', '[[c]]'],
+        [
+          ['[[a b]]', 0],
+          ['[[c]]', 8],
+          ['[[c]]', 14],
+        ],
+        [
+          REFUSED_LINK_EDIT,
+          changedLine('- [ ] [[a \r b]] [[X]] [[c]]'),
+          changedLine('- [ ] [[a \r b]] [[c]] [[X]]'),
+          REFUSED_LINK_EDIT,
+        ],
       ],
-      // The source holds as many links as the title shows, but not the same ones, so a check of
-      // the counts alone lets occurrence 0 rewrite `[x](y)`.
+      // Numbered by the fragments, occurrence 0 rewrites `[x](y)`.
       [
-        'a lone CR in a wiki link leaves a Markdown link in its place',
+        'a lone CR in a wiki link leaves a Markdown link inside it',
         '- [ ] [[a \r [x](y) b]]',
-        ['[[a [x](y) b]]'],
+        [['[[a [x](y) b]]', 0]],
+        [REFUSED_LINK_EDIT, REFUSED_LINK_EDIT],
       ],
-    ])('refuses every title link edit when %s', (_case, source, shown) => {
-      expect(parseLinks(parse(source).markdownTitle).map((link) => link.raw)).toEqual(shown);
-      for (let occurrence = 0; occurrence <= shown.length; occurrence++) {
-        expect(
-          codec.applyLineEdit(source, { type: 'edit-link', occurrence, replacement: '[[X]]' }),
-        ).toEqual({ type: 'invalid', issues: [{ code: 'invalid-target', field: 'link' }] });
-      }
-    });
+    ] as const)(
+      'edits only the title links the source holds where the panel shows them when %s',
+      (_case, source, shown, edits) => {
+        expectTitleLinkEdits(source, shown, edits);
+      },
+    );
 
     // A check that compares the links without collapsing their whitespace runs refuses these.
     it.each([
@@ -898,6 +945,78 @@ describe('TaskMarkdownCodec', () => {
         }),
       ).toEqual({ type: 'invalid', issues: [{ code: 'invalid-target', field: 'link' }] });
     });
+
+    // The panel shows `a b [[c]] [[d]]`. A place that leaves out the collapse of `a  b`, or the
+    // space that joins the fragments, refuses both edits.
+    it('edits each title link in place after a whitespace run and removed fields', () => {
+      expectTitleLinkEdits(
+        '- [ ] a  b 📅 2026-09-30 [[c]] ⏫ [[d]]',
+        [
+          ['[[c]]', 4],
+          ['[[d]]', 10],
+        ],
+        [
+          changedLine('- [ ] a  b 📅 2026-09-30 [[X]] ⏫ [[d]]'),
+          changedLine('- [ ] a  b 📅 2026-09-30 [[c]] ⏫ [[X]]'),
+          REFUSED_LINK_EDIT,
+        ],
+      );
+    });
+
+    // The rendered title can make a link, image, or embed across a removed field, and its collapse
+    // can complete an embed that a lone CR breaks in the source. A Markdown match that the title
+    // drops still consumes the text up to its `)`. So a source link can sit hidden inside a made
+    // image or embed, or inside a dropped match, while a link with the same text takes its number.
+    it.each([
+      // Without the place, occurrence 0 rewrites the `[i j](k)` inside the image.
+      [
+        'T1, a link made across two fields',
+        '- [ ] ![p 🔁 x] ⏫ q](r [i j](k) [i 🔁 y] ⏫ j](k)',
+        [['[i j](k)', 18]],
+        [REFUSED_LINK_EDIT, REFUSED_LINK_EDIT],
+      ],
+      // Without the place, occurrence 1 rewrites the `[x y](z)` that the title's search from
+      // `[x](]]` swallows.
+      [
+        'T4, a link made across two fields after a dropped match',
+        '- [ ] [[x](]] ⏰ 10:00 [x y](z) [x 🔁 q] ⏫ y](z)',
+        [
+          ['[[x](]]', 0],
+          ['[x y](z)', 17],
+        ],
+        [
+          changedLine('- [ ] [[X]] ⏰ 10:00 [x y](z) [x 🔁 q] ⏫ y](z)'),
+          REFUSED_LINK_EDIT,
+          REFUSED_LINK_EDIT,
+        ],
+      ],
+      // Without the place, occurrence 0 rewrites the `[[m n]]` inside the image.
+      [
+        'T2, a wiki link that a lone CR hides, after an image made across two fields',
+        '- [ ] ![i 🔁 x] ⏫ j](k [[m n]] l) [[m \r n]]',
+        [['[[m n]]', 20]],
+        [REFUSED_LINK_EDIT, REFUSED_LINK_EDIT],
+      ],
+      // Without the place, occurrence 0 rewrites the `[x ](y)` inside the embed.
+      [
+        'T3, a link made across a field, after an embed that collapsing a lone CR completes',
+        '- [ ] ![[p \r [x ](y) l]] [x 📅 ] ](y)',
+        [['[x ](y)', 17]],
+        [REFUSED_LINK_EDIT, REFUSED_LINK_EDIT],
+      ],
+      // Without the place, occurrence 0 rewrites the `[[m n]]` inside the image.
+      [
+        'T6, a wiki link that a lone CR hides, before an image made across a field',
+        '- [ ] [[m \r n]]![p 📅 ] `xq](r [[m n]])',
+        [['[[m n]]', 0]],
+        [REFUSED_LINK_EDIT, REFUSED_LINK_EDIT],
+      ],
+    ] as const)(
+      'edits a title link only where the source holds it, on %s',
+      (_case, source, shown, edits) => {
+        expectTitleLinkEdits(source, shown, edits);
+      },
+    );
 
     it('sets the title fragment after a repository-leading tag without retaining the old title', () => {
       const source = '- [ ] #task/one-off Buy milk 📅 2026-06-24';
@@ -2098,7 +2217,7 @@ describe('title link edits and the panel numbering', () => {
 
     expect(slip).toBeUndefined();
     // Measured on these lines: the panel shows 3,772 links on 2,011 of them, and the edits rewrite
-    // 2,086 and refuse 1,686, on 727 lines, each of which holds a CR.
+    // 2,934 and refuse 838, on 717 lines, each of which holds a CR.
     expect(tally.refusedLinesWithCr).toBeGreaterThan(0);
     expect(tally.rewrites).toBeGreaterThanOrEqual(2_000);
   });

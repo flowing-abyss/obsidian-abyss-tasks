@@ -1143,9 +1143,10 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       expect(await h.read()).toBe(source);
     });
 
-    it('refuses a title link edit when a lone CR hides the link from the source', async () => {
+    it('refuses only the title link that a lone CR hides from the source', async () => {
       // Lines split at line feeds only, so the lone CR stays inside the task line. The panel
-      // numbers `[[Note Other]]` first; without the check, the edit rewrites `[[Target]]`.
+      // numbers `[[Note Other]]` first; numbered by the fragments, occurrence 0 rewrites
+      // `[[Target]]`.
       const source = '- [ ] see [[Note \r Other]] and [[Target]]\n';
       const h = await makeHarness(adapter, source);
       const root = expectDefined(h.snapshots(source)[0]);
@@ -1163,6 +1164,18 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         issues: [{ code: 'invalid-target', field: 'link' }],
       });
       expect(await h.read()).toBe(source);
+
+      // `[[Target]]` renders where the source holds it, so its edit still goes through.
+      const fresh = await makeHarness(adapter, source);
+      await expect(
+        fresh.repository.edit({
+          type: 'edit-link',
+          target: { type: 'title', target: { type: 'task', ref: rootRef(fresh, source) } },
+          occurrence: 1,
+          replacement: '[[Changed]]',
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+      expect(await fresh.read()).toBe('- [ ] see [[Note \r Other]] and [[Changed]]\n');
     });
 
     it('rejects multiline title and link inputs without changing bytes', async () => {

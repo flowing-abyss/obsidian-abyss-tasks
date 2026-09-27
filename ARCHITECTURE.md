@@ -129,11 +129,12 @@ The UI must not treat an earlier snapshot as continuing write authority.
 
 A link edit names a link by its number in the text the panel renders: the title, the description,
 or a comment. The repository finds that same link in the source and replaces only that link.
-Descriptions number the lines that `TaskSnapshotProjector` reads with `readTaskDescriptionLine`,
-through `TaskBlockEditor.descriptionLink`. Titles check that the source's title fragments hold the
-links the rendered title shows. Comments number a line whose prefix and timestamp hold no link
-syntax. When the source does not hold the numbered link, the edit returns a conflict or an invalid
-target rather than rewriting another link.
+Descriptions number the lines that
+[`TaskSnapshotProjector.ts`](src/tasks/infrastructure/markdown/TaskSnapshotProjector.ts) reads
+with `readTaskDescriptionLine`, through `TaskBlockEditor.descriptionLink`. Titles rewrite the
+source link that renders with the same text at the same place in the rendered title. Comments
+number a line whose prefix and timestamp hold no link syntax. When the source does not hold the
+numbered link, the edit returns a conflict or an invalid target rather than rewriting another link.
 
 After a repository write, the index retains the committed content. A conflicting cache observation
 must match a fresh vault read before it can replace that content, so delayed events cannot undo a

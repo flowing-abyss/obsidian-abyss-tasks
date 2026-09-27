@@ -598,23 +598,51 @@ function appendTitle(parsed: ParsedTaskLine, markdown: string): string {
   return spliceSource(parsed.original, last.to, last.to, ` ${markdown}`);
 }
 
-/** The links in the title fragments of the source, in order, each at its column in the line. */
-function sourceTitleLinks(parsed: ParsedTaskLine): LinkAtColumn[] {
-  return editableTitleFragments(parsed).flatMap((fragment) =>
-    parseLinks(parsed.original.slice(fragment.from, fragment.to)).map((link) => ({
-      column: fragment.from + link.index,
-      raw: link.raw,
-    })),
-  );
+/** Collapses each run of two or more whitespace characters to one space, as the title renders. */
+function collapseWhitespaceRuns(text: string): string {
+  return text.replace(/\s{2,}/gu, ' ');
+}
+
+/** A link in a title fragment, with the index of its first character in the rendered title. */
+interface TitleLink extends LinkAtColumn {
+  readonly titleIndex: number;
 }
 
 /**
- * Replaces title link `occurrence`, numbered as the panel numbers it. The panel numbers the links
- * of the rendered title, which joins the title fragments and collapses each whitespace run to one
- * space, while the edit is applied per fragment over the source. When the two readings disagree,
- * for example on a lone CR in a whitespace run inside a wiki link, the edit is refused rather than
- * rewriting another link. A link starts with `[` or `!` and ends with `]` or `)`, so its whitespace
- * runs collapse in the title as they do on their own.
+ * The links in the title fragments of the source, in order, each at its column in the line and at
+ * its index in the rendered title. The rendered title joins the fragments with one space,
+ * collapses each run of two or more whitespace characters to one space, and trims. A fragment
+ * starts and ends with a character that is not whitespace, and so does a link, so no whitespace
+ * run crosses a fragment's or a link's edge, and the trim removes nothing. A link's index is then
+ * a running sum: the collapsed length of the text before it in its fragment, plus, for each
+ * earlier fragment, its collapsed length and one space for the join.
+ */
+function sourceTitleLinks(parsed: ParsedTaskLine): TitleLink[] {
+  const links: TitleLink[] = [];
+  let titleIndex = 0;
+  for (const fragment of editableTitleFragments(parsed)) {
+    const text = parsed.original.slice(fragment.from, fragment.to);
+    let counted = 0;
+    for (const link of parseLinks(text)) {
+      titleIndex += collapseWhitespaceRuns(text.slice(counted, link.index)).length;
+      counted = link.index;
+      links.push({ column: fragment.from + link.index, raw: link.raw, titleIndex });
+    }
+    titleIndex += collapseWhitespaceRuns(text.slice(counted)).length + 1;
+  }
+  return links;
+}
+
+/**
+ * Replaces title link `occurrence`, numbered as the panel numbers the links of the rendered title.
+ * The edit rewrites the source link whose first character renders where that link starts and
+ * whose text, with each run of two or more whitespace characters collapsed to one space, is that
+ * link's text. When the source holds no such link, for example because a lone CR in a whitespace
+ * run hides a wiki link from the source, or because the join makes a link across a removed field,
+ * only this edit is refused, and the other links on the line still edit. Today a source link that
+ * renders at that place always reads as that link. The text comparison stays because a grammar
+ * change that reads a link's end from its context (SP1q) could make the two readings differ, and
+ * the comparison then refuses the edit rather than rewriting other text.
  */
 function editTitleLink(
   parsed: ParsedTaskLine,
@@ -622,13 +650,13 @@ function editTitleLink(
   replacement: string,
 ): PreparedLineEdit {
   if (!Number.isInteger(occurrence) || occurrence < 0) return invalidTaskTarget('link');
-  const links = sourceTitleLinks(parsed);
-  const shown = parseLinks(parsed.markdownTitle);
-  const agree =
-    shown.length === links.length &&
-    shown.every((link, index) => link.raw === links[index]?.raw.replace(/\s{2,}/gu, ' '));
-  const link = links[occurrence];
-  if (!agree || link == null) return invalidTaskTarget('link');
+  const shown = parseLinks(parsed.markdownTitle)[occurrence];
+  if (shown === undefined) return invalidTaskTarget('link');
+  const link = sourceTitleLinks(parsed).find(
+    (candidate) =>
+      candidate.titleIndex === shown.index && collapseWhitespaceRuns(candidate.raw) === shown.raw,
+  );
+  if (link === undefined) return invalidTaskTarget('link');
   return {
     type: 'prepared',
     content: spliceSource(parsed.original, link.column, link.column + link.raw.length, replacement),
