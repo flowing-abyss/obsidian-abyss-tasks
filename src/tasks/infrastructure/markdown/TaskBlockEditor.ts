@@ -680,14 +680,6 @@ function readDescriptionSourceLines(
   return result;
 }
 
-function readTaskDescriptionLines(
-  content: string,
-  block: TaskRootBlock,
-  target: TaskBlockTarget,
-): readonly number[] {
-  return readDescriptionSourceLines(content, block, target).map((line) => line.relativeLine);
-}
-
 /**
  * Finds link `occurrence` of the description as the panel numbers it, in the text of `lines`
  * joined by line breaks, and the line that holds it.
@@ -726,7 +718,9 @@ function editDescription(
   if (edit.text?.includes('\r') ?? false) return { type: 'invalid', field: 'description' };
   const requested = edit.text ?? undefined;
   if (requested === target.description) return { type: 'unchanged', content, block };
-  const directDescriptions = readTaskDescriptionLines(content, block, target);
+  const directDescriptions = readDescriptionSourceLines(content, block, target).map(
+    (line) => line.relativeLine,
+  );
   replaceDescriptionLines(context, directDescriptions, requested);
   return undefined;
 }

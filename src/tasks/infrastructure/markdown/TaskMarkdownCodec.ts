@@ -1077,8 +1077,9 @@ export class TaskMarkdownCodec {
   }
 
   /**
-   * Replaces the link that starts at `link.column`. A line that does not hold `link.raw` there is
-   * a conflict, so a link found in other text never rewrites another one.
+   * Replaces the link that starts at `link.column`. `link` must be a token read from this line's
+   * text, so `link.column` is a non-negative integer and `link.raw` is not empty. Under that
+   * precondition, a line that does not hold `link.raw` at `link.column` is a conflict.
    */
   editTextLinkAt(
     source: string,

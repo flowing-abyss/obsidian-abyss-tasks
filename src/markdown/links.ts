@@ -112,9 +112,9 @@ function pushWikiMatches(
   input: string,
   inlineCode: readonly SourceRange[],
 ): void {
-  // A wiki link runs to the first `]]` on its line and holds no `[[`; group 1 marks an embed.
-  // Group 3 passes over an escaped `\`, `[`, or `!`. The pattern is global and never matches
-  // empty text, so each search starts where the previous match ended.
+  // A wiki link runs to the first `]]` after non-empty content and holds no `[[` or line break;
+  // group 1 marks an embed. Group 3 passes over an escaped `\`, `[`, or `!`. The pattern is global
+  // and never matches empty text, so each search starts where the previous match ended.
   const wiki = /(!?)\[\[((?:(?!\[\[)[^\r\n])+?)\]\]|(\\[\\[!])/gu;
   const rangeCursor = { index: 0 };
   let match: RegExpExecArray | null;

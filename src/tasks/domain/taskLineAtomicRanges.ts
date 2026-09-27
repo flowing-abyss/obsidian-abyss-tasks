@@ -102,7 +102,8 @@ export function parseLinkRanges(input: string): readonly LinkRange[] {
   if (!input.includes('[')) return [];
   const candidates: LinkRange[] = [];
   const inlineCode = inlineCodeRanges(input);
-  // A wiki link or embed runs to the first `]]` on its line and holds no `[[`.
+  // A wiki link or embed runs to the first `]]` after non-empty content and holds no `[[` or
+  // line break.
   pushLinkRanges(candidates, input, /(!?)\[\[((?:(?!\[\[)[^\r\n])+?)\]\]|(\\[\\[!])/gu, inlineCode);
   // A backslash always takes the next character, and a Markdown link or image ends at a `)`.
   pushLinkRanges(
