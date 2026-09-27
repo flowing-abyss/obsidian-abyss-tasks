@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import { parseLinks } from '../../src/markdown/links';
 import { parseTaskLineSourceModel } from '../../src/tasks/domain/taskLineSourceModel';
 import type { TaskRef } from '../../src/tasks/domain/types';
 import { localDate, localTime } from '../../src/tasks/domain/validation';
 import { applyTaskCommand } from '../../src/tasks/infrastructure/markdown/applyTaskCommand';
 import {
   TaskMarkdownCodec,
+  type LineEditResult,
   type ParsedTaskLine,
+  type SourceSpan,
   type TaskSpanKind,
 } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
-import { canonicalStatusCatalog, medianInterleavedRatio } from '../helpers';
+import { canonicalStatusCatalog, medianInterleavedRatio, seededRandom } from '../helpers';
 import { expectDefined } from './../helpers';
 
 const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
@@ -69,6 +72,35 @@ function authoritativePartition(parsed: AuthoritativePartition): readonly unknow
     parsed.onCompletion,
     parsed.onCompletionExplicit,
   ];
+}
+
+const REFUSED_LINK_EDIT: LineEditResult = {
+  type: 'invalid',
+  issues: [{ code: 'invalid-target', field: 'link' }],
+};
+
+function changedLine(content: string): LineEditResult {
+  return { type: 'changed', content };
+}
+
+/**
+ * Checks the links the panel shows in the title of `source`, as their text and index, and the
+ * edit of each one and of the occurrence after the last, with the replacement `[[X]]`.
+ */
+function expectTitleLinkEdits(
+  source: string,
+  shown: ReadonlyArray<readonly [string, number]>,
+  edits: readonly LineEditResult[],
+): void {
+  expect(parseLinks(parse(source).markdownTitle).map((link) => [link.raw, link.index])).toEqual(
+    shown,
+  );
+  expect(edits).toHaveLength(shown.length + 1);
+  expect(
+    edits.map((_edit, occurrence) =>
+      codec.applyLineEdit(source, { type: 'edit-link', occurrence, replacement: '[[X]]' }),
+    ),
+  ).toEqual(edits);
 }
 
 describe('TaskMarkdownCodec', () => {
@@ -480,6 +512,42 @@ describe('TaskMarkdownCodec', () => {
     });
   });
 
+  describe('editTextLinkAt', () => {
+    const source = '  - > see [[a]] and [b](c)';
+
+    it('replaces the link that starts at the column', () => {
+      expect(codec.editTextLinkAt(source, { column: 20, raw: '[b](c)' }, '[[d]]')).toEqual({
+        type: 'changed',
+        content: '  - > see [[a]] and [[d]]',
+      });
+    });
+
+    it('leaves the line unchanged when the replacement is the link', () => {
+      expect(codec.editTextLinkAt(source, { column: 10, raw: '[[a]]' }, '[[a]]')).toEqual({
+        type: 'unchanged',
+        content: source,
+      });
+    });
+
+    it.each([
+      ['a column one to the left', { column: 19, raw: '[b](c)' }],
+      ['a column one to the right', { column: 21, raw: '[b](c)' }],
+      ['a link the line does not hold', { column: 10, raw: '[[x]]' }],
+      ['a column past the end of the line', { column: 40, raw: '[b](c)' }],
+    ])('reports a conflict for %s', (_case, link) => {
+      expect(codec.editTextLinkAt(source, link, '[[d]]')).toEqual({ type: 'conflict' });
+    });
+
+    it('rejects a multiline replacement', () => {
+      expect(codec.editTextLinkAt(source, { column: 10, raw: '[[a]]' }, '[[d]]\ninjected')).toEqual(
+        {
+          type: 'invalid',
+          issues: [{ code: 'invalid-target', field: 'link' }],
+        },
+      );
+    });
+  });
+
   describe('full-line validation used by task creation', () => {
     it.each([
       ['ordinary metadata', '- [ ] Gym ⏰ 10:00 ⏱️ 1h 📅 2026-07-11'],
@@ -799,6 +867,157 @@ describe('TaskMarkdownCodec', () => {
         issues: [{ code: 'invalid-target', field: 'link' }],
       });
     });
+
+    // The panel numbers the links of the rendered title, where each run of two or more whitespace
+    // characters is one space, so it shows a wiki link that a lone CR hides from the source. Only
+    // that link's edit is refused; each other link on the line is matched on its own.
+    it.each([
+      // Numbered by the fragments, occurrence 0 rewrites `[[Target]]`.
+      [
+        'a lone CR in a wiki link hides it before another link',
+        '- [ ] see [[Note \r Other]] and [[Target]]',
+        [
+          ['[[Note Other]]', 4],
+          ['[[Target]]', 23],
+        ],
+        [
+          REFUSED_LINK_EDIT,
+          changedLine('- [ ] see [[Note \r Other]] and [[X]]'),
+          REFUSED_LINK_EDIT,
+        ],
+      ],
+      // Matched by text alone, occurrence 2 rewrites the first `[[c]]`.
+      [
+        'a lone CR in a wiki link hides it before two equal links',
+        '- [ ] [[a \r b]] [[c]] [[c]]',
+        [
+          ['[[a b]]', 0],
+          ['[[c]]', 8],
+          ['[[c]]', 14],
+        ],
+        [
+          REFUSED_LINK_EDIT,
+          changedLine('- [ ] [[a \r b]] [[X]] [[c]]'),
+          changedLine('- [ ] [[a \r b]] [[c]] [[X]]'),
+          REFUSED_LINK_EDIT,
+        ],
+      ],
+      // Numbered by the fragments, occurrence 0 rewrites `[x](y)`.
+      [
+        'a lone CR in a wiki link leaves a Markdown link inside it',
+        '- [ ] [[a \r [x](y) b]]',
+        [['[[a [x](y) b]]', 0]],
+        [REFUSED_LINK_EDIT, REFUSED_LINK_EDIT],
+      ],
+    ] as const)(
+      'edits only the title links the source holds where the panel shows them when %s',
+      (_case, source, shown, edits) => {
+        expectTitleLinkEdits(source, shown, edits);
+      },
+    );
+
+    // A check that compares the links without collapsing their whitespace runs refuses these.
+    it.each([
+      [
+        'a double space',
+        '- [ ] [[a  b]] and [[c]]',
+        ['- [ ] [[X]] and [[c]]', '- [ ] [[a  b]] and [[X]]'],
+      ],
+      [
+        'a space, a tab, and a space',
+        '- [ ] [[a \t b]] [[c]]',
+        ['- [ ] [[X]] [[c]]', '- [ ] [[a \t b]] [[X]]'],
+      ],
+    ])('edits each title link when a wiki link holds %s', (_case, source, edited) => {
+      expect(parseLinks(parse(source).markdownTitle).map((link) => link.raw)).toEqual([
+        '[[a b]]',
+        '[[c]]',
+      ]);
+      edited.forEach((content, occurrence) => {
+        expect(
+          codec.applyLineEdit(source, { type: 'edit-link', occurrence, replacement: '[[X]]' }),
+        ).toEqual({ type: 'changed', content });
+      });
+      expect(
+        codec.applyLineEdit(source, {
+          type: 'edit-link',
+          occurrence: edited.length,
+          replacement: '[[X]]',
+        }),
+      ).toEqual({ type: 'invalid', issues: [{ code: 'invalid-target', field: 'link' }] });
+    });
+
+    // The panel shows `a b [[c]] [[d]]`. A place that leaves out the collapse of `a  b`, or the
+    // space that joins the fragments, refuses both edits.
+    it('edits each title link in place after a whitespace run and removed fields', () => {
+      expectTitleLinkEdits(
+        '- [ ] a  b 📅 2026-09-30 [[c]] ⏫ [[d]]',
+        [
+          ['[[c]]', 4],
+          ['[[d]]', 10],
+        ],
+        [
+          changedLine('- [ ] a  b 📅 2026-09-30 [[X]] ⏫ [[d]]'),
+          changedLine('- [ ] a  b 📅 2026-09-30 [[c]] ⏫ [[X]]'),
+          REFUSED_LINK_EDIT,
+        ],
+      );
+    });
+
+    // The rendered title can make a link, image, or embed across a removed field, and its collapse
+    // can complete an embed that a lone CR breaks in the source. A Markdown match that the title
+    // drops still consumes the text up to its `)`. So a source link can sit hidden inside a made
+    // image or embed, or inside a dropped match, while a link with the same text takes its number.
+    it.each([
+      // Without the place, occurrence 0 rewrites the `[i j](k)` inside the image.
+      [
+        'T1, a link made across two fields',
+        '- [ ] ![p 🔁 x] ⏫ q](r [i j](k) [i 🔁 y] ⏫ j](k)',
+        [['[i j](k)', 18]],
+        [REFUSED_LINK_EDIT, REFUSED_LINK_EDIT],
+      ],
+      // Without the place, occurrence 1 rewrites the `[x y](z)` that the title's search from
+      // `[x](]]` swallows.
+      [
+        'T4, a link made across two fields after a dropped match',
+        '- [ ] [[x](]] ⏰ 10:00 [x y](z) [x 🔁 q] ⏫ y](z)',
+        [
+          ['[[x](]]', 0],
+          ['[x y](z)', 17],
+        ],
+        [
+          changedLine('- [ ] [[X]] ⏰ 10:00 [x y](z) [x 🔁 q] ⏫ y](z)'),
+          REFUSED_LINK_EDIT,
+          REFUSED_LINK_EDIT,
+        ],
+      ],
+      // Without the place, occurrence 0 rewrites the `[[m n]]` inside the image.
+      [
+        'T2, a wiki link that a lone CR hides, after an image made across two fields',
+        '- [ ] ![i 🔁 x] ⏫ j](k [[m n]] l) [[m \r n]]',
+        [['[[m n]]', 20]],
+        [REFUSED_LINK_EDIT, REFUSED_LINK_EDIT],
+      ],
+      // Without the place, occurrence 0 rewrites the `[x ](y)` inside the embed.
+      [
+        'T3, a link made across a field, after an embed that collapsing a lone CR completes',
+        '- [ ] ![[p \r [x ](y) l]] [x 📅 ] ](y)',
+        [['[x ](y)', 17]],
+        [REFUSED_LINK_EDIT, REFUSED_LINK_EDIT],
+      ],
+      // Without the place, occurrence 0 rewrites the `[[m n]]` inside the image.
+      [
+        'T6, a wiki link that a lone CR hides, before an image made across a field',
+        '- [ ] [[m \r n]]![p 📅 ] `xq](r [[m n]])',
+        [['[[m n]]', 0]],
+        [REFUSED_LINK_EDIT, REFUSED_LINK_EDIT],
+      ],
+    ] as const)(
+      'edits a title link only where the source holds it, on %s',
+      (_case, source, shown, edits) => {
+        expectTitleLinkEdits(source, shown, edits);
+      },
+    );
 
     it('sets the title fragment after a repository-leading tag without retaining the old title', () => {
       const source = '- [ ] #task/one-off Buy milk 📅 2026-06-24';
@@ -1676,19 +1895,24 @@ describe('task line tag and link boundaries', () => {
     ['skips tags attached to a word', '- [ ] Pay x#y and é#x #ok', ['#ok']],
     ['skips a tag after an astral letter', `- [ ] ${mathBoldA}#x #ok`, ['#ok']],
     ['skips a tag after an emoji', `- [ ] Pay x#y and ${partyPopper}#party #ok/sub`, ['#ok/sub']],
-    ['reads a tag inside a wiki embed', '- [ ] ![[Note #tag]]', ['#tag']],
-    ['reads a tag inside a Markdown image', '- [ ] ![alt #tag](img.png)', ['#tag']],
-    ['hides a tag in a wiki link right after an image opener', '- [ ] ![[[Note #tag]]', []],
+    ['hides a tag in an embed whose content starts with `[`', '- [ ] ![[[Note #tag]]', []],
+    // Obsidian reads a tag inside Markdown link text (probe 4 P9); the tag grammar is SP1i's.
     ['hides a tag in a Markdown link right after an image opener', '- [ ] ![[a #t](b)', []],
   ])('%s', (_case, line, tags) => {
     expect(modelOf(line).tags).toEqual(tags);
   });
 
-  it('does not make an image opener a link range', () => {
-    expect(modelOf('- [ ] ![alt #tag](img.png)').carriers).toEqual([
-      { kind: 'tag', from: 12, to: 16 },
-    ]);
-  });
+  // The tag sits in a link that starts inside a dropped match but after the kept link before it.
+  // Skipping every match that starts inside a dropped match reads the tag `#tag`.
+  it.each(['- [ ] [a]([[b) [c](#tag)]]', '- [ ] [[a[b](c]] [[#tag]])'])(
+    'reads no tag in a link that starts inside a dropped match in %j',
+    (line) => {
+      const model = modelOf(line);
+
+      expect(model.tags).toEqual([]);
+      expect(model.markdownTitle).toBe(line.slice('- [ ] '.length));
+    },
+  );
 
   it('stays linear on many unclosed images', () => {
     const small = `- [ ] ${'![a](b '.repeat(1_000)}`;
@@ -1703,5 +1927,436 @@ describe('task line tag and link boundaries', () => {
         large: () => parseTaskLineSourceModel(large),
       }),
     ).toBeLessThan(8);
+  });
+});
+
+const BACKSLASH = '\\';
+const LATEX_ALPHA = String.raw`\alpha`;
+const LATEX_BRACKETS = String.raw`\[x\] `;
+const escapes = (count: number, escaped: string): string => (BACKSLASH + escaped).repeat(count);
+const latexCommands = (count: number): string =>
+  Array.from({ length: count }, () => LATEX_ALPHA).join(' + ');
+
+describe('task line embeds and images', () => {
+  const modelOf = (line: string) => expectDefined(parseTaskLineSourceModel(line));
+
+  // SP1k UI QA defect 3 and probe 4: today the tag becomes a task tag and is cut out of the title.
+  it.each([
+    ['a wiki embed (probe 4 P1, P3)', '- [ ] ![[Note #tag]]'],
+    ['a Markdown image (P2, P4)', '- [ ] ![alt #tag](img.png)'],
+    ['an embed alias', '- [ ] ![[Note|alias #tag]]'],
+    ['an embed alias in a table (P5)', String.raw`- [ ] ![[Note\|alias #tag]]`],
+    ['an image destination in angle brackets (P7)', '- [ ] ![alt](<img #tag.png>)'],
+  ])('keeps a tag inside %s in the title', (_case, line) => {
+    const model = modelOf(line);
+
+    expect(model.tags).toEqual([]);
+    expect(model.markdownTitle).toBe(line.slice('- [ ] '.length));
+  });
+
+  it('keeps the whole of an embed that starts with `[` in the title', () => {
+    // Master reads the same, as a wiki link after `!`, and SP1m reads an embed. The tag and link
+    // boundaries check that the line reads no tag.
+    expect(modelOf('- [ ] ![[[Note #tag]]').markdownTitle).toBe('![[[Note #tag]]');
+  });
+
+  // Probe 4: Obsidian reads these tags the same way.
+  it.each([
+    ['after an embed (P8)', '- [ ] ![[a]] #tag', ['#tag']],
+    ['in a wiki link to a heading (P10)', '- [ ] [[Note #tag]]', []],
+    // The plugin reads no image here because the alt text is empty, and Obsidian none because
+    // the destination holds a space. If SP1q accepts empty alt text, it must refuse the space.
+    ['in an image destination with a space (P6)', '- [ ] ![](a #tag.png)', ['#tag']],
+  ])('reads the tag %s as Obsidian does', (_case, line, tags) => {
+    expect(modelOf(line).tags).toEqual(tags);
+  });
+
+  // Today each field is read from inside the embed or image, and editing it rewrites the embed.
+  it.each([
+    ['due date', '- [ ] ![[Note 📅 2026-09-30]]', 'due'],
+    ['due date in alt text', '- [ ] ![alt 📅 2026-09-30](img.png)', 'due'],
+    ['priority', '- [ ] ![[Note ⏫]]', 'priority'],
+    ['duration', '- [ ] ![[Note ⏱️ 1h30m]]', 'duration'],
+    ['recurrence', '- [ ] ![alt 🔁 every day](img.png)', 'recurrence'],
+    ['task id', '- [ ] ![[Note 🆔 abc123]]', 'malformed-known'],
+  ] as const)('reads no %s inside an embed or image', (_case, line, kind) => {
+    const parsed = parse(line);
+
+    expect(spanText(parsed, kind)).toEqual([]);
+    expect(parsed.markdownTitle).toBe(line.slice('- [ ] '.length));
+    expectLosslessPartition(parsed);
+  });
+
+  it('still reads the tag and date after an embed', () => {
+    const parsed = parse('- [ ] Task ![[Note]] #tag 📅 2026-09-30');
+
+    expect(parsed.tags).toEqual(['#tag']);
+    expect(parsed.planning.due).toBe('2026-09-30');
+  });
+
+  it('ends a recurrence at an embed as it does at a link', () => {
+    // Today the recurrence runs over the embed and the rest of the title.
+    const parsed = parse('- [ ] 🔁 every day ![[image.png]] rest');
+
+    expect(parsed.recurrence).toBe('every day');
+    expect(parsed.markdownTitle).toBe('![[image.png]] rest');
+  });
+
+  it('makes an image one atomic title range', () => {
+    // Today the tag is a carrier inside the image.
+    expect(modelOf('- [ ] ![alt #tag](img.png)').carriers).toEqual([
+      { kind: 'title', from: 6, to: 26 },
+    ]);
+  });
+
+  it('removes no tag from inside an embed', () => {
+    // Today the edit rewrites the embed to `![[Note]]`.
+    expect(
+      codec.applyLineEdit('- [ ] ![[Note #tag]]', {
+        type: 'change-tags',
+        add: [],
+        remove: ['#tag'],
+      }),
+    ).toEqual({ type: 'unchanged', content: '- [ ] ![[Note #tag]]' });
+  });
+
+  it('adds a due date instead of rewriting one inside an embed', () => {
+    // Today the edit rewrites the embed to `![[Note 📅 2026-10-01]]`.
+    expect(
+      codec.applyLineEdit('- [ ] ![[Note 📅 2026-09-30]]', {
+        type: 'set-date',
+        field: 'due',
+        value: '2026-10-01',
+      }),
+    ).toEqual({ type: 'changed', content: '- [ ] ![[Note 📅 2026-09-30]] 📅 2026-10-01' });
+  });
+
+  it('keeps the whole embed in the title', () => {
+    const parsed = parse('- [ ] Review ![[Note #tag]] #real');
+
+    // SP1n: the plain title keeps its legacy collapse patterns until title presentation changes it.
+    expect(parsed.title).toBe('Review !🔗 Note #tag');
+    expect(parsed.markdownTitle).toBe('Review ![[Note #tag]]');
+    expect(parsed.tags).toEqual(['#real']);
+  });
+});
+
+describe('TaskMarkdownCodec link reading', () => {
+  it.each([
+    ['a due date', String.raw`- [ ] Read [notes\](📅 2026-09-30)`, 'due', ['📅 2026-09-30']],
+    ['a tag', String.raw`- [ ] see [a\](b #tag)`, 'tag', ['#tag']],
+    // Today a wiki link to `a]b` is not read, so its tag is a task tag.
+    ['no tag inside a wiki link with a single `]`', '- [ ] [[a]b #tag]]', 'tag', []],
+  ] as const)('reads %s as Obsidian reads the links around it', (_case, source, kind, expected) => {
+    expect(spanText(parse(source), kind)).toEqual(expected);
+  });
+
+  it('keeps a due date inside a link that an escaped lookalike no longer hides', () => {
+    // SP1q: this relies on a destination with a space being a link, which Obsidian refuses.
+    expect(spanText(parse(String.raw`- [ ] \[x](a [y](📅 2026-09-30) c)`), 'due')).toEqual([]);
+  });
+
+  it.each([
+    ['a wiki target', (count: number) => `[[${escapes(count, 'a')}`],
+    ['a wiki alias', (count: number) => `[[a|${escapes(count, 'a')}`],
+    ['a Markdown text', (count: number) => `[${escapes(count, 'a')}`],
+    ['a Markdown destination', (count: number) => `[a](${escapes(count, 'a')}`],
+    ['an interval', (count: number) => `Prove it on $[0, 1)$ with ${latexCommands(count)}`],
+  ] as const)('keeps escapes after %s in a task line linear', (_case, body) => {
+    // A line has a fixed parse cost, so these sizes are larger than in test/links.test.ts.
+    const small = `- [ ] ${body(10)}`;
+    const large = `- [ ] ${body(18)}`;
+
+    expect(
+      medianInterleavedRatio({
+        small: () => codec.parseLine(small, location),
+        large: () => codec.parseLine(large, location),
+      }),
+    ).toBeLessThan(8);
+  });
+
+  it.each([
+    ['unclosed Markdown links', (count: number) => '[a](b '.repeat(count)],
+    [
+      'unclosed links before an escaped parenthesis',
+      (count: number) => `${'[a](b '.repeat(count)}${BACKSLASH})`,
+    ],
+    // The closing parenthesis keeps the escaped openers inside the searched text.
+    ['escaped openers', (count: number) => `[${escapes(count, '[')})`],
+    ['LaTeX brackets', (count: number) => `[${LATEX_BRACKETS.repeat(count)})`],
+    ['unclosed wiki links', (count: number) => '[[a'.repeat(count)],
+    ['unclosed embeds', (count: number) => '![['.repeat(count)],
+    ['escaped brackets in a wiki link', (count: number) => `[[${escapes(count, '[')}`],
+  ] as const)('avoids quadratic growth for repeated %s in a task line', (_case, body) => {
+    const small = `- [ ] ${body(500)}`;
+    const large = `- [ ] ${body(2_000)}`;
+
+    expect(
+      medianInterleavedRatio({
+        small: () => codec.parseLine(small, location),
+        large: () => codec.parseLine(large, location),
+      }),
+    ).toBeLessThan(8);
+  });
+});
+
+// Title fragments for seeded task lines: links of each kind, whitespace runs, openers, closers,
+// escapes, a tag, and task fields. The two wiki links with a lone CR in a whitespace run render as
+// links that the source does not hold. Characters that do not show are built from their codes.
+const CR = String.fromCharCode(13);
+const TAB = String.fromCharCode(9);
+const NO_BREAK_SPACE = String.fromCharCode(0xa0);
+const LINE_SEPARATOR = String.fromCharCode(0x2028);
+const TITLE_FRAGMENTS = [
+  '[[a]]',
+  '[[a b]]',
+  '[[c]]',
+  '[[a|b]]',
+  `[[a${BACKSLASH}|b]]`,
+  `[[a ${CR} b]]`,
+  `[[a ${CR} [x](y) b]]`,
+  '[a](b)',
+  '[x y](z)',
+  '![[e]]',
+  '![i](j)',
+  '`k`',
+  '``',
+  ' ',
+  '  ',
+  TAB,
+  CR,
+  NO_BREAK_SPACE,
+  LINE_SEPARATOR,
+  BACKSLASH,
+  BACKSLASH + BACKSLASH,
+  `${BACKSLASH}[`,
+  `${BACKSLASH}!`,
+  '[',
+  ']',
+  '(',
+  ')',
+  '[[',
+  ']]',
+  '](',
+  '![[',
+  '![',
+  '!',
+  '|',
+  'x',
+  '#t',
+  ' #t ',
+  ' 📅 2026-09-30 ',
+  ' ⏫ ',
+  ' 🔁 every day ',
+  ' 🆔 abc ',
+  ' ⏰ 10:00 ',
+  ' ^blk',
+];
+// The replacement appears nowhere in the fragments, so an edit that is not refused changes the
+// line, and the replacement marks where.
+const TITLE_REPLACEMENT = '[[@Z@]]';
+
+interface TitleEditTally {
+  linkRefusals: number;
+  otherRefusals: number;
+  refusedLinesWithCr: number;
+  rewrites: number;
+}
+
+/** `count` task lines of 1 to 12 seeded title fragments, the same on every run. */
+function seededTitleLines(count: number): string[] {
+  const next = seededRandom(20_260_927);
+  return Array.from({ length: count }, () => {
+    const fragments = Array.from(
+      { length: 1 + next(12) },
+      () => TITLE_FRAGMENTS[next(TITLE_FRAGMENTS.length)] ?? '',
+    );
+    return `- [ ] ${fragments.join('')}`;
+  });
+}
+
+interface TitleFragment {
+  readonly from: number;
+  readonly to: number;
+}
+
+/** How a span takes part in the title fragments, by the rules the domain joins them with. */
+function titleSpanRole(
+  span: SourceSpan,
+  contentEnd: number,
+): 'extends' | 'continues' | 'ends' | 'skipped' {
+  if (span.kind === 'prefix' || (span.kind === 'separator' && span.from === contentEnd)) {
+    return 'skipped';
+  }
+  if (span.kind === 'title' || span.kind === 'unknown') return 'extends';
+  return span.kind === 'separator' ? 'continues' : 'ends';
+}
+
+/**
+ * The title fragments of a line, rebuilt from its spans as the domain joins them: title and
+ * unknown spans extend a fragment, a separator inside one continues it, any other span ends it,
+ * and the prefix and the line's final separator are skipped.
+ */
+function titleFragmentsOf(parsed: ParsedTaskLine): TitleFragment[] {
+  const contentEnd = parsed.original.length - parsed.lineEnding.length;
+  const fragments: TitleFragment[] = [];
+  let open: TitleFragment | undefined;
+  for (const span of parsed.spans) {
+    const role = titleSpanRole(span, contentEnd);
+    if (role === 'extends') {
+      open = { from: open?.from ?? span.from, to: span.to };
+    } else if (role === 'ends') {
+      if (open !== undefined) fragments.push(open);
+      open = undefined;
+    }
+  }
+  if (open !== undefined) fragments.push(open);
+  return fragments;
+}
+
+interface RenderedTitle {
+  readonly text: string;
+  /** The source index that each character of `text` comes from, or -1 for the join's space. */
+  readonly sources: readonly number[];
+}
+
+/**
+ * The title the panel renders for a line, rebuilt without the codec: the title fragments joined
+ * with one space, each run of two or more whitespace characters collapsed to one space that comes
+ * from the run's first source index, and the ends trimmed.
+ */
+function renderedTitle(parsed: ParsedTaskLine): RenderedTitle {
+  const joined: number[] = [];
+  for (const [index, fragment] of titleFragmentsOf(parsed).entries()) {
+    if (index > 0) joined.push(-1);
+    for (let at = fragment.from; at < fragment.to; at++) joined.push(at);
+  }
+  const joinedText = joined.map((at) => (at < 0 ? ' ' : (parsed.original[at] ?? ''))).join('');
+  let text = '';
+  const sources: number[] = [];
+  let copied = 0;
+  const runs = /\s{2,}/gu;
+  let run: RegExpExecArray | null;
+  while ((run = runs.exec(joinedText)) !== null) {
+    text += `${joinedText.slice(copied, run.index)} `;
+    sources.push(...joined.slice(copied, run.index), joined[run.index] ?? -1);
+    copied = run.index + run[0].length;
+  }
+  text += joinedText.slice(copied);
+  sources.push(...joined.slice(copied));
+  const from = text.length - text.trimStart().length;
+  const to = text.trimEnd().length;
+  return { text: text.slice(from, to), sources: sources.slice(from, to) };
+}
+
+/**
+ * Whether the source holds a link at source index `at` that renders as `raw`: a link that
+ * `parseLinks` reads over the title fragment holding `at` starts there, and its text, with each
+ * run of two or more whitespace characters collapsed to one space, is `raw`.
+ */
+function sourceHoldsLinkAt(parsed: ParsedTaskLine, at: number, raw: string): boolean {
+  const fragment = titleFragmentsOf(parsed).find(({ from, to }) => from <= at && at < to);
+  if (fragment === undefined) return false;
+  return parseLinks(parsed.original.slice(fragment.from, fragment.to)).some(
+    (link) => fragment.from + link.index === at && link.raw.replace(/\s{2,}/gu, ' ') === raw,
+  );
+}
+
+function editSeededTitleLink(line: string, occurrence: number): LineEditResult {
+  return codec.applyLineEdit(line, {
+    type: 'edit-link',
+    occurrence,
+    replacement: TITLE_REPLACEMENT,
+  });
+}
+
+function isLinkRefusal(result: LineEditResult): boolean {
+  return (
+    result.type === 'invalid' &&
+    result.issues.length === 1 &&
+    result.issues[0]?.code === 'invalid-target' &&
+    result.issues[0].field === 'link'
+  );
+}
+
+/** A title link the panel shows, with the source index its first character comes from. */
+interface ShownTitleLink {
+  readonly raw: string;
+  readonly at: number;
+}
+
+/**
+ * Judges the edit of shown title link `occurrence`. A rewrite must start at the source index of
+ * the link's first character and replace text that collapses to the link's text. A refusal with
+ * `invalid-target` on `link` must concern a link that the source does not hold there. A refusal
+ * with another issue, a title edit that would add a field, is counted and not judged. Returns the
+ * edit when it is wrong.
+ */
+function shownLinkEditSlip(
+  parsed: ParsedTaskLine,
+  occurrence: number,
+  shown: ShownTitleLink,
+  tally: TitleEditTally,
+): string | undefined {
+  const line = parsed.original;
+  const result = editSeededTitleLink(line, occurrence);
+  if (result.type === 'changed') {
+    const from = result.content.indexOf(TITLE_REPLACEMENT);
+    const length = line.length + TITLE_REPLACEMENT.length - result.content.length;
+    const written = line.slice(from, from + length);
+    if (from === shown.at && written.replace(/\s{2,}/gu, ' ') === shown.raw) {
+      tally.rewrites++;
+      return undefined;
+    }
+  } else if (result.type === 'invalid' && !isLinkRefusal(result)) {
+    tally.otherRefusals++;
+    return undefined;
+  } else if (isLinkRefusal(result) && !sourceHoldsLinkAt(parsed, shown.at, shown.raw)) {
+    tally.linkRefusals++;
+    return undefined;
+  }
+  return JSON.stringify({ line, occurrence, shown, result });
+}
+
+/**
+ * Checks that the title rebuilt from the spans equals the codec's, judges the edit of each title
+ * link the panel shows on `line`, and checks that the edit of the occurrence after the last does
+ * not change the line. Returns the first wrong result.
+ */
+function titleEditSlip(line: string, tally: TitleEditTally): string | undefined {
+  const parsed = parse(line);
+  const title = renderedTitle(parsed);
+  if (title.text !== parsed.markdownTitle) return JSON.stringify({ line, rebuilt: title.text });
+  const shown = parseLinks(parsed.markdownTitle);
+  const linkRefusalsBefore = tally.linkRefusals;
+  for (const [occurrence, link] of shown.entries()) {
+    const at = title.sources[link.index] ?? -1;
+    const slip = shownLinkEditSlip(parsed, occurrence, { raw: link.raw, at }, tally);
+    if (slip !== undefined) return slip;
+  }
+  if (tally.linkRefusals > linkRefusalsBefore && line.includes(CR)) tally.refusedLinesWithCr++;
+  const past = editSeededTitleLink(line, shown.length);
+  return past.type === 'changed'
+    ? JSON.stringify({ line, occurrence: shown.length, past })
+    : undefined;
+}
+
+describe('title link edits and the panel numbering', () => {
+  it('rewrites each title link where the panel shows it, or refuses one the source does not hold there, on seeded lines', () => {
+    const tally: TitleEditTally = {
+      linkRefusals: 0,
+      otherRefusals: 0,
+      refusedLinesWithCr: 0,
+      rewrites: 0,
+    };
+    let slip: string | undefined;
+    for (const line of seededTitleLines(3_000)) slip ??= titleEditSlip(line, tally);
+
+    expect(slip).toBeUndefined();
+    // Measured on these lines: 1,056 hold a CR, and the panel shows 3,772 links on 2,011 of them.
+    // The edits rewrite 2,934 and refuse 838 as links the source does not hold there, on 717
+    // lines, each of which holds a CR. None is refused for another issue.
+    expect(tally.refusedLinesWithCr).toBeGreaterThan(0);
+    expect(tally.rewrites).toBeGreaterThanOrEqual(2_900);
   });
 });

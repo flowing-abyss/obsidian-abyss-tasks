@@ -1,4 +1,3 @@
-import { parseLinks } from '../../src/markdown/links';
 import {
   dependencyMetadataIssues,
   subtaskRestorationGapIsCurrent,
@@ -619,7 +618,13 @@ type EditLocation =
 type TextEditLocation =
   | { readonly type: 'conflict' }
   | { readonly type: 'invalid' }
-  | { readonly type: 'ready'; readonly line: number; readonly occurrence: number };
+  | { readonly type: 'comment'; readonly line: number; readonly occurrence: number }
+  | {
+      readonly type: 'description';
+      readonly line: number;
+      readonly column: number;
+      readonly raw: string;
+    };
 
 type SurvivingRootTransition =
   | { readonly type: 'result'; readonly result: TaskRepositoryResult }
@@ -1554,35 +1559,35 @@ export class InMemoryTaskRepository implements TaskRepository {
       const line = commentLine(input.block.line + input.relativeLine, command.target.ref, lines);
       return line === undefined
         ? { type: 'conflict' }
-        : { type: 'ready', line, occurrence: command.occurrence };
+        : { type: 'comment', line, occurrence: command.occurrence };
     }
-    let occurrence = command.occurrence;
-    const candidates = this.editor.descriptionLines(
+    const found = this.editor.descriptionLink(
       input.content,
       input.block,
       blockTarget(target, input.block.toLine - input.block.line + 1, input.relativeLine),
+      command.occurrence,
     );
-    for (const relativeLine of candidates) {
-      const line = input.block.line + relativeLine;
-      const count = parseLinks(lines[line] ?? '').length;
-      if (occurrence < count) return { type: 'ready', line, occurrence };
-      occurrence -= count;
-    }
-    return { type: 'invalid' };
+    if (found.type !== 'ready') return found;
+    return {
+      type: 'description',
+      line: input.block.line + found.relativeLine,
+      column: found.column,
+      raw: found.raw,
+    };
   }
 
   private applyTextEdit(
     input: LocatedEditInput,
     command: Extract<TaskEditCommand, { readonly type: 'edit-link' }>,
     current: TaskSnapshot,
-    target: Extract<TextEditLocation, { readonly type: 'ready' }>,
+    target: Extract<TextEditLocation, { readonly type: 'comment' | 'description' }>,
   ): TaskRepositoryResult {
     const sourceLine = input.content.split(/\r?\n/u)[target.line] ?? '';
-    const edited = this.options.codec.editTextLink(
-      sourceLine,
-      target.occurrence,
-      command.replacement,
-    );
+    const edited =
+      target.type === 'comment'
+        ? this.options.codec.editTextLink(sourceLine, target.occurrence, command.replacement)
+        : this.options.codec.editTextLinkAt(sourceLine, target, command.replacement);
+    if (edited.type === 'conflict') return { type: 'conflict', current };
     if (edited.type === 'invalid') return edited;
     if (edited.type === 'unchanged') {
       return { type: 'committed', outcome: { type: 'task', task: current }, changed: false };

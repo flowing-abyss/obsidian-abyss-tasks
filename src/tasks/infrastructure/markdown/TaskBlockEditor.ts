@@ -1,3 +1,4 @@
+import { parseLinks } from '../../../markdown/links';
 import {
   instantOffsetMinutes,
   parseCommentTimestampPrefix,
@@ -23,13 +24,14 @@ import {
   consumeMarkdownFenceLine,
   isTaskBlockBlankLine,
   parseMarkdownFrontmatter,
+  readTaskDescriptionLine,
   type MarkdownFence,
+  type TaskDescriptionLine,
 } from './taskBlockSyntax';
 import type { TaskMarkdownCodec } from './TaskMarkdownCodec';
 
 const TASK_RE = /^[\s>]*- \[(.)\]/u;
 const PREFIX_RE = /^([\s>]*)/u;
-const DESCRIPTION_RE = /^[\s>]*- > /u;
 const LINE_BREAK_RE = /[\r\n]/u;
 const STAMP_OFFSET_RE = /(?:Z|[+-]\d{2}:\d{2})$/u;
 
@@ -75,6 +77,17 @@ export interface TaskBlockTarget {
   readonly childRanges: ReadonlyArray<{ readonly from: number; readonly to: number }>;
   readonly description?: string;
 }
+
+/** Where a description link sits in the file, or why it cannot be edited. */
+export type DescriptionLinkTarget =
+  | {
+      readonly type: 'ready';
+      readonly relativeLine: number;
+      readonly column: number;
+      readonly raw: string;
+    }
+  | { readonly type: 'conflict' }
+  | { readonly type: 'invalid' };
 
 export interface CreateDependencySubtaskEdit {
   readonly type: 'create-dependency-subtask';
@@ -645,23 +658,56 @@ function readTaskRootBlocks(content: string): readonly TaskRootBlock[] {
   return roots;
 }
 
-function readTaskDescriptionLines(
+interface DescriptionSourceLine extends TaskDescriptionLine {
+  readonly relativeLine: number;
+}
+
+function readDescriptionSourceLines(
   content: string,
   block: TaskRootBlock,
   target: TaskBlockTarget,
-): readonly number[] {
+): DescriptionSourceLine[] {
   const lines = sourceLines(content);
-  const result: number[] = [];
+  const result: DescriptionSourceLine[] = [];
   for (let relative = 1; relative < target.lineCount; relative++) {
     if (target.childRanges.some((range) => relative >= range.from && relative <= range.to)) {
       continue;
     }
     const rootRelative = target.relativeLine + relative;
-    if (DESCRIPTION_RE.test(lines[block.line + rootRelative]?.text ?? '')) {
-      result.push(rootRelative);
-    }
+    const line = readTaskDescriptionLine(lines[block.line + rootRelative]?.text ?? '');
+    if (line !== undefined) result.push({ ...line, relativeLine: rootRelative });
   }
   return result;
+}
+
+/**
+ * Finds link `occurrence` of the description as the panel numbers it, in the text of `lines`
+ * joined by line breaks, and the line that holds it.
+ */
+function descriptionLinkIn(
+  lines: readonly DescriptionSourceLine[],
+  description: string | undefined,
+  occurrence: number,
+): DescriptionLinkTarget {
+  const text = lines.map((line) => line.text).join('\n');
+  if (text !== (description ?? '')) return { type: 'conflict' };
+  const link = parseLinks(text)[occurrence];
+  if (link === undefined) return { type: 'invalid' };
+  let from = 0;
+  for (const line of lines) {
+    const to = from + line.text.length;
+    if (link.index >= from && link.index + link.raw.length <= to) {
+      return {
+        type: 'ready',
+        relativeLine: line.relativeLine,
+        column: line.column + link.index - from,
+        raw: link.raw,
+      };
+    }
+    from = to + 1;
+  }
+  // No one line holds the link: it crosses a line break.
+  return { type: 'invalid' };
 }
 
 function editDescription(
@@ -672,7 +718,9 @@ function editDescription(
   if (edit.text?.includes('\r') ?? false) return { type: 'invalid', field: 'description' };
   const requested = edit.text ?? undefined;
   if (requested === target.description) return { type: 'unchanged', content, block };
-  const directDescriptions = readTaskDescriptionLines(content, block, target);
+  const directDescriptions = readDescriptionSourceLines(content, block, target).map(
+    (line) => line.relativeLine,
+  );
   replaceDescriptionLines(context, directDescriptions, requested);
   return undefined;
 }
@@ -839,7 +887,7 @@ function subtaskInsertionLine(context: BlockEditContext): number {
   const blockEnd = blockEndLine(context);
   let insertion = context.parentLine + 1;
   for (let at = context.parentLine + 1; at < blockEnd; at++) {
-    if (DESCRIPTION_RE.test(context.lines[at]?.text ?? '')) insertion = at + 1;
+    if (readTaskDescriptionLine(context.lines[at]?.text ?? '') !== undefined) insertion = at + 1;
   }
   return insertion;
 }
@@ -1266,12 +1314,22 @@ export class TaskBlockEditor {
     return { content: next, block: updated };
   }
 
-  descriptionLines(
+  /**
+   * Finds description link `occurrence` as the panel numbers it: over the target's description
+   * lines joined by line breaks. Text that is not the target's description is a conflict, and a
+   * link that crosses a line break cannot be edited.
+   */
+  descriptionLink(
     content: string,
     block: TaskRootBlock,
     target: TaskBlockTarget,
-  ): readonly number[] {
-    return readTaskDescriptionLines(content, block, target);
+    occurrence: number,
+  ): DescriptionLinkTarget {
+    return descriptionLinkIn(
+      readDescriptionSourceLines(content, block, target),
+      target.description,
+      occurrence,
+    );
   }
 
   edit(

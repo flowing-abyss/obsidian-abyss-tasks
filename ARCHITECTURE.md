@@ -127,6 +127,15 @@ in the index before returning. Conflicts, invalid input, missing or ambiguous ta
 and I/O failures are structured outcomes; the initiating presentation boundary reports failures.
 The UI must not treat an earlier snapshot as continuing write authority.
 
+A link edit names a link by its number in the text the panel renders: the title, the description,
+or a comment. The repository finds that same link in the source and replaces only that link.
+Descriptions number the lines that
+[`TaskSnapshotProjector.ts`](src/tasks/infrastructure/markdown/TaskSnapshotProjector.ts) reads
+with `readTaskDescriptionLine`, through `TaskBlockEditor.descriptionLink`. Titles rewrite the
+source link that renders with the same text at the same place in the rendered title. Comments
+number a line whose prefix and timestamp hold no link syntax. When the source does not hold the
+numbered link, the edit returns a conflict or an invalid target rather than rewriting another link.
+
 After a repository write, the index retains the committed content. A conflicting cache observation
 must match a fresh vault read before it can replace that content, so delayed events cannot undo a
 published write.
@@ -579,10 +588,21 @@ would track, whether ESLint lints it or not; the
 negative lookbehind becomes an alternative that passes over the refused character or a check on
 the code point before the match, and an inner one becomes a class on the content's last
 character. The code point check lives in
-[`src/markdown/precedingCodePoint.ts`](src/markdown/precedingCodePoint.ts). The task domain keeps
-an identical copy of the search because neither layer may import the other: the domain imports
-only its own modules and `rrule`, and shared Markdown helpers import no task layer.
-[One suite](test/preceding-code-point.test.ts) runs both.
+[`src/markdown/precedingCodePoint.ts`](src/markdown/precedingCodePoint.ts).
+
+Two readings are copied across layers because neither layer may import the other: the domain
+imports only its own modules and `rrule`, and shared Markdown helpers import no task layer. The
+task domain copies the code point search of `src/markdown/precedingCodePoint.ts`. It also reads
+links in [`src/tasks/domain/taskLineAtomicRanges.ts`](src/tasks/domain/taskLineAtomicRanges.ts),
+where links, embeds, and images are ranges that no task field may start inside, while
+[`src/markdown/links.ts`](src/markdown/links.ts) returns link tokens for rendering, counts,
+edits, and project values. Both link readings use the same wiki and Markdown patterns, search
+Markdown links only up to the last unescaped `)`, and keep no match that starts inside an earlier
+kept match, so nothing starts inside an embed or image. The domain module starts with the verbatim
+text of [`src/markdown/inlineCode.ts`](src/markdown/inlineCode.ts), so both drop matches that
+start in inline code found by the same scan. [One suite](test/preceding-code-point.test.ts) runs
+both code point searches, and [another](test/link-reading-layers.test.ts) holds the link readings
+equal and checks that the copied text is the same.
 
 `pnpm lint:store` runs the community directory's published review rules in the full gate, as a
 [Vitest file](test/store/review-lint.test.ts) under its own config, outside the unit suite and its

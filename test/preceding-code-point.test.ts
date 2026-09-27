@@ -5,6 +5,7 @@ import {
   replaceUnlessPreceded,
 } from '../src/markdown/precedingCodePoint';
 import { matchesUnlessPreceded as domainMatchesUnlessPreceded } from '../src/tasks/domain/precedingCodePoint';
+import { seededRandom } from './helpers';
 
 type Refusal = (previous: string) => boolean;
 type MatchesUnlessPreceded = typeof markdownMatchesUnlessPreceded;
@@ -54,13 +55,9 @@ const isHashMark: Refusal = (previous) => previous === '#';
 const refusesNothing: Refusal = () => false;
 const bracket = (match: RegExpExecArray): string => `<${match[0]}>`;
 
-/** Park and Miller's minimal standard generator, so every run checks the same texts. */
+/** Seeded texts, so every run checks the same ones. */
 function seededTexts(count: number): string[] {
-  let state = SEED;
-  const next = (bound: number): number => {
-    state = (state * 48_271) % 2_147_483_647;
-    return state % bound;
-  };
+  const next = seededRandom(SEED);
   return Array.from({ length: count }, () =>
     Array.from({ length: next(13) }, () => ALPHABET[next(ALPHABET.length)] ?? '').join(''),
   );

@@ -67,6 +67,12 @@ export type LineEditResult =
   | { readonly type: 'unchanged'; readonly content: string }
   | { readonly type: 'invalid'; readonly issues: readonly TaskIssue[] };
 
+/** A link in a line, named by the column it starts at and its text. */
+export interface LinkAtColumn {
+  readonly column: number;
+  readonly raw: string;
+}
+
 type PreparedLineEdit =
   | {
       readonly type: 'prepared';
@@ -265,12 +271,18 @@ const WIKILINK_RE = /\[\[([^[\]]+)\]\]/gu;
 const MD_LINK_RE = /\[([^[\]]+)\]\(([^)]+)\)/gu;
 const BRACKETS_RE = /\[([^[\]]*)\]/gu;
 
+/** A Markdown link ends at a `)`, so the search stops at the last one. */
+function collapseMarkdownLinks(input: string): string {
+  const end = input.lastIndexOf(')') + 1;
+  return input.slice(0, end).replace(MD_LINK_RE, '🌐 $1') + input.slice(end);
+}
+
 function collapseLinks(input: string): string {
-  return input
-    .replace(WIKILINK_ALIAS_RE, '🔗$1')
-    .replace(WIKILINK_RE, (_match, link: string) => `🔗 ${link.replace(/\.[^.]*$/u, '')}`)
-    .replace(MD_LINK_RE, '🌐 $1')
-    .replace(BRACKETS_RE, '$1');
+  return collapseMarkdownLinks(
+    input
+      .replace(WIKILINK_ALIAS_RE, '🔗$1')
+      .replace(WIKILINK_RE, (_match, link: string) => `🔗 ${link.replace(/\.[^.]*$/u, '')}`),
+  ).replace(BRACKETS_RE, '$1');
 }
 
 function spliceSource(source: string, from: number, to: number, replacement: string): string {
@@ -586,34 +598,76 @@ function appendTitle(parsed: ParsedTaskLine, markdown: string): string {
   return spliceSource(parsed.original, last.to, last.to, ` ${markdown}`);
 }
 
+/** Collapses each run of two or more whitespace characters to one space, as the title renders. */
+function collapseWhitespaceRuns(text: string): string {
+  return text.replace(/\s{2,}/gu, ' ');
+}
+
+/** A link in a title fragment, with the index of its first character in the rendered title. */
+interface TitleLink extends LinkAtColumn {
+  readonly titleIndex: number;
+}
+
+/**
+ * The links in the title fragments of the source, in order, each at its column in the line and at
+ * its index in the rendered title. The rendered title joins the fragments with one space,
+ * collapses each run of two or more whitespace characters to one space, and trims. A fragment
+ * starts and ends with a character that is not whitespace, and so does a link, so no whitespace
+ * run crosses a fragment's or a link's edge, and the trim removes nothing. A link's index is then
+ * a running sum: the collapsed length of the text before it in its fragment, plus, for each
+ * earlier fragment, its collapsed length and one space for the join.
+ */
+function sourceTitleLinks(parsed: ParsedTaskLine): TitleLink[] {
+  const links: TitleLink[] = [];
+  let titleIndex = 0;
+  for (const fragment of editableTitleFragments(parsed)) {
+    const text = parsed.original.slice(fragment.from, fragment.to);
+    let counted = 0;
+    for (const link of parseLinks(text)) {
+      titleIndex += collapseWhitespaceRuns(text.slice(counted, link.index)).length;
+      counted = link.index;
+      links.push({ column: fragment.from + link.index, raw: link.raw, titleIndex });
+    }
+    titleIndex += collapseWhitespaceRuns(text.slice(counted)).length + 1;
+  }
+  return links;
+}
+
+/**
+ * Replaces title link `occurrence`, numbered as the panel numbers the links of the rendered title.
+ * The edit rewrites the source link whose first character renders where that link starts and
+ * whose text, with each run of two or more whitespace characters collapsed to one space, is that
+ * link's text. When the source holds no such link, for example because a lone CR in a whitespace
+ * run hides a wiki link from the source, or because the join makes a link across a removed field,
+ * only this edit is refused; each other link on the line is matched on its own. Today a source
+ * link that renders at that place always reads as that link. The text comparison stays because a
+ * grammar change that reads a link's end from its context (SP1q) could make the two readings
+ * differ, and the comparison then refuses the edit rather than rewriting other text.
+ */
 function editTitleLink(
   parsed: ParsedTaskLine,
   occurrence: number,
   replacement: string,
 ): PreparedLineEdit {
   if (!Number.isInteger(occurrence) || occurrence < 0) return invalidTaskTarget('link');
-  let remaining = occurrence;
-  for (const fragment of editableTitleFragments(parsed)) {
-    const source = parsed.original.slice(fragment.from, fragment.to);
-    const links = parseLinks(source);
-    if (remaining >= links.length) {
-      remaining -= links.length;
-      continue;
-    }
-    const link = links[remaining];
-    if (link == null) return invalidTaskTarget('link');
-    return {
-      type: 'prepared',
-      content: spliceSource(
-        parsed.original,
-        fragment.from + link.index,
-        fragment.from + link.index + link.raw.length,
-        replacement,
-      ),
-      fields: ['title'],
-    };
-  }
-  return invalidTaskTarget('link');
+  const shown = parseLinks(parsed.markdownTitle)[occurrence];
+  if (shown === undefined) return invalidTaskTarget('link');
+  const link = sourceTitleLinks(parsed).find(
+    (candidate) =>
+      candidate.titleIndex === shown.index && collapseWhitespaceRuns(candidate.raw) === shown.raw,
+  );
+  if (link === undefined) return invalidTaskTarget('link');
+  return {
+    type: 'prepared',
+    content: spliceSource(parsed.original, link.column, link.column + link.raw.length, replacement),
+    fields: ['title'],
+  };
+}
+
+/** Replaces the link text `link.raw` that starts at `link.column`. */
+function replaceLinkText(source: string, link: LinkAtColumn, replacement: string): LineEditResult {
+  const content = spliceSource(source, link.column, link.column + link.raw.length, replacement);
+  return content === source ? { type: 'unchanged', content: source } : { type: 'changed', content };
 }
 
 function statusTransitionIssues(parsed: ParsedTaskLine): readonly TaskIssue[] {
@@ -1047,10 +1101,22 @@ export class TaskMarkdownCodec {
     if (!Number.isInteger(occurrence) || occurrence < 0) return invalidTaskTarget('link');
     const link = parseLinks(source)[occurrence];
     if (link == null) return invalidTaskTarget('link');
-    const content = spliceSource(source, link.index, link.index + link.raw.length, replacement);
-    return content === source
-      ? { type: 'unchanged', content: source }
-      : { type: 'changed', content };
+    return replaceLinkText(source, { column: link.index, raw: link.raw }, replacement);
+  }
+
+  /**
+   * Replaces the link that starts at `link.column`. `link` must be a token read from this line's
+   * text, so `link.column` is a non-negative integer and `link.raw` is not empty. Under that
+   * precondition, a line that does not hold `link.raw` at `link.column` is a conflict.
+   */
+  editTextLinkAt(
+    source: string,
+    link: LinkAtColumn,
+    replacement: string,
+  ): LineEditResult | { readonly type: 'conflict' } {
+    if (!isSingleLineText(replacement)) return invalidTaskTarget('link');
+    if (!source.startsWith(link.raw, link.column)) return { type: 'conflict' };
+    return replaceLinkText(source, link, replacement);
   }
 
   /** Validates a complete candidate line before task creation writes it to the vault. */

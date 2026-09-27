@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import { parseLinks } from '../src/markdown/links';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -9,6 +10,7 @@ import type { TaskRef, TaskSnapshot } from '../src/tasks/domain/types';
 import { LinkEditModal } from '../src/ui/LinkEditModal';
 import {
   createAppWithFiles,
+  editSettingControl,
   expectDefined,
   task,
   taskQueryApi,
@@ -258,5 +260,64 @@ describe('task link rewrite delegation', () => {
 
     expect(state.get('taskStack')[0]).toMatchObject({ ref: freshRef, markdownTitle: 'New' });
     expect(acknowledged).toHaveBeenCalledWith(freshRef);
+  });
+});
+
+describe('link edit modal Save', () => {
+  async function openModal(raw: string, onSave: (newRaw: string) => void): Promise<LinkEditModal> {
+    const token = expectDefined(parseLinks(raw)[0]);
+    const modal = new LinkEditModal(await createAppWithFiles({}), token, onSave);
+    modal.onOpen();
+    return modal;
+  }
+
+  function save(modal: LinkEditModal): void {
+    expectDefined(
+      Array.from(modal.contentEl.querySelectorAll<HTMLElement>('button')).find(
+        (button) => button.textContent === 'Save',
+      ),
+    ).click();
+  }
+
+  // Rebuilding these unchanged links would rewrite `[[Note\|Alias]]` as `[[Note|Alias]]`, `[[a|]]`
+  // as `[[a]]`, and `[ a ]( b )` as `[a](b)`.
+  it.each([String.raw`[[Note\|Alias]]`, '[[a|]]', '[a](b)', '[ a ]( b )'])(
+    'writes nothing when nothing changed in %s',
+    async (raw) => {
+      const onSave = vi.fn();
+      const modal = await openModal(raw, onSave);
+      const close = vi.spyOn(modal, 'close');
+
+      save(modal);
+
+      expect(onSave).not.toHaveBeenCalled();
+      expect(close).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('rebuilds the link with the trimmed display when the display changes', async () => {
+    const onSave = vi.fn();
+    const modal = await openModal(String.raw`[[Note\|Alias]]`, onSave);
+    const close = vi.spyOn(modal, 'close');
+    const display = expectDefined(modal.contentEl.querySelectorAll('input')[1]);
+
+    editSettingControl(display, ' Renamed ');
+    save(modal);
+
+    expect(onSave).toHaveBeenCalledExactlyOnceWith('[[Note|Renamed]]');
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('rebuilds the link when the target changes', async () => {
+    const onSave = vi.fn();
+    const modal = await openModal('[a](b)', onSave);
+    const close = vi.spyOn(modal, 'close');
+    const target = expectDefined(modal.contentEl.querySelectorAll('input')[0]);
+
+    editSettingControl(target, 'c');
+    save(modal);
+
+    expect(onSave).toHaveBeenCalledExactlyOnceWith('[a](c)');
+    expect(close).toHaveBeenCalledOnce();
   });
 });

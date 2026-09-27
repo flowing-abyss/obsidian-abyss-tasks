@@ -1,5 +1,4 @@
 import { TFile, type App } from 'obsidian';
-import { parseLinks } from '../../../markdown/links';
 import {
   dependencyMetadataIssues,
   taskEditMutationTarget as mutationTarget,
@@ -73,7 +72,12 @@ import {
   recoverSubtaskRemoval,
   withSubtaskRemovalRecovery,
 } from '../markdown/subtaskRemovalRecovery';
-import type { TaskBlockEdit, TaskBlockTarget, TaskRootBlock } from '../markdown/TaskBlockEditor';
+import type {
+  DescriptionLinkTarget,
+  TaskBlockEdit,
+  TaskBlockTarget,
+  TaskRootBlock,
+} from '../markdown/TaskBlockEditor';
 import { type TaskBlockEditor } from '../markdown/TaskBlockEditor';
 import { type TaskLocator } from '../markdown/TaskLocator';
 import { type TaskMarkdownCodec } from '../markdown/TaskMarkdownCodec';
@@ -786,10 +790,10 @@ interface RejectedRollbackContext {
   readonly expectedRevision: string;
 }
 
+/** A comment link is numbered in its one line; the editor finds a description link. */
 type TextEditTarget =
-  | { readonly type: 'ready'; readonly relativeLine: number; readonly occurrence: number }
-  | { readonly type: 'conflict' }
-  | { readonly type: 'invalid' };
+  | { readonly type: 'comment'; readonly relativeLine: number; readonly occurrence: number }
+  | DescriptionLinkTarget;
 
 export class ObsidianTaskRepository implements TaskRepository {
   readonly supportsRevisionPreconditions = true as const;
@@ -2624,15 +2628,15 @@ export class ObsidianTaskRepository implements TaskRepository {
     input: LocatedEditInput,
     command: Extract<TaskEditCommand, { readonly type: 'edit-link' }>,
     current: TaskSnapshot,
-    target: Extract<TextEditTarget, { readonly type: 'ready' }>,
+    target: Extract<TextEditTarget, { readonly type: 'comment' | 'ready' }>,
   ): EditOutcome {
     const { content, block } = input;
     const source = content.split(/\r?\n/u)[block.line + target.relativeLine] ?? '';
-    const editResult = this.codec_abyssPrivate.editTextLink(
-      source,
-      target.occurrence,
-      command.replacement,
-    );
+    const editResult =
+      target.type === 'comment'
+        ? this.codec_abyssPrivate.editTextLink(source, target.occurrence, command.replacement)
+        : this.codec_abyssPrivate.editTextLinkAt(source, target, command.replacement);
+    if (editResult.type === 'conflict') return { result: conflict(current), content };
     if (editResult.type === 'invalid') return { result: editResult, content };
     if (editResult.type === 'unchanged') {
       return {
@@ -2677,30 +2681,15 @@ export class ObsidianTaskRepository implements TaskRepository {
       );
       return relativeLine === undefined
         ? { type: 'conflict' }
-        : { type: 'ready', relativeLine, occurrence: command.occurrence };
+        : { type: 'comment', relativeLine, occurrence: command.occurrence };
     }
     if (command.target.type !== 'description') return { type: 'invalid' };
-    return this.descriptionLinkTarget_abyssPrivate(input, command.occurrence, node, lines);
-  }
-
-  private descriptionLinkTarget_abyssPrivate(
-    input: LocatedEditInput,
-    initialOccurrence: number,
-    node: TaskSnapshot | SubtaskSnapshot,
-    lines: readonly string[],
-  ): Extract<TextEditTarget, { readonly type: 'ready' | 'invalid' }> {
-    let occurrence = initialOccurrence;
-    const candidates = this.editor_abyssPrivate.descriptionLines(
+    return this.editor_abyssPrivate.descriptionLink(
       input.content,
       input.block,
       blockTarget(node, input.block, input.relativeLine),
+      command.occurrence,
     );
-    for (const relativeLine of candidates) {
-      const count = parseLinks(lines[input.block.line + relativeLine] ?? '').length;
-      if (occurrence < count) return { type: 'ready', relativeLine, occurrence };
-      occurrence -= count;
-    }
-    return { type: 'invalid' };
   }
 
   private snapshotFor_abyssPrivate(

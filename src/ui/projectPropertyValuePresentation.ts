@@ -1,4 +1,4 @@
-import { exactLinkToken, type LinkToken } from '../markdown/links';
+import { exactLinkToken, linkLabel, type LinkToken } from '../markdown/links';
 
 export interface ProjectPropertyValuePresentation {
   readonly value: string;
@@ -9,7 +9,7 @@ export interface ProjectPropertyValuePresentation {
 
 export function projectPropertyValuePresentation(value: string): ProjectPropertyValuePresentation {
   const link = exactLinkToken(value);
-  return link === undefined ? { value, label: value } : { value, label: link.display, link };
+  return link === undefined ? { value, label: value } : { value, label: linkLabel(link), link };
 }
 
 export function projectPropertyValuePresentations(
