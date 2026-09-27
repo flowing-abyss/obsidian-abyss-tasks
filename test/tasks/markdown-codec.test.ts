@@ -1827,12 +1827,17 @@ describe('task line embeds and images', () => {
     ['an embed alias', '- [ ] ![[Note|alias #tag]]'],
     ['an embed alias in a table (P5)', String.raw`- [ ] ![[Note\|alias #tag]]`],
     ['an image destination in angle brackets (P7)', '- [ ] ![alt](<img #tag.png>)'],
-    ['an embed that starts with `[`', '- [ ] ![[[Note #tag]]'],
   ])('keeps a tag inside %s in the title', (_case, line) => {
     const model = modelOf(line);
 
     expect(model.tags).toEqual([]);
     expect(model.markdownTitle).toBe(line.slice('- [ ] '.length));
+  });
+
+  it('keeps the whole of an embed that starts with `[` in the title', () => {
+    // Master reads the same, as a wiki link after `!`, and SP1m reads an embed. The tag and link
+    // boundaries check that the line reads no tag.
+    expect(modelOf('- [ ] ![[[Note #tag]]').markdownTitle).toBe('![[[Note #tag]]');
   });
 
   // Probe 4: Obsidian reads these tags the same way.

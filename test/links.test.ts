@@ -307,9 +307,9 @@ const latexCommands = (count: number): string =>
 
 describe('parseLinks reads wiki links as Obsidian does', () => {
   // Obsidian 1.13.7 metadataCache readings from the SP1m probes (W: probe 1, V: probe 2, P3:
-  // probe 3). A wiki link runs to the first `]]` on its line and holds no `[[`. The display is the
-  // alias, or the target's basename when there is no alias. Each comment names the wrong reading
-  // the row catches.
+  // probe 3). A wiki link runs to the first `]]` after non-empty content and holds no `[[` or line
+  // break. The display is the alias, or the target's basename when there is no alias. Each comment
+  // names the wrong reading the row catches.
   it.each([
     // W1: today an escaped `|` does not split (target and display `a\|b`).
     [String.raw`[[a\|b]]`, [wikiToken(String.raw`[[a\|b]]`, 'a', 'b')]],
@@ -512,7 +512,9 @@ describe('parseLinks reads no link inside an embed or image', () => {
     ['![a]([[b]])', []],
     // P15: an embed holds no link; master reads `[a](b)` at 5.
     ['![[x [a](b) y]]', []],
-    // P16, P17: a link after an image, whose alt text can be empty.
+    // P16, P17: a link after an image, whose alt text can be empty. An image read as a link gives
+    // P16 an extra token for `![a](b)`, and a Markdown scope that stops before the last `)` makes
+    // both rows read no link.
     ['![a](b) [c](d)', [markdownToken('[c](d)', 'd', 'c', 8)]],
     ['![](a.png) [c](d)', [markdownToken('[c](d)', 'd', 'c', 11)]],
   ])('reads %j', (source, expected) => {
@@ -598,6 +600,7 @@ describe('parseLinks growth', () => {
     ['unclosed embeds', (count: number) => '![['.repeat(count)],
     ['unclosed wiki links on separate lines', (count: number) => '[[a]\n'.repeat(count)],
     ['escaped brackets in a wiki link', (count: number) => `[[${escapes(count, '[')}`],
+    // Guards against a future rescan from the opener at each `]`; today's pattern scans once.
     ['single closers in a wiki link', (count: number) => `[[${'a]'.repeat(count)}]`],
     // Probe 4 P15: every link inside an embed is found and then dropped.
     ['embeds that hold a link', (count: number) => '![[x [a](b) y]] '.repeat(count)],
