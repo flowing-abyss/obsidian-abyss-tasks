@@ -298,22 +298,26 @@ describe('link edit modal Save', () => {
   it('rebuilds the link with the trimmed display when the display changes', async () => {
     const onSave = vi.fn();
     const modal = await openModal(String.raw`[[Note\|Alias]]`, onSave);
+    const close = vi.spyOn(modal, 'close');
     const display = expectDefined(modal.contentEl.querySelectorAll('input')[1]);
 
     editSettingControl(display, ' Renamed ');
     save(modal);
 
     expect(onSave).toHaveBeenCalledExactlyOnceWith('[[Note|Renamed]]');
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it('rebuilds the link when the target changes', async () => {
     const onSave = vi.fn();
     const modal = await openModal('[a](b)', onSave);
+    const close = vi.spyOn(modal, 'close');
     const target = expectDefined(modal.contentEl.querySelectorAll('input')[0]);
 
     editSettingControl(target, 'c');
     save(modal);
 
     expect(onSave).toHaveBeenCalledExactlyOnceWith('[a](c)');
+    expect(close).toHaveBeenCalledOnce();
   });
 });
