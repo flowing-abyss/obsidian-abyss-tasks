@@ -1834,6 +1834,7 @@ describe('task line embeds and images', () => {
   it('keeps the whole embed in the title', () => {
     const parsed = parse('- [ ] Review ![[Note #tag]] #real');
 
+    // SP1n: the plain title keeps its legacy collapse patterns until title presentation changes it.
     expect(parsed.title).toBe('Review !🔗 Note #tag');
     expect(parsed.markdownTitle).toBe('Review ![[Note #tag]]');
     expect(parsed.tags).toEqual(['#real']);

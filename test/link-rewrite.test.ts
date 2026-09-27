@@ -272,7 +272,11 @@ describe('link edit modal Save', () => {
   }
 
   function save(modal: LinkEditModal): void {
-    expectDefined(modal.contentEl.querySelector('button')).click();
+    expectDefined(
+      Array.from(modal.contentEl.querySelectorAll<HTMLElement>('button')).find(
+        (button) => button.textContent === 'Save',
+      ),
+    ).click();
   }
 
   // Rebuilding these unchanged links would rewrite `[[Note\|Alias]]` as `[[Note|Alias]]`, `[[a|]]`
@@ -281,19 +285,22 @@ describe('link edit modal Save', () => {
     'writes nothing when nothing changed in %s',
     async (raw) => {
       const onSave = vi.fn();
+      const modal = await openModal(raw, onSave);
+      const close = vi.spyOn(modal, 'close');
 
-      save(await openModal(raw, onSave));
+      save(modal);
 
       expect(onSave).not.toHaveBeenCalled();
+      expect(close).toHaveBeenCalledOnce();
     },
   );
 
-  it('rebuilds the link when the display changes', async () => {
+  it('rebuilds the link with the trimmed display when the display changes', async () => {
     const onSave = vi.fn();
     const modal = await openModal(String.raw`[[Note\|Alias]]`, onSave);
     const display = expectDefined(modal.contentEl.querySelectorAll('input')[1]);
 
-    editSettingControl(display, 'Renamed');
+    editSettingControl(display, ' Renamed ');
     save(modal);
 
     expect(onSave).toHaveBeenCalledExactlyOnceWith('[[Note|Renamed]]');

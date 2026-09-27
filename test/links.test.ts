@@ -363,7 +363,7 @@ describe('parseLinks reads wiki links as Obsidian does', () => {
     // V13, V39: today the link starts at the last `[[` (`[[a]]`).
     ['[[[a]]', [wikiToken('[[[a]]', '[a', '[a')]],
     ['[[[[a]]]]', [wikiToken('[[[a]]', '[a', '[a', 1)]],
-    // V14: letting the content hold `[[` reads one link to `a]] [[b`.
+    // V14: a greedy scan that may hold `[[` reads one link to `a]] [[b`.
     ['[[a]] [[b]]', [wikiToken('[[a]]', 'a', 'a'), wikiToken('[[b]]', 'b', 'b', 6)]],
     // V15, V40: a greedy scan runs to the last `]]` (display `b]]c`, `b]] `).
     ['[[a|b]]c]]', [wikiToken('[[a|b]]', 'a', 'b')]],
@@ -409,7 +409,7 @@ describe('parseLinks reads wiki links as Obsidian does', () => {
     [String.raw`[[a\#h]]`, [wikiToken(String.raw`[[a\#h]]`, String.raw`a\#h`, String.raw`a\#h`)]],
     // V41: today the link runs over the line break.
     ['[[a\nb]]', []],
-    // P3: today a Markdown link `[( ]()` is read inside the wiki link.
+    // P3: the content holds single brackets; today no link is read.
     ['[[[( ]()]]', [wikiToken('[[[( ]()]]', '[( ]()', '[( ]()')]],
     // P3: the first `]]` closes; today the link runs to `[[\]]]`.
     [String.raw`[[\]]]`, [wikiToken(String.raw`[[\]]`, '', '')]],
@@ -466,7 +466,7 @@ describe('parseLinks reads Markdown links as Obsidian does', () => {
     [String.raw`\[x](a [y](b) c)`, [markdownToken('[y](b)', 'b', 'y', 7)]],
     // M6: today one link runs to the destination `y [z](w`.
     [String.raw`[x\](y [z](w)`, [markdownToken('[z](w)', 'w', 'z', 7)]],
-    // M7, P21: today and under part 1's option B, the `![` skip ignores the escaped `!`.
+    // M7, P21: today the `![` skip ignores the escaped `!`.
     [String.raw`\![a](b)`, [markdownToken('[a](b)', 'b', 'a', 2)]],
     // M9: today an escaped `)` closes the destination (target `u\\\`).
     [String.raw`[t](u\\\)`, []],

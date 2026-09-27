@@ -53,7 +53,7 @@ const FRAGMENTS = [
   '\r',
   '\n',
 ];
-// Part 1's escape-heavy fragments: backslash runs before every closer, escaped openers,
+// Escape-heavy fragments: backslash runs before every closer, escaped openers,
 // LaTeX-like commands, table pipes, and line terminators.
 const ESCAPE_FRAGMENTS = [
   '\\',
@@ -190,10 +190,14 @@ describe('link reading in both layers', () => {
   });
 
   it.each(TEXTS)('reads the same links on %s', (_set, texts) => {
-    expect(texts.find((text) => links(text) !== domainLinks(text))).toBeUndefined();
+    const found = texts.find((text) => links(text) !== domainLinks(text));
+
+    expect(found, JSON.stringify(found)).toBeUndefined();
   });
 
   it.each([...TEXTS, BACKTICK_RUNS])('finds the same inline code on %s', (_set, texts) => {
-    expect(texts.find((text) => code(text) !== domainCode(text))).toBeUndefined();
+    const found = texts.find((text) => code(text) !== domainCode(text));
+
+    expect(found, JSON.stringify(found)).toBeUndefined();
   });
 });
