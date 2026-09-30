@@ -197,6 +197,21 @@ describe('TaskRowSelection after renders and writes', () => {
     expect(snapshot(selection)).toEqual({ selected: ['b', 'd'], anchor: 'd', focus: 'd' });
   });
 
+  it('keeps a listed anchor and moves a hidden focus to the first kept key', () => {
+    const selection = new TaskRowSelection();
+    selection.collapseTo('d');
+    selection.extendTo('b', order);
+    const withoutB = orderOf('a', 'c', 'd', 'e');
+
+    selection.reconcile(withoutB);
+
+    expect(snapshot(selection, withoutB)).toEqual({
+      selected: ['c', 'd'],
+      anchor: 'd',
+      focus: 'c',
+    });
+  });
+
   it('clears an empty or unmatched anchor and focus when nothing listed stays', () => {
     const empty = new TaskRowSelection();
     empty.collapseTo('');

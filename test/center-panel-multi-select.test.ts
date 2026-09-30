@@ -754,12 +754,26 @@ describe('CenterPanel multi-selection', () => {
     click(expectDefined(cards(el)[0]), { ctrlKey: true });
     click(expectDefined(cards(el)[1]), { ctrlKey: true });
 
-    state.set('searchQuery', 'Task');
+    state.set('searchQuery', 'Task 1');
     state.set('mode', 'search');
-    expect(cards(el)).toHaveLength(3);
+    expect(cards(el)).toHaveLength(1);
     state.set('mode', 'tasks');
 
     expect(selectedLines(el)).toEqual(['0', '1']);
+  });
+
+  it('reads no rows after a filter empties the list', () => {
+    const { el, state } = makeCenter([t1, t2, t3]);
+    attach(el);
+    click(expectDefined(cards(el)[0]));
+
+    state.set('centerFilter', 'nothing matches');
+    expect(cards(el)).toHaveLength(0);
+    const event = key(el, 'ArrowDown');
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(state.get('taskStack')).toEqual([t1]);
+    el.remove();
   });
 
   it('leaves ArrowDown in Search to the page', () => {
