@@ -652,6 +652,7 @@ const GATE_OPTIONS: Readonly<Record<string, Readonly<Record<string, unknown>>>> 
     include: ['test/**/*.test.ts'],
     exclude: ['test/perf/**', 'test/store/**'],
     setupFiles: ['test/setup/obsidianMocks.ts', 'test/setup/isolatedFailures.ts'],
+    isolate: true,
     pool: 'forks',
     testTimeout: 10_000,
     hookTimeout: 10_000,
@@ -659,12 +660,21 @@ const GATE_OPTIONS: Readonly<Record<string, Readonly<Record<string, unknown>>>> 
   'vitest.store.config.ts': {
     include: ['test/store/**/*.test.ts'],
     setupFiles: ['obsidian-test-mocks/vitest-setup'],
+    isolate: true,
     pool: 'forks',
     testTimeout: 10_000,
     hookTimeout: 10_000,
   },
 };
-const PINNED_OPTIONS = ['include', 'exclude', 'setupFiles', 'pool', 'testTimeout', 'hookTimeout'];
+const PINNED_OPTIONS = [
+  'include',
+  'exclude',
+  'setupFiles',
+  'isolate',
+  'pool',
+  'testTimeout',
+  'hookTimeout',
+];
 /** Options a gate config leaves out; a tag definition can carry its own `timeout` and `retry`. */
 const UNSET_OPTIONS = ['retry', 'globals', 'projects', 'tags'];
 /** The flags with which a script could change a Vitest run's limits, pool, or isolation. */

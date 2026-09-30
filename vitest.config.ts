@@ -12,6 +12,8 @@ export default defineConfig({
     // A suite that needs no DOM and no Obsidian global helper declares the Node environment in
     // a `// @vitest-environment node` first line; test/setup/obsidianMocks.ts serves both.
     environment: 'jsdom',
+    // Written out, though it is the default, so that Vitest stops advising `isolate: false`.
+    isolate: true,
     // Light work runs on these limits and heavy work names its kind's limit from
     // test/support/timeouts.ts, all sized on this pool; test/test-timeouts.test.ts holds them.
     pool: 'forks',
