@@ -325,6 +325,23 @@ describe('dependency picker visible containment', () => {
     const removeWindow = vi.spyOn(win, 'removeEventListener');
     const addDocument = vi.spyOn(doc, 'addEventListener');
     const removeDocument = vi.spyOn(doc, 'removeEventListener');
+    const frames = new Map<number, FrameRequestCallback>();
+    let lastFrame = 0;
+    vi.spyOn(win, 'requestAnimationFrame').mockImplementation((callback) => {
+      lastFrame += 1;
+      frames.set(lastFrame, callback);
+      return lastFrame;
+    });
+    vi.spyOn(win, 'cancelAnimationFrame').mockImplementation((handle) => {
+      frames.delete(handle);
+    });
+    // The observer places the picker on the frame after its notification.
+    const resized = (observer: { resize: () => void }): void => {
+      observer.resize();
+      const due = [...frames.values()];
+      frames.clear();
+      for (const callback of due) callback(0);
+    };
     button(h.el, '.abyss-dep-badge-body').click();
     const picker = expectDefined(h.el.querySelector<HTMLElement>('.abyss-dep-search'));
     const first = expectDefined(observers[0]);
@@ -337,7 +354,7 @@ describe('dependency picker visible containment', () => {
     expect(picker.querySelectorAll('[role="option"]')).toHaveLength(0);
     expect(picker.querySelector<HTMLElement>('.abyss-dep-search-create')?.hidden).toBe(false);
     height = 200; // The DOM-only renderer does not measure the changed content.
-    first.resize();
+    resized(first);
     expect(picker.style.getPropertyValue('--abyss-pop-top')).toBe('196px');
     for (const [target, type] of [
       [h.el, 'scroll'],
@@ -352,7 +369,7 @@ describe('dependency picker visible containment', () => {
       expect(parseFloat(picker.style.getPropertyValue('--abyss-pop-top'))).toBe(anchorTop - 304);
     }
     blockRect.mockReturnValue(new DOMRect(100, 120, 400, 900));
-    first.resize();
+    resized(first);
     expect(picker.style.getPropertyValue('--abyss-pop-top')).toBe('116px');
     blockRect.mockReturnValue(new DOMRect(100, 100, 400, 900));
     search(h.el, 'Invalid 🆔 authored').dispatchEvent(
@@ -361,20 +378,28 @@ describe('dependency picker visible containment', () => {
     await flushMicrotasks(30);
     expect(picker.querySelector<HTMLElement>('.abyss-dep-search-error')?.hidden).toBe(false);
     height = 240;
-    first.resize();
+    resized(first);
     expect(picker.style.getPropertyValue('--abyss-pop-top')).toBe('96px');
     search(h.el, 'Draft');
     height = 200;
+    // Placing the picker again for a new selection cancels the frame its old owner asked for.
+    first.resize();
     h.state.updateInspectorSelection([h.node('Current').root]);
+    expect(frames.size).toBe(0);
     expect(h.el.querySelector('.abyss-dep-search')).toBe(picker);
     expect(picker.querySelector('input')?.value).toBe('Draft');
     expect(first.disconnect).toHaveBeenCalledTimes(1);
     expect(observers).toHaveLength(2);
+    // So does the panel's disposal, and no notification asks for a frame after it.
+    expectDefined(observers[1]).resize();
+    expect(frames.size).toBe(1);
     h.panel.destroy();
+    expect(frames.size).toBe(0);
     expect(observers[1]?.disconnect).toHaveBeenCalledTimes(1);
     const before = picker.style.cssText;
     height = 10;
     for (const observer of observers) observer.resize();
+    expect(frames.size).toBe(0);
     win.dispatchEvent(new Event('resize'));
     doc.dispatchEvent(new Event('scroll'));
     expect(picker.style.cssText).toBe(before);

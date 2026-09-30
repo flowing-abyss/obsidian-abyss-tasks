@@ -3452,10 +3452,20 @@ export class RightPanel {
     };
     listen('addEventListener');
     // A surface changes size once it is placed (the inspector's scrollbar goes, its content
-    // wraps), so every anchored surface is placed again when it or its surroundings resize.
+    // wraps), so every anchored surface is placed again when it or its surroundings resize. The
+    // observer places it on the next frame: a placement inside its callback resizes what it
+    // observes again, which the browser reports as a ResizeObserver loop.
+    let frame: number | undefined;
+    const schedule = (): void => {
+      if (disposed || frame !== undefined || ownerWindow === null) return;
+      frame = ownerWindow.requestAnimationFrame(() => {
+        frame = undefined;
+        position();
+      });
+    };
     const ResizeObserver = ownerWindow?.ResizeObserver;
     const observer =
-      typeof ResizeObserver === 'function' ? new ResizeObserver(position) : undefined;
+      typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : undefined;
     for (const element of new Set([
       popover,
       anchor,
@@ -3469,6 +3479,7 @@ export class RightPanel {
     const cleanup = (): void => {
       if (disposed) return;
       disposed = true;
+      if (frame !== undefined) ownerWindow?.cancelAnimationFrame(frame);
       observer?.disconnect();
       listen('removeEventListener');
       if (this.anchoredSurfaceCleanups_abyssPrivate.get(popover) === cleanup) {
