@@ -3,6 +3,7 @@ import stylelint from 'stylelint';
 import { describe, expect, it } from 'vitest';
 import { contracts } from '../tooling/css-contracts.mjs';
 import { analyzeCss, discoverRuntimeVariables } from '../tooling/css-policy.mjs';
+import { CHILD_PROCESS_TIMEOUT_MS } from './support/timeouts';
 
 const fixtureContracts = { ...contracts, exceptions: [], runtime: { produced: [], consumed: [] } };
 const analyze = (css: string) =>
@@ -299,7 +300,7 @@ describe('selected third-party correctness rules', () => {
 
 it(
   'CLI rejects a bad source and accepts a valid source with no output',
-  { timeout: 30_000 },
+  { timeout: CHILD_PROCESS_TIMEOUT_MS },
   async () => {
     if (!Platform.isDesktop) throw new Error('CSS CLI tests require desktop');
     const [{ spawnSync }, fs, os, path] = await Promise.all([

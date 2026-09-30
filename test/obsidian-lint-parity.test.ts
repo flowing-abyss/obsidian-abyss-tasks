@@ -3,10 +3,10 @@ import obsidianmd from 'eslint-plugin-obsidianmd';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { repositoryFiles, trackedFiles } from './support/repositoryFiles';
+import { CHILD_PROCESS_TIMEOUT_MS, LINTER_TIMEOUT_MS } from './support/timeouts';
 
 const ROOT = ts.sys.resolvePath(`${import.meta.dirname}/..`);
 const PROJECT_CONFIG = ts.sys.resolvePath(`${ROOT}/eslint.config.mts`);
-const ESLINT_COLD_START_TIMEOUT_MS = 30_000;
 const SOURCE_FILES = ts.sys.readDirectory(ts.sys.resolvePath(`${ROOT}/src`), ['.ts']);
 const CODE_EXTENSIONS = ['.ts', '.mts', '.cts', '.tsx', '.js', '.mjs', '.cjs', '.jsx'];
 const obsidianmdOnly = new ESLint({
@@ -185,7 +185,7 @@ describe('eslint-plugin-obsidianmd parity for plugin source', () => {
     async () => {
       expect(await parityProblems(projectLint, SOURCE_FILES)).toEqual([]);
     },
-    ESLINT_COLD_START_TIMEOUT_MS,
+    LINTER_TIMEOUT_MS,
   );
 
   it(
@@ -201,7 +201,7 @@ describe('eslint-plugin-obsidianmd parity for plugin source', () => {
         'no-self-compare is weaker than obsidianmd sets it in src/main.ts',
       ]);
     },
-    ESLINT_COLD_START_TIMEOUT_MS,
+    LINTER_TIMEOUT_MS,
   );
 
   it.each<[string, string, Linter.RulesRecord, string]>([
@@ -242,43 +242,51 @@ describe('eslint-plugin-obsidianmd parity for plugin source', () => {
         problem,
       ]);
     },
-    ESLINT_COLD_START_TIMEOUT_MS,
+    LINTER_TIMEOUT_MS,
   );
 
-  it('reports each reviewed difference that no source file uses', async () => {
-    expect(await parityProblems(projectLint, [])).toEqual([
-      '@typescript-eslint/no-floating-promises is a reviewed difference that no source file uses',
-      '@typescript-eslint/no-misused-promises is a reviewed difference that no source file uses',
-      '@typescript-eslint/no-unused-vars is a reviewed difference that no source file uses',
-      '@typescript-eslint/restrict-template-expressions is a reviewed difference that no source file uses',
-    ]);
-  });
+  it(
+    'reports each reviewed difference that no source file uses',
+    async () => {
+      expect(await parityProblems(projectLint, [])).toEqual([
+        '@typescript-eslint/no-floating-promises is a reviewed difference that no source file uses',
+        '@typescript-eslint/no-misused-promises is a reviewed difference that no source file uses',
+        '@typescript-eslint/no-unused-vars is a reviewed difference that no source file uses',
+        '@typescript-eslint/restrict-template-expressions is a reviewed difference that no source file uses',
+      ]);
+    },
+    LINTER_TIMEOUT_MS,
+  );
 });
 
 // eslint-plugin-obsidianmd's lookbehind rule misses negative lookbehind literals and every pattern
 // built from a template, so the first row holds the rule's intent for every code file, and the
 // second pins which lines the scan reports.
 describe('lookbehind-free code', () => {
-  it('keeps regular-expression lookbehinds out of every code file', () => {
-    // Named samples, two of them ignored by ESLint, prove that the scan listed and read files, and
-    // the `.cjs` and `.mts` ones keep those extensions in the scan.
-    const samples = [
-      'src/markdown/links.ts',
-      'test/obsidian-lint-parity.test.ts',
-      'release-check.mjs',
-      'esbuild.config.mjs',
-      '.ai/setup.mjs',
-      'dependency-cruiser.config.cjs',
-      'eslint.config.mts',
-    ];
-    const read = repositoryCodeFiles().flatMap((file) => {
-      const text = ts.sys.readFile(ts.sys.resolvePath(`${ROOT}/${file}`));
-      return text === undefined ? [] : [{ file, text }];
-    });
+  it(
+    'keeps regular-expression lookbehinds out of every code file',
+    () => {
+      // Named samples, two of them ignored by ESLint, prove that the scan listed and read files,
+      // and the `.cjs` and `.mts` ones keep those extensions in the scan.
+      const samples = [
+        'src/markdown/links.ts',
+        'test/obsidian-lint-parity.test.ts',
+        'release-check.mjs',
+        'esbuild.config.mjs',
+        '.ai/setup.mjs',
+        'dependency-cruiser.config.cjs',
+        'eslint.config.mts',
+      ];
+      const read = repositoryCodeFiles().flatMap((file) => {
+        const text = ts.sys.readFile(ts.sys.resolvePath(`${ROOT}/${file}`));
+        return text === undefined ? [] : [{ file, text }];
+      });
 
-    expect(read.map(({ file }) => file)).toEqual(expect.arrayContaining(samples));
-    expect(read.flatMap(({ file, text }) => lookbehindLines(file, text))).toEqual([]);
-  });
+      expect(read.map(({ file }) => file)).toEqual(expect.arrayContaining(samples));
+      expect(read.flatMap(({ file, text }) => lookbehindLines(file, text))).toEqual([]);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
   it('reports each line that holds lookbehind text and no other group', () => {
     const text = [
@@ -308,7 +316,7 @@ describe('directive comment ban', () => {
       expect(LINTED_FILES.length).toBeGreaterThan(SOURCE_FILES.length);
       expect(await directiveBanProblems(projectLint, LINTED_FILES)).toEqual([]);
     },
-    ESLINT_COLD_START_TIMEOUT_MS,
+    LINTER_TIMEOUT_MS,
   );
 
   it.each<[string, Linter.RulesRecord, string]>([
@@ -341,7 +349,7 @@ describe('directive comment ban', () => {
 
       expect(await directiveBanProblems(weakened, files)).toEqual([problem]);
     },
-    ESLINT_COLD_START_TIMEOUT_MS,
+    LINTER_TIMEOUT_MS,
   );
 
   it(
@@ -367,6 +375,6 @@ describe('directive comment ban', () => {
         ['@typescript-eslint/ban-ts-comment', 3],
       ]);
     },
-    ESLINT_COLD_START_TIMEOUT_MS,
+    LINTER_TIMEOUT_MS,
   );
 });

@@ -7,6 +7,7 @@ import {
 } from '../../src/tasks/domain/recurrence';
 import type { LocalDate, TaskPlanning } from '../../src/tasks/domain/types';
 import { localDate } from '../../src/tasks/domain/validation';
+import { CHILD_PROCESS_TIMEOUT_MS } from '../support/timeouts';
 
 const keepScheduled = { removeScheduledDate: false } as const;
 
@@ -512,10 +513,12 @@ describe('expandRecurrenceReferences', () => {
     });
   });
 
-  it('is timezone independent in isolated Node processes', async () => {
-    if (!Platform.isDesktop) throw new Error('Timezone process test requires desktop APIs');
-    const { execFileSync } = await import('node:child_process');
-    const probeSource = `
+  it(
+    'is timezone independent in isolated Node processes',
+    async () => {
+      if (!Platform.isDesktop) throw new Error('Timezone process test requires desktop APIs');
+      const { execFileSync } = await import('node:child_process');
+      const probeSource = `
       import { expandRecurrenceReferences, nextOccurrencePlanning } from './src/tasks/domain/recurrence';
       import { localDate } from './src/tasks/domain/validation';
 
@@ -536,7 +539,7 @@ describe('expandRecurrenceReferences', () => {
       });
       process.stdout.write(JSON.stringify({ next, expanded }));
     `;
-    const bundler = `
+      const bundler = `
       import { build } from 'esbuild';
       const result = await build({
         stdin: {
@@ -555,32 +558,34 @@ describe('expandRecurrenceReferences', () => {
       if (output === undefined) throw new Error('Timezone probe bundle was not produced');
       process.stdout.write(output);
     `;
-    const probe = execFileSync(process.execPath, ['--input-type=module'], {
-      cwd: process.cwd(),
-      input: bundler,
-      encoding: 'utf8',
-    });
-
-    const outputs = ['UTC', 'America/Los_Angeles'].map((timezone) =>
-      execFileSync(process.execPath, [], {
+      const probe = execFileSync(process.execPath, ['--input-type=module'], {
         cwd: process.cwd(),
-        env: { ...process.env, TZ: timezone },
-        input: probe,
+        input: bundler,
         encoding: 'utf8',
-      }),
-    );
-    const expected = JSON.stringify({
-      next: {
-        type: 'next',
-        planning: { due: '2026-08-10' },
-        dayDelta: 3,
-      },
-      expanded: {
-        type: 'expanded',
-        dates: ['2022-02-28', '2022-03-28', '2022-04-28'],
-      },
-    });
+      });
 
-    expect(outputs).toEqual([expected, expected]);
-  });
+      const outputs = ['UTC', 'America/Los_Angeles'].map((timezone) =>
+        execFileSync(process.execPath, [], {
+          cwd: process.cwd(),
+          env: { ...process.env, TZ: timezone },
+          input: probe,
+          encoding: 'utf8',
+        }),
+      );
+      const expected = JSON.stringify({
+        next: {
+          type: 'next',
+          planning: { due: '2026-08-10' },
+          dayDelta: 3,
+        },
+        expanded: {
+          type: 'expanded',
+          dates: ['2022-02-28', '2022-03-28', '2022-04-28'],
+        },
+      });
+
+      expect(outputs).toEqual([expected, expected]);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 });

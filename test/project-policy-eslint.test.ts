@@ -1,6 +1,7 @@
 import { ESLint } from 'eslint';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { LINTER_TIMEOUT_MS } from './support/timeouts';
 
 const root = ts.sys.resolvePath(`${import.meta.dirname}/..`);
 const eslint = new ESLint({ cwd: root, overrideConfigFile: `${root}/eslint.config.mts` });
@@ -70,7 +71,7 @@ describe('project lexical policy', () => {
         },
       ]);
     },
-    30_000,
+    LINTER_TIMEOUT_MS,
   );
 
   it.each([
@@ -84,55 +85,68 @@ describe('project lexical policy', () => {
     'cancelAnimationFrame',
     'ResizeObserver',
     'queueMicrotask',
-  ])('rejects UI global value %s', async (name) => {
-    expect(await check('src/panels/projects/ProjectCellEditor.ts', `void ${name};`)).toEqual([
-      {
-        ruleId: 'project-policy/ambient',
-        messageId: 'owner',
-        line: 1,
-        column: 6,
-        endLine: 1,
-        endColumn: 6 + name.length,
-      },
-    ]);
-  });
+  ])(
+    'rejects UI global value %s',
+    async (name) => {
+      expect(await check('src/panels/projects/ProjectCellEditor.ts', `void ${name};`)).toEqual([
+        {
+          ruleId: 'project-policy/ambient',
+          messageId: 'owner',
+          line: 1,
+          column: 6,
+          endLine: 1,
+          endColumn: 6 + name.length,
+        },
+      ]);
+    },
+    LINTER_TIMEOUT_MS,
+  );
 
-  it('rejects a bare window in the shared project actions', async () => {
-    expect(await check('src/ui/projectActions.ts', 'void window;')).toEqual([
-      {
-        ruleId: 'project-policy/ambient',
-        messageId: 'owner',
-        line: 1,
-        column: 6,
-        endLine: 1,
-        endColumn: 12,
-      },
-    ]);
-  });
+  it(
+    'rejects a bare window in the shared project actions',
+    async () => {
+      expect(await check('src/ui/projectActions.ts', 'void window;')).toEqual([
+        {
+          ruleId: 'project-policy/ambient',
+          messageId: 'owner',
+          line: 1,
+          column: 6,
+          endLine: 1,
+          endColumn: 12,
+        },
+      ]);
+    },
+    LINTER_TIMEOUT_MS,
+  );
 
-  it('rejects a bare matchMedia call in a project surface', async () => {
-    expect(
-      await check(
-        'src/panels/projects/ProjectCellEditor.ts',
-        "matchMedia('(prefers-reduced-motion: reduce)').matches;",
-      ),
-    ).toEqual([
-      {
-        ruleId: 'project-policy/ambient',
-        messageId: 'owner',
-        line: 1,
-        column: 1,
-        endLine: 1,
-        endColumn: 11,
-      },
-    ]);
-  });
+  it(
+    'rejects a bare matchMedia call in a project surface',
+    async () => {
+      expect(
+        await check(
+          'src/panels/projects/ProjectCellEditor.ts',
+          "matchMedia('(prefers-reduced-motion: reduce)').matches;",
+        ),
+      ).toEqual([
+        {
+          ruleId: 'project-policy/ambient',
+          messageId: 'owner',
+          line: 1,
+          column: 1,
+          endLine: 1,
+          endColumn: 11,
+        },
+      ]);
+    },
+    LINTER_TIMEOUT_MS,
+  );
 
   it.each(['fetch', 'XMLHttpRequest', 'WebSocket', 'performance', 'globalThis', 'self', 'Date'])(
     'rejects pure capability escapes %s',
     async (name) => {
       expect(await check(pureFiles[0] ?? '', `void ${name};`)).toHaveLength(1);
     },
+    LINTER_TIMEOUT_MS,
   );
 
   it.each(pureFiles)(
@@ -154,6 +168,7 @@ describe('project lexical policy', () => {
         ),
       ).toEqual([]);
     },
+    LINTER_TIMEOUT_MS,
   );
 
   it.each([
@@ -163,43 +178,55 @@ describe('project lexical policy', () => {
     ['Date();', 1, 5],
     ['Date[UTC]();', 1, 5],
     ['const { now } = Date;', 17, 21],
-  ])('rejects ambient aliases and nested clock access: %s', async (source, column, endColumn) => {
-    expect(await check('src/projects/projectTableModel.ts', source)).toEqual([
-      {
-        ruleId: 'project-policy/ambient',
-        messageId: 'pure',
-        line: 1,
-        column,
-        endLine: 1,
-        endColumn,
-      },
-    ]);
-  });
+  ])(
+    'rejects ambient aliases and nested clock access: %s',
+    async (source, column, endColumn) => {
+      expect(await check('src/projects/projectTableModel.ts', source)).toEqual([
+        {
+          ruleId: 'project-policy/ambient',
+          messageId: 'pure',
+          line: 1,
+          column,
+          endLine: 1,
+          endColumn,
+        },
+      ]);
+    },
+    LINTER_TIMEOUT_MS,
+  );
 
-  it('accepts imported value bindings that share ambient names', async () => {
-    expect(
-      await check(
-        'src/projects/projectTableModel.ts',
-        `
+  it(
+    'accepts imported value bindings that share ambient names',
+    async () => {
+      expect(
+        await check(
+          'src/projects/projectTableModel.ts',
+          `
       import { window, document, Date, setTimeout } from 'local-capabilities';
       window.dayCount; document.title; Date.now(); setTimeout();
     `,
-      ),
-    ).toEqual([]);
-  });
+        ),
+      ).toEqual([]);
+    },
+    LINTER_TIMEOUT_MS,
+  );
 
-  it('accepts owner capabilities and local shadowing in UI', async () => {
-    expect(
-      await check(
-        'src/panels/projects/ProjectCellEditor.ts',
-        `
+  it(
+    'accepts owner capabilities and local shadowing in UI',
+    async () => {
+      expect(
+        await check(
+          'src/panels/projects/ProjectCellEditor.ts',
+          `
       function schedule(ownerWindow: Window, window: Window) {
         ownerWindow.setTimeout(() => {}, 0); window.requestAnimationFrame(() => {});
         ownerWindow.matchMedia('(prefers-reduced-motion: reduce)');
       }
       type Types = [Window, Document, ResizeObserver];
     `,
-      ),
-    ).toEqual([]);
-  });
+        ),
+      ).toEqual([]);
+    },
+    LINTER_TIMEOUT_MS,
+  );
 });

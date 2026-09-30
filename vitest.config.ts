@@ -10,7 +10,10 @@ export default defineConfig({
     setupFiles: ['obsidian-test-mocks/vitest-setup', 'test/setup/isolatedFailures.ts'],
     passWithNoTests: false,
     environment: 'jsdom',
-    testTimeout: 5_000,
+    // Light work runs on these limits and heavy work names its kind's limit from
+    // test/support/timeouts.ts, all sized on this pool; test/test-timeouts.test.ts holds them.
+    pool: 'forks',
+    testTimeout: 10_000,
     hookTimeout: 10_000,
     unstubEnvs: true,
     unstubGlobals: true,

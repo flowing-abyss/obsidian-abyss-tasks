@@ -629,6 +629,13 @@ Authored CSS also meets the review's CSS rules: no `:has()`, no `!important`, an
 the manifest's baseline supports only in part. Where a selector would read state from the DOM, the
 TypeScript that owns the state sets a state class.
 
+Rows and hooks whose work reaches a linter, a TypeScript program, a source walk, or a child process
+name that kind's limit from [`test/support/timeouts.ts`](test/support/timeouts.ts), light work runs
+on the configs' `testTimeout` and `hookTimeout`, one rule sizes both, and the
+[time limit check](test/test-timeouts.test.ts) holds every row and hook of both gates to it,
+following names through the helpers and modules outside `src/` that test files load, but not
+dynamic property calls, functions passed in from modules it does not read, or plugin code.
+
 Update this document in the implementing commit when ownership, a public boundary, dependency
 direction, a critical data flow, persisted authority/migration, or a compatibility seam changes.
 Private renames, local helpers, and styling do not require architecture prose. Record any necessary

@@ -1,6 +1,7 @@
 import { ESLint } from 'eslint';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { LINTER_TIMEOUT_MS } from './support/timeouts';
 
 const ROOT = ts.sys.resolvePath(`${import.meta.dirname}/..`);
 const eslint = new ESLint({
@@ -12,7 +13,6 @@ const ARCHITECTURE_RULES = new Set([
   'no-restricted-syntax',
   'no-restricted-globals',
 ]);
-const ESLINT_COLD_START_TIMEOUT_MS = 30_000;
 
 interface Diagnostic {
   readonly ruleId: string | null;
@@ -54,7 +54,7 @@ describe('task architecture ESLint boundaries', () => {
       expectParseSafe(items);
       expect(architectureDiagnostics(items)).toEqual([]);
     },
-    ESLINT_COLD_START_TIMEOUT_MS,
+    LINTER_TIMEOUT_MS,
   );
 
   it.each([
@@ -94,11 +94,15 @@ describe('task architecture ESLint boundaries', () => {
           "'obsidian' import is restricted from being used by a pattern. Task application may depend only on domain contracts and application ports.",
       },
     ],
-  ])('rejects a forbidden import at the %s boundary', async (path, source, expected) => {
-    const items = await diagnostics(path, source);
-    expectParseSafe(items);
-    expect(architectureDiagnostics(items)).toEqual([expected]);
-  });
+  ])(
+    'rejects a forbidden import at the %s boundary',
+    async (path, source, expected) => {
+      const items = await diagnostics(path, source);
+      expectParseSafe(items);
+      expect(architectureDiagnostics(items)).toEqual([expected]);
+    },
+    LINTER_TIMEOUT_MS,
+  );
 
   it.each([
     [
@@ -111,26 +115,30 @@ describe('task architecture ESLint boundaries', () => {
       'Task application receives time through its Clock port.',
       'Task application cannot depend on browser ambient state.',
     ],
-  ])('rejects ambient time and DOM access in %s', async (path, timeMessage, domMessage) => {
-    const items = await diagnostics(
-      path,
-      'new Date(); Date(); Date.now(); window.location; document.title;',
-    );
-    expectParseSafe(items);
-    expect(architectureDiagnostics(items)).toEqual([
-      { ruleId: 'no-restricted-syntax', message: timeMessage },
-      { ruleId: 'no-restricted-syntax', message: timeMessage },
-      { ruleId: 'no-restricted-syntax', message: timeMessage },
-      {
-        ruleId: 'no-restricted-globals',
-        message: `Unexpected use of 'window'. ${domMessage}`,
-      },
-      {
-        ruleId: 'no-restricted-globals',
-        message: `Unexpected use of 'document'. ${domMessage}`,
-      },
-    ]);
-  });
+  ])(
+    'rejects ambient time and DOM access in %s',
+    async (path, timeMessage, domMessage) => {
+      const items = await diagnostics(
+        path,
+        'new Date(); Date(); Date.now(); window.location; document.title;',
+      );
+      expectParseSafe(items);
+      expect(architectureDiagnostics(items)).toEqual([
+        { ruleId: 'no-restricted-syntax', message: timeMessage },
+        { ruleId: 'no-restricted-syntax', message: timeMessage },
+        { ruleId: 'no-restricted-syntax', message: timeMessage },
+        {
+          ruleId: 'no-restricted-globals',
+          message: `Unexpected use of 'window'. ${domMessage}`,
+        },
+        {
+          ruleId: 'no-restricted-globals',
+          message: `Unexpected use of 'document'. ${domMessage}`,
+        },
+      ]);
+    },
+    LINTER_TIMEOUT_MS,
+  );
 
   it.each([
     'adapter.process(value);',
@@ -142,14 +150,19 @@ describe('task architecture ESLint boundaries', () => {
     "adapter['process']!(value);",
     "(adapter['process'] as (value: unknown) => void)(value);",
     'adapter?.process?.(value);',
-  ])('rejects a presentation-side process reference: %s', async (source) => {
-    const items = await diagnostics('src/ui/StatusMarker.ts', source);
-    expectParseSafe(items);
-    expect(architectureDiagnostics(items)).toEqual([
-      {
-        ruleId: 'no-restricted-syntax',
-        message: 'Presentation sends task commands through TaskApplicationApi; it does not write.',
-      },
-    ]);
-  });
+  ])(
+    'rejects a presentation-side process reference: %s',
+    async (source) => {
+      const items = await diagnostics('src/ui/StatusMarker.ts', source);
+      expectParseSafe(items);
+      expect(architectureDiagnostics(items)).toEqual([
+        {
+          ruleId: 'no-restricted-syntax',
+          message:
+            'Presentation sends task commands through TaskApplicationApi; it does not write.',
+        },
+      ]);
+    },
+    LINTER_TIMEOUT_MS,
+  );
 });

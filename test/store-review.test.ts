@@ -11,11 +11,9 @@ import {
   reviewFindings,
   scannerLintConfig,
 } from './support/storeReview';
+import { LINTER_TIMEOUT_MS } from './support/timeouts';
 
 const ROOT = ts.sys.resolvePath(`${import.meta.dirname}/..`);
-// The rows that run ESLint or stylelint load the linters' plugins on first use, and CI runs them
-// under coverage on slower machines.
-const LINTER_TIMEOUT_MS = 30_000;
 
 function readRepositoryFile(path: string): string {
   const text = ts.sys.readFile(ts.sys.resolvePath(`${ROOT}/${path}`));
@@ -161,19 +159,12 @@ describe('Store review configuration', () => {
     LINTER_TIMEOUT_MS,
   );
 
-  it(
-    'finds nothing in styles.css at the manifest baseline',
-    async () => {
-      const results = await reviewCss(
-        { files: [`${ROOT}/styles.css`] },
-        manifestMinAppVersion(ROOT),
-      );
+  it('finds nothing in styles.css at the manifest baseline', async () => {
+    const results = await reviewCss({ files: [`${ROOT}/styles.css`] }, manifestMinAppVersion(ROOT));
 
-      expect(results.map(({ source }) => source)).toEqual([`${ROOT}/styles.css`]);
-      expect(reviewFindings([], results, ROOT)).toEqual([]);
-    },
-    LINTER_TIMEOUT_MS,
-  );
+    expect(results.map(({ source }) => source)).toEqual([`${ROOT}/styles.css`]);
+    expect(reviewFindings([], results, ROOT)).toEqual([]);
+  });
 
   it.each([
     [
@@ -191,17 +182,13 @@ describe('Store review configuration', () => {
       '.abyss-a {\n  clip-path: inset(50%);\n}\n',
       'plugin/no-unsupported-browser-features',
     ],
-  ])(
-    'reports %s',
-    async (_kind, code, rule) => {
-      const results = await reviewCss({ code }, '1.7.2');
+  ])('reports %s', async (_kind, code, rule) => {
+    const results = await reviewCss({ code }, '1.7.2');
 
-      expect(results.flatMap(({ warnings }) => warnings.map((warning) => warning.rule))).toEqual([
-        rule,
-      ]);
-    },
-    LINTER_TIMEOUT_MS,
-  );
+    expect(results.flatMap(({ warnings }) => warnings.map((warning) => warning.rule))).toEqual([
+      rule,
+    ]);
+  });
 
   it(
     'writes one line for each finding, parse errors and invalid options included',

@@ -7,7 +7,11 @@ export default defineConfig({
     include: ['test/store/**/*.test.ts'],
     setupFiles: ['obsidian-test-mocks/vitest-setup'],
     environment: 'jsdom',
-    testTimeout: 120_000,
+    // Light work runs on these limits and heavy work names its kind's limit from
+    // test/support/timeouts.ts, all sized on this pool; test/test-timeouts.test.ts holds them.
+    pool: 'forks',
+    testTimeout: 10_000,
+    hookTimeout: 10_000,
     alias: {
       obsidian: 'obsidian-test-mocks/obsidian',
     },

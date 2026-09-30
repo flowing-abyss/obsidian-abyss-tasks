@@ -1,5 +1,6 @@
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { SOURCE_WALK_TIMEOUT_MS } from './support/timeouts';
 
 const ROOT = ts.sys.resolvePath(`${import.meta.dirname}/..`);
 const SRC_ROOT = ts.sys.resolvePath(`${ROOT}/src`);
@@ -719,54 +720,72 @@ function propertyAccesses(path: string): ReadonlySet<string> {
 }
 
 describe('task architecture boundaries', () => {
-  it('keeps task domain and application free of ambient time and DOM access', () => {
-    expect(ambientBoundarySites()).toEqual([]);
-  });
+  it(
+    'keeps task domain and application free of ambient time and DOM access',
+    () => {
+      expect(ambientBoundarySites()).toEqual([]);
+    },
+    SOURCE_WALK_TIMEOUT_MS,
+  );
 
-  it('allows only the recurrence engine to import the deterministic rrule boundary', () => {
-    expect(rruleImportViolations()).toEqual([]);
-    const rruleImport = importsFromSyntax(
-      syntaxFromText('src/tasks/domain/recurrence.ts', "import { RRule } from 'rrule';"),
-    );
-    expect(rruleImportViolationsFor('src/tasks/domain/recurrence.ts', rruleImport)).toEqual([]);
-    expect(rruleImportViolationsFor('src/tasks/domain/validation.ts', rruleImport)).toEqual([
-      'src/tasks/domain/validation.ts -> rrule',
-    ]);
+  it(
+    'allows only the recurrence engine to import the deterministic rrule boundary',
+    () => {
+      expect(rruleImportViolations()).toEqual([]);
+      const rruleImport = importsFromSyntax(
+        syntaxFromText('src/tasks/domain/recurrence.ts', "import { RRule } from 'rrule';"),
+      );
+      expect(rruleImportViolationsFor('src/tasks/domain/recurrence.ts', rruleImport)).toEqual([]);
+      expect(rruleImportViolationsFor('src/tasks/domain/validation.ts', rruleImport)).toEqual([
+        'src/tasks/domain/validation.ts -> rrule',
+      ]);
 
-    const deepRruleImport = importsFromSyntax(
-      syntaxFromText(
-        'src/tasks/domain/recurrence.ts',
-        "import { RRule } from 'rrule/dist/es5/rrule';",
-      ),
-    );
-    expect(rruleImportViolationsFor('src/tasks/domain/recurrence.ts', deepRruleImport)).toEqual([
-      'src/tasks/domain/recurrence.ts -> rrule/dist/es5/rrule',
-    ]);
-  });
+      const deepRruleImport = importsFromSyntax(
+        syntaxFromText(
+          'src/tasks/domain/recurrence.ts',
+          "import { RRule } from 'rrule/dist/es5/rrule';",
+        ),
+      );
+      expect(rruleImportViolationsFor('src/tasks/domain/recurrence.ts', deepRruleImport)).toEqual([
+        'src/tasks/domain/recurrence.ts -> rrule/dist/es5/rrule',
+      ]);
+    },
+    SOURCE_WALK_TIMEOUT_MS,
+  );
 
-  it('keeps Obsidian Notice in presentation while allowing infrastructure types', () => {
-    expect(infrastructureNoticeImportViolations()).toEqual([]);
-    const namedNotice = importsFromSyntax(
-      syntaxFromText('src/tasks/infrastructure/probe.ts', "import { Notice } from 'obsidian';"),
-    );
-    expect(
-      infrastructureNoticeImportViolationsFor('src/tasks/infrastructure/probe.ts', namedNotice),
-    ).toEqual(['src/tasks/infrastructure/probe.ts -> obsidian:Notice']);
+  it(
+    'keeps Obsidian Notice in presentation while allowing infrastructure types',
+    () => {
+      expect(infrastructureNoticeImportViolations()).toEqual([]);
+      const namedNotice = importsFromSyntax(
+        syntaxFromText('src/tasks/infrastructure/probe.ts', "import { Notice } from 'obsidian';"),
+      );
+      expect(
+        infrastructureNoticeImportViolationsFor('src/tasks/infrastructure/probe.ts', namedNotice),
+      ).toEqual(['src/tasks/infrastructure/probe.ts -> obsidian:Notice']);
 
-    const namespace = importsFromSyntax(
-      syntaxFromText('src/tasks/infrastructure/probe.ts', "import * as Obsidian from 'obsidian';"),
-    );
-    expect(
-      infrastructureNoticeImportViolationsFor('src/tasks/infrastructure/probe.ts', namespace),
-    ).toEqual(['src/tasks/infrastructure/probe.ts -> obsidian:*']);
+      const namespace = importsFromSyntax(
+        syntaxFromText(
+          'src/tasks/infrastructure/probe.ts',
+          "import * as Obsidian from 'obsidian';",
+        ),
+      );
+      expect(
+        infrastructureNoticeImportViolationsFor('src/tasks/infrastructure/probe.ts', namespace),
+      ).toEqual(['src/tasks/infrastructure/probe.ts -> obsidian:*']);
 
-    const namedType = importsFromSyntax(
-      syntaxFromText('src/tasks/infrastructure/probe.ts', "import type { TFile } from 'obsidian';"),
-    );
-    expect(
-      infrastructureNoticeImportViolationsFor('src/tasks/infrastructure/probe.ts', namedType),
-    ).toEqual([]);
-  });
+      const namedType = importsFromSyntax(
+        syntaxFromText(
+          'src/tasks/infrastructure/probe.ts',
+          "import type { TFile } from 'obsidian';",
+        ),
+      );
+      expect(
+        infrastructureNoticeImportViolationsFor('src/tasks/infrastructure/probe.ts', namedType),
+      ).toEqual([]);
+    },
+    SOURCE_WALK_TIMEOUT_MS,
+  );
 
   it('allows only explicit Date construction in the recurrence engine', () => {
     const safe = syntaxFromText(
@@ -856,16 +875,20 @@ describe('task architecture boundaries', () => {
     expect({ existing, markers }).toEqual({ existing: [], markers: [] });
   });
 
-  it('keeps every process or vault-create call on one exact, reasoned allowlist', () => {
-    expect(writerSites()).toEqual(
-      Object.keys(ALLOWED_WRITER_CALLS).sort((left, right) => left.localeCompare(right)),
-    );
-    expect(
-      Object.values(ALLOWED_WRITER_CALLS).every(
-        (entry) => entry.mutation.length > 0 && entry.reason.trim().length > 0,
-      ),
-    ).toBe(true);
-  });
+  it(
+    'keeps every process or vault-create call on one exact, reasoned allowlist',
+    () => {
+      expect(writerSites()).toEqual(
+        Object.keys(ALLOWED_WRITER_CALLS).sort((left, right) => left.localeCompare(right)),
+      );
+      expect(
+        Object.values(ALLOWED_WRITER_CALLS).every(
+          (entry) => entry.mutation.length > 0 && entry.reason.trim().length > 0,
+        ),
+      ).toBe(true);
+    },
+    SOURCE_WALK_TIMEOUT_MS,
+  );
 
   it('keeps exactly one single-task transaction boundary', () => {
     expect(
@@ -877,45 +900,53 @@ describe('task architecture boundaries', () => {
     ]);
   });
 
-  it('keeps calendar modules free of repository and Vault writes', () => {
-    const safe = syntaxFromText(
-      'src/views/probe.ts',
-      'tasks.execute(command); app.vault.cachedRead(file); taskSnapshotForCalendarOccurrence(occurrence);',
-    );
-    const unsafe = syntaxFromText(
-      'src/views/probe.ts',
-      'app.vault.process(file, update); app.vault.modify(file, text); repository.completeRecurrence(request);',
-    );
-    expect(calendarWriteSitesFor('src/views/probe.ts', safe)).toEqual([]);
-    expect(calendarWriteSitesFor('src/views/probe.ts', unsafe)).toEqual([
-      'src/views/probe.ts:app.vault.process',
-      'src/views/probe.ts:app.vault.modify',
-      'src/views/probe.ts:repository.completeRecurrence',
-    ]);
-    expect(calendarModules().flatMap((path) => calendarWriteSitesFor(path, syntax(path)))).toEqual(
-      [],
-    );
-  });
+  it(
+    'keeps calendar modules free of repository and Vault writes',
+    () => {
+      const safe = syntaxFromText(
+        'src/views/probe.ts',
+        'tasks.execute(command); app.vault.cachedRead(file); taskSnapshotForCalendarOccurrence(occurrence);',
+      );
+      const unsafe = syntaxFromText(
+        'src/views/probe.ts',
+        'app.vault.process(file, update); app.vault.modify(file, text); repository.completeRecurrence(request);',
+      );
+      expect(calendarWriteSitesFor('src/views/probe.ts', safe)).toEqual([]);
+      expect(calendarWriteSitesFor('src/views/probe.ts', unsafe)).toEqual([
+        'src/views/probe.ts:app.vault.process',
+        'src/views/probe.ts:app.vault.modify',
+        'src/views/probe.ts:repository.completeRecurrence',
+      ]);
+      expect(
+        calendarModules().flatMap((path) => calendarWriteSitesFor(path, syntax(path))),
+      ).toEqual([]);
+    },
+    SOURCE_WALK_TIMEOUT_MS,
+  );
 
-  it('forbids forecast-to-snapshot casts while allowing the calendar occurrence adapter', () => {
-    const probe = syntaxFromText(
-      'src/views/probe.ts',
-      [
-        'const safe: TaskSnapshot = taskSnapshotForCalendarOccurrence(occurrence);',
-        'const first = forecast as TaskSnapshot;',
-        'const second = projectedOccurrence as unknown as TaskSnapshot;',
-        'const third = <TaskSnapshot[]>forecastProjection;',
-      ].join('\n'),
-    );
-    expect(unsafeForecastSnapshotCastsFor('src/views/probe.ts', probe)).toEqual([
-      'src/views/probe.ts:forecast as TaskSnapshot',
-      'src/views/probe.ts:projectedOccurrence as unknown as TaskSnapshot',
-      'src/views/probe.ts:forecastProjection as TaskSnapshot[]',
-    ]);
-    expect(
-      calendarModules().flatMap((path) => unsafeForecastSnapshotCastsFor(path, syntax(path))),
-    ).toEqual([]);
-  });
+  it(
+    'forbids forecast-to-snapshot casts while allowing the calendar occurrence adapter',
+    () => {
+      const probe = syntaxFromText(
+        'src/views/probe.ts',
+        [
+          'const safe: TaskSnapshot = taskSnapshotForCalendarOccurrence(occurrence);',
+          'const first = forecast as TaskSnapshot;',
+          'const second = projectedOccurrence as unknown as TaskSnapshot;',
+          'const third = <TaskSnapshot[]>forecastProjection;',
+        ].join('\n'),
+      );
+      expect(unsafeForecastSnapshotCastsFor('src/views/probe.ts', probe)).toEqual([
+        'src/views/probe.ts:forecast as TaskSnapshot',
+        'src/views/probe.ts:projectedOccurrence as unknown as TaskSnapshot',
+        'src/views/probe.ts:forecastProjection as TaskSnapshot[]',
+      ]);
+      expect(
+        calendarModules().flatMap((path) => unsafeForecastSnapshotCastsFor(path, syntax(path))),
+      ).toEqual([]);
+    },
+    SOURCE_WALK_TIMEOUT_MS,
+  );
 
   it('routes every mounted recurrence editor write through TaskApplicationApi', () => {
     expect(

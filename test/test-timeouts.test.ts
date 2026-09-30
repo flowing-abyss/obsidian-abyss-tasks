@@ -1,14 +1,84 @@
 import { Platform } from 'obsidian';
 import type ts from 'typescript';
 import { afterEach, describe, expect, it } from 'vitest';
-import { suiteTimeoutFindings, timeoutFindings } from './architecture/testTimeouts';
+import {
+  configValue,
+  suiteTimeoutFindings,
+  timeoutFindings,
+  vitestTestOptions,
+} from './architecture/testTimeouts';
+import * as limits from './support/timeouts';
 import { TYPESCRIPT_PROGRAM_TIMEOUT_MS } from './support/timeouts';
 
 const loadNodeTools = async () => {
   if (!Platform.isDesktop) throw new Error('Test time limit rows require a desktop runtime');
   return Promise.all([import('node:fs'), import('node:os'), import('node:path')]);
 };
-const [{ mkdirSync, mkdtempSync, rmSync, writeFileSync }, { tmpdir }, path] = await loadNodeTools();
+const [{ mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync }, { tmpdir }, path] =
+  await loadNodeTools();
+
+const repositoryRoot = path.resolve(import.meta.dirname, '..');
+
+/**
+ * The script of a worker thread that runs one export of the check's module and posts its result.
+ * Node strips the module's types, as it does by default on every version the engines allow (from
+ * 22.18 and 23.6), and a resolve hook (`registerHooks`, from 22.15 and 23.5) adds the `.ts`
+ * extension that the module's relative imports leave out, as the repository's bundler resolution
+ * does.
+ */
+const CHECK_WORKER = [
+  "const { registerHooks } = require('node:module');",
+  "const { pathToFileURL } = require('node:url');",
+  "const { parentPort, workerData } = require('node:worker_threads');",
+  'registerHooks({',
+  '  resolve(specifier, context, nextResolve) {',
+  '    try {',
+  '      return nextResolve(specifier, context);',
+  '    } catch (error) {',
+  "      if (!specifier.startsWith('.') || error.code !== 'ERR_MODULE_NOT_FOUND') throw error;",
+  "      return nextResolve(specifier + '.ts', context);",
+  '    }',
+  '  },',
+  '});',
+  'import(pathToFileURL(workerData.module).href).then((check) => {',
+  '  parentPort.postMessage(check[workerData.name](workerData.root));',
+  '});',
+].join('\n');
+
+function isStrings(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+/**
+ * The check's findings over every file either gate of the repository at `root` runs, from a worker
+ * thread. Vitest's v8 provider counts every block that this thread runs, which makes the check's
+ * parse about five times slower; a worker thread runs in an isolate of its own, outside that
+ * count. The worker runs `suiteTimeoutFindings`, named here by reference, so that the check
+ * follows this row's work into it.
+ */
+async function checkInWorker(root: string): Promise<string[]> {
+  if (!Platform.isDesktop) throw new Error('Test time limit rows require a desktop runtime');
+  const { Worker } = await import('node:worker_threads');
+  const worker = new Worker(CHECK_WORKER, {
+    eval: true,
+    workerData: {
+      module: path.join(import.meta.dirname, 'architecture', 'testTimeouts.ts'),
+      name: suiteTimeoutFindings.name,
+      root,
+    },
+  });
+  return new Promise((resolve, reject) => {
+    let findings: string[] | undefined;
+    worker.on('message', (message: unknown) => {
+      if (isStrings(message)) findings = message;
+    });
+    worker.on('error', reject);
+    worker.on('exit', (code) => {
+      if (findings === undefined) reject(new Error(`The check's worker ended with code ${code}`));
+      else resolve(findings);
+    });
+  });
+}
 
 const FIXTURE_ROOT = '/fixture';
 const FIXTURE_TEST = 'test/fixture.test.ts';
@@ -16,7 +86,7 @@ const FIXTURE_TEST = 'test/fixture.test.ts';
 const FIXTURE_LIMITS = [
   'export const LINTER_TIMEOUT_MS = 120_000;',
   'export const TYPESCRIPT_PROGRAM_TIMEOUT_MS = 80_000;',
-  'export const SOURCE_WALK_TIMEOUT_MS = 60_000;',
+  'export const SOURCE_WALK_TIMEOUT_MS = 80_000;',
   'export const CHILD_PROCESS_TIMEOUT_MS = 20_000;',
 ];
 const PROGRAM_WORK = 'program work needs TYPESCRIPT_PROGRAM_TIMEOUT_MS';
@@ -286,6 +356,39 @@ describe('test time limits', () => {
   );
 
   it(
+    'accepts either limit of two kinds that share the largest value',
+    () => {
+      expect(
+        findings([
+          "import ts from 'typescript';",
+          "import { it } from 'vitest';",
+          "import { SOURCE_WALK_TIMEOUT_MS, TYPESCRIPT_PROGRAM_TIMEOUT_MS } from './support/timeouts';",
+          'function buildWalked() {',
+          "  const files = ts.sys.readDirectory('src', ['.ts']);",
+          "  files.forEach((file) => ts.createSourceFile(file, '', ts.ScriptTarget.ESNext));",
+          '  return ts.createProgram(files, {});',
+          '}',
+          "it('builds the files it walks', () => {",
+          '  buildWalked();',
+          '});',
+          "it('builds the files it walks under the program limit', () => {",
+          '  buildWalked();',
+          '}, TYPESCRIPT_PROGRAM_TIMEOUT_MS);',
+          "it('builds the files it walks under the walk limit', () => {",
+          '  buildWalked();',
+          '}, SOURCE_WALK_TIMEOUT_MS);',
+        ]),
+      ).toEqual([
+        on(
+          9,
+          "row 'builds the files it walks': program and walk work needs TYPESCRIPT_PROGRAM_TIMEOUT_MS or SOURCE_WALK_TIMEOUT_MS",
+        ),
+      ]);
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
+
+  it(
     "counts exec, Worker, and esbuild's calls as child processes only through their modules",
     () => {
       expect(
@@ -399,7 +502,7 @@ describe('test time limits', () => {
           "describe('a retried suite', { retry: 2 }, () => {});",
           "it('a row retried under a quoted key', { 'retry': 2 }, () => {});",
           "it('a retried row', { retry: 2 }, () => {});",
-          'vi.setConfig({ testTimeout: 60_000 });',
+          'vi.setConfig({ testTimeout: 80_000 });',
         ]),
       ).toEqual([
         on(7, `row 'builds under a number': ${notImported}, not a number`),
@@ -478,7 +581,7 @@ describe('test time limits', () => {
 
   it(
     'reads every file a gate runs, whatever the file mentions, and the setup files it names',
-    () => {
+    async () => {
       const light = [
         "import { it } from 'vitest';",
         'const T = 5_000;',
@@ -499,13 +602,13 @@ describe('test time limits', () => {
           "import { defineConfig } from 'vitest/config';",
           "export default defineConfig({ test: { include: ['test/store/**/*.test.ts'] } });",
         ],
-        'test/setup.ts': ["import { vi } from 'vitest';", 'vi.setConfig({ testTimeout: 60_000 });'],
+        'test/setup.ts': ["import { vi } from 'vitest';", 'vi.setConfig({ testTimeout: 80_000 });'],
         'test/light.test.ts': light,
         'test/perf/light.test.ts': light,
         'test/store/light.test.ts': light,
       });
 
-      expect(suiteTimeoutFindings(root)).toEqual([
+      expect(await checkInWorker(root)).toEqual([
         "test/light.test.ts:3 row 'waits': a limit on light work",
         'test/setup.ts:2 vi.setConfig: changes the limits of the rows after it',
         "test/store/light.test.ts:3 row 'waits': a limit on light work",
@@ -513,4 +616,107 @@ describe('test time limits', () => {
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
   );
+});
+
+/** What each gate config sets for the options the pins hold. */
+const GATE_OPTIONS: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
+  'vitest.config.ts': {
+    include: ['test/**/*.test.ts'],
+    exclude: ['test/perf/**', 'test/store/**'],
+    setupFiles: ['obsidian-test-mocks/vitest-setup', 'test/setup/isolatedFailures.ts'],
+    pool: 'forks',
+    testTimeout: 10_000,
+    hookTimeout: 10_000,
+  },
+  'vitest.store.config.ts': {
+    include: ['test/store/**/*.test.ts'],
+    setupFiles: ['obsidian-test-mocks/vitest-setup'],
+    pool: 'forks',
+    testTimeout: 10_000,
+    hookTimeout: 10_000,
+  },
+};
+const PINNED_OPTIONS = ['include', 'exclude', 'setupFiles', 'pool', 'testTimeout', 'hookTimeout'];
+/** Options a gate config leaves out; a tag definition can carry its own `timeout` and `retry`. */
+const UNSET_OPTIONS = ['retry', 'globals', 'projects', 'tags'];
+/** The flags with which a script could change a Vitest run's limits, pool, or isolation. */
+const RUN_FLAGS = [
+  '--testTimeout',
+  '--test-timeout',
+  '--hookTimeout',
+  '--hook-timeout',
+  '--retry',
+  '--pool',
+  '--isolate',
+  '--no-isolate',
+];
+
+/** A gate config's light limit, its `testTimeout`. */
+function lightLimit(config: string): number {
+  const limit = configValue(vitestTestOptions(repositoryRoot, config), 'testTimeout', config);
+  if (typeof limit !== 'number') throw new Error(`${config} sets no testTimeout the pins can read`);
+  return limit;
+}
+
+/**
+ * Every flag of a `package.json` script that could change a Vitest run's limits, pool, isolation,
+ * or config, as `<script>: <flag>`, with the value that follows a config flag.
+ */
+function runFlags(scripts: Readonly<Record<string, string>>): string[] {
+  const flags: string[] = [];
+  for (const [script, command] of Object.entries(scripts)) {
+    const words = command.split(/\s+/u);
+    for (const [index, word] of words.entries()) {
+      if (RUN_FLAGS.some((flag) => word.startsWith(flag))) flags.push(`${script}: ${word}`);
+      if (word.startsWith('--config') || word.startsWith('-c')) {
+        const value = word.includes('=') ? '' : ` ${words[index + 1] ?? ''}`;
+        flags.push(`${script}: ${word}${value}`);
+      }
+    }
+  }
+  return flags;
+}
+
+describe('gate time limits', () => {
+  it(
+    'holds every row and hook that either gate runs to the limit of its work',
+    async () => {
+      expect(await checkInWorker(repositoryRoot)).toEqual([]);
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
+
+  it('pins the four limits, each above the light limit of both gate configs', () => {
+    expect({ ...limits }).toEqual({
+      LINTER_TIMEOUT_MS: 120_000,
+      TYPESCRIPT_PROGRAM_TIMEOUT_MS: 80_000,
+      SOURCE_WALK_TIMEOUT_MS: 80_000,
+      CHILD_PROCESS_TIMEOUT_MS: 20_000,
+    });
+    const light = Math.max(...Object.keys(GATE_OPTIONS).map(lightLimit));
+    expect(Object.entries(limits).filter(([, limit]) => limit <= light)).toEqual([]);
+  });
+
+  it('pins both gate configs and keeps every script off the flags that would change a run', () => {
+    for (const [config, expected] of Object.entries(GATE_OPTIONS)) {
+      const options = vitestTestOptions(repositoryRoot, config);
+      const pinned = PINNED_OPTIONS.map((key) => [key, configValue(options, key, config)]);
+
+      expect(Object.fromEntries(pinned), config).toEqual(expected);
+      expect(configValue(options, 'isolate', config), config).not.toBe(false);
+      expect(
+        UNSET_OPTIONS.filter((key) => options.has(key)),
+        config,
+      ).toEqual([]);
+    }
+    const { scripts } = JSON.parse(
+      readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'),
+    ) as { scripts: Record<string, string> };
+
+    expect(runFlags(scripts)).toEqual([
+      'lint:store: --config vitest.store.config.ts',
+      'bench: --config vitest.bench.config.ts',
+      'arch: --config dependency-cruiser.config.cjs',
+    ]);
+  });
 });

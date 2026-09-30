@@ -19,6 +19,7 @@ import {
 } from './architecture/settingsOwnership';
 import priorSerializerFixture from './fixtures/settings-persistence/cc84b5d-property-definitions-roundtrip.json';
 import { expectDefined } from './helpers';
+import { TYPESCRIPT_PROGRAM_TIMEOUT_MS } from './support/timeouts';
 
 const STATE_PATH = '.test-config/plugins/abyss-tasks/state.json';
 
@@ -1221,7 +1222,7 @@ describe('complete known settings ownership', () => {
         ts.flattenDiagnosticMessageText(expectDefined(diagnostics[0]).messageText, '\n'),
       ).toContain("Property 'futurePreference' is missing");
     },
-    20_000,
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
   );
 
   it('routes every populated known view root to state and preserves extensions across independent saves', async () => {

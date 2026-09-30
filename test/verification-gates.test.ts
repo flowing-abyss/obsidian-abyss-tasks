@@ -1,5 +1,6 @@
 import { Platform } from 'obsidian';
 import { describe, expect, it } from 'vitest';
+import { CHILD_PROCESS_TIMEOUT_MS } from './support/timeouts';
 
 const loadNodeTools = async () => {
   if (!Platform.isDesktop) throw new Error('Verification gate tests require a desktop runtime');
@@ -69,57 +70,77 @@ exit 0
 }
 
 describe('verification gates', () => {
-  it('stops the fast gate when CSS linting fails', () => {
-    const result = runGate(scripts['verify:task'] ?? '', 'lint:css');
+  it(
+    'stops the fast gate when CSS linting fails',
+    () => {
+      const result = runGate(scripts['verify:task'] ?? '', 'lint:css');
 
-    expect(result.status).not.toBe(0);
-    expect(result.commands).toContain('lint:css');
-    expect(result.commands).not.toContain('test');
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.commands).toContain('lint:css');
+      expect(result.commands).not.toContain('test');
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
-  it('stops the fast gate when the architecture check fails', () => {
-    const result = runGate(scripts['verify:task'] ?? '', 'arch');
+  it(
+    'stops the fast gate when the architecture check fails',
+    () => {
+      const result = runGate(scripts['verify:task'] ?? '', 'arch');
 
-    expect(result.status).not.toBe(0);
-    expect(result.commands).toContain('arch');
-    expect(result.commands).not.toContain('test');
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.commands).toContain('arch');
+      expect(result.commands).not.toContain('test');
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
-  it('stops the full gate when the Store review lint fails', () => {
-    const result = runGate(scripts['verify'] ?? '', 'lint:store');
+  it(
+    'stops the full gate when the Store review lint fails',
+    () => {
+      const result = runGate(scripts['verify'] ?? '', 'lint:store');
 
-    expect(result.status).not.toBe(0);
-    expect(result.commands).toContain('lint:store');
-    expect(result.commands).not.toContain('typecheck');
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.commands).toContain('lint:store');
+      expect(result.commands).not.toContain('typecheck');
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
-  it('stops when artifact CSS fails after fresh generation', () => {
-    const result = runGate(scripts['verify'] ?? '', 'lint:css:artifact');
-    expect(result.status).not.toBe(0);
-    expect(result.commands).toContain('release:artifacts');
-    expect(result.commands).toContain('lint:css:artifact');
-    expect(result.commands).not.toContain('release:check');
-  });
+  it(
+    'stops when artifact CSS fails after fresh generation',
+    () => {
+      const result = runGate(scripts['verify'] ?? '', 'lint:css:artifact');
+      expect(result.status).not.toBe(0);
+      expect(result.commands).toContain('release:artifacts');
+      expect(result.commands).toContain('lint:css:artifact');
+      expect(result.commands).not.toContain('release:check');
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
-  it('runs every established stage of the full verification gate', () => {
-    const result = runGate(scripts['verify'] ?? '');
+  it(
+    'runs every established stage of the full verification gate',
+    () => {
+      const result = runGate(scripts['verify'] ?? '');
 
-    expect(result.status).toBe(0);
-    expect(result.commands).toEqual([
-      'format:check',
-      'lint',
-      'lint:css',
-      'lint:store',
-      'typecheck',
-      'arch',
-      'deadcode',
-      'test:ai',
-      'test:coverage',
-      'build',
-      'release:artifacts',
-      'lint:css:artifact',
-      'release:check',
-      'audit:dependencies',
-    ]);
-  });
+      expect(result.status).toBe(0);
+      expect(result.commands).toEqual([
+        'format:check',
+        'lint',
+        'lint:css',
+        'lint:store',
+        'typecheck',
+        'arch',
+        'deadcode',
+        'test:ai',
+        'test:coverage',
+        'build',
+        'release:artifacts',
+        'lint:css:artifact',
+        'release:check',
+        'audit:dependencies',
+      ]);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 });

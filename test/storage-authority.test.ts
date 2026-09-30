@@ -5,6 +5,7 @@ import {
   STORAGE_AUTHORIZATIONS,
   storageAuthorityViolations,
 } from './architecture/storageAuthority';
+import { TYPESCRIPT_PROGRAM_TIMEOUT_MS } from './support/timeouts';
 
 const ROOT = ts.sys.resolvePath(`${import.meta.dirname}/..`);
 function repoFile(file: string): string {
@@ -178,7 +179,7 @@ export class TaskCalendarPlugin extends Plugin {
 
 beforeAll(() => {
   program = fixtureProgram(sourceMap);
-}, 20_000);
+}, TYPESCRIPT_PROGRAM_TIMEOUT_MS);
 function accesses(file: string) {
   const source = program.getSourceFile(repoFile(file));
   if (source === undefined) throw new Error(`Missing fixture ${file}`);
@@ -195,44 +196,63 @@ describe('resolved Obsidian storage authority', () => {
       expect(found[0]).toMatchObject({ file, api, owner: '<module>', line: 3 });
       expect(storageAuthorityViolations(found, [])).toHaveLength(1);
     },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
   );
 
   it.each(
     assignmentExtractions.map(([source, api, column], index) => ({ source, api, column, index })),
-  )('rejects assignment extraction $api in $source', ({ api, column, index }) => {
-    const file = `src/ui/storage-assignment-${index}.ts`;
-    const found = accesses(file);
-    expect(found).toEqual([{ file, api, owner: '<module>', line: 4, column }]);
-    expect(storageAuthorityViolations(found, [])).toEqual([
-      `storage/unauthorized ${file}:4:${column} <module> ${api}`,
-    ]);
-  });
+  )(
+    'rejects assignment extraction $api in $source',
+    ({ api, column, index }) => {
+      const file = `src/ui/storage-assignment-${index}.ts`;
+      const found = accesses(file);
+      expect(found).toEqual([{ file, api, owner: '<module>', line: 4, column }]);
+      expect(storageAuthorityViolations(found, [])).toEqual([
+        `storage/unauthorized ${file}:4:${column} <module> ${api}`,
+      ]);
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
 
-  it('reports a stable source span and diagnostic ID', () => {
-    const found = accesses('src/ui/storage-probe-0.ts');
-    expect(found).toEqual([
-      {
-        file: 'src/ui/storage-probe-0.ts',
-        line: 3,
-        column: 7,
-        api: 'DataAdapter.write',
-        owner: '<module>',
-      },
-    ]);
-    expect(storageAuthorityViolations(found, [])).toEqual([
-      'storage/unauthorized src/ui/storage-probe-0.ts:3:7 <module> DataAdapter.write',
-    ]);
-  });
+  it(
+    'reports a stable source span and diagnostic ID',
+    () => {
+      const found = accesses('src/ui/storage-probe-0.ts');
+      expect(found).toEqual([
+        {
+          file: 'src/ui/storage-probe-0.ts',
+          line: 3,
+          column: 7,
+          api: 'DataAdapter.write',
+          owner: '<module>',
+        },
+      ]);
+      expect(storageAuthorityViolations(found, [])).toEqual([
+        'storage/unauthorized src/ui/storage-probe-0.ts:3:7 <module> DataAdapter.write',
+      ]);
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
 
-  it('accepts reads, provisioning of folders/binary files, ports and unrelated method names', () => {
-    expect(accesses('src/ui/storage-safe.ts')).toEqual([]);
-  });
+  it(
+    'accepts reads, provisioning of folders/binary files, ports and unrelated method names',
+    () => {
+      expect(accesses('src/ui/storage-safe.ts')).toEqual([]);
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
 
-  it('accepts every exact current owner, including the named persistence callbacks', () => {
-    const found = [...new Set([...allowed.map(([file]) => file), 'src/main.ts'])].flatMap(accesses);
-    expect(found).toHaveLength(10);
-    expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
-  });
+  it(
+    'accepts every exact current owner, including the named persistence callbacks',
+    () => {
+      const found = [...new Set([...allowed.map(([file]) => file), 'src/main.ts'])].flatMap(
+        accesses,
+      );
+      expect(found).toHaveLength(10);
+      expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
 
   it('rejects stale, duplicate and unreasoned authorizations and extra references in an owner', () => {
     const access = {
@@ -268,51 +288,63 @@ describe('resolved Obsidian storage authority', () => {
     ).toHaveLength(2);
   });
 
-  it('fails fixture setup on unresolved types or malformed syntax', () => {
-    expect(() =>
-      fixtureProgram(
-        new Map([
-          [
-            repoFile('test/broken-storage.ts'),
-            "import { MissingVault } from 'obsidian'; declare const vault: MissingVault; vault.write();",
-          ],
-        ]),
-      ),
-    ).toThrow(/MissingVault/u);
-    expect(() =>
-      fixtureProgram(new Map([[repoFile('test/broken-storage.ts'), 'const = ;']])),
-    ).toThrow();
-  }, 20_000);
+  it(
+    'fails fixture setup on unresolved types or malformed syntax',
+    () => {
+      expect(() =>
+        fixtureProgram(
+          new Map([
+            [
+              repoFile('test/broken-storage.ts'),
+              "import { MissingVault } from 'obsidian'; declare const vault: MissingVault; vault.write();",
+            ],
+          ]),
+        ),
+      ).toThrow(/MissingVault/u);
+      expect(() =>
+        fixtureProgram(new Map([[repoFile('test/broken-storage.ts'), 'const = ;']])),
+      ).toThrow();
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
 
-  it('bounds semantic work independently of unrelated property traffic', () => {
-    const checker = program.getTypeChecker();
-    const lookups = [
-      vi.spyOn(checker, 'getSymbolAtLocation'),
-      vi.spyOn(checker, 'getPropertyOfType'),
-      vi.spyOn(checker, 'getTypeAtLocation'),
-      vi.spyOn(checker, 'getTypeOfSymbolAtLocation'),
-      vi.spyOn(checker, 'getNonNullableType'),
-    ];
-    const work = ['base', 'noisy'].map((variant) => {
-      for (const lookup of lookups) lookup.mockClear();
-      const file = `src/ui/storage-work-${variant}.ts`;
-      expect(accesses(file)).toEqual([
-        { file, api: 'Vault.modify', owner: '<module>', line: 4, column: 13 },
-      ]);
-      return lookups.reduce((total, lookup) => total + lookup.mock.calls.length, 0);
-    });
-    expect(work[0]).toBeGreaterThan(0);
-    expect(work[1]).toBe(work[0]);
-  });
+  it(
+    'bounds semantic work independently of unrelated property traffic',
+    () => {
+      const checker = program.getTypeChecker();
+      const lookups = [
+        vi.spyOn(checker, 'getSymbolAtLocation'),
+        vi.spyOn(checker, 'getPropertyOfType'),
+        vi.spyOn(checker, 'getTypeAtLocation'),
+        vi.spyOn(checker, 'getTypeOfSymbolAtLocation'),
+        vi.spyOn(checker, 'getNonNullableType'),
+      ];
+      const work = ['base', 'noisy'].map((variant) => {
+        for (const lookup of lookups) lookup.mockClear();
+        const file = `src/ui/storage-work-${variant}.ts`;
+        expect(accesses(file)).toEqual([
+          { file, api: 'Vault.modify', owner: '<module>', line: 4, column: 13 },
+        ]);
+        return lookups.reduce((total, lookup) => total + lookup.mock.calls.length, 0);
+      });
+      expect(work[0]).toBeGreaterThan(0);
+      expect(work[1]).toBe(work[0]);
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
 
-  it('keeps the real source inventory exact and reasoned', () => {
-    const files = ts.sys.readDirectory(repoFile('src'), ['.ts']);
-    const sourceProgram = ts.createProgram(files, options);
-    const sourceFiles = sourceProgram
-      .getSourceFiles()
-      .filter((source) => files.includes(source.fileName));
-    const found = collectStorageAccesses(sourceProgram, sourceFiles);
-    expect(found).toHaveLength(10);
-    expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
-  }, 20_000);
+  it(
+    'keeps the real source inventory exact and reasoned',
+    () => {
+      const files = ts.sys.readDirectory(repoFile('src'), ['.ts']);
+      const sourceProgram = ts.createProgram(files, options);
+      const sourceFiles = sourceProgram
+        .getSourceFiles()
+        .filter((source) => files.includes(source.fileName));
+      const found = collectStorageAccesses(sourceProgram, sourceFiles);
+      expect(found).toHaveLength(10);
+      expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
 });

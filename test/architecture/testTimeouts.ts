@@ -287,7 +287,7 @@ function isFunctionNode(node: ts.Node): node is FunctionNode {
   );
 }
 
-/** The function a declaration binds: a function declaration, or a variable a function initializes. */
+/** The function a declaration binds: a function, or a variable a function initializes. */
 function declaredFunction(declaration: ts.Node | undefined): FunctionNode | undefined {
   if (declaration === undefined || isFunctionNode(declaration)) return declaration;
   const initializer = ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
@@ -625,12 +625,17 @@ class TimeoutCheck {
   private readonly stack: Unit[] = [];
   private readonly signalNames = new Map<ts.SourceFile, ReadonlySet<string>>();
   private readonly vitestSpecifiers = new Map<ts.ImportSpecifier, string>();
+  // Fields, not parameter properties: the check's rows load this module in a worker thread through
+  // Node's type stripping, which takes erasable syntax only.
+  private readonly tree: CheckedTree;
+  private readonly files: ReadonlyMap<string, CheckedFile>;
+  private readonly checker: ts.TypeChecker;
 
-  constructor(
-    private readonly tree: CheckedTree,
-    private readonly files: ReadonlyMap<string, CheckedFile>,
-    private readonly checker: ts.TypeChecker,
-  ) {}
+  constructor(tree: CheckedTree, files: ReadonlyMap<string, CheckedFile>, checker: ts.TypeChecker) {
+    this.tree = tree;
+    this.files = files;
+    this.checker = checker;
+  }
 
   run(): string[] {
     for (const file of this.files.values()) this.checkFile(file);
@@ -1046,7 +1051,7 @@ class TimeoutCheck {
     }
   }
 
-  /** A dynamic import or `require()`: of Vitest, or of a module the check reads, in a shape it resolves. */
+  /** Checks an `import()` or `require()` of Vitest or of a read module for a shape it resolves. */
   private checkModuleCall(file: CheckedFile, call: ts.CallExpression, form: string): void {
     const [specifier] = call.arguments;
     const how = form === 'require' ? 'require()' : 'import()';
@@ -1333,7 +1338,10 @@ function objectProperties(
 }
 
 /** The `test` options of a Vitest config, read from its source text, by name. */
-function vitestTestOptions(root: string, config: string): ReadonlyMap<string, ts.Expression> {
+export function vitestTestOptions(
+  root: string,
+  config: string,
+): ReadonlyMap<string, ts.Expression> {
   const text = ts.sys.readFile(`${root}/${config}`);
   if (text === undefined) throw new Error(`The timeout check cannot read ${config}`);
   const source = ts.createSourceFile(config, text, ts.ScriptTarget.ESNext, true);
@@ -1348,6 +1356,30 @@ function vitestTestOptions(root: string, config: string): ReadonlyMap<string, ts
     throw new Error(`${config} has no test options the timeout check can read`);
   }
   return objectProperties(test, config);
+}
+
+function literalOption(expression: ts.Expression, option: string): unknown {
+  if (ts.isNumericLiteral(expression)) return Number(expression.text);
+  if (ts.isStringLiteralLike(expression)) return expression.text;
+  if (expression.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (expression.kind === ts.SyntaxKind.FalseKeyword) return false;
+  if (ts.isArrayLiteralExpression(expression)) {
+    return expression.elements.map((element) => literalOption(element, option));
+  }
+  throw new Error(`${option} is ${expression.getText()}, which the pins cannot read`);
+}
+
+/**
+ * A config option's value where the config writes it as a literal (a string, a number, `true`,
+ * `false`, or a list of these), for the pins; undefined where the config leaves it out.
+ */
+export function configValue(
+  options: ReadonlyMap<string, ts.Expression>,
+  key: string,
+  config: string,
+): unknown {
+  const value = options.get(key);
+  return value === undefined ? undefined : literalOption(value, `${config} ${key}`);
 }
 
 /** A config option that lists strings; an option the config leaves out lists none. */
