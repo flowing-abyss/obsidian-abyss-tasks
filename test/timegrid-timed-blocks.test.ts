@@ -23,6 +23,13 @@ import {
 
 useRealMoment();
 
+// A compatibility gesture listens on the window until a pointerup or pointercancel reaches it, and
+// many rows end theirs on a detached element or not at all. Cancel any gesture a row leaves open,
+// so its window listeners cannot run during a later row.
+afterEach(() => {
+  window.dispatchEvent(new PointerEvent('pointercancel'));
+});
+
 async function loadStyles(): Promise<string> {
   if (!Platform.isDesktop) return '';
   const { readFileSync } = await import('node:fs');
