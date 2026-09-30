@@ -11,7 +11,8 @@ import {
   type SourceSpan,
   type TaskSpanKind,
 } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
-import { canonicalStatusCatalog, interleavedRatio, seededRandom } from '../helpers';
+import { canonicalStatusCatalog, interleavedRatio } from '../helpers';
+import { seededRandom } from '../support/seededRandom';
 import { expectDefined } from './../helpers';
 
 const codec = new TaskMarkdownCodec(canonicalStatusCatalog());

@@ -637,7 +637,10 @@ following names through the helpers and modules outside `src/` that test files l
 dynamic property calls, functions passed in from modules it does not read, or plugin code. A row
 that times its own work reads the process's CPU clock through
 [`cpuMilliseconds`](test/support/cpuTime.ts) or `interleavedRatio` in
-[`test/helpers.ts`](test/helpers.ts), never the wall clock.
+[`test/helpers.ts`](test/helpers.ts), never the wall clock. `test/helpers.ts` loads no presentation
+module, which [its own suite](test/helpers.test.ts) checks through every module it loads, and a
+presentation harness has its own support module, such as the panels'
+[`test/support/panelHarness.ts`](test/support/panelHarness.ts).
 
 Update this document in the implementing commit when ownership, a public boundary, dependency
 direction, a critical data flow, persisted authority/migration, or a compatibility seam changes.

@@ -35,10 +35,6 @@ import {
 import { PanelNavigator } from '../src/views/panelNavigation';
 import { MIN_BLOCK_HEIGHT_PX } from '../src/views/timegrid/layout';
 import {
-  calendarCommand,
-  calendarDateOf,
-  calendarOf,
-  calendarViewInstanceOf,
   configuredTaskApplication,
   createAppWithFiles,
   deferred,
@@ -47,15 +43,21 @@ import {
   flushMicrotasks,
   freshContainer,
   methodOf,
-  pendingTimedBlockFocusOf,
   seedTaskCache,
-  setCalendarDate,
-  setCalendarViewType,
   subtask,
   task,
   taskQueryApi,
   useRealMoment,
 } from './helpers';
+import {
+  calendarCommand,
+  calendarDateOf,
+  calendarOf,
+  calendarViewInstanceOf,
+  pendingTimedBlockFocusOf,
+  setCalendarDate,
+  setCalendarViewType,
+} from './support/panelHarness';
 
 const TODAY = moment().format('YYYY-MM-DD');
 

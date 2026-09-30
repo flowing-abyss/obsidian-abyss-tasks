@@ -1,5 +1,7 @@
 import { Platform, setIcon } from 'obsidian';
+import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
+import { runtimeReferences } from './architecture/runtimeReferences';
 import { interleavedRatio, subtask, task, useRealMoment, withMobile } from './helpers';
 
 const processClock = vi.hoisted(() => ({ read: (): number => 0 }));
@@ -64,6 +66,64 @@ function stubClock(costs: StubCosts): StubClock {
   };
 }
 
+const ROOT = ts.sys.resolvePath(`${import.meta.dirname}/..`);
+const PRESENTATION_FOLDERS = ['src/panels/', 'src/views/', 'src/ui/'];
+const CODE_FILE = /\.[cm]?[jt]sx?$/;
+const RESOLVED_SUFFIXES = ['', '.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs', '/index.ts'];
+
+interface ModuleGraph {
+  /** Each module reached, relative to the repository, with the chain of modules that loads it. */
+  readonly chains: ReadonlyMap<string, readonly string[]>;
+  /**
+   * Each place the graph cannot be followed: a specifier that is not a string literal, a module
+   * that does not resolve, or a file that cannot be read.
+   */
+  readonly unreadable: readonly string[];
+}
+
+/**
+ * Every module `entry` loads at run time, followed through each module outside packages (test
+ * support and `src/` alike) by the run-time references the time limit check reads.
+ */
+function runtimeModuleGraph(entry: string): ModuleGraph {
+  const chains = new Map<string, readonly string[]>([[entry, [entry]]]);
+  const unreadable: string[] = [];
+  const pending = [entry];
+  for (let current = pending.shift(); current !== undefined; current = pending.shift()) {
+    const chain = chains.get(current) ?? [current];
+    const text = ts.sys.readFile(`${ROOT}/${current}`);
+    if (text === undefined) {
+      unreadable.push(`${current}: cannot be read`);
+      continue;
+    }
+    const file = ts.createSourceFile(current, text, ts.ScriptTarget.Latest);
+    for (const reference of runtimeReferences(file)) {
+      const line = file.getLineAndCharacterOfPosition(reference.node.getStart(file)).line + 1;
+      const { specifier } = reference;
+      if (specifier === undefined) {
+        unreadable.push(
+          `${current}:${line}: ${reference.form} of a specifier that is not a string`,
+        );
+        continue;
+      }
+      if (!specifier.startsWith('.')) continue;
+      const base = ts.sys.resolvePath(`${ROOT}/${current}/../${specifier}`);
+      const resolved = RESOLVED_SUFFIXES.map((suffix) => `${base}${suffix}`).find((candidate) =>
+        ts.sys.fileExists(candidate),
+      );
+      if (resolved === undefined) {
+        unreadable.push(`${current}:${line}: ${specifier} does not resolve`);
+        continue;
+      }
+      const target = resolved.slice(ROOT.length + 1);
+      if (chains.has(target)) continue;
+      chains.set(target, [...chain, target]);
+      if (CODE_FILE.test(target)) pending.push(target);
+    }
+  }
+  return { chains, unreadable };
+}
+
 function shifts(count: number): number[] {
   return Array.from({ length: count }, (_, shift) => shift);
 }
@@ -117,6 +177,19 @@ describe('test helpers', () => {
     it('resolves imports from obsidian via obsidian-test-mocks', () => {
       // setIcon is a function from the mocked obsidian module
       expect(typeof setIcon).toBe('function');
+    });
+  });
+
+  describe('module graph', () => {
+    it('loads no presentation module from test/helpers.ts', () => {
+      const { chains, unreadable } = runtimeModuleGraph('test/helpers.ts');
+      const presentation = [...chains]
+        .filter(([module]) => PRESENTATION_FOLDERS.some((folder) => module.startsWith(folder)))
+        .map(([, chain]) => chain.join(' > '));
+
+      expect([...chains.keys()].some((module) => module.startsWith('src/'))).toBe(true);
+      expect(presentation).toEqual([]);
+      expect(unreadable).toEqual([]);
     });
   });
 

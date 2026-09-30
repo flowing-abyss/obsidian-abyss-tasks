@@ -9,12 +9,12 @@ import {
   dispatchImeKey,
   expectDefined,
   freshContainer,
-  makeCenterPanelForTest,
   makeStubStore,
   methodOf,
   task,
   useRealMoment,
 } from './helpers';
+import { makeCenterPanelForTest } from './support/panelHarness';
 
 useRealMoment();
 

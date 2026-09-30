@@ -21,7 +21,6 @@ import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import {
-  calendarCommand,
   createAppWithFiles,
   expectDefined,
   flushMicrotasks,
@@ -31,6 +30,7 @@ import {
   taskQueryApi,
   useRealMoment,
 } from './helpers';
+import { calendarCommand } from './support/panelHarness';
 
 useRealMoment();
 

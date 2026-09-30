@@ -9,15 +9,8 @@ import type { CalendarSettings, TagGroup } from '../src/settings/types';
 import { discoveredPrefixGroupId } from '../src/tags/effectiveTagGroups';
 import type { TaskSnapshot } from '../src/tasks';
 import { PanelNavigator } from '../src/views/panelNavigation';
-import {
-  expectDefined,
-  fixedToday,
-  makeCenterPanelForTest,
-  makeStubStore,
-  subtask,
-  task,
-  useRealMoment,
-} from './helpers';
+import { expectDefined, fixedToday, makeStubStore, subtask, task, useRealMoment } from './helpers';
+import { makeCenterPanelForTest } from './support/panelHarness';
 
 const TODAY = moment().format('YYYY-MM-DD');
 

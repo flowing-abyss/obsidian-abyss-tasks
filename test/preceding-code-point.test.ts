@@ -5,7 +5,7 @@ import {
   replaceUnlessPreceded,
 } from '../src/markdown/precedingCodePoint';
 import { matchesUnlessPreceded as domainMatchesUnlessPreceded } from '../src/tasks/domain/precedingCodePoint';
-import { seededRandom } from './helpers';
+import { seededRandom } from './support/seededRandom';
 
 type Refusal = (previous: string) => boolean;
 type MatchesUnlessPreceded = typeof markdownMatchesUnlessPreceded;

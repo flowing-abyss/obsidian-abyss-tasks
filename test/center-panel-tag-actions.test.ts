@@ -9,13 +9,13 @@ import {
   expectDefined,
   flushMicrotasks,
   loseFocusOnRemoval,
-  makeCenterPanelForTest,
   makeStubStore,
   methodOf,
   objectMatching,
   task,
   useRealMoment,
 } from './helpers';
+import { makeCenterPanelForTest } from './support/panelHarness';
 
 useRealMoment();
 

@@ -39,13 +39,13 @@ import {
   methodOf,
   queryApiForTasks,
   resolvedConfig,
-  setCalendarDate,
   subtask,
   task,
   useRealMoment,
   type TaskFixtureInput,
 } from './helpers';
 import { expandCompoundSelectorLists } from './support/expandedCss';
+import { setCalendarDate } from './support/panelHarness';
 
 useRealMoment();
 
