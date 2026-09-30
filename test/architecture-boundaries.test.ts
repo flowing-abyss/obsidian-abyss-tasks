@@ -248,8 +248,19 @@ function repoPath(path: string): string {
   return normalizedPath.startsWith(prefix) ? normalizedPath.slice(prefix.length) : normalizedPath;
 }
 
+const parsedSources = new Map<string, { readonly text: string; readonly file: ts.SourceFile }>();
+
+/**
+ * One syntax tree per repository file and text: several rows walk every source file, and a tree is
+ * a pure function of its text that the walks only read.
+ */
 function syntax(path: string): ts.SourceFile {
-  return syntaxFromText(path, source(path));
+  const text = source(path);
+  const parsed = parsedSources.get(path);
+  if (parsed?.text === text) return parsed.file;
+  const file = syntaxFromText(path, text);
+  parsedSources.set(path, { text, file });
+  return file;
 }
 
 function syntaxFromText(path: string, text: string): ts.SourceFile {

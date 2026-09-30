@@ -82,8 +82,18 @@ function typeScriptFiles(directory: string): string[] {
   });
 }
 
+const parsedSources = new Map<string, { readonly text: string; readonly file: ts.SourceFile }>();
+
+/**
+ * One syntax tree per path and text: several rows walk every source and test file, and a tree is
+ * a pure function of its text that the walks below only read.
+ */
 function sourceFile(path: string, candidate: string): ts.SourceFile {
-  return ts.createSourceFile(path, candidate, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const parsed = parsedSources.get(path);
+  if (parsed?.text === candidate) return parsed.file;
+  const file = ts.createSourceFile(path, candidate, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  parsedSources.set(path, { text: candidate, file });
+  return file;
 }
 
 function moduleSpecifiers(path: string, candidate: string): string[] {

@@ -1184,43 +1184,62 @@ describe('shared week preference', () => {
 });
 
 describe('complete known settings ownership', () => {
+  const root = ts.sys.resolvePath(`${import.meta.dirname}/..`);
+  const ownershipPath = `${root}/test/architecture/settingsOwnership.ts`;
+  const typesPath = `${root}/src/settings/types.ts`;
+  const options: ts.CompilerOptions = {
+    target: ts.ScriptTarget.ES2021,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    strict: true,
+    skipLibCheck: true,
+    types: ['node'],
+  };
+  // Every program here has the same options, so the files on disk are parsed once and shared: a
+  // syntax tree is a pure function of its text and options, and each program still type-checks
+  // on its own checker. Only the mutated types file is new in each row, and it is never kept.
+  const parsed = new Map<string, ts.SourceFile | undefined>();
+  const host = ts.createCompilerHost(options);
+  const readSourceFile = host.getSourceFile.bind(host);
+  let appended: string | undefined;
+  host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) => {
+    if (!parsed.has(fileName)) {
+      parsed.set(
+        fileName,
+        readSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile),
+      );
+    }
+    const source = parsed.get(fileName);
+    return fileName === typesPath && source !== undefined && appended !== undefined
+      ? ts.createSourceFile(fileName, `${source.text}\n${appended}`, languageVersion, true)
+      : source;
+  };
+  let baselineDiagnostics: readonly ts.Diagnostic[] | undefined;
+  function baseline(): readonly ts.Diagnostic[] {
+    appended = undefined;
+    baselineDiagnostics ??= ts.getPreEmitDiagnostics(
+      ts.createProgram([ownershipPath], options, host),
+    );
+    return baselineDiagnostics;
+  }
+
   it.each(['CalendarSettings', 'ProjectsSettings'] as const)(
     'requires classification when a known %s key is added',
     (interfaceName) => {
-      const root = ts.sys.resolvePath(`${import.meta.dirname}/..`);
-      const ownershipPath = `${root}/test/architecture/settingsOwnership.ts`;
-      const typesPath = `${root}/src/settings/types.ts`;
-      const options: ts.CompilerOptions = {
-        target: ts.ScriptTarget.ES2021,
-        module: ts.ModuleKind.ESNext,
-        moduleResolution: ts.ModuleResolutionKind.Bundler,
-        strict: true,
-        skipLibCheck: true,
-        types: ['node'],
-      };
-      const host = ts.createCompilerHost(options);
-      const getSourceFile = host.getSourceFile.bind(host);
-      const baseline = ts.createProgram([ownershipPath], options, host);
-      expect(ts.getPreEmitDiagnostics(baseline)).toEqual([]);
-      host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) => {
-        const source = getSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile);
-        return fileName === typesPath && source !== undefined
-          ? ts.createSourceFile(
-              fileName,
-              `${source.text}\nexport interface ${interfaceName} { futurePreference: boolean }`,
-              languageVersion,
-              true,
-            )
-          : source;
-      };
+      expect(baseline()).toEqual([]);
+      appended = `export interface ${interfaceName} { futurePreference: boolean }`;
       const mutated = ts.createProgram([ownershipPath], options, host);
       const diagnostics = ts.getPreEmitDiagnostics(mutated);
+      appended = undefined;
       expect(diagnostics).toHaveLength(1);
       expect(diagnostics[0]?.code).toBe(1360);
       expect(diagnostics[0]?.file?.fileName).toBe(ownershipPath);
-      expect(
-        ts.flattenDiagnosticMessageText(expectDefined(diagnostics[0]).messageText, '\n'),
-      ).toContain("Property 'futurePreference' is missing");
+      const message = ts.flattenDiagnosticMessageText(
+        expectDefined(diagnostics[0]).messageText,
+        '\n',
+      );
+      expect(message).toContain("Property 'futurePreference' is missing");
+      expect(message).toContain(`Record<keyof ${interfaceName}, SettingsOwner>`);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
   );

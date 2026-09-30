@@ -95,16 +95,26 @@ const allowed = [
   ],
 ] as const;
 
-function fixtureProgram(sources: ReadonlyMap<string, string>): ts.Program {
+// Every program in this file has the same options, so a file read from disk is parsed once and
+// shared: a syntax tree is a pure function of its text and options, and each program still
+// type-checks on its own checker. Fixture texts are never cached; they shadow the disk.
+const diskFiles = new Map<string, ts.SourceFile | undefined>();
+function programHost(sources: ReadonlyMap<string, string>): ts.CompilerHost {
   const host = ts.createCompilerHost(options);
   const original = host.getSourceFile.bind(host);
   host.getSourceFile = (fileName, version, onError, shouldCreateNewSourceFile) => {
     const source = sources.get(fileName);
-    return source === undefined
-      ? original(fileName, version, onError, shouldCreateNewSourceFile)
-      : ts.createSourceFile(fileName, source, version, true);
+    if (source !== undefined) return ts.createSourceFile(fileName, source, version, true);
+    if (!diskFiles.has(fileName)) {
+      diskFiles.set(fileName, original(fileName, version, onError, shouldCreateNewSourceFile));
+    }
+    return diskFiles.get(fileName);
   };
-  const program = ts.createProgram([...sources.keys()], options, host);
+  return host;
+}
+
+function fixtureProgram(sources: ReadonlyMap<string, string>): ts.Program {
+  const program = ts.createProgram([...sources.keys()], options, programHost(sources));
   const diagnostics = ts.getPreEmitDiagnostics(program);
   if (diagnostics.length > 0) {
     throw new Error(
@@ -337,7 +347,7 @@ describe('resolved Obsidian storage authority', () => {
     'keeps the real source inventory exact and reasoned',
     () => {
       const files = ts.sys.readDirectory(repoFile('src'), ['.ts']);
-      const sourceProgram = ts.createProgram(files, options);
+      const sourceProgram = ts.createProgram(files, options, programHost(new Map()));
       const sourceFiles = sourceProgram
         .getSourceFiles()
         .filter((source) => files.includes(source.fileName));
