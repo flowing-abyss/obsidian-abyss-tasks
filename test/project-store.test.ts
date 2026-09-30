@@ -132,6 +132,16 @@ describe('ProjectStore enumeration', () => {
     ps.destroy();
   });
 
+  it('Y1j names a project note with an upper-case .MD as Obsidian does', () => {
+    // Obsidian keeps a file's extension in lower case, as the fixture's files have it, so the
+    // store sees `Plan.MD` as a note.
+    const { app } = makeApp([{ path: 'Projects/Plan.MD', tags: [], fm: {} }]);
+    const ps = new ProjectStore(app, storeWith([]), { ...DEFAULT_SETTINGS });
+    ps.initialize();
+    expect(ps.get('Projects/Plan.MD')?.name).toBe('Plan');
+    ps.destroy();
+  });
+
   it('computes stats from tasks in the note', () => {
     const { app } = makeApp([{ path: 'Projects/A.md', tags: [], fm: { status: 'active' } }]);
     const tasks = [

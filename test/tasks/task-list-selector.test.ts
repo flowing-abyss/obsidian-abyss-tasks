@@ -6,6 +6,7 @@ import type { ListViewState } from '../../src/settings/types';
 import { discoveredPrefixGroupId } from '../../src/tags/effectiveTagGroups';
 import { searchTaskList, selectTaskList } from '../../src/task-lists/TaskListSelector';
 import type { LocalDate, SubtaskSnapshot, TaskSnapshot, TimeEntrySnapshot } from '../../src/tasks';
+import { taskFromCodecLine } from '../helpers';
 
 function snapshot(
   title: string,
@@ -297,6 +298,27 @@ describe('selectTaskList', () => {
         { groupBy: 'date', sortBy: { field: 'date', dir: 'asc' }, filters: [] },
       ),
     ).toEqual(['earlier due', 'later due']);
+  });
+
+  it('Y1m sorts by title with the full note names that master cut to one name', () => {
+    // The titles come from the codec's parse, as the index gives them, with the creation dates.
+    const source = (line: number) => ({ source: { filePath: 'tasks.md', line } });
+    const ordered = selectTaskList({
+      tasks: [
+        taskFromCodecLine('- [ ] Read [[v1.2 notes]] ➕ 2026-08-22', source(0)),
+        taskFromCodecLine('- [ ] Read [[v1.5 plans]] ➕ 2026-08-01', source(1)),
+      ],
+      selection: { type: 'project', path: 'tasks.md' },
+      viewState: { groupBy: 'none', sortBy: { field: 'title', dir: 'asc' }, filters: [] },
+      settings: DEFAULT_SETTINGS,
+      today,
+      nowMs: Date.parse('2026-07-13T12:00:00Z'),
+    });
+
+    expect(ordered.map((task) => task.markdownTitle)).toEqual([
+      'Read [[v1.2 notes]]',
+      'Read [[v1.5 plans]]',
+    ]);
   });
 
   it.each(['none', 'date', 'priority', 'tag', 'status'] as const)(

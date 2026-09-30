@@ -193,7 +193,7 @@ describe('linkValueLabel', () => {
 });
 
 describe('buildLinkRaw', () => {
-  it('omits the alias when display equals target basename', () => {
+  it('omits the alias when it is empty or repeats a target with no folder and no .md extension', () => {
     expect(buildLinkRaw('wiki', 'Note', 'Note')).toBe('[[Note]]');
     expect(buildLinkRaw('wiki', 'Path/Note', 'alias')).toBe('[[Path/Note|alias]]');
     expect(buildLinkRaw('md', 'https://x.io', 'text')).toBe('[text](https://x.io)');

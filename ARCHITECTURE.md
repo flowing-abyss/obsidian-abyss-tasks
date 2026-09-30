@@ -56,14 +56,14 @@ existing nested prefix or appends that unit to its owner's exact prefix; descrip
 retain their original prefixes. Reading, reordering, moving, and restoring source preserve authored
 indentation.
 
-| Boundary                                         | Responsibility                                                                              | Dependency direction                                                     |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| [Task public API](src/tasks/index.ts)            | Query, dependency query, commands, and capture planning                                     | Presentation imports this boundary                                       |
-| [Task domain](src/tasks/domain/)                 | Immutable values, references, commands, status, recurrence, dates, and time                 | Domain and deterministic `rrule` boundary only                           |
-| [Task application](src/tasks/application/)       | Resolve and validate use cases; coordinate repository and destination ports                 | Domain and application ports; no concrete infrastructure or presentation |
-| [Task infrastructure](src/tasks/infrastructure/) | Obsidian adapters, index, canonical codec, block editing, location, and reference authority | Application, domain, shared Markdown helpers, and Obsidian; no UI        |
-| [Shared Markdown helpers](src/markdown/)         | Links, tags, inline code, note path patterns, and the preceding code point search           | Itself and the host Moment boundary; no task layer                       |
-| [Sidebar shell](src/views/PanelView.ts)          | AppState, responsive panels, navigation, shortcuts, and collaborator lifetimes              | Public task capabilities                                                 |
+| Boundary                                         | Responsibility                                                                                | Dependency direction                                                     |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| [Task public API](src/tasks/index.ts)            | Query, dependency query, commands, and capture planning                                       | Presentation imports this boundary                                       |
+| [Task domain](src/tasks/domain/)                 | Immutable values, references, commands, status, recurrence, dates, and time                   | Domain and deterministic `rrule` boundary only                           |
+| [Task application](src/tasks/application/)       | Resolve and validate use cases; coordinate repository and destination ports                   | Domain and application ports; no concrete infrastructure or presentation |
+| [Task infrastructure](src/tasks/infrastructure/) | Obsidian adapters, index, canonical codec, block editing, location, and reference authority   | Application, domain, shared Markdown helpers, and Obsidian; no UI        |
+| [Shared Markdown helpers](src/markdown/)         | Links, tags, inline code, note names, note path patterns, and the preceding code point search | Itself and the host Moment boundary; no task layer                       |
+| [Sidebar shell](src/views/PanelView.ts)          | AppState, responsive panels, navigation, shortcuts, and collaborator lifetimes                | Public task capabilities                                                 |
 
 The public task capabilities are `TaskQueryApi`, `TaskDependencyQueryApi`, `TimeTrackingQueryApi`,
 `TaskApplicationApi`, and `TaskCaptureApplicationApi`. Application queries supply all three query

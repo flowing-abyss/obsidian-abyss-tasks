@@ -1,18 +1,14 @@
 import { inlineCodeRanges, type SourceRange } from './inlineCode';
+import { noteNameOfPath, withoutMarkdownExtension } from './noteName';
 
 // Link regexes shared across parsing and collapsing.
-const WIKILINK_ALIAS_RE = /\[\[([^|[\]]+)\|([^[\]]+)\]\]/gu;
 const WIKILINK_RE = /\[\[([^[\]]+)\]\]/gu;
 const MD_LINK_RE = /\[([^[\]]+)\]\(([^)]+)\)/gu;
 const BRACKETS_RE = /\[([^[\]]*)\]/gu;
 
 /** Collapse links to the readable, non-clickable placeholder form (legacy `text`). */
 export function collapseLinks(input: string): string {
-  return input
-    .replace(WIKILINK_ALIAS_RE, '🔗$1')
-    .replace(WIKILINK_RE, (_m, link: string) => `🔗 ${link.replace(/\.[^.]*$/u, '')}`)
-    .replace(MD_LINK_RE, '🌐 $1')
-    .replace(BRACKETS_RE, '$1');
+  return collapseWikiLinks(input).replace(MD_LINK_RE, '🌐 $1').replace(BRACKETS_RE, '$1');
 }
 
 export interface LinkToken {
@@ -25,7 +21,7 @@ export interface LinkToken {
   target: string;
   /**
    * The wiki alias, trimmed, which can be empty (`[[a|]]`), or else the target without folder and
-   * extension. A Markdown display is the link text as written.
+   * `.md` extension. A Markdown display is the link text as written.
    */
   display: string;
   index: number;
@@ -78,22 +74,59 @@ function nonOverlappingTokens(matches: LinkMatch[]): LinkToken[] {
   return accepted;
 }
 
-/** A wiki link's display without an alias: the target without folder and extension. */
-function unaliasedDisplay(target: string): string {
-  return target.replace(/\.[^.]*$/u, '').replace(/^.*\//u, '');
+/** A wiki target's path, and its subpath from the first `#`. */
+function splitSubpath(target: string): readonly [path: string, subpath: string] {
+  const hash = target.indexOf('#');
+  return hash < 0 ? [target, ''] : [target.slice(0, hash), target.slice(hash)];
+}
+
+/** A wiki link's display without an alias: its note name without folder, then its subpath. */
+export function unaliasedDisplay(target: string): string {
+  const [path, subpath] = splitSubpath(target);
+  return noteNameOfPath(path) + subpath;
+}
+
+/** A wiki link's target, its alias when written, and the separator written before the alias. */
+interface WikiContent {
+  readonly target: string;
+  readonly alias: string | undefined;
+  readonly separator: '|' | '\\|';
 }
 
 /**
  * Reads a wiki link's content as Obsidian does: the first `|` splits the target from the alias
  * unless nothing comes before it, both parts are trimmed, and one backslash at the end of the
- * target is dropped, which is how the table form `[[Note\|Alias]]` works.
+ * target is dropped, which is how the table form `[[Note\|Alias]]` works; that form's separator
+ * is `\|`.
  */
-function wikiToken(raw: string, content: string, index: number): LinkToken {
+function readWikiContent(content: string): WikiContent {
   const text = content.trim();
   const pipe = text.indexOf('|');
   const written = pipe > 0 ? text.slice(0, pipe).trim() : text;
-  const target = written.endsWith('\\') ? written.slice(0, -1).trim() : written;
-  const alias = pipe > 0 ? text.slice(pipe + 1).trim() : undefined;
+  const escaped = written.endsWith('\\');
+  return {
+    target: escaped ? written.slice(0, -1).trim() : written,
+    alias: pipe > 0 ? text.slice(pipe + 1).trim() : undefined,
+    separator: pipe > 0 && escaped ? '\\|' : '|',
+  };
+}
+
+/**
+ * Collapses each wiki link to its plain form, read as `parseLinks` reads its content: a link with
+ * an alias to the link symbol and its target, any other to the symbol, a space, and its target
+ * without the `.md` extension of its path.
+ */
+export function collapseWikiLinks(input: string): string {
+  return input.replace(WIKILINK_RE, (_match, content: string) => {
+    const { target, alias } = readWikiContent(content);
+    if ((alias ?? '') !== '') return `🔗${target}`;
+    const [path, subpath] = splitSubpath(target);
+    return `🔗 ${withoutMarkdownExtension(path)}${subpath}`;
+  });
+}
+
+function wikiToken(raw: string, content: string, index: number): LinkToken {
+  const { target, alias } = readWikiContent(content);
   return {
     raw,
     type: 'wiki',
@@ -178,7 +211,7 @@ export function exactLinkToken(value: string): LinkToken | undefined {
 
 /**
  * The text that labels a link, never blank: its display, else a wiki link's target without folder
- * and extension, else the link as written.
+ * and `.md` extension, else the link as written.
  */
 export function linkLabel(token: LinkToken): string {
   if (token.display.trim() !== '') return token.display;
@@ -201,11 +234,32 @@ export function countLinksIn(texts: Array<string | undefined>): number {
   return total;
 }
 
-/** Build the raw markup for a link, omitting the wiki alias when it equals the basename. */
-export function buildLinkRaw(type: 'wiki' | 'md', target: string, display: string): string {
-  if (type === 'md') return `[${display}](${target})`;
-  const basename = unaliasedDisplay(target);
-  return Boolean(display) && display !== basename ? `[[${target}|${display}]]` : `[[${target}]]`;
+/** The text a link is written with: a Markdown link's text, a wiki link's alias, else nothing. */
+export function writtenAlias(token: LinkToken): string {
+  return token.type === 'md'
+    ? token.display
+    : (readWikiContent(token.raw.slice(2, -2)).alias ?? '');
+}
+
+/** The separator a wiki link writes before its alias: `\|` in the table form, else `|`. */
+export function aliasSeparator(token: LinkToken): '|' | '\\|' {
+  return token.type === 'md' ? '|' : readWikiContent(token.raw.slice(2, -2)).separator;
+}
+
+/**
+ * Build the raw markup for a link from its written text. A wiki alias is left out when it is
+ * empty, or when it repeats a target with no folder and no `.md` extension, whose label is the
+ * same without it; the separator keeps a table's escaped pipe.
+ */
+export function buildLinkRaw(
+  type: 'wiki' | 'md',
+  target: string,
+  alias: string,
+  separator: '|' | '\\|' = '|',
+): string {
+  if (type === 'md') return `[${alias}](${target})`;
+  const redundant = alias === '' || (alias === target && target === unaliasedDisplay(target));
+  return redundant ? `[[${target}]]` : `[[${target}${separator}${alias}]]`;
 }
 
 export interface AnchorDescriptor {

@@ -35,6 +35,10 @@ describe('panelTitle', () => {
     expect(listSelectionTitle({ type: 'project', path: 'Plan' }, groups)).toBe('Plan');
   });
 
+  it('Y1j names a project note with an upper-case .MD as Obsidian does', () => {
+    expect(listSelectionTitle({ type: 'project', path: 'Projects/Plan.MD' }, groups)).toBe('Plan');
+  });
+
   it('names every mode and asks for the list name only in tasks mode', () => {
     const listTitle = vi.fn(() => 'Work');
     expect(panelTitle('tasks', listTitle)).toBe('Work');

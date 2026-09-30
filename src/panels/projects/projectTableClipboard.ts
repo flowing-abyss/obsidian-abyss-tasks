@@ -1,4 +1,4 @@
-import { buildLinkRaw, parseLinks } from '../../markdown/links';
+import { aliasSeparator, buildLinkRaw, parseLinks, writtenAlias } from '../../markdown/links';
 import type { ProjectFieldCatalogItem } from '../../projects/projectFields';
 import { projectTableLinkTargetParts } from '../../projects/projectTableLinkTarget';
 
@@ -459,7 +459,7 @@ function rebaseString(
     if (resolved === undefined) continue;
     const linktext = rebaser.linktext(resolved, destinationPath);
     const target = `${link.type === 'md' ? encodeURI(linktext) : linktext}${subpath}`;
-    const raw = buildLinkRaw(link.type, target, link.display);
+    const raw = buildLinkRaw(link.type, target, writtenAlias(link), aliasSeparator(link));
     result = `${result.slice(0, link.index)}${raw}${result.slice(link.index + link.raw.length)}`;
   }
   return result;

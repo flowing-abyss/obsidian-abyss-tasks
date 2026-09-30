@@ -1,4 +1,5 @@
 import { normalizePath } from 'obsidian';
+import { noteNameOfPath } from '../../../markdown/noteName';
 import { compileNotePathPattern } from '../../../markdown/notePathPattern';
 import type {
   TaskDestinationPlan,
@@ -31,11 +32,6 @@ interface DestinationPlanOptions {
   readonly provisionDestination?: boolean;
 }
 
-function titleFor(filePath: string): string {
-  const name = filePath.slice(filePath.lastIndexOf('/') + 1);
-  return name.toLowerCase().endsWith('.md') ? name.slice(0, -'.md'.length) : name;
-}
-
 export class ObsidianTaskDestinationProvider implements TaskDestinationProvider {
   constructor(
     private readonly currentConfiguration: CurrentTaskDestinationConfiguration,
@@ -53,7 +49,7 @@ export class ObsidianTaskDestinationProvider implements TaskDestinationProvider 
       insertion: { ...configuration.insertion },
     };
     return Promise.resolve(
-      this.plan(destination, configuration.taskTemplatePath, titleFor(destination.filePath), {
+      this.plan(destination, configuration.taskTemplatePath, noteNameOfPath(destination.filePath), {
         allowExcluded: false,
       }),
     );
@@ -67,7 +63,7 @@ export class ObsidianTaskDestinationProvider implements TaskDestinationProvider 
       insertion: { type: 'append' },
     };
     return Promise.resolve(
-      this.plan(destination, '', titleFor(destination.filePath), { allowExcluded: true }),
+      this.plan(destination, '', noteNameOfPath(destination.filePath), { allowExcluded: true }),
     );
   }
 
@@ -80,7 +76,7 @@ export class ObsidianTaskDestinationProvider implements TaskDestinationProvider 
       insertion: { ...destination.insertion },
     };
     return Promise.resolve(
-      this.plan(planned, '', titleFor(planned.filePath), {
+      this.plan(planned, '', noteNameOfPath(planned.filePath), {
         allowExcluded: false,
         provisionDestination: options.provision,
       }),

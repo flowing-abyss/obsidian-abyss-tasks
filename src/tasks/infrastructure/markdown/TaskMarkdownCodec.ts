@@ -1,4 +1,4 @@
-import { parseLinks } from '../../../markdown/links';
+import { collapseWikiLinks, parseLinks } from '../../../markdown/links';
 import { type StatusCatalog } from '../../domain/StatusCatalog';
 import { parseRecurrenceRule } from '../../domain/recurrence';
 import {
@@ -266,8 +266,6 @@ const DATE_SPAN_KINDS = new Set<TaskSpanKind>([
   'completion',
 ]);
 
-const WIKILINK_ALIAS_RE = /\[\[([^|[\]]+)\|([^[\]]+)\]\]/gu;
-const WIKILINK_RE = /\[\[([^[\]]+)\]\]/gu;
 const MD_LINK_RE = /\[([^[\]]+)\]\(([^)]+)\)/gu;
 const BRACKETS_RE = /\[([^[\]]*)\]/gu;
 
@@ -278,11 +276,7 @@ function collapseMarkdownLinks(input: string): string {
 }
 
 function collapseLinks(input: string): string {
-  return collapseMarkdownLinks(
-    input
-      .replace(WIKILINK_ALIAS_RE, '🔗$1')
-      .replace(WIKILINK_RE, (_match, link: string) => `🔗 ${link.replace(/\.[^.]*$/u, '')}`),
-  ).replace(BRACKETS_RE, '$1');
+  return collapseMarkdownLinks(collapseWikiLinks(input)).replace(BRACKETS_RE, '$1');
 }
 
 function spliceSource(source: string, from: number, to: number, replacement: string): string {
