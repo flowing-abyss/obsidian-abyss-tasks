@@ -281,6 +281,25 @@ async function settleChangedCustomDate(
   return card;
 }
 
+/** Opens "Set date…" from a card's menu under fake timers, then closes the picker with Escape. */
+function escapeCardDatePicker(
+  el: HTMLElement,
+  card: HTMLElement,
+  items: readonly CapturedMenuItem[],
+): void {
+  openMenu(card);
+  items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+  vi.runOnlyPendingTimers();
+  const input = expectDefined(
+    el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
+  );
+  expect(activeDocument.activeElement).toBe(input);
+  input.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
+  expect(el.querySelector('.abyss-date-picker-popover')).toBeNull();
+}
+
 /** Opens "Set date…" from the focused card and types a date without committing it. */
 async function openCustomDateDraft(el: HTMLElement, items: readonly CapturedMenuItem[]) {
   const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
@@ -1097,6 +1116,51 @@ describe('CenterPanel task date context menus', () => {
       panel.refresh();
 
       expect(activeDocument.activeElement).toBe(activeDocument.body);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('returns focus to a Search result card when its date picker closes', () => {
+    vi.useFakeTimers();
+    const items = captureMenu();
+    const { el, state, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+
+    try {
+      state.set('searchQuery', 'first');
+      state.set('mode', 'search');
+      const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
+
+      escapeCardDatePicker(el, card, items);
+
+      expect(activeDocument.activeElement).toBe(card);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('returns focus to a dashboard card when its date picker closes', () => {
+    vi.useFakeTimers();
+    const items = captureMenu();
+    const { el, state, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+
+    try {
+      state.set('mode', 'projects');
+      const host = el.createDiv({ cls: 'abyss-project-tasks' });
+      (
+        panel as unknown as {
+          renderProjectTasks_abyssPrivate(host: HTMLElement, path: string): void;
+        }
+      ).renderProjectTasks_abyssPrivate(host, 'a.md');
+      const card = expectDefined(host.querySelector<HTMLElement>('.abyss-task-card'));
+
+      escapeCardDatePicker(el, card, items);
+
+      expect(activeDocument.activeElement).toBe(card);
     } finally {
       panel.destroy();
       el.remove();

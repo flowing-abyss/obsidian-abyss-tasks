@@ -409,6 +409,7 @@ export default defineConfig(
     files: [
       'src/panels/projects/**/*.ts',
       'src/panels/calendar/**/*.ts',
+      'src/panels/task-list/**/*.ts',
       'src/ui/projectActions.ts',
     ],
     rules: { 'project-policy/ambient': ['error', 'owner'] },

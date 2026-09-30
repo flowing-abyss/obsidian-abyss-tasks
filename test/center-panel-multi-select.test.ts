@@ -87,6 +87,15 @@ function attach(el: HTMLElement): void {
   activeDocument.body.append(el);
 }
 
+/** Renders a project's task list into the panel through the entry a project dashboard calls. */
+function renderDashboardList(panel: CenterPanel, el: HTMLElement, path: string): HTMLElement {
+  const host = el.createDiv({ cls: 'abyss-project-tasks' });
+  (
+    panel as unknown as { renderProjectTasks_abyssPrivate(host: HTMLElement, path: string): void }
+  ).renderProjectTasks_abyssPrivate(host, path);
+  return host;
+}
+
 describe('CenterPanel multi-selection', () => {
   const t1 = task({
     status: 'open',
@@ -693,5 +702,22 @@ describe('CenterPanel multi-selection', () => {
     } finally {
       frame.remove();
     }
+  });
+
+  it('opens a clicked dashboard card without focusing or scrolling it', () => {
+    const { el, state, panel } = makeCenter([t1, t2, t3]);
+    attach(el);
+    state.set('mode', 'projects');
+    const dashboard = renderDashboardList(panel, el, 'a.md');
+    const card = expectDefined(cards(dashboard)[1]);
+    card.scrollIntoView = vi.fn();
+
+    click(card);
+
+    expect(state.get('taskStack')).toEqual([t2]);
+    expect(card.classList.contains('is-selected')).toBe(true);
+    expect(methodOf(card, 'scrollIntoView')).not.toHaveBeenCalled();
+    expect(activeDocument.activeElement).not.toBe(card);
+    el.remove();
   });
 });
