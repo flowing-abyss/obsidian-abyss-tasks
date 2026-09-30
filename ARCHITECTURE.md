@@ -88,7 +88,8 @@ until the command settles: `PanelView`'s selection wrapper registers every such 
 inspector registers its Delete task and Archive in its own state, the task modal's included. The
 registry is transient and unpublished. While the selected root's removal is pending, an index
 update that does not resolve it exactly clears the selection instead of following its line to the
-next task.
+next task. A successful move then selects the moved task in its new note, with the sub-task and the
+inspector history the selection had before the move.
 
 ## Calendar mode
 
@@ -288,9 +289,10 @@ at once, before any render the change causes, so the paths on screen agree with 
 the debounced refresh then re-reads the note. It adds no persisted cache.
 
 [ProjectManager](src/projects/ProjectManager.ts) creates notes without opening them, edits project
-frontmatter, and moves tasks through `TaskApplicationApi`. Membership comes from the configured
-query. Status uses one configured frontmatter property and literal status-definition names; project
-tags do not carry status.
+frontmatter, and moves tasks through `TaskApplicationApi`, the caller's when it passes one: a panel's
+project drop passes its selection wrapper, so the panel sees its own move. Membership comes from the
+configured query. Status uses one configured frontmatter property and literal status-definition
+names; project tags do not carry status.
 
 `projectFields` owns case-insensitive field lookup and the shared catalog. Status, start, and end
 have configured source properties; description uses `description`. Name comes from the filename,

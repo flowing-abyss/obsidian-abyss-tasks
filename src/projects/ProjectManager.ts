@@ -831,11 +831,16 @@ export class ProjectManager {
   /**
    * Move a task into a project by physically relocating its markdown block into
    * the project note (membership == file location). No-op when the task already
-   * lives in that note. Honors the plugin's task-insertion setting.
+   * lives in that note. Honors the plugin's task-insertion setting. The command runs
+   * on the caller's task API when it passes one, else on the manager's own.
    */
-  async moveTaskToProject(ref: TaskRef, projectPath: string): Promise<TaskCommandResult> {
+  async moveTaskToProject(
+    ref: TaskRef,
+    projectPath: string,
+    tasks: TaskApplicationApi = this.tasks,
+  ): Promise<TaskCommandResult> {
     const insertion = projectTaskInsertion(this.settings.projects);
-    return this.tasks.execute({
+    return tasks.execute({
       type: 'move',
       ref,
       destination: { filePath: projectPath, insertion },

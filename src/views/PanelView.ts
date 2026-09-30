@@ -1,5 +1,5 @@
 import { ItemView, Notice, Platform, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
-import { AppState } from '../app/AppState';
+import { AppState, type AppStateData } from '../app/AppState';
 import { CenterPanel } from '../panels/CenterPanel';
 import { LeftPanel } from '../panels/LeftPanel';
 import { RailPanel } from '../panels/RailPanel';
@@ -188,6 +188,9 @@ function isResizeObserverConstructor(value: unknown): value is ResizeObserverCon
 
 /** The commands that take a root task out of its note, so its line may pass to the next task. */
 const ROOT_REMOVALS: ReadonlySet<TaskCommand['type']> = new Set(['delete', 'archive', 'move']);
+
+/** The selection and inspector history before a removal, which a pending removal clears. */
+type SelectionOrigin = Pick<AppStateData, 'taskStack' | 'inspectorBackStack'>;
 
 export class PanelView extends ItemView {
   private state_abyssPrivate!: AppState;
@@ -437,13 +440,16 @@ export class PanelView extends ItemView {
     removesRoot: boolean,
     run: () => Promise<TaskCommandResult>,
   ): Promise<TaskCommandResult> {
+    const state = this.state_abyssPrivate;
+    const origin: SelectionOrigin | undefined = removesRoot
+      ? { taskStack: state.get('taskStack'), inspectorBackStack: state.get('inspectorBackStack') }
+      : undefined;
     const release =
-      removesRoot && initiatingRef != null
-        ? this.state_abyssPrivate.beginTaskRemoval(initiatingRef)
-        : undefined;
+      removesRoot && initiatingRef != null ? state.beginTaskRemoval(initiatingRef) : undefined;
     try {
       const result = await run();
-      if (initiatingRef != null) this.convergeOwnCommand_abyssPrivate(initiatingRef, result);
+      if (initiatingRef != null)
+        this.convergeOwnCommand_abyssPrivate(initiatingRef, result, origin);
       return result;
     } finally {
       release?.();
@@ -1296,14 +1302,28 @@ export class PanelView extends ItemView {
     }
   }
 
-  private convergeOwnCommand_abyssPrivate(initiatingRef: TaskRef, result: TaskCommandResult): void {
+  /**
+   * Re-points the selection at the command's resulting task while the selection is the command's
+   * root. A move that its pending removal cleared follows its task from the selection and the
+   * inspector history it began with.
+   */
+  private convergeOwnCommand_abyssPrivate(
+    initiatingRef: TaskRef,
+    result: TaskCommandResult,
+    origin?: SelectionOrigin,
+  ): void {
     if (result.type !== 'ok' || result.outcome.type !== 'task') return;
-    const stack = this.state_abyssPrivate.get('taskStack');
+    const state = this.state_abyssPrivate;
+    const cleared = state.get('taskStack').length === 0 ? origin : undefined;
+    const stack = cleared?.taskStack ?? state.get('taskStack');
     const selectedRef = stack[0] != null ? rootTaskRef(stack[0]) : undefined;
     if (selectedRef == null || !this.sameRef_abyssPrivate(selectedRef, initiatingRef)) return;
     const updated = result.outcome.task;
     const draft = this.right_abyssPrivate.captureDraftState();
-    this.state_abyssPrivate.updateInspectorSelection(rebuildTaskSelection(updated, stack));
+    state.batch(() => {
+      if (cleared != null) state.set('inspectorBackStack', cleared.inspectorBackStack);
+      state.updateInspectorSelection(rebuildTaskSelection(updated, stack));
+    });
     this.right_abyssPrivate.restoreDraftState(draft, updated);
     this.ownedWriteRef_abyssPrivate = result.changed ? { ...updated.ref } : undefined;
   }

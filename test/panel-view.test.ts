@@ -1,6 +1,7 @@
 import { Menu, MenuItem, Notice, Platform, TFile, WorkspaceLeaf, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { type AppState, type ListSelection } from '../src/app/AppState';
+import { ProjectManager } from '../src/projects/ProjectManager';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
@@ -33,6 +34,7 @@ import {
   configuredTaskApplication,
   createAppWithFiles,
   deferred,
+  dispatchDnD,
   expectDefined,
   flushMicrotasks,
   loadPluginStyles,
@@ -175,7 +177,12 @@ describe('PanelView dependency command convergence', () => {
       const converge = vi.spyOn(internals, 'convergeOwnCommand_abyssPrivate');
       const restored = await tasks.execute({ type: 'restore-subtask', ...recovery });
       expect(restored.type).toBe('ok');
-      expect(converge).toHaveBeenCalledExactlyOnceWith(deleted.outcome.task.ref, restored);
+      // A restore removes no root task, so the convergence gets no pre-command selection.
+      expect(converge).toHaveBeenCalledExactlyOnceWith(
+        deleted.outcome.task.ref,
+        restored,
+        undefined,
+      );
       expect(
         internals.state_abyssPrivate.get('taskStack')[0]?.subtasks.map((child) => child.title),
       ).toEqual(['Removed', 'Next']);
@@ -336,6 +343,7 @@ interface RemovalPanel {
   /** Holds index updates from the panel until the returned release delivers them. */
   holdIndexEvents(): () => void;
   card(title: string): HTMLElement;
+  projectRow(name: string): HTMLElement;
   select(title: string): void;
   read(path?: string): Promise<string>;
   close(): Promise<void>;
@@ -382,6 +390,15 @@ async function openRemovalPanel(
     }),
   );
   const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+  // As in main.ts, the plugin's project manager runs its commands on the raw task service.
+  const projectManager = new ProjectManager(
+    app,
+    settings,
+    {
+      createNoteFromTemplate: () => Promise.reject(new Error('No project notes in this test')),
+    },
+    application.tasks,
+  );
   const view = new PanelView(
     leaf,
     settings,
@@ -389,6 +406,10 @@ async function openRemovalPanel(
     application.index,
     application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
     application.statusRegistry,
+    async () => {},
+    undefined,
+    async () => {},
+    projectManager,
   );
   await view.onOpen();
   activeDocument.body.appendChild(view.containerEl);
@@ -417,6 +438,12 @@ async function openRemovalPanel(
       };
     },
     card,
+    projectRow: (name) =>
+      expectDefined(
+        [...view.contentEl.querySelectorAll<HTMLElement>('.abyss-project-item')].find(
+          (row) => row.querySelector('.abyss-left-label')?.textContent === name,
+        ),
+      ),
     select: (title) => {
       card(title).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     },
@@ -708,6 +735,189 @@ describe('PanelView own task removals', () => {
       expect(await panel.read()).not.toContain('First');
       expect(panel.state.get('taskStack').map((node) => node.title)).toEqual(['Third']);
       expect(panel.card('Third').querySelector('.abyss-task-delete-btn')).not.toBeNull();
+    } finally {
+      await panel.close();
+    }
+  });
+});
+
+const PROJECT_NOTE = '---\nstatus: wip\n---\n# Tasks\n';
+
+function projectFiles(
+  titles: readonly string[] = ['First', 'Second', 'Third'],
+): Record<string, string> {
+  return { 'today.md': todayNote(titles), 'Projects/P.md': PROJECT_NOTE };
+}
+
+const projectDrops: ReadonlyArray<readonly [string, (panel: RemovalPanel, title: string) => void]> =
+  [
+    [
+      'onto the left panel project row',
+      (panel, title) => {
+        dispatchDnD(panel.card(title), 'dragstart');
+        dispatchDnD(panel.projectRow('P'), 'drop');
+      },
+    ],
+    [
+      'of the project row onto the card',
+      (panel, title) => {
+        dispatchDnD(panel.projectRow('P'), 'dragstart');
+        dispatchDnD(panel.card(title), 'drop');
+        dispatchDnD(panel.projectRow('P'), 'dragend');
+      },
+    ],
+  ];
+
+function selectedCardTitles(panel: RemovalPanel): string[] {
+  return [
+    ...panel.view.contentEl.querySelectorAll<HTMLElement>('.abyss-task-card.is-selected'),
+  ].map((card) => card.querySelector('.abyss-task-title')?.textContent ?? '');
+}
+
+function cardsWithTheX(panel: RemovalPanel): string[] {
+  return [...panel.view.contentEl.querySelectorAll<HTMLElement>('.abyss-task-delete-btn')].map(
+    (button) =>
+      button.closest('.abyss-task-card')?.querySelector('.abyss-task-title')?.textContent ?? '',
+  );
+}
+
+function selectedRoot(panel: RemovalPanel): { readonly title: string; readonly filePath: string } {
+  const root = expectDefined(panel.state.get('taskStack')[0]);
+  if (!('source' in root)) throw new Error('The selection has no root task');
+  return { title: root.title, filePath: root.source.filePath };
+}
+
+describe('PanelView project moves of the inspected task', () => {
+  it.each(projectDrops)(
+    'a drop %s keeps the moved task in the inspector when the index update lands first',
+    async (_name, drop) => {
+      const panel = await openRemovalPanel(projectFiles());
+      try {
+        panel.select('First');
+        panel.selections.length = 0;
+
+        drop(panel, 'First');
+        await settleRemoval();
+
+        expect(await panel.read('Projects/P.md')).toContain('First');
+        expect(await panel.read()).not.toContain('First');
+        expect(selectedRoot(panel)).toEqual({ title: 'First', filePath: 'Projects/P.md' });
+        expect(panel.selections.flat().filter((title) => title !== 'First')).toEqual([]);
+        expect(selectedCardTitles(panel)).toEqual(['First']);
+        expect(cardsWithTheX(panel)).toEqual(['First']);
+      } finally {
+        await panel.close();
+      }
+    },
+  );
+
+  it.each(projectDrops)(
+    'a drop %s keeps the moved task in the inspector when the index update lands after the command',
+    async (_name, drop) => {
+      const panel = await openRemovalPanel(projectFiles());
+      try {
+        panel.select('First');
+        panel.selections.length = 0;
+        const release = panel.holdIndexEvents();
+
+        drop(panel, 'First');
+        await settleRemoval();
+        expect(await panel.read('Projects/P.md')).toContain('First');
+        release();
+        await settleRemoval();
+
+        expect(selectedRoot(panel)).toEqual({ title: 'First', filePath: 'Projects/P.md' });
+        expect(panel.selections.flat().filter((title) => title !== 'First')).toEqual([]);
+        expect(selectedCardTitles(panel)).toEqual(['First']);
+        expect(cardsWithTheX(panel)).toEqual(['First']);
+      } finally {
+        await panel.close();
+      }
+    },
+  );
+
+  it('keeps the inspected sub-task and the back stack through the move', async () => {
+    const today = window.moment().format('YYYY-MM-DD');
+    const panel = await openRemovalPanel({
+      'today.md': `\n- [ ] First 📅 ${today}\n  - [ ] Child\n- [ ] Second 📅 ${today}\n- [ ] Third 📅 ${today}\n`,
+      'Projects/P.md': PROJECT_NOTE,
+    });
+    try {
+      const nodes = panel.application.index.listNodes();
+      const third = expectDefined(nodes.find(({ node }) => node.title === 'Third'));
+      const child = expectDefined(nodes.find(({ node }) => node.title === 'Child'));
+      panel.state.set('taskStack', [third.root]);
+      panel.state.openInspectorDependency(child);
+      const history = panel.state.get('inspectorBackStack');
+      expect(panel.state.get('taskStack').map((node) => node.title)).toEqual(['First', 'Child']);
+
+      expectDefined(projectDrops[0])[1](panel, 'First');
+      await settleRemoval();
+
+      expect(selectedRoot(panel)).toEqual({ title: 'First', filePath: 'Projects/P.md' });
+      expect(panel.state.get('taskStack').map((node) => node.title)).toEqual(['First', 'Child']);
+      expect(panel.state.get('inspectorBackStack')).toEqual(history);
+    } finally {
+      await panel.close();
+    }
+  });
+
+  it('keeps the selection on the source task when the move fails', async () => {
+    const panel = await openRemovalPanel(projectFiles());
+    try {
+      panel.select('First');
+      const first = selectedRoot(panel);
+      vi.spyOn(panel.application.tasks, 'execute').mockResolvedValueOnce({
+        type: 'io-error',
+        cause: 'repository-error',
+        contentState: 'unchanged',
+      });
+
+      expectDefined(projectDrops[0])[1](panel, 'First');
+      await settleRemoval();
+
+      expect(selectedRoot(panel)).toEqual(first);
+      expect(selectedCardTitles(panel)).toEqual(['First']);
+    } finally {
+      await panel.close();
+    }
+  });
+
+  it('keeps the inspected task when another task moves', async () => {
+    const panel = await openRemovalPanel(projectFiles());
+    try {
+      panel.select('Second');
+
+      expectDefined(projectDrops[0])[1](panel, 'First');
+      await settleRemoval();
+
+      expect(await panel.read('Projects/P.md')).toContain('First');
+      expect(selectedRoot(panel)).toEqual({ title: 'Second', filePath: 'today.md' });
+      expect(cardsWithTheX(panel)).toEqual(['Second']);
+    } finally {
+      await panel.close();
+    }
+  });
+
+  it('keeps a selection begun while the move runs', async () => {
+    const panel = await openRemovalPanel(projectFiles());
+    try {
+      panel.select('First');
+      const gate = deferred<undefined>();
+      const execute = panel.application.tasks.execute.bind(panel.application.tasks);
+      vi.spyOn(panel.application.tasks, 'execute').mockImplementation(async (command) => {
+        await gate.promise;
+        return execute(command);
+      });
+
+      expectDefined(projectDrops[0])[1](panel, 'First');
+      panel.select('Third');
+      gate.resolve(undefined);
+      await settleRemoval();
+
+      expect(await panel.read('Projects/P.md')).toContain('First');
+      expect(selectedRoot(panel)).toEqual({ title: 'Third', filePath: 'today.md' });
+      expect(cardsWithTheX(panel)).toEqual(['Third']);
     } finally {
       await panel.close();
     }

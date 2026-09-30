@@ -90,7 +90,7 @@ function openRecovery(
 }
 
 describe('partial move recovery presentation', () => {
-  it('routes a project drop through ProjectManager and opens recovery for its partial result', async () => {
+  it("routes a project drop through ProjectManager on the caller's task API and opens recovery for its partial result", async () => {
     const app = await createAppWithFiles({});
     const tasks = taskApi(exact(snapshot(source)));
     const manager = { moveTaskToProject: vi.fn().mockResolvedValue(partial()) };
@@ -98,7 +98,7 @@ describe('partial move recovery presentation', () => {
 
     await moveTaskToProjectWithRecovery(app, tasks, manager as never, source, 'Projects/P.md');
 
-    expect(manager.moveTaskToProject).toHaveBeenCalledWith(source, 'Projects/P.md');
+    expect(manager.moveTaskToProject).toHaveBeenCalledWith(source, 'Projects/P.md', tasks);
     expect(open).toHaveBeenCalledOnce();
   });
 
