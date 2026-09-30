@@ -56,7 +56,7 @@ export function mountTaskListRows(
   };
 }
 
-/** Nothing mounted: the handle before the first list render and outside the three surfaces. */
+/** Nothing mounted: the handle before the first card render and at the start of each one. */
 export const NO_MOUNTED_TASK_LIST_ROWS: MountedTaskListRows = {
   rows: NO_TASK_LIST_ROWS,
   element: () => undefined,

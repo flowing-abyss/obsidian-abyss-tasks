@@ -1079,7 +1079,7 @@ export class CenterPanel {
     this.mountTaskRows_abyssPrivate(container, buildTaskListRows(tasks, grouping), tagGroups);
   }
 
-  /** Mounts the tasks as ungrouped rows: Search results, a dashboard list, and ungrouped lists. */
+  /** Mounts the tasks as ungrouped rows: Search results and a dashboard list. */
   private renderFlat_abyssPrivate(
     container: HTMLElement,
     tasks: TaskSnapshot[],
