@@ -634,7 +634,10 @@ name that kind's limit from [`test/support/timeouts.ts`](test/support/timeouts.t
 on the configs' `testTimeout` and `hookTimeout`, one rule sizes both, and the
 [time limit check](test/test-timeouts.test.ts) holds every row and hook of both gates to it,
 following names through the helpers and modules outside `src/` that test files load, but not
-dynamic property calls, functions passed in from modules it does not read, or plugin code.
+dynamic property calls, functions passed in from modules it does not read, or plugin code. A row
+that times its own work reads the process's CPU clock through
+[`cpuMilliseconds`](test/support/cpuTime.ts) or `interleavedRatio` in
+[`test/helpers.ts`](test/helpers.ts), never the wall clock.
 
 Update this document in the implementing commit when ownership, a public boundary, dependency
 direction, a critical data flow, persisted authority/migration, or a compatibility seam changes.

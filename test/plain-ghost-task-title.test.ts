@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { plainGhostTaskTitle } from '../src/ui/plainGhostTaskTitle';
-import { medianInterleavedRatio, task } from './helpers';
+import { interleavedRatio, task } from './helpers';
 
 const LINE_SEPARATOR = String.fromCodePoint(0x2028);
 const PARAGRAPH_SEPARATOR = String.fromCodePoint(0x2029);
@@ -57,7 +57,7 @@ describe('plainGhostTaskTitle', () => {
     // threshold is their geometric mean, and interleaved pairs keep a CPU speed change to the
     // pair it splits.
     expect(
-      medianInterleavedRatio({
+      interleavedRatio({
         small: () => plainGhostTaskTitle(small),
         large: () => plainGhostTaskTitle(large),
       }),

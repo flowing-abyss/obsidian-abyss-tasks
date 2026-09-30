@@ -44,6 +44,7 @@ import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/Obs
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
 import { TimeEntryIndex } from '../src/tasks/infrastructure/TimeEntryIndex';
+import { cpuMilliseconds } from './support/cpuTime';
 import { expandCompoundSelectorLists } from './support/expandedCss';
 
 export async function loadPluginStyles(): Promise<string> {
@@ -1027,41 +1028,76 @@ export function fixedToday(dateStr: string): void {
 }
 
 /**
- * The median of `pairs` large/small time ratios. After one unrecorded call of each, it doubles
- * `repeat` from 1 (at most 65536) until one batch of `small` takes at least `minSampleMs`. Each
- * pair then runs `small` and `large` back to back, `repeat` times each, alternating which goes
- * first, after `warmup` unrecorded pairs, so a CPU speed change biases only the pair it splits.
+ * The ratio of `large`'s time to `small`'s on the process's CPU clock (`clock` serves this helper's
+ * own rows). After one unrecorded call of each, `repeat` doubles from 1 (at most 65536) until the
+ * fastest of three batches of `small` takes at least `minSampleMs`, once before `warmup` unrecorded
+ * pairs and once after them, on warm code. Each of `pairs` recorded pairs then runs `small` and
+ * `large` back to back, `repeat` times each, alternating which goes first. Helper threads' work and
+ * other lumps only add to a batch, and under load the CPU time of the same work changes within a
+ * call, so the helper reads two ratios of the fastest batches and returns the lower: the fastest
+ * large batch over the fastest small batch, and the median over the pairs of the same ratio within
+ * each pair and its neighbours. The first reads high when a short stretch speeds up only small
+ * batches, the second when such stretches fill more than half the windows.
  */
-export function medianInterleavedRatio(options: {
+export function interleavedRatio(options: {
   readonly small: () => void;
   readonly large: () => void;
   readonly pairs?: number;
   readonly warmup?: number;
   readonly minSampleMs?: number;
+  readonly clock?: () => number;
 }): number {
-  const { small, large, pairs = 41, warmup = 5, minSampleMs = 0.1 } = options;
+  const {
+    small,
+    large,
+    pairs = 41,
+    warmup = 5,
+    minSampleMs = 0.1,
+    clock = cpuMilliseconds,
+  } = options;
   let repeat = 1;
   const batchMs = (run: () => void): number => {
-    const startedAt = performance.now();
+    const startedAt = clock();
     for (let index = 0; index < repeat; index++) run();
-    return performance.now() - startedAt;
+    return clock() - startedAt;
+  };
+  const calibrate = (): void => {
+    while (
+      Math.min(batchMs(small), batchMs(small), batchMs(small)) < minSampleMs &&
+      repeat < 65_536
+    ) {
+      repeat *= 2;
+    }
+  };
+  const runPair = (index: number): readonly [smallMs: number, largeMs: number] => {
+    if (index % 2 === 0) {
+      const smallMs = batchMs(small);
+      return [smallMs, batchMs(large)];
+    }
+    const largeMs = batchMs(large);
+    return [batchMs(small), largeMs];
   };
   small();
   large();
-  while (batchMs(small) < minSampleMs && repeat < 65_536) repeat *= 2;
-  const pairRatio = (index: number): number => {
-    if (index % 2 === 0) {
-      const smallMs = batchMs(small);
-      return batchMs(large) / smallMs;
-    }
-    const largeMs = batchMs(large);
-    return largeMs / batchMs(small);
-  };
-  for (let index = 0; index < warmup; index++) pairRatio(index);
-  const ratios = Array.from({ length: pairs }, (_, index) => pairRatio(index)).sort(
-    (left, right) => left - right,
+  calibrate();
+  for (let index = 0; index < warmup; index++) runPair(index);
+  calibrate();
+  const smallBatches: number[] = [];
+  const largeBatches: number[] = [];
+  for (let index = 0; index < pairs; index++) {
+    const [smallMs, largeMs] = runPair(index);
+    smallBatches.push(smallMs);
+    largeBatches.push(largeMs);
+  }
+  const fastestRatio = (from: number, to: number): number =>
+    Math.min(...largeBatches.slice(from, to)) / Math.min(...smallBatches.slice(from, to));
+  const windowRatios = smallBatches
+    .map((_, index) => fastestRatio(Math.max(0, index - 1), index + 2))
+    .sort((left, right) => left - right);
+  return Math.min(
+    fastestRatio(0, pairs),
+    expectDefined(windowRatios[Math.floor(windowRatios.length / 2)]),
   );
-  return expectDefined(ratios[Math.floor(ratios.length / 2)]);
 }
 
 /**

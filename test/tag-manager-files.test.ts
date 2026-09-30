@@ -11,6 +11,7 @@ import {
 import { transformMarkdownTags } from '../src/tags/markdownTagRename';
 import { TagManager } from '../src/tags/TagManager';
 import { createAppWithFiles, expectDefined } from './helpers';
+import { cpuMilliseconds } from './support/cpuTime';
 
 async function makeManager(files: Record<string, string> = {}) {
   const settings: CalendarSettings = {
@@ -533,9 +534,9 @@ describe('TagManager exact and prefix vault rename', () => {
       ): { readonly searchWork: number; readonly length: number; readonly elapsedMs: number } => {
         const original = `${candidate.repeat(count)} trailing #work`;
         const counted = countedString(original);
-        const started = activeWindow.performance.now();
+        const started = cpuMilliseconds();
         const transformed = transformMarkdownTags(counted.source, '#work', '#focus', 'exact');
-        const elapsedMs = activeWindow.performance.now() - started;
+        const elapsedMs = cpuMilliseconds() - started;
         const expected =
           candidate === '<!--' ? original : `${candidate.repeat(count)} trailing #focus`;
         expect(transformed).toBe(expected);

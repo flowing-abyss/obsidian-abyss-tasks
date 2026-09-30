@@ -7,7 +7,7 @@ import {
   parseLinks,
   type LinkToken,
 } from '../src/markdown/links';
-import { expectDefined, medianInterleavedRatio } from './helpers';
+import { expectDefined, interleavedRatio } from './helpers';
 
 function insecureUrl(host: string): string {
   return ['http:', '', host].join('/');
@@ -166,7 +166,7 @@ describe('parseLinks', () => {
     // Four times the candidates cost about 4x; quadratic work costs 16x. The threshold is their
     // geometric mean, and interleaved pairs keep a CPU speed change to the pair it splits.
     expect(
-      medianInterleavedRatio({ small: () => parseLinks(small), large: () => parseLinks(large) }),
+      interleavedRatio({ small: () => parseLinks(small), large: () => parseLinks(large) }),
     ).toBeLessThan(8);
   });
 });
@@ -285,7 +285,7 @@ describe('image and embed openers', () => {
     // threshold is their geometric mean, and interleaved pairs keep a CPU speed change to the
     // pair it splits.
     expect(
-      medianInterleavedRatio({ small: () => parseLinks(small), large: () => parseLinks(large) }),
+      interleavedRatio({ small: () => parseLinks(small), large: () => parseLinks(large) }),
     ).toBeLessThan(8);
   });
 });
@@ -579,7 +579,7 @@ describe('parseLinks growth', () => {
     const large = source(14);
 
     expect(
-      medianInterleavedRatio({
+      interleavedRatio({
         small: () => countLinksIn([small]),
         large: () => countLinksIn([large]),
       }),
@@ -610,7 +610,7 @@ describe('parseLinks growth', () => {
 
     // Four times the text costs about 4x; quadratic work costs 16x.
     expect(
-      medianInterleavedRatio({ small: () => parseLinks(small), large: () => parseLinks(large) }),
+      interleavedRatio({ small: () => parseLinks(small), large: () => parseLinks(large) }),
     ).toBeLessThan(8);
   });
 });

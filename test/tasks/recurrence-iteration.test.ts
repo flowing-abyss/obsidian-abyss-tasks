@@ -10,7 +10,7 @@ import type { TaskPlanning } from '../../src/tasks/domain/types';
 import { localDate, localTime } from '../../src/tasks/domain/validation';
 import { stripTerminalBlockId } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
-import { canonicalStatusCatalog, medianInterleavedRatio } from '../helpers';
+import { canonicalStatusCatalog, interleavedRatio } from '../helpers';
 
 const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
 
@@ -596,7 +596,7 @@ describe('stripTerminalBlockId', () => {
     // threshold is their geometric mean, and interleaved pairs keep a CPU speed change to the
     // pair it splits.
     expect(
-      medianInterleavedRatio({
+      interleavedRatio({
         small: () => stripTerminalBlockId(small),
         large: () => stripTerminalBlockId(large),
       }),
