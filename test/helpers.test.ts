@@ -1,6 +1,6 @@
 import { Platform, setIcon } from 'obsidian';
 import ts from 'typescript';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runtimeReferences } from './architecture/runtimeReferences';
 import { interleavedRatio, subtask, task, useRealMoment, withMobile } from './helpers';
 
@@ -188,12 +188,20 @@ describe('test helpers', () => {
         .map(([, chain]) => chain.join(' > '));
 
       expect([...chains.keys()].some((module) => module.startsWith('src/'))).toBe(true);
+      expect(
+        [...chains.values()].some(
+          (chain) => chain.filter((module) => module.startsWith('src/')).length >= 2,
+        ),
+      ).toBe(true);
       expect(presentation).toEqual([]);
       expect(unreadable).toEqual([]);
     });
   });
 
   describe('interleavedRatio', () => {
+    afterEach(() => {
+      processClock.read = () => 0;
+    });
     const PAIRS = 41;
     const MIN_SAMPLE_MS = 0.1;
     // The ratio cases count in tenths, so that every batch reads a whole number: read off a running

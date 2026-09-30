@@ -49,9 +49,12 @@ useRealMoment();
 const mountedPanels: RightPanel[] = [];
 
 afterEach(() => {
-  for (const panel of mountedPanels.splice(0)) panel.destroy();
-  vi.useRealTimers();
-  vi.restoreAllMocks();
+  try {
+    for (const panel of mountedPanels.splice(0)) panel.destroy();
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
 });
 
 async function stylesCss(): Promise<string> {
