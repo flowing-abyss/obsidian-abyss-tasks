@@ -20,6 +20,7 @@ import {
   rebuildTaskSelection,
   renamedRootSelection,
   rootTaskRef,
+  selectedRootResolution,
   type TaskSelectionNode,
 } from './taskSelection';
 import { deviceTrackedTimeContext, type TrackingSurface } from './timeTracking/TimeBadge';
@@ -206,7 +207,11 @@ export class TaskModal {
     if (this.queries_abyssPrivate == null || !this.affects_abyssPrivate(event, ref.filePath))
       return;
     if ('source' in root && this.applyRenamedRoot_abyssPrivate(event, root, stack)) return;
-    this.applyResolution_abyssPrivate(this.queries_abyssPrivate.resolve(ref), stack);
+    const removalPending = this.innerState_abyssPrivate?.isTaskRemovalPending(ref) === true;
+    this.applyResolution_abyssPrivate(
+      selectedRootResolution(this.queries_abyssPrivate, ref, removalPending),
+      stack,
+    );
   }
 
   private applyRenamedRoot_abyssPrivate(

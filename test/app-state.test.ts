@@ -230,6 +230,58 @@ describe('AppState dependency history', () => {
   });
 });
 
+describe('AppState task removals', () => {
+  const ref = { filePath: 'tasks.md', line: 3, revision: 'r1' };
+
+  it('holds a removal pending from its begin until its release', () => {
+    const state = new AppState();
+    expect(state.isTaskRemovalPending(ref)).toBe(false);
+
+    const release = state.beginTaskRemoval(ref);
+    expect(state.isTaskRemovalPending({ ...ref })).toBe(true);
+
+    release();
+    expect(state.isTaskRemovalPending(ref)).toBe(false);
+  });
+
+  it('matches the file, the line, and the revision of the removed root', () => {
+    const state = new AppState();
+    state.beginTaskRemoval(ref);
+
+    expect(state.isTaskRemovalPending({ ...ref, filePath: 'other.md' })).toBe(false);
+    expect(state.isTaskRemovalPending({ ...ref, line: 4 })).toBe(false);
+    expect(state.isTaskRemovalPending({ ...ref, revision: 'r2' })).toBe(false);
+  });
+
+  it('releases a begin once however often its release runs', () => {
+    const state = new AppState();
+    const first = state.beginTaskRemoval(ref);
+    const second = state.beginTaskRemoval(ref);
+
+    first();
+    first();
+    expect(state.isTaskRemovalPending(ref)).toBe(true);
+
+    second();
+    expect(state.isTaskRemovalPending(ref)).toBe(false);
+    second();
+    expect(state.isTaskRemovalPending(ref)).toBe(false);
+  });
+
+  it('keeps removals out of the published state', () => {
+    const state = new AppState();
+    const selection = vi.fn();
+    const commit = vi.fn();
+    state.on('taskStack', selection);
+    state.onCommit(commit);
+
+    state.beginTaskRemoval(ref)();
+
+    expect(selection).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+  });
+});
+
 describe('AppState', () => {
   it('returns initial values', () => {
     const s = new AppState();

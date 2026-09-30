@@ -83,6 +83,13 @@ Navigation finishes the active project editor before changing mode. A rejected d
 current mode and projection intact. Inspector history stores structural task paths for its session;
 only proven successor references survive writes, and history never becomes persisted task identity.
 
+A panel's own delete, archive, or move of a root task registers that root's reference in `AppState`
+until the command settles: `PanelView`'s selection wrapper registers every such command, and the
+inspector registers its Delete task and Archive in its own state, the task modal's included. The
+registry is transient and unpublished. While the selected root's removal is pending, an index
+update that does not resolve it exactly clears the selection instead of following its line to the
+next task.
+
 ## Calendar mode
 
 `CenterPanel` routes modes and keeps the task actions, the task modal, the capture session, and

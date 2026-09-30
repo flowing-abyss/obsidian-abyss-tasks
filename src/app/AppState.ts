@@ -6,6 +6,7 @@ import {
   type DependencyDirection,
   type TaskCommand,
   type TaskNodeSnapshot,
+  type TaskRef,
   type TaskSnapshot,
 } from '../tasks';
 import { taskNodeRef, type TaskSelectionNode } from '../ui/taskSelection';
@@ -136,6 +137,10 @@ function detachedDragPayload(payload: TaskNodeDragPayload | null): TaskNodeDragP
   });
 }
 
+function taskRemovalKey(ref: TaskRef): string {
+  return JSON.stringify([ref.filePath, ref.line, ref.revision]);
+}
+
 export class AppState {
   private data: AppStateData = {
     mode: 'tasks',
@@ -156,6 +161,8 @@ export class AppState {
   private pendingChanges = new Map<keyof AppStateData, PendingChange>();
   private batchDepth = 0;
   private delivering = false;
+  /** Root tasks this state's own commands are removing; never published or persisted. */
+  private readonly taskRemovals = new Set<{ readonly key: string }>();
 
   get<K extends keyof AppStateData>(key: K): AppStateData[K] {
     return this.data[key];
@@ -236,6 +243,25 @@ export class AppState {
       this.updateInspectorSelection(freeze([...destination.taskStack]));
     });
     return true;
+  }
+
+  /**
+   * Marks a root task as being removed (deleted, archived, or moved) by one of this state's own
+   * commands until the returned release runs. The release is idempotent; two begins for one
+   * reference need two releases.
+   */
+  beginTaskRemoval(ref: TaskRef): () => void {
+    const removal = { key: taskRemovalKey(ref) };
+    this.taskRemovals.add(removal);
+    return () => {
+      this.taskRemovals.delete(removal);
+    };
+  }
+
+  /** Whether one of this state's own commands is removing the root with this exact reference. */
+  isTaskRemovalPending(ref: TaskRef): boolean {
+    const key = taskRemovalKey(ref);
+    return [...this.taskRemovals].some((removal) => removal.key === key);
   }
 
   private setValue<K extends keyof AppStateData>(key: K, value: AppStateData[K]): void {

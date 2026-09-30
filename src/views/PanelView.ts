@@ -22,6 +22,7 @@ import type {
   CommentTimeContextProvider,
   TaskApplicationApi,
   TaskCaptureApplicationApi,
+  TaskCommand,
   TaskCommandResult,
   TaskIndexEvent,
   TaskNodeRef,
@@ -48,6 +49,7 @@ import {
   renamedRootSelection,
   rootTaskNodeRef,
   rootTaskRef,
+  selectedRootResolution,
   type TaskSelectionNode,
 } from '../ui/taskSelection';
 import {
@@ -183,6 +185,9 @@ type ResizeObserverConstructor = new (callback: ResizeObserverCallback) => Resiz
 function isResizeObserverConstructor(value: unknown): value is ResizeObserverConstructor {
   return typeof value === 'function';
 }
+
+/** The commands that take a root task out of its note, so its line may pass to the next task. */
+const ROOT_REMOVALS: ReadonlySet<TaskCommand['type']> = new Set(['delete', 'archive', 'move']);
 
 export class PanelView extends ItemView {
   private state_abyssPrivate!: AppState;
@@ -409,21 +414,40 @@ export class PanelView extends ItemView {
               if (session.type !== 'ready') return session;
               return {
                 ...session,
-                execute: async (ref: TaskRef) => {
-                  const result = await session.execute(ref);
-                  this.convergeOwnCommand_abyssPrivate(ref, result);
-                  return result;
-                },
+                execute: (ref: TaskRef) =>
+                  this.runOwnCommand_abyssPrivate(ref, true, () => session.execute(ref)),
               };
             },
           }),
-      execute: async (command) => {
-        const initiatingRef = taskCommandRootRef(command);
-        const result = await this.tasks_abyssPrivate.execute(command);
-        if (initiatingRef != null) this.convergeOwnCommand_abyssPrivate(initiatingRef, result);
-        return result;
-      },
+      execute: (command) =>
+        this.runOwnCommand_abyssPrivate(
+          taskCommandRootRef(command),
+          ROOT_REMOVALS.has(command.type),
+          () => this.tasks_abyssPrivate.execute(command),
+        ),
     };
+  }
+
+  /**
+   * Runs a command of the panel's selection wrapper and converges the selection on its result. A
+   * removal of the root holds it pending in the panel's state until the command settles.
+   */
+  private async runOwnCommand_abyssPrivate(
+    initiatingRef: TaskRef | undefined,
+    removesRoot: boolean,
+    run: () => Promise<TaskCommandResult>,
+  ): Promise<TaskCommandResult> {
+    const release =
+      removesRoot && initiatingRef != null
+        ? this.state_abyssPrivate.beginTaskRemoval(initiatingRef)
+        : undefined;
+    try {
+      const result = await run();
+      if (initiatingRef != null) this.convergeOwnCommand_abyssPrivate(initiatingRef, result);
+      return result;
+    } finally {
+      release?.();
+    }
   }
 
   private createLayout_abyssPrivate(): PanelLayoutElements {
@@ -826,7 +850,13 @@ export class PanelView extends ItemView {
           return;
         }
       }
-      this.applyResolution_abyssPrivate(this.queries_abyssPrivate.resolve(ref));
+      this.applyResolution_abyssPrivate(
+        selectedRootResolution(
+          this.queries_abyssPrivate,
+          ref,
+          this.state_abyssPrivate.isTaskRemovalPending(ref),
+        ),
+      );
     });
   }
 

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
+import type { AppState } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type {
   TaskApplicationApi,
@@ -1094,6 +1095,115 @@ describe('TaskModal with real RightPanel', () => {
       activeDocument.querySelector('.abyss-modal .abyss-detached-draft')?.textContent,
     ).toContain('local unsaved');
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  describe('its own removal of the task', () => {
+    async function openRemovable(): Promise<{
+      readonly execute: Mock<TaskApplicationApi['execute']>;
+      readonly titles: string[];
+    }> {
+      const app = await createAppWithFiles({ 'f.md': '- [ ] observed\n- [ ] next\n' });
+      const observed = task({
+        title: 'observed',
+        markdownTitle: 'observed',
+        ref: { filePath: 'f.md', line: 0, revision: 'old' },
+        source: {
+          filePath: 'f.md',
+          line: 0,
+          originalMarkdown: '- [ ] observed',
+          originalBlock: '- [ ] observed',
+        },
+      });
+      const next = task({
+        title: 'next',
+        markdownTitle: 'next',
+        ref: { filePath: 'f.md', line: 0, revision: 'next' },
+        source: {
+          filePath: 'f.md',
+          line: 0,
+          originalMarkdown: '- [ ] next',
+          originalBlock: '- [ ] next',
+        },
+      });
+      const events = queryEvents();
+      let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
+      const queries = taskQueryApi({ resolve: () => resolution, subscribe: events.subscribe });
+      // The index publishes the note's update during the write, before the command returns.
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation((command) => {
+        resolution = { type: 'visual', stale: observed.ref, current: next, evidence: 'same-line' };
+        events.publish({ type: 'changed', files: ['f.md'] });
+        return Promise.resolve({
+          type: 'ok',
+          changed: true,
+          outcome:
+            command.type === 'archive'
+              ? { type: 'archived', ref: observed.ref, filePath: 'archive.md' }
+              : { type: 'deleted', ref: observed.ref },
+        });
+      });
+      modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+        queries,
+        execute,
+      });
+      modal.open(observed);
+      const titles: string[] = [];
+      const inner = (modal as unknown as { innerState_abyssPrivate: AppState })
+        .innerState_abyssPrivate;
+      inner.on('taskStack', (stack) => {
+        titles.push(...stack.map((node) => node.title));
+      });
+      return { execute, titles };
+    }
+
+    function chooseAction(label: 'Delete task' | 'Archive'): void {
+      click(
+        expectDefined(
+          activeDocument.querySelector<HTMLElement>(
+            '.abyss-modal .abyss-right-action-btn[aria-label="More actions"]',
+          ),
+        ),
+      );
+      click(
+        expectDefined(
+          [
+            ...activeDocument.querySelectorAll<HTMLElement>(
+              '.abyss-modal .abyss-task-context-menu .abyss-context-item',
+            ),
+          ].find((item) => item.textContent === label),
+        ),
+      );
+    }
+
+    it.each(['Delete task', 'Archive'] as const)(
+      'closes after its %s when the index moves the next task onto the line first',
+      async (label) => {
+        const { execute, titles } = await openRemovable();
+
+        chooseAction(label);
+        await flushMicrotasks();
+
+        expect(execute).toHaveBeenCalledOnce();
+        expect(titles).not.toContain('next');
+        expect(activeDocument.querySelector('.abyss-modal-backdrop')).toBeNull();
+      },
+    );
+
+    it('keeps an unsaved draft open without showing the next task', async () => {
+      const { titles } = await openRemovable();
+      const comment = expectDefined(
+        activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+      );
+      comment.value = 'unsaved note';
+
+      chooseAction('Delete task');
+      await flushMicrotasks();
+
+      expect(titles).not.toContain('next');
+      expect(activeDocument.querySelector('.abyss-modal .abyss-right-title')).toBeNull();
+      expect(
+        activeDocument.querySelector('.abyss-modal .abyss-detached-draft')?.textContent,
+      ).toContain('unsaved note');
+    });
   });
 
   it('shares the header status control, rebuilds command results, and owns its refresh', async () => {

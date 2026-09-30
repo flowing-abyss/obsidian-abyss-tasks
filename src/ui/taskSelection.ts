@@ -8,6 +8,7 @@ import {
   type TaskNodeRef,
   type TaskQueryApi,
   type TaskRef,
+  type TaskResolution,
   type TaskSnapshot,
 } from '../tasks';
 
@@ -180,4 +181,18 @@ export function renamedRootSelection(
         candidate.source.originalBlock === staleRoot.source.originalBlock,
     );
   return matches.length === 1 ? matches[0] : undefined;
+}
+
+/**
+ * Resolves a selected root for an index update. While the selection's own delete, archive, or move
+ * of that root is pending, anything but an exact match reads as not found, so the task that takes
+ * the removed root's line never inherits the selection.
+ */
+export function selectedRootResolution(
+  queries: TaskQueryApi,
+  ref: TaskRef,
+  removalPending: boolean,
+): TaskResolution {
+  const resolution = queries.resolve(ref);
+  return removalPending && resolution.type !== 'exact' ? { type: 'not-found', ref } : resolution;
 }
