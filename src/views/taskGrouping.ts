@@ -84,9 +84,17 @@ export function sortTasksByField(
   });
 }
 
-export function groupTasksByPriority(
-  tasks: TaskSnapshot[],
-): Array<{ label: string; tasks: TaskSnapshot[] }> {
+/**
+ * One bucket of a grouped list: a key that names the bucket whatever its label says, the label its
+ * header shows, and its tasks in input order.
+ */
+export interface TaskGroup {
+  readonly key: string;
+  readonly label: string;
+  readonly tasks: TaskSnapshot[];
+}
+
+export function groupTasksByPriority(tasks: readonly TaskSnapshot[]): TaskGroup[] {
   const PRIORITY_ORDER = ['A', 'B', 'C', 'D', 'E', 'F'] as const;
   const map = new Map<string, TaskSnapshot[]>();
   for (const t of tasks) {
@@ -96,45 +104,46 @@ export function groupTasksByPriority(
     const bucket = map.get(priority);
     return bucket === undefined
       ? []
-      : [{ label: PRIORITY_LABELS[priority] ?? priority, tasks: bucket }];
+      : [{ key: priority, label: PRIORITY_LABELS[priority] ?? priority, tasks: bucket }];
   });
 }
 
 export function groupTasksByStatus(
-  tasks: TaskSnapshot[],
+  tasks: readonly TaskSnapshot[],
   registry: StatusRegistry,
-): Array<{ label: string; tasks: TaskSnapshot[] }> {
-  const buckets = new Map<string, { order: number; label: string; tasks: TaskSnapshot[] }>();
+): TaskGroup[] {
+  const buckets = new Map<
+    string,
+    { key: string; order: number; label: string; tasks: TaskSnapshot[] }
+  >();
   for (const t of tasks) {
     const def = registry.bySymbol(t.statusSymbol);
     const key = def?.id ?? '__other__';
     const label = def?.name ?? 'Other';
     const order = def != null ? registry.orderIndex(t.statusSymbol) : Number.MAX_SAFE_INTEGER;
     const bucket = buckets.get(key);
-    if (bucket === undefined) buckets.set(key, { order, label, tasks: [t] });
+    if (bucket === undefined) buckets.set(key, { key, order, label, tasks: [t] });
     else bucket.tasks.push(t);
   }
   return [...buckets.values()]
     .sort((x, y) => x.order - y.order)
-    .map(({ label, tasks }) => ({ label, tasks }));
+    .map(({ key, label, tasks }) => ({ key, label, tasks }));
 }
 
-export function groupTasksByTag(
-  tasks: TaskSnapshot[],
-): Array<{ label: string; tasks: TaskSnapshot[] }> {
+export function groupTasksByTag(tasks: readonly TaskSnapshot[]): TaskGroup[] {
   const map = new Map<string, TaskSnapshot[]>();
   for (const t of tasks) {
     const tag = t.tags[0] ?? '';
     const key = tag.length > 0 ? tag : 'No tag';
     appendToBucket(map, key, t);
   }
-  const groups: Array<{ label: string; tasks: TaskSnapshot[] }> = [];
+  const groups: TaskGroup[] = [];
   for (const [label, gtasks] of map) {
-    if (label !== 'No tag') groups.push({ label, tasks: gtasks });
+    if (label !== 'No tag') groups.push({ key: label, label, tasks: gtasks });
   }
   groups.sort((a, b) => a.label.localeCompare(b.label));
   const noTag = map.get('No tag');
-  if (noTag !== undefined) groups.push({ label: 'No tag', tasks: noTag });
+  if (noTag !== undefined) groups.push({ key: 'No tag', label: 'No tag', tasks: noTag });
   return groups;
 }
 
@@ -149,16 +158,16 @@ function dateGroupLabel(task: TaskSnapshot, today: string, tomorrow: string): Da
 }
 
 export function groupTasksByDate(
-  tasks: TaskSnapshot[],
+  tasks: readonly TaskSnapshot[],
   today: string,
   tomorrow: string,
-): Array<{ label: string; tasks: TaskSnapshot[] }> {
+): TaskGroup[] {
   const buckets = new Map<DateGroupLabel, TaskSnapshot[]>();
   for (const task of tasks) appendToBucket(buckets, dateGroupLabel(task, today, tomorrow), task);
   const order: readonly DateGroupLabel[] = ['Overdue', 'Today', 'Tomorrow', 'Upcoming', 'No date'];
   return order.flatMap((label) => {
     const bucket = buckets.get(label);
-    return bucket === undefined ? [] : [{ label, tasks: bucket }];
+    return bucket === undefined ? [] : [{ key: label, label, tasks: bucket }];
   });
 }
 

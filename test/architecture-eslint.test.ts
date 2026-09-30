@@ -177,6 +177,8 @@ const pureFiles = [
   'src/projects/projectTimelineAxis.ts',
   'src/projects/projectTimelineEdits.ts',
   'src/panels/projects/projectTableViewport.ts',
+  'src/views/taskGrouping.ts',
+  'src/panels/task-list/taskListRows.ts',
   'src/settings/viewStatePaths.ts',
 ];
 async function check(file: string, source: string) {
