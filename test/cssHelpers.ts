@@ -82,17 +82,37 @@ export function createCssReader(source: string): CssReader {
   };
 }
 
-/** Read declarations from actual selector branches, preserving cascade/source order. */
+const sharedReaders = new Map<string, CssReader>();
+
+/**
+ * The reader of one stylesheet text, parsed once per test file: the queries below read the same
+ * sheet many times, and each reader is a pure function of its source text.
+ */
+function sharedCssReader(source: string): CssReader {
+  let reader = sharedReaders.get(source);
+  if (reader === undefined) {
+    reader = createCssReader(source);
+    sharedReaders.set(source, reader);
+  }
+  return reader;
+}
+
+/**
+ * Read declarations from actual selector branches, preserving cascade/source order. Each call gets
+ * detached copies, so a row that edits one cannot change what a later query reads.
+ */
 export function cssDeclarations(
   source: string,
   selector: string,
   topLevel = false,
 ): postcss.Declaration[] {
-  return createCssReader(source).declarations(selector, topLevel);
+  return sharedCssReader(source)
+    .declarations(selector, topLevel)
+    .map((declaration) => declaration.clone());
 }
 
 export function cssDeclarationText(source: string, selector: string, topLevel = false): string {
-  return createCssReader(source).declarationText(selector, topLevel);
+  return sharedCssReader(source).declarationText(selector, topLevel);
 }
 
 export function cssValue(declarations: string, property: string): string | undefined {
@@ -104,5 +124,5 @@ export function cssValue(declarations: string, property: string): string | undef
 
 /** Exact selector branches in one rule, with source-order selection explicit at call sites. */
 export function cssRuleContaining(source: string, selectors: string[], last = false): string {
-  return createCssReader(source).ruleContaining(selectors, last);
+  return sharedCssReader(source).ruleContaining(selectors, last);
 }

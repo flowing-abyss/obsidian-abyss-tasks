@@ -1,3 +1,4 @@
+// @vitest-environment node
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { inlineCodeRanges as markdownInlineCodeRanges } from '../src/markdown/inlineCode';
@@ -6,7 +7,7 @@ import {
   inlineCodeRanges as domainInlineCodeRanges,
   parseLinkRanges,
 } from '../src/tasks/domain/taskLineAtomicRanges';
-import { seededRandom } from './helpers';
+import { seededRandom } from './support/seededRandom';
 
 // Links are read in two layers, because neither may import the other: the shared Markdown helper
 // returns link tokens, and the task domain keeps links, embeds, and images as ranges that no task

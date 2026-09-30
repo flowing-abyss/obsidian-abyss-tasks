@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { layoutVisibleSpans } from '../src/views/spanLayout';
 import { expectDefined, task } from './helpers';

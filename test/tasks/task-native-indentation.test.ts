@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
 import { atomDateTime } from '../../src/tasks/domain/commentTimestamp';
 import {

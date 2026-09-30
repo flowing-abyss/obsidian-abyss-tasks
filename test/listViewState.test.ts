@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { isListViewCustomized, listSelectionToKey } from '../src/app/listViewState';
 import { getListViewDefaults } from '../src/settings/defaults';

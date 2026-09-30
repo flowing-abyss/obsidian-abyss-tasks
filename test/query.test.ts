@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { evaluateQuery, validateQuerySyntax } from '../src/query/evaluateQuery';
 import { localDate } from '../src/tasks';

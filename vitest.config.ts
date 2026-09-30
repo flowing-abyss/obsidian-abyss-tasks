@@ -7,10 +7,17 @@ export default defineConfig({
     mockReset: true,
     include: ['test/**/*.test.ts'],
     exclude: ['test/perf/**', 'test/store/**'],
-    setupFiles: ['obsidian-test-mocks/vitest-setup', 'test/setup/isolatedFailures.ts'],
+    setupFiles: ['test/setup/obsidianMocks.ts', 'test/setup/isolatedFailures.ts'],
     passWithNoTests: false,
+    // A suite that needs no DOM and no Obsidian global helper declares the Node environment in
+    // a `// @vitest-environment node` first line; test/setup/obsidianMocks.ts serves both.
     environment: 'jsdom',
-    testTimeout: 5_000,
+    // Written out, though it is the default, so that Vitest stops advising `isolate: false`.
+    isolate: true,
+    // Light work runs on these limits and heavy work names its kind's limit from
+    // test/support/timeouts.ts, all sized on this pool; test/test-timeouts.test.ts holds them.
+    pool: 'forks',
+    testTimeout: 10_000,
     hookTimeout: 10_000,
     unstubEnvs: true,
     unstubGlobals: true,

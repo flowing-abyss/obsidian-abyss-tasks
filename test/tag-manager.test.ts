@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TagManager } from '../src/tags/TagManager';

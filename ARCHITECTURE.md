@@ -629,6 +629,22 @@ Authored CSS also meets the review's CSS rules: no `:has()`, no `!important`, an
 the manifest's baseline supports only in part. Where a selector would read state from the DOM, the
 TypeScript that owns the state sets a state class.
 
+Rows and hooks whose work reaches a linter, a TypeScript program, a source walk, or a child process
+name that kind's limit from [`test/support/timeouts.ts`](test/support/timeouts.ts), light work runs
+on the configs' `testTimeout` and `hookTimeout`, one rule sizes both, and the
+[time limit check](test/test-timeouts.test.ts) holds every row and hook of both gates to it,
+following names through the helpers and modules outside `src/` that test files load, but not
+dynamic property calls, a function that code outside the row's work passes to a helper, or plugin
+code. A gate row that times its own work reads the process's CPU clock through
+[`cpuMilliseconds`](test/support/cpuTime.ts) or `interleavedRatio` in
+[`test/helpers.ts`](test/helpers.ts), never the wall clock. `test/helpers.ts` loads no presentation
+module, which [its own suite](test/helpers.test.ts) checks through every module it loads, and a
+presentation harness has its own support module, such as the panels'
+[`test/support/panelHarness.ts`](test/support/panelHarness.ts). A suite that needs no DOM and no
+Obsidian global helper declares the Node environment on its first line;
+[`test/setup/obsidianMocks.ts`](test/setup/obsidianMocks.ts) gives every suite the mocked
+`obsidian` module, and Obsidian's global helpers only where a DOM exists.
+
 Update this document in the implementing commit when ownership, a public boundary, dependency
 direction, a critical data flow, persisted authority/migration, or a compatibility seam changes.
 Private renames, local helpers, and styling do not require architecture prose. Record any necessary

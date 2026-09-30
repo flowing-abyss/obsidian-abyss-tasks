@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import type { ProjectKanbanDropInput } from '../src/panels/projects/projectKanbanDrop';
 import {

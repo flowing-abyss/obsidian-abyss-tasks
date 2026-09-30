@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import { clockFrom, systemClock } from '../../src/tasks/domain/clock';

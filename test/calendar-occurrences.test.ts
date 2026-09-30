@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { RRule } from 'rrule';
 import { describe, expect, it, vi } from 'vitest';
 import type { DateRange, TaskPlanning, TaskSnapshot } from '../src/tasks/domain/types';

@@ -1,6 +1,8 @@
+// @vitest-environment node
 import { Platform } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { git, repositoryFiles, trackedFiles } from './support/repositoryFiles';
+import { CHILD_PROCESS_TIMEOUT_MS } from './support/timeouts';
 
 const loadNodeTools = async () => {
   if (!Platform.isDesktop) throw new Error('Repository file tests require a desktop runtime');
@@ -25,25 +27,37 @@ function makeRepository(files: Readonly<Record<string, string>>) {
 }
 
 describe('repository files', () => {
-  it('lists what a clone would hold, without files deleted but not staged', () => {
-    const root = makeRepository({ '.gitignore': 'ignored.ts\n', 'kept.ts': '', 'deleted.ts': '' });
-    rmSync(path.join(root, 'deleted.ts'));
-    writeFileSync(path.join(root, 'untracked.ts'), '');
-    writeFileSync(path.join(root, 'ignored.ts'), '');
+  it(
+    'lists what a clone would hold, without files deleted but not staged',
+    () => {
+      const root = makeRepository({
+        '.gitignore': 'ignored.ts\n',
+        'kept.ts': '',
+        'deleted.ts': '',
+      });
+      rmSync(path.join(root, 'deleted.ts'));
+      writeFileSync(path.join(root, 'untracked.ts'), '');
+      writeFileSync(path.join(root, 'ignored.ts'), '');
 
-    expect(new Set(trackedFiles(root))).toEqual(new Set(['.gitignore', 'kept.ts']));
-    expect(new Set(repositoryFiles(root))).toEqual(
-      new Set(['.gitignore', 'kept.ts', 'untracked.ts']),
-    );
-  });
+      expect(new Set(trackedFiles(root))).toEqual(new Set(['.gitignore', 'kept.ts']));
+      expect(new Set(repositoryFiles(root))).toEqual(
+        new Set(['.gitignore', 'kept.ts', 'untracked.ts']),
+      );
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
   // A git hook in a worktree exports GIT_DIR, which git prefers to the directory it runs in.
-  it('lists the repository at the given root whatever repository the environment names', () => {
-    const root = makeRepository({ 'kept.ts': '' });
-    const other = makeRepository({ 'other.ts': '' });
-    vi.stubEnv('GIT_DIR', path.join(other, '.git'));
+  it(
+    'lists the repository at the given root whatever repository the environment names',
+    () => {
+      const root = makeRepository({ 'kept.ts': '' });
+      const other = makeRepository({ 'other.ts': '' });
+      vi.stubEnv('GIT_DIR', path.join(other, '.git'));
 
-    expect(trackedFiles(root)).toEqual(['kept.ts']);
-    expect(repositoryFiles(root)).toEqual(['kept.ts']);
-  });
+      expect(trackedFiles(root)).toEqual(['kept.ts']);
+      expect(repositoryFiles(root)).toEqual(['kept.ts']);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 });

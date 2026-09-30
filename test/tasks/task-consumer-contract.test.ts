@@ -1,6 +1,8 @@
+// @vitest-environment node
 import { Platform } from 'obsidian';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { SOURCE_WALK_TIMEOUT_MS } from '../support/timeouts';
 
 async function loadDesktopNodeModules() {
   if (!Platform.isDesktop) throw new Error('Task consumer contracts require a desktop test host');
@@ -81,8 +83,18 @@ function typeScriptFiles(directory: string): string[] {
   });
 }
 
+const parsedSources = new Map<string, { readonly text: string; readonly file: ts.SourceFile }>();
+
+/**
+ * One syntax tree per path and text: several rows walk every source and test file, and a tree is
+ * a pure function of its text that the walks below only read.
+ */
 function sourceFile(path: string, candidate: string): ts.SourceFile {
-  return ts.createSourceFile(path, candidate, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const parsed = parsedSources.get(path);
+  if (parsed?.text === candidate) return parsed.file;
+  const file = ts.createSourceFile(path, candidate, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  parsedSources.set(path, { text: candidate, file });
+  return file;
 }
 
 function moduleSpecifiers(path: string, candidate: string): string[] {
@@ -243,13 +255,17 @@ describe('final task consumer contract', () => {
     });
   });
 
-  it('keeps production and tests independent of the exact removed module paths', () => {
-    const references = [...productionFiles, ...testFiles].flatMap((path) =>
-      removedModuleReferences(path, source(path)).map((specifier) => `${path}: ${specifier}`),
-    );
+  it(
+    'keeps production and tests independent of the exact removed module paths',
+    () => {
+      const references = [...productionFiles, ...testFiles].flatMap((path) =>
+        removedModuleReferences(path, source(path)).map((specifier) => `${path}: ${specifier}`),
+      );
 
-    expect(references).toEqual([]);
-  }, 60_000);
+      expect(references).toEqual([]);
+    },
+    SOURCE_WALK_TIMEOUT_MS,
+  );
 
   it('recognizes removed paths through aliases, source suffixes, and TypeScript module forms', () => {
     const candidates = [
@@ -285,13 +301,17 @@ describe('final task consumer contract', () => {
     expect(removedBindings('src/example.ts', harmless)).toEqual([]);
   });
 
-  it('keeps production and tests free of recreated removed compatibility bindings', () => {
-    const bindings = [...productionFiles, ...testFiles].flatMap((path) =>
-      removedBindings(path, source(path)).map((binding) => `${path}: ${binding}`),
-    );
+  it(
+    'keeps production and tests free of recreated removed compatibility bindings',
+    () => {
+      const bindings = [...productionFiles, ...testFiles].flatMap((path) =>
+        removedBindings(path, source(path)).map((binding) => `${path}: ${binding}`),
+      );
 
-    expect(bindings).toEqual([]);
-  }, 60_000);
+      expect(bindings).toEqual([]);
+    },
+    SOURCE_WALK_TIMEOUT_MS,
+  );
 
   it('keeps the final read model independent of legacy parser projections and task shapes', () => {
     const finalReadModel = productionFiles.filter((path) =>
@@ -331,24 +351,28 @@ describe('final task consumer contract', () => {
     expect(matchingFiles(taskMutationConsumers, /\.vault\.process\s*\(/u)).toEqual([]);
   });
 
-  it('confines projection adapters to the two calendar composition roots', () => {
-    const projectionBindings = new Set([
-      'projectCalendarOccurrences',
-      'taskSnapshotForCalendarOccurrence',
-    ]);
-    const consumers = productionFiles.filter((path) =>
-      namedImports(path, source(path)).some((name) => projectionBindings.has(name)),
-    );
+  it(
+    'confines projection adapters to the two calendar composition roots',
+    () => {
+      const projectionBindings = new Set([
+        'projectCalendarOccurrences',
+        'taskSnapshotForCalendarOccurrence',
+      ]);
+      const consumers = productionFiles.filter((path) =>
+        namedImports(path, source(path)).some((name) => projectionBindings.has(name)),
+      );
 
-    expect(new Set(consumers)).toEqual(CALENDAR_PROJECTION_CONSUMERS);
-    expect(
-      [...CALENDAR_PROJECTION_CONSUMERS].every(
-        (path) =>
-          namedImports(path, source(path)).filter((name) => projectionBindings.has(name)).length ===
-          projectionBindings.size,
-      ),
-    ).toBe(true);
-  });
+      expect(new Set(consumers)).toEqual(CALENDAR_PROJECTION_CONSUMERS);
+      expect(
+        [...CALENDAR_PROJECTION_CONSUMERS].every(
+          (path) =>
+            namedImports(path, source(path)).filter((name) => projectionBindings.has(name))
+              .length === projectionBindings.size,
+        ),
+      ).toBe(true);
+    },
+    SOURCE_WALK_TIMEOUT_MS,
+  );
 
   it('keeps premature statistics and time-tracking presentation absent', () => {
     const production = productionFiles.map(source).join('\n');

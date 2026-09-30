@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { selectorSpecificity } from '@csstools/selector-specificity';
 import postcss from 'postcss';
 import selectorParser from 'postcss-selector-parser';

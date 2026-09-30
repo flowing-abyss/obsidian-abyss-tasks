@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { parseLinks } from '../../src/markdown/links';
 import { parseTaskLineSourceModel } from '../../src/tasks/domain/taskLineSourceModel';
@@ -11,7 +12,8 @@ import {
   type SourceSpan,
   type TaskSpanKind,
 } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
-import { canonicalStatusCatalog, medianInterleavedRatio, seededRandom } from '../helpers';
+import { canonicalStatusCatalog, interleavedRatio } from '../helpers';
+import { seededRandom } from '../support/seededRandom';
 import { expectDefined } from './../helpers';
 
 const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
@@ -1282,7 +1284,7 @@ describe('TaskMarkdownCodec', () => {
       // Four times the markers cost about 4x; quadratic work costs 16x. The threshold is their
       // geometric mean, and interleaved pairs keep a CPU speed change to the pair it splits.
       expect(
-        medianInterleavedRatio({
+        interleavedRatio({
           small: () => codec.parseLine(small, location),
           large: () => codec.parseLine(large, location),
         }),
@@ -1922,7 +1924,7 @@ describe('task line tag and link boundaries', () => {
     // threshold is their geometric mean, and interleaved pairs keep a CPU speed change to the
     // pair it splits.
     expect(
-      medianInterleavedRatio({
+      interleavedRatio({
         small: () => parseTaskLineSourceModel(small),
         large: () => parseTaskLineSourceModel(large),
       }),
@@ -2068,7 +2070,7 @@ describe('TaskMarkdownCodec link reading', () => {
     const large = `- [ ] ${body(18)}`;
 
     expect(
-      medianInterleavedRatio({
+      interleavedRatio({
         small: () => codec.parseLine(small, location),
         large: () => codec.parseLine(large, location),
       }),
@@ -2092,7 +2094,7 @@ describe('TaskMarkdownCodec link reading', () => {
     const large = `- [ ] ${body(2_000)}`;
 
     expect(
-      medianInterleavedRatio({
+      interleavedRatio({
         small: () => codec.parseLine(small, location),
         large: () => codec.parseLine(large, location),
       }),

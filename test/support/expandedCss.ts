@@ -37,8 +37,22 @@ function expandSelector(selector: selectorParser.Selector): string[] | undefined
   return safe ? group.nodes.map((arm) => substitute(selector, arm)) : undefined;
 }
 
-/** Let declaration assertions address individual selectors regardless of safe :is factoring. */
+const expanded = new Map<string, string>();
+
+/**
+ * Let declaration assertions address individual selectors regardless of safe :is factoring. The
+ * expansion is a pure function of the text, so each test file expands one stylesheet once.
+ */
 export function expandCompoundSelectorLists(css: string): string {
+  let result = expanded.get(css);
+  if (result === undefined) {
+    result = expandOnce(css);
+    expanded.set(css, result);
+  }
+  return result;
+}
+
+function expandOnce(css: string): string {
   const root = postcss.parse(css);
   root.walkRules((rule) => {
     const ast = selectorParser().astSync(rule.selector);

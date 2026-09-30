@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { moment as hostMoment } from 'obsidian';
 import { describe, expect, it } from 'vitest';
 import { moment } from '../src/obsidianMoment';

@@ -18,7 +18,6 @@ import {
   expectDefined,
   flushMicrotasks,
   freshContainer,
-  makeLeftPanelForTest,
   makeStubStore,
   methodOf,
   objectMatching,
@@ -26,6 +25,7 @@ import {
   task,
   useRealMoment,
 } from './helpers';
+import { makeLeftPanelForTest } from './support/panelHarness';
 
 function firstNoticeText(): string {
   const message = vi.mocked(Notice).mock.calls[0]?.[0];

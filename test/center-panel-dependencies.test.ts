@@ -21,10 +21,9 @@ import {
   expectDefined,
   flushMicrotasks,
   resolvedConfig,
-  setCalendarDate,
-  setCalendarViewType,
   useRealMoment,
 } from './helpers';
+import { setCalendarDate, setCalendarViewType } from './support/panelHarness';
 
 useRealMoment();
 const cleanups: Array<() => void> = [];

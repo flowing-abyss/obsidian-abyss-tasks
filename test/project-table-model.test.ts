@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { planProjectGroupDrop } from '../src/panels/projects/projectTableDrag';
 import type {

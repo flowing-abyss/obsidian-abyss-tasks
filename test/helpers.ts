@@ -1,22 +1,11 @@
 import { App as ObsidianApp, Platform, type CachedMetadata, type TFile } from 'obsidian';
 import { afterEach, beforeEach, expect, vi } from 'vitest';
-import type { AppState } from '../src/app/AppState';
 import { NoteTemplateService } from '../src/notes/NoteTemplateService';
 import { moment } from '../src/obsidianMoment';
-import type { CalendarCommands } from '../src/panels/calendar/calendarCommands';
-import type { CalendarMoment } from '../src/panels/calendar/calendarDateNavigation';
-import type { CalendarMode } from '../src/panels/calendar/CalendarMode';
-import type { CalendarViewInstance } from '../src/panels/calendar/calendarViewFactory';
-import type { CalViewType } from '../src/panels/calendar/calendarViewType';
-import { CenterPanel } from '../src/panels/CenterPanel';
-import { LeftPanel } from '../src/panels/LeftPanel';
-import type { ProjectManager } from '../src/projects/ProjectManager';
-import type { ProjectStore } from '../src/projects/ProjectStore';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import type { CalendarSettings, ResolvedConfig } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import type { TagManager } from '../src/tags/TagManager';
 import type {
   SubtaskSnapshot,
   TaskApplicationApi,
@@ -44,6 +33,7 @@ import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/Obs
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
 import { TimeEntryIndex } from '../src/tasks/infrastructure/TimeEntryIndex';
+import { cpuMilliseconds } from './support/cpuTime';
 import { expandCompoundSelectorLists } from './support/expandedCss';
 
 export async function loadPluginStyles(): Promise<string> {
@@ -89,7 +79,19 @@ export interface CssRuleParts {
   readonly declarations: string;
 }
 
+const ruleParts = new Map<string, readonly CssRuleParts[]>();
+
+/** The rules of a stylesheet text, split once per test file and frozen, since queries repeat. */
 export function cssRuleParts(source: string): readonly CssRuleParts[] {
+  let rules = ruleParts.get(source);
+  if (rules === undefined) {
+    rules = Object.freeze(splitCssRuleParts(source).map((rule) => Object.freeze(rule)));
+    ruleParts.set(source, rules);
+  }
+  return rules;
+}
+
+function splitCssRuleParts(source: string): CssRuleParts[] {
   const rules: CssRuleParts[] = [];
   for (const segment of stripCssComments(source).split('}')) {
     const openingBrace = segment.lastIndexOf('{');
@@ -280,135 +282,6 @@ export interface TestTaskHarness extends TaskApplicationApi {
   readonly toggleTask: ReturnType<typeof vi.fn>;
   readonly setPriority: ReturnType<typeof vi.fn>;
   readonly setTaskStatus: ReturnType<typeof vi.fn>;
-}
-
-type CenterPanelTestArgs = readonly [
-  state: AppState,
-  taskHarness: TestTaskHarness,
-  app: ObsidianApp,
-  settings: CalendarSettings,
-  tagManager: TagManager,
-  onSaveSettings?: () => Promise<void>,
-  projectStore?: ProjectStore | null,
-  projectManager?: ProjectManager | null,
-  tasks?: TaskApplicationApi,
-];
-
-export function makeCenterPanelForTest(
-  ...[
-    state,
-    taskHarness,
-    app,
-    settings,
-    _tagManager,
-    onSaveSettings = async () => {},
-    projectStore = null,
-    projectManager = null,
-    tasks,
-  ]: CenterPanelTestArgs
-): CenterPanel {
-  const application = tasks ?? taskHarness;
-  return new CenterPanel(
-    state,
-    app,
-    settings,
-    taskHarness.queries,
-    taskHarness.statusRegistry,
-    onSaveSettings,
-    projectStore,
-    projectManager,
-    application,
-  );
-}
-
-/** The calendar controller a CenterPanel owns; tests reach calendar session state through it. */
-export function calendarOf(panel: CenterPanel): CalendarMode {
-  return panel['calendar_abyssPrivate'];
-}
-
-/** The calendar commands the panel's calendar mode owns; tests drive gestures through them. */
-function calendarCommandsOf(panel: CenterPanel): CalendarCommands {
-  return calendarOf(panel)['commands_abyssPrivate'];
-}
-
-/** Calls one calendar command by name on the commands the panel's calendar mode owns. */
-export function calendarCommand<T>(
-  panel: CenterPanel,
-  method: string,
-  ...args: unknown[]
-): Promise<T> | T {
-  const commands = calendarCommandsOf(panel) as unknown as Record<string, (...a: unknown[]) => T>;
-  return expectDefined(commands[method]).call(commands, ...args);
-}
-
-/** The date the calendar shows, or will show on its next render. */
-export function calendarDateOf(panel: CenterPanel): CalendarMoment {
-  return calendarOf(panel)['date_abyssPrivate'];
-}
-
-/** Sets the calendar date without rendering; the next render or refresh shows it. */
-export function setCalendarDate(panel: CenterPanel, date: CalendarMoment): void {
-  calendarOf(panel)['date_abyssPrivate'] = date;
-}
-
-/** Sets the calendar view type without rendering and without moving the date. */
-export function setCalendarViewType(panel: CenterPanel, view: CalViewType): void {
-  calendarOf(panel)['viewType_abyssPrivate'] = view;
-}
-
-/** The mounted calendar view instance while calendar mode is rendered. */
-export function calendarViewInstanceOf(panel: CenterPanel): CalendarViewInstance | null {
-  return calendarOf(panel)['viewInstance_abyssPrivate'];
-}
-
-/** The timed-block focus the calendar is retaining across re-renders, if any. */
-export function pendingTimedBlockFocusOf(
-  panel: CenterPanel,
-): { readonly originElement?: HTMLElement } | undefined {
-  return calendarOf(panel)['focusRetention_abyssPrivate']['pendingFocus_abyssPrivate'];
-}
-
-type LeftPanelTestArgs = readonly [
-  state: AppState,
-  taskHarness: TestTaskHarness,
-  settings: CalendarSettings,
-  tagManager: TagManager,
-  app: ObsidianApp,
-  onSaveSettings?: () => Promise<void>,
-  projectStore?: ProjectStore | null,
-  projectManager?: ProjectManager | null,
-  tasks?: TaskApplicationApi,
-  onSaveViewState?: () => Promise<void>,
-];
-
-export function makeLeftPanelForTest(
-  ...[
-    state,
-    taskHarness,
-    settings,
-    tagManager,
-    app,
-    onSaveSettings = async () => {},
-    projectStore = null,
-    projectManager = null,
-    tasks,
-    onSaveViewState,
-  ]: LeftPanelTestArgs
-): LeftPanel {
-  const application = tasks ?? taskHarness;
-  return new LeftPanel(
-    state,
-    settings,
-    tagManager,
-    app,
-    taskHarness.queries,
-    application,
-    onSaveSettings,
-    projectStore,
-    projectManager,
-    undefined,
-    onSaveViewState,
-  );
 }
 
 /** Canonical semantic status catalog for parser/codec compatibility tests. */
@@ -1015,52 +888,74 @@ export function fixedToday(dateStr: string): void {
 }
 
 /**
- * The median of `pairs` large/small time ratios. After one unrecorded call of each, it doubles
- * `repeat` from 1 (at most 65536) until one batch of `small` takes at least `minSampleMs`. Each
- * pair then runs `small` and `large` back to back, `repeat` times each, alternating which goes
- * first, after `warmup` unrecorded pairs, so a CPU speed change biases only the pair it splits.
+ * The ratio of `large`'s time to `small`'s on the process's CPU clock (`clock` serves this helper's
+ * own rows). After one unrecorded call of each, `repeat` doubles from 1 (at most 65536) until the
+ * fastest of three batches of `small` takes at least `minSampleMs`, once before `warmup` unrecorded
+ * pairs and once after them, on warm code. Each of `pairs` recorded pairs then runs `small` and
+ * `large` back to back, `repeat` times each, alternating which goes first. Helper threads' work and
+ * other lumps only add to a batch, and under load the CPU time of the same work changes within a
+ * call, so the helper reads two ratios of the fastest batches and returns the lower: the fastest
+ * large batch over the fastest small batch, and the median over the pairs of the same ratio within
+ * each pair and its neighbours. The first reads high when a short stretch speeds up only small
+ * batches, the second when such stretches fill more than half the windows.
  */
-export function medianInterleavedRatio(options: {
+export function interleavedRatio(options: {
   readonly small: () => void;
   readonly large: () => void;
   readonly pairs?: number;
   readonly warmup?: number;
   readonly minSampleMs?: number;
+  readonly clock?: () => number;
 }): number {
-  const { small, large, pairs = 41, warmup = 5, minSampleMs = 0.1 } = options;
+  const {
+    small,
+    large,
+    pairs = 41,
+    warmup = 5,
+    minSampleMs = 0.1,
+    clock = cpuMilliseconds,
+  } = options;
   let repeat = 1;
   const batchMs = (run: () => void): number => {
-    const startedAt = performance.now();
+    const startedAt = clock();
     for (let index = 0; index < repeat; index++) run();
-    return performance.now() - startedAt;
+    return clock() - startedAt;
+  };
+  const calibrate = (): void => {
+    while (
+      Math.min(batchMs(small), batchMs(small), batchMs(small)) < minSampleMs &&
+      repeat < 65_536
+    ) {
+      repeat *= 2;
+    }
+  };
+  const runPair = (index: number): readonly [smallMs: number, largeMs: number] => {
+    if (index % 2 === 0) {
+      const smallMs = batchMs(small);
+      return [smallMs, batchMs(large)];
+    }
+    const largeMs = batchMs(large);
+    return [batchMs(small), largeMs];
   };
   small();
   large();
-  while (batchMs(small) < minSampleMs && repeat < 65_536) repeat *= 2;
-  const pairRatio = (index: number): number => {
-    if (index % 2 === 0) {
-      const smallMs = batchMs(small);
-      return batchMs(large) / smallMs;
-    }
-    const largeMs = batchMs(large);
-    return largeMs / batchMs(small);
-  };
-  for (let index = 0; index < warmup; index++) pairRatio(index);
-  const ratios = Array.from({ length: pairs }, (_, index) => pairRatio(index)).sort(
-    (left, right) => left - right,
+  calibrate();
+  for (let index = 0; index < warmup; index++) runPair(index);
+  calibrate();
+  const smallBatches: number[] = [];
+  const largeBatches: number[] = [];
+  for (let index = 0; index < pairs; index++) {
+    const [smallMs, largeMs] = runPair(index);
+    smallBatches.push(smallMs);
+    largeBatches.push(largeMs);
+  }
+  const fastestRatio = (from: number, to: number): number =>
+    Math.min(...largeBatches.slice(from, to)) / Math.min(...smallBatches.slice(from, to));
+  const windowRatios = smallBatches
+    .map((_, index) => fastestRatio(Math.max(0, index - 1), index + 2))
+    .sort((left, right) => left - right);
+  return Math.min(
+    fastestRatio(0, pairs),
+    expectDefined(windowRatios[Math.floor(windowRatios.length / 2)]),
   );
-  return expectDefined(ratios[Math.floor(ratios.length / 2)]);
-}
-
-/**
- * Park and Miller's minimal standard generator. Each call returns a whole number below `bound`,
- * and a seed gives the same numbers on every run. The seed must be a whole number
- * from 1 to 2,147,483,646.
- */
-export function seededRandom(seed: number): (bound: number) => number {
-  let state = seed;
-  return (bound) => {
-    state = (state * 48_271) % 2_147_483_647;
-    return state % bound;
-  };
 }

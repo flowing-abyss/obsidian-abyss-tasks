@@ -43,9 +43,18 @@ import {
 
 useRealMoment();
 
+// A panel keeps its document listeners, such as the keys of an open "+ date" menu, until it is
+// destroyed, and many rows leave theirs mounted, so an earlier row's menu could take a later
+// row's Escape. Each row's panels are destroyed when the row ends.
+const mountedPanels: RightPanel[] = [];
+
 afterEach(() => {
-  vi.useRealTimers();
-  vi.restoreAllMocks();
+  try {
+    for (const panel of mountedPanels.splice(0)) panel.destroy();
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
 });
 
 async function stylesCss(): Promise<string> {
@@ -488,6 +497,7 @@ async function makePanel(
     commentTimeContext,
     interactionOwnership,
   );
+  mountedPanels.push(panel);
   const el = freshContainer();
   panel.mount(el);
   return { panel, state, app, el };
@@ -782,6 +792,7 @@ describe('RightPanel render lifecycle', () => {
       undefined,
       renderHeaderActions,
     );
+    mountedPanels.push(panel);
     const el = freshContainer();
     panel.mount(el);
     expect(renderHeaderActions).not.toHaveBeenCalled();
@@ -2839,6 +2850,7 @@ describe('RightPanel popovers', () => {
       undefined,
       tasks,
     );
+    mountedPanels.push(panel);
     const el = freshContainer();
     panel.mount(el);
     state.set('taskStack', [

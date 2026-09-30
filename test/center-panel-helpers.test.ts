@@ -9,27 +9,21 @@ import type { CalendarSettings, TagGroup } from '../src/settings/types';
 import { discoveredPrefixGroupId } from '../src/tags/effectiveTagGroups';
 import type { TaskSnapshot } from '../src/tasks';
 import { PanelNavigator } from '../src/views/panelNavigation';
-import {
-  expectDefined,
-  fixedToday,
-  makeCenterPanelForTest,
-  makeStubStore,
-  subtask,
-  task,
-  useRealMoment,
-} from './helpers';
+import { expectDefined, fixedToday, makeStubStore, subtask, task, useRealMoment } from './helpers';
+import { makeCenterPanelForTest } from './support/panelHarness';
 
 const TODAY = moment().format('YYYY-MM-DD');
 
 useRealMoment();
 
 /**
- * Construct a CenterPanel wired to a stub store + real AppState + DEFAULT_SETTINGS.
- * Pure helpers don't touch the DOM or vault, so `app` is a minimal stub.
+ * Construct a CenterPanel wired to a stub store + real AppState + a copy of DEFAULT_SETTINGS.
+ * Pure helpers don't touch the DOM or vault, so `app` is a minimal stub. The panel saves each
+ * list's view state into the settings it gets, so every row gets its own copy.
  */
 function makePanel(
   tasks: TaskSnapshot[],
-  settings: CalendarSettings = DEFAULT_SETTINGS,
+  settings: CalendarSettings = structuredClone(DEFAULT_SETTINGS),
   state: AppState = new AppState(),
 ): { panel: CenterPanel; state: AppState } {
   const store = makeStubStore(tasks);

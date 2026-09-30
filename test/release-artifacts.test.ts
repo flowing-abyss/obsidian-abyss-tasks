@@ -1,9 +1,11 @@
+// @vitest-environment node
 import { selectorSpecificity } from '@csstools/selector-specificity';
 import { Platform } from 'obsidian';
 import postcss from 'postcss';
 import selectorParser from 'postcss-selector-parser';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { CHILD_PROCESS_TIMEOUT_MS } from './support/timeouts';
 
 const loadNodeTools = async () => {
   if (!Platform.isDesktop) throw new Error('Release artifact tests require a desktop runtime');
@@ -126,130 +128,168 @@ describe('release stylesheet producer', () => {
       }
       expect(outputs[0]).toEqual(outputs[1]);
     },
+    CHILD_PROCESS_TIMEOUT_MS,
   );
 
-  it('preserves selector specificity and scope through release minification', () => {
-    const source = `
+  it(
+    'preserves selector specificity and scope through release minification',
+    () => {
+      const source = `
       .scope :is(.active, .inactive) > button::before { color: var(--text-normal); }
       .scope .row:hover, .scope .row:focus-within { opacity: 1; }
       .scope #strong, .scope .weak { padding: 0 1px; }
     `;
-    writeProducerFixture(1024, source);
-    const result = runScript(PRODUCER_PATH);
-    expect(result.status, result.stderr).toBe(0);
-    function inventory(css: string): string[] {
-      const selectors: string[] = [];
-      postcss.parse(css).walkRules((rule) => {
-        for (const selector of selectorParser().astSync(rule.selector, { lossless: false }).nodes) {
-          selector.walkPseudos((pseudo) => {
-            if (pseudo.value === '::before') pseudo.value = ':before';
-          });
-          selectors.push(JSON.stringify([selector.toString(), selectorSpecificity(selector)]));
-        }
-      });
-      return selectors.sort((left, right) => left.localeCompare(right));
-    }
-    const output = readFileSync(path.join(fixtureDirectory, 'dist/styles.css'), 'utf8');
-    expect(inventory(output)).toEqual(inventory(source));
-    expect(output).toContain('var(--text-normal)');
-  });
+      writeProducerFixture(1024, source);
+      const result = runScript(PRODUCER_PATH);
+      expect(result.status, result.stderr).toBe(0);
+      function inventory(css: string): string[] {
+        const selectors: string[] = [];
+        postcss.parse(css).walkRules((rule) => {
+          const { nodes } = selectorParser().astSync(rule.selector, { lossless: false });
+          for (const selector of nodes) {
+            selector.walkPseudos((pseudo) => {
+              if (pseudo.value === '::before') pseudo.value = ':before';
+            });
+            selectors.push(JSON.stringify([selector.toString(), selectorSpecificity(selector)]));
+          }
+        });
+        return selectors.sort((left, right) => left.localeCompare(right));
+      }
+      const output = readFileSync(path.join(fixtureDirectory, 'dist/styles.css'), 'utf8');
+      expect(inventory(output)).toEqual(inventory(source));
+      expect(output).toContain('var(--text-normal)');
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
-  it('ships the real stylesheet under budget with deterministic output and untouched source', () => {
-    const source = readFileSync(path.join(REPOSITORY_ROOT, 'styles.css'), 'utf8');
-    const pkg = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, 'package.json'), 'utf8')) as {
-      release: { stylesCssBudgetBytes: number };
-    };
-    writeProducerFixture(pkg.release.stylesCssBudgetBytes, source);
-    const first = runScript(PRODUCER_PATH, { ...process.env, BROWSERSLIST: 'ie 11' });
-    expect(first.status, first.stderr).toBe(0);
-    const output = readFileSync(path.join(fixtureDirectory, 'dist/styles.css'));
-    expect(output.length).toBeLessThanOrEqual(pkg.release.stylesCssBudgetBytes);
-    const second = runScript(PRODUCER_PATH, { ...process.env, BROWSERSLIST: 'chrome 120' });
-    expect(second.status, second.stderr).toBe(0);
-    expect(readFileSync(path.join(fixtureDirectory, 'dist/styles.css'))).toEqual(output);
-    expect(readFileSync(path.join(fixtureDirectory, 'styles.css'), 'utf8')).toBe(source);
-  });
+  it(
+    'ships the real stylesheet under budget with deterministic output and untouched source',
+    () => {
+      const source = readFileSync(path.join(REPOSITORY_ROOT, 'styles.css'), 'utf8');
+      const pkg = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, 'package.json'), 'utf8')) as {
+        release: { stylesCssBudgetBytes: number };
+      };
+      writeProducerFixture(pkg.release.stylesCssBudgetBytes, source);
+      const first = runScript(PRODUCER_PATH, { ...process.env, BROWSERSLIST: 'ie 11' });
+      expect(first.status, first.stderr).toBe(0);
+      const output = readFileSync(path.join(fixtureDirectory, 'dist/styles.css'));
+      expect(output.length).toBeLessThanOrEqual(pkg.release.stylesCssBudgetBytes);
+      const second = runScript(PRODUCER_PATH, { ...process.env, BROWSERSLIST: 'chrome 120' });
+      expect(second.status, second.stderr).toBe(0);
+      expect(readFileSync(path.join(fixtureDirectory, 'dist/styles.css'))).toEqual(output);
+      expect(readFileSync(path.join(fixtureDirectory, 'styles.css'), 'utf8')).toBe(source);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
-  it('replaces stale output with minified CSS under budget', () => {
-    writeProducerFixture(128, '.alpha { color: red; }');
+  it(
+    'replaces stale output with minified CSS under budget',
+    () => {
+      writeProducerFixture(128, '.alpha { color: red; }');
 
-    const result = runScript(PRODUCER_PATH);
+      const result = runScript(PRODUCER_PATH);
 
-    expect(result.status).toBe(0);
-    expect(readFileSync(path.join(fixtureDirectory, 'dist/styles.css'), 'utf8')).toBe(
-      '.alpha{color:red}\n',
-    );
-  });
+      expect(result.status).toBe(0);
+      expect(readFileSync(path.join(fixtureDirectory, 'dist/styles.css'), 'utf8')).toBe(
+        '.alpha{color:red}\n',
+      );
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
-  it('fails when generated CSS exceeds the configured budget', () => {
-    writeProducerFixture(4, '.alpha { color: red; }');
+  it(
+    'fails when generated CSS exceeds the configured budget',
+    () => {
+      writeProducerFixture(4, '.alpha { color: red; }');
 
-    const result = runScript(PRODUCER_PATH);
+      const result = runScript(PRODUCER_PATH);
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain('styles.css');
-    expect(result.stderr).toContain('budget');
-    expect(existsSync(path.join(fixtureDirectory, 'dist/styles.css'))).toBe(false);
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('styles.css');
+      expect(result.stderr).toContain('budget');
+      expect(existsSync(path.join(fixtureDirectory, 'dist/styles.css'))).toBe(false);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
-  it('fails on malformed CSS without preserving stale output', () => {
-    writeProducerFixture(128, '.alpha { color: red; }}');
+  it(
+    'fails on malformed CSS without preserving stale output',
+    () => {
+      writeProducerFixture(128, '.alpha { color: red; }}');
 
-    const result = runScript(PRODUCER_PATH);
+      const result = runScript(PRODUCER_PATH);
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toMatch(/styles\.css produced \d+ esbuild warning/u);
-    expect(existsSync(path.join(fixtureDirectory, 'dist/styles.css'))).toBe(false);
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/styles\.css produced \d+ esbuild warning/u);
+      expect(existsSync(path.join(fixtureDirectory, 'dist/styles.css'))).toBe(false);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 });
 
 describe('release stylesheet checker', () => {
-  it('fails with an actionable message when the generated stylesheet is missing', () => {
-    writeCheckerFixture(128);
+  it(
+    'fails with an actionable message when the generated stylesheet is missing',
+    () => {
+      writeCheckerFixture(128);
 
-    const result = runScript(CHECKER_PATH);
+      const result = runScript(CHECKER_PATH);
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(
-      'dist/styles.css is missing — run `pnpm release:artifacts` first.',
-    );
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        'dist/styles.css is missing — run `pnpm release:artifacts` first.',
+      );
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
-  it('fails when the generated stylesheet is empty', () => {
-    writeCheckerFixture(128);
-    mkdirSync(path.join(fixtureDirectory, 'dist'));
-    writeFileSync(path.join(fixtureDirectory, 'dist/styles.css'), '');
+  it(
+    'fails when the generated stylesheet is empty',
+    () => {
+      writeCheckerFixture(128);
+      mkdirSync(path.join(fixtureDirectory, 'dist'));
+      writeFileSync(path.join(fixtureDirectory, 'dist/styles.css'), '');
 
-    const result = runScript(CHECKER_PATH);
+      const result = runScript(CHECKER_PATH);
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toBe(
-      'release:check failed with 1 problem(s):\n\n  ✖ dist/styles.css is empty.\n',
-    );
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toBe(
+        'release:check failed with 1 problem(s):\n\n  ✖ dist/styles.css is empty.\n',
+      );
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
-  it('fails when the generated stylesheet exceeds the shared budget', () => {
-    writeCheckerFixture(4);
-    mkdirSync(path.join(fixtureDirectory, 'dist'));
-    writeFileSync(path.join(fixtureDirectory, 'dist/styles.css'), 'five!');
+  it(
+    'fails when the generated stylesheet exceeds the shared budget',
+    () => {
+      writeCheckerFixture(4);
+      mkdirSync(path.join(fixtureDirectory, 'dist'));
+      writeFileSync(path.join(fixtureDirectory, 'dist/styles.css'), 'five!');
 
-    const result = runScript(CHECKER_PATH);
+      const result = runScript(CHECKER_PATH);
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain('dist/styles.css is 5 bytes, over the 4-byte budget.');
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain('dist/styles.css is 5 bytes, over the 4-byte budget.');
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
-  it('accepts a non-empty generated stylesheet under the shared budget', () => {
-    writeCheckerFixture(128);
-    mkdirSync(path.join(fixtureDirectory, 'dist'));
-    writeFileSync(path.join(fixtureDirectory, 'dist/styles.css'), '.a{}\n');
+  it(
+    'accepts a non-empty generated stylesheet under the shared budget',
+    () => {
+      writeCheckerFixture(128);
+      mkdirSync(path.join(fixtureDirectory, 'dist'));
+      writeFileSync(path.join(fixtureDirectory, 'dist/styles.css'), '.a{}\n');
 
-    const result = runScript(CHECKER_PATH);
+      const result = runScript(CHECKER_PATH);
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe('release:check passed.\n');
-    expect(result.stderr).toBe('');
-  });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe('release:check passed.\n');
+      expect(result.stderr).toBe('');
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 });
 
 describe('release tag checker', () => {
@@ -261,25 +301,33 @@ describe('release tag checker', () => {
     };
   }
 
-  it('rejects a release tag that differs from the manifest version', () => {
-    writeAcceptedFixture();
+  it(
+    'rejects a release tag that differs from the manifest version',
+    () => {
+      writeAcceptedFixture();
 
-    const result = runScript(CHECKER_PATH, releaseRef('2.0.0'));
+      const result = runScript(CHECKER_PATH, releaseRef('2.0.0'));
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(
-      'Release tag "2.0.0" must equal manifest.json version "1.0.0".',
-    );
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        'Release tag "2.0.0" must equal manifest.json version "1.0.0".',
+      );
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
-  it('accepts a release tag that equals the manifest version', () => {
-    writeAcceptedFixture();
+  it(
+    'accepts a release tag that equals the manifest version',
+    () => {
+      writeAcceptedFixture();
 
-    const result = runScript(CHECKER_PATH, releaseRef('1.0.0'));
+      const result = runScript(CHECKER_PATH, releaseRef('1.0.0'));
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('release:check passed.');
-  });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('release:check passed.');
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 });
 
 describe('release main.js checker', () => {
@@ -292,50 +340,64 @@ describe('release main.js checker', () => {
   it.each([
     ['a negative', negativeLookbehind],
     ['a positive', positiveLookbehind],
-  ])('rejects %s lookbehind in a mobile bundle', (_kind, mainJs) => {
-    writeAcceptedFixture({ isDesktopOnly: false, mainJs });
+  ])(
+    'rejects %s lookbehind in a mobile bundle',
+    (_kind, mainJs) => {
+      writeAcceptedFixture({ isDesktopOnly: false, mainJs });
 
-    const result = runScript(CHECKER_PATH);
+      const result = runScript(CHECKER_PATH);
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(lookbehindMessage);
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(lookbehindMessage);
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
-  it('rejects a Node built-in require in a mobile bundle', () => {
-    writeAcceptedFixture({ isDesktopOnly: false, mainJs: 'require("fs");\n' });
+  it(
+    'rejects a Node built-in require in a mobile bundle',
+    () => {
+      writeAcceptedFixture({ isDesktopOnly: false, mainJs: 'require("fs");\n' });
 
-    const result = runScript(CHECKER_PATH);
+      const result = runScript(CHECKER_PATH);
 
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(
-      'main.js requires Node built-in module(s) [fs] but manifest.json sets "isDesktopOnly": ' +
-        'false — this will crash on mobile. Check for a desktop-only dependency that got bundled.',
-    );
-  });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        'main.js requires Node built-in module(s) [fs] but manifest.json sets "isDesktopOnly": ' +
+          'false — this will crash on mobile. Check for a desktop-only dependency that got bundled.',
+      );
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 
   it.each([
     ['a lookbehind in a desktop-only bundle', true, negativeLookbehind],
     ['a named group in a mobile bundle', false, 'const pattern = /(?<name>a)/u;\n'],
-  ])('accepts %s', (_case, isDesktopOnly, mainJs) => {
-    writeAcceptedFixture({ isDesktopOnly, mainJs });
+  ])(
+    'accepts %s',
+    (_case, isDesktopOnly, mainJs) => {
+      writeAcceptedFixture({ isDesktopOnly, mainJs });
 
-    const result = runScript(CHECKER_PATH);
+      const result = runScript(CHECKER_PATH);
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('release:check passed.');
-    expect(result.stderr).toBe('');
-  });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('release:check passed.');
+      expect(result.stderr).toBe('');
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 });
 
 describe('host Moment bundle boundary', () => {
-  it('uses only the externally supplied Obsidian instance in its production bundle', () => {
-    // esbuild runs in its supported Node realm, rather than jsdom's split typed-array realm.
-    const output = execFileSync(
-      process.execPath,
-      [
-        '--input-type=module',
-        '-e',
-        `
+  it(
+    'uses only the externally supplied Obsidian instance in its production bundle',
+    () => {
+      // esbuild runs in its supported Node realm, rather than jsdom's split typed-array realm.
+      const output = execFileSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `
       import assert from 'node:assert/strict';
       import { runInNewContext } from 'node:vm';
       import { build } from 'esbuild';
@@ -358,9 +420,11 @@ describe('host Moment bundle boundary', () => {
       assert.equal(module.exports.moment, suppliedHost);
       console.log('external host identity preserved');
     `,
-      ],
-      { encoding: 'utf8' },
-    );
-    expect(output.trim()).toBe('external host identity preserved');
-  });
+        ],
+        { encoding: 'utf8' },
+      );
+      expect(output.trim()).toBe('external host identity preserved');
+    },
+    CHILD_PROCESS_TIMEOUT_MS,
+  );
 });

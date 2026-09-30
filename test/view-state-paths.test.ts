@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';

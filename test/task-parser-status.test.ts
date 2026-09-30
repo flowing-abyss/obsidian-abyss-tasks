@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { parseTask } from '../src/parser/TaskParser';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';

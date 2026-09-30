@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { cruise, type ICruiseResult } from 'dependency-cruiser';
 import extractDepcruiseOptions from 'dependency-cruiser/config-utl/extract-depcruise-options';
 import { Platform } from 'obsidian';

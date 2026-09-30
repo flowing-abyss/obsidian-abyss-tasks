@@ -1,7 +1,9 @@
 import { App, Component, MarkdownRenderer, Notice, Scope, TFile } from 'obsidian';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  mountProjectCellEditor,
+  mountProjectCellEditor as mountEditorUnderTest,
+  type ProjectCellEditorHandle,
+  type ProjectCellEditorOptions,
   type ProjectCellEditorResult,
 } from '../src/panels/projects/ProjectCellEditor';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
@@ -9,6 +11,21 @@ import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import type { ProjectPropertyType } from '../src/projects/projectFields';
 import { ProjectPropertySuggest } from '../src/ui/ProjectPropertySuggest';
 import { dispatchImeKey, expectDefined, freshContainer } from './helpers';
+
+// An editor listens on its document until it is destroyed, and rows leave theirs open, so an
+// editor from an earlier row could still take focus or react to a later row's events. Each row's
+// editors are destroyed when the row ends.
+const mountedEditors: ProjectCellEditorHandle[] = [];
+
+function mountProjectCellEditor(options: ProjectCellEditorOptions): ProjectCellEditorHandle {
+  const editor = mountEditorUnderTest(options);
+  mountedEditors.push(editor);
+  return editor;
+}
+
+afterEach(() => {
+  for (const editor of mountedEditors.splice(0)) editor.destroy();
+});
 
 function catalog(
   values: readonly string[] = [],

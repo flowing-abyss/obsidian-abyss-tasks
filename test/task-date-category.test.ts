@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { getTaskDateCategory } from '../src/domain/taskDateCategory';
 import { task } from './helpers';

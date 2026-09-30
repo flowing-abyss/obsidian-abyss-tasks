@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import type { TagGroup } from '../src/settings/types';
 import { colorForTag, tagColorFor } from '../src/tags/tagColor';

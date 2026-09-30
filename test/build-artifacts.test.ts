@@ -4,6 +4,7 @@ import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type TaskCalendarPlugin from '../src/main';
 import { appWithFiles, useRealMoment } from './helpers';
+import { CHILD_PROCESS_TIMEOUT_MS, TYPESCRIPT_PROGRAM_TIMEOUT_MS } from './support/timeouts';
 
 const loadNodeTools = async () => {
   if (!Platform.isDesktop) throw new Error('Artifact tests require a desktop runtime');
@@ -27,7 +28,6 @@ useRealMoment();
 
 const root = process.cwd();
 const suffix = '_abyssPrivate';
-const TYPESCRIPT_COLD_START_TIMEOUT_MS = 30_000;
 const privateOwners = new Set([
   'AsyncEditLifecycle',
   'CenterPanel',
@@ -148,7 +148,7 @@ describe('production private member boundary', () => {
     const options = ts.parseJsonConfigFileContent(config.config, ts.sys, root).options;
     program = ts.createProgram(files, options);
     checker = program.getTypeChecker();
-  }, TYPESCRIPT_COLD_START_TIMEOUT_MS);
+  }, TYPESCRIPT_PROGRAM_TIMEOUT_MS);
 
   it(
     'reserves the mangling suffix for explicit private declarations in audited owners',
@@ -180,7 +180,7 @@ describe('production private member boundary', () => {
       expect(foundOwners).toEqual(privateOwners);
       // The audit's type queries also trigger lazy TypeScript initialization on cold CI runners.
     },
-    TYPESCRIPT_COLD_START_TIMEOUT_MS,
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
   );
 });
 
@@ -217,7 +217,7 @@ describe('production JavaScript artifact', () => {
     buildStatus = result.status;
     buildError = result.stderr;
     code = readFileSync(path.join(directory, 'main.js'), 'utf8');
-  });
+  }, CHILD_PROCESS_TIMEOUT_MS);
 
   afterAll(() => {
     rmSync(directory, { recursive: true, force: true });

@@ -1,6 +1,6 @@
 import type * as ObsidianModule from 'obsidian';
 import { App, Notice, Setting } from 'obsidian';
-import { describe, expect, it, vi, type Mock } from 'vitest';
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import { buildDefaultProjectsSettings, DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { addProjectPropertyColumn } from '../src/settings/projectTableSettings';
@@ -30,6 +30,21 @@ vi.mock('obsidian', async () => {
 });
 
 useRealMoment();
+
+// A displayed tab commits its drafts on a window blur until it is hidden, and most rows never hide
+// theirs. When a focused element is removed, jsdom keeps the Document focused and fires a blur at
+// the window on the next focus anywhere, so an earlier row's tab could commit during a later row.
+// After each row its tabs are hidden, as closing Obsidian's settings does (a second hide does
+// nothing), and a temporary button takes the pending blur.
+const displayedTabs: CalendarSettingsTab[] = [];
+
+afterEach(() => {
+  for (const tab of displayedTabs.splice(0)) tab.hide();
+  const settle = document.body.createEl('button');
+  settle.focus();
+  settle.blur();
+  settle.remove();
+});
 
 const css = await loadPluginStyles();
 
@@ -187,6 +202,7 @@ function makeTab(
     plugin as unknown as ConstructorParameters<typeof CalendarSettingsTab>[1],
     opts.projectProperties,
   );
+  displayedTabs.push(tab);
   // Cards (tag groups / statuses) are collapsed by default; expand them all so
   // their body Settings render and are captured for inspection.
   if (expandCards) {
