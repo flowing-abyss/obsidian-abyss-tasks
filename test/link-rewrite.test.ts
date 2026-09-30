@@ -279,8 +279,8 @@ describe('link edit modal Save', () => {
     ).click();
   }
 
-  // Rebuilding these unchanged links would rewrite `[[Note\|Alias]]` as `[[Note|Alias]]`, `[[a|]]`
-  // as `[[a]]`, and `[ a ]( b )` as `[a](b)`.
+  // Rebuilding these unchanged links would rewrite `[[a|]]` as `[[a]]` and `[ a ]( b )` as
+  // `[a](b)`.
   it.each([String.raw`[[Note\|Alias]]`, '[[a|]]', '[a](b)', '[ a ]( b )'])(
     'writes nothing when nothing changed in %s',
     async (raw) => {
@@ -304,7 +304,7 @@ describe('link edit modal Save', () => {
     editSettingControl(display, ' Renamed ');
     save(modal);
 
-    expect(onSave).toHaveBeenCalledExactlyOnceWith('[[Note|Renamed]]');
+    expect(onSave).toHaveBeenCalledExactlyOnceWith(String.raw`[[Note\|Renamed]]`);
     expect(close).toHaveBeenCalledOnce();
   });
 

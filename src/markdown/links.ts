@@ -81,21 +81,23 @@ function splitSubpath(target: string): readonly [path: string, subpath: string] 
 }
 
 /** A wiki link's display without an alias: its note name without folder, then its subpath. */
-function unaliasedDisplay(target: string): string {
+export function unaliasedDisplay(target: string): string {
   const [path, subpath] = splitSubpath(target);
   return noteNameOfPath(path) + subpath;
 }
 
-/** A wiki link's target, and its alias when written. */
+/** A wiki link's target, its alias when written, and the separator written before the alias. */
 interface WikiContent {
   readonly target: string;
   readonly alias: string | undefined;
+  readonly separator: '|' | '\\|';
 }
 
 /**
  * Reads a wiki link's content as Obsidian does: the first `|` splits the target from the alias
  * unless nothing comes before it, both parts are trimmed, and one backslash at the end of the
- * target is dropped, which is how the table form `[[Note\|Alias]]` works.
+ * target is dropped, which is how the table form `[[Note\|Alias]]` works; that form's separator
+ * is `\|`.
  */
 function readWikiContent(content: string): WikiContent {
   const text = content.trim();
@@ -105,6 +107,7 @@ function readWikiContent(content: string): WikiContent {
   return {
     target: escaped ? written.slice(0, -1).trim() : written,
     alias: pipe > 0 ? text.slice(pipe + 1).trim() : undefined,
+    separator: pipe > 0 && escaped ? '\\|' : '|',
   };
 }
 
@@ -231,11 +234,32 @@ export function countLinksIn(texts: Array<string | undefined>): number {
   return total;
 }
 
-/** Build the raw markup for a link, omitting the wiki alias when it equals the basename. */
-export function buildLinkRaw(type: 'wiki' | 'md', target: string, display: string): string {
-  if (type === 'md') return `[${display}](${target})`;
-  const basename = unaliasedDisplay(target);
-  return Boolean(display) && display !== basename ? `[[${target}|${display}]]` : `[[${target}]]`;
+/** The text a link is written with: a Markdown link's text, a wiki link's alias, else nothing. */
+export function writtenAlias(token: LinkToken): string {
+  return token.type === 'md'
+    ? token.display
+    : (readWikiContent(token.raw.slice(2, -2)).alias ?? '');
+}
+
+/** The separator a wiki link writes before its alias: `\|` in the table form, else `|`. */
+export function aliasSeparator(token: LinkToken): '|' | '\\|' {
+  return token.type === 'md' ? '|' : readWikiContent(token.raw.slice(2, -2)).separator;
+}
+
+/**
+ * Build the raw markup for a link from its written text. A wiki alias is left out when it is
+ * empty, or when it repeats a target with no folder and no `.md` extension, whose label is the
+ * same without it; the separator keeps a table's escaped pipe.
+ */
+export function buildLinkRaw(
+  type: 'wiki' | 'md',
+  target: string,
+  alias: string,
+  separator: '|' | '\\|' = '|',
+): string {
+  if (type === 'md') return `[${alias}](${target})`;
+  const redundant = alias === '' || (alias === target && target === unaliasedDisplay(target));
+  return redundant ? `[[${target}]]` : `[[${target}${separator}${alias}]]`;
 }
 
 export interface AnchorDescriptor {

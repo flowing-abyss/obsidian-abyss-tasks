@@ -2,7 +2,15 @@
 // A wiki link's note name drops only a `.md` extension of the path before the first `#`, as
 // Obsidian names a note file, and a plain title reads each wiki link as `parseLinks` does.
 import { describe, expect, it } from 'vitest';
-import { collapseLinks, linkLabel, linkValueLabel, parseLinks } from '../src/markdown/links';
+import {
+  aliasSeparator,
+  buildLinkRaw,
+  collapseLinks,
+  linkLabel,
+  linkValueLabel,
+  parseLinks,
+  writtenAlias,
+} from '../src/markdown/links';
 import { noteNameOfPath } from '../src/markdown/noteName';
 import { rebaseProjectClipboardLinks } from '../src/panels/projects/projectTableClipboard';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
@@ -148,4 +156,64 @@ describe('the plain title of a wiki link', () => {
       expect(collapseLinks(title)).toBe(plain);
     },
   );
+});
+
+describe('the text a link is written with', () => {
+  it.each([
+    ['[[Note]]', ''],
+    ['[[Note|A]]', 'A'],
+    ['[[Note|]]', ''],
+    ['[[ |A]]', ''],
+    [String.raw`[[Note\|A]]`, 'A'],
+    ['[Docs](x)', 'Docs'],
+  ])('Y1l the written alias of %s is %j', (raw, alias) => {
+    expect(writtenAlias(expectDefined(parseLinks(raw)[0]))).toBe(alias);
+  });
+
+  it.each([
+    ['[[Note|A]]', '|'],
+    [String.raw`[[Note\|A]]`, String.raw`\|`],
+    [String.raw`[[Note\]]`, '|'],
+    ['[Docs](x)', '|'],
+  ])('Y1l the alias separator of %s is %s', (raw, separator) => {
+    expect(aliasSeparator(expectDefined(parseLinks(raw)[0]))).toBe(separator);
+  });
+
+  // An alias is left out only when it is empty or repeats a target with no folder and no `.md`
+  // extension; the separator is `|` unless one is given.
+  it.each([
+    ['Note', 'Note', undefined, '[[Note]]'],
+    ['Folder/Note', 'Folder/Note', undefined, '[[Folder/Note|Folder/Note]]'],
+    ['Folder/Note', 'Note', undefined, '[[Folder/Note|Note]]'],
+    ['Note', 'note', undefined, '[[Note|note]]'],
+    ['Note', '', undefined, '[[Note]]'],
+    ['Note#H', 'Note#H', undefined, '[[Note#H]]'],
+    ['Note.md', 'Note.md', undefined, '[[Note.md|Note.md]]'],
+    ['v1.2 notes', 'v1.2 notes', undefined, '[[v1.2 notes]]'],
+    ['Note#v1.2', 'Note#v1.2', undefined, '[[Note#v1.2]]'],
+    ['Note.md', 'Note', undefined, '[[Note.md|Note]]'],
+    ['Note', 'A', '\\|', String.raw`[[Note\|A]]`],
+  ] as const)(
+    'Y1l a wiki link to %s with the alias %j and the separator %s is written %s',
+    (target, alias, separator, raw) => {
+      expect(buildLinkRaw('wiki', target, alias, separator)).toBe(raw);
+    },
+  );
+});
+
+describe('a copied link keeps only the alias it is written with', () => {
+  it.each([
+    ['[[Note]]', '[[Folder/Note]]'],
+    ['[[Note|Alias]]', '[[Folder/Note|Alias]]'],
+    ['[[Other|Note]]', '[[Folder/Note|Note]]'],
+    ['[[Folder/Note|Folder/Note]]', '[[Folder/Note|Folder/Note]]'],
+    ['[[Note|Folder/Note]]', '[[Folder/Note|Folder/Note]]'],
+    [String.raw`[[Note\|Alias]]`, String.raw`[[Folder/Note\|Alias]]`],
+  ])('Y2f %s pasted where it needs its folder is %s', (value, pasted) => {
+    const copied = rebaseProjectClipboardLinks(value, 'a.md', 'Sub/b.md', {
+      resolve: () => 'Folder/Note.md',
+      linktext: () => 'Folder/Note',
+    });
+    expect(copied).toBe(pasted);
+  });
 });
