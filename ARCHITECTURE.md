@@ -91,7 +91,8 @@ inspector registers its Delete task and Archive in its own state, the task modal
 registry is transient and unpublished. While the selected root's removal is pending, an index
 update that does not resolve it exactly clears the selection instead of following its line to the
 next task. A successful move then selects the moved task in its new note, with the sub-task and the
-inspector history the selection had before the move.
+inspector history the selection had before the move, and at once points that history at the lines
+its tasks moved to, while the index can still prove them.
 
 ## Calendar mode
 

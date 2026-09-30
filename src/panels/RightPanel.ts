@@ -606,7 +606,7 @@ export class RightPanel {
       offDrag();
     };
     this.offDependencyQueries_abyssPrivate = this.tasks_abyssPrivate?.queries.subscribe(() => {
-      this.refreshInspectorHistory_abyssPrivate();
+      this.refreshInspectorHistory();
       queueMicrotask(() => {
         if (this.mounted_abyssPrivate) this.refreshDependencies_abyssPrivate();
       });
@@ -1580,7 +1580,8 @@ export class RightPanel {
     this.state_abyssPrivate.backInspectorDependency(selected);
   }
 
-  private refreshInspectorHistory_abyssPrivate(): void {
+  /** Points every history frame the index can prove at its task's current reference. */
+  refreshInspectorHistory(): void {
     const frames = this.state_abyssPrivate.get('inspectorBackStack');
     this.state_abyssPrivate.updateInspectorHistoryFrames(
       frames.map((frame) => {

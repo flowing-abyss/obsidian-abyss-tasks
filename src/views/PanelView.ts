@@ -1311,14 +1311,17 @@ export class PanelView extends ItemView {
     const state = this.state_abyssPrivate;
     const cleared = state.get('taskStack').length === 0 ? origin : undefined;
     const stack = cleared?.taskStack ?? state.get('taskStack');
-    const selectedRef = stack[0] != null ? rootTaskRef(stack[0]) : undefined;
-    if (selectedRef == null || !this.sameRef_abyssPrivate(selectedRef, initiatingRef)) return;
+    const root = stack[0];
+    if (root == null || !this.sameRef_abyssPrivate(rootTaskRef(root), initiatingRef)) return;
     const updated = result.outcome.task;
     const draft = this.right_abyssPrivate.captureDraftState();
     state.batch(() => {
       if (cleared != null) state.set('inspectorBackStack', cleared.inspectorBackStack);
       state.updateInspectorSelection(rebuildTaskSelection(updated, stack));
     });
+    // The restored history names lines from before the move. The index proves their successors
+    // only until the next write to the note, so they follow the move now.
+    if (cleared != null) this.right_abyssPrivate.refreshInspectorHistory();
     this.right_abyssPrivate.restoreDraftState(draft, updated);
     this.ownedWriteRef_abyssPrivate = result.changed ? { ...updated.ref } : undefined;
   }

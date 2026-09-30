@@ -866,31 +866,52 @@ describe('PanelView project moves of the inspected task', () => {
     },
   );
 
-  it('keeps the inspected sub-task and the back stack through the move', async () => {
-    const today = window.moment().format('YYYY-MM-DD');
-    const panel = await openRemovalPanel({
-      'today.md': `\n- [ ] First 📅 ${today}\n  - [ ] Child\n- [ ] Second 📅 ${today}\n- [ ] Third 📅 ${today}\n`,
-      'Projects/P.md': PROJECT_NOTE,
-    });
-    try {
-      const nodes = panel.application.index.listNodes();
-      const third = expectDefined(nodes.find(({ node }) => node.title === 'Third'));
-      const child = expectDefined(nodes.find(({ node }) => node.title === 'Child'));
-      panel.state.set('taskStack', [third.root]);
-      panel.state.openInspectorDependency(child);
-      const history = panel.state.get('inspectorBackStack');
-      expect(panel.state.get('taskStack').map((node) => node.title)).toEqual(['First', 'Child']);
+  it.each([
+    ['first', false],
+    ['after the command', true],
+  ] as const)(
+    'keeps the inspected sub-task and a working Back through the move and a later write when the index update lands %s',
+    async (_order, holdIndex) => {
+      const today = window.moment().format('YYYY-MM-DD');
+      const panel = await openRemovalPanel({
+        'today.md': `\n- [ ] First 📅 ${today}\n  - [ ] Child\n- [ ] Second 📅 ${today}\n- [ ] Third 📅 ${today}\n`,
+        'Projects/P.md': PROJECT_NOTE,
+      });
+      try {
+        const nodes = panel.application.index.listNodes();
+        const third = expectDefined(nodes.find(({ node }) => node.title === 'Third'));
+        const child = expectDefined(nodes.find(({ node }) => node.title === 'Child'));
+        panel.state.set('taskStack', [third.root]);
+        panel.state.openInspectorDependency(child);
+        expect(panel.state.get('taskStack').map((node) => node.title)).toEqual(['First', 'Child']);
+        const release = holdIndex ? panel.holdIndexEvents() : undefined;
 
-      expectDefined(projectDrops[0])[1](panel, 'First');
-      await settleRemoval();
+        expectDefined(projectDrops[0])[1](panel, 'First');
+        await settleRemoval();
+        release?.();
+        await settleRemoval();
 
-      expect(selectedRoot(panel)).toEqual({ title: 'First', filePath: 'Projects/P.md' });
-      expect(panel.state.get('taskStack').map((node) => node.title)).toEqual(['First', 'Child']);
-      expect(panel.state.get('inspectorBackStack')).toEqual(history);
-    } finally {
-      await panel.close();
-    }
-  });
+        expect(selectedRoot(panel)).toEqual({ title: 'First', filePath: 'Projects/P.md' });
+        expect(panel.state.get('taskStack').map((node) => node.title)).toEqual(['First', 'Child']);
+        // Third moved up two lines. After one more write to its note, Back still finds it.
+        const file = panel.app.vault.getAbstractFileByPath('today.md');
+        if (!(file instanceof TFile)) throw new Error('Missing fixture');
+        await panel.app.vault.modify(
+          file,
+          (await panel.read()).replace('- [ ] Second', '- [x] Second'),
+        );
+        await settleRemoval();
+        expectDefined(
+          panel.view.contentEl.querySelector<HTMLElement>('[aria-label="Back to previous task"]'),
+        ).click();
+
+        expect(selectedRoot(panel)).toEqual({ title: 'Third', filePath: 'today.md' });
+        expect(panel.state.get('inspectorBackStack')).toEqual([]);
+      } finally {
+        await panel.close();
+      }
+    },
+  );
 
   it('keeps the selection on the source task when the move fails', async () => {
     const panel = await openRemovalPanel(projectFiles());
