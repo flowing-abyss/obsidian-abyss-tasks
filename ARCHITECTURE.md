@@ -73,7 +73,9 @@ or settings UI.
 
 `PanelView` owns `RailPanel` for mode changes, `LeftPanel` for navigation, `CenterPanel` for selected
 content, and `RightPanel` for the task inspector. Panels share transient navigation through
-`AppState`.
+`AppState`. `set('taskStack')` begins a selection and `updateInspectorSelection` refreshes one;
+`AppState` tells its selection-begun listeners after a begun selection is delivered, and at a
+compact width `PanelView` opens the details pane for a begun selection only.
 
 When a panel moves between windows, `PanelView` rebinds its shortcut router and native interaction
 blocker to the current document, retains its state and capture coordinator, and releases the

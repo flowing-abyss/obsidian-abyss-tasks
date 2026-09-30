@@ -221,7 +221,6 @@ export class PanelView extends ItemView {
   private compactPaneRefresh_abyssPrivate: (() => void) | undefined;
   private compactHeaderResizeObserver_abyssPrivate: ResizeObserver | undefined = undefined;
   private compactPaneOpen_abyssPrivate: CompactPane | null = null;
-  private compactTaskSelectionKey_abyssPrivate: string | undefined = undefined;
   private compactLeftCollapsed_abyssPrivate = false;
   private compactRightCollapsed_abyssPrivate = false;
   private pendingCompactPane_abyssPrivate: PendingCompactPane | undefined = undefined;
@@ -677,8 +676,9 @@ export class PanelView extends ItemView {
   }
 
   /**
-   * Shows a tracked task the way a card selection does: the panel switches to Tasks and the node
-   * becomes the inspector selection, which at a compact width is what opens the details pane.
+   * Shows a tracked task the way a card selection does: the panel switches to Tasks, the node
+   * becomes the inspector selection, and at a compact width the details pane opens, also for the
+   * task already selected.
    */
   private openTrackedTask_abyssPrivate(target: TaskNodeRef): void {
     const address = taskNodeAddress(target);
@@ -695,6 +695,8 @@ export class PanelView extends ItemView {
     }
     this.panelNavigation_abyssPrivate.openTasks();
     this.state_abyssPrivate.openInspectorDependency(node);
+    // The hop begins no selection and leaves a task already selected as it is.
+    this.openCompactPane_abyssPrivate('right', false);
   }
 
   private initializeCapture_abyssPrivate(
@@ -779,9 +781,18 @@ export class PanelView extends ItemView {
       }
       this.refreshHostHeader_abyssPrivate();
     });
-    this.selectionUnsub_abyssPrivate = this.state_abyssPrivate.on('taskStack', (stack) => {
+    const offStack = this.state_abyssPrivate.on('taskStack', (stack) => {
       this.handleTaskStackChange_abyssPrivate(stack);
     });
+    // Beginning a selection shows its details, also for the task already selected; a refresh of the
+    // selection by the index or by a command leaves a hidden pane hidden.
+    const offBegun = this.state_abyssPrivate.onTaskSelectionBegun((stack) => {
+      if (stack.length > 0) this.openCompactPane_abyssPrivate('right', false);
+    });
+    this.selectionUnsub_abyssPrivate = () => {
+      offStack();
+      offBegun();
+    };
     this.listUnsub_abyssPrivate = this.state_abyssPrivate.on('selectedList', () => {
       this.refreshHostHeader_abyssPrivate();
     });
@@ -809,9 +820,9 @@ export class PanelView extends ItemView {
   private handleTaskStackChange_abyssPrivate(stack: readonly TaskSelectionNode[]): void {
     const selected = stack[0];
     const selectedRef = selected == null ? undefined : rootTaskRef(selected);
-    const selectionKey =
-      selectedRef == null ? undefined : `${selectedRef.filePath}\u0000${String(selectedRef.line)}`;
-    this.updateCompactTaskSelection_abyssPrivate(selectionKey);
+    if (selectedRef == null && this.compactPaneOpen_abyssPrivate === 'right') {
+      this.closeCompactPane_abyssPrivate(false);
+    }
     if (this.ownedWriteRef_abyssPrivate == null) return;
     if (
       selectedRef == null ||
@@ -819,21 +830,6 @@ export class PanelView extends ItemView {
     ) {
       this.ownedWriteRef_abyssPrivate = undefined;
     }
-  }
-
-  private updateCompactTaskSelection_abyssPrivate(selectionKey: string | undefined): void {
-    const selectionChanged =
-      selectionKey !== undefined && selectionKey !== this.compactTaskSelectionKey_abyssPrivate;
-    if (
-      selectionChanged &&
-      this.state_abyssPrivate.get('mode') === 'tasks' &&
-      this.compactRightCollapsed_abyssPrivate
-    ) {
-      this.openCompactPane_abyssPrivate('right', false);
-    } else if (selectionKey === undefined && this.compactPaneOpen_abyssPrivate === 'right') {
-      this.closeCompactPane_abyssPrivate(false);
-    }
-    this.compactTaskSelectionKey_abyssPrivate = selectionKey;
   }
 
   private subscribeToQueries_abyssPrivate(): void {
@@ -884,7 +880,6 @@ export class PanelView extends ItemView {
     this.compactPaneRefresh_abyssPrivate = undefined;
     this.closeCompactPane_abyssPrivate(false);
     this.compactPaneElements_abyssPrivate = undefined;
-    this.compactTaskSelectionKey_abyssPrivate = undefined;
     this.compactLeftCollapsed_abyssPrivate = false;
     this.compactRightCollapsed_abyssPrivate = false;
     this.pendingCompactPane_abyssPrivate = undefined;

@@ -954,6 +954,136 @@ describe('PanelView project moves of the inspected task', () => {
   });
 });
 
+function compactLayout(
+  panel: RemovalPanel,
+  width = 390,
+): { readonly right: HTMLElement; readonly details: HTMLButtonElement } {
+  const layout = expectDefined(panel.view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+  setGeometry(layout, rect(0, 0, width, 480));
+  window.dispatchEvent(new Event('resize'));
+  return {
+    right: expectDefined(layout.querySelector<HTMLElement>('.abyss-right')),
+    details: expectDefined(
+      layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right'),
+    ),
+  };
+}
+
+function openTrackedTask(panel: RemovalPanel, title: string): void {
+  const tracked = expectDefined(
+    panel.application.index.list().find((candidate) => candidate.title === title),
+  );
+  (
+    panel.view as unknown as { openTrackedTask_abyssPrivate(target: TaskNodeRef): void }
+  ).openTrackedTask_abyssPrivate({ type: 'task', ref: tracked.ref });
+}
+
+async function editToday(panel: RemovalPanel, edit: (content: string) => string): Promise<void> {
+  const file = panel.app.vault.getAbstractFileByPath('today.md');
+  if (!(file instanceof TFile)) throw new Error('Missing fixture');
+  await panel.app.vault.modify(file, edit(await panel.read()));
+  await settleRemoval();
+}
+
+describe('PanelView compact details on a begun selection', () => {
+  it('reopens the hidden details when the selected card is tapped again', async () => {
+    const panel = await openRemovalPanel();
+    try {
+      const { right, details } = compactLayout(panel);
+      panel.select('First');
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      details.click();
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+
+      panel.select('First');
+
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      expect(details.getAttribute('aria-expanded')).toBe('true');
+    } finally {
+      await panel.close();
+    }
+  });
+
+  it('reopens the hidden details for a tracked task that is already selected', async () => {
+    const panel = await openRemovalPanel();
+    try {
+      const { right, details } = compactLayout(panel);
+      panel.select('First');
+      details.click();
+
+      openTrackedTask(panel, 'First');
+
+      expect(panel.state.get('taskStack').map((node) => node.title)).toEqual(['First']);
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+    } finally {
+      await panel.close();
+    }
+  });
+
+  it('keeps the details hidden when an edit above moves the selected line', async () => {
+    const panel = await openRemovalPanel();
+    try {
+      const { right, details } = compactLayout(panel);
+      panel.select('Second');
+      details.click();
+
+      await editToday(panel, (content) => `- [ ] Above\n${content}`);
+
+      expect(selectedRoot(panel)).toEqual({ title: 'Second', filePath: 'today.md' });
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+    } finally {
+      await panel.close();
+    }
+  });
+
+  it('keeps the details hidden when the selected line is refreshed in place', async () => {
+    const panel = await openRemovalPanel();
+    try {
+      const { right, details } = compactLayout(panel);
+      panel.select('First');
+      details.click();
+
+      await editToday(panel, (content) => content.replace('- [ ] First', '- [ ] Edited'));
+
+      expect(selectedRoot(panel)).toEqual({ title: 'Edited', filePath: 'today.md' });
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+    } finally {
+      await panel.close();
+    }
+  });
+
+  it('opens the details for a tracked task that is not selected yet', async () => {
+    const panel = await openRemovalPanel();
+    try {
+      const { right } = compactLayout(panel);
+
+      openTrackedTask(panel, 'Second');
+
+      expect(panel.state.get('taskStack').map((node) => node.title)).toEqual(['Second']);
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+    } finally {
+      await panel.close();
+    }
+  });
+
+  it('keeps the details hidden when the hidden selection moves to a project', async () => {
+    const panel = await openRemovalPanel(projectFiles());
+    try {
+      const { right, details } = compactLayout(panel, 700);
+      panel.select('First');
+      details.click();
+
+      expectDefined(projectDrops[0])[1](panel, 'First');
+      await settleRemoval();
+
+      expect(selectedRoot(panel)).toEqual({ title: 'First', filePath: 'Projects/P.md' });
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+    } finally {
+      await panel.close();
+    }
+  });
+});
+
 describe('PanelView', () => {
   // jsdom has no `scrollIntoView`, and creation feedback scrolls a created card into view.
   let scrollIntoView: Mock<HTMLElement['scrollIntoView']>;

@@ -53,6 +53,7 @@ export interface AppStateData {
 
 type Listener<T> = (value: T, prev: T) => void;
 type CommitListener = (changed: ReadonlySet<keyof AppStateData>) => void;
+type SelectionBegunListener = (stack: readonly TaskSelectionNode[]) => void;
 
 interface PendingChange {
   prev: unknown;
@@ -163,6 +164,9 @@ export class AppState {
   private delivering = false;
   /** Root tasks this state's own commands are removing; never published or persisted. */
   private readonly taskRemovals = new Set<{ readonly key: string }>();
+  private readonly selectionBegunListeners = new Set<SelectionBegunListener>();
+  /** A `set` of the selection changed it; its listeners hear of it once the change is delivered. */
+  private selectionBegun = false;
 
   get<K extends keyof AppStateData>(key: K): AppStateData[K] {
     return this.data[key];
@@ -179,7 +183,7 @@ export class AppState {
     if (key === 'taskStack' && this.data.inspectorBackStack.length > 0) {
       this.batch(() => {
         this.setValue('inspectorBackStack', Object.freeze([]));
-        this.setValue(key, value);
+        this.setValue(key, value, true);
       });
       return;
     }
@@ -191,7 +195,19 @@ export class AppState {
       this.setValue('inspectorBackStack', Object.freeze(frames));
       return;
     }
-    this.setValue(key, value);
+    this.setValue(key, value, key === 'taskStack');
+  }
+
+  /**
+   * Tells the listener, once the change is delivered, that `set('taskStack')` began a selection,
+   * even of the task already selected. A refresh through `updateInspectorSelection` or the
+   * dependency history never does.
+   */
+  onTaskSelectionBegun(listener: SelectionBegunListener): () => void {
+    this.selectionBegunListeners.add(listener);
+    return () => {
+      this.selectionBegunListeners.delete(listener);
+    };
   }
 
   /** Refresh or navigate within the current frame without beginning a new selection. */
@@ -264,18 +280,23 @@ export class AppState {
     return [...this.taskRemovals].some((removal) => removal.key === key);
   }
 
-  private setValue<K extends keyof AppStateData>(key: K, value: AppStateData[K]): void {
+  private setValue<K extends keyof AppStateData>(
+    key: K,
+    value: AppStateData[K],
+    beginsSelection = false,
+  ): void {
     const prev = this.data[key];
     if (prev === value) return;
     if (this.delivering) throw new AppStateReentrantMutationError(key);
     if (key === 'taskStack' && this.data.draggingTaskNode !== null) {
       this.batch(() => {
         this.setValue('draggingTaskNode', null);
-        this.setValue(key, value);
+        this.setValue(key, value, beginsSelection);
       });
       return;
     }
     this.data[key] = value;
+    if (beginsSelection) this.selectionBegun = true;
     if (this.batchDepth > 0) {
       const pending = this.pendingChanges.get(key);
       if (pending != null) pending.value = value;
@@ -315,6 +336,7 @@ export class AppState {
         this.notifyBatchKey(key, change.value, change.prev, errors);
       }
       this.notifyCommit(immutableChangedSet(changes.keys()), errors);
+      this.notifySelectionBegun(errors);
     } finally {
       this.delivering = false;
     }
@@ -344,6 +366,7 @@ export class AppState {
     try {
       this.notifyBatchKey(key, value, prev, errors);
       this.notifyCommit(immutableChangedSet([key]), errors);
+      this.notifySelectionBegun(errors);
     } finally {
       this.delivering = false;
     }
@@ -354,6 +377,18 @@ export class AppState {
     for (const listener of [...this.commitListeners]) {
       try {
         listener(changed);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+  }
+
+  private notifySelectionBegun(errors: unknown[]): void {
+    if (!this.selectionBegun) return;
+    this.selectionBegun = false;
+    for (const listener of [...this.selectionBegunListeners]) {
+      try {
+        listener(this.data.taskStack);
       } catch (error) {
         errors.push(error);
       }
