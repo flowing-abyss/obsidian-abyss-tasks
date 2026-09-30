@@ -429,6 +429,7 @@ export default defineConfig(
       'src/views/panelTitle.ts',
       'src/views/taskGrouping.ts',
       'src/panels/task-list/taskListRows.ts',
+      'src/panels/task-list/taskRowSelection.ts',
       'src/settings/viewStatePaths.ts',
     ],
     rules: { 'project-policy/ambient': ['error', 'pure'] },

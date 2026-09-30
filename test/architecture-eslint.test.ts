@@ -179,6 +179,7 @@ const pureFiles = [
   'src/panels/projects/projectTableViewport.ts',
   'src/views/taskGrouping.ts',
   'src/panels/task-list/taskListRows.ts',
+  'src/panels/task-list/taskRowSelection.ts',
   'src/settings/viewStatePaths.ts',
 ];
 async function check(file: string, source: string) {
