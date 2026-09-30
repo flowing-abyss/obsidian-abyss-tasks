@@ -4743,6 +4743,20 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   color: var(--text-muted);
 }
 
+/*
+ * In the inspector an Undo row stands in for a sub-task or dependency row, so it reads at that
+ * row's text size and is that row's height, with its button at the 22px of the row's remove
+ * control. A dependency title inherits the list's size, and so does the row standing in for it.
+ * The time entries popover sizes its own Undo row.
+ */
+.abyss-subtask-section .abyss-undo-row {
+  font-size: var(--font-ui-small);
+}
+
+:is(.abyss-subtask-section, .abyss-dep-section) .abyss-undo-row button {
+  height: 22px;
+}
+
 .abyss-subtask-row.is-dragging {
   opacity: 0.4;
 }

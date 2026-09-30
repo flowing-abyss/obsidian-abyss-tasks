@@ -797,6 +797,52 @@ describe('inspector subtask row removal', () => {
     );
   });
 
+  it('gives an inspector Undo row the text size and height of the row it stands in for', async () => {
+    if (!Platform.isDesktop) throw new Error('CSS contract requires desktop filesystem access');
+    const fs = await import('node:fs');
+    const css = expandCompoundSelectorLists(
+      fs.readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8'),
+    );
+    const cssReader = createCssReader(css);
+    const value = (selector: string, property: string) =>
+      cssDeclarationValue(cssReader.declarationText(selector), property);
+    // A sub-task row reads at its label's size, and its 22px remove control sets its height.
+    expect(value('.abyss-subtask-label', 'font-size')).toBe('var(--font-ui-small)');
+    expect(value('.abyss-subtask-remove', 'height')).toBe('22px');
+    expect(value('.abyss-subtask-section .abyss-undo-row', 'font-size')).toBe(
+      'var(--font-ui-small)',
+    );
+    expect(value('.abyss-subtask-section .abyss-undo-row button', 'height')).toBe('22px');
+    // A dependency title inherits the list's size, and so does the row that stands in for it.
+    expect(value('.abyss-dep-row button.abyss-dep-title', 'font-size')).toBe('inherit');
+    for (const selector of [
+      '.abyss-undo-row',
+      '.abyss-subtask-row',
+      '.abyss-subtask-row.abyss-undo-row',
+      '.abyss-dep-section .abyss-undo-row',
+    ])
+      expect(value(selector, 'font-size')).toBeUndefined();
+    expect(value('.abyss-dep-remove', 'height')).toBe('22px');
+    expect(value('.abyss-dep-section .abyss-undo-row button', 'height')).toBe('22px');
+    // The time entries popover keeps its own Undo row.
+    expect(value('.abyss-undo-row button', 'height')).toBe('24px');
+    expect(value('.abyss-time-tracking-popover--sessions .abyss-undo-row', 'min-height')).toBe(
+      '30px',
+    );
+    expect(value('.abyss-time-tracking-popover--sessions .abyss-undo-row', 'gap')).toBe(
+      'var(--size-2-3)',
+    );
+    expect(value('.abyss-time-tracking-popover--sessions .abyss-undo-row', 'padding')).toBe(
+      '0 var(--size-2-3)',
+    );
+    expect(
+      value('.abyss-time-tracking-popover--sessions .abyss-undo-row', 'font-size'),
+    ).toBeUndefined();
+    expect(
+      value('.abyss-time-tracking-popover--sessions .abyss-undo-row button', 'height'),
+    ).toBeUndefined();
+  });
+
   it('deletes a nested subtree from its row and Undo restores exact bytes without navigation', async () => {
     const markdown =
       '- [ ] Source\n- [ ] Current\n  - [ ] Branch\n    - [ ] Remove me 🆔 child ⛔ missing\n      - > Keep **description**\n      - [ ] Grandchild\n      - 2026-09-05: Keep comment\n    - [ ] Keep sibling\n';
