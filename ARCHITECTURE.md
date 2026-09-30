@@ -376,8 +376,13 @@ retain creation requests or arm Kanban dragging. A dashboard temporarily detache
 invalidates Timeline interaction authority; reattachment preserves the session but cannot revive an old queued gesture.
 
 Table owns a full expanded logical row/cell projection for selection, keyboard navigation, and
-clipboard commands, independently of mounted DOM. Its local `projectTableViewport` owns measured
-and estimated row offsets, bounded windows, and spacer geometry. Scroll reconciliation reuses the
+clipboard commands, independently of mounted DOM. The pure
+[overview cell lists](src/panels/projects/projectOverviewCells.ts) build it: rows in display order,
+cells with their selection identities, row and column orders, and a lookup index. The same module
+lists Kanban and Timeline cells from their models by the rules those views render with; until the
+views use it, [parity tests](test/project-kanban-view.test.ts) compare it with the cells they mount.
+The Table's local `projectTableViewport` owns measured and estimated row offsets, bounded windows,
+and spacer geometry. Scroll reconciliation reuses the
 retained model; data and group changes replace that sequence and clamp the viewport immediately.
 Group metadata remains available outside the window. Editors and native drag sources pin their
 occurrence rows until the interaction finishes; other evicted rows release listeners and Markdown
@@ -398,7 +403,8 @@ cells rather than requiring mounted elements. Row mounting is needed only for re
 editing, and pointer interaction. These interaction rules belong to the controller, not the geometry
 helper; windowing alone is not a complete reusable view implementation.
 
-Regression entry points are [viewport geometry tests](test/project-table-viewport.test.ts) and
+Regression entry points are [overview cell tests](test/project-overview-cells.test.ts),
+[viewport geometry tests](test/project-table-viewport.test.ts), and
 [table interaction tests](test/project-table-view.test.ts). They cover buffer boundaries, group
 expansion/collapse, shrinking results, changed heights, offscreen bulk selection and Quick Capture,
 and retained editor/drag rows. Native validation additionally checks visible coverage after large

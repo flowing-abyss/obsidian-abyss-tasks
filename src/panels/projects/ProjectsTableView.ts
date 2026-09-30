@@ -120,6 +120,14 @@ import { ProjectCreationComposer } from './ProjectCreationComposer';
 import { ProjectCreationPresentation } from './ProjectCreationPresentation';
 import { formatProjectRelativeDate } from './projectDatePresentation';
 import { forecastProjectGroupDrop, type ProjectGroupDropForecast } from './projectGroupDropPreview';
+import {
+  NO_PROJECT_OVERVIEW_CELLS,
+  projectTableCells,
+  projectTableOccurrenceId,
+  visibleProjectColumns,
+  type ProjectOverviewCells,
+  type ProjectTableRow,
+} from './projectOverviewCells';
 import { ProjectsKanbanView } from './ProjectsKanbanView';
 import { ProjectsTableToolbar } from './ProjectsTableToolbar';
 import { ProjectsTimelineView } from './ProjectsTimelineView';
@@ -331,12 +339,6 @@ interface RenderedGroupContext extends ProjectTableDragGroup {
   label: string;
 }
 
-interface TableModelRow {
-  readonly key: string;
-  readonly group: ProjectTableGroup;
-  readonly project?: Project;
-}
-
 interface RenderedProjectRow {
   readonly markdown: Component;
   readonly element: HTMLTableRowElement;
@@ -505,17 +507,6 @@ function editableField(field: ProjectFieldCatalogItem): field is ProjectField {
     field.type !== 'progress' &&
     field.type !== 'tracked'
   );
-}
-
-function visibleColumns(
-  settings: CalendarSettings,
-  fields: readonly ProjectFieldCatalogItem[],
-): VisibleProjectColumn[] {
-  return settings.projects.table.columns.flatMap((column) => {
-    if (!column.visible) return [];
-    const field = findProjectFieldById(fields, column.id);
-    return field === undefined ? [] : [{ column, field }];
-  });
 }
 
 function copyProjectedValue(value: unknown): unknown {
@@ -721,12 +712,8 @@ export class ProjectsTableView {
   private tableSpacers_abyssPrivate = new Map<string, HTMLTableRowElement>();
   private tableRowsDirty_abyssPrivate = false;
   private tableModel_abyssPrivate: ProjectTableModel | undefined;
-  private tableRows_abyssPrivate: TableModelRow[] = [];
-  private tableLogicalCells_abyssPrivate: LogicalCellContext[] = [];
-  private readonly tableCellIndex_abyssPrivate = new Map<string, LogicalCellContext>();
-  private tableRowIds_abyssPrivate: string[] = [];
-  private tableColumnIds_abyssPrivate: string[] = [];
-  private tableSelectableCells_abyssPrivate: ProjectTableSelectableCell[] = [];
+  private tableRows_abyssPrivate: readonly ProjectTableRow[] = [];
+  private tableCells_abyssPrivate: ProjectOverviewCells = NO_PROJECT_OVERVIEW_CELLS;
   private selectedKeys_abyssPrivate = new Set<string>();
   private tableRenderedCells_abyssPrivate: RenderedCellContext[] = [];
   private kanbanRenderedCells_abyssPrivate: RenderedCellContext[] = [];
@@ -1102,8 +1089,7 @@ export class ProjectsTableView {
     this.removeMissingRows_abyssPrivate(new Set(), new Set());
     this.tableModel_abyssPrivate = undefined;
     this.tableRows_abyssPrivate = [];
-    this.tableLogicalCells_abyssPrivate = [];
-    this.tableCellIndex_abyssPrivate.clear();
+    this.tableCells_abyssPrivate = NO_PROJECT_OVERVIEW_CELLS;
     this.tableViewport_abyssPrivate.replace([]);
     this.tableSpacers_abyssPrivate.clear();
     this.renderedProjectRows_abyssPrivate.clear();
@@ -1448,7 +1434,7 @@ export class ProjectsTableView {
     if (focus && group !== undefined && this.collapsedGroups_abyssPrivate.delete(group.key)) {
       this.renderTable_abyssPrivate();
     }
-    const logical = this.tableLogicalCells_abyssPrivate.find(
+    const logical = this.tableCells_abyssPrivate.cells.find(
       ({ project: candidate, field }) => candidate.path === project.path && field.id === 'name',
     );
     if (focus && logical !== undefined) this.revealLogicalCell_abyssPrivate(logical.identity);
@@ -1582,10 +1568,7 @@ export class ProjectsTableView {
 
     const tableSettings = this.context_abyssPrivate.settings.projects.table;
     enforceProjectTableColumnInvariants(tableSettings);
-    const columns = visibleColumns(
-      this.context_abyssPrivate.settings,
-      this.renderFields_abyssPrivate(),
-    );
+    const columns = visibleProjectColumns(tableSettings.columns, this.renderFields_abyssPrivate());
     this.syncRelativeDateTimer_abyssPrivate(columns, tableSettings.dateDisplay);
     this.compiledPresets_abyssPrivate = new Map(
       columns.map(({ field }) => [
@@ -2421,56 +2404,21 @@ export class ProjectsTableView {
     this.body_abyssPrivate = body;
     this.tableRowsDirty_abyssPrivate = true;
     this.tableModel_abyssPrivate = model;
-    this.tableRows_abyssPrivate = [];
-    this.tableLogicalCells_abyssPrivate = [];
-    this.tableCellIndex_abyssPrivate.clear();
-    this.tableRowIds_abyssPrivate = [];
-    this.tableColumnIds_abyssPrivate = columns.map(({ column }) => column.id);
     this.renderedGroups_abyssPrivate.clear();
-    const grouped = this.context_abyssPrivate.settings.projects.table.groupBy !== 'none';
-    for (const group of model.groups) {
-      this.renderedGroups_abyssPrivate.set(group.key, group);
-      if (grouped) this.tableRows_abyssPrivate.push({ key: `group:${group.key}`, group });
-      if (grouped && this.collapsedGroups_abyssPrivate.has(group.key)) continue;
-      this.appendLogicalGroup_abyssPrivate(group, columns);
-    }
-    this.tableSelectableCells_abyssPrivate = this.tableLogicalCells_abyssPrivate.map(
-      ({ identity }) => identity,
-    );
+    for (const group of model.groups) this.renderedGroups_abyssPrivate.set(group.key, group);
+    const { rows, cells } = projectTableCells({
+      model,
+      grouped: this.context_abyssPrivate.settings.projects.table.groupBy !== 'none',
+      columns,
+      collapsedGroups: this.collapsedGroups_abyssPrivate,
+      effectiveField: (project, field) => this.effectiveField_abyssPrivate(project, field),
+    });
+    this.tableRows_abyssPrivate = rows;
+    this.tableCells_abyssPrivate = cells;
     this.tableViewport_abyssPrivate.replace(
-      this.tableRows_abyssPrivate.map(({ key, project }) => ({
-        key,
-        height: project === undefined ? 32 : 34,
-      })),
+      rows.map(({ key, project }) => ({ key, height: project === undefined ? 32 : 34 })),
     );
     this.renderTableWindow_abyssPrivate();
-  }
-
-  private appendLogicalGroup_abyssPrivate(
-    group: ProjectTableGroup,
-    columns: readonly VisibleProjectColumn[],
-  ): void {
-    for (const project of group.projects) {
-      const key = `${encodeURIComponent(group.key)}:${encodeURIComponent(project.path)}`;
-      this.tableRows_abyssPrivate.push({ key, group, project });
-      this.tableRowIds_abyssPrivate.push(key);
-      for (const { column, field: rawField } of columns) {
-        const { field, ownedClear } = this.effectiveField_abyssPrivate(project, rawField);
-        const cell = {
-          identity: {
-            occurrenceId: key,
-            projectPath: project.path,
-            groupKey: group.key,
-            columnId: column.id,
-          },
-          project,
-          field,
-          ownedClear,
-        };
-        this.tableLogicalCells_abyssPrivate.push(cell);
-        this.tableCellIndex_abyssPrivate.set(`${key}\u0000${column.id}`, cell);
-      }
-    }
   }
 
   private tableViewportHeight_abyssPrivate(): number {
@@ -2599,7 +2547,7 @@ export class ProjectsTableView {
 
   private mountTableRow_abyssPrivate(
     body: HTMLTableSectionElement,
-    item: TableModelRow,
+    item: ProjectTableRow,
     model: ProjectTableModel,
     rows: ReconciledBodyRows,
   ): HTMLTableRowElement {
@@ -2971,7 +2919,7 @@ export class ProjectsTableView {
 
   private reconcileProjectRow_abyssPrivate(options: RenderProjectRowOptions): RenderedProjectRow {
     const { project, group, grouped } = options;
-    const occurrenceId = `${encodeURIComponent(group.key)}:${encodeURIComponent(project.path)}`;
+    const occurrenceId = projectTableOccurrenceId(group.key, project.path);
     const renderedRow =
       this.renderedProjectRows_abyssPrivate.get(occurrenceId) ??
       this.createProjectRow_abyssPrivate(options.body, project, group.key, occurrenceId);
@@ -3495,9 +3443,9 @@ export class ProjectsTableView {
     });
   }
 
-  private selectableCells_abyssPrivate(): ProjectTableSelectableCell[] {
+  private selectableCells_abyssPrivate(): readonly ProjectTableSelectableCell[] {
     return this.overviewMode_abyssPrivate === 'table'
-      ? this.tableSelectableCells_abyssPrivate
+      ? this.tableCells_abyssPrivate.identities
       : this.renderedCells_abyssPrivate.map(({ identity }) => identity);
   }
 
@@ -3513,7 +3461,7 @@ export class ProjectsTableView {
 
   private logicalCells_abyssPrivate(): readonly LogicalCellContext[] {
     return this.overviewMode_abyssPrivate === 'table'
-      ? this.tableLogicalCells_abyssPrivate
+      ? this.tableCells_abyssPrivate.cells
       : this.renderedCells_abyssPrivate;
   }
 
@@ -3521,7 +3469,7 @@ export class ProjectsTableView {
     identity: ProjectTableSelectableCell,
   ): LogicalCellContext | undefined {
     return this.overviewMode_abyssPrivate === 'table'
-      ? this.tableCellIndex_abyssPrivate.get(`${identity.occurrenceId}\u0000${identity.columnId}`)
+      ? this.tableCells_abyssPrivate.cell(identity.occurrenceId, identity.columnId)
       : this.renderedCell_abyssPrivate(identity);
   }
 
@@ -3889,15 +3837,15 @@ export class ProjectsTableView {
     return true;
   }
 
-  private rowIds_abyssPrivate(): string[] {
-    if (this.overviewMode_abyssPrivate === 'table') return this.tableRowIds_abyssPrivate;
+  private rowIds_abyssPrivate(): readonly string[] {
+    if (this.overviewMode_abyssPrivate === 'table') return this.tableCells_abyssPrivate.rowIds;
     return [
       ...new Set(this.renderedCells_abyssPrivate.map(({ identity }) => identity.occurrenceId)),
     ];
   }
 
-  private columnIds_abyssPrivate(): string[] {
-    if (this.overviewMode_abyssPrivate === 'table') return this.tableColumnIds_abyssPrivate;
+  private columnIds_abyssPrivate(): readonly string[] {
+    if (this.overviewMode_abyssPrivate === 'table') return this.tableCells_abyssPrivate.columnIds;
     return [...new Set(this.renderedCells_abyssPrivate.map(({ identity }) => identity.columnId))];
   }
 
@@ -3906,7 +3854,7 @@ export class ProjectsTableView {
     const columnId = this.columnIds_abyssPrivate()[column];
     if (occurrenceId === undefined || columnId === undefined) return undefined;
     if (this.overviewMode_abyssPrivate === 'table')
-      return this.tableCellIndex_abyssPrivate.get(`${occurrenceId}\u0000${columnId}`);
+      return this.tableCells_abyssPrivate.cell(occurrenceId, columnId);
     return this.renderedCells_abyssPrivate.find(
       ({ identity }) => identity.occurrenceId === occurrenceId && identity.columnId === columnId,
     );

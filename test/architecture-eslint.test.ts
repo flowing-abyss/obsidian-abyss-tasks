@@ -176,6 +176,8 @@ const pureFiles = [
   'src/projects/projectTimelineModel.ts',
   'src/projects/projectTimelineAxis.ts',
   'src/projects/projectTimelineEdits.ts',
+  'src/panels/projects/projectOverviewCells.ts',
+  'src/panels/projects/projectTableSelection.ts',
   'src/panels/projects/projectTableViewport.ts',
   'src/views/taskGrouping.ts',
   'src/panels/task-list/taskListRows.ts',

@@ -422,6 +422,8 @@ export default defineConfig(
       'src/projects/projectTimelineAxis.ts',
       'src/projects/projectTimelineEdits.ts',
       'src/projects/projectTimelineEndpointEdits.ts',
+      'src/panels/projects/projectOverviewCells.ts',
+      'src/panels/projects/projectTableSelection.ts',
       'src/panels/projects/projectTableViewport.ts',
       'src/panels/calendar/calendarPolicy.ts',
       'src/panels/calendar/calendarDateNavigation.ts',

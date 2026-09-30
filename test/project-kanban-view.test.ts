@@ -2,21 +2,36 @@ import { MarkdownRenderer, Menu, Notice } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { isProjectKanbanCustomized } from '../src/panels/projects/ProjectKanbanOptions';
-import { projectTimelineOptionsRows } from '../src/panels/projects/ProjectTimelineOptions';
+import {
+  projectKanbanCells,
+  projectTimelineCells,
+  type ProjectOverviewFieldResolver,
+} from '../src/panels/projects/projectOverviewCells';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
+import type { ProjectTableSelectableCell } from '../src/panels/projects/projectTableSelection';
+import { projectTimelineOptionsRows } from '../src/panels/projects/ProjectTimelineOptions';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { ProjectEditHistory } from '../src/projects/projectEditHistory';
-import type {
-  AppliedProjectCellChange,
-  ProjectCellChange,
-  ProjectEditResult,
+import {
+  createOwnedInferredPropertyClear,
+  type AppliedProjectCellChange,
+  type OwnedInferredPropertyClear,
+  type ProjectCellChange,
+  type ProjectEditResult,
 } from '../src/projects/projectEdits';
+import type { ProjectFieldCatalogItem } from '../src/projects/projectFields';
+import type { ProjectKanbanModel } from '../src/projects/projectKanbanModel';
 import {
   buildDefaultProjectKanbanSettings,
   normalizeProjectKanbanSettings,
+  type ProjectKanbanSettings,
 } from '../src/projects/projectKanbanSettings';
-import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
+import type { ProjectTimelineModel } from '../src/projects/projectTimelineModel';
+import {
+  buildDefaultProjectTimelineSettings,
+  type ProjectTimelineSettings,
+} from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { ProjectsSettings } from '../src/settings/types';
@@ -4709,5 +4724,573 @@ describe('project Kanban overview', () => {
         .closest<HTMLElement>('.abyss-project-kanban-group')
         ?.querySelector<HTMLElement>('.abyss-project-kanban-group-body')?.hidden,
     ).toBe(true);
+  });
+});
+
+describe('project overview cell lists', () => {
+  interface ListedCell {
+    readonly identity: ProjectTableSelectableCell;
+    readonly project: Project;
+    readonly field: ProjectFieldCatalogItem;
+    readonly ownedClear: OwnedInferredPropertyClear | undefined;
+  }
+
+  interface ListedSurface<TModel, TSettings> {
+    currentModel(): TModel | undefined;
+    visibleCells(): readonly ListedCell[];
+    readonly collapsedGroups_abyssPrivate: ReadonlySet<string>;
+    readonly context_abyssPrivate: {
+      settings(): TSettings;
+      modelInput(): { readonly fields: readonly ProjectFieldCatalogItem[] };
+    };
+  }
+
+  interface ListedInternals {
+    readonly kanbanView_abyssPrivate?: ListedSurface<ProjectKanbanModel, ProjectKanbanSettings>;
+    readonly timelineView_abyssPrivate?: ListedSurface<
+      ProjectTimelineModel,
+      ProjectTimelineSettings
+    >;
+    readonly effectiveField_abyssPrivate: ProjectOverviewFieldResolver;
+  }
+
+  /** What the parity check compares per cell: identity, project, field id and type, owned clear. */
+  function listed(cells: readonly ListedCell[]) {
+    return cells.map(({ identity, project: owner, field, ownedClear }) => ({
+      identity,
+      path: owner.path,
+      fieldId: field.id,
+      fieldType: field.type,
+      ownedClear,
+    }));
+  }
+
+  /** The Kanban projection beside the cells the board mounted. */
+  function kanbanLists(view: ProjectsTableView) {
+    const internals = view as unknown as ListedInternals;
+    const board = expectDefined(internals.kanbanView_abyssPrivate);
+    const projected = projectKanbanCells({
+      model: expectDefined(board.currentModel()),
+      settings: board.context_abyssPrivate.settings(),
+      fields: board.context_abyssPrivate.modelInput().fields,
+      collapsedGroups: board.collapsedGroups_abyssPrivate,
+      effectiveField: (owner, field) => internals.effectiveField_abyssPrivate(owner, field),
+    });
+    return { projected: listed(projected.cells), rendered: listed(board.visibleCells()) };
+  }
+
+  /** The Timeline projection beside the cells the Timeline mounted. */
+  function timelineLists(view: ProjectsTableView) {
+    const internals = view as unknown as ListedInternals;
+    const timeline = expectDefined(internals.timelineView_abyssPrivate);
+    const projected = projectTimelineCells({
+      model: expectDefined(timeline.currentModel()),
+      settings: timeline.context_abyssPrivate.settings(),
+      fields: timeline.context_abyssPrivate.modelInput().fields,
+      collapsedGroups: timeline.collapsedGroups_abyssPrivate,
+      effectiveField: (owner, field) => internals.effectiveField_abyssPrivate(owner, field),
+    });
+    return { projected: listed(projected.cells), rendered: listed(timeline.visibleCells()) };
+  }
+
+  /** Each listed cell as `A:name`, its project note's name and its field. */
+  function names(cells: ReturnType<typeof listed>): string[] {
+    return cells.map(({ path, fieldId }) => `${path.slice('Projects/'.length, -3)}:${fieldId}`);
+  }
+
+  const secondStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+
+  /** A with every field and a percent, B with a Start only and no tasks, C in the next column. */
+  function listedProjects(): Project[] {
+    return [
+      project(),
+      project({
+        path: 'Projects/B.md',
+        name: 'B project',
+        frontmatter: { start: '2026-10-01' },
+        stats: {
+          total: 0,
+          done: 0,
+          cancelled: 0,
+          inProgress: 0,
+          tracked: { closedMs: 0, openStartsMs: [] },
+        },
+      }),
+      project({
+        path: 'Projects/C.md',
+        name: 'C project',
+        statusId: secondStatus.id,
+        frontmatter: { start: '2026-09-15', end: '2026-10-01', Budget: 7 },
+      }),
+    ];
+  }
+
+  it.each<{
+    readonly name: string;
+    readonly configure?: (kanban: ProjectKanbanSettings) => void;
+    readonly collapse?: string;
+    readonly cells: readonly string[];
+  }>([
+    {
+      name: 'an ungrouped board',
+      cells: [
+        'A:name',
+        'A:description',
+        'A:start',
+        'A:end',
+        'A:progress',
+        'B:name',
+        'B:start',
+        'C:name',
+        'C:start',
+        'C:end',
+        'C:progress',
+      ],
+    },
+    {
+      name: 'a board grouped by End',
+      configure: (kanban) => {
+        kanban.groupBy = 'end';
+      },
+      cells: [
+        'A:name',
+        'A:description',
+        'A:start',
+        'A:end',
+        'A:progress',
+        'B:name',
+        'B:start',
+        'C:name',
+        'C:start',
+        'C:end',
+        'C:progress',
+      ],
+    },
+    {
+      name: 'a collapsed group',
+      configure: (kanban) => {
+        kanban.groupBy = 'end';
+      },
+      collapse: 'value:2026-09-30',
+      cells: ['B:name', 'B:start', 'C:name', 'C:start', 'C:end', 'C:progress'],
+    },
+    {
+      name: 'a collapsed column',
+      configure: (kanban) => {
+        kanban.collapsedColumns = [`id:${secondStatus.id}`];
+      },
+      cells: ['A:name', 'A:description', 'A:start', 'A:end', 'A:progress', 'B:name', 'B:start'],
+    },
+    {
+      name: 'no description lines',
+      configure: (kanban) => {
+        kanban.descriptionLines = 0;
+      },
+      cells: [
+        'A:name',
+        'A:start',
+        'A:end',
+        'A:progress',
+        'B:name',
+        'B:start',
+        'C:name',
+        'C:start',
+        'C:end',
+        'C:progress',
+      ],
+    },
+    {
+      name: 'two description lines',
+      configure: (kanban) => {
+        kanban.descriptionLines = 2;
+      },
+      cells: [
+        'A:name',
+        'A:description',
+        'A:start',
+        'A:end',
+        'A:progress',
+        'B:name',
+        'B:start',
+        'C:name',
+        'C:start',
+        'C:end',
+        'C:progress',
+      ],
+    },
+    {
+      name: 'empty progress shown',
+      configure: (kanban) => {
+        kanban.showEmptyProgress = true;
+      },
+      cells: [
+        'A:name',
+        'A:description',
+        'A:start',
+        'A:end',
+        'A:progress',
+        'B:name',
+        'B:start',
+        'B:progress',
+        'C:name',
+        'C:start',
+        'C:end',
+        'C:progress',
+      ],
+    },
+    {
+      name: 'empty fields hidden',
+      configure: (kanban) => {
+        kanban.fields.push({ id: 'property:Budget', visible: true });
+        kanban.showEmptyFields = false;
+      },
+      cells: [
+        'A:name',
+        'A:description',
+        'A:start',
+        'A:end',
+        'A:property:Budget',
+        'A:progress',
+        'B:name',
+        'B:start',
+        'C:name',
+        'C:start',
+        'C:end',
+        'C:property:Budget',
+        'C:progress',
+      ],
+    },
+    {
+      name: 'empty fields shown',
+      configure: (kanban) => {
+        kanban.fields.push({ id: 'property:Budget', visible: true });
+        kanban.showEmptyFields = true;
+      },
+      cells: [
+        'A:name',
+        'A:description',
+        'A:start',
+        'A:end',
+        'A:property:Budget',
+        'A:progress',
+        'B:name',
+        'B:start',
+        'B:end',
+        'B:property:Budget',
+        'C:name',
+        'C:start',
+        'C:end',
+        'C:property:Budget',
+        'C:progress',
+      ],
+    },
+  ])('lists the projected Kanban cells for $name as the board mounts them', async (options) => {
+    const { host, view, settings } = mountView(listedProjects());
+    const kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    options.configure?.(kanban);
+    settings.projects.kanban = kanban;
+    clickView(host, 'Kanban');
+    if (options.collapse !== undefined) {
+      expectDefined(
+        host.querySelector<HTMLButtonElement>(
+          `[data-group-key="${options.collapse}"] .abyss-project-kanban-group-header`,
+        ),
+      ).click();
+      await flushMicrotasks();
+    }
+
+    const { projected, rendered } = kanbanLists(view);
+
+    expect(names(rendered)).toEqual(options.cells);
+    expect(projected).toEqual(rendered);
+  });
+
+  it('lists an owned clear receipt on the Kanban cell it owns', () => {
+    const budget = {
+      id: 'property:Budget',
+      property: 'Budget',
+      label: 'Budget',
+      type: 'number',
+    } as const;
+    const ownedClear = createOwnedInferredPropertyClear({
+      path: 'Projects/B.md',
+      fieldId: budget.id,
+      sourceProperty: budget.property,
+      sourceKey: budget.property,
+      type: budget.type,
+    });
+    const history = new ProjectEditHistory(vi.fn());
+    history.record({
+      applied: [
+        {
+          path: 'Projects/B.md',
+          field: budget,
+          value: undefined,
+          expectedValue: 10,
+          previousValue: 10,
+          sourceProperty: budget.property,
+          sourceKey: budget.property,
+          previousExists: true,
+          appliedExists: false,
+          ownedClear,
+        },
+      ],
+      failed: [],
+    });
+    const { host, view, settings } = mountView(listedProjects(), { history });
+    const kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    kanban.fields = [{ id: 'property:Budget', visible: true }];
+    kanban.showEmptyFields = true;
+    settings.projects.kanban = kanban;
+    clickView(host, 'Kanban');
+
+    const { projected, rendered } = kanbanLists(view);
+
+    expect(names(rendered.filter((cell) => cell.ownedClear !== undefined))).toEqual([
+      'B:property:Budget',
+    ]);
+    expect(projected).toEqual(rendered);
+  });
+
+  it.each<{
+    readonly name: string;
+    readonly configure?: (timeline: ProjectTimelineSettings) => void;
+    readonly collapse?: boolean;
+    readonly cells: readonly string[];
+  }>([
+    {
+      name: 'a grouped Timeline',
+      cells: [
+        'A:name',
+        'A:status',
+        'A:start',
+        'A:end',
+        'A:progress',
+        'B:name',
+        'B:status',
+        'B:start',
+        'B:end',
+        'B:progress',
+        'C:name',
+        'C:status',
+        'C:start',
+        'C:end',
+        'C:progress',
+      ],
+    },
+    {
+      name: 'a collapsed group',
+      collapse: true,
+      cells: ['C:name', 'C:status', 'C:start', 'C:end', 'C:progress'],
+    },
+    {
+      name: 'hidden metadata',
+      configure: (timeline) => {
+        timeline.showMetadata = false;
+      },
+      cells: ['A:name', 'A:progress', 'B:name', 'B:progress', 'C:name', 'C:progress'],
+    },
+    {
+      name: 'hidden Progress',
+      configure: (timeline) => {
+        timeline.progress = 'hidden';
+      },
+      cells: [
+        'A:name',
+        'A:status',
+        'A:start',
+        'A:end',
+        'B:name',
+        'B:status',
+        'B:start',
+        'B:end',
+        'C:name',
+        'C:status',
+        'C:start',
+        'C:end',
+      ],
+    },
+  ])(
+    'lists the projected Timeline cells for $name as the Timeline mounts them',
+    async (options) => {
+      const { host, view, settings } = mountView(listedProjects());
+      const timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+      options.configure?.(timeline);
+      settings.projects.timeline = timeline;
+      clickView(host, 'Timeline');
+      if (options.collapse === true) {
+        expectDefined(
+          host.querySelector<HTMLButtonElement>('.abyss-project-timeline-group-header'),
+        ).click();
+        await flushMicrotasks();
+      }
+
+      const { projected, rendered } = timelineLists(view);
+
+      expect(names(rendered)).toEqual(options.cells);
+      expect(projected).toEqual(rendered);
+    },
+  );
+
+  it('clears a selected Kanban Start cell in one batch and restores it with Undo', async () => {
+    const { host, applyEdits } = mountView();
+    clickView(host, 'Kanban');
+    const start = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-kanban [data-column-id="start"]'),
+    );
+    start.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    start.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledOnce();
+    const cleared = expectDefined(applyEdits.mock.calls[0])[0];
+    expect(cleared).toHaveLength(1);
+    expect(cleared[0]).toMatchObject({
+      path: 'Projects/A.md',
+      field: { id: 'start' },
+      value: undefined,
+      expectedValue: '2026-09-01',
+    });
+    // The board hides empty fields, so the cleared cell leaves and focus stays on its card.
+    expect(host.querySelector('.abyss-project-kanban [data-column-id="start"]')).toBeNull();
+    const focused = expectDefined(activeDocument.activeElement as HTMLElement | null);
+    expect(focused.closest<HTMLElement>('.abyss-project-kanban-card')?.dataset['projectPath']).toBe(
+      'Projects/A.md',
+    );
+
+    focused.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledTimes(2);
+    const restored = expectDefined(applyEdits.mock.calls[1])[0];
+    expect(restored).toHaveLength(1);
+    expect(restored[0]).toMatchObject({
+      path: 'Projects/A.md',
+      field: { id: 'start' },
+      value: '2026-09-01',
+      expectedValue: undefined,
+    });
+  });
+
+  it('moves the Timeline selection down between Name cells', () => {
+    const later = project({
+      path: 'Projects/B.md',
+      name: 'B project',
+      frontmatter: { start: '2026-09-10', end: '2026-09-20' },
+    });
+    const { host, view } = mountView([project(), later]);
+    clickView(host, 'Timeline');
+    const [first, second] = Array.from(
+      host.querySelectorAll<HTMLElement>('.abyss-project-timeline [data-column-id="name"]'),
+    );
+    const firstName = expectDefined(first);
+    const secondName = expectDefined(second);
+    expect(
+      secondName.closest<HTMLElement>('.abyss-project-timeline-row')?.dataset['projectPath'],
+    ).toBe('Projects/B.md');
+    firstName.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(view.selectedProjectPath()).toBe('Projects/A.md');
+
+    firstName.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+    );
+
+    expect(activeDocument.activeElement).toBe(secondName);
+    expect(view.selectedProjectPath()).toBe('Projects/B.md');
+    expect(secondName.classList).toContain('is-selected');
+    expect(firstName.classList).not.toContain('is-selected');
+  });
+
+  it('clears a selected Timeline metadata cell in one batch', async () => {
+    const { host, applyEdits } = mountView();
+    clickView(host, 'Timeline');
+    const end = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline-metadata [data-column-id="end"]'),
+    );
+    end.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    end.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+
+    expect(applyEdits).toHaveBeenCalledOnce();
+    const cleared = expectDefined(applyEdits.mock.calls[0])[0];
+    expect(cleared).toHaveLength(1);
+    expect(cleared[0]).toMatchObject({
+      path: 'Projects/A.md',
+      field: { id: 'end' },
+      value: undefined,
+      expectedValue: '2026-09-30',
+    });
+  });
+
+  it('selects a Kanban creation in its collapsed group over the earlier selection', async () => {
+    let finishCreate: ((path: string) => void) | undefined;
+    const createProject = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finishCreate = resolve;
+        }),
+    );
+    const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const existing = project();
+    const neighbour = project({
+      path: 'Projects/B.md',
+      name: 'B project',
+      frontmatter: { start: '2026-10-01', end: '2026-10-15' },
+    });
+    const created = project({
+      path: 'Projects/Kanban creation.md',
+      name: 'Kanban creation',
+      frontmatter: { start: '2026-10-02', end: '2026-10-15' },
+    });
+    const { host, view, settings } = mountView([existing, neighbour], { createProject });
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.groupBy = 'end';
+    clickView(host, 'Kanban');
+    const start = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/A.md"] [data-column-id="start"]',
+      ),
+    );
+    start.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const header = expectDefined(
+      host.querySelector<HTMLButtonElement>(
+        '[data-group-key="value:2026-10-15"] .abyss-project-kanban-group-header',
+      ),
+    );
+    header.click();
+    await flushMicrotasks();
+    expect(header.getAttribute('aria-expanded')).toBe('false');
+    expect(view.selectedProjectPath()).toBe('Projects/A.md');
+
+    expectDefined(
+      host.querySelector<HTMLButtonElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${status.id}"] .abyss-project-kanban-column-create`,
+      ),
+    ).click();
+    const composer = expectDefined(
+      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+    );
+    composer.value = created.name;
+    composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    view.update([existing, neighbour, created]);
+    finishCreate?.(created.path);
+    await flushMicrotasks();
+
+    expect(header.getAttribute('aria-expanded')).toBe('true');
+    expect(view.selectedProjectPath()).toBe(created.path);
+    const card = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/Kanban creation.md"]',
+      ),
+    );
+    expect(card.classList).toContain('is-just-created');
+    expect(card.querySelector('[data-column-id="name"]')?.classList).toContain('is-selected');
+    expect(start.classList).not.toContain('is-selected');
   });
 });
