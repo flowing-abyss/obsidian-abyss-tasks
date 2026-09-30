@@ -26,6 +26,10 @@ peerDependencyRules:
     'eslint-plugin-obsidianmd@0.4.2>obsidian': '1.13.1'
 allowedDeprecatedVersions:
   eslint: '9.39.5'
+# GHSA-4p3w-j4w9-5jqw: obsidian@1.13.1 (types only) and obsidian-test-mocks@6.0.0 pin moment 2.29.4
+# exactly. The shipped plugin uses the host's Moment. Remove once both admit moment 2.31.0 or later.
+overrides:
+  'moment@>=2.29.2 <2.31.0': '2.31.0'
 
 allowBuilds:
   '@parcel/watcher': false
