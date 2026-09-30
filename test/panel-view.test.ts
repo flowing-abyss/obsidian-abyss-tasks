@@ -652,6 +652,36 @@ describe('PanelView own task removals', () => {
     },
   );
 
+  it('keeps following the selected task through an edit on the panel wrapper', async () => {
+    const panel = await openRemovalPanel();
+    try {
+      panel.select('First');
+      const first = expectDefined(
+        panel.application.index.list().find((candidate) => candidate.title === 'First'),
+      );
+      const tasks = (
+        panel.view as unknown as { createSelectionTasks_abyssPrivate(): TaskApplicationApi }
+      ).createSelectionTasks_abyssPrivate();
+      const order: string[] = [];
+      panel.application.index.subscribe(() => order.push('index update'));
+
+      const result = await tasks.execute({
+        type: 'patch',
+        target: { type: 'task', ref: first.ref },
+        patch: { markdownTitle: { type: 'set', value: 'First edited' } },
+      });
+      order.push('command returned');
+      await settleRemoval();
+
+      expect(result.type).toBe('ok');
+      expect(order.slice(0, 2)).toEqual(['index update', 'command returned']);
+      expect(panel.state.get('taskStack').map((node) => node.title)).toEqual(['First edited']);
+      expect(cardsWithTheX(panel)).toEqual(['First edited']);
+    } finally {
+      await panel.close();
+    }
+  });
+
   it('keeps the selection when the delete fails, and still follows a later edit of the line', async () => {
     const panel = await openRemovalPanel();
     try {
