@@ -89,7 +89,19 @@ export interface CssRuleParts {
   readonly declarations: string;
 }
 
+const ruleParts = new Map<string, readonly CssRuleParts[]>();
+
+/** The rules of a stylesheet text, split once per test file and frozen, since queries repeat. */
 export function cssRuleParts(source: string): readonly CssRuleParts[] {
+  let rules = ruleParts.get(source);
+  if (rules === undefined) {
+    rules = Object.freeze(splitCssRuleParts(source).map((rule) => Object.freeze(rule)));
+    ruleParts.set(source, rules);
+  }
+  return rules;
+}
+
+function splitCssRuleParts(source: string): CssRuleParts[] {
   const rules: CssRuleParts[] = [];
   for (const segment of stripCssComments(source).split('}')) {
     const openingBrace = segment.lastIndexOf('{');
