@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { expectDefined } from './helpers';
 // test/tag-manager-settings.test.ts
 import { describe, expect, it, vi } from 'vitest';

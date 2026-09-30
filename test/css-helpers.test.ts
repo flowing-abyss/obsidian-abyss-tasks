@@ -1,3 +1,4 @@
+// @vitest-environment node
 import type postcss from 'postcss';
 import { describe, expect, it } from 'vitest';
 import { cssDeclarations, cssDeclarationText } from './cssHelpers';

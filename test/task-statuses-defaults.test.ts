@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { expectDefined } from './helpers';

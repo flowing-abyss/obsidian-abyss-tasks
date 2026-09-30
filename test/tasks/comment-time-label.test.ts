@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { formatCommentTimeLabel } from '../../src/tasks/domain/commentTimeLabel';
 import { atomDateTime, type CommentTimestamp } from '../../src/tasks/domain/commentTimestamp';

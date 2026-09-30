@@ -1,3 +1,4 @@
+// @vitest-environment node
 import type { App, EventRef } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { ObsidianProjectProperties } from '../src/projects/ObsidianProjectProperties';

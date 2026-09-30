@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import {
   PROJECT_TABLE_CLIPBOARD_TYPE,

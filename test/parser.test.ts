@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { formatTaskLine, parseTask as parseTaskWithCatalog } from '../src/parser/TaskParser';
 import type { ParseContext } from '../src/parser/types';

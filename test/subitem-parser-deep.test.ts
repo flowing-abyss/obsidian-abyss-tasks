@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { parseSubItems as parseSubItemsWithCatalog } from '../src/parser/SubItemParser';
 import { canonicalStatusCatalog } from './helpers';

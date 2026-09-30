@@ -1,3 +1,4 @@
+// @vitest-environment node
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { inlineCodeRanges as markdownInlineCodeRanges } from '../src/markdown/inlineCode';

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import type * as ObsidianModule from 'obsidian';
 import { Notice } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { parseProjectDate, projectCalendarDay } from '../src/projects/projectDateValue';
 import { planProjectTimelineEndpointEdit } from '../src/projects/projectTimelineEndpointEdits';

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { selectorSpecificity } from '@csstools/selector-specificity';
 import { Platform } from 'obsidian';
 import postcss from 'postcss';

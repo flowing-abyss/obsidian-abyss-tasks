@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { plainGhostTaskTitle } from '../src/ui/plainGhostTaskTitle';
 import { interleavedRatio, task } from './helpers';

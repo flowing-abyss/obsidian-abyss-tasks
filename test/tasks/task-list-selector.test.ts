@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import type { ListSelection } from '../../src/app/AppState';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../../src/settings/defaults';

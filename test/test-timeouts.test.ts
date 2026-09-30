@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { Platform } from 'obsidian';
 import type ts from 'typescript';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -623,7 +624,7 @@ const GATE_OPTIONS: Readonly<Record<string, Readonly<Record<string, unknown>>>> 
   'vitest.config.ts': {
     include: ['test/**/*.test.ts'],
     exclude: ['test/perf/**', 'test/store/**'],
-    setupFiles: ['obsidian-test-mocks/vitest-setup', 'test/setup/isolatedFailures.ts'],
+    setupFiles: ['test/setup/obsidianMocks.ts', 'test/setup/isolatedFailures.ts'],
     pool: 'forks',
     testTimeout: 10_000,
     hookTimeout: 10_000,

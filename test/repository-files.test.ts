@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { Platform } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { git, repositoryFiles, trackedFiles } from './support/repositoryFiles';

@@ -640,7 +640,10 @@ that times its own work reads the process's CPU clock through
 [`test/helpers.ts`](test/helpers.ts), never the wall clock. `test/helpers.ts` loads no presentation
 module, which [its own suite](test/helpers.test.ts) checks through every module it loads, and a
 presentation harness has its own support module, such as the panels'
-[`test/support/panelHarness.ts`](test/support/panelHarness.ts).
+[`test/support/panelHarness.ts`](test/support/panelHarness.ts). A suite that needs no DOM
+declares the Node environment on its first line;
+[`test/setup/obsidianMocks.ts`](test/setup/obsidianMocks.ts) gives every suite the mocked
+`obsidian` module, and Obsidian's global helpers only where a DOM exists.
 
 Update this document in the implementing commit when ownership, a public boundary, dependency
 direction, a critical data flow, persisted authority/migration, or a compatibility seam changes.

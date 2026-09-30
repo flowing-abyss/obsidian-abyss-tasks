@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
 import { initializeProjectPropertyDefinitions } from '../src/projects/initializeProjectPropertyDefinitions';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';

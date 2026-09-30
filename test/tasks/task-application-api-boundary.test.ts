@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { expectTypeOf, it } from 'vitest';
 import type {
   CreateDependencySubtaskCommand,

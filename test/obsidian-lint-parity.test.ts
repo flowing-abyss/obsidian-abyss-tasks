@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { ESLint, type Linter } from 'eslint';
 import obsidianmd from 'eslint-plugin-obsidianmd';
 import ts from 'typescript';

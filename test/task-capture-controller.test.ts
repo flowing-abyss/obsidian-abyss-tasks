@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
 import { localDate, type TaskCommandResult, type TaskCreateSession } from '../src/tasks';
 import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';

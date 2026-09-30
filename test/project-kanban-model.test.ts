@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import type { ProjectField, ProjectTableSettings } from '../src/projects/projectFields';
 import {

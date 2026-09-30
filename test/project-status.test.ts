@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { orderedGroups, resolveStatus } from '../src/projects/status';
 import type { Project } from '../src/projects/types';

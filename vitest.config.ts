@@ -7,8 +7,10 @@ export default defineConfig({
     mockReset: true,
     include: ['test/**/*.test.ts'],
     exclude: ['test/perf/**', 'test/store/**'],
-    setupFiles: ['obsidian-test-mocks/vitest-setup', 'test/setup/isolatedFailures.ts'],
+    setupFiles: ['test/setup/obsidianMocks.ts', 'test/setup/isolatedFailures.ts'],
     passWithNoTests: false,
+    // A suite that needs no DOM and no Obsidian global helper declares the Node environment in
+    // a `// @vitest-environment node` first line; test/setup/obsidianMocks.ts serves both.
     environment: 'jsdom',
     // Light work runs on these limits and heavy work names its kind's limit from
     // test/support/timeouts.ts, all sized on this pool; test/test-timeouts.test.ts holds them.

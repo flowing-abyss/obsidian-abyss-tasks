@@ -1,3 +1,4 @@
+// @vitest-environment node
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 

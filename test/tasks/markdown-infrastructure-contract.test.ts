@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import type { TaskEditCommand } from '../../src/tasks/application/TaskRepository';
 import type { TaskRef } from '../../src/tasks/domain/types';

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { ESLint } from 'eslint';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';

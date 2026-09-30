@@ -1,3 +1,4 @@
+// @vitest-environment node
 import postcss from 'postcss';
 import valueParser from 'postcss-value-parser';
 import ts from 'typescript';

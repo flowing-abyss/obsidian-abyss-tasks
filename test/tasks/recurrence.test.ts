@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { Platform } from 'obsidian';
 import { describe, expect, it } from 'vitest';
 import {

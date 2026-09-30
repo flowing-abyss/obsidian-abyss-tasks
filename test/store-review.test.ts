@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { ESLint, type Linter } from 'eslint';
 import stylelint from 'stylelint';
 import ts from 'typescript';
