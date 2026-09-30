@@ -281,6 +281,25 @@ async function settleChangedCustomDate(
   return card;
 }
 
+/** Opens "Set date…" from a card's menu under fake timers, then closes the picker with Escape. */
+function escapeCardDatePicker(
+  el: HTMLElement,
+  card: HTMLElement,
+  items: readonly CapturedMenuItem[],
+): void {
+  openMenu(card);
+  items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+  vi.runOnlyPendingTimers();
+  const input = expectDefined(
+    el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
+  );
+  expect(activeDocument.activeElement).toBe(input);
+  input.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
+  expect(el.querySelector('.abyss-date-picker-popover')).toBeNull();
+}
+
 /** Opens "Set date…" from the focused card and types a date without committing it. */
 async function openCustomDateDraft(el: HTMLElement, items: readonly CapturedMenuItem[]) {
   const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
@@ -1103,6 +1122,51 @@ describe('CenterPanel task date context menus', () => {
     }
   });
 
+  it('returns focus to a Search result card when its date picker closes', () => {
+    vi.useFakeTimers();
+    const items = captureMenu();
+    const { el, state, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+
+    try {
+      state.set('searchQuery', 'first');
+      state.set('mode', 'search');
+      const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
+
+      escapeCardDatePicker(el, card, items);
+
+      expect(activeDocument.activeElement).toBe(card);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('returns focus to a dashboard card when its date picker closes', () => {
+    vi.useFakeTimers();
+    const items = captureMenu();
+    const { el, state, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+
+    try {
+      state.set('mode', 'projects');
+      const host = el.createDiv({ cls: 'abyss-project-tasks' });
+      (
+        panel as unknown as {
+          renderProjectTasks_abyssPrivate(host: HTMLElement, path: string): void;
+        }
+      ).renderProjectTasks_abyssPrivate(host, 'a.md');
+      const card = expectDefined(host.querySelector<HTMLElement>('.abyss-task-card'));
+
+      escapeCardDatePicker(el, card, items);
+
+      expect(activeDocument.activeElement).toBe(card);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
   it('does not carry focus into a later unrelated refresh after custom-date cancellation', () => {
     vi.useFakeTimers();
     const items = captureMenu();
@@ -1184,21 +1248,20 @@ describe('CenterPanel task date context menus', () => {
       card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     }
     const mixedFirstCard = expectDefined(mixedCards.find((card) => card.dataset['line'] === '0'));
-    const mixedSecondCard = expectDefined(mixedCards.find((card) => card.dataset['line'] === '1'));
-    expectDefined(mixedFirstCard.parentElement).append(mixedFirstCard, mixedSecondCard);
     openMenu(mixedFirstCard);
 
     items.find((item) => item.title__ === 'Tomorrow')?.onClick__?.(new MouseEvent('click'));
     await flushMicrotasks();
+    // The date sort shows the dated task first.
     expect(mixedCenter.execute.mock.calls.map(([command]) => command)).toEqual([
       {
         type: 'patch',
-        target: { type: 'task', ref: first.ref },
+        target: { type: 'task', ref: mixedSecond.ref },
         patch: { due: { type: 'set', value: tomorrow } },
       },
       {
         type: 'patch',
-        target: { type: 'task', ref: mixedSecond.ref },
+        target: { type: 'task', ref: first.ref },
         patch: { due: { type: 'set', value: tomorrow } },
       },
     ]);
@@ -1217,10 +1280,6 @@ describe('CenterPanel task date context menus', () => {
     const matchingFirstCard = expectDefined(
       matchingCards.find((card) => card.dataset['line'] === '0'),
     );
-    const matchingSecondCard = expectDefined(
-      matchingCards.find((card) => card.dataset['line'] === '1'),
-    );
-    expectDefined(matchingFirstCard.parentElement).append(matchingFirstCard, matchingSecondCard);
     openMenu(matchingFirstCard);
 
     clearItems.find((item) => item.title__ === 'Tomorrow')?.onClick__?.(new MouseEvent('click'));
@@ -1258,6 +1317,7 @@ describe('CenterPanel task date context menus', () => {
         cause: 'test',
         contentState: 'unchanged',
       });
+    // The date sort shows datedSecond first; query order and click order both put first first.
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
     expectDefined(cards[1]).dispatchEvent(
       new MouseEvent('click', { bubbles: true, ctrlKey: true }),
@@ -1266,10 +1326,6 @@ describe('CenterPanel task date context menus', () => {
       new MouseEvent('click', { bubbles: true, ctrlKey: true }),
     );
     const firstCard = expectDefined(Array.from(cards).find((card) => card.dataset['line'] === '0'));
-    const secondCard = expectDefined(
-      Array.from(cards).find((card) => card.dataset['line'] === '1'),
-    );
-    expectDefined(firstCard.parentElement).append(firstCard, secondCard);
     openMenu(firstCard);
 
     items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
@@ -1283,7 +1339,7 @@ describe('CenterPanel task date context menus', () => {
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute).toHaveBeenNthCalledWith(1, {
       type: 'patch',
-      target: { type: 'task', ref: first.ref },
+      target: { type: 'task', ref: datedSecond.ref },
       patch: { due: { type: 'set', value: '2026-08-02' } },
     });
 
@@ -1295,7 +1351,7 @@ describe('CenterPanel task date context menus', () => {
     await flushMicrotasks();
     expect(execute).toHaveBeenNthCalledWith(2, {
       type: 'patch',
-      target: { type: 'task', ref: datedSecond.ref },
+      target: { type: 'task', ref: first.ref },
       patch: { due: { type: 'set', value: '2026-08-02' } },
     });
   });

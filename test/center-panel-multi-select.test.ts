@@ -87,6 +87,15 @@ function attach(el: HTMLElement): void {
   activeDocument.body.append(el);
 }
 
+/** Renders a project's task list into the panel through the entry a project dashboard calls. */
+function renderDashboardList(panel: CenterPanel, el: HTMLElement, path: string): HTMLElement {
+  const host = el.createDiv({ cls: 'abyss-project-tasks' });
+  (
+    panel as unknown as { renderProjectTasks_abyssPrivate(host: HTMLElement, path: string): void }
+  ).renderProjectTasks_abyssPrivate(host, path);
+  return host;
+}
+
 describe('CenterPanel multi-selection', () => {
   const t1 = task({
     status: 'open',
@@ -461,16 +470,18 @@ describe('CenterPanel multi-selection', () => {
   });
 
   it('uses rendered card order rather than query order for keyboard navigation', () => {
-    const { el, state } = makeCenter([t1, t2, t3]);
+    const late = { ...t1, planning: { due: '2026-07-03' as never } };
+    const early = { ...t2, planning: { due: '2026-07-01' as never } };
+    const middle = { ...t3, planning: { due: '2026-07-02' as never } };
+    const { el, state } = makeCenter([late, early, middle]);
     attach(el);
-    const [first, second, third] = cards(el);
-    const scroll = expectDefined(expectDefined(first).parentElement);
-    scroll.append(expectDefined(second), expectDefined(third), expectDefined(first));
+    const rendered = cards(el);
+    expect(rendered.map((card) => card.dataset['line'])).toEqual(['1', '2', '0']);
 
     key(el, 'ArrowDown');
 
-    expect(state.get('taskStack')).toEqual([t2]);
-    expect(activeDocument.activeElement).toBe(second);
+    expect(state.get('taskStack')).toEqual([early]);
+    expect(activeDocument.activeElement).toBe(rendered[0]);
     el.remove();
   });
 
@@ -693,5 +704,109 @@ describe('CenterPanel multi-selection', () => {
     } finally {
       frame.remove();
     }
+  });
+
+  it('opens a clicked dashboard card without focusing or scrolling it', () => {
+    const { el, state, panel } = makeCenter([t1, t2, t3]);
+    attach(el);
+    state.set('mode', 'projects');
+    const dashboard = renderDashboardList(panel, el, 'a.md');
+    const card = expectDefined(cards(dashboard)[1]);
+    card.scrollIntoView = vi.fn();
+
+    click(card);
+
+    expect(state.get('taskStack')).toEqual([t2]);
+    expect(card.classList.contains('is-selected')).toBe(true);
+    expect(methodOf(card, 'scrollIntoView')).not.toHaveBeenCalled();
+    expect(activeDocument.activeElement).not.toBe(card);
+    el.remove();
+  });
+
+  it('clears the selection when the list changes, even to a list showing the same tasks', () => {
+    const { el, state } = makeCenter([t1, t2, t3]);
+    click(expectDefined(cards(el)[0]), { ctrlKey: true });
+    click(expectDefined(cards(el)[1]), { ctrlKey: true });
+
+    state.set('selectedList', { type: 'tag', tag: '#task/inbox' });
+
+    expect(cards(el)).toHaveLength(3);
+    expect(selectedLines(el)).toEqual([]);
+    click(expectDefined(cards(el)[2]), { shiftKey: true });
+    expect(selectedLines(el)).toEqual(['2']);
+  });
+
+  it('keeps the selection and its highlights across a Calendar round trip', () => {
+    const { el, state } = makeCenter([t1, t2, t3]);
+    click(expectDefined(cards(el)[0]), { ctrlKey: true });
+    click(expectDefined(cards(el)[2]), { ctrlKey: true });
+
+    state.set('mode', 'calendar');
+    expect(cards(el)).toHaveLength(0);
+    state.set('mode', 'tasks');
+
+    expect(selectedLines(el)).toEqual(['0', '2']);
+    expect(el.querySelectorAll('.abyss-selected-state')).toHaveLength(2);
+  });
+
+  it('keeps the selection across a Lists, Search, Lists round trip', () => {
+    const { el, state } = makeCenter([t1, t2, t3]);
+    click(expectDefined(cards(el)[0]), { ctrlKey: true });
+    click(expectDefined(cards(el)[1]), { ctrlKey: true });
+
+    state.set('searchQuery', 'Task 1');
+    state.set('mode', 'search');
+    expect(cards(el)).toHaveLength(1);
+    state.set('mode', 'tasks');
+
+    expect(selectedLines(el)).toEqual(['0', '1']);
+  });
+
+  it('reads no rows after a filter empties the list', () => {
+    const { el, state } = makeCenter([t1, t2, t3]);
+    attach(el);
+    click(expectDefined(cards(el)[0]));
+
+    state.set('centerFilter', 'nothing matches');
+    expect(cards(el)).toHaveLength(0);
+    const event = key(el, 'ArrowDown');
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(state.get('taskStack')).toEqual([t1]);
+    el.remove();
+  });
+
+  it('leaves ArrowDown in Search to the page', () => {
+    const { el, state } = makeCenter([t1, t2, t3]);
+    attach(el);
+    state.set('searchQuery', 'Task');
+    state.set('mode', 'search');
+    const result = expectDefined(cards(el)[0]);
+    result.focus();
+
+    const event = key(result, 'ArrowDown');
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(state.get('taskStack')).toEqual([]);
+    expect(activeDocument.activeElement).toBe(result);
+    expect(selectedLines(el)).toEqual([]);
+    el.remove();
+  });
+
+  it('shows the empty states of Lists, Search, and a dashboard', () => {
+    const { el, state, panel } = makeCenter([]);
+    expect(el.querySelector('.abyss-center-scroll .abyss-center-empty')?.textContent).toBe(
+      'No tasks',
+    );
+
+    state.set('searchQuery', 'nothing matches');
+    state.set('mode', 'search');
+    expect(el.querySelector('.abyss-center-scroll .abyss-center-empty')?.textContent).toBe(
+      'No results',
+    );
+
+    state.set('mode', 'projects');
+    const dashboard = renderDashboardList(panel, el, 'a.md');
+    expect(dashboard.querySelector('.abyss-center-empty')?.textContent).toBe('No tasks yet');
   });
 });

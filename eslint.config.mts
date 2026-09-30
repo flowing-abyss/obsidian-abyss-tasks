@@ -409,6 +409,7 @@ export default defineConfig(
     files: [
       'src/panels/projects/**/*.ts',
       'src/panels/calendar/**/*.ts',
+      'src/panels/task-list/**/*.ts',
       'src/ui/projectActions.ts',
     ],
     rules: { 'project-policy/ambient': ['error', 'owner'] },
@@ -427,6 +428,9 @@ export default defineConfig(
       'src/panels/calendar/visibleCalendarDates.ts',
       'src/panels/calendar/calendarContent.ts',
       'src/views/panelTitle.ts',
+      'src/views/taskGrouping.ts',
+      'src/panels/task-list/taskListRows.ts',
+      'src/panels/task-list/taskRowSelection.ts',
       'src/settings/viewStatePaths.ts',
     ],
     rules: { 'project-policy/ambient': ['error', 'pure'] },

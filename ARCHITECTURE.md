@@ -123,6 +123,36 @@ Regression entry points: [calendar date navigation](test/calendar-date-navigatio
 [focus retention](test/timed-block-focus-retention.test.ts), [calendar mode](test/calendar-mode.test.ts),
 and the calendar cases of [the centre panel integration suite](test/center-panel-integration.test.ts).
 
+## Centre task list
+
+`CenterPanel` renders one task card on three surfaces: Lists and Tags, Search results, and the task
+list of a project dashboard. Their rows and selection live in
+[`src/panels/task-list/`](src/panels/task-list/):
+
+| Module                                                         | Responsibility                                                                                                                                                                                                                                                                                         |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`taskListRows`](src/panels/task-list/taskListRows.ts)         | Pure row model: the selected, sorted root tasks become task rows keyed by note and line and, when grouped, header rows keyed by grouping and bucket from [`taskGrouping`](src/views/taskGrouping.ts), with display-order lookups; `taskStackRowKey` names the card of the task open in the detail pane |
+| [`taskRowSelection`](src/panels/task-list/taskRowSelection.ts) | Pure multi-selection: the selected keys in the order they were added, the anchor, and the keyboard focus; clicks, Shift ranges, arrows, the reconcile after a render, display order for bulk actions, and archive rebasing, all against an order it is handed                                          |
+| [`taskListRowView`](src/panels/task-list/taskListRowView.ts)   | The only code that turns rows into elements: mounts them in order as direct children of the list, renders headers, takes each card from `CenterPanel`, and returns the key-to-element handle                                                                                                           |
+
+`CenterPanel` owns one `TaskRowSelection` for the session and resets the handle before every card
+render. Its list order is the mounted rows in Lists and Tags and the empty order in Search, a
+dashboard, and Calendar, so those surfaces have no ranges, arrows, or bulk menu, and a mode round
+trip keeps the selection. A list change clears the selection, and each Lists and Tags render
+reconciles it. Arrows and bulk actions act on the snapshots the cards were rendered from. Selection
+classes, the detail highlight, and card focus are patched through the handle. A click or an arrow
+focuses only a card of Lists and Tags; a card's date picker returns focus to its card on every
+surface. Creation reveal, the calendar half of the detail highlight, and event-target reads still
+read the mounted DOM, and none of them reads the list's order. A windowed renderer would implement
+the handle for the rows it mounts. Every file under `src/panels/task-list/` uses owner
+capabilities, and its pure modules are in the pure roster.
+
+Regression entry points: [row model](test/task-list-rows.test.ts),
+[selection model](test/task-row-selection.test.ts), [row mounting](test/task-list-row-view.test.ts),
+[multi-selection](test/center-panel-multi-select.test.ts), the bulk and date menus of
+[the tag actions suite](test/center-panel-tag-actions.test.ts), and the list, Search, and grouping
+cases of [the centre panel integration suite](test/center-panel-integration.test.ts).
+
 ## Task commands and reconciliation
 
 ### Reads, writes, and identity
@@ -581,9 +611,10 @@ must extend these checks without creating another persistence path.
 
 [Project ESLint policy](eslint-project-policy.mts) rejects ambient capabilities in the pure-module
 roster in [eslint.config.mts](eslint.config.mts) and global document/window capabilities in project
-and calendar surfaces and in the shared [project actions](src/ui/projectActions.ts), which join by
-a per-file entry. Enroll new pure modules in that roster and supply explicit time; native surfaces
-retain their owning window and dispose pending work. These lexical checks complement
+and calendar surfaces, in the centre task list's [`src/panels/task-list/`](src/panels/task-list/),
+and in the shared [project actions](src/ui/projectActions.ts), which join by a per-file entry.
+Enroll new pure modules in that roster and supply explicit time; native surfaces retain their
+owning window and dispose pending work. These lexical checks complement
 [owner-lifecycle tests](test/project-owner-lifecycle.test.ts); they do not establish transitive
 purity or native popout behavior.
 
