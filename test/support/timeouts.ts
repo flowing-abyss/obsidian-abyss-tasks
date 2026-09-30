@@ -34,8 +34,8 @@ export const TYPESCRIPT_PROGRAM_TIMEOUT_MS = 80_000;
 /**
  * A source walk: listing a directory and parsing the TypeScript files in it. Two and a half times
  * the task consumer contract row's 30.46 s in the plan's round under 30 busy loops, re-sized from
- * twice its 27.75 s at load 30 (the allowlist walk took 21.8 s at SP1o's load 38). It ties with
- * the program limit, so work of both kinds names either.
+ * twice its 27.75 s at 30 busy loops (the allowlist walk took 21.8 s at SP1o's load 38). It ties
+ * with the program limit, so work of both kinds names either.
  */
 export const SOURCE_WALK_TIMEOUT_MS = 80_000;
 

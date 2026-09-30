@@ -15,8 +15,9 @@ import { isTypeOnlyImport, runtimeReferences, type RuntimeReference } from './ru
 // included, and every declaration a name there binds to, followed transitively across the files
 // the check reads: functions, classes, and values with their initializers. Names resolve through
 // one TypeScript program over those files, so they bind as the language scopes them. The check
-// follows no dynamic property call, no function passed in from a module it does not read, and no
-// code in src/, which starts no linter, program, walk, or process.
+// follows no dynamic property call, no function that code outside the row's work passes to a helper
+// (a parameter reaches only its default), and no code in src/, which starts no linter, program,
+// walk, or process.
 
 // Signals, as bits of a mask of the work a row or hook reaches.
 const LINTER = 1;
