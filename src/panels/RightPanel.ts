@@ -3439,7 +3439,6 @@ export class RightPanel {
     this.anchoredSurfaceCleanups_abyssPrivate.get(popover)?.();
     const ownerDocument = this.el_abyssPrivate.ownerDocument;
     const ownerWindow = ownerDocument.defaultView;
-    const dependency = popover.matches('.abyss-dep-search');
     const overlay = anchor.closest('.abyss-modal');
     let disposed = false;
     const position = (): void => {
@@ -3452,9 +3451,11 @@ export class RightPanel {
       ownerDocument[method]('scroll', position, true);
     };
     listen('addEventListener');
+    // A surface changes size once it is placed (the inspector's scrollbar goes, its content
+    // wraps), so every anchored surface is placed again when it or its surroundings resize.
     const ResizeObserver = ownerWindow?.ResizeObserver;
     const observer =
-      dependency && typeof ResizeObserver === 'function' ? new ResizeObserver(position) : undefined;
+      typeof ResizeObserver === 'function' ? new ResizeObserver(position) : undefined;
     for (const element of new Set([
       popover,
       anchor,

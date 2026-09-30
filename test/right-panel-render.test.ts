@@ -3095,6 +3095,68 @@ describe('RightPanel popovers', () => {
     },
   );
 
+  it('places the repeat popover again inside the inspector when its width grows', async () => {
+    const observers: Array<{ place: () => void; targets: Element[]; disconnect: () => void }> = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        readonly record;
+        constructor(callback: () => void) {
+          this.record = { place: callback, targets: [] as Element[], disconnect: vi.fn() };
+          observers.push(this.record);
+        }
+        observe(target: Element) {
+          this.record.targets.push(target);
+        }
+        disconnect() {
+          this.record.disconnect();
+        }
+      },
+    );
+    const { panel, state, el } = await makePanel();
+    try {
+      state.set('taskStack', [task({ title: 'Repeat me', planning: { due: '2026-08-09' } })]);
+      const chip = expectDefined(el.querySelector<HTMLElement>('.abyss-repeat-chip'));
+      Object.defineProperty(el, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => rect(100, 50, 300, 400),
+      });
+      Object.defineProperty(chip, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => rect(300, 80, 20, 20),
+      });
+      let width = 90;
+      const real = methodOf(HTMLElement.prototype, 'getBoundingClientRect');
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        if (this.classList.contains('abyss-recurrence-popover')) return rect(0, 0, width, 120);
+        return real.call(this);
+      });
+
+      click(chip);
+      const popover = expectDefined(el.querySelector<HTMLElement>('.abyss-recurrence-popover'));
+      // Measured at its first size, the popover fits where the repeat chip starts.
+      expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe('200px');
+      // Placed, the popover widens, and the observer places it again.
+      width = 150;
+      const watching = observers.filter(({ targets }) => targets.includes(popover));
+      for (const { place } of watching) place();
+      // Its right edge now keeps the inspector's edge gap, 100 + 142 + 150 = 400 - 8.
+      expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe('142px');
+      expect(watching).toHaveLength(1);
+      expect(watching[0]?.targets).toEqual(expect.arrayContaining([popover, chip, el]));
+      expectDefined(el.querySelector<HTMLElement>('.abyss-recurrence-editor')).dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+      expect(el.querySelector('.abyss-recurrence-popover')).toBeNull();
+      expect(watching[0]?.disconnect).toHaveBeenCalledTimes(1);
+    } finally {
+      panel.destroy();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('removes anchored-surface resize and scroll listeners when the panel is destroyed', async () => {
     const { panel, state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
