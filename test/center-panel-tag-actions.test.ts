@@ -1248,21 +1248,20 @@ describe('CenterPanel task date context menus', () => {
       card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     }
     const mixedFirstCard = expectDefined(mixedCards.find((card) => card.dataset['line'] === '0'));
-    const mixedSecondCard = expectDefined(mixedCards.find((card) => card.dataset['line'] === '1'));
-    expectDefined(mixedFirstCard.parentElement).append(mixedFirstCard, mixedSecondCard);
     openMenu(mixedFirstCard);
 
     items.find((item) => item.title__ === 'Tomorrow')?.onClick__?.(new MouseEvent('click'));
     await flushMicrotasks();
+    // The date sort shows the dated task first.
     expect(mixedCenter.execute.mock.calls.map(([command]) => command)).toEqual([
       {
         type: 'patch',
-        target: { type: 'task', ref: first.ref },
+        target: { type: 'task', ref: mixedSecond.ref },
         patch: { due: { type: 'set', value: tomorrow } },
       },
       {
         type: 'patch',
-        target: { type: 'task', ref: mixedSecond.ref },
+        target: { type: 'task', ref: first.ref },
         patch: { due: { type: 'set', value: tomorrow } },
       },
     ]);
@@ -1281,10 +1280,6 @@ describe('CenterPanel task date context menus', () => {
     const matchingFirstCard = expectDefined(
       matchingCards.find((card) => card.dataset['line'] === '0'),
     );
-    const matchingSecondCard = expectDefined(
-      matchingCards.find((card) => card.dataset['line'] === '1'),
-    );
-    expectDefined(matchingFirstCard.parentElement).append(matchingFirstCard, matchingSecondCard);
     openMenu(matchingFirstCard);
 
     clearItems.find((item) => item.title__ === 'Tomorrow')?.onClick__?.(new MouseEvent('click'));
@@ -1322,6 +1317,7 @@ describe('CenterPanel task date context menus', () => {
         cause: 'test',
         contentState: 'unchanged',
       });
+    // The date sort shows datedSecond first; query order and click order both put first first.
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
     expectDefined(cards[1]).dispatchEvent(
       new MouseEvent('click', { bubbles: true, ctrlKey: true }),
@@ -1330,10 +1326,6 @@ describe('CenterPanel task date context menus', () => {
       new MouseEvent('click', { bubbles: true, ctrlKey: true }),
     );
     const firstCard = expectDefined(Array.from(cards).find((card) => card.dataset['line'] === '0'));
-    const secondCard = expectDefined(
-      Array.from(cards).find((card) => card.dataset['line'] === '1'),
-    );
-    expectDefined(firstCard.parentElement).append(firstCard, secondCard);
     openMenu(firstCard);
 
     items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
@@ -1347,7 +1339,7 @@ describe('CenterPanel task date context menus', () => {
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute).toHaveBeenNthCalledWith(1, {
       type: 'patch',
-      target: { type: 'task', ref: first.ref },
+      target: { type: 'task', ref: datedSecond.ref },
       patch: { due: { type: 'set', value: '2026-08-02' } },
     });
 
@@ -1359,7 +1351,7 @@ describe('CenterPanel task date context menus', () => {
     await flushMicrotasks();
     expect(execute).toHaveBeenNthCalledWith(2, {
       type: 'patch',
-      target: { type: 'task', ref: datedSecond.ref },
+      target: { type: 'task', ref: first.ref },
       patch: { due: { type: 'set', value: '2026-08-02' } },
     });
   });
