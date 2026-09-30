@@ -3095,6 +3095,99 @@ describe('RightPanel popovers', () => {
     },
   );
 
+  it('places the repeat popover again inside the inspector on the frame after its width grows', async () => {
+    const observers: Array<{ place: () => void; targets: Element[]; disconnect: () => void }> = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        readonly record;
+        constructor(callback: () => void) {
+          this.record = { place: callback, targets: [] as Element[], disconnect: vi.fn() };
+          observers.push(this.record);
+        }
+        observe(target: Element) {
+          this.record.targets.push(target);
+        }
+        disconnect() {
+          this.record.disconnect();
+        }
+      },
+    );
+    const { panel, state, el } = await makePanel();
+    const ownerWindow = expectDefined(el.ownerDocument.defaultView);
+    const frames = new Map<number, FrameRequestCallback>();
+    let lastFrame = 0;
+    vi.spyOn(ownerWindow, 'requestAnimationFrame').mockImplementation((callback) => {
+      lastFrame += 1;
+      frames.set(lastFrame, callback);
+      return lastFrame;
+    });
+    vi.spyOn(ownerWindow, 'cancelAnimationFrame').mockImplementation((handle) => {
+      frames.delete(handle);
+    });
+    try {
+      state.set('taskStack', [task({ title: 'Repeat me', planning: { due: '2026-08-09' } })]);
+      const chip = expectDefined(el.querySelector<HTMLElement>('.abyss-repeat-chip'));
+      Object.defineProperty(el, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => rect(100, 50, 300, 400),
+      });
+      Object.defineProperty(chip, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => rect(300, 80, 20, 20),
+      });
+      let width = 90;
+      let measured = 0;
+      const real = methodOf(HTMLElement.prototype, 'getBoundingClientRect');
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        if (!this.classList.contains('abyss-recurrence-popover')) return real.call(this);
+        measured += 1;
+        return rect(0, 0, width, 120);
+      });
+
+      click(chip);
+      const popover = expectDefined(el.querySelector<HTMLElement>('.abyss-recurrence-popover'));
+      const left = (): string => popover.style.getPropertyValue('--abyss-pop-left');
+      // Measured at its first size, the popover fits where the repeat chip starts.
+      expect(left()).toBe('200px');
+      const watching = observers.filter(({ targets }) => targets.includes(popover));
+      expect(watching).toHaveLength(1);
+      const observer = expectDefined(watching[0]);
+      expect(observer.targets).toEqual(expect.arrayContaining([popover, chip, el]));
+      // Placed, the popover widens. Its observer places nothing inside the callback, where a
+      // placement would resize what it observes again, and asks for one frame however often
+      // it is told.
+      width = 150;
+      const placed = measured;
+      observer.place();
+      observer.place();
+      expect(left()).toBe('200px');
+      expect(measured).toBe(placed);
+      expect(frames.size).toBe(1);
+      // The frame places it once: its right edge keeps the inspector's edge gap,
+      // 100 + 142 + 150 = 400 - 8.
+      const due = [...frames.values()];
+      frames.clear();
+      for (const callback of due) callback(0);
+      expect(left()).toBe('142px');
+      expect(measured).toBe(placed + 1);
+      // Closing the popover cancels a frame still pending and ends the observation.
+      observer.place();
+      expect(frames.size).toBe(1);
+      expectDefined(el.querySelector<HTMLElement>('.abyss-recurrence-editor')).dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+      expect(el.querySelector('.abyss-recurrence-popover')).toBeNull();
+      expect(frames.size).toBe(0);
+      expect(observer.disconnect).toHaveBeenCalledTimes(1);
+    } finally {
+      panel.destroy();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('removes anchored-surface resize and scroll listeners when the panel is destroyed', async () => {
     const { panel, state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);

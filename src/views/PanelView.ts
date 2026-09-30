@@ -1,5 +1,5 @@
 import { ItemView, Notice, Platform, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
-import { AppState } from '../app/AppState';
+import { AppState, type AppStateData } from '../app/AppState';
 import { CenterPanel } from '../panels/CenterPanel';
 import { LeftPanel } from '../panels/LeftPanel';
 import { RailPanel } from '../panels/RailPanel';
@@ -22,6 +22,7 @@ import type {
   CommentTimeContextProvider,
   TaskApplicationApi,
   TaskCaptureApplicationApi,
+  TaskCommand,
   TaskCommandResult,
   TaskIndexEvent,
   TaskNodeRef,
@@ -48,6 +49,7 @@ import {
   renamedRootSelection,
   rootTaskNodeRef,
   rootTaskRef,
+  selectedRootResolution,
   type TaskSelectionNode,
 } from '../ui/taskSelection';
 import {
@@ -184,6 +186,12 @@ function isResizeObserverConstructor(value: unknown): value is ResizeObserverCon
   return typeof value === 'function';
 }
 
+/** The commands that take a root task out of its note, so its line may pass to the next task. */
+const ROOT_REMOVALS: ReadonlySet<TaskCommand['type']> = new Set(['delete', 'archive', 'move']);
+
+/** The selection and inspector history before a removal, which a pending removal clears. */
+type SelectionOrigin = Pick<AppStateData, 'taskStack' | 'inspectorBackStack'>;
+
 export class PanelView extends ItemView {
   private state_abyssPrivate!: AppState;
   private rail_abyssPrivate!: RailPanel;
@@ -213,7 +221,6 @@ export class PanelView extends ItemView {
   private compactPaneRefresh_abyssPrivate: (() => void) | undefined;
   private compactHeaderResizeObserver_abyssPrivate: ResizeObserver | undefined = undefined;
   private compactPaneOpen_abyssPrivate: CompactPane | null = null;
-  private compactTaskSelectionKey_abyssPrivate: string | undefined = undefined;
   private compactLeftCollapsed_abyssPrivate = false;
   private compactRightCollapsed_abyssPrivate = false;
   private pendingCompactPane_abyssPrivate: PendingCompactPane | undefined = undefined;
@@ -409,21 +416,43 @@ export class PanelView extends ItemView {
               if (session.type !== 'ready') return session;
               return {
                 ...session,
-                execute: async (ref: TaskRef) => {
-                  const result = await session.execute(ref);
-                  this.convergeOwnCommand_abyssPrivate(ref, result);
-                  return result;
-                },
+                execute: (ref: TaskRef) =>
+                  this.runOwnCommand_abyssPrivate(ref, true, () => session.execute(ref)),
               };
             },
           }),
-      execute: async (command) => {
-        const initiatingRef = taskCommandRootRef(command);
-        const result = await this.tasks_abyssPrivate.execute(command);
-        if (initiatingRef != null) this.convergeOwnCommand_abyssPrivate(initiatingRef, result);
-        return result;
-      },
+      execute: (command) =>
+        this.runOwnCommand_abyssPrivate(
+          taskCommandRootRef(command),
+          ROOT_REMOVALS.has(command.type),
+          () => this.tasks_abyssPrivate.execute(command),
+        ),
     };
+  }
+
+  /**
+   * Runs a command of the panel's selection wrapper and converges the selection on its result. A
+   * removal of the root holds it pending in the panel's state until the command settles.
+   */
+  private async runOwnCommand_abyssPrivate(
+    initiatingRef: TaskRef | undefined,
+    removesRoot: boolean,
+    run: () => Promise<TaskCommandResult>,
+  ): Promise<TaskCommandResult> {
+    const state = this.state_abyssPrivate;
+    const origin: SelectionOrigin | undefined = removesRoot
+      ? { taskStack: state.get('taskStack'), inspectorBackStack: state.get('inspectorBackStack') }
+      : undefined;
+    const release =
+      removesRoot && initiatingRef != null ? state.beginTaskRemoval(initiatingRef) : undefined;
+    try {
+      const result = await run();
+      if (initiatingRef != null)
+        this.convergeOwnCommand_abyssPrivate(initiatingRef, result, origin);
+      return result;
+    } finally {
+      release?.();
+    }
   }
 
   private createLayout_abyssPrivate(): PanelLayoutElements {
@@ -647,8 +676,9 @@ export class PanelView extends ItemView {
   }
 
   /**
-   * Shows a tracked task the way a card selection does: the panel switches to Tasks and the node
-   * becomes the inspector selection, which at a compact width is what opens the details pane.
+   * Shows a tracked task the way a card selection does: the panel switches to Tasks, the node
+   * becomes the inspector selection, and at a compact width the details pane opens, also for the
+   * task already selected.
    */
   private openTrackedTask_abyssPrivate(target: TaskNodeRef): void {
     const address = taskNodeAddress(target);
@@ -665,6 +695,8 @@ export class PanelView extends ItemView {
     }
     this.panelNavigation_abyssPrivate.openTasks();
     this.state_abyssPrivate.openInspectorDependency(node);
+    // The hop begins no selection and leaves a task already selected as it is.
+    this.openCompactPane_abyssPrivate('right', false);
   }
 
   private initializeCapture_abyssPrivate(
@@ -749,9 +781,18 @@ export class PanelView extends ItemView {
       }
       this.refreshHostHeader_abyssPrivate();
     });
-    this.selectionUnsub_abyssPrivate = this.state_abyssPrivate.on('taskStack', (stack) => {
+    const offStack = this.state_abyssPrivate.on('taskStack', (stack) => {
       this.handleTaskStackChange_abyssPrivate(stack);
     });
+    // Beginning a selection shows its details, also for the task already selected; a refresh of the
+    // selection by the index or by a command leaves a hidden pane hidden.
+    const offBegun = this.state_abyssPrivate.onTaskSelectionBegun((stack) => {
+      if (stack.length > 0) this.openCompactPane_abyssPrivate('right', false);
+    });
+    this.selectionUnsub_abyssPrivate = () => {
+      offStack();
+      offBegun();
+    };
     this.listUnsub_abyssPrivate = this.state_abyssPrivate.on('selectedList', () => {
       this.refreshHostHeader_abyssPrivate();
     });
@@ -779,9 +820,9 @@ export class PanelView extends ItemView {
   private handleTaskStackChange_abyssPrivate(stack: readonly TaskSelectionNode[]): void {
     const selected = stack[0];
     const selectedRef = selected == null ? undefined : rootTaskRef(selected);
-    const selectionKey =
-      selectedRef == null ? undefined : `${selectedRef.filePath}\u0000${String(selectedRef.line)}`;
-    this.updateCompactTaskSelection_abyssPrivate(selectionKey);
+    if (selectedRef == null && this.compactPaneOpen_abyssPrivate === 'right') {
+      this.closeCompactPane_abyssPrivate(false);
+    }
     if (this.ownedWriteRef_abyssPrivate == null) return;
     if (
       selectedRef == null ||
@@ -789,21 +830,6 @@ export class PanelView extends ItemView {
     ) {
       this.ownedWriteRef_abyssPrivate = undefined;
     }
-  }
-
-  private updateCompactTaskSelection_abyssPrivate(selectionKey: string | undefined): void {
-    const selectionChanged =
-      selectionKey !== undefined && selectionKey !== this.compactTaskSelectionKey_abyssPrivate;
-    if (
-      selectionChanged &&
-      this.state_abyssPrivate.get('mode') === 'tasks' &&
-      this.compactRightCollapsed_abyssPrivate
-    ) {
-      this.openCompactPane_abyssPrivate('right', false);
-    } else if (selectionKey === undefined && this.compactPaneOpen_abyssPrivate === 'right') {
-      this.closeCompactPane_abyssPrivate(false);
-    }
-    this.compactTaskSelectionKey_abyssPrivate = selectionKey;
   }
 
   private subscribeToQueries_abyssPrivate(): void {
@@ -826,7 +852,13 @@ export class PanelView extends ItemView {
           return;
         }
       }
-      this.applyResolution_abyssPrivate(this.queries_abyssPrivate.resolve(ref));
+      this.applyResolution_abyssPrivate(
+        selectedRootResolution(
+          this.queries_abyssPrivate,
+          ref,
+          this.state_abyssPrivate.isTaskRemovalPending(ref),
+        ),
+      );
     });
   }
 
@@ -848,7 +880,6 @@ export class PanelView extends ItemView {
     this.compactPaneRefresh_abyssPrivate = undefined;
     this.closeCompactPane_abyssPrivate(false);
     this.compactPaneElements_abyssPrivate = undefined;
-    this.compactTaskSelectionKey_abyssPrivate = undefined;
     this.compactLeftCollapsed_abyssPrivate = false;
     this.compactRightCollapsed_abyssPrivate = false;
     this.pendingCompactPane_abyssPrivate = undefined;
@@ -1266,14 +1297,31 @@ export class PanelView extends ItemView {
     }
   }
 
-  private convergeOwnCommand_abyssPrivate(initiatingRef: TaskRef, result: TaskCommandResult): void {
+  /**
+   * Re-points the selection at the command's resulting task while the selection is the command's
+   * root. A move that its pending removal cleared follows its task from the selection and the
+   * inspector history it began with.
+   */
+  private convergeOwnCommand_abyssPrivate(
+    initiatingRef: TaskRef,
+    result: TaskCommandResult,
+    origin?: SelectionOrigin,
+  ): void {
     if (result.type !== 'ok' || result.outcome.type !== 'task') return;
-    const stack = this.state_abyssPrivate.get('taskStack');
-    const selectedRef = stack[0] != null ? rootTaskRef(stack[0]) : undefined;
-    if (selectedRef == null || !this.sameRef_abyssPrivate(selectedRef, initiatingRef)) return;
+    const state = this.state_abyssPrivate;
+    const cleared = state.get('taskStack').length === 0 ? origin : undefined;
+    const stack = cleared?.taskStack ?? state.get('taskStack');
+    const root = stack[0];
+    if (root == null || !this.sameRef_abyssPrivate(rootTaskRef(root), initiatingRef)) return;
     const updated = result.outcome.task;
     const draft = this.right_abyssPrivate.captureDraftState();
-    this.state_abyssPrivate.updateInspectorSelection(rebuildTaskSelection(updated, stack));
+    state.batch(() => {
+      if (cleared != null) state.set('inspectorBackStack', cleared.inspectorBackStack);
+      state.updateInspectorSelection(rebuildTaskSelection(updated, stack));
+    });
+    // The restored history names lines from before the move. The index proves their successors
+    // only until the next write to the note, so they follow the move now.
+    if (cleared != null) this.right_abyssPrivate.refreshInspectorHistory();
     this.right_abyssPrivate.restoreDraftState(draft, updated);
     this.ownedWriteRef_abyssPrivate = result.changed ? { ...updated.ref } : undefined;
   }

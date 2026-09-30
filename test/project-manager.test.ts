@@ -532,6 +532,25 @@ describe('ProjectManager.moveTaskToProject', () => {
     });
   });
 
+  it("runs the move on the caller's task API with the project insertion setting", async () => {
+    const app = await createAppWithFiles({});
+    const settings = clone();
+    settings.projects.taskInsertionMode = 'append';
+    const own = taskApi(ok);
+    const caller = taskApi(ok);
+    const pm = new ProjectManager(app, settings, {} as never, own);
+
+    const result = await pm.moveTaskToProject(ref, 'Projects/P.md', caller);
+
+    expect(result).toBe(ok);
+    expect(methodOf(own, 'execute')).not.toHaveBeenCalled();
+    expect(methodOf(caller, 'execute')).toHaveBeenCalledExactlyOnceWith({
+      type: 'move',
+      ref,
+      destination: { filePath: 'Projects/P.md', insertion: { type: 'append' } },
+    });
+  });
+
   it('returns partial unchanged so presentation can offer recovery without retrying', async () => {
     const app = await createAppWithFiles({});
     const partial: TaskCommandResult = {

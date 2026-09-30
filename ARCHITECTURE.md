@@ -73,7 +73,12 @@ or settings UI.
 
 `PanelView` owns `RailPanel` for mode changes, `LeftPanel` for navigation, `CenterPanel` for selected
 content, and `RightPanel` for the task inspector. Panels share transient navigation through
-`AppState`.
+`AppState`. `set('taskStack')` begins a selection and `updateInspectorSelection` refreshes one;
+`AppState` tells its selection-begun listeners after a begun selection is delivered. At a compact
+width in Tasks mode, `PanelView` opens the details pane when a selection begins, when the rail's
+time tracking opens a tracked task (a dependency hop, which begins no selection), when Tasks mode
+returns with a task selected, and when the panel turns compact with a task selected, besides the
+pane's own button. A refresh of the selection never opens it.
 
 When a panel moves between windows, `PanelView` rebinds its shortcut router and native interaction
 blocker to the current document, retains its state and capture coordinator, and releases the
@@ -82,6 +87,15 @@ migration subscription and router on close.
 Navigation finishes the active project editor before changing mode. A rejected draft leaves the
 current mode and projection intact. Inspector history stores structural task paths for its session;
 only proven successor references survive writes, and history never becomes persisted task identity.
+
+A panel's own delete, archive, or move of a root task registers that root's reference in `AppState`
+until the command settles: `PanelView`'s selection wrapper registers every such command, and the
+inspector registers its Delete task and Archive in its own state, the task modal's included. The
+registry is transient and unpublished. While the selected root's removal is pending, an index
+update that does not resolve it exactly clears the selection instead of following its line to the
+next task. A successful move then selects the moved task in its new note, with the sub-task and the
+inspector history the selection had before the move, and at once points that history at the lines
+its tasks moved to, while the index can still prove them.
 
 ## Calendar mode
 
@@ -281,9 +295,10 @@ at once, before any render the change causes, so the paths on screen agree with 
 the debounced refresh then re-reads the note. It adds no persisted cache.
 
 [ProjectManager](src/projects/ProjectManager.ts) creates notes without opening them, edits project
-frontmatter, and moves tasks through `TaskApplicationApi`. Membership comes from the configured
-query. Status uses one configured frontmatter property and literal status-definition names; project
-tags do not carry status.
+frontmatter, and moves tasks through `TaskApplicationApi`, the caller's when it passes one: a panel's
+project drop passes its selection wrapper, so the panel sees its own move. Membership comes from the
+configured query. Status uses one configured frontmatter property and literal status-definition
+names; project tags do not carry status.
 
 `projectFields` owns case-insensitive field lookup and the shared catalog. Status, start, and end
 have configured source properties; description uses `description`. Name comes from the filename,

@@ -361,6 +361,20 @@ async function executeTaskCommand(
   }
 }
 
+/** Holds the root's removal pending in the inspector's own state until the command settles. */
+async function whileRemovingRoot<T>(
+  state: AppState,
+  ref: TaskRef,
+  remove: () => Promise<T>,
+): Promise<T> {
+  const release = state.beginTaskRemoval(ref);
+  try {
+    return await remove();
+  } finally {
+    release();
+  }
+}
+
 function subtaskUndoPosition(
   stack: readonly TaskLike[],
   ref: SubtaskRef,
@@ -592,7 +606,7 @@ export class RightPanel {
       offDrag();
     };
     this.offDependencyQueries_abyssPrivate = this.tasks_abyssPrivate?.queries.subscribe(() => {
-      this.refreshInspectorHistory_abyssPrivate();
+      this.refreshInspectorHistory();
       queueMicrotask(() => {
         if (this.mounted_abyssPrivate) this.refreshDependencies_abyssPrivate();
       });
@@ -1566,7 +1580,8 @@ export class RightPanel {
     this.state_abyssPrivate.backInspectorDependency(selected);
   }
 
-  private refreshInspectorHistory_abyssPrivate(): void {
+  /** Points every history frame the index can prove at its task's current reference. */
+  refreshInspectorHistory(): void {
     const frames = this.state_abyssPrivate.get('inspectorBackStack');
     this.state_abyssPrivate.updateInspectorHistoryFrames(
       frames.map((frame) => {
@@ -3425,7 +3440,6 @@ export class RightPanel {
     this.anchoredSurfaceCleanups_abyssPrivate.get(popover)?.();
     const ownerDocument = this.el_abyssPrivate.ownerDocument;
     const ownerWindow = ownerDocument.defaultView;
-    const dependency = popover.matches('.abyss-dep-search');
     const overlay = anchor.closest('.abyss-modal');
     let disposed = false;
     const position = (): void => {
@@ -3438,9 +3452,21 @@ export class RightPanel {
       ownerDocument[method]('scroll', position, true);
     };
     listen('addEventListener');
+    // A surface changes size once it is placed (the inspector's scrollbar goes, its content
+    // wraps), so every anchored surface is placed again when it or its surroundings resize. The
+    // observer places it on the next frame: a placement inside its callback resizes what it
+    // observes again, which the browser reports as a ResizeObserver loop.
+    let frame: number | undefined;
+    const schedule = (): void => {
+      if (disposed || frame !== undefined || ownerWindow === null) return;
+      frame = ownerWindow.requestAnimationFrame(() => {
+        frame = undefined;
+        position();
+      });
+    };
     const ResizeObserver = ownerWindow?.ResizeObserver;
     const observer =
-      dependency && typeof ResizeObserver === 'function' ? new ResizeObserver(position) : undefined;
+      typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : undefined;
     for (const element of new Set([
       popover,
       anchor,
@@ -3454,6 +3480,7 @@ export class RightPanel {
     const cleanup = (): void => {
       if (disposed) return;
       disposed = true;
+      if (frame !== undefined) ownerWindow?.cancelAnimationFrame(frame);
       observer?.disconnect();
       listen('removeEventListener');
       if (this.anchoredSurfaceCleanups_abyssPrivate.get(popover) === cleanup) {
@@ -4295,9 +4322,12 @@ export class RightPanel {
   }
 
   private async deleteRootTask_abyssPrivate(ref: TaskRef): Promise<void> {
-    if (this.tasks_abyssPrivate == null) return;
+    const tasks = this.tasks_abyssPrivate;
+    if (tasks == null) return;
     const initiatingStack = this.state_abyssPrivate.get('taskStack');
-    const result = await executeTaskCommand(this.tasks_abyssPrivate, { type: 'delete', ref });
+    const result = await whileRemovingRoot(this.state_abyssPrivate, ref, () =>
+      executeTaskCommand(tasks, { type: 'delete', ref }),
+    );
     presentTaskCommandResult(result);
     const selectedRoot = this.state_abyssPrivate.get('taskStack')[0];
     const selectedRef = selectedRoot != null ? rootTaskRef(selectedRoot) : undefined;
@@ -4316,11 +4346,12 @@ export class RightPanel {
     const tasks = this.tasks_abyssPrivate;
     if (tasks == null) return;
     const initiatingStack = this.state_abyssPrivate.get('taskStack');
-    const session = await tasks.planArchive?.();
-    const result =
-      session?.type === 'ready'
-        ? await session.execute(ref)
-        : await executeTaskCommand(tasks, { type: 'archive', ref });
+    const result = await whileRemovingRoot(this.state_abyssPrivate, ref, async () => {
+      const session = await tasks.planArchive?.();
+      return session?.type === 'ready'
+        ? session.execute(ref)
+        : executeTaskCommand(tasks, { type: 'archive', ref });
+    });
     presentTaskArchiveResult(this.app_abyssPrivate, tasks, result);
     this.clearArchivedInspector_abyssPrivate(ref, result, initiatingStack);
   }

@@ -230,6 +230,121 @@ describe('AppState dependency history', () => {
   });
 });
 
+describe('AppState task removals', () => {
+  const ref = { filePath: 'tasks.md', line: 3, revision: 'r1' };
+
+  it('holds a removal pending from its begin until its release', () => {
+    const state = new AppState();
+    expect(state.isTaskRemovalPending(ref)).toBe(false);
+
+    const release = state.beginTaskRemoval(ref);
+    expect(state.isTaskRemovalPending({ ...ref })).toBe(true);
+
+    release();
+    expect(state.isTaskRemovalPending(ref)).toBe(false);
+  });
+
+  it('matches the file, the line, and the revision of the removed root', () => {
+    const state = new AppState();
+    state.beginTaskRemoval(ref);
+
+    expect(state.isTaskRemovalPending({ ...ref, filePath: 'other.md' })).toBe(false);
+    expect(state.isTaskRemovalPending({ ...ref, line: 4 })).toBe(false);
+    expect(state.isTaskRemovalPending({ ...ref, revision: 'r2' })).toBe(false);
+  });
+
+  it('releases a begin once however often its release runs', () => {
+    const state = new AppState();
+    const first = state.beginTaskRemoval(ref);
+    const second = state.beginTaskRemoval(ref);
+
+    first();
+    first();
+    expect(state.isTaskRemovalPending(ref)).toBe(true);
+
+    second();
+    expect(state.isTaskRemovalPending(ref)).toBe(false);
+    second();
+    expect(state.isTaskRemovalPending(ref)).toBe(false);
+  });
+
+  it('keeps removals out of the published state', () => {
+    const state = new AppState();
+    const selection = vi.fn();
+    const commit = vi.fn();
+    state.on('taskStack', selection);
+    state.onCommit(commit);
+
+    state.beginTaskRemoval(ref)();
+
+    expect(selection).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+  });
+});
+
+describe('AppState selection begun', () => {
+  it('tells its listeners after a set of the selection is delivered', () => {
+    const state = new AppState();
+    const order: string[] = [];
+    const begun = vi.fn((stack: readonly unknown[]) => {
+      order.push(`begun ${String(stack.length)}`);
+    });
+    state.on('taskStack', () => order.push('taskStack'));
+    state.onCommit(() => order.push('commit'));
+    state.onTaskSelectionBegun(begun);
+    const selected = task({ title: 'Selected' });
+
+    state.set('taskStack', [selected]);
+
+    expect(order).toEqual(['taskStack', 'commit', 'begun 1']);
+    expect(begun).toHaveBeenCalledExactlyOnceWith([selected]);
+  });
+
+  it('tells nothing for a refresh or a dependency hop of the selection', () => {
+    const state = new AppState();
+    state.set('taskStack', [task({ title: 'A' })]);
+    const begun = vi.fn();
+    state.onTaskSelectionBegun(begun);
+
+    state.updateInspectorSelection([task({ title: 'A refreshed' })]);
+    state.batch(() => {
+      state.updateInspectorSelection([task({ title: 'A again' })]);
+    });
+    state.openInspectorDependency(inspectorLocation('B'));
+    state.backInspectorDependency();
+
+    expect(begun).not.toHaveBeenCalled();
+  });
+
+  it('tells once for a set inside a batch, after the batch is delivered', () => {
+    const state = new AppState();
+    const begun = vi.fn();
+    state.onTaskSelectionBegun(begun);
+    const selected = task({ title: 'Selected' });
+
+    state.batch(() => {
+      state.set('taskStack', [selected]);
+      expect(begun).not.toHaveBeenCalled();
+    });
+
+    expect(begun).toHaveBeenCalledExactlyOnceWith([selected]);
+  });
+
+  it('tells nothing for the same stack and stops after the unsubscribe', () => {
+    const state = new AppState();
+    const stack = [task({ title: 'Selected' })];
+    state.set('taskStack', stack);
+    const begun = vi.fn();
+    const off = state.onTaskSelectionBegun(begun);
+
+    state.set('taskStack', stack);
+    off();
+    state.set('taskStack', [task({ title: 'Other' })]);
+
+    expect(begun).not.toHaveBeenCalled();
+  });
+});
+
 describe('AppState', () => {
   it('returns initial values', () => {
     const s = new AppState();
