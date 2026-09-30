@@ -319,6 +319,71 @@ describe('ProjectsPanel dispatch', () => {
     expect(scroll.scrollLeft).toBe(47);
   });
 
+  describe('dashboard scroll position', () => {
+    function openDashboard(path: string): {
+      panel: ProjectsPanel;
+      el: HTMLElement;
+      state: AppState;
+    } {
+      const state = new AppState();
+      state.set('projectsPanel', { view: 'dashboard', path });
+      const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
+        projectProperties,
+      });
+      const el = freshContainer();
+      panel.mount(el);
+      return { panel, el, state };
+    }
+
+    function dashboard(el: HTMLElement): HTMLElement {
+      return expectDefined(el.querySelector<HTMLElement>('.abyss-project-dashboard-session'));
+    }
+
+    it('keeps its place when its project renders again', () => {
+      const { panel, el } = openDashboard('Projects/A.md');
+      try {
+        const before = dashboard(el);
+        // jsdom keeps no layout, so the scrolled host is given its position directly.
+        before.scrollTop = 612;
+
+        panel.refresh();
+
+        expect(dashboard(el)).not.toBe(before);
+        expect(dashboard(el).scrollTop).toBe(612);
+      } finally {
+        panel.destroy();
+      }
+    });
+
+    it('opens another project at its top', () => {
+      const { panel, el, state } = openDashboard('Projects/A.md');
+      try {
+        dashboard(el).scrollTop = 612;
+
+        state.set('projectsPanel', { view: 'dashboard', path: 'Projects/B.md' });
+
+        expect(dashboard(el).scrollTop).toBe(0);
+      } finally {
+        panel.destroy();
+      }
+    });
+
+    it('opens the same project at its top again after the overview', () => {
+      const { panel, el } = openDashboard('Projects/A.md');
+      try {
+        dashboard(el).scrollTop = 612;
+
+        expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-back')).click();
+        expect(el.querySelector('.abyss-project-dashboard-session')).toBeNull();
+        expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-table-name')).click();
+
+        expect(dashboard(el).scrollTop).toBe(0);
+      } finally {
+        panel.destroy();
+      }
+    });
+  });
+
   it('repaints column settings without a project-data change and defers safely for an active draft', () => {
     const state = new AppState();
     const settings = structuredClone(DEFAULT_SETTINGS);

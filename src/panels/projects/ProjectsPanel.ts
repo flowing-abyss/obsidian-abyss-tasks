@@ -38,6 +38,7 @@ export class ProjectsPanel {
   private tableHost_abyssPrivate: HTMLElement | null = null;
   private tableView_abyssPrivate: ProjectsTableView | null = null;
   private dashboardHost_abyssPrivate: HTMLElement | null = null;
+  private dashboardPath_abyssPrivate: string | null = null;
   private offs_abyssPrivate: Array<() => void> = [];
 
   constructor(
@@ -195,9 +196,14 @@ export class ProjectsPanel {
   private renderDashboard_abyssPrivate(path: string): void {
     const el = this.el_abyssPrivate;
     if (el === null) return;
-    this.dashboardHost_abyssPrivate?.remove();
+    const previous = this.dashboardHost_abyssPrivate;
+    // A render of the project already shown keeps its place; opening a project starts at its top.
+    const scrollTop =
+      previous !== null && this.dashboardPath_abyssPrivate === path ? previous.scrollTop : 0;
+    previous?.remove();
     const host = el.createDiv({ cls: 'abyss-project-dashboard-session' });
     this.dashboardHost_abyssPrivate = host;
+    this.dashboardPath_abyssPrivate = path;
     renderProjectDashboard(host, this.projectStore_abyssPrivate.get(path), {
       state: this.state_abyssPrivate,
       settings: this.settings_abyssPrivate,
@@ -218,5 +224,6 @@ export class ProjectsPanel {
       },
       renderTasks: this.renderTasks_abyssPrivate,
     });
+    if (scrollTop > 0) host.scrollTop = scrollTop;
   }
 }
