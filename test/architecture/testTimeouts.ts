@@ -997,7 +997,6 @@ class TimeoutCheck {
   private checkVitestImports(file: CheckedFile): void {
     for (const statement of file.source.statements) {
       if (ts.isImportDeclaration(statement)) this.checkVitestImport(statement);
-      else if (ts.isExportDeclaration(statement)) this.checkVitestExport(statement);
       else if (
         ts.isImportEqualsDeclaration(statement) &&
         ts.isExternalModuleReference(statement.moduleReference) &&
@@ -1005,6 +1004,10 @@ class TimeoutCheck {
       ) {
         this.unreadable(statement, 'vitest', 'imported through require()');
       }
+    }
+    // Imports bind wherever the file writes them, so its re-exports are read after every import.
+    for (const statement of file.source.statements.filter(ts.isExportDeclaration)) {
+      this.checkVitestExport(statement);
     }
     for (const reference of file.references) {
       if (reference.form === 'dynamic-import' || reference.form === 'require') {
