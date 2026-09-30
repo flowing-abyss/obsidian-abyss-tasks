@@ -314,7 +314,7 @@ describe('resolved Obsidian storage authority', () => {
       ).toThrow(/MissingVault/u);
       expect(() =>
         fixtureProgram(new Map([[repoFile('test/broken-storage.ts'), 'const = ;']])),
-      ).toThrow();
+      ).toThrow(/TS1134/u);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
   );
@@ -352,6 +352,11 @@ describe('resolved Obsidian storage authority', () => {
       const sourceFiles = sourceProgram
         .getSourceFiles()
         .filter((source) => files.includes(source.fileName));
+      expect(
+        sourceFiles
+          .filter((source) => source.text !== ts.sys.readFile(source.fileName))
+          .map((source) => source.fileName),
+      ).toEqual([]);
       const found = collectStorageAccesses(sourceProgram, sourceFiles);
       expect(found).toHaveLength(10);
       expect(storageAuthorityViolations(found, STORAGE_AUTHORIZATIONS)).toEqual([]);
