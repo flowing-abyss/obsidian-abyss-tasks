@@ -632,4 +632,17 @@ describe('Panel hierarchy styles', () => {
     expect(adjacentRightSections).toContain('margin-top: var(--size-4-2)');
     expect(adjacentRightSections).not.toContain('border');
   });
+
+  it('keeps every left panel count clear of its name, as the tag group header does', () => {
+    const row = declarationsFor('.abyss-left-item');
+
+    // The gap only holds a name that fills the row off its count; a row with room to spare
+    // spreads its two parts apart as before.
+    expect(row).toContain('gap: var(--size-2-3)');
+    expect(row).toContain('justify-content: space-between');
+    expect(declarationsFor('.abyss-tag-group-header')).toContain('gap: var(--size-2-3)');
+    expect(declarationsFor('.abyss-left-item-left')).toContain('min-width: 0');
+    expect(declarationsFor('.abyss-left-label')).toContain('text-overflow: ellipsis');
+    expect(declarationsFor('.abyss-left-count')).toContain('flex-shrink: 0');
+  });
 });

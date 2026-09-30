@@ -1785,10 +1785,12 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   padding: var(--size-4-1) 0;
 }
 
+/* The gap keeps a name that fills the row off its count, as in the tag group header. */
 .abyss-left-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--size-2-3);
   padding: 5px var(--size-4-3) 5px var(--size-4-4);
   border-radius: 6px;
   margin: 1px var(--size-2-3);
