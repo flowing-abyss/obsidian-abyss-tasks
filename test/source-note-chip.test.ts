@@ -80,6 +80,13 @@ describe('renderSourceNoteChip', () => {
     expect(name?.textContent).toBe('Note');
   });
 
+  it('Y1j names a note file with an upper-case .MD as Obsidian does', () => {
+    const container = freshContainer();
+    renderSourceNoteChip(container, task({ source: { filePath: 'Projects/Plan.MD' } }));
+    const name = container.querySelector('.abyss-task-source-note-name');
+    expect(name?.textContent).toBe('Plan');
+  });
+
   it('calls onClick with filePath when chip is clicked', () => {
     const container = freshContainer();
     const t = task({ source: { filePath: 'notes/2026-06-26.md' } });

@@ -1,4 +1,5 @@
 import { getAllTags, TFile, type App, type CachedMetadata, type TAbstractFile } from 'obsidian';
+import { noteNameOfPath } from '../markdown/noteName';
 import { evaluateQuery } from '../query/evaluateQuery';
 import type { CalendarSettings } from '../settings/types';
 import type {
@@ -39,11 +40,6 @@ export function computeStats(tasks: readonly TaskSnapshot[], tracked: TrackedTot
     else if (t.status === 'in-progress') inProgress++;
   }
   return { total: tasks.length, done, cancelled, inProgress, tracked };
-}
-
-function basename(path: string): string {
-  const file = path.split('/').pop() ?? path;
-  return file.replace(/\.md$/, '');
 }
 
 function isMarkdownFile(file: TAbstractFile): file is TFile {
@@ -231,7 +227,7 @@ export class ProjectStore {
     this.byPath_abyssPrivate.delete(oldPath);
     const listed = this.cache_abyssPrivate.filter((entry) => entry.path !== oldPath);
     if (newPath !== undefined && isMarkdownPath(newPath)) {
-      const moved: Project = { ...project, path: newPath, name: basename(newPath) };
+      const moved: Project = { ...project, path: newPath, name: noteNameOfPath(newPath) };
       this.byPath_abyssPrivate.set(newPath, moved);
       listed.splice(sortedInsertionIndex(listed, moved), 0, moved);
     }
@@ -412,7 +408,7 @@ export class ProjectStore {
     const { statusId, rawStatus } = resolveStatus(this.settings_abyssPrivate.projects, fm);
     return {
       path,
-      name: basename(path),
+      name: noteNameOfPath(path),
       frontmatter: fm,
       tags,
       statusId,

@@ -1088,6 +1088,13 @@ describe('filterChipLabel', () => {
     ).toBe('📄 Daily Note');
   });
 
+  it('Y1j file filter → the name of a note file with an upper-case .MD', () => {
+    const { panel } = makePanel([]);
+    expect(
+      call<string>(panel, 'filterChipLabel', { type: 'file', filePath: 'Projects/Plan.MD' }),
+    ).toBe('📄 Plan');
+  });
+
   it('time filter → clock emoji + time', () => {
     const { panel } = makePanel([]);
     expect(call<string>(panel, 'filterChipLabel', { type: 'time', value: '09:00' })).toBe(

@@ -1,4 +1,5 @@
 import { setIcon } from 'obsidian';
+import { noteNameOfPath } from '../markdown/noteName';
 import { compileNotePathPattern } from '../markdown/notePathPattern';
 import type { TaskSnapshot } from '../tasks';
 
@@ -23,7 +24,7 @@ export function renderSourceNoteChip(
   task: TaskSnapshot,
   onClick?: (filePath: string) => void,
 ): void {
-  const noteName = task.source.filePath.split('/').pop()?.replace(/\.md$/, '') ?? '';
+  const noteName = noteNameOfPath(task.source.filePath);
   const chip = container.createSpan({
     cls: `abyss-task-source-note${onClick != null ? ' abyss-task-source-note--clickable' : ''}`,
   });

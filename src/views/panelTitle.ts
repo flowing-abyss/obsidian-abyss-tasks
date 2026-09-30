@@ -1,4 +1,5 @@
 import type { ListSelection, ViewMode } from '../app/AppState';
+import { noteNameOfPath } from '../markdown/noteName';
 
 /** The static tab title on desktop; the phone view header shows the panel title instead. */
 export const PANEL_DISPLAY_TEXT = 'Abyss Tasks';
@@ -6,10 +7,6 @@ export const PANEL_DISPLAY_TEXT = 'Abyss Tasks';
 export interface PanelTitleGroup {
   readonly id: string;
   readonly name: string;
-}
-
-function projectNameFromPath(path: string): string {
-  return (path.split('/').pop() ?? path).replace(/\.md$/, '');
 }
 
 /**
@@ -36,7 +33,7 @@ export function listSelectionTitle(
     case 'tag':
       return selection.tag;
     case 'project':
-      return projectNameFromPath(selection.path);
+      return noteNameOfPath(selection.path);
     case 'group':
       return groups.find((group) => group.id === selection.groupId)?.name ?? 'Group';
     default:

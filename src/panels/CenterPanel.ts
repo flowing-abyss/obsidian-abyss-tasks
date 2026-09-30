@@ -7,6 +7,7 @@ import {
   statusGroupsEqual,
 } from '../app/listViewState';
 import type { LinkToken } from '../markdown/links';
+import { noteNameOfPath } from '../markdown/noteName';
 import { PRIORITY_LEVELS } from '../priority';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
@@ -2205,7 +2206,7 @@ export class CenterPanel {
 
   private filterChipLabel_abyssPrivate(f: PropertyFilter): string {
     if (f.type === 'file') {
-      return `📄 ${f.filePath.split('/').pop()?.replace(/\.md$/, '') ?? ''}`;
+      return `📄 ${noteNameOfPath(f.filePath)}`;
     }
     if (f.type !== 'priority') return this.nonPriorityFilterLabel_abyssPrivate(f);
     const level = PRIORITY_LEVELS.find((l) => l.value === f.value);
