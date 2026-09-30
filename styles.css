@@ -8893,6 +8893,283 @@ body.is-phone .abyss-creation-feedback {
   );
 }
 
+/* ---- Tablet ---- */
+
+/*
+ * On a tablet Obsidian pads every plain button 4px 20px (`.is-tablet button:not(.clickable-icon)`,
+ * specificity 0,2,1), over the padding a plugin button declares, so icon buttons lose their icon
+ * and text buttons spread apart. Each rule below repeats one declared padding for the buttons it
+ * styles, above that host rule and in the order of the rules it repeats. It sets nothing else, so
+ * the hover and active rules keep winning. A button that declares no padding takes the host's
+ * standard padding everywhere and keeps it here too. A change to a declared padding changes its rule
+ * here as well; test/picker-control-styles.test.ts holds the two equal.
+ */
+body.is-tablet button.abyss-compact-pane-button {
+  padding: 0;
+}
+
+body.is-tablet button.abyss-tg-header-cell {
+  padding: var(--size-2-3) 0;
+}
+
+body.is-tablet button.abyss-mg-add-btn {
+  padding: 0;
+}
+
+body.is-tablet .abyss-mg-cell button.abyss-mg-day-label {
+  padding: 0;
+}
+
+body.is-tablet button.abyss-rail-btn {
+  padding: 0;
+}
+
+body.is-tablet button.abyss-task-delete-btn {
+  padding: 0;
+}
+
+body.is-tablet button.abyss-add-task-trigger {
+  padding-block: 0;
+  padding-inline: 10px;
+}
+
+body.is-tablet button:is(.abyss-cal-nav-month, .abyss-cal-nav-year) {
+  padding: 0 var(--size-4-1);
+}
+
+body.is-tablet button.abyss-cal-nav-btn {
+  padding: 0;
+}
+
+body.is-tablet button.abyss-cal-nav-today {
+  padding: 0 10px;
+}
+
+body.is-tablet :is(button.abyss-cal-view-btn, button.abyss-project-overview-mode) {
+  padding: 0 10px;
+}
+
+body.is-tablet .abyss-month-picker button.abyss-month-picker-btn,
+body.is-tablet .abyss-year-picker button.abyss-year-picker-btn {
+  padding: var(--size-2-3) var(--size-4-1);
+}
+
+body.is-tablet .abyss-breadcrumb button.abyss-inspector-back {
+  padding: 0 var(--size-4-1);
+}
+
+body.is-tablet button.abyss-chip {
+  padding: 0 10px;
+}
+
+body.is-tablet button.abyss-chip-remove {
+  padding: 0;
+}
+
+body.is-tablet button.abyss-popover-clear-icon-btn {
+  padding: 0;
+}
+
+body.is-tablet button.abyss-priority-option {
+  padding: 0.5em 0.65em 0.5em 0.45em;
+}
+
+body.is-tablet .abyss-recurrence-presets button {
+  padding: 0 0.55rem;
+}
+
+body.is-tablet .abyss-recurrence-actions button.abyss-recurrence-clear {
+  padding-inline: var(--size-4-1);
+}
+
+body.is-tablet button.abyss-status-popover-flag {
+  padding: 0;
+}
+
+body.is-tablet :is(.abyss-dep-badge, .abyss-time-badge) > button {
+  padding: 3px var(--size-2-3);
+}
+
+body.is-tablet .abyss-dep-badge > button.abyss-dep-badge-body {
+  padding-inline: 10px var(--size-2-1);
+}
+
+body.is-tablet .abyss-dep-badge > button.abyss-dep-badge-add {
+  padding-inline: var(--size-2-1) 10px;
+}
+
+body.is-tablet .abyss-dep-row button.abyss-dep-title {
+  padding: 0;
+}
+
+body.is-tablet button.abyss-subtask-remove,
+body.is-tablet button.abyss-dep-remove,
+body.is-tablet button.abyss-time-row-remove {
+  padding: 0;
+}
+
+body.is-tablet button.abyss-dep-search-option:not([hidden]) {
+  padding: 5px var(--size-2-3);
+}
+
+body.is-tablet button.abyss-dep-search-direction {
+  padding: var(--size-4-1) var(--size-2-3);
+}
+
+body.is-tablet button.abyss-dep-search-create {
+  padding: var(--size-2-3);
+}
+
+body.is-tablet button.abyss-subtask-add-row {
+  padding: var(--size-2-3) 0 var(--size-4-1);
+}
+
+body.is-tablet .abyss-tag-picker-modal button.abyss-tag-picker-item {
+  padding: var(--size-2-3) var(--size-4-2) var(--size-2-3)
+    calc(var(--size-4-2) + var(--abyss-tag-indent, 0px));
+}
+
+body.is-tablet button.abyss-filter-chip-x {
+  padding: 0;
+}
+
+body.is-tablet button.abyss-view-state-btn {
+  padding: 0;
+}
+
+body.is-tablet .abyss-view-state-popover button.abyss-view-state-row-main {
+  padding: 10px 14px;
+}
+
+body.is-tablet .abyss-view-state-popover button.abyss-view-state-option {
+  padding: 7px var(--size-4-3) 7px 14px;
+}
+
+body.is-tablet button.abyss-view-state-reset-btn {
+  padding: var(--size-2-1) var(--size-2-3);
+}
+
+body.is-tablet .abyss-project-table-controls button.abyss-view-state-btn {
+  padding: 0;
+}
+
+body.is-tablet .abyss-projects-table button.abyss-project-overview-mode {
+  padding: 0;
+}
+
+body.is-tablet .abyss-projects-table button.abyss-project-table-column-button {
+  padding: 0;
+}
+
+body.is-tablet .abyss-projects-table button.abyss-project-table-name {
+  padding: 0;
+}
+
+body.is-tablet .abyss-projects-table button.abyss-project-table-group-toggle {
+  padding: 0 10px;
+}
+
+body.is-tablet button.abyss-project-table-status-pill {
+  padding: var(--size-2-1) var(--size-4-2);
+}
+
+body.is-tablet button.abyss-project-table-status-pill:is(.is-text, .is-dot) {
+  padding-inline: 0;
+}
+
+body.is-tablet .abyss-projects-table button.abyss-project-table-value-remove {
+  padding: 0;
+}
+
+body.is-tablet .abyss-projects-table button.abyss-project-value-picker-edit {
+  padding: 0;
+}
+
+body.is-tablet .abyss-projects-table button.abyss-project-value-picker-action {
+  padding: 0 var(--size-2-3);
+}
+
+body.is-tablet .abyss-projects-table button.abyss-projects-new {
+  padding: 3px var(--size-4-2);
+}
+
+body.is-tablet .abyss-projects-table button.abyss-project-kanban-group-header {
+  padding: var(--size-2-1) var(--size-4-1);
+}
+
+body.is-tablet .abyss-project-timeline-axis button {
+  padding: 0;
+}
+
+body.is-tablet .abyss-project-timeline-axis button.abyss-cal-nav-today {
+  padding: 0 var(--size-2-3);
+}
+
+body.is-tablet button.abyss-project-timeline-group-header {
+  padding: var(--size-4-1) 10px;
+}
+
+body.is-tablet .abyss-project-timeline-name-cell button.abyss-project-table-name {
+  padding: 0;
+}
+
+body.is-tablet .abyss-view-state-popover button.abyss-view-state-option-move {
+  padding: 5px;
+}
+
+body.is-tablet .abyss-view-state-popover button.abyss-view-state-option-action {
+  padding: var(--size-2-1) var(--size-2-3);
+}
+
+body.is-tablet button.abyss-project-column-add {
+  padding: 3px var(--size-4-2);
+}
+
+body.is-tablet button.abyss-project-back {
+  padding: var(--size-4-1) var(--size-2-3);
+}
+
+body.is-tablet button.abyss-project-open-btn {
+  padding: 0;
+}
+
+body.is-tablet .abyss-status-icon-field button.abyss-status-icon-result {
+  padding: 0;
+}
+
+body.is-tablet button.abyss-detached-draft-copy,
+body.is-tablet button.abyss-detached-draft-discard {
+  padding: var(--size-2-1) var(--size-2-3);
+}
+
+body.is-tablet .abyss-time-badge > button.abyss-time-badge-body {
+  padding-inline: 10px var(--size-2-1);
+}
+
+body.is-tablet .abyss-time-badge > button.abyss-time-badge-toggle {
+  padding-inline: var(--size-2-1) 10px;
+}
+
+body.is-tablet .abyss-rail-tracking button.abyss-rail-tracking-toggle {
+  padding: 0;
+}
+
+body.is-tablet .abyss-rail-tracking button.abyss-rail-tracking-task {
+  padding: var(--size-2-3) 0;
+}
+
+body.is-tablet .abyss-time-tracking-popover--tasks button.abyss-tracked-day-header {
+  padding: var(--size-4-1) var(--size-2-3);
+}
+
+body.is-tablet .abyss-tracked-row button.abyss-tracked-row-toggle {
+  padding: 0;
+}
+
+body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
+  padding: var(--size-4-1) 0;
+}
+
 .abyss-project-table .abyss-project-table-spacer > td {
   padding: 0;
   border: 0;
