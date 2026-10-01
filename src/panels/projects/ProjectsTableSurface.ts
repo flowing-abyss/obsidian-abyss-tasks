@@ -28,6 +28,7 @@ import {
   nearestViewportDelta,
   type ProjectOverviewEditorFrame,
   type ProjectOverviewRenderHooks,
+  type ProjectsOverviewSurface,
   type RenderedCellContext,
 } from './ProjectsOverviewSurface';
 import {
@@ -185,7 +186,7 @@ export interface ProjectsTableSurfaceContext {
  * The Table view of the projects overview: its scroll, header, and bounded window of group and
  * project rows, the logical cells of every expanded row, and the viewport that keeps them.
  */
-export class ProjectsTableSurface {
+export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCellContext> {
   readonly scroll: HTMLElement;
   readonly #context: ProjectsTableSurfaceContext;
   readonly #host: HTMLElement;
@@ -198,6 +199,7 @@ export class ProjectsTableSurface {
   #rows: readonly ProjectTableRow[] = [];
   #cells: ProjectOverviewCells = NO_PROJECT_OVERVIEW_CELLS;
   #projects: readonly Project[] = [];
+  #search = '';
   #renderedCells: RenderedCellContext[] = [];
   readonly #renderedGroups = new Map<string, RenderedGroupContext>();
   readonly #renderedProjectRows = new Map<string, RenderedProjectRow>();
@@ -246,6 +248,7 @@ export class ProjectsTableSurface {
    */
   render(projects: readonly Project[], search: string, hooks: ProjectOverviewRenderHooks): void {
     this.#projects = projects;
+    this.#search = search;
     const scrollLeft = this.scroll.scrollLeft;
     const focusedIdentity = this.#focusedCellIdentity();
     const availableWidth = this.scroll.clientWidth;
@@ -281,7 +284,7 @@ export class ProjectsTableSurface {
   }
 
   /** Scrolls a mounted cell below the sticky header and right of a pinned Name column. */
-  scrollCellIntoView(cell: HTMLElement): void {
+  scrollCellIntoView({ element: cell }: RenderedCellContext): void {
     const viewport = this.scroll.getBoundingClientRect();
     const target = cell.getBoundingClientRect();
     const header = this.#host.querySelector<HTMLElement>('.abyss-project-table-header-cell');
@@ -302,10 +305,35 @@ export class ProjectsTableSurface {
     this.scroll.scrollTop = Math.max(0, this.scroll.scrollTop + vertical);
   }
 
-  /** An editor stays inside the scroll and below the table header. */
+  /** An editor stays inside the scroll and below the table header, whatever its cell. */
   editorFrame(): ProjectOverviewEditorFrame {
     const stickyHeader = this.#table?.tHead ?? undefined;
     return { boundary: this.scroll, ...(stickyHeader === undefined ? {} : { stickyHeader }) };
+  }
+
+  /** Opens the project's group if it is collapsed, and then renders the overview again. */
+  revealProject(path: string): void {
+    const model = buildProjectTableModel({
+      ...this.#context.modelInput(),
+      projects: this.#projects,
+      search: this.#search,
+    });
+    const group = model.groups.find(({ projects }) =>
+      projects.some((project) => project.path === path),
+    );
+    if (group !== undefined && this.#collapsedGroups.delete(group.key)) this.#context.render();
+  }
+
+  occurrenceElement(cell: RenderedCellContext): HTMLElement {
+    return cell.element.closest<HTMLElement>('.abyss-project-table-row') ?? cell.element;
+  }
+
+  syncSelectedProjectPath(): void {
+    // The Table shows its selection on the cells; no row carries a selected mark.
+  }
+
+  captureViewportBeforeHide(): void {
+    // The Table does not keep its scroll across a dashboard round trip yet.
   }
 
   destroy(): void {
@@ -315,11 +343,6 @@ export class ProjectsTableSurface {
     this.#columnCleanup?.();
     this.#columnCleanup = undefined;
     this.#resizeObserver?.disconnect();
-  }
-
-  /** Opens a collapsed group and reports whether it was collapsed. */
-  expandGroup(key: string): boolean {
-    return this.#collapsedGroups.delete(key);
   }
 
   /** A rendered group, which the row drag reads while it lives in the controller. */

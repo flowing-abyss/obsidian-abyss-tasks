@@ -370,14 +370,16 @@ only when first requested.
 property-catalog subscription. The controller shares the toolbar, field renderer, editor boundary, mutation queues,
 receipt projection, and history across Table, Kanban, and Timeline. Each surface retains its own
 search, selection, organization, and viewport. Switching hides inactive surfaces instead of
-rebuilding them. The controller drives Kanban and Timeline through one
+rebuilding them. The controller drives the Table, Kanban, and Timeline through one
 [surface contract](src/panels/projects/ProjectsOverviewSurface.ts): show and hide, a render whose
 hooks publish the toolbar statuses and project count and then settle the selection, the cell list
 and the mounted cells, cell reveal and scrolling, the editor frame, a created project's occurrence,
-and teardown. The [Table surface](src/panels/projects/ProjectsTableSurface.ts) owns the Table's
-scroll, header, rows, window, and logical cells; the controller still calls it directly, and it
-reaches the cell renderer, the header commands, and the row drag through its context.
-[Contract tests](test/project-overview-surface.test.ts) run the same cases on each surface.
+and teardown. Selection, reveal, editing, and creation go through the active surface; Kanban and
+Timeline exist once first shown. The [Table surface](src/panels/projects/ProjectsTableSurface.ts)
+owns the Table's scroll, header, rows, window, and logical cells, and reaches the cell renderer,
+the header commands, and the row drag through its context.
+[Contract tests](test/project-overview-surface.test.ts) run the same cases on each surface; on the
+Table they also mount an offscreen row.
 Project gesture and creation timers use the owning window and release pending
 callbacks on disposal. A document without a window releases short gesture guards synchronously and does not
 retain creation requests or arm Kanban dragging. A dashboard temporarily detaches the overview and

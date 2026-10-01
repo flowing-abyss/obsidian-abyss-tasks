@@ -679,20 +679,17 @@ export class ProjectsTableView {
   }
 
   private get renderedCells_abyssPrivate(): readonly RenderedCellContext[] {
-    if (this.overviewMode_abyssPrivate === 'table')
-      return this.tableSurface_abyssPrivate.renderedCells();
     return this.activeSurface_abyssPrivate()?.renderedCells() ?? [];
   }
 
-  /** The Kanban or Timeline surface of the current mode once it exists, not yet the Table. */
+  /** The surface of the current mode: the Table, or the Kanban or Timeline once first shown. */
   private activeSurface_abyssPrivate(): ProjectsOverviewSurface<RenderedCellContext> | undefined {
     if (this.overviewMode_abyssPrivate === 'kanban') return this.kanbanView_abyssPrivate;
     if (this.overviewMode_abyssPrivate === 'timeline') return this.timelineView_abyssPrivate;
-    return undefined;
+    return this.tableSurface_abyssPrivate;
   }
 
   private overviewCells_abyssPrivate(): ProjectOverviewCells {
-    if (this.overviewMode_abyssPrivate === 'table') return this.tableSurface_abyssPrivate.cells();
     return this.activeSurface_abyssPrivate()?.cells() ?? NO_PROJECT_OVERVIEW_CELLS;
   }
 
@@ -948,6 +945,7 @@ export class ProjectsTableView {
 
   captureViewportBeforeHide(): void {
     this.timelineInteractionRevision_abyssPrivate++;
+    this.tableSurface_abyssPrivate.captureViewportBeforeHide();
     this.kanbanView_abyssPrivate?.captureViewportBeforeHide();
     this.timelineView_abyssPrivate?.captureViewportBeforeHide();
   }
@@ -1285,9 +1283,6 @@ export class ProjectsTableView {
   private presentCreatedProject_abyssPrivate(project: Project, focus: boolean): HTMLElement | null {
     if (!this.creationPresentationReady_abyssPrivate()) return null;
     if (focus) this.relaxCreationProjection_abyssPrivate(project);
-    if (this.overviewMode_abyssPrivate === 'table') {
-      return this.presentCreatedTableProject_abyssPrivate(project, focus);
-    }
     const surface = this.activeSurface_abyssPrivate();
     if (surface === undefined) return null;
     return this.presentCreatedSurfaceProject_abyssPrivate(surface, project, focus);
@@ -1308,7 +1303,7 @@ export class ProjectsTableView {
 
   /**
    * Opens the created project's group or column, then reveals, selects, and highlights its Name
-   * cell: the Table's sequence below, run through the surface.
+   * cell: one sequence for every view.
    */
   private presentCreatedSurfaceProject_abyssPrivate(
     surface: ProjectsOverviewSurface<RenderedCellContext>,
@@ -1335,36 +1330,9 @@ export class ProjectsTableView {
     return surface.occurrenceElement(cell);
   }
 
-  private presentCreatedTableProject_abyssPrivate(
-    project: Project,
-    focus: boolean,
-  ): HTMLElement | null {
-    const model = buildProjectTableModel(this.projectTableModelInput_abyssPrivate());
-    const group = model.groups.find(({ projects }) =>
-      projects.some(({ path }) => path === project.path),
-    );
-    if (focus && group !== undefined && this.tableSurface_abyssPrivate.expandGroup(group.key)) {
-      this.renderTable_abyssPrivate();
-    }
-    const logical = this.tableSurface_abyssPrivate
-      .cells()
-      .cells.find(
-        ({ project: candidate, field }) => candidate.path === project.path && field.id === 'name',
-      );
-    if (focus && logical !== undefined) this.revealLogicalCell_abyssPrivate(logical.identity);
-    const cell = this.tableSurface_abyssPrivate
-      .renderedCells()
-      .find(
-        ({ project: candidate, field }) => candidate.path === project.path && field.id === 'name',
-      );
-    if (cell === undefined) return null;
-    if (focus) this.selectAndRevealCreationCell_abyssPrivate(cell);
-    return cell.element.closest<HTMLElement>('.abyss-project-table-row') ?? cell.element;
-  }
-
   private selectAndRevealCreationCell_abyssPrivate(cell: RenderedCellContext): void {
     this.selectCell_abyssPrivate(cell, false);
-    this.revealSelectionCell_abyssPrivate(cell.element);
+    this.revealSelectionCell_abyssPrivate(cell);
   }
 
   private relaxCreationProjection_abyssPrivate(project: Project): void {
@@ -1457,14 +1425,22 @@ export class ProjectsTableView {
     }
     this.renderPending_abyssPrivate = false;
     this.trackedNowMs_abyssPrivate = Date.now();
-    if (this.renderAlternativeSurface_abyssPrivate()) return;
-    this.showTableSurface_abyssPrivate();
-    this.tableSurface_abyssPrivate.render(
+    const mode = this.overviewMode_abyssPrivate;
+    this.showSurface_abyssPrivate(mode).render(
       this.projectedProjects_abyssPrivate(),
-      this.sessions_abyssPrivate.table.search,
+      this.sessions_abyssPrivate[mode].search,
       this.renderHooks_abyssPrivate,
     );
     this.notifyCreationReconciled_abyssPrivate();
+  }
+
+  /** Shows the mode's surface and hides the others, creating a Kanban or Timeline on first use. */
+  private showSurface_abyssPrivate(
+    mode: ProjectOverviewMode,
+  ): ProjectsOverviewSurface<RenderedCellContext> {
+    if (mode === 'kanban') return this.showKanbanSurface_abyssPrivate();
+    if (mode === 'timeline') return this.showTimelineSurface_abyssPrivate();
+    return this.showTableSurface_abyssPrivate();
   }
 
   /** The Table's visible columns, once their presets are compiled and relative dates timed. */
@@ -1480,23 +1456,6 @@ export class ProjectsTableView {
       ]),
     );
     return columns;
-  }
-
-  private renderAlternativeSurface_abyssPrivate(): boolean {
-    const mode = this.overviewMode_abyssPrivate;
-    if (mode === 'table') return false;
-    this.tableSurface_abyssPrivate.hide();
-    const surface =
-      mode === 'kanban'
-        ? this.showKanbanSurface_abyssPrivate()
-        : this.showTimelineSurface_abyssPrivate();
-    surface.render(
-      this.projectedProjects_abyssPrivate(),
-      this.sessions_abyssPrivate[mode].search,
-      this.renderHooks_abyssPrivate,
-    );
-    this.notifyCreationReconciled_abyssPrivate();
-    return true;
   }
 
   private notifyCreationReconciled_abyssPrivate(): void {
@@ -1526,10 +1485,12 @@ export class ProjectsTableView {
     }
   }
 
-  private showTableSurface_abyssPrivate(): void {
+  /** Shows the Table, then hides the board and the Timeline if they exist. */
+  private showTableSurface_abyssPrivate(): ProjectsTableSurface {
     this.tableSurface_abyssPrivate.show();
     this.kanbanView_abyssPrivate?.hide();
     this.timelineView_abyssPrivate?.hide();
+    return this.tableSurface_abyssPrivate;
   }
 
   private renderFields_abyssPrivate(): readonly ProjectFieldCatalogItem[] {
@@ -1581,8 +1542,9 @@ export class ProjectsTableView {
     };
   }
 
-  /** Hides the Timeline, then shows the board, created on first use, with its card fields. */
+  /** Hides the other views, then shows the board, created on first use, with its card fields. */
   private showKanbanSurface_abyssPrivate(): ProjectsKanbanView<RenderedCellContext> {
+    this.tableSurface_abyssPrivate.hide();
     this.timelineView_abyssPrivate?.hide();
     const board = (this.kanbanView_abyssPrivate ??= this.createKanbanView_abyssPrivate());
     board.show();
@@ -1590,8 +1552,9 @@ export class ProjectsTableView {
     return board;
   }
 
-  /** Hides the board, then shows the Timeline, created on first use, with its row fields. */
+  /** Hides the other views, then shows the Timeline, created on first use, with its row fields. */
   private showTimelineSurface_abyssPrivate(): ProjectsTimelineView<RenderedCellContext> {
+    this.tableSurface_abyssPrivate.hide();
     this.kanbanView_abyssPrivate?.hide();
     const timeline = (this.timelineView_abyssPrivate ??= this.createTimelineView_abyssPrivate());
     timeline.show();
@@ -2805,7 +2768,7 @@ export class ProjectsTableView {
     if (rendered === undefined) return;
     rendered.element.focus({ preventScroll: true });
     this.syncSelection_abyssPrivate();
-    if (reveal) this.revealSelectionCell_abyssPrivate(rendered.element);
+    if (reveal) this.revealSelectionCell_abyssPrivate(rendered);
   }
 
   private syncSelection_abyssPrivate(): void {
@@ -2840,7 +2803,6 @@ export class ProjectsTableView {
   private syncOverviewSelectedProject_abyssPrivate(
     focus: ProjectTableSelectableCell | undefined,
   ): void {
-    if (this.overviewMode_abyssPrivate === 'table') return;
     const path =
       focus === undefined ? undefined : this.logicalCell_abyssPrivate(focus)?.project.path;
     this.activeSurface_abyssPrivate()?.syncSelectedProjectPath(path);
@@ -2994,21 +2956,11 @@ export class ProjectsTableView {
   }
 
   private revealLogicalCell_abyssPrivate(identity: ProjectTableSelectableCell): void {
-    if (this.overviewMode_abyssPrivate !== 'table') {
-      this.activeSurface_abyssPrivate()?.revealCell(identity);
-      return;
-    }
-    this.tableSurface_abyssPrivate.revealCell(identity);
+    this.activeSurface_abyssPrivate()?.revealCell(identity);
   }
 
-  private revealSelectionCell_abyssPrivate(cell: HTMLElement): void {
-    const surface = this.activeSurface_abyssPrivate();
-    const rendered = this.renderedCells_abyssPrivate.find(({ element }) => element === cell);
-    if (surface !== undefined && rendered !== undefined) {
-      surface.scrollCellIntoView(rendered);
-      return;
-    }
-    this.tableSurface_abyssPrivate.scrollCellIntoView(cell);
+  private revealSelectionCell_abyssPrivate(cell: RenderedCellContext): void {
+    this.activeSurface_abyssPrivate()?.scrollCellIntoView(cell);
   }
 
   private handleSelectionAction_abyssPrivate(
@@ -3804,16 +3756,17 @@ export class ProjectsTableView {
       containsEditorAnchor(element, anchor),
     );
     const frame =
-      rendered === undefined ? undefined : this.activeSurface_abyssPrivate()?.editorFrame(rendered);
-    const tableFrame = this.tableSurface_abyssPrivate.editorFrame();
-    const stickyHeader = frame?.stickyHeader ?? tableFrame.stickyHeader;
+      (rendered === undefined
+        ? undefined
+        : this.activeSurface_abyssPrivate()?.editorFrame(rendered)) ??
+      this.tableSurface_abyssPrivate.editorFrame();
     return mountProjectCellEditorPosition({
       anchor,
       host,
-      boundary: frame?.boundary ?? tableFrame.boundary,
+      boundary: frame.boundary,
       positioningContainer: preferredWidth === undefined ? anchor : this.root_abyssPrivate,
       onMove,
-      ...optionalEditorPositionFields(avoid, preferredWidth, stickyHeader),
+      ...optionalEditorPositionFields(avoid, preferredWidth, frame.stickyHeader),
     });
   }
 

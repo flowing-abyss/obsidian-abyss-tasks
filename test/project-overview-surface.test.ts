@@ -18,12 +18,13 @@ import { appWithFiles, expectDefined, flushMicrotasks, freshContainer } from './
 type Surface = ProjectsOverviewSurface<RenderedCellContext>;
 
 interface SurfaceInternals {
+  readonly tableSurface_abyssPrivate?: Surface;
   readonly kanbanView_abyssPrivate?: Surface;
   readonly timelineView_abyssPrivate?: Surface;
 }
 
 interface SurfaceCase {
-  readonly mode: 'Kanban' | 'Timeline';
+  readonly mode: 'Table' | 'Kanban' | 'Timeline';
   /** Groups the view so that A's group can collapse on its own. */
   group(projects: ProjectsSettings): void;
   surface(view: ProjectsTableView): Surface | undefined;
@@ -46,6 +47,8 @@ interface SurfaceCase {
   /** The listener `destroy` removes, as its target and event type. */
   listener(surface: Surface): readonly [EventTarget, string];
   readonly observesScroll: boolean;
+  /** Whether the view mounts only a window of its rows, so a listed cell can start unmounted. */
+  readonly windowed: boolean;
 }
 
 interface RecordedObserver {
@@ -103,6 +106,14 @@ function projects(): Project[] {
   ];
 }
 
+/** Projects without dates or a budget in the first status, which only lengthen the list. */
+function fillers(count: number): Project[] {
+  return Array.from({ length: count }, (_, index) => {
+    const name = `Filler ${String(index).padStart(2, '0')}`;
+    return project({ path: `Projects/${name}.md`, name, frontmatter: {} });
+  });
+}
+
 function catalog(): ProjectPropertyCatalog {
   const properties = [
     { name: 'start', type: 'date' as const },
@@ -122,14 +133,14 @@ function catalog(): ProjectPropertyCatalog {
   };
 }
 
-/** Mounts the overview on three projects and switches it to the case's view. */
-function mountSurface(testCase: SurfaceCase) {
+/** Mounts the overview on three projects and `extra` fillers, and switches to the case's view. */
+function mountSurface(testCase: SurfaceCase, extra = 0) {
   const host = freshContainer();
   activeDocument.body.append(host);
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.projects.propertyDefinitions['property:Budget'] = { type: 'number' };
   testCase.group(settings.projects);
-  const listed = projects();
+  const listed = [...projects(), ...fillers(extra)];
   const applyEdits = vi.fn(async (): Promise<ProjectEditResult> =>
     Promise.resolve({ applied: [], failed: [] }),
   );
@@ -206,6 +217,28 @@ function recordResizeObservers(): RecordedObserver[] {
   return observers;
 }
 
+function tableGroupToggle(host: HTMLElement, path: string): HTMLElement {
+  const key = expectDefined(
+    host.querySelector<HTMLElement>(`.abyss-project-table-row[data-project-path="${path}"]`)
+      ?.dataset['groupKey'],
+  );
+  return expectDefined(
+    Array.from(host.querySelectorAll<HTMLElement>('.abyss-project-table-group-toggle')).find(
+      (toggle) => toggle.dataset['groupKey'] === key,
+    ),
+  );
+}
+
+function tableHead(surface: Surface): HTMLElement {
+  return expectDefined(surface.scroll.querySelector<HTMLElement>('thead'));
+}
+
+function tableHeaderCell(surface: Surface): HTMLElement {
+  return expectDefined(
+    surface.scroll.querySelector<HTMLElement>('.abyss-project-table-header-cell'),
+  );
+}
+
 function kanbanColumnHeader(cell: HTMLElement): HTMLElement {
   return expectDefined(
     cell
@@ -219,6 +252,24 @@ function timelineAxis(surface: Surface): HTMLElement {
 }
 
 const cases: readonly SurfaceCase[] = [
+  {
+    mode: 'Table',
+    group: (settings) => {
+      settings.table.groupBy = 'status';
+    },
+    surface: (view) => (view as unknown as SurfaceInternals).tableSurface_abyssPrivate,
+    groupHeader: tableGroupToggle,
+    viewport: (surface) => ({
+      horizontal: surface.scroll,
+      vertical: surface.scroll,
+      header: tableHeaderCell(surface),
+    }),
+    editorFrame: (surface) => ({ boundary: surface.scroll, stickyHeader: tableHead(surface) }),
+    restoresScrollAfterHide: false,
+    listener: (surface) => [surface.scroll, 'scroll'],
+    observesScroll: true,
+    windowed: true,
+  },
   {
     mode: 'Kanban',
     group: (settings) => {
@@ -245,6 +296,7 @@ const cases: readonly SurfaceCase[] = [
     restoresScrollAfterHide: false,
     listener: (surface) => [surface.scroll.ownerDocument, 'focusin'],
     observesScroll: false,
+    windowed: false,
   },
   {
     mode: 'Timeline',
@@ -269,6 +321,7 @@ const cases: readonly SurfaceCase[] = [
     restoresScrollAfterHide: true,
     listener: (surface) => [surface.scroll, 'scroll'],
     observesScroll: true,
+    windowed: false,
   },
 ];
 
@@ -301,13 +354,16 @@ describe.each(cases)('project overview surface contract: $mode', (testCase) => {
   });
 
   it('has a rendered cell for a listed identity once it reveals it', () => {
-    const { surface } = mountSurface(testCase);
+    // Forty fillers push the Table's last row out of its window; the other views mount them all.
+    const { surface } = mountSurface(testCase, 40);
     const { identities } = surface.cells();
     const last = expectDefined(identities[identities.length - 1]);
+    const key = `${last.occurrenceId} ${last.columnId}`;
+    expect(cellKeys(surface.renderedCells()).includes(key)).toBe(!testCase.windowed);
 
     surface.revealCell(last);
 
-    expect(cellKeys(surface.renderedCells())).toContain(`${last.occurrenceId} ${last.columnId}`);
+    expect(cellKeys(surface.renderedCells())).toContain(key);
   });
 
   it('scrolls each area the least that shows a cell below its header', () => {
