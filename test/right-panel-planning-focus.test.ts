@@ -711,6 +711,67 @@ describe('inspector repeat editor focus continuity', () => {
   });
 });
 
+describe('recurrence draft recovery boundary', () => {
+  it('forwards a recurrence submission to the current retained panel method', async () => {
+    const h = await hosted('- [ ] Current 📅 2026-09-23\n');
+    const initiating = h.state.get('taskStack')[0];
+    const submit = vi
+      .fn<(typeof h.panel)['executePlanningPatch_abyssPrivate']>()
+      .mockResolvedValue({
+        type: 'io-error',
+        cause: 'test',
+        contentState: 'unchanged',
+      });
+    h.panel['executePlanningPatch_abyssPrivate'] = submit;
+    activate(control(h, '.abyss-repeat-chip'));
+    await flushMicrotasks();
+    activate(editorButton(h, 'Daily'));
+    activate(editorButton(h, 'Save repeat'));
+    await flushMicrotasks();
+    expect(submit).toHaveBeenCalledWith(initiating, {
+      recurrence: { type: 'set', value: 'every day' },
+    });
+    expect(await h.read()).toBe('- [ ] Current 📅 2026-09-23\n');
+  });
+  it('preserves a dirty recurrence draft in the detached tray when no rebuilt anchor exists', async () => {
+    const h = await hosted('- [ ] Current\n');
+    activate(control(h, '.abyss-repeat-chip'));
+    await flushMicrotasks();
+    activate(editorButton(h, 'Daily'));
+    const bundle = expectDefined(h.panel.captureDraftState(), 'Missing recurrence draft');
+    h.panel['planningSurfaces_abyssPrivate'].clearAnchoredSurfaces();
+    h.panel['planningSurfaces_abyssPrivate'].resetRenderedControls();
+
+    h.panel.restoreDraftState(bundle, h.node('Current').root);
+
+    expect(h.el.querySelector('.abyss-detached-draft')).not.toBeNull();
+    expect(h.el.querySelector('.abyss-detached-draft-label')?.textContent).toContain(
+      'recurrence editor',
+    );
+    expect(await h.read()).toBe('- [ ] Current\n');
+  });
+
+  it('does not detach a dirty recurrence draft when its anchor exists but restoration returns no focus', async () => {
+    const h = await hosted('- [ ] Current\n');
+    activate(control(h, '.abyss-repeat-chip'));
+    await flushMicrotasks();
+    activate(editorButton(h, 'Daily'));
+    const outside = activeDocument.body.createEl('button', { text: 'Outside' });
+    outside.focus();
+    const bundle = expectDefined(h.panel.captureDraftState(), 'Missing recurrence draft');
+    expect(bundle.entries[0]?.hadFocus).toBe(false);
+    h.panel['planningSurfaces_abyssPrivate'].clearAnchoredSurfaces();
+    outside.focus();
+
+    h.panel.restoreDraftState(bundle, h.node('Current').root);
+
+    expect(h.el.querySelector('.abyss-recurrence-editor')).not.toBeNull();
+    expect(h.el.querySelector('.abyss-detached-draft')).toBeNull();
+    expect(activeDocument.activeElement).toBe(outside);
+    expect(await h.read()).toBe('- [ ] Current\n');
+  });
+});
+
 describe('inspector write outcomes', () => {
   it('presents a refused concurrent priority change and restores the label from before it', async () => {
     const h = await hosted('- [ ] Current\n');

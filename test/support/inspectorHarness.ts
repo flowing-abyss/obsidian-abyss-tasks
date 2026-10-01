@@ -84,14 +84,13 @@ export async function inspectorHarness(
   const location = node(selected);
   state.set('taskStack', [location.root, ...location.path]);
   const el = activeDocument.body.createDiv();
-  const panel = new RightPanel(
+  const panel = new RightPanel({
     state,
     app,
-    new StatusRegistry([...statusDefinitions]),
-    DEFAULT_SETTINGS,
-    undefined,
-    api,
-  );
+    statusRegistry: new StatusRegistry([...statusDefinitions]),
+    settings: DEFAULT_SETTINGS,
+    tasks: api,
+  });
   panel.mount(el);
   inspectorCleanups.push(() => {
     panel.destroy();

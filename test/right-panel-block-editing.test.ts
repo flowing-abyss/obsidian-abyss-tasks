@@ -160,14 +160,14 @@ async function panelWith(
   const app = await createAppWithFiles({ 'tasks.md': '- [ ] root\n' });
   const state = new AppState();
   state.set('taskStack', [initial]);
-  const panel = new RightPanel(
+  const panel = new RightPanel({
     state,
     app,
-    testStatusRegistry(),
+    statusRegistry: testStatusRegistry(),
     settings,
-    acknowledge,
-    api(execute),
-  );
+    onSuccessfulMutation: acknowledge,
+    tasks: api(execute),
+  });
   return { app, state, panel };
 }
 

@@ -73,7 +73,38 @@ or settings UI.
 
 `PanelView` owns `RailPanel` for mode changes, `LeftPanel` for navigation, `CenterPanel` for selected
 content, and `RightPanel` for the task inspector. Centre composition uses readonly named options,
-including distinct callbacks for static settings and saved view state. Panels share transient navigation through
+including distinct callbacks for static settings and saved view state. Inspector and TaskModal
+composition also use readonly named options. PanelView and TaskModal forward the same task
+capability, interaction ownership and comment-time provider, plus their existing mutation lifecycle
+callbacks. TaskModal keeps a local AppState, lease, owner document and ticker, mounts RightPanel
+before subscribing active-selection convergence to queries, and retains the inspector's continuity
+methods. RightPanel constructs one `InspectorPlanningSurfaces` for planning/status controls, chips,
+menus, recurrence editor state, anchored geometry and focus/placement cleanup. The owner receives
+only tag-suggestion `listNodes` queries and live root, Markdown Component, selection, badge and
+retained dependency-resolution and planning-target reconstruction callbacks. Typed call-time command
+arrows forward to RightPanel;
+all application execution, selection epochs, drafts/recovery, Undo and history remain in the shell.
+Recurrence restoration reports anchor presence separately from focus; the shell alone decides
+whether to preserve a dirty draft. RightPanel also constructs one `InspectorDependencies` for dependency disclosure, badge, sections,
+drop gestures and search. It receives the exact read-only dependency queries and live shell resolver,
+command, Undo and badge callbacks; query subscriptions and all results remain in RightPanel. Search
+rebuilds retain one handle and interaction lease, release placement while detached, then refresh and
+restore permitted focus only if that handle is still current. PlanningSurfaces delegates attached or
+matching-surface search dismissal to this owner. Dependency refresh preserves Undo detach, status
+markers, badge/time badge, status-menu close, sections, search refresh, Undo render and placement in
+that order. RightPanel retains one shared task-drag cleanup for subtask and relation gestures; both
+finish the prior drag before starting and register the new cleanup afterwards. Dependency and
+retained subtask rows import the same stateless `renderRowRemove` helper directly.
+RightPanel constructs one `InspectorSections` for title/description editors, subtask/comment
+sections, attachments and link-edit UI. It reads the current Markdown Component/root through host
+callbacks, registers entry cleanup on that Component and shares the shell's drag callbacks and row
+remove helper. Its command arrows call retained RightPanel adapters at invocation; dismissal first
+marks the captured submitted target, then cancels the shell's restored-focus timer, then closes the
+entry. The shell keeps text draft capture/restore, targets, submission/late-result handling and all
+write authority; the three presentation owners do not subscribe or acquire a task writer. Distinct
+editor save/blur/IME rules and existing section DOM/reopen gestures remain intact.
+Selection, render, refresh and destroy call the owner's narrow operations at their former positions.
+Panels share transient navigation through
 `AppState`. `set('taskStack')` begins a selection and `updateInspectorSelection` refreshes one;
 `AppState` tells its selection-begun listeners after a begun selection is delivered. At a compact
 width in Tasks mode, `PanelView` opens the details pane when a selection begins, when the rail's
@@ -670,7 +701,8 @@ must extend these checks without creating another persistence path.
 
 [Project ESLint policy](eslint-project-policy.mts) rejects ambient capabilities in the pure-module
 roster in [eslint.config.mts](eslint.config.mts) and global document/window capabilities in project
-and calendar surfaces, in the centre services' [`src/panels/center/`](src/panels/center/),
+and calendar surfaces, in the centre services' [`src/panels/center/`](src/panels/center/) and inspector UI owners'
+[`src/panels/right/`](src/panels/right/),
 in the centre task list's [`src/panels/task-list/`](src/panels/task-list/), and in the shared [project actions](src/ui/projectActions.ts), which join by a per-file entry.
 Enroll new pure modules in that roster and supply explicit time; native surfaces retain their
 owning window and dispose pending work. These lexical checks complement

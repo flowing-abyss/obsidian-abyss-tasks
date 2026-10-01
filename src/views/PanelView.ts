@@ -557,21 +557,19 @@ export class PanelView extends ItemView {
         this.observeCompactHeader_abyssPrivate(header);
       },
     });
-    this.right_abyssPrivate = new RightPanel(
-      this.state_abyssPrivate,
-      this.app,
-      this.statusRegistry_abyssPrivate,
-      this.settings_abyssPrivate,
-      undefined,
-      this.tasks_abyssPrivate,
-      undefined,
-      (event) => {
+    this.right_abyssPrivate = new RightPanel({
+      state: this.state_abyssPrivate,
+      app: this.app,
+      statusRegistry: this.statusRegistry_abyssPrivate,
+      settings: this.settings_abyssPrivate,
+      tasks: this.tasks_abyssPrivate,
+      onMutationLifecycle: (event) => {
         this.trackOwnWrite_abyssPrivate(event);
       },
-      this.commentTimeContext_abyssPrivate,
-      this.interactionRegistry_abyssPrivate,
+      commentTimeContext: this.commentTimeContext_abyssPrivate,
+      interactionOwnership: this.interactionRegistry_abyssPrivate,
       timeTracking,
-    );
+    });
   }
 
   /** One tick and one write boundary for every tracking control this view hosts. */

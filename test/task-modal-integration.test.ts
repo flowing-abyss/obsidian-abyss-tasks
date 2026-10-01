@@ -122,9 +122,15 @@ async function openHeldRepeatSave(): Promise<{
     resolve: () => resolution,
     subscribe: events.subscribe,
   });
-  const modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+  const modal = new TaskModal({
+    app,
+    statusRegistry: testStatusRegistry(),
+    settings: DEFAULT_SETTINGS,
     queries,
-    execute,
+    tasks: {
+      queries,
+      execute,
+    },
   });
   modal.open(observed);
   return {
@@ -219,9 +225,15 @@ describe('TaskModal with real RightPanel', () => {
       subscribe: events.subscribe,
     });
     const execute = vi.fn<TaskApplicationApi['execute']>();
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute,
+      tasks: {
+        queries,
+        execute,
+      },
     });
     modal.open(observed);
     click(
@@ -300,9 +312,15 @@ describe('TaskModal with real RightPanel', () => {
       await blocked;
       return { type: 'ok', changed: true, outcome: { type: 'task', task: current } };
     });
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute,
+      tasks: {
+        queries,
+        execute,
+      },
     });
     modal.open(observed);
     const input = expectDefined(
@@ -358,9 +376,15 @@ describe('TaskModal with real RightPanel', () => {
       resolve: () => resolution,
       subscribe: events.subscribe,
     });
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute,
+      tasks: {
+        queries,
+        execute,
+      },
     });
     modal.open(observed);
     const input = expectDefined(
@@ -427,9 +451,15 @@ describe('TaskModal with real RightPanel', () => {
           finish = resolvePromise;
         }),
     );
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute,
+      tasks: {
+        queries,
+        execute,
+      },
     });
     modal.open(observed);
     const input = expectDefined(
@@ -531,9 +561,15 @@ describe('TaskModal with real RightPanel', () => {
       await blocked;
       return { type: 'ok', changed: true, outcome: { type: 'task', task: current } };
     });
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute,
+      tasks: {
+        queries,
+        execute,
+      },
     });
     modal.open(observed);
     const texts = [
@@ -605,9 +641,15 @@ describe('TaskModal with real RightPanel', () => {
       resolve: () => resolution,
       subscribe: events.subscribe,
     });
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute,
+      tasks: {
+        queries,
+        execute,
+      },
     });
     modal.open(observed);
     const input = expectDefined(
@@ -716,9 +758,15 @@ describe('TaskModal with real RightPanel', () => {
       resolve: () => resolution,
       subscribe: events.subscribe,
     });
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute,
+      tasks: {
+        queries,
+        execute,
+      },
     });
     modal.open(observed);
     const input = expectDefined(
@@ -771,12 +819,18 @@ describe('TaskModal with real RightPanel', () => {
     const queries = taskQueryApi({
       resolve: () => ({ type: 'exact', task: observed, basis: { observed } }),
     });
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute: vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
-        type: 'conflict',
-        current: observed,
-      }),
+      tasks: {
+        queries,
+        execute: vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+          type: 'conflict',
+          current: observed,
+        }),
+      },
     });
     modal.open(observed);
     click(
@@ -932,9 +986,15 @@ describe('TaskModal with real RightPanel', () => {
         await blocked;
         return { type: 'ok', changed: true, outcome: { type: 'task', task: current } };
       });
-      modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      modal = new TaskModal({
+        app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
         queries,
-        execute,
+        tasks: {
+          queries,
+          execute,
+        },
       });
       modal.open(observed);
 
@@ -974,9 +1034,15 @@ describe('TaskModal with real RightPanel', () => {
       resolve: () => ({ type: 'not-found', ref: observed.ref }),
       subscribe: events.subscribe,
     });
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute: vi.fn<TaskApplicationApi['execute']>(),
+      tasks: {
+        queries,
+        execute: vi.fn<TaskApplicationApi['execute']>(),
+      },
     });
     modal.open(observed);
     const comment = expectDefined(
@@ -1034,9 +1100,15 @@ describe('TaskModal with real RightPanel', () => {
       subscribe: events.subscribe,
     });
     const execute = vi.fn<TaskApplicationApi['execute']>();
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute,
+      tasks: {
+        queries,
+        execute,
+      },
     });
     modal.open(observed);
     const comment = expectDefined(
@@ -1076,9 +1148,15 @@ describe('TaskModal with real RightPanel', () => {
       subscribe: events.subscribe,
     });
     const execute = vi.fn<TaskApplicationApi['execute']>();
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute,
+      tasks: {
+        queries,
+        execute,
+      },
     });
     modal.open(observed);
     const comment = expectDefined(
@@ -1141,9 +1219,15 @@ describe('TaskModal with real RightPanel', () => {
               : { type: 'deleted', ref: observed.ref },
         });
       });
-      modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      modal = new TaskModal({
+        app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
         queries,
-        execute,
+        tasks: {
+          queries,
+          execute,
+        },
       });
       modal.open(observed);
       const titles: string[] = [];
@@ -1259,7 +1343,13 @@ describe('TaskModal with real RightPanel', () => {
       return { type: 'ok', changed: true, outcome: { type: 'task', task: next } };
     });
     const tasks: TaskApplicationApi = { queries, execute };
-    modal = new TaskModal(app, registry, DEFAULT_SETTINGS, queries, tasks);
+    modal = new TaskModal({
+      app,
+      statusRegistry: registry,
+      settings: DEFAULT_SETTINGS,
+      queries,
+      tasks,
+    });
 
     modal.open(current);
 
@@ -1379,9 +1469,15 @@ describe('TaskModal with real RightPanel', () => {
       changed: false,
       outcome: { type: 'task', task: current },
     });
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute,
+      tasks: {
+        queries,
+        execute,
+      },
     });
     modal.open(current);
 
@@ -1420,9 +1516,15 @@ describe('TaskModal with real RightPanel', () => {
       list: () => [current],
       resolve: () => ({ type: 'exact', task: current, basis: { observed: current } }),
     });
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute: vi.fn<TaskApplicationApi['execute']>(),
+      tasks: {
+        queries,
+        execute: vi.fn<TaskApplicationApi['execute']>(),
+      },
     });
     modal.open(current);
     const marker = expectDefined(
@@ -1461,9 +1563,15 @@ describe('TaskModal with real RightPanel', () => {
       list: () => [current],
       resolve: () => ({ type: 'exact', task: current, basis: { observed: current } }),
     });
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute: vi.fn<TaskApplicationApi['execute']>(),
+      tasks: {
+        queries,
+        execute: vi.fn<TaskApplicationApi['execute']>(),
+      },
     });
     modal.open(current);
     const chip = expectDefined(
@@ -1504,9 +1612,15 @@ describe('TaskModal with real RightPanel', () => {
       list: () => [current],
       resolve: () => ({ type: 'exact', task: current, basis: { observed: current } }),
     });
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute: vi.fn<TaskApplicationApi['execute']>(),
+      tasks: {
+        queries,
+        execute: vi.fn<TaskApplicationApi['execute']>(),
+      },
     });
     modal.open(current);
     const modalEl = expectDefined(activeDocument.querySelector<HTMLElement>('.abyss-modal'));
@@ -1663,9 +1777,15 @@ describe('TaskModal with real RightPanel', () => {
       configurable: true,
       value: () => ({ '#alpha': 1 }),
     });
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute: vi.fn<TaskApplicationApi['execute']>(),
+      tasks: {
+        queries,
+        execute: vi.fn<TaskApplicationApi['execute']>(),
+      },
     });
     modal.open(current);
 
@@ -1730,9 +1850,15 @@ describe('TaskModal with real RightPanel', () => {
       events.publish({ type: 'changed', files: ['f.md'] });
       return { type: 'ok', changed: true, outcome: { type: 'task', task: current } };
     });
-    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       queries,
-      execute,
+      tasks: {
+        queries,
+        execute,
+      },
     });
     modal.open(observed);
     const chip = expectDefined(

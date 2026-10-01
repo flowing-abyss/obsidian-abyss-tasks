@@ -170,15 +170,11 @@ const categories: ReadonlyArray<{
   {
     category: 'plugin-owned task modal',
     open: (registry) => {
-      const modal = new TaskModal(
-        new App(),
-        testStatusRegistry(),
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        registry,
-      );
+      const modal = new TaskModal({
+        app: new App(),
+        statusRegistry: testStatusRegistry(),
+        interactionOwnership: registry,
+      });
       modal.open(task());
       return {
         control: expectDefined(activeDocument.querySelector<HTMLElement>('.abyss-modal-close-btn')),

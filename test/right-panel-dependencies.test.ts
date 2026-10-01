@@ -10,6 +10,7 @@ import {
   type TaskResolution,
 } from '../src/tasks';
 import { TaskModal } from '../src/ui/TaskModal';
+import { noInteractionOwnership } from '../src/ui/interactionOwnership';
 import { rebuildTaskSelection, rootTaskRef } from '../src/ui/taskSelection';
 import {
   createCssReader,
@@ -452,7 +453,13 @@ describe('inspector subtask row removal', () => {
   it('offers local recovery after deleting the selected subtask through the modal menu', async () => {
     const markdown = '- [ ] Current\n  - [ ] Child\n  - [ ] Sibling\n';
     const h = await harness(markdown);
-    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    const modal = new TaskModal({
+      app: h.app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.api,
+    });
     cleanups.unshift(() => {
       modal.close();
     });
@@ -501,7 +508,13 @@ describe('inspector subtask row removal', () => {
         await pending.promise;
         return result;
       });
-      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      const modal = new TaskModal({
+        app: h.app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
+        queries: h.index,
+        tasks: h.api,
+      });
       cleanups.unshift(() => {
         modal.close();
       });
@@ -589,7 +602,13 @@ describe('inspector subtask row removal', () => {
       await pending.promise;
       return execute(command);
     });
-    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    const modal = new TaskModal({
+      app: h.app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.api,
+    });
     cleanups.unshift(() => {
       modal.close();
     });
@@ -1106,9 +1125,8 @@ describe('inspector dependency navigation', () => {
 
   it('replaces and clears a dependency status menu handle after closing and refreshing', async () => {
     const h = await harness('- [ ] Current ⛔ related\n- [ ] Related 🆔 related\n');
-    const panel = h.panel as unknown as {
-      dependencyStatusMenu_abyssPrivate: { element: HTMLElement } | undefined;
-    };
+    const surfaces = h.panel['planningSurfaces_abyssPrivate'];
+    const opened = vi.spyOn(surfaces, 'openStatusMenu');
     const marker = expectDefined(
       h.el.querySelector<HTMLElement>(
         '[data-dependency-direction="blocked-by"] .abyss-status-marker',
@@ -1118,7 +1136,9 @@ describe('inspector dependency navigation', () => {
     try {
       marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       vi.runOnlyPendingTimers();
-      const firstMenu = expectDefined(panel.dependencyStatusMenu_abyssPrivate);
+      const firstMenu = expectDefined(
+        opened.mock.results[0]?.value as ReturnType<typeof surfaces.openStatusMenu> | undefined,
+      );
       expect(firstMenu.element.isConnected).toBe(true);
 
       activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -1126,8 +1146,11 @@ describe('inspector dependency navigation', () => {
 
       vi.useRealTimers();
       marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-      const secondMenu = expectDefined(panel.dependencyStatusMenu_abyssPrivate);
+      const secondMenu = expectDefined(
+        opened.mock.results[1]?.value as ReturnType<typeof surfaces.openStatusMenu> | undefined,
+      );
       expect(secondMenu).not.toBe(firstMenu);
+      const close = vi.spyOn(secondMenu, 'close');
       await h.api.execute({
         type: 'patch',
         target: { type: 'task', ref: h.node('Related').root.ref },
@@ -1135,7 +1158,9 @@ describe('inspector dependency navigation', () => {
       });
       await flushMicrotasks(30);
 
-      expect(panel.dependencyStatusMenu_abyssPrivate).toBeUndefined();
+      expect(close).toHaveBeenCalledTimes(1);
+      surfaces.closeDependencyStatusMenu();
+      expect(close).toHaveBeenCalledTimes(1);
       expect(secondMenu.element.isConnected).toBe(false);
     } finally {
       vi.useRealTimers();
@@ -1216,7 +1241,13 @@ describe('inspector dependency navigation', () => {
     async (mode) => {
       const h = await harness(source, 'A.1.a');
       const outer = h.state.get('taskStack');
-      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      const modal = new TaskModal({
+        app: h.app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
+        queries: h.index,
+        tasks: h.api,
+      });
       cleanups.unshift(() => {
         modal.close();
       });
@@ -1252,7 +1283,13 @@ describe('owned dependency destination editing', () => {
   const source = '- [ ] B\n  - [ ] B.2 🆔 b\n    - [ ] Deep\n- [ ] C ⛔ b\n';
   it('preserves nested current and both history frames through an owned linked child insertion', async () => {
     const h = await harness(source, 'C');
-    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    const modal = new TaskModal({
+      app: h.app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.api,
+    });
     cleanups.unshift(() => {
       modal.close();
     });
@@ -1344,7 +1381,13 @@ describe('owned dependency destination editing', () => {
     'keeps a related nested selection and Back after %s editing',
     async (kind) => {
       const h = await harness(source, 'C');
-      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      const modal = new TaskModal({
+        app: h.app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
+        queries: h.index,
+        tasks: h.api,
+      });
       cleanups.unshift(() => {
         modal.close();
       });
@@ -1397,7 +1440,13 @@ describe('owned dependency destination editing', () => {
 
   it('does not retain a child through a concurrent insertion while its title edit is pending', async () => {
     const h = await harness(source, 'C');
-    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    const modal = new TaskModal({
+      app: h.app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.api,
+    });
     cleanups.unshift(() => {
       modal.close();
     });
@@ -1433,7 +1482,13 @@ describe('live dependency history restoration', () => {
     'keeps %s history current through sequential shifts and later dependency mutations',
     async (surface) => {
       const h = await harness(source.replace('🆔 b', '🆔 b ⛔ missing'), 'C');
-      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      const modal = new TaskModal({
+        app: h.app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
+        queries: h.index,
+        tasks: h.api,
+      });
       cleanups.unshift(() => {
         modal.close();
       });
@@ -1629,7 +1684,13 @@ describe('TaskModal dependency selection', () => {
     async (_location, source) => {
       const h = await harness(source, 'Parent');
       h.panel.destroy();
-      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      const modal = new TaskModal({
+        app: h.app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
+        queries: h.index,
+        tasks: h.api,
+      });
       cleanups.unshift(() => {
         modal.close();
       });
@@ -1688,7 +1749,13 @@ describe('TaskModal dependency selection', () => {
   it('does not preserve duplicate selection through an unrelated structural authority transition', async () => {
     const h = await harness('- [ ] Parent\n  - [ ] Current\n  - [ ] Current\n', 'Parent');
     h.panel.destroy();
-    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    const modal = new TaskModal({
+      app: h.app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.api,
+    });
     cleanups.unshift(() => {
       modal.close();
     });
@@ -2121,6 +2188,8 @@ describe('RightPanel dependency inspector', () => {
 
   it('keeps a search draft through a proven selection refresh and drops it on another task', async () => {
     const h = await harness('- [ ] Current\n- [ ] Candidate\n');
+    const release = vi.fn();
+    const acquire = vi.spyOn(noInteractionOwnership, 'acquire').mockReturnValue({ release });
     button(h.el, '.abyss-dep-badge-body').click();
     const input = search(h.el, 'Candidate');
     button(h.el, '[data-direction="blocks"]').click();
@@ -2138,8 +2207,12 @@ describe('RightPanel dependency inspector', () => {
     expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
     expect(input.value).toBe('Candidate');
     expect(activeDocument.activeElement).toBe(input);
+    expect(acquire).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
     h.state.set('taskStack', [h.node('Candidate').root]);
     expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
+    expect(acquire).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
   it.each(['main', 'invoking'] as const)(
@@ -2551,7 +2624,13 @@ describe('continuous dependency entry', () => {
       '- [ ] Tabbed parent\n\t- [ ] Nested owner\n\t\t- [ ] Grandchild ⛔ blocker\n- [ ] Blocker 🆔 blocker\n',
       'Grandchild',
     );
-    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    const modal = new TaskModal({
+      app: h.app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.api,
+    });
     cleanups.unshift(() => {
       modal.close();
     });
@@ -2607,7 +2686,13 @@ describe('continuous dependency entry', () => {
         '- [ ] Root\n\t- [ ] Nested owner\n\t\t- [ ] Grandchild\n- [ ] Candidate one\n- [ ] Candidate two\n',
         'Nested owner',
       );
-      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      const modal = new TaskModal({
+        app: h.app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
+        queries: h.index,
+        tasks: h.api,
+      });
       cleanups.unshift(() => {
         modal.close();
       });

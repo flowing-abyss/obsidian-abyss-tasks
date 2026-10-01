@@ -170,23 +170,18 @@ function mountInspector(stack: TrackingStack, state: AppState, win: Window = win
     now: stack.now,
     win,
   });
-  const panel = new RightPanel(
+  const panel = new RightPanel({
     state,
-    stack.app,
-    stack.statusRegistry,
-    DEFAULT_SETTINGS,
-    undefined,
-    stack.tasks,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    {
+    app: stack.app,
+    statusRegistry: stack.statusRegistry,
+    settings: DEFAULT_SETTINGS,
+    tasks: stack.tasks,
+    timeTracking: {
       ticker,
       actions: createTrackingActions(stack.tasks, (result) => reported.push(result)),
       context: () => ({ nowMs: stack.now(), offsetAt: () => OFFSET_MINUTES }),
     },
-  );
+  });
   const el = activeDocument.body.createDiv();
   panel.mount(el);
   const off = stack.tasks.queries.subscribe((event) => {
@@ -464,13 +459,13 @@ describe('inspector tracked time badge', () => {
   it('shows the same badge inside the task modal', async () => {
     const stack = await trackingStack(CLOSED_SESSIONS);
     const root = expectDefined(stack.index.list()[0], 'Missing root task');
-    const modal = new TaskModal(
-      stack.app,
-      stack.statusRegistry,
-      DEFAULT_SETTINGS,
-      stack.index,
-      stack.tasks,
-    );
+    const modal = new TaskModal({
+      app: stack.app,
+      statusRegistry: stack.statusRegistry,
+      settings: DEFAULT_SETTINGS,
+      queries: stack.index,
+      tasks: stack.tasks,
+    });
     cleanups.push(() => {
       modal.close();
     });
