@@ -241,7 +241,11 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
   'TaskApplicationApi.planArchive': 'src/panels/center/TaskCommands.ts',
   'TaskApplicationApi.queries': 'src/ui/TaskMoveRecoveryModal.ts',
   'TaskQueryApi.forCalendarProjection': 'src/panels/calendar/calendarContent.ts',
-  'TaskQueryApi.list': ['src/panels/CenterPanel.ts', 'src/panels/calendar/calendarCommands.ts'],
+  'TaskQueryApi.list': [
+    'src/panels/CenterPanel.ts',
+    'src/panels/calendar/calendarCommands.ts',
+    'src/panels/center/TaskSearch.ts',
+  ],
   'TaskQueryApi.resolve': 'src/views/PanelView.ts',
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',
   'TaskQueryApi.subscribeReconciled': 'src/projects/ProjectStore.ts',

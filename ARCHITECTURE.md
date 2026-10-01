@@ -168,6 +168,14 @@ call-time root and date-format callbacks. Updates change the settings entry, sta
 async save action, then notify AppState synchronously. The shell retains headers, filter debounce,
 formatDate and lifecycle close ordering.
 
+[`TaskSearch`](src/panels/center/TaskSearch.ts) owns Search input/results, coalesced frame
+refresh and result-card navigation. Constructed once, it reads the same persisted task list and
+uses the shell's existing navigation port. Live host callbacks reset mounted rows, replace the
+current Markdown Component, render flat rows with effective tag groups and complete rendering,
+including empty results. CenterPanel retains the sole state/query subscriptions and Component;
+Search cancels its frame and clears mounted elements at the original render/destroy points. Status
+controls keep Search/query, while ordinary result navigation precedes task-stack selection.
+
 ## Calendar mode
 
 `CenterPanel` routes modes, delegates task actions to TaskCommands, and keeps the task modal and
