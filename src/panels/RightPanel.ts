@@ -407,6 +407,7 @@ export class RightPanel {
         mounted: () => this.mounted_abyssPrivate,
         component: () => this.md_abyssPrivate,
         stack: () => this.state_abyssPrivate.get('taskStack'),
+        rebuildPlanningTargetStack: (root, target) => rebuildPlanningTargetStack(root, target),
         dependencyTask: (stack) => this.dependencyTask_abyssPrivate(stack),
         trackingNode: () => this.trackingNode_abyssPrivate(),
         timeBadge: () => this.timeBadge_abyssPrivate,

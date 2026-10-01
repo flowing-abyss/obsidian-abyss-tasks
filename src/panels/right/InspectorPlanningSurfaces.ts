@@ -13,8 +13,6 @@ import {
   subtreeRunning,
   type LocalDate,
   type PlanningTarget,
-  type SubtaskRef,
-  type SubtaskSnapshot,
   type TaskCommandResult,
   type TaskNodeRef,
   type TaskPatch,
@@ -59,6 +57,10 @@ interface InspectorPlanningHost {
   readonly mounted: () => boolean;
   readonly component: () => Component;
   readonly stack: () => readonly TaskLike[];
+  readonly rebuildPlanningTargetStack: (
+    root: TaskSnapshot,
+    target: PlanningTarget,
+  ) => readonly TaskLike[];
   readonly dependencyTask: (stack?: readonly TaskLike[]) => TaskLike | undefined;
   readonly trackingNode: () => TrackedNode | undefined;
   readonly timeBadge: () => TimeBadgeHandle | undefined;
@@ -94,31 +96,6 @@ interface InspectorPlanningSurfacesOptions {
   readonly timeTracking: TrackingSurface | undefined;
   readonly host: InspectorPlanningHost;
   readonly commands: InspectorPlanningCommands;
-}
-
-function planningChildChain(target: PlanningTarget): readonly SubtaskRef[] {
-  const chain: SubtaskRef[] = [];
-  let node: TaskNodeRef = target;
-  while (node.type === 'subtask') {
-    chain.push(node.ref);
-    node = node.ref.parent;
-  }
-  chain.reverse();
-  return chain;
-}
-
-function rebuildPlanningTargetStack(root: TaskSnapshot, target: PlanningTarget): TaskLike[] {
-  const stack: TaskLike[] = [root];
-  let current: TaskLike = root;
-  for (const ref of planningChildChain(target)) {
-    const child: SubtaskSnapshot | undefined = current.subtasks.find(
-      (candidate) => candidate.ref.relativeLine === ref.relativeLine,
-    );
-    if (child == null) break;
-    stack.push(child);
-    current = child;
-  }
-  return stack;
 }
 
 function timeChipPresentation(
@@ -1251,7 +1228,7 @@ export class InspectorPlanningSurfaces {
     const root = this.#host.stack()[0];
     const target = taskNodeRef(task);
     if (root == null || !('source' in root)) return [];
-    return rebuildPlanningTargetStack(root, target);
+    return this.#host.rebuildPlanningTargetStack(root, target);
   }
 
   /**

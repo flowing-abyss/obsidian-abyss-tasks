@@ -81,7 +81,8 @@ before subscribing active-selection convergence to queries, and retains the insp
 methods. RightPanel constructs one `InspectorPlanningSurfaces` for planning/status controls, chips,
 menus, recurrence editor state, anchored geometry and focus/placement cleanup. The owner receives
 only tag-suggestion `listNodes` queries and live root, Markdown Component, selection, badge and
-retained dependency-resolution callbacks. Typed call-time command arrows forward to RightPanel;
+retained dependency-resolution and planning-target reconstruction callbacks. Typed call-time command
+arrows forward to RightPanel;
 all application execution, selection epochs, drafts/recovery, Undo and history remain in the shell.
 Recurrence restoration reports anchor presence separately from focus; the shell alone decides
 whether to preserve a dirty draft. Dependency search stays in RightPanel and uses explicit attached
