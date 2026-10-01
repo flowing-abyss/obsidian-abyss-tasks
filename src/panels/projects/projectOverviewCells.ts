@@ -27,7 +27,7 @@ import type { VisibleProjectColumn } from './projectTableColumns';
 import type { ProjectTableSelectableCell } from './projectTableSelection';
 
 /** One selectable cell of an overview view: the identity selection keys it by, and what it edits. */
-interface ProjectOverviewCell {
+export interface ProjectOverviewCell {
   readonly identity: ProjectTableSelectableCell;
   readonly project: Project;
   readonly field: ProjectFieldCatalogItem;
@@ -200,7 +200,7 @@ export function projectTableCells(input: ProjectTableCellsInput): {
 }
 
 /** A collapsed column and a compact empty column show no cards. */
-function kanbanColumnExpanded(
+export function kanbanColumnExpanded(
   column: ProjectKanbanColumn,
   settings: ProjectKanbanSettings,
 ): boolean {

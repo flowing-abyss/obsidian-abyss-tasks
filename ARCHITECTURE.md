@@ -370,7 +370,13 @@ only when first requested.
 property-catalog subscription. The controller shares the toolbar, field renderer, editor boundary, mutation queues,
 receipt projection, and history across Table, Kanban, and Timeline. Each surface retains its own
 search, selection, organization, and viewport. Switching hides inactive surfaces instead of
-rebuilding them. Project gesture and creation timers use the owning window and release pending
+rebuilding them. The controller drives Kanban and Timeline through one
+[surface contract](src/panels/projects/ProjectsOverviewSurface.ts): show and hide, a render whose
+hooks publish the toolbar statuses and project count and then settle the selection, the cell list
+and the mounted cells, cell reveal and scrolling, the editor frame, a created project's occurrence,
+and teardown. The Table still renders inline in the controller.
+[Contract tests](test/project-overview-surface.test.ts) run the same cases on each surface.
+Project gesture and creation timers use the owning window and release pending
 callbacks on disposal. A document without a window releases short gesture guards synchronously and does not
 retain creation requests or arm Kanban dragging. A dashboard temporarily detaches the overview and
 invalidates Timeline interaction authority; reattachment preserves the session but cannot revive an old queued gesture.
@@ -378,9 +384,10 @@ invalidates Timeline interaction authority; reattachment preserves the session b
 Table owns a full expanded logical row/cell projection for selection, keyboard navigation, and
 clipboard commands, independently of mounted DOM. The pure
 [overview cell lists](src/panels/projects/projectOverviewCells.ts) build it: rows in display order,
-cells with their selection identities, row and column orders, and a lookup index. The same module
-lists Kanban and Timeline cells from their models by the rules those views render with; until the
-views use it, [parity tests](test/project-kanban-view.test.ts) compare it with the cells they mount.
+cells with their selection identities, row and column orders, and a lookup index. Kanban and
+Timeline build their lists with the same module in each render, from the model and inputs they
+render with, so selection, range selection, paste, and Delete read one list in every view.
+[Parity tests](test/project-kanban-view.test.ts) compare each list with the cells the view mounts.
 The Table's local `projectTableViewport` owns measured and estimated row offsets, bounded windows,
 and spacer geometry. Scroll reconciliation reuses the
 retained model; data and group changes replace that sequence and clamp the viewport immediately.

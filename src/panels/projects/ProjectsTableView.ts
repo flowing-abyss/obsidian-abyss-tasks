@@ -125,10 +125,18 @@ import {
   projectTableCells,
   projectTableOccurrenceId,
   visibleProjectColumns,
+  type ProjectOverviewCell,
   type ProjectOverviewCells,
   type ProjectTableRow,
 } from './projectOverviewCells';
 import { ProjectsKanbanView } from './ProjectsKanbanView';
+import {
+  cellContaining,
+  nearestViewportDelta,
+  type ProjectOverviewRenderHooks,
+  type ProjectsOverviewSurface,
+  type RenderedCellContext,
+} from './ProjectsOverviewSurface';
 import { ProjectsTableToolbar } from './ProjectsTableToolbar';
 import { ProjectsTimelineView } from './ProjectsTimelineView';
 import { renderProjectTableCell } from './projectTableCells';
@@ -283,7 +291,7 @@ interface ProjectRowDragPayload {
 }
 
 interface GroupDropPlan {
-  readonly cell: LogicalCellContext;
+  readonly cell: ProjectOverviewCell;
   readonly value: unknown;
   readonly target: RenderedGroupContext;
 }
@@ -318,21 +326,10 @@ function showOverviewNameDescription(
 
 type ResizeObserverConstructor = new (callback: ResizeObserverCallback) => ResizeObserver;
 
-interface LogicalCellContext {
-  identity: ProjectTableSelectableCell;
-  project: Project;
-  field: ProjectFieldCatalogItem;
-  ownedClear: OwnedInferredPropertyClear | undefined;
-}
-
-export interface RenderedCellContext extends LogicalCellContext {
-  readonly element: HTMLElement;
-  readonly markdown?: Component;
-  contentSignature: string;
-  editorBoundary?: HTMLElement;
-  stickyHeader?: HTMLElement;
-  horizontalScroll?: HTMLElement;
-  verticalScroll?: HTMLElement;
+/** A view's selection and search, which it keeps across mode switches. */
+interface OverviewSession {
+  readonly selection: ProjectTableSelection;
+  search: string;
 }
 
 interface RenderedGroupContext extends ProjectTableDragGroup {
@@ -554,17 +551,6 @@ function markDropRunEnds(rows: readonly RenderedProjectRow[], state: string): vo
   }
 }
 
-function nearestViewportDelta(
-  start: number,
-  end: number,
-  viewportStart: number,
-  viewportEnd: number,
-): number {
-  if (start < viewportStart) return start - viewportStart;
-  if (end > viewportEnd) return end - viewportEnd;
-  return 0;
-}
-
 function observationMatchesReceipt(
   observation: ProjectSourceObservation,
   receipt: AppliedProjectCellChange,
@@ -705,9 +691,11 @@ export class ProjectsTableView {
    */
   private trackedNowMs_abyssPrivate = Date.now();
   private readonly collapsedGroups_abyssPrivate = new Set<string>();
-  private readonly tableSelection_abyssPrivate = new ProjectTableSelection();
-  private readonly kanbanSelection_abyssPrivate = new ProjectTableSelection();
-  private readonly timelineSelection_abyssPrivate = new ProjectTableSelection();
+  private readonly sessions_abyssPrivate: Record<ProjectOverviewMode, OverviewSession> = {
+    table: { selection: new ProjectTableSelection(), search: '' },
+    kanban: { selection: new ProjectTableSelection(), search: '' },
+    timeline: { selection: new ProjectTableSelection(), search: '' },
+  };
   private readonly tableViewport_abyssPrivate = new ProjectTableViewport();
   private tableSpacers_abyssPrivate = new Map<string, HTMLTableRowElement>();
   private tableRowsDirty_abyssPrivate = false;
@@ -716,8 +704,6 @@ export class ProjectsTableView {
   private tableCells_abyssPrivate: ProjectOverviewCells = NO_PROJECT_OVERVIEW_CELLS;
   private selectedKeys_abyssPrivate = new Set<string>();
   private tableRenderedCells_abyssPrivate: RenderedCellContext[] = [];
-  private kanbanRenderedCells_abyssPrivate: RenderedCellContext[] = [];
-  private timelineRenderedCells_abyssPrivate: RenderedCellContext[] = [];
   private readonly renderedGroups_abyssPrivate = new Map<string, RenderedGroupContext>();
   private readonly renderedProjectRows_abyssPrivate = new Map<string, RenderedProjectRow>();
   private readonly renderedGroupRows_abyssPrivate = new Map<string, RenderedGroupRow>();
@@ -726,11 +712,6 @@ export class ProjectsTableView {
   private headerSignature_abyssPrivate = '';
   private columnResizePreview_abyssPrivate = false;
   private visibleColumns_abyssPrivate: readonly VisibleProjectColumn[] = [];
-  private readonly searches_abyssPrivate: Record<ProjectOverviewMode, string> = {
-    table: '',
-    kanban: '',
-    timeline: '',
-  };
   private overviewMode_abyssPrivate: ProjectOverviewMode;
   private mounted_abyssPrivate = false;
   private timelineInteractionRevision_abyssPrivate = 0;
@@ -749,6 +730,19 @@ export class ProjectsTableView {
   private readonly resizeObserver_abyssPrivate: ResizeObserver | undefined;
   private nativeMenuOpen_abyssPrivate = false;
   private relativeDateInterval_abyssPrivate: number | undefined;
+  /** How a render reports back: the toolbar and count first, then the settled selection. */
+  private readonly renderHooks_abyssPrivate: ProjectOverviewRenderHooks = {
+    publish: ({ availableStatusGroups, uniqueVisibleCount }) => {
+      this.toolbar_abyssPrivate.update(availableStatusGroups);
+      this.count_abyssPrivate.setText(
+        `${uniqueVisibleCount} ${uniqueVisibleCount === 1 ? 'project' : 'projects'}`,
+      );
+    },
+    settleSelection: () => {
+      this.selection_abyssPrivate.reconcile(this.selectableCells_abyssPrivate());
+      this.syncSelection_abyssPrivate();
+    },
+  };
 
   constructor(
     host: HTMLElement,
@@ -829,23 +823,24 @@ export class ProjectsTableView {
   }
 
   private get selection_abyssPrivate(): ProjectTableSelection {
-    if (this.overviewMode_abyssPrivate === 'kanban') return this.kanbanSelection_abyssPrivate;
-    if (this.overviewMode_abyssPrivate === 'timeline') return this.timelineSelection_abyssPrivate;
-    return this.tableSelection_abyssPrivate;
+    return this.sessions_abyssPrivate[this.overviewMode_abyssPrivate].selection;
   }
 
-  private get renderedCells_abyssPrivate(): RenderedCellContext[] {
-    if (this.overviewMode_abyssPrivate === 'kanban') return this.kanbanRenderedCells_abyssPrivate;
-    if (this.overviewMode_abyssPrivate === 'timeline')
-      return this.timelineRenderedCells_abyssPrivate;
-    return this.tableRenderedCells_abyssPrivate;
+  private get renderedCells_abyssPrivate(): readonly RenderedCellContext[] {
+    if (this.overviewMode_abyssPrivate === 'table') return this.tableRenderedCells_abyssPrivate;
+    return this.activeSurface_abyssPrivate()?.renderedCells() ?? [];
   }
 
-  private set renderedCells_abyssPrivate(cells: RenderedCellContext[]) {
-    if (this.overviewMode_abyssPrivate === 'kanban') this.kanbanRenderedCells_abyssPrivate = cells;
-    else if (this.overviewMode_abyssPrivate === 'timeline')
-      this.timelineRenderedCells_abyssPrivate = cells;
-    else this.tableRenderedCells_abyssPrivate = cells;
+  /** The Kanban or Timeline surface of the current mode once it exists; the Table is inline. */
+  private activeSurface_abyssPrivate(): ProjectsOverviewSurface<RenderedCellContext> | undefined {
+    if (this.overviewMode_abyssPrivate === 'kanban') return this.kanbanView_abyssPrivate;
+    if (this.overviewMode_abyssPrivate === 'timeline') return this.timelineView_abyssPrivate;
+    return undefined;
+  }
+
+  private overviewCells_abyssPrivate(): ProjectOverviewCells {
+    if (this.overviewMode_abyssPrivate === 'table') return this.tableCells_abyssPrivate;
+    return this.activeSurface_abyssPrivate()?.cells() ?? NO_PROJECT_OVERVIEW_CELLS;
   }
 
   private createToolbar_abyssPrivate(): ProjectsTableToolbar {
@@ -859,7 +854,7 @@ export class ProjectsTableView {
       fields: () => buildConfiguredProjectFieldCatalog(this.context_abyssPrivate.settings.projects),
       onSearch: (query) => {
         this.finishEditorBeforeAction(() => {
-          this.searches_abyssPrivate[this.overviewMode_abyssPrivate] = query;
+          this.sessions_abyssPrivate[this.overviewMode_abyssPrivate].search = query;
           this.renderTable_abyssPrivate();
         });
       },
@@ -1011,7 +1006,7 @@ export class ProjectsTableView {
       }
       this.overviewMode_abyssPrivate = mode;
       this.context_abyssPrivate.settings.projects.overviewView = mode;
-      this.toolbar_abyssPrivate.setSearchValue(this.searches_abyssPrivate[mode]);
+      this.toolbar_abyssPrivate.setSearchValue(this.sessions_abyssPrivate[mode].search);
       this.persistAndRender_abyssPrivate();
     });
   }
@@ -1024,6 +1019,7 @@ export class ProjectsTableView {
 
   captureViewportBeforeHide(): void {
     this.timelineInteractionRevision_abyssPrivate++;
+    this.kanbanView_abyssPrivate?.captureViewportBeforeHide();
     this.timelineView_abyssPrivate?.captureViewportBeforeHide();
   }
 
@@ -1097,13 +1093,8 @@ export class ProjectsTableView {
   }
 
   private clearOverviewState_abyssPrivate(): void {
-    this.selection_abyssPrivate.clear();
-    this.tableSelection_abyssPrivate.clear();
-    this.kanbanSelection_abyssPrivate.clear();
-    this.timelineSelection_abyssPrivate.clear();
+    for (const session of Object.values(this.sessions_abyssPrivate)) session.selection.clear();
     this.tableRenderedCells_abyssPrivate = [];
-    this.kanbanRenderedCells_abyssPrivate = [];
-    this.timelineRenderedCells_abyssPrivate = [];
   }
 
   private destroyOverviewSurfaces_abyssPrivate(): void {
@@ -1382,13 +1373,12 @@ export class ProjectsTableView {
   private presentCreatedProject_abyssPrivate(project: Project, focus: boolean): HTMLElement | null {
     if (!this.creationPresentationReady_abyssPrivate()) return null;
     if (focus) this.relaxCreationProjection_abyssPrivate(project);
-    if (this.overviewMode_abyssPrivate === 'kanban') {
-      return this.presentCreatedKanbanProject_abyssPrivate(project, focus);
+    if (this.overviewMode_abyssPrivate === 'table') {
+      return this.presentCreatedTableProject_abyssPrivate(project, focus);
     }
-    if (this.overviewMode_abyssPrivate === 'timeline') {
-      return this.presentCreatedTimelineProject_abyssPrivate(project, focus);
-    }
-    return this.presentCreatedTableProject_abyssPrivate(project, focus);
+    const surface = this.activeSurface_abyssPrivate();
+    if (surface === undefined) return null;
+    return this.presentCreatedSurfaceProject_abyssPrivate(surface, project, focus);
   }
 
   private creationPresentationReady_abyssPrivate(): boolean {
@@ -1404,23 +1394,33 @@ export class ProjectsTableView {
     );
   }
 
-  private presentCreatedKanbanProject_abyssPrivate(
+  /**
+   * Opens the created project's group or column, then reveals, selects, and highlights its Name
+   * cell: the Table's sequence below, run through the surface.
+   */
+  private presentCreatedSurfaceProject_abyssPrivate(
+    surface: ProjectsOverviewSurface<RenderedCellContext>,
     project: Project,
     focus: boolean,
   ): HTMLElement | null {
-    const board = this.kanbanView_abyssPrivate;
-    if (board === undefined) return null;
     if (focus) {
-      board.revealProject(project.path);
-      this.kanbanRenderedCells_abyssPrivate = [...board.visibleCells()];
-      this.kanbanSelection_abyssPrivate.reconcile(this.selectableCells_abyssPrivate());
+      surface.revealProject(project.path);
+      this.selection_abyssPrivate.reconcile(this.selectableCells_abyssPrivate());
     }
-    const cell = this.kanbanRenderedCells_abyssPrivate.find(
-      ({ project: candidate, field }) => candidate.path === project.path && field.id === 'name',
-    );
+    const logical = surface
+      .cells()
+      .cells.find(
+        ({ project: candidate, field }) => candidate.path === project.path && field.id === 'name',
+      );
+    if (focus && logical !== undefined) surface.revealCell(logical.identity);
+    const cell = surface
+      .renderedCells()
+      .find(
+        ({ project: candidate, field }) => candidate.path === project.path && field.id === 'name',
+      );
     if (cell === undefined) return null;
     if (focus) this.selectAndRevealCreationCell_abyssPrivate(cell);
-    return cell.element.closest<HTMLElement>('.abyss-project-kanban-card') ?? cell.element;
+    return surface.occurrenceElement(cell);
   }
 
   private presentCreatedTableProject_abyssPrivate(
@@ -1446,25 +1446,6 @@ export class ProjectsTableView {
     return cell.element.closest<HTMLElement>('.abyss-project-table-row') ?? cell.element;
   }
 
-  private presentCreatedTimelineProject_abyssPrivate(
-    project: Project,
-    focus: boolean,
-  ): HTMLElement | null {
-    const timeline = this.timelineView_abyssPrivate;
-    if (timeline === undefined) return null;
-    if (focus) {
-      timeline.revealProject(project.path);
-      this.timelineRenderedCells_abyssPrivate = [...timeline.visibleCells()];
-      this.timelineSelection_abyssPrivate.reconcile(this.selectableCells_abyssPrivate());
-    }
-    const cell = this.timelineRenderedCells_abyssPrivate.find(
-      ({ project: candidate, field }) => candidate.path === project.path && field.id === 'name',
-    );
-    if (cell === undefined) return null;
-    if (focus) this.selectAndRevealCreationCell_abyssPrivate(cell);
-    return cell.element.closest<HTMLElement>('.abyss-project-timeline-row') ?? cell.element;
-  }
-
   private selectAndRevealCreationCell_abyssPrivate(cell: RenderedCellContext): void {
     this.selectCell_abyssPrivate(cell, false);
     this.revealSelectionCell_abyssPrivate(cell.element);
@@ -1487,9 +1468,9 @@ export class ProjectsTableView {
       this.ensureTimelineSettings_abyssPrivate().showUnscheduled = true;
       changed = true;
     }
-    const search = this.searches_abyssPrivate[this.overviewMode_abyssPrivate];
-    if (search.length > 0 && !this.singletonVisible_abyssPrivate(project, search)) {
-      this.searches_abyssPrivate[this.overviewMode_abyssPrivate] = '';
+    const session = this.sessions_abyssPrivate[this.overviewMode_abyssPrivate];
+    if (session.search.length > 0 && !this.singletonVisible_abyssPrivate(project, session.search)) {
+      session.search = '';
       this.toolbar_abyssPrivate.setSearchValue('');
       changed = true;
     }
@@ -1577,10 +1558,7 @@ export class ProjectsTableView {
       ]),
     );
     const model = buildProjectTableModel(this.projectTableModelInput_abyssPrivate());
-    this.toolbar_abyssPrivate.update(model.availableStatusGroups);
-    this.count_abyssPrivate.setText(
-      `${model.uniqueVisibleCount} ${model.uniqueVisibleCount === 1 ? 'project' : 'projects'}`,
-    );
+    this.renderHooks_abyssPrivate.publish(model);
 
     const table = this.table_abyssPrivate ?? this.createTable_abyssPrivate();
     this.reconcileTableHeader_abyssPrivate(table, columns);
@@ -1595,9 +1573,18 @@ export class ProjectsTableView {
   }
 
   private renderAlternativeSurface_abyssPrivate(): boolean {
-    if (this.overviewMode_abyssPrivate === 'table') return false;
-    if (this.overviewMode_abyssPrivate === 'kanban') this.renderKanban_abyssPrivate();
-    else this.renderTimeline_abyssPrivate();
+    const mode = this.overviewMode_abyssPrivate;
+    if (mode === 'table') return false;
+    this.scroll_abyssPrivate.hidden = true;
+    const surface =
+      mode === 'kanban'
+        ? this.showKanbanSurface_abyssPrivate()
+        : this.showTimelineSurface_abyssPrivate();
+    surface.render(
+      this.projectedProjects_abyssPrivate(),
+      this.sessions_abyssPrivate[mode].search,
+      this.renderHooks_abyssPrivate,
+    );
     this.notifyCreationReconciled_abyssPrivate();
     return true;
   }
@@ -1607,8 +1594,7 @@ export class ProjectsTableView {
     scrollLeft: number,
     focusedIdentity: FocusedCellIdentity | undefined,
   ): void {
-    this.selection_abyssPrivate.reconcile(this.selectableCells_abyssPrivate());
-    this.syncSelection_abyssPrivate();
+    this.renderHooks_abyssPrivate.settleSelection();
     this.restoreTablePosition_abyssPrivate(scrollTop, scrollLeft, focusedIdentity);
     this.notifyCreationReconciled_abyssPrivate();
   }
@@ -1642,11 +1628,8 @@ export class ProjectsTableView {
 
   private showTableSurface_abyssPrivate(): void {
     this.scroll_abyssPrivate.hidden = false;
-    if (this.kanbanView_abyssPrivate !== undefined) this.kanbanView_abyssPrivate.root.hidden = true;
-    if (this.timelineView_abyssPrivate !== undefined) {
-      this.timelineView_abyssPrivate.cancelInteraction();
-      this.timelineView_abyssPrivate.root.hidden = true;
-    }
+    this.kanbanView_abyssPrivate?.hide();
+    this.timelineView_abyssPrivate?.hide();
   }
 
   private renderFields_abyssPrivate(): readonly ProjectFieldCatalogItem[] {
@@ -1684,77 +1667,46 @@ export class ProjectsTableView {
       statuses: this.context_abyssPrivate.settings.projects.statuses,
       settings: this.effectiveTableSettings_abyssPrivate(),
       propertyDefinitions: this.context_abyssPrivate.settings.projects.propertyDefinitions,
-      search: this.searches_abyssPrivate.table,
+      search: this.sessions_abyssPrivate.table.search,
       nowMs: this.trackedNowMs_abyssPrivate,
       resolveLink: (target, sourcePath) =>
         this.context_abyssPrivate.app.metadataCache.getFirstLinkpathDest(target, sourcePath)?.path,
     };
   }
 
-  private renderKanban_abyssPrivate(): void {
-    this.scroll_abyssPrivate.hidden = true;
-    if (this.timelineView_abyssPrivate !== undefined) {
-      this.timelineView_abyssPrivate.cancelInteraction();
-      this.timelineView_abyssPrivate.root.hidden = true;
-    }
+  /** Hides the Timeline, then shows the board, created on first use, with its card fields. */
+  private showKanbanSurface_abyssPrivate(): ProjectsKanbanView<RenderedCellContext> {
+    this.timelineView_abyssPrivate?.hide();
     const board = (this.kanbanView_abyssPrivate ??= this.createKanbanView_abyssPrivate());
-    board.root.hidden = false;
-    const settings = this.ensureKanbanSettings_abyssPrivate();
-    this.compiledPresets_abyssPrivate = new Map(
-      settings.fields.map(({ id }) => [
-        id,
-        compileProjectPropertyPresets(this.projectPropertyDefinition_abyssPrivate(id)),
-      ]),
-    );
-    const relativeColumns = settings.fields.flatMap((column) => {
-      const field = findProjectFieldById(this.fields_abyssPrivate, column.id);
-      return field === undefined ? [] : [{ column, field }];
-    });
-    this.syncRelativeDateTimer_abyssPrivate(relativeColumns);
-    if (board.currentModel() === undefined) {
-      board.mount(this.projectedProjects_abyssPrivate(), this.searches_abyssPrivate.kanban);
-    } else {
-      board.update(this.projectedProjects_abyssPrivate(), this.searches_abyssPrivate.kanban);
-    }
-    const model = board.currentModel();
-    this.renderedCells_abyssPrivate = [...board.visibleCells()];
-    this.toolbar_abyssPrivate.update(model?.availableStatusGroups ?? []);
-    const count = model?.uniqueVisibleCount ?? 0;
-    this.count_abyssPrivate.setText(`${count} ${count === 1 ? 'project' : 'projects'}`);
-    this.selection_abyssPrivate.reconcile(this.selectableCells_abyssPrivate());
-    this.syncSelection_abyssPrivate();
+    board.show();
+    this.prepareCardFields_abyssPrivate(this.ensureKanbanSettings_abyssPrivate().fields);
+    return board;
   }
 
-  private renderTimeline_abyssPrivate(): void {
-    this.scroll_abyssPrivate.hidden = true;
-    if (this.kanbanView_abyssPrivate !== undefined) this.kanbanView_abyssPrivate.root.hidden = true;
+  /** Hides the board, then shows the Timeline, created on first use, with its row fields. */
+  private showTimelineSurface_abyssPrivate(): ProjectsTimelineView<RenderedCellContext> {
+    this.kanbanView_abyssPrivate?.hide();
     const timeline = (this.timelineView_abyssPrivate ??= this.createTimelineView_abyssPrivate());
-    timeline.root.hidden = false;
-    const timelineSettings = this.ensureTimelineSettings_abyssPrivate();
-    const timelineFields = projectTimelineFields(timelineSettings);
+    timeline.show();
+    this.prepareCardFields_abyssPrivate(
+      projectTimelineFields(this.ensureTimelineSettings_abyssPrivate()),
+    );
+    return timeline;
+  }
+
+  /** Compiles the presets of a Kanban or Timeline view's fields and times their relative dates. */
+  private prepareCardFields_abyssPrivate(columns: readonly ProjectColumn[]): void {
     this.compiledPresets_abyssPrivate = new Map(
-      timelineFields.map(({ id }) => [
+      columns.map(({ id }) => [
         id,
         compileProjectPropertyPresets(this.projectPropertyDefinition_abyssPrivate(id)),
       ]),
     );
-    const relativeColumns = timelineFields.flatMap((column) => {
+    const relativeColumns = columns.flatMap((column) => {
       const field = findProjectFieldById(this.fields_abyssPrivate, column.id);
       return field === undefined ? [] : [{ column, field }];
     });
     this.syncRelativeDateTimer_abyssPrivate(relativeColumns);
-    if (timeline.currentModel() === undefined) {
-      timeline.mount(this.projectedProjects_abyssPrivate(), this.searches_abyssPrivate.timeline);
-    } else {
-      timeline.update(this.projectedProjects_abyssPrivate(), this.searches_abyssPrivate.timeline);
-    }
-    const model = timeline.currentModel();
-    this.renderedCells_abyssPrivate = [...timeline.visibleCells()];
-    this.toolbar_abyssPrivate.update(model?.availableStatusGroups ?? []);
-    const count = model?.uniqueVisibleCount ?? 0;
-    this.count_abyssPrivate.setText(`${count} ${count === 1 ? 'project' : 'projects'}`);
-    this.selection_abyssPrivate.reconcile(this.selectableCells_abyssPrivate());
-    this.syncSelection_abyssPrivate();
   }
 
   private createTimelineView_abyssPrivate(): ProjectsTimelineView<RenderedCellContext> {
@@ -1770,6 +1722,7 @@ export class ProjectsTableView {
           this.context_abyssPrivate.app.metadataCache.getFirstLinkpathDest(target, sourcePath)
             ?.path,
       }),
+      effectiveField: (project, field) => this.effectiveField_abyssPrivate(project, field),
       renderCell: (options) => this.renderTimelineCell_abyssPrivate(options),
       selectCell: (cell) => {
         this.selectCell_abyssPrivate(cell, false);
@@ -1798,9 +1751,12 @@ export class ProjectsTableView {
       },
       finishEditor: () => this.requestFinishActiveEditor(),
       openRangeMenu: (occurrenceId, event) => {
-        const rendered = this.timelineRenderedCells_abyssPrivate.find(
-          ({ identity }) => identity.occurrenceId === occurrenceId && identity.columnId === 'name',
-        );
+        const rendered = this.timelineView_abyssPrivate
+          ?.renderedCells()
+          .find(
+            ({ identity }) =>
+              identity.occurrenceId === occurrenceId && identity.columnId === 'name',
+          );
         if (rendered === undefined) return;
         this.selectCell_abyssPrivate(rendered, false);
         this.showDescriptionMenu_abyssPrivate(rendered, event);
@@ -1823,6 +1779,7 @@ export class ProjectsTableView {
           this.context_abyssPrivate.app.metadataCache.getFirstLinkpathDest(target, sourcePath)
             ?.path,
       }),
+      effectiveField: (project, field) => this.effectiveField_abyssPrivate(project, field),
       renderCell: (options) => this.renderKanbanCell_abyssPrivate(options),
       selectCell: (cell) => {
         this.selectCell_abyssPrivate(cell, false);
@@ -2179,7 +2136,6 @@ export class ProjectsTableView {
     rendered.project = options.project;
     rendered.field = field;
     rendered.ownedClear = ownedClear;
-    this.assignOverviewCellViewport_abyssPrivate(rendered, options.host, presentation);
     options.host.addClass('abyss-project-table-cell', `abyss-project-${presentation}-cell`);
     options.host.tabIndex = 0;
     options.host.dataset['columnId'] = field.id;
@@ -2216,52 +2172,6 @@ export class ProjectsTableView {
       });
     }
     return rendered;
-  }
-
-  private assignOverviewCellViewport_abyssPrivate(
-    rendered: RenderedCellContext,
-    host: HTMLElement,
-    presentation: 'kanban' | 'timeline',
-  ): void {
-    if (presentation === 'kanban') {
-      this.assignKanbanCellViewport_abyssPrivate(rendered, host);
-      return;
-    }
-    const scroll = this.timelineView_abyssPrivate?.scroll;
-    if (scroll === undefined) {
-      delete rendered.editorBoundary;
-      delete rendered.horizontalScroll;
-      delete rendered.verticalScroll;
-    } else {
-      rendered.editorBoundary = scroll;
-      rendered.horizontalScroll = scroll;
-      rendered.verticalScroll = scroll;
-    }
-    const stickyHeader = this.timelineView_abyssPrivate?.root.querySelector<HTMLElement>(
-      '.abyss-project-timeline-axis',
-    );
-    if (stickyHeader === null || stickyHeader === undefined) delete rendered.stickyHeader;
-    else rendered.stickyHeader = stickyHeader;
-  }
-
-  private assignKanbanCellViewport_abyssPrivate(
-    rendered: RenderedCellContext,
-    host: HTMLElement,
-  ): void {
-    const editorBoundary = this.kanbanView_abyssPrivate?.scroll;
-    if (editorBoundary === undefined) delete rendered.editorBoundary;
-    else rendered.editorBoundary = editorBoundary;
-    if (editorBoundary === undefined) delete rendered.horizontalScroll;
-    else rendered.horizontalScroll = editorBoundary;
-    const verticalScroll = host.closest<HTMLElement>('.abyss-project-kanban-column-body');
-    if (verticalScroll === null) delete rendered.verticalScroll;
-    else rendered.verticalScroll = verticalScroll;
-    const stickyHeader =
-      host
-        .closest<HTMLElement>('.abyss-project-kanban-column')
-        ?.querySelector<HTMLElement>('.abyss-project-kanban-column-header') ?? undefined;
-    if (stickyHeader === undefined) delete rendered.stickyHeader;
-    else rendered.stickyHeader = stickyHeader;
   }
 
   private projectPropertyDefinition_abyssPrivate(
@@ -3444,9 +3354,7 @@ export class ProjectsTableView {
   }
 
   private selectableCells_abyssPrivate(): readonly ProjectTableSelectableCell[] {
-    return this.overviewMode_abyssPrivate === 'table'
-      ? this.tableCells_abyssPrivate.identities
-      : this.renderedCells_abyssPrivate.map(({ identity }) => identity);
+    return this.overviewCells_abyssPrivate().identities;
   }
 
   private renderedCell_abyssPrivate(
@@ -3459,21 +3367,17 @@ export class ProjectsTableView {
     );
   }
 
-  private logicalCells_abyssPrivate(): readonly LogicalCellContext[] {
-    return this.overviewMode_abyssPrivate === 'table'
-      ? this.tableCells_abyssPrivate.cells
-      : this.renderedCells_abyssPrivate;
+  private logicalCells_abyssPrivate(): readonly ProjectOverviewCell[] {
+    return this.overviewCells_abyssPrivate().cells;
   }
 
   private logicalCell_abyssPrivate(
     identity: ProjectTableSelectableCell,
-  ): LogicalCellContext | undefined {
-    return this.overviewMode_abyssPrivate === 'table'
-      ? this.tableCells_abyssPrivate.cell(identity.occurrenceId, identity.columnId)
-      : this.renderedCell_abyssPrivate(identity);
+  ): ProjectOverviewCell | undefined {
+    return this.overviewCells_abyssPrivate().cell(identity.occurrenceId, identity.columnId);
   }
 
-  private selectedCells_abyssPrivate(): LogicalCellContext[] {
+  private selectedCells_abyssPrivate(): ProjectOverviewCell[] {
     return this.selection_abyssPrivate
       .selected(this.selectableCells_abyssPrivate())
       .flatMap((identity) => {
@@ -3515,13 +3419,7 @@ export class ProjectsTableView {
   };
 
   private overviewFocusSurface_abyssPrivate(): HTMLElement {
-    if (this.overviewMode_abyssPrivate === 'kanban') {
-      return this.kanbanView_abyssPrivate?.scroll ?? this.scroll_abyssPrivate;
-    }
-    if (this.overviewMode_abyssPrivate === 'timeline') {
-      return this.timelineView_abyssPrivate?.scroll ?? this.scroll_abyssPrivate;
-    }
-    return this.scroll_abyssPrivate;
+    return this.activeSurface_abyssPrivate()?.scroll ?? this.scroll_abyssPrivate;
   }
 
   private focusSelectionCell_abyssPrivate(
@@ -3570,12 +3468,8 @@ export class ProjectsTableView {
   ): void {
     if (this.overviewMode_abyssPrivate === 'table') return;
     const path =
-      focus === undefined ? undefined : this.renderedCell_abyssPrivate(focus)?.project.path;
-    if (this.overviewMode_abyssPrivate === 'kanban') {
-      this.kanbanView_abyssPrivate?.syncSelectedProjectPath(path);
-    } else {
-      this.timelineView_abyssPrivate?.syncSelectedProjectPath(path);
-    }
+      focus === undefined ? undefined : this.logicalCell_abyssPrivate(focus)?.project.path;
+    this.activeSurface_abyssPrivate()?.syncSelectedProjectPath(path);
   }
 
   private isCellActionTarget_abyssPrivate(target: EventTarget | null, cell: HTMLElement): boolean {
@@ -3649,10 +3543,7 @@ export class ProjectsTableView {
   }
 
   private keydownCell_abyssPrivate(target: EventTarget | null): RenderedCellContext | undefined {
-    if (!(target instanceof Node)) return undefined;
-    return this.renderedCells_abyssPrivate.find(
-      ({ element }) => element === target || element.contains(target),
-    );
+    return cellContaining(this.renderedCells_abyssPrivate, target);
   }
 
   private ensureSelectionFocus_abyssPrivate(cell: RenderedCellContext): void {
@@ -3729,7 +3620,10 @@ export class ProjectsTableView {
   }
 
   private revealLogicalCell_abyssPrivate(identity: ProjectTableSelectableCell): void {
-    if (this.overviewMode_abyssPrivate !== 'table') return;
+    if (this.overviewMode_abyssPrivate !== 'table') {
+      this.activeSurface_abyssPrivate()?.revealCell(identity);
+      return;
+    }
     this.scroll_abyssPrivate.scrollTop = this.tableViewport_abyssPrivate.reveal(
       identity.occurrenceId,
       this.scroll_abyssPrivate.scrollTop,
@@ -3739,9 +3633,10 @@ export class ProjectsTableView {
   }
 
   private revealSelectionCell_abyssPrivate(cell: HTMLElement): void {
+    const surface = this.activeSurface_abyssPrivate();
     const rendered = this.renderedCells_abyssPrivate.find(({ element }) => element === cell);
-    if (rendered?.horizontalScroll !== undefined && rendered.verticalScroll !== undefined) {
-      this.revealKanbanCell_abyssPrivate(cell, rendered);
+    if (surface !== undefined && rendered !== undefined) {
+      surface.scrollCellIntoView(rendered);
       return;
     }
     const viewport = this.scroll_abyssPrivate.getBoundingClientRect();
@@ -3767,34 +3662,6 @@ export class ProjectsTableView {
       this.scroll_abyssPrivate.scrollLeft + horizontal,
     );
     this.scroll_abyssPrivate.scrollTop = Math.max(0, this.scroll_abyssPrivate.scrollTop + vertical);
-  }
-
-  private revealKanbanCell_abyssPrivate(cell: HTMLElement, rendered: RenderedCellContext): void {
-    const horizontalScroll = rendered.horizontalScroll;
-    const verticalScroll = rendered.verticalScroll;
-    if (horizontalScroll === undefined || verticalScroll === undefined) return;
-    const horizontalViewport = horizontalScroll.getBoundingClientRect();
-    const verticalViewport = verticalScroll.getBoundingClientRect();
-    const target = cell.getBoundingClientRect();
-    const usableTop = Math.max(
-      verticalViewport.top,
-      rendered.stickyHeader?.getBoundingClientRect().bottom ?? verticalViewport.top,
-    );
-    horizontalScroll.scrollLeft = Math.max(
-      0,
-      horizontalScroll.scrollLeft +
-        nearestViewportDelta(
-          target.left,
-          target.right,
-          horizontalViewport.left,
-          horizontalViewport.right,
-        ),
-    );
-    verticalScroll.scrollTop = Math.max(
-      0,
-      verticalScroll.scrollTop +
-        nearestViewportDelta(target.top, target.bottom, usableTop, verticalViewport.bottom),
-    );
   }
 
   private handleSelectionAction_abyssPrivate(
@@ -3838,26 +3705,18 @@ export class ProjectsTableView {
   }
 
   private rowIds_abyssPrivate(): readonly string[] {
-    if (this.overviewMode_abyssPrivate === 'table') return this.tableCells_abyssPrivate.rowIds;
-    return [
-      ...new Set(this.renderedCells_abyssPrivate.map(({ identity }) => identity.occurrenceId)),
-    ];
+    return this.overviewCells_abyssPrivate().rowIds;
   }
 
   private columnIds_abyssPrivate(): readonly string[] {
-    if (this.overviewMode_abyssPrivate === 'table') return this.tableCells_abyssPrivate.columnIds;
-    return [...new Set(this.renderedCells_abyssPrivate.map(({ identity }) => identity.columnId))];
+    return this.overviewCells_abyssPrivate().columnIds;
   }
 
-  private cellAt_abyssPrivate(row: number, column: number): LogicalCellContext | undefined {
+  private cellAt_abyssPrivate(row: number, column: number): ProjectOverviewCell | undefined {
     const occurrenceId = this.rowIds_abyssPrivate()[row];
     const columnId = this.columnIds_abyssPrivate()[column];
     if (occurrenceId === undefined || columnId === undefined) return undefined;
-    if (this.overviewMode_abyssPrivate === 'table')
-      return this.tableCells_abyssPrivate.cell(occurrenceId, columnId);
-    return this.renderedCells_abyssPrivate.find(
-      ({ identity }) => identity.occurrenceId === occurrenceId && identity.columnId === columnId,
-    );
+    return this.overviewCells_abyssPrivate().cell(occurrenceId, columnId);
   }
 
   private selectionBounds_abyssPrivate(): TableSelectionBounds | undefined {
@@ -3880,7 +3739,7 @@ export class ProjectsTableView {
     };
   }
 
-  private clipboardValue_abyssPrivate(cell: LogicalCellContext): unknown {
+  private clipboardValue_abyssPrivate(cell: ProjectOverviewCell): unknown {
     if (cell.field.type === 'name') return cell.project.name;
     if (cell.field.type === 'progress') return projectProgressDisplayValue(cell.project.stats);
     if (cell.field.type === 'tracked') {
@@ -4018,7 +3877,7 @@ export class ProjectsTableView {
     }
   }
 
-  private changeForCell_abyssPrivate(cell: LogicalCellContext, value: unknown): ProjectCellChange {
+  private changeForCell_abyssPrivate(cell: ProjectOverviewCell, value: unknown): ProjectCellChange {
     if (!editableField(cell.field)) throw new Error(`${cell.field.label} is read-only`);
     const state = projectCellEditorState(
       cell.project,
@@ -4273,7 +4132,7 @@ export class ProjectsTableView {
     );
     if (groupField === undefined) throw new Error('Project grouping field is unavailable');
     const effective = this.effectiveField_abyssPrivate(visibleProject, groupField);
-    const cell: LogicalCellContext = {
+    const cell: ProjectOverviewCell = {
       identity: {
         occurrenceId: payload.occurrenceId,
         projectPath: visibleProject.path,
@@ -4608,11 +4467,13 @@ export class ProjectsTableView {
     const rendered = this.renderedCells_abyssPrivate.find(({ element }) =>
       containsEditorAnchor(element, anchor),
     );
-    const stickyHeader = rendered?.stickyHeader ?? this.table_abyssPrivate?.tHead ?? undefined;
+    const frame =
+      rendered === undefined ? undefined : this.activeSurface_abyssPrivate()?.editorFrame(rendered);
+    const stickyHeader = frame?.stickyHeader ?? this.table_abyssPrivate?.tHead ?? undefined;
     return mountProjectCellEditorPosition({
       anchor,
       host,
-      boundary: rendered?.editorBoundary ?? this.scroll_abyssPrivate,
+      boundary: frame?.boundary ?? this.scroll_abyssPrivate,
       positioningContainer: preferredWidth === undefined ? anchor : this.root_abyssPrivate,
       onMove,
       ...optionalEditorPositionFields(avoid, preferredWidth, stickyHeader),

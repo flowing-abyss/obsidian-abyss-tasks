@@ -36,6 +36,18 @@ import {
 import type { Project } from '../../projects/types';
 import { projectCardFields } from './projectCardFields';
 import {
+  NO_PROJECT_OVERVIEW_CELLS,
+  projectTimelineCells,
+  type ProjectOverviewCells,
+  type ProjectOverviewFieldResolver,
+} from './projectOverviewCells';
+import {
+  scrollIntoUsableViewport,
+  type ProjectOverviewEditorFrame,
+  type ProjectOverviewRenderHooks,
+  type ProjectsOverviewSurface,
+} from './ProjectsOverviewSurface';
+import {
   applyProjectTimelineBarGeometry,
   freezeProjectTimelineRangeBinding,
   ProjectTimelinePointerInteraction,
@@ -58,6 +70,8 @@ export interface ProjectsTimelineViewContext<
 > extends ProjectTimelineRangeCommitter {
   readonly settings: () => ProjectTimelineSettings;
   readonly modelInput: () => Omit<ProjectTimelineModelInput, 'projects' | 'settings' | 'search'>;
+  /** The field each cell edits, which an owned clear may retype; `cells()` lists it. */
+  readonly effectiveField: ProjectOverviewFieldResolver;
   readonly renderCell: (options: {
     readonly host: HTMLElement;
     readonly project: Project;
@@ -80,12 +94,6 @@ export interface ProjectsTimelineViewContext<
   readonly openRangeMenu: (occurrenceId: string, event: MouseEvent | KeyboardEvent) => void;
   readonly finishEditor: () => Promise<boolean>;
   readonly now?: () => Date;
-}
-
-export interface ProjectTimelineViewportState {
-  readonly scrollLeft: number;
-  readonly scrollTop: number;
-  readonly anchorDay: string;
 }
 
 interface RenderedRow<TCell extends ProjectTimelineCellContext> {
@@ -270,7 +278,9 @@ function reconcileOrder(parent: HTMLElement, desired: readonly HTMLElement[]): v
 
 let timelineRangeAccessibilitySequence = 0;
 
-export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
+export class ProjectsTimelineView<
+  TCell extends ProjectTimelineCellContext,
+> implements ProjectsOverviewSurface<TCell> {
   readonly root: HTMLElement;
   readonly scroll: HTMLElement;
   private readonly axis_abyssPrivate: HTMLElement;
@@ -283,6 +293,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   private readonly groups_abyssPrivate = new Map<string, RenderedGroup<TCell>>();
   private readonly collapsedGroups_abyssPrivate = new Set<string>();
   private visibleCells_abyssPrivate: TCell[] = [];
+  private cells_abyssPrivate: ProjectOverviewCells = NO_PROJECT_OVERVIEW_CELLS;
   private projects_abyssPrivate: readonly Project[] = [];
   private search_abyssPrivate = '';
   private model_abyssPrivate: ProjectTimelineModel | undefined;
@@ -411,10 +422,21 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
   }
 
   update(projects: readonly Project[], search: string): void {
-    this.projects_abyssPrivate = projects;
-    this.search_abyssPrivate = search;
-    this.handleScaleTransition_abyssPrivate();
-    this.render_abyssPrivate(false);
+    this.renderProjects_abyssPrivate(projects, search);
+  }
+
+  show(): void {
+    this.root.hidden = false;
+  }
+
+  hide(): void {
+    this.interaction_abyssPrivate.cancelActive();
+    this.root.hidden = true;
+  }
+
+  render(projects: readonly Project[], search: string, hooks: ProjectOverviewRenderHooks): void {
+    hooks.publish(this.renderProjects_abyssPrivate(projects, search));
+    hooks.settleSelection();
   }
 
   destroy(): void {
@@ -428,16 +450,37 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     this.axisFrame_abyssPrivate = undefined;
     this.groups_abyssPrivate.clear();
     this.visibleCells_abyssPrivate = [];
+    this.cells_abyssPrivate = NO_PROJECT_OVERVIEW_CELLS;
     this.editingMarks_abyssPrivate = [];
     this.root.remove();
   }
 
-  visibleCells(): readonly TCell[] {
+  cells(): ProjectOverviewCells {
+    return this.cells_abyssPrivate;
+  }
+
+  renderedCells(): readonly TCell[] {
     return this.visibleCells_abyssPrivate;
   }
 
-  currentModel(): ProjectTimelineModel | undefined {
-    return this.model_abyssPrivate;
+  revealCell(): void {
+    // Every row of an expanded group is mounted, so each listed cell is rendered.
+  }
+
+  scrollCellIntoView(cell: TCell): void {
+    scrollIntoUsableViewport(cell.element, {
+      horizontal: this.scroll,
+      vertical: this.scroll,
+      header: this.axis_abyssPrivate,
+    });
+  }
+
+  editorFrame(): ProjectOverviewEditorFrame {
+    return { boundary: this.scroll, stickyHeader: this.axis_abyssPrivate };
+  }
+
+  occurrenceElement(cell: TCell): HTMLElement {
+    return cell.element.closest<HTMLElement>('.abyss-project-timeline-row') ?? cell.element;
   }
 
   visibleRow(occurrenceId: string): ProjectTimelineRow | undefined {
@@ -447,10 +490,6 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       if (row !== undefined) return row;
     }
     return undefined;
-  }
-
-  selectedProjectPath(): string | undefined {
-    return this.selectedPath_abyssPrivate;
   }
 
   syncSelectedProjectPath(path: string | undefined): void {
@@ -475,24 +514,12 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     }
   }
 
-  retainedViewportState(): ProjectTimelineViewportState {
-    return {
-      scrollLeft: this.scroll.scrollLeft,
-      scrollTop: this.scroll.scrollTop,
-      anchorDay: localDay(this.anchor_abyssPrivate),
-    };
-  }
-
   captureViewportBeforeHide(): void {
     this.interaction_abyssPrivate.cancelActive();
     this.hiddenScrollPosition_abyssPrivate = {
       left: this.scroll.scrollLeft,
       top: this.scroll.scrollTop,
     };
-  }
-
-  cancelInteraction(): void {
-    this.interaction_abyssPrivate.cancelActive();
   }
 
   prepareScaleChange(): void {
@@ -529,6 +556,16 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
         this.scroll.scrollLeft,
       );
     }
+  }
+
+  private renderProjects_abyssPrivate(
+    projects: readonly Project[],
+    search: string,
+  ): ProjectTimelineModel {
+    this.projects_abyssPrivate = projects;
+    this.search_abyssPrivate = search;
+    this.handleScaleTransition_abyssPrivate();
+    return this.render_abyssPrivate(false);
   }
 
   private addNavigationButton_abyssPrivate(
@@ -673,7 +710,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     );
   }
 
-  private render_abyssPrivate(navigation: boolean): void {
+  private render_abyssPrivate(navigation: boolean): ProjectTimelineModel {
     this.syncScaleButtons_abyssPrivate();
     const focused = this.focusedDescendant_abyssPrivate();
     const focusedRange = this.focusedRangeIdentity_abyssPrivate(focused);
@@ -689,6 +726,13 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       search: this.search_abyssPrivate,
     });
     this.model_abyssPrivate = model;
+    this.cells_abyssPrivate = projectTimelineCells({
+      model,
+      settings: this.context_abyssPrivate.settings(),
+      fields: input.fields,
+      collapsedGroups: this.collapsedGroups_abyssPrivate,
+      effectiveField: this.context_abyssPrivate.effectiveField,
+    });
     if (this.preparedScaleChange_abyssPrivate) {
       this.preparedScaleChange_abyssPrivate = false;
       this.renderedScale_abyssPrivate = this.context_abyssPrivate.settings().scale;
@@ -711,6 +755,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     this.restoreScroll_abyssPrivate(navigation, window, left, top);
     this.patchVisibleCalendar_abyssPrivate(window);
     this.restoreFocus_abyssPrivate(focused, focusedRange);
+    return model;
   }
 
   private restoreScroll_abyssPrivate(
@@ -933,15 +978,11 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
       const group =
         this.groups_abyssPrivate.get(model.key) ?? this.createGroup_abyssPrivate(model.key);
       this.groups_abyssPrivate.set(model.key, group);
+      const collapsed = this.collapsedGroups_abyssPrivate.has(model.key);
       group.header.hidden = !grouped;
-      group.header.setAttribute(
-        'aria-expanded',
-        String(!this.collapsedGroups_abyssPrivate.has(model.key)),
-      );
+      group.header.setAttribute('aria-expanded', String(!collapsed));
       group.chevron.empty();
-      const chevron = this.collapsedGroups_abyssPrivate.has(model.key)
-        ? 'chevron-right'
-        : 'chevron-down';
+      const chevron = collapsed ? 'chevron-right' : 'chevron-down';
       group.chevron.dataset['icon'] = chevron;
       setIcon(group.chevron, chevron);
       this.context_abyssPrivate.renderGroupContent(group.marker, group.label, {
@@ -949,8 +990,9 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
         projects: model.rows.map(({ project }) => project),
       });
       group.count.setText(String(model.rows.length));
-      group.body.hidden = this.collapsedGroups_abyssPrivate.has(model.key);
-      this.reconcileRows_abyssPrivate(group, model, window, cells);
+      group.body.hidden = collapsed;
+      // A collapsed group keeps its rows mounted, but none of their cells is selectable.
+      this.reconcileRows_abyssPrivate(group, model, window, collapsed ? [] : cells);
       desired.push(group.element);
     }
     for (const [key, group] of this.groups_abyssPrivate) {
@@ -1166,10 +1208,7 @@ export class ProjectsTimelineView<TCell extends ProjectTimelineCellContext> {
     });
     if (cell.element !== host && cell.element.parentElement !== host) host.append(cell.element);
     row.cells.set(field.id, cell);
-    const groupBody = row.element.closest('.abyss-project-timeline-group-body');
-    if (options.selectable && groupBody !== null && !groupBody.hasAttribute('hidden')) {
-      visibleCells.push(cell);
-    }
+    if (options.selectable) visibleCells.push(cell);
   }
 
   private patchDescriptionPresentation_abyssPrivate(

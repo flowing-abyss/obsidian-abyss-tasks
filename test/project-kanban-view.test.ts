@@ -2,11 +2,6 @@ import { MarkdownRenderer, Menu, Notice } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { isProjectKanbanCustomized } from '../src/panels/projects/ProjectKanbanOptions';
-import {
-  projectKanbanCells,
-  projectTimelineCells,
-  type ProjectOverviewFieldResolver,
-} from '../src/panels/projects/projectOverviewCells';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
 import type { ProjectTableSelectableCell } from '../src/panels/projects/projectTableSelection';
 import { projectTimelineOptionsRows } from '../src/panels/projects/ProjectTimelineOptions';
@@ -21,13 +16,11 @@ import {
   type ProjectEditResult,
 } from '../src/projects/projectEdits';
 import type { ProjectFieldCatalogItem } from '../src/projects/projectFields';
-import type { ProjectKanbanModel } from '../src/projects/projectKanbanModel';
 import {
   buildDefaultProjectKanbanSettings,
   normalizeProjectKanbanSettings,
   type ProjectKanbanSettings,
 } from '../src/projects/projectKanbanSettings';
-import type { ProjectTimelineModel } from '../src/projects/projectTimelineModel';
 import {
   buildDefaultProjectTimelineSettings,
   type ProjectTimelineSettings,
@@ -1818,14 +1811,16 @@ describe('project Kanban overview', () => {
     );
     const board = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-scroll'));
     const internals = view as unknown as {
-      readonly kanbanRenderedCells_abyssPrivate: ReadonlyArray<{
-        readonly element: HTMLElement;
-        readonly field: { readonly id: string };
-      }>;
+      readonly kanbanView_abyssPrivate: {
+        renderedCells(): ReadonlyArray<{
+          readonly element: HTMLElement;
+          readonly field: { readonly id: string };
+        }>;
+      };
       selectCell_abyssPrivate(cell: unknown, extend: boolean): void;
     };
     const rendered = expectDefined(
-      internals.kanbanRenderedCells_abyssPrivate.find(({ field }) => field.id === 'start'),
+      internals.kanbanView_abyssPrivate.renderedCells().find(({ field }) => field.id === 'start'),
     );
     internals.selectCell_abyssPrivate(rendered, false);
 
@@ -4735,23 +4730,14 @@ describe('project overview cell lists', () => {
     readonly ownedClear: OwnedInferredPropertyClear | undefined;
   }
 
-  interface ListedSurface<TModel, TSettings> {
-    currentModel(): TModel | undefined;
-    visibleCells(): readonly ListedCell[];
-    readonly collapsedGroups_abyssPrivate: ReadonlySet<string>;
-    readonly context_abyssPrivate: {
-      settings(): TSettings;
-      modelInput(): { readonly fields: readonly ProjectFieldCatalogItem[] };
-    };
+  interface ListedSurface {
+    cells(): { readonly cells: readonly ListedCell[] };
+    renderedCells(): readonly ListedCell[];
   }
 
   interface ListedInternals {
-    readonly kanbanView_abyssPrivate?: ListedSurface<ProjectKanbanModel, ProjectKanbanSettings>;
-    readonly timelineView_abyssPrivate?: ListedSurface<
-      ProjectTimelineModel,
-      ProjectTimelineSettings
-    >;
-    readonly effectiveField_abyssPrivate: ProjectOverviewFieldResolver;
+    readonly kanbanView_abyssPrivate?: ListedSurface;
+    readonly timelineView_abyssPrivate?: ListedSurface;
   }
 
   /** What the parity check compares per cell: identity, project, field id and type, owned clear. */
@@ -4765,32 +4751,20 @@ describe('project overview cell lists', () => {
     }));
   }
 
-  /** The Kanban projection beside the cells the board mounted. */
-  function kanbanLists(view: ProjectsTableView) {
-    const internals = view as unknown as ListedInternals;
-    const board = expectDefined(internals.kanbanView_abyssPrivate);
-    const projected = projectKanbanCells({
-      model: expectDefined(board.currentModel()),
-      settings: board.context_abyssPrivate.settings(),
-      fields: board.context_abyssPrivate.modelInput().fields,
-      collapsedGroups: board.collapsedGroups_abyssPrivate,
-      effectiveField: (owner, field) => internals.effectiveField_abyssPrivate(owner, field),
-    });
-    return { projected: listed(projected.cells), rendered: listed(board.visibleCells()) };
+  /** A view's cell list beside the cells it mounted. */
+  function surfaceLists(surface: ListedSurface | undefined) {
+    const shown = expectDefined(surface);
+    return { projected: listed(shown.cells().cells), rendered: listed(shown.renderedCells()) };
   }
 
-  /** The Timeline projection beside the cells the Timeline mounted. */
+  /** The board's cell list beside the cells it mounted. */
+  function kanbanLists(view: ProjectsTableView) {
+    return surfaceLists((view as unknown as ListedInternals).kanbanView_abyssPrivate);
+  }
+
+  /** The Timeline's cell list beside the cells it mounted. */
   function timelineLists(view: ProjectsTableView) {
-    const internals = view as unknown as ListedInternals;
-    const timeline = expectDefined(internals.timelineView_abyssPrivate);
-    const projected = projectTimelineCells({
-      model: expectDefined(timeline.currentModel()),
-      settings: timeline.context_abyssPrivate.settings(),
-      fields: timeline.context_abyssPrivate.modelInput().fields,
-      collapsedGroups: timeline.collapsedGroups_abyssPrivate,
-      effectiveField: (owner, field) => internals.effectiveField_abyssPrivate(owner, field),
-    });
-    return { projected: listed(projected.cells), rendered: listed(timeline.visibleCells()) };
+    return surfaceLists((view as unknown as ListedInternals).timelineView_abyssPrivate);
   }
 
   /** Each listed cell as `A:name`, its project note's name and its field. */
@@ -5292,5 +5266,51 @@ describe('project overview cell lists', () => {
     expect(card.classList).toContain('is-just-created');
     expect(card.querySelector('[data-column-id="name"]')?.classList).toContain('is-selected');
     expect(start.classList).not.toContain('is-selected');
+  });
+
+  it('keeps a card selected when a Delete moves it to another group', async () => {
+    const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const budgeted = (path: string, name: string, budget: number): Project =>
+      project({
+        path,
+        name,
+        statusId: status.id,
+        frontmatter: { status: status.name, Budget: budget },
+      });
+    const moving = budgeted('Projects/A.md', 'A', 100);
+    const other = budgeted('Projects/B.md', 'B', 200);
+    const { host, settings, view } = mountView([moving, other]);
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.fields = [{ id: 'property:Budget', visible: true }];
+    settings.projects.kanban.groupBy = 'property:Budget';
+    settings.projects.kanban.sortBy = { field: 'none', dir: 'asc' };
+    view.refreshFields();
+    clickView(host, 'Kanban');
+    const budget = expectDefined(
+      Array.from(
+        host.querySelectorAll<HTMLElement>(
+          '.abyss-project-kanban [data-column-id="property:Budget"]',
+        ),
+      ).find((cell) => cell.textContent === '100'),
+    );
+    budget.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    budget.focus();
+    expect(view.selectedProjectPath()).toBe('Projects/A.md');
+
+    budget.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+    view.update([{ ...moving, frontmatter: { status: status.name } }, other]);
+    await flushMicrotasks();
+
+    // The cleared Budget moves the card to the empty group, where its Name cell takes focus.
+    const focused = expectDefined(activeDocument.activeElement as HTMLElement | null);
+    expect(focused.dataset['columnId']).toBe('name');
+    expect(focused.closest<HTMLElement>('[data-group-key]')?.dataset['groupKey']).toBe('empty');
+    expect(view.selectedProjectPath()).toBe('Projects/A.md');
+    const selected = host.querySelectorAll('.abyss-project-kanban-cell.is-selected');
+    expect(selected).toHaveLength(1);
+    expect(selected[0]).toBe(focused);
   });
 });

@@ -28,6 +28,19 @@ import {
   type ProjectKanbanDropSource,
   type ProjectKanbanDropTarget,
 } from './projectKanbanDrop';
+import {
+  kanbanColumnExpanded,
+  NO_PROJECT_OVERVIEW_CELLS,
+  projectKanbanCells,
+  type ProjectOverviewCells,
+  type ProjectOverviewFieldResolver,
+} from './projectOverviewCells';
+import {
+  scrollIntoUsableViewport,
+  type ProjectOverviewEditorFrame,
+  type ProjectOverviewRenderHooks,
+  type ProjectsOverviewSurface,
+} from './ProjectsOverviewSurface';
 
 let kanbanSurfaceAccessibilitySequence = 0;
 
@@ -68,7 +81,7 @@ export interface ProjectKanbanGroupContext<TCell extends ProjectKanbanCellContex
   value: unknown;
 }
 
-export interface ProjectKanbanColumnContext<TCell extends ProjectKanbanCellContext> {
+interface ProjectKanbanColumnContext<TCell extends ProjectKanbanCellContext> {
   readonly key: string;
   readonly element: HTMLElement;
   readonly header: HTMLElement;
@@ -82,6 +95,8 @@ export interface ProjectsKanbanViewContext<TCell extends ProjectKanbanCellContex
   readonly beginDrag: () => () => void;
   readonly settings: () => ProjectKanbanSettings;
   readonly modelInput: () => Omit<ProjectKanbanModelInput, 'projects' | 'settings' | 'search'>;
+  /** The field each cell edits, which an owned clear may retype; `cells()` lists it. */
+  readonly effectiveField: ProjectOverviewFieldResolver;
   readonly renderCell: (options: {
     readonly host: HTMLElement;
     readonly project: Project;
@@ -118,11 +133,6 @@ export interface ProjectsKanbanViewContext<TCell extends ProjectKanbanCellContex
   ) => Promise<ProjectEditResult>;
   readonly reportDropFailure: (error: unknown) => void;
   readonly createProject: (anchor: HTMLElement, statusId: string) => void;
-}
-
-export interface ProjectKanbanViewportState {
-  readonly scrollLeft: number;
-  readonly columnScrollTop: Readonly<Record<string, number>>;
 }
 
 interface RenderedCard<
@@ -166,7 +176,9 @@ interface DragFocusOwnership {
   readonly fieldId?: string;
 }
 
-export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
+export class ProjectsKanbanView<
+  TCell extends ProjectKanbanCellContext,
+> implements ProjectsOverviewSurface<TCell> {
   readonly root: HTMLElement;
   readonly scroll: HTMLElement;
   private readonly columns_abyssPrivate = new Map<string, RenderedColumn<TCell>>();
@@ -177,7 +189,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
   private mounted_abyssPrivate = false;
   private selectedPath_abyssPrivate: string | undefined;
   private visibleCells_abyssPrivate: TCell[] = [];
-  private model_abyssPrivate: ProjectKanbanModel | undefined;
+  private cells_abyssPrivate: ProjectOverviewCells = NO_PROJECT_OVERVIEW_CELLS;
   private readonly drag_abyssPrivate: ProjectKanbanDragController;
   private readonly dragFocus_abyssPrivate = new WeakMap<
     ProjectKanbanDropSource,
@@ -213,15 +225,20 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     this.root.ownerDocument.addEventListener('focusin', this.handleDocumentFocusIn_abyssPrivate);
   }
 
-  mount(projects: readonly Project[], search: string): void {
-    this.mounted_abyssPrivate = true;
-    this.update(projects, search);
+  show(): void {
+    this.root.hidden = false;
   }
 
-  update(projects: readonly Project[], search: string): void {
+  hide(): void {
+    this.root.hidden = true;
+  }
+
+  render(projects: readonly Project[], search: string, hooks: ProjectOverviewRenderHooks): void {
+    this.mounted_abyssPrivate = true;
     this.projects_abyssPrivate = projects;
     this.search_abyssPrivate = search;
-    if (this.mounted_abyssPrivate) this.render_abyssPrivate();
+    hooks.publish(this.render_abyssPrivate());
+    hooks.settleSelection();
   }
 
   destroy(): void {
@@ -233,6 +250,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     this.columns_abyssPrivate.clear();
     this.cards_abyssPrivate.clear();
     this.visibleCells_abyssPrivate = [];
+    this.cells_abyssPrivate = NO_PROJECT_OVERVIEW_CELLS;
     this.drag_abyssPrivate.destroy();
     this.root.remove();
   }
@@ -391,29 +409,54 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     );
   }
 
-  selectedProjectPath(): string | undefined {
-    return this.selectedPath_abyssPrivate;
-  }
-
   syncSelectedProjectPath(path: string | undefined): void {
     this.selectedPath_abyssPrivate = path;
     this.syncSelectedCards_abyssPrivate();
   }
 
-  visibleCells(): readonly TCell[] {
+  cells(): ProjectOverviewCells {
+    return this.cells_abyssPrivate;
+  }
+
+  renderedCells(): readonly TCell[] {
     return this.visibleCells_abyssPrivate;
   }
 
-  currentModel(): ProjectKanbanModel | undefined {
-    return this.model_abyssPrivate;
+  revealCell(): void {
+    // Every card of an expanded column and group is mounted, so each listed cell is rendered.
   }
 
-  currentColumns(): ReadonlyArray<ProjectKanbanColumnContext<TCell>> {
-    return [...this.columns_abyssPrivate.values()];
+  scrollCellIntoView(cell: TCell): void {
+    const body = cell.element.closest<HTMLElement>('.abyss-project-kanban-column-body');
+    if (body === null) return;
+    const header = this.columnHeader_abyssPrivate(cell.element);
+    scrollIntoUsableViewport(cell.element, {
+      horizontal: this.scroll,
+      vertical: body,
+      ...(header === undefined ? {} : { header }),
+    });
   }
 
-  currentCards(): ReadonlyArray<ProjectKanbanOccurrenceContext<TCell>> {
-    return [...this.cards_abyssPrivate.values()];
+  editorFrame(cell: TCell | undefined): ProjectOverviewEditorFrame {
+    const stickyHeader =
+      cell === undefined ? undefined : this.columnHeader_abyssPrivate(cell.element);
+    return { boundary: this.scroll, ...(stickyHeader === undefined ? {} : { stickyHeader }) };
+  }
+
+  occurrenceElement(cell: TCell): HTMLElement {
+    return cell.element.closest<HTMLElement>('.abyss-project-kanban-card') ?? cell.element;
+  }
+
+  captureViewportBeforeHide(): void {
+    // The board does not keep its scroll across a dashboard round trip yet.
+  }
+
+  private columnHeader_abyssPrivate(element: HTMLElement): HTMLElement | undefined {
+    return (
+      element
+        .closest<HTMLElement>('.abyss-project-kanban-column')
+        ?.querySelector<HTMLElement>('.abyss-project-kanban-column-header') ?? undefined
+    );
   }
 
   revealProject(path: string): void {
@@ -446,16 +489,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     return this.context_abyssPrivate.projectSnapshot(path);
   }
 
-  retainedViewportState(): ProjectKanbanViewportState {
-    return {
-      scrollLeft: this.scroll.scrollLeft,
-      columnScrollTop: Object.fromEntries(
-        Array.from(this.columns_abyssPrivate, ([key, column]) => [key, column.body.scrollTop]),
-      ),
-    };
-  }
-
-  private render_abyssPrivate(): void {
+  private render_abyssPrivate(): ProjectKanbanModel {
     const focused = this.focusedDescendant_abyssPrivate();
     const settings = this.context_abyssPrivate.settings();
     const model = buildProjectKanbanModel({
@@ -464,7 +498,13 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
       settings,
       search: this.search_abyssPrivate,
     });
-    this.model_abyssPrivate = model;
+    this.cells_abyssPrivate = projectKanbanCells({
+      model,
+      settings,
+      fields: this.context_abyssPrivate.modelInput().fields,
+      collapsedGroups: this.collapsedGroups_abyssPrivate,
+      effectiveField: this.context_abyssPrivate.effectiveField,
+    });
     const desiredColumns: HTMLElement[] = [];
     const retainedColumns = new Set<string>();
     const retainedCards = new Set<string>();
@@ -483,6 +523,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     this.reconcileSelectedPath_abyssPrivate();
     this.syncSelectedCards_abyssPrivate();
     this.restoreFocusedDescendant_abyssPrivate(focused);
+    return model;
   }
 
   private focusedDescendant_abyssPrivate(): HTMLElement | undefined {
@@ -664,6 +705,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
     const grouped =
       this.context_abyssPrivate.settings().groupBy !== 'none' &&
       this.context_abyssPrivate.settings().groupBy !== 'status';
+    const columnExpanded = kanbanColumnExpanded(model, this.context_abyssPrivate.settings());
     for (const modelGroup of model.groups) {
       const key = `${column.key}\u0000${modelGroup.key}`;
       retainedGroups.add(key);
@@ -683,10 +725,7 @@ export class ProjectsKanbanView<TCell extends ProjectKanbanCellContext> {
         projects: modelGroup.projects,
         retainedCards,
         visibleCells,
-        collectVisible:
-          !collapsed &&
-          !column.element.classList.contains('is-collapsed') &&
-          !column.element.classList.contains('is-compact-empty'),
+        collectVisible: !collapsed && columnExpanded,
       });
     }
     for (const [key, group] of column.groups) {

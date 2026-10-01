@@ -75,6 +75,7 @@ function mount(
       fields,
       statuses: DEFAULT_SETTINGS.projects.statuses,
     }),
+    effectiveField: (_project, field) => ({ field }),
     renderCell: ({ host: cellHost, project: item, field, column, occurrenceId, existing }) => {
       const cell = existing ?? {
         element: cellHost,
