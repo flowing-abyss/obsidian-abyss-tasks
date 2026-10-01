@@ -5,6 +5,9 @@ import type { CalendarMoment } from '../../src/panels/calendar/calendarDateNavig
 import type { CalendarMode } from '../../src/panels/calendar/CalendarMode';
 import type { CalendarViewInstance } from '../../src/panels/calendar/calendarViewFactory';
 import type { CalViewType } from '../../src/panels/calendar/calendarViewType';
+import type { CaptureSessions } from '../../src/panels/center/CaptureSessions';
+import type { ListViewControls } from '../../src/panels/center/ListViewControls';
+import type { TaskCommands } from '../../src/panels/center/TaskCommands';
 import { CenterPanel } from '../../src/panels/CenterPanel';
 import { LeftPanel } from '../../src/panels/LeftPanel';
 import type { ProjectManager } from '../../src/projects/ProjectManager';
@@ -44,17 +47,32 @@ export function makeCenterPanelForTest(
   ]: CenterPanelTestArgs
 ): CenterPanel {
   const application = tasks ?? taskHarness;
-  return new CenterPanel(
+  return new CenterPanel({
     state,
     app,
     settings,
-    taskHarness.queries,
-    taskHarness.statusRegistry,
+    queries: taskHarness.queries,
+    statusRegistry: taskHarness.statusRegistry,
     onSaveSettings,
     projectStore,
     projectManager,
-    application,
-  );
+    tasks: application,
+  });
+}
+
+/** The centre list controls; callers use its public filters and popover API. */
+export function listViewControlsOf(panel: CenterPanel): ListViewControls {
+  return panel['listViewControls_abyssPrivate'];
+}
+
+/** The centre capture owner; callers use its typed public session API. */
+export function captureSessionsOf(panel: CenterPanel): CaptureSessions {
+  return panel['captureSessions_abyssPrivate'];
+}
+
+/** The centre command service; callers use its typed public submission API. */
+export function taskCommandsOf(panel: CenterPanel): TaskCommands {
+  return panel['taskCommands_abyssPrivate'];
 }
 
 /** The calendar controller a CenterPanel owns; tests reach calendar session state through it. */

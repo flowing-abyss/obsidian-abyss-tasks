@@ -14,7 +14,7 @@ import {
   task,
   useRealMoment,
 } from './helpers';
-import { makeCenterPanelForTest } from './support/panelHarness';
+import { makeCenterPanelForTest, taskCommandsOf } from './support/panelHarness';
 
 useRealMoment();
 
@@ -274,11 +274,7 @@ describe('CenterPanel multi-selection', () => {
     click(expectDefined(cards(el)[0]), { ctrlKey: true });
     click(expectDefined(cards(el)[1]), { ctrlKey: true });
 
-    await (
-      panel as unknown as {
-        archiveTasks_abyssPrivate(tasks: readonly TaskSnapshot[]): Promise<void>;
-      }
-    ).archiveTasks_abyssPrivate([t1, t2]);
+    await taskCommandsOf(panel).archiveTasks([t1, t2]);
 
     expect(planArchive).toHaveBeenCalledOnce();
     expect(execute.mock.calls.map(([calledRef]) => calledRef)).toEqual([t1.ref, t2.ref]);

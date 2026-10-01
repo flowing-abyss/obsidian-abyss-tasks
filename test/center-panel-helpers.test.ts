@@ -5,12 +5,12 @@ import { AppState } from '../src/app/AppState';
 import { moment } from '../src/obsidianMoment';
 import { type CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
-import type { CalendarSettings, TagGroup } from '../src/settings/types';
+import type { CalendarSettings, PropertyFilter, TagGroup } from '../src/settings/types';
 import { discoveredPrefixGroupId } from '../src/tags/effectiveTagGroups';
 import type { TaskSnapshot } from '../src/tasks';
 import { PanelNavigator } from '../src/views/panelNavigation';
 import { expectDefined, fixedToday, makeStubStore, subtask, task, useRealMoment } from './helpers';
-import { makeCenterPanelForTest } from './support/panelHarness';
+import { listViewControlsOf, makeCenterPanelForTest } from './support/panelHarness';
 
 const TODAY = moment().format('YYYY-MM-DD');
 
@@ -38,6 +38,23 @@ function call<T>(panel: CenterPanel, method: string, ...args: unknown[]): T {
     (panel as unknown as Record<string, (...a: unknown[]) => T>)[`${method}_abyssPrivate`],
   );
   return fn.call(panel, ...args);
+}
+
+function renderedFilterChips(panel: CenterPanel): HTMLElement[] {
+  const controls = createFragment().createDiv();
+  const viewButton = controls.createEl('button');
+  const chips = listViewControlsOf(panel).renderPropertyChips(controls, viewButton);
+  expect(Array.from(controls.children)).toEqual([...chips, viewButton]);
+  return chips;
+}
+
+function renderedFilterLabel(filter: PropertyFilter): string | null {
+  const { panel, state } = makePanel([]);
+  state.set('centerListViewState', { ...state.get('centerListViewState'), filters: [filter] });
+  return (
+    expectDefined(renderedFilterChips(panel)[0]).querySelector('.abyss-filter-chip-label')
+      ?.textContent ?? null
+  );
 }
 
 describe('CenterPanel pure helpers', () => {
@@ -996,7 +1013,7 @@ describe('addPropertyFilter', () => {
       sortBy: { field: 'date', dir: 'asc' },
       filters: [],
     });
-    call(panel, 'addPropertyFilter', { type: 'tag', value: '#work' });
+    listViewControlsOf(panel).addPropertyFilter({ type: 'tag', value: '#work' });
     expect(state.get('centerListViewState').filters).toHaveLength(1);
     expect(state.get('centerListViewState').filters[0]).toEqual({ type: 'tag', value: '#work' });
   });
@@ -1008,7 +1025,7 @@ describe('addPropertyFilter', () => {
       sortBy: { field: 'date', dir: 'asc' },
       filters: [{ type: 'tag', value: '#work' }],
     });
-    call(panel, 'addPropertyFilter', { type: 'tag', value: '#work' });
+    listViewControlsOf(panel).addPropertyFilter({ type: 'tag', value: '#work' });
     expect(state.get('centerListViewState').filters).toHaveLength(1);
   });
 
@@ -1019,7 +1036,7 @@ describe('addPropertyFilter', () => {
       sortBy: { field: 'date', dir: 'asc' },
       filters: [{ type: 'file', filePath: 'a.md' }],
     });
-    call(panel, 'addPropertyFilter', { type: 'file', filePath: 'a.md' });
+    listViewControlsOf(panel).addPropertyFilter({ type: 'file', filePath: 'a.md' });
     expect(state.get('centerListViewState').filters).toHaveLength(1);
   });
 
@@ -1030,7 +1047,7 @@ describe('addPropertyFilter', () => {
       sortBy: { field: 'date', dir: 'asc' },
       filters: [{ type: 'date', value: '2026-01-10' }],
     });
-    call(panel, 'addPropertyFilter', { type: 'date', value: '2026-01-10' });
+    listViewControlsOf(panel).addPropertyFilter({ type: 'date', value: '2026-01-10' });
     expect(state.get('centerListViewState').filters).toHaveLength(1);
   });
 
@@ -1041,7 +1058,7 @@ describe('addPropertyFilter', () => {
       sortBy: { field: 'date', dir: 'asc' },
       filters: [{ type: 'status', value: '/' }],
     });
-    call(panel, 'addPropertyFilter', { type: 'status', value: '/' });
+    listViewControlsOf(panel).addPropertyFilter({ type: 'status', value: '/' });
     expect(state.get('centerListViewState').filters).toHaveLength(1);
   });
 
@@ -1052,7 +1069,7 @@ describe('addPropertyFilter', () => {
       sortBy: { field: 'date', dir: 'asc' },
       filters: [{ type: 'tag', value: '#work' }],
     });
-    call(panel, 'addPropertyFilter', { type: 'time', value: '#work' });
+    listViewControlsOf(panel).addPropertyFilter({ type: 'time', value: '#work' });
     expect(state.get('centerListViewState').filters).toHaveLength(2);
   });
 });
@@ -1068,7 +1085,9 @@ describe('removePropertyFilter', () => {
         { type: 'tag', value: '#personal' },
       ],
     });
-    call(panel, 'removePropertyFilter', 0);
+    expectDefined(
+      renderedFilterChips(panel)[0]?.querySelector<HTMLButtonElement>('.abyss-filter-chip-x'),
+    ).click();
     const filters = state.get('centerListViewState').filters;
     expect(filters).toHaveLength(1);
     expect(filters[0]).toEqual({ type: 'tag', value: '#personal' });
@@ -1077,47 +1096,32 @@ describe('removePropertyFilter', () => {
 
 describe('filterChipLabel', () => {
   it('tag filter → tag value', () => {
-    const { panel } = makePanel([]);
-    expect(call<string>(panel, 'filterChipLabel', { type: 'tag', value: '#work' })).toBe('#work');
+    expect(renderedFilterLabel({ type: 'tag', value: '#work' })).toBe('#work');
   });
 
   it('file filter → filename without extension', () => {
-    const { panel } = makePanel([]);
-    expect(
-      call<string>(panel, 'filterChipLabel', { type: 'file', filePath: 'notes/Daily Note.md' }),
-    ).toBe('📄 Daily Note');
+    expect(renderedFilterLabel({ type: 'file', filePath: 'notes/Daily Note.md' })).toBe(
+      '📄 Daily Note',
+    );
   });
 
   it('Y1j file filter → the name of a note file with an upper-case .MD', () => {
-    const { panel } = makePanel([]);
-    expect(
-      call<string>(panel, 'filterChipLabel', { type: 'file', filePath: 'Projects/Plan.MD' }),
-    ).toBe('📄 Plan');
+    expect(renderedFilterLabel({ type: 'file', filePath: 'Projects/Plan.MD' })).toBe('📄 Plan');
   });
 
   it('time filter → clock emoji + time', () => {
-    const { panel } = makePanel([]);
-    expect(call<string>(panel, 'filterChipLabel', { type: 'time', value: '09:00' })).toBe(
-      '⏰ 09:00',
-    );
+    expect(renderedFilterLabel({ type: 'time', value: '09:00' })).toBe('⏰ 09:00');
   });
 
   it('priority filter → emoji label', () => {
-    const { panel } = makePanel([]);
-    expect(call<string>(panel, 'filterChipLabel', { type: 'priority', value: 'B' })).toBe(
-      '⏫ High',
-    );
+    expect(renderedFilterLabel({ type: 'priority', value: 'B' })).toBe('⏫ High');
   });
 
   it('status filter → status name from registry', () => {
-    const { panel } = makePanel([]);
-    expect(call<string>(panel, 'filterChipLabel', { type: 'status', value: '/' })).toBe(
-      'In progress',
-    );
+    expect(renderedFilterLabel({ type: 'status', value: '/' })).toBe('In progress');
   });
 
   it('status filter → raw symbol fallback when unknown', () => {
-    const { panel } = makePanel([]);
-    expect(call<string>(panel, 'filterChipLabel', { type: 'status', value: '~' })).toBe('~');
+    expect(renderedFilterLabel({ type: 'status', value: '~' })).toBe('~');
   });
 });

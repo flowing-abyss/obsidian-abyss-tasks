@@ -17,6 +17,7 @@ import {
   testStatusRegistry,
   useRealMoment,
 } from './helpers';
+import { taskCommandsOf } from './support/panelHarness';
 
 useRealMoment();
 
@@ -117,24 +118,23 @@ describe('task link rewrite delegation', () => {
     const ref: TaskRef = { filePath: 't.md', line: 0, revision: 'root' };
     const { tasks, execute } = taskApi(ref);
     const state = new AppState();
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
       app,
-      DEFAULT_SETTINGS,
-      tasks.queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
-      null,
-      null,
+      settings: DEFAULT_SETTINGS,
+      queries: tasks.queries,
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      projectStore: null,
+      projectManager: null,
       tasks,
-    );
+    });
     const current = Object.assign(
       task({ markdownTitle: '[[Old]]', source: { filePath: 't.md' } }),
       { ref },
     );
     saveImmediately('[[Changed]]');
 
-    call<void>(panel, 'editTaskLink', current, 0, {
+    taskCommandsOf(panel).editTaskLink(current, 0, {
       raw: '[[Old]]',
       type: 'wiki',
       target: 'Old',

@@ -220,13 +220,13 @@ describe('task presentation identity', () => {
     };
     const state = new AppState();
     state.set('selectedList', 'inbox');
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      {} as App,
-      DEFAULT_SETTINGS,
+      app: {} as App,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-    );
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    });
     const listHost = freshContainer();
     panel.mount(listHost);
     const listCards = freshContainer();

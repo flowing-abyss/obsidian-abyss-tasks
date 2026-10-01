@@ -72,7 +72,8 @@ Markdown or import private task layers. The domain must not import Obsidian, inf
 or settings UI.
 
 `PanelView` owns `RailPanel` for mode changes, `LeftPanel` for navigation, `CenterPanel` for selected
-content, and `RightPanel` for the task inspector. Panels share transient navigation through
+content, and `RightPanel` for the task inspector. Centre composition uses readonly named options,
+including distinct callbacks for static settings and saved view state. Panels share transient navigation through
 `AppState`. `set('taskStack')` begins a selection and `updateInspectorSelection` refreshes one;
 `AppState` tells its selection-begun listeners after a begun selection is delivered. At a compact
 width in Tasks mode, `PanelView` opens the details pane when a selection begins, when the rail's
@@ -97,10 +98,50 @@ next task. A successful move then selects the moved task in its new note, with t
 inspector history the selection had before the move, and at once points that history at the lines
 its tasks moved to, while the index can still prove them.
 
+## Centre panel shell
+
+`CenterPanel` composes its centre collaborators through named options. Task actions route through
+[`TaskCommands`](src/panels/center/TaskCommands.ts), constructed once before CalendarMode with the
+panel's exact task capability and shared TaskRowSelection. It owns command submission/result
+presentation, archive session rebasing and stop-on-failure, root selection cleanup, link edits,
+project moves and completion-confirmation teardown. Its selection-change callback reads the shell's
+current method at call time. Cards, menus, date presets and calendar host actions use this service;
+the shell retains drag validation and both recurrence editor submissions. Services never import
+CenterPanel. Files under `src/panels/center/` use owner capabilities and task contracts from `src/tasks`.
+
+[`TaskMenus`](src/panels/center/TaskMenus.ts) owns single-task and bulk context menu registration,
+priority/status submenus, pinned-tag items and tag-picker composition. Constructed once before
+CalendarMode, it uses the existing TaskCommands service and live shell callbacks for date/repeat
+editors, filters and tag catalogue/color reads. The shell keeps context-menu selection handling,
+visual-order snapshot capture and status-popover close sequencing. TaskMenus owns no lifecycle
+registry or task write authority.
+
+| Centre service                                              | Responsibility                                                                                       |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| [`TaskMenus`](src/panels/center/TaskMenus.ts)               | Context menus and tag pickers; shared TaskCommands submissions and call-time host callbacks          |
+| [`CaptureSessions`](src/panels/center/CaptureSessions.ts)   | Capture target/session lifecycle, surface placement and focus; public capture application capability |
+| [`ListViewControls`](src/panels/center/ListViewControls.ts) | List view initialization, property chips and sort/group popover; shared settings save callback       |
+
+[`CaptureSessions`](src/panels/center/CaptureSessions.ts) owns list/dashboard/calendar capture
+placement, retained target resolution, controller/surface mount/remount, feedback and Escape focus
+restoration. It is constructed once before CalendarMode with the default resolver today provider,
+live task-node/root/result callbacks and the retained panel capture capability. The shell preserves
+mode/list/projects subscription and teardown ordering while delegating session cancellation.
+`cancelActiveCapture` invalidates pending resolution and disposes its controller/surface; no separate
+lifecycle registry is added.
+
+[`ListViewControls`](src/panels/center/ListViewControls.ts) owns list view initialization,
+property-filter labels, chip insertion/removal, deduplication and sort/group/status popover cleanup.
+It is constructed once before CalendarMode with the same settings entry and save callback, plus
+call-time root and date-format callbacks. Updates change the settings entry, start the existing
+async save action, then notify AppState synchronously. The shell retains headers, filter debounce,
+formatDate and lifecycle close ordering.
+
 ## Calendar mode
 
-`CenterPanel` routes modes and keeps the task actions, the task modal, the capture session, and
-both recurrence editors. Calendar mode lives in [`src/panels/calendar/`](src/panels/calendar/)
+`CenterPanel` routes modes, delegates task actions to TaskCommands, and keeps the task modal and
+both recurrence editors. Capture sessions live in the centre CaptureSessions service. Calendar mode
+lives in [`src/panels/calendar/`](src/panels/calendar/)
 and never imports `CenterPanel`:
 
 | Module                                                                        | Responsibility                                                                                                                                                                                                                                                       |
@@ -110,7 +151,7 @@ and never imports `CenterPanel`:
 | [`TimedBlockFocusRetention`](src/panels/calendar/timedBlockFocusRetention.ts) | Keyboard queue and deferred focus restoration with the owning window's timer                                                                                                                                                                                         |
 | [`calendarViewFactory`](src/panels/calendar/calendarViewFactory.ts)           | The single view-selection point: maps the controller's handler set onto the Today, Week, and Month view classes                                                                                                                                                      |
 | [`CalendarNavigationBar`](src/panels/calendar/CalendarNavigationBar.ts)       | Toolbar DOM, title, month and year pickers, view switcher                                                                                                                                                                                                            |
-| [`calendarCapturePlacement`](src/panels/calendar/calendarCapturePlacement.ts) | Resolves capture hosts from the mounted grid; the capture session stays in `CenterPanel`                                                                                                                                                                             |
+| [`calendarCapturePlacement`](src/panels/calendar/calendarCapturePlacement.ts) | Resolves capture hosts from the mounted grid; CaptureSessions owns the session                                                                                                                                                                                       |
 
 Every file under `src/panels/calendar/` uses owner capabilities: no ambient window, document, or
 timers. The four pure helpers `calendarPolicy`, `calendarDateNavigation`, `visibleCalendarDates`,
@@ -629,8 +670,8 @@ must extend these checks without creating another persistence path.
 
 [Project ESLint policy](eslint-project-policy.mts) rejects ambient capabilities in the pure-module
 roster in [eslint.config.mts](eslint.config.mts) and global document/window capabilities in project
-and calendar surfaces, in the centre task list's [`src/panels/task-list/`](src/panels/task-list/),
-and in the shared [project actions](src/ui/projectActions.ts), which join by a per-file entry.
+and calendar surfaces, in the centre services' [`src/panels/center/`](src/panels/center/),
+in the centre task list's [`src/panels/task-list/`](src/panels/task-list/), and in the shared [project actions](src/ui/projectActions.ts), which join by a per-file entry.
 Enroll new pure modules in that roster and supply explicit time; native surfaces retain their
 owning window and dispose pending work. These lexical checks complement
 [owner-lifecycle tests](test/project-owner-lifecycle.test.ts); they do not establish transitive

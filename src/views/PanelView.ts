@@ -529,34 +529,34 @@ export class PanelView extends ItemView {
       this.panelNavigation_abyssPrivate,
       this.onSaveViewState_abyssPrivate,
     );
-    this.center_abyssPrivate = new CenterPanel(
-      this.state_abyssPrivate,
-      this.app,
-      this.settings_abyssPrivate,
-      this.queries_abyssPrivate,
-      this.statusRegistry_abyssPrivate,
-      this.onSaveSettings_abyssPrivate,
+    this.center_abyssPrivate = new CenterPanel({
+      state: this.state_abyssPrivate,
+      app: this.app,
+      settings: this.settings_abyssPrivate,
+      queries: this.queries_abyssPrivate,
+      statusRegistry: this.statusRegistry_abyssPrivate,
+      onSaveSettings: this.onSaveSettings_abyssPrivate,
       projectStore,
       projectManager,
-      selectionTasks,
-      this.commentTimeContext_abyssPrivate,
-      selectionTasks,
-      (result, description) => {
+      tasks: selectionTasks,
+      commentTimeContext: this.commentTimeContext_abyssPrivate,
+      captureApplication: selectionTasks,
+      onCreationResult: (result, description) => {
         this.presentCreationResult_abyssPrivate(result, description);
       },
-      (root) => this.creationPresentation_abyssPrivate?.afterRender(root),
-      this.interactionRegistry_abyssPrivate,
-      this.panelNavigation_abyssPrivate,
-      this.onSaveViewState_abyssPrivate,
+      onRenderComplete: (root) => this.creationPresentation_abyssPrivate?.afterRender(root),
+      interactionOwnership: this.interactionRegistry_abyssPrivate,
+      navigation: this.panelNavigation_abyssPrivate,
+      onSaveViewState: this.onSaveViewState_abyssPrivate,
       timeTracking,
-      (header, _title, controls) => {
+      onRenderTaskHeaderActions: (header, _title, controls) => {
         const compact = this.compactPaneElements_abyssPrivate;
         if (compact === undefined) return;
         controls.prepend(compact.leftButton);
         controls.append(compact.rightButton);
         this.observeCompactHeader_abyssPrivate(header);
       },
-    );
+    });
     this.right_abyssPrivate = new RightPanel(
       this.state_abyssPrivate,
       this.app,

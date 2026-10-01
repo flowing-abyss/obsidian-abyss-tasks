@@ -23,7 +23,6 @@ import type { TaskQuery } from '../src/tasks/application/TaskApplicationApi';
 import { TaskModal } from '../src/ui/TaskModal';
 import { InteractionRegistry, type InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import { PanelShortcutRouter } from '../src/ui/panelShortcutRouter';
-import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
 import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import type { TrackingActions } from '../src/ui/timeTracking/trackingActions';
 import { TodayView } from '../src/views/TodayView';
@@ -54,9 +53,11 @@ import {
   calendarDateOf,
   calendarOf,
   calendarViewInstanceOf,
+  captureSessionsOf,
   pendingTimedBlockFocusOf,
   setCalendarDate,
   setCalendarViewType,
+  taskCommandsOf,
 } from './support/panelHarness';
 
 const TODAY = moment().format('YYYY-MM-DD');
@@ -170,22 +171,16 @@ function makeStaticPanel(
     interactionOwnership?: InteractionOwnershipPort,
   ]
 ): CenterPanel {
-  return new CenterPanel(
+  return new CenterPanel({
     state,
     app,
     settings,
-    queryApiForSnapshots(() => snapshots),
-    new StatusRegistry(settings.taskStatuses),
-    undefined,
-    null,
-    null,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
+    queries: queryApiForSnapshots(() => snapshots),
+    statusRegistry: new StatusRegistry(settings.taskStatuses),
+    projectStore: null,
+    projectManager: null,
     interactionOwnership,
-  );
+  });
 }
 
 /** The writes a tracking surface offers, for a panel under test that only ever reads its clock. */
@@ -271,19 +266,17 @@ async function makePanel(
   const state = new AppState();
   const taskApplication = configuredTaskApplication(app, settings);
   await taskApplication.index.initialize();
-  const panel = new CenterPanel(
+  const panel = new CenterPanel({
     state,
     app,
     settings,
-    taskApplication.index,
-    taskApplication.statusRegistry,
-    undefined,
-    null,
-    null,
-    taskApplication.tasks,
-    undefined,
-    taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
-  );
+    queries: taskApplication.index,
+    statusRegistry: taskApplication.statusRegistry,
+    projectStore: null,
+    projectManager: null,
+    tasks: taskApplication.tasks,
+    captureApplication: taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+  });
   return {
     panel,
     state,
@@ -1073,29 +1066,20 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
     state.set('selectedList', 'today');
     const queries = queryApiForSnapshots(() => [closed, running]);
     const ticker = new TrackingTicker({ queries, now: () => nowMs, win: window });
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      {} as App,
-      DEFAULT_SETTINGS,
+      app: {} as App,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
-      null,
-      null,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      {
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      projectStore: null,
+      projectManager: null,
+      timeTracking: {
         ticker,
         actions: trackingActionStubs(),
         context: () => ({ nowMs, offsetAt: () => 0 }),
       },
-    );
+    });
     const container = freshContainer();
     activeDocument.body.append(container);
 
@@ -1387,19 +1371,17 @@ describe('CenterPanel shared list capture', () => {
       })),
     };
     return {
-      panel: new CenterPanel(
+      panel: new CenterPanel({
         state,
-        {} as App,
-        { ...DEFAULT_SETTINGS, taskPrefix: '' },
+        app: {} as App,
+        settings: { ...DEFAULT_SETTINGS, taskPrefix: '' },
         queries,
-        new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-        undefined,
-        null,
-        null,
-        application,
-        undefined,
-        application,
-      ),
+        statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+        projectStore: null,
+        projectManager: null,
+        tasks: application,
+        captureApplication: application,
+      }),
       state,
       planCreate,
       sessionExecute,
@@ -2012,7 +1994,7 @@ describe('CenterPanel.deleteTask', () => {
       [{ path: 't.md', items: [{ task: ' ', parent: -1, line: 1 }] }],
     );
     const target = expectDefined(index.list().find((item) => item.title === 'delete me'));
-    await call<void>(panel, 'deleteTask', target);
+    await taskCommandsOf(panel).deleteTask(target);
     const content = await readMd(app, 't.md');
     expect(content).toBe('- [ ] keep\n- [ ] keep2');
   });
@@ -2024,7 +2006,7 @@ describe('CenterPanel.deleteTask', () => {
       { path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] },
     ]);
     const target = expectDefined(index.list()[0]);
-    await call<void>(panel, 'deleteTask', target);
+    await taskCommandsOf(panel).deleteTask(target);
     const after = await readMd(app, 't.md');
     expect(after).toBe('- [ ] other');
   });
@@ -2039,7 +2021,7 @@ describe('CenterPanel.deleteTask', () => {
       ref: { ...original.ref, filePath: 'does-not-exist.md' },
       source: { ...original.source, filePath: 'does-not-exist.md' },
     };
-    await expect(call<void>(panel, 'deleteTask', target)).resolves.toBeUndefined();
+    await expect(taskCommandsOf(panel).deleteTask(target)).resolves.toBeUndefined();
   });
 
   it('clears taskStack when the deleted task was the stack top', async () => {
@@ -2048,7 +2030,7 @@ describe('CenterPanel.deleteTask', () => {
     ]);
     const target = expectDefined(index.list()[0]);
     state.set('taskStack', [target]);
-    await call<void>(panel, 'deleteTask', target);
+    await taskCommandsOf(panel).deleteTask(target);
     expect(state.get('taskStack')).toEqual([]);
   });
 });
@@ -2427,13 +2409,13 @@ describe('CenterPanel.renderSearch', () => {
     const state = new AppState();
     state.set('mode', 'search');
     state.set('searchQuery', 'needle');
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      {} as App,
-      DEFAULT_SETTINGS,
+      app: {} as App,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-    );
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    });
 
     panel.mount(freshContainer());
 
@@ -2825,17 +2807,17 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     const taskApplication = configuredTaskApplication(app, settings);
     await taskApplication.index.initialize();
     const state = new AppState();
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
       app,
       settings,
-      taskApplication.index,
-      taskApplication.statusRegistry,
-      options?.saveSettings ?? (async () => {}),
-      stubProjectStore(),
-      stubProjectManager(),
-      taskApplication.tasks,
-    );
+      queries: taskApplication.index,
+      statusRegistry: taskApplication.statusRegistry,
+      onSaveSettings: options?.saveSettings ?? (async () => {}),
+      projectStore: stubProjectStore(),
+      projectManager: stubProjectManager(),
+      tasks: taskApplication.tasks,
+    });
     const el = freshContainer();
     panel.mount(el);
     return { panel, state, el };
@@ -2904,19 +2886,17 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       onSourceObservation: () => () => {},
       refresh: () => {},
     } as never;
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
       app,
-      DEFAULT_SETTINGS,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
       projectStore,
-      stubProjectManager(),
-      application,
-      undefined,
-      application,
-    );
+      projectManager: stubProjectManager(),
+      tasks: application,
+      captureApplication: application,
+    });
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
@@ -3116,6 +3096,38 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     }
   });
 
+  it('cancels an unfocused dashboard draft across Table and back without blur submission', async () => {
+    const { panel, state, container, sessionExecute } = await projectCaptureHarness();
+    const execute = vi.spyOn(expectDefined(panel['captureApplication_abyssPrivate']), 'execute');
+    try {
+      const focus = vi.spyOn(HTMLInputElement.prototype, 'focus').mockImplementation(() => {});
+      const draft = await openListCapture(container);
+      focus.mockRestore();
+      const blur = vi.fn();
+      draft.addEventListener('blur', blur);
+      // Set a draft on an unfocused input before any event can submit it.
+      setCaptureDraft(draft, 'must not return');
+      expect(activeDocument.activeElement).not.toBe(draft);
+      state.set('projectsPanel', { view: 'table' });
+      await flushMicrotasks();
+      expect(container.querySelector('.abyss-quick-capture-input')).toBeNull();
+      state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+      await flushMicrotasks();
+      expect(blur).not.toHaveBeenCalled();
+      expect(sessionExecute).not.toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
+      expect(container.querySelector('.abyss-quick-capture-input')).toBeNull();
+      const trigger = expectDefined(
+        container.querySelector<HTMLButtonElement>('.abyss-add-task-trigger'),
+      );
+      expect(trigger.hidden).toBe(false);
+      expect(trigger.textContent).toContain('Add task');
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
   it('keeps a project-dashboard capture session across success and a full panel rerender', async () => {
     const app = await createAppWithFiles({ 'Projects/A.md': '# Project\n' });
     const state = new AppState();
@@ -3165,19 +3177,17 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       onSourceObservation: () => () => {},
       refresh: () => {},
     } as never;
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
       app,
-      DEFAULT_SETTINGS,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
       projectStore,
-      stubProjectManager(),
-      application,
-      undefined,
-      application,
-    );
+      projectManager: stubProjectManager(),
+      tasks: application,
+      captureApplication: application,
+    });
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
@@ -3375,23 +3385,22 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
       forCalendarProjection: () => ({ materialized: sources, recurringSources: [] }),
     });
     const state = new AppState();
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      {} as App,
-      DEFAULT_SETTINGS,
+      app: {} as App,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
-      null,
-      null,
-      {
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      projectStore: null,
+      projectManager: null,
+      tasks: {
         queries,
         execute: vi.fn().mockResolvedValue({
           type: 'invalid',
           issues: [{ code: 'invalid-target' }],
         }),
       },
-    );
+    });
     const el = freshContainer();
     panel.mount(el);
     setCalendarDate(panel, moment(TODAY));
@@ -3463,23 +3472,22 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     queries.listNodes = listNodes;
     const state = new AppState();
     state.set('selectedList', 'today');
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      {} as App,
+      app: {} as App,
       settings,
       queries,
-      new StatusRegistry(settings.taskStatuses),
-      undefined,
-      null,
-      null,
-      {
+      statusRegistry: new StatusRegistry(settings.taskStatuses),
+      projectStore: null,
+      projectManager: null,
+      tasks: {
         queries,
         execute: vi.fn().mockResolvedValue({
           type: 'invalid',
           issues: [{ code: 'invalid-target' }],
         }),
       },
-    );
+    });
     const el = freshContainer();
 
     panel.mount(el);
@@ -3518,38 +3526,75 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const queries = queryApiForSnapshots(() => tasks);
     const listNodes = vi.fn(queries.listNodes.bind(queries));
     queries.listNodes = listNodes;
-    const panel = new CenterPanel(
-      new AppState(),
-      {} as App,
+    const panel = new CenterPanel({
+      state: new AppState(),
+      app: {} as App,
       settings,
       queries,
-      new StatusRegistry(settings.taskStatuses),
-      undefined,
-      null,
-      null,
-      {
+      statusRegistry: new StatusRegistry(settings.taskStatuses),
+      projectStore: null,
+      projectManager: null,
+      tasks: {
         queries,
         execute: vi.fn().mockResolvedValue({
           type: 'invalid',
           issues: [{ code: 'invalid-target' }],
         }),
       },
-    );
+    });
     const open = vi.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
       const opening = this.onOpen();
       if (opening instanceof Promise) throw new Error('Expected synchronous tag picker open');
     });
 
+    const originalAddItem = methodOf(Menu.prototype, 'addItem');
+    const addItem = vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (
+      this: Menu,
+      callback,
+    ) {
+      return originalAddItem.call(this, (item) => {
+        (item as unknown as { dom: HTMLElement }).dom = createDiv();
+        callback(item);
+      });
+    });
     try {
-      const single = call<void>(panel, 'openTagPicker', expectDefined(tasks[0]));
-      if (single instanceof Promise) throw new Error('Expected synchronous single tag picker');
+      const card = createDiv();
+      const singleMenu = panel['taskMenus_abyssPrivate'].createTaskContextMenu(
+        card,
+        expectDefined(tasks[0]),
+      );
+      const clickSetTag = (menu: Menu): void => {
+        const items = (
+          menu as unknown as {
+            menuItems__: Array<{
+              title__: string;
+              onClick__: ((event: MouseEvent) => unknown) | null;
+            }>;
+          }
+        ).menuItems__;
+        expectDefined(items.find((item) => item.title__ === 'Set tag…')?.onClick__)(
+          new MouseEvent('click'),
+        );
+      };
+      clickSetTag(singleMenu);
       expect(listNodes).toHaveBeenCalledTimes(1);
 
       listNodes.mockClear();
-      const bulk = call<void>(panel, 'openBulkTagPicker', tasks.slice(0, 2));
-      if (bulk instanceof Promise) throw new Error('Expected synchronous bulk tag picker');
+      const shown = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+        this: Menu,
+      ) {
+        return this;
+      });
+      panel['taskMenus_abyssPrivate'].showBulkContextMenu(
+        new MouseEvent('contextmenu'),
+        card,
+        tasks.slice(0, 2),
+      );
+      clickSetTag(expectDefined(shown.mock.instances[0]) as Menu);
+      shown.mockRestore();
       expect(listNodes).toHaveBeenCalledTimes(1);
     } finally {
+      addItem.mockRestore();
       open.mockRestore();
       panel.destroy();
     }
@@ -3588,17 +3633,16 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
       issues: [{ code: 'invalid-target' }],
     });
     const state = new AppState();
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      {} as App,
-      DEFAULT_SETTINGS,
+      app: {} as App,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
-      null,
-      null,
-      { queries, execute },
-    );
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      projectStore: null,
+      projectManager: null,
+      tasks: { queries, execute },
+    });
     const el = freshContainer();
     panel.mount(el);
     setCalendarDate(panel, moment('2026-08-09'));
@@ -3760,17 +3804,16 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
       issues: [{ code: 'invalid-target' }],
     });
     const state = new AppState();
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      {} as App,
-      DEFAULT_SETTINGS,
+      app: {} as App,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
-      null,
-      null,
-      { queries, execute },
-    );
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      projectStore: null,
+      projectManager: null,
+      tasks: { queries, execute },
+    });
     const el = freshContainer();
     panel.mount(el);
     const openModal = vi.spyOn(
@@ -4362,19 +4405,17 @@ describe('CenterPanel calendar mode — click-to-create', () => {
       })),
     };
     const state = new AppState();
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      {} as App,
-      { ...clickToCreateSettings },
+      app: {} as App,
+      settings: { ...clickToCreateSettings },
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
-      null,
-      null,
-      application,
-      undefined,
-      application,
-    );
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      projectStore: null,
+      projectManager: null,
+      tasks: application,
+      captureApplication: application,
+    });
     const el = freshContainer();
     activeDocument.body.append(el);
     panel.mount(el);
@@ -4501,50 +4542,49 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     },
   );
 
-  it('gives explicit calendar placements truthful labels and due/time values', () => {
-    const { panel, el } = sharedCalendarCaptureHarness(async () => successfulCapture());
-    const calendarTarget: CaptureTarget = {
-      label: 'Today · today',
-      context: { type: 'default', source: 'calendar' },
-      session: {
-        type: 'ready',
-        destination: { filePath: 'Capture.md', insertion: { type: 'append' } },
-        execute: vi.fn(),
-      },
-      markdownPrefix: '',
-      markdownSuffixes: [],
-      initial: { due: { type: 'set', value: localDate('2026-08-24') } },
-    };
-
+  it('gives explicit calendar placements truthful labels and submitted due/time values', async () => {
+    const { panel, el, sessionExecute } = sharedCalendarCaptureHarness(async () =>
+      successfulCapture(),
+    );
+    const placements = [
+      { type: 'calendar-month', date: '2026-09-03' },
+      { type: 'calendar-timed', date: '2026-09-04', time: '10:00' },
+      { type: 'calendar-all-day', date: '2026-09-05' },
+    ] as const;
     try {
-      const month = call<CaptureTarget>(panel, 'targetForCapturePlacement', calendarTarget, {
-        type: 'calendar-month',
-        date: '2026-09-03',
-      }) as CaptureTarget;
-      const timed = call<CaptureTarget>(panel, 'targetForCapturePlacement', calendarTarget, {
-        type: 'calendar-timed',
-        date: '2026-09-04',
-        time: '10:00',
-      }) as CaptureTarget;
-      const allDay = call<CaptureTarget>(panel, 'targetForCapturePlacement', calendarTarget, {
-        type: 'calendar-all-day',
-        date: '2026-09-05',
-      }) as CaptureTarget;
-
-      expect(month.label).toBe('2026-09-03 · all day');
-      expect(month.initial).toEqual({
-        due: { type: 'set', value: localDate('2026-09-03') },
-      });
-      expect(timed.label).toBe('2026-09-04 · 10:00');
-      expect(timed.initial).toEqual({
-        due: { type: 'set', value: localDate('2026-09-04') },
-        time: { type: 'set', value: localTime('10:00') },
-      });
-      expect(allDay.label).toBe('2026-09-05 · all day');
-      expect(allDay.initial).toEqual({
-        due: { type: 'set', value: localDate('2026-09-05') },
-      });
-      expect(calendarTarget.label).toBe('Today · today');
+      // Minimal rendered calendar cells provide the hosts; target resolution/submission remain real.
+      el.empty();
+      const month = el.createDiv({ cls: 'abyss-mg-cell' });
+      month.dataset['mgDate'] = '2026-09-03';
+      const timed = el.createDiv({ cls: 'abyss-tg-day-column' });
+      timed.dataset['tgDate'] = '2026-09-04';
+      timed.createDiv({ cls: 'abyss-tg-hour-column' });
+      const allDay = el.createDiv({ cls: 'abyss-tg-allday-cell' });
+      allDay.dataset['tgDate'] = '2026-09-05';
+      for (const placement of placements) {
+        captureSessionsOf(panel).openCapture(placement, { type: 'default', source: 'calendar' });
+        await flushMicrotasks();
+        const input = expectDefined(el.querySelector<HTMLInputElement>('.abyss-capture-input'));
+        expect(el.querySelector('.abyss-capture-destination')?.textContent).toBe(
+          placement.type === 'calendar-timed'
+            ? '2026-09-04 · 10:00'
+            : `${placement.date} · all day`,
+        );
+        setCaptureDraft(input, `Capture ${placement.type}`);
+        pressCaptureKey(input, 'Enter');
+        await flushMicrotasks();
+        const request = expectDefined(
+          sessionExecute.mock.calls[sessionExecute.mock.calls.length - 1]?.[0],
+        );
+        expect(request.initial).toEqual({
+          due: { type: 'set', value: localDate(placement.date) },
+          ...(placement.type === 'calendar-timed'
+            ? { time: { type: 'set', value: localTime('10:00') } }
+            : {}),
+        });
+        expect(request.markdownBody).toBe(`Capture ${placement.type}`);
+      }
+      expect(sessionExecute).toHaveBeenCalledTimes(3);
     } finally {
       panel.destroy();
       el.remove();
@@ -4886,17 +4926,16 @@ function keyboardPanelHarness(
   };
   const tasks: TaskApplicationApi = { queries, execute };
   const state = new AppState();
-  const panel = new CenterPanel(
+  const panel = new CenterPanel({
     state,
-    {} as App,
-    DEFAULT_SETTINGS,
+    app: {} as App,
+    settings: DEFAULT_SETTINGS,
     queries,
-    new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-    undefined,
-    null,
-    null,
+    statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    projectStore: null,
+    projectManager: null,
     tasks,
-  );
+  });
   const el = ownerDocument.body.createDiv();
   panel.mount(el);
   state.set('mode', 'calendar');
@@ -4945,17 +4984,16 @@ function forecastPanelFixture(): {
     issues: [{ code: 'invalid-target' }],
   });
   const state = new AppState();
-  const panel = new CenterPanel(
+  const panel = new CenterPanel({
     state,
-    {} as App,
-    DEFAULT_SETTINGS,
+    app: {} as App,
+    settings: DEFAULT_SETTINGS,
     queries,
-    new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-    undefined,
-    null,
-    null,
-    { queries, execute },
-  );
+    statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    projectStore: null,
+    projectManager: null,
+    tasks: { queries, execute },
+  });
   const el = activeDocument.body.createDiv();
   panel.mount(el);
   setCalendarDate(panel, moment('2026-08-09'));

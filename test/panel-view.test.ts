@@ -1,6 +1,7 @@
 import { Menu, MenuItem, Notice, Platform, TFile, WorkspaceLeaf, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { type AppState, type ListSelection } from '../src/app/AppState';
+import type { CenterPanel } from '../src/panels/CenterPanel';
 import { ProjectManager } from '../src/projects/ProjectManager';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
@@ -42,6 +43,7 @@ import {
   task,
   useRealMoment,
 } from './helpers';
+import { taskCommandsOf } from './support/panelHarness';
 
 function workspaceState(app: App): { activeLeaf: WorkspaceLeaf | null } {
   return app.workspace;
@@ -138,6 +140,54 @@ describe('PanelView host styles', () => {
     const panelProperties = cssDeclarations(css, '.abyss-panel-view').map(({ prop }) => prop);
     expect(panelProperties).not.toContain('padding');
     expect(panelProperties).not.toContain('overflow');
+  });
+});
+
+describe('PanelView centre composition', () => {
+  it('keeps the settings and view-state save callbacks distinct', async () => {
+    const app = await createAppWithFiles({ 'tasks.md': '- [ ] Root\n' });
+    const application = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
+    await application.index.initialize();
+    const onSaveSettings = async (): Promise<void> => {};
+    const onSaveViewState = async (): Promise<void> => {};
+    const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+    const view = new PanelView(
+      leaf,
+      DEFAULT_SETTINGS,
+      makeTagManager(app),
+      application.index,
+      application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+      application.statusRegistry,
+      onSaveSettings,
+      undefined,
+      onSaveViewState,
+    );
+    await view.onOpen();
+    try {
+      const internals = view as unknown as {
+        readonly onSaveSettings_abyssPrivate: () => Promise<void>;
+        readonly onSaveViewState_abyssPrivate: () => Promise<void>;
+        readonly center_abyssPrivate: {
+          readonly onSaveSettings_abyssPrivate: (() => Promise<void>) | undefined;
+          readonly onSaveViewState_abyssPrivate: () => Promise<void>;
+        };
+      };
+      expect(internals.onSaveSettings_abyssPrivate).toBe(onSaveSettings);
+      expect(internals.onSaveViewState_abyssPrivate).toBe(onSaveViewState);
+      expect(internals.center_abyssPrivate.onSaveSettings_abyssPrivate).toBe(
+        internals.onSaveSettings_abyssPrivate,
+      );
+      expect(internals.center_abyssPrivate.onSaveViewState_abyssPrivate).toBe(
+        internals.onSaveViewState_abyssPrivate,
+      );
+      expect(internals.center_abyssPrivate.onSaveSettings_abyssPrivate).not.toBe(
+        internals.center_abyssPrivate.onSaveViewState_abyssPrivate,
+      );
+    } finally {
+      await view.onClose();
+      view.containerEl.remove();
+      application.index.destroy();
+    }
   });
 });
 
@@ -2094,9 +2144,7 @@ describe('PanelView', () => {
       async (path) => {
         const invalidDelete = task({ recurrence: 'tomorrow', onCompletion: 'delete' });
         const internals = view as unknown as {
-          center_abyssPrivate: {
-            toggleTask_abyssPrivate(task: typeof invalidDelete): Promise<void>;
-          };
+          center_abyssPrivate: CenterPanel;
           right_abyssPrivate: {
             toggleTaskLike_abyssPrivate(task: typeof invalidDelete): Promise<void>;
           };
@@ -2104,7 +2152,7 @@ describe('PanelView', () => {
         };
         const completion =
           path === 'CenterPanel'
-            ? internals.center_abyssPrivate.toggleTask_abyssPrivate(invalidDelete)
+            ? taskCommandsOf(internals.center_abyssPrivate).toggleTask(invalidDelete)
             : internals.right_abyssPrivate.toggleTaskLike_abyssPrivate(invalidDelete);
         const registry = internals.interactionRegistry_abyssPrivate;
         const surface = expectDefined(
