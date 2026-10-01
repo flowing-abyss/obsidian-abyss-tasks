@@ -142,7 +142,7 @@ export function makeLeftPanelForTest(
     settings,
     tagManager,
     app,
-    onSaveSettings = async () => {},
+    ,
     projectStore = null,
     projectManager = null,
     tasks,
@@ -150,17 +150,15 @@ export function makeLeftPanelForTest(
   ]: LeftPanelTestArgs
 ): LeftPanel {
   const application = tasks ?? taskHarness;
-  return new LeftPanel(
+  return new LeftPanel({
     state,
     settings,
     tagManager,
     app,
-    taskHarness.queries,
-    application,
-    onSaveSettings,
+    queries: taskHarness.queries,
+    tasks: application,
     projectStore,
     projectManager,
-    undefined,
     onSaveViewState,
-  );
+  });
 }

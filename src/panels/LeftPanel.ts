@@ -10,28 +10,16 @@ import {
 } from '../projects/projectCreation';
 import { projectStatusDisplayName } from '../projects/status';
 import type { CalendarSettings } from '../settings/types';
-import { RenameTagModal } from '../tags/RenameTagModal';
 import type { TagManager } from '../tags/TagManager';
-import {
-  isTagNavigationArchived,
-  prefixForDiscoveredGroupId,
-  resolveEffectiveTagGroups,
-  tagMatchesGroup,
-  type EffectiveTagGroup,
-} from '../tags/effectiveTagGroups';
+import { isTagNavigationArchived, resolveEffectiveTagGroups } from '../tags/effectiveTagGroups';
 import { tagSettingsFailureNotice } from '../tags/tagSettingsFailure';
 import { collectTaskNodeTags } from '../tags/taskTagCatalog';
 import {
   normalizeTaskTagInput,
   type TaskApplicationApi,
-  type TaskNodeSnapshot,
   type TaskQueryApi,
   type TaskSnapshot,
 } from '../tasks';
-import {
-  TagGroupAppearanceModal,
-  type TagGroupAppearanceResult,
-} from '../ui/TagGroupAppearanceModal';
 import { isImeOwnedEvent } from '../ui/ime';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
 import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
@@ -39,6 +27,7 @@ import { changeProjectStatus, openProjectNote } from '../ui/projectActions';
 import { runAsyncAction } from '../ui/runAsyncAction';
 import { presentTaskCommandResult } from '../ui/taskCommandResult';
 import { PanelNavigator, type PanelNavigationActions } from '../views/panelNavigation';
+import { TagNavigation } from './left/TagNavigation';
 
 const PROJECTS_CAP = 10;
 
@@ -77,36 +66,17 @@ interface InlineAddHold {
   readonly selectionDirection: 'forward' | 'backward' | 'none' | null;
 }
 
-type LeftPanelConstructorArgs = [
-  state: AppState,
-  settings: CalendarSettings,
-  tagManager: TagManager,
-  app: App,
-  queries: TaskQueryApi,
-  tasks: TaskApplicationApi,
-  onSaveSettings?: () => Promise<void>,
-  projectStore?: ProjectStore | null,
-  projectManager?: ProjectManager | null,
-  navigation?: PanelNavigationActions,
-  onSaveViewState?: () => Promise<void>,
-];
-
-interface TagGroupRenderContext {
-  readonly group: EffectiveTagGroup;
-  readonly tags: readonly string[];
-  readonly allNodes: readonly TaskNodeSnapshot[];
-  readonly isExpanded: boolean;
-  readonly isGroupActive: boolean;
-}
-
-/** A task is "active" (actionable) when open or in-progress — the same set the
- *  center list shows by default, so left-panel badges match the opened list. */
-function isActiveTask(t: TaskSnapshot): boolean {
-  return t.status === 'open' || t.status === 'in-progress';
-}
-
-function uniqueStrings(values: readonly string[]): string[] {
-  return [...new Set(values)];
+export interface LeftPanelOptions {
+  readonly state: AppState;
+  readonly settings: CalendarSettings;
+  readonly tagManager: TagManager;
+  readonly app: App;
+  readonly queries: TaskQueryApi;
+  readonly tasks: TaskApplicationApi;
+  readonly projectStore?: ProjectStore | null | undefined;
+  readonly projectManager?: ProjectManager | null | undefined;
+  readonly navigation?: PanelNavigationActions | undefined;
+  readonly onSaveViewState?: (() => Promise<void>) | undefined;
 }
 
 export class LeftPanel {
@@ -121,8 +91,6 @@ export class LeftPanel {
   private readonly projectManager_abyssPrivate: ProjectManager | null;
   private el_abyssPrivate!: HTMLElement;
   private readonly offs_abyssPrivate: Array<() => void> = [];
-  private readonly expandedGroups_abyssPrivate = new Set<string>();
-  private readonly explicitlyCollapsed_abyssPrivate = new Set<string>();
   private showAllProjects_abyssPrivate = false;
   private inlineAdd_abyssPrivate: InlineAddSession | undefined;
   // Every session that has not ended, including one a newer "+" replaced as the record and one an
@@ -130,25 +98,22 @@ export class LeftPanel {
   private readonly inlineAddSessions_abyssPrivate = new Set<InlineAddSession>();
   // Advanced by every full render, so a failed create can tell whether one ran while it was pending.
   private renderCount_abyssPrivate = 0;
-  // When a tag is opened from the Pinned section, don't auto-expand the group
-  // that contains it in the Tags tree — the pin exists precisely to avoid that.
-  private tagSelectedFromPinned_abyssPrivate = false;
+  private readonly tagNavigation_abyssPrivate: TagNavigation;
   private readonly navigation_abyssPrivate: PanelNavigationActions;
 
-  constructor(...args: LeftPanelConstructorArgs) {
-    const [
+  constructor(options: LeftPanelOptions) {
+    const {
       state,
       settings,
       tagManager,
       app,
       queries,
       tasks,
-      ,
       projectStore = null,
       projectManager = null,
       navigation,
       onSaveViewState = async () => {},
-    ] = args;
+    } = options;
     this.state_abyssPrivate = state;
     this.settings_abyssPrivate = settings;
     this.tagManager_abyssPrivate = tagManager;
@@ -170,6 +135,24 @@ export class LeftPanel {
         },
         onSaveViewState,
       );
+    this.tagNavigation_abyssPrivate = new TagNavigation({
+      state,
+      settings,
+      tagManager,
+      app,
+      navigation: this.navigation_abyssPrivate,
+      queries: tasks.queries,
+      host: {
+        render: () => {
+          this.render_abyssPrivate();
+        },
+        appendCustomDot: (parent, selection) => {
+          this.appendCustomDot_abyssPrivate(parent, selection);
+        },
+        draggedCenterRoot: () => this.draggedCenterRoot_abyssPrivate(),
+        assignTagFromInbox: (task, tag) => this.assignTagFromInbox_abyssPrivate(task, tag),
+      },
+    });
   }
 
   mount(container: HTMLElement): void {
@@ -294,7 +277,7 @@ export class LeftPanel {
         body: (body) => {
           for (const tag of this.settings_abyssPrivate.pinnedTags) {
             if (isTagNavigationArchived(this.settings_abyssPrivate, tag)) continue;
-            this.renderPinnedTag_abyssPrivate(body, tag, allNodes);
+            this.tagNavigation_abyssPrivate.renderPinnedTag(body, tag, allNodes);
           }
         },
       });
@@ -317,7 +300,7 @@ export class LeftPanel {
       },
       body: (body) => {
         for (const group of groups) {
-          this.renderTagGroup_abyssPrivate(body, group, allNodes);
+          this.tagNavigation_abyssPrivate.renderTagGroup(body, group, allNodes);
         }
       },
     });
@@ -757,81 +740,6 @@ export class LeftPanel {
     runAsyncAction(openProjectNote(this.app_abyssPrivate, path));
   }
 
-  private renderPinnedTag_abyssPrivate(
-    parent: HTMLElement,
-    tag: string,
-    allNodes: readonly TaskNodeSnapshot[],
-  ): void {
-    const sel = this.state_abyssPrivate.get('selectedList');
-    const isActive = typeof sel === 'object' && sel.type === 'tag' && sel.tag === tag;
-    const count = this.countMatchingRoots_abyssPrivate(allNodes, ({ node }) =>
-      node.tags.includes(tag),
-    );
-
-    const row = parent.createDiv({
-      cls: `abyss-left-item abyss-pinned-tag${isActive ? ' is-active' : ''}`,
-    });
-    row.createDiv({ cls: 'abyss-left-item-left' }, (l) => {
-      l.createSpan({ cls: 'abyss-left-label', text: tag });
-      this.appendCustomDot_abyssPrivate(l, { type: 'tag', tag });
-    });
-    if (count > 0) row.createSpan({ cls: 'abyss-left-count', text: String(count) });
-
-    row.addEventListener('click', () => {
-      this.tagSelectedFromPinned_abyssPrivate = true;
-      this.navigation_abyssPrivate.openList({ type: 'tag', tag });
-    });
-
-    row.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      this.showPinnedTagMenu_abyssPrivate(e, tag);
-    });
-
-    this.attachTagDragSource_abyssPrivate(row, tag);
-    this.attachDropZone_abyssPrivate(row, tag);
-  }
-
-  /** A flat, non-expandable tag row (used for manual single-tag groups). */
-  private renderTagLeaf_abyssPrivate(
-    parent: HTMLElement,
-    group: EffectiveTagGroup,
-    tag: string,
-    allNodes: readonly TaskNodeSnapshot[],
-  ): void {
-    const sel = this.state_abyssPrivate.get('selectedList');
-    const isActive = typeof sel === 'object' && sel.type === 'tag' && sel.tag === tag;
-    const count = this.countMatchingRoots_abyssPrivate(allNodes, ({ node }) =>
-      node.tags.includes(tag),
-    );
-
-    const row = parent.createDiv({
-      cls: `abyss-left-item abyss-tag-leaf${isActive ? ' is-active' : ''}`,
-    });
-    row.createDiv({ cls: 'abyss-left-item-left' }, (l) => {
-      // Match group rows: a color dot + the group name (no leading '#').
-      if (group.color !== undefined && group.color !== '') {
-        const dot = l.createSpan({ cls: 'abyss-group-dot' });
-        dot.style.background = group.color;
-      }
-      l.createSpan({ cls: 'abyss-left-label', text: group.name });
-      this.appendCustomDot_abyssPrivate(l, { type: 'tag', tag });
-    });
-    if (count > 0) row.createSpan({ cls: 'abyss-left-count', text: String(count) });
-
-    row.addEventListener('click', () => {
-      this.tagSelectedFromPinned_abyssPrivate = false;
-      this.navigation_abyssPrivate.openList({ type: 'tag', tag });
-    });
-    row.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this.showTagGroupMenu_abyssPrivate(e, group, tag);
-    });
-    this.attachTagDragSource_abyssPrivate(row, tag);
-    this.attachDropZone_abyssPrivate(row, tag);
-    this.attachGroupReorder_abyssPrivate(row, group.id);
-  }
-
   private renderSmartList_abyssPrivate(
     ...args: [HTMLElement, ListSelection, string, string, number]
   ): void {
@@ -852,493 +760,6 @@ export class LeftPanel {
 
     row.addEventListener('click', () => {
       this.navigation_abyssPrivate.openList(selection);
-    });
-  }
-
-  private renderTagGroup_abyssPrivate(
-    parent: HTMLElement,
-    group: EffectiveTagGroup,
-    allNodes: readonly TaskNodeSnapshot[],
-  ): void {
-    if (this.renderSingleTagGroup_abyssPrivate(parent, group, allNodes)) return;
-    const sel = this.state_abyssPrivate.get('selectedList');
-    const isGroupActive =
-      typeof sel === 'object' && sel.type === 'group' && sel.groupId === group.id;
-    const tags = this.resolveGroupTags_abyssPrivate(group, allNodes).filter(
-      (tag) => !isTagNavigationArchived(this.settings_abyssPrivate, tag),
-    );
-    const hasActiveChild = tags.some(
-      (t) => typeof sel === 'object' && sel.type === 'tag' && sel.tag === t,
-    );
-    this.expandActiveTagGroup_abyssPrivate(group.id, hasActiveChild);
-    const isExpanded = this.expandedGroups_abyssPrivate.has(group.id);
-    const container = parent.createDiv({ cls: 'abyss-tag-group' });
-    const context = { group, tags, allNodes, isExpanded, isGroupActive };
-    this.renderTagGroupHeader_abyssPrivate(container, context);
-    if (isExpanded) this.renderTagGroupChildren_abyssPrivate(container, context);
-  }
-
-  private renderSingleTagGroup_abyssPrivate(
-    parent: HTMLElement,
-    group: EffectiveTagGroup,
-    allNodes: readonly TaskNodeSnapshot[],
-  ): boolean {
-    const soleTag = group.mode === 'manual' && group.tags?.length === 1 ? group.tags[0] : undefined;
-    if (soleTag === undefined) return false;
-    if (!this.settings_abyssPrivate.archivedTags.includes(soleTag)) {
-      this.renderTagLeaf_abyssPrivate(parent, group, soleTag, allNodes);
-    }
-    return true;
-  }
-
-  private expandActiveTagGroup_abyssPrivate(groupId: string, hasActiveChild: boolean): void {
-    if (
-      !hasActiveChild ||
-      this.explicitlyCollapsed_abyssPrivate.has(groupId) ||
-      this.tagSelectedFromPinned_abyssPrivate
-    ) {
-      return;
-    }
-    this.expandedGroups_abyssPrivate.add(groupId);
-  }
-
-  private renderTagGroupHeader_abyssPrivate(
-    container: HTMLElement,
-    context: TagGroupRenderContext,
-  ): void {
-    const { group, allNodes, isExpanded, isGroupActive } = context;
-    const header = container.createDiv({
-      cls: `abyss-tag-group-header${isGroupActive ? ' is-active' : ''}`,
-    });
-    this.attachGroupReorder_abyssPrivate(header, group.id);
-    const chevron = header.createSpan({
-      cls: `abyss-left-icon abyss-group-arrow${isExpanded ? ' is-open' : ''}`,
-    });
-    setIcon(chevron, isExpanded ? 'chevron-down' : 'chevron-right');
-    chevron.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.toggleTagGroup_abyssPrivate(group.id);
-      this.render_abyssPrivate();
-    });
-    if (group.color !== undefined && group.color !== '') {
-      const dot = header.createSpan({ cls: 'abyss-group-dot' });
-      dot.style.background = group.color;
-    }
-    header.createSpan({ cls: 'abyss-left-label', text: group.name });
-    this.appendCustomDot_abyssPrivate(header, { type: 'group', groupId: group.id });
-
-    const groupCount = this.tagGroupTaskCount_abyssPrivate(group, allNodes);
-    if (groupCount > 0) {
-      header.createSpan({ cls: 'abyss-left-count', text: String(groupCount) });
-    }
-    header.addEventListener('click', () => {
-      this.navigation_abyssPrivate.openList({ type: 'group', groupId: group.id });
-    });
-    header.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this.showTagGroupMenu_abyssPrivate(e, group);
-    });
-  }
-
-  private tagGroupTaskCount_abyssPrivate(
-    group: EffectiveTagGroup,
-    allNodes: readonly TaskNodeSnapshot[],
-  ): number {
-    return this.countMatchingRoots_abyssPrivate(allNodes, ({ node }) =>
-      node.tags.some((tag) => tagMatchesGroup(tag, group)),
-    );
-  }
-
-  private toggleTagGroup_abyssPrivate(groupId: string): void {
-    if (this.expandedGroups_abyssPrivate.has(groupId)) {
-      this.expandedGroups_abyssPrivate.delete(groupId);
-      this.explicitlyCollapsed_abyssPrivate.add(groupId);
-    } else {
-      this.expandedGroups_abyssPrivate.add(groupId);
-      this.explicitlyCollapsed_abyssPrivate.delete(groupId);
-    }
-  }
-
-  private renderTagGroupChildren_abyssPrivate(
-    container: HTMLElement,
-    context: TagGroupRenderContext,
-  ): void {
-    const children = container.createDiv({ cls: 'abyss-tag-group-children' });
-    for (const tag of context.tags) {
-      this.renderTagGroupChild_abyssPrivate(children, context.group, tag, context.allNodes);
-    }
-  }
-
-  private renderTagGroupChild_abyssPrivate(
-    parent: HTMLElement,
-    group: EffectiveTagGroup,
-    tag: string,
-    allNodes: readonly TaskNodeSnapshot[],
-  ): void {
-    const prefix = group.mode === 'prefix' ? group.prefix : undefined;
-    const label = prefix !== undefined && prefix.length > 0 ? tag.replace(`#${prefix}/`, '') : tag;
-    const selected = this.state_abyssPrivate.get('selectedList');
-    const isActive =
-      typeof selected === 'object' && selected.type === 'tag' && selected.tag === tag;
-    const count = this.countMatchingRoots_abyssPrivate(allNodes, ({ node }) =>
-      node.tags.includes(tag),
-    );
-    const child = parent.createDiv({
-      cls: `abyss-left-item abyss-tag-child${isActive ? ' is-active' : ''}`,
-    });
-    child.createDiv({ cls: 'abyss-left-item-left' }, (left) => {
-      left.createSpan({ cls: 'abyss-left-label', text: label });
-      this.appendCustomDot_abyssPrivate(left, { type: 'tag', tag });
-    });
-    if (count > 0) child.createSpan({ cls: 'abyss-left-count', text: String(count) });
-    child.addEventListener('click', (event) => {
-      event.stopPropagation();
-      this.tagSelectedFromPinned_abyssPrivate = false;
-      this.navigation_abyssPrivate.openList({ type: 'tag', tag });
-    });
-    child.addEventListener('contextmenu', (event) => {
-      event.preventDefault();
-      this.showChildTagMenu_abyssPrivate(event, tag);
-    });
-    this.attachTagDragSource_abyssPrivate(child, tag);
-    this.attachDropZone_abyssPrivate(child, tag);
-  }
-
-  private showPinnedTagMenu_abyssPrivate(e: MouseEvent, tag: string): void {
-    const menu = new Menu();
-    menu.addItem((item) =>
-      item
-        .setTitle('Unpin')
-        .setIcon('pin-off')
-        .onClick(this.makeTagOp_abyssPrivate(() => this.setTagPinned_abyssPrivate(tag, false))),
-    );
-    menu.addItem((item) =>
-      item
-        .setTitle('Archive')
-        .setIcon('archive')
-        .onClick(this.makeTagOp_abyssPrivate(() => this.archiveTagNavigation_abyssPrivate(tag))),
-    );
-    menu.addItem((item) =>
-      item
-        .setTitle('Rename tag across vault…')
-        .setIcon('pencil')
-        .onClick(() => {
-          new RenameTagModal(this.app_abyssPrivate, this.tagManager_abyssPrivate, tag, () => {
-            this.render_abyssPrivate();
-          }).open();
-        }),
-    );
-    showMenuAtMouseEventWithFocus(menu, e);
-  }
-
-  private showChildTagMenu_abyssPrivate(e: MouseEvent, tag: string): void {
-    const isPinned = this.settings_abyssPrivate.pinnedTags.includes(tag);
-    const menu = new Menu();
-    menu.addItem((item) =>
-      item
-        .setTitle(isPinned ? 'Unpin' : 'Pin')
-        .setIcon(isPinned ? 'pin-off' : 'pin')
-        .onClick(this.makeTagOp_abyssPrivate(() => this.setTagPinned_abyssPrivate(tag, !isPinned))),
-    );
-    menu.addItem((item) =>
-      item
-        .setTitle('Archive')
-        .setIcon('archive')
-        .onClick(this.makeTagOp_abyssPrivate(() => this.archiveTagNavigation_abyssPrivate(tag))),
-    );
-    menu.addItem((item) =>
-      item
-        .setTitle('Rename tag across vault…')
-        .setIcon('pencil')
-        .onClick(() => {
-          new RenameTagModal(this.app_abyssPrivate, this.tagManager_abyssPrivate, tag, () => {
-            this.render_abyssPrivate();
-          }).open();
-        }),
-    );
-    showMenuAtMouseEventWithFocus(menu, e);
-  }
-
-  private showTagGroupMenu_abyssPrivate(
-    e: MouseEvent,
-    group: EffectiveTagGroup,
-    flattenedTag?: string,
-  ): void {
-    const menu = new Menu();
-    menu.addItem((item) =>
-      item
-        .setTitle('Rename display name…')
-        .setIcon('pencil')
-        .onClick(() => {
-          this.openTagGroupAppearance_abyssPrivate(group, 'name');
-        }),
-    );
-    menu.addItem((item) =>
-      item
-        .setTitle('Change color…')
-        .setIcon('palette')
-        .onClick(() => {
-          this.openTagGroupAppearance_abyssPrivate(group, 'color');
-        }),
-    );
-
-    if (group.mode === 'prefix' && group.prefix !== undefined && group.prefix !== '') {
-      const prefix = `#${group.prefix}`;
-      menu.addItem((item) =>
-        item
-          .setTitle('Rename prefix across vault…')
-          .setIcon('replace')
-          .onClick(() => {
-            this.openTagGroupPrefixRename_abyssPrivate(prefix);
-          }),
-      );
-    } else {
-      const tags = uniqueStrings(
-        flattenedTag !== undefined && flattenedTag !== '' ? [flattenedTag] : (group.tags ?? []),
-      );
-      for (const tag of tags) {
-        menu.addItem((item) =>
-          item
-            .setTitle(`Rename ${tag} across vault…`)
-            .setIcon('replace')
-            .onClick(() => {
-              new RenameTagModal(this.app_abyssPrivate, this.tagManager_abyssPrivate, tag, () => {
-                this.render_abyssPrivate();
-              }).open();
-            }),
-        );
-      }
-    }
-
-    if (flattenedTag !== undefined && flattenedTag !== '') {
-      const isPinned = this.settings_abyssPrivate.pinnedTags.includes(flattenedTag);
-      menu.addItem((item) =>
-        item
-          .setTitle(isPinned ? 'Unpin' : 'Pin')
-          .setIcon(isPinned ? 'pin-off' : 'pin')
-          .onClick(
-            this.makeTagOp_abyssPrivate(() =>
-              this.setTagPinned_abyssPrivate(flattenedTag, !isPinned),
-            ),
-          ),
-      );
-    }
-    menu.addItem((item) =>
-      item
-        .setTitle('Archive')
-        .setIcon('archive')
-        .onClick(
-          this.makeTagOp_abyssPrivate(() => this.archiveGroupNavigation_abyssPrivate(group)),
-        ),
-    );
-    showMenuAtMouseEventWithFocus(menu, e);
-  }
-
-  /**
-   * Pin and Unpin share the tag settings failure policy. `pinTag` and `unpinTag` restore exactly
-   * the array they replaced, and only when no newer save started, so the array read just before
-   * the change means the rollback ran; any other array means a newer save kept the change.
-   */
-  private async setTagPinned_abyssPrivate(tag: string, pinned: boolean): Promise<void> {
-    const before = this.settings_abyssPrivate.pinnedTags;
-    await this.runTagSettingsAction_abyssPrivate(
-      pinned
-        ? this.tagManager_abyssPrivate.pinTag(tag)
-        : this.tagManager_abyssPrivate.unpinTag(tag),
-      pinned ? 'pin tag' : 'unpin tag',
-      () => this.settings_abyssPrivate.pinnedTags === before,
-    );
-  }
-
-  private async archiveTagNavigation_abyssPrivate(tag: string): Promise<void> {
-    const saved = await this.runTagSettingsAction_abyssPrivate(
-      this.tagManager_abyssPrivate.archiveTag(tag),
-      'archive tag',
-      () => !this.settings_abyssPrivate.archivedTags.includes(tag),
-    );
-    if (!saved) return;
-    const selected = this.state_abyssPrivate.get('selectedList');
-    if (typeof selected === 'object' && selected.type === 'tag' && selected.tag === tag) {
-      this.navigation_abyssPrivate.openList('today');
-    }
-  }
-
-  private async archiveGroupNavigation_abyssPrivate(group: EffectiveTagGroup): Promise<void> {
-    const saved = await this.runTagSettingsAction_abyssPrivate(
-      this.tagManager_abyssPrivate.archiveGroup(group),
-      'archive tag group',
-      () => !this.isEffectiveGroupArchived_abyssPrivate(group.id),
-    );
-    if (!saved) return;
-    const selected = this.state_abyssPrivate.get('selectedList');
-    if (this.selectionMatchesGroup_abyssPrivate(selected, group)) {
-      this.navigation_abyssPrivate.openList('today');
-    }
-  }
-
-  private async runTagSettingsAction_abyssPrivate(
-    operation: Promise<void>,
-    description: string,
-    rolledBack: () => boolean,
-  ): Promise<boolean> {
-    try {
-      await operation;
-      return true;
-    } catch (error) {
-      console.error(`[abyss-tasks] Could not ${description}`, error);
-      new Notice(tagSettingsFailureNotice(description, rolledBack()));
-      return false;
-    }
-  }
-
-  private isEffectiveGroupArchived_abyssPrivate(groupId: string): boolean {
-    return (
-      resolveEffectiveTagGroups(
-        this.settings_abyssPrivate,
-        collectTaskNodeTags(this.tasks_abyssPrivate.queries.listNodes()),
-      ).find((group) => group.id === groupId)?.archived === true
-    );
-  }
-
-  private selectionMatchesGroup_abyssPrivate(
-    selected: ListSelection,
-    group: EffectiveTagGroup,
-  ): boolean {
-    if (typeof selected !== 'object') return false;
-    if (selected.type === 'group') return selected.groupId === group.id;
-    return (
-      selected.type === 'tag' &&
-      group.mode === 'manual' &&
-      group.tags?.length === 1 &&
-      selected.tag === group.tags[0]
-    );
-  }
-
-  private openTagGroupPrefixRename_abyssPrivate(prefix: string): void {
-    new RenameTagModal(
-      this.app_abyssPrivate,
-      this.tagManager_abyssPrivate,
-      prefix,
-      () => {
-        this.render_abyssPrivate();
-      },
-      'prefix',
-    ).open();
-  }
-
-  private openTagGroupAppearance_abyssPrivate(
-    group: EffectiveTagGroup,
-    field: 'name' | 'color',
-  ): void {
-    new TagGroupAppearanceModal(
-      this.app_abyssPrivate,
-      { name: group.name, ...(group.color !== undefined && { color: group.color }) },
-      (result) => {
-        this.applyTagGroupAppearance_abyssPrivate(group, result);
-      },
-      field,
-    ).open();
-  }
-
-  private applyTagGroupAppearance_abyssPrivate(
-    group: EffectiveTagGroup,
-    result: TagGroupAppearanceResult,
-  ): void {
-    if (result.name === undefined && result.color === undefined) return;
-    const previous = { name: group.name, color: group.color };
-    const update = {
-      ...(result.name === undefined ? {} : { name: result.name }),
-      ...(result.color === undefined ? {} : { color: result.color ?? undefined }),
-    };
-    runAsyncAction(
-      this.runTagSettingsAction_abyssPrivate(
-        this.tagManager_abyssPrivate.updateGroup(group, update),
-        'update tag group',
-        () => {
-          const current = this.settings_abyssPrivate.tagGroups.find(
-            (candidate) => candidate.id === group.id,
-          );
-          return (
-            current === undefined ||
-            (current.name === previous.name && current.color === previous.color)
-          );
-        },
-      ).then(() => {
-        this.render_abyssPrivate();
-      }),
-    );
-  }
-
-  private makeTagOp_abyssPrivate(op: () => Promise<void>): () => void {
-    return () => {
-      runAsyncAction(
-        op().then(() => {
-          this.render_abyssPrivate();
-        }),
-      );
-    };
-  }
-
-  private static readonly GROUP_DND_abyssPrivate = 'application/x-abyss-taggroup';
-
-  /**
-   * Makes a tag-group row a drag source AND drop target for reordering groups on
-   * the left panel, persisting the new order. Uses a dedicated dataTransfer type
-   * so it never collides with the tag→task assignment drag (`draggingTag`).
-   */
-  private attachGroupReorder_abyssPrivate(el: HTMLElement, groupId: string): void {
-    el.setAttribute('draggable', 'true');
-    el.addEventListener('dragstart', (e) => {
-      e.stopPropagation();
-      e.dataTransfer?.setData(LeftPanel.GROUP_DND_abyssPrivate, groupId);
-      el.classList.add('abyss-dragging');
-    });
-    el.addEventListener('dragend', () => {
-      el.classList.remove('abyss-dragging');
-    });
-    el.addEventListener('dragover', (e) => {
-      if (!(e.dataTransfer?.types.includes(LeftPanel.GROUP_DND_abyssPrivate) ?? false)) return;
-      e.preventDefault();
-      el.classList.add('abyss-reorder-target');
-    });
-    el.addEventListener('dragleave', () => {
-      el.classList.remove('abyss-reorder-target');
-    });
-    el.addEventListener('drop', (e) => {
-      const draggedId = e.dataTransfer?.getData(LeftPanel.GROUP_DND_abyssPrivate);
-      el.classList.remove('abyss-reorder-target');
-      if (draggedId === undefined || draggedId === '' || draggedId === groupId) return;
-      e.preventDefault();
-      e.stopPropagation();
-      runAsyncAction(this.reorderTagGroups_abyssPrivate(draggedId, groupId));
-    });
-  }
-
-  private async reorderTagGroups_abyssPrivate(draggedId: string, targetId: string): Promise<void> {
-    const groups = resolveEffectiveTagGroups(
-      this.settings_abyssPrivate,
-      collectTaskNodeTags(this.tasks_abyssPrivate.queries.listNodes()),
-    ).filter((group) => !group.archived);
-    const previousOrder = this.settings_abyssPrivate.tagGroups.map(({ id }) => id).join('\0');
-    await this.runTagSettingsAction_abyssPrivate(
-      this.tagManager_abyssPrivate.reorderGroups(draggedId, targetId, groups),
-      'reorder tag groups',
-      () => this.settings_abyssPrivate.tagGroups.map(({ id }) => id).join('\0') === previousOrder,
-    );
-    this.render_abyssPrivate();
-  }
-
-  private attachTagDragSource_abyssPrivate(el: HTMLElement, tag: string): void {
-    el.setAttribute('draggable', 'true');
-    el.addEventListener('dragstart', (e) => {
-      e.stopPropagation();
-      this.state_abyssPrivate.set('draggingTag', tag);
-      el.classList.add('abyss-dragging');
-    });
-    el.addEventListener('dragend', () => {
-      this.state_abyssPrivate.set('draggingTag', null);
-      el.classList.remove('abyss-dragging');
     });
   }
 
@@ -1396,24 +817,6 @@ export class LeftPanel {
     });
   }
 
-  private attachDropZone_abyssPrivate(el: HTMLElement, tag: string): void {
-    el.addEventListener('dragover', (e) => {
-      if (this.draggedCenterRoot_abyssPrivate() == null) return;
-      e.preventDefault();
-      el.classList.add('abyss-drop-target');
-    });
-    el.addEventListener('dragleave', () => {
-      el.classList.remove('abyss-drop-target');
-    });
-    el.addEventListener('drop', (e) => {
-      el.classList.remove('abyss-drop-target');
-      const dragging = this.draggedCenterRoot_abyssPrivate();
-      if (dragging == null) return;
-      e.preventDefault();
-      runAsyncAction(this.assignTagFromInbox_abyssPrivate(dragging, tag));
-    });
-  }
-
   private draggedCenterRoot_abyssPrivate(): TaskSnapshot | undefined {
     const payload = this.state_abyssPrivate.get('draggingTaskNode');
     return payload?.source === 'center-card' &&
@@ -1431,56 +834,6 @@ export class LeftPanel {
         patch: { tags: { add: [tag] } },
       }),
     );
-  }
-
-  private resolveGroupTags_abyssPrivate(
-    group: EffectiveTagGroup,
-    allNodes: readonly TaskNodeSnapshot[],
-  ): string[] {
-    if (group.mode === 'prefix' && group.prefix !== undefined && group.prefix.length > 0) {
-      return this.collectPrefixTags_abyssPrivate(group, allNodes);
-    }
-    return group.tags ?? [];
-  }
-
-  private collectPrefixTags_abyssPrivate(
-    group: EffectiveTagGroup,
-    allNodes: readonly TaskNodeSnapshot[],
-  ): string[] {
-    const found = new Set<string>();
-    for (const { node } of allNodes) {
-      for (const tag of node.tags) {
-        if (
-          tag.includes('/') &&
-          tagMatchesGroup(tag, group) &&
-          !this.isClaimedAutomaticChild_abyssPrivate(group, tag)
-        ) {
-          found.add(tag);
-        }
-      }
-    }
-    return Array.from(found).sort((left, right) => left.localeCompare(right));
-  }
-
-  private isClaimedAutomaticChild_abyssPrivate(group: EffectiveTagGroup, tag: string): boolean {
-    if (prefixForDiscoveredGroupId(group.id) === undefined) return false;
-    return this.settings_abyssPrivate.tagGroups.some(
-      (candidate) => candidate.id !== group.id && tagMatchesGroup(tag, candidate),
-    );
-  }
-
-  private countMatchingRoots_abyssPrivate(
-    allNodes: readonly TaskNodeSnapshot[],
-    matches: (node: TaskNodeSnapshot) => boolean,
-  ): number {
-    const roots = new Set<string>();
-    for (const candidate of allNodes) {
-      if (!isActiveTask(candidate.root) || !matches(candidate)) continue;
-      roots.add(
-        `${candidate.root.source.filePath}:${candidate.root.source.line}:${candidate.root.ref.revision}`,
-      );
-    }
-    return roots.size;
   }
 
   private countInbox_abyssPrivate(tasks: TaskSnapshot[]): number {

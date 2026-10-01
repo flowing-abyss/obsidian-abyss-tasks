@@ -252,6 +252,7 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
   'TaskDependencyQueryApi.listNodes': [
     'src/panels/right/InspectorDependencies.ts',
     'src/panels/right/InspectorPlanningSurfaces.ts',
+    'src/panels/left/TagNavigation.ts',
   ],
   'TaskDependencyQueryApi.dependencies': [
     'src/panels/RightPanel.ts',
@@ -294,6 +295,7 @@ function calendarModules(): string[] {
     ...CALENDAR_HOST_MODULES,
     ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/panels/calendar`)).map(repoPath),
     ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/panels/center`)).map(repoPath),
+    ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/panels/left`)).map(repoPath),
     ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/panels/right`)).map(repoPath),
     ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/views`)).map(repoPath),
   ];

@@ -410,6 +410,7 @@ export default defineConfig(
       'src/panels/projects/**/*.ts',
       'src/panels/calendar/**/*.ts',
       'src/panels/center/**/*.ts',
+      'src/panels/left/**/*.ts',
       'src/panels/right/**/*.ts',
       'src/panels/task-list/**/*.ts',
       'src/ui/projectActions.ts',

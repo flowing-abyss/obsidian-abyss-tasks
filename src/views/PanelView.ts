@@ -516,19 +516,18 @@ export class PanelView extends ItemView {
       this.app as never,
       this.panelNavigation_abyssPrivate,
     );
-    this.left_abyssPrivate = new LeftPanel(
-      this.state_abyssPrivate,
-      this.settings_abyssPrivate,
-      this.tagManager_abyssPrivate,
-      this.app,
-      this.queries_abyssPrivate,
-      selectionTasks,
-      this.onSaveSettings_abyssPrivate,
+    this.left_abyssPrivate = new LeftPanel({
+      state: this.state_abyssPrivate,
+      settings: this.settings_abyssPrivate,
+      tagManager: this.tagManager_abyssPrivate,
+      app: this.app,
+      queries: this.queries_abyssPrivate,
+      tasks: selectionTasks,
       projectStore,
       projectManager,
-      this.panelNavigation_abyssPrivate,
-      this.onSaveViewState_abyssPrivate,
-    );
+      navigation: this.panelNavigation_abyssPrivate,
+      onSaveViewState: this.onSaveViewState_abyssPrivate,
+    });
     this.center_abyssPrivate = new CenterPanel({
       state: this.state_abyssPrivate,
       app: this.app,

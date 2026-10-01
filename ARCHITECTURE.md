@@ -112,6 +112,16 @@ time tracking opens a tracked task (a dependency hop, which begins no selection)
 returns with a task selected, and when the panel turns compact with a task selected, besides the
 pane's own button. A refresh of the selection never opens it.
 
+`LeftPanel` receives named readonly options and constructs one
+[`TagNavigation`](src/panels/left/TagNavigation.ts) for pinned/group/child rows, menus, tag/group
+reorder and tag drops, with its expanded/collapsed and pinned-origin state. Render uses the
+shell's existing node snapshot; only existing interaction-time reads reach `listNodes` through
+the supplied task wrapper. Live callbacks reach shell rendering/customized dots and the retained
+root-drag/tag command path. TagManager retains settings rollback/archive/promotion and file
+mutation authority. LeftPanel keeps outer sections, smart/project navigation, effective-group
+enumeration, creation-result routing, and the one shared tag/project inline-add session with
+hold/restore/settle and lifecycle cleanup.
+
 When a panel moves between windows, `PanelView` rebinds its shortcut router and native interaction
 blocker to the current document, retains its state and capture coordinator, and releases the
 migration subscription and router on close.
@@ -722,7 +732,8 @@ must extend these checks without creating another persistence path.
 
 [Project ESLint policy](eslint-project-policy.mts) rejects ambient capabilities in the pure-module
 roster in [eslint.config.mts](eslint.config.mts) and global document/window capabilities in project
-and calendar surfaces, in the centre services' [`src/panels/center/`](src/panels/center/) and inspector UI owners'
+and calendar surfaces, in navigation owners' [`src/panels/left/`](src/panels/left/),
+the centre services' [`src/panels/center/`](src/panels/center/) and inspector UI owners'
 [`src/panels/right/`](src/panels/right/),
 in the centre task list's [`src/panels/task-list/`](src/panels/task-list/), and in the shared [project actions](src/ui/projectActions.ts), which join by a per-file entry.
 Enroll new pure modules in that roster and supply explicit time; native surfaces retain their
