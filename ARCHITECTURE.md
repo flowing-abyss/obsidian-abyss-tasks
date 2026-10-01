@@ -176,6 +176,15 @@ including empty results. CenterPanel retains the sole state/query subscriptions 
 Search cancels its frame and clears mounted elements at the original render/destroy points. Status
 controls keep Search/query, while ordinary result navigation precedes task-stack selection.
 
+[`TaskCardRenderer`](src/panels/center/TaskCardRenderer.ts) owns card DOM, status/dependency
+markers, Markdown title/description, counts, tracked badges, metadata/tag replacement drops and
+delete-button rendering. One instance receives the existing TaskCommands and ListViewControls;
+its live Component callback reads the shell's current Markdown owner. CenterPanel retains selected
+flags, click/range/whole-card drag/project-drop/context interactions, date focus and recurrence.
+The shell reads one render clock for sorting and passes the same instant to badge rendering; its
+sole ticker subscription forwards indexed running-root updates. Begin-render and teardown clear
+the renderer's badge map. No card-specific service, query subscription or write authority is added.
+
 ## Calendar mode
 
 `CenterPanel` routes modes, delegates task actions to TaskCommands, and keeps the task modal and

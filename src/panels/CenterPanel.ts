@@ -1,4 +1,4 @@
-import { Component, setIcon, type App } from 'obsidian';
+import { Component, type App } from 'obsidian';
 import type { AppState } from '../app/AppState';
 import { isListViewCustomized, listSelectionToKey } from '../app/listViewState';
 import type { ProjectManager } from '../projects/ProjectManager';
@@ -14,9 +14,6 @@ import { collectTaskNodeTags } from '../tags/taskTagCatalog';
 import { selectTaskList } from '../task-lists/TaskListSelector';
 import {
   localDate,
-  subtreeTotal,
-  taskNodeAddress,
-  totalMs,
   type CommentTimeContextProvider,
   type LocalDate,
   type TaskApplicationApi,
@@ -24,41 +21,23 @@ import {
   type TaskCommandResult,
   type TaskNodeSnapshot,
   type TaskQueryApi,
-  type TaskRef,
   type TaskSnapshot,
-  type TrackedTotal,
 } from '../tasks';
 import { showDatePickerPopover } from '../ui/DatePickerPopover';
-import { renderStatusMarker } from '../ui/StatusMarker';
 import { TaskModal } from '../ui/TaskModal';
 import { isRealmHTMLElement } from '../ui/domRealm';
 import { isImeOwnedEvent } from '../ui/ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
 import { mountAnchoredRecurrenceEditor } from '../ui/recurrence/RecurrenceEditor';
-import {
-  recurrenceBadgeInput,
-  renderRecurrenceBadge,
-} from '../ui/recurrence/renderRecurrenceBadge';
-import { renderTaskText } from '../ui/renderTaskText';
 import { runAsyncAction } from '../ui/runAsyncAction';
-import { renderSourceNoteChip, shouldShowSourceNote } from '../ui/sourceNoteChip';
 import { showStatusMenuAt } from '../ui/statusMenu';
 import { type CreationResultDescription } from '../ui/taskCommandResult';
-import {
-  dependencyCompletionBlocked,
-  renderDependencyIndicator,
-  type TaskDependencyLookup,
-} from '../ui/taskDependencyPresentation';
+import type { TaskDependencyLookup } from '../ui/taskDependencyPresentation';
 import { startTaskNodeDrag } from '../ui/taskNodeDrag';
-import {
-  applyTaskPresentationIdentity,
-  renderedTaskNodeElements,
-} from '../ui/taskPresentationIdentity';
+import { renderedTaskNodeElements } from '../ui/taskPresentationIdentity';
 import { taskNodeRef } from '../ui/taskSelection';
 import type { TrackingSurface } from '../ui/timeTracking/TimeBadge';
-import type { TrackingTickerState } from '../ui/timeTracking/TrackingTicker';
-import { formatTrackedDuration } from '../ui/timeTracking/formatTracked';
 import {
   calendarMutationTarget,
   calendarOccurrenceForTask,
@@ -74,6 +53,7 @@ import { CalendarMode, type CalendarModeHost } from './calendar/CalendarMode';
 import type { CalViewType } from './calendar/calendarViewType';
 import { CaptureSessions } from './center/CaptureSessions';
 import { ListViewControls } from './center/ListViewControls';
+import { TaskCardRenderer } from './center/TaskCardRenderer';
 import { TaskCommands } from './center/TaskCommands';
 import { TaskMenus } from './center/TaskMenus';
 import { TaskSearch } from './center/TaskSearch';
@@ -114,17 +94,6 @@ interface CenterPanelOptions {
   readonly timeTracking?: TrackingSurface | undefined;
   readonly onRenderTaskHeaderActions?:
     ((header: HTMLElement, title: HTMLElement, controls: HTMLElement) => void) | undefined;
-}
-
-/** One rendered card badge a tick can repaint without asking the index anything again. */
-interface RunningCardBadge {
-  readonly total: TrackedTotal;
-  readonly value: HTMLElement;
-}
-
-/** How a card badge names the root a running entry belongs to, for the tick that repaints it. */
-function trackingRootAddress(ref: TaskRef): string {
-  return taskNodeAddress({ type: 'task', ref });
 }
 
 export class CenterPanel {
@@ -191,8 +160,8 @@ export class CenterPanel {
   private readonly timeTracking_abyssPrivate: TrackingSurface | undefined;
   private readonly onRenderTaskHeaderActions_abyssPrivate:
     ((header: HTMLElement, title: HTMLElement, controls: HTMLElement) => void) | undefined;
-  /** The running card badges of the current render, keyed by the root address a tick looks up. */
-  private readonly runningCardBadges_abyssPrivate = new Map<string, RunningCardBadge>();
+  /** Owns card DOM and the running badges the shared ticker repaints. */
+  private readonly taskCardRenderer_abyssPrivate: TaskCardRenderer;
   /** The one instant every card badge of the current render is read against. */
   private cardRenderNowMs_abyssPrivate = 0;
   private trackingUnsubscribe_abyssPrivate: (() => void) | undefined;
@@ -251,6 +220,7 @@ export class CenterPanel {
     this.taskMenus_abyssPrivate = this.createTaskMenus_abyssPrivate();
     this.captureSessions_abyssPrivate = this.createCaptureSessions_abyssPrivate();
     this.listViewControls_abyssPrivate = this.createListViewControls_abyssPrivate();
+    this.taskCardRenderer_abyssPrivate = this.createTaskCardRenderer_abyssPrivate();
     this.taskSearch_abyssPrivate = this.createTaskSearch_abyssPrivate();
     this.calendar_abyssPrivate = new CalendarMode({
       state,
@@ -262,6 +232,31 @@ export class CenterPanel {
       interactionOwnership: this.interactionOwnership_abyssPrivate,
       navigation: this.navigation_abyssPrivate,
       host: this.createCalendarHost_abyssPrivate(),
+    });
+  }
+
+  private createTaskCardRenderer_abyssPrivate(): TaskCardRenderer {
+    return new TaskCardRenderer({
+      app: this.app_abyssPrivate,
+      state: this.state_abyssPrivate,
+      settings: this.settings_abyssPrivate,
+      statusRegistry: this.statusRegistry_abyssPrivate,
+      commands: this.taskCommands_abyssPrivate,
+      listControls: this.listViewControls_abyssPrivate,
+      trackingEnabled: this.timeTracking_abyssPrivate !== undefined,
+      host: {
+        component: () => this.md_abyssPrivate,
+        dependenciesFor: (task) => this.dependenciesFor_abyssPrivate(task),
+        mountInteractions: (card, task) => {
+          this.mountTaskCardInteractions_abyssPrivate(card, task);
+        },
+        openStatusMenu: (event, task) => {
+          this.openStatusMenu_abyssPrivate(event, task);
+        },
+        formatDate: (date) => this.formatDate_abyssPrivate(date),
+        getDateClass: (date) => this.getDateClass_abyssPrivate(date),
+        getTagColor: (tag, groups) => this.getTagColor_abyssPrivate(tag, groups),
+      },
     });
   }
 
@@ -471,7 +466,7 @@ export class CenterPanel {
     for (const [key, card] of this.mountedRows_abyssPrivate.cards()) {
       const isSelected = key === detailKey;
       card.classList.toggle('is-selected', isSelected);
-      this.syncTaskDeleteButton_abyssPrivate(card, isSelected ? deletable : undefined);
+      this.taskCardRenderer_abyssPrivate.syncDeleteButton(card, isSelected ? deletable : undefined);
     }
     this.el.querySelectorAll<HTMLElement>('.abyss-calendar-item.is-selected').forEach((item) => {
       item.classList.remove('is-selected');
@@ -653,7 +648,7 @@ export class CenterPanel {
     this.trackingUnsubscribe_abyssPrivate?.();
     this.trackingUnsubscribe_abyssPrivate = undefined;
     // Nothing can repaint them any more, and their elements go with the panel.
-    this.runningCardBadges_abyssPrivate.clear();
+    this.taskCardRenderer_abyssPrivate.clear();
     this.endTaskDrag_abyssPrivate?.();
     this.taskCommands_abyssPrivate.dispose();
     this.captureSessions_abyssPrivate.cancelActiveCapture();
@@ -962,60 +957,18 @@ export class CenterPanel {
     onCard?: (card: HTMLElement, task: TaskSnapshot) => void,
   ): void {
     this.mountedRows_abyssPrivate = mountTaskListRows(container, rows, (host, row) => {
-      const card = this.renderTaskCard_abyssPrivate(host, row.task, tagGroups);
+      const selected = this.isTaskCardSelected_abyssPrivate(row.task);
+      const card = this.taskCardRenderer_abyssPrivate.render(host, row.task, tagGroups, {
+        selected,
+        showDelete: selected && this.rowSelection_abyssPrivate.size === 0,
+      });
       onCard?.(card, row.task);
       return card;
     });
   }
 
-  private renderTaskCard_abyssPrivate(
-    container: HTMLElement,
-    task: TaskSnapshot,
-    tagGroups: readonly EffectiveTagGroup[] = this.effectiveTagGroups_abyssPrivate(),
-  ): HTMLElement {
-    const isSelected = this.isTaskCardSelected_abyssPrivate(task);
-    const card = container.createDiv({
-      cls: `abyss-task-card${isSelected ? ' is-selected' : ''}`,
-      attr: { tabindex: '-1' },
-    });
-    applyTaskPresentationIdentity(card, task.ref);
-    card.dataset['filePath'] = task.source.filePath;
-    card.dataset['line'] = String(task.source.line);
-
-    const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
-    this.renderTaskStatus_abyssPrivate(mainRow, task);
-    this.renderTaskCardBody_abyssPrivate(mainRow, task);
-    this.renderTaskCardMetadata_abyssPrivate(mainRow, task, tagGroups);
-    this.mountTaskCardInteractions_abyssPrivate(card, task);
-    this.syncTaskDeleteButton_abyssPrivate(
-      card,
-      isSelected && this.rowSelection_abyssPrivate.size === 0 ? task : undefined,
-    );
-    return card;
-  }
-
   private isTaskCardSelected_abyssPrivate(task: TaskSnapshot): boolean {
     return taskStackRowKey(this.state_abyssPrivate.get('taskStack')) === taskRowKey(task);
-  }
-
-  private renderTaskStatus_abyssPrivate(mainRow: HTMLElement, task: TaskSnapshot): void {
-    const projection = this.dependenciesFor_abyssPrivate(task);
-    renderStatusMarker(mainRow, {
-      task,
-      registry: this.statusRegistry_abyssPrivate,
-      completionBlocked: dependencyCompletionBlocked(projection),
-      onLeftClick: () => {
-        runAsyncAction(this.taskCommands_abyssPrivate.toggleTask(task));
-      },
-      onContextMenu: (event) => {
-        event.stopPropagation();
-        this.openStatusMenu_abyssPrivate(event, task);
-      },
-    });
-    mainRow.toggleClass(
-      'abyss-task-card-main-row--has-dep',
-      renderDependencyIndicator(mainRow, projection) !== undefined,
-    );
   }
 
   private readonly dependenciesFor_abyssPrivate: TaskDependencyLookup = (task) => {
@@ -1023,96 +976,14 @@ export class CenterPanel {
     return target === undefined ? undefined : this.tasks_abyssPrivate?.queries.dependencies(target);
   };
 
-  private renderTaskCardBody_abyssPrivate(mainRow: HTMLElement, task: TaskSnapshot): void {
-    const body = mainRow.createDiv({ cls: 'abyss-task-body' });
-    const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
-    const recurrence = task.recurrence;
-    if (recurrence !== undefined && recurrence !== '') {
-      renderRecurrenceBadge(titleRow, recurrenceBadgeInput(recurrence));
-    }
-    this.renderTaskCountBadges_abyssPrivate(titleRow, task);
-    const titleEl = titleRow.createSpan({ cls: 'abyss-task-title' });
-    renderTaskText(titleEl, task.markdownTitle, {
-      app: this.app_abyssPrivate,
-      sourcePath: task.source.filePath,
-      component: this.md_abyssPrivate,
-      onEditLink: (occurrence, token) => {
-        this.taskCommands_abyssPrivate.editTaskLink(task, occurrence, token);
-      },
-    });
-    this.renderTaskDescription_abyssPrivate(body, task);
-  }
-
-  private renderTaskCountBadges_abyssPrivate(titleRow: HTMLElement, task: TaskSnapshot): void {
-    const subtaskCount = task.subtasks.length;
-    if (subtaskCount > 0) {
-      const doneCount = task.subtasks.filter((subtask) => subtask.status === 'done').length;
-      this.renderTaskCountBadge_abyssPrivate(
-        titleRow,
-        'check-square',
-        `${doneCount}/${subtaskCount}`,
-      );
-    }
-    if (task.comments.length > 0) {
-      this.renderTaskCountBadge_abyssPrivate(
-        titleRow,
-        'message-square',
-        String(task.comments.length),
-      );
-    }
-    if (task.presentation.linkCount > 0) {
-      this.renderTaskCountBadge_abyssPrivate(
-        titleRow,
-        'paperclip',
-        String(task.presentation.linkCount),
-      );
-    }
-    this.renderTrackedTimeBadge_abyssPrivate(titleRow, task);
-  }
-
-  private renderTaskCountBadge_abyssPrivate(
-    host: HTMLElement,
-    icon: string,
-    text: string,
-    cls = 'abyss-task-count-badge',
-  ): { readonly badge: HTMLElement; readonly value: HTMLElement } {
-    const badge = host.createSpan({ cls });
-    setIcon(badge, icon);
-    return { badge, value: badge.createSpan({ text }) };
-  }
-
   /**
    * A render owns the badges it creates and the instant they are read against, so the previous
    * render's badges go with it and every card in this one shows the same clock.
    */
   private beginTaskCardRender_abyssPrivate(): void {
     this.mountedRows_abyssPrivate = NO_MOUNTED_TASK_LIST_ROWS;
-    this.runningCardBadges_abyssPrivate.clear();
     this.cardRenderNowMs_abyssPrivate = this.timeTracking_abyssPrivate?.context().nowMs ?? 0;
-  }
-
-  /**
-   * Tracked time on a card, as a passive reading of the snapshot the render was handed. A running
-   * subtree keeps its total here so the shared tick is one addition per running root and one DOM
-   * write per displayed minute, never a walk of the list or a question to the index.
-   */
-  private renderTrackedTimeBadge_abyssPrivate(titleRow: HTMLElement, task: TaskSnapshot): void {
-    const tracking = this.timeTracking_abyssPrivate;
-    if (tracking === undefined || isForecastCalendarTask(task)) return;
-    const total = subtreeTotal(task);
-    const running = total.openStartsMs.length > 0;
-    const tracked = totalMs(total, this.cardRenderNowMs_abyssPrivate);
-    if (!running && tracked <= 0) return;
-    const { badge, value } = this.renderTaskCountBadge_abyssPrivate(
-      titleRow,
-      'timer',
-      formatTrackedDuration(tracked),
-      `abyss-task-count-badge abyss-task-time-badge${running ? ' is-tracking' : ''}`,
-    );
-    if (!running) return;
-    const address = trackingRootAddress(task.ref);
-    badge.dataset['trackingRoot'] = address;
-    this.runningCardBadges_abyssPrivate.set(address, { total, value });
+    this.taskCardRenderer_abyssPrivate.beginRender(this.cardRenderNowMs_abyssPrivate);
   }
 
   /** One subscription per panel repaints the running roots, and only those. */
@@ -1122,154 +993,8 @@ export class CenterPanel {
     // A remount must not leave the previous mount listening, so the panel keeps exactly one.
     this.trackingUnsubscribe_abyssPrivate?.();
     this.trackingUnsubscribe_abyssPrivate = tracking.ticker.subscribe((state) => {
-      this.paintRunningCardBadges_abyssPrivate(state);
+      this.taskCardRenderer_abyssPrivate.paintTracking(state);
     });
-  }
-
-  private paintRunningCardBadges_abyssPrivate({ nowMs, active }: TrackingTickerState): void {
-    const badges = this.runningCardBadges_abyssPrivate;
-    if (badges.size === 0) return;
-    for (const entry of active) {
-      // The entry already carries its root's address, so a tick reads a string rather than builds one.
-      const badge = badges.get(entry.rootAddress);
-      if (badge === undefined) continue;
-      const tracked = formatTrackedDuration(totalMs(badge.total, nowMs));
-      if (badge.value.textContent !== tracked) badge.value.setText(tracked);
-    }
-  }
-
-  private renderTaskDescription_abyssPrivate(host: HTMLElement, task: TaskSnapshot): void {
-    const description = task.description;
-    if (description === undefined || description === '') return;
-    const descriptionElement = host.createDiv({ cls: 'abyss-task-desc' });
-    renderTaskText(descriptionElement, description.split('\n')[0] ?? '', {
-      app: this.app_abyssPrivate,
-      sourcePath: task.source.filePath,
-      component: this.md_abyssPrivate,
-    });
-  }
-
-  private renderTaskCardMetadata_abyssPrivate(
-    mainRow: HTMLElement,
-    task: TaskSnapshot,
-    tagGroups: readonly EffectiveTagGroup[],
-  ): void {
-    const today = localDate(window.moment().format('YYYY-MM-DD'));
-    const sel = this.state_abyssPrivate.get('selectedList');
-    const d = task.planning.due ?? task.planning.scheduled;
-    const tags = task.tags;
-    const suppressToday = sel === 'today' && d === today;
-    const showSourceNote = shouldShowSourceNote(
-      task,
-      this.settings_abyssPrivate.sourceNoteDisplay,
-      this.settings_abyssPrivate.taskFilePath,
-    );
-    const hasRightMeta =
-      showSourceNote ||
-      (d != null && !suppressToday) ||
-      task.planning.time != null ||
-      tags.length > 0;
-    if (!hasRightMeta) return;
-    const metaRight = mainRow.createDiv({ cls: 'abyss-task-meta-right' });
-    this.renderTaskDateMetadata_abyssPrivate(metaRight, task, d, suppressToday);
-    if (showSourceNote) {
-      renderSourceNoteChip(metaRight, task, (filePath) => {
-        this.listViewControls_abyssPrivate.addPropertyFilter({ type: 'file', filePath });
-      });
-    }
-    for (const tag of tags.slice(0, 2))
-      this.renderTaskTagMetadata_abyssPrivate(metaRight, task, tag, tagGroups);
-  }
-
-  private renderTaskDateMetadata_abyssPrivate(
-    host: HTMLElement,
-    task: TaskSnapshot,
-    date: LocalDate | undefined,
-    suppressToday: boolean,
-  ): void {
-    const time = task.planning.time;
-    if (date != null && !suppressToday) {
-      const dateElement = host.createSpan({
-        cls: `abyss-task-date ${this.getDateClass_abyssPrivate(date)}`.trim(),
-      });
-      this.renderDateFilterPart_abyssPrivate(dateElement, date);
-      if (time != null)
-        this.renderTimeFilterPart_abyssPrivate(dateElement, time, 'abyss-task-time-part');
-      return;
-    }
-    if (date == null && time != null)
-      this.renderTimeFilterPart_abyssPrivate(host, time, 'abyss-task-date');
-  }
-
-  private renderDateFilterPart_abyssPrivate(host: HTMLElement, date: LocalDate): void {
-    const part = host.createSpan({ cls: 'abyss-task-date-part abyss-cursor-pointer' });
-    const icon = part.createSpan({ cls: 'abyss-date-icon' });
-    setIcon(icon, 'calendar');
-    part.createSpan({ text: this.formatDate_abyssPrivate(date) });
-    part.addEventListener('click', (event) => {
-      event.stopPropagation();
-      this.listViewControls_abyssPrivate.addPropertyFilter({ type: 'date', value: date });
-    });
-  }
-
-  private renderTimeFilterPart_abyssPrivate(
-    host: HTMLElement,
-    time: string,
-    className: string,
-  ): void {
-    const part = host.createSpan({ cls: `${className} abyss-cursor-pointer` });
-    const icon = part.createSpan({ cls: 'abyss-date-icon' });
-    setIcon(icon, 'clock');
-    part.createSpan({ text: time });
-    part.addEventListener('click', (event) => {
-      event.stopPropagation();
-      this.listViewControls_abyssPrivate.addPropertyFilter({ type: 'time', value: time });
-    });
-  }
-
-  private renderTaskTagMetadata_abyssPrivate(
-    host: HTMLElement,
-    task: TaskSnapshot,
-    tag: string,
-    tagGroups: readonly EffectiveTagGroup[],
-  ): void {
-    const element = host.createSpan({ cls: 'abyss-task-tag abyss-cursor-pointer', text: tag });
-    const color = this.getTagColor_abyssPrivate(tag, tagGroups);
-    if (color !== undefined && color !== '') {
-      element.setCssProps({ '--abyss-tag-color': color });
-      element.addClass('abyss-task-tag--colored');
-    }
-    element.addEventListener('click', (event) => {
-      event.stopPropagation();
-      this.listViewControls_abyssPrivate.addPropertyFilter({ type: 'tag', value: tag });
-    });
-    element.addEventListener('dragover', (event) => {
-      const dragging = this.state_abyssPrivate.get('draggingTag');
-      if (dragging === null || dragging === '' || dragging === tag) return;
-      event.preventDefault();
-      event.stopPropagation();
-      element.classList.add('abyss-drop-target');
-    });
-    element.addEventListener('dragleave', () => {
-      element.classList.remove('abyss-drop-target');
-    });
-    element.addEventListener('drop', (event) => {
-      this.handleTaskTagDrop_abyssPrivate(event, element, task, tag);
-    });
-  }
-
-  private handleTaskTagDrop_abyssPrivate(
-    event: DragEvent,
-    element: HTMLElement,
-    task: TaskSnapshot,
-    replacedTag: string,
-  ): void {
-    event.preventDefault();
-    event.stopPropagation();
-    element.classList.remove('abyss-drop-target');
-    const dragging = this.state_abyssPrivate.get('draggingTag');
-    if (dragging === null || dragging === '' || dragging === replacedTag) return;
-    runAsyncAction(this.taskCommands_abyssPrivate.patchTaskTags(task, [dragging], [replacedTag]));
   }
 
   private mountTaskCardInteractions_abyssPrivate(card: HTMLElement, task: TaskSnapshot): void {
@@ -1279,31 +1004,6 @@ export class CenterPanel {
     this.mountTaskCardDrag_abyssPrivate(card, task);
     card.addEventListener('contextmenu', (event) => {
       this.handleTaskContextMenu_abyssPrivate(event, card, task);
-    });
-  }
-
-  private syncTaskDeleteButton_abyssPrivate(
-    card: HTMLElement,
-    task: TaskSnapshot | undefined,
-  ): void {
-    const mainRow = card.querySelector<HTMLElement>('.abyss-task-card-main-row');
-    if (mainRow == null) return;
-    const existing = mainRow.querySelector<HTMLButtonElement>('.abyss-task-delete-btn');
-    if (task === undefined) {
-      existing?.remove();
-      mainRow.removeClass('abyss-task-card-main-row--has-delete');
-      return;
-    }
-    mainRow.addClass('abyss-task-card-main-row--has-delete');
-    if (existing != null) return;
-    const deleteButton = mainRow.createEl('button', {
-      cls: 'abyss-task-delete-btn',
-      attr: { title: 'Delete task', 'aria-label': 'Delete task' },
-    });
-    setIcon(deleteButton, 'x');
-    deleteButton.addEventListener('click', (event) => {
-      event.stopPropagation();
-      runAsyncAction(this.taskCommands_abyssPrivate.deleteTask(task));
     });
   }
 

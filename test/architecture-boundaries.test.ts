@@ -173,7 +173,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/ui/timeTracking/TrackingTicker.ts',
     'src/ui/timeTracking/RailTrackingWidget.ts',
   ],
-  TrackedTotal: ['src/ui/timeTracking/TimeBadge.ts', 'src/panels/CenterPanel.ts'],
+  TrackedTotal: ['src/ui/timeTracking/TimeBadge.ts', 'src/panels/center/TaskCardRenderer.ts'],
   daysBetweenLocalDates: [
     'src/panels/calendar/calendarCommands.ts',
     'src/views/timegrid/dragGeometry.ts',
@@ -227,10 +227,10 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/right/InspectorPlanningSurfaces.ts',
     'src/panels/center/TaskMenus.ts',
   ],
-  subtreeTotal: ['src/ui/timeTracking/TimeBadge.ts', 'src/panels/CenterPanel.ts'],
+  subtreeTotal: ['src/ui/timeTracking/TimeBadge.ts', 'src/panels/center/TaskCardRenderer.ts'],
   taskReconciliationKey: ['src/ui/taskPresentationIdentity.ts'],
   timeEntryRef: ['src/ui/timeTracking/TimeEntriesPopover.ts'],
-  totalMs: ['src/ui/timeTracking/TimeBadge.ts', 'src/panels/CenterPanel.ts'],
+  totalMs: ['src/ui/timeTracking/TimeBadge.ts', 'src/panels/center/TaskCardRenderer.ts'],
 };
 
 const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string[]> = {
