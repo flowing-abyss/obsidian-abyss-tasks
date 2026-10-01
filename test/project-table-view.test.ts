@@ -6490,6 +6490,73 @@ describe('ProjectsTableView', () => {
     ]);
   });
 
+  it('rejects foreign and ended row payloads and consumes the initiating payload on drop', async () => {
+    const config = settings();
+    config.projects.table.groupBy = 'property:Owners';
+    config.projects.table.columns.push({ id: 'property:Owners', visible: true });
+    const applyEdits = vi.fn(async (changes: readonly ProjectCellChange[]) => ({
+      applied: changes.map((change): AppliedProjectCellChange => ({
+        ...change,
+        sourceProperty: 'Owners',
+        sourceKey: 'Owners',
+        previousValue: change.expectedValue,
+        previousExists: true,
+        appliedExists: true,
+      })),
+      failed: [],
+    }));
+    const { host } = mount(
+      [
+        project({ path: 'Projects/A.md', frontmatter: { Owners: ['A'] } }),
+        project({ path: 'Projects/B.md', frontmatter: { Owners: ['B'] } }),
+      ],
+      { settings: config, catalog: catalog([{ name: 'Owners', type: 'list' }]), applyEdits },
+    );
+    const source = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-row[data-group-key="value:a"]'),
+    );
+    const target = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-table-group-row[data-group-key="value:b"]'),
+    );
+    const mime = 'application/x-abyss-project-table-row';
+    const data = transfer({
+      [mime]: JSON.stringify({
+        version: 1,
+        projectPath: 'Projects/A.md',
+        occurrenceId: expectDefined(source.dataset['occurrenceId']),
+        sourceGroupKey: 'value:a',
+      }),
+    });
+    target.dispatchEvent(dragEvent('drop', data));
+    await flushMicrotasks();
+    expect(applyEdits).not.toHaveBeenCalled();
+
+    source.dispatchEvent(dragEvent('dragstart', data));
+    const initiatingPayload = data.getData(mime);
+    data.setData(mime, initiatingPayload.replace('Projects/A.md', 'Projects/B.md'));
+    target.dispatchEvent(dragEvent('drop', data));
+    await flushMicrotasks();
+    expect(applyEdits).not.toHaveBeenCalled();
+    data.setData(mime, initiatingPayload);
+    target.dispatchEvent(dragEvent('drop', data));
+    await flushMicrotasks();
+    expect(applyEdits).not.toHaveBeenCalled();
+
+    source.dispatchEvent(dragEvent('dragstart', data));
+    source.dispatchEvent(dragEvent('dragend', data));
+    target.dispatchEvent(dragEvent('drop', data));
+    await flushMicrotasks();
+    expect(applyEdits).not.toHaveBeenCalled();
+
+    source.dispatchEvent(dragEvent('dragstart', data));
+    target.dispatchEvent(dragEvent('drop', data));
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledOnce();
+    expect(applyEdits.mock.calls[0]?.[0]).toMatchObject([
+      { path: 'Projects/A.md', value: ['B'], expectedValue: ['A'] },
+    ]);
+  });
+
   it('clears native and table selection only after a row drag is accepted', () => {
     vi.useFakeTimers();
     const { host } = mount([project({})]);

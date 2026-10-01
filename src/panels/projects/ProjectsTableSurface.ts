@@ -15,6 +15,7 @@ import {
   writeOptionalAttribute,
   writeText,
 } from '../../ui/guardedDomWrites';
+import type { ProjectGroupDropForecast } from './projectGroupDropPreview';
 import {
   NO_PROJECT_OVERVIEW_CELLS,
   projectTableCells,
@@ -40,6 +41,33 @@ import {
 import type { ProjectTableDragGroup } from './projectTableDrag';
 import type { ProjectTableSelectableCell } from './projectTableSelection';
 import { ProjectTableViewport } from './projectTableViewport';
+
+export const PROJECT_TABLE_ROW_DRAG_TYPE = 'application/x-abyss-project-table-row';
+
+export interface ProjectRowDragPayload {
+  readonly version: 1;
+  readonly projectPath: string;
+  readonly occurrenceId: string;
+  readonly sourceGroupKey: string;
+}
+
+interface GroupDropPreview {
+  readonly payload: ProjectRowDragPayload | undefined;
+  readonly targetGroupKey: string;
+  readonly revision: number;
+  readonly allowed: boolean;
+  readonly message: string;
+  readonly rows: readonly HTMLTableRowElement[];
+  readonly forecast?: ProjectGroupDropForecast;
+  readonly line?: HTMLTableRowElement;
+}
+
+/** Marks the last row of each run of drop target rows, which draws the run's bottom edge. */
+function markDropRunEnds(rows: readonly RenderedProjectRow[], state: string): void {
+  for (const { element } of rows) {
+    element.toggleClass('is-drop-end', element.nextElementSibling?.hasClass(state) !== true);
+  }
+}
 
 type ResizeObserverConstructor = new (callback: ResizeObserverCallback) => ResizeObserver;
 
@@ -138,12 +166,25 @@ type ProjectTableColumnActions = Omit<
   'columns' | 'sort' | 'dateDisplay' | 'onResizePreview'
 >;
 
-/** Row drag and group drop, which the controller keeps; the surface binds them to its rows. */
+/** Validation and submission stay with the overview controller. */
 interface ProjectTableRowDrag {
-  bindRow(row: RenderedProjectRow): () => void;
-  bindGroupDropTarget(row: HTMLTableRowElement, groupKey: () => string): () => void;
-  /** The occurrence of the row being dragged, which stays mounted until the drag ends. */
-  draggedOccurrence(): string | undefined;
+  hasActiveEditor(): boolean;
+  beginProjectDrag(): () => void;
+  previewGroupDrop(
+    payload: ProjectRowDragPayload | undefined,
+    targetGroupKey: string,
+    currentTargetPaths: readonly string[],
+    targetCollapsed: boolean,
+  ): {
+    readonly allowed: boolean;
+    readonly message: string;
+    readonly forecast?: ProjectGroupDropForecast;
+  };
+  commitGroupDrop(
+    dataTransfer: DataTransfer,
+    active: ProjectRowDragPayload | undefined,
+    targetGroupKey: string,
+  ): void;
 }
 
 /** What the Table surface reads from the overview controller. */
@@ -188,6 +229,9 @@ export interface ProjectsTableSurfaceContext {
  */
 export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCellContext> {
   readonly scroll: HTMLElement;
+  #activeRowDrag: ProjectRowDragPayload | undefined;
+  #groupDropPreview: GroupDropPreview | undefined;
+  #groupDropRevision = 0;
   readonly #context: ProjectsTableSurfaceContext;
   readonly #host: HTMLElement;
   #columnCleanup: (() => void) | undefined;
@@ -337,6 +381,8 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   }
 
   destroy(): void {
+    this.#clearGroupDropStates();
+    this.#activeRowDrag = undefined;
     this.#renderedCells = [];
     this.#renderedGroups.clear();
     this.#destroyViewport();
@@ -345,7 +391,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     this.#resizeObserver?.disconnect();
   }
 
-  /** A rendered group, which the row drag reads while it lives in the controller. */
+  /** A rendered group, which controller validation reads during a row drag. */
   group(key: string): RenderedGroupContext | undefined {
     return this.#renderedGroups.get(key);
   }
@@ -588,7 +634,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
 
   #pinnedRows(): string[] {
     const pinned: string[] = [];
-    const dragged = this.#context.rowDrag.draggedOccurrence();
+    const dragged = this.#activeRowDrag?.occurrenceId;
     if (dragged !== undefined) pinned.push(dragged);
     for (const [key, row] of this.#renderedProjectRows) {
       if (row.element.querySelector('.is-editor-anchor, .is-editing') !== null) pinned.push(key);
@@ -728,7 +774,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
         this.#context.render();
       });
     });
-    this.#context.rowDrag.bindGroupDropTarget(row, () => rendered.context.key);
+    this.#bindGroupDropTarget(row, () => rendered.context.key);
   }
 
   #removeMissingRows(
@@ -839,7 +885,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
       occurrenceId,
     };
     this.#renderedProjectRows.set(occurrenceId, rendered);
-    rendered.dragCleanup = this.#context.rowDrag.bindRow(rendered);
+    rendered.dragCleanup = this.#bindProjectRowDrag(rendered);
     return rendered;
   }
 
@@ -882,5 +928,237 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
         ({ identity }) => identity.occurrenceId === occurrenceId && identity.columnId === columnId,
       )?.element ?? null
     );
+  }
+  invalidateDragPreview(): void {
+    this.#clearGroupDropStates();
+    this.#groupDropRevision++;
+  }
+
+  #bindProjectRowDrag(rendered: RenderedProjectRow): () => void {
+    const row = rendered.element;
+    let suppressClick = false;
+    let clickTimer: number | undefined;
+    const ownerWindow = row.ownerDocument.defaultView;
+    let releaseDrag: (() => void) | undefined;
+    let gestureTarget: EventTarget | null = null;
+    let gestureCleanup: (() => void) | undefined;
+    const clearGesture = (): void => {
+      gestureCleanup?.();
+      gestureCleanup = undefined;
+      gestureTarget = null;
+    };
+    const rememberGesture = (event: PointerEvent): void => {
+      clearGesture();
+      gestureTarget = event.target;
+      const ownerDocument = row.ownerDocument;
+      const finishGesture = (): void => {
+        clearGesture();
+      };
+      gestureCleanup = () => {
+        ownerDocument.removeEventListener('pointerup', finishGesture, true);
+        ownerDocument.removeEventListener('pointercancel', finishGesture, true);
+      };
+      ownerDocument.addEventListener('pointerup', finishGesture, true);
+      ownerDocument.addEventListener('pointercancel', finishGesture, true);
+    };
+    const startDrag = (event: DragEvent): void => {
+      const origin = gestureTarget ?? event.target;
+      clearGesture();
+      releaseDrag = this.#startProjectRowDrag(rendered, event, origin);
+      if (releaseDrag === undefined) return;
+      suppressClick = true;
+    };
+    const finishDrag = (): void => {
+      clearGesture();
+      row.removeClass('is-dragging');
+      this.#activeRowDrag = undefined;
+      this.#clearGroupDropStates();
+      releaseDrag?.();
+      releaseDrag = undefined;
+      ownerWindow?.clearTimeout(clickTimer);
+      clickTimer = ownerWindow?.setTimeout(() => {
+        suppressClick = false;
+        clickTimer = undefined;
+      }, 0);
+      this.renderWindow();
+    };
+    const suppressDraggedClick = (event: MouseEvent): void => {
+      if (!suppressClick) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    const dropCleanup = this.#bindGroupDropTarget(row, () => rendered.groupKey);
+    row.addEventListener('pointerdown', rememberGesture, true);
+    row.addEventListener('dragstart', startDrag);
+    row.addEventListener('dragend', finishDrag);
+    row.addEventListener('click', suppressDraggedClick, true);
+    return () => {
+      ownerWindow?.clearTimeout(clickTimer);
+      clearGesture();
+      row.removeClass('is-dragging');
+      dropCleanup();
+      row.removeEventListener('pointerdown', rememberGesture, true);
+      row.removeEventListener('dragstart', startDrag);
+      row.removeEventListener('dragend', finishDrag);
+      row.removeEventListener('click', suppressDraggedClick, true);
+      releaseDrag?.();
+      releaseDrag = undefined;
+    };
+  }
+
+  #startProjectRowDrag(
+    rendered: RenderedProjectRow,
+    event: DragEvent,
+    origin: EventTarget | null,
+  ): (() => void) | undefined {
+    const row = rendered.element;
+    if (!row.draggable || this.#isProtectedRowDragTarget(origin, row)) {
+      event.preventDefault();
+      return;
+    }
+    const dataTransfer = event.dataTransfer;
+    if (dataTransfer === null) return;
+    const payload: ProjectRowDragPayload = {
+      version: 1,
+      projectPath: rendered.project.path,
+      occurrenceId: rendered.occurrenceId,
+      sourceGroupKey: rendered.groupKey,
+    };
+    dataTransfer.setData(PROJECT_TABLE_ROW_DRAG_TYPE, JSON.stringify(payload));
+    dataTransfer.effectAllowed = 'move';
+    const release = this.#context.rowDrag.beginProjectDrag();
+    this.#activeRowDrag = payload;
+    row.addClass('is-dragging');
+    return release;
+  }
+
+  #isProtectedRowDragTarget(target: EventTarget | null, row: HTMLTableRowElement): boolean {
+    const ownerWindow = row.ownerDocument.defaultView;
+    if (
+      this.#context.rowDrag.hasActiveEditor() ||
+      ownerWindow === null ||
+      !(target instanceof ownerWindow.Element)
+    )
+      return true;
+    const action = target.closest(
+      'a, input, select, textarea, [contenteditable="true"], .abyss-project-cell-editor, button',
+    );
+    if (action === null || !row.contains(action)) return false;
+    return !action.classList.contains('abyss-project-table-name');
+  }
+
+  #bindGroupDropTarget(row: HTMLTableRowElement, groupKey: () => string): () => void {
+    const previewDrop = (event: DragEvent): void => {
+      if (event.dataTransfer?.types.includes(PROJECT_TABLE_ROW_DRAG_TYPE) !== true) return;
+      event.preventDefault();
+      const preview = this.#showGroupDropPreview(groupKey());
+      event.dataTransfer.dropEffect = preview.allowed ? 'move' : 'none';
+    };
+    const leaveDropTarget = (event: DragEvent): void => {
+      const related = event.relatedTarget;
+      const ownerWindow = row.ownerDocument.defaultView;
+      if (
+        ownerWindow === null ||
+        !(related instanceof ownerWindow.Element) ||
+        related.closest<HTMLElement>('[data-group-key]')?.dataset['groupKey'] !== groupKey()
+      ) {
+        this.#clearGroupDropStates();
+      }
+    };
+    const drop = (event: DragEvent): void => {
+      if (event.dataTransfer?.types.includes(PROJECT_TABLE_ROW_DRAG_TYPE) !== true) return;
+      event.preventDefault();
+      this.#clearGroupDropStates();
+      const active = this.#activeRowDrag;
+      this.#activeRowDrag = undefined;
+      this.#context.rowDrag.commitGroupDrop(event.dataTransfer, active, groupKey());
+    };
+    row.addEventListener('dragenter', previewDrop);
+    row.addEventListener('dragover', previewDrop);
+    row.addEventListener('dragleave', leaveDropTarget);
+    row.addEventListener('drop', drop);
+    return () => {
+      this.#clearGroupDropStates();
+      row.removeEventListener('dragenter', previewDrop);
+      row.removeEventListener('dragover', previewDrop);
+      row.removeEventListener('dragleave', leaveDropTarget);
+      row.removeEventListener('drop', drop);
+    };
+  }
+
+  #showGroupDropPreview(targetGroupKey: string): GroupDropPreview {
+    const payload = this.#activeRowDrag;
+    const current = this.#cachedGroupDropPreview(payload, targetGroupKey);
+    if (current !== undefined) return current;
+    this.#clearGroupDropStates();
+    const targetRows = this.displayedGroupRows(targetGroupKey);
+    const groupRow = this.groupRow(targetGroupKey);
+    const result = this.#context.rowDrag.previewGroupDrop(
+      payload,
+      targetGroupKey,
+      targetRows.map(({ project }) => project.path),
+      this.isGroupCollapsed(targetGroupKey),
+    );
+    const rows = [groupRow?.element, ...targetRows.map(({ element }) => element)].filter(
+      (row) => row !== undefined,
+    );
+    const state = result.allowed ? 'is-drop-target' : 'is-drop-disabled';
+    for (const row of rows) {
+      row.addClass(state);
+      row.setAttribute('title', result.message);
+    }
+    markDropRunEnds(targetRows, state);
+    groupRow?.dropHint.setText(result.message);
+    const line = this.#groupDropLine(result.forecast, targetRows, groupRow);
+    line?.addClass(result.forecast?.kind === 'before' ? 'is-drop-before' : 'is-drop-after');
+    const preview: GroupDropPreview = {
+      payload,
+      targetGroupKey,
+      revision: this.#groupDropRevision,
+      ...result,
+      rows,
+      ...(line === undefined ? {} : { line }),
+    };
+    this.#groupDropPreview = preview;
+    return preview;
+  }
+
+  #cachedGroupDropPreview(
+    payload: ProjectRowDragPayload | undefined,
+    targetGroupKey: string,
+  ): GroupDropPreview | undefined {
+    const current = this.#groupDropPreview;
+    if (current === undefined) return undefined;
+    return current.payload === payload &&
+      current.targetGroupKey === targetGroupKey &&
+      current.revision === this.#groupDropRevision
+      ? current
+      : undefined;
+  }
+
+  #groupDropLine(
+    forecast: ProjectGroupDropForecast | undefined,
+    targetRows: readonly RenderedProjectRow[],
+    groupRow: RenderedGroupRow | undefined,
+  ): HTMLTableRowElement | undefined {
+    if (forecast === undefined) return undefined;
+    if (forecast.kind === 'before') {
+      const before = targetRows.find(({ project }) => project.path === forecast.projectPath);
+      return before?.element;
+    }
+    if (forecast.kind !== 'append') return undefined;
+    return targetRows[targetRows.length - 1]?.element ?? groupRow?.element;
+  }
+
+  #clearGroupDropStates(): void {
+    const preview = this.#groupDropPreview;
+    if (preview === undefined) return;
+    this.#groupDropPreview = undefined;
+    for (const row of preview.rows) {
+      row.removeClass('is-drop-target', 'is-drop-disabled', 'is-drop-end');
+      row.removeAttribute('title');
+    }
+    preview.line?.removeClass('is-drop-before', 'is-drop-after');
+    this.groupRow(preview.targetGroupKey)?.dropHint.empty();
   }
 }

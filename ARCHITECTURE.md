@@ -465,8 +465,12 @@ hooks publish the toolbar statuses and project count and then settle the selecti
 and the mounted cells, cell reveal and scrolling, the editor frame, a created project's occurrence,
 and teardown. Selection, reveal, editing, and creation go through the active surface; Kanban and
 Timeline exist once first shown. The [Table surface](src/panels/projects/ProjectsTableSurface.ts)
-owns the Table's scroll, header, rows, window, and logical cells, and reaches the cell renderer,
-the header commands, and the row drag through its context.
+owns the Table's scroll, header, rows, window, logical cells, and physical row/group drag.
+It keeps the initiating payload, pinned occurrence, gesture/click suppression, preview cache and
+mounted drop decoration. Its context reaches the cell renderer, header commands, and live
+controller ports for editor state, shared drag release, validation/forecast and submission.
+The controller retains payload parsing, group-drop planning and receipt-sensitive forecasts,
+revalidates before the editor-finish write/history action, and shares its drag release with Kanban.
 [Contract tests](test/project-overview-surface.test.ts) run the same cases on each surface; on the
 Table they also mount an offscreen row.
 Project gesture and creation timers use the owning window and release pending

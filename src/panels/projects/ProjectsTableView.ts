@@ -133,12 +133,12 @@ import {
   type RenderedCellContext,
 } from './ProjectsOverviewSurface';
 import {
+  PROJECT_TABLE_ROW_DRAG_TYPE,
   ProjectsTableSurface,
+  type ProjectRowDragPayload,
   type ProjectsTableSurfaceContext,
   type ReconcileProjectCellOptions,
   type RenderedGroupContext,
-  type RenderedGroupRow,
-  type RenderedProjectRow,
 } from './ProjectsTableSurface';
 import { ProjectsTableToolbar } from './ProjectsTableToolbar';
 import { ProjectsTimelineView } from './ProjectsTimelineView';
@@ -172,8 +172,6 @@ import {
   type ProjectTimelineRangeCapture,
   type ProjectTimelineRangeEditRequest,
 } from './projectTimelineInteraction';
-
-const PROJECT_TABLE_ROW_DRAG_TYPE = 'application/x-abyss-project-table-row';
 
 function projectManualOrderStatusKey(project: Project): string {
   if (project.statusId !== null && project.statusId.length > 0) return `id:${project.statusId}`;
@@ -274,29 +272,10 @@ interface TableSelectionBounds {
   readonly focus: { readonly row: number; readonly column: number };
 }
 
-interface ProjectRowDragPayload {
-  readonly version: 1;
-  readonly projectPath: string;
-  readonly occurrenceId: string;
-  readonly sourceGroupKey: string;
-}
-
 interface GroupDropPlan {
   readonly cell: ProjectOverviewCell;
   readonly value: unknown;
   readonly target: RenderedGroupContext;
-}
-
-interface GroupDropPreview {
-  readonly payload: ProjectRowDragPayload | undefined;
-  readonly targetGroupKey: string;
-  readonly revision: number;
-  readonly allowed: boolean;
-  readonly message: string;
-  readonly plan?: GroupDropPlan;
-  readonly rows: readonly HTMLTableRowElement[];
-  readonly forecast?: ProjectGroupDropForecast;
-  readonly line?: HTMLTableRowElement;
 }
 
 function overviewDescriptionLines(
@@ -456,13 +435,6 @@ function sameRowDragPayload(left: ProjectRowDragPayload, right: ProjectRowDragPa
   );
 }
 
-/** Marks the last row of each run of drop target rows, which draws the run's bottom edge. */
-function markDropRunEnds(rows: readonly RenderedProjectRow[], state: string): void {
-  for (const { element } of rows) {
-    element.toggleClass('is-drop-end', element.nextElementSibling?.hasClass(state) !== true);
-  }
-}
-
 function observationMatchesReceipt(
   observation: ProjectSourceObservation,
   receipt: AppliedProjectCellChange,
@@ -565,9 +537,6 @@ export class ProjectsTableView {
   private readonly ownerWindow_abyssPrivate: Window | undefined;
   private activeEditor_abyssPrivate: ActiveEditor | undefined;
   private projectDragActive_abyssPrivate = false;
-  private activeRowDrag_abyssPrivate: ProjectRowDragPayload | undefined;
-  private groupDropPreview_abyssPrivate: GroupDropPreview | undefined;
-  private groupDropRevision_abyssPrivate = 0;
   private compiledPresets_abyssPrivate = new Map<string, CompiledProjectPropertyPresets>();
   /**
    * The instant tracked time is read at. It is taken once per render pass and never on a timer, so
@@ -627,7 +596,7 @@ export class ProjectsTableView {
       this.tableSurfaceContext_abyssPrivate(),
     );
     this.root_abyssPrivate.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') this.clearGroupDropStates_abyssPrivate();
+      if (event.key === 'Escape') this.tableSurface_abyssPrivate.invalidateDragPreview();
       this.handleTableKeydown_abyssPrivate(event);
     });
     this.ownerWindow_abyssPrivate = this.root_abyssPrivate.ownerDocument.defaultView ?? undefined;
@@ -757,10 +726,13 @@ export class ProjectsTableView {
         this.handlePaste_abyssPrivate(event);
       },
       rowDrag: {
-        bindRow: (row) => this.bindProjectRowDrag_abyssPrivate(row),
-        bindGroupDropTarget: (row, groupKey) =>
-          this.bindGroupDropTarget_abyssPrivate(row, groupKey),
-        draggedOccurrence: () => this.activeRowDrag_abyssPrivate?.occurrenceId,
+        hasActiveEditor: () => this.activeEditor_abyssPrivate !== undefined,
+        beginProjectDrag: () => this.beginProjectDrag_abyssPrivate(),
+        previewGroupDrop: (payload, key, paths, collapsed) =>
+          this.groupDropPreviewResult_abyssPrivate(payload, key, paths, collapsed),
+        commitGroupDrop: (transfer, active, key) => {
+          this.dropProjectIntoGroup_abyssPrivate(transfer, active, key);
+        },
       },
       finishEditorBefore: (action) => {
         this.finishEditorBeforeAction(action);
@@ -985,13 +957,12 @@ export class ProjectsTableView {
     this.timelineInteractionRevision_abyssPrivate++;
     this.creationInteractionRevision_abyssPrivate++;
     this.creationInteractionToken_abyssPrivate = undefined;
-    this.clearGroupDropStates_abyssPrivate();
+    this.tableSurface_abyssPrivate.invalidateDragPreview();
     this.pendingAction_abyssPrivate?.replace?.();
     this.pendingAction_abyssPrivate = undefined;
     this.activeEditor_abyssPrivate?.positionCleanup();
     this.activeEditor_abyssPrivate?.handle.destroy();
     this.activeEditor_abyssPrivate = undefined;
-    this.activeRowDrag_abyssPrivate = undefined;
     this.clearOverviewState_abyssPrivate();
     this.tableSurface_abyssPrivate.destroy();
     this.toolbar_abyssPrivate.destroy();
@@ -1412,9 +1383,8 @@ export class ProjectsTableView {
   }
 
   private renderTable_abyssPrivate(): void {
+    this.tableSurface_abyssPrivate.invalidateDragPreview();
     if (!this.mounted_abyssPrivate) return;
-    this.clearGroupDropStates_abyssPrivate();
-    this.groupDropRevision_abyssPrivate++;
     if (
       this.mutationActive_abyssPrivate ||
       this.activeEditor_abyssPrivate !== undefined ||
@@ -2113,46 +2083,6 @@ export class ProjectsTableView {
       this.context_abyssPrivate.settings.projects.statuses.find(({ id }) => key === `id:${id}`)
         ?.color ?? fallback
     );
-  }
-
-  private bindGroupDropTarget_abyssPrivate(
-    row: HTMLTableRowElement,
-    groupKey: () => string,
-  ): () => void {
-    const previewDrop = (event: DragEvent): void => {
-      if (event.dataTransfer?.types.includes(PROJECT_TABLE_ROW_DRAG_TYPE) !== true) return;
-      event.preventDefault();
-      const preview = this.showGroupDropPreview_abyssPrivate(groupKey());
-      event.dataTransfer.dropEffect = preview.allowed ? 'move' : 'none';
-    };
-    const leaveDropTarget = (event: DragEvent): void => {
-      const related = event.relatedTarget;
-      const ownerWindow = row.ownerDocument.defaultView;
-      if (
-        ownerWindow === null ||
-        !(related instanceof ownerWindow.Element) ||
-        related.closest<HTMLElement>('[data-group-key]')?.dataset['groupKey'] !== groupKey()
-      ) {
-        this.clearGroupDropStates_abyssPrivate();
-      }
-    };
-    const drop = (event: DragEvent): void => {
-      if (event.dataTransfer?.types.includes(PROJECT_TABLE_ROW_DRAG_TYPE) !== true) return;
-      event.preventDefault();
-      this.clearGroupDropStates_abyssPrivate();
-      this.dropProjectIntoGroup_abyssPrivate(event.dataTransfer, groupKey());
-    };
-    row.addEventListener('dragenter', previewDrop);
-    row.addEventListener('dragover', previewDrop);
-    row.addEventListener('dragleave', leaveDropTarget);
-    row.addEventListener('drop', drop);
-    return () => {
-      this.clearGroupDropStates_abyssPrivate();
-      row.removeEventListener('dragenter', previewDrop);
-      row.removeEventListener('dragover', previewDrop);
-      row.removeEventListener('dragleave', leaveDropTarget);
-      row.removeEventListener('drop', drop);
-    };
   }
 
   private sortByColumn_abyssPrivate(field: string): void {
@@ -3264,104 +3194,6 @@ export class ProjectsTableView {
     this.feedback_abyssPrivate.setText(message);
   }
 
-  private bindProjectRowDrag_abyssPrivate(rendered: RenderedProjectRow): () => void {
-    const row = rendered.element;
-    let suppressClick = false;
-    let clickTimer: number | undefined;
-    const ownerWindow = row.ownerDocument.defaultView;
-    let releaseDrag: (() => void) | undefined;
-    let gestureTarget: EventTarget | null = null;
-    let gestureCleanup: (() => void) | undefined;
-    const clearGesture = (): void => {
-      gestureCleanup?.();
-      gestureCleanup = undefined;
-      gestureTarget = null;
-    };
-    const rememberGesture = (event: PointerEvent): void => {
-      clearGesture();
-      gestureTarget = event.target;
-      const ownerDocument = row.ownerDocument;
-      const finishGesture = (): void => {
-        clearGesture();
-      };
-      gestureCleanup = () => {
-        ownerDocument.removeEventListener('pointerup', finishGesture, true);
-        ownerDocument.removeEventListener('pointercancel', finishGesture, true);
-      };
-      ownerDocument.addEventListener('pointerup', finishGesture, true);
-      ownerDocument.addEventListener('pointercancel', finishGesture, true);
-    };
-    const startDrag = (event: DragEvent): void => {
-      const origin = gestureTarget ?? event.target;
-      clearGesture();
-      releaseDrag = this.startProjectRowDrag_abyssPrivate(rendered, event, origin);
-      if (releaseDrag === undefined) return;
-      suppressClick = true;
-    };
-    const finishDrag = (): void => {
-      clearGesture();
-      row.removeClass('is-dragging');
-      this.activeRowDrag_abyssPrivate = undefined;
-      this.clearGroupDropStates_abyssPrivate();
-      releaseDrag?.();
-      releaseDrag = undefined;
-      ownerWindow?.clearTimeout(clickTimer);
-      clickTimer = ownerWindow?.setTimeout(() => {
-        suppressClick = false;
-        clickTimer = undefined;
-      }, 0);
-      this.tableSurface_abyssPrivate.renderWindow();
-    };
-    const suppressDraggedClick = (event: MouseEvent): void => {
-      if (!suppressClick) return;
-      event.preventDefault();
-      event.stopPropagation();
-    };
-    const dropCleanup = this.bindGroupDropTarget_abyssPrivate(row, () => rendered.groupKey);
-    row.addEventListener('pointerdown', rememberGesture, true);
-    row.addEventListener('dragstart', startDrag);
-    row.addEventListener('dragend', finishDrag);
-    row.addEventListener('click', suppressDraggedClick, true);
-    return () => {
-      ownerWindow?.clearTimeout(clickTimer);
-      clearGesture();
-      row.removeClass('is-dragging');
-      dropCleanup();
-      row.removeEventListener('pointerdown', rememberGesture, true);
-      row.removeEventListener('dragstart', startDrag);
-      row.removeEventListener('dragend', finishDrag);
-      row.removeEventListener('click', suppressDraggedClick, true);
-      releaseDrag?.();
-      releaseDrag = undefined;
-    };
-  }
-
-  private startProjectRowDrag_abyssPrivate(
-    rendered: RenderedProjectRow,
-    event: DragEvent,
-    origin: EventTarget | null,
-  ): (() => void) | undefined {
-    const row = rendered.element;
-    if (!row.draggable || this.isProtectedRowDragTarget_abyssPrivate(origin, row)) {
-      event.preventDefault();
-      return;
-    }
-    const dataTransfer = event.dataTransfer;
-    if (dataTransfer === null) return;
-    const payload: ProjectRowDragPayload = {
-      version: 1,
-      projectPath: rendered.project.path,
-      occurrenceId: rendered.occurrenceId,
-      sourceGroupKey: rendered.groupKey,
-    };
-    dataTransfer.setData(PROJECT_TABLE_ROW_DRAG_TYPE, JSON.stringify(payload));
-    dataTransfer.effectAllowed = 'move';
-    const release = this.beginProjectDrag_abyssPrivate();
-    this.activeRowDrag_abyssPrivate = payload;
-    row.addClass('is-dragging');
-    return release;
-  }
-
   private beginProjectDrag_abyssPrivate(): () => void {
     this.root_abyssPrivate.ownerDocument.defaultView?.getSelection()?.removeAllRanges();
     this.selection_abyssPrivate.clear();
@@ -3376,18 +3208,6 @@ export class ProjectsTableView {
       this.root_abyssPrivate.removeClass('is-project-dragging');
       if (this.renderPending_abyssPrivate) this.renderTable_abyssPrivate();
     };
-  }
-
-  private isProtectedRowDragTarget_abyssPrivate(
-    target: EventTarget | null,
-    row: HTMLTableRowElement,
-  ): boolean {
-    if (this.activeEditor_abyssPrivate !== undefined || !(target instanceof Element)) return true;
-    const action = target.closest(
-      'a, input, select, textarea, [contenteditable="true"], .abyss-project-cell-editor, button',
-    );
-    if (action === null || !row.contains(action)) return false;
-    return !action.classList.contains('abyss-project-table-name');
   }
 
   private readRowDragPayload_abyssPrivate(
@@ -3477,119 +3297,61 @@ export class ProjectsTableView {
     return { cell, value, target };
   }
 
-  private showGroupDropPreview_abyssPrivate(targetGroupKey: string): GroupDropPreview {
-    const payload = this.activeRowDrag_abyssPrivate;
-    const current = this.cachedGroupDropPreview_abyssPrivate(payload, targetGroupKey);
-    if (current !== undefined) return current;
-    this.clearGroupDropStates_abyssPrivate();
-    const result = this.groupDropPreviewResult_abyssPrivate(payload, targetGroupKey);
-    const targetRows = this.tableSurface_abyssPrivate.displayedGroupRows(targetGroupKey);
-    const groupRow = this.tableSurface_abyssPrivate.groupRow(targetGroupKey);
-    const rows = [groupRow?.element, ...targetRows.map(({ element }) => element)].filter(
-      (row) => row !== undefined,
-    );
-    const state = result.allowed ? 'is-drop-target' : 'is-drop-disabled';
-    for (const row of rows) {
-      row.addClass(state);
-      row.setAttribute('title', result.message);
-    }
-    markDropRunEnds(targetRows, state);
-    groupRow?.dropHint.setText(result.message);
-    const insertion =
-      result.plan === undefined
-        ? {}
-        : this.groupDropInsertion_abyssPrivate(result.plan, targetGroupKey, targetRows, groupRow);
-    insertion.line?.addClass(
-      insertion.forecast?.kind === 'before' ? 'is-drop-before' : 'is-drop-after',
-    );
-    const preview: GroupDropPreview = {
-      payload,
-      targetGroupKey,
-      revision: this.groupDropRevision_abyssPrivate,
-      ...result,
-      rows,
-      ...insertion,
-    };
-    this.groupDropPreview_abyssPrivate = preview;
-    return preview;
-  }
-
-  private cachedGroupDropPreview_abyssPrivate(
-    payload: ProjectRowDragPayload | undefined,
-    targetGroupKey: string,
-  ): GroupDropPreview | undefined {
-    const current = this.groupDropPreview_abyssPrivate;
-    if (current === undefined) return undefined;
-    return current.payload === payload &&
-      current.targetGroupKey === targetGroupKey &&
-      current.revision === this.groupDropRevision_abyssPrivate
-      ? current
-      : undefined;
-  }
-
   private groupDropPreviewResult_abyssPrivate(
     payload: ProjectRowDragPayload | undefined,
     targetGroupKey: string,
-  ): Pick<GroupDropPreview, 'allowed' | 'message' | 'plan'> {
-    let result: Pick<GroupDropPreview, 'allowed' | 'message' | 'plan'>;
+    currentTargetPaths: readonly string[],
+    targetCollapsed: boolean,
+  ): {
+    readonly allowed: boolean;
+    readonly message: string;
+    readonly forecast?: ProjectGroupDropForecast;
+  } {
     try {
       if (payload === undefined) throw new Error('Invalid project row drag');
       const plan = this.groupDropPlan_abyssPrivate(payload, targetGroupKey);
       const clearsList =
         (plan.cell.field.type === 'list' || plan.cell.field.type === 'tags') &&
         (targetGroupKey === 'empty' || targetGroupKey === 'none');
-      result = {
+      const forecast = this.groupDropForecast_abyssPrivate(
+        plan,
+        targetGroupKey,
+        currentTargetPaths,
+        targetCollapsed,
+      );
+      return {
         allowed: true,
         message: clearsList
           ? `Drop to clear the entire ${plan.cell.field.label} list`
           : `Drop to move to ${plan.target.label}`,
-        plan,
+        ...(forecast === undefined ? {} : { forecast }),
       };
     } catch (error) {
-      result = {
-        allowed: false,
-        message: error instanceof Error ? error.message : String(error),
-      };
+      return { allowed: false, message: error instanceof Error ? error.message : String(error) };
     }
-    return result;
   }
 
-  private groupDropInsertion_abyssPrivate(
+  private groupDropForecast_abyssPrivate(
     plan: GroupDropPlan,
     targetGroupKey: string,
-    targetRows: readonly RenderedProjectRow[],
-    groupRow: RenderedGroupRow | undefined,
-  ): Pick<GroupDropPreview, 'forecast' | 'line'> {
-    if (this.tableSurface_abyssPrivate.isGroupCollapsed(targetGroupKey)) return {};
+    currentTargetPaths: readonly string[],
+    targetCollapsed: boolean,
+  ): ProjectGroupDropForecast | undefined {
+    if (targetCollapsed) return undefined;
     try {
       const change = this.changeForCell_abyssPrivate(plan.cell, plan.value);
-      if (change.sourceProperty === undefined) return {};
-      const forecast = forecastProjectGroupDrop({
+      if (change.sourceProperty === undefined) return undefined;
+      return forecastProjectGroupDrop({
         model: this.projectTableModelInput_abyssPrivate(),
         change: { ...change, sourceProperty: change.sourceProperty },
         targetGroupKey,
-        currentTargetPaths: targetRows.map(({ project }) => project.path),
+        currentTargetPaths,
         projectsSettings: this.context_abyssPrivate.settings.projects,
         tagsReliable: this.groupDropTagsReliable_abyssPrivate(change, plan),
       });
-      const line = this.groupDropLine_abyssPrivate(forecast, targetRows, groupRow);
-      return { forecast, ...(line === undefined ? {} : { line }) };
     } catch {
-      return { forecast: { kind: 'none' } };
+      return { kind: 'none' };
     }
-  }
-
-  private groupDropLine_abyssPrivate(
-    forecast: ProjectGroupDropForecast,
-    targetRows: readonly RenderedProjectRow[],
-    groupRow: RenderedGroupRow | undefined,
-  ): HTMLTableRowElement | undefined {
-    if (forecast.kind === 'before') {
-      const before = targetRows.find(({ project }) => project.path === forecast.projectPath);
-      return before?.element;
-    }
-    if (forecast.kind !== 'append') return undefined;
-    return targetRows[targetRows.length - 1]?.element ?? groupRow?.element;
   }
 
   private groupDropTagsReliable_abyssPrivate(
@@ -3609,11 +3371,10 @@ export class ProjectsTableView {
 
   private dropProjectIntoGroup_abyssPrivate(
     dataTransfer: DataTransfer,
+    active: ProjectRowDragPayload | undefined,
     targetGroupKey: string,
   ): void {
-    const active = this.activeRowDrag_abyssPrivate;
     const payload = this.readRowDragPayload_abyssPrivate(dataTransfer);
-    this.activeRowDrag_abyssPrivate = undefined;
     if (payload === undefined || active === undefined || !sameRowDragPayload(payload, active)) {
       this.showInputFailure_abyssPrivate(new Error('Invalid project row drag'));
       return;
@@ -3628,18 +3389,6 @@ export class ProjectsTableView {
         this.showInputFailure_abyssPrivate(error);
       }
     });
-  }
-
-  private clearGroupDropStates_abyssPrivate(): void {
-    const preview = this.groupDropPreview_abyssPrivate;
-    if (preview === undefined) return;
-    this.groupDropPreview_abyssPrivate = undefined;
-    for (const row of preview.rows) {
-      row.removeClass('is-drop-target', 'is-drop-disabled', 'is-drop-end');
-      row.removeAttribute('title');
-    }
-    preview.line?.removeClass('is-drop-before', 'is-drop-after');
-    this.tableSurface_abyssPrivate.groupRow(preview.targetGroupKey)?.dropHint.empty();
   }
 
   private requestRemoveListValue_abyssPrivate(
