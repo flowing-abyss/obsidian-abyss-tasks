@@ -1,6 +1,7 @@
 import { Menu, MenuItem, Notice, Platform, TFile, WorkspaceLeaf, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { type AppState, type ListSelection } from '../src/app/AppState';
+import type { CenterPanel } from '../src/panels/CenterPanel';
 import { ProjectManager } from '../src/projects/ProjectManager';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
@@ -42,6 +43,7 @@ import {
   task,
   useRealMoment,
 } from './helpers';
+import { taskCommandsOf } from './support/panelHarness';
 
 function workspaceState(app: App): { activeLeaf: WorkspaceLeaf | null } {
   return app.workspace;
@@ -2142,9 +2144,7 @@ describe('PanelView', () => {
       async (path) => {
         const invalidDelete = task({ recurrence: 'tomorrow', onCompletion: 'delete' });
         const internals = view as unknown as {
-          center_abyssPrivate: {
-            toggleTask_abyssPrivate(task: typeof invalidDelete): Promise<void>;
-          };
+          center_abyssPrivate: CenterPanel;
           right_abyssPrivate: {
             toggleTaskLike_abyssPrivate(task: typeof invalidDelete): Promise<void>;
           };
@@ -2152,7 +2152,7 @@ describe('PanelView', () => {
         };
         const completion =
           path === 'CenterPanel'
-            ? internals.center_abyssPrivate.toggleTask_abyssPrivate(invalidDelete)
+            ? taskCommandsOf(internals.center_abyssPrivate).toggleTask(invalidDelete)
             : internals.right_abyssPrivate.toggleTaskLike_abyssPrivate(invalidDelete);
         const registry = internals.interactionRegistry_abyssPrivate;
         const surface = expectDefined(

@@ -5,6 +5,7 @@ import type { CalendarMoment } from '../../src/panels/calendar/calendarDateNavig
 import type { CalendarMode } from '../../src/panels/calendar/CalendarMode';
 import type { CalendarViewInstance } from '../../src/panels/calendar/calendarViewFactory';
 import type { CalViewType } from '../../src/panels/calendar/calendarViewType';
+import type { TaskCommands } from '../../src/panels/center/TaskCommands';
 import { CenterPanel } from '../../src/panels/CenterPanel';
 import { LeftPanel } from '../../src/panels/LeftPanel';
 import type { ProjectManager } from '../../src/projects/ProjectManager';
@@ -55,6 +56,11 @@ export function makeCenterPanelForTest(
     projectManager,
     tasks: application,
   });
+}
+
+/** The centre command service; callers use its typed public submission API. */
+export function taskCommandsOf(panel: CenterPanel): TaskCommands {
+  return panel['taskCommands_abyssPrivate'];
 }
 
 /** The calendar controller a CenterPanel owns; tests reach calendar session state through it. */

@@ -25,6 +25,7 @@ import {
   freshContainer,
   useRealMoment,
 } from './helpers';
+import { taskCommandsOf } from './support/panelHarness';
 
 useRealMoment();
 
@@ -131,11 +132,7 @@ async function archiveSelection(
     );
   }
   try {
-    await (
-      panel as unknown as {
-        archiveTasks_abyssPrivate(tasks: readonly TaskSnapshot[]): Promise<void>;
-      }
-    ).archiveTasks_abyssPrivate(selected);
+    await taskCommandsOf(panel).archiveTasks(selected);
     state.batch(() => {});
     afterArchive?.(el);
     return [...el.querySelectorAll<HTMLElement>('.abyss-multi-selected')].map(

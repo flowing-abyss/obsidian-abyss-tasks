@@ -98,10 +98,21 @@ next task. A successful move then selects the moved task in its new note, with t
 inspector history the selection had before the move, and at once points that history at the lines
 its tasks moved to, while the index can still prove them.
 
+## Centre panel shell
+
+`CenterPanel` composes its centre collaborators through named options. Task actions route through
+[`TaskCommands`](src/panels/center/TaskCommands.ts), constructed once before CalendarMode with the
+panel's exact task capability and shared TaskRowSelection. It owns command submission/result
+presentation, archive session rebasing and stop-on-failure, root selection cleanup, link edits,
+project moves and completion-confirmation teardown. Its selection-change callback reads the shell's
+current method at call time. Cards, menus, date presets and calendar host actions use this service;
+the shell retains drag validation and both recurrence editor submissions. Services never import
+CenterPanel. Files under `src/panels/center/` use owner capabilities and task contracts from `src/tasks`.
+
 ## Calendar mode
 
-`CenterPanel` routes modes and keeps the task actions, the task modal, the capture session, and
-both recurrence editors. Calendar mode lives in [`src/panels/calendar/`](src/panels/calendar/)
+`CenterPanel` routes modes, delegates task actions to TaskCommands, and keeps the task modal,
+capture session and both recurrence editors. Calendar mode lives in [`src/panels/calendar/`](src/panels/calendar/)
 and never imports `CenterPanel`:
 
 | Module                                                                        | Responsibility                                                                                                                                                                                                                                                       |
@@ -630,8 +641,8 @@ must extend these checks without creating another persistence path.
 
 [Project ESLint policy](eslint-project-policy.mts) rejects ambient capabilities in the pure-module
 roster in [eslint.config.mts](eslint.config.mts) and global document/window capabilities in project
-and calendar surfaces, in the centre task list's [`src/panels/task-list/`](src/panels/task-list/),
-and in the shared [project actions](src/ui/projectActions.ts), which join by a per-file entry.
+and calendar surfaces, in the centre services' [`src/panels/center/`](src/panels/center/),
+in the centre task list's [`src/panels/task-list/`](src/panels/task-list/), and in the shared [project actions](src/ui/projectActions.ts), which join by a per-file entry.
 Enroll new pure modules in that roster and supply explicit time; native surfaces retain their
 owning window and dispose pending work. These lexical checks complement
 [owner-lifecycle tests](test/project-owner-lifecycle.test.ts); they do not establish transitive

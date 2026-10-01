@@ -57,6 +57,7 @@ import {
   pendingTimedBlockFocusOf,
   setCalendarDate,
   setCalendarViewType,
+  taskCommandsOf,
 } from './support/panelHarness';
 
 const TODAY = moment().format('YYYY-MM-DD');
@@ -1993,7 +1994,7 @@ describe('CenterPanel.deleteTask', () => {
       [{ path: 't.md', items: [{ task: ' ', parent: -1, line: 1 }] }],
     );
     const target = expectDefined(index.list().find((item) => item.title === 'delete me'));
-    await call<void>(panel, 'deleteTask', target);
+    await taskCommandsOf(panel).deleteTask(target);
     const content = await readMd(app, 't.md');
     expect(content).toBe('- [ ] keep\n- [ ] keep2');
   });
@@ -2005,7 +2006,7 @@ describe('CenterPanel.deleteTask', () => {
       { path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] },
     ]);
     const target = expectDefined(index.list()[0]);
-    await call<void>(panel, 'deleteTask', target);
+    await taskCommandsOf(panel).deleteTask(target);
     const after = await readMd(app, 't.md');
     expect(after).toBe('- [ ] other');
   });
@@ -2020,7 +2021,7 @@ describe('CenterPanel.deleteTask', () => {
       ref: { ...original.ref, filePath: 'does-not-exist.md' },
       source: { ...original.source, filePath: 'does-not-exist.md' },
     };
-    await expect(call<void>(panel, 'deleteTask', target)).resolves.toBeUndefined();
+    await expect(taskCommandsOf(panel).deleteTask(target)).resolves.toBeUndefined();
   });
 
   it('clears taskStack when the deleted task was the stack top', async () => {
@@ -2029,7 +2030,7 @@ describe('CenterPanel.deleteTask', () => {
     ]);
     const target = expectDefined(index.list()[0]);
     state.set('taskStack', [target]);
-    await call<void>(panel, 'deleteTask', target);
+    await taskCommandsOf(panel).deleteTask(target);
     expect(state.get('taskStack')).toEqual([]);
   });
 });

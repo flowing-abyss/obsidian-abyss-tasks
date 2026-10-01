@@ -17,6 +17,7 @@ import {
   testStatusRegistry,
   useRealMoment,
 } from './helpers';
+import { taskCommandsOf } from './support/panelHarness';
 
 useRealMoment();
 
@@ -133,7 +134,7 @@ describe('task link rewrite delegation', () => {
     );
     saveImmediately('[[Changed]]');
 
-    call<void>(panel, 'editTaskLink', current, 0, {
+    taskCommandsOf(panel).editTaskLink(current, 0, {
       raw: '[[Old]]',
       type: 'wiki',
       target: 'Old',

@@ -6,11 +6,12 @@ import { CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import type {
-  TaskApplicationApi,
-  TaskCaptureApplicationApi,
-  TaskCreateSession,
-  TaskSnapshot,
+import {
+  localDate,
+  type TaskApplicationApi,
+  type TaskCaptureApplicationApi,
+  type TaskCreateSession,
+  type TaskSnapshot,
 } from '../src/tasks';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
@@ -30,7 +31,7 @@ import {
   taskQueryApi,
   useRealMoment,
 } from './helpers';
-import { calendarCommand } from './support/panelHarness';
+import { calendarCommand, taskCommandsOf } from './support/panelHarness';
 
 useRealMoment();
 
@@ -38,12 +39,6 @@ async function readMd(app: App, path: string): Promise<string> {
   const f = app.vault.getAbstractFileByPath(path);
   if (!(f instanceof TFile)) throw new Error(`${path} is not a TFile`);
   return app.vault.cachedRead(f);
-}
-
-function callPrivate<T>(panel: CenterPanel, method: string, ...args: unknown[]): T {
-  const key = method === 'toggleDueToday' ? method : `${method}_abyssPrivate`;
-  const fn = expectDefined((panel as unknown as Record<string, (...a: unknown[]) => T>)[key]);
-  return fn.call(panel, ...args);
 }
 
 async function submitCapture(panel: CenterPanel, value: string): Promise<void> {
@@ -199,11 +194,14 @@ describe('CenterPanel planning API delegation', () => {
     const process = vi.spyOn(app.vault, 'process');
 
     await calendarCommand(panel, 'rescheduleFromDrag', 'f.md:::0', '2026-07-20');
-    await callPrivate(panel, 'toggleDueToday', current);
+    await taskCommandsOf(panel).toggleTaskDuePreset(
+      current,
+      localDate(moment().format('YYYY-MM-DD')),
+    );
     await calendarCommand(panel, 'setStart', current, '2026-07-18');
     await calendarCommand(panel, 'setDue', current, '2026-07-22');
-    await callPrivate(panel, 'setTaskDue', current, '2026-07-23');
-    await callPrivate(panel, 'setTaskDue', current, null);
+    await taskCommandsOf(panel).setTaskDue(current, localDate('2026-07-23'));
+    await taskCommandsOf(panel).setTaskDue(current, null);
 
     expect(execute).toHaveBeenNthCalledWith(1, {
       type: 'reschedule',
@@ -512,7 +510,7 @@ describe('CenterPanel root lifecycle API delegation', () => {
       tasks: { queries, execute },
     });
 
-    const pending = callPrivate<Promise<void>>(panel, 'deleteTask', oldTask);
+    const pending = taskCommandsOf(panel).deleteTask(oldTask);
     expect(execute).toHaveBeenCalledWith({ type: 'delete', ref: oldRef });
     state.set('taskStack', [newTask]);
     finish({ type: 'ok', outcome: { type: 'deleted', ref: oldRef }, changed: true });
@@ -534,7 +532,7 @@ describe('CenterPanel.setPriority', () => {
       },
     });
     const { panel, app } = await makePanel({ 'n.md': '- [ ] Task\n' }, [t]);
-    await callPrivate(panel, 'setPriority', t, 'A');
+    await taskCommandsOf(panel).setPriority(t, 'A');
     const content = await readMd(app, 'n.md');
     expect(content).toContain('🔺');
   });
@@ -546,7 +544,7 @@ describe('CenterPanel.setPriority', () => {
       source: { filePath: 'n.md', line: 0, originalMarkdown: raw, originalBlock: raw },
     });
     const { panel, app } = await makePanel({ 'n.md': `${raw}\n` }, [t]);
-    await callPrivate(panel, 'setPriority', t, 'D');
+    await taskCommandsOf(panel).setPriority(t, 'D');
     const content = await readMd(app, 'n.md');
     expect(content).not.toMatch(/[🔺⏫🔼🔽⏬]/u);
   });
@@ -558,7 +556,7 @@ describe('CenterPanel.setPriority', () => {
       source: { filePath: 'n.md', line: 0, originalMarkdown: raw, originalBlock: raw },
     });
     const { panel, app } = await makePanel({ 'n.md': `${raw}\n` }, [t]);
-    await callPrivate(panel, 'setPriority', t, 'C');
+    await taskCommandsOf(panel).setPriority(t, 'C');
     const content = await readMd(app, 'n.md');
     expect(content).toContain('🔼');
     expect(content).not.toContain('⏫');

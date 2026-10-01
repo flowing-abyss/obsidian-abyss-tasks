@@ -101,7 +101,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   SubtaskRef: ['src/panels/RightPanel.ts'],
   SubtaskSnapshot: ['src/panels/RightPanel.ts'],
   TaskApplicationApi: ['src/main.ts'],
-  TaskArchiveSession: ['src/panels/CenterPanel.ts'],
+  TaskArchiveSession: ['src/panels/center/TaskCommands.ts'],
   TaskCaptureApplicationApi: ['src/main.ts'],
   TaskCommand: ['src/panels/RightPanel.ts'],
   TaskCommandResult: ['src/projects/ProjectManager.ts'],
@@ -194,7 +194,7 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
     'src/panels/CenterPanel.ts',
     'src/panels/calendar/calendarCommands.ts',
   ],
-  'TaskApplicationApi.planArchive': 'src/panels/CenterPanel.ts',
+  'TaskApplicationApi.planArchive': 'src/panels/center/TaskCommands.ts',
   'TaskApplicationApi.queries': 'src/ui/TaskMoveRecoveryModal.ts',
   'TaskQueryApi.forCalendarProjection': 'src/panels/calendar/calendarContent.ts',
   'TaskQueryApi.list': ['src/panels/CenterPanel.ts', 'src/panels/calendar/calendarCommands.ts'],
@@ -238,6 +238,7 @@ function calendarModules(): string[] {
   return [
     ...CALENDAR_HOST_MODULES,
     ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/panels/calendar`)).map(repoPath),
+    ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/panels/center`)).map(repoPath),
     ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/views`)).map(repoPath),
   ];
 }
