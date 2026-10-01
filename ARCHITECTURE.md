@@ -85,8 +85,16 @@ retained dependency-resolution and planning-target reconstruction callbacks. Typ
 arrows forward to RightPanel;
 all application execution, selection epochs, drafts/recovery, Undo and history remain in the shell.
 Recurrence restoration reports anchor presence separately from focus; the shell alone decides
-whether to preserve a dirty draft. Dependency search stays in RightPanel and uses explicit attached
-or matching-surface close callbacks, keeping placement cleanup distinct from search lifetime.
+whether to preserve a dirty draft. RightPanel also constructs one `InspectorDependencies` for dependency disclosure, badge, sections,
+drop gestures and search. It receives the exact read-only dependency queries and live shell resolver,
+command, Undo and badge callbacks; query subscriptions and all results remain in RightPanel. Search
+rebuilds retain one handle and interaction lease, release placement while detached, then refresh and
+restore permitted focus only if that handle is still current. PlanningSurfaces delegates attached or
+matching-surface search dismissal to this owner. Dependency refresh preserves Undo detach, status
+markers, badge/time badge, status-menu close, sections, search refresh, Undo render and placement in
+that order. RightPanel retains one shared task-drag cleanup for subtask and relation gestures; both
+finish the prior drag before starting and register the new cleanup afterwards. Dependency and
+retained subtask rows import the same stateless `renderRowRemove` helper directly.
 Selection, render, refresh and destroy call the owner's narrow operations at their former positions.
 Panels share transient navigation through
 `AppState`. `set('taskStack')` begins a selection and `updateInspectorSelection` refreshes one;

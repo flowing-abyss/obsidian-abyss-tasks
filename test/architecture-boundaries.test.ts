@@ -84,7 +84,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   CreateTaskCommandInitial: ['src/ui/taskCapture/CaptureTargetResolver.ts'],
   CreateDependencySubtaskCommand: ['src/panels/RightPanel.ts'],
   DateRange: ['src/views/calendarOccurrences.ts'],
-  DependencyDirection: ['src/panels/RightPanel.ts'],
+  DependencyDirection: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorDependencies.ts'],
   LocalDate: [
     'src/panels/CenterPanel.ts',
     'src/panels/RightPanel.ts',
@@ -107,7 +107,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskApplicationApi: ['src/main.ts', 'src/panels/RightPanel.ts'],
   TaskArchiveSession: ['src/panels/center/TaskCommands.ts'],
   TaskCaptureApplicationApi: ['src/main.ts'],
-  TaskCommand: ['src/panels/RightPanel.ts'],
+  TaskCommand: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorDependencies.ts'],
   TaskCommandResult: [
     'src/projects/ProjectManager.ts',
     'src/panels/RightPanel.ts',
@@ -117,7 +117,11 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskCreateSession: ['src/ui/taskCapture/CaptureTargetResolver.ts'],
   TaskIndexEvent: ['src/projects/ProjectStore.ts'],
   TaskInsertionPolicy: ['src/main.ts'],
-  TaskNodeRef: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
+  TaskNodeRef: [
+    'src/panels/RightPanel.ts',
+    'src/panels/right/InspectorPlanningSurfaces.ts',
+    'src/panels/right/InspectorDependencies.ts',
+  ],
   TaskPlanning: ['src/views/calendarOccurrences.ts'],
   TaskOccurrenceResult: ['src/ui/recurrence/RecurrenceEditor.ts'],
   TaskPatch: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
@@ -128,10 +132,14 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/right/InspectorPlanningSurfaces.ts',
   ],
   TaskQueryApi: ['src/main.ts'],
-  TaskDependencyQueryApi: ['src/main.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
+  TaskDependencyQueryApi: [
+    'src/main.ts',
+    'src/panels/right/InspectorPlanningSurfaces.ts',
+    'src/panels/right/InspectorDependencies.ts',
+  ],
   TaskDependencyEligibility: ['src/ui/dependencySearch.ts'],
-  TaskDependencyProjection: ['src/panels/RightPanel.ts'],
-  TaskDependencyRelation: ['src/panels/RightPanel.ts'],
+  TaskDependencyProjection: ['src/panels/right/InspectorDependencies.ts'],
+  TaskDependencyRelation: ['src/panels/right/InspectorDependencies.ts'],
   TaskNodeSnapshot: ['src/ui/dependencySearch.ts'],
   TaskRef: [
     'src/projects/ProjectManager.ts',
@@ -199,7 +207,11 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/CenterPanel.ts',
     'src/views/PanelView.ts',
   ],
-  sameTaskNodeRef: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
+  sameTaskNodeRef: [
+    'src/panels/RightPanel.ts',
+    'src/panels/right/InspectorPlanningSurfaces.ts',
+    'src/panels/right/InspectorDependencies.ts',
+  ],
   shiftLocalDate: ['src/ui/timedBlockKeyboardQueue.ts'],
   shiftLocalDayStartMs: [
     'src/ui/timeTracking/formatTracked.ts',
@@ -229,11 +241,15 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',
   'TaskQueryApi.subscribeReconciled': 'src/projects/ProjectStore.ts',
   'TaskDependencyQueryApi.listNodes': [
-    'src/panels/RightPanel.ts',
+    'src/panels/right/InspectorDependencies.ts',
     'src/panels/right/InspectorPlanningSurfaces.ts',
   ],
-  'TaskDependencyQueryApi.dependencies': ['src/panels/RightPanel.ts', 'src/panels/CenterPanel.ts'],
-  'TaskDependencyQueryApi.dependencyEligibility': 'src/panels/RightPanel.ts',
+  'TaskDependencyQueryApi.dependencies': [
+    'src/panels/RightPanel.ts',
+    'src/panels/CenterPanel.ts',
+    'src/panels/right/InspectorDependencies.ts',
+  ],
+  'TaskDependencyQueryApi.dependencyEligibility': 'src/panels/right/InspectorDependencies.ts',
 };
 
 function source(path: string): string {

@@ -1,8 +1,10 @@
 import type { App } from 'obsidian';
 import { Component, Notice, setIcon } from 'obsidian';
-import type { AppState, InspectorHistoryFrame, TaskNodeDragPayload } from '../app/AppState';
+import type { AppState, InspectorHistoryFrame } from '../app/AppState';
 import type { LinkToken } from '../markdown/links';
+import { InspectorDependencies } from './right/InspectorDependencies';
 import { InspectorPlanningSurfaces } from './right/InspectorPlanningSurfaces';
+import { renderRowRemove } from './right/inspectorRowRemove';
 import type {
   AddDateField,
   PlanningControlKey,
@@ -32,8 +34,6 @@ import {
   type TaskCommand,
   type TaskCommandResult,
   type TaskCommentSnapshot,
-  type TaskDependencyProjection,
-  type TaskDependencyRelation,
   type TaskNodeRef,
   type TaskPatch,
   type TaskPriority,
@@ -47,13 +47,7 @@ import {
   insertAtCaret,
   whenPasteSettled,
 } from '../ui/attachmentDrop';
-import {
-  dependencySearchOptions,
-  focusWithoutScroll,
-  mountDependencySearch,
-  type DependencyPickerCommitResult,
-  type DependencySearchHandle,
-} from '../ui/dependencySearch';
+import { type DependencyPickerCommitResult } from '../ui/dependencySearch';
 import { isImeOwnedEvent } from '../ui/ime';
 import { createInlineTaskUndo, type InlineUndoPosition } from '../ui/inlineTaskUndo';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
@@ -68,12 +62,7 @@ import {
   presentTaskCommandResult,
   requestTaskCompletion,
 } from '../ui/taskCommandResult';
-import {
-  dependencyCompletionBlocked,
-  dependencyCountPresentation,
-  dependencyDirectionLabel,
-  dependencyRelationPresentation,
-} from '../ui/taskDependencyPresentation';
+import { dependencyCompletionBlocked } from '../ui/taskDependencyPresentation';
 import {
   createRightPanelDraftRebaseContext,
   draftIdentity,
@@ -94,11 +83,6 @@ import {
   type TrackedNode,
   type TrackingSurface,
 } from '../ui/timeTracking/TimeBadge';
-
-interface DependencyDisclosureState {
-  readonly selectionKey: string;
-  readonly latched: boolean;
-}
 
 interface RightPanelOptions {
   readonly state: AppState;
@@ -162,29 +146,6 @@ interface SubmittedDraft {
   dismissed?: boolean;
   epoch: number;
   consumed: boolean;
-}
-
-function updateDependencyBadgeCounts(
-  body: HTMLButtonElement,
-  counts: ReturnType<typeof dependencyCountPresentation>,
-): void {
-  const lock = body.querySelector<HTMLElement>('.abyss-dep-lock') as HTMLElement;
-  const blockedBy = body.querySelector<HTMLElement>(
-    '[data-dependency-count="blocked-by"]',
-  ) as HTMLElement;
-  const divider = body.querySelector<HTMLElement>('.abyss-dep-divider') as HTMLElement;
-  const blocks = body.querySelector<HTMLElement>('[data-dependency-count="blocks"]') as HTMLElement;
-  const isEmpty = counts.blockedBy === 0 && counts.blocks === 0;
-  let lockClass = 'abyss-dep-lock';
-  if (counts.blockedBy > 0) lockClass += ' abyss-dep-count-blocked-by';
-  else if (counts.blocks > 0) lockClass += ' abyss-dep-count-blocks';
-  lock.className = lockClass;
-  blockedBy.setText(String(counts.blockedBy));
-  blockedBy.className = isEmpty ? 'abyss-dep-count' : 'abyss-dep-count-blocked-by';
-  divider.toggleAttribute('hidden', isEmpty);
-  blocks.setText(String(counts.blocks));
-  blocks.className = isEmpty ? 'abyss-dep-count' : 'abyss-dep-count-blocks';
-  blocks.toggleAttribute('hidden', isEmpty);
 }
 
 function rootRefForPlanningTarget(target: PlanningTarget): TaskRef {
@@ -350,9 +311,6 @@ export class RightPanel {
   private timeBadge_abyssPrivate: TimeBadgeHandle | undefined;
   private off_abyssPrivate?: () => void;
   private offDependencyQueries_abyssPrivate: (() => void) | undefined;
-  private dependencySearch_abyssPrivate: DependencySearchHandle | undefined;
-  private dependencySearchAnchor_abyssPrivate = '.abyss-dep-badge-body';
-  private dependencyDisclosure_abyssPrivate: DependencyDisclosureState | undefined;
   private draggingSub_abyssPrivate: SubtaskSnapshot | null = null;
   private endTaskDrag_abyssPrivate: (() => void) | undefined;
   private md_abyssPrivate = new Component();
@@ -368,6 +326,7 @@ export class RightPanel {
   private detachedAnnouncement_abyssPrivate = '';
   private detachedFocusTimer_abyssPrivate: number | undefined;
 
+  private readonly dependencies_abyssPrivate: InspectorDependencies;
   private readonly planningSurfaces_abyssPrivate: InspectorPlanningSurfaces;
 
   constructor(options: RightPanelOptions) {
@@ -413,12 +372,10 @@ export class RightPanel {
         timeBadge: () => this.timeBadge_abyssPrivate,
         formatDate: (date) => this.formatDate_abyssPrivate(date),
         closeAttachedSearch: () => {
-          if (this.dependencySearch_abyssPrivate?.element.parentElement != null)
-            this.dependencySearch_abyssPrivate.close(false);
+          this.dependencies_abyssPrivate.closeAttachedSearch();
         },
         closeSearchSurface: (surface) => {
-          if (surface === this.dependencySearch_abyssPrivate?.element)
-            this.dependencySearch_abyssPrivate.close(false);
+          this.dependencies_abyssPrivate.closeSearchSurface(surface);
         },
       },
       commands: {
@@ -437,13 +394,49 @@ export class RightPanel {
         deleteTask: (task) => this.deleteTask_abyssPrivate(task),
       },
     });
+    this.dependencies_abyssPrivate = this.createDependencies_abyssPrivate();
+  }
+
+  private createDependencies_abyssPrivate(): InspectorDependencies {
+    return new InspectorDependencies({
+      state: this.state_abyssPrivate,
+      queries: this.tasks_abyssPrivate?.queries,
+      statusRegistry: this.statusRegistry_abyssPrivate,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
+      surfaces: this.planningSurfaces_abyssPrivate,
+      host: {
+        root: () => this.el_abyssPrivate,
+        mounted: () => this.mounted_abyssPrivate,
+        dependencyTask: (stack) => this.dependencyTask_abyssPrivate(stack),
+        isBlocked: (task) => this.isDependencyBlocked_abyssPrivate(task),
+        detachUndo: () => {
+          this.undo_abyssPrivate.detach();
+        },
+        renderUndo: () => {
+          this.undo_abyssPrivate.render(this.el_abyssPrivate);
+        },
+        refreshTimeBadge: () => this.timeBadge_abyssPrivate?.update(),
+        finishTaskDrag: () => {
+          this.finishTaskDrag_abyssPrivate();
+        },
+        setTaskDragCleanup: (cleanup) => {
+          this.setTaskDragCleanup_abyssPrivate(cleanup);
+        },
+      },
+      commands: {
+        executeDependencyCommand: (command, position) =>
+          this.executeDependencyCommand_abyssPrivate(command, position),
+        createDependencySubtask: (text, direction) =>
+          this.createDependencySubtask_abyssPrivate(text, direction),
+      },
+    });
   }
 
   mount(container: HTMLElement): void {
     this.el_abyssPrivate = container;
     this.mounted_abyssPrivate = true;
     this.mountTimeBadge_abyssPrivate(container);
-    this.updateDependencyDisclosureSelection_abyssPrivate(
+    this.dependencies_abyssPrivate.updateDisclosureSelection(
       this.state_abyssPrivate.get('taskStack'),
       false,
     );
@@ -456,7 +449,7 @@ export class RightPanel {
         sameTaskNodeRef(taskNodeRef(prior), taskNodeRef(selected));
       const continuesOwnedSelection = this.consumeOwnedSelection_abyssPrivate(next);
       const continuesSelection = sameSelection || continuesOwnedSelection;
-      this.updateDependencyDisclosureSelection_abyssPrivate(next, continuesSelection);
+      this.dependencies_abyssPrivate.updateDisclosureSelection(next, continuesSelection);
       const statusFocus = sameSelection
         ? this.planningSurfaces_abyssPrivate.statusFocusTarget(previous)
         : undefined;
@@ -477,8 +470,8 @@ export class RightPanel {
     });
     const offDrag = this.state_abyssPrivate.on('draggingTaskNode', (next, previous) => {
       if (next?.source === 'center-card' || previous?.source === 'center-card')
-        this.refreshDependencies_abyssPrivate();
-      else this.clearDependencyDropClasses_abyssPrivate();
+        this.dependencies_abyssPrivate.refresh();
+      else this.dependencies_abyssPrivate.clearDropClasses();
     });
     this.off_abyssPrivate = () => {
       offSelection();
@@ -488,7 +481,7 @@ export class RightPanel {
     this.offDependencyQueries_abyssPrivate = this.tasks_abyssPrivate?.queries.subscribe(() => {
       this.refreshInspectorHistory();
       queueMicrotask(() => {
-        if (this.mounted_abyssPrivate) this.refreshDependencies_abyssPrivate();
+        if (this.mounted_abyssPrivate) this.dependencies_abyssPrivate.refresh();
       });
     });
     this.render_abyssPrivate();
@@ -503,8 +496,7 @@ export class RightPanel {
       if (this.undoConvergence_abyssPrivate?.command?.type !== 'restore-subtask')
         this.undo_abyssPrivate.clear();
       if (!continuesOwnedSelection) {
-        this.dependencySearch_abyssPrivate?.destroy();
-        this.dependencySearch_abyssPrivate = undefined;
+        this.dependencies_abyssPrivate.cancelSearch();
         this.planningSurfaces_abyssPrivate.clearRecurrenceIntent();
       }
     }
@@ -562,13 +554,12 @@ export class RightPanel {
     this.mounted_abyssPrivate = false;
     this.planningSurfaces_abyssPrivate.resetRenderedControls();
     this.planningSurfaces_abyssPrivate.clearRecurrenceIntent();
-    this.endTaskDrag_abyssPrivate?.();
+    this.finishTaskDrag_abyssPrivate();
     this.completionConfirmationAbortController_abyssPrivate.abort();
     this.off_abyssPrivate?.();
     this.offDependencyQueries_abyssPrivate?.();
-    this.dependencySearch_abyssPrivate?.destroy();
-    this.dependencySearch_abyssPrivate = undefined;
-    this.dependencyDisclosure_abyssPrivate = undefined;
+    this.dependencies_abyssPrivate.cancelSearch();
+    this.dependencies_abyssPrivate.clearDisclosure();
     if (this.detachedFocusTimer_abyssPrivate !== undefined)
       window.clearTimeout(this.detachedFocusTimer_abyssPrivate);
     this.planningSurfaces_abyssPrivate.clearAnchoredSurfaces();
@@ -1173,13 +1164,7 @@ export class RightPanel {
     this.restoredFocusTimer_abyssPrivate = undefined;
     this.undo_abyssPrivate.detach();
     this.planningSurfaces_abyssPrivate.resetRenderedControls();
-    const search = this.dependencySearch_abyssPrivate;
-    const focused = this.el_abyssPrivate.ownerDocument.activeElement as HTMLElement | null;
-    const searchFocus = search?.element.contains(focused) === true ? focused : null;
-    if (search !== undefined) {
-      this.planningSurfaces_abyssPrivate.releasePlacement(search.element);
-      search.element.remove();
-    }
+    this.dependencies_abyssPrivate.detachSearchForRender();
     this.md_abyssPrivate.unload();
     this.md_abyssPrivate = new Component();
     this.md_abyssPrivate.load();
@@ -1197,11 +1182,7 @@ export class RightPanel {
     }
     this.renderTask_abyssPrivate(task, stack, this.commentTimeContext_abyssPrivate?.());
     this.renderDetachedDraftTray_abyssPrivate();
-    if (search !== undefined) {
-      this.el_abyssPrivate.append(search.element);
-      search.refresh();
-      this.positionDependencySearch_abyssPrivate(search.element, searchFocus);
-    }
+    this.dependencies_abyssPrivate.reattachSearchAfterRender();
     this.planningSurfaces_abyssPrivate.restoreRenderFocus(statusFocus, controls);
   }
 
@@ -1379,7 +1360,7 @@ export class RightPanel {
     this.renderTaskHeader_abyssPrivate(task);
     this.renderTaskMetadata_abyssPrivate(task, stack);
     this.renderDescriptionSection_abyssPrivate(task);
-    this.renderDependencySections_abyssPrivate();
+    this.dependencies_abyssPrivate.renderSections();
     this.renderSubtaskSection_abyssPrivate(task);
     this.renderCommentSection_abyssPrivate(task, commentTimeContext);
     this.undo_abyssPrivate.render(this.el_abyssPrivate);
@@ -1556,7 +1537,7 @@ export class RightPanel {
       this.timeBadge_abyssPrivate?.render(chips);
       this.planningSurfaces_abyssPrivate.registerTrackingControls();
       chips.createSpan({ cls: 'abyss-chip abyss-dep-badge' });
-      this.updateDependencyBadge_abyssPrivate();
+      this.dependencies_abyssPrivate.updateBadge();
     }
     this.planningSurfaces_abyssPrivate.renderPriorityChip(chips, task);
     this.planningSurfaces_abyssPrivate.renderRecurrenceChip(chips, task, stack);
@@ -1582,27 +1563,6 @@ export class RightPanel {
     });
   }
 
-  private updateDependencyDisclosureSelection_abyssPrivate(
-    stack: readonly TaskLike[],
-    preserveLatch: boolean,
-  ): void {
-    const selected = stack[stack.length - 1];
-    if (selected === undefined) {
-      this.dependencyDisclosure_abyssPrivate = undefined;
-      return;
-    }
-    this.dependencyDisclosure_abyssPrivate = {
-      selectionKey: JSON.stringify(taskNodeRef(selected)),
-      latched: preserveLatch && this.dependencyDisclosure_abyssPrivate?.latched === true,
-    };
-  }
-
-  private latchDependencyDisclosure_abyssPrivate(): void {
-    const disclosure = this.dependencyDisclosure_abyssPrivate;
-    if (disclosure === undefined || disclosure.latched) return;
-    this.dependencyDisclosure_abyssPrivate = { ...disclosure, latched: true };
-  }
-
   private dependencyTask_abyssPrivate(
     stack: readonly TaskLike[] = this.state_abyssPrivate.get('taskStack'),
   ): TaskLike | undefined {
@@ -1616,416 +1576,6 @@ export class RightPanel {
         preserveDependencyChanges: resolution.evidence === 'authority-transition',
       });
     return currentStack.length === stack.length ? currentStack[currentStack.length - 1] : undefined;
-  }
-
-  private dependencyProjection_abyssPrivate(): TaskDependencyProjection | undefined {
-    const task = this.dependencyTask_abyssPrivate();
-    return task === undefined
-      ? undefined
-      : this.tasks_abyssPrivate?.queries.dependencies(taskNodeRef(task));
-  }
-
-  private updateDependencyBadge_abyssPrivate(): void {
-    const badge = this.el_abyssPrivate.querySelector<HTMLElement>('.abyss-dep-badge');
-    const projection = this.dependencyProjection_abyssPrivate();
-    if (badge === null || projection === undefined) return;
-    const body =
-      badge.querySelector<HTMLButtonElement>('.abyss-dep-badge-body') ??
-      this.createDependencyBadgeBody_abyssPrivate(badge);
-    const counts = dependencyCountPresentation(projection);
-    body.setAttribute('aria-label', counts.ariaLabel);
-    body.title = counts.title;
-    body.setAttribute('aria-expanded', String(this.dependencySearch_abyssPrivate !== undefined));
-    updateDependencyBadgeCounts(body, counts);
-    this.updateDependencyBadgeAdd_abyssPrivate(badge, projection);
-  }
-
-  private createDependencyBadgeBody_abyssPrivate(badge: HTMLElement): HTMLButtonElement {
-    const body = badge.createEl('button', {
-      cls: 'abyss-dep-badge-body',
-      attr: { type: 'button', 'aria-haspopup': 'dialog' },
-    });
-    body.createSpan({ cls: 'abyss-dep-lock', text: '🔒', attr: { 'aria-hidden': 'true' } });
-    for (const [name, direction] of [
-      ['count-blocked-by', 'blocked-by'],
-      ['divider', undefined],
-      ['count-blocks', 'blocks'],
-    ] as const)
-      body.createSpan({
-        cls: `abyss-dep-${name}`,
-        attr: {
-          'aria-hidden': 'true',
-          ...(direction !== undefined && { 'data-dependency-count': direction }),
-        },
-      });
-    body.addEventListener('click', () => {
-      this.showDependencySearch_abyssPrivate();
-    });
-    return body;
-  }
-
-  private updateDependencyBadgeAdd_abyssPrivate(
-    badge: HTMLElement,
-    projection: TaskDependencyProjection,
-  ): void {
-    const plus = badge.querySelector('.abyss-dep-badge-add');
-    const sectionsExist =
-      this.dependencySectionsDisclosed_abyssPrivate() ||
-      projection.blockedBy.length > 0 ||
-      projection.blocks.length > 0;
-    if (sectionsExist) plus?.remove();
-    else if (plus === null) {
-      const add = badge.createEl('button', {
-        cls: 'abyss-dep-badge-add',
-        text: '+',
-        attr: { type: 'button', 'aria-label': 'Add dependency sections', title: 'Add dependency' },
-      });
-      add.addEventListener('click', () => {
-        this.dependencySearch_abyssPrivate?.close(false);
-        this.latchDependencyDisclosure_abyssPrivate();
-        this.refreshDependencies_abyssPrivate();
-        this.el_abyssPrivate.querySelector<HTMLButtonElement>('.abyss-dep-add')?.focus();
-      });
-    }
-  }
-
-  private renderDependencySections_abyssPrivate(): void {
-    const task = this.dependencyTask_abyssPrivate();
-    const projection = this.dependencyProjection_abyssPrivate();
-    if (task === undefined || projection === undefined) return;
-    if (projection.blockedBy.length > 0 || projection.blocks.length > 0)
-      this.latchDependencyDisclosure_abyssPrivate();
-    for (const direction of ['blocked-by', 'blocks'] as const) {
-      const relations = direction === 'blocked-by' ? projection.blockedBy : projection.blocks;
-      if (relations.length === 0 && !this.dependencySectionsDisclosed_abyssPrivate()) continue;
-      this.renderDependencySection_abyssPrivate(direction, relations, taskNodeRef(task));
-    }
-  }
-
-  private dependencySectionsDisclosed_abyssPrivate(): boolean {
-    return (
-      this.dependencyDisclosure_abyssPrivate?.latched === true ||
-      this.state_abyssPrivate.get('draggingTaskNode')?.source === 'center-card'
-    );
-  }
-
-  private renderDependencySection_abyssPrivate(
-    direction: DependencyDirection,
-    relations: readonly TaskDependencyRelation[],
-    current: TaskNodeRef,
-  ): void {
-    const section = this.el_abyssPrivate.createDiv({
-      cls: 'abyss-right-section abyss-dep-section',
-      attr: { 'data-dependency-direction': direction },
-    });
-    this.bindDependencyDrop_abyssPrivate(section, direction);
-    section
-      .createDiv({ cls: 'abyss-right-section-header' })
-      .createSpan({ cls: 'abyss-right-section-label', text: dependencyDirectionLabel(direction) });
-    const list = section.createDiv({ cls: 'abyss-subtask-list' });
-    for (const relation of relations)
-      this.renderDependencyRow_abyssPrivate(list, relation, direction, current);
-    const add = section.createEl('button', {
-      cls: 'abyss-subtask-add-row abyss-dep-add',
-      attr: {
-        type: 'button',
-        'aria-label': `Add dependency: ${dependencyDirectionLabel(direction)}`,
-        'aria-haspopup': 'dialog',
-      },
-    });
-    add.createSpan({ cls: 'abyss-subtask-add-icon', text: '+' });
-    add.createSpan({ cls: 'abyss-subtask-add-label', text: 'Add dependency' });
-    add.addEventListener('click', () => {
-      this.showDependencySearch_abyssPrivate(direction);
-    });
-    const subtasks = this.el_abyssPrivate.querySelector('.abyss-subtask-section');
-    if (subtasks !== null) this.el_abyssPrivate.insertBefore(section, subtasks);
-  }
-
-  private dependencyDropCommand_abyssPrivate(
-    direction: DependencyDirection,
-  ): Extract<TaskCommand, { type: 'add-dependency' | 'reverse-dependency' }> | undefined {
-    const payload = this.state_abyssPrivate.get('draggingTaskNode');
-    const current = this.dependencyTask_abyssPrivate();
-    if (payload === null || current === undefined) return undefined;
-    if (payload.source === 'inspector-relation') {
-      const { relation } = payload;
-      if (
-        relation.direction === direction ||
-        !sameTaskNodeRef(
-          taskNodeRef(current),
-          relation.direction === 'blocked-by' ? relation.dependent : relation.blocker,
-        )
-      )
-        return undefined;
-      return {
-        type: 'reverse-dependency',
-        blocker: relation.blocker,
-        dependent: relation.dependent,
-        dependencyId: relation.dependencyId,
-      };
-    }
-    return {
-      type: 'add-dependency',
-      blocker: direction === 'blocked-by' ? payload.task.target : taskNodeRef(current),
-      dependent: direction === 'blocked-by' ? taskNodeRef(current) : payload.task.target,
-    };
-  }
-
-  private dependencyDropAllowed_abyssPrivate(
-    command: ReturnType<RightPanel['dependencyDropCommand_abyssPrivate']>,
-  ): boolean {
-    if (command === undefined) return false;
-    return (
-      (command.type === 'reverse-dependency'
-        ? this.tasks_abyssPrivate?.queries.dependencyEligibility(
-            command.dependent,
-            command.blocker,
-            { without: command },
-          )
-        : this.tasks_abyssPrivate?.queries.dependencyEligibility(command.blocker, command.dependent)
-      )?.type === 'allowed'
-    );
-  }
-
-  private clearDependencyDropClasses_abyssPrivate(): void {
-    this.el_abyssPrivate.querySelectorAll('.abyss-dep-section').forEach((section) => {
-      section.removeClass('is-drop-target', 'is-drop-disabled');
-    });
-  }
-
-  private bindDependencyDrop_abyssPrivate(
-    section: HTMLElement,
-    direction: DependencyDirection,
-  ): void {
-    let checked: TaskNodeDragPayload | null = null;
-    let allowed = false;
-    const preview = (event: DragEvent): void => {
-      this.clearDependencyDropClasses_abyssPrivate();
-      const command = this.dependencyDropCommand_abyssPrivate(direction);
-      if (command === undefined || this.tasks_abyssPrivate === undefined) return;
-      const payload = this.state_abyssPrivate.get('draggingTaskNode');
-      if (checked !== payload) {
-        checked = payload;
-        allowed = this.dependencyDropAllowed_abyssPrivate(command);
-      }
-      section.addClass(allowed ? 'is-drop-target' : 'is-drop-disabled');
-      if (allowed) event.preventDefault();
-    };
-    section.addEventListener('dragenter', preview);
-    section.addEventListener('dragover', preview);
-    section.addEventListener('dragleave', (event) => {
-      if (!section.contains(event.relatedTarget as Node | null))
-        section.removeClass('is-drop-target', 'is-drop-disabled');
-    });
-    section.addEventListener('drop', (event) => {
-      const command = this.dependencyDropCommand_abyssPrivate(direction);
-      this.clearDependencyDropClasses_abyssPrivate();
-      if (command !== undefined && this.dependencyDropAllowed_abyssPrivate(command)) {
-        event.preventDefault();
-        event.stopPropagation();
-        runAsyncAction(
-          this.commitDependencyDrop_abyssPrivate(command),
-          'Could not update dependency',
-        );
-      }
-      if (this.state_abyssPrivate.get('draggingTaskNode') !== null)
-        this.state_abyssPrivate.set('draggingTaskNode', null);
-    });
-  }
-
-  private async commitDependencyDrop_abyssPrivate(
-    command: Extract<TaskCommand, { type: 'add-dependency' | 'reverse-dependency' }>,
-  ): Promise<void> {
-    const selection = this.state_abyssPrivate.get('taskStack');
-    const committed = await this.executeDependencyCommand_abyssPrivate(command);
-    if (!committed || !this.mounted_abyssPrivate) return;
-    const submitted = this.dependencyTask_abyssPrivate(selection);
-    const current = this.dependencyTask_abyssPrivate();
-    if (
-      submitted === undefined ||
-      current === undefined ||
-      !sameTaskNodeRef(taskNodeRef(submitted), taskNodeRef(current))
-    )
-      return;
-    this.refreshDependencies_abyssPrivate();
-  }
-
-  private renderDependencyRow_abyssPrivate(
-    container: HTMLElement,
-    relation: TaskDependencyRelation,
-    direction: DependencyDirection,
-    current: TaskNodeRef,
-  ): void {
-    const presentation = dependencyRelationPresentation(relation);
-    const row = container.createDiv({
-      cls: `abyss-subtask-row abyss-dep-row${presentation.unavailable ? ' is-unavailable' : ''}`,
-      attr: { 'data-state': presentation.state },
-    });
-    if (relation.type === 'resolved') {
-      this.bindRelationDrag_abyssPrivate(row, relation, direction, current);
-      renderStatusMarker(row, {
-        task: relation.task.node,
-        registry: this.statusRegistry_abyssPrivate,
-        interactive: 'menu',
-        onLeftClick: () => {},
-        onContextMenu: (event) => {
-          this.planningSurfaces_abyssPrivate.openDependencyStatusMenu(event, relation.task.node);
-        },
-      });
-      row.addEventListener('click', (event) => {
-        event.stopPropagation();
-        const previous = this.state_abyssPrivate.get('taskStack');
-        this.state_abyssPrivate.openInspectorDependency(relation.task);
-        if (this.state_abyssPrivate.get('taskStack') !== previous)
-          this.el_abyssPrivate.querySelector<HTMLElement>('.abyss-inspector-back')?.focus();
-      });
-    }
-    row.createEl(relation.type === 'resolved' ? 'button' : 'span', {
-      cls: `abyss-subtask-label abyss-dep-title${presentation.done ? ' is-done' : ''}`,
-      text: presentation.title,
-      attr: {
-        title: presentation.title,
-        ...(relation.type === 'resolved' ? { type: 'button' } : {}),
-      },
-    });
-    if (presentation.unavailable)
-      row.createSpan({
-        cls: 'abyss-dep-id',
-        text: relation.dependencyId,
-        attr: { title: relation.dependencyId },
-      });
-    const dependent =
-      direction === 'blocks' && relation.type === 'resolved' ? relation.task.target : current;
-    this.renderRowRemove_abyssPrivate(
-      row,
-      'abyss-dep-remove',
-      {
-        label: presentation.removeLabel,
-        title: presentation.removeLabel,
-        failure: 'Could not remove dependency',
-      },
-      () =>
-        this.executeDependencyCommand_abyssPrivate(
-          {
-            type: 'remove-dependency',
-            dependent,
-            dependencyId: relation.dependencyId,
-          },
-          {
-            list: `[data-dependency-direction="${direction}"] .abyss-subtask-list`,
-            index: [...container.querySelectorAll('.abyss-dep-row')].indexOf(row),
-            title: relation.type === 'resolved' ? presentation.title : relation.dependencyId,
-          },
-        ),
-    );
-  }
-
-  private bindRelationDrag_abyssPrivate(
-    row: HTMLElement,
-    relation: Extract<TaskDependencyRelation, { type: 'resolved' }>,
-    direction: DependencyDirection,
-    current: TaskNodeRef,
-  ): void {
-    row.draggable = true;
-    row.addEventListener('dragstart', (event) => {
-      event.stopPropagation();
-      this.endTaskDrag_abyssPrivate?.();
-      row.addClass('is-dragging');
-      this.endTaskDrag_abyssPrivate = startTaskNodeDrag(
-        this.state_abyssPrivate,
-        this.el_abyssPrivate,
-        row,
-        {
-          payload: {
-            source: 'inspector-relation',
-            task: relation.task,
-            relation: {
-              direction,
-              dependencyId: relation.dependencyId,
-              blocker: direction === 'blocked-by' ? relation.task.target : current,
-              dependent: direction === 'blocked-by' ? current : relation.task.target,
-            },
-          },
-          onEnd: () => {
-            row.removeClass('is-dragging');
-          },
-        },
-      );
-    });
-  }
-
-  private refreshDependencies_abyssPrivate(): void {
-    this.undo_abyssPrivate.detach();
-    this.planningSurfaces_abyssPrivate.refreshStatusMarkers((task) =>
-      this.isDependencyBlocked_abyssPrivate(task),
-    );
-    this.updateDependencyBadge_abyssPrivate();
-    this.timeBadge_abyssPrivate?.update();
-    this.planningSurfaces_abyssPrivate.closeDependencyStatusMenu();
-    this.el_abyssPrivate.querySelectorAll('.abyss-dep-section').forEach((section) => {
-      section.remove();
-    });
-    this.renderDependencySections_abyssPrivate();
-    this.dependencySearch_abyssPrivate?.refresh();
-    this.undo_abyssPrivate.render(this.el_abyssPrivate);
-    this.positionDependencySearch_abyssPrivate();
-  }
-
-  private showDependencySearch_abyssPrivate(direction?: DependencyDirection): void {
-    this.planningSurfaces_abyssPrivate.clearPopovers();
-    this.dependencySearchAnchor_abyssPrivate =
-      direction === undefined
-        ? '.abyss-dep-badge-body'
-        : `[data-dependency-direction="${direction}"] .abyss-dep-add`;
-    this.dependencySearch_abyssPrivate = mountDependencySearch(this.el_abyssPrivate, {
-      direction: direction ?? 'blocked-by',
-      canChangeDirection: direction === undefined,
-      options: (query, chosen) => {
-        const current = this.dependencyTask_abyssPrivate();
-        const tasks = this.tasks_abyssPrivate;
-        if (tasks === undefined || current === undefined) return [];
-        return dependencySearchOptions({
-          current: taskNodeRef(current),
-          direction: chosen,
-          query,
-          tasks: tasks.queries.listNodes(),
-          eligibility: (blocker, dependent) =>
-            tasks.queries.dependencyEligibility(blocker, dependent),
-        });
-      },
-      selectExisting: async (option, chosen) => {
-        const current = this.dependencyTask_abyssPrivate();
-        if (current === undefined)
-          return { type: 'validation-error', message: 'The current task is no longer available.' };
-        const committed = await this.executeDependencyCommand_abyssPrivate({
-          type: 'add-dependency',
-          blocker: chosen === 'blocked-by' ? option.task.target : taskNodeRef(current),
-          dependent: chosen === 'blocked-by' ? taskNodeRef(current) : option.task.target,
-        });
-        return { type: committed ? 'committed' : 'failed' };
-      },
-      createNew: (text, chosen) => this.createDependencySubtask_abyssPrivate(text, chosen),
-      onClose: (restoreFocus) => {
-        const surface = this.dependencySearch_abyssPrivate?.element;
-        if (surface !== undefined) this.planningSurfaces_abyssPrivate.releasePlacement(surface);
-        this.dependencySearch_abyssPrivate = undefined;
-        this.updateDependencyBadge_abyssPrivate();
-        if (restoreFocus) focusWithoutScroll(this.dependencyAnchor_abyssPrivate());
-      },
-      ownership: this.interactionOwnership_abyssPrivate,
-      position: (element) => {
-        this.positionDependencySearch_abyssPrivate(element);
-      },
-    });
-    this.updateDependencyBadge_abyssPrivate();
-  }
-
-  private dependencyAnchor_abyssPrivate(): HTMLElement | null {
-    return (
-      this.el_abyssPrivate.querySelector<HTMLElement>(this.dependencySearchAnchor_abyssPrivate) ??
-      this.el_abyssPrivate.querySelector<HTMLElement>('.abyss-dep-badge-body')
-    );
   }
 
   private async createDependencySubtask_abyssPrivate(
@@ -2086,23 +1636,6 @@ export class RightPanel {
       this.restoreDraftState(draft, root);
     }
     if (result.changed) this.onSuccessfulMutation_abyssPrivate?.(root.ref);
-  }
-
-  private positionDependencySearch_abyssPrivate(
-    element = this.dependencySearch_abyssPrivate?.element,
-    focused?: HTMLElement | null,
-  ): void {
-    if (element === undefined) return;
-    const anchor = this.dependencyAnchor_abyssPrivate();
-    if (anchor !== null)
-      this.planningSurfaces_abyssPrivate.positionAnchoredSurface(element, anchor, 'below-start');
-    if (focused != null) {
-      focusWithoutScroll(
-        element.contains(focused) && !focused.matches(':disabled,[hidden]')
-          ? focused
-          : element.querySelector<HTMLElement>('input'),
-      );
-    }
   }
 
   private async executeDependencyCommand_abyssPrivate(
@@ -2412,30 +1945,6 @@ export class RightPanel {
     this.renderSubtaskContent_abyssPrivate(row, sub);
   }
 
-  private renderRowRemove_abyssPrivate(
-    container: HTMLElement,
-    cls: string,
-    { label, title, failure }: { label: string; title?: string; failure: string },
-    action: () => Promise<unknown>,
-  ): void {
-    const remove = container.createEl('button', {
-      cls,
-      attr: { type: 'button', 'aria-label': label, ...(title === undefined ? {} : { title }) },
-    });
-    setIcon(remove, 'x');
-    remove.addEventListener('click', (event) => {
-      event.stopPropagation();
-      if (remove.disabled) return;
-      remove.disabled = true;
-      runAsyncAction(
-        action().finally(() => {
-          remove.disabled = false;
-        }),
-        failure,
-      );
-    });
-  }
-
   private bindSubtaskDragAndDrop_abyssPrivate(
     row: HTMLElement,
     container: HTMLElement,
@@ -2478,24 +1987,29 @@ export class RightPanel {
     });
   }
 
+  private finishTaskDrag_abyssPrivate(): void {
+    this.endTaskDrag_abyssPrivate?.();
+  }
+
+  private setTaskDragCleanup_abyssPrivate(cleanup: () => void): void {
+    this.endTaskDrag_abyssPrivate = cleanup;
+  }
+
   private startSubtaskDrag_abyssPrivate(
     row: HTMLElement,
     container: HTMLElement,
     sub: SubtaskSnapshot,
     event: DragEvent,
   ): void {
-    this.endTaskDrag_abyssPrivate?.();
+    this.finishTaskDrag_abyssPrivate();
     this.draggingSub_abyssPrivate = sub;
     row.addClass('is-dragging');
     event.dataTransfer?.setData('text/plain', String(sub.ref.relativeLine));
     const stack = this.state_abyssPrivate.get('taskStack');
     const root = stack[0];
     if (root !== undefined && 'source' in root) {
-      this.endTaskDrag_abyssPrivate = startTaskNodeDrag(
-        this.state_abyssPrivate,
-        this.el_abyssPrivate,
-        row,
-        {
+      this.setTaskDragCleanup_abyssPrivate(
+        startTaskNodeDrag(this.state_abyssPrivate, this.el_abyssPrivate, row, {
           payload: {
             source: 'inspector-subtask',
             task: {
@@ -2512,7 +2026,7 @@ export class RightPanel {
               element.removeClass('drop-above', 'drop-below');
             });
           },
-        },
+        }),
       );
     }
   }
@@ -2535,7 +2049,7 @@ export class RightPanel {
       const stack = this.state_abyssPrivate.get('taskStack');
       this.state_abyssPrivate.updateInspectorSelection([...stack, sub]);
     });
-    this.renderRowRemove_abyssPrivate(
+    renderRowRemove(
       titleRow,
       'abyss-subtask-remove',
       { label: 'Delete sub-task', failure: 'Could not delete sub-task' },

@@ -10,6 +10,7 @@ import {
   type TaskResolution,
 } from '../src/tasks';
 import { TaskModal } from '../src/ui/TaskModal';
+import { noInteractionOwnership } from '../src/ui/interactionOwnership';
 import { rebuildTaskSelection, rootTaskRef } from '../src/ui/taskSelection';
 import {
   createCssReader,
@@ -2187,6 +2188,8 @@ describe('RightPanel dependency inspector', () => {
 
   it('keeps a search draft through a proven selection refresh and drops it on another task', async () => {
     const h = await harness('- [ ] Current\n- [ ] Candidate\n');
+    const release = vi.fn();
+    const acquire = vi.spyOn(noInteractionOwnership, 'acquire').mockReturnValue({ release });
     button(h.el, '.abyss-dep-badge-body').click();
     const input = search(h.el, 'Candidate');
     button(h.el, '[data-direction="blocks"]').click();
@@ -2204,8 +2207,12 @@ describe('RightPanel dependency inspector', () => {
     expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
     expect(input.value).toBe('Candidate');
     expect(activeDocument.activeElement).toBe(input);
+    expect(acquire).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
     h.state.set('taskStack', [h.node('Candidate').root]);
     expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
+    expect(acquire).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
   it.each(['main', 'invoking'] as const)(
