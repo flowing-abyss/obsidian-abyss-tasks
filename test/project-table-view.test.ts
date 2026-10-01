@@ -6953,4 +6953,29 @@ describe('ProjectsTableView', () => {
     expect(search.value).toBe('');
     expect(host.querySelector('[data-project-path="Projects/Needle.md"]')).not.toBeNull();
   });
+
+  it('shows the empty states only while a grouped Table lists no group', () => {
+    const { host, view, config } = mount([]);
+    const empty = () => host.querySelector<HTMLElement>('.abyss-projects-empty');
+    expect(config.projects.table.groupBy).toBe('status');
+    expect(empty()?.textContent).toBe('No projects yet');
+    expect(empty()?.getAttribute('colspan')).toBe(
+      String(host.querySelectorAll('.abyss-project-table thead th').length),
+    );
+
+    view.update([project({})]);
+    expect(empty()).toBeNull();
+    const search = expectDefined(host.querySelector<HTMLInputElement>('.abyss-center-search'));
+    search.value = 'nothing matches this';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(empty()?.textContent).toBe('No matching projects');
+
+    // Without grouping the model always lists its one group, so no empty state shows (finding 6).
+    config.projects.table.groupBy = 'none';
+    view.update([project({})]);
+    expect(host.querySelector('.abyss-project-table-row')).toBeNull();
+    expect(empty()).toBeNull();
+    view.update([]);
+    expect(empty()).toBeNull();
+  });
 });

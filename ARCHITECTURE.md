@@ -370,14 +370,30 @@ only when first requested.
 property-catalog subscription. The controller shares the toolbar, field renderer, editor boundary, mutation queues,
 receipt projection, and history across Table, Kanban, and Timeline. Each surface retains its own
 search, selection, organization, and viewport. Switching hides inactive surfaces instead of
-rebuilding them. Project gesture and creation timers use the owning window and release pending
+rebuilding them. The controller drives the Table, Kanban, and Timeline through one
+[surface contract](src/panels/projects/ProjectsOverviewSurface.ts): show and hide, a render whose
+hooks publish the toolbar statuses and project count and then settle the selection, the cell list
+and the mounted cells, cell reveal and scrolling, the editor frame, a created project's occurrence,
+and teardown. Selection, reveal, editing, and creation go through the active surface; Kanban and
+Timeline exist once first shown. The [Table surface](src/panels/projects/ProjectsTableSurface.ts)
+owns the Table's scroll, header, rows, window, and logical cells, and reaches the cell renderer,
+the header commands, and the row drag through its context.
+[Contract tests](test/project-overview-surface.test.ts) run the same cases on each surface; on the
+Table they also mount an offscreen row.
+Project gesture and creation timers use the owning window and release pending
 callbacks on disposal. A document without a window releases short gesture guards synchronously and does not
 retain creation requests or arm Kanban dragging. A dashboard temporarily detaches the overview and
 invalidates Timeline interaction authority; reattachment preserves the session but cannot revive an old queued gesture.
 
 Table owns a full expanded logical row/cell projection for selection, keyboard navigation, and
-clipboard commands, independently of mounted DOM. Its local `projectTableViewport` owns measured
-and estimated row offsets, bounded windows, and spacer geometry. Scroll reconciliation reuses the
+clipboard commands, independently of mounted DOM. The pure
+[overview cell lists](src/panels/projects/projectOverviewCells.ts) build it: rows in display order,
+cells with their selection identities, row and column orders, and a lookup index. Kanban and
+Timeline build their lists with the same module in each render, from the model and inputs they
+render with, so selection, range selection, paste, and Delete read one list in every view.
+[Parity tests](test/project-kanban-view.test.ts) compare each list with the cells the view mounts.
+The Table's local `projectTableViewport` owns measured and estimated row offsets, bounded windows,
+and spacer geometry. Scroll reconciliation reuses the
 retained model; data and group changes replace that sequence and clamp the viewport immediately.
 Group metadata remains available outside the window. Editors and native drag sources pin their
 occurrence rows until the interaction finishes; other evicted rows release listeners and Markdown
@@ -388,17 +404,19 @@ occurrence/header keys, measured heights, cumulative offsets, binary range looku
 segments. It keeps one range with 170px overscan and consumes that buffer before refilling it.
 Replacing the row sequence or accepting changed measurements invalidates the range; a viewport
 height change also forces recalculation. Measurements preserve the current row anchor, and the
-controller bounds measurement correction to two passes. Mounted rows stay bounded; full-collection
-sorting, grouping, counts, and logical cell projection still scale with the collection.
+Table surface bounds measurement correction to two passes. Mounted rows stay bounded;
+full-collection sorting, grouping, counts, and logical cell projection still scale with the
+collection.
 
 DOM identity alone does not preserve native focus: detaching and reinserting a retained row can
 blur its editor. Table reuses keyed spacer rows, patches only changed geometry, and removes obsolete
 spacers before ordering retained rows. Selection consumers, including Quick Capture, resolve logical
 cells rather than requiring mounted elements. Row mounting is needed only for rendering, focus,
-editing, and pointer interaction. These interaction rules belong to the controller, not the geometry
-helper; windowing alone is not a complete reusable view implementation.
+editing, and pointer interaction. These interaction rules belong to the Table surface, not the
+geometry helper; windowing alone is not a complete reusable view implementation.
 
-Regression entry points are [viewport geometry tests](test/project-table-viewport.test.ts) and
+Regression entry points are [overview cell tests](test/project-overview-cells.test.ts),
+[viewport geometry tests](test/project-table-viewport.test.ts), and
 [table interaction tests](test/project-table-view.test.ts). They cover buffer boundaries, group
 expansion/collapse, shrinking results, changed heights, offscreen bulk selection and Quick Capture,
 and retained editor/drag rows. Native validation additionally checks visible coverage after large
