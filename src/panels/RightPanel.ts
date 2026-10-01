@@ -1,10 +1,9 @@
 import type { App } from 'obsidian';
 import { Component, Notice, setIcon } from 'obsidian';
 import type { AppState, InspectorHistoryFrame } from '../app/AppState';
-import type { LinkToken } from '../markdown/links';
 import { InspectorDependencies } from './right/InspectorDependencies';
 import { InspectorPlanningSurfaces } from './right/InspectorPlanningSurfaces';
-import { renderRowRemove } from './right/inspectorRowRemove';
+import { InspectorSections } from './right/InspectorSections';
 import type {
   AddDateField,
   PlanningControlKey,
@@ -17,7 +16,6 @@ import type { StatusRegistry } from '../status/StatusRegistry';
 import {
   cloneTaskSnapshot,
   durationMinutes,
-  formatCommentTimeLabel,
   localTime,
   sameTaskNodeRef,
   type CommentRef,
@@ -41,17 +39,9 @@ import {
   type TaskSnapshot,
   type TaskTextTarget,
 } from '../tasks';
-import {
-  enableAttachmentDrop,
-  enableAttachmentPaste,
-  insertAtCaret,
-  whenPasteSettled,
-} from '../ui/attachmentDrop';
 import { type DependencyPickerCommitResult } from '../ui/dependencySearch';
-import { isImeOwnedEvent } from '../ui/ime';
 import { createInlineTaskUndo, type InlineUndoPosition } from '../ui/inlineTaskUndo';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
-import { LinkEditModal } from '../ui/LinkEditModal';
 import { rebuildOwnedTaskSelection } from '../ui/ownedTaskSelection';
 import { renderTaskText } from '../ui/renderTaskText';
 import { runAsyncAction } from '../ui/runAsyncAction';
@@ -74,7 +64,6 @@ import {
   type RightPanelDraftBundle,
   type RightPanelDraftState,
 } from '../ui/taskDraftContinuity';
-import { startTaskNodeDrag } from '../ui/taskNodeDrag';
 import { rebuildTaskSelection, rootTaskRef, taskNodeLine, taskNodeRef } from '../ui/taskSelection';
 import { taskRemovalInverse } from '../ui/taskUndoNotice';
 import {
@@ -104,28 +93,6 @@ interface TextDraftSnapshot {
   readonly selectionEnd: number;
   readonly hadFocus: boolean;
   readonly dirty: boolean;
-}
-
-class AsyncEditLifecycle {
-  private phase_abyssPrivate: 'idle' | 'saving' | 'closed' = 'idle';
-
-  begin(): boolean {
-    if (this.phase_abyssPrivate !== 'idle') return false;
-    this.phase_abyssPrivate = 'saving';
-    return true;
-  }
-
-  retry(): void {
-    if (this.phase_abyssPrivate === 'saving') this.phase_abyssPrivate = 'idle';
-  }
-
-  close(): void {
-    this.phase_abyssPrivate = 'closed';
-  }
-
-  isClosed(): boolean {
-    return this.phase_abyssPrivate === 'closed';
-  }
 }
 
 export interface RightPanelMutationLifecycle {
@@ -311,7 +278,6 @@ export class RightPanel {
   private timeBadge_abyssPrivate: TimeBadgeHandle | undefined;
   private off_abyssPrivate?: () => void;
   private offDependencyQueries_abyssPrivate: (() => void) | undefined;
-  private draggingSub_abyssPrivate: SubtaskSnapshot | null = null;
   private endTaskDrag_abyssPrivate: (() => void) | undefined;
   private md_abyssPrivate = new Component();
   private readonly onSuccessfulMutation_abyssPrivate: ((ref?: TaskRef) => void) | undefined;
@@ -326,6 +292,7 @@ export class RightPanel {
   private detachedAnnouncement_abyssPrivate = '';
   private detachedFocusTimer_abyssPrivate: number | undefined;
 
+  private readonly sections_abyssPrivate: InspectorSections;
   private readonly dependencies_abyssPrivate: InspectorDependencies;
   private readonly planningSurfaces_abyssPrivate: InspectorPlanningSurfaces;
 
@@ -395,6 +362,7 @@ export class RightPanel {
       },
     });
     this.dependencies_abyssPrivate = this.createDependencies_abyssPrivate();
+    this.sections_abyssPrivate = this.createSections_abyssPrivate();
   }
 
   private createDependencies_abyssPrivate(): InspectorDependencies {
@@ -428,6 +396,50 @@ export class RightPanel {
           this.executeDependencyCommand_abyssPrivate(command, position),
         createDependencySubtask: (text, direction) =>
           this.createDependencySubtask_abyssPrivate(text, direction),
+      },
+    });
+  }
+
+  private createSections_abyssPrivate(): InspectorSections {
+    return new InspectorSections({
+      app: this.app_abyssPrivate,
+      state: this.state_abyssPrivate,
+      statusRegistry: this.statusRegistry_abyssPrivate,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
+      host: {
+        root: () => this.el_abyssPrivate,
+        component: () => this.md_abyssPrivate,
+        renderTaskStatusMarker: (parent, task) => {
+          this.renderTaskStatusMarker_abyssPrivate(parent, task);
+        },
+        finishTaskDrag: () => {
+          this.finishTaskDrag_abyssPrivate();
+        },
+        setTaskDragCleanup: (cleanup) => {
+          this.setTaskDragCleanup_abyssPrivate(cleanup);
+        },
+        dismissEntrySubmission: (kind, target) => {
+          this.dismissEntrySubmission_abyssPrivate(kind, target);
+        },
+        cancelRestoredDraftFocus: (document) => {
+          clearOptionalTimer(document.defaultView, this.restoredFocusTimer_abyssPrivate);
+        },
+      },
+      commands: {
+        saveTaskTitle: (task, text) => this.saveTaskTitle_abyssPrivate(task, text),
+        appendToTitle: (task, text) => this.appendToTitle_abyssPrivate(task, text),
+        updateDescription: (task, text) => this.updateDescription_abyssPrivate(task, text),
+        addSubTask: (task, text) => this.addSubTask_abyssPrivate(task, text),
+        addComment: (task, text, list, input) =>
+          this.addComment_abyssPrivate(task, text, list, input),
+        updateComment: (task, comment, text) =>
+          this.updateComment_abyssPrivate(task, comment, text),
+        deleteComment: (task, comment) => this.deleteComment_abyssPrivate(task, comment),
+        deleteTask: (task) => this.deleteTask_abyssPrivate(task),
+        reorderSubTask: (parent, moved, target, position) =>
+          this.reorderSubTask_abyssPrivate(parent, moved, target, position),
+        executeLinkEdit: (target, occurrence, replacement) =>
+          this.executeLinkEdit_abyssPrivate(target, occurrence, replacement),
       },
     });
   }
@@ -1186,48 +1198,6 @@ export class RightPanel {
     this.planningSurfaces_abyssPrivate.restoreRenderFocus(statusFocus, controls);
   }
 
-  /** Wire clipboard paste-to-attach onto an editable textarea, inserting links at the caret. */
-  private enablePaste_abyssPrivate(el: HTMLTextAreaElement, task: TaskLike): void {
-    enableAttachmentPaste(el, {
-      app: this.app_abyssPrivate,
-      sourcePath: rootTaskRef(task).filePath,
-      onInsert: (links) => {
-        insertAtCaret(el, links);
-      },
-    });
-  }
-
-  private editLink_abyssPrivate(task: TaskLike, occ: number, token: LinkToken): void {
-    const target = taskNodeRef(task);
-    new LinkEditModal(
-      this.app_abyssPrivate,
-      token,
-      (newRaw) => {
-        runAsyncAction(this.executeLinkEdit_abyssPrivate({ type: 'title', target }, occ, newRaw));
-      },
-      rootTaskRef(task).filePath,
-      this.interactionOwnership_abyssPrivate,
-    ).open();
-  }
-
-  /** Edit a target-scoped link through the same revision-confirming task API as title edits. */
-  private editLinkInString_abyssPrivate(
-    target: TaskTextTarget,
-    occ: number,
-    token: LinkToken,
-    sourcePath: string,
-  ): void {
-    new LinkEditModal(
-      this.app_abyssPrivate,
-      token,
-      (newRaw) => {
-        runAsyncAction(this.executeLinkEdit_abyssPrivate(target, occ, newRaw));
-      },
-      sourcePath,
-      this.interactionOwnership_abyssPrivate,
-    ).open();
-  }
-
   private async executeLinkEdit_abyssPrivate(
     target: TaskTextTarget,
     occurrence: number,
@@ -1245,101 +1215,6 @@ export class RightPanel {
   }
 
   /** Description block: rendered markdown (clickable links) that becomes a textarea on click. */
-  private renderDescriptionBlock_abyssPrivate(section: HTMLElement, task: TaskLike): void {
-    const view = section.createDiv({ cls: 'abyss-right-desc abyss-right-desc-view' });
-    enableAttachmentDrop(view, {
-      app: this.app_abyssPrivate,
-      sourcePath: rootTaskRef(task).filePath,
-      onLinks: (links) => {
-        // The closure carries the observed revision; a concurrent edit is surfaced as a
-        // structured conflict instead of overwriting the changed block.
-        const current = task.description ?? '';
-        runAsyncAction(
-          this.updateDescription_abyssPrivate(
-            task,
-            current.trim().length > 0 ? `${current} ${links}` : links,
-          ),
-        );
-      },
-    });
-    const showView = (): void => {
-      this.showDescription_abyssPrivate(view, task);
-    };
-    view.addEventListener('click', (e) => {
-      if ((e.target as HTMLElement).closest('a') != null) return; // let links navigate
-      this.enterDescriptionEdit_abyssPrivate(section, view, task, showView);
-    });
-    showView();
-  }
-
-  private enterDescriptionEdit_abyssPrivate(
-    section: HTMLElement,
-    view: HTMLElement,
-    task: TaskLike,
-    showView: () => void,
-  ): void {
-    const start = view.offsetHeight;
-    view.hide();
-    const textarea = section.createEl('textarea', {
-      cls: 'abyss-right-desc abyss-right-desc-edit',
-    });
-    view.insertAdjacentElement('afterend', textarea);
-    textarea.value = task.description ?? '';
-    this.enablePaste_abyssPrivate(textarea, task);
-    textarea.setCssStyles({ height: `${Math.max(start, 60)}px` });
-    window.setTimeout(() => {
-      textarea.focus();
-    }, 0);
-    const lifecycle = new AsyncEditLifecycle();
-    const finish = async (save: boolean): Promise<void> => {
-      if (!lifecycle.begin()) return;
-      await whenPasteSettled(textarea);
-      const changed = textarea.value !== (task.description ?? '');
-      if (save && changed && !(await this.updateDescription_abyssPrivate(task, textarea.value))) {
-        lifecycle.retry();
-        textarea.focus();
-        return;
-      }
-      lifecycle.close();
-      textarea.remove();
-      view.show();
-      showView();
-    };
-    textarea.addEventListener('blur', () => {
-      runAsyncAction(finish(true));
-    });
-    textarea.addEventListener('keydown', (event) => {
-      if (event.key !== 'Escape' || isImeOwnedEvent(event)) return;
-      event.preventDefault();
-      runAsyncAction(finish(false));
-    });
-  }
-
-  private showDescription_abyssPrivate(view: HTMLElement, task: TaskLike): void {
-    const description = task.description ?? '';
-    if (description.trim().length === 0) {
-      view.empty();
-      view.addClass('abyss-right-desc-empty');
-      view.setText('Add a description…');
-      return;
-    }
-    view.removeClass('abyss-right-desc-empty');
-    renderTaskText(view, description, {
-      app: this.app_abyssPrivate,
-      sourcePath: rootTaskRef(task).filePath,
-      component: this.md_abyssPrivate,
-      onEditLink: (occurrence, token) => {
-        const target = taskNodeRef(task);
-        this.editLinkInString_abyssPrivate(
-          { type: 'description', target },
-          occurrence,
-          token,
-          rootTaskRef(task).filePath,
-        );
-      },
-    });
-  }
-
   private renderEmpty_abyssPrivate(): void {
     const empty = this.el_abyssPrivate.createDiv({ cls: 'abyss-right-empty' });
     const icon = empty.createDiv({ cls: 'abyss-right-empty-icon' });
@@ -1359,10 +1234,10 @@ export class RightPanel {
     this.renderBreadcrumb_abyssPrivate(stack);
     this.renderTaskHeader_abyssPrivate(task);
     this.renderTaskMetadata_abyssPrivate(task, stack);
-    this.renderDescriptionSection_abyssPrivate(task);
+    this.sections_abyssPrivate.renderDescriptionSection(task);
     this.dependencies_abyssPrivate.renderSections();
-    this.renderSubtaskSection_abyssPrivate(task);
-    this.renderCommentSection_abyssPrivate(task, commentTimeContext);
+    this.sections_abyssPrivate.renderSubtaskSection(task);
+    this.sections_abyssPrivate.renderCommentSection(task, commentTimeContext);
     this.undo_abyssPrivate.render(this.el_abyssPrivate);
   }
 
@@ -1397,7 +1272,7 @@ export class RightPanel {
         sourcePath: rootTaskRef(item).filePath,
         component: this.md_abyssPrivate,
         onEditLink: (occurrence, token) => {
-          this.editLink_abyssPrivate(item, occurrence, token);
+          this.sections_abyssPrivate.editLink(item, occurrence, token);
         },
       });
       crumb.addEventListener('click', () => {
@@ -1477,7 +1352,7 @@ export class RightPanel {
   private renderTaskHeader_abyssPrivate(task: TaskLike): void {
     const header = this.el_abyssPrivate.createDiv({ cls: 'abyss-right-header' });
     this.renderTaskStatusMarker_abyssPrivate(header, task);
-    this.renderTitleBlock_abyssPrivate(header, task);
+    this.sections_abyssPrivate.renderTitleBlock(header, task);
     const headerActions = header.createDiv({ cls: 'abyss-right-header-actions' });
     const menuBtn = headerActions.createEl('button', {
       cls: 'abyss-right-action-btn',
@@ -1660,83 +1535,6 @@ export class RightPanel {
     return result.type === 'ok';
   }
 
-  private renderDescriptionSection_abyssPrivate(task: TaskLike): void {
-    const descSection = this.el_abyssPrivate.createDiv({ cls: 'abyss-right-section' });
-    const descHeader = descSection.createDiv({ cls: 'abyss-right-section-header' });
-    descHeader.createSpan({ cls: 'abyss-right-section-label', text: 'Description' });
-    this.renderDescriptionBlock_abyssPrivate(descSection, task);
-  }
-
-  private renderSubtaskSection_abyssPrivate(task: TaskLike): void {
-    const subSection = this.el_abyssPrivate.createDiv({
-      cls: 'abyss-right-section abyss-subtask-section',
-    });
-    const subHeader = subSection.createDiv({ cls: 'abyss-right-section-header' });
-    subHeader.createSpan({ cls: 'abyss-right-section-label', text: 'Sub-tasks' });
-    const totalSubs = task.subtasks.length;
-    if (totalSubs > 0) {
-      const doneSubs = task.subtasks.filter((s) => s.status === 'done').length;
-      subHeader.createSpan({
-        cls: 'abyss-right-section-count',
-        text: `${doneSubs}/${totalSubs}`,
-      });
-    }
-    const subList = subSection.createDiv({ cls: 'abyss-subtask-list' });
-    for (const sub of task.subtasks) this.renderSubTask_abyssPrivate(subList, sub, task);
-    this.renderAddSubtaskControl_abyssPrivate(subSection, task);
-  }
-
-  private renderAddSubtaskControl_abyssPrivate(subSection: HTMLElement, task: TaskLike): void {
-    const addSubRow = subSection.createDiv({ cls: 'abyss-subtask-add-row' });
-    addSubRow.createSpan({ cls: 'abyss-subtask-add-icon', text: '+' });
-    addSubRow.createSpan({ cls: 'abyss-subtask-add-label', text: 'Add sub-task' });
-    addSubRow.addEventListener('click', () => {
-      this.openSubtaskInput_abyssPrivate(subSection, addSubRow, task);
-    });
-  }
-
-  private openSubtaskInput_abyssPrivate(
-    section: HTMLElement,
-    trigger: HTMLElement,
-    task: TaskLike,
-  ): void {
-    trigger.addClass('abyss-subtask-add-row--hidden');
-    const input = section.createEl('input', {
-      cls: 'abyss-subtask-new-input',
-      attr: { type: 'text', placeholder: 'New sub-task…' },
-    });
-    const lifecycle = new AsyncEditLifecycle();
-    const close = (): void => {
-      if (lifecycle.isClosed()) return;
-      lifecycle.close();
-      removeDismissal();
-      input.remove();
-      trigger.removeClass('abyss-subtask-add-row--hidden');
-    };
-    const commit = async (): Promise<void> => {
-      const text = input.value.trim();
-      if (text === '' || !lifecycle.begin()) return;
-      const succeeded = await this.addSubTask_abyssPrivate(task, text);
-      if (lifecycle.isClosed() || !input.isConnected) return;
-      lifecycle.retry();
-      if (!succeeded && input.ownerDocument.activeElement === input) input.focus();
-    };
-    const removeDismissal = this.registerEntryDismissal_abyssPrivate(
-      input,
-      task,
-      'new-subtask',
-      close,
-    );
-    this.md_abyssPrivate.register(close);
-    input.addEventListener('keydown', (event: KeyboardEvent) => {
-      if (event.key === 'Enter' && !isImeOwnedEvent(event)) {
-        event.preventDefault();
-        runAsyncAction(commit());
-      }
-    });
-    input.focus();
-  }
-
   private dismissEntrySubmission_abyssPrivate(
     kind: 'new-subtask' | 'new-comment',
     target: TaskNodeRef,
@@ -1753,435 +1551,12 @@ export class RightPanel {
     }
   }
 
-  private registerEntryDismissal_abyssPrivate(
-    input: HTMLInputElement | HTMLTextAreaElement,
-    task: TaskLike,
-    kind: 'new-subtask' | 'new-comment',
-    close: () => void,
-  ): () => void {
-    const document = input.ownerDocument;
-    const dismiss = (): void => {
-      this.dismissEntrySubmission_abyssPrivate(kind, taskNodeRef(task));
-      clearOptionalTimer(document.defaultView, this.restoredFocusTimer_abyssPrivate);
-      close();
-    };
-    const outside = (event: Event): void => {
-      if (
-        input.isConnected &&
-        event.target !== input &&
-        (event.type === 'focusin' || kind === 'new-subtask' || document.activeElement === input)
-      )
-        dismiss();
-    };
-    const escape = (raw: Event): void => {
-      const event = raw as KeyboardEvent;
-      if (event.key !== 'Escape' || isImeOwnedEvent(event)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      dismiss();
-    };
-    document.addEventListener('pointerdown', outside);
-    document.addEventListener('focusin', outside);
-    input.addEventListener('keydown', escape);
-    let listening = true;
-    const cleanup = (): void => {
-      if (!listening) return;
-      listening = false;
-      document.removeEventListener('pointerdown', outside);
-      document.removeEventListener('focusin', outside);
-      input.removeEventListener('keydown', escape);
-    };
-    this.md_abyssPrivate.register(cleanup);
-    return cleanup;
-  }
-
-  private renderCommentSection_abyssPrivate(
-    task: TaskLike,
-    commentTimeContext?: CommentTimeContext,
-  ): void {
-    const commentSection = this.el_abyssPrivate.createDiv({ cls: 'abyss-right-section' });
-    const commentHeader = commentSection.createDiv({ cls: 'abyss-right-section-header' });
-    commentHeader.createSpan({ cls: 'abyss-right-section-label', text: 'Comments' });
-    const commentCount = task.comments.length;
-    if (commentCount > 0) {
-      commentHeader.createSpan({
-        cls: 'abyss-right-section-count',
-        text: String(commentCount),
-      });
-    }
-    const commentList = commentSection.createDiv({ cls: 'abyss-comment-list' });
-    for (const comment of task.comments) {
-      this.renderComment_abyssPrivate(commentList, comment, task, commentTimeContext);
-    }
-    const commentInput = commentSection.createEl('textarea', {
-      cls: 'abyss-comment-input',
-      attr: { placeholder: 'Write a comment…', rows: '2' },
-    });
-    enableAttachmentDrop(commentInput, {
-      app: this.app_abyssPrivate,
-      sourcePath: rootTaskRef(task).filePath,
-      onLinks: (links) => {
-        commentInput.value = commentInput.value === '' ? links : `${commentInput.value} ${links}`;
-        commentInput.focus();
-      },
-    });
-    this.enablePaste_abyssPrivate(commentInput, task);
-    this.registerEntryDismissal_abyssPrivate(commentInput, task, 'new-comment', () => {
-      commentInput.blur();
-    });
-    commentInput.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && !e.shiftKey && !isImeOwnedEvent(e)) {
-        e.preventDefault();
-        const text = commentInput.value.trim();
-        if (text !== '') {
-          runAsyncAction(this.addComment_abyssPrivate(task, text, commentList, commentInput));
-        }
-      }
-    });
-  }
-
-  private renderTitleBlock_abyssPrivate(header: HTMLElement, task: TaskLike): void {
-    const view = header.createDiv({ cls: 'abyss-right-title abyss-right-title-view' });
-    enableAttachmentDrop(view, {
-      app: this.app_abyssPrivate,
-      sourcePath: rootTaskRef(task).filePath,
-      onLinks: (links) => {
-        runAsyncAction(this.appendToTitle_abyssPrivate(task, links));
-      },
-    });
-    const renderView = (): void => {
-      renderTaskText(view, task.markdownTitle, {
-        app: this.app_abyssPrivate,
-        sourcePath: rootTaskRef(task).filePath,
-        component: this.md_abyssPrivate,
-        onEditLink: (occ, token) => {
-          this.editLink_abyssPrivate(task, occ, token);
-        },
-      });
-    };
-    renderView();
-
-    // Click on empty space / non-link text enters edit mode.
-    view.addEventListener('click', (e) => {
-      if ((e.target as HTMLElement).closest('a') != null) return; // let links navigate
-      this.enterTitleEdit_abyssPrivate(header, view, task, renderView);
-    });
-  }
-
-  private enterTitleEdit_abyssPrivate(
-    header: HTMLElement,
-    view: HTMLElement,
-    task: TaskLike,
-    renderView: () => void,
-  ): void {
-    // Preserve the height the user stretched the read-mode block to (measure first).
-    const startHeight = view.offsetHeight;
-    view.hide();
-    const ta = header.createEl('textarea', { cls: 'abyss-right-title abyss-right-title-edit' });
-    // Keep the textarea in the title's slot so the ⋯/× action buttons stay on the right.
-    view.insertAdjacentElement('afterend', ta);
-    ta.value = task.markdownTitle;
-    this.enablePaste_abyssPrivate(ta, task);
-    // Auto-grow to content, but never below the stretched height.
-    let autoHeight = '';
-    const grow = (): void => {
-      ta.setCssStyles({ height: 'auto' });
-      ta.setCssStyles({ height: `${Math.max(ta.scrollHeight, startHeight)}px` });
-      autoHeight = ta.style.height;
-    };
-    ta.addEventListener('input', grow);
-    window.setTimeout(() => {
-      ta.focus();
-      grow();
-    }, 0);
-
-    const lifecycle = new AsyncEditLifecycle();
-    const finish = async (save: boolean): Promise<void> => {
-      if (!lifecycle.begin()) return;
-      // Let any in-flight paste insert its link into the value before we save/remove.
-      await whenPasteSettled(ta);
-      const resizedHeight = ta.style.height !== autoHeight ? ta.offsetHeight : undefined;
-      if (save && ta.value !== task.markdownTitle) {
-        const saved = await this.saveTaskTitle_abyssPrivate(task, ta.value.trim());
-        if (!saved) {
-          lifecycle.retry();
-          ta.focus();
-          return;
-        }
-      }
-      lifecycle.close();
-      if (resizedHeight !== undefined) view.setCssStyles({ height: `${resizedHeight}px` });
-      ta.remove();
-      view.show();
-      renderView();
-    };
-    ta.addEventListener('blur', () => {
-      runAsyncAction(finish(true));
-    });
-    ta.addEventListener('keydown', (e) => {
-      if (isImeOwnedEvent(e)) return;
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        runAsyncAction(finish(true));
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        runAsyncAction(finish(false));
-      }
-    });
-  }
-
-  private renderSubTask_abyssPrivate(
-    container: HTMLElement,
-    sub: SubtaskSnapshot,
-    parentTask: TaskLike,
-  ): void {
-    const row = container.createDiv({
-      cls: 'abyss-subtask-row',
-      attr: { draggable: 'true', tabindex: '-1' },
-    });
-    this.bindSubtaskDragAndDrop_abyssPrivate(row, container, sub, parentTask);
-    this.renderTaskStatusMarker_abyssPrivate(row, sub);
-    this.renderSubtaskContent_abyssPrivate(row, sub);
-  }
-
-  private bindSubtaskDragAndDrop_abyssPrivate(
-    row: HTMLElement,
-    container: HTMLElement,
-    sub: SubtaskSnapshot,
-    parentTask: TaskLike,
-  ): void {
-    row.addEventListener('dragstart', (e) => {
-      this.startSubtaskDrag_abyssPrivate(row, container, sub, e);
-    });
-
-    row.addEventListener('dragover', (e) => {
-      if (
-        this.draggingSub_abyssPrivate == null ||
-        this.draggingSub_abyssPrivate.ref.relativeLine === sub.ref.relativeLine
-      )
-        return;
-      e.preventDefault();
-      const rect = row.getBoundingClientRect();
-      const isAbove = e.clientY < rect.top + rect.height / 2;
-      // Clear indicators on all siblings first
-      container.querySelectorAll('.drop-above,.drop-below').forEach((el) => {
-        el.removeClass('drop-above', 'drop-below');
-      });
-      row.addClass(isAbove ? 'drop-above' : 'drop-below');
-    });
-
-    row.addEventListener('dragleave', (e) => {
-      if (!row.contains(e.relatedTarget as Node)) {
-        row.removeClass('drop-above', 'drop-below');
-      }
-    });
-
-    row.addEventListener('drop', (e) => {
-      const dragged = this.draggingSub_abyssPrivate;
-      if (dragged == null || dragged.ref.relativeLine === sub.ref.relativeLine) return;
-      e.preventDefault();
-      const position = row.hasClass('drop-above') ? 'before' : 'after';
-      row.removeClass('drop-above', 'drop-below');
-      runAsyncAction(this.reorderSubTask_abyssPrivate(parentTask, dragged, sub, position));
-    });
-  }
-
   private finishTaskDrag_abyssPrivate(): void {
     this.endTaskDrag_abyssPrivate?.();
   }
 
   private setTaskDragCleanup_abyssPrivate(cleanup: () => void): void {
     this.endTaskDrag_abyssPrivate = cleanup;
-  }
-
-  private startSubtaskDrag_abyssPrivate(
-    row: HTMLElement,
-    container: HTMLElement,
-    sub: SubtaskSnapshot,
-    event: DragEvent,
-  ): void {
-    this.finishTaskDrag_abyssPrivate();
-    this.draggingSub_abyssPrivate = sub;
-    row.addClass('is-dragging');
-    event.dataTransfer?.setData('text/plain', String(sub.ref.relativeLine));
-    const stack = this.state_abyssPrivate.get('taskStack');
-    const root = stack[0];
-    if (root !== undefined && 'source' in root) {
-      this.setTaskDragCleanup_abyssPrivate(
-        startTaskNodeDrag(this.state_abyssPrivate, this.el_abyssPrivate, row, {
-          payload: {
-            source: 'inspector-subtask',
-            task: {
-              root,
-              path: [...stack.filter((node): node is SubtaskSnapshot => !('source' in node)), sub],
-              node: sub,
-              target: taskNodeRef(sub),
-            },
-          },
-          onEnd: () => {
-            this.draggingSub_abyssPrivate = null;
-            row.removeClass('is-dragging');
-            container.querySelectorAll('.drop-above,.drop-below').forEach((element) => {
-              element.removeClass('drop-above', 'drop-below');
-            });
-          },
-        }),
-      );
-    }
-  }
-
-  private renderSubtaskContent_abyssPrivate(row: HTMLElement, sub: SubtaskSnapshot): void {
-    const content = row.createDiv({ cls: 'abyss-subtask-content' });
-    const titleRow = content.createDiv({ cls: 'abyss-subtask-title-row' });
-    const label = titleRow.createSpan({
-      cls: `abyss-subtask-label${sub.status === 'done' ? ' is-done' : ''}`,
-    });
-    renderTaskText(label, sub.markdownTitle, {
-      app: this.app_abyssPrivate,
-      sourcePath: rootTaskRef(sub).filePath,
-      component: this.md_abyssPrivate,
-      onEditLink: (occ, token) => {
-        this.editLink_abyssPrivate(sub, occ, token);
-      },
-    });
-    label.addEventListener('click', () => {
-      const stack = this.state_abyssPrivate.get('taskStack');
-      this.state_abyssPrivate.updateInspectorSelection([...stack, sub]);
-    });
-    renderRowRemove(
-      titleRow,
-      'abyss-subtask-remove',
-      { label: 'Delete sub-task', failure: 'Could not delete sub-task' },
-      () => this.deleteTask_abyssPrivate(sub),
-    );
-
-    // Progress + comment count indicators
-    const subCount = sub.subtasks.length;
-    const commentCount = sub.comments.length;
-    if (subCount > 0 || commentCount > 0) {
-      const subMeta = content.createDiv({ cls: 'abyss-subtask-meta' });
-      if (subCount > 0) {
-        const done = sub.subtasks.filter((s) => s.status === 'done').length;
-        subMeta.createSpan({ cls: 'abyss-subtask-progress', text: `${done}/${subCount}` });
-      }
-      if (commentCount > 0) {
-        subMeta.createSpan({
-          cls: 'abyss-subtask-comment-count',
-          text: `💬 ${commentCount}`,
-        });
-      }
-    }
-  }
-
-  private renderComment_abyssPrivate(
-    container: HTMLElement,
-    comment: TaskCommentSnapshot,
-    task: TaskLike,
-    commentTimeContext?: CommentTimeContext,
-  ): void {
-    const row = container.createDiv({ cls: 'abyss-comment-row' });
-    enableAttachmentDrop(row, {
-      app: this.app_abyssPrivate,
-      sourcePath: rootTaskRef(task).filePath,
-      onLinks: (links) => {
-        runAsyncAction(
-          this.updateComment_abyssPrivate(task, comment, `${comment.text} ${links}`.trim()),
-        );
-      },
-    });
-    if (comment.timestamp != null && commentTimeContext != null) {
-      row.createSpan({
-        cls: 'abyss-comment-date',
-        text: formatCommentTimeLabel({ timestamp: comment.timestamp, ...commentTimeContext }),
-      });
-    }
-    const showText = (): void => {
-      this.renderCommentText_abyssPrivate(row, comment, task, showText);
-    };
-    showText();
-  }
-
-  private renderCommentText_abyssPrivate(
-    row: HTMLElement,
-    comment: TaskCommentSnapshot,
-    task: TaskLike,
-    showText: () => void,
-  ): void {
-    const textEl = row.createEl('p', { cls: 'abyss-comment-text' });
-    renderTaskText(textEl, comment.text, {
-      app: this.app_abyssPrivate,
-      sourcePath: rootTaskRef(task).filePath,
-      component: this.md_abyssPrivate,
-      onEditLink: (occurrence, token) => {
-        this.editLinkInString_abyssPrivate(
-          { type: 'comment', ref: commentRefOf(comment) },
-          occurrence,
-          token,
-          rootTaskRef(task).filePath,
-        );
-      },
-    });
-    textEl.addEventListener('click', (event) => {
-      if ((event.target as HTMLElement).closest('a') != null) return;
-      this.openCommentEditor_abyssPrivate(row, comment, task, showText);
-    });
-  }
-
-  private openCommentEditor_abyssPrivate(
-    row: HTMLElement,
-    comment: TaskCommentSnapshot,
-    task: TaskLike,
-    showText: () => void,
-  ): void {
-    row.querySelector('.abyss-comment-text')?.remove();
-    const textarea = row.createEl('textarea', { cls: 'abyss-comment-edit-input' });
-    textarea.value = comment.text;
-    this.enablePaste_abyssPrivate(textarea, task);
-    const lifecycle = new AsyncEditLifecycle();
-    const finish = async (): Promise<void> => {
-      if (!lifecycle.begin()) return;
-      await whenPasteSettled(textarea);
-      const value = textarea.value.trim();
-      if (value === comment.text) {
-        lifecycle.close();
-        textarea.remove();
-        showText();
-        return;
-      }
-      const committed =
-        value === ''
-          ? await this.deleteComment_abyssPrivate(task, comment)
-          : await this.updateComment_abyssPrivate(task, comment, value);
-      if (!committed) {
-        lifecycle.retry();
-        textarea.focus();
-        return;
-      }
-      lifecycle.close();
-      textarea.remove();
-    };
-    textarea.addEventListener('blur', () => {
-      window.setTimeout(() => {
-        runAsyncAction(finish());
-      }, 150);
-    });
-    textarea.addEventListener('keydown', (event: KeyboardEvent) => {
-      if (isImeOwnedEvent(event)) return;
-      if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault();
-        textarea.blur();
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopPropagation();
-        lifecycle.close();
-        textarea.remove();
-        showText();
-      }
-    });
-    textarea.focus();
-    textarea.select();
   }
 
   // ---- Write-back helpers ----

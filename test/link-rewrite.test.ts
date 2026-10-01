@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { parseLinks } from '../src/markdown/links';
 import { CenterPanel } from '../src/panels/CenterPanel';
+import type { InspectorSections } from '../src/panels/right/InspectorSections';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
@@ -17,6 +18,15 @@ import {
   testStatusRegistry,
   useRealMoment,
 } from './helpers';
+import {
+  captureLinkModals,
+  captureMenus,
+  clickSave,
+  mockReadingView,
+  modalInputs,
+  rightClick,
+  settleRender,
+} from './support/linkEditHarness';
 import { taskCommandsOf } from './support/panelHarness';
 
 useRealMoment();
@@ -95,7 +105,9 @@ describe('task link rewrite delegation', () => {
     );
     saveImmediately('[[Changed]]');
 
-    call<void>(panel, 'editLink', current, 0, {
+    (
+      panel as unknown as { sections_abyssPrivate: InspectorSections }
+    ).sections_abyssPrivate.editLink(current, 0, {
       raw: '[[Old]]',
       type: 'wiki',
       target: 'Old',
@@ -159,32 +171,46 @@ describe('task link rewrite delegation', () => {
       originalMarkdown: '  - 2026-07-14: [[Old]]',
     };
     const { tasks, execute } = taskApi(ref);
+    const state = new AppState();
+    state.set('taskStack', [
+      task({
+        ref,
+        title: 'root',
+        source: { filePath: 't.md' },
+        description: '[[First]] [[Old]]',
+        comments: [{ ref: commentRef, text: '[[Old]]' }],
+      }),
+    ]);
+    mockReadingView();
+    const menus = captureMenus();
+    const modals = captureLinkModals();
     const panel = new RightPanel({
-      state: new AppState(),
+      state,
       app,
       statusRegistry: testStatusRegistry(),
       settings: DEFAULT_SETTINGS,
       tasks,
     });
-    const token = {
-      raw: '[[Old]]',
-      type: 'wiki' as const,
-      target: 'Old',
-      display: 'Old',
-      index: 0,
-    };
-    saveImmediately('[[Changed]]');
-
-    call<void>(
-      panel,
-      'editLinkInString',
-      { type: 'description', target: { type: 'task', ref } },
-      1,
-      token,
-      't.md',
-    );
-    call<void>(panel, 'editLinkInString', { type: 'comment', ref: commentRef }, 0, token, 't.md');
-    await Promise.resolve();
+    const container = activeDocument.body.createDiv();
+    panel.mount(container);
+    await settleRender();
+    try {
+      const links = [
+        expectDefined(container.querySelectorAll('.abyss-right-desc-view a')[1]),
+        expectDefined(container.querySelector('.abyss-comment-text a')),
+      ];
+      for (const link of links) {
+        rightClick(link);
+        expectDefined(menus[menus.length - 1]).pick('Edit link…');
+        const modal = modals.last();
+        editSettingControl(modalInputs(modal).target, 'Changed');
+        clickSave(modal);
+        await Promise.resolve();
+      }
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
 
     expect(execute.mock.calls.map(([command]) => command)).toEqual([
       {

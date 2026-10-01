@@ -29,7 +29,6 @@ useRealMoment();
 const root = process.cwd();
 const suffix = '_abyssPrivate';
 const privateOwners = new Set([
-  'AsyncEditLifecycle',
   'CenterPanel',
   'RightPanel',
   'PanelView',

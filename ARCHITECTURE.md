@@ -95,6 +95,14 @@ markers, badge/time badge, status-menu close, sections, search refresh, Undo ren
 that order. RightPanel retains one shared task-drag cleanup for subtask and relation gestures; both
 finish the prior drag before starting and register the new cleanup afterwards. Dependency and
 retained subtask rows import the same stateless `renderRowRemove` helper directly.
+RightPanel constructs one `InspectorSections` for title/description editors, subtask/comment
+sections, attachments and link-edit UI. It reads the current Markdown Component/root through host
+callbacks, registers entry cleanup on that Component and shares the shell's drag callbacks and row
+remove helper. Its command arrows call retained RightPanel adapters at invocation; dismissal first
+marks the captured submitted target, then cancels the shell's restored-focus timer, then closes the
+entry. The shell keeps text draft capture/restore, targets, submission/late-result handling and all
+write authority; the three presentation owners do not subscribe or acquire a task writer. Distinct
+editor save/blur/IME rules and existing section DOM/reopen gestures remain intact.
 Selection, render, refresh and destroy call the owner's narrow operations at their former positions.
 Panels share transient navigation through
 `AppState`. `set('taskStack')` begins a selection and `updateInspectorSelection` refreshes one;
