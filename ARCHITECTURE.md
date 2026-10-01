@@ -116,14 +116,24 @@ editors, filters and tag catalogue/color reads. The shell keeps context-menu sel
 visual-order snapshot capture and status-popover close sequencing. TaskMenus owns no lifecycle
 registry or task write authority.
 
-| Centre service                                | Responsibility                                                                              |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| [`TaskMenus`](src/panels/center/TaskMenus.ts) | Context menus and tag pickers; shared TaskCommands submissions and call-time host callbacks |
+| Centre service                                            | Responsibility                                                                                       |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| [`TaskMenus`](src/panels/center/TaskMenus.ts)             | Context menus and tag pickers; shared TaskCommands submissions and call-time host callbacks          |
+| [`CaptureSessions`](src/panels/center/CaptureSessions.ts) | Capture target/session lifecycle, surface placement and focus; public capture application capability |
+
+[`CaptureSessions`](src/panels/center/CaptureSessions.ts) owns list/dashboard/calendar capture
+placement, retained target resolution, controller/surface mount/remount, feedback and Escape focus
+restoration. It is constructed once before CalendarMode with the default resolver today provider,
+live task-node/root/result callbacks and the retained panel capture capability. The shell preserves
+mode/list/projects subscription and teardown ordering while delegating session cancellation.
+`cancelActiveCapture` invalidates pending resolution and disposes its controller/surface; no separate
+lifecycle registry is added.
 
 ## Calendar mode
 
-`CenterPanel` routes modes, delegates task actions to TaskCommands, and keeps the task modal,
-capture session and both recurrence editors. Calendar mode lives in [`src/panels/calendar/`](src/panels/calendar/)
+`CenterPanel` routes modes, delegates task actions to TaskCommands, and keeps the task modal and
+both recurrence editors. Capture sessions live in the centre CaptureSessions service. Calendar mode
+lives in [`src/panels/calendar/`](src/panels/calendar/)
 and never imports `CenterPanel`:
 
 | Module                                                                        | Responsibility                                                                                                                                                                                                                                                       |
@@ -133,7 +143,7 @@ and never imports `CenterPanel`:
 | [`TimedBlockFocusRetention`](src/panels/calendar/timedBlockFocusRetention.ts) | Keyboard queue and deferred focus restoration with the owning window's timer                                                                                                                                                                                         |
 | [`calendarViewFactory`](src/panels/calendar/calendarViewFactory.ts)           | The single view-selection point: maps the controller's handler set onto the Today, Week, and Month view classes                                                                                                                                                      |
 | [`CalendarNavigationBar`](src/panels/calendar/CalendarNavigationBar.ts)       | Toolbar DOM, title, month and year pickers, view switcher                                                                                                                                                                                                            |
-| [`calendarCapturePlacement`](src/panels/calendar/calendarCapturePlacement.ts) | Resolves capture hosts from the mounted grid; the capture session stays in `CenterPanel`                                                                                                                                                                             |
+| [`calendarCapturePlacement`](src/panels/calendar/calendarCapturePlacement.ts) | Resolves capture hosts from the mounted grid; CaptureSessions owns the session                                                                                                                                                                                       |
 
 Every file under `src/panels/calendar/` uses owner capabilities: no ambient window, document, or
 timers. The four pure helpers `calendarPolicy`, `calendarDateNavigation`, `visibleCalendarDates`,

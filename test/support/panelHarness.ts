@@ -5,6 +5,7 @@ import type { CalendarMoment } from '../../src/panels/calendar/calendarDateNavig
 import type { CalendarMode } from '../../src/panels/calendar/CalendarMode';
 import type { CalendarViewInstance } from '../../src/panels/calendar/calendarViewFactory';
 import type { CalViewType } from '../../src/panels/calendar/calendarViewType';
+import type { CaptureSessions } from '../../src/panels/center/CaptureSessions';
 import type { TaskCommands } from '../../src/panels/center/TaskCommands';
 import { CenterPanel } from '../../src/panels/CenterPanel';
 import { LeftPanel } from '../../src/panels/LeftPanel';
@@ -56,6 +57,11 @@ export function makeCenterPanelForTest(
     projectManager,
     tasks: application,
   });
+}
+
+/** The centre capture owner; callers use its typed public session API. */
+export function captureSessionsOf(panel: CenterPanel): CaptureSessions {
+  return panel['captureSessions_abyssPrivate'];
 }
 
 /** The centre command service; callers use its typed public submission API. */

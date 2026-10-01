@@ -59,17 +59,7 @@ import { renderTaskText } from '../ui/renderTaskText';
 import { runAsyncAction } from '../ui/runAsyncAction';
 import { renderSourceNoteChip, shouldShowSourceNote } from '../ui/sourceNoteChip';
 import { showStatusMenuAt } from '../ui/statusMenu';
-import { CaptureSurface } from '../ui/taskCapture/CaptureSurface';
-import {
-  CaptureTargetResolver,
-  type CaptureContext,
-  type CaptureTarget,
-} from '../ui/taskCapture/CaptureTargetResolver';
-import { TaskCaptureController } from '../ui/taskCapture/TaskCaptureController';
-import {
-  describeTaskCreationResult,
-  type CreationResultDescription,
-} from '../ui/taskCommandResult';
+import { type CreationResultDescription } from '../ui/taskCommandResult';
 import {
   dependencyCompletionBlocked,
   renderDependencyIndicator,
@@ -96,14 +86,8 @@ import {
 import { PanelNavigator, type PanelNavigationActions } from '../views/panelNavigation';
 import { listSelectionTitle } from '../views/panelTitle';
 import { CalendarMode, type CalendarModeHost } from './calendar/CalendarMode';
-import {
-  calendarCaptureHost,
-  calendarCaptureInputClass,
-  captureTargetForCalendarPlacement,
-  isCalendarCapturePlacement,
-  type CalendarCapturePlacement,
-} from './calendar/calendarCapturePlacement';
 import type { CalViewType } from './calendar/calendarViewType';
+import { CaptureSessions } from './center/CaptureSessions';
 import { TaskCommands } from './center/TaskCommands';
 import { TaskMenus } from './center/TaskMenus';
 import { ProjectsPanel } from './projects/ProjectsPanel';
@@ -121,24 +105,6 @@ import {
   type TaskListRows,
 } from './task-list/taskListRows';
 import { TaskRowSelection } from './task-list/taskRowSelection';
-
-type BarCapturePlacement =
-  | { readonly type: 'list'; readonly selectionKey: string }
-  | { readonly type: 'project'; readonly path: string };
-
-type PanelCapturePlacement = BarCapturePlacement | CalendarCapturePlacement;
-
-interface PanelCaptureSession {
-  readonly requestId: number;
-  readonly placement: PanelCapturePlacement;
-  readonly controller: TaskCaptureController;
-  surface?: CaptureSurface | undefined;
-  host?: HTMLElement | undefined;
-  feedbackHost?: HTMLElement | undefined;
-  returnFocus?: HTMLElement;
-  restoreFocusOnClose: boolean;
-  focusOnMount: boolean;
-}
 
 interface CenterPanelOptions {
   readonly state: AppState;
@@ -218,13 +184,7 @@ export class CenterPanel {
   private projectsPanel_abyssPrivate: ProjectsPanel | null = null;
   private readonly captureApplication_abyssPrivate:
     (TaskApplicationApi & TaskCaptureApplicationApi) | null;
-  private readonly captureTargets_abyssPrivate: CaptureTargetResolver | null;
-  private captureRequestId_abyssPrivate = 0;
-  private resolvingCapture_abyssPrivate: {
-    readonly requestId: number;
-    readonly placement: PanelCapturePlacement;
-  } | null = null;
-  private activeCapture_abyssPrivate: PanelCaptureSession | null = null;
+  private readonly captureSessions_abyssPrivate: CaptureSessions;
   private readonly navigation_abyssPrivate: PanelNavigationActions;
   private readonly calendar_abyssPrivate: CalendarMode;
   private readonly state_abyssPrivate: AppState;
@@ -290,15 +250,6 @@ export class CenterPanel {
     this.timeTracking_abyssPrivate = timeTracking;
     this.onRenderTaskHeaderActions_abyssPrivate = onRenderTaskHeaderActions;
     this.captureApplication_abyssPrivate = captureApplication ?? null;
-    this.captureTargets_abyssPrivate =
-      this.captureApplication_abyssPrivate != null
-        ? new CaptureTargetResolver(
-            this.captureApplication_abyssPrivate,
-            settings,
-            undefined,
-            () => this.tasks_abyssPrivate?.queries.listNodes() ?? [],
-          )
-        : null;
     this.navigation_abyssPrivate = this.createNavigation_abyssPrivate(navigation);
     this.taskCommands_abyssPrivate = new TaskCommands({
       app,
@@ -313,6 +264,7 @@ export class CenterPanel {
       },
     });
     this.taskMenus_abyssPrivate = this.createTaskMenus_abyssPrivate();
+    this.captureSessions_abyssPrivate = this.createCaptureSessions_abyssPrivate();
     this.calendar_abyssPrivate = new CalendarMode({
       state,
       app,
@@ -323,6 +275,19 @@ export class CenterPanel {
       interactionOwnership: this.interactionOwnership_abyssPrivate,
       navigation: this.navigation_abyssPrivate,
       host: this.createCalendarHost_abyssPrivate(),
+    });
+  }
+
+  private createCaptureSessions_abyssPrivate(): CaptureSessions {
+    return new CaptureSessions({
+      state: this.state_abyssPrivate,
+      settings: this.settings_abyssPrivate,
+      application: this.captureApplication_abyssPrivate,
+      listNodes: () => this.tasks_abyssPrivate?.queries.listNodes() ?? [],
+      onCreationResult: (result, description) => {
+        this.onCreationResult_abyssPrivate(result, description);
+      },
+      root: () => this.el,
     });
   }
 
@@ -373,13 +338,16 @@ export class CenterPanel {
         this.dismissRecurrenceEditor_abyssPrivate();
       },
       openCapture: (placement) => {
-        this.openCapture_abyssPrivate(placement, { type: 'default', source: 'calendar' });
+        this.captureSessions_abyssPrivate.openCapture(placement, {
+          type: 'default',
+          source: 'calendar',
+        });
       },
       unmountActiveCapture: () => {
-        this.unmountActiveCapture_abyssPrivate();
+        this.captureSessions_abyssPrivate.unmountActiveCapture();
       },
       remountActiveCapture: () => {
-        this.remountActiveCapture_abyssPrivate();
+        this.captureSessions_abyssPrivate.remountActiveCapture();
       },
       syncTaskStackSelection: () => {
         this.updateTaskStackSelection_abyssPrivate();
@@ -446,7 +414,7 @@ export class CenterPanel {
         this.handleSelectedListChanged_abyssPrivate();
       }),
       this.state_abyssPrivate.on('mode', () => {
-        this.cancelStaleListCapture_abyssPrivate();
+        this.captureSessions_abyssPrivate.cancelStaleListCapture();
         this.calendar_abyssPrivate.cancelKeyboardInteraction();
       }),
       this.state_abyssPrivate.on('searchQuery', (query) => {
@@ -457,7 +425,7 @@ export class CenterPanel {
       }),
       this.state_abyssPrivate.on('projectsPanel', (next, previous) => {
         if (previous.view === 'dashboard' && next.view === 'table') {
-          this.cancelActiveCapture_abyssPrivate();
+          this.captureSessions_abyssPrivate.cancelActiveCapture();
         }
       }),
       this.state_abyssPrivate.onCommit((changed) => {
@@ -467,7 +435,7 @@ export class CenterPanel {
   }
 
   private handleSelectedListChanged_abyssPrivate(): void {
-    this.cancelStaleListCapture_abyssPrivate();
+    this.captureSessions_abyssPrivate.cancelStaleListCapture();
     this.rowSelection_abyssPrivate.clear();
   }
 
@@ -678,7 +646,7 @@ export class CenterPanel {
     this.runningCardBadges_abyssPrivate.clear();
     this.endTaskDrag_abyssPrivate?.();
     this.taskCommands_abyssPrivate.dispose();
-    this.cancelActiveCapture_abyssPrivate();
+    this.captureSessions_abyssPrivate.cancelActiveCapture();
     this.calendar_abyssPrivate.cancelKeyboardInteraction();
     this.abandonTaskDateFocus_abyssPrivate();
     this.clearSearchShell_abyssPrivate();
@@ -714,7 +682,7 @@ export class CenterPanel {
     }
 
     const bar = host.createDiv({ cls: 'abyss-add-task-bar' });
-    this.renderCaptureHost_abyssPrivate(bar, { type: 'project', path });
+    this.captureSessions_abyssPrivate.renderCaptureHost(bar, { type: 'project', path });
     this.completeTaskCardRender_abyssPrivate();
   }
 
@@ -765,7 +733,7 @@ export class CenterPanel {
   }
 
   private prepareRender_abyssPrivate(mode: string, retainTaskShell = false): void {
-    this.unmountActiveCapture_abyssPrivate();
+    this.captureSessions_abyssPrivate.unmountActiveCapture();
     this.clearTaskDatePicker_abyssPrivate();
     this.dismissRecurrenceEditor_abyssPrivate();
     if (!retainTaskShell) this.viewStatePopoverCleanup_abyssPrivate?.();
@@ -840,7 +808,7 @@ export class CenterPanel {
       );
     }
     addBar.empty();
-    this.renderCaptureHost_abyssPrivate(addBar, {
+    this.captureSessions_abyssPrivate.renderCaptureHost(addBar, {
       type: 'list',
       selectionKey: listSelectionToKey(this.state_abyssPrivate.get('selectedList')),
     });
@@ -1846,289 +1814,6 @@ export class CenterPanel {
     delete withoutStatusGroups.statusGroups;
     this.updateViewState_abyssPrivate(
       groups === undefined ? withoutStatusGroups : { ...viewState, statusGroups: groups },
-    );
-  }
-
-  private renderCaptureHost_abyssPrivate(host: HTMLElement, placement: BarCapturePlacement): void {
-    host.dataset['abyssCaptureHost'] = placement.type;
-    if (placement.type === 'project') host.dataset['abyssCapturePath'] = placement.path;
-    if (placement.type === 'list') {
-      host.dataset['abyssCaptureSelection'] = placement.selectionKey;
-    }
-    const trigger = host.createEl('button', {
-      cls: 'abyss-add-task-trigger',
-      attr: { type: 'button' },
-    });
-    trigger.createSpan({ cls: 'abyss-add-task-plus', text: '+' });
-    trigger.createSpan({ cls: 'abyss-add-task-label', text: 'Add task' });
-    trigger.addEventListener('click', () => {
-      const context: CaptureContext =
-        placement.type === 'project'
-          ? { type: 'project-dashboard', path: placement.path }
-          : { type: 'list', selection: this.state_abyssPrivate.get('selectedList') };
-      this.openCapture_abyssPrivate(placement, context, trigger);
-    });
-    const active = this.activeCapture_abyssPrivate;
-    if (active != null && this.sameCapturePlacement_abyssPrivate(active.placement, placement)) {
-      trigger.hidden = true;
-      active.returnFocus = trigger;
-      this.mountCaptureSurface_abyssPrivate(active, host);
-    }
-  }
-
-  private openCapture_abyssPrivate(
-    placement: PanelCapturePlacement,
-    context: CaptureContext,
-    returnFocus = this.currentCaptureFocusOrigin_abyssPrivate(),
-  ): void {
-    if (this.captureTargets_abyssPrivate == null) return;
-    this.cancelActiveCapture_abyssPrivate();
-    const requestId = ++this.captureRequestId_abyssPrivate;
-    this.resolvingCapture_abyssPrivate = { requestId, placement };
-    runAsyncAction(
-      this.captureTargets_abyssPrivate.resolve(context).then((resolvedTarget) => {
-        if (requestId !== this.captureRequestId_abyssPrivate) return;
-        this.resolvingCapture_abyssPrivate = null;
-        const target = this.targetForCapturePlacement_abyssPrivate(resolvedTarget, placement);
-        const controller = new TaskCaptureController({
-          target,
-          describe: describeTaskCreationResult,
-          onResult: (result, description) => {
-            const current = this.activeCapture_abyssPrivate;
-            if (current?.requestId === requestId && description.kind !== 'success') {
-              current.restoreFocusOnClose = false;
-            }
-            this.onCreationResult_abyssPrivate(result, description);
-          },
-          onRequestClose: () => {
-            this.closeCaptureByRequestId_abyssPrivate(requestId);
-          },
-        });
-        const session: PanelCaptureSession = {
-          requestId,
-          placement,
-          controller,
-          ...(returnFocus !== null && { returnFocus }),
-          restoreFocusOnClose: false,
-          focusOnMount: true,
-        };
-        this.activeCapture_abyssPrivate = session;
-        this.remountActiveCapture_abyssPrivate();
-      }),
-    );
-  }
-
-  private remountActiveCapture_abyssPrivate(): void {
-    const active = this.activeCapture_abyssPrivate;
-    if (active == null) return;
-    const placement = active.placement;
-    if (isCalendarCapturePlacement(placement)) {
-      const host = calendarCaptureHost(this.el, placement);
-      if (host != null) this.mountCaptureSurface_abyssPrivate(active, host);
-      return;
-    }
-    const host = [...this.el.querySelectorAll<HTMLElement>('[data-abyss-capture-host]')].find(
-      (candidate) =>
-        placement.type === 'project'
-          ? candidate.dataset['abyssCaptureHost'] === 'project' &&
-            candidate.dataset['abyssCapturePath'] === placement.path
-          : candidate.dataset['abyssCaptureHost'] === 'list' &&
-            candidate.dataset['abyssCaptureSelection'] === placement.selectionKey,
-    );
-    if (host != null) this.mountCaptureSurface_abyssPrivate(active, host);
-  }
-
-  private targetForCapturePlacement_abyssPrivate(
-    target: CaptureTarget,
-    placement: PanelCapturePlacement,
-  ): CaptureTarget {
-    if (!isCalendarCapturePlacement(placement)) return target;
-    return captureTargetForCalendarPlacement(target, placement);
-  }
-
-  private mountCaptureSurface_abyssPrivate(active: PanelCaptureSession, host: HTMLElement): void {
-    if (this.activeCapture_abyssPrivate !== active) return;
-    if (this.isCaptureSurfaceMounted_abyssPrivate(active, host)) return;
-    this.unmountActiveCapture_abyssPrivate();
-    const feedbackHost = this.prepareCaptureHost_abyssPrivate(active, host);
-    const onEscape = (): void => {
-      active.restoreFocusOnClose = true;
-    };
-    const options = {
-      ...(active.placement.type === 'calendar-timed' && {
-        placeholder: `Task at ${active.placement.time}…`,
-      }),
-      ...(feedbackHost !== undefined && { feedbackHost }),
-      onEscape,
-    };
-    const presentation =
-      active.placement.type === 'list' || active.placement.type === 'project'
-        ? 'inline'
-        : 'default';
-    const surface = new CaptureSurface(host, active.controller, { ...options, presentation });
-    this.applyCaptureInputClass_abyssPrivate(surface, active.placement);
-    active.surface = surface;
-    active.host = host;
-    this.focusNewCaptureSurface_abyssPrivate(active, surface);
-  }
-
-  private isCaptureSurfaceMounted_abyssPrivate(
-    active: PanelCaptureSession,
-    host: HTMLElement,
-  ): boolean {
-    return active.surface?.element.isConnected === true && active.host === host;
-  }
-
-  private applyCaptureInputClass_abyssPrivate(
-    surface: CaptureSurface,
-    placement: PanelCapturePlacement,
-  ): void {
-    const className = calendarCaptureInputClass(placement);
-    if (className !== undefined && className !== '') surface.input.addClass(className);
-  }
-
-  private focusNewCaptureSurface_abyssPrivate(
-    active: PanelCaptureSession,
-    surface: CaptureSurface,
-  ): void {
-    if (!active.focusOnMount) return;
-    active.focusOnMount = false;
-    surface.focus();
-  }
-
-  private prepareCaptureHost_abyssPrivate(
-    active: PanelCaptureSession,
-    host: HTMLElement,
-  ): HTMLElement | undefined {
-    if (isCalendarCapturePlacement(active.placement)) {
-      host.empty();
-      const feedbackHost = this.el.createDiv({ cls: 'abyss-calendar-capture-feedback' });
-      active.feedbackHost = feedbackHost;
-      return feedbackHost;
-    }
-    const trigger = host.querySelector<HTMLButtonElement>('.abyss-add-task-trigger');
-    if (trigger != null) {
-      trigger.hidden = true;
-      active.returnFocus = trigger;
-    }
-    return undefined;
-  }
-
-  private unmountActiveCapture_abyssPrivate(): void {
-    const active = this.activeCapture_abyssPrivate;
-    const surface = active?.surface;
-    if (active == null || surface == null) return;
-    active.focusOnMount =
-      active.focusOnMount || surface.input.ownerDocument.activeElement === surface.input;
-    active.surface = undefined;
-    active.host = undefined;
-    surface.destroy();
-    active.feedbackHost?.remove();
-    active.feedbackHost = undefined;
-  }
-
-  private closeCapture_abyssPrivate(active: PanelCaptureSession): void {
-    if (this.activeCapture_abyssPrivate !== active) return;
-    const host = active.host;
-    const placement = active.placement;
-    const returnFocus = active.returnFocus;
-    const restoreFocus = active.restoreFocusOnClose;
-    const captureOwnedFocus =
-      active.surface !== undefined &&
-      active.surface.input.ownerDocument.activeElement === active.surface.input;
-    this.unmountActiveCapture_abyssPrivate();
-    active.controller.destroy();
-    this.activeCapture_abyssPrivate = null;
-    this.restoreCaptureHost_abyssPrivate(host, placement);
-    if (
-      restoreFocus &&
-      captureOwnedFocus &&
-      returnFocus != null &&
-      this.canRestoreCaptureFocus_abyssPrivate(returnFocus)
-    ) {
-      returnFocus.focus({ preventScroll: true });
-    }
-  }
-
-  private closeCaptureByRequestId_abyssPrivate(requestId: number): void {
-    const active = this.activeCapture_abyssPrivate;
-    if (active?.requestId === requestId) this.closeCapture_abyssPrivate(active);
-  }
-
-  private cancelActiveCapture_abyssPrivate(): void {
-    this.captureRequestId_abyssPrivate++;
-    this.resolvingCapture_abyssPrivate = null;
-    const active = this.activeCapture_abyssPrivate;
-    if (active == null) return;
-    const host = active.host;
-    const placement = active.placement;
-    this.unmountActiveCapture_abyssPrivate();
-    active.controller.destroy();
-    this.activeCapture_abyssPrivate = null;
-    this.restoreCaptureHost_abyssPrivate(host, placement);
-  }
-
-  private restoreCaptureHost_abyssPrivate(
-    host: HTMLElement | undefined,
-    placement: PanelCapturePlacement,
-  ): void {
-    if (host?.isConnected !== true) return;
-    if (isCalendarCapturePlacement(placement)) {
-      host.remove();
-      return;
-    }
-    host.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')?.removeAttribute('hidden');
-  }
-
-  private sameCapturePlacement_abyssPrivate(
-    left: PanelCapturePlacement,
-    right: PanelCapturePlacement,
-  ): boolean {
-    return (
-      this.capturePlacementKey_abyssPrivate(left) === this.capturePlacementKey_abyssPrivate(right)
-    );
-  }
-
-  private capturePlacementKey_abyssPrivate(placement: PanelCapturePlacement): string {
-    switch (placement.type) {
-      case 'project':
-        return `project:${placement.path}`;
-      case 'calendar-timed':
-        return `calendar-timed:${placement.date}:${placement.time}`;
-      case 'calendar-all-day':
-        return `calendar-all-day:${placement.date}`;
-      case 'calendar-month':
-        return `calendar-month:${placement.date}`;
-      case 'list':
-        return `list:${placement.selectionKey}`;
-    }
-  }
-
-  private cancelStaleListCapture_abyssPrivate(): void {
-    const placement =
-      this.activeCapture_abyssPrivate?.placement ?? this.resolvingCapture_abyssPrivate?.placement;
-    if (placement?.type !== 'list') return;
-    const currentSelectionKey = listSelectionToKey(this.state_abyssPrivate.get('selectedList'));
-    if (
-      this.state_abyssPrivate.get('mode') !== 'tasks' ||
-      placement.selectionKey !== currentSelectionKey
-    ) {
-      this.cancelActiveCapture_abyssPrivate();
-    }
-  }
-
-  private currentCaptureFocusOrigin_abyssPrivate(): HTMLElement | null {
-    const active = this.el.ownerDocument.activeElement;
-    return isRealmHTMLElement(active) ? active : null;
-  }
-
-  private canRestoreCaptureFocus_abyssPrivate(element: HTMLElement): boolean {
-    if (!element.isConnected) return false;
-    const ownerWindow = element.ownerDocument.defaultView;
-    if (ownerWindow == null) return false;
-    const style = ownerWindow.getComputedStyle(element);
-    return (
-      style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse'
     );
   }
 

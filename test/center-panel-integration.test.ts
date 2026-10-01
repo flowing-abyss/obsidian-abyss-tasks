@@ -23,7 +23,6 @@ import type { TaskQuery } from '../src/tasks/application/TaskApplicationApi';
 import { TaskModal } from '../src/ui/TaskModal';
 import { InteractionRegistry, type InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import { PanelShortcutRouter } from '../src/ui/panelShortcutRouter';
-import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
 import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import type { TrackingActions } from '../src/ui/timeTracking/trackingActions';
 import { TodayView } from '../src/views/TodayView';
@@ -54,6 +53,7 @@ import {
   calendarDateOf,
   calendarOf,
   calendarViewInstanceOf,
+  captureSessionsOf,
   pendingTimedBlockFocusOf,
   setCalendarDate,
   setCalendarViewType,
@@ -3096,6 +3096,38 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     }
   });
 
+  it('cancels an unfocused dashboard draft across Table and back without blur submission', async () => {
+    const { panel, state, container, sessionExecute } = await projectCaptureHarness();
+    const execute = vi.spyOn(expectDefined(panel['captureApplication_abyssPrivate']), 'execute');
+    try {
+      const focus = vi.spyOn(HTMLInputElement.prototype, 'focus').mockImplementation(() => {});
+      const draft = await openListCapture(container);
+      focus.mockRestore();
+      const blur = vi.fn();
+      draft.addEventListener('blur', blur);
+      // Set a draft on an unfocused input before any event can submit it.
+      setCaptureDraft(draft, 'must not return');
+      expect(activeDocument.activeElement).not.toBe(draft);
+      state.set('projectsPanel', { view: 'table' });
+      await flushMicrotasks();
+      expect(container.querySelector('.abyss-quick-capture-input')).toBeNull();
+      state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+      await flushMicrotasks();
+      expect(blur).not.toHaveBeenCalled();
+      expect(sessionExecute).not.toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
+      expect(container.querySelector('.abyss-quick-capture-input')).toBeNull();
+      const trigger = expectDefined(
+        container.querySelector<HTMLButtonElement>('.abyss-add-task-trigger'),
+      );
+      expect(trigger.hidden).toBe(false);
+      expect(trigger.textContent).toContain('Add task');
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
   it('keeps a project-dashboard capture session across success and a full panel rerender', async () => {
     const app = await createAppWithFiles({ 'Projects/A.md': '# Project\n' });
     const state = new AppState();
@@ -4510,50 +4542,49 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     },
   );
 
-  it('gives explicit calendar placements truthful labels and due/time values', () => {
-    const { panel, el } = sharedCalendarCaptureHarness(async () => successfulCapture());
-    const calendarTarget: CaptureTarget = {
-      label: 'Today · today',
-      context: { type: 'default', source: 'calendar' },
-      session: {
-        type: 'ready',
-        destination: { filePath: 'Capture.md', insertion: { type: 'append' } },
-        execute: vi.fn(),
-      },
-      markdownPrefix: '',
-      markdownSuffixes: [],
-      initial: { due: { type: 'set', value: localDate('2026-08-24') } },
-    };
-
+  it('gives explicit calendar placements truthful labels and submitted due/time values', async () => {
+    const { panel, el, sessionExecute } = sharedCalendarCaptureHarness(async () =>
+      successfulCapture(),
+    );
+    const placements = [
+      { type: 'calendar-month', date: '2026-09-03' },
+      { type: 'calendar-timed', date: '2026-09-04', time: '10:00' },
+      { type: 'calendar-all-day', date: '2026-09-05' },
+    ] as const;
     try {
-      const month = call<CaptureTarget>(panel, 'targetForCapturePlacement', calendarTarget, {
-        type: 'calendar-month',
-        date: '2026-09-03',
-      }) as CaptureTarget;
-      const timed = call<CaptureTarget>(panel, 'targetForCapturePlacement', calendarTarget, {
-        type: 'calendar-timed',
-        date: '2026-09-04',
-        time: '10:00',
-      }) as CaptureTarget;
-      const allDay = call<CaptureTarget>(panel, 'targetForCapturePlacement', calendarTarget, {
-        type: 'calendar-all-day',
-        date: '2026-09-05',
-      }) as CaptureTarget;
-
-      expect(month.label).toBe('2026-09-03 · all day');
-      expect(month.initial).toEqual({
-        due: { type: 'set', value: localDate('2026-09-03') },
-      });
-      expect(timed.label).toBe('2026-09-04 · 10:00');
-      expect(timed.initial).toEqual({
-        due: { type: 'set', value: localDate('2026-09-04') },
-        time: { type: 'set', value: localTime('10:00') },
-      });
-      expect(allDay.label).toBe('2026-09-05 · all day');
-      expect(allDay.initial).toEqual({
-        due: { type: 'set', value: localDate('2026-09-05') },
-      });
-      expect(calendarTarget.label).toBe('Today · today');
+      // Minimal rendered calendar cells provide the hosts; target resolution/submission remain real.
+      el.empty();
+      const month = el.createDiv({ cls: 'abyss-mg-cell' });
+      month.dataset['mgDate'] = '2026-09-03';
+      const timed = el.createDiv({ cls: 'abyss-tg-day-column' });
+      timed.dataset['tgDate'] = '2026-09-04';
+      timed.createDiv({ cls: 'abyss-tg-hour-column' });
+      const allDay = el.createDiv({ cls: 'abyss-tg-allday-cell' });
+      allDay.dataset['tgDate'] = '2026-09-05';
+      for (const placement of placements) {
+        captureSessionsOf(panel).openCapture(placement, { type: 'default', source: 'calendar' });
+        await flushMicrotasks();
+        const input = expectDefined(el.querySelector<HTMLInputElement>('.abyss-capture-input'));
+        expect(el.querySelector('.abyss-capture-destination')?.textContent).toBe(
+          placement.type === 'calendar-timed'
+            ? '2026-09-04 · 10:00'
+            : `${placement.date} · all day`,
+        );
+        setCaptureDraft(input, `Capture ${placement.type}`);
+        pressCaptureKey(input, 'Enter');
+        await flushMicrotasks();
+        const request = expectDefined(
+          sessionExecute.mock.calls[sessionExecute.mock.calls.length - 1]?.[0],
+        );
+        expect(request.initial).toEqual({
+          due: { type: 'set', value: localDate(placement.date) },
+          ...(placement.type === 'calendar-timed'
+            ? { time: { type: 'set', value: localTime('10:00') } }
+            : {}),
+        });
+        expect(request.markdownBody).toBe(`Capture ${placement.type}`);
+      }
+      expect(sessionExecute).toHaveBeenCalledTimes(3);
     } finally {
       panel.destroy();
       el.remove();
