@@ -395,7 +395,7 @@ it('ties finite runtime producer families to calls in their actual source owners
       '--abyss-pop-top',
       '--abyss-pop-width',
     ],
-    'src/panels/RightPanel.ts': [
+    'src/panels/right/InspectorPlanningSurfaces.ts': [
       '--abyss-pop-height',
       '--abyss-pop-left',
       '--abyss-pop-top',

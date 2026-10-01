@@ -17,11 +17,11 @@ const LEGACY_BRIDGE_FILES = [
 
 // Calendar modules outside `src/panels/calendar/` and `src/views/`, which `calendarModules`
 // scans whole; `CenterPanel` hosts calendar mode from the panel shell.
-const CALENDAR_HOST_MODULES = ['src/panels/CenterPanel.ts'] as const;
+const CALENDAR_HOST_MODULES = ['src/panels/CenterPanel.ts', 'src/panels/RightPanel.ts'] as const;
 
 const RECURRENCE_EDITOR_WRITE_CONSUMERS = [
   'src/panels/CenterPanel.ts',
-  'src/panels/RightPanel.ts',
+  'src/panels/right/InspectorPlanningSurfaces.ts',
 ] as const;
 
 interface AllowedWriter {
@@ -80,12 +80,16 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   CalendarTaskSource: ['src/views/calendarOccurrences.ts'],
   CommentRef: ['src/panels/RightPanel.ts'],
   CommentTimeContext: ['src/panels/RightPanel.ts'],
-  CommentTimeContextProvider: ['src/views/PanelView.ts'],
+  CommentTimeContextProvider: ['src/views/PanelView.ts', 'src/panels/RightPanel.ts'],
   CreateTaskCommandInitial: ['src/ui/taskCapture/CaptureTargetResolver.ts'],
   CreateDependencySubtaskCommand: ['src/panels/RightPanel.ts'],
   DateRange: ['src/views/calendarOccurrences.ts'],
   DependencyDirection: ['src/panels/RightPanel.ts'],
-  LocalDate: ['src/panels/CenterPanel.ts'],
+  LocalDate: [
+    'src/panels/CenterPanel.ts',
+    'src/panels/RightPanel.ts',
+    'src/panels/right/InspectorPlanningSurfaces.ts',
+  ],
   MoveRecovery: ['src/ui/TaskMoveRecoveryModal.ts'],
   normalizeTaskTagInput: [
     'src/settings/SettingsTab.ts',
@@ -94,35 +98,57 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/ui/taskCapture/CaptureTargetResolver.ts',
   ],
   OffsetAt: ['src/ui/timeTracking/formatTracked.ts'],
-  PlanningTarget: ['src/panels/RightPanel.ts'],
+  PlanningTarget: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
   RecurrenceParseResult: ['src/ui/recurrence/RecurrenceEditor.ts'],
   RecurrencePolicy: ['src/ui/recurrence/RecurrenceEditor.ts'],
   SubtaskPatch: ['src/panels/RightPanel.ts'],
-  SubtaskRef: ['src/panels/RightPanel.ts'],
-  SubtaskSnapshot: ['src/panels/RightPanel.ts'],
-  TaskApplicationApi: ['src/main.ts'],
+  SubtaskRef: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
+  SubtaskSnapshot: [
+    'src/panels/RightPanel.ts',
+    'src/panels/right/InspectorPlanningSurfaces.ts',
+    'src/panels/right/inspectorTypes.ts',
+  ],
+  TaskApplicationApi: ['src/main.ts', 'src/panels/RightPanel.ts'],
   TaskArchiveSession: ['src/panels/center/TaskCommands.ts'],
   TaskCaptureApplicationApi: ['src/main.ts'],
   TaskCommand: ['src/panels/RightPanel.ts'],
-  TaskCommandResult: ['src/projects/ProjectManager.ts'],
+  TaskCommandResult: [
+    'src/projects/ProjectManager.ts',
+    'src/panels/RightPanel.ts',
+    'src/panels/right/InspectorPlanningSurfaces.ts',
+  ],
   TaskCommentSnapshot: ['src/panels/RightPanel.ts'],
   TaskCreateSession: ['src/ui/taskCapture/CaptureTargetResolver.ts'],
   TaskIndexEvent: ['src/projects/ProjectStore.ts'],
   TaskInsertionPolicy: ['src/main.ts'],
-  TaskNodeRef: ['src/panels/RightPanel.ts'],
+  TaskNodeRef: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
   TaskPlanning: ['src/views/calendarOccurrences.ts'],
   TaskOccurrenceResult: ['src/ui/recurrence/RecurrenceEditor.ts'],
-  TaskPatch: ['src/panels/RightPanel.ts'],
-  TaskPriority: ['src/panels/CenterPanel.ts', 'src/panels/center/TaskMenus.ts'],
+  TaskPatch: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
+  TaskPriority: [
+    'src/panels/CenterPanel.ts',
+    'src/panels/center/TaskMenus.ts',
+    'src/panels/RightPanel.ts',
+    'src/panels/right/InspectorPlanningSurfaces.ts',
+  ],
   TaskQueryApi: ['src/main.ts'],
-  TaskDependencyQueryApi: ['src/main.ts'],
+  TaskDependencyQueryApi: ['src/main.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
   TaskDependencyEligibility: ['src/ui/dependencySearch.ts'],
   TaskDependencyProjection: ['src/panels/RightPanel.ts'],
   TaskDependencyRelation: ['src/panels/RightPanel.ts'],
   TaskNodeSnapshot: ['src/ui/dependencySearch.ts'],
-  TaskRef: ['src/projects/ProjectManager.ts'],
+  TaskRef: [
+    'src/projects/ProjectManager.ts',
+    'src/panels/RightPanel.ts',
+    'src/panels/right/InspectorPlanningSurfaces.ts',
+  ],
   TaskResolution: ['src/views/PanelView.ts'],
-  TaskSnapshot: ['src/panels/CenterPanel.ts'],
+  TaskSnapshot: [
+    'src/panels/CenterPanel.ts',
+    'src/panels/RightPanel.ts',
+    'src/panels/right/InspectorPlanningSurfaces.ts',
+    'src/panels/right/inspectorTypes.ts',
+  ],
   TaskStatusType: ['src/settings/SettingsTab.ts'],
   TaskTextTarget: ['src/panels/RightPanel.ts'],
   TimeEntryRef: ['src/ui/timeTracking/trackingActions.ts'],
@@ -143,15 +169,15 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/calendar/calendarCommands.ts',
     'src/views/timegrid/dragGeometry.ts',
   ],
-  cloneTaskSnapshot: ['src/app/AppState.ts'],
-  durationMinutes: ['src/panels/calendar/calendarCommands.ts'],
+  cloneTaskSnapshot: ['src/app/AppState.ts', 'src/panels/RightPanel.ts'],
+  durationMinutes: ['src/panels/calendar/calendarCommands.ts', 'src/panels/RightPanel.ts'],
   entryDurationMs: ['src/ui/timeTracking/TimeEntriesPopover.ts'],
   expandRecurrenceReferences: ['src/views/calendarOccurrences.ts'],
   formatCommentTimeLabel: ['src/panels/RightPanel.ts'],
   formatTrackedDuration: ['src/projects/projectTableModel.ts'],
   formatTrackedDurationWithSeconds: ['src/ui/timeTracking/TimeEntriesPopover.ts'],
   groupTrackedDays: ['src/ui/timeTracking/RailTrackingWidget.ts'],
-  localDate: ['src/main.ts'],
+  localDate: ['src/main.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
   localDayStartMs: [
     'src/ui/timeTracking/formatTracked.ts',
     'src/ui/timeTracking/RailTrackingWidget.ts',
@@ -160,6 +186,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   localTime: [
     'src/panels/calendar/calendarCommands.ts',
     'src/panels/calendar/calendarCapturePlacement.ts',
+    'src/panels/RightPanel.ts',
   ],
   parseRecurrenceRule: ['src/ui/recurrence/RecurrenceEditor.ts'],
   recentTrackingWindow: ['src/main.ts', 'src/ui/timeTracking/RailTrackingWidget.ts'],
@@ -176,7 +203,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/CenterPanel.ts',
     'src/views/PanelView.ts',
   ],
-  sameTaskNodeRef: ['src/panels/RightPanel.ts'],
+  sameTaskNodeRef: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
   shiftLocalDate: ['src/ui/timedBlockKeyboardQueue.ts'],
   shiftLocalDayStartMs: [
     'src/ui/timeTracking/formatTracked.ts',
@@ -184,7 +211,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   ],
   subtreeRunning: [
     'src/panels/CenterPanel.ts',
-    'src/panels/RightPanel.ts',
+    'src/panels/right/InspectorPlanningSurfaces.ts',
     'src/panels/center/TaskMenus.ts',
   ],
   subtreeTotal: ['src/ui/timeTracking/TimeBadge.ts', 'src/panels/CenterPanel.ts'],
@@ -205,7 +232,10 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
   'TaskQueryApi.resolve': 'src/views/PanelView.ts',
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',
   'TaskQueryApi.subscribeReconciled': 'src/projects/ProjectStore.ts',
-  'TaskDependencyQueryApi.listNodes': 'src/panels/RightPanel.ts',
+  'TaskDependencyQueryApi.listNodes': [
+    'src/panels/RightPanel.ts',
+    'src/panels/right/InspectorPlanningSurfaces.ts',
+  ],
   'TaskDependencyQueryApi.dependencies': ['src/panels/RightPanel.ts', 'src/panels/CenterPanel.ts'],
   'TaskDependencyQueryApi.dependencyEligibility': 'src/panels/RightPanel.ts',
 };
@@ -243,6 +273,7 @@ function calendarModules(): string[] {
     ...CALENDAR_HOST_MODULES,
     ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/panels/calendar`)).map(repoPath),
     ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/panels/center`)).map(repoPath),
+    ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/panels/right`)).map(repoPath),
     ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/views`)).map(repoPath),
   ];
 }
@@ -611,8 +642,83 @@ function unsafeForecastSnapshotCastsFor(path: string, module: ts.SourceFile): st
   return sites;
 }
 
+function namedType(node: ts.TypeNode | undefined, name: string): boolean {
+  return node !== undefined && ts.isTypeReferenceNode(node) && node.typeName.getText() === name;
+}
+
+function interfaceProperty(
+  module: ts.SourceFile,
+  name: string,
+  property: string,
+): ts.PropertySignature | undefined {
+  const contract = module.statements.find(
+    (node): node is ts.InterfaceDeclaration =>
+      ts.isInterfaceDeclaration(node) && node.name.text === name,
+  );
+  return contract?.members.find(
+    (member): member is ts.PropertySignature =>
+      ts.isPropertySignature(member) && member.name.getText(module) === property,
+  );
+}
+
+function enclosingClass(node: ts.Node): ts.ClassDeclaration | undefined {
+  if (ts.isClassDeclaration(node)) return node;
+  return ts.isSourceFile(node) ? undefined : enclosingClass(node.parent);
+}
+
+function hasPlanningConstructorBinding(owner: ts.ClassDeclaration, module: ts.SourceFile): boolean {
+  const constructor = owner.members.find(ts.isConstructorDeclaration);
+  const parameter = constructor?.parameters[0];
+  if (parameter === undefined || !namedType(parameter.type, 'InspectorPlanningSurfacesOptions'))
+    return false;
+  return (
+    constructor?.body?.statements.some((statement) => {
+      if (!ts.isExpressionStatement(statement) || !ts.isBinaryExpression(statement.expression))
+        return false;
+      const assignment = statement.expression;
+      return (
+        assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        assignment.left.getText(module) === 'this.#commands' &&
+        assignment.right.getText(module) === `${parameter.name.getText(module)}.commands`
+      );
+    }) === true
+  );
+}
+
+function hasDeclaredPlanningCommands(owner: ts.ClassDeclaration, module: ts.SourceFile): boolean {
+  const commands = owner.members.find(
+    (member): member is ts.PropertyDeclaration =>
+      ts.isPropertyDeclaration(member) && member.name.getText(module) === '#commands',
+  );
+  if (!namedType(commands?.type, 'InspectorPlanningCommands')) return false;
+  if (
+    commands?.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ReadonlyKeyword) !==
+    true
+  )
+    return false;
+  return true;
+}
+
+function declaredPlanningCommandsOwner(module: ts.SourceFile): ts.ClassDeclaration | undefined {
+  const owner = module.statements.find(
+    (node): node is ts.ClassDeclaration =>
+      ts.isClassDeclaration(node) && node.name?.text === 'InspectorPlanningSurfaces',
+  );
+  if (owner === undefined) return undefined;
+  if (!hasDeclaredPlanningCommands(owner, module)) return undefined;
+  const submit = interfaceProperty(module, 'InspectorPlanningCommands', 'executePlanningPatch');
+  if (submit?.type === undefined || !ts.isFunctionTypeNode(submit.type)) return undefined;
+  const optionsPort = interfaceProperty(module, 'InspectorPlanningSurfacesOptions', 'commands');
+  if (!namedType(optionsPort?.type, 'InspectorPlanningCommands')) return undefined;
+  return hasPlanningConstructorBinding(owner, module) ? owner : undefined;
+}
+
 function recurrenceSubmitRoutesFor(path: string, module: ts.SourceFile): string[] {
   const routes: string[] = [];
+  const planningOwner =
+    path === 'src/panels/right/InspectorPlanningSurfaces.ts'
+      ? declaredPlanningCommandsOwner(module)
+      : undefined;
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
       const target = unwrapCallTarget(node.expression);
@@ -641,6 +747,13 @@ function recurrenceSubmitRoutesFor(path: string, module: ts.SourceFile): string[
               /(?:^|\.)tasks_abyssPrivate!?$/u.test(callTarget.expression.getText(module))
             ) {
               route = 'TaskApplicationApi.execute';
+            } else if (
+              planningOwner !== undefined &&
+              callTarget.name.text === 'executePlanningPatch' &&
+              callTarget.expression.getText(module) === 'this.#commands'
+            ) {
+              if (enclosingClass(candidate) === planningOwner)
+                route = 'commands.executePlanningPatch';
             } else if (callTarget.name.text === 'executePlanningPatch_abyssPrivate') {
               route = 'executePlanningPatch';
             }
@@ -965,6 +1078,33 @@ describe('task architecture boundaries', () => {
     SOURCE_WALK_TIMEOUT_MS,
   );
 
+  it('recognizes only the planning owner declared command port for recurrence submits', () => {
+    const path = 'src/panels/right/InspectorPlanningSurfaces.ts';
+    const text = source(path);
+    const parse = (input: string) =>
+      ts.createSourceFile(path, input, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    expect(recurrenceSubmitRoutesFor(path, parse(text))).toEqual([
+      `${path}:commands.executePlanningPatch`,
+    ]);
+    expect(recurrenceSubmitRoutesFor(path, parse(text.replace('onSubmit:', 'onCancel:')))).toEqual([
+      `${path}:missing-onSubmit`,
+    ]);
+    const unrelated = text.replace(
+      'onSubmit: (patch) => this.#commands.executePlanningPatch(task, patch)',
+      'onSubmit: (patch) => unrelated.executePlanningPatch(task, patch)',
+    );
+    expect(unrelated).not.toBe(text);
+    expect(recurrenceSubmitRoutesFor(path, parse(unrelated))).toEqual([
+      `${path}:missing-application-route`,
+    ]);
+    expect(
+      recurrenceSubmitRoutesFor(
+        path,
+        parse(text.replace('#commands: InspectorPlanningCommands', '#commands: UnrelatedCommands')),
+      ),
+    ).toEqual([`${path}:missing-application-route`]);
+  });
+
   it('routes every mounted recurrence editor write through TaskApplicationApi', () => {
     expect(
       RECURRENCE_EDITOR_WRITE_CONSUMERS.flatMap((path) =>
@@ -973,7 +1113,7 @@ describe('task architecture boundaries', () => {
     ).toEqual([
       'src/panels/CenterPanel.ts:TaskApplicationApi.execute',
       'src/panels/CenterPanel.ts:TaskApplicationApi.execute',
-      'src/panels/RightPanel.ts:executePlanningPatch',
+      'src/panels/right/InspectorPlanningSurfaces.ts:commands.executePlanningPatch',
     ]);
     expect(
       memberApplicationExecuteCount(

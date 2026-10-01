@@ -1124,9 +1124,8 @@ describe('inspector dependency navigation', () => {
 
   it('replaces and clears a dependency status menu handle after closing and refreshing', async () => {
     const h = await harness('- [ ] Current ⛔ related\n- [ ] Related 🆔 related\n');
-    const panel = h.panel as unknown as {
-      dependencyStatusMenu_abyssPrivate: { element: HTMLElement } | undefined;
-    };
+    const surfaces = h.panel['planningSurfaces_abyssPrivate'];
+    const opened = vi.spyOn(surfaces, 'openStatusMenu');
     const marker = expectDefined(
       h.el.querySelector<HTMLElement>(
         '[data-dependency-direction="blocked-by"] .abyss-status-marker',
@@ -1136,7 +1135,9 @@ describe('inspector dependency navigation', () => {
     try {
       marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       vi.runOnlyPendingTimers();
-      const firstMenu = expectDefined(panel.dependencyStatusMenu_abyssPrivate);
+      const firstMenu = expectDefined(
+        opened.mock.results[0]?.value as ReturnType<typeof surfaces.openStatusMenu> | undefined,
+      );
       expect(firstMenu.element.isConnected).toBe(true);
 
       activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -1144,8 +1145,11 @@ describe('inspector dependency navigation', () => {
 
       vi.useRealTimers();
       marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-      const secondMenu = expectDefined(panel.dependencyStatusMenu_abyssPrivate);
+      const secondMenu = expectDefined(
+        opened.mock.results[1]?.value as ReturnType<typeof surfaces.openStatusMenu> | undefined,
+      );
       expect(secondMenu).not.toBe(firstMenu);
+      const close = vi.spyOn(secondMenu, 'close');
       await h.api.execute({
         type: 'patch',
         target: { type: 'task', ref: h.node('Related').root.ref },
@@ -1153,7 +1157,9 @@ describe('inspector dependency navigation', () => {
       });
       await flushMicrotasks(30);
 
-      expect(panel.dependencyStatusMenu_abyssPrivate).toBeUndefined();
+      expect(close).toHaveBeenCalledTimes(1);
+      surfaces.closeDependencyStatusMenu();
+      expect(close).toHaveBeenCalledTimes(1);
       expect(secondMenu.element.isConnected).toBe(false);
     } finally {
       vi.useRealTimers();

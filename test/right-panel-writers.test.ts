@@ -173,7 +173,15 @@ async function makePanel(
   return { panel, state, app };
 }
 
-describe('RightPanel.getTagColor', () => {
+function renderedTagColor(panel: RightPanel, tag: string): string | undefined {
+  const container = freshContainer();
+  panel['planningSurfaces_abyssPrivate'].renderTagChip(container, task(), tag);
+  const chip = expectDefined(container.querySelector<HTMLElement>('.abyss-chip-tag'));
+  const color = chip.style.getPropertyValue('--abyss-chip-tag-color');
+  return color === '' ? undefined : color;
+}
+
+describe('RightPanel tag-chip colors', () => {
   it('prefix mode: exact match returns group.color', async () => {
     const group: TagGroup = {
       id: 'g1',
@@ -184,7 +192,7 @@ describe('RightPanel.getTagColor', () => {
     };
     const settings: CalendarSettings = { ...DEFAULT_SETTINGS, tagGroups: [group] };
     const { panel } = await makePanel({ 't.md': '- [ ] x' }, settings);
-    expect(call<string | undefined>(panel, 'getTagColor', '#work')).toBe('#ff0000');
+    expect(renderedTagColor(panel, '#work')).toBe('#ff0000');
   });
 
   it('prefix mode: slash subtag matches (e.g. #work/deep)', async () => {
@@ -197,7 +205,7 @@ describe('RightPanel.getTagColor', () => {
     };
     const settings: CalendarSettings = { ...DEFAULT_SETTINGS, tagGroups: [group] };
     const { panel } = await makePanel({ 't.md': '- [ ] x' }, settings);
-    expect(call<string | undefined>(panel, 'getTagColor', '#work/deep')).toBe('#ff0000');
+    expect(renderedTagColor(panel, '#work/deep')).toBe('#ff0000');
   });
 
   it('manual mode: matches tag with or without leading #', async () => {
@@ -210,8 +218,8 @@ describe('RightPanel.getTagColor', () => {
     };
     const settings: CalendarSettings = { ...DEFAULT_SETTINGS, tagGroups: [group] };
     const { panel } = await makePanel({ 't.md': '- [ ] x' }, settings);
-    expect(call<string | undefined>(panel, 'getTagColor', '#urgent')).toBe('#00ff00');
-    expect(call<string | undefined>(panel, 'getTagColor', '#low')).toBe('#00ff00');
+    expect(renderedTagColor(panel, '#urgent')).toBe('#00ff00');
+    expect(renderedTagColor(panel, '#low')).toBe('#00ff00');
   });
 
   it('no matching group → undefined', async () => {
@@ -224,7 +232,7 @@ describe('RightPanel.getTagColor', () => {
     };
     const settings: CalendarSettings = { ...DEFAULT_SETTINGS, tagGroups: [group] };
     const { panel } = await makePanel({ 't.md': '- [ ] x' }, settings);
-    expect(call<string | undefined>(panel, 'getTagColor', '#personal')).toBeUndefined();
+    expect(renderedTagColor(panel, '#personal')).toBeUndefined();
   });
 
   it('no settings → undefined', async () => {
@@ -235,7 +243,7 @@ describe('RightPanel.getTagColor', () => {
       app,
       statusRegistry: testStatusRegistry(),
     });
-    expect(call<string | undefined>(panel, 'getTagColor', '#anything')).toBeUndefined();
+    expect(renderedTagColor(panel, '#anything')).toBeUndefined();
   });
 });
 

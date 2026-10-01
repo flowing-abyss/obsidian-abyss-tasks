@@ -189,6 +189,10 @@ export const contracts = {
 // Finite wrappers, scoped to their source owners. Contract tests execute/discover each family.
 export const runtimeFamilies = [
   { file: 'src/ui/anchoredPopover.ts', helper: 'setLength', prefix: '--abyss-pop-' },
-  { file: 'src/panels/RightPanel.ts', helper: 'setPopoverLength', prefix: '--abyss-pop-' },
+  {
+    file: 'src/panels/right/InspectorPlanningSurfaces.ts',
+    helper: 'setPopoverLength',
+    prefix: '--abyss-pop-',
+  },
   { file: 'src/ui/ViewOptionsPopover.ts', helper: 'setPopoverVariable', prefix: '' },
 ];
