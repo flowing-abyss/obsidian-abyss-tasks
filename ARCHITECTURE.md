@@ -109,6 +109,17 @@ current method at call time. Cards, menus, date presets and calendar host action
 the shell retains drag validation and both recurrence editor submissions. Services never import
 CenterPanel. Files under `src/panels/center/` use owner capabilities and task contracts from `src/tasks`.
 
+[`TaskMenus`](src/panels/center/TaskMenus.ts) owns single-task and bulk context menu registration,
+priority/status submenus, pinned-tag items and tag-picker composition. Constructed once before
+CalendarMode, it uses the existing TaskCommands service and live shell callbacks for date/repeat
+editors, filters and tag catalogue/color reads. The shell keeps context-menu selection handling,
+visual-order snapshot capture and status-popover close sequencing. TaskMenus owns no lifecycle
+registry or task write authority.
+
+| Centre service                                | Responsibility                                                                              |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| [`TaskMenus`](src/panels/center/TaskMenus.ts) | Context menus and tag pickers; shared TaskCommands submissions and call-time host callbacks |
+
 ## Calendar mode
 
 `CenterPanel` routes modes, delegates task actions to TaskCommands, and keeps the task modal,

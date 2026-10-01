@@ -3515,16 +3515,54 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
       if (opening instanceof Promise) throw new Error('Expected synchronous tag picker open');
     });
 
+    const originalAddItem = methodOf(Menu.prototype, 'addItem');
+    const addItem = vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (
+      this: Menu,
+      callback,
+    ) {
+      return originalAddItem.call(this, (item) => {
+        (item as unknown as { dom: HTMLElement }).dom = createDiv();
+        callback(item);
+      });
+    });
     try {
-      const single = call<void>(panel, 'openTagPicker', expectDefined(tasks[0]));
-      if (single instanceof Promise) throw new Error('Expected synchronous single tag picker');
+      const card = createDiv();
+      const singleMenu = panel['taskMenus_abyssPrivate'].createTaskContextMenu(
+        card,
+        expectDefined(tasks[0]),
+      );
+      const clickSetTag = (menu: Menu): void => {
+        const items = (
+          menu as unknown as {
+            menuItems__: Array<{
+              title__: string;
+              onClick__: ((event: MouseEvent) => unknown) | null;
+            }>;
+          }
+        ).menuItems__;
+        expectDefined(items.find((item) => item.title__ === 'Set tag…')?.onClick__)(
+          new MouseEvent('click'),
+        );
+      };
+      clickSetTag(singleMenu);
       expect(listNodes).toHaveBeenCalledTimes(1);
 
       listNodes.mockClear();
-      const bulk = call<void>(panel, 'openBulkTagPicker', tasks.slice(0, 2));
-      if (bulk instanceof Promise) throw new Error('Expected synchronous bulk tag picker');
+      const shown = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+        this: Menu,
+      ) {
+        return this;
+      });
+      panel['taskMenus_abyssPrivate'].showBulkContextMenu(
+        new MouseEvent('contextmenu'),
+        card,
+        tasks.slice(0, 2),
+      );
+      clickSetTag(expectDefined(shown.mock.instances[0]) as Menu);
+      shown.mockRestore();
       expect(listNodes).toHaveBeenCalledTimes(1);
     } finally {
+      addItem.mockRestore();
       open.mockRestore();
       panel.destroy();
     }
