@@ -162,14 +162,14 @@ async function makePanel(
     clockFrom(Date.parse('2026-07-14T05:04:03Z'), 420),
   );
   await index.initialize();
-  const panel = new RightPanel(
+  const panel = new RightPanel({
     state,
     app,
-    testStatusRegistry(),
+    statusRegistry: testStatusRegistry(),
     settings,
     onSuccessfulMutation,
     tasks,
-  );
+  });
   return { panel, state, app };
 }
 
@@ -230,7 +230,11 @@ describe('RightPanel.getTagColor', () => {
   it('no settings → undefined', async () => {
     const app = await createAppWithFiles({ 't.md': '- [ ] x' });
     const state = new AppState();
-    const panel = new RightPanel(state, app, testStatusRegistry(), undefined);
+    const panel = new RightPanel({
+      state,
+      app,
+      statusRegistry: testStatusRegistry(),
+    });
     expect(call<string | undefined>(panel, 'getTagColor', '#anything')).toBeUndefined();
   });
 });
@@ -346,14 +350,13 @@ describe('RightPanel planning API delegation', () => {
       queries: taskQueryApi(),
       execute,
     };
-    const panel = new RightPanel(
+    const panel = new RightPanel({
       state,
       app,
-      testStatusRegistry(),
-      DEFAULT_SETTINGS,
-      undefined,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       tasks,
-    );
+    });
     const current = Object.assign(task({ source: { filePath: 't.md', line: 0 } }), { ref });
     const process = vi.spyOn(app.vault, 'process');
 
@@ -399,14 +402,13 @@ describe('RightPanel planning API delegation', () => {
       queries: taskQueryApi(),
       execute,
     };
-    const panel = new RightPanel(
+    const panel = new RightPanel({
       state,
       app,
-      testStatusRegistry(),
-      DEFAULT_SETTINGS,
-      undefined,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       tasks,
-    );
+    });
     const current = Object.assign(
       task({
         planning: { scheduled: '2026-07-20' },
@@ -459,14 +461,13 @@ describe('RightPanel planning API delegation', () => {
       queries: taskQueryApi(),
       execute,
     };
-    const panel = new RightPanel(
+    const panel = new RightPanel({
       state,
       app,
-      testStatusRegistry(),
-      DEFAULT_SETTINGS,
-      undefined,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       tasks,
-    );
+    });
     const root = Object.assign(task({ source: { filePath: 't.md', line: 0 } }), { ref: rootRef });
     const child = Object.assign(task({ source: { filePath: 't.md', line: 1 } }), { ref: childRef });
     const process = vi.spyOn(app.vault, 'process');
@@ -572,14 +573,13 @@ describe('RightPanel planning API delegation', () => {
       queries: taskQueryApi(),
       execute,
     };
-    const panel = new RightPanel(
+    const panel = new RightPanel({
       state,
       app,
-      testStatusRegistry(),
-      DEFAULT_SETTINGS,
-      undefined,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       tasks,
-    );
+    });
     const legacyRoot = Object.assign(
       task({ title: 'root', source: { filePath: 't.md', line: 0 } }),
       {
@@ -629,14 +629,14 @@ describe('RightPanel planning API delegation', () => {
         queries: taskQueryApi(),
         execute,
       };
-      const panel = new RightPanel(
+      const panel = new RightPanel({
         state,
         app,
-        testStatusRegistry(),
-        DEFAULT_SETTINGS,
-        acknowledge,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
+        onSuccessfulMutation: acknowledge,
         tasks,
-      );
+      });
       const legacyRoot = Object.assign(
         task({ title: 'A', source: { filePath: 'a.md', line: 0 } }),
         {
@@ -739,7 +739,12 @@ describe('RightPanel.formatDate', () => {
   function makePanelNoVault(): RightPanel {
     const state = new AppState();
     const app = { vault: { getAbstractFileByPath: () => null } } as unknown as App;
-    return new RightPanel(state, app, testStatusRegistry(), DEFAULT_SETTINGS);
+    return new RightPanel({
+      state,
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+    });
   }
 
   it('today → "Today"', () => {
@@ -776,14 +781,13 @@ describe('RightPanel.updateTaskTitle', () => {
       queries: taskQueryApi(),
       execute,
     };
-    const panel = new RightPanel(
+    const panel = new RightPanel({
       state,
       app,
-      testStatusRegistry(),
-      DEFAULT_SETTINGS,
-      undefined,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       tasks,
-    );
+    });
     const root = Object.assign(task({ source: { filePath: 't.md', line: 0 } }), { ref: rootRef });
     const child = Object.assign(task({ source: { filePath: 't.md', line: 1 } }), { ref: childRef });
     const process = vi.spyOn(app.vault, 'process');
@@ -1567,14 +1571,13 @@ describe('RightPanel.removeTag', () => {
       queries: taskQueryApi(),
       execute,
     };
-    const panel = new RightPanel(
+    const panel = new RightPanel({
       state,
       app,
-      testStatusRegistry(),
-      DEFAULT_SETTINGS,
-      undefined,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       tasks,
-    );
+    });
     const root = Object.assign(task({ source: { filePath: 't.md', line: 0 } }), { ref: rootRef });
     const child = Object.assign(task({ source: { filePath: 't.md', line: 1 } }), { ref: childRef });
     const process = vi.spyOn(app.vault, 'process');

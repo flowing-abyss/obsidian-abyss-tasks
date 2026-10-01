@@ -462,23 +462,18 @@ function mountInspector(stack: TrackingStack, title: string) {
     now: stack.now,
     win: window,
   });
-  const panel = new RightPanel(
+  const panel = new RightPanel({
     state,
-    stack.app,
-    stack.statusRegistry,
-    DEFAULT_SETTINGS,
-    undefined,
-    stack.tasks,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    {
+    app: stack.app,
+    statusRegistry: stack.statusRegistry,
+    settings: DEFAULT_SETTINGS,
+    tasks: stack.tasks,
+    timeTracking: {
       ticker,
       actions: createTrackingActions(stack.tasks, (result) => reported.push(result)),
       context: () => ({ nowMs: stack.now(), offsetAt: () => OFFSET_MINUTES }),
     },
-  );
+  });
   const el = activeDocument.body.createDiv();
   panel.mount(el);
   cleanups.push(() => {

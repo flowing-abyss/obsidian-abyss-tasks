@@ -27,15 +27,15 @@ import { deviceTrackedTimeContext, type TrackingSurface } from './timeTracking/T
 import { TrackingTicker } from './timeTracking/TrackingTicker';
 import { createTrackingActions } from './timeTracking/trackingActions';
 
-type TaskModalConstructorArgs = [
-  app: App,
-  statusRegistry: StatusRegistry,
-  settings?: CalendarSettings,
-  queries?: TaskQueryApi,
-  tasks?: TaskApplicationApi,
-  commentTimeContext?: CommentTimeContextProvider,
-  interactionOwnership?: InteractionOwnershipPort,
-];
+interface TaskModalOptions {
+  readonly app: App;
+  readonly statusRegistry: StatusRegistry;
+  readonly settings?: CalendarSettings | undefined;
+  readonly queries?: TaskQueryApi | undefined;
+  readonly tasks?: TaskApplicationApi | undefined;
+  readonly commentTimeContext?: CommentTimeContextProvider | undefined;
+  readonly interactionOwnership?: InteractionOwnershipPort | undefined;
+}
 
 export class TaskModal {
   private readonly app_abyssPrivate: App;
@@ -57,8 +57,16 @@ export class TaskModal {
   private ownershipToken_abyssPrivate: { release(): void } | null = null;
   private timeTracking_abyssPrivate: TrackingSurface | undefined;
 
-  constructor(...args: TaskModalConstructorArgs) {
-    const [app, statusRegistry, settings, queries, tasks, commentTimeContext, ownership] = args;
+  constructor(options: TaskModalOptions) {
+    const {
+      app,
+      statusRegistry,
+      settings,
+      queries,
+      tasks,
+      commentTimeContext,
+      interactionOwnership: ownership,
+    } = options;
     this.app_abyssPrivate = app;
     this.statusRegistry_abyssPrivate = statusRegistry;
     this.settings_abyssPrivate = settings;
@@ -96,23 +104,22 @@ export class TaskModal {
     }
 
     const panelEl = modal.createDiv({ cls: 'abyss-right abyss-modal-body' });
-    this.innerPanel_abyssPrivate = new RightPanel(
-      this.innerState_abyssPrivate,
-      this.app_abyssPrivate,
-      this.statusRegistry_abyssPrivate,
-      this.settings_abyssPrivate,
-      undefined,
-      this.tasks_abyssPrivate,
-      (actions) => {
+    this.innerPanel_abyssPrivate = new RightPanel({
+      state: this.innerState_abyssPrivate,
+      app: this.app_abyssPrivate,
+      statusRegistry: this.statusRegistry_abyssPrivate,
+      settings: this.settings_abyssPrivate,
+      tasks: this.tasks_abyssPrivate,
+      onRenderHeaderActions: (actions) => {
         this.renderCloseButton_abyssPrivate(actions);
       },
-      (event) => {
+      onMutationLifecycle: (event) => {
         this.trackOwnWrite_abyssPrivate(event);
       },
-      this.commentTimeContext_abyssPrivate,
-      this.interactionOwnership_abyssPrivate,
-      this.createTrackingSurface_abyssPrivate(),
-    );
+      commentTimeContext: this.commentTimeContext_abyssPrivate,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
+      timeTracking: this.createTrackingSurface_abyssPrivate(),
+    });
     this.innerPanel_abyssPrivate.mount(panelEl);
     // As in PanelView, RightPanel's synchronous history maintenance must run before
     // active-selection convergence consumes the pending owned-command evidence.

@@ -392,15 +392,15 @@ export class CenterPanel {
   }
 
   private initializeOwnedUi_abyssPrivate(): void {
-    this.taskModal_abyssPrivate = new TaskModal(
-      this.app_abyssPrivate,
-      this.statusRegistry_abyssPrivate,
-      this.settings_abyssPrivate,
-      this.queries_abyssPrivate,
-      this.tasks_abyssPrivate,
-      this.commentTimeContext_abyssPrivate,
-      this.interactionOwnership_abyssPrivate,
-    );
+    this.taskModal_abyssPrivate = new TaskModal({
+      app: this.app_abyssPrivate,
+      statusRegistry: this.statusRegistry_abyssPrivate,
+      settings: this.settings_abyssPrivate,
+      queries: this.queries_abyssPrivate,
+      tasks: this.tasks_abyssPrivate,
+      commentTimeContext: this.commentTimeContext_abyssPrivate,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
+    });
   }
 
   private subscribeToState_abyssPrivate(): void {

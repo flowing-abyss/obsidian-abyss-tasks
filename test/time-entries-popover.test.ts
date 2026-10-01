@@ -154,23 +154,19 @@ async function inspector(
     now: () => nowMs,
     win,
   });
-  const panel = new RightPanel(
+  const panel = new RightPanel({
     state,
     app,
-    stack.statusRegistry,
-    DEFAULT_SETTINGS,
-    undefined,
-    stack.tasks,
-    undefined,
-    undefined,
-    undefined,
-    ownership,
-    {
+    statusRegistry: stack.statusRegistry,
+    settings: DEFAULT_SETTINGS,
+    tasks: stack.tasks,
+    interactionOwnership: ownership,
+    timeTracking: {
       ticker,
       actions: createTrackingActions(stack.tasks, (result) => reported.push(result)),
       context: () => ({ nowMs, offsetAt: () => OFFSET_MINUTES }),
     },
-  );
+  });
   const el = activeDocument.body.createDiv();
   panel.mount(el);
   // What the owning view does: it converges the selection only for the file the inspector shows.

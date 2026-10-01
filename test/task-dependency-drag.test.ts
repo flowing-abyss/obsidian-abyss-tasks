@@ -84,7 +84,13 @@ async function harness(markdown: string, selected = 'B', additionalFiles = {}) {
   });
   center.mount(centerEl);
   const el = activeDocument.body.createDiv();
-  const panel = new RightPanel(state, app, testStatusRegistry(), DEFAULT_SETTINGS, undefined, api);
+  const panel = new RightPanel({
+    state,
+    app,
+    statusRegistry: testStatusRegistry(),
+    settings: DEFAULT_SETTINGS,
+    tasks: api,
+  });
   panel.mount(el);
   cleanups.push(() => {
     center.destroy();

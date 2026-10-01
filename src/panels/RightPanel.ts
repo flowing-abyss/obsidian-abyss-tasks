@@ -119,19 +119,19 @@ interface DependencyDisclosureState {
   readonly latched: boolean;
 }
 
-type RightPanelDependencies = readonly [
-  state: AppState,
-  app: App,
-  statusRegistry: StatusRegistry,
-  settings?: CalendarSettings,
-  onSuccessfulMutation?: (ref?: TaskRef) => void,
-  tasks?: TaskApplicationApi,
-  onRenderHeaderActions?: (actions: HTMLElement) => void,
-  onMutationLifecycle?: (event: RightPanelMutationLifecycle) => void,
-  commentTimeContext?: CommentTimeContextProvider,
-  interactionOwnership?: InteractionOwnershipPort,
-  timeTracking?: TrackingSurface,
-];
+interface RightPanelOptions {
+  readonly state: AppState;
+  readonly app: App;
+  readonly statusRegistry: StatusRegistry;
+  readonly settings?: CalendarSettings | undefined;
+  readonly onSuccessfulMutation?: ((ref?: TaskRef) => void) | undefined;
+  readonly tasks?: TaskApplicationApi | undefined;
+  readonly onRenderHeaderActions?: ((actions: HTMLElement) => void) | undefined;
+  readonly onMutationLifecycle?: ((event: RightPanelMutationLifecycle) => void) | undefined;
+  readonly commentTimeContext?: CommentTimeContextProvider | undefined;
+  readonly interactionOwnership?: InteractionOwnershipPort | undefined;
+  readonly timeTracking?: TrackingSurface | undefined;
+}
 
 interface TextDraftSnapshot {
   readonly value: string;
@@ -536,8 +536,8 @@ export class RightPanel {
   private detachedAnnouncement_abyssPrivate = '';
   private detachedFocusTimer_abyssPrivate: number | undefined;
 
-  constructor(...dependencies: RightPanelDependencies) {
-    const [
+  constructor(options: RightPanelOptions) {
+    const {
       state,
       app,
       statusRegistry,
@@ -549,7 +549,7 @@ export class RightPanel {
       commentTimeContext,
       interactionOwnership = noInteractionOwnership,
       timeTracking,
-    ] = dependencies;
+    } = options;
     this.state_abyssPrivate = state;
     this.app_abyssPrivate = app;
     this.statusRegistry_abyssPrivate = statusRegistry;

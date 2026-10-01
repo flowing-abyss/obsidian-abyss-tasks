@@ -3873,12 +3873,24 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const application: TaskApplicationApi = { queries, execute };
     const registry = new StatusRegistry(DEFAULT_SETTINGS.taskStatuses);
     const state = new AppState();
-    const panel = new RightPanel(state, app, registry, DEFAULT_SETTINGS, undefined, application);
+    const panel = new RightPanel({
+      state,
+      app,
+      statusRegistry: registry,
+      settings: DEFAULT_SETTINGS,
+      tasks: application,
+    });
     const panelHost = freshContainer();
     panel.mount(panelHost);
     state.set('taskStack', [recurring]);
 
-    const modal = new TaskModal(app, registry, DEFAULT_SETTINGS, queries, application);
+    const modal = new TaskModal({
+      app,
+      statusRegistry: registry,
+      settings: DEFAULT_SETTINGS,
+      queries,
+      tasks: application,
+    });
     try {
       panelHost
         .querySelector<HTMLElement>('.abyss-right-header > .abyss-status-marker')

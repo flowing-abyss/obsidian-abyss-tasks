@@ -485,18 +485,16 @@ async function makePanel(
     { today: () => '2026-07-14' as never },
   );
   await index.initialize();
-  const panel = new RightPanel(
+  const panel = new RightPanel({
     state,
     app,
     statusRegistry,
-    DEFAULT_SETTINGS,
+    settings: DEFAULT_SETTINGS,
     onSuccessfulMutation,
-    tasks ?? defaultTasks,
-    undefined,
-    undefined,
+    tasks: tasks ?? defaultTasks,
     commentTimeContext,
     interactionOwnership,
-  );
+  });
   mountedPanels.push(panel);
   const el = freshContainer();
   panel.mount(el);
@@ -783,15 +781,13 @@ describe('RightPanel render lifecycle', () => {
     const app = await createAppWithFiles({});
     const state = new AppState();
     const renderHeaderActions = vi.fn<(actions: HTMLElement) => void>();
-    const panel = new RightPanel(
+    const panel = new RightPanel({
       state,
       app,
-      testStatusRegistry(),
-      DEFAULT_SETTINGS,
-      undefined,
-      undefined,
-      renderHeaderActions,
-    );
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      onRenderHeaderActions: renderHeaderActions,
+    });
     mountedPanels.push(panel);
     const el = freshContainer();
     panel.mount(el);
@@ -2842,14 +2838,13 @@ describe('RightPanel popovers', () => {
       queries: taskQueryApi(),
       execute,
     };
-    const panel = new RightPanel(
+    const panel = new RightPanel({
       state,
       app,
-      testStatusRegistry(),
-      DEFAULT_SETTINGS,
-      undefined,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       tasks,
-    );
+    });
     mountedPanels.push(panel);
     const el = freshContainer();
     panel.mount(el);

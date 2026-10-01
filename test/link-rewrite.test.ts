@@ -82,14 +82,13 @@ describe('task link rewrite delegation', () => {
     const app = await createAppWithFiles({ 't.md': '- [ ] [[Old]]\n' });
     const ref: TaskRef = { filePath: 't.md', line: 0, revision: 'root' };
     const { tasks, execute } = taskApi(ref);
-    const panel = new RightPanel(
-      new AppState(),
+    const panel = new RightPanel({
+      state: new AppState(),
       app,
-      testStatusRegistry(),
-      DEFAULT_SETTINGS,
-      undefined,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       tasks,
-    );
+    });
     const current = Object.assign(
       task({ markdownTitle: '[[Old]]', source: { filePath: 't.md' } }),
       { ref },
@@ -160,14 +159,13 @@ describe('task link rewrite delegation', () => {
       originalMarkdown: '  - 2026-07-14: [[Old]]',
     };
     const { tasks, execute } = taskApi(ref);
-    const panel = new RightPanel(
-      new AppState(),
+    const panel = new RightPanel({
+      state: new AppState(),
       app,
-      testStatusRegistry(),
-      DEFAULT_SETTINGS,
-      undefined,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       tasks,
-    );
+    });
     const token = {
       raw: '[[Old]]',
       type: 'wiki' as const,
@@ -242,14 +240,14 @@ describe('task link rewrite delegation', () => {
       Object.assign(task({ title: 'Old', source: { filePath: 't.md' } }), { ref: staleRef }),
     ]);
     const acknowledged = vi.fn();
-    const panel = new RightPanel(
+    const panel = new RightPanel({
       state,
       app,
-      testStatusRegistry(),
-      DEFAULT_SETTINGS,
-      acknowledged,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      onSuccessfulMutation: acknowledged,
       tasks,
-    );
+    });
 
     await call<Promise<void>>(
       panel,

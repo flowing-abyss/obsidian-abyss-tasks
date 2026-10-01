@@ -452,7 +452,13 @@ describe('inspector subtask row removal', () => {
   it('offers local recovery after deleting the selected subtask through the modal menu', async () => {
     const markdown = '- [ ] Current\n  - [ ] Child\n  - [ ] Sibling\n';
     const h = await harness(markdown);
-    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    const modal = new TaskModal({
+      app: h.app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.api,
+    });
     cleanups.unshift(() => {
       modal.close();
     });
@@ -501,7 +507,13 @@ describe('inspector subtask row removal', () => {
         await pending.promise;
         return result;
       });
-      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      const modal = new TaskModal({
+        app: h.app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
+        queries: h.index,
+        tasks: h.api,
+      });
       cleanups.unshift(() => {
         modal.close();
       });
@@ -589,7 +601,13 @@ describe('inspector subtask row removal', () => {
       await pending.promise;
       return execute(command);
     });
-    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    const modal = new TaskModal({
+      app: h.app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.api,
+    });
     cleanups.unshift(() => {
       modal.close();
     });
@@ -1216,7 +1234,13 @@ describe('inspector dependency navigation', () => {
     async (mode) => {
       const h = await harness(source, 'A.1.a');
       const outer = h.state.get('taskStack');
-      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      const modal = new TaskModal({
+        app: h.app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
+        queries: h.index,
+        tasks: h.api,
+      });
       cleanups.unshift(() => {
         modal.close();
       });
@@ -1252,7 +1276,13 @@ describe('owned dependency destination editing', () => {
   const source = '- [ ] B\n  - [ ] B.2 🆔 b\n    - [ ] Deep\n- [ ] C ⛔ b\n';
   it('preserves nested current and both history frames through an owned linked child insertion', async () => {
     const h = await harness(source, 'C');
-    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    const modal = new TaskModal({
+      app: h.app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.api,
+    });
     cleanups.unshift(() => {
       modal.close();
     });
@@ -1344,7 +1374,13 @@ describe('owned dependency destination editing', () => {
     'keeps a related nested selection and Back after %s editing',
     async (kind) => {
       const h = await harness(source, 'C');
-      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      const modal = new TaskModal({
+        app: h.app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
+        queries: h.index,
+        tasks: h.api,
+      });
       cleanups.unshift(() => {
         modal.close();
       });
@@ -1397,7 +1433,13 @@ describe('owned dependency destination editing', () => {
 
   it('does not retain a child through a concurrent insertion while its title edit is pending', async () => {
     const h = await harness(source, 'C');
-    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    const modal = new TaskModal({
+      app: h.app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.api,
+    });
     cleanups.unshift(() => {
       modal.close();
     });
@@ -1433,7 +1475,13 @@ describe('live dependency history restoration', () => {
     'keeps %s history current through sequential shifts and later dependency mutations',
     async (surface) => {
       const h = await harness(source.replace('🆔 b', '🆔 b ⛔ missing'), 'C');
-      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      const modal = new TaskModal({
+        app: h.app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
+        queries: h.index,
+        tasks: h.api,
+      });
       cleanups.unshift(() => {
         modal.close();
       });
@@ -1629,7 +1677,13 @@ describe('TaskModal dependency selection', () => {
     async (_location, source) => {
       const h = await harness(source, 'Parent');
       h.panel.destroy();
-      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      const modal = new TaskModal({
+        app: h.app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
+        queries: h.index,
+        tasks: h.api,
+      });
       cleanups.unshift(() => {
         modal.close();
       });
@@ -1688,7 +1742,13 @@ describe('TaskModal dependency selection', () => {
   it('does not preserve duplicate selection through an unrelated structural authority transition', async () => {
     const h = await harness('- [ ] Parent\n  - [ ] Current\n  - [ ] Current\n', 'Parent');
     h.panel.destroy();
-    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    const modal = new TaskModal({
+      app: h.app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.api,
+    });
     cleanups.unshift(() => {
       modal.close();
     });
@@ -2551,7 +2611,13 @@ describe('continuous dependency entry', () => {
       '- [ ] Tabbed parent\n\t- [ ] Nested owner\n\t\t- [ ] Grandchild ⛔ blocker\n- [ ] Blocker 🆔 blocker\n',
       'Grandchild',
     );
-    const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+    const modal = new TaskModal({
+      app: h.app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.api,
+    });
     cleanups.unshift(() => {
       modal.close();
     });
@@ -2607,7 +2673,13 @@ describe('continuous dependency entry', () => {
         '- [ ] Root\n\t- [ ] Nested owner\n\t\t- [ ] Grandchild\n- [ ] Candidate one\n- [ ] Candidate two\n',
         'Nested owner',
       );
-      const modal = new TaskModal(h.app, testStatusRegistry(), DEFAULT_SETTINGS, h.index, h.api);
+      const modal = new TaskModal({
+        app: h.app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
+        queries: h.index,
+        tasks: h.api,
+      });
       cleanups.unshift(() => {
         modal.close();
       });

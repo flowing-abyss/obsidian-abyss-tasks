@@ -143,14 +143,13 @@ function mountCenter(h: Harness): CenterPanel {
 function mountInspector(h: Harness, title = 'Current'): RightPanel {
   const location = h.node(title);
   h.state.set('taskStack', [location.root, ...location.path]);
-  const panel = new RightPanel(
-    h.state,
-    h.app,
-    h.statusRegistry,
-    DEFAULT_SETTINGS,
-    undefined,
-    h.tasks,
-  );
+  const panel = new RightPanel({
+    state: h.state,
+    app: h.app,
+    statusRegistry: h.statusRegistry,
+    settings: DEFAULT_SETTINGS,
+    tasks: h.tasks,
+  });
   panel.mount(h.el);
   cleanups.push(() => {
     panel.destroy();

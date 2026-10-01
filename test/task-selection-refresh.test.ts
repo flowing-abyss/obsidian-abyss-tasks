@@ -1,6 +1,7 @@
 import type { App } from 'obsidian';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
+import type { RightPanel } from '../src/panels/RightPanel';
 import type {
   SubtaskSnapshot,
   TaskIndexEvent,
@@ -30,15 +31,10 @@ const captured = vi.hoisted(() => ({
 
 vi.mock('../src/panels/RightPanel', () => ({
   RightPanel: class RightPanelMock {
-    constructor(
-      ...[state, _app, _statusRegistry, _settings, acknowledgeOwnWrite]: readonly [
-        state: AppState,
-        app: unknown,
-        statusRegistry: unknown,
-        settings: unknown,
-        acknowledgeOwnWrite?: (ref?: TaskRef) => void,
-      ]
-    ) {
+    constructor({
+      state,
+      onSuccessfulMutation: acknowledgeOwnWrite,
+    }: ConstructorParameters<typeof RightPanel>[0]) {
       captured.state = state;
       captured.acknowledgeOwnWrite = acknowledgeOwnWrite;
     }
@@ -118,7 +114,11 @@ describe('revision-aware TaskModal refresh', () => {
     const observed = snapshot('old');
     const fresh = { ...observed, presentation: { linkCount: 0, noteColor: '#fff' } };
     const h = queryHarness({ type: 'exact', task: fresh, basis: { observed } });
-    const modal = new TaskModal({} as App, testStatusRegistry(), undefined, h.queries);
+    const modal = new TaskModal({
+      app: {} as App,
+      statusRegistry: testStatusRegistry(),
+      queries: h.queries,
+    });
     modal.open(observed);
     h.changed();
     expect(captured.state?.get('taskStack')[0]).toMatchObject({
@@ -140,7 +140,11 @@ describe('revision-aware TaskModal refresh', () => {
       evidence: 'authority-transition',
       basis: { observed },
     });
-    const modal = new TaskModal({} as App, testStatusRegistry(), undefined, h.queries);
+    const modal = new TaskModal({
+      app: {} as App,
+      statusRegistry: testStatusRegistry(),
+      queries: h.queries,
+    });
     modal.open(observed);
     h.changed();
     expect(captured.state?.get('taskStack')[0]).toMatchObject({
@@ -162,7 +166,11 @@ describe('revision-aware TaskModal refresh', () => {
       current,
       evidence: 'same-line',
     });
-    const modal = new TaskModal({} as App, testStatusRegistry(), undefined, h.queries);
+    const modal = new TaskModal({
+      app: {} as App,
+      statusRegistry: testStatusRegistry(),
+      queries: h.queries,
+    });
     modal.open(observed);
     h.changed();
 
@@ -181,7 +189,11 @@ describe('revision-aware TaskModal refresh', () => {
     const second = snapshot('second', 'Second');
     const external = snapshot('external', 'External');
     const h = queryHarness({ type: 'uncertain', ref: external.ref });
-    const modal = new TaskModal({} as App, testStatusRegistry(), undefined, h.queries);
+    const modal = new TaskModal({
+      app: {} as App,
+      statusRegistry: testStatusRegistry(),
+      queries: h.queries,
+    });
     modal.open(first);
     captured.state?.set('taskStack', [second]);
     captured.acknowledgeOwnWrite?.(first.ref);
@@ -195,7 +207,11 @@ describe('revision-aware TaskModal refresh', () => {
   it('silently clears an uncertain selection without exposing actions', () => {
     const observed = snapshot('old', 'Observed');
     const h = queryHarness({ type: 'uncertain', ref: observed.ref });
-    const modal = new TaskModal({} as App, testStatusRegistry(), undefined, h.queries);
+    const modal = new TaskModal({
+      app: {} as App,
+      statusRegistry: testStatusRegistry(),
+      queries: h.queries,
+    });
     modal.open(observed);
     h.changed();
     expect(captured.state?.get('taskStack')).toEqual([]);
@@ -206,7 +222,11 @@ describe('revision-aware TaskModal refresh', () => {
   it('closes a missing modal selection', () => {
     const observed = snapshot('old');
     const h = queryHarness({ type: 'not-found', ref: observed.ref });
-    const modal = new TaskModal({} as App, testStatusRegistry(), undefined, h.queries);
+    const modal = new TaskModal({
+      app: {} as App,
+      statusRegistry: testStatusRegistry(),
+      queries: h.queries,
+    });
     modal.open(observed);
     h.changed();
     expect(activeDocument.body.querySelector('.abyss-modal-backdrop')).toBeNull();
@@ -223,7 +243,11 @@ describe('revision-aware TaskModal refresh', () => {
         { root: second, target: { type: 'task', ref: second.ref } },
       ],
     });
-    const modal = new TaskModal({} as App, testStatusRegistry(), undefined, h.queries);
+    const modal = new TaskModal({
+      app: {} as App,
+      statusRegistry: testStatusRegistry(),
+      queries: h.queries,
+    });
     modal.open(observed);
     h.changed();
     expect(captured.state?.get('taskStack')).toEqual([]);

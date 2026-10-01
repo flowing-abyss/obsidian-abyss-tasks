@@ -379,14 +379,13 @@ describe('status and priority consumer delegation', () => {
       issues: [{ code: 'invalid-target' }],
     });
     const tasks: TaskApplicationApi = { queries: queryApiForTasks(() => []), execute };
-    const panel = new RightPanel(
-      new AppState(),
+    const panel = new RightPanel({
+      state: new AppState(),
       app,
-      testStatusRegistry(),
-      DEFAULT_SETTINGS,
-      undefined,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
       tasks,
-    );
+    });
     const ref = {
       parent: {
         type: 'task' as const,

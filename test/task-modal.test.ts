@@ -1,8 +1,10 @@
 import type { App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
-import type { TaskApplicationApi } from '../src/tasks';
+import type { RightPanel, RightPanelMutationLifecycle } from '../src/panels/RightPanel';
+import { localDate, type CommentTimeContextProvider, type TaskApplicationApi } from '../src/tasks';
 import type { TaskRef } from '../src/tasks/domain/types';
+import type { InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import { expectDefined, task, taskQueryApi, testStatusRegistry } from './helpers';
 
 // vi.hoisted runs BEFORE vi.mock factory execution, avoiding TDZ.
@@ -15,22 +17,25 @@ const mockState = vi.hoisted(() => ({
   // inspect taskStack after simulating a store update (RightPanel itself is mocked out).
   capturedState: null as AppState | null,
   capturedTasks: undefined as TaskApplicationApi | undefined,
+  capturedOwnership: undefined as InteractionOwnershipPort | undefined,
+  capturedCommentTime: undefined as CommentTimeContextProvider | undefined,
+  capturedLifecycle: undefined as ((event: RightPanelMutationLifecycle) => void) | undefined,
 }));
 
 vi.mock('../src/panels/RightPanel', () => ({
   RightPanel: class RightPanelMock {
-    constructor(
-      ...[state, _app, _statusRegistry, _settings, _onSuccessfulMutation, tasks]: readonly [
-        state: AppState,
-        app: App,
-        statusRegistry: unknown,
-        settings: unknown,
-        onSuccessfulMutation: unknown,
-        tasks: TaskApplicationApi | undefined,
-      ]
-    ) {
+    constructor({
+      state,
+      tasks,
+      onMutationLifecycle: lifecycle,
+      commentTimeContext: commentTime,
+      interactionOwnership: ownership,
+    }: ConstructorParameters<typeof RightPanel>[0]) {
       mockState.capturedState = state;
       mockState.capturedTasks = tasks;
+      mockState.capturedOwnership = ownership;
+      mockState.capturedCommentTime = commentTime;
+      mockState.capturedLifecycle = lifecycle;
     }
 
     mount(el: HTMLElement): void {
@@ -63,7 +68,13 @@ describe('TaskModal', () => {
     mockState.includeHeaderActions.value = true;
     mockState.capturedState = null;
     mockState.capturedTasks = undefined;
-    modal = new TaskModal(app, testStatusRegistry());
+    mockState.capturedOwnership = undefined;
+    mockState.capturedCommentTime = undefined;
+    mockState.capturedLifecycle = undefined;
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+    });
   });
 
   afterEach(() => {
@@ -88,7 +99,7 @@ describe('TaskModal', () => {
       expect(mockState.mountImpl).toHaveBeenCalledTimes(1);
     });
 
-    it('passes the shared task API into the modal RightPanel', () => {
+    it('passes the supplied task API, ownership and comment provider into the inner panel with a live mutation callback', () => {
       const tasks = {
         queries: taskQueryApi({
           resolve: (ref: TaskRef) => ({
@@ -98,11 +109,52 @@ describe('TaskModal', () => {
         }),
         execute: vi.fn(),
       } satisfies TaskApplicationApi;
-      modal = new TaskModal(app, testStatusRegistry(), undefined, tasks.queries, tasks);
+      const ownership = { acquire: vi.fn(() => ({ release: vi.fn() })) };
+      const commentTime: CommentTimeContextProvider = () => ({
+        nowEpochMs: 0,
+        today: localDate('2026-10-02'),
+        locale: 'en',
+        timeZone: 'UTC',
+      });
+      modal = new TaskModal({
+        app,
+        statusRegistry: testStatusRegistry(),
+        queries: tasks.queries,
+        tasks,
+        commentTimeContext: commentTime,
+        interactionOwnership: ownership,
+      });
 
       modal.open(task());
 
       expect(mockState.capturedTasks).toBe(tasks);
+      expect(mockState.capturedOwnership).toBe(ownership);
+      expect(mockState.capturedCommentTime).toBe(commentTime);
+      const lifecycle = expectDefined(mockState.capturedLifecycle);
+      const ref = task().ref;
+      const token = {};
+      lifecycle({ phase: 'started', ref, token });
+      expect(modal['ownedWriteRef_abyssPrivate']).toEqual(ref);
+      lifecycle({ phase: 'settled', ref, token });
+      expect(modal['ownedWriteRef_abyssPrivate']).toBeUndefined();
+    });
+
+    it('mounts the inner panel before subscribing active-selection convergence to the queries', () => {
+      const unsubscribe = vi.fn();
+      const subscribe = vi.fn(() => {
+        expect(mockState.mountImpl).toHaveBeenCalledTimes(1);
+        expect(mockState.capturedState?.get('taskStack')[0]?.title).toBe('mount first');
+        return unsubscribe;
+      });
+      modal = new TaskModal({
+        app,
+        statusRegistry: testStatusRegistry(),
+        queries: taskQueryApi({ subscribe }),
+      });
+      modal.open(task({ title: 'mount first' }));
+      expect(subscribe).toHaveBeenCalledOnce();
+      modal.close();
+      expect(unsubscribe).toHaveBeenCalledOnce();
     });
 
     it('close button has abyss-right-action-btn abyss-modal-close-btn class', () => {
@@ -243,7 +295,10 @@ describe('TaskModal', () => {
     });
 
     it('close when never opened is a no-op', () => {
-      const m = new TaskModal(app, testStatusRegistry());
+      const m = new TaskModal({
+        app,
+        statusRegistry: testStatusRegistry(),
+      });
       expect(() => {
         m.close();
       }).not.toThrow();
@@ -259,15 +314,11 @@ describe('TaskModal', () => {
           .mockReturnValueOnce({ release: releases[0] })
           .mockReturnValueOnce({ release: releases[1] }),
       };
-      modal = new TaskModal(
+      modal = new TaskModal({
         app,
-        testStatusRegistry(),
-        undefined,
-        undefined,
-        undefined,
-        undefined,
+        statusRegistry: testStatusRegistry(),
         interactionOwnership,
-      );
+      });
 
       modal.open(task({ title: 'first' }));
       modal.open(task({ title: 'second' }));

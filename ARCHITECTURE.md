@@ -73,7 +73,12 @@ or settings UI.
 
 `PanelView` owns `RailPanel` for mode changes, `LeftPanel` for navigation, `CenterPanel` for selected
 content, and `RightPanel` for the task inspector. Centre composition uses readonly named options,
-including distinct callbacks for static settings and saved view state. Panels share transient navigation through
+including distinct callbacks for static settings and saved view state. Inspector and TaskModal
+composition also use readonly named options. PanelView and TaskModal forward the same task
+capability, interaction ownership and comment-time provider, plus their existing mutation lifecycle
+callbacks. TaskModal keeps a local AppState, lease, owner document and ticker, mounts RightPanel
+before subscribing active-selection convergence to queries, and retains the inspector's continuity
+methods. Panels share transient navigation through
 `AppState`. `set('taskStack')` begins a selection and `updateInspectorSelection` refreshes one;
 `AppState` tells its selection-begun listeners after a begun selection is delivered. At a compact
 width in Tasks mode, `PanelView` opens the details pane when a selection begins, when the rail's

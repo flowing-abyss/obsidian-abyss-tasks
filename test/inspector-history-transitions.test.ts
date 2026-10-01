@@ -56,13 +56,13 @@ async function harness(surface: 'panel' | 'modal', source: string, selected: str
       view.containerEl.remove();
     });
   } else {
-    const modal = new TaskModal(
+    const modal = new TaskModal({
       app,
-      application.statusRegistry,
-      DEFAULT_SETTINGS,
-      application.index,
-      application.tasks,
-    );
+      statusRegistry: application.statusRegistry,
+      settings: DEFAULT_SETTINGS,
+      queries: application.index,
+      tasks: application.tasks,
+    });
     modal.open(node(selected).root);
     const local = modal as unknown as {
       innerState_abyssPrivate: AppState;
