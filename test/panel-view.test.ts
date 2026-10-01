@@ -141,6 +141,54 @@ describe('PanelView host styles', () => {
   });
 });
 
+describe('PanelView centre composition', () => {
+  it('keeps the settings and view-state save callbacks distinct', async () => {
+    const app = await createAppWithFiles({ 'tasks.md': '- [ ] Root\n' });
+    const application = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
+    await application.index.initialize();
+    const onSaveSettings = async (): Promise<void> => {};
+    const onSaveViewState = async (): Promise<void> => {};
+    const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+    const view = new PanelView(
+      leaf,
+      DEFAULT_SETTINGS,
+      makeTagManager(app),
+      application.index,
+      application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+      application.statusRegistry,
+      onSaveSettings,
+      undefined,
+      onSaveViewState,
+    );
+    await view.onOpen();
+    try {
+      const internals = view as unknown as {
+        readonly onSaveSettings_abyssPrivate: () => Promise<void>;
+        readonly onSaveViewState_abyssPrivate: () => Promise<void>;
+        readonly center_abyssPrivate: {
+          readonly onSaveSettings_abyssPrivate: (() => Promise<void>) | undefined;
+          readonly onSaveViewState_abyssPrivate: () => Promise<void>;
+        };
+      };
+      expect(internals.onSaveSettings_abyssPrivate).toBe(onSaveSettings);
+      expect(internals.onSaveViewState_abyssPrivate).toBe(onSaveViewState);
+      expect(internals.center_abyssPrivate.onSaveSettings_abyssPrivate).toBe(
+        internals.onSaveSettings_abyssPrivate,
+      );
+      expect(internals.center_abyssPrivate.onSaveViewState_abyssPrivate).toBe(
+        internals.onSaveViewState_abyssPrivate,
+      );
+      expect(internals.center_abyssPrivate.onSaveSettings_abyssPrivate).not.toBe(
+        internals.center_abyssPrivate.onSaveViewState_abyssPrivate,
+      );
+    } finally {
+      await view.onClose();
+      view.containerEl.remove();
+      application.index.destroy();
+    }
+  });
+});
+
 describe('PanelView dependency command convergence', () => {
   it('converges a restored subtree through the committed parent root', async () => {
     const app = await createAppWithFiles({

@@ -112,17 +112,17 @@ async function archiveSelection(
   );
   const state = new AppState();
   state.set('selectedList', 'inbox');
-  const panel = new CenterPanel(
+  const panel = new CenterPanel({
     state,
-    h.app,
-    DEFAULT_SETTINGS,
-    h.index,
-    new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-    async () => {},
-    null,
-    null,
-    application,
-  );
+    app: h.app,
+    settings: DEFAULT_SETTINGS,
+    queries: h.index,
+    statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    onSaveSettings: async () => {},
+    projectStore: null,
+    projectManager: null,
+    tasks: application,
+  });
   const el = freshContainer();
   panel.mount(el);
   for (const task of selected) {

@@ -44,17 +44,17 @@ export function makeCenterPanelForTest(
   ]: CenterPanelTestArgs
 ): CenterPanel {
   const application = tasks ?? taskHarness;
-  return new CenterPanel(
+  return new CenterPanel({
     state,
     app,
     settings,
-    taskHarness.queries,
-    taskHarness.statusRegistry,
+    queries: taskHarness.queries,
+    statusRegistry: taskHarness.statusRegistry,
     onSaveSettings,
     projectStore,
     projectManager,
-    application,
-  );
+    tasks: application,
+  });
 }
 
 /** The calendar controller a CenterPanel owns; tests reach calendar session state through it. */

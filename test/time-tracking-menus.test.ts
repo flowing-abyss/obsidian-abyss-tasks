@@ -164,29 +164,21 @@ function mountCenter(stack: TrackingStack, win: Window = window) {
   state.set('selectedList', { type: 'project', path: 'tasks.md' });
   const reported: TaskCommandResult[] = [];
   const ticker = new TrackingTicker({ queries: stack.tasks.queries, now: stack.now, win });
-  const panel = new CenterPanel(
+  const panel = new CenterPanel({
     state,
-    stack.app,
-    DEFAULT_SETTINGS,
-    stack.tasks.queries,
-    stack.statusRegistry,
-    undefined,
-    null,
-    null,
-    stack.tasks,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    {
+    app: stack.app,
+    settings: DEFAULT_SETTINGS,
+    queries: stack.tasks.queries,
+    statusRegistry: stack.statusRegistry,
+    projectStore: null,
+    projectManager: null,
+    tasks: stack.tasks,
+    timeTracking: {
       ticker,
       actions: createTrackingActions(stack.tasks, (result) => reported.push(result)),
       context: () => ({ nowMs: stack.now(), offsetAt: () => OFFSET_MINUTES }),
     },
-  );
+  });
   const el = activeDocument.body.createDiv();
   panel.mount(el);
   // Every status group is allowed so a done task still has a card to right-click.

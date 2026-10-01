@@ -838,17 +838,16 @@ describe('forecast visual system', () => {
       issues: [{ code: 'invalid-target' }],
     });
     const state = new AppState();
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      fakeApp,
-      DEFAULT_SETTINGS,
+      app: fakeApp,
+      settings: DEFAULT_SETTINGS,
       queries,
-      registry,
-      undefined,
-      null,
-      null,
-      { queries, execute },
-    );
+      statusRegistry: registry,
+      projectStore: null,
+      projectManager: null,
+      tasks: { queries, execute },
+    });
     const root = freshContainer();
     panel.mount(root);
     setCalendarDate(panel, moment('1400-08-01'));
@@ -881,17 +880,16 @@ describe('forecast visual system', () => {
       },
     );
     const state = new AppState();
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      fakeApp,
-      DEFAULT_SETTINGS,
+      app: fakeApp,
+      settings: DEFAULT_SETTINGS,
       queries,
-      registry,
-      undefined,
-      null,
-      null,
-      { queries, execute: vi.fn() },
-    );
+      statusRegistry: registry,
+      projectStore: null,
+      projectManager: null,
+      tasks: { queries, execute: vi.fn() },
+    });
     const root = freshContainer();
     panel.mount(root);
     setCalendarDate(panel, moment('1400-08-01'));
@@ -1435,17 +1433,16 @@ describe('forecast interaction contract', () => {
       },
     );
     const state = new AppState();
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      fakeApp,
-      DEFAULT_SETTINGS,
+      app: fakeApp,
+      settings: DEFAULT_SETTINGS,
       queries,
-      registry,
-      undefined,
-      null,
-      null,
-      { queries, execute: vi.fn() },
-    );
+      statusRegistry: registry,
+      projectStore: null,
+      projectManager: null,
+      tasks: { queries, execute: vi.fn() },
+    });
     const root = freshContainer();
     panel.mount(root);
     setCalendarDate(panel, moment('2026-08-09'));
@@ -1481,17 +1478,16 @@ describe('forecast interaction contract', () => {
       issues: [{ code: 'invalid-target' }],
     });
     const state = new AppState();
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      fakeApp,
-      DEFAULT_SETTINGS,
+      app: fakeApp,
+      settings: DEFAULT_SETTINGS,
       queries,
-      registry,
-      undefined,
-      null,
-      null,
-      { queries, execute },
-    );
+      statusRegistry: registry,
+      projectStore: null,
+      projectManager: null,
+      tasks: { queries, execute },
+    });
     const root = freshContainer();
     panel.mount(root);
     const openModal = vi.spyOn(

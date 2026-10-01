@@ -150,30 +150,28 @@ interface PanelCaptureSession {
   focusOnMount: boolean;
 }
 
-type CenterPanelConstructorArgs = [
-  state: AppState,
-  app: App,
-  settings: CalendarSettings,
-  queries: TaskQueryApi,
-  statusRegistry: StatusRegistry,
-  onSaveSettings?: () => Promise<void>,
-  projectStore?: ProjectStore | null,
-  projectManager?: ProjectManager | null,
-  tasks?: TaskApplicationApi,
-  commentTimeContext?: CommentTimeContextProvider,
-  captureApplication?: TaskApplicationApi & TaskCaptureApplicationApi,
-  onCreationResult?: (result: TaskCommandResult, description: CreationResultDescription) => void,
-  onRenderComplete?: (root: HTMLElement) => void,
-  interactionOwnership?: InteractionOwnershipPort,
-  navigation?: PanelNavigationActions,
-  onSaveViewState?: () => Promise<void>,
-  timeTracking?: TrackingSurface,
-  onRenderTaskHeaderActions?: (
-    header: HTMLElement,
-    title: HTMLElement,
-    controls: HTMLElement,
-  ) => void,
-];
+interface CenterPanelOptions {
+  readonly state: AppState;
+  readonly app: App;
+  readonly settings: CalendarSettings;
+  readonly queries: TaskQueryApi;
+  readonly statusRegistry: StatusRegistry;
+  readonly onSaveSettings?: (() => Promise<void>) | undefined;
+  readonly projectStore?: ProjectStore | null | undefined;
+  readonly projectManager?: ProjectManager | null | undefined;
+  readonly tasks?: TaskApplicationApi | undefined;
+  readonly commentTimeContext?: CommentTimeContextProvider | undefined;
+  readonly captureApplication?: (TaskApplicationApi & TaskCaptureApplicationApi) | undefined;
+  readonly onCreationResult?:
+    ((result: TaskCommandResult, description: CreationResultDescription) => void) | undefined;
+  readonly onRenderComplete?: ((root: HTMLElement) => void) | undefined;
+  readonly interactionOwnership?: InteractionOwnershipPort | undefined;
+  readonly navigation?: PanelNavigationActions | undefined;
+  readonly onSaveViewState?: (() => Promise<void>) | undefined;
+  readonly timeTracking?: TrackingSurface | undefined;
+  readonly onRenderTaskHeaderActions?:
+    ((header: HTMLElement, title: HTMLElement, controls: HTMLElement) => void) | undefined;
+}
 
 /** One rendered card badge a tick can repaint without asking the index anything again. */
 interface RunningCardBadge {
@@ -281,8 +279,8 @@ export class CenterPanel {
   private cardRenderNowMs_abyssPrivate = 0;
   private trackingUnsubscribe_abyssPrivate: (() => void) | undefined;
 
-  constructor(...args: CenterPanelConstructorArgs) {
-    const [
+  constructor(options: CenterPanelOptions) {
+    const {
       state,
       app,
       settings,
@@ -301,7 +299,7 @@ export class CenterPanel {
       onSaveViewState = async () => {},
       timeTracking,
       onRenderTaskHeaderActions,
-    ] = args;
+    } = options;
     this.state_abyssPrivate = state;
     this.app_abyssPrivate = app;
     this.settings_abyssPrivate = settings;

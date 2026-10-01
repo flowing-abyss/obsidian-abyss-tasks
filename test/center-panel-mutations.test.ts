@@ -134,17 +134,16 @@ async function makePanel(
   const tasks = new TaskApplicationService(queries, repository, statusCatalog, {
     today: () => '2026-07-14' as never,
   });
-  const panel = new CenterPanel(
+  const panel = new CenterPanel({
     state,
     app,
-    DEFAULT_SETTINGS,
+    settings: DEFAULT_SETTINGS,
     queries,
-    new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-    undefined,
-    null,
-    null,
+    statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    projectStore: null,
+    projectManager: null,
     tasks,
-  );
+  });
   return { panel, app };
 }
 
@@ -160,17 +159,16 @@ describe('CenterPanel planning API delegation', () => {
       target: { type: 'task', ref: { filePath: 'f.md', line: 0, revision: 'r' } },
     });
     const tasks: TaskApplicationApi = { queries, execute };
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
       app,
-      DEFAULT_SETTINGS,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
-      null,
-      null,
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      projectStore: null,
+      projectManager: null,
       tasks,
-    );
+    });
     const ref: TaskRef = { filePath: 'f.md', line: 0, revision: 'r' };
     const current = Object.assign(task({ source: { filePath: 'f.md', line: 0 } }), { ref });
     vi.spyOn(queries, 'list').mockReturnValue([
@@ -267,17 +265,16 @@ describe('CenterPanel planning API delegation', () => {
       type: 'not-found',
       target: { type: 'task', ref },
     });
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
       app,
-      DEFAULT_SETTINGS,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
-      null,
-      null,
-      { queries, execute },
-    );
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      projectStore: null,
+      projectManager: null,
+      tasks: { queries, execute },
+    });
     vi.spyOn(queries, 'list').mockReturnValue([
       {
         ref,
@@ -383,19 +380,17 @@ describe('CenterPanel root lifecycle API delegation', () => {
       execute,
       planCreate,
     };
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
       app,
-      DEFAULT_SETTINGS,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
-      null,
-      null,
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      projectStore: null,
+      projectManager: null,
       tasks,
-      undefined,
-      tasks,
-    );
+      captureApplication: tasks,
+    });
     const process = vi.spyOn(app.vault, 'process');
 
     try {
@@ -460,19 +455,17 @@ describe('CenterPanel root lifecycle API delegation', () => {
         planCreate,
       };
       const lookup = vi.spyOn(app.vault, 'getAbstractFileByPath');
-      const panel = new CenterPanel(
+      const panel = new CenterPanel({
         state,
         app,
-        { ...DEFAULT_SETTINGS, taskFilePath },
+        settings: { ...DEFAULT_SETTINGS, taskFilePath },
         queries,
-        new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-        undefined,
-        null,
-        null,
+        statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+        projectStore: null,
+        projectManager: null,
         tasks,
-        undefined,
-        tasks,
-      );
+        captureApplication: tasks,
+      });
 
       try {
         await submitCapture(panel, 'captured');
@@ -508,17 +501,16 @@ describe('CenterPanel root lifecycle API delegation', () => {
     const execute = vi
       .fn<TaskApplicationApi['execute']>()
       .mockReturnValue(new Promise((resolve) => (finish = resolve)));
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
       app,
-      DEFAULT_SETTINGS,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
-      null,
-      null,
-      { queries, execute },
-    );
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      projectStore: null,
+      projectManager: null,
+      tasks: { queries, execute },
+    });
 
     const pending = callPrivate<Promise<void>>(panel, 'deleteTask', oldTask);
     expect(execute).toHaveBeenCalledWith({ type: 'delete', ref: oldRef });

@@ -72,7 +72,8 @@ Markdown or import private task layers. The domain must not import Obsidian, inf
 or settings UI.
 
 `PanelView` owns `RailPanel` for mode changes, `LeftPanel` for navigation, `CenterPanel` for selected
-content, and `RightPanel` for the task inspector. Panels share transient navigation through
+content, and `RightPanel` for the task inspector. Centre composition uses readonly named options,
+including distinct callbacks for static settings and saved view state. Panels share transient navigation through
 `AppState`. `set('taskStack')` begins a selection and `updateInspectorSelection` refreshes one;
 `AppState` tells its selection-begun listeners after a begun selection is delivered. At a compact
 width in Tasks mode, `PanelView` opens the details pane when a selection begins, when the rail's

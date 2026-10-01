@@ -72,17 +72,16 @@ async function harness(markdown: string, selected = 'B', additionalFiles = {}) {
   state.set('taskStack', [location.root, ...location.path]);
   state.set('selectedList', { type: 'project', path: 'tasks.md' });
   const centerEl = activeDocument.body.createDiv();
-  const center = new CenterPanel(
+  const center = new CenterPanel({
     state,
     app,
-    DEFAULT_SETTINGS,
-    index,
-    testStatusRegistry(),
-    undefined,
-    null,
-    null,
-    api,
-  );
+    settings: DEFAULT_SETTINGS,
+    queries: index,
+    statusRegistry: testStatusRegistry(),
+    projectStore: null,
+    projectManager: null,
+    tasks: api,
+  });
   center.mount(centerEl);
   const el = activeDocument.body.createDiv();
   const panel = new RightPanel(state, app, testStatusRegistry(), DEFAULT_SETTINGS, undefined, api);

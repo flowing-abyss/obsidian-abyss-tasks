@@ -170,22 +170,16 @@ function makeStaticPanel(
     interactionOwnership?: InteractionOwnershipPort,
   ]
 ): CenterPanel {
-  return new CenterPanel(
+  return new CenterPanel({
     state,
     app,
     settings,
-    queryApiForSnapshots(() => snapshots),
-    new StatusRegistry(settings.taskStatuses),
-    undefined,
-    null,
-    null,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
+    queries: queryApiForSnapshots(() => snapshots),
+    statusRegistry: new StatusRegistry(settings.taskStatuses),
+    projectStore: null,
+    projectManager: null,
     interactionOwnership,
-  );
+  });
 }
 
 /** The writes a tracking surface offers, for a panel under test that only ever reads its clock. */
@@ -271,19 +265,17 @@ async function makePanel(
   const state = new AppState();
   const taskApplication = configuredTaskApplication(app, settings);
   await taskApplication.index.initialize();
-  const panel = new CenterPanel(
+  const panel = new CenterPanel({
     state,
     app,
     settings,
-    taskApplication.index,
-    taskApplication.statusRegistry,
-    undefined,
-    null,
-    null,
-    taskApplication.tasks,
-    undefined,
-    taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
-  );
+    queries: taskApplication.index,
+    statusRegistry: taskApplication.statusRegistry,
+    projectStore: null,
+    projectManager: null,
+    tasks: taskApplication.tasks,
+    captureApplication: taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+  });
   return {
     panel,
     state,
@@ -1073,29 +1065,20 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
     state.set('selectedList', 'today');
     const queries = queryApiForSnapshots(() => [closed, running]);
     const ticker = new TrackingTicker({ queries, now: () => nowMs, win: window });
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      {} as App,
-      DEFAULT_SETTINGS,
+      app: {} as App,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
-      null,
-      null,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      {
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      projectStore: null,
+      projectManager: null,
+      timeTracking: {
         ticker,
         actions: trackingActionStubs(),
         context: () => ({ nowMs, offsetAt: () => 0 }),
       },
-    );
+    });
     const container = freshContainer();
     activeDocument.body.append(container);
 
@@ -1387,19 +1370,17 @@ describe('CenterPanel shared list capture', () => {
       })),
     };
     return {
-      panel: new CenterPanel(
+      panel: new CenterPanel({
         state,
-        {} as App,
-        { ...DEFAULT_SETTINGS, taskPrefix: '' },
+        app: {} as App,
+        settings: { ...DEFAULT_SETTINGS, taskPrefix: '' },
         queries,
-        new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-        undefined,
-        null,
-        null,
-        application,
-        undefined,
-        application,
-      ),
+        statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+        projectStore: null,
+        projectManager: null,
+        tasks: application,
+        captureApplication: application,
+      }),
       state,
       planCreate,
       sessionExecute,
@@ -2427,13 +2408,13 @@ describe('CenterPanel.renderSearch', () => {
     const state = new AppState();
     state.set('mode', 'search');
     state.set('searchQuery', 'needle');
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      {} as App,
-      DEFAULT_SETTINGS,
+      app: {} as App,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-    );
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    });
 
     panel.mount(freshContainer());
 
@@ -2825,17 +2806,17 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     const taskApplication = configuredTaskApplication(app, settings);
     await taskApplication.index.initialize();
     const state = new AppState();
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
       app,
       settings,
-      taskApplication.index,
-      taskApplication.statusRegistry,
-      options?.saveSettings ?? (async () => {}),
-      stubProjectStore(),
-      stubProjectManager(),
-      taskApplication.tasks,
-    );
+      queries: taskApplication.index,
+      statusRegistry: taskApplication.statusRegistry,
+      onSaveSettings: options?.saveSettings ?? (async () => {}),
+      projectStore: stubProjectStore(),
+      projectManager: stubProjectManager(),
+      tasks: taskApplication.tasks,
+    });
     const el = freshContainer();
     panel.mount(el);
     return { panel, state, el };
@@ -2904,19 +2885,17 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       onSourceObservation: () => () => {},
       refresh: () => {},
     } as never;
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
       app,
-      DEFAULT_SETTINGS,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
       projectStore,
-      stubProjectManager(),
-      application,
-      undefined,
-      application,
-    );
+      projectManager: stubProjectManager(),
+      tasks: application,
+      captureApplication: application,
+    });
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
@@ -3165,19 +3144,17 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       onSourceObservation: () => () => {},
       refresh: () => {},
     } as never;
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
       app,
-      DEFAULT_SETTINGS,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
       projectStore,
-      stubProjectManager(),
-      application,
-      undefined,
-      application,
-    );
+      projectManager: stubProjectManager(),
+      tasks: application,
+      captureApplication: application,
+    });
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
@@ -3375,23 +3352,22 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
       forCalendarProjection: () => ({ materialized: sources, recurringSources: [] }),
     });
     const state = new AppState();
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      {} as App,
-      DEFAULT_SETTINGS,
+      app: {} as App,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
-      null,
-      null,
-      {
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      projectStore: null,
+      projectManager: null,
+      tasks: {
         queries,
         execute: vi.fn().mockResolvedValue({
           type: 'invalid',
           issues: [{ code: 'invalid-target' }],
         }),
       },
-    );
+    });
     const el = freshContainer();
     panel.mount(el);
     setCalendarDate(panel, moment(TODAY));
@@ -3463,23 +3439,22 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     queries.listNodes = listNodes;
     const state = new AppState();
     state.set('selectedList', 'today');
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      {} as App,
+      app: {} as App,
       settings,
       queries,
-      new StatusRegistry(settings.taskStatuses),
-      undefined,
-      null,
-      null,
-      {
+      statusRegistry: new StatusRegistry(settings.taskStatuses),
+      projectStore: null,
+      projectManager: null,
+      tasks: {
         queries,
         execute: vi.fn().mockResolvedValue({
           type: 'invalid',
           issues: [{ code: 'invalid-target' }],
         }),
       },
-    );
+    });
     const el = freshContainer();
 
     panel.mount(el);
@@ -3518,23 +3493,22 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const queries = queryApiForSnapshots(() => tasks);
     const listNodes = vi.fn(queries.listNodes.bind(queries));
     queries.listNodes = listNodes;
-    const panel = new CenterPanel(
-      new AppState(),
-      {} as App,
+    const panel = new CenterPanel({
+      state: new AppState(),
+      app: {} as App,
       settings,
       queries,
-      new StatusRegistry(settings.taskStatuses),
-      undefined,
-      null,
-      null,
-      {
+      statusRegistry: new StatusRegistry(settings.taskStatuses),
+      projectStore: null,
+      projectManager: null,
+      tasks: {
         queries,
         execute: vi.fn().mockResolvedValue({
           type: 'invalid',
           issues: [{ code: 'invalid-target' }],
         }),
       },
-    );
+    });
     const open = vi.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
       const opening = this.onOpen();
       if (opening instanceof Promise) throw new Error('Expected synchronous tag picker open');
@@ -3588,17 +3562,16 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
       issues: [{ code: 'invalid-target' }],
     });
     const state = new AppState();
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      {} as App,
-      DEFAULT_SETTINGS,
+      app: {} as App,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
-      null,
-      null,
-      { queries, execute },
-    );
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      projectStore: null,
+      projectManager: null,
+      tasks: { queries, execute },
+    });
     const el = freshContainer();
     panel.mount(el);
     setCalendarDate(panel, moment('2026-08-09'));
@@ -3760,17 +3733,16 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
       issues: [{ code: 'invalid-target' }],
     });
     const state = new AppState();
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      {} as App,
-      DEFAULT_SETTINGS,
+      app: {} as App,
+      settings: DEFAULT_SETTINGS,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
-      null,
-      null,
-      { queries, execute },
-    );
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      projectStore: null,
+      projectManager: null,
+      tasks: { queries, execute },
+    });
     const el = freshContainer();
     panel.mount(el);
     const openModal = vi.spyOn(
@@ -4362,19 +4334,17 @@ describe('CenterPanel calendar mode — click-to-create', () => {
       })),
     };
     const state = new AppState();
-    const panel = new CenterPanel(
+    const panel = new CenterPanel({
       state,
-      {} as App,
-      { ...clickToCreateSettings },
+      app: {} as App,
+      settings: { ...clickToCreateSettings },
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-      undefined,
-      null,
-      null,
-      application,
-      undefined,
-      application,
-    );
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      projectStore: null,
+      projectManager: null,
+      tasks: application,
+      captureApplication: application,
+    });
     const el = freshContainer();
     activeDocument.body.append(el);
     panel.mount(el);
@@ -4886,17 +4856,16 @@ function keyboardPanelHarness(
   };
   const tasks: TaskApplicationApi = { queries, execute };
   const state = new AppState();
-  const panel = new CenterPanel(
+  const panel = new CenterPanel({
     state,
-    {} as App,
-    DEFAULT_SETTINGS,
+    app: {} as App,
+    settings: DEFAULT_SETTINGS,
     queries,
-    new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-    undefined,
-    null,
-    null,
+    statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    projectStore: null,
+    projectManager: null,
     tasks,
-  );
+  });
   const el = ownerDocument.body.createDiv();
   panel.mount(el);
   state.set('mode', 'calendar');
@@ -4945,17 +4914,16 @@ function forecastPanelFixture(): {
     issues: [{ code: 'invalid-target' }],
   });
   const state = new AppState();
-  const panel = new CenterPanel(
+  const panel = new CenterPanel({
     state,
-    {} as App,
-    DEFAULT_SETTINGS,
+    app: {} as App,
+    settings: DEFAULT_SETTINGS,
     queries,
-    new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-    undefined,
-    null,
-    null,
-    { queries, execute },
-  );
+    statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    projectStore: null,
+    projectManager: null,
+    tasks: { queries, execute },
+  });
   const el = activeDocument.body.createDiv();
   panel.mount(el);
   setCalendarDate(panel, moment('2026-08-09'));

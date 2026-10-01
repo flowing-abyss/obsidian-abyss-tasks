@@ -67,13 +67,13 @@ describe('center inspector selection', () => {
       await application.index.initialize();
       const state = new AppState();
       state.set('selectedList', 'inbox');
-      const center = new CenterPanel(
+      const center = new CenterPanel({
         state,
         app,
-        DEFAULT_SETTINGS,
-        application.index,
-        application.statusRegistry,
-      );
+        settings: DEFAULT_SETTINGS,
+        queries: application.index,
+        statusRegistry: application.statusRegistry,
+      });
       const container = activeDocument.body.createDiv();
       center.mount(container);
       try {

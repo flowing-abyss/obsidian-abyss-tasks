@@ -124,17 +124,16 @@ async function harness(markdown: string) {
 
 type Harness = Awaited<ReturnType<typeof harness>>;
 function mountCenter(h: Harness): CenterPanel {
-  const panel = new CenterPanel(
-    h.state,
-    h.app,
-    { ...DEFAULT_SETTINGS, inbox: { ...DEFAULT_SETTINGS.inbox, mode: 'untagged' } },
-    h.index,
-    h.statusRegistry,
-    undefined,
-    null,
-    null,
-    h.tasks,
-  );
+  const panel = new CenterPanel({
+    state: h.state,
+    app: h.app,
+    settings: { ...DEFAULT_SETTINGS, inbox: { ...DEFAULT_SETTINGS.inbox, mode: 'untagged' } },
+    queries: h.index,
+    statusRegistry: h.statusRegistry,
+    projectStore: null,
+    projectManager: null,
+    tasks: h.tasks,
+  });
   panel.mount(h.el);
   cleanups.push(() => {
     panel.destroy();
