@@ -1,19 +1,10 @@
 import { Component, setIcon, type App } from 'obsidian';
 import type { AppState } from '../app/AppState';
-import {
-  isListViewCustomized,
-  listSelectionToKey,
-  normalizeStatusGroups,
-  statusGroupsEqual,
-} from '../app/listViewState';
-import { noteNameOfPath } from '../markdown/noteName';
-import { PRIORITY_LEVELS } from '../priority';
+import { isListViewCustomized, listSelectionToKey } from '../app/listViewState';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
-import { getListViewDefaults } from '../settings/defaults';
-import type { CalendarSettings, ListViewState, PropertyFilter } from '../settings/types';
+import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
-import { ACTIVE_STATUS_GROUPS, ALL_STATUS_GROUPS, TYPE_LABELS } from '../status/statusConstants';
 import {
   resolveEffectiveTagGroups,
   tagMatchesGroup,
@@ -35,17 +26,11 @@ import {
   type TaskQueryApi,
   type TaskRef,
   type TaskSnapshot,
-  type TaskStatusType,
   type TrackedTotal,
 } from '../tasks';
 import { showDatePickerPopover } from '../ui/DatePickerPopover';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { TaskModal } from '../ui/TaskModal';
-import {
-  openViewOptionsPopover,
-  type ViewOptionsMultiRow,
-  type ViewOptionsSingleRow,
-} from '../ui/ViewOptionsPopover';
 import { isRealmHTMLElement } from '../ui/domRealm';
 import { isImeOwnedEvent } from '../ui/ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
@@ -88,6 +73,7 @@ import { listSelectionTitle } from '../views/panelTitle';
 import { CalendarMode, type CalendarModeHost } from './calendar/CalendarMode';
 import type { CalViewType } from './calendar/calendarViewType';
 import { CaptureSessions } from './center/CaptureSessions';
+import { ListViewControls } from './center/ListViewControls';
 import { TaskCommands } from './center/TaskCommands';
 import { TaskMenus } from './center/TaskMenus';
 import { ProjectsPanel } from './projects/ProjectsPanel';
@@ -152,7 +138,7 @@ export class CenterPanel {
     changed: boolean;
   } | null = null;
   private recurrenceEditorCleanup_abyssPrivate: (() => void) | null = null;
-  private viewStatePopoverCleanup_abyssPrivate: ((restoreFocus?: boolean) => void) | null = null;
+  private readonly listViewControls_abyssPrivate: ListViewControls;
   private taskModal_abyssPrivate: TaskModal | null = null;
   /** The list's multi-selection, anchor, and keyboard focus, kept across renders and modes. */
   private readonly rowSelection_abyssPrivate = new TaskRowSelection();
@@ -265,6 +251,7 @@ export class CenterPanel {
     });
     this.taskMenus_abyssPrivate = this.createTaskMenus_abyssPrivate();
     this.captureSessions_abyssPrivate = this.createCaptureSessions_abyssPrivate();
+    this.listViewControls_abyssPrivate = this.createListViewControls_abyssPrivate();
     this.calendar_abyssPrivate = new CalendarMode({
       state,
       app,
@@ -275,6 +262,20 @@ export class CenterPanel {
       interactionOwnership: this.interactionOwnership_abyssPrivate,
       navigation: this.navigation_abyssPrivate,
       host: this.createCalendarHost_abyssPrivate(),
+    });
+  }
+
+  private createListViewControls_abyssPrivate(): ListViewControls {
+    return new ListViewControls({
+      state: this.state_abyssPrivate,
+      settings: this.settings_abyssPrivate,
+      statusRegistry: this.statusRegistry_abyssPrivate,
+      interactionOwnership: this.interactionOwnership_abyssPrivate,
+      saveViewState: this.onSaveViewState_abyssPrivate,
+      host: {
+        root: () => this.el,
+        formatDate: (value) => this.formatDate_abyssPrivate(value),
+      },
     });
   }
 
@@ -307,7 +308,7 @@ export class CenterPanel {
           this.openRecurrenceEditor_abyssPrivate(anchor, task);
         },
         addFilter: (filter) => {
-          this.addPropertyFilter_abyssPrivate(filter);
+          this.listViewControls_abyssPrivate.addPropertyFilter(filter);
         },
         tagCatalog: () => this.taskTagCatalog_abyssPrivate(),
         tagColor: (tag, groups) => this.getTagColor_abyssPrivate(tag, groups),
@@ -381,7 +382,7 @@ export class CenterPanel {
   mount(container: HTMLElement): void {
     this.el = container;
     this.initializeOwnedUi_abyssPrivate();
-    this.initializeListViewState_abyssPrivate();
+    this.listViewControls_abyssPrivate.initializeListViewState();
     this.subscribeToState_abyssPrivate();
     this.subscribeToTracking_abyssPrivate();
     this.render_abyssPrivate();
@@ -400,12 +401,6 @@ export class CenterPanel {
       this.commentTimeContext_abyssPrivate,
       this.interactionOwnership_abyssPrivate,
     );
-  }
-
-  private initializeListViewState_abyssPrivate(): void {
-    const key = listSelectionToKey(this.state_abyssPrivate.get('selectedList'));
-    const viewState = this.settings_abyssPrivate.listViewStates?.[key] ?? getListViewDefaults(key);
-    this.state_abyssPrivate.set('centerListViewState', viewState);
   }
 
   private subscribeToState_abyssPrivate(): void {
@@ -652,7 +647,7 @@ export class CenterPanel {
     this.clearSearchShell_abyssPrivate();
     this.clearTaskDatePicker_abyssPrivate();
     this.dismissRecurrenceEditor_abyssPrivate();
-    this.viewStatePopoverCleanup_abyssPrivate?.();
+    this.listViewControls_abyssPrivate.closeViewStatePopover();
     this.taskModal_abyssPrivate?.close();
     window.clearTimeout(this.filterDebounce_abyssPrivate);
     this.offs_abyssPrivate.forEach((f) => {
@@ -725,7 +720,7 @@ export class CenterPanel {
     const shell = this.taskShell_abyssPrivate;
     return (
       mode === 'tasks' &&
-      shell?.key === this.activeListKey_abyssPrivate() &&
+      shell?.key === this.listViewControls_abyssPrivate.activeListKey() &&
       shell.header.isConnected &&
       shell.scroll.isConnected &&
       shell.addBar.isConnected
@@ -736,7 +731,7 @@ export class CenterPanel {
     this.captureSessions_abyssPrivate.unmountActiveCapture();
     this.clearTaskDatePicker_abyssPrivate();
     this.dismissRecurrenceEditor_abyssPrivate();
-    if (!retainTaskShell) this.viewStatePopoverCleanup_abyssPrivate?.();
+    if (!retainTaskShell) this.listViewControls_abyssPrivate.closeViewStatePopover();
     this.clearSearchShell_abyssPrivate();
     if (mode === 'search') return;
     this.md_abyssPrivate.unload();
@@ -825,13 +820,13 @@ export class CenterPanel {
     const header = this.el.createDiv({ cls: 'abyss-center-header' });
     const title = header.createEl('h2', { cls: 'abyss-center-title' });
     const controls = header.createDiv({ cls: 'abyss-center-controls' });
-    const viewButton = this.renderViewStateButton_abyssPrivate(controls);
+    const viewButton = this.listViewControls_abyssPrivate.renderViewStateButton(controls);
     const filterInput = this.renderTaskFilterInput_abyssPrivate(controls);
     this.onRenderTaskHeaderActions_abyssPrivate?.(header, title, controls);
     const scroll = this.el.createDiv({ cls: 'abyss-center-scroll' });
     const addBar = this.el.createDiv({ cls: 'abyss-add-task-bar' });
     const shell: NonNullable<CenterPanel['taskShell_abyssPrivate']> = {
-      key: this.activeListKey_abyssPrivate(),
+      key: this.listViewControls_abyssPrivate.activeListKey(),
       header,
       title,
       controls,
@@ -850,11 +845,14 @@ export class CenterPanel {
   ): void {
     shell.title.setText(this.getTitle_abyssPrivate());
     for (const chip of shell.filterChips) chip.remove();
-    shell.filterChips = this.renderPropertyChips_abyssPrivate(shell.controls, shell.viewButton);
+    shell.filterChips = this.listViewControls_abyssPrivate.renderPropertyChips(
+      shell.controls,
+      shell.viewButton,
+    );
     const viewState = this.state_abyssPrivate.get('centerListViewState');
     shell.viewButton.toggleClass(
       'abyss-view-state-btn--active',
-      isListViewCustomized(viewState, this.activeListKey_abyssPrivate()),
+      isListViewCustomized(viewState, this.listViewControls_abyssPrivate.activeListKey()),
     );
     const { filterInput } = shell;
     const filter = this.state_abyssPrivate.get('centerFilter');
@@ -1290,7 +1288,7 @@ export class CenterPanel {
     this.renderTaskDateMetadata_abyssPrivate(metaRight, task, d, suppressToday);
     if (showSourceNote) {
       renderSourceNoteChip(metaRight, task, (filePath) => {
-        this.addPropertyFilter_abyssPrivate({ type: 'file', filePath });
+        this.listViewControls_abyssPrivate.addPropertyFilter({ type: 'file', filePath });
       });
     }
     for (const tag of tags.slice(0, 2))
@@ -1324,7 +1322,7 @@ export class CenterPanel {
     part.createSpan({ text: this.formatDate_abyssPrivate(date) });
     part.addEventListener('click', (event) => {
       event.stopPropagation();
-      this.addPropertyFilter_abyssPrivate({ type: 'date', value: date });
+      this.listViewControls_abyssPrivate.addPropertyFilter({ type: 'date', value: date });
     });
   }
 
@@ -1339,7 +1337,7 @@ export class CenterPanel {
     part.createSpan({ text: time });
     part.addEventListener('click', (event) => {
       event.stopPropagation();
-      this.addPropertyFilter_abyssPrivate({ type: 'time', value: time });
+      this.listViewControls_abyssPrivate.addPropertyFilter({ type: 'time', value: time });
     });
   }
 
@@ -1357,7 +1355,7 @@ export class CenterPanel {
     }
     element.addEventListener('click', (event) => {
       event.stopPropagation();
-      this.addPropertyFilter_abyssPrivate({ type: 'tag', value: tag });
+      this.listViewControls_abyssPrivate.addPropertyFilter({ type: 'tag', value: tag });
     });
     element.addEventListener('dragover', (event) => {
       const dragging = this.state_abyssPrivate.get('draggingTag');
@@ -1540,281 +1538,6 @@ export class CenterPanel {
       const task = order.task(key);
       return task === undefined ? [] : [task];
     });
-  }
-
-  /** Renders one chip per filter right before the view-state button and returns them in order. */
-  private renderPropertyChips_abyssPrivate(
-    controls: HTMLElement,
-    viewButton: HTMLElement,
-  ): HTMLElement[] {
-    const vs = this.state_abyssPrivate.get('centerListViewState');
-    const chips: HTMLElement[] = [];
-    for (const [i, f] of vs.filters.entries()) {
-      const label = this.filterChipLabel_abyssPrivate(f);
-      const chip = controls.createSpan({ cls: 'abyss-filter-chip' });
-      viewButton.before(chip);
-      chip.createSpan({ cls: 'abyss-filter-chip-label', text: label });
-      const x = chip.createEl('button', { cls: 'abyss-filter-chip-x', text: '×' });
-      const idx = i;
-      x.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.removePropertyFilter_abyssPrivate(idx);
-      });
-      chips.push(chip);
-    }
-    return chips;
-  }
-
-  private filterChipLabel_abyssPrivate(f: PropertyFilter): string {
-    if (f.type === 'file') {
-      return `📄 ${noteNameOfPath(f.filePath)}`;
-    }
-    if (f.type !== 'priority') return this.nonPriorityFilterLabel_abyssPrivate(f);
-    const level = PRIORITY_LEVELS.find((l) => l.value === f.value);
-    if (level == null) return f.value;
-    // D/None has no emoji and reads as "Normal" here (distinct from the
-    // "None" label used in priority-picker menus).
-    return level.emoji.length > 0 ? `${level.emoji} ${level.label}` : 'Normal';
-  }
-
-  private nonPriorityFilterLabel_abyssPrivate(
-    filter: Exclude<PropertyFilter, { readonly type: 'file' } | { readonly type: 'priority' }>,
-  ): string {
-    if (filter.type === 'tag') return filter.value;
-    if (filter.type === 'time') return `⏰ ${filter.value}`;
-    if (filter.type === 'status') {
-      return this.statusRegistry_abyssPrivate.bySymbol(filter.value)?.name ?? filter.value;
-    }
-    return `📅 ${this.formatDate_abyssPrivate(filter.value)}`;
-  }
-
-  private addPropertyFilter_abyssPrivate(filter: PropertyFilter): void {
-    const vs = this.state_abyssPrivate.get('centerListViewState');
-    const key = this.propertyFilterKey_abyssPrivate(filter);
-    const already = vs.filters.some(
-      (existing) => this.propertyFilterKey_abyssPrivate(existing) === key,
-    );
-    if (already) return;
-    const next: ListViewState = { ...vs, filters: [...vs.filters, filter] };
-    this.updateViewState_abyssPrivate(next);
-  }
-
-  private propertyFilterKey_abyssPrivate(filter: PropertyFilter): string {
-    return filter.type === 'file'
-      ? `${filter.type}:${filter.filePath}`
-      : `${filter.type}:${filter.value}`;
-  }
-
-  private removePropertyFilter_abyssPrivate(idx: number): void {
-    const vs = this.state_abyssPrivate.get('centerListViewState');
-    const next: ListViewState = { ...vs, filters: vs.filters.filter((_, i) => i !== idx) };
-    this.updateViewState_abyssPrivate(next);
-  }
-
-  private updateViewState_abyssPrivate(next: ListViewState): void {
-    this.settings_abyssPrivate.listViewStates ??= {};
-    this.settings_abyssPrivate.listViewStates[this.activeListKey_abyssPrivate()] = next;
-    runAsyncAction(this.onSaveViewState_abyssPrivate(), 'Could not save list view state');
-    this.state_abyssPrivate.set('centerListViewState', next);
-  }
-
-  private activeListKey_abyssPrivate(): string {
-    return listSelectionToKey(this.state_abyssPrivate.get('selectedList'));
-  }
-
-  private renderViewStateButton_abyssPrivate(container: HTMLElement): HTMLButtonElement {
-    const vs = this.state_abyssPrivate.get('centerListViewState');
-    const defaults = getListViewDefaults(this.activeListKey_abyssPrivate());
-    const isNonDefault =
-      vs.groupBy !== defaults.groupBy ||
-      vs.sortBy.field !== defaults.sortBy.field ||
-      vs.sortBy.dir !== defaults.sortBy.dir ||
-      !statusGroupsEqual(vs.statusGroups, defaults.statusGroups);
-
-    const btn = container.createEl('button', {
-      cls: `abyss-view-state-btn${isNonDefault ? ' abyss-view-state-btn--active' : ''}`,
-      attr: { 'aria-label': 'Sort & group options' },
-    });
-    setIcon(btn, 'arrow-up-down');
-    btn.addEventListener('click', () => {
-      this.showViewStatePopover_abyssPrivate(btn);
-    });
-    return btn;
-  }
-
-  private showViewStatePopover_abyssPrivate(anchor: HTMLElement): void {
-    if (this.viewStatePopoverCleanup_abyssPrivate != null) {
-      this.viewStatePopoverCleanup_abyssPrivate(true);
-      return;
-    }
-
-    const defaults = getListViewDefaults(this.activeListKey_abyssPrivate());
-    const close = openViewOptionsPopover({
-      host: this.el,
-      anchor,
-      rows: [
-        this.groupByRowSpec_abyssPrivate(defaults),
-        this.sortByRowSpec_abyssPrivate(defaults),
-        this.statusGroupsRowSpec_abyssPrivate(),
-      ],
-      showReset: () =>
-        isListViewCustomized(
-          this.state_abyssPrivate.get('centerListViewState'),
-          this.activeListKey_abyssPrivate(),
-        ),
-      onReset: () => {
-        this.updateViewState_abyssPrivate(getListViewDefaults(this.activeListKey_abyssPrivate()));
-      },
-      interactionOwnership: this.interactionOwnership_abyssPrivate,
-      onClose: () => {
-        if (this.viewStatePopoverCleanup_abyssPrivate === close) {
-          this.viewStatePopoverCleanup_abyssPrivate = null;
-        }
-      },
-    });
-    this.viewStatePopoverCleanup_abyssPrivate = close;
-  }
-
-  private groupByRowSpec_abyssPrivate(defaults: ListViewState): ViewOptionsSingleRow {
-    const labels: Record<string, string> = {
-      none: 'None',
-      date: 'Date',
-      priority: 'Priority',
-      tag: 'Tag',
-      status: 'Status',
-    };
-    return {
-      kind: 'single',
-      icon: 'layout-list',
-      label: 'Group by',
-      displayValue: () => {
-        const groupBy = this.state_abyssPrivate.get('centerListViewState').groupBy;
-        return labels[groupBy] ?? groupBy;
-      },
-      activeValue: () => this.state_abyssPrivate.get('centerListViewState').groupBy,
-      options: Object.entries(labels).map(([value, label]) => ({
-        label,
-        value,
-        isDefault: value === defaults.groupBy,
-      })),
-      onSelect: (value) => {
-        const viewState = this.state_abyssPrivate.get('centerListViewState');
-        this.updateViewState_abyssPrivate({
-          ...viewState,
-          groupBy: value as ListViewState['groupBy'],
-        });
-      },
-    };
-  }
-
-  private sortByRowSpec_abyssPrivate(defaults: ListViewState): ViewOptionsSingleRow {
-    const fields: Array<ListViewState['sortBy']['field']> = [
-      'date',
-      'priority',
-      'title',
-      'tag',
-      'status',
-      'tracked',
-    ];
-    return {
-      kind: 'single',
-      icon: 'arrow-up-down',
-      label: 'Sort by',
-      displayValue: () => {
-        const { sortBy } = this.state_abyssPrivate.get('centerListViewState');
-        return `${this.capitalize_abyssPrivate(sortBy.field)} ${sortBy.dir === 'asc' ? '↑' : '↓'}`;
-      },
-      activeValue: () => this.state_abyssPrivate.get('centerListViewState').sortBy.field,
-      options: fields.map((field) => ({
-        label: () => {
-          const { sortBy } = this.state_abyssPrivate.get('centerListViewState');
-          const arrow = sortBy.dir === 'asc' ? '↑' : '↓';
-          return `${this.capitalize_abyssPrivate(field)} ${sortBy.field === field ? arrow : ''}`.trim();
-        },
-        value: field,
-        isDefault: field === defaults.sortBy.field,
-      })),
-      onSelect: (value) => {
-        const viewState = this.state_abyssPrivate.get('centerListViewState');
-        const field = value as ListViewState['sortBy']['field'];
-        // Tracked time is asked for to find where the time went, so it opens on the busiest task;
-        // every other field opens ascending. Choosing the field again flips it either way.
-        const opening = field === 'tracked' ? 'desc' : 'asc';
-        const flipped = viewState.sortBy.dir === 'asc' ? 'desc' : 'asc';
-        const dir = viewState.sortBy.field === field ? flipped : opening;
-        this.updateViewState_abyssPrivate({ ...viewState, sortBy: { field, dir } });
-      },
-    };
-  }
-
-  private capitalize_abyssPrivate(value: string): string {
-    return value.charAt(0).toUpperCase() + value.slice(1);
-  }
-
-  private statusGroupsRowSpec_abyssPrivate(): ViewOptionsMultiRow {
-    const apply = (groups: TaskStatusType[] | undefined): void => {
-      this.applyStatusGroupsChange_abyssPrivate(groups);
-    };
-    return {
-      kind: 'multi',
-      icon: 'eye',
-      label: 'Show',
-      displayValue: () =>
-        this.statusGroupsLabel_abyssPrivate(
-          this.state_abyssPrivate.get('centerListViewState').statusGroups,
-        ),
-      selected: () =>
-        this.state_abyssPrivate.get('centerListViewState').statusGroups ?? ALL_STATUS_GROUPS,
-      options: ALL_STATUS_GROUPS.map((value) => ({ label: TYPE_LABELS[value], value })),
-      onToggle: (rawValue) => {
-        const value = rawValue as TaskStatusType;
-        const viewState = this.state_abyssPrivate.get('centerListViewState');
-        const current = viewState.statusGroups ?? ALL_STATUS_GROUPS;
-        const next = current.includes(value)
-          ? current.filter((group) => group !== value)
-          : [...current, value];
-        apply(next.length === 0 || next.length >= 4 ? undefined : next);
-      },
-      presets: [
-        {
-          label: 'Active',
-          onSelect: () => {
-            apply(ACTIVE_STATUS_GROUPS);
-          },
-          active: () =>
-            statusGroupsEqual(
-              this.state_abyssPrivate.get('centerListViewState').statusGroups,
-              ACTIVE_STATUS_GROUPS,
-            ),
-        },
-        {
-          label: 'All',
-          onSelect: () => {
-            apply(undefined);
-          },
-          active: () =>
-            normalizeStatusGroups(
-              this.state_abyssPrivate.get('centerListViewState').statusGroups,
-            ) === undefined,
-        },
-      ],
-    };
-  }
-
-  private statusGroupsLabel_abyssPrivate(selected: TaskStatusType[] | undefined): string {
-    const effective = normalizeStatusGroups(selected) ?? ALL_STATUS_GROUPS;
-    if (effective.length >= 4) return 'All';
-    if (statusGroupsEqual(effective, ACTIVE_STATUS_GROUPS)) return 'Active';
-    return `${effective.length} selected`;
-  }
-
-  private applyStatusGroupsChange_abyssPrivate(groups: TaskStatusType[] | undefined): void {
-    const viewState = this.state_abyssPrivate.get('centerListViewState');
-    const withoutStatusGroups = { ...viewState };
-    delete withoutStatusGroups.statusGroups;
-    this.updateViewState_abyssPrivate(
-      groups === undefined ? withoutStatusGroups : { ...viewState, statusGroups: groups },
-    );
   }
 
   private getFilteredTasks_abyssPrivate(): TaskSnapshot[] {
@@ -2126,7 +1849,7 @@ export class CenterPanel {
   private openStatusMenu_abyssPrivate(event: MouseEvent, task: TaskSnapshot): void {
     this.clearTaskDatePicker_abyssPrivate();
     this.dismissRecurrenceEditor_abyssPrivate();
-    this.viewStatePopoverCleanup_abyssPrivate?.();
+    this.listViewControls_abyssPrivate.closeViewStatePopover();
     showStatusMenuAt(event, {
       task,
       registry: this.statusRegistry_abyssPrivate,

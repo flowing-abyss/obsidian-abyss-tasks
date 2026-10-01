@@ -116,10 +116,11 @@ editors, filters and tag catalogue/color reads. The shell keeps context-menu sel
 visual-order snapshot capture and status-popover close sequencing. TaskMenus owns no lifecycle
 registry or task write authority.
 
-| Centre service                                            | Responsibility                                                                                       |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| [`TaskMenus`](src/panels/center/TaskMenus.ts)             | Context menus and tag pickers; shared TaskCommands submissions and call-time host callbacks          |
-| [`CaptureSessions`](src/panels/center/CaptureSessions.ts) | Capture target/session lifecycle, surface placement and focus; public capture application capability |
+| Centre service                                              | Responsibility                                                                                       |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| [`TaskMenus`](src/panels/center/TaskMenus.ts)               | Context menus and tag pickers; shared TaskCommands submissions and call-time host callbacks          |
+| [`CaptureSessions`](src/panels/center/CaptureSessions.ts)   | Capture target/session lifecycle, surface placement and focus; public capture application capability |
+| [`ListViewControls`](src/panels/center/ListViewControls.ts) | List view initialization, property chips and sort/group popover; shared settings save callback       |
 
 [`CaptureSessions`](src/panels/center/CaptureSessions.ts) owns list/dashboard/calendar capture
 placement, retained target resolution, controller/surface mount/remount, feedback and Escape focus
@@ -128,6 +129,13 @@ live task-node/root/result callbacks and the retained panel capture capability. 
 mode/list/projects subscription and teardown ordering while delegating session cancellation.
 `cancelActiveCapture` invalidates pending resolution and disposes its controller/surface; no separate
 lifecycle registry is added.
+
+[`ListViewControls`](src/panels/center/ListViewControls.ts) owns list view initialization,
+property-filter labels, chip insertion/removal, deduplication and sort/group/status popover cleanup.
+It is constructed once before CalendarMode with the same settings entry and save callback, plus
+call-time root and date-format callbacks. Updates change the settings entry, start the existing
+async save action, then notify AppState synchronously. The shell retains headers, filter debounce,
+formatDate and lifecycle close ordering.
 
 ## Calendar mode
 

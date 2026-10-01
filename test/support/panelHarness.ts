@@ -6,6 +6,7 @@ import type { CalendarMode } from '../../src/panels/calendar/CalendarMode';
 import type { CalendarViewInstance } from '../../src/panels/calendar/calendarViewFactory';
 import type { CalViewType } from '../../src/panels/calendar/calendarViewType';
 import type { CaptureSessions } from '../../src/panels/center/CaptureSessions';
+import type { ListViewControls } from '../../src/panels/center/ListViewControls';
 import type { TaskCommands } from '../../src/panels/center/TaskCommands';
 import { CenterPanel } from '../../src/panels/CenterPanel';
 import { LeftPanel } from '../../src/panels/LeftPanel';
@@ -57,6 +58,11 @@ export function makeCenterPanelForTest(
     projectManager,
     tasks: application,
   });
+}
+
+/** The centre list controls; callers use its public filters and popover API. */
+export function listViewControlsOf(panel: CenterPanel): ListViewControls {
+  return panel['listViewControls_abyssPrivate'];
 }
 
 /** The centre capture owner; callers use its typed public session API. */
