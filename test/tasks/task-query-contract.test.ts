@@ -53,7 +53,7 @@ describe('TaskQueryApi contract', () => {
     index.destroy();
   });
 
-  it('applies the exact current file, folder, tag, status, and list-date semantics', async () => {
+  it('keeps exact file/folder identity and case-compatible tag, status and list-date semantics', async () => {
     const index = await queryIndex({
       'Work/2026-07-01.md': [
         '- [ ] due #Work 📅 2026-07-10',
@@ -68,8 +68,30 @@ describe('TaskQueryApi contract', () => {
     expect(index.list({ filePath: 'work/2026-07-01.md' })).toEqual([]);
     expect(index.list({ folder: 'Work' })).toHaveLength(4);
     expect(index.list({ folder: 'work' })).toHaveLength(1);
-    expect(index.list({ tag: '#Work' })).toHaveLength(4);
-    expect(index.list({ tag: '#work' })).toHaveLength(1);
+    const upper = index.list({ tag: '#Work' });
+    const lower = index.list({ tag: '#work' });
+    const byLocation = (
+      a: readonly [string, number, string],
+      b: readonly [string, number, string],
+    ): number => {
+      const pathOrder = a[0].localeCompare(b[0]);
+      return pathOrder !== 0 ? pathOrder : a[1] - b[1];
+    };
+    const expectedTasks: Array<[string, number, string]> = [
+      ['Work/2026-07-01.md', 0, 'due'],
+      ['Work/2026-07-01.md', 1, 'scheduled'],
+      ['Work/2026-07-01.md', 2, 'due wins'],
+      ['Workish.md', 0, 'start'],
+      ['work/lower.md', 0, 'lower'],
+    ].sort(byLocation);
+    for (const tasks of [upper, lower]) {
+      expect(
+        tasks
+          .map<[string, number, string]>((task) => [task.ref.filePath, task.ref.line, task.title])
+          .sort(byLocation),
+      ).toEqual(expectedTasks);
+    }
+    expect(lower.map((task) => task.ref)).toEqual(upper.map((task) => task.ref));
     expect(index.list({ statuses: ['in-progress', 'cancelled'] })).toHaveLength(2);
     expect(
       index.list({
