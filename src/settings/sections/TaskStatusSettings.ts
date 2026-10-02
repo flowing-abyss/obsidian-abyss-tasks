@@ -51,7 +51,7 @@ export function validateStatusSymbol(
   return null;
 }
 
-export interface TaskStatusSettingsHost {
+interface TaskStatusSettingsHost {
   readonly renderCards: (
     container: HTMLElement,
     items: TaskStatusDef[],
