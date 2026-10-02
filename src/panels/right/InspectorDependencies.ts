@@ -122,6 +122,7 @@ export class InspectorDependencies {
   #searchAnchor = '.abyss-dep-badge-body';
   #disclosure: DependencyDisclosureState | undefined;
   #renderedSections: RenderedDependencySections | undefined;
+  #dependencyPreviewGeneration = 0;
   #retainedSearch: DependencySearchHandle | undefined;
   #retainedFocus: HTMLElement | null = null;
   constructor(options: InspectorDependenciesOptions) {
@@ -451,14 +452,16 @@ export class InspectorDependencies {
 
   #bindDependencyDrop(section: HTMLElement, direction: DependencyDirection): void {
     let checked: TaskNodeDragPayload | null = null;
+    let checkedGeneration = -1;
     let allowed = false;
     const preview = (event: DragEvent): void => {
       this.clearDropClasses();
       const command = this.#dependencyDropCommand(direction);
       if (command === undefined || this.#queries === undefined) return;
       const payload = this.#state.get('draggingTaskNode');
-      if (checked !== payload) {
+      if (checked !== payload || checkedGeneration !== this.#dependencyPreviewGeneration) {
         checked = payload;
+        checkedGeneration = this.#dependencyPreviewGeneration;
         allowed = this.#dependencyDropAllowed(command);
       }
       section.addClass(allowed ? 'is-drop-target' : 'is-drop-disabled');
@@ -601,6 +604,7 @@ export class InspectorDependencies {
   }
 
   refresh(): void {
+    this.#dependencyPreviewGeneration += 1;
     this.#host.detachUndo();
     this.#surfaces.refreshStatusMarkers((task) => this.#host.isBlocked(task));
     this.updateBadge();

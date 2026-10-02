@@ -106,8 +106,9 @@ markers and badge/time badge, then replaces sections and closes their menu only 
 counterpart references, ordered relations, visible directions or status definitions change, or the
 recorded section DOM is no longer live in its owning root. Equal inputs retain the original menu
 and counterpart command closures without granting new write authority. Drop classes, search
-candidates, Undo rendering and placement always refresh afterwards in their original order; full
-render and disclosure cleanup invalidate the private section record. RightPanel retains one shared task-drag cleanup for subtask and relation gestures; both
+candidates, Undo rendering and placement always refresh afterwards in their original order. Each
+refresh also invalidates retained section-local drag preview decisions through a private generation;
+actual drop always checks live eligibility independently. Full render and disclosure cleanup invalidate the private section record. RightPanel retains one shared task-drag cleanup for subtask and relation gestures; both
 finish the prior drag before starting and register the new cleanup afterwards. Dependency and
 retained subtask rows import the same stateless `renderRowRemove` helper directly.
 RightPanel constructs one `InspectorSections` for title/description editors, subtask/comment
