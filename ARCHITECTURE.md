@@ -390,7 +390,9 @@ through shared `AppState` before running the existing reveal presentation.
 
 `TaskApplicationService` owns prefix and Inbox-tag policy for roots, subtasks, and linked subtasks.
 It validates explicit tags atomically, combines the root's initial tags with its Markdown tags, and
-evaluates each created task line independently. Tag patches use the same Inbox policy. Presentation
+evaluates each created task line independently. Tag patches use the same Inbox policy, derived case identity and removal-wins precedence while
+retaining the first authored spelling. The application reads shared identity through the inward task
+tag domain boundary. Presentation
 supplies typed fields and does not duplicate these policies. `planCreate` accepts transient Inbox
 intent, which freezes a session without the global prefix while keeping the same authored-tag and
 Inbox policy. The intent is not persisted.

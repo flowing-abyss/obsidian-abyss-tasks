@@ -1,10 +1,11 @@
-import { Menu } from 'obsidian';
+import { Menu, Modal } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
 import { localDate, type TaskApplicationApi, type TaskSnapshot } from '../src/tasks';
+import { TagPickerModal } from '../src/ui/TagPickerModal';
 import {
   expectDefined,
   flushMicrotasks,
@@ -1555,6 +1556,47 @@ describe('CenterPanel task date context menus', () => {
     },
   );
 
+  it('shows case-equivalent bulk tags checked and removes them from the held targets', async () => {
+    const items = captureMenu();
+    const tasks = [
+      task({ ...first, tags: ['#Work', '#task/inbox'] }),
+      task({ ...second, tags: ['#work', '#task/inbox'] }),
+    ];
+    const { el, panel, execute } = makeCenter(tasks);
+    const opened: TagPickerModal[] = [];
+    vi.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
+      if (!(this instanceof TagPickerModal)) throw new Error('Expected tag picker');
+      opened.push(this);
+      this.onOpen();
+    });
+    try {
+      const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
+      for (const card of cards)
+        card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+      openMenu(expectDefined(cards[0]));
+      items.find((item) => item.title__ === 'Set tag…')?.onClick__?.(new MouseEvent('click'));
+      const modal = expectDefined(opened[0]);
+      const button = expectDefined(
+        modal.contentEl.querySelector<HTMLButtonElement>('[data-tag="#Work"]'),
+      );
+      expect(button.getAttribute('aria-pressed')).toBe('true');
+      button.click();
+      modal.onClose();
+      await flushMicrotasks();
+      expect(execute.mock.calls.map(([command]) => command)).toEqual(
+        tasks.map((held) => ({
+          type: 'patch',
+          target: { type: 'task', ref: held.ref },
+          patch: { tags: { remove: ['#Work'] } },
+        })),
+      );
+    } finally {
+      opened[0]?.contentEl.empty();
+      opened[0]?.containerEl.remove();
+      panel.destroy();
+      el.remove();
+    }
+  });
   it('closes the bulk picker on Escape without clearing selection or detail state', () => {
     vi.useFakeTimers();
     const items = captureMenu();

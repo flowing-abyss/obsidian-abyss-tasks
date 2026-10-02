@@ -82,12 +82,14 @@ function affectedKey(key: string, change: TagRenameChange, ids: ReadonlySet<stri
   if (!sameTag(change.oldTag, change.newTag)) return renamedKey(key, change, ids) !== key;
   if (keyIdentity(key, ids) === undefined) return false;
   if (key.startsWith('tag:'))
-    return (
-      changedTag(key.slice(4), change) !== key.slice(4) || sameTag(key.slice(4), change.oldTag)
-    );
+    return change.scope === 'prefix'
+      ? tagHasPrefix(key.slice(4), change.oldTag)
+      : sameTag(key.slice(4), change.oldTag);
   const parsed = groupTag(key.slice(6));
   if (parsed === undefined || (parsed.prefix && change.scope !== 'prefix')) return false;
-  return sameTag(parsed.tag, change.oldTag) || changedTag(parsed.tag, change) !== parsed.tag;
+  return change.scope === 'prefix'
+    ? tagHasPrefix(parsed.tag, change.oldTag)
+    : sameTag(parsed.tag, change.oldTag);
 }
 function destinationOccupied(
   key: string,

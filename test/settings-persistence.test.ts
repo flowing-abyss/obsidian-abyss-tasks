@@ -1519,6 +1519,50 @@ describe('tag view rename refusal and queue guards', () => {
     expect(port.writes).toEqual([]);
     expect(port.stateText).toBe(before);
   });
+  it('refuses destination-spelled child aliases for a case-only prefix before all writes', async () => {
+    const { port, manager, coordinator, settings, app } = await fixture({
+      'tag:#work/child': entry,
+      'tag:#WORK/child': { ...entry, groupBy: 'priority' },
+    });
+    const before = port.stateText,
+      decoded = structuredClone(settings.listViewStates),
+      process = vi.spyOn(app.vault, 'process'),
+      selection = { type: 'tag' as const, tag: '#work/child' };
+    const state = new AppState();
+    state.set('selectedList', selection);
+    const navigator = new PanelNavigator(
+      state,
+      settings,
+      {
+        calendarView: () => 'month',
+        setCalendarView: () => {},
+        openQuickCapture: () => {},
+      },
+      () => coordinator.saveViewState(settings),
+    );
+    manager.registerSelectedListState({
+      applyTagRename: (change) => {
+        navigator.followTagRename(change);
+      },
+    });
+    port.writes = [];
+    expect(await manager.renameTagPrefix('#work', '#WORK')).toEqual({
+      type: 'invalid',
+      reason: 'view-state-conflict',
+    });
+    expect(() =>
+      coordinator.renameTagViewState(settings, {
+        oldTag: '#work',
+        newTag: '#WORK',
+        scope: 'prefix',
+      }),
+    ).toThrow();
+    expect(process).not.toHaveBeenCalled();
+    expect(settings.listViewStates).toEqual(decoded);
+    expect(port.stateText).toBe(before);
+    expect(port.writes).toEqual([]);
+    expect(state.get('selectedList')).toBe(selection);
+  });
   it('keeps a single case-only physical alias with its complete extension', async () => {
     const { port, manager } = await fixture({ 'tag:#Work': entry });
     expect(await manager.renameTagExact('#work', '#WORK')).toMatchObject({ type: 'ok' });

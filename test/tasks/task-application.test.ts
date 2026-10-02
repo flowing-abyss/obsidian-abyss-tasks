@@ -932,6 +932,48 @@ describe('TaskApplicationService planning commands', () => {
     ]);
   });
 
+  it('uses case identity for command deduplication, Inbox policy and removal precedence', async () => {
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: snapshot() },
+      changed: true,
+    });
+    const application = service({ edit }, queries(), () => ({
+      taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
+      recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
+      taskPrefix: '',
+      inbox: { mode: 'tag', tag: '#Inbox', removeTagOnAssign: true },
+    }));
+    for (const tags of [
+      { add: ['#Work', '#work'] },
+      { add: ['#inbox', '#work'] },
+      { add: ['#Work'], remove: ['#work'] },
+      { add: ['#Inbox'], remove: ['#inbox'] },
+    ])
+      await application.execute({ type: 'patch', target: { type: 'task', ref }, patch: { tags } });
+    expect(edit.mock.calls.map(([request]) => unwrapEdit(request))).toEqual([
+      {
+        type: 'patch',
+        target: { type: 'task', ref },
+        patch: { tags: { add: ['#Work'], remove: ['#Inbox'] } },
+      },
+      {
+        type: 'patch',
+        target: { type: 'task', ref },
+        patch: { tags: { add: ['#work'], remove: ['#Inbox'] } },
+      },
+      {
+        type: 'patch',
+        target: { type: 'task', ref },
+        patch: { tags: { add: [], remove: ['#work', '#Inbox'] } },
+      },
+      {
+        type: 'patch',
+        target: { type: 'task', ref },
+        patch: { tags: { add: [], remove: ['#inbox'] } },
+      },
+    ]);
+  });
   it('normalizes nested-task tag patches without changing the target reference', async () => {
     const childRef = {
       parent: { type: 'task' as const, ref },

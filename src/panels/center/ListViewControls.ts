@@ -2,6 +2,7 @@ import { setIcon } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import {
   isListViewCustomized,
+  listSelectionToKey,
   normalizeStatusGroups,
   resolveListViewStateKey,
   statusGroupsEqual,
@@ -48,11 +49,7 @@ export class ListViewControls {
   }
 
   initializeListViewState(): void {
-    const key = resolveListViewStateKey(
-      this.#options.state.get('selectedList'),
-      this.#options.settings.listViewStates,
-      new Set(this.#options.settings.tagGroups.map((g) => g.id)),
-    );
+    const key = this.#savedStateKey();
     const viewState = this.#options.settings.listViewStates?.[key] ?? getListViewDefaults(key);
     this.#options.state.set('centerListViewState', viewState);
   }
@@ -123,12 +120,16 @@ export class ListViewControls {
 
   #updateViewState(next: ListViewState): void {
     this.#options.settings.listViewStates ??= {};
-    this.#options.settings.listViewStates[this.activeListKey()] = next;
+    this.#options.settings.listViewStates[this.#savedStateKey()] = next;
     runAsyncAction(this.#options.saveViewState(), 'Could not save list view state');
     this.#options.state.set('centerListViewState', next);
   }
 
   activeListKey(): string {
+    return listSelectionToKey(this.#options.state.get('selectedList'));
+  }
+
+  #savedStateKey(): string {
     return resolveListViewStateKey(
       this.#options.state.get('selectedList'),
       this.#options.settings.listViewStates,
@@ -138,7 +139,7 @@ export class ListViewControls {
 
   renderViewStateButton(container: HTMLElement): HTMLButtonElement {
     const vs = this.#options.state.get('centerListViewState');
-    const defaults = getListViewDefaults(this.activeListKey());
+    const defaults = getListViewDefaults(this.#savedStateKey());
     const isNonDefault =
       vs.groupBy !== defaults.groupBy ||
       vs.sortBy.field !== defaults.sortBy.field ||
@@ -162,7 +163,7 @@ export class ListViewControls {
       return;
     }
 
-    const defaults = getListViewDefaults(this.activeListKey());
+    const defaults = getListViewDefaults(this.#savedStateKey());
     const close = openViewOptionsPopover({
       host: this.#options.host.root(),
       anchor,
@@ -172,9 +173,9 @@ export class ListViewControls {
         this.#statusGroupsRowSpec(),
       ],
       showReset: () =>
-        isListViewCustomized(this.#options.state.get('centerListViewState'), this.activeListKey()),
+        isListViewCustomized(this.#options.state.get('centerListViewState'), this.#savedStateKey()),
       onReset: () => {
-        this.#updateViewState(getListViewDefaults(this.activeListKey()));
+        this.#updateViewState(getListViewDefaults(this.#savedStateKey()));
       },
       interactionOwnership: this.#options.interactionOwnership,
       onClose: () => {

@@ -72,6 +72,7 @@ describe('case-compatible physical saved keys', () => {
         saveViewState: async () => {},
         host: { root: () => activeDocument.body, formatDate: (value) => value },
       });
+    expect(controls.activeListKey()).toBe('tag:#work');
     controls.initializeListViewState();
     expect(state.get('centerListViewState')).toBe(saved);
     controls.addPropertyFilter({ type: 'tag', value: '#new' });

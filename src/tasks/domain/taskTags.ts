@@ -1,6 +1,9 @@
 import { sameTag, tagComparisonKey } from '../../markdown/tagSyntax';
 import { isCanonicalTaskTag, parseTaskLineSourceModel } from './taskLineSourceModel';
 
+// Application policy shares the domain's tag identity without crossing outward.
+export { sameTag, tagComparisonKey } from '../../markdown/tagSyntax';
+
 function normalizeToken(token: string): string | undefined {
   const body = token.replace(/^#+/u, '');
   if (body.length === 0) return undefined;
