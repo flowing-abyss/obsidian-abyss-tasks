@@ -194,6 +194,85 @@ describe('TaskModal with real RightPanel', () => {
     });
   });
 
+  it('keeps unsaved Weekly inline after current modal chips through a same-file line shift', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] observed 📅 2031-10-02\n' });
+    const observed = task({
+      title: 'observed',
+      planning: { due: '2031-10-02' },
+      ref: { filePath: 'f.md', line: 0, revision: 'same' },
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] observed 📅 2031-10-02',
+        originalBlock: '- [ ] observed 📅 2031-10-02',
+      },
+    });
+    const current = task({
+      ...observed,
+      ref: { ...observed.ref, line: 1 },
+      source: { ...observed.source, line: 1 },
+    });
+    const events = queryEvents();
+    let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
+    const queries = taskQueryApi({ resolve: () => resolution, subscribe: events.subscribe });
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries,
+      tasks: { queries, execute },
+    });
+    modal.open(observed);
+    click(
+      expectDefined(activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-repeat-chip')),
+    );
+    click(
+      expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-modal [data-recurrence-preset="weekly"]'),
+      ),
+    );
+    const first = expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-recurrence-popover'),
+    );
+    const chips = expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-chips-row'),
+    );
+    expect(chips.nextElementSibling).toBe(first);
+    expect(first.classList.contains('abyss-recurrence-popover-inline')).toBe(true);
+    expect(first.classList.contains('abyss-popover-anchored')).toBe(false);
+    resolution = {
+      type: 'rebased',
+      previous: observed,
+      current,
+      evidence: 'authority-transition',
+      basis: { observed },
+    };
+    events.publish({ type: 'changed', files: ['f.md'] });
+    const replacement = expectDefined(
+      activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-recurrence-popover'),
+    );
+    expect(first.isConnected).toBe(false);
+    expect(replacement).not.toBe(first);
+    expect(
+      expectDefined(activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-chips-row'))
+        .nextElementSibling,
+    ).toBe(replacement);
+    expect(replacement.classList.contains('abyss-recurrence-popover-inline')).toBe(true);
+    expect(replacement.classList.contains('abyss-popover-anchored')).toBe(false);
+    expect(
+      replacement.querySelector('[data-recurrence-preset="weekly"]')?.getAttribute('aria-pressed'),
+    ).toBe('true');
+    expect(execute).not.toHaveBeenCalled();
+    replacement.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    expect(replacement.isConnected).toBe(false);
+    modal.close();
+    expect(activeDocument.querySelector('.abyss-modal')).toBeNull();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('preserves a dirty focused title through a proven silent refresh', async () => {
     const app = await createAppWithFiles({ 'f.md': '- [ ] observed\n' });
     const observed = task({
