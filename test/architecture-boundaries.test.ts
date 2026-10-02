@@ -158,7 +158,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/right/InspectorPlanningSurfaces.ts',
     'src/panels/right/inspectorTypes.ts',
   ],
-  TaskStatusType: ['src/settings/SettingsTab.ts'],
+  TaskStatusType: ['src/settings/sections/TaskStatusSettings.ts'],
   TaskTextTarget: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorSections.ts'],
   TimeEntryRef: ['src/ui/timeTracking/trackingActions.ts'],
   TimeEntryRemovalRecovery: ['src/ui/timeTracking/trackingActions.ts'],

@@ -78,6 +78,24 @@ describe('task architecture ESLint boundaries', () => {
       },
     ],
     [
+      'src/settings/sections/ShortcutSettings.ts',
+      "import '../../tasks/domain/types';",
+      {
+        ruleId: 'no-restricted-imports',
+        message:
+          "'../../tasks/domain/types' import is restricted from being used by a pattern. Presentation imports task contracts only through src/tasks/index.ts.",
+      },
+    ],
+    [
+      'src/settings/sections/TaskStatusSettings.ts',
+      "import '../../tasks/domain/types';",
+      {
+        ruleId: 'no-restricted-imports',
+        message:
+          "'../../tasks/domain/types' import is restricted from being used by a pattern. Presentation imports task contracts only through src/tasks/index.ts.",
+      },
+    ],
+    [
       'src/tasks/domain/validation.ts',
       "import { Notice } from 'obsidian';",
       {
@@ -266,6 +284,23 @@ describe('project lexical policy', () => {
           column: 6,
           endLine: 1,
           endColumn: 6 + name.length,
+        },
+      ]);
+    },
+    LINTER_TIMEOUT_MS,
+  );
+
+  it.each(['ShortcutSettings', 'TaskStatusSettings'])(
+    'rejects an ambient window in Settings section %s',
+    async (name) => {
+      expect(await check(`src/settings/sections/${name}.ts`, 'void window;')).toEqual([
+        {
+          ruleId: 'project-policy/ambient',
+          messageId: 'owner',
+          line: 1,
+          column: 6,
+          endLine: 1,
+          endColumn: 12,
         },
       ]);
     },

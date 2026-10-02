@@ -648,6 +648,16 @@ and [creation presentation tests](test/project-creation-presentation.test.ts).
 
 ## Settings and compatibility
 
+[CalendarSettingsTab](src/settings/SettingsTab.ts) retains one [ShortcutSettings](src/settings/sections/ShortcutSettings.ts)
+and one [TaskStatusSettings](src/settings/sections/TaskStatusSettings.ts) through display/hide.
+The shortcut owner renders validation/feedback and keeps its coalesced save/retry queue across redraws
+and hiding; live callbacks read the current shortcuts and call the tab's current save capability.
+The status owner renders groups, core locks, symbols, icon search, previews and delete confirmation.
+It clears rendered preview references and owner-window confirmation timers before staging and on hide.
+The tab keeps generic cards/reorder, expanded IDs, staging/focus restoration and SettingsValueCommit
+flush/disposal. Status persistence awaits save before semantic rebuild; a successful reorder also
+keeps its immediate rebuild. No persistence or task-write authority moves into the section owners.
+
 [`src/obsidianMoment.ts`](src/obsidianMoment.ts) is the single compatibility boundary for
 Obsidian's named host Moment export. Its namespace declaration loses call signatures under
 TypeScript ES module interop; the boundary restores Moment's own complete callable type without
@@ -743,7 +753,8 @@ roster in [eslint.config.mts](eslint.config.mts) and global document/window capa
 and calendar surfaces, in navigation owners' [`src/panels/left/`](src/panels/left/),
 the centre services' [`src/panels/center/`](src/panels/center/) and inspector UI owners'
 [`src/panels/right/`](src/panels/right/),
-in the centre task list's [`src/panels/task-list/`](src/panels/task-list/), and in the shared [project actions](src/ui/projectActions.ts) and [compact-pane owner](src/views/CompactPaneAccess.ts), which join by per-file entries.
+in the centre task list's [`src/panels/task-list/`](src/panels/task-list/), Settings section owners'
+[`src/settings/sections/`](src/settings/sections/), and in the shared [project actions](src/ui/projectActions.ts) and [compact-pane owner](src/views/CompactPaneAccess.ts), which join by per-file entries.
 Enroll new pure modules in that roster and supply explicit time; native surfaces retain their
 owning window and dispose pending work. These lexical checks complement
 [owner-lifecycle tests](test/project-owner-lifecycle.test.ts); they do not establish transitive
