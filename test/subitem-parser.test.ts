@@ -10,6 +10,22 @@ const parseSubItems = (lines: string[], taskLineIdx: number, filePath: string) =
   parseSubItemsWithCatalog(lines, taskLineIdx, filePath, statusCatalog);
 
 describe('parseSubItems', () => {
+  it('preserves mixed-marker nested children and their source positions', () => {
+    const lines = ['12) [ ] Parent', '  * [x] Child', '    + [ ] Grandchild', '  3. [ ] Sibling'];
+    const result = parseSubItems(lines, 0, FILE);
+    expect(result.subtasks).toMatchObject([
+      {
+        text: 'Child',
+        status: 'done',
+        line: 1,
+        rawText: lines[1],
+        subtasks: [{ text: 'Grandchild', status: 'open', line: 2, rawText: lines[2] }],
+      },
+      { text: 'Sibling', status: 'open', line: 3, rawText: lines[3] },
+    ]);
+    expect(result.subtaskRange).toEqual({ from: 1, to: 3 });
+  });
+
   it('returns empty result for task with no children', () => {
     const lines = ['- [ ] Task'];
     const r = parseSubItems(lines, 0, FILE);

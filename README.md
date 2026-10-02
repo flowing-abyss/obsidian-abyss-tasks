@@ -33,7 +33,9 @@ Abyss Tasks also comes with the
 
 1. Open the command palette and run **Abyss Tasks: Open view**. The view opens in a new tab, or
    comes forward if it is already open. You can drag its tab into a sidebar.
-2. Write tasks as `- [ ]` checkboxes in your notes, for example `- [ ] Call the bank 📅 2026-10-01`.
+2. Write tasks with `-`, `*`, `+`, or decimal `1.` / `1)` checkbox markers in your notes,
+   for example `- [ ] Call the bank 📅 2026-10-01`. Existing markers and ordinals are preserved;
+   newly created tasks and children use `- [ ]`.
    The **Archive file** and notes that match **Ignored task sources** in Settings are skipped.
    Dates, priorities, and repeat rules use the emoji format of the Tasks plugin.
 3. Switch between Tasks, Calendar, Projects, and Search with the buttons on the left edge.

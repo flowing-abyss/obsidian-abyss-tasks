@@ -194,10 +194,10 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         policyToken: '',
         expectedRoots: ['open', 'done'],
         expected:
-          '- [ ] Repeat 🔁 every day ➕ 2026-08-01 📅 2026-08-02\n' +
-          '  - [ ] Child ➕ 2026-08-01 📅 2026-08-04\n' +
-          '- [x] Repeat 🔁 every day 📅 2026-08-01 ✅ 2026-08-01\n' +
-          '  - [x] Child 📅 2026-08-03 ✅ 2026-07-31\n' +
+          '12) [ ] Repeat 🔁 every day ➕ 2026-08-01 📅 2026-08-02\n' +
+          '  * [ ] Child ➕ 2026-08-01 📅 2026-08-04\n' +
+          '12) [x] Repeat 🔁 every day 📅 2026-08-01 ✅ 2026-08-01\n' +
+          '  * [x] Child 📅 2026-08-03 ✅ 2026-07-31\n' +
           '- [ ] Outside\n',
       },
       {
@@ -206,18 +206,18 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         policyToken: ' 🏁 keep',
         expectedRoots: ['done', 'open'],
         expected:
-          '- [x] Repeat 🔁 every day 🏁 keep 📅 2026-08-01 ✅ 2026-08-01\r\n' +
-          '  - [x] Child 📅 2026-08-03 ✅ 2026-07-31\r\n' +
-          '- [ ] Repeat 🔁 every day 🏁 keep ➕ 2026-08-01 📅 2026-08-02\r\n' +
-          '  - [ ] Child ➕ 2026-08-01 📅 2026-08-04\r\n' +
+          '12) [x] Repeat 🔁 every day 🏁 keep 📅 2026-08-01 ✅ 2026-08-01\r\n' +
+          '  * [x] Child 📅 2026-08-03 ✅ 2026-07-31\r\n' +
+          '12) [ ] Repeat 🔁 every day 🏁 keep ➕ 2026-08-01 📅 2026-08-02\r\n' +
+          '  * [ ] Child ➕ 2026-08-01 📅 2026-08-04\r\n' +
           '- [ ] Outside\r\n',
       },
     ])(
       'keeps exact $ending bytes and places the clean root $placement the completed root',
       async ({ placement, ending, policyToken, expected, expectedRoots }) => {
         const source = [
-          `- [ ] Repeat 🔁 every day${policyToken} 📅 2026-08-01`,
-          '  - [x] Child 📅 2026-08-03 ✅ 2026-07-31',
+          `12) [ ] Repeat 🔁 every day${policyToken} 📅 2026-08-01`,
+          '  * [x] Child 📅 2026-08-03 ✅ 2026-07-31',
           '- [ ] Outside',
           '',
         ].join(ending);

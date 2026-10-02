@@ -140,6 +140,59 @@ function captureCreateCallback(
 }
 
 describe('TaskIndex lifecycle and events', () => {
+  it.each(['metadata', 'fallback'] as const)(
+    'indexes exact mixed-marker hierarchy with %s',
+    async (mode) => {
+      const lines = [
+        '- [ ] Dash',
+        '  * [x] Child',
+        '    2) [ ] Grandchild',
+        '* [ ] Star',
+        '+ [ ] Plus',
+        '1. [ ] Dot',
+        '1) [ ] Paren',
+        '2. ordinary list',
+      ];
+      const content = lines.join('\n');
+      const app = await createAppWithFiles({ 'markers.md': content });
+      if (mode === 'fallback') app.metadataCache.getFileCache = (): null => null;
+      else
+        seedTaskCache(
+          app,
+          'markers.md',
+          lines.slice(0, 7).map((_, line) => {
+            let parent = -1;
+            if (line === 1) parent = 0;
+            if (line === 2) parent = 1;
+            return { task: line === 1 ? 'x' : ' ', parent, line };
+          }),
+        );
+      const index = new TaskIndex(app, { statusCatalog: canonicalStatusCatalog() });
+      const fireCreate = captureCreateCallback(app);
+      try {
+        await index.initialize();
+        if (mode === 'fallback') {
+          fireCreate(mdFile(app, 'markers.md'));
+          await flushMicrotasks();
+        }
+        const roots = index.list();
+        expect(
+          roots.map((root) => [root.title, root.source.line, root.source.originalMarkdown]),
+        ).toEqual([0, 3, 4, 5, 6].map((line) => [lines[line]?.split('] ')[1], line, lines[line]]));
+        expect(roots[0]?.subtasks).toMatchObject([
+          {
+            title: 'Child',
+            status: 'done',
+            ref: { relativeLine: 1, originalBlock: `${lines[1]}\n${lines[2]}` },
+            subtasks: [{ title: 'Grandchild', ref: { relativeLine: 1, originalBlock: lines[2] } }],
+          },
+        ]);
+      } finally {
+        index.destroy();
+      }
+    },
+  );
+
   it('mints detached initial duplicate refs and preserves them on an unchanged metadata refresh', async () => {
     const authority = new TaskRefAuthority('initial-duplicates');
     const source = '\n- [ ] Same\n- [ ] Same\n- [ ] Unique\n';

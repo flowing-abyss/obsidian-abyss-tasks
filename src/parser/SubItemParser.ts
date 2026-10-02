@@ -1,6 +1,7 @@
 import { collapseLinks } from '../markdown/links';
 import type { StatusCatalog } from '../tasks/domain/StatusCatalog';
 import { parseCommentTimestampPrefix } from '../tasks/domain/commentTimestamp';
+import { readTaskLinePrefix } from '../tasks/domain/taskLineSourceModel';
 import { isTimeEntryShape } from '../tasks/domain/timeEntry';
 import { extractMetadata, type ExtractedMetadata } from './extractMetadata';
 import type { SubTask, TaskComment } from './types';
@@ -12,9 +13,6 @@ export interface SubItemResult {
   subtaskRange: { from: number; to: number } | undefined;
 }
 
-// Leading group allows blockquote/callout markers (`>`) alongside whitespace so
-// sub-items inside a blockquote (`> \t- [ ]`) nest correctly under their parent.
-const SUBTASK_RE = /^([\s>]*)- \[(.)\]\s+(.*)/;
 const DESCRIPTION_RE = /^([\s>]*)- > (.*)/;
 const INDENT_RE = /^[\s>]*/;
 
@@ -63,7 +61,8 @@ interface ParseSubtaskContext {
   readonly lines: string[];
   readonly index: number;
   readonly filePath: string;
-  readonly match: RegExpExecArray;
+  readonly statusSymbol: string;
+  readonly rawContent: string;
   readonly statusCatalog: StatusCatalog;
 }
 
@@ -86,10 +85,10 @@ function parseSubtask(context: ParseSubtaskContext): {
   nextIdx: number;
   rangeTo: number;
 } {
-  const { lines, index, filePath, match, statusCatalog } = context;
+  const { lines, index, filePath, statusSymbol, statusCatalog } = context;
   const rawText = lines[index] ?? '';
-  const statusChar = match[2] ?? ' ';
-  const rawContent = (match[3] ?? '').trim();
+  const statusChar = statusSymbol;
+  const rawContent = context.rawContent.trim();
   const meta = extractMetadata(rawContent);
   const childResult = parseSubItems(lines, index, filePath, statusCatalog);
   const subtask: SubTask = {
@@ -111,15 +110,30 @@ function parseSubtask(context: ParseSubtaskContext): {
   return { subtask, nextIdx, rangeTo };
 }
 
+function readSubtaskContent(
+  line: string,
+): Pick<ParseSubtaskContext, 'statusSymbol' | 'rawContent'> | null {
+  const prefix = readTaskLinePrefix(line);
+  if (prefix == null) return null;
+  const suffix = /^\s+(.*)/u.exec(line.slice(prefix.prefixEnd));
+  return suffix == null ? null : { statusSymbol: prefix.statusSymbol, rawContent: suffix[1] ?? '' };
+}
+
 function consumeNestedLine(context: ConsumeNestedLineContext): {
   readonly nextIndex: number;
   readonly rangeTo: number;
 } {
   const { lines, index, filePath, statusCatalog, accumulator } = context;
   const line = lines[index] ?? '';
-  const subtaskMatch = SUBTASK_RE.exec(line);
-  if (subtaskMatch != null) {
-    const parsed = parseSubtask({ lines, index, filePath, match: subtaskMatch, statusCatalog });
+  const subtask = readSubtaskContent(line);
+  if (subtask != null) {
+    const parsed = parseSubtask({
+      lines,
+      index,
+      filePath,
+      ...subtask,
+      statusCatalog,
+    });
     accumulator.subtasks.push(parsed.subtask);
     return { nextIndex: parsed.nextIdx, rangeTo: parsed.rangeTo };
   }

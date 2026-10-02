@@ -1,6 +1,10 @@
 import { shiftLocalDate } from './localDateMath';
 import { parseRecurrenceRule, type RecurrenceIssueCode } from './recurrence';
-import { parseTaskLineSourceModel, type TaskLineSourceCarrier } from './taskLineSourceModel';
+import {
+  parseTaskLineSourceModel,
+  readTaskLinePrefix,
+  type TaskLineSourceCarrier,
+} from './taskLineSourceModel';
 import { isTimeEntryShape } from './timeEntry';
 import type { LocalDate, TaskPlanning } from './types';
 import { formatDurationMinutes, localDate, localTime } from './validation';
@@ -92,7 +96,6 @@ export type RecurrenceTaskLineEditResult =
   | { readonly type: 'changed'; readonly content: string }
   | { readonly type: 'invalid'; readonly code: IterationIssueCode };
 
-const TASK_RE = /^[\s>]*- \[(.)\]/u;
 const PREFIX_RE = /^([\s>]*)/u;
 const DATE_MARKERS: Readonly<Record<DateCarrier, string>> = {
   created: '➕',
@@ -208,7 +211,7 @@ function ownedTaskLines(
   for (let index = fromLine; index <= toLine; index++) {
     const line = lines[index];
     if (line === undefined) return undefined;
-    if (TASK_RE.test(line.text)) taskLines.push(index);
+    if (readTaskLinePrefix(line.text) !== null) taskLines.push(index);
   }
   return taskLines;
 }
@@ -226,8 +229,8 @@ export function recurrenceOwnedSubtree(
     owner == null ||
     !Number.isInteger(ownerRelativeLine) ||
     ownerRelativeLine < 0 ||
-    !TASK_RE.test(root.text) ||
-    !TASK_RE.test(owner.text)
+    readTaskLinePrefix(root.text) === null ||
+    readTaskLinePrefix(owner.text) === null
   ) {
     return undefined;
   }
@@ -656,7 +659,7 @@ function recurrenceStructureIssue(
 
 function iterationLinesIssue(lines: readonly SourceLine[]): IterationIssueCode | undefined {
   for (const line of lines) {
-    if (!TASK_RE.test(line.text)) continue;
+    if (readTaskLinePrefix(line.text) === null) continue;
     const parsed = parseIterationTaskLine(line.text + line.ending);
     if (parsed.type === 'invalid') return parsed.code;
   }

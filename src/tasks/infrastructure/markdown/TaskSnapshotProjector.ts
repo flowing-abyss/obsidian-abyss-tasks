@@ -2,6 +2,7 @@ import { countLinksIn } from '../../../markdown/links';
 import type { CommentTimestamp } from '../../domain/commentTimestamp';
 import { parseCommentTimestampPrefix } from '../../domain/commentTimestamp';
 import type { StatusCatalog } from '../../domain/StatusCatalog';
+import { readTaskLinePrefix } from '../../domain/taskLineSourceModel';
 import type { OffsetAt } from '../../domain/timeEntry';
 import { parseTimeEntryLine } from '../../domain/timeEntry';
 import type { TimeEntrySnapshot } from '../../domain/timeTracking';
@@ -23,7 +24,6 @@ import { isTaskBlockBlankLine, readTaskDescriptionLine } from './taskBlockSyntax
 import type { TaskMarkdownCodec } from './TaskMarkdownCodec';
 
 const PREFIX_RE = /^([\s>]*)/u;
-const SUBTASK_RE = /^([\s>]*)- \[(.)\]\s+(.*)/u;
 const ENTRY_ARROW = '→';
 const NO_TIME_ENTRIES: readonly TimeEntrySnapshot[] = Object.freeze([]);
 
@@ -176,7 +176,8 @@ function projectedSubtask(
   line: number,
   source: string,
 ): { readonly snapshot: SubtaskSnapshot; readonly toLine: number } | undefined {
-  if (SUBTASK_RE.exec(source) == null) return undefined;
+  const prefix = readTaskLinePrefix(source);
+  if (prefix == null || /^\s+(.*)/u.exec(source.slice(prefix.prefixEnd)) == null) return undefined;
   const parsed = context.codec.parseLine(source, { filePath: context.filePath, line });
   return parsed == null ? undefined : projectSubtask(context, line, parent, parsed);
 }

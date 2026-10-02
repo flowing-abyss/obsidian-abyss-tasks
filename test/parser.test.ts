@@ -9,6 +9,16 @@ const parseTask = (rawText: string, ctx: Omit<ParseContext, 'statusCatalog'>) =>
   parseTaskWithCatalog(rawText, { ...ctx, statusCatalog });
 
 describe('parseTask', () => {
+  it.each(['-', '*', '+', '1.', '1)'])('recognizes ordinary %s checkbox tasks', (marker) => {
+    const rawText = `${marker} [ ] Ordinary`;
+    expect(parseTask(rawText, { filePath: 'f.md', line: 2 })).toMatchObject({
+      text: 'Ordinary',
+      status: 'open',
+      line: 2,
+      rawText,
+    });
+  });
+
   it('returns null for non-task lines', () => {
     expect(parseTask('- just a list item', { filePath: 'f.md', line: 0 })).toBeNull();
     expect(parseTask('# heading', { filePath: 'f.md', line: 0 })).toBeNull();

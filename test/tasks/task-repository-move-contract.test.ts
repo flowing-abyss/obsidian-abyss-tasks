@@ -117,10 +117,10 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       {
         name: 'LF source into final-newline LF target',
         source:
-          '- [ ] root 🆔 portable-id ⛔ blocked-by\n  - > description\n  - 2026-07-14: comment\n  - [ ] child\n    - [ ] nested\n- [ ] keep\n',
+          '12) [ ] root 🆔 portable-id ⛔ blocked-by\n  - > description\n  - 2026-07-14: comment\n  * [ ] child\n    + [ ] nested\n- [ ] keep\n',
         target: '# Target\n',
         expectedTarget:
-          '# Target\n- [ ] root 🆔 portable-id ⛔ blocked-by\n  - > description\n  - 2026-07-14: comment\n  - [ ] child\n    - [ ] nested\n',
+          '# Target\n12) [ ] root 🆔 portable-id ⛔ blocked-by\n  - > description\n  - 2026-07-14: comment\n  * [ ] child\n    + [ ] nested\n',
         expectedSource: '- [ ] keep\n',
       },
       {
