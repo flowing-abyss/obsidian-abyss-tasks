@@ -1,5 +1,5 @@
 import { requireApiVersion } from 'obsidian';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -20,7 +20,12 @@ import {
   testStatusRegistry,
   useRealMoment,
 } from './helpers';
-import { notices } from './support/inspectorHarness';
+import {
+  inspectorCleanups,
+  inspectorHarness,
+  notices,
+  subscribeInspectorReconciliation,
+} from './support/inspectorHarness';
 
 useRealMoment();
 
@@ -1950,4 +1955,239 @@ describe('RightPanel IME-owned keys', () => {
       }
     },
   );
+});
+
+describe('consumed draft recovery over the real index', () => {
+  afterEach(() => {
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+  });
+
+  it('preserves the exact newer live continuation and trays the original submitted text', async () => {
+    const h = await inspectorHarness('- [ ] A\n- [ ] B\nSentinel.\n', 'A');
+    const unsubscribe = subscribeInspectorReconciliation(h);
+    const late = deferred<TaskCommandResult>();
+    const published = deferred<void>();
+    const execute = h.api.execute.bind(h.api);
+    const spy = vi.spyOn(h.api, 'execute').mockImplementation(async (command) => {
+      const result = await execute(command);
+      expect(result.type).toBe('ok');
+      published.resolve(undefined);
+      return late.promise;
+    });
+    try {
+      expectDefined(
+        h.el.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
+      ).click();
+      const submitted = expectDefined(
+        h.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
+      );
+      submitted.value = 'QA-SP1j submitted';
+      submitted.dispatchEvent(new Event('input', { bubbles: true }));
+      submitted.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await published.promise;
+      await flushMicrotasks(20);
+      const expected = '- [ ] A\n\t- [ ] QA-SP1j submitted ➕ 2026-09-05\n- [ ] B\nSentinel.\n';
+      expect(await h.read()).toBe(expected);
+      const stack = h.state.get('taskStack').map(taskNodeRef);
+      expect(stack).toEqual([h.node('A').target]);
+      const newer = expectDefined(h.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input'));
+      expect(newer.value).toBe('');
+      expect(activeDocument.activeElement).toBe(newer);
+      newer.value = 'QA-SP1j newer';
+      newer.dispatchEvent(new Event('input', { bubbles: true }));
+      newer.setSelectionRange(13, 13);
+      late.resolve({ type: 'io-error', cause: 'repository-error', contentState: 'unknown' });
+      await flushMicrotasks(20);
+      expect(h.el.querySelector('.abyss-subtask-new-input')).toBe(newer);
+      expect(newer.isConnected).toBe(true);
+      expect(newer.value).toBe('QA-SP1j newer');
+      expect([newer.selectionStart, newer.selectionEnd]).toEqual([13, 13]);
+      expect(activeDocument.activeElement).toBe(newer);
+      expect(h.state.get('taskStack').map(taskNodeRef)).toEqual(stack);
+      expect(await h.read()).toBe(expected);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(h.el.querySelector('.abyss-detached-draft-label')?.textContent).toBe('A, new subtask');
+      expect(h.el.querySelector('.abyss-detached-draft pre')?.textContent).toBe(
+        'QA-SP1j submitted',
+      );
+    } finally {
+      late.resolve({ type: 'io-error', cause: 'repository-error', contentState: 'unknown' });
+      await flushMicrotasks(20);
+      unsubscribe();
+      spy.mockRestore();
+    }
+  });
+  it.each(['different root', 'same-root sibling'] as const)(
+    'keeps a live description at a %s while recovering A to its original tray',
+    async (kind) => {
+      const initial =
+        kind === 'different root'
+          ? '- [ ] A\n\t- > Old\n- [ ] B\nSentinel.\n'
+          : '- [ ] Root\n\t- [ ] A\n\t\t- > Old\n\t- [ ] B\nSentinel.\n';
+      const expected = initial.replace('- > Old', '- > Submitted description');
+      const h = await inspectorHarness(initial, 'A');
+      const unsubscribe = subscribeInspectorReconciliation(h);
+      const late = deferred<TaskCommandResult>(),
+        published = deferred<void>();
+      const execute = h.api.execute.bind(h.api);
+      const spy = vi.spyOn(h.api, 'execute').mockImplementation(async (command) => {
+        const result = await execute(command);
+        expect(result.type).toBe('ok');
+        published.resolve(undefined);
+        return late.promise;
+      });
+      try {
+        expectDefined(h.el.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
+        const submitted = expectDefined(
+          h.el.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+        );
+        submitted.focus();
+        submitted.value = 'Submitted description';
+        submitted.dispatchEvent(new Event('input', { bubbles: true }));
+        submitted.blur();
+        await published.promise;
+        await flushMicrotasks(20);
+        expect(await h.read()).toBe(expected);
+        const other = h.node('B');
+        h.state.set('taskStack', [other.root, ...other.path]);
+        expectDefined(h.el.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
+        const live = expectDefined(
+          h.el.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+        );
+        live.focus();
+        live.value = 'New B';
+        live.dispatchEvent(new Event('input', { bubbles: true }));
+        live.setSelectionRange(2, 4);
+        const stack = h.state.get('taskStack').map(taskNodeRef);
+        late.resolve({ type: 'io-error', cause: 'repository-error', contentState: 'unknown' });
+        await flushMicrotasks(20);
+        expect(h.el.querySelector('.abyss-right-desc-edit')).toBe(live);
+        expect(live.isConnected).toBe(true);
+        expect(live.value).toBe('New B');
+        expect([live.selectionStart, live.selectionEnd]).toEqual([2, 4]);
+        expect(activeDocument.activeElement).toBe(live);
+        expect(h.state.get('taskStack').map(taskNodeRef)).toEqual(stack);
+        expect(await h.read()).toBe(expected);
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(h.el.querySelector('.abyss-detached-draft-label')?.textContent).toBe(
+          'A, description',
+        );
+        expect(h.el.querySelector('.abyss-detached-draft pre')?.textContent).toBe(
+          'Submitted description',
+        );
+      } finally {
+        late.resolve({ type: 'io-error', cause: 'repository-error', contentState: 'unknown' });
+        await flushMicrotasks(20);
+        unsubscribe();
+        spy.mockRestore();
+      }
+    },
+  );
+
+  it.each(['QA-SP1j submitted', ''])(
+    'does not recreate or assign a present same-owner entry with value %j',
+    async (value) => {
+      const h = await inspectorHarness('- [ ] A\n- [ ] B\nSentinel.\n', 'A');
+      const unsubscribe = subscribeInspectorReconciliation(h);
+      const late = deferred<TaskCommandResult>(),
+        published = deferred<void>();
+      const execute = h.api.execute.bind(h.api);
+      const spy = vi.spyOn(h.api, 'execute').mockImplementation(async (command) => {
+        const result = await execute(command);
+        expect(result.type).toBe('ok');
+        published.resolve(undefined);
+        return late.promise;
+      });
+      try {
+        expectDefined(
+          h.el.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
+        ).click();
+        const submitted = expectDefined(
+          h.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
+        );
+        submitted.value = 'QA-SP1j submitted';
+        submitted.dispatchEvent(new Event('input', { bubbles: true }));
+        submitted.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await published.promise;
+        await flushMicrotasks(20);
+        const expected = '- [ ] A\n\t- [ ] QA-SP1j submitted ➕ 2026-09-05\n- [ ] B\nSentinel.\n';
+        expect(await h.read()).toBe(expected);
+        const live = expectDefined(
+          h.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
+        );
+        live.value = value;
+        live.dispatchEvent(new Event('input', { bubbles: true }));
+        live.setSelectionRange(0, 0);
+        late.resolve({ type: 'io-error', cause: 'repository-error', contentState: 'unknown' });
+        await flushMicrotasks(20);
+        expect(h.el.querySelector('.abyss-subtask-new-input')).toBe(live);
+        expect(live.isConnected).toBe(true);
+        expect(live.value).toBe(value);
+        expect([live.selectionStart, live.selectionEnd]).toEqual([0, 0]);
+        expect(activeDocument.activeElement).toBe(live);
+        expect(await h.read()).toBe(expected);
+        expect(h.state.get('taskStack').map(taskNodeRef)).toEqual([h.node('A').target]);
+        expect(spy).toHaveBeenCalledTimes(1);
+        if (value === '') {
+          expect(h.el.querySelector('.abyss-detached-draft-label')?.textContent).toBe(
+            'A, new subtask',
+          );
+          expect(h.el.querySelector('.abyss-detached-draft pre')?.textContent).toBe(
+            'QA-SP1j submitted',
+          );
+        } else expect(h.el.querySelector('.abyss-detached-draft')).toBeNull();
+      } finally {
+        late.resolve({ type: 'io-error', cause: 'repository-error', contentState: 'unknown' });
+        await flushMicrotasks(20);
+        unsubscribe();
+        spy.mockRestore();
+      }
+    },
+  );
+  it('trays an existing-comment draft whose original anchor changed at publication', async () => {
+    const h = await inspectorHarness(
+      '- [ ] A\n\t- 2026-07-13: Original\n- [ ] B\nSentinel.\n',
+      'A',
+    );
+    const unsubscribe = subscribeInspectorReconciliation(h);
+    const late = deferred<TaskCommandResult>(),
+      published = deferred<void>();
+    const execute = h.api.execute.bind(h.api);
+    const spy = vi.spyOn(h.api, 'execute').mockImplementation(async (command) => {
+      const result = await execute(command);
+      expect(result.type).toBe('ok');
+      published.resolve(undefined);
+      return late.promise;
+    });
+    try {
+      expectDefined(h.el.querySelector<HTMLElement>('.abyss-comment-text')).click();
+      const submitted = expectDefined(
+        h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input'),
+      );
+      submitted.focus();
+      submitted.value = 'Edited';
+      submitted.dispatchEvent(new Event('input', { bubbles: true }));
+      submitted.blur();
+      await published.promise;
+      await flushMicrotasks(20);
+      const expected = '- [ ] A\n\t- 2026-07-13: Edited\n- [ ] B\nSentinel.\n';
+      expect(await h.read()).toBe(expected);
+      expect(h.el.querySelector('.abyss-comment-edit-input')).toBeNull();
+      late.resolve({ type: 'io-error', cause: 'repository-error', contentState: 'unknown' });
+      await flushMicrotasks(20);
+      expect(h.el.querySelector('.abyss-comment-edit-input')).toBeNull();
+      expect(h.el.querySelector('.abyss-comment-text')?.textContent).toBe('Edited');
+      expect(h.el.querySelector('.abyss-detached-draft-label')?.textContent).toBe(
+        'A, existing comment',
+      );
+      expect(h.el.querySelector('.abyss-detached-draft pre')?.textContent).toBe('Edited');
+      expect(await h.read()).toBe(expected);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      late.resolve({ type: 'io-error', cause: 'repository-error', contentState: 'unknown' });
+      await flushMicrotasks(20);
+      unsubscribe();
+      spy.mockRestore();
+    }
+  });
 });

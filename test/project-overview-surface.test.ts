@@ -354,8 +354,8 @@ describe.each(cases)('project overview surface contract: $mode', (testCase) => {
   });
 
   it('has a rendered cell for a listed identity once it reveals it', () => {
-    // Forty fillers push the Table's last row out of its window; the other views mount them all.
-    const { surface } = mountSurface(testCase, 40);
+    // Only windowed views need fillers to make the last row's unmounted-to-mounted reveal nonvacuous.
+    const { surface } = mountSurface(testCase, testCase.windowed ? 40 : 0);
     const { identities } = surface.cells();
     const last = expectDefined(identities[identities.length - 1]);
     const key = `${last.occurrenceId} ${last.columnId}`;

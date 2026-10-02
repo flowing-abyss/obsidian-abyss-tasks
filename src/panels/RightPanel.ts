@@ -928,28 +928,134 @@ export class RightPanel {
    * Reopens or preserves a consumed submission's draft after its write failed. The draft keeps the
    * focus it had at submit time only while no control holds focus now.
    */
+  private recoveryDraftOwner_abyssPrivate(draft: RightPanelDraftState): TaskNodeRef {
+    switch (draft.kind) {
+      case 'title':
+      case 'description':
+        return draft.target.target;
+      case 'existing-comment':
+        return draft.target.ref.parent;
+      case 'new-comment':
+      case 'new-subtask':
+        return draft.parent;
+      case 'recurrence-editor':
+        return draft.target;
+    }
+  }
+
+  private admittedRecoveryDraft_abyssPrivate(
+    submitted: SubmittedDraft,
+    stack: readonly TaskLike[],
+  ): RightPanelDraftState | undefined {
+    const draft = submitted.draft;
+    const original = submitted.selection[submitted.selection.length - 1];
+    const current = stack[stack.length - 1];
+    if (
+      draft === undefined ||
+      original === undefined ||
+      current === undefined ||
+      !sameTaskNodeRef(this.recoveryDraftOwner_abyssPrivate(draft), taskNodeRef(original))
+    )
+      return undefined;
+    const sameStack = (expected: readonly TaskLike[] | undefined): boolean =>
+      stack.length === expected?.length &&
+      stack.every((node, index) => {
+        const prior = expected[index];
+        return prior !== undefined && sameTaskNodeRef(taskNodeRef(node), taskNodeRef(prior));
+      });
+    if (!sameStack(submitted.selection) && !sameStack(submitted.successorSelection))
+      return undefined;
+    return this.mappedRecoveryDraft_abyssPrivate(draft, current);
+  }
+
+  private mappedRecoveryDraft_abyssPrivate(
+    draft: RightPanelDraftState,
+    current: TaskLike,
+  ): RightPanelDraftState | undefined {
+    const target = taskNodeRef(current);
+    switch (draft.kind) {
+      case 'title':
+        return { ...draft, target: { type: 'title', target } };
+      case 'description':
+        return { ...draft, target: { type: 'description', target } };
+      case 'existing-comment': {
+        const matches = current.comments.filter(
+          (comment) =>
+            comment.ref.relativeLine === draft.target.ref.relativeLine &&
+            comment.ref.originalMarkdown === draft.target.ref.originalMarkdown,
+        );
+        const comment = matches.length === 1 ? matches[0] : undefined;
+        return comment === undefined
+          ? undefined
+          : { ...draft, target: { ...draft.target, ref: comment.ref } };
+      }
+      case 'new-comment':
+      case 'new-subtask':
+        return { ...draft, parent: target };
+      case 'recurrence-editor':
+        return { ...draft, target };
+    }
+  }
+
   private recoverSubmittedDraft_abyssPrivate(submitted: SubmittedDraft): void {
     const submittedDraft = submitted.draft;
     if (submittedDraft == null || submitted.dismissed === true) return;
-    const draft = this.recoverableDraft_abyssPrivate(submittedDraft);
-    const currentSameKey = this.captureDraftState()?.entries.find(
-      (candidate) => draftIdentity(candidate) === draftIdentity(draft),
-    );
-    if (currentSameKey != null && !this.sameDraftPayload_abyssPrivate(currentSameKey, draft)) {
-      this.appendDetachedDraft_abyssPrivate(draft, submitted.origin);
-      return;
-    }
-    if (currentSameKey != null) return;
-    const bundle: RightPanelDraftBundle = {
-      entries: [draft],
-      ...(submitted.origin !== undefined && { origin: submitted.origin }),
+    const preserveOriginal = (): void => {
+      this.appendDetachedDraft_abyssPrivate(unfocusedDraft(submittedDraft), submitted.origin);
     };
-    const root = this.state_abyssPrivate.get('taskStack')[0];
-    if (root != null && 'source' in root) {
-      this.restoreDraftState(bundle, root);
+    const stack = this.state_abyssPrivate.get('taskStack');
+    const root = stack[0];
+    const current = stack[stack.length - 1];
+    const admitted = this.admittedRecoveryDraft_abyssPrivate(submitted, stack);
+    if (
+      admitted === undefined ||
+      current === undefined ||
+      root === undefined ||
+      !('source' in root)
+    ) {
+      preserveOriginal();
       return;
     }
-    this.detachDraftState(bundle);
+    const currentRef = taskNodeRef(current);
+    const active = this.el_abyssPrivate.ownerDocument.activeElement;
+    const candidates = this.captureRecoveryCandidates_abyssPrivate(current, currentRef, active);
+    const disposition = this.recoveryLiveDisposition_abyssPrivate(candidates, admitted, currentRef);
+    if (disposition !== 'unrepresented') {
+      if (disposition === 'conflict') preserveOriginal();
+      return;
+    }
+    this.restoreDraftState(
+      {
+        entries: [this.recoverableDraft_abyssPrivate(admitted)],
+        ...(submitted.origin !== undefined && { origin: submitted.origin }),
+      },
+      root,
+    );
+  }
+
+  private captureRecoveryCandidates_abyssPrivate(
+    current: TaskLike,
+    currentRef: TaskNodeRef,
+    active: Element | null,
+  ): RightPanelDraftState[] {
+    const candidates = this.captureTextDrafts_abyssPrivate(current, currentRef, active);
+    const recurrence = this.planningSurfaces_abyssPrivate.captureRecurrenceDraft(active);
+    if (recurrence !== undefined) candidates.push(recurrence);
+    return candidates;
+  }
+
+  private recoveryLiveDisposition_abyssPrivate(
+    candidates: readonly RightPanelDraftState[],
+    admitted: RightPanelDraftState,
+    currentRef: TaskNodeRef,
+  ): 'equal' | 'conflict' | 'unrepresented' {
+    const live = candidates.find((entry) => draftIdentity(entry) === draftIdentity(admitted));
+    if (live !== undefined)
+      return this.sameDraftPayload_abyssPrivate(live, admitted) ? 'equal' : 'conflict';
+    return candidates.some((entry) => entry.hadFocus || isDirtyDraft(entry)) ||
+      this.planningSurfaces_abyssPrivate.hasFocusedTypedInputFor(currentRef)
+      ? 'conflict'
+      : 'unrepresented';
   }
 
   restoreDraftState(bundle: RightPanelDraftBundle | undefined, currentRoot: TaskSnapshot): void {

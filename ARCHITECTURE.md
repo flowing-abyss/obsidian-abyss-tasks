@@ -116,7 +116,12 @@ sections, attachments and link-edit UI. It reads the current Markdown Component/
 callbacks, registers entry cleanup on that Component and shares the shell's drag callbacks and row
 remove helper. Its command arrows call retained RightPanel adapters at invocation; dismissal first
 marks the captured submitted target, then cancels the shell's restored-focus timer, then closes the
-entry. The shell keeps text draft capture/restore, targets, submission/late-result handling and all
+entry. Consumed late-failure recovery admits only the exact stored original selection or its proven
+successor stack and selected draft owner before opening an editor. Current live payloads, including
+intentionally empty fields, retain their DOM, caret and focus; equal payloads are already represented.
+Conflicting or uncertain-owner recovery preserves the original unfocused draft and origin label in
+Unsaved drafts. Recovery does not grant write authority or change global draft rebase/identity.
+The shell keeps text draft capture/restore, targets, submission/late-result handling and all
 write authority; the three presentation owners do not subscribe or acquire a task writer. Distinct
 editor save/blur/IME rules and existing section DOM/reopen gestures remain intact.
 Selection, render, refresh and destroy call the owner's narrow operations at their former positions.
