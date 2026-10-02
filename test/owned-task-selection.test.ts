@@ -29,6 +29,59 @@ const target = { type: 'subtask' as const, ref: expectDefined(before.subtasks[1]
 const selection = [before, expectDefined(before.subtasks[1])];
 
 describe('owned non-structural inspector selection', () => {
+  it.each([
+    { label: 'add', from: 'B.2', to: 'B.2 #added', tags: { add: ['added'] } },
+    { label: 'remove', from: 'B.2 #old', to: 'B.2', tags: { remove: ['old'] } },
+  ])('proves the exact $label tag delta on a nested selected path', ({ from, to, tags }) => {
+    const original = snapshot(source.replace('B.2', from), 'before');
+    const parent = expectDefined(original.subtasks[1]);
+    const deep = expectDefined(parent.subtasks[0]);
+    const current = snapshot(original.source.originalBlock.replace(from, to), 'after');
+    const command: TaskCommand = {
+      type: 'patch',
+      target: { type: 'subtask', ref: parent.ref },
+      patch: { tags },
+    };
+    const selected = [original, parent, deep];
+    expect(rebuildOwnedTaskSelection(current, selected, command)?.[2]?.ref).toEqual(
+      current.subtasks[1]?.subtasks[0]?.ref,
+    );
+    for (const foreign of [
+      current.source.originalBlock.replace(to, `${to} #wrong`),
+      current.source.originalBlock.replace('B.3', 'Changed sibling'),
+      current.source.originalBlock.replace('B.3', 'B.3 ^changed-source'),
+    ])
+      expect(
+        rebuildOwnedTaskSelection(snapshot(foreign, 'foreign'), selected, command),
+      ).toBeUndefined();
+  });
+
+  it('proves normalized remove-then-add while retaining surviving duplicate order', () => {
+    const original = snapshot(source.replace('B.2', 'B.2 #keep #keep #drop #Case'), 'before');
+    const parent = expectDefined(original.subtasks[1]);
+    const current = snapshot(source.replace('B.2', 'B.2 #keep #keep #Case #drop #new'), 'after');
+    const command: TaskCommand = {
+      type: 'patch',
+      target: { type: 'subtask', ref: parent.ref },
+      patch: { tags: { remove: ['drop', '#drop'], add: ['#drop', 'new', '#new', 'keep'] } },
+    };
+    expect(rebuildOwnedTaskSelection(current, [original, parent], command)?.[1]?.ref).toEqual(
+      current.subtasks[1]?.ref,
+    );
+    for (const wrong of [
+      'B.2 #keep #Case #drop #new',
+      'B.2 #keep #keep #case #drop #new',
+      'B.2 #keep #keep #Case #new #drop',
+    ])
+      expect(
+        rebuildOwnedTaskSelection(
+          snapshot(source.replace('B.2', wrong), 'wrong'),
+          [original, parent],
+          command,
+        ),
+      ).toBeUndefined();
+  });
+
   it.each(['\n', '\r\n'])(
     'proves one insertion with preserved %j line endings and quote prefixes',
     (ending) => {

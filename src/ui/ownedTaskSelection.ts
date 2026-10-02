@@ -68,7 +68,13 @@ function clearedField(key: string): unknown {
   return undefined;
 }
 
-function matchesPatch(node: TaskSelectionNode, key: string, update: unknown): boolean {
+function matchesPatch(
+  before: TaskSelectionNode,
+  node: TaskSelectionNode,
+  key: string,
+  update: unknown,
+): boolean {
+  if (key === 'tags') return matchesTagPatch(before, node, update as TaskPatch['tags']);
   const record = (PLANNING_FIELDS.has(key) ? node.planning : node) as unknown as Record<
     string,
     unknown
@@ -77,10 +83,30 @@ function matchesPatch(node: TaskSelectionNode, key: string, update: unknown): bo
   return record[key] === (value.type === 'set' ? value.value : clearedField(key));
 }
 
-function patchFields(node: TaskSelectionNode, patch: TaskPatch): Set<string> | undefined {
+function matchesTagPatch(
+  before: TaskSelectionNode,
+  after: TaskSelectionNode,
+  tags: TaskPatch['tags'],
+): boolean {
+  const normalize = (tag: string): string => (tag.startsWith('#') ? tag : `#${tag}`);
+  const remove = new Set((tags?.remove ?? []).map(normalize));
+  const remaining = before.tags.filter((tag) => !remove.has(tag));
+  const add = [...new Set((tags?.add ?? []).map(normalize))];
+  const expected = [...remaining, ...add.filter((tag) => !remaining.includes(tag))];
+  return (
+    expected.length === after.tags.length &&
+    expected.every((tag, index) => tag === after.tags[index])
+  );
+}
+
+function patchFields(
+  before: TaskSelectionNode,
+  after: TaskSelectionNode,
+  patch: TaskPatch,
+): Set<string> | undefined {
   const fields = new Set<string>();
   for (const [key, update] of Object.entries(patch)) {
-    if (key === 'tags' || !matchesPatch(node, key, update)) return undefined;
+    if (!matchesPatch(before, after, key, update)) return undefined;
     fields.add(PLANNING_FIELDS.has(key) ? `planning.${key}` : key);
     if (key === 'markdownTitle') fields.add('title');
     if (key === 'onCompletion') fields.add('onCompletionExplicit');
@@ -98,7 +124,7 @@ function editedFields(
     return dependencySubtaskChild(before, after, command, policy) === undefined
       ? undefined
       : new Set(['dependencyId', 'dependsOn']);
-  if (command.type === 'patch') return patchFields(after, command.patch);
+  if (command.type === 'patch') return patchFields(before, after, command.patch);
   if (command.type === 'set-description') {
     return after.description === (command.text ?? undefined) ? new Set(['description']) : undefined;
   }

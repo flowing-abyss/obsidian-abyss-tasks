@@ -467,11 +467,24 @@ export class RightPanel {
         prior !== undefined &&
         selected !== undefined &&
         sameTaskNodeRef(taskNodeRef(prior), taskNodeRef(selected));
-      const continuesOwnedSelection = this.consumeOwnedSelection_abyssPrivate(next);
+      const owned = this.consumeOwnedSelection_abyssPrivate(next);
+      const continuesOwnedSelection = owned !== undefined;
       const continuesSelection = sameSelection || continuesOwnedSelection;
       this.dependencies_abyssPrivate.updateDisclosureSelection(next, continuesSelection);
-      const statusFocus = sameSelection
-        ? this.planningSurfaces_abyssPrivate.statusFocusTarget(previous)
+      const statusFocus = continuesSelection
+        ? this.planningSurfaces_abyssPrivate.statusFocusTarget(previous, (focusedStack) => {
+            const nextRoot = next[0];
+            if (owned?.command !== undefined && nextRoot !== undefined && 'source' in nextRoot) {
+              const mapped = rebuildOwnedTaskSelection(
+                nextRoot,
+                focusedStack,
+                owned.command,
+                owned.creationPolicy,
+              );
+              if (mapped !== undefined) return mapped[mapped.length - 1];
+            }
+            return this.dependencyTask_abyssPrivate(focusedStack);
+          })
         : undefined;
       const controls = continuesSelection
         ? this.planningSurfaces_abyssPrivate.planningFocusKeys()
@@ -526,12 +539,13 @@ export class RightPanel {
     }
   }
 
-  private consumeOwnedSelection_abyssPrivate(next: readonly TaskLike[]): boolean {
+  private consumeOwnedSelection_abyssPrivate(
+    next: readonly TaskLike[],
+  ): SubmittedDraft | undefined {
     const owned = this.ownedConvergence_abyssPrivate;
     this.ownedConvergence_abyssPrivate = undefined;
     const ownedSelection = owned?.successorSelection;
-    return (
-      owned?.epoch === this.selectionEpoch_abyssPrivate &&
+    return owned?.epoch === this.selectionEpoch_abyssPrivate &&
       next.length === ownedSelection?.length &&
       next.every((node, index) => {
         const successor = ownedSelection[index];
@@ -539,7 +553,8 @@ export class RightPanel {
           successor !== undefined && sameTaskNodeRef(taskNodeRef(node), taskNodeRef(successor))
         );
       })
-    );
+      ? owned
+      : undefined;
   }
 
   /** One badge per mounted inspector: it owns its popover across every re-render below it. */
