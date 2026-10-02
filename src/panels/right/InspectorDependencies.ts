@@ -75,6 +75,18 @@ interface DependencyDisclosureState {
   readonly latched: boolean;
 }
 
+interface DependencySectionInputs {
+  readonly current: TaskNodeRef;
+  readonly projection: TaskDependencyProjection;
+  readonly directions: readonly DependencyDirection[];
+  readonly key: string;
+}
+interface RenderedDependencySections {
+  readonly root: HTMLElement;
+  readonly key: string;
+  readonly sections: readonly HTMLElement[];
+}
+
 function updateDependencyBadgeCounts(
   body: HTMLButtonElement,
   counts: ReturnType<typeof dependencyCountPresentation>,
@@ -109,6 +121,8 @@ export class InspectorDependencies {
   #search: DependencySearchHandle | undefined;
   #searchAnchor = '.abyss-dep-badge-body';
   #disclosure: DependencyDisclosureState | undefined;
+  #renderedSections: RenderedDependencySections | undefined;
+  #dependencyPreviewGeneration = 0;
   #retainedSearch: DependencySearchHandle | undefined;
   #retainedFocus: HTMLElement | null = null;
   constructor(options: InspectorDependenciesOptions) {
@@ -121,6 +135,7 @@ export class InspectorDependencies {
     this.#commands = options.commands;
   }
   clearDisclosure(): void {
+    this.#renderedSections = undefined;
     this.#disclosure = undefined;
   }
   cancelSearch(): void {
@@ -241,16 +256,105 @@ export class InspectorDependencies {
   }
 
   renderSections(): void {
+    this.#renderedSections = undefined;
+    const inputs = this.#sectionInputs();
+    if (inputs !== undefined) this.#renderSections(inputs);
+  }
+
+  #referenceKey(target: TaskNodeRef): readonly unknown[] {
+    return target.type === 'task'
+      ? ['task', target.ref.filePath, target.ref.line, target.ref.revision]
+      : [
+          'subtask',
+          this.#referenceKey(target.ref.parent),
+          target.ref.relativeLine,
+          target.ref.originalBlock,
+        ];
+  }
+
+  #relationKey(relation: TaskDependencyRelation): readonly unknown[] {
+    if (relation.type === 'unavailable')
+      return [relation.type, relation.dependencyId, relation.reason];
+    if (relation.type === 'ambiguous')
+      return [
+        relation.type,
+        relation.dependencyId,
+        relation.state,
+        relation.candidates.map((candidate) => this.#referenceKey(candidate.target)),
+      ];
+    const task = relation.task.node;
+    return [
+      relation.type,
+      relation.dependencyId,
+      relation.state,
+      this.#referenceKey(relation.task.target),
+      task.title,
+      task.status,
+      task.statusSymbol,
+      task.priority,
+    ];
+  }
+
+  #sectionInputs(): DependencySectionInputs | undefined {
     const task = this.#host.dependencyTask();
-    const projection = this.#dependencyProjection();
-    if (task === undefined || projection === undefined) return;
+    if (task === undefined) return undefined;
+    const current = taskNodeRef(task);
+    const projection = this.#queries?.dependencies(current);
+    if (projection === undefined) return undefined;
     if (projection.blockedBy.length > 0 || projection.blocks.length > 0)
       this.#latchDependencyDisclosure();
-    for (const direction of ['blocked-by', 'blocks'] as const) {
-      const relations = direction === 'blocked-by' ? projection.blockedBy : projection.blocks;
-      if (relations.length === 0 && !this.#dependencySectionsDisclosed()) continue;
-      this.#renderDependencySection(direction, relations, taskNodeRef(task));
-    }
+    const disclosed = this.#dependencySectionsDisclosed();
+    const directions = (['blocked-by', 'blocks'] as const).filter(
+      (direction) =>
+        disclosed ||
+        (direction === 'blocked-by' ? projection.blockedBy : projection.blocks).length > 0,
+    );
+    const key = JSON.stringify([
+      this.#referenceKey(current),
+      directions,
+      ['blocked-by', projection.blockedBy.map((relation) => this.#relationKey(relation))],
+      ['blocks', projection.blocks.map((relation) => this.#relationKey(relation))],
+      this.#statusRegistry
+        .all()
+        .map((definition) => [
+          definition.id,
+          definition.symbol,
+          definition.name,
+          definition.type,
+          definition.icon,
+          definition.core,
+        ]),
+    ]);
+    return { current, projection, directions, key };
+  }
+
+  #canReuseSections(inputs: DependencySectionInputs): boolean {
+    const rendered = this.#renderedSections;
+    const root = this.#host.root();
+    if (rendered?.root !== root || !root.isConnected || rendered.key !== inputs.key) return false;
+    const current = [...root.querySelectorAll('.abyss-dep-section')];
+    return (
+      rendered.sections.length === inputs.directions.length &&
+      current.length === rendered.sections.length &&
+      rendered.sections.every(
+        (section, index) =>
+          section.isConnected &&
+          section.parentElement === root &&
+          current[index] === section &&
+          section.dataset['dependencyDirection'] === inputs.directions[index],
+      )
+    );
+  }
+
+  #renderSections(inputs: DependencySectionInputs): void {
+    const sections = inputs.directions.map((direction) =>
+      this.#renderDependencySection(
+        direction,
+        direction === 'blocked-by' ? inputs.projection.blockedBy : inputs.projection.blocks,
+        inputs.current,
+      ),
+    );
+    this.#renderedSections = { root: this.#host.root(), key: inputs.key, sections };
   }
 
   #dependencySectionsDisclosed(): boolean {
@@ -264,7 +368,7 @@ export class InspectorDependencies {
     direction: DependencyDirection,
     relations: readonly TaskDependencyRelation[],
     current: TaskNodeRef,
-  ): void {
+  ): HTMLElement {
     const section = this.#host.root().createDiv({
       cls: 'abyss-right-section abyss-dep-section',
       attr: { 'data-dependency-direction': direction },
@@ -290,6 +394,7 @@ export class InspectorDependencies {
     });
     const subtasks = this.#host.root().querySelector('.abyss-subtask-section');
     if (subtasks !== null) this.#host.root().insertBefore(section, subtasks);
+    return section;
   }
 
   #dependencyDropCommand(
@@ -347,14 +452,16 @@ export class InspectorDependencies {
 
   #bindDependencyDrop(section: HTMLElement, direction: DependencyDirection): void {
     let checked: TaskNodeDragPayload | null = null;
+    let checkedGeneration = -1;
     let allowed = false;
     const preview = (event: DragEvent): void => {
       this.clearDropClasses();
       const command = this.#dependencyDropCommand(direction);
       if (command === undefined || this.#queries === undefined) return;
       const payload = this.#state.get('draggingTaskNode');
-      if (checked !== payload) {
+      if (checked !== payload || checkedGeneration !== this.#dependencyPreviewGeneration) {
         checked = payload;
+        checkedGeneration = this.#dependencyPreviewGeneration;
         allowed = this.#dependencyDropAllowed(command);
       }
       section.addClass(allowed ? 'is-drop-target' : 'is-drop-disabled');
@@ -497,18 +604,24 @@ export class InspectorDependencies {
   }
 
   refresh(): void {
+    this.#dependencyPreviewGeneration += 1;
     this.#host.detachUndo();
     this.#surfaces.refreshStatusMarkers((task) => this.#host.isBlocked(task));
     this.updateBadge();
     this.#host.refreshTimeBadge();
-    this.#surfaces.closeDependencyStatusMenu();
-    this.#host
-      .root()
-      .querySelectorAll('.abyss-dep-section')
-      .forEach((section) => {
-        section.remove();
-      });
-    this.renderSections();
+    const inputs = this.#sectionInputs();
+    if (inputs === undefined || !this.#canReuseSections(inputs)) {
+      this.#surfaces.closeDependencyStatusMenu();
+      this.#renderedSections = undefined;
+      this.#host
+        .root()
+        .querySelectorAll('.abyss-dep-section')
+        .forEach((section) => {
+          section.remove();
+        });
+      if (inputs !== undefined) this.#renderSections(inputs);
+    }
+    this.clearDropClasses();
     this.#search?.refresh();
     this.#host.renderUndo();
     this.#positionDependencySearch();
