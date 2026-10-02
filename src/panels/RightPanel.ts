@@ -265,7 +265,9 @@ export class RightPanel {
   private el_abyssPrivate!: HTMLElement;
   private mounted_abyssPrivate = false;
   private pendingPlanningRender_abyssPrivate = false;
-  private queuedPlanningRender_abyssPrivate: number | undefined;
+  private queuedPlanningRender_abyssPrivate:
+    | { readonly ownerWindow: Window; readonly timer: number; readonly generation: number }
+    | undefined;
   private planningRenderGeneration_abyssPrivate = 0;
   private readonly state_abyssPrivate: AppState;
   private readonly app_abyssPrivate: App;
@@ -1173,6 +1175,8 @@ export class RightPanel {
   }
 
   private invalidateDeferredPlanningRender_abyssPrivate(): void {
+    const scheduled = this.queuedPlanningRender_abyssPrivate;
+    if (scheduled !== undefined) scheduled.ownerWindow.clearTimeout(scheduled.timer);
     this.pendingPlanningRender_abyssPrivate = false;
     this.queuedPlanningRender_abyssPrivate = undefined;
     this.planningRenderGeneration_abyssPrivate++;
@@ -1181,16 +1185,25 @@ export class RightPanel {
   private scheduleDeferredPlanningRender_abyssPrivate(): void {
     if (
       !this.pendingPlanningRender_abyssPrivate ||
-      this.queuedPlanningRender_abyssPrivate !== undefined
+      this.queuedPlanningRender_abyssPrivate !== undefined ||
+      !this.mounted_abyssPrivate
     )
       return;
-    const generation = this.planningRenderGeneration_abyssPrivate;
-    this.queuedPlanningRender_abyssPrivate = generation;
-    queueMicrotask(() => {
-      if (generation !== this.planningRenderGeneration_abyssPrivate || !this.mounted_abyssPrivate)
+    const ownerWindow = this.el_abyssPrivate.ownerDocument.defaultView;
+    if (ownerWindow === null) return;
+    const scheduled = {
+      ownerWindow,
+      timer: 0,
+      generation: this.planningRenderGeneration_abyssPrivate,
+    };
+    scheduled.timer = ownerWindow.setTimeout(() => {
+      if (
+        this.queuedPlanningRender_abyssPrivate !== scheduled ||
+        scheduled.generation !== this.planningRenderGeneration_abyssPrivate ||
+        !this.mounted_abyssPrivate
+      )
         return;
-      if (this.queuedPlanningRender_abyssPrivate === generation)
-        this.queuedPlanningRender_abyssPrivate = undefined;
+      this.queuedPlanningRender_abyssPrivate = undefined;
       const stack = this.state_abyssPrivate.get('taskStack');
       const task = stack[stack.length - 1];
       if (
@@ -1199,7 +1212,8 @@ export class RightPanel {
       )
         return;
       this.render_abyssPrivate(undefined, this.planningSurfaces_abyssPrivate.planningFocusKeys());
-    });
+    }, 0);
+    this.queuedPlanningRender_abyssPrivate = scheduled;
   }
 
   private render_abyssPrivate(

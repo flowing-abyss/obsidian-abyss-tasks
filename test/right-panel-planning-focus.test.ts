@@ -197,8 +197,28 @@ describe('inspector planning focus continuity', () => {
     expect(await h.read()).toBe(continuityExternal);
 
     const chip = dateChip(h);
-    // The document capture listener dismisses the tag before the chip's ordinary click handler.
-    activate(chip);
+    const header = control(h, '.abyss-right-title-view');
+    const ownerDocument = chip.ownerDocument;
+    // Two-phase unit model of the observed native capture→microtask→target ordering.
+    // The production capture listener dismisses the tag; this later gate pauses only continuation.
+    const pauseTargetHandler = (event: MouseEvent): void => {
+      if (event.target === chip) event.stopPropagation();
+    };
+    ownerDocument.addEventListener('click', pauseTargetHandler, true);
+    try {
+      activate(chip);
+      // Promise-only checkpoint: flushMicrotasks also advances timers and cannot model this phase.
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(tagInput.isConnected).toBe(false);
+      expect(chip.isConnected).toBe(true);
+      expect(dateChip(h)).toBe(chip);
+      expect(header.isConnected).toBe(true);
+      expect(control(h, '.abyss-right-title-view')).toBe(header);
+    } finally {
+      ownerDocument.removeEventListener('click', pauseTargetHandler, true);
+    }
+    chip.click();
     const dateInput = control<HTMLInputElement>(h, '.abyss-date-input');
     expect(tagInput.isConnected).toBe(false);
     await flushMicrotasks(40);
