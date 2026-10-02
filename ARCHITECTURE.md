@@ -84,6 +84,12 @@ only tag-suggestion `listNodes` queries and live root, Markdown Component, selec
 retained dependency-resolution and planning-target reconstruction callbacks. Typed call-time command
 arrows forward to RightPanel;
 all application execution, selection epochs, drafts/recovery, Undo and history remain in the shell.
+For a focused, unsubmitted date/tag entry whose full task-node reference is unchanged, the shell
+coalesces destructive renders until ordinary entry release. PlanningSurfaces retains the connected
+input and original command target, marks submission before command invocation and reports release
+only for its current record. One generation-guarded microtask renders current AppState after cleanup,
+with planning focus captured at execution; changed selection and destroy invalidate queued work.
+Index/selection/dependency delivery continues normally; no draft serialization or writer is added.
 Recurrence restoration reports anchor presence separately from focus; the shell alone decides
 whether to preserve a dirty draft. RightPanel also constructs one `InspectorDependencies` for dependency disclosure, badge, sections,
 drop gestures and search. It receives the exact read-only dependency queries and live shell resolver,

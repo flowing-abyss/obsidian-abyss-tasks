@@ -65,6 +65,7 @@ interface InspectorPlanningHost {
   readonly trackingNode: () => TrackedNode | undefined;
   readonly timeBadge: () => TimeBadgeHandle | undefined;
   readonly formatDate: (d: string) => string;
+  readonly onTypedInputReleased: () => void;
   readonly closeAttachedSearch: () => void;
   readonly closeSearchSurface: (surface: HTMLElement) => void;
 }
@@ -251,6 +252,39 @@ export class InspectorPlanningSurfaces {
   }
 
   readonly #anchoredSurfaceCleanups = new Map<HTMLElement, () => void>();
+
+  #typedInput:
+    | {
+        readonly surface: HTMLElement;
+        readonly input: HTMLInputElement;
+        readonly target: TaskNodeRef;
+        submitted: boolean;
+      }
+    | undefined;
+
+  hasFocusedTypedInputFor(target: TaskNodeRef): boolean {
+    const entry = this.#typedInput;
+    return (
+      entry !== undefined &&
+      !entry.submitted &&
+      entry.surface.isConnected &&
+      entry.input.isConnected &&
+      entry.input.ownerDocument.activeElement === entry.input &&
+      sameTaskNodeRef(entry.target, target)
+    );
+  }
+
+  #resumeTypedInput(surface: HTMLElement): void {
+    if (this.#typedInput?.surface === surface && surface.isConnected) {
+      this.#typedInput.submitted = false;
+    }
+  }
+
+  #releaseTypedInput(surface: HTMLElement): void {
+    if (this.#typedInput?.surface !== surface) return;
+    this.#typedInput = undefined;
+    this.#host.onTypedInputReleased();
+  }
 
   #recurrenceDraftEditor:
     | {
@@ -791,11 +825,14 @@ export class InspectorPlanningSurfaces {
       cls: 'abyss-date-input',
       attr: { type: 'date', value: datePopoverValue(task, field) ?? '' },
     });
+    const entry = { surface: pop, input, target: taskNodeRef(task), submitted: false };
+    this.#typedInput = entry;
     const draft = bindSegmentedInputCommit({
       input,
       boundary: pop,
       commit: () => {
         if (!isUsableDateInputValue(input.value)) return;
+        entry.submitted = true;
         runAsyncAction(this.#commands.updateDate(task, field, localDate(input.value)));
         this.#removeAnchoredSurface(pop);
       },
@@ -805,6 +842,7 @@ export class InspectorPlanningSurfaces {
     }, 0);
 
     this.#renderPopoverClear(inputRow, 'Clear date', () => {
+      entry.submitted = true;
       draft.cancel();
       if (field === 'due') runAsyncAction(this.#commands.clearDate(task));
       else runAsyncAction(this.#commands.clearPlanningDate(task, field));
@@ -816,6 +854,7 @@ export class InspectorPlanningSurfaces {
       onCleanup: () => {
         draft.cancel();
         restorePopupRole(anchor, previousPopupRole);
+        this.#releaseTypedInput(pop);
       },
     });
   }
@@ -1016,11 +1055,26 @@ export class InspectorPlanningSurfaces {
         task.tags,
       ),
       (tag) => this.#getTagColor(tag),
-      async (tags) => await this.#commands.addTags(task, tags),
+      async (tags) => {
+        const entry = this.#typedInput;
+        if (entry?.surface === surface) entry.submitted = true;
+        try {
+          const result = await this.#commands.addTags(task, tags);
+          if (result === 'failed') this.#resumeTypedInput(surface);
+          return result;
+        } catch (error) {
+          this.#resumeTypedInput(surface);
+          throw error;
+        }
+      },
       () => {
         this.#removeAnchoredSurface(surface);
       },
     );
+    const input = surface.querySelector<HTMLInputElement>('.abyss-tag-input');
+    if (input !== null) {
+      this.#typedInput = { surface, input, target: taskNodeRef(task), submitted: false };
+    }
     anchor.addClass('abyss-chip-add--hidden');
     this.#dismissMenuOnOutsideClick(
       surface,
@@ -1032,6 +1086,7 @@ export class InspectorPlanningSurfaces {
         focusLeaveDelay: 200,
         onCleanup: () => {
           anchor.removeClass('abyss-chip-add--hidden');
+          this.#releaseTypedInput(surface);
         },
       },
     );

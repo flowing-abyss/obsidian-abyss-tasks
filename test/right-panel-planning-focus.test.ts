@@ -130,6 +130,90 @@ function holdNextWrite(h: InspectorHarness, { outcome, dropSaveFocus }: HeldWrit
 }
 
 describe('inspector planning focus continuity', () => {
+  const continuityBase = '- [ ] Current #qasp1aa 📅 2031-02-10\n- [ ] Other #qasp1aa\nSentinel.\n';
+  const continuityExternal = continuityBase.replace('Other #qasp1aa', 'Other edited #qasp1aa');
+
+  it.each([
+    { kind: 'date', selector: '.abyss-date-input', value: '2031-02-12' },
+    { kind: 'tag', selector: '.abyss-tag-input', value: 'qasp1aa-draft' },
+  ])(
+    'keeps actually typed $kind through real same-task reconciliation and saves its original target',
+    async ({ kind, selector, value }) => {
+      const h = await hosted(continuityBase);
+      activate(kind === 'date' ? dateChip(h) : control(h, '[aria-label="Add tag"]'));
+      await flushMicrotasks();
+      const input = control<HTMLInputElement>(h, selector);
+      if (kind === 'date') {
+        key(input, '2');
+        change(input, value);
+      } else {
+        input.value = value;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      expect(activeDocument.activeElement).toBe(input);
+      expect(await h.read()).toBe(continuityBase);
+      await h.app.vault.modify(h.file, `\n${continuityExternal}`);
+      await flushMicrotasks(40);
+      expect(h.el.querySelector(selector)).toBe(input);
+      expect(input.value).toBe(value);
+      expect(activeDocument.activeElement).toBe(input);
+      expect(await h.read()).toBe(continuityExternal);
+      let external = continuityExternal;
+      if (kind === 'date') {
+        external = continuityBase.replace('Other #qasp1aa', 'Other edited twice #qasp1aa');
+        await h.app.vault.modify(h.file, `\n${external}`);
+        await flushMicrotasks(40);
+        expect(h.el.querySelector(selector)).toBe(input);
+        expect(input.value).toBe(value);
+        expect(activeDocument.activeElement).toBe(input);
+        expect(await h.read()).toBe(external);
+      }
+      key(input, 'Enter');
+      await flushMicrotasks(40);
+      const expected =
+        kind === 'date'
+          ? external.replace('📅 2031-02-10', '📅 2031-02-12')
+          : external.replace('#qasp1aa 📅', '#qasp1aa #qasp1aa-draft 📅');
+      expect(await h.read()).toBe(expected);
+      expect(selectedTitle(h)).toBe('Current');
+      expect(h.el.querySelector(selector)).toBeNull();
+      expect(activeDocument.activeElement).toBe(
+        kind === 'date' ? dateChip(h) : control(h, '[aria-label="Add tag"]'),
+      );
+    },
+  );
+
+  it.each(['outside', 'switch', 'destroy'] as const)(
+    'releases a held editor without stale writes or focus after %s',
+    async (kind) => {
+      const h = await hosted(continuityBase);
+      const chip = dateChip(h);
+      activate(chip);
+      await flushMicrotasks();
+      const input = control<HTMLInputElement>(h, '.abyss-date-input');
+      key(input, '2');
+      change(input, '2031-02-12');
+      await h.app.vault.modify(h.file, `\n${continuityExternal}`);
+      await flushMicrotasks(40);
+      expect(h.el.querySelector('.abyss-date-input')).toBe(input);
+      key(input, 'Escape');
+      const outside = activeDocument.body.createEl('button', { text: 'Outside' });
+      outside.focus();
+      if (kind === 'switch') {
+        const other = h.node('Other edited');
+        h.state.set('taskStack', [other.root, ...other.path]);
+      } else if (kind === 'destroy') h.panel.destroy();
+      const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+      await flushMicrotasks(40);
+      expect(h.el.querySelector('.abyss-date-input')).toBeNull();
+      expect(await h.read()).toBe(continuityExternal);
+      expect(activeDocument.activeElement).toBe(outside);
+      expect(focus).not.toHaveBeenCalled();
+      if (kind === 'switch') expect(selectedTitle(h)).toBe('Other edited');
+      if (kind === 'outside') expect(dateChip(h)).not.toBe(chip);
+    },
+  );
+
   it('returns focus to the rebuilt priority chip after an option is chosen', async () => {
     const h = await hosted('- [ ] Current\n');
     const chip = control(h, '.abyss-priority-chip');

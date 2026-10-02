@@ -264,6 +264,9 @@ export class RightPanel {
   private readonly completionConfirmationAbortController_abyssPrivate = new AbortController();
   private el_abyssPrivate!: HTMLElement;
   private mounted_abyssPrivate = false;
+  private pendingPlanningRender_abyssPrivate = false;
+  private queuedPlanningRender_abyssPrivate: number | undefined;
+  private planningRenderGeneration_abyssPrivate = 0;
   private readonly state_abyssPrivate: AppState;
   private readonly app_abyssPrivate: App;
   private readonly statusRegistry_abyssPrivate: StatusRegistry;
@@ -338,6 +341,9 @@ export class RightPanel {
         trackingNode: () => this.trackingNode_abyssPrivate(),
         timeBadge: () => this.timeBadge_abyssPrivate,
         formatDate: (date) => this.formatDate_abyssPrivate(date),
+        onTypedInputReleased: () => {
+          this.scheduleDeferredPlanningRender_abyssPrivate();
+        },
         closeAttachedSearch: () => {
           this.dependencies_abyssPrivate.closeAttachedSearch();
         },
@@ -554,6 +560,7 @@ export class RightPanel {
   }
 
   destroy(): void {
+    this.invalidateDeferredPlanningRender_abyssPrivate();
     clearOptionalTimer(
       this.el_abyssPrivate.ownerDocument.defaultView,
       this.restoredFocusTimer_abyssPrivate,
@@ -1165,10 +1172,50 @@ export class RightPanel {
     this.el_abyssPrivate.prepend(tray);
   }
 
+  private invalidateDeferredPlanningRender_abyssPrivate(): void {
+    this.pendingPlanningRender_abyssPrivate = false;
+    this.queuedPlanningRender_abyssPrivate = undefined;
+    this.planningRenderGeneration_abyssPrivate++;
+  }
+
+  private scheduleDeferredPlanningRender_abyssPrivate(): void {
+    if (
+      !this.pendingPlanningRender_abyssPrivate ||
+      this.queuedPlanningRender_abyssPrivate !== undefined
+    )
+      return;
+    const generation = this.planningRenderGeneration_abyssPrivate;
+    this.queuedPlanningRender_abyssPrivate = generation;
+    queueMicrotask(() => {
+      if (generation !== this.planningRenderGeneration_abyssPrivate || !this.mounted_abyssPrivate)
+        return;
+      if (this.queuedPlanningRender_abyssPrivate === generation)
+        this.queuedPlanningRender_abyssPrivate = undefined;
+      const stack = this.state_abyssPrivate.get('taskStack');
+      const task = stack[stack.length - 1];
+      if (
+        task !== undefined &&
+        this.planningSurfaces_abyssPrivate.hasFocusedTypedInputFor(taskNodeRef(task))
+      )
+        return;
+      this.render_abyssPrivate(undefined, this.planningSurfaces_abyssPrivate.planningFocusKeys());
+    });
+  }
+
   private render_abyssPrivate(
     statusFocus?: TaskNodeRef,
     controls?: readonly PlanningControlKey[],
   ): void {
+    const stack = this.state_abyssPrivate.get('taskStack');
+    const task = stack[stack.length - 1];
+    if (
+      task !== undefined &&
+      this.planningSurfaces_abyssPrivate.hasFocusedTypedInputFor(taskNodeRef(task))
+    ) {
+      this.pendingPlanningRender_abyssPrivate = true;
+      return;
+    }
+    this.invalidateDeferredPlanningRender_abyssPrivate();
     clearOptionalTimer(
       this.el_abyssPrivate.ownerDocument.defaultView,
       this.restoredFocusTimer_abyssPrivate,
@@ -1182,8 +1229,6 @@ export class RightPanel {
     this.md_abyssPrivate.load();
     this.planningSurfaces_abyssPrivate.clearAnchoredSurfaces();
     this.el_abyssPrivate.empty();
-    const stack = this.state_abyssPrivate.get('taskStack');
-    const task = stack[stack.length - 1];
     if (task === undefined) {
       // Nothing is selected, so the badge is not re-placed and the popover it owns would otherwise
       // outlive the selection it was opened from, listeners and all.
