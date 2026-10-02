@@ -445,14 +445,15 @@ export class InspectorPlanningSurfaces {
     return active === null || active === ownerDocument.body || active === this.#host.root();
   }
 
-  statusFocusTarget(stack: readonly TaskLike[]): TaskNodeRef | undefined {
+  statusFocusTarget(
+    stack: readonly TaskLike[],
+    resolve: (stack: readonly TaskLike[]) => TaskLike | undefined = this.#host.dependencyTask,
+  ): TaskNodeRef | undefined {
     const focused = this.#host.root().ownerDocument.activeElement;
     if (focused === null) return undefined;
     for (const [marker, task] of this.#dependencyStatusMarkers) {
       if (marker !== focused && marker.closest('.abyss-status-control') !== focused) continue;
-      const current = this.#host.dependencyTask(
-        task === stack[stack.length - 1] ? stack : [...stack, task],
-      );
+      const current = resolve(task === stack[stack.length - 1] ? stack : [...stack, task]);
       return current === undefined ? undefined : taskNodeRef(current);
     }
     return undefined;

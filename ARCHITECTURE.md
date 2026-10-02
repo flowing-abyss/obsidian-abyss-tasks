@@ -320,7 +320,12 @@ Escape, outside interaction, navigation, and teardown end the session. Dependenc
 ownership lease across successful writes, then resets the query and reads current candidates.
 Inspector planning controls, the tracked-time badge, and the recurrence editor keep keyboard focus
 across a rebuild of the same selection or its proven successor, unless the user moved focus
-elsewhere.
+elsewhere. Submitted tag patches preserve an owned child selection only when the exact normalized
+remove-then-add sequence matches its successor tags and the unchanged tree proof passes. The shell
+consumes the one-shot epoch/full-selection record synchronously and uses that submitted command
+proof to map the actually focused status marker or wrapper to its new full reference before DOM
+replacement. This includes a child marker under a selected parent; outside focus is never captured.
+The proof preserves selection and focus, not write permission.
 
 Vault and metadata events reconcile external and plugin edits through the same index path.
 `TaskIndexEvent.changed` identifies changed task projections. A separate reconciled-file signal

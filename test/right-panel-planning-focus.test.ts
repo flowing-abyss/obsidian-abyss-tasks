@@ -130,6 +130,107 @@ function holdNextWrite(h: InspectorHarness, { outcome, dropSaveFocus }: HeldWrit
 }
 
 describe('inspector planning focus continuity', () => {
+  const childPlain = '- [ ] Current #parent\n  - [ ] Child #child\n  - [ ] Sibling #sibling\n';
+  const childTagged = childPlain.replace('Child #child', 'Child #child #added');
+  const childCompleted = childPlain.replace('- [ ] Child', '- [x] Child');
+
+  it('retains the drilled child and Add tag focus after its exact tag addition', async () => {
+    const h = await hosted(childPlain, 'Child');
+    const opener = control(h, '[aria-label="Add tag"]');
+    activate(opener);
+    const input = control<HTMLInputElement>(h, '.abyss-tag-input');
+    input.value = '#added';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(activeDocument.activeElement).toBe(input);
+    expect(await h.read()).toBe(childPlain);
+    key(input, 'Enter');
+    await flushMicrotasks();
+    expect(await h.read()).toBe(childTagged);
+    const child = h.node('Child');
+    expect(h.state.get('taskStack')).toEqual([child.root, ...child.path]);
+    expectRebuiltFocus(opener, control(h, '[aria-label="Add tag"]'));
+    expect(h.node('Current').node.tags).toEqual(['#parent']);
+    expect(h.node('Current').node.statusSymbol).toBe(' ');
+    expect(h.node('Sibling').node.tags).toEqual(['#sibling']);
+    expect(h.node('Sibling').node.statusSymbol).toBe(' ');
+  });
+
+  it('retains the drilled child and Add tag focus after its exact tag removal', async () => {
+    const h = await hosted(childTagged, 'Child');
+    const chip = expectDefined(
+      Array.from(h.el.querySelectorAll<HTMLElement>('.abyss-chip-tag')).find((candidate) =>
+        candidate.textContent.startsWith('#added'),
+      ),
+    );
+    const remove = expectDefined(chip.querySelector<HTMLElement>('.abyss-chip-remove'));
+    activate(remove);
+    await flushMicrotasks();
+    expect(await h.read()).toBe(childPlain);
+    const child = h.node('Child');
+    expect(h.state.get('taskStack')).toEqual([child.root, ...child.path]);
+    expectRebuiltFocus(remove, control(h, '[aria-label="Add tag"]'));
+    expect(h.node('Current').node.tags).toEqual(['#parent']);
+    expect(h.node('Current').node.statusSymbol).toBe(' ');
+    expect(h.node('Sibling').node.tags).toEqual(['#sibling']);
+    expect(h.node('Sibling').node.statusSymbol).toBe(' ');
+  });
+
+  it.each(['Current', 'Child'])(
+    'retains the rebuilt child status focus under %s',
+    async (selected) => {
+      const h = await hosted(childCompleted, selected);
+      const locate = () => {
+        if (selected === 'Child')
+          return control(h, '.abyss-right-header .abyss-status-marker[role="checkbox"]');
+        const label = expectDefined(
+          Array.from(h.el.querySelectorAll<HTMLElement>('.abyss-subtask-label')).find(
+            (candidate) => candidate.textContent === 'Child',
+          ),
+        );
+        return expectDefined(
+          label
+            .closest('.abyss-subtask-row')
+            ?.querySelector<HTMLElement>('.abyss-status-marker[role="checkbox"]'),
+        );
+      };
+      const marker = locate();
+      marker.focus();
+      expect(activeDocument.activeElement).toBe(marker);
+      key(marker, ' ');
+      await flushMicrotasks();
+      expect(await h.read()).toBe(childPlain);
+      const current = h.node(selected);
+      expect(h.state.get('taskStack')).toEqual([current.root, ...current.path]);
+      expectRebuiltFocus(marker, locate());
+      expect(h.node('Child').node.statusSymbol).toBe(' ');
+    },
+  );
+
+  it('does not steal outside focus when an owned child status write settles', async () => {
+    const h = await hosted(childCompleted);
+    const label = expectDefined(
+      Array.from(h.el.querySelectorAll<HTMLElement>('.abyss-subtask-label')).find(
+        (candidate) => candidate.textContent === 'Child',
+      ),
+    );
+    const marker = expectDefined(
+      label
+        .closest('.abyss-subtask-row')
+        ?.querySelector<HTMLElement>('.abyss-status-marker[role="checkbox"]'),
+    );
+    const held = holdNextWrite(h);
+    marker.focus();
+    key(marker, ' ');
+    const outside = activeDocument.body.createEl('button', { text: 'Outside' });
+    outside.focus();
+    held.release();
+    await flushMicrotasks();
+    expect(await h.read()).toBe(childPlain);
+    const current = h.node('Current');
+    expect(h.state.get('taskStack')).toEqual([current.root, ...current.path]);
+    expect(activeDocument.activeElement).toBe(outside);
+  });
+
   const continuityBase = '- [ ] Current #qasp1aa 📅 2031-02-10\n- [ ] Other #qasp1aa\nSentinel.\n';
   const continuityExternal = continuityBase.replace('Other #qasp1aa', 'Other edited #qasp1aa');
 
