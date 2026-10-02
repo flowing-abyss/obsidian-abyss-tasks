@@ -5,6 +5,7 @@ import type { StatusRegistry } from '../status/StatusRegistry';
 import { tagColorFor } from '../tags/tagColor';
 import { tagFillTextColorVar } from '../tags/tagFillContrast';
 import type { TaskPriority, TaskSnapshot } from '../tasks';
+import { plainGhostTaskTitle } from '../ui/plainGhostTaskTitle';
 import { renderTaskText } from '../ui/renderTaskText';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { showStatusMenuAt } from '../ui/statusMenu';
@@ -457,10 +458,11 @@ export class MonthGridView extends BaseView {
       cls: `abyss-mg-item-title${statusTitleClass(t.status)}`,
     });
     if (forecast) {
-      titleEl.setText(t.title);
+      titleEl.setText(plainGhostTaskTitle(t));
       return;
     }
     renderTaskText(titleEl, t.markdownTitle, {
+      presentation: 'title',
       app: this.callbacks.app,
       sourcePath: t.source.filePath,
       component: this.md,

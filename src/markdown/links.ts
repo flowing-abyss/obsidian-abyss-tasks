@@ -55,21 +55,22 @@ interface LinkMatch {
   readonly from: number;
   readonly to: number;
   readonly token: LinkToken | undefined;
+  readonly titleLabel: string | undefined;
 }
 
 /**
- * Keeps each match that does not start inside an earlier kept match, and returns the links among
- * them, so no link starts inside an embed or image. No two matches start at one index, because a
+ * Keeps each match that does not start inside an earlier kept match, so no link starts inside
+ * an embed or image. No two matches start at one index, because a
  * wiki match starts with `[[` or `![[` and a Markdown link's text cannot start with `[`.
  */
-function nonOverlappingTokens(matches: LinkMatch[]): LinkToken[] {
+function nonOverlappingMatches(matches: LinkMatch[]): LinkMatch[] {
   matches.sort((left, right) => left.from - right.from);
-  const accepted: LinkToken[] = [];
+  const accepted: LinkMatch[] = [];
   let acceptedTo = 0;
   for (const match of matches) {
     if (match.from < acceptedTo) continue;
     acceptedTo = match.to;
-    if (match.token !== undefined) accepted.push(match.token);
+    accepted.push(match);
   }
   return accepted;
 }
@@ -113,13 +114,13 @@ function readWikiContent(content: string): WikiContent {
 
 /**
  * Collapses each wiki link to its plain form, read as `parseLinks` reads its content: a link with
- * an alias to the link symbol and its target, any other to the symbol, a space, and its target
+ * an alias to the link symbol and its alias, any other to the symbol, a space, and its target
  * without the `.md` extension of its path.
  */
 export function collapseWikiLinks(input: string): string {
   return input.replace(WIKILINK_RE, (_match, content: string) => {
     const { target, alias } = readWikiContent(content);
-    if ((alias ?? '') !== '') return `🔗${target}`;
+    if ((alias ?? '') !== '') return `🔗 ${alias}`;
     const [path, subpath] = splitSubpath(target);
     return `🔗 ${withoutMarkdownExtension(path)}${subpath}`;
   });
@@ -138,6 +139,11 @@ function wikiToken(raw: string, content: string, index: number): LinkToken {
 
 function markdownToken(raw: string, text: string, destination: string, index: number): LinkToken {
   return { raw, type: 'md', target: destination, display: text, index };
+}
+
+function wikiTitleLabel(content: string): string {
+  const { target, alias } = readWikiContent(content);
+  return alias !== undefined && alias !== '' ? alias : unaliasedDisplay(target);
 }
 
 function pushWikiMatches(
@@ -159,6 +165,7 @@ function pushWikiMatches(
       from: match.index,
       to: match.index + match[0].length,
       token: match[1] === '!' ? undefined : wikiToken(match[0], match[2] ?? '', match.index),
+      titleLabel: match[1] === '!' ? wikiTitleLabel(match[2] ?? '') : undefined,
     });
   }
 }
@@ -185,6 +192,7 @@ function pushMarkdownMatches(
       token: match[0].startsWith('!')
         ? undefined
         : markdownToken(match[0], match[1] ?? '', match[2] ?? '', match.index),
+      titleLabel: match[0].startsWith('!') ? (match[1] ?? '') : undefined,
     });
   }
 }
@@ -193,13 +201,31 @@ function pushMarkdownMatches(
  * Parse [[wiki]], [[wiki|alias]] and [md](url) links in document order. Embeds and images are not
  * links, and no link starts inside one.
  */
-export function parseLinks(input: string): LinkToken[] {
+function linkMatches(input: string): LinkMatch[] {
   if (!input.includes('[')) return [];
   const inlineCode = inlineCodeRanges(input);
   const matches: LinkMatch[] = [];
   pushWikiMatches(matches, input, inlineCode);
   pushMarkdownMatches(matches, input, inlineCode);
-  return nonOverlappingTokens(matches);
+  return nonOverlappingMatches(matches);
+}
+
+/** Keep editable source tokens in their original document order and offsets. */
+export function parseLinks(input: string): LinkToken[] {
+  return linkMatches(input).flatMap((match) => (match.token === undefined ? [] : [match.token]));
+}
+
+/** Replace recognized title embeds/images before host rendering, without granting link authority. */
+export function inlineTaskTitleMarkdown(input: string): string {
+  let result = '';
+  let cursor = 0;
+  for (const match of linkMatches(input)) {
+    if (match.titleLabel === undefined) continue;
+    const label = `📎 ${match.titleLabel}`.replace(/[\\`*_{}[\]()#+.!<>|~-]/gu, '\\$&');
+    result += input.slice(cursor, match.from) + label;
+    cursor = match.to;
+  }
+  return result + input.slice(cursor);
 }
 
 /** Return a link only when its markup occupies the complete value. */

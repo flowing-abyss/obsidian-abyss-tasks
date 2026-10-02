@@ -292,6 +292,7 @@ function renderAllDayBody(context: AllDayBodyRenderContext): HTMLElement {
   const titleEl = el.createSpan({ cls: `abyss-tg-body-title${statusTitleClass(task.status)}` });
   if (occurrence.kind === 'materialized' && interactive) {
     renderTaskText(titleEl, task.markdownTitle, {
+      presentation: 'title',
       app: callbacks.app,
       sourcePath: task.source.filePath,
       component: callbacks.component,
@@ -755,6 +756,7 @@ function renderDeadlineTitle(
     return;
   }
   renderTaskText(titleEl, task.markdownTitle, {
+    presentation: 'title',
     app: callbacks.app,
     sourcePath: task.source.filePath,
     component: callbacks.component,

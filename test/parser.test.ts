@@ -201,7 +201,7 @@ describe('parseTask', () => {
 
   it('collapses wikilink with alias', () => {
     const t = parseTask('- [ ] See [[My Note|alias]]', { filePath: 'f.md', line: 0 });
-    expect(t?.text).toContain('🔗My Note');
+    expect(t?.text).toContain('🔗 alias');
     expect(t?.text).not.toContain('[[');
   });
 
@@ -494,9 +494,8 @@ describe('markdownText preserves link markup', () => {
       '- [ ] Read [[Sources|secondary sources]] and [docs](https://x.io) #task/reference 📅 2026-07-01 🔼';
     const t = expectDefined(parseTask(raw, ctx));
     expect(t.markdownText).toBe('Read [[Sources|secondary sources]] and [docs](https://x.io)');
-    // text keeps the collapsed, human-readable form (note name, not alias — matches
-    // existing collapseLinks/wikilink-alias behavior, unchanged by this feature)
-    expect(t.text).toContain('Sources');
+    // Derived text uses the readable alias while markdownText above preserves authored source.
+    expect(t.text).toContain('🔗 secondary sources');
     expect(t.text).not.toContain('[[');
     expect(t.text).not.toContain('](');
   });

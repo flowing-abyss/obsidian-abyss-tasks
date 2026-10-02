@@ -23,6 +23,7 @@ import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { InteractionRegistry, type InteractionOwnershipPort } from '../src/ui/interactionOwnership';
+import * as taskText from '../src/ui/renderTaskText';
 import { rootTaskRef, taskNodeLine } from '../src/ui/taskSelection';
 import {
   createAppWithFiles,
@@ -982,7 +983,8 @@ describe('RightPanel.renderTask', () => {
   it('renders the root header first and the nested breadcrumb immediately before its header', async () => {
     const { state, el } = await makePanel();
     const child = subtask({ title: 'Child' });
-    const parent = task({ title: 'Parent', subtasks: [child] });
+    const parent = task({ title: 'Parent', markdownTitle: '**Parent**', subtasks: [child] });
+    const render = vi.spyOn(taskText, 'renderTaskText');
 
     state.set('taskStack', [parent]);
     expect(el.firstElementChild?.classList.contains('abyss-right-header')).toBe(true);
@@ -994,7 +996,22 @@ describe('RightPanel.renderTask', () => {
     expect(breadcrumb?.nextElementSibling?.classList.contains('abyss-right-header')).toBe(true);
     // Crumb text renders via MarkdownRenderer (mocked as a noop in tests), so we
     // assert on the crumb item element's presence rather than its textContent.
-    expect(breadcrumb?.querySelector('.abyss-breadcrumb-item')).not.toBeNull();
+    const crumb = expectDefined(breadcrumb?.querySelector<HTMLElement>('.abyss-breadcrumb-item'));
+    const call = expectDefined(render.mock.calls.find(([el]) => el === crumb));
+    expect(call[1]).toBe('**Parent**');
+    expect(call[2]).toMatchObject({
+      presentation: 'title',
+      sourcePath: parent.ref.filePath,
+    });
+    expect(typeof call[2].onEditLink).toBe('function');
+    const headerCall = expectDefined(
+      [...render.mock.calls]
+        .reverse()
+        .find(([el]) => el.classList.contains('abyss-right-title-view')),
+    );
+    expect(call[2].component).toBe(headerCall[2].component);
+    click(crumb);
+    expect(state.get('taskStack')).toEqual([parent]);
   });
 
   it('title view renders idle; clicking it enters edit mode with markdownText', async () => {

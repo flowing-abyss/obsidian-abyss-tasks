@@ -9,6 +9,67 @@ afterEach(() => {
   document.body.empty();
 });
 
+describe('inline task title presentation', () => {
+  it('routes formatted and escaped no-link titles through the host with the original owner', () => {
+    vi.useFakeTimers();
+    const render = vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
+    const app = {} as App;
+    const component = new Component();
+    const formatted = '**bold** *italic* `code` \\*literal\\*';
+    renderTaskText(document.body.createDiv(), formatted, {
+      app,
+      sourcePath: 'tasks.md',
+      component,
+      presentation: 'title',
+    });
+    expect(render).toHaveBeenCalledWith(
+      app,
+      formatted,
+      expect.any(HTMLElement),
+      'tasks.md',
+      component,
+    );
+  });
+
+  it('keeps genuine plain titles synchronous without a Markdown owner or timer', () => {
+    vi.useFakeTimers();
+    const render = vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
+    const host = document.body.createDiv();
+    renderTaskText(host, 'Ordinary task title', {
+      app: {} as App,
+      sourcePath: 'tasks.md',
+      component: new Component(),
+      presentation: 'title',
+    });
+    expect(render).not.toHaveBeenCalled();
+    expect(host.textContent).toBe('Ordinary task title');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('transforms only title embeds while preserving default non-title Markdown', () => {
+    vi.useFakeTimers();
+    const render = vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
+    const source = '![[Folder/Preview.md]] [[Real]]';
+    const options = { app: {} as App, sourcePath: 'tasks.md', component: new Component() };
+    renderTaskText(document.body.createDiv(), source, { ...options, presentation: 'title' });
+    expect(render).toHaveBeenLastCalledWith(
+      options.app,
+      '📎 Preview [[Real]]',
+      expect.any(HTMLElement),
+      'tasks.md',
+      options.component,
+    );
+    renderTaskText(document.body.createDiv(), source, options);
+    expect(render).toHaveBeenLastCalledWith(
+      options.app,
+      source,
+      expect.any(HTMLElement),
+      'tasks.md',
+      options.component,
+    );
+  });
+});
+
 describe('renderTaskText link occurrence pairing', () => {
   it('renders an exact link label without installing interactive link behavior', async () => {
     vi.useFakeTimers();
@@ -122,6 +183,7 @@ describe('renderTaskText link occurrence pairing', () => {
 
   it.each([
     ['`[[Same]]` [[Same]]', 'Same', '[[Same]]'],
+    ['![[Very long preview name]] [[Same]]', 'Same', '[[Same]]'],
     ['`[Same](Same)` [Same](Same)', 'Same', '[Same](Same)'],
   ])('pairs the real link outside inline code as occurrence zero', async (source, href, raw) => {
     vi.useFakeTimers();
@@ -162,6 +224,7 @@ describe('renderTaskText link occurrence pairing', () => {
       sourcePath: 'tasks.md',
       component: new Component(),
       onEditLink,
+      presentation: 'title',
     });
     await vi.runAllTimersAsync();
 
