@@ -1,4 +1,4 @@
-import { Component, type App } from 'obsidian';
+import { Component, type App, type Menu } from 'obsidian';
 import type { AppState } from '../app/AppState';
 import { isListViewCustomized, listSelectionToKey } from '../app/listViewState';
 import type { ProjectManager } from '../projects/ProjectManager';
@@ -21,6 +21,7 @@ import {
   type TaskCommandResult,
   type TaskNodeSnapshot,
   type TaskQueryApi,
+  type TaskRef,
   type TaskSnapshot,
 } from '../tasks';
 import { showDatePickerPopover } from '../ui/DatePickerPopover';
@@ -106,6 +107,24 @@ export class CenterPanel {
     key: string;
     armedRenderGeneration: number;
     changed: boolean;
+  } | null = null;
+  private cardReturn_abyssPrivate: {
+    readonly original: TaskSnapshot;
+    ref: TaskRef;
+    readonly opener: HTMLElement;
+    readonly list: string;
+    readonly kind: 'menu' | 'recurrence';
+    surface: HTMLElement | undefined;
+    pending: boolean;
+    hidden: boolean;
+  } | null = null;
+  private showingTaskMenu_abyssPrivate = false;
+  private wholeCardFocus_abyssPrivate: HTMLElement | null = null;
+  private renderingRecurrenceCleanup_abyssPrivate = false;
+  private renderCardFocus_abyssPrivate: {
+    readonly ref: TaskRef;
+    readonly list: string;
+    readonly opener: HTMLElement;
   } | null = null;
   private recurrenceEditorCleanup_abyssPrivate: (() => void) | null = null;
   private readonly listViewControls_abyssPrivate: ListViewControls;
@@ -266,6 +285,17 @@ export class CenterPanel {
       queries: this.queries_abyssPrivate,
       navigation: this.navigation_abyssPrivate,
       host: {
+        revealTask: (task) => {
+          const key = taskRowKey(task);
+          const current = this.mountedRows_abyssPrivate.rows.task(key);
+          const card = this.mountedRows_abyssPrivate.element(key);
+          if (
+            current != null &&
+            card?.isConnected === true &&
+            this.sameCardRef_abyssPrivate(current.ref, task.ref)
+          )
+            this.scrollTaskCardIntoView_abyssPrivate(card);
+        },
         beginResults: () => {
           this.beginTaskCardRender_abyssPrivate();
           this.md_abyssPrivate.unload();
@@ -318,6 +348,12 @@ export class CenterPanel {
       timeTracking: this.timeTracking_abyssPrivate,
       commands: this.taskCommands_abyssPrivate,
       host: {
+        showTaskMenu: (menu, event, card) => {
+          this.showTaskMenu_abyssPrivate(menu, event, card);
+        },
+        applyBulkDuePreset: (card, tasks, value) => {
+          this.applyBulkDuePreset_abyssPrivate(card, tasks, value);
+        },
         openDatePicker: (anchor, selectedTasks) => {
           this.openTaskDatePicker_abyssPrivate(anchor, selectedTasks);
         },
@@ -426,6 +462,8 @@ export class CenterPanel {
         this.handleSelectedListChanged_abyssPrivate();
       }),
       this.state_abyssPrivate.on('mode', () => {
+        this.wholeCardFocus_abyssPrivate = null;
+        this.cardReturn_abyssPrivate = null;
         this.captureSessions_abyssPrivate.cancelStaleListCapture();
         this.calendar_abyssPrivate.cancelKeyboardInteraction();
       }),
@@ -447,6 +485,8 @@ export class CenterPanel {
   }
 
   private handleSelectedListChanged_abyssPrivate(): void {
+    this.wholeCardFocus_abyssPrivate = null;
+    this.cardReturn_abyssPrivate = null;
     this.captureSessions_abyssPrivate.cancelStaleListCapture();
     this.rowSelection_abyssPrivate.clear();
   }
@@ -566,6 +606,15 @@ export class CenterPanel {
       ownerDocument.removeEventListener('focusin', onFocusIn);
     });
     const onPointerDown = (event: PointerEvent): void => {
+      if (
+        event.target !== this.wholeCardFocus_abyssPrivate &&
+        !(
+          isRealmHTMLElement(event.target) &&
+          this.wholeCardFocus_abyssPrivate?.contains(event.target) === true
+        )
+      )
+        this.wholeCardFocus_abyssPrivate = null;
+      this.revokeCardReturnOutside_abyssPrivate(event.target, true);
       this.revokeTaskDateFocusOutside_abyssPrivate(event.target);
     };
     ownerDocument.addEventListener('pointerdown', onPointerDown, true);
@@ -581,6 +630,8 @@ export class CenterPanel {
         nextTarget.ownerDocument === ownerDocument
       )
         return;
+      this.cardReturn_abyssPrivate = null;
+      this.wholeCardFocus_abyssPrivate = null;
       this.abandonTaskDateFocus_abyssPrivate();
       if (this.calendar_abyssPrivate.hasPendingTimedBlockFocus())
         this.calendar_abyssPrivate.cancelKeyboardInteraction();
@@ -591,7 +642,19 @@ export class CenterPanel {
     });
   }
 
+  private captureWholeCardFocus_abyssPrivate(target: EventTarget | null): void {
+    if (
+      isRealmHTMLElement(target) &&
+      target !== this.el.ownerDocument.body &&
+      target !== this.el.ownerDocument.documentElement
+    )
+      this.wholeCardFocus_abyssPrivate =
+        target.matches('.abyss-task-card') && this.el.contains(target) ? target : null;
+  }
+
   private handlePanelFocusIn_abyssPrivate(target: EventTarget | null): void {
+    this.captureWholeCardFocus_abyssPrivate(target);
+    this.revokeCardReturnOutside_abyssPrivate(target);
     this.revokeTaskDateFocusOutside_abyssPrivate(target);
     if (!isRealmHTMLElement(target)) return;
     const ownerDocument = this.el.ownerDocument;
@@ -645,6 +708,9 @@ export class CenterPanel {
   }
 
   destroy(): void {
+    this.wholeCardFocus_abyssPrivate = null;
+    this.cardReturn_abyssPrivate = null;
+    this.renderCardFocus_abyssPrivate = null;
     this.trackingUnsubscribe_abyssPrivate?.();
     this.trackingUnsubscribe_abyssPrivate = undefined;
     // Nothing can repaint them any more, and their elements go with the panel.
@@ -740,7 +806,12 @@ export class CenterPanel {
   private prepareRender_abyssPrivate(mode: string, retainTaskShell = false): void {
     this.captureSessions_abyssPrivate.unmountActiveCapture();
     this.clearTaskDatePicker_abyssPrivate();
-    this.dismissRecurrenceEditor_abyssPrivate();
+    this.renderingRecurrenceCleanup_abyssPrivate = true;
+    try {
+      this.dismissRecurrenceEditor_abyssPrivate();
+    } finally {
+      this.renderingRecurrenceCleanup_abyssPrivate = false;
+    }
     if (!retainTaskShell) this.listViewControls_abyssPrivate.closeViewStatePopover();
     this.taskSearch_abyssPrivate.clear();
     if (mode === 'search') return;
@@ -981,6 +1052,25 @@ export class CenterPanel {
    * render's badges go with it and every card in this one shows the same clock.
    */
   private beginTaskCardRender_abyssPrivate(): void {
+    this.renderCardFocus_abyssPrivate = null;
+    const active = this.el.ownerDocument.activeElement;
+    for (const [key, card] of this.mountedRows_abyssPrivate.cards()) {
+      const task = this.mountedRows_abyssPrivate.rows.task(key);
+      if (
+        active === card &&
+        this.wholeCardFocus_abyssPrivate === card &&
+        this.cardReturn_abyssPrivate === null &&
+        task != null &&
+        this.state_abyssPrivate.get('mode') === 'tasks'
+      ) {
+        this.renderCardFocus_abyssPrivate = {
+          ref: task.ref,
+          list: this.listViewControls_abyssPrivate.activeListKey(),
+          opener: card,
+        };
+        break;
+      }
+    }
     this.mountedRows_abyssPrivate = NO_MOUNTED_TASK_LIST_ROWS;
     this.cardRenderNowMs_abyssPrivate = this.timeTracking_abyssPrivate?.context().nowMs ?? 0;
     this.taskCardRenderer_abyssPrivate.beginRender(this.cardRenderNowMs_abyssPrivate);
@@ -1096,6 +1186,143 @@ export class CenterPanel {
     runAsyncAction(this.taskCommands_abyssPrivate.moveTaskToProject(task, project));
   }
 
+  private sameCardRef_abyssPrivate(a: TaskRef, b: TaskRef): boolean {
+    return a.filePath === b.filePath && a.line === b.line && a.revision === b.revision;
+  }
+
+  private neutralCardFocus_abyssPrivate(opener: HTMLElement, surface?: HTMLElement): boolean {
+    const doc = this.el.ownerDocument;
+    const active = doc.activeElement;
+    return (
+      active === doc.body ||
+      active === doc.documentElement ||
+      active === opener ||
+      (active != null && surface?.contains(active) === true)
+    );
+  }
+
+  private returnExactCard_abyssPrivate(ref: TaskRef): boolean {
+    const key = `${ref.filePath}:${ref.line}`;
+    const task = this.mountedRows_abyssPrivate.rows.task(key);
+    const card = this.mountedRows_abyssPrivate.element(key);
+    if (
+      this.state_abyssPrivate.get('mode') !== 'tasks' ||
+      task == null ||
+      !this.sameCardRef_abyssPrivate(task.ref, ref) ||
+      card?.isConnected !== true ||
+      card.ownerDocument !== this.el.ownerDocument
+    )
+      return false;
+    card.focus({ preventScroll: true });
+    this.scrollTaskCardIntoView_abyssPrivate(card);
+    return true;
+  }
+
+  private armCardReturn_abyssPrivate(
+    opener: HTMLElement,
+    kind: 'menu' | 'recurrence',
+  ): CenterPanel['cardReturn_abyssPrivate'] {
+    const key = this.eventTaskCardKey_abyssPrivate(opener);
+    const task = key == null ? undefined : this.mountedRows_abyssPrivate.rows.task(key);
+    if (
+      task == null ||
+      opener.isConnected !== true ||
+      opener.ownerDocument !== this.el.ownerDocument
+    )
+      return null;
+    const record: NonNullable<CenterPanel['cardReturn_abyssPrivate']> = {
+      original: task,
+      ref: task.ref,
+      opener,
+      list: this.listViewControls_abyssPrivate.activeListKey(),
+      kind,
+      surface: undefined,
+      pending: false,
+      hidden: false,
+    };
+    this.cardReturn_abyssPrivate = record;
+    return record;
+  }
+
+  private ownsCardReturnTarget_abyssPrivate(
+    record: NonNullable<CenterPanel['cardReturn_abyssPrivate']>,
+    target: HTMLElement,
+  ): boolean {
+    return record.opener.contains(target) || record.surface?.contains(target) === true;
+  }
+
+  private revokeCardReturnOutside_abyssPrivate(target: EventTarget | null, pointer = false): void {
+    const record = this.cardReturn_abyssPrivate;
+    if (record == null || this.showingTaskMenu_abyssPrivate) return;
+    const doc = this.el.ownerDocument;
+    if (!pointer && (target === doc.body || target === doc.documentElement)) return;
+    if (target === record.opener) return;
+    if (isRealmHTMLElement(target) && this.ownsCardReturnTarget_abyssPrivate(record, target))
+      return;
+    this.cardReturn_abyssPrivate = null;
+  }
+
+  private finishCardReturn_abyssPrivate(): void {
+    const record = this.cardReturn_abyssPrivate;
+    if (record == null || record.pending || !record.hidden) return;
+    this.cardReturn_abyssPrivate = null;
+    if (
+      record.list === this.listViewControls_abyssPrivate.activeListKey() &&
+      this.neutralCardFocus_abyssPrivate(record.opener, record.surface)
+    )
+      this.returnExactCard_abyssPrivate(record.ref);
+  }
+
+  private showTaskMenu_abyssPrivate(menu: Menu, event: MouseEvent, card: HTMLElement): void {
+    const record = this.armCardReturn_abyssPrivate(card, 'menu');
+    menu.onHide(() => {
+      if (record == null || this.cardReturn_abyssPrivate !== record) return;
+      record.hidden = true;
+      this.finishCardReturn_abyssPrivate();
+    });
+    this.showingTaskMenu_abyssPrivate = true;
+    try {
+      const surface = showMenuAtMouseEventWithFocus(menu, event);
+      if (record != null) record.surface = surface;
+    } finally {
+      this.showingTaskMenu_abyssPrivate = false;
+    }
+  }
+
+  private applyBulkDuePreset_abyssPrivate(
+    card: HTMLElement,
+    tasks: readonly TaskSnapshot[],
+    value: LocalDate,
+  ): void {
+    const existing = this.cardReturn_abyssPrivate;
+    const record =
+      existing?.opener === card ? existing : this.armCardReturn_abyssPrivate(card, 'menu');
+    if (record != null) {
+      record.pending = true;
+      if (record !== existing) record.hidden = true;
+    }
+    runAsyncAction(
+      this.taskCommands_abyssPrivate
+        .applyBulkDuePreset(tasks, value, (submitted, result) => {
+          if (
+            record == null ||
+            this.cardReturn_abyssPrivate !== record ||
+            !this.sameCardRef_abyssPrivate(submitted.ref, record.original.ref)
+          )
+            return;
+          if (result.type === 'ok' && result.outcome.type === 'task')
+            record.ref = result.outcome.task.ref;
+          else this.cardReturn_abyssPrivate = null;
+        })
+        .finally(() => {
+          if (record != null && this.cardReturn_abyssPrivate === record) {
+            record.pending = false;
+            this.finishCardReturn_abyssPrivate();
+          }
+        }),
+    );
+  }
+
   private handleTaskContextMenu_abyssPrivate(
     event: MouseEvent,
     card: HTMLElement,
@@ -1114,7 +1341,7 @@ export class CenterPanel {
       return;
     }
     const menu = this.taskMenus_abyssPrivate.createTaskContextMenu(card, task);
-    showMenuAtMouseEventWithFocus(menu, event);
+    this.showTaskMenu_abyssPrivate(menu, event, card);
   }
 
   /** The selected tasks in display order, as the snapshots their cards were rendered from. */
@@ -1304,11 +1531,21 @@ export class CenterPanel {
     const card = this.mountedRows_abyssPrivate.element(key);
     if (card?.isConnected !== true) return false;
     card.focus({ preventScroll: true });
+    this.wholeCardFocus_abyssPrivate = null;
     this.scrollTaskCardIntoView_abyssPrivate(card);
     return true;
   }
 
   private completeTaskCardRender_abyssPrivate(): void {
+    const focused = this.renderCardFocus_abyssPrivate;
+    this.renderCardFocus_abyssPrivate = null;
+    if (
+      focused?.list === this.listViewControls_abyssPrivate.activeListKey() &&
+      this.neutralCardFocus_abyssPrivate(focused.opener)
+    ) {
+      this.returnExactCard_abyssPrivate(focused.ref);
+    }
+    this.finishCardReturn_abyssPrivate();
     this.taskCardRenderGeneration_abyssPrivate += 1;
     this.onRenderComplete_abyssPrivate(this.el);
     const continuityKey = this.taskDateFocusContinuityKey_abyssPrivate;
@@ -1468,7 +1705,7 @@ export class CenterPanel {
       source,
       policy: { removeScheduledDate: this.settings_abyssPrivate.recurrence.removeScheduledDate },
       ownershipConflict: hasOtherCalendarRecurrenceOwner(source),
-      onSubmit: (patch) => {
+      onSubmit: async (patch) => {
         const command = calendarPatchCommand(task, patch);
         if (this.tasks_abyssPrivate == null || command == null) {
           return Promise.resolve({
@@ -1477,11 +1714,32 @@ export class CenterPanel {
             contentState: 'unchanged' as const,
           });
         }
-        return this.tasks_abyssPrivate.execute(command);
+        const record = this.armCardReturn_abyssPrivate(anchor, 'recurrence');
+        if (record != null) {
+          record.surface =
+            anchor.ownerDocument.querySelector<HTMLElement>('.abyss-recurrence-popover') ??
+            undefined;
+          record.pending = true;
+        }
+        const result = await this.tasks_abyssPrivate.execute(command);
+        if (record != null && this.cardReturn_abyssPrivate === record) {
+          if (result.type === 'ok' && result.outcome.type === 'task')
+            record.ref = result.outcome.task.ref;
+          else this.cardReturn_abyssPrivate = null;
+          record.pending = false;
+          record.hidden = true;
+          this.finishCardReturn_abyssPrivate();
+        }
+        return result;
       },
       onClose: () => {
         if (this.recurrenceEditorCleanup_abyssPrivate === cleanup) {
           this.recurrenceEditorCleanup_abyssPrivate = null;
+          if (
+            !this.renderingRecurrenceCleanup_abyssPrivate &&
+            this.cardReturn_abyssPrivate?.kind === 'recurrence'
+          )
+            this.cardReturn_abyssPrivate = null;
         }
       },
       interactionOwnership: this.interactionOwnership_abyssPrivate,
@@ -1534,6 +1792,11 @@ export class CenterPanel {
   }
 
   private dismissRecurrenceEditor_abyssPrivate(): void {
+    if (
+      !this.renderingRecurrenceCleanup_abyssPrivate &&
+      this.cardReturn_abyssPrivate?.kind === 'recurrence'
+    )
+      this.cardReturn_abyssPrivate = null;
     const cleanup = this.recurrenceEditorCleanup_abyssPrivate;
     this.recurrenceEditorCleanup_abyssPrivate = null;
     cleanup?.();

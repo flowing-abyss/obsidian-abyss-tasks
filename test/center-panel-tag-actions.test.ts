@@ -550,9 +550,11 @@ describe('CenterPanel task date context menus', () => {
     menu.className = 'menu';
     const firstItem = menu.createDiv({ cls: 'menu-item', text: 'Today' });
     captureMenu();
+    let shown: Menu | undefined;
     vi.mocked(methodOf(Menu.prototype, 'showAtMouseEvent')).mockImplementation(function (
       this: Menu,
     ) {
+      shown = this.setParentElement(document.body);
       activeDocument.body.append(menu);
       return this;
     });
@@ -567,6 +569,9 @@ describe('CenterPanel task date context menus', () => {
       expect(activeDocument.activeElement).toBe(firstItem);
       expect(menu.contains(activeDocument.activeElement)).toBe(true);
       expect(firstItem.tabIndex).toBe(0);
+      menu.remove();
+      expectDefined(shown).hide();
+      expect(activeDocument.activeElement).toBe(card);
     } finally {
       panel.destroy();
       menu.remove();

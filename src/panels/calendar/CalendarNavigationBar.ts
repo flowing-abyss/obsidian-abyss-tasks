@@ -12,7 +12,7 @@ export interface CalendarNavigationBarCallbacks {
   /** Months are zero-based, as Moment numbers them. */
   readonly onSelectMonth: (month: number) => void;
   readonly onSelectYear: (year: number) => void;
-  readonly onSelectView: (view: CalViewType) => void;
+  readonly onSelectView: (view: CalViewType, trigger: HTMLButtonElement) => void;
 }
 
 export interface CalendarNavigationBarOptions {
@@ -107,7 +107,17 @@ export class CalendarNavigationBar {
     this.picker_abyssPrivate?.close(restoreFocus);
   }
 
+  private readonly viewButtons_abyssPrivate = new Map<CalViewType, HTMLButtonElement>();
+
+  focusView(view: CalViewType): boolean {
+    const button = this.viewButtons_abyssPrivate.get(view);
+    if (button?.isConnected !== true) return false;
+    button.focus({ preventScroll: true });
+    return true;
+  }
+
   destroy(): void {
+    this.viewButtons_abyssPrivate.clear();
     this.closePicker();
     this.elements_abyssPrivate = null;
   }
@@ -120,8 +130,9 @@ export class CalendarNavigationBar {
         cls: `abyss-cal-view-btn${callbacks.view() === view ? ' is-active' : ''}`,
         text: VIEW_LABELS[view],
       });
+      this.viewButtons_abyssPrivate.set(view, button);
       button.addEventListener('click', () => {
-        callbacks.onSelectView(view);
+        callbacks.onSelectView(view, button);
       });
     }
   }

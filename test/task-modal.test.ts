@@ -81,6 +81,49 @@ describe('TaskModal', () => {
     modal.close();
   });
 
+  it.each(['backdrop', 'Escape', 'Close'])(
+    'returns explicit %s close to its connected opener',
+    (action) => {
+      const opener = document.body.createEl('button');
+      opener.focus();
+      modal.open(task());
+      const backdrop = expectDefined(document.querySelector<HTMLElement>('.abyss-modal-backdrop'));
+      expectDefined(document.querySelector<HTMLButtonElement>('.abyss-modal-close-btn')).focus();
+      if (action === 'backdrop') backdrop.click();
+      else if (action === 'Close')
+        expectDefined(document.querySelector<HTMLElement>('.abyss-modal-close-btn')).click();
+      else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(document.activeElement).toBe(opener);
+      opener.remove();
+    },
+  );
+
+  it.each(['outside', 'detached', 'public-close', 'replacement'] as const)(
+    'does not focus a modal opener on %s',
+    (action) => {
+      const opener = document.body.createEl('button'),
+        outside = document.body.createEl('input');
+      opener.focus();
+      modal.open(task());
+      try {
+        if (action === 'outside') outside.focus();
+        else if (action === 'detached') opener.remove();
+        else
+          expectDefined(
+            document.querySelector<HTMLButtonElement>('.abyss-modal-close-btn'),
+          ).focus();
+        if (action === 'public-close') modal.close();
+        else if (action === 'replacement') modal.open(task({ title: 'replacement' }));
+        else expectDefined(document.querySelector<HTMLElement>('.abyss-modal-backdrop')).click();
+        expect(document.activeElement).not.toBe(opener);
+      } finally {
+        modal.close();
+        opener.remove();
+        outside.remove();
+      }
+    },
+  );
+
   describe('open', () => {
     it('creates .abyss-modal-backdrop appended to activeDocument.body', () => {
       modal.open(task());

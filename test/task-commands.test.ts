@@ -243,3 +243,33 @@ describe('TaskCommands submission routing', () => {
     expect(activeDocument.querySelector('.abyss-recurrence-delete-confirm')).toBeNull();
   });
 });
+
+it.each([false, true])(
+  'observes each original due result in sequential order, clear=%s',
+  async (clear) => {
+    const f = await fixture();
+    const originals = [
+      task({ title: 'one', planning: clear ? { due } : {} }),
+      task({
+        title: 'two',
+        source: { filePath: 'two.md', line: 0 },
+        planning: clear ? { due } : {},
+      }),
+    ];
+    const seen: TaskSnapshot[] = [];
+    const observer = vi.fn((original: TaskSnapshot) => {
+      seen.push(original);
+      expect(f.execute).toHaveBeenCalledTimes(seen.length);
+    });
+    await f.commands.applyBulkDuePreset(originals, due, observer);
+    expect(seen).toEqual(originals);
+    expect(observer).toHaveBeenCalledTimes(2);
+    for (const [i, call] of f.execute.mock.calls.entries()) {
+      expect(call[0]).toMatchObject({
+        type: 'patch',
+        target: { type: 'task', ref: originals[i]?.ref },
+        patch: { due: clear ? { type: 'clear' } : { type: 'set', value: due } },
+      });
+    }
+  },
+);

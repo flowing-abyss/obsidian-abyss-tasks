@@ -6749,3 +6749,247 @@ describe('CenterPanel search mode — empty query hint', () => {
     }
   });
 });
+
+describe('CenterPanel actual centre focus continuity', () => {
+  fixedToday('2026-10-02');
+  async function mounted() {
+    const before =
+      '- [ ] first #task/inbox 📅 2026-10-02\n- [ ] second #task/inbox 📅 2026-10-02\n- [ ] other #task/inbox';
+    const addItem = methodOf(Menu.prototype, 'addItem');
+    const add = vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, cb) {
+      return addItem.call(this, (item) => {
+        (item as unknown as { dom: HTMLElement }).dom = createDiv();
+        cb(item);
+      });
+    });
+    const h = await makePanel({ 'focus.md': before }, DEFAULT_SETTINGS, [
+      { path: 'focus.md', items: [0, 1, 2].map((line) => ({ task: ' ', parent: -1, line })) },
+    ]);
+    const el = document.body.createDiv();
+    h.panel.mount(el);
+    h.state.set('selectedList', { type: 'project', path: 'focus.md' });
+    const off = h.index.subscribe(() => {
+      h.panel.refresh();
+    });
+    const cards = () => [...el.querySelectorAll<HTMLElement>('.abyss-task-card')];
+    return {
+      ...h,
+      before,
+      el,
+      cards,
+      cleanup: () => {
+        off();
+        h.panel.destroy();
+        el.remove();
+        add.mockRestore();
+      },
+    };
+  }
+  it('retains the exact focused root after actual other-root vault publication and ArrowDown', async () => {
+    const h = await mounted();
+    try {
+      const old = expectDefined(h.cards()[0]);
+      old.click();
+      old.focus();
+      const ref = expectDefined(h.index.list()[0]).ref;
+      const f = h.app.vault.getAbstractFileByPath('focus.md');
+      if (!(f instanceof TFile)) throw new Error('owned file missing');
+      await h.app.vault.process(f, (text) => text.replace('other #', 'other changed #'));
+      await vi.advanceTimersByTimeAsync(25);
+      expect(expectDefined(h.index.list()[0]).ref).toEqual(ref);
+      expect(old.isConnected).toBe(false);
+      const live = expectDefined(h.cards()[0]);
+      expect(document.activeElement).toBe(live);
+      live.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      expect(document.activeElement).toBe(h.cards()[1]);
+      expect(h.state.get('taskStack')[0]).toEqual(h.index.list()[1]);
+      expect(await readMd(h.app, 'focus.md')).toBe(h.before.replace('other #', 'other changed #'));
+    } finally {
+      h.cleanup();
+    }
+  });
+  it('does not acquire card focus from an outside input on publication', async () => {
+    const h = await mounted();
+    const outside = document.body.createEl('input');
+    try {
+      expectDefined(h.cards()[0]).click();
+      outside.focus();
+      await h.tasks.execute({
+        type: 'toggle-completion',
+        target: { type: 'task', ref: expectDefined(h.index.list()[2]).ref },
+      });
+      await vi.advanceTimersByTimeAsync(25);
+      expect(document.activeElement).toBe(outside);
+    } finally {
+      outside.remove();
+      h.cleanup();
+    }
+  });
+  it('returns actual bulk Tomorrow only to the original second opener successor', async () => {
+    const h = await mounted();
+    let menu: Menu | undefined;
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+      this: Menu,
+    ) {
+      menu = this.setParentElement(document.body);
+      return this;
+    });
+    try {
+      const first = expectDefined(h.cards()[0]),
+        second = expectDefined(h.cards()[1]);
+      first.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
+      second.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
+      second.focus();
+      second.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const items = (
+        expectDefined(menu) as unknown as {
+          menuItems__: Array<{ title__: string; onClick__: ((e: MouseEvent) => unknown) | null }>;
+        }
+      ).menuItems__;
+      expectDefined(items.find((i) => i.title__ === 'Tomorrow')?.onClick__)(
+        new MouseEvent('click'),
+      );
+      expectDefined(menu).hide();
+      await vi.advanceTimersByTimeAsync(25);
+      expect(await readMd(h.app, 'focus.md')).toBe(
+        h.before.replaceAll('📅 2026-10-02', '📅 2026-10-03'),
+      );
+      const live = expectDefined(h.cards().find((c) => c.textContent.includes('second')));
+      expect(document.activeElement).toBe(live);
+    } finally {
+      show.mockRestore();
+      h.cleanup();
+    }
+  });
+  it('reveals the exact Search destination after list and stack navigation without acquiring focus', async () => {
+    const h = await mounted();
+    const reveal = vi.fn();
+    const render = vi.spyOn(h.panel, 'refresh');
+    // Mounted card hook observes the real destination scroll primitive, not a private reveal call.
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
+    HTMLElement.prototype.scrollIntoView = reveal;
+    try {
+      h.state.set('searchQuery', 'first');
+      h.state.set('mode', 'search');
+      await vi.advanceTimersByTimeAsync(25);
+      expectDefined(h.el.querySelector<HTMLElement>('.abyss-task-title')).click();
+      expect(h.state.get('mode')).toBe('tasks');
+      expect(h.state.get('selectedList')).toBe('today');
+      expect(h.state.get('taskStack')[0]).toEqual(h.index.list()[0]);
+      expect(reveal).toHaveBeenCalledWith({ block: 'nearest' });
+      expect(document.activeElement).not.toBe(h.cards()[0]);
+    } finally {
+      if (original != null)
+        Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', original);
+      else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+      render.mockRestore();
+      h.cleanup();
+    }
+  });
+  it.each(['outside', 'rejected'] as const)(
+    'does not return bulk focus after %s settlement',
+    async (disposition) => {
+      const h = await mounted();
+      const outside = document.body.createEl('input');
+      let menu: Menu | undefined;
+      const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+        this: Menu,
+      ) {
+        menu = this.setParentElement(document.body);
+        return this;
+      });
+      const execute = h.tasks.execute.bind(h.tasks);
+      const held = deferred<void>();
+      let observed = false;
+      const submit = vi.spyOn(h.tasks, 'execute').mockImplementation(async (command) => {
+        if (disposition === 'rejected')
+          return { type: 'io-error', cause: 'repository-error', contentState: 'unchanged' };
+        const result = await execute(command);
+        if (!observed) {
+          observed = true;
+          await held.promise;
+        }
+        return result;
+      });
+      try {
+        const first = expectDefined(h.cards()[0]),
+          second = expectDefined(h.cards()[1]);
+        first.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
+        second.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
+        second.focus();
+        second.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        const items = (
+          expectDefined(menu) as unknown as {
+            menuItems__: Array<{ title__: string; onClick__: ((e: MouseEvent) => unknown) | null }>;
+          }
+        ).menuItems__;
+        if (disposition === 'rejected') second.blur();
+        expectDefined(items.find((i) => i.title__ === 'Tomorrow')?.onClick__)(
+          new MouseEvent('click'),
+        );
+        expectDefined(menu).hide();
+        await vi.advanceTimersByTimeAsync(25);
+        if (disposition === 'outside') {
+          expect(observed).toBe(true);
+          outside.focus();
+        }
+        held.resolve(undefined);
+        await vi.advanceTimersByTimeAsync(25);
+        expect(document.activeElement).toBe(disposition === 'outside' ? outside : document.body);
+        expect(await readMd(h.app, 'focus.md')).toBe(
+          disposition === 'outside'
+            ? h.before.replaceAll('📅 2026-10-02', '📅 2026-10-03')
+            : h.before,
+        );
+      } finally {
+        submit.mockRestore();
+        show.mockRestore();
+        outside.remove();
+        h.cleanup();
+      }
+    },
+  );
+  it('returns from real Weekly Save to result successor without changing the second root', async () => {
+    const h = await mounted();
+    let menu: Menu | undefined;
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+      this: Menu,
+    ) {
+      menu = this.setParentElement(document.body);
+      return this;
+    });
+    try {
+      const first = expectDefined(h.cards()[0]);
+      first.click();
+      first.focus();
+      first.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const items = (
+        expectDefined(menu) as unknown as {
+          menuItems__: Array<{ title__: string; onClick__: ((e: MouseEvent) => unknown) | null }>;
+        }
+      ).menuItems__;
+      expectDefined(items.find((i) => i.title__ === 'Edit repeat…')?.onClick__)(
+        new MouseEvent('click'),
+      );
+      expectDefined(
+        document.querySelector<HTMLElement>('[data-recurrence-preset="weekly"]'),
+      ).click();
+      const save = expectDefined(
+        document.querySelector<HTMLButtonElement>('.abyss-recurrence-save'),
+      );
+      save.focus();
+      save.click();
+      await vi.advanceTimersByTimeAsync(25);
+      expect(await readMd(h.app, 'focus.md')).toBe(
+        h.before.replace('first #task/inbox 📅', 'first #task/inbox 🔁 every week on Friday 📅'),
+      );
+      const live = expectDefined(h.cards()[0]);
+      expect(document.activeElement).toBe(live);
+      live.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      expect(document.activeElement).toBe(h.cards()[1]);
+    } finally {
+      show.mockRestore();
+      h.cleanup();
+    }
+  });
+});

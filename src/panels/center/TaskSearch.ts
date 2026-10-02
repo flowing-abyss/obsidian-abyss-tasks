@@ -6,6 +6,7 @@ import { isImeOwnedEvent } from '../../ui/ime';
 import type { PanelNavigationActions } from '../../views/panelNavigation';
 
 interface TaskSearchHost {
+  revealTask(task: TaskSnapshot): void;
   beginResults(): void;
   renderRows(
     host: HTMLElement,
@@ -170,6 +171,7 @@ export class TaskSearch {
         }
         this.#navigation.openList(list);
         this.#state.set('taskStack', [task]);
+        this.#host.revealTask(task);
       },
       { capture: true },
     );
