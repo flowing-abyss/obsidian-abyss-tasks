@@ -377,3 +377,40 @@ describe('CalendarMode forecast menu', () => {
     expect(document.querySelector('.abyss-forecast-context-menu')).toBeNull();
   });
 });
+
+it('returns actual activation to the corresponding newly mounted view button', () => {
+  const h = harness();
+  h.mode.render(h.root);
+  h.openCalendarView.mockImplementation((view) => {
+    h.mode.setView(view);
+    h.mode.render(h.root);
+  });
+  const old = expectDefined(
+    [...h.root.querySelectorAll<HTMLButtonElement>('.abyss-cal-view-btn')].find(
+      (x) => x.textContent === 'Week',
+    ),
+  );
+  old.focus();
+  old.click();
+  const live = expectDefined(
+    [...h.root.querySelectorAll<HTMLButtonElement>('.abyss-cal-view-btn')].find(
+      (x) => x.textContent === 'Week',
+    ),
+  );
+  expect(old.isConnected).toBe(false);
+  expect(document.activeElement).toBe(live);
+});
+
+it('does not acquire view focus for programmatic navigation', () => {
+  const h = harness();
+  h.mode.render(h.root);
+  const outside = document.body.createEl('input');
+  outside.focus();
+  try {
+    h.mode.setView('month');
+    h.mode.render(h.root);
+    expect(document.activeElement).toBe(outside);
+  } finally {
+    outside.remove();
+  }
+});

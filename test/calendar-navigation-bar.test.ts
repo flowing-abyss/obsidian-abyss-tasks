@@ -122,7 +122,10 @@ describe('CalendarNavigationBar callbacks', () => {
     [...h.owner.querySelectorAll<HTMLElement>('.abyss-cal-view-btn')].forEach((button) => {
       button.click();
     });
-    expect(h.callbacks.onSelectView.mock.calls).toEqual([['today'], ['week'], ['month']]);
+    const buttons = [...h.owner.querySelectorAll<HTMLButtonElement>('.abyss-cal-view-btn')];
+    expect(h.callbacks.onSelectView).toHaveBeenNthCalledWith(1, 'today', buttons[0]);
+    expect(h.callbacks.onSelectView).toHaveBeenNthCalledWith(2, 'week', buttons[1]);
+    expect(h.callbacks.onSelectView).toHaveBeenNthCalledWith(3, 'month', buttons[2]);
   });
 });
 

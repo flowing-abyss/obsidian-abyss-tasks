@@ -190,32 +190,45 @@ export class TaskCommands {
     await this.setTaskDue(task, task.planning.due === value ? null : value);
   }
 
-  async setTaskDue(task: TaskSnapshot, value: LocalDate | null): Promise<boolean> {
+  async setTaskDue(
+    task: TaskSnapshot,
+    value: LocalDate | null,
+    onResult?: (task: TaskSnapshot, result: TaskCommandResult) => void,
+  ): Promise<boolean> {
     const command = calendarPatchCommand(task, {
       due: value === null ? { type: 'clear' } : { type: 'set', value },
     });
     if (command == null || this.#tasks == null) return false;
     const result = await this.#tasks.execute(command);
     presentTaskCommandResult(result);
+    onResult?.(task, result);
     return result.type === 'ok' && result.changed;
   }
 
-  async applyDueInOrder(tasks: readonly TaskSnapshot[], value: LocalDate): Promise<boolean> {
+  async applyDueInOrder(
+    tasks: readonly TaskSnapshot[],
+    value: LocalDate,
+    onResult?: (task: TaskSnapshot, result: TaskCommandResult) => void,
+  ): Promise<boolean> {
     let changed = false;
     for (const task of tasks) {
-      const taskChanged = await this.setTaskDue(task, value);
+      const taskChanged = await this.setTaskDue(task, value, onResult);
       changed = taskChanged || changed;
     }
     return changed;
   }
 
-  async applyBulkDuePreset(tasks: readonly TaskSnapshot[], value: LocalDate): Promise<void> {
+  async applyBulkDuePreset(
+    tasks: readonly TaskSnapshot[],
+    value: LocalDate,
+    onResult?: (task: TaskSnapshot, result: TaskCommandResult) => void,
+  ): Promise<void> {
     const shouldClear = tasks.every((task) => task.planning.due === value);
     if (!shouldClear) {
-      await this.applyDueInOrder(tasks, value);
+      await this.applyDueInOrder(tasks, value, onResult);
       return;
     }
-    for (const task of tasks) await this.setTaskDue(task, null);
+    for (const task of tasks) await this.setTaskDue(task, null, onResult);
   }
 
   async setPriority(

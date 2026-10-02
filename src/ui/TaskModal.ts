@@ -12,6 +12,7 @@ import type {
   TaskResolution,
   TaskSnapshot,
 } from '../tasks';
+import { isRealmHTMLElement } from './domRealm';
 import { isImeOwnedEvent } from './ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 import { presentTaskCommandResult } from './taskCommandResult';
@@ -50,6 +51,7 @@ export class TaskModal {
   private innerState_abyssPrivate: AppState | null = null;
   private innerPanel_abyssPrivate: RightPanel | null = null;
   private keyHandler_abyssPrivate: ((e: KeyboardEvent) => void) | null = null;
+  private opener_abyssPrivate: HTMLElement | null = null;
   private ownerDoc_abyssPrivate: Document | null = null;
   private queryUnsub_abyssPrivate: (() => void) | null = null;
   private selectionUnsub_abyssPrivate: (() => void) | null = null;
@@ -83,6 +85,9 @@ export class TaskModal {
     });
     // Capture the active document at open time so close() removes from the same document
     this.ownerDoc_abyssPrivate = activeDocument;
+    const active = this.ownerDoc_abyssPrivate.activeElement;
+    this.opener_abyssPrivate =
+      isRealmHTMLElement(active) && active !== this.ownerDoc_abyssPrivate.body ? active : null;
     this.innerState_abyssPrivate = new AppState();
     this.innerState_abyssPrivate.set('taskStack', [task]);
     this.selectionUnsub_abyssPrivate = this.innerState_abyssPrivate.on('taskStack', (stack) => {
@@ -134,14 +139,14 @@ export class TaskModal {
     );
 
     backdrop.addEventListener('click', (e) => {
-      if (e.target === backdrop) this.close();
+      if (e.target === backdrop) this.closeFromUser_abyssPrivate();
     });
 
     this.keyHandler_abyssPrivate = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented || isImeOwnedEvent(e)) return;
       e.preventDefault();
       e.stopPropagation();
-      this.close();
+      this.closeFromUser_abyssPrivate();
     };
     this.ownerDoc_abyssPrivate.addEventListener('keydown', this.keyHandler_abyssPrivate);
   }
@@ -177,11 +182,29 @@ export class TaskModal {
     closeBtn.setAttribute('title', 'Close');
     closeBtn.textContent = '✕';
     closeBtn.addEventListener('click', () => {
-      this.close();
+      this.closeFromUser_abyssPrivate();
     });
   }
 
+  private closeFromUser_abyssPrivate(): void {
+    const doc = this.ownerDoc_abyssPrivate;
+    if (doc == null) {
+      this.close();
+      return;
+    }
+    const opener = this.opener_abyssPrivate;
+    const active = doc.activeElement;
+    const allowed =
+      active === doc.body ||
+      active === opener ||
+      this.backdropEl_abyssPrivate?.contains(active) === true;
+    this.close();
+    if (allowed && opener?.isConnected === true && opener.ownerDocument === doc)
+      opener.focus({ preventScroll: true });
+  }
+
   close(): void {
+    this.opener_abyssPrivate = null;
     const ownershipToken = this.ownershipToken_abyssPrivate;
     this.ownershipToken_abyssPrivate = null;
     ownershipToken?.release();

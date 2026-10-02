@@ -16,7 +16,6 @@ import {
 } from '../../tasks';
 import { TagPickerModal } from '../../ui/TagPickerModal';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
-import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { buildStatusSubmenu } from '../../ui/statusMenu';
 import { openInFile } from '../../ui/taskNavigation';
@@ -25,6 +24,8 @@ import { calendarMutationTarget } from '../../views/calendarOccurrences';
 import type { TaskCommands } from './TaskCommands';
 
 interface TaskMenusHost {
+  showTaskMenu(menu: Menu, event: MouseEvent, card: HTMLElement): void;
+  applyBulkDuePreset(card: HTMLElement, tasks: readonly TaskSnapshot[], value: LocalDate): void;
   openDatePicker(anchor: HTMLElement, tasks: readonly TaskSnapshot[]): void;
   openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void;
   addFilter(filter: PropertyFilter): void;
@@ -403,7 +404,7 @@ export class TaskMenus {
     }
     this.#addBulkPropertyMenuItems(menu, selectedTasks, firstSelectedTask);
     this.#addBulkActionMenuItems(menu, selectedTasks);
-    showMenuAtMouseEventWithFocus(menu, event);
+    this.#options.host.showTaskMenu(menu, event, card);
   }
 
   #addBulkDateMenuItems(menu: Menu, selectedTasks: TaskSnapshot[], card: HTMLElement): void {
@@ -417,7 +418,7 @@ export class TaskMenus {
         .setSection('today')
         .setChecked(allHaveToday)
         .onClick(() => {
-          runAsyncAction(this.#options.commands.applyBulkDuePreset(selectedTasks, today));
+          this.#options.host.applyBulkDuePreset(card, selectedTasks, today);
         }),
     );
 
@@ -430,7 +431,7 @@ export class TaskMenus {
           .setSection('today')
           .setChecked(allHaveTomorrow)
           .onClick(() => {
-            runAsyncAction(this.#options.commands.applyBulkDuePreset(selectedTasks, tomorrow));
+            this.#options.host.applyBulkDuePreset(card, selectedTasks, tomorrow);
           }),
       );
     }

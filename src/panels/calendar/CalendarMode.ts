@@ -256,8 +256,17 @@ export class CalendarMode {
           bar.updateTitle();
           mountView();
         },
-        onSelectView: (view) => {
+        onSelectView: (view, trigger) => {
+          const doc = trigger.ownerDocument;
+          const held = doc.activeElement === trigger;
           this.deps_abyssPrivate.navigation.openCalendarView(view);
+          if (
+            held &&
+            (doc.activeElement === trigger ||
+              doc.activeElement === doc.body ||
+              doc.activeElement === doc.documentElement)
+          )
+            this.navigationBar_abyssPrivate?.focusView(view);
         },
       },
     });

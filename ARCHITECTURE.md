@@ -275,6 +275,23 @@ read the mounted DOM, and none of them reads the list's order. A windowed render
 the handle for the rows it mounts. Every file under `src/panels/task-list/` uses owner
 capabilities, and its pure modules are in the pure roster.
 
+Centre focus continuity stays local to existing owners. The shell captures an actual whole-card
+focus intent across a same-list render and returns only to a connected mounted row with the exact
+full task reference. Date-picker-created return focus does not arm this separate intent. TaskMenus
+routes native display/hide and bulk due presets through the shell; the captured opener remains
+separate from the original bulk array and inspector selection. TaskCommands' optional local result
+observer runs after ordinary result presentation and proves only the submitted opener's successor.
+The shell cancels pending menu/recurrence return on outside focus/pointer, owner departure, list/mode
+change or teardown. Own recurrence render cleanup preserves only its pending command settlement;
+explicit dismissal does not. No focus operation writes or changes selection.
+
+TaskSearch navigates and selects through its existing ports, then asks the shell to reveal the exact
+mounted destination without taking focus. TaskModal captures its connected actual opener after prior
+teardown and returns only on explicit user close; public close remains teardown. CalendarNavigationBar
+owns its mounted view-button references; CalendarMode returns actual activation to the corresponding
+new button after navigation, without acquiring focus for programmatic view changes. Ordinary capture
+arrival/highlight and its continuing input remain unchanged.
+
 Regression entry points: [row model](test/task-list-rows.test.ts),
 [selection model](test/task-row-selection.test.ts), [row mounting](test/task-list-row-view.test.ts),
 [multi-selection](test/center-panel-multi-select.test.ts), the bulk and date menus of
