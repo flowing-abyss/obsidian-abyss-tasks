@@ -55,6 +55,11 @@ the current unit: a tab by default, or four spaces when disabled. New nested con
 existing nested prefix or appends that unit to its owner's exact prefix; description replacements
 retain their original prefixes. Reading, reordering, moving, and restoring source preserve authored
 indentation.
+The domain source model's shared `readTaskLinePrefix` admits dash, star, plus, and decimal
+ordered checkbox markers for canonical parsing, index fallback, legacy subitems, block editing,
+snapshot projection and recurrence ownership. Status/title span edits and subtree transfers retain
+original markers, ordinal spelling, quotes and line endings. Creation deliberately keeps its dash
+prefix and existing native indentation policy.
 
 | Boundary                                         | Responsibility                                                                                | Dependency direction                                                     |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |

@@ -2376,3 +2376,33 @@ describe('ordinary tag validity at the codec write boundary', () => {
     expect(parse(source).original).toBe(source);
   });
 });
+
+describe('authored task marker offsets', () => {
+  it.each(['-', '*', '+', '1.', '1)'])(
+    'partitions %s without changing authored bytes',
+    (marker) => {
+      const source = `${marker} [ ] Ordinary`;
+      expectLosslessPartition(parse(source));
+      expect(parse(source).markdownTitle).toBe('Ordinary');
+    },
+  );
+  it('edits only the status or title after a quoted multi-digit ordinal', () => {
+    const source = '> \t12) [ ] Original #keep\r\n';
+    expectLosslessPartition(parse(source));
+    expect(
+      codec.applyLineEdit(source, {
+        type: 'set-status',
+        symbol: 'x',
+        today: '2026-10-03',
+        addCompletionDate: false,
+      }),
+    ).toEqual({
+      type: 'changed',
+      content: '> \t12) [x] Original #keep\r\n',
+    });
+    expect(codec.applyLineEdit(source, { type: 'set-title', markdownTitle: 'Changed' })).toEqual({
+      type: 'changed',
+      content: '> \t12) [ ] Changed #keep\r\n',
+    });
+  });
+});

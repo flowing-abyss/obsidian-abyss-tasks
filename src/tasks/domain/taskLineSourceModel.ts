@@ -70,7 +70,15 @@ export interface TaskLineSourceModel {
 
 type Candidate = TaskLineSourceCarrier;
 
-const TASK_LINE_RE = /^[\s>]*- \[(.)\]/u;
+const TASK_LINE_RE = /^[\s>]*(?:[-*+]|\d+[.)]) \[(.)\]/u;
+export function readTaskLinePrefix(source: string): {
+  readonly prefixEnd: number;
+  readonly statusSymbol: string;
+} | null {
+  const match = TASK_LINE_RE.exec(source);
+  return match == null ? null : { prefixEnd: match[0].length, statusSymbol: match[1] ?? '' };
+}
+
 const TASK_TAG_BODY = `${TAG_CHARACTER_SOURCE}+(?:/${TAG_CHARACTER_SOURCE}+)*`;
 const TASK_TAG_ADJACENT = String.raw`(?:[#\p{L}\p{M}\p{N}\p{Pc}/-]|\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier}|\uFE0F|\u200D)`;
 // `isTaskTagAdjacent` refuses a match that continues a word, a path, another tag, or an emoji.
@@ -585,16 +593,16 @@ function taskLineParseContext(original: string): TaskLineParseContext | null {
   const lineEnding = lineEndingOf(original);
   const contentEnd = original.length - lineEnding.length;
   const content = original.slice(0, contentEnd);
-  const taskMatch = TASK_LINE_RE.exec(content);
-  if (taskMatch == null) return null;
-  const prefixEnd = taskMatch[0].length;
+  const prefix = readTaskLinePrefix(content);
+  if (prefix == null) return null;
+  const { prefixEnd } = prefix;
   const body = content.slice(prefixEnd);
   const atomicBodyRanges = mergedRanges([...inlineCodeRanges(body), ...parseLinkRanges(body)]);
   return {
     original,
     lineEnding,
     contentEnd,
-    statusSymbol: taskMatch[1] ?? '',
+    statusSymbol: prefix.statusSymbol,
     prefixEnd,
     body,
     atomicBodyRanges,

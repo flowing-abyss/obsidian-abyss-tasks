@@ -10,6 +10,7 @@ import {
   type RecurrenceOwnedSubtree,
 } from '../../domain/recurrenceIteration';
 import type { DependencyDirection } from '../../domain/taskDependencies';
+import { readTaskLinePrefix } from '../../domain/taskLineSourceModel';
 import {
   closeEntryLine,
   formatOpenEntry,
@@ -30,7 +31,6 @@ import {
 } from './taskBlockSyntax';
 import type { TaskMarkdownCodec } from './TaskMarkdownCodec';
 
-const TASK_RE = /^[\s>]*- \[(.)\]/u;
 const PREFIX_RE = /^([\s>]*)/u;
 const LINE_BREAK_RE = /[\r\n]/u;
 const STAMP_OFFSET_RE = /(?:Z|[+-]\d{2}:\d{2})$/u;
@@ -305,7 +305,7 @@ function isConfirmedTarget(
 ): parent is SourceLine {
   return (
     parent !== undefined &&
-    TASK_RE.test(parent.text) &&
+    readTaskLinePrefix(parent.text) !== null &&
     target.lineCount >= 1 &&
     parentLine + target.lineCount - 1 <= block.toLine
   );
@@ -339,7 +339,7 @@ function compatibleBlankLine(line: string, parent: string): boolean {
 
 function validRestoredSubtree(lines: readonly SourceLine[], parent: string): boolean {
   const first = lines[0]?.text;
-  if (first === undefined || !TASK_RE.test(first)) return false;
+  if (first === undefined || readTaskLinePrefix(first) === null) return false;
   const depth = indentation(first);
   return (
     depth > indentation(parent) &&
@@ -447,7 +447,7 @@ function rootBlockAt(
   index: number,
 ): { readonly block: TaskRootBlock; readonly next: number } | undefined {
   const rootLine = lines[index];
-  if (rootLine == null || !TASK_RE.test(rootLine.text)) return undefined;
+  if (rootLine == null || readTaskLinePrefix(rootLine.text) === null) return undefined;
   const rootIndent = indentation(rootLine.text);
   const rootQuote = quoteDepth(rootLine.text);
   let toLine = index;
@@ -842,7 +842,7 @@ function directChildBlocks(
   while (at < blockEnd) {
     const text = context.lines[at]?.text;
     if (text === undefined) break;
-    if (TASK_RE.test(text) && indentation(text) > parentIndent) {
+    if (readTaskLinePrefix(text) !== null && indentation(text) > parentIndent) {
       const to = childBlockEnd(context, at, blockEnd);
       ranges.push({ from: at, to });
       at = to + 1;

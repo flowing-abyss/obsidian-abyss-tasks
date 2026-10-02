@@ -28,6 +28,7 @@ import {
   type TaskDependencyProjection,
   type TaskNodeSnapshot,
 } from '../domain/taskDependencies';
+import { readTaskLinePrefix } from '../domain/taskLineSourceModel';
 import {
   reconcileRootTransitions,
   taskReconciliationKey,
@@ -281,7 +282,6 @@ interface FallbackListLine {
 }
 
 const FALLBACK_LIST_ITEM_RE = /^([\s>]*)(?:[-*+]|\d+[.)])\s+/u;
-const FALLBACK_TASK_RE = /^[\s>]*- \[(.)\]/u;
 const FALLBACK_PREFIX_RE = /^([\s>]*)/u;
 
 function fallbackFenceState(
@@ -388,7 +388,7 @@ function appendFallbackListItem(state: FallbackScanState, item: FallbackListLine
   );
   const indent = fallbackIndent(prefix);
   const ancestors = state.ancestorsByQuoteDepth.get(quoteDepth) ?? [];
-  const task = FALLBACK_TASK_RE.exec(line)?.[1];
+  const task = readTaskLinePrefix(line)?.statusSymbol;
   state.items.push({
     ...(task !== undefined && { task }),
     parent: fallbackParent(ancestors, indent, lineNumber),

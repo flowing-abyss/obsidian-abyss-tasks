@@ -65,7 +65,7 @@ describe('prepareRecurrenceIteration', () => {
   it('uses the canonical start marker when replacing and shifting start dates', () => {
     expect(
       prepareRecurrenceIteration({
-        rootBlock: '- [/] Owner 🔁 every day 🛫 2026-08-02\n  - [x] Child 🛫 2026-08-03',
+        rootBlock: '12) [/] Owner 🔁 every day 🛫 2026-08-02\n  + [x] Child 🛫 2026-08-03',
         ownerRelativeLine: 0,
         nextPlanning: { start: localDate('2026-08-09') },
         dayDelta: 7,
@@ -77,7 +77,7 @@ describe('prepareRecurrenceIteration', () => {
       }),
     ).toMatchObject({
       type: 'prepared',
-      cleanSubtree: '- [ ] Owner 🔁 every day 🛫 2026-08-09\n  - [ ] Child 🛫 2026-08-10',
+      cleanSubtree: '12) [ ] Owner 🔁 every day 🛫 2026-08-09\n  + [ ] Child 🛫 2026-08-10',
     });
   });
 

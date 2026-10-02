@@ -577,7 +577,7 @@ describe('TaskBlockEditor', () => {
 
   it('adds a quoted child without changing CRLF or the missing final newline', () => {
     const editor = new TaskBlockEditor();
-    const source = '>\t- [ ] root\r\n>\t  - [ ] existing';
+    const source = '>\t12) [ ] root\r\n>\t  * [ ] existing';
     const block = expectDefined(editor.rootBlocks(source)[0]);
     const result = editor.edit(
       source,
@@ -588,7 +588,7 @@ describe('TaskBlockEditor', () => {
 
     expect(result).toMatchObject({
       type: 'changed',
-      content: '>\t- [ ] root\r\n>\t  - [ ] existing\r\n>\t  - [ ] new [[child]]',
+      content: '>\t12) [ ] root\r\n>\t  * [ ] existing\r\n>\t  - [ ] new [[child]]',
     });
   });
 
@@ -639,7 +639,7 @@ describe('TaskBlockEditor', () => {
   it('reorders only exact immediate-child blocks and preserves mixed indentation', () => {
     const editor = new TaskBlockEditor();
     const source =
-      '- [ ] root\r\n' + '\t- [ ] first\r\n' + '\t  - [ ] nested\r\n' + '    - [ ] second\r\n';
+      '12) [ ] root\r\n' + '\t* [ ] first\r\n' + '\t  + [ ] nested\r\n' + '    3. [ ] second\r\n';
     const block = expectDefined(editor.rootBlocks(source)[0]);
     const result = editor.edit(
       source,
@@ -656,9 +656,9 @@ describe('TaskBlockEditor', () => {
         type: 'reorder-subtask',
         source: {
           relativeLine: 1,
-          originalBlock: '\t- [ ] first\r\n\t  - [ ] nested',
+          originalBlock: '\t* [ ] first\r\n\t  + [ ] nested',
         },
-        target: { relativeLine: 3, originalBlock: '    - [ ] second' },
+        target: { relativeLine: 3, originalBlock: '    3. [ ] second' },
         placement: 'after',
       },
     );
@@ -666,7 +666,35 @@ describe('TaskBlockEditor', () => {
     expect(result).toMatchObject({
       type: 'changed',
       content:
-        '- [ ] root\r\n' + '    - [ ] second\r\n' + '\t- [ ] first\r\n' + '\t  - [ ] nested\r\n',
+        '12) [ ] root\r\n' + '    3. [ ] second\r\n' + '\t* [ ] first\r\n' + '\t  + [ ] nested\r\n',
+    });
+  });
+
+  it('restores a mixed-marker child subtree without changing neighboring source', () => {
+    const editor = new TaskBlockEditor();
+    const source = '12) [ ] root\r\n  + [ ] sibling\r\n- [ ] neighbor\r\n';
+    const result = editor.edit(
+      source,
+      expectDefined(editor.rootBlocks(source)[0]),
+      {
+        relativeLine: 0,
+        lineCount: 2,
+        childRanges: [{ from: 1, to: 1 }],
+      },
+      {
+        type: 'restore-subtask',
+        markdown: '  * [ ] restored\r\n    2. [x] nested',
+        placement: {
+          relativeLine: 1,
+          before: { relativeLine: 1, originalBlock: '  + [ ] sibling' },
+          lineEnding: '\r\n',
+        },
+      },
+    );
+    expect(result).toMatchObject({
+      type: 'changed',
+      content:
+        '12) [ ] root\r\n  * [ ] restored\r\n    2. [x] nested\r\n  + [ ] sibling\r\n- [ ] neighbor\r\n',
     });
   });
 

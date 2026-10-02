@@ -469,7 +469,7 @@ describe('transactional task archive', () => {
 
   it('appends the complete owned root, leaves source delimiters, and never publishes the archive root', async () => {
     const block =
-      '- [x] Root 🆔 root-id ⛔ other\n  - > Description\n  - 2026-09-19: comment\n  - [ ] Child\n';
+      '12) [x] Root 🆔 root-id ⛔ other\n  - > Description\n  - 2026-09-19: comment\n  * [ ] Child\n';
     const source = `# Source\n%%\n${block}%%\n# End\n`;
     const h = await harness(source, '# Archive\n');
 
