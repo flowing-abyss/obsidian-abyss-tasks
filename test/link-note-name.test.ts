@@ -124,18 +124,21 @@ describe('the plain title of a wiki link', () => {
   it.each([
     ['- [ ] Read [[Sources|]]', `Read ${LINK} Sources`],
     ['- [ ] Read [[Note.md|]]', `Read ${LINK} Note`],
-    ['- [ ] Read [[Note.md|Alias]]', `Read ${LINK}Note.md`],
-  ])('Y1f an empty alias collapses as no alias does: %s is %s', (line, title) => {
-    expect(codecTitle(line)).toBe(title);
-  });
+    ['- [ ] Read [[Note.md|Alias]]', `Read ${LINK} Alias`],
+  ])(
+    'Y1f empty aliases keep the unaliased form and written aliases stay readable: %s is %s',
+    (line, title) => {
+      expect(codecTitle(line)).toBe(title);
+    },
+  );
 
   it('Y1g the legacy collapse reads an empty alias as no alias', () => {
     expect(collapseLinks('[[Sources|]] and [[Note.md|]]')).toBe(`${LINK} Sources and ${LINK} Note`);
   });
 
-  it('Y1h the table form drops its backslash in both collapses', () => {
-    expect(codecTitle(String.raw`- [ ] Read [[Note\|Alias]]`)).toBe(`Read ${LINK}Note`);
-    expect(collapseLinks(String.raw`Read [[Note\|Alias]]`)).toBe(`Read ${LINK}Note`);
+  it('Y1h the table form preserves its readable alias in both collapses', () => {
+    expect(codecTitle(String.raw`- [ ] Read [[Note\|Alias]]`)).toBe(`Read ${LINK} Alias`);
+    expect(collapseLinks(String.raw`Read [[Note\|Alias]]`)).toBe(`Read ${LINK} Alias`);
   });
 
   it('Y1i a link with a blank text before its pipe collapses as an unaliased link', () => {
@@ -146,9 +149,9 @@ describe('the plain title of a wiki link', () => {
   it.each([
     ['Read [[ Note ]]', `Read ${LINK} Note`],
     ['Read [[Note.md ]]', `Read ${LINK} Note`],
-    ['Read [[ Note | Alias ]]', `Read ${LINK}Note`],
+    ['Read [[ Note | Alias ]]', `Read ${LINK} Alias`],
     [String.raw`Read [[Note\]]`, `Read ${LINK} Note`],
-    ['Read [[x [[a|b]] y]]', `Read [x ${LINK}a y]`],
+    ['Read [[x [[a|b]] y]]', `Read [x ${LINK} b y]`],
   ])(
     'Y1k padding and nesting read as the reader reads them: %s is %s in both collapses',
     (title, plain) => {

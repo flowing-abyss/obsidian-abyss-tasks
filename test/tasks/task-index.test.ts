@@ -785,7 +785,7 @@ describe('TaskIndex lifecycle and events', () => {
     const root = expectDefined(index.snapshotsFromContent('nested.md', content)[0]);
 
     expect(root).toMatchObject({
-      title: 'Parent 🔗Note',
+      title: 'Parent 🔗 alias',
       markdownTitle: 'Parent [[Note|alias]]',
       status: 'in-progress',
       statusSymbol: '/',
