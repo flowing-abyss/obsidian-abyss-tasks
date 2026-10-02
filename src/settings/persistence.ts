@@ -1,3 +1,4 @@
+import type { TagRenameChange } from '../markdown/tagSyntax';
 import {
   isMalformedProjectKanbanSettings,
   normalizeProjectKanbanSettings,
@@ -14,6 +15,7 @@ import { ACTIVE_STATUS_GROUPS, TYPE_ORDER } from '../status/statusConstants';
 import type { TaskStatusType } from '../tasks/domain/types';
 import { getListViewDefaults } from './defaults';
 import { migrateSettings } from './migration';
+import { prepareTagViewStateRename } from './tagViewState';
 import type {
   CalendarSettings,
   ListViewState,
@@ -762,14 +764,32 @@ export class SettingsPersistenceCoordinator {
 
   saveViewState(settings: CalendarSettings): Promise<void> {
     if (this.stateWritesSuspended) return Promise.reject(new ViewStateWritesSuspendedError());
-    const payload = createStateEnvelope(settings, this.rawStateEnvelope, this.stateRecovery);
+    const rawBase = this.rawStateEnvelope;
+    const payload = createStateEnvelope(settings, rawBase, this.stateRecovery);
     const serialized = serialize(payload);
     return this.enqueue(async () => {
       if (serialized === this.lastStateSerialized) return;
       await this.port.state.write(this.port.state.path, serialized);
-      this.rawStateEnvelope = payload;
+      if (this.rawStateEnvelope === rawBase) this.rawStateEnvelope = payload;
       this.lastStateSerialized = serialized;
     });
+  }
+
+  checkTagRename(
+    settings: CalendarSettings,
+    change: TagRenameChange,
+  ): 'ready' | 'conflict' | 'unavailable' {
+    if (this.stateWritesSuspended) return 'unavailable';
+    return prepareTagViewStateRename(settings, this.rawStateEnvelope, change).type;
+  }
+
+  renameTagViewState(settings: CalendarSettings, change: TagRenameChange): Promise<void> {
+    if (this.stateWritesSuspended) throw new ViewStateWritesSuspendedError();
+    const staged = prepareTagViewStateRename(settings, this.rawStateEnvelope, change);
+    if (staged.type === 'conflict') throw new Error('Saved tag view preferences conflict.');
+    settings.listViewStates = staged.states ?? {};
+    this.rawStateEnvelope = staged.rawEnvelope;
+    return this.saveViewState(settings);
   }
 
   private async loadState(defaults: CalendarSettings): Promise<StateLoadOutcome> {

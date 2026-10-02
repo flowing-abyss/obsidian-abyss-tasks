@@ -1,16 +1,12 @@
 // src/tags/TagManager.ts
 import type { App, TFile } from 'obsidian';
-import type { ListSelection } from '../app/AppState';
+import { sameTag, tagHasPrefix, type TagRenameChange } from '../markdown/tagSyntax';
 import { beginSettingsSave, latestSettingsSaveRevision } from '../settings/settingsSaveRevision';
 import type { CalendarSettings, TagGroup } from '../settings/types';
 import { normalizeTaskTagInput } from '../tasks';
 import {
-  collisionFreeDiscoveredGroupId,
-  discoveredPrefixGroupId,
-  discoveredTagGroupId,
   normalizeTagPrefix,
   prefixForDiscoveredGroupId,
-  tagForDiscoveredGroupId,
   type EffectiveTagGroup,
 } from './effectiveTagGroups';
 import { normalizeTag, transformMarkdownTags, type TagRenameScope } from './markdownTagRename';
@@ -32,7 +28,8 @@ export type VaultTagRenameResult =
     }
   | {
       readonly type: 'invalid';
-      readonly reason: 'invalid-tag' | 'same-tag';
+      readonly reason:
+        'invalid-tag' | 'same-tag' | 'view-state-conflict' | 'view-state-unavailable';
     };
 
 function replaceSettingTag(
@@ -41,9 +38,9 @@ function replaceSettingTag(
   newTag: string,
   scope: TagRenameScope,
 ): string {
-  if (value === oldTag) return newTag;
-  if (scope === 'prefix' && value.startsWith(`${oldTag}/`)) {
-    return `${newTag}${value.slice(oldTag.length)}`;
+  if (sameTag(value, oldTag)) return newTag;
+  if (scope === 'prefix' && tagHasPrefix(value, oldTag)) {
+    return `${newTag}/${value.split('/').slice(oldTag.split('/').length).join('/')}`;
   }
   return value;
 }
@@ -88,8 +85,17 @@ interface SettingsRenameUpdate {
 }
 
 export interface SelectedListState {
-  readonly getSelectedList: () => ListSelection;
-  readonly setSelectedList: (selection: ListSelection) => void;
+  applyTagRename(change: TagRenameChange): void;
+}
+export interface TagRenameViewStatePort {
+  check(change: TagRenameChange): 'ready' | 'conflict' | 'unavailable';
+  apply(change: TagRenameChange, applyLive: () => void): Promise<void>;
+}
+export class TagGroupValidationError extends Error {
+  constructor() {
+    super('Enter a valid tag without empty segments or a trailing slash.');
+    this.name = 'TagGroupValidationError';
+  }
 }
 
 interface PreparedTagRename {
@@ -214,43 +220,6 @@ function rollbackTagGroupTags(
   else group.tags = previous;
 }
 
-interface TagRenameIdentity {
-  readonly oldTag: string;
-  readonly newTag: string;
-  readonly scope: TagRenameScope;
-}
-
-function rebaseDiscoveredGroupSelection(
-  settings: CalendarSettings,
-  state: SelectedListState,
-  selected: Extract<ListSelection, { readonly type: 'group' }>,
-  rename: TagRenameIdentity,
-): void {
-  const { oldTag, newTag, scope } = rename;
-  if (scope === 'prefix' && prefixForDiscoveredGroupId(selected.groupId) === oldTag.slice(1)) {
-    state.setSelectedList({
-      type: 'group',
-      groupId: collisionFreeDiscoveredGroupId(settings, discoveredPrefixGroupId(newTag.slice(1))),
-    });
-    return;
-  }
-  if (scope === 'exact' && tagForDiscoveredGroupId(selected.groupId) === oldTag) {
-    state.setSelectedList({
-      type: 'group',
-      groupId: collisionFreeDiscoveredGroupId(settings, discoveredTagGroupId(newTag)),
-    });
-  }
-}
-
-function rebaseTagSelection(
-  state: SelectedListState,
-  selected: Extract<ListSelection, { readonly type: 'tag' }>,
-  rename: TagRenameIdentity,
-): void {
-  const tag = replaceSettingTag(selected.tag, rename.oldTag, rename.newTag, rename.scope);
-  if (tag !== selected.tag) state.setSelectedList({ type: 'tag', tag });
-}
-
 function updateManualTagGroup(
   group: TagGroup,
   replace: (value: string) => string,
@@ -369,6 +338,7 @@ export class TagManager {
     private readonly app: App,
     private readonly settings: CalendarSettings,
     private readonly saveSettings: () => Promise<void>,
+    private readonly tagViewState: TagRenameViewStatePort,
   ) {}
 
   registerSelectedListState(state: SelectedListState): () => void {
@@ -385,12 +355,10 @@ export class TagManager {
   async createManualGroup(name: string): Promise<void> {
     const label = name.trim();
     if (label.length === 0) return;
-    const slug = label
-      .toLowerCase()
-      .replace(/\s+/g, '-')
-      .replace(/[^\w/-]/g, '');
+    const slug = label.toLowerCase().replace(/\s+/g, '-');
     if (slug.length === 0) return;
-    const tag = slug.startsWith('#') ? slug : `#${slug}`;
+    const tag = normalizeTag(slug);
+    if (tag === null) throw new TagGroupValidationError();
     // Collision-proof id (length-based ids repeat after add/delete cycles).
     const base = `group-${slug}`;
     let id = base;
@@ -420,7 +388,7 @@ export class TagManager {
   }
 
   async pinTag(tag: string): Promise<void> {
-    if (this.settings.pinnedTags.includes(tag)) return;
+    if (this.settings.pinnedTags.some((candidate) => sameTag(candidate, tag))) return;
     const previous = this.settings.pinnedTags;
     const applied = [...previous, tag];
     this.settings.pinnedTags = applied;
@@ -430,10 +398,10 @@ export class TagManager {
   }
 
   async unpinTag(tag: string): Promise<void> {
-    const idx = this.settings.pinnedTags.indexOf(tag);
+    const idx = this.settings.pinnedTags.findIndex((candidate) => sameTag(candidate, tag));
     if (idx < 0) return;
     const previous = this.settings.pinnedTags;
-    const applied = previous.filter((_, index) => index !== idx);
+    const applied = previous.filter((candidate) => !sameTag(candidate, tag));
     this.settings.pinnedTags = applied;
     await this.persistMutation(() => {
       if (this.settings.pinnedTags === applied) this.settings.pinnedTags = previous;
@@ -441,11 +409,11 @@ export class TagManager {
   }
 
   async archiveTag(tag: string): Promise<void> {
-    if (this.settings.archivedTags.includes(tag)) return;
+    if (this.settings.archivedTags.some((candidate) => sameTag(candidate, tag))) return;
     const previousArchived = this.settings.archivedTags;
     const previousPinned = this.settings.pinnedTags;
     const appliedArchived = [...previousArchived, tag];
-    const appliedPinned = previousPinned.filter((candidate) => candidate !== tag);
+    const appliedPinned = previousPinned.filter((candidate) => !sameTag(candidate, tag));
     this.settings.archivedTags = appliedArchived;
     this.settings.pinnedTags = appliedPinned;
     await this.persistMutation(() => {
@@ -456,10 +424,10 @@ export class TagManager {
   }
 
   async unarchiveTag(tag: string): Promise<void> {
-    const idx = this.settings.archivedTags.indexOf(tag);
+    const idx = this.settings.archivedTags.findIndex((candidate) => sameTag(candidate, tag));
     if (idx < 0) return;
     const previous = this.settings.archivedTags;
-    const applied = previous.filter((_, index) => index !== idx);
+    const applied = previous.filter((candidate) => !sameTag(candidate, tag));
     this.settings.archivedTags = applied;
     await this.persistMutation(() => {
       if (this.settings.archivedTags === applied) this.settings.archivedTags = previous;
@@ -687,6 +655,13 @@ export class TagManager {
     if (oldTag === null || newTag === null) return { type: 'invalid', reason: 'invalid-tag' };
     if (oldTag === newTag) return { type: 'invalid', reason: 'same-tag' };
 
+    const change = { oldTag, newTag, scope };
+    const check = this.tagViewState.check(change);
+    if (check !== 'ready')
+      return {
+        type: 'invalid',
+        reason: check === 'conflict' ? 'view-state-conflict' : 'view-state-unavailable',
+      };
     const preparation = await this.prepareVaultRenames(oldTag, newTag, scope);
     const { failedFiles } = preparation;
     const changedFiles = await this.applyVaultRenames(preparation.prepared, failedFiles);
@@ -698,24 +673,17 @@ export class TagManager {
     });
     if (settingsError !== undefined) return settingsError;
 
-    this.rebaseSelectedLists(oldTag, newTag, scope);
+    try {
+      await this.tagViewState.apply(change, () => {
+        for (const state of this.selectedListStates) state.applyTagRename(change);
+      });
+    } catch (error) {
+      console.error('[abyss-tasks] Could not save renamed tag view preferences', error);
+      return { type: 'settings-error', changedFiles, failedFiles };
+    }
 
     return failedFiles.length > 0
       ? { type: 'partial', changedFiles, failedFiles }
       : { type: 'ok', changedFiles };
-  }
-
-  private rebaseSelectedLists(oldTag: string, newTag: string, scope: TagRenameScope): void {
-    const rename = { oldTag, newTag, scope };
-    for (const state of this.selectedListStates) {
-      const selected = state.getSelectedList();
-      if (typeof selected === 'string') continue;
-      if (selected.type === 'tag') {
-        rebaseTagSelection(state, selected, rename);
-      } else if (selected.type === 'group') {
-        if (this.settings.tagGroups.some((group) => group.id === selected.groupId)) continue;
-        rebaseDiscoveredGroupSelection(this.settings, state, selected, rename);
-      }
-    }
   }
 }

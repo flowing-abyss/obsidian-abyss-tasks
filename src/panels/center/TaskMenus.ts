@@ -1,4 +1,5 @@
 import { Menu, type App, type MenuItem } from 'obsidian';
+import { sameTag } from '../../markdown/tagSyntax';
 import { moment } from '../../obsidianMoment';
 import { PRIORITY_LEVELS } from '../../priority';
 import type { CalendarSettings, PropertyFilter } from '../../settings/types';
@@ -127,7 +128,7 @@ export class TaskMenus {
 
   #addTaskTagMenuItems(menu: Menu, task: TaskSnapshot): void {
     for (const pinnedTag of this.#options.settings.pinnedTags) {
-      const hasTag = this.#getTaskTags(task).has(pinnedTag);
+      const hasTag = [...this.#getTaskTags(task)].some((tag) => sameTag(tag, pinnedTag));
       menu.addItem((item) =>
         item
           .setTitle(pinnedTag)
@@ -366,7 +367,8 @@ export class TaskMenus {
   #openBulkTagPicker(selectedTasks: TaskSnapshot[]): void {
     const tagSets = selectedTasks.map((t) => this.#getTaskTags(t));
     const allTags = new Set(tagSets.flatMap((s) => [...s]));
-    const hasAll = (tag: string): boolean => tagSets.every((s) => s.has(tag));
+    const hasAll = (tag: string): boolean =>
+      tagSets.every((s) => [...s].some((candidate) => sameTag(candidate, tag)));
     const currentTags = new Set([...allTags].filter(hasAll));
     const partialTags = new Set([...allTags].filter((tag) => !hasAll(tag)));
     const catalog = this.#options.host.tagCatalog();

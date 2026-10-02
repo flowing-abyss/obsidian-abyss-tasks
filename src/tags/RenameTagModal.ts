@@ -22,16 +22,18 @@ function fileLabel(count: number): string {
 
 function presentResult(result: VaultTagRenameResult): boolean {
   if (result.type === 'invalid') {
-    new Notice(
-      result.reason === 'same-tag'
-        ? 'Choose a different tag.'
-        : 'Enter a valid tag without spaces, empty segments, or a trailing slash.',
-    );
+    const messages = {
+      'view-state-conflict': 'Choose another tag; saved view preferences would conflict.',
+      'view-state-unavailable': 'Saved view state is unavailable; tag rename was not started.',
+      'same-tag': 'Choose a different tag.',
+      'invalid-tag': 'Enter a valid tag without spaces, empty segments, or a trailing slash.',
+    };
+    new Notice(messages[result.reason]);
     return false;
   }
   if (result.type === 'settings-error') {
     new Notice(
-      `Warning: vault tags changed in ${fileLabel(result.changedFiles.length)}, but tag settings were not saved. ${fileLabel(result.failedFiles.length)} also failed.`,
+      `Warning: vault tags changed in ${fileLabel(result.changedFiles.length)}, but tag/view preferences were not fully saved. ${fileLabel(result.failedFiles.length)} also failed.`,
       8000,
     );
     return true;

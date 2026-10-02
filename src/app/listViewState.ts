@@ -1,3 +1,4 @@
+import { tagComparisonKey } from '../markdown/tagSyntax';
 import { getListViewDefaults } from '../settings/defaults';
 import type { ListViewState } from '../settings/types';
 import { ALL_STATUS_GROUPS } from '../status/statusConstants';
@@ -10,6 +11,43 @@ export function listSelectionToKey(sel: ListSelection): string {
   if (sel.type === 'tag') return `tag:${sel.tag}`;
   if (sel.type === 'project') return `project:${sel.path}`;
   return `group:${sel.groupId}`;
+}
+
+function canonicalDerivedKey(key: string, configuredGroupIds: ReadonlySet<string>): string {
+  if (key.startsWith('tag:')) return `tag:${tagComparisonKey(key.slice(4))}`;
+  const match = /^group:discovered:(tag|prefix):(.+)$/u.exec(key);
+  if (match === null || configuredGroupIds.has(key.slice(6))) return key;
+  const kind = match[1],
+    encoded = match[2];
+  if (kind === undefined || encoded === undefined) return key;
+  try {
+    return `group:discovered:${kind}:${encodeURIComponent(tagComparisonKey(decodeURIComponent(encoded)))}`;
+  } catch {
+    return key;
+  }
+}
+/** Read-time aliases preserve physical saved keys; configured IDs always retain their own key. */
+export function resolveListViewStateKey(
+  selection: ListSelection,
+  states: Record<string, ListViewState> | undefined,
+  configuredGroupIds: ReadonlySet<string>,
+): string {
+  const exact = listSelectionToKey(selection);
+  if (
+    typeof selection === 'object' &&
+    selection.type === 'group' &&
+    configuredGroupIds.has(selection.groupId)
+  )
+    return exact;
+  if (states?.[exact] !== undefined) return exact;
+  const wanted = canonicalDerivedKey(exact, configuredGroupIds);
+  const alias = Object.keys(states ?? {})
+    .filter((key) => canonicalDerivedKey(key, configuredGroupIds) === wanted)
+    .sort((a, b) => {
+      if (a === b) return 0;
+      return a < b ? -1 : 1;
+    })[0];
+  return alias ?? wanted;
 }
 
 // undefined, or all 4 groups selected, both mean "no filtering" (show everything) —

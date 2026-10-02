@@ -192,8 +192,8 @@ export default defineConfig(
         {
           patterns: [
             {
-              regex: '^(?!\\./)',
-              message: 'Task domain may import only sibling domain modules.',
+              regex: '^(?!\\./|\\.\\./\\.\\./markdown/tagSyntax$)',
+              message: 'Task domain may import sibling domain modules and shared pure tag syntax.',
             },
           ],
         },
@@ -440,6 +440,8 @@ export default defineConfig(
       'src/panels/task-list/taskListRows.ts',
       'src/panels/task-list/taskRowSelection.ts',
       'src/settings/viewStatePaths.ts',
+      'src/settings/tagViewState.ts',
+      'src/markdown/tagSyntax.ts',
     ],
     rules: { 'project-policy/ambient': ['error', 'pure'] },
   },

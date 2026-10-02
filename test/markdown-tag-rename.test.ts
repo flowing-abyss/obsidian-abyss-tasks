@@ -22,3 +22,10 @@ describe('Markdown body tags after a hash mark', () => {
     },
   );
 });
+
+it('preserves the authored nested suffix when lowercase changes matched prefix length', () => {
+  const source = '---\ntags: [i̇/Child]\n---\n#i̇/Child `#i̇/Child`\n';
+  expect(transformMarkdownTags(source, '#İ', '#NEW', 'prefix')).toBe(
+    '---\ntags: [NEW/Child]\n---\n#NEW/Child `#i̇/Child`\n',
+  );
+});

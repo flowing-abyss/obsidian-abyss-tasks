@@ -7,6 +7,7 @@ import {
   type TAbstractFile,
 } from 'obsidian';
 import { extractMarkdownBodyTags } from '../../markdown/markdownTagRename';
+import { sameTag } from '../../markdown/tagSyntax';
 import type {
   CalendarProjectionSources,
   CalendarTaskSource,
@@ -714,7 +715,9 @@ function filterTasksByTag(
   tasks: readonly TaskSnapshot[],
   tag: string | undefined,
 ): readonly TaskSnapshot[] {
-  return nonEmpty(tag) ? tasks.filter((task) => task.tags.includes(tag)) : tasks;
+  return nonEmpty(tag)
+    ? tasks.filter((task) => task.tags.some((candidate) => sameTag(candidate, tag)))
+    : tasks;
 }
 
 function filterTasksByStatus(

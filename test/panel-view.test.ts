@@ -52,7 +52,12 @@ function workspaceState(app: App): { activeLeaf: WorkspaceLeaf | null } {
 
 function makeTagManager(app: App, settings: CalendarSettings = DEFAULT_SETTINGS): TagManager {
   const save = vi.fn().mockResolvedValue(undefined);
-  return new TagManager(app, settings, save);
+  return new TagManager(app, settings, save, {
+    check: () => 'ready',
+    apply: async (_change, applyLive) => {
+      applyLive();
+    },
+  });
 }
 
 useRealMoment();
@@ -2756,10 +2761,7 @@ describe('PanelView', () => {
       };
       const openCalendar = vi.spyOn(internals.panelNavigation_abyssPrivate, 'openCalendar');
       const openList = vi.spyOn(internals.panelNavigation_abyssPrivate, 'openList');
-      const rebaseListIdentity = vi.spyOn(
-        internals.panelNavigation_abyssPrivate,
-        'rebaseListIdentity',
-      );
+      const followTagRename = vi.spyOn(internals.panelNavigation_abyssPrivate, 'followTagRename');
 
       expectDefined(
         view.contentEl.querySelector<HTMLButtonElement>('.abyss-rail [aria-label="Calendar"]'),
@@ -2772,7 +2774,15 @@ describe('PanelView', () => {
       internals.state_abyssPrivate.set('selectedList', { type: 'tag', tag: '#work' });
       await tagManager.renameTagExact('#work', '#focus');
 
-      expect(rebaseListIdentity).toHaveBeenCalledWith({ type: 'tag', tag: '#focus' });
+      expect(followTagRename).toHaveBeenCalledExactlyOnceWith({
+        oldTag: '#work',
+        newTag: '#focus',
+        scope: 'exact',
+      });
+      expect(internals.state_abyssPrivate.get('selectedList')).toEqual({
+        type: 'tag',
+        tag: '#focus',
+      });
     });
 
     it('mode change to calendar updates layout class', () => {
@@ -2829,6 +2839,7 @@ describe('PanelView', () => {
           panelNavigation_abyssPrivate: PanelNavigator;
         };
         const rebase = vi.spyOn(internals.panelNavigation_abyssPrivate, 'rebaseListIdentity');
+        const followTagRename = vi.spyOn(internals.panelNavigation_abyssPrivate, 'followTagRename');
         const followNoteDelete = vi.spyOn(
           internals.panelNavigation_abyssPrivate,
           'followNoteDelete',
@@ -2862,6 +2873,12 @@ describe('PanelView', () => {
         if (event === 'project delete') {
           expect(followNoteDelete).toHaveBeenCalledExactlyOnceWith('Project.md');
           expect(rebase).not.toHaveBeenCalled();
+        } else if (event === 'tag rename') {
+          expect(followTagRename).toHaveBeenCalledExactlyOnceWith({
+            oldTag: '#work',
+            newTag: '#focus',
+            scope: 'exact',
+          });
         } else {
           expect(rebase).toHaveBeenCalledWith(expected);
         }

@@ -459,3 +459,13 @@ describe('parseSubItems', () => {
     });
   });
 });
+
+it('extracts ordinary Unicode child tags without consuming numeric or empty segments', () => {
+  const result = parseSubItems(
+    ['- [ ] Parent', '  - [ ] Child #Работа #café/子 #123 #bad//part'],
+    0,
+    FILE,
+  );
+  expect(result.subtasks[0]?.text).toBe('Child #123 #bad//part');
+  expect(result.subtasks[0]?.rawText).toBe('  - [ ] Child #Работа #café/子 #123 #bad//part');
+});

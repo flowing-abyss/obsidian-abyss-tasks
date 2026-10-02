@@ -390,7 +390,9 @@ through shared `AppState` before running the existing reveal presentation.
 
 `TaskApplicationService` owns prefix and Inbox-tag policy for roots, subtasks, and linked subtasks.
 It validates explicit tags atomically, combines the root's initial tags with its Markdown tags, and
-evaluates each created task line independently. Tag patches use the same Inbox policy. Presentation
+evaluates each created task line independently. Tag patches use the same Inbox policy, derived case identity and removal-wins precedence while
+retaining the first authored spelling. The application reads shared identity through the inward task
+tag domain boundary. Presentation
 supplies typed fields and does not duplicate these policies. `planCreate` accepts transient Inbox
 intent, which freezes a session without the global prefix while keeping the same authored-tag and
 Inbox policy. The intent is not persisted.
@@ -737,6 +739,20 @@ Obsidian's public vault adapter. `data.json` owns static configuration; adjacent
 `state.json` owns list/section state and project Table, Kanban, Timeline, and active-view preferences.
 One composed `CalendarSettings` object remains the runtime authority. Panels do not receive separate
 settings copies.
+
+Shared [tag syntax](src/markdown/tagSyntax.ts) defines Unicode/nested non-numeric validity and
+locale-independent case comparison. Scanners retain their own context/source ranges; commands
+preserve authored tag spelling and unrelated Markdown. Derived discovered IDs use lowercase
+identity; configured group IDs remain exact. Saved view reads/stores resolve existing case aliases
+without deleting or rebinding physical keys, and configured IDs always use their exact key.
+
+Explicit tag rename stages decoded preferences and entire raw entries through the coordinator's
+[pure tag view transform](src/settings/tagViewState.ts), including inactive keys, filters and unknown
+extensions. Conflicting physical aliases or occupied destinations refuse before vault writes.
+Static tag settings retain their existing rollback boundary; a later view-write failure retains staged
+preferences for ordinary retry. Older queued saves cannot replace a newer raw staging base.
+TagManager notifies every registered PanelNavigator through a non-writing tag rebase in one state
+batch; project path rebasing and all writer authorities remain unchanged.
 
 [`ViewStatePathOwner`](src/settings/ViewStatePathOwner.ts), created by `src/main.ts` when settings
 load, keeps saved view state that names a note path in step with vault deletes and renames: Kanban

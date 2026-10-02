@@ -39,7 +39,12 @@ function makeCenter(
     ...DEFAULT_SETTINGS,
     inbox: { mode: 'tag' as const, tag: '#task/inbox', removeTagOnAssign: true },
   };
-  const tm = new TagManager(null as never, settings, save);
+  const tm = new TagManager(null as never, settings, save, {
+    check: () => 'ready',
+    apply: async (_change, applyLive) => {
+      applyLive();
+    },
+  });
   const store = makeStubStore(tasks);
   const panel = makeCenterPanelForTest(
     state,

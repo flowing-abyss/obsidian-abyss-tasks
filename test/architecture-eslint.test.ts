@@ -101,7 +101,7 @@ describe('task architecture ESLint boundaries', () => {
       {
         ruleId: 'no-restricted-imports',
         message:
-          "'obsidian' import is restricted from being used by a pattern. Task domain may import only sibling domain modules.",
+          "'obsidian' import is restricted from being used by a pattern. Task domain may import sibling domain modules and shared pure tag syntax.",
       },
     ],
     [
@@ -201,6 +201,8 @@ const pureFiles = [
   'src/panels/task-list/taskListRows.ts',
   'src/panels/task-list/taskRowSelection.ts',
   'src/settings/viewStatePaths.ts',
+  'src/settings/tagViewState.ts',
+  'src/markdown/tagSyntax.ts',
 ];
 async function check(file: string, source: string) {
   const [result] = await eslint.lintText(source, { filePath: `${ROOT}/${file}` });

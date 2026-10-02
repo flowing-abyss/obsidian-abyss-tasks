@@ -350,9 +350,8 @@ export class PanelView extends ItemView {
     );
     this.selectedListRenameUnsub_abyssPrivate =
       this.tagManager_abyssPrivate.registerSelectedListState({
-        getSelectedList: () => this.state_abyssPrivate.get('selectedList'),
-        setSelectedList: (selection) => {
-          this.panelNavigation_abyssPrivate.rebaseListIdentity(selection);
+        applyTagRename: (change) => {
+          this.panelNavigation_abyssPrivate.followTagRename(change);
         },
       });
   }

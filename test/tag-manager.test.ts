@@ -5,7 +5,12 @@ import { TagManager } from '../src/tags/TagManager';
 
 describe('TagManager task boundary', () => {
   it('owns settings and vault-wide operations, not per-task mutation methods', () => {
-    const manager = new TagManager(null as never, DEFAULT_SETTINGS, vi.fn());
+    const manager = new TagManager(null as never, DEFAULT_SETTINGS, vi.fn(), {
+      check: () => 'ready',
+      apply: async (_change, applyLive) => {
+        applyLive();
+      },
+    });
 
     for (const method of [
       'addTagToTask',

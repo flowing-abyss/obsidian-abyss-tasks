@@ -1,7 +1,9 @@
 import type { AppState, ListSelection, ViewMode } from '../app/AppState';
-import { listSelectionToKey } from '../app/listViewState';
+import { listSelectionToKey, resolveListViewStateKey } from '../app/listViewState';
+import type { TagRenameChange } from '../markdown/tagSyntax';
 import type { CalViewType } from '../panels/calendar/calendarViewType';
 import { getListViewDefaults } from '../settings/defaults';
+import { renameTagSelection } from '../settings/tagViewState';
 import type { CalendarSettings, ListViewState } from '../settings/types';
 import { renameFileFilters } from '../settings/viewStatePaths';
 
@@ -88,6 +90,24 @@ export class PanelNavigator implements PanelNavigationActions {
     });
   }
 
+  followTagRename(change: TagRenameChange): void {
+    const ids = new Set(this.settings.tagGroups.map((g) => g.id));
+    this.lastTasksList = renameTagSelection(this.lastTasksList, change, ids);
+    this.state.batch(() => {
+      const selection = renameTagSelection(this.state.get('selectedList'), change, ids);
+      this.state.set('selectedList', selection);
+      const current = this.state.get('centerListViewState');
+      const filters = current.filters.map((filter) => {
+        if (filter.type !== 'tag') return filter;
+        const renamed = renameTagSelection({ type: 'tag', tag: filter.value }, change, ids);
+        return typeof renamed === 'object' && renamed.type === 'tag'
+          ? { ...filter, value: renamed.tag }
+          : filter;
+      });
+      this.state.set('centerListViewState', { ...this.listState(selection), filters });
+    });
+  }
+
   /** Leaves a deleted project list for Today without storing its state under the deleted key. */
   followNoteDelete(path: string): void {
     if (!this.isSelectedProject(path)) return;
@@ -147,7 +167,11 @@ export class PanelNavigator implements PanelNavigationActions {
   }
 
   private storeListState(selection: ListSelection): void {
-    const key = listSelectionToKey(selection);
+    const key = resolveListViewStateKey(
+      selection,
+      this.settings.listViewStates,
+      new Set(this.settings.tagGroups.map((g) => g.id)),
+    );
     const current = this.state.get('centerListViewState');
     this.listViewStates()[key] = current;
   }
@@ -166,7 +190,11 @@ export class PanelNavigator implements PanelNavigationActions {
   }
 
   private listState(selection: ListSelection): ListViewState {
-    const key = listSelectionToKey(selection);
+    const key = resolveListViewStateKey(
+      selection,
+      this.settings.listViewStates,
+      new Set(this.settings.tagGroups.map((g) => g.id)),
+    );
     const saved = this.settings.listViewStates?.[key];
     if (saved != null) return saved;
     const defaults = getListViewDefaults(key);

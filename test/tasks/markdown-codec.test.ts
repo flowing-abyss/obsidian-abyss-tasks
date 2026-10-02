@@ -2362,3 +2362,17 @@ describe('title link edits and the panel numbering', () => {
     expect(tally.rewrites).toBeGreaterThanOrEqual(2_900);
   });
 });
+
+describe('ordinary tag validity at the codec write boundary', () => {
+  it.each(['#123', '#bad//part', '#bad/'])('rejects %s without changing authored bytes', (tag) => {
+    const source = '- [ ] Task #keep ^block';
+    expect(
+      applyTaskCommand(codec, source, {
+        type: 'patch',
+        target: { type: 'task', ref },
+        patch: { tags: { add: [tag] } },
+      }),
+    ).toMatchObject({ type: 'invalid' });
+    expect(parse(source).original).toBe(source);
+  });
+});

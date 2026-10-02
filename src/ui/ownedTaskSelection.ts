@@ -1,3 +1,4 @@
+import { sameTag } from '../markdown/tagSyntax';
 import {
   dependencySubtaskChild,
   sameTaskNodeRef,
@@ -90,9 +91,16 @@ function matchesTagPatch(
 ): boolean {
   const normalize = (tag: string): string => (tag.startsWith('#') ? tag : `#${tag}`);
   const remove = new Set((tags?.remove ?? []).map(normalize));
-  const remaining = before.tags.filter((tag) => !remove.has(tag));
-  const add = [...new Set((tags?.add ?? []).map(normalize))];
-  const expected = [...remaining, ...add.filter((tag) => !remaining.includes(tag))];
+  const remaining = before.tags.filter(
+    (tag) => ![...remove].some((candidate) => sameTag(candidate, tag)),
+  );
+  const add = (tags?.add ?? [])
+    .map(normalize)
+    .filter((tag, index, all) => all.findIndex((candidate) => sameTag(candidate, tag)) === index);
+  const expected = [
+    ...remaining,
+    ...add.filter((tag) => !remaining.some((candidate) => sameTag(candidate, tag))),
+  ];
   return (
     expected.length === after.tags.length &&
     expected.every((tag, index) => tag === after.tags[index])

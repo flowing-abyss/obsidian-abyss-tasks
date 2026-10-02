@@ -175,7 +175,22 @@ export default class TaskCalendarPlugin extends Plugin {
       this.tasks,
       this.projectProperties,
     );
-    this.tagManager = new TagManager(this.app, this.settings, () => this.saveSettings());
+    this.initializeTagManager();
+  }
+
+  private initializeTagManager(): void {
+    this.tagManager = new TagManager(this.app, this.settings, () => this.saveSettings(), {
+      check: (change) => this.settingsPersistence.checkTagRename(this.settings, change),
+      apply: async (change, applyLive) => {
+        this.viewStatePaths.cancelPendingSave();
+        const pending = this.settingsPersistence.renameTagViewState(this.settings, change);
+        try {
+          applyLive();
+        } finally {
+          await pending;
+        }
+      },
+    });
   }
 
   private registerPanel(commentTimeContext: CommentTimeContextProvider): void {

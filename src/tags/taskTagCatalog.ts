@@ -1,4 +1,5 @@
 import { extractMarkdownBodyTags } from '../markdown/markdownTagRename';
+import { tagComparisonKey } from '../markdown/tagSyntax';
 import type { CalendarSettings, TagGroup } from '../settings/types';
 import { normalizeTaskTagInput, type TaskNodeSnapshot } from '../tasks';
 
@@ -6,8 +7,15 @@ function addInput(target: string[], seen: Set<string>, input: string): void {
   const tags = normalizeTaskTagInput(input);
   if (tags === undefined) return;
   for (const tag of tags) {
-    if (seen.has(tag)) continue;
-    seen.add(tag);
+    if (seen.has(tagComparisonKey(tag))) {
+      const index = target.findIndex(
+        (existing) => tagComparisonKey(existing) === tagComparisonKey(tag),
+      );
+      const current = target[index];
+      if (current !== undefined && tag < current) target[index] = tag;
+      continue;
+    }
+    seen.add(tagComparisonKey(tag));
     target.push(tag);
   }
 }

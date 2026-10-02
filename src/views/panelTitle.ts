@@ -1,4 +1,5 @@
 import type { ListSelection, ViewMode } from '../app/AppState';
+import { resolveListViewStateKey } from '../app/listViewState';
 import { noteNameOfPath } from '../markdown/noteName';
 
 /** The static tab title on desktop; the phone view header shows the panel title instead. */
@@ -7,6 +8,7 @@ export const PANEL_DISPLAY_TEXT = 'Abyss Tasks';
 export interface PanelTitleGroup {
   readonly id: string;
   readonly name: string;
+  readonly origin?: 'configured' | 'discovered';
 }
 
 /**
@@ -35,7 +37,7 @@ export function listSelectionTitle(
     case 'project':
       return noteNameOfPath(selection.path);
     case 'group':
-      return groups.find((group) => group.id === selection.groupId)?.name ?? 'Group';
+      return groupTitle(selection.groupId, groups);
     default:
       return 'Tasks';
   }
@@ -56,4 +58,25 @@ export function panelTitle(mode: ViewMode, listTitle: () => string): string {
     case 'search':
       return 'Search';
   }
+}
+
+function groupTitle(groupId: string, groups: readonly PanelTitleGroup[]): string {
+  const configuredIds = new Set(
+    groups.filter((group) => group.origin !== 'discovered').map((group) => group.id),
+  );
+  const key = resolveListViewStateKey({ type: 'group', groupId }, undefined, configuredIds);
+  return (
+    (
+      groups.find((group) => group.id === groupId) ??
+      groups.find(
+        (group) =>
+          group.origin === 'discovered' &&
+          resolveListViewStateKey(
+            { type: 'group', groupId: group.id },
+            undefined,
+            configuredIds,
+          ) === key,
+      )
+    )?.name ?? 'Group'
+  );
 }

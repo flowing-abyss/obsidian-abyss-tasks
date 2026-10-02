@@ -1738,7 +1738,7 @@ describe('TaskApplicationService lifecycle settings', () => {
     );
   });
 
-  it('normalizes supported initial tags through the real codec and rejects unsupported grammar', async () => {
+  it('normalizes ASCII and Unicode initial tags through the real codec and refuses empty segments', async () => {
     const harness = await makeHarness('in-memory', '');
     const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
     const api = new TaskApplicationService(
@@ -1769,14 +1769,35 @@ describe('TaskApplicationService lifecycle settings', () => {
       api.execute({
         type: 'create',
         destination: { type: 'explicit', destination: appendDestination },
-        markdownBody: 'Unsupported',
+        markdownBody: 'Unicode',
         initial: { tags: { add: ['#работа'] } },
+      }),
+    ).resolves.toMatchObject({
+      type: 'ok',
+      outcome: {
+        type: 'task',
+        task: {
+          title: 'Unicode',
+          tags: ['#работа'],
+          ref: { filePath: path, line: 1 },
+          source: { originalMarkdown: '- [ ] Unicode #работа' },
+        },
+      },
+    });
+    expect(await harness.read()).toBe('- [ ] Supported #work\n- [ ] Unicode #работа');
+
+    await expect(
+      api.execute({
+        type: 'create',
+        destination: { type: 'explicit', destination: appendDestination },
+        markdownBody: 'Unsupported',
+        initial: { tags: { add: ['#bad//child'] } },
       }),
     ).resolves.toEqual({
       type: 'invalid',
       issues: [{ code: 'invalid-target', field: 'tags' }],
     });
-    expect(await harness.read()).toBe('- [ ] Supported #work');
+    expect(await harness.read()).toBe('- [ ] Supported #work\n- [ ] Unicode #работа');
   });
 });
 

@@ -193,7 +193,12 @@ function makeTab(
   };
   if (opts.tasks !== undefined) {
     plugin.queries = queryApiForTasks(() => opts.tasks ?? []);
-    plugin.tagManager = new TagManager(app, settings, saveSettings);
+    plugin.tagManager = new TagManager(app, settings, saveSettings, {
+      check: () => 'ready',
+      apply: async (_change, applyLive) => {
+        applyLive();
+      },
+    });
   }
   const captured: CapturedComp[] = [];
   const restore = patchSetting(captured);

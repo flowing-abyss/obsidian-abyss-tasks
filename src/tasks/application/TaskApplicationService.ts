@@ -21,7 +21,12 @@ import {
   taskMutationNodeRef,
 } from '../domain/taskCommandTargets';
 import { reconcileTaskNodeRef, type TaskResolution } from '../domain/taskReconciliation';
-import { applyTaskCreationTagPolicy, normalizeTaskTagInput } from '../domain/taskTags';
+import {
+  applyTaskCreationTagPolicy,
+  normalizeTaskTagInput,
+  sameTag,
+  tagComparisonKey,
+} from '../domain/taskTags';
 import type {
   LocalDate,
   SubtaskSnapshot,
@@ -81,7 +86,13 @@ import {
 import { TimeTrackingService } from './TimeTrackingService';
 
 function uniqueInOrder(values: readonly string[]): string[] {
-  return [...new Set(values)];
+  const seen = new Set<string>();
+  return values.filter((tag) => {
+    const key = tagComparisonKey(tag);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function normalizeTagValues(values: readonly string[]): readonly string[] | undefined {
@@ -108,8 +119,8 @@ function automaticInboxRemoval(
 ): readonly string[] {
   if (!additionsProvided || !settings.inbox.removeTagOnAssign) return [];
   const inboxTag = configuredInboxTag(settings);
-  if (inboxTag === undefined || explicitRemovals.includes(inboxTag)) return [];
-  return additions.some((tag) => tag !== inboxTag) ? [inboxTag] : [];
+  if (inboxTag === undefined || explicitRemovals.some((tag) => sameTag(tag, inboxTag))) return [];
+  return additions.some((tag) => !sameTag(tag, inboxTag)) ? [inboxTag] : [];
 }
 
 function normalizeTagChange(
@@ -123,9 +134,11 @@ function normalizeTagChange(
     ...explicitRemove,
     ...automaticInboxRemoval(tags.add !== undefined, add, explicitRemove, settings),
   ]);
-  const removed = new Set(remove);
+  const removed = new Set(remove.map(tagComparisonKey));
   return {
-    ...(tags.add !== undefined && { add: add.filter((tag) => !removed.has(tag)) }),
+    ...(tags.add !== undefined && {
+      add: add.filter((tag) => !removed.has(tagComparisonKey(tag))),
+    }),
     ...((tags.remove !== undefined || remove.length > 0) && { remove }),
   };
 }
