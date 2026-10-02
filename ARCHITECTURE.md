@@ -574,6 +574,11 @@ Project gesture and creation timers use the owning window and release pending
 callbacks on disposal. A document without a window releases short gesture guards synchronously and does not
 retain creation requests or arm Kanban dragging. A dashboard temporarily detaches the overview and
 invalidates Timeline interaction authority; reattachment preserves the session but cannot revive an old queued gesture.
+Table and Kanban keep one pending connected-active viewport snapshot through detached updates.
+Table feeds its saved top into the first window calculation; Kanban restores board horizontal and
+status-column vertical offsets after reconciliation. An explicit dashboard-owned Back restores only
+the exact retained mounted cell in the same mode and logical focus, after offsets settle. Outside
+input focus wins; disposal clears pending offsets and focus identity.
 
 Table owns a full expanded logical row/cell projection for selection, keyboard navigation, and
 clipboard commands, independently of mounted DOM. The pure
@@ -581,6 +586,14 @@ clipboard commands, independently of mounted DOM. The pure
 cells with their selection identities, row and column orders, and a lookup index. Kanban and
 Timeline build their lists with the same module in each render, from the model and inputs they
 render with, so selection, range selection, paste, and Delete read one list in every view.
+Group Cmd+A retains first/last endpoints but selects only the shared group key, including matching
+Area occurrences across status columns. Ordinary selection clears that membership mode; sparse
+arrow navigation skips missing cells along the requested axis. Keydown from an already selected
+cell preserves the group for Copy/Delete/Paste, and Paste validates every selected logical field
+before rectangle mapping or batch submission. Primary Shift-mousedown on non-action cells prevents
+browser focus from rebasing the anchor before the existing click handler.
+Creation alone may scroll a fitting entire Kanban card into its board/body viewport below the
+column header; oversized cards and ordinary field navigation keep the existing cell geometry.
 [Parity tests](test/project-kanban-view.test.ts) compare each list with the cells the view mounts.
 The Table's local `projectTableViewport` owns measured and estimated row offsets, bounded windows,
 and spacer geometry. Scroll reconciliation reuses the

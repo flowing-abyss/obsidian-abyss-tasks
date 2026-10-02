@@ -265,7 +265,7 @@ const cases: readonly SurfaceCase[] = [
       header: tableHeaderCell(surface),
     }),
     editorFrame: (surface) => ({ boundary: surface.scroll, stickyHeader: tableHead(surface) }),
-    restoresScrollAfterHide: false,
+    restoresScrollAfterHide: true,
     listener: (surface) => [surface.scroll, 'scroll'],
     observesScroll: true,
     windowed: true,
@@ -293,7 +293,7 @@ const cases: readonly SurfaceCase[] = [
       boundary: surface.scroll,
       stickyHeader: kanbanColumnHeader(cell),
     }),
-    restoresScrollAfterHide: false,
+    restoresScrollAfterHide: true,
     listener: (surface) => [surface.scroll.ownerDocument, 'focusin'],
     observesScroll: false,
     windowed: false,
@@ -408,7 +408,7 @@ describe.each(cases)('project overview surface contract: $mode', (testCase) => {
     expect(surface.scroll.closest('[hidden]')).toBeNull();
   });
 
-  it('restores a scroll captured before hiding only where the view keeps it', () => {
+  it('retains a captured scroll through detached updates until connected render', () => {
     const { view, projects: listed, surface } = mountSurface(testCase);
     surface.scroll.scrollLeft = 180;
     surface.scroll.scrollTop = 44;
@@ -416,10 +416,19 @@ describe.each(cases)('project overview surface contract: $mode', (testCase) => {
     surface.scroll.scrollLeft = 0;
     surface.scroll.scrollTop = 0;
 
+    // Table/Kanban keep their pending snapshot while detached; Timeline's existing contract stays unchanged.
+    if (testCase.mode !== 'Timeline') {
+      const parent = expectDefined(surface.scroll.parentElement);
+      surface.scroll.remove();
+      view.update(listed);
+      surface.scroll.scrollLeft = 0;
+      surface.scroll.scrollTop = 0;
+      parent.append(surface.scroll);
+    }
     view.update(listed);
 
     expect([surface.scroll.scrollLeft, surface.scroll.scrollTop]).toEqual(
-      testCase.restoresScrollAfterHide ? [180, 44] : [0, 0],
+      testCase.restoresScrollAfterHide ? [180, testCase.mode === 'Kanban' ? 0 : 44] : [0, 0],
     );
   });
 

@@ -70,10 +70,6 @@ function atPosition(
   return index.cellByPosition.get(positionKey(position.row, position.column));
 }
 
-function moveAxis(position: number, direction: -1 | 0 | 1, count: number): number {
-  return Math.max(0, Math.min(count - 1, position + direction));
-}
-
 function axisDirection(
   direction: ProjectTableSelectionDirection,
   negative: ProjectTableSelectionDirection,
@@ -85,6 +81,7 @@ function axisDirection(
 }
 
 export class ProjectTableSelection {
+  #groupKey: string | undefined;
   #anchor: ProjectTableSelectableCell | undefined;
   #focus: ProjectTableSelectableCell | undefined;
 
@@ -102,6 +99,7 @@ export class ProjectTableSelection {
     extend: boolean,
   ): void {
     if (!cells.some((candidate) => sameCell(candidate, cell))) return;
+    this.#groupKey = undefined;
     if (!extend || this.#anchor === undefined) this.#anchor = cell;
     this.#focus = cell;
   }
@@ -120,13 +118,17 @@ export class ProjectTableSelection {
     const columnCount = index.columns.length;
     const rowDirection = axisDirection(direction, 'up', 'down');
     const columnDirection = axisDirection(direction, 'left', 'right');
-    const next = {
-      row: moveAxis(position.row, rowDirection, rowCount),
-      column: moveAxis(position.column, columnDirection, columnCount),
-    };
-    const target = atPosition(next, index);
-    if (target !== undefined) this.select(target, cells, extend);
-    return target;
+    this.#groupKey = undefined;
+    let next = { row: position.row + rowDirection, column: position.column + columnDirection };
+    while (next.row >= 0 && next.row < rowCount && next.column >= 0 && next.column < columnCount) {
+      const target = atPosition(next, index);
+      if (target !== undefined) {
+        this.select(target, cells, extend);
+        return target;
+      }
+      next = { row: next.row + rowDirection, column: next.column + columnDirection };
+    }
+    return undefined;
   }
 
   tab(
@@ -153,6 +155,7 @@ export class ProjectTableSelection {
     const first = groupCells[0];
     const last = groupCells[groupCells.length - 1];
     if (first === undefined || last === undefined) return;
+    this.#groupKey = focus.groupKey;
     this.#anchor = first;
     this.#focus = last;
   }
@@ -161,6 +164,8 @@ export class ProjectTableSelection {
     const anchor = this.#anchor;
     const focus = this.#focus;
     if (anchor === undefined || focus === undefined) return [];
+    if (this.#groupKey !== undefined)
+      return cells.filter((cell) => cell.groupKey === this.#groupKey);
     const index = projectionIndex(cells);
     const from = positionOf(anchor, index);
     const to = positionOf(focus, index);
@@ -187,14 +192,23 @@ export class ProjectTableSelection {
     if (
       anchor === undefined ||
       focus === undefined ||
-      !cells.some((cell) => sameCell(cell, anchor)) ||
-      !cells.some((cell) => sameCell(cell, focus))
+      !cells.some(
+        (cell) =>
+          sameCell(cell, anchor) &&
+          (this.#groupKey === undefined || cell.groupKey === this.#groupKey),
+      ) ||
+      !cells.some(
+        (cell) =>
+          sameCell(cell, focus) &&
+          (this.#groupKey === undefined || cell.groupKey === this.#groupKey),
+      )
     ) {
       this.clear();
     }
   }
 
   clear(): void {
+    this.#groupKey = undefined;
     this.#anchor = undefined;
     this.#focus = undefined;
   }

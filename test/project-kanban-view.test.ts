@@ -5202,71 +5202,101 @@ describe('project overview cell lists', () => {
     });
   });
 
-  it('selects a Kanban creation in its collapsed group over the earlier selection', async () => {
-    let finishCreate: ((path: string) => void) | undefined;
-    const createProject = vi.fn(
-      () =>
-        new Promise<string>((resolve) => {
-          finishCreate = resolve;
-        }),
-    );
-    const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
-    const existing = project();
-    const neighbour = project({
-      path: 'Projects/B.md',
-      name: 'B project',
-      frontmatter: { start: '2026-10-01', end: '2026-10-15' },
-    });
-    const created = project({
-      path: 'Projects/Kanban creation.md',
-      name: 'Kanban creation',
-      frontmatter: { start: '2026-10-02', end: '2026-10-15' },
-    });
-    const { host, view, settings } = mountView([existing, neighbour], { createProject });
-    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
-    settings.projects.kanban.groupBy = 'end';
-    clickView(host, 'Kanban');
-    const start = expectDefined(
-      host.querySelector<HTMLElement>(
-        '.abyss-project-kanban-card[data-project-path="Projects/A.md"] [data-column-id="start"]',
-      ),
-    );
-    start.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    const header = expectDefined(
-      host.querySelector<HTMLButtonElement>(
-        '[data-group-key="value:2026-10-15"] .abyss-project-kanban-group-header',
-      ),
-    );
-    header.click();
-    await flushMicrotasks();
-    expect(header.getAttribute('aria-expanded')).toBe('false');
-    expect(view.selectedProjectPath()).toBe('Projects/A.md');
+  it.each([false, true])(
+    'selects a Kanban creation and reveals a fitting card (oversized: %s)',
+    async (oversized) => {
+      let finishCreate: ((path: string) => void) | undefined;
+      const createProject = vi.fn(
+        () =>
+          new Promise<string>((resolve) => {
+            finishCreate = resolve;
+          }),
+      );
+      const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+      const existing = project();
+      const neighbour = project({
+        path: 'Projects/B.md',
+        name: 'B project',
+        frontmatter: { start: '2026-10-01', end: '2026-10-15' },
+      });
+      const created = project({
+        path: 'Projects/Kanban creation.md',
+        name: 'Kanban creation',
+        frontmatter: { start: '2026-10-02', end: '2026-10-15' },
+      });
+      const { host, view, settings } = mountView([existing, neighbour], { createProject });
+      settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+      settings.projects.kanban.groupBy = 'end';
+      clickView(host, 'Kanban');
+      const start = expectDefined(
+        host.querySelector<HTMLElement>(
+          '.abyss-project-kanban-card[data-project-path="Projects/A.md"] [data-column-id="start"]',
+        ),
+      );
+      start.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      const header = expectDefined(
+        host.querySelector<HTMLButtonElement>(
+          '[data-group-key="value:2026-10-15"] .abyss-project-kanban-group-header',
+        ),
+      );
+      header.click();
+      await flushMicrotasks();
+      expect(header.getAttribute('aria-expanded')).toBe('false');
+      expect(view.selectedProjectPath()).toBe('Projects/A.md');
 
-    expectDefined(
-      host.querySelector<HTMLButtonElement>(
-        `.abyss-project-kanban-column[data-status-key="id:${status.id}"] .abyss-project-kanban-column-create`,
-      ),
-    ).click();
-    const composer = expectDefined(
-      host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
-    );
-    composer.value = created.name;
-    composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    view.update([existing, neighbour, created]);
-    finishCreate?.(created.path);
-    await flushMicrotasks();
+      expectDefined(
+        host.querySelector<HTMLButtonElement>(
+          `.abyss-project-kanban-column[data-status-key="id:${status.id}"] .abyss-project-kanban-column-create`,
+        ),
+      ).click();
+      const body = expectDefined(
+        host.querySelector<HTMLElement>('.abyss-project-kanban-column-body'),
+      );
+      const board = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-scroll'));
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        if (this === body) return rectangle(0, 40, 300, 200);
+        if (this === board) return rectangle(0, 0, 300, 200);
+        if (this.matches('.abyss-project-kanban-column-header')) return rectangle(0, 0, 300, 40);
+        if (this.matches('[data-project-path="Projects/Kanban creation.md"]'))
+          return rectangle(10, 180 - body.scrollTop, 250, (oversized ? 400 : 227) - body.scrollTop);
+        if (
+          this.closest('[data-project-path="Projects/Kanban creation.md"]') !== null &&
+          this.dataset['columnId'] === 'name'
+        )
+          return rectangle(20, 181 - body.scrollTop, 240, 198 - body.scrollTop);
+        return rectangle(0, 40, 100, 70);
+      });
+      const composer = expectDefined(
+        host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+      );
+      composer.value = created.name;
+      composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      view.update([existing, neighbour, created]);
+      finishCreate?.(created.path);
+      await flushMicrotasks();
 
-    expect(header.getAttribute('aria-expanded')).toBe('true');
-    expect(view.selectedProjectPath()).toBe(created.path);
-    const card = expectDefined(
-      host.querySelector<HTMLElement>(
-        '.abyss-project-kanban-card[data-project-path="Projects/Kanban creation.md"]',
-      ),
-    );
-    expect(card.classList).toContain('is-just-created');
-    expect(card.querySelector('[data-column-id="name"]')?.classList).toContain('is-selected');
-    expect(start.classList).not.toContain('is-selected');
-  });
+      expect(header.getAttribute('aria-expanded')).toBe('true');
+      expect(view.selectedProjectPath()).toBe(created.path);
+      const card = expectDefined(
+        host.querySelector<HTMLElement>(
+          '.abyss-project-kanban-card[data-project-path="Projects/Kanban creation.md"]',
+        ),
+      );
+      expect(card.classList).toContain('is-just-created');
+      expect(card.querySelector('[data-column-id="name"]')?.classList).toContain('is-selected');
+      expect(start.classList).not.toContain('is-selected');
+      expect(body.scrollTop).toBe(oversized ? 0 : 27);
+      expect(createProject).toHaveBeenCalledOnce();
+      const name = expectDefined(card.querySelector<HTMLElement>('[data-column-id="name"]'));
+      expect(activeDocument.activeElement).toBe(name);
+      // Ordinary field navigation still scrolls the initiating cell, not the whole occurrence.
+      body.scrollTop = 0;
+      name.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      expect(body.scrollTop).toBe(0);
+    },
+  );
 
   it('keeps a card selected when a Delete moves it to another group', async () => {
     const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
