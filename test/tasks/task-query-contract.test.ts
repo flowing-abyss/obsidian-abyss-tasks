@@ -83,7 +83,8 @@ describe('TaskQueryApi contract', () => {
       ['Work/2026-07-01.md', 2, 'due wins'],
       ['Workish.md', 0, 'start'],
       ['work/lower.md', 0, 'lower'],
-    ].sort(byLocation);
+    ];
+    expectedTasks.sort(byLocation);
     for (const tasks of [upper, lower]) {
       expect(
         tasks
