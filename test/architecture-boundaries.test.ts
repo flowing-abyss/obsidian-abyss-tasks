@@ -158,7 +158,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/right/InspectorPlanningSurfaces.ts',
     'src/panels/right/inspectorTypes.ts',
   ],
-  TaskStatusType: ['src/settings/SettingsTab.ts'],
+  TaskStatusType: ['src/settings/sections/TaskStatusSettings.ts'],
   TaskTextTarget: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorSections.ts'],
   TimeEntryRef: ['src/ui/timeTracking/trackingActions.ts'],
   TimeEntryRemovalRecovery: ['src/ui/timeTracking/trackingActions.ts'],
@@ -173,7 +173,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/ui/timeTracking/TrackingTicker.ts',
     'src/ui/timeTracking/RailTrackingWidget.ts',
   ],
-  TrackedTotal: ['src/ui/timeTracking/TimeBadge.ts', 'src/panels/CenterPanel.ts'],
+  TrackedTotal: ['src/ui/timeTracking/TimeBadge.ts', 'src/panels/center/TaskCardRenderer.ts'],
   daysBetweenLocalDates: [
     'src/panels/calendar/calendarCommands.ts',
     'src/views/timegrid/dragGeometry.ts',
@@ -227,10 +227,10 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/right/InspectorPlanningSurfaces.ts',
     'src/panels/center/TaskMenus.ts',
   ],
-  subtreeTotal: ['src/ui/timeTracking/TimeBadge.ts', 'src/panels/CenterPanel.ts'],
+  subtreeTotal: ['src/ui/timeTracking/TimeBadge.ts', 'src/panels/center/TaskCardRenderer.ts'],
   taskReconciliationKey: ['src/ui/taskPresentationIdentity.ts'],
   timeEntryRef: ['src/ui/timeTracking/TimeEntriesPopover.ts'],
-  totalMs: ['src/ui/timeTracking/TimeBadge.ts', 'src/panels/CenterPanel.ts'],
+  totalMs: ['src/ui/timeTracking/TimeBadge.ts', 'src/panels/center/TaskCardRenderer.ts'],
 };
 
 const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string[]> = {
@@ -241,13 +241,18 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
   'TaskApplicationApi.planArchive': 'src/panels/center/TaskCommands.ts',
   'TaskApplicationApi.queries': 'src/ui/TaskMoveRecoveryModal.ts',
   'TaskQueryApi.forCalendarProjection': 'src/panels/calendar/calendarContent.ts',
-  'TaskQueryApi.list': ['src/panels/CenterPanel.ts', 'src/panels/calendar/calendarCommands.ts'],
+  'TaskQueryApi.list': [
+    'src/panels/CenterPanel.ts',
+    'src/panels/calendar/calendarCommands.ts',
+    'src/panels/center/TaskSearch.ts',
+  ],
   'TaskQueryApi.resolve': 'src/views/PanelView.ts',
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',
   'TaskQueryApi.subscribeReconciled': 'src/projects/ProjectStore.ts',
   'TaskDependencyQueryApi.listNodes': [
     'src/panels/right/InspectorDependencies.ts',
     'src/panels/right/InspectorPlanningSurfaces.ts',
+    'src/panels/left/TagNavigation.ts',
   ],
   'TaskDependencyQueryApi.dependencies': [
     'src/panels/RightPanel.ts',
@@ -290,6 +295,7 @@ function calendarModules(): string[] {
     ...CALENDAR_HOST_MODULES,
     ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/panels/calendar`)).map(repoPath),
     ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/panels/center`)).map(repoPath),
+    ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/panels/left`)).map(repoPath),
     ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/panels/right`)).map(repoPath),
     ...sourceFiles(ts.sys.resolvePath(`${SRC_ROOT}/views`)).map(repoPath),
   ];

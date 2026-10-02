@@ -322,6 +322,7 @@ export default defineConfig(
       'src/ui/**/*.ts',
       'src/views/**/*.ts',
       'src/settings/SettingsTab.ts',
+      'src/settings/sections/**/*.ts',
     ],
     rules: {
       'no-restricted-imports': [
@@ -410,9 +411,12 @@ export default defineConfig(
       'src/panels/projects/**/*.ts',
       'src/panels/calendar/**/*.ts',
       'src/panels/center/**/*.ts',
+      'src/panels/left/**/*.ts',
       'src/panels/right/**/*.ts',
       'src/panels/task-list/**/*.ts',
       'src/ui/projectActions.ts',
+      'src/views/CompactPaneAccess.ts',
+      'src/settings/sections/**/*.ts',
     ],
     rules: { 'project-policy/ambient': ['error', 'owner'] },
   },

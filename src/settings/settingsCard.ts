@@ -1,5 +1,18 @@
 import { setIcon } from 'obsidian';
 
+export interface CardListOptions<T> {
+  listKey: string;
+  id: (item: T) => string;
+  title: (item: T) => string;
+  accent?: (item: T) => string | undefined;
+  badge?: (item: T) => string | undefined;
+  preview?: (headerEl: HTMLElement, item: T) => void;
+  body: (bodyEl: HTMLElement, item: T) => void;
+  onReorder: (draggedId: string, targetId: string) => boolean;
+  groupKey?: string;
+  onCrossGroupDrop?: (draggedId: string, targetGroupKey: string) => void;
+}
+
 interface CardPayload {
   id: string;
   listKey: string;

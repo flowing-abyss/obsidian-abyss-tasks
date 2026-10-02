@@ -229,15 +229,8 @@ describe('task presentation identity', () => {
     });
     const listHost = freshContainer();
     panel.mount(listHost);
-    const listCards = freshContainer();
     const projectHost = freshContainer();
 
-    (
-      panel as unknown as {
-        renderTaskCard_abyssPrivate(host: HTMLElement, taskSnapshot: TaskSnapshot): void;
-        renderProjectTasks(host: HTMLElement, path: string): void;
-      }
-    ).renderTaskCard_abyssPrivate(listCards, snapshot);
     (
       panel as unknown as {
         renderProjectTasks_abyssPrivate(host: HTMLElement, path: string): void;
@@ -245,7 +238,7 @@ describe('task presentation identity', () => {
     ).renderProjectTasks_abyssPrivate(projectHost, 'capture.md');
 
     expect(
-      listCards.querySelector<HTMLElement>('.abyss-task-card')?.dataset['abyssTaskRefKey'],
+      listHost.querySelector<HTMLElement>('.abyss-task-card')?.dataset['abyssTaskRefKey'],
     ).toBe(taskPresentationKey(snapshot.ref));
     expect(
       projectHost.querySelector<HTMLElement>('.abyss-task-card')?.dataset['abyssTaskRefKey'],

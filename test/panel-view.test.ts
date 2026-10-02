@@ -27,6 +27,7 @@ import type { QuickCaptureCoordinator } from '../src/ui/taskCapture/QuickCapture
 import { requestTaskCompletion } from '../src/ui/taskCommandResult';
 import { renderedTaskNodeElements, taskPresentationKey } from '../src/ui/taskPresentationIdentity';
 import { taskNodeLine, type TaskSelectionNode } from '../src/ui/taskSelection';
+import type { CompactPaneAccess } from '../src/views/CompactPaneAccess';
 import { MonthGridView } from '../src/views/MonthGridView';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
 import type { PanelNavigator } from '../src/views/panelNavigation';
@@ -1739,7 +1740,7 @@ describe('PanelView', () => {
       const internals = view as unknown as {
         quickCapture_abyssPrivate: QuickCaptureCoordinator;
         creationPresentation_abyssPrivate: CreationPresentationController;
-        pendingCompactPane_abyssPrivate: unknown;
+        compactPaneAccess_abyssPrivate: CompactPaneAccess;
       };
       const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
       const right = expectDefined(layout.querySelector<HTMLElement>('.abyss-right'));
@@ -1756,6 +1757,7 @@ describe('PanelView', () => {
         }
       ).options;
       options.resolveTarget = async () => panelCaptureTarget(execute);
+      const takePending = vi.spyOn(internals.compactPaneAccess_abyssPrivate, 'takePending');
       const failure = new Error('presentation failed');
       vi.spyOn(internals.creationPresentation_abyssPrivate, 'present').mockImplementation(() => {
         throw failure;
@@ -1772,12 +1774,15 @@ describe('PanelView', () => {
         new Event('pointerdown', { bubbles: true, cancelable: true, composed: true }),
       );
       details.click();
-      expect(internals.pendingCompactPane_abyssPrivate).toBeDefined();
+      expect(takePending).not.toHaveBeenCalled();
+      expect(right.classList.contains('is-compact-open')).toBe(false);
 
       pending.resolve(successfulCaptureResult());
       await flushMicrotasks(0);
 
-      expect(internals.pendingCompactPane_abyssPrivate).toBeUndefined();
+      expect(takePending).toHaveBeenCalledOnce();
+      expect(takePending.mock.results[0]?.value).toEqual({ pane: 'right', moveFocus: true });
+      expect(internals.compactPaneAccess_abyssPrivate.takePending()).toBeUndefined();
       expect(internals.quickCapture_abyssPrivate.phase).toBe('closed');
       expect(right.classList.contains('is-compact-open')).toBe(true);
       expect(log).toHaveBeenCalledExactlyOnceWith(

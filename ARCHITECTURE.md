@@ -107,10 +107,28 @@ Selection, render, refresh and destroy call the owner's narrow operations at the
 Panels share transient navigation through
 `AppState`. `set('taskStack')` begins a selection and `updateInspectorSelection` refreshes one;
 `AppState` tells its selection-begun listeners after a begun selection is delivered. At a compact
-width in Tasks mode, `PanelView` opens the details pane when a selection begins, when the rail's
+width in Tasks mode, `PanelView` delegates to its one `CompactPaneAccess` to open the details pane when a selection begins, when the rail's
 time tracking opens a tracked task (a dependency hop, which begins no selection), when Tasks mode
 returns with a task selected, and when the panel turns compact with a task selected, besides the
 pane's own button. A refresh of the selection never opens it.
+`CompactPaneAccess` owns the complete compact DOM/focus state, width/header observers,
+58rem/38rem thresholds, owner-document gestures, overlay offset and pending-pane intent.
+Its readonly options read the current shell mode, selection, capture and interaction capability
+at invocation. PanelView retains subscriptions and capture/result authority: pending intent is
+taken before synchronous creation presentation and scheduled in finally only for a successful
+creation description. Reset removes listeners/observers before closing without focus restoration
+and dropping elements/state. Empty selection closes only an open right pane; begun selection
+can reopen the same selected task. The owner creates no capture session, subscription or writer.
+
+`LeftPanel` receives named readonly options and constructs one
+[`TagNavigation`](src/panels/left/TagNavigation.ts) for pinned/group/child rows, menus, tag/group
+reorder and tag drops, with its expanded/collapsed and pinned-origin state. Render uses the
+shell's existing node snapshot; only existing interaction-time reads reach `listNodes` through
+the supplied task wrapper. Live callbacks reach shell rendering/customized dots and the retained
+root-drag/tag command path. TagManager retains settings rollback/archive/promotion and file
+mutation authority. LeftPanel keeps outer sections, smart/project navigation, effective-group
+enumeration, creation-result routing, and the one shared tag/project inline-add session with
+hold/restore/settle and lifecycle cleanup.
 
 When a panel moves between windows, `PanelView` rebinds its shortcut router and native interaction
 blocker to the current document, retains its state and capture coordinator, and releases the
@@ -167,6 +185,23 @@ It is constructed once before CalendarMode with the same settings entry and save
 call-time root and date-format callbacks. Updates change the settings entry, start the existing
 async save action, then notify AppState synchronously. The shell retains headers, filter debounce,
 formatDate and lifecycle close ordering.
+
+[`TaskSearch`](src/panels/center/TaskSearch.ts) owns Search input/results, coalesced frame
+refresh and result-card navigation. Constructed once, it reads the same persisted task list and
+uses the shell's existing navigation port. Live host callbacks reset mounted rows, replace the
+current Markdown Component, render flat rows with effective tag groups and complete rendering,
+including empty results. CenterPanel retains the sole state/query subscriptions and Component;
+Search cancels its frame and clears mounted elements at the original render/destroy points. Status
+controls keep Search/query, while ordinary result navigation precedes task-stack selection.
+
+[`TaskCardRenderer`](src/panels/center/TaskCardRenderer.ts) owns card DOM, status/dependency
+markers, Markdown title/description, counts, tracked badges, metadata/tag replacement drops and
+delete-button rendering. One instance receives the existing TaskCommands and ListViewControls;
+its live Component callback reads the shell's current Markdown owner. CenterPanel retains selected
+flags, click/range/whole-card drag/project-drop/context interactions, date focus and recurrence.
+The shell reads one render clock for sorting and passes the same instant to badge rendering; its
+sole ticker subscription forwards indexed running-root updates. Begin-render and teardown clear
+the renderer's badge map. No card-specific service, query subscription or write authority is added.
 
 ## Calendar mode
 
@@ -448,8 +483,12 @@ hooks publish the toolbar statuses and project count and then settle the selecti
 and the mounted cells, cell reveal and scrolling, the editor frame, a created project's occurrence,
 and teardown. Selection, reveal, editing, and creation go through the active surface; Kanban and
 Timeline exist once first shown. The [Table surface](src/panels/projects/ProjectsTableSurface.ts)
-owns the Table's scroll, header, rows, window, and logical cells, and reaches the cell renderer,
-the header commands, and the row drag through its context.
+owns the Table's scroll, header, rows, window, logical cells, and physical row/group drag.
+It keeps the initiating payload, pinned occurrence, gesture/click suppression, preview cache and
+mounted drop decoration. Its context reaches the cell renderer, header commands, and live
+controller ports for editor state, shared drag release, validation/forecast and submission.
+The controller retains payload parsing, group-drop planning and receipt-sensitive forecasts,
+revalidates before the editor-finish write/history action, and shares its drag release with Kanban.
 [Contract tests](test/project-overview-surface.test.ts) run the same cases on each surface; on the
 Table they also mount an offscreen row.
 Project gesture and creation timers use the owning window and release pending
@@ -609,6 +648,16 @@ and [creation presentation tests](test/project-creation-presentation.test.ts).
 
 ## Settings and compatibility
 
+[CalendarSettingsTab](src/settings/SettingsTab.ts) retains one [ShortcutSettings](src/settings/sections/ShortcutSettings.ts)
+and one [TaskStatusSettings](src/settings/sections/TaskStatusSettings.ts) through display/hide.
+The shortcut owner renders validation/feedback and keeps its coalesced save/retry queue across redraws
+and hiding; live callbacks read the current shortcuts and call the tab's current save capability.
+The status owner renders groups, core locks, symbols, icon search, previews and delete confirmation.
+It clears rendered preview references and owner-window confirmation timers before staging and on hide.
+The tab keeps generic cards/reorder, expanded IDs, staging/focus restoration and SettingsValueCommit
+flush/disposal. Status persistence awaits save before semantic rebuild; a successful reorder also
+keeps its immediate rebuild. No persistence or task-write authority moves into the section owners.
+
 [`src/obsidianMoment.ts`](src/obsidianMoment.ts) is the single compatibility boundary for
 Obsidian's named host Moment export. Its namespace declaration loses call signatures under
 TypeScript ES module interop; the boundary restores Moment's own complete callable type without
@@ -701,9 +750,11 @@ must extend these checks without creating another persistence path.
 
 [Project ESLint policy](eslint-project-policy.mts) rejects ambient capabilities in the pure-module
 roster in [eslint.config.mts](eslint.config.mts) and global document/window capabilities in project
-and calendar surfaces, in the centre services' [`src/panels/center/`](src/panels/center/) and inspector UI owners'
+and calendar surfaces, in navigation owners' [`src/panels/left/`](src/panels/left/),
+the centre services' [`src/panels/center/`](src/panels/center/) and inspector UI owners'
 [`src/panels/right/`](src/panels/right/),
-in the centre task list's [`src/panels/task-list/`](src/panels/task-list/), and in the shared [project actions](src/ui/projectActions.ts), which join by a per-file entry.
+in the centre task list's [`src/panels/task-list/`](src/panels/task-list/), Settings section owners'
+[`src/settings/sections/`](src/settings/sections/), and in the shared [project actions](src/ui/projectActions.ts) and [compact-pane owner](src/views/CompactPaneAccess.ts), which join by per-file entries.
 Enroll new pure modules in that roster and supply explicit time; native surfaces retain their
 owning window and dispose pending work. These lexical checks complement
 [owner-lifecycle tests](test/project-owner-lifecycle.test.ts); they do not establish transitive

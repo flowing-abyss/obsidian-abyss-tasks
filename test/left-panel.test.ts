@@ -911,8 +911,10 @@ describe('LeftPanel top-level tag group menus', () => {
   });
 
   it('does not let an older rejected appearance save overwrite a newer saved appearance', async () => {
+    renderOpenedModalsInDocument();
+    const items = captureMenu();
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { panel, merged, save } = makePanel([], {
+    const { el, merged, save } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#ff0000' }],
     });
     const group = expectDefined(merged.tagGroups[0]);
@@ -930,19 +932,37 @@ describe('LeftPanel top-level tag group menus', () => {
         return firstSave;
       })
       .mockResolvedValueOnce(undefined);
-    const applyAppearance = (
-      panel as unknown as {
-        applyTagGroupAppearance_abyssPrivate(
-          target: CalendarSettings['tagGroups'][number],
-          result: { readonly name?: string; readonly color?: string | null },
-        ): void;
+    const applyAppearance = (name: string, color?: string): void => {
+      items.splice(0);
+      openContextMenu(expectDefined(el.querySelector('.abyss-tag-group-header')));
+      expectDefined(items.find((item) => item.title === 'Rename display name…')).click();
+      const input = expectDefined(
+        activeDocument.querySelector<HTMLInputElement>(
+          '.abyss-tag-group-appearance-modal input[type="text"]',
+        ),
+      );
+      input.value = name;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      if (color !== undefined) {
+        const picker = expectDefined(
+          activeDocument.querySelector<HTMLInputElement>(
+            '.abyss-tag-group-appearance-modal input[type="color"]',
+          ),
+        );
+        picker.value = color;
+        picker.dispatchEvent(new Event('input', { bubbles: true }));
       }
-    ).applyTagGroupAppearance_abyssPrivate.bind(panel);
+      expectDefined(
+        activeDocument.querySelector<HTMLButtonElement>(
+          '.abyss-tag-group-appearance-modal .mod-cta',
+        ),
+      ).click();
+    };
     const failure = new Error('older save rejected');
 
-    applyAppearance(group, { name: 'First edit' });
+    applyAppearance('First edit');
     await firstStarted;
-    applyAppearance(group, { name: 'Newer edit', color: '#00ff00' });
+    applyAppearance('Newer edit', '#00ff00');
     await flushMicrotasks();
     rejectFirst(failure);
     await flushMicrotasks();
@@ -961,16 +981,34 @@ describe('LeftPanel top-level tag group menus', () => {
 
   it('reports a failed reorder once and renders the rolled-back order', async () => {
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { panel, merged, save } = makePanel([task({ tags: ['#a'] }), task({ tags: ['#b'] })]);
+    const { el, merged, save } = makePanel([task({ tags: ['#a'] }), task({ tags: ['#b'] })]);
     const failure = new Error('settings storage unavailable');
     save.mockRejectedValueOnce(failure);
-    const reorder = (
-      panel as unknown as {
-        reorderTagGroups_abyssPrivate(draggedId: string, targetId: string): Promise<void>;
-      }
-    ).reorderTagGroups_abyssPrivate.bind(panel);
-
-    await reorder(discoveredTagGroupId('#b'), discoveredTagGroupId('#a'));
+    const rows = Array.from(el.querySelectorAll<HTMLElement>('.abyss-tag-leaf'));
+    const before = rows.map((row) => row.querySelector('.abyss-left-label')?.textContent);
+    const values = new Map<string, string>();
+    const dataTransfer = {
+      setData: (type: string, value: string) => {
+        values.set(type, value);
+      },
+      getData: (type: string) => values.get(type) ?? '',
+      get types() {
+        return [...values.keys()];
+      },
+    };
+    const start = new Event('dragstart', { bubbles: true, cancelable: true });
+    Object.defineProperty(start, 'dataTransfer', { value: dataTransfer });
+    expectDefined(rows[1]).dispatchEvent(start);
+    expect(dataTransfer.getData('application/x-abyss-taggroup')).toBe(discoveredTagGroupId('#b'));
+    const drop = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, 'dataTransfer', { value: dataTransfer });
+    expectDefined(rows[0]).dispatchEvent(drop);
+    await flushMicrotasks();
+    expect(
+      Array.from(el.querySelectorAll('.abyss-tag-leaf .abyss-left-label')).map(
+        (label) => label.textContent,
+      ),
+    ).toEqual(before);
 
     expect(merged.tagGroups).toEqual([]);
     expect(Notice).toHaveBeenCalledOnce();

@@ -77,6 +77,34 @@ function openStatusesSection(tab: CalendarSettingsTab): HTMLElement {
 }
 
 describe('CalendarSettingsTab — custom statuses section', () => {
+  it.each(['redraw', 'hide'] as const)(
+    'releases an armed delete timer when status controls %s',
+    (action) => {
+      vi.useFakeTimers();
+      try {
+        const { tab, plugin } = makeTab({ withCustomStatus: true });
+        const body = openStatusesSection(tab);
+        const button = expectDefined(
+          Array.from(body.querySelectorAll<HTMLButtonElement>('button')).find(
+            (candidate) => candidate.textContent === 'Delete status',
+          ),
+        );
+        button.click();
+        expect(button.textContent).toBe('Click again to confirm');
+        if (action === 'redraw') (tab as unknown as { display(): void }).display();
+        else tab.hide();
+        vi.advanceTimersByTime(4000);
+        expect(button.textContent).toBe('Click again to confirm');
+        expect(plugin.settings.taskStatuses.some((status) => status.id === 'status-custom')).toBe(
+          true,
+        );
+        expect(methodOf(plugin, 'saveSettings')).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it('renders a card for each default status, grouped by type', () => {
     const { tab } = makeTab();
     const body = openStatusesSection(tab);
