@@ -29,9 +29,10 @@ import type {
   TaskQueryApi,
   TaskRef,
   TaskResolution,
+  TaskSnapshot,
   TimeTrackingQueryApi,
 } from '../tasks';
-import { taskCommandRootRef, taskNodeAddress } from '../tasks';
+import { parseRecurrenceRule, taskCommandRootRef, taskNodeAddress } from '../tasks';
 import { CreationPresentationController } from '../ui/creation/CreationPresentationController';
 import { InteractionRegistry } from '../ui/interactionOwnership';
 import { nativeInteractionBlocksPanelShortcuts } from '../ui/nativeInteractionBlocker';
@@ -382,10 +383,55 @@ export class PanelView extends ItemView {
       execute: (command) =>
         this.runOwnCommand_abyssPrivate(
           taskCommandRootRef(command),
-          ROOT_REMOVALS.has(command.type),
+          this.commandMayRemoveRoot_abyssPrivate(command),
           () => this.tasks_abyssPrivate.execute(command),
         ),
     };
+  }
+
+  private createInspectorTasks_abyssPrivate(
+    selectionTasks: TaskApplicationApi,
+  ): TaskApplicationApi {
+    const raw = this.tasks_abyssPrivate;
+    const planArchive = raw.planArchive?.bind(raw);
+    return {
+      queries: raw.queries,
+      execute: (command) =>
+        (command.type === 'set-status' || command.type === 'toggle-completion') &&
+        this.commandMayRemoveRoot_abyssPrivate(command)
+          ? selectionTasks.execute(command)
+          : raw.execute(command),
+      ...(planArchive === undefined ? {} : { planArchive }),
+    };
+  }
+
+  private commandMayRemoveRoot_abyssPrivate(command: TaskCommand): boolean {
+    if (ROOT_REMOVALS.has(command.type)) return true;
+    if (
+      (command.type !== 'set-status' && command.type !== 'toggle-completion') ||
+      command.target.type !== 'task'
+    )
+      return false;
+    const current = this.currentDeletingRoot_abyssPrivate(command.target.ref);
+    if (current == null) return false;
+    const requested =
+      command.type === 'set-status'
+        ? this.statusRegistry_abyssPrivate.bySymbol(command.symbol)
+        : this.statusRegistry_abyssPrivate.defaultForType('done');
+    if (requested?.type !== 'done') return false;
+    return current.recurrence == null || parseRecurrenceRule(current.recurrence).type !== 'valid';
+  }
+
+  private currentDeletingRoot_abyssPrivate(ref: TaskRef): TaskSnapshot | undefined {
+    const resolution = this.tasks_abyssPrivate.queries.resolve(ref);
+    let current: TaskSnapshot;
+    if (resolution.type === 'exact') current = resolution.task;
+    else if (resolution.type === 'rebased') current = resolution.current;
+    else return undefined;
+    if (current.onCompletion !== 'delete') return undefined;
+    if (this.statusRegistry_abyssPrivate.typeForSymbol(current.statusSymbol) === 'done')
+      return undefined;
+    return current;
   }
 
   /**
@@ -515,7 +561,7 @@ export class PanelView extends ItemView {
       app: this.app,
       statusRegistry: this.statusRegistry_abyssPrivate,
       settings: this.settings_abyssPrivate,
-      tasks: this.tasks_abyssPrivate,
+      tasks: this.createInspectorTasks_abyssPrivate(selectionTasks),
       onMutationLifecycle: (event) => {
         this.trackOwnWrite_abyssPrivate(event);
       },
@@ -984,13 +1030,31 @@ export class PanelView extends ItemView {
     result: TaskCommandResult,
     origin?: SelectionOrigin,
   ): void {
-    if (result.type !== 'ok' || result.outcome.type !== 'task') return;
+    if (result.type !== 'ok') return;
+    if (result.outcome.type === 'deleted') {
+      this.clearDeletedSelection_abyssPrivate(initiatingRef, result.outcome.ref);
+      return;
+    }
+    if (result.outcome.type !== 'task') return;
+    this.convergeTaskSelection_abyssPrivate(
+      initiatingRef,
+      result.outcome.task,
+      result.changed,
+      origin,
+    );
+  }
+
+  private convergeTaskSelection_abyssPrivate(
+    initiatingRef: TaskRef,
+    updated: TaskSnapshot,
+    changed: boolean,
+    origin?: SelectionOrigin,
+  ): void {
     const state = this.state_abyssPrivate;
     const cleared = state.get('taskStack').length === 0 ? origin : undefined;
     const stack = cleared?.taskStack ?? state.get('taskStack');
     const root = stack[0];
     if (root == null || !this.sameRef_abyssPrivate(rootTaskRef(root), initiatingRef)) return;
-    const updated = result.outcome.task;
     const draft = this.right_abyssPrivate.captureDraftState();
     state.batch(() => {
       if (cleared != null) state.set('inspectorBackStack', cleared.inspectorBackStack);
@@ -1000,7 +1064,15 @@ export class PanelView extends ItemView {
     // only until the next write to the note, so they follow the move now.
     if (cleared != null) this.right_abyssPrivate.refreshInspectorHistory();
     this.right_abyssPrivate.restoreDraftState(draft, updated);
-    this.ownedWriteRef_abyssPrivate = result.changed ? { ...updated.ref } : undefined;
+    this.ownedWriteRef_abyssPrivate = changed ? { ...updated.ref } : undefined;
+  }
+
+  private clearDeletedSelection_abyssPrivate(initiatingRef: TaskRef, deletedRef: TaskRef): void {
+    const root = this.state_abyssPrivate.get('taskStack')[0];
+    if (root == null) return;
+    if (!this.sameRef_abyssPrivate(deletedRef, initiatingRef)) return;
+    if (!this.sameRef_abyssPrivate(rootTaskRef(root), initiatingRef)) return;
+    this.state_abyssPrivate.set('taskStack', []);
   }
 
   private sameRef_abyssPrivate(left: TaskRef, right: TaskRef): boolean {

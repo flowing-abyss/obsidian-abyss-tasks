@@ -11,6 +11,7 @@ import { collectTaskNodeTags } from '../src/tags/taskTagCatalog';
 import type {
   TaskApplicationApi,
   TaskCaptureApplicationApi,
+  TaskCommand,
   TaskCommandResult,
   TaskCreateSession,
   TaskIndexEvent,
@@ -426,9 +427,11 @@ async function settleRemoval(): Promise<void> {
 
 async function openRemovalPanel(
   files: Record<string, string> = { 'today.md': todayNote(['First', 'Second', 'Third']) },
+  configure?: (settings: CalendarSettings) => void,
 ): Promise<RemovalPanel> {
   const app = await createAppWithFiles(files);
   const settings = structuredClone(DEFAULT_SETTINGS);
+  configure?.(settings);
   const application = configuredTaskApplication(app, settings, { authority: true });
   await application.index.initialize();
   const held: Array<() => void> = [];
@@ -592,6 +595,171 @@ const panelRemovals: ReadonlyArray<readonly [string, (panel: RemovalPanel) => vo
 ];
 
 describe('PanelView own task removals', () => {
+  const deletingFixture = (recurrence = false): string => {
+    const due = recurrence ? '2031-02-10' : window.moment().format('YYYY-MM-DD');
+    return `- [ ] First${recurrence ? ' 🔁 every day' : ''} 🏁 delete 📅 ${due}\n  - [ ] Child\n- [ ] Sentinel 📅 ${window.moment().format('YYYY-MM-DD')}\n`;
+  };
+  const wrappedTasks = (panel: RemovalPanel): TaskApplicationApi =>
+    (
+      panel.view as unknown as { createSelectionTasks_abyssPrivate(): TaskApplicationApi }
+    ).createSelectionTasks_abyssPrivate();
+
+  it.each([false, true])(
+    'Delete completion empties the inspector with index held=%s',
+    async (hold) => {
+      const source = deletingFixture();
+      const panel = await openRemovalPanel({ 'today.md': source });
+      const expected = source.split('\n').slice(2).join('\n');
+      let release: (() => void) | undefined;
+      try {
+        panel.select('First');
+        panel.selections.length = 0;
+        if (hold) release = panel.holdIndexEvents();
+        expectDefined(
+          sidebarInspector(panel).querySelector<HTMLElement>(
+            '.abyss-right-header .abyss-status-marker',
+          ),
+        ).click();
+        await settleRemoval();
+        expect(await panel.read()).toBe(expected);
+        expect(panel.state.get('taskStack')).toEqual([]);
+        release?.();
+        release = undefined;
+        await settleRemoval();
+        expect(panel.state.get('taskStack')).toEqual([]);
+        expect(panel.selections.flat().filter((title) => title !== 'First')).toEqual([]);
+        expect(sidebarInspector(panel).querySelector('.abyss-right-title')).toBeNull();
+        expect(sidebarInspector(panel).querySelector('.abyss-right-header-actions')).toBeNull();
+        expect(panel.view.contentEl.querySelector('.abyss-task-delete-btn')).toBeNull();
+      } finally {
+        release?.();
+        await panel.close();
+      }
+    },
+  );
+
+  it.each(['set-status', 'toggle-completion'] as const)(
+    'uses configured non-x Done for %s removal',
+    async (type) => {
+      const source = deletingFixture();
+      const panel = await openRemovalPanel({ 'today.md': source }, (settings) => {
+        const done = expectDefined(
+          settings.taskStatuses.find((rule) => rule.type === 'done' && rule.core),
+        );
+        done.symbol = '!';
+      });
+      try {
+        panel.select('First');
+        const first = expectDefined(
+          panel.application.index.list().find((t) => t.title === 'First'),
+        );
+        const result = await wrappedTasks(panel).execute(
+          type === 'set-status'
+            ? { type, target: { type: 'task', ref: first.ref }, symbol: '!' }
+            : { type, target: { type: 'task', ref: first.ref } },
+        );
+        await settleRemoval();
+        expect(result.type).toBe('ok');
+        expect(await panel.read()).toBe(source.split('\n').slice(2).join('\n'));
+        expect(panel.state.get('taskStack')).toEqual([]);
+      } finally {
+        await panel.close();
+      }
+    },
+  );
+
+  it('keeps the valid daily Delete recurrence active root and child selected', async () => {
+    const source = deletingFixture(true);
+    const panel = await openRemovalPanel({ 'today.md': source });
+    try {
+      panel.state.set('selectedList', 'inbox');
+      panel.select('First');
+      const first = expectDefined(panel.application.index.list().find((t) => t.title === 'First'));
+      const result = await wrappedTasks(panel).execute({
+        type: 'toggle-completion',
+        target: { type: 'task', ref: first.ref },
+      });
+      await settleRemoval();
+      const created = window.moment().format('YYYY-MM-DD');
+      expect(await panel.read()).toBe(
+        `- [ ] First 🔁 every day 🏁 delete ➕ ${created} 📅 2031-02-11\n  - [ ] Child ➕ ${created}\n- [ ] Sentinel 📅 ${created}\n`,
+      );
+      expect(result.type).toBe('ok');
+      const successor = expectDefined(
+        panel.application.index.list().find((t) => t.title === 'First'),
+      );
+      expect(panel.state.get('taskStack')).toEqual([successor]);
+      expect(successor.subtasks[0]?.ref.parent).toEqual({ type: 'task', ref: successor.ref });
+      expect(sidebarInspector(panel).querySelector('.abyss-right-title-view')?.textContent).toBe(
+        'First',
+      );
+    } finally {
+      await panel.close();
+    }
+  });
+
+  it.each(['child', 'non-Done', 'already-Done', 'unproven'] as const)(
+    'does not hold %s status command as root removal',
+    async (kind) => {
+      const source = deletingFixture().replace(
+        '- [ ] First',
+        kind === 'already-Done' ? '- [x] First' : '- [ ] First',
+      );
+      const panel = await openRemovalPanel({ 'today.md': source });
+      try {
+        const first = expectDefined(
+          panel.application.index.list().find((t) => t.title === 'First'),
+        );
+        const hold = vi.spyOn(panel.state, 'beginTaskRemoval');
+        vi.spyOn(panel.application.tasks, 'execute').mockResolvedValueOnce({
+          type: 'io-error',
+          cause: 'repository-error',
+          contentState: 'unchanged',
+        });
+        const command: TaskCommand = {
+          type: 'set-status',
+          target:
+            kind === 'child'
+              ? { type: 'subtask', ref: expectDefined(first.subtasks[0]).ref }
+              : {
+                  type: 'task',
+                  ref: kind === 'unproven' ? { ...first.ref, revision: 'unproven' } : first.ref,
+                },
+          symbol: kind === 'non-Done' ? ' ' : 'x',
+        };
+        await wrappedTasks(panel).execute(command);
+        expect(hold).not.toHaveBeenCalled();
+        expect(await panel.read()).toBe(source);
+      } finally {
+        await panel.close();
+      }
+    },
+  );
+
+  it('does not clear another exact selected ref on a late deleted completion result', async () => {
+    const panel = await openRemovalPanel({ 'today.md': deletingFixture() });
+    try {
+      panel.select('First');
+      const first = expectDefined(panel.application.index.list().find((t) => t.title === 'First'));
+      const gate = deferred<TaskCommandResult>();
+      vi.spyOn(panel.application.tasks, 'execute').mockReturnValueOnce(gate.promise);
+      const pending = wrappedTasks(panel).execute({
+        type: 'toggle-completion',
+        target: { type: 'task', ref: first.ref },
+      });
+      panel.select('Sentinel');
+      const selected = panel.state.get('taskStack');
+      gate.resolve({ type: 'ok', changed: true, outcome: { type: 'deleted', ref: first.ref } });
+      await pending;
+      expect(panel.state.get('taskStack')).toEqual(selected);
+      expect(sidebarInspector(panel).querySelector('.abyss-right-title-view')?.textContent).toBe(
+        'Sentinel',
+      );
+    } finally {
+      await panel.close();
+    }
+  });
+
   it.each(panelRemovals)(
     '%s empties the inspector when the index update lands first',
     async (_name, remove) => {
