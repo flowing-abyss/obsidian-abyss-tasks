@@ -414,6 +414,7 @@ export default defineConfig(
       'src/panels/right/**/*.ts',
       'src/panels/task-list/**/*.ts',
       'src/ui/projectActions.ts',
+      'src/views/CompactPaneAccess.ts',
     ],
     rules: { 'project-policy/ambient': ['error', 'owner'] },
   },

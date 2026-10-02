@@ -107,10 +107,18 @@ Selection, render, refresh and destroy call the owner's narrow operations at the
 Panels share transient navigation through
 `AppState`. `set('taskStack')` begins a selection and `updateInspectorSelection` refreshes one;
 `AppState` tells its selection-begun listeners after a begun selection is delivered. At a compact
-width in Tasks mode, `PanelView` opens the details pane when a selection begins, when the rail's
+width in Tasks mode, `PanelView` delegates to its one `CompactPaneAccess` to open the details pane when a selection begins, when the rail's
 time tracking opens a tracked task (a dependency hop, which begins no selection), when Tasks mode
 returns with a task selected, and when the panel turns compact with a task selected, besides the
 pane's own button. A refresh of the selection never opens it.
+`CompactPaneAccess` owns the complete compact DOM/focus state, width/header observers,
+58rem/38rem thresholds, owner-document gestures, overlay offset and pending-pane intent.
+Its readonly options read the current shell mode, selection, capture and interaction capability
+at invocation. PanelView retains subscriptions and capture/result authority: pending intent is
+taken before synchronous creation presentation and scheduled in finally only for a successful
+creation description. Reset removes listeners/observers before closing without focus restoration
+and dropping elements/state. Empty selection closes only an open right pane; begun selection
+can reopen the same selected task. The owner creates no capture session, subscription or writer.
 
 `LeftPanel` receives named readonly options and constructs one
 [`TagNavigation`](src/panels/left/TagNavigation.ts) for pinned/group/child rows, menus, tag/group
@@ -735,7 +743,7 @@ roster in [eslint.config.mts](eslint.config.mts) and global document/window capa
 and calendar surfaces, in navigation owners' [`src/panels/left/`](src/panels/left/),
 the centre services' [`src/panels/center/`](src/panels/center/) and inspector UI owners'
 [`src/panels/right/`](src/panels/right/),
-in the centre task list's [`src/panels/task-list/`](src/panels/task-list/), and in the shared [project actions](src/ui/projectActions.ts), which join by a per-file entry.
+in the centre task list's [`src/panels/task-list/`](src/panels/task-list/), and in the shared [project actions](src/ui/projectActions.ts) and [compact-pane owner](src/views/CompactPaneAccess.ts), which join by per-file entries.
 Enroll new pure modules in that roster and supply explicit time; native surfaces retain their
 owning window and dispose pending work. These lexical checks complement
 [owner-lifecycle tests](test/project-owner-lifecycle.test.ts); they do not establish transitive
