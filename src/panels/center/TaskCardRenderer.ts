@@ -155,6 +155,7 @@ export class TaskCardRenderer {
     this.#renderCountBadges(titleRow, task);
     const titleEl = titleRow.createSpan({ cls: 'abyss-task-title' });
     renderTaskText(titleEl, task.markdownTitle, {
+      presentation: 'title',
       app: this.#app,
       sourcePath: task.source.filePath,
       component: this.#host.component(),

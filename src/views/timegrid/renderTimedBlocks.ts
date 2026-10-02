@@ -242,6 +242,7 @@ function renderTimedBlockTitle(input: TimedBlockTitleInput): void {
       cls: `abyss-tg-block-title abyss-calendar-title${statusTitleClass(task.status)}`,
     });
     renderTaskText(title, task.markdownTitle, {
+      presentation: 'title',
       app: callbacks.app,
       sourcePath: task.source.filePath,
       component: callbacks.component,

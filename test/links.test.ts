@@ -2,7 +2,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildLinkRaw,
+  collapseWikiLinks,
   countLinksIn,
+  inlineTaskTitleMarkdown,
   linkValueLabel,
   pairAnchorsToTokens,
   parseLinks,
@@ -613,5 +615,30 @@ describe('parseLinks growth', () => {
     expect(
       interleavedRatio({ small: () => parseLinks(small), large: () => parseLinks(large) }),
     ).toBeLessThan(8);
+  });
+});
+
+describe('inline task title Markdown', () => {
+  it.each([
+    ['![[Folder/Note.md]]', '📎 Note'],
+    ['![[Folder/Note.md|Readable alias]] [[Real]]', '📎 Readable alias [[Real]]'],
+    ['\\![[Note]] `![[Note]]`', '\\![[Note]] `![[Note]]`'],
+    ['![ordinary alt](image.png)', '📎 ordinary alt'],
+    ['![[Note|**alias** [x] <tag>]]', String.raw`📎 \*\*alias\*\* \[x\] \<tag\>`],
+  ])('replaces only recognized presentation spans in %s', (input, expected) => {
+    expect(inlineTaskTitleMarkdown(input)).toBe(expected);
+  });
+
+  it('leaves the original editable occurrence and source offset authoritative', () => {
+    const source = '![[Folder/Note.md|Alias]] [[Real]]';
+    expect(inlineTaskTitleMarkdown(source)).toBe('📎 Alias [[Real]]');
+    expect(parseLinks(source)).toEqual([
+      { raw: '[[Real]]', type: 'wiki', target: 'Real', display: 'Real', index: 26 },
+    ]);
+  });
+
+  it('uses the written readable alias only for derived plain display', () => {
+    expect(collapseWikiLinks('[[Folder/Note.md|Readable alias]]')).toBe('🔗 Readable alias');
+    expect(collapseWikiLinks('[[Folder/Note.md]]')).toBe('🔗 Folder/Note');
   });
 });

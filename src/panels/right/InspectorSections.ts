@@ -412,6 +412,7 @@ export class InspectorSections {
     });
     const renderView = (): void => {
       renderTaskText(view, task.markdownTitle, {
+        presentation: 'title',
         app: this.#app,
         sourcePath: rootTaskRef(task).filePath,
         component: this.#host.component(),
@@ -584,6 +585,7 @@ export class InspectorSections {
       cls: `abyss-subtask-label${sub.status === 'done' ? ' is-done' : ''}`,
     });
     renderTaskText(label, sub.markdownTitle, {
+      presentation: 'title',
       app: this.#app,
       sourcePath: rootTaskRef(sub).filePath,
       component: this.#host.component(),

@@ -1448,6 +1448,7 @@ export class RightPanel {
       if (index > 0) breadcrumb.createSpan({ cls: 'abyss-breadcrumb-sep', text: ' › ' });
       const crumb = breadcrumb.createSpan({ cls: 'abyss-breadcrumb-item' });
       renderTaskText(crumb, item.markdownTitle, {
+        presentation: 'title',
         app: this.app_abyssPrivate,
         sourcePath: rootTaskRef(item).filePath,
         component: this.md_abyssPrivate,

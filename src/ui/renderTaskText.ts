@@ -1,9 +1,15 @@
 import { Component, Keymap, MarkdownRenderer, Menu, type App, type MenuItem } from 'obsidian';
-import { pairAnchorsToTokens, parseLinks, type LinkToken } from '../markdown/links';
+import {
+  inlineTaskTitleMarkdown,
+  pairAnchorsToTokens,
+  parseLinks,
+  type LinkToken,
+} from '../markdown/links';
 import { showMenuAtMouseEventWithFocus } from './nativeMenuFocus';
 import { runAsyncAction } from './runAsyncAction';
 
 export interface RenderTaskTextOptions {
+  readonly presentation?: 'title';
   app: App;
   sourcePath: string;
   component: Component;
@@ -19,17 +25,19 @@ export function renderTaskText(
   opts: RenderTaskTextOptions,
 ): void {
   el.empty();
-  // Fast path: the vast majority of tasks have no links. Skip the whole Obsidian
-  // MarkdownRenderer pipeline (+ its deferred wiring) and just set text — this keeps
-  // large lists at roughly the old `textContent` cost so they don't jank.
+  // Editable occurrences always come from the authored source, even when labels change length.
   const tokens = parseLinks(markdownText);
-  if (tokens.length === 0) {
-    el.setText(markdownText);
+  const titleMode = opts.presentation === 'title';
+  const presented = titleMode ? inlineTaskTitleMarkdown(markdownText) : markdownText;
+  // Plain titles retain the synchronous path; formatting and escapes need host Markdown even
+  // without links. Non-title callers keep their existing link-driven dispatch contract.
+  if (titleMode ? !/[\\*_~`[\]<>&!]/u.test(markdownText) : tokens.length === 0) {
+    el.setText(presented);
     return;
   }
   const holder = el.createSpan({ cls: 'abyss-md' });
   runAsyncAction(
-    MarkdownRenderer.render(opts.app, markdownText, holder, opts.sourcePath, opts.component),
+    MarkdownRenderer.render(opts.app, presented, holder, opts.sourcePath, opts.component),
     'Could not render task text',
   );
   // Unwrap the single wrapping <p> MarkdownRenderer emits so titles stay inline.

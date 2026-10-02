@@ -168,6 +168,23 @@ next task. A successful move then selects the moved task in its new note, with t
 inspector history the selection had before the move, and at once points that history at the lines
 its tasks moved to, while the index can still prove them.
 
+## Task title presentation
+
+`renderTaskText` has an explicit title-only inline presentation mode for cards (including Search),
+inspector root/subtask titles and breadcrumbs, and real Month/timegrid titles. Ordinary plain titles
+remain synchronous text; formatting and escapes reach the existing host MarkdownRenderer with the
+same source path and Component lifetime even when no editable links occur. The shared Markdown
+helper replaces recognized title embeds/images with escaped inert compact labels before rendering,
+so compact rows never load their note/image previews. Descriptions, comments and project values keep
+the default non-title contract.
+
+Editable link occurrences always come from original authored Markdown and retain its offsets/order;
+rendered genuine anchors pair to those original tokens after presentation labels change length.
+Compact embed labels acquire no anchor or edit authority. Existing command/codec validation remains
+responsible for exact original-source writes and rejecting synthetic joined-fragment edits.
+Derived plain wiki aliases use the written readable alias; Month, Week and Day forecast/continuation
+titles share `plainGhostTaskTitle` and remain inert, with no materialization or navigation change.
+
 ## Centre panel shell
 
 `CenterPanel` composes its centre collaborators through named options. Task actions route through

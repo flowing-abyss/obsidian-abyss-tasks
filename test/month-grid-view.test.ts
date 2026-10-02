@@ -5,7 +5,12 @@ import selectorParser from 'postcss-selector-parser';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import { calendarOccurrenceForRender } from '../src/views/calendarOccurrences';
+import { localDate } from '../src/tasks';
+import {
+  calendarOccurrenceForRender,
+  projectCalendarOccurrences,
+  taskSnapshotForCalendarOccurrence,
+} from '../src/views/calendarOccurrences';
 import { MonthGridView } from '../src/views/MonthGridView';
 import { createSpanInteractionOwner } from '../src/views/spanInteractions';
 import { layoutVisibleSpans } from '../src/views/spanLayout';
@@ -187,6 +192,32 @@ function monthGridRowFor(container: HTMLElement, date: string, title: string): n
 }
 
 describe('MonthGridView', () => {
+  it('renders the actual projected forecast as the common inert readable title', () => {
+    const root = taskFromCodecLine(
+      '- [ ] **Forecast** *label* `code` [[Folder/Note.md|Readable alias]] 🔁 every day 📅 2026-07-09',
+      { planning: { time: '09:00', duration: 60 } },
+    );
+    const source = { root, node: root, target: { type: 'task' as const, ref: root.ref } };
+    const occurrence = expectDefined(
+      projectCalendarOccurrences(
+        { materialized: [], recurringSources: [source] },
+        { from: localDate('2026-07-10'), to: localDate('2026-07-10') },
+        { removeScheduledDate: false },
+      ).occurrences[0],
+    );
+    expect(occurrence.kind).toBe('forecast');
+    const projected = taskSnapshotForCalendarOccurrence(occurrence);
+    const container = freshContainer();
+    new MonthGridView(callbacks()).render(
+      container,
+      [projected],
+      resolvedConfig({ startPosition: '2026-07' }),
+    );
+    const title = requiredElement(container, '.abyss-mg-item-title');
+    expect(title.textContent).toBe('Forecast label code 🔗 Readable alias');
+    expect(title.querySelector('a,.internal-embed,img')).toBeNull();
+  });
+
   it('renders the shared recurrence badge DOM in a compact month item', () => {
     const container = freshContainer();
     new MonthGridView(callbacks()).render(

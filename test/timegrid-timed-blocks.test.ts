@@ -2,8 +2,13 @@ import { Component, Platform, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
+import { localDate } from '../src/tasks';
 import { taskPresentationKey } from '../src/ui/taskPresentationIdentity';
-import { calendarOccurrenceForRender } from '../src/views/calendarOccurrences';
+import {
+  calendarOccurrenceForRender,
+  projectCalendarOccurrences,
+  taskSnapshotForCalendarOccurrence,
+} from '../src/views/calendarOccurrences';
 import { MIN_BLOCK_HEIGHT_PX } from '../src/views/timegrid/layout';
 import { renderTimedBlocksForDay } from '../src/views/timegrid/renderTimedBlocks';
 import {
@@ -18,6 +23,7 @@ import {
   methodOf,
   task,
   taskComment,
+  taskFromCodecLine,
   useRealMoment,
 } from './helpers';
 
@@ -160,6 +166,27 @@ function timedGestureGrid() {
 }
 
 describe('Task 2 unified timed interaction contract', () => {
+  it('renders the actual projected forecast as the common inert readable title', () => {
+    const root = taskFromCodecLine(
+      '- [ ] **Forecast** *label* `code` [[Folder/Note.md|Readable alias]] 🔁 every day 📅 2026-07-09 ⏰ 09:00 ⏱️ 1h',
+    );
+    const source = { root, node: root, target: { type: 'task' as const, ref: root.ref } };
+    const occurrence = expectDefined(
+      projectCalendarOccurrences(
+        { materialized: [], recurringSources: [source] },
+        { from: localDate('2026-07-10'), to: localDate('2026-07-10') },
+        { removeScheduledDate: false },
+      ).occurrences[0],
+    );
+    expect(occurrence.kind).toBe('forecast');
+    const projected = taskSnapshotForCalendarOccurrence(occurrence);
+    const container = freshContainer();
+    renderTimedBlocksForDay(container, [projected], callbacks());
+    const title = expectDefined(container.querySelector<HTMLElement>('.abyss-calendar-title'));
+    expect(title.textContent).toBe('Forecast label code 🔗 Readable alias');
+    expect(title.querySelector('a,.internal-embed,img')).toBeNull();
+  });
+
   it('renders one shared recurrence badge in the terminal timed-block head', () => {
     const container = freshContainer();
     renderTimedBlocksForDay(
