@@ -96,7 +96,10 @@ AppState after the current input event; planning focus is captured at execution,
 selection/destroy cancel the originating-window task and invalidate its generation.
 Index/selection/dependency delivery continues normally; no draft serialization or writer is added.
 Recurrence restoration reports anchor presence separately from focus; the shell alone decides
-whether to preserve a dirty draft. RightPanel also constructs one `InspectorDependencies` for dependency disclosure, badge, sections,
+whether to preserve a dirty draft. In a real modal with a direct chips row, PlanningSurfaces
+mounts the same recurrence editor in flow immediately after the entire row; restoration retains
+its ordinary draft, dismissal and handle cleanup, without anchored placement work. Sidebar and
+missing-row surfaces retain their existing anchored observer/lifetime. RightPanel also constructs one `InspectorDependencies` for dependency disclosure, badge, sections,
 drop gestures and search. It receives the exact read-only dependency queries and live shell resolver,
 command, Undo and badge callbacks; query subscriptions and all results remain in RightPanel. Search
 rebuilds retain one handle and interaction lease, release placement while detached, then refresh and
@@ -134,6 +137,9 @@ returns with a task selected, and when the panel turns compact with a task selec
 pane's own button. A refresh of the selection never opens it.
 `CompactPaneAccess` owns the complete compact DOM/focus state, width/header observers,
 58rem/38rem thresholds, owner-document gestures, overlay offset and pending-pane intent.
+It synchronizes compact button availability classes from those existing width states, including
+empty selection and reattached headers; Tasks-only CSS displays available buttons outside container
+queries. Pane geometry remains container-driven, and availability alone never opens or focuses a pane.
 Its readonly options read the current shell mode, selection, capture and interaction capability
 at invocation. PanelView retains subscriptions and capture/result authority: pending intent is
 taken before synchronous creation presentation and scheduled in finally only for a successful

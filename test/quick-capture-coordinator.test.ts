@@ -193,7 +193,7 @@ describe('QuickCaptureCoordinator', () => {
       /\.abyss-layout--tasks\s*>\s*\.abyss-(?:left|right)\.is-compact-open\s*\{[\s\S]*?position:\s*absolute[\s\S]*?z-index:/u,
     );
     expect(css).toMatch(
-      /@container\s+abyss-panel-layout\s*\(max-width:\s*58rem\)[\s\S]*?\.abyss-compact-pane-button--right\s*\{[\s\S]*?display:\s*inline-flex/u,
+      /\.abyss-layout--tasks\s+button\.abyss-compact-pane-button\.is-compact-available\s*\{\s*display:\s*inline-flex/u,
     );
   });
 

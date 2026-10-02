@@ -70,6 +70,7 @@ export class CompactPaneAccess {
     if (compact === undefined) return;
     controls.prepend(compact.leftButton);
     controls.append(compact.rightButton);
+    this.#syncButtonAvailability();
     this.#observeCompactHeader(header);
   }
 
@@ -108,6 +109,8 @@ export class CompactPaneAccess {
     this.#compactHeaderResizeObserver = undefined;
     this.#compactPaneRefresh = undefined;
     this.close(false);
+    this.#compactPaneElements?.leftButton.removeClass('is-compact-available');
+    this.#compactPaneElements?.rightButton.removeClass('is-compact-available');
     this.#compactPaneElements = undefined;
     this.#compactLeftCollapsed = false;
     this.#compactRightCollapsed = false;
@@ -310,9 +313,21 @@ export class CompactPaneAccess {
     const wasRightCollapsed = this.#compactRightCollapsed;
     this.#compactRightCollapsed = width <= COMPACT_RIGHT_MAX_REM * rem;
     this.#compactLeftCollapsed = width <= COMPACT_LEFT_MAX_REM * rem;
+    this.#syncButtonAvailability();
     this.#discardExpandedPendingPane();
     this.#closeExpandedCompactPane();
     this.#openNewlyCollapsedTaskDetails(wasRightCollapsed);
+  }
+
+  #syncButtonAvailability(): void {
+    this.#compactPaneElements?.leftButton.toggleClass(
+      'is-compact-available',
+      this.#compactLeftCollapsed,
+    );
+    this.#compactPaneElements?.rightButton.toggleClass(
+      'is-compact-available',
+      this.#compactRightCollapsed,
+    );
   }
 
   #rootFontSize(ownerWindow: Window | null): number {

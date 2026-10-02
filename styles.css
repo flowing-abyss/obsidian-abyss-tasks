@@ -215,10 +215,6 @@
     inline-size: min(20rem, calc(100cqi - 48px));
     box-shadow: var(--shadow-l, none);
   }
-
-  .abyss-layout--tasks .abyss-compact-pane-button--right {
-    display: inline-flex;
-  }
 }
 
 @container abyss-panel-layout (max-width: 38rem) {
@@ -233,10 +229,6 @@
     inset-inline-start: 48px;
     inline-size: min(15rem, calc(100cqi - 48px));
     box-shadow: var(--shadow-l, none);
-  }
-
-  .abyss-layout--tasks .abyss-compact-pane-button--left {
-    display: inline-flex;
   }
 
   .abyss-layout--tasks .abyss-center-header {
@@ -306,6 +298,10 @@ button.abyss-compact-pane-button {
   color: var(--text-muted);
   box-shadow: none;
   margin: 0;
+}
+
+.abyss-layout--tasks button.abyss-compact-pane-button.is-compact-available {
+  display: inline-flex;
 }
 
 button.abyss-compact-pane-button:hover {
@@ -2793,6 +2789,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
     grid-column: 2 / -1;
     grid-row: 2;
     width: 100%;
+    min-inline-size: 0;
     justify-content: flex-start;
   }
 
@@ -2822,7 +2819,13 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   }
 
   .abyss-task-source-note {
+    min-inline-size: 0;
+    max-inline-size: 100%;
     white-space: nowrap;
+  }
+
+  .abyss-task-source-note-name {
+    min-inline-size: 0;
   }
 }
 
@@ -3648,6 +3651,12 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   box-shadow: var(--shadow-s, none);
 }
 
+.abyss-priority-popover button.abyss-priority-option:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+
 .abyss-priority-option {
   display: grid;
   grid-template-columns: 0.8em 0.9em max-content;
@@ -3740,6 +3749,16 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   max-inline-size: calc(100% - (var(--abyss-popover-edge-gap, 0.5rem) * 2));
   padding: 0.625rem;
   background: var(--background-secondary);
+}
+
+.abyss-recurrence-popover.abyss-recurrence-popover-inline {
+  position: static;
+  flex: 0 0 auto;
+  inline-size: auto;
+  min-inline-size: 0;
+  max-inline-size: none;
+  align-self: stretch;
+  margin: 0 var(--size-4-4) var(--size-4-2);
 }
 
 .abyss-popover-anchored.abyss-recurrence-popover-floating {

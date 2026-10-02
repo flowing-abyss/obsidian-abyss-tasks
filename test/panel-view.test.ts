@@ -1509,6 +1509,60 @@ describe('PanelView', () => {
       },
     );
 
+    it('retains width availability for empty selection across mode/header changes and clears reset refs', () => {
+      activeDocument.body.appendChild(view.containerEl);
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        compactPaneAccess_abyssPrivate: CompactPaneAccess;
+      };
+      internals.state_abyssPrivate.set('taskStack', []);
+      const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+      const right = expectDefined(layout.querySelector<HTMLElement>('.abyss-right'));
+      const lists = expectDefined(
+        layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--left'),
+      );
+      const details = expectDefined(
+        layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right'),
+      );
+      const resizeTo = (width: number): void => {
+        setGeometry(layout, rect(0, 0, width, 480));
+        window.dispatchEvent(new Event('resize'));
+      };
+      const focused = activeDocument.activeElement;
+      resizeTo(929);
+      expect(details.classList.contains('is-compact-available')).toBe(false);
+      resizeTo(928);
+      expect(details.classList.contains('is-compact-available')).toBe(true);
+      expect(lists.classList.contains('is-compact-available')).toBe(false);
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+      expect(activeDocument.activeElement).toBe(focused);
+      resizeTo(608);
+      expect(lists.classList.contains('is-compact-available')).toBe(true);
+      details.click();
+      internals.state_abyssPrivate.set('mode', 'calendar');
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+      expect(details.classList.contains('is-compact-available')).toBe(true);
+      expect(lists.classList.contains('is-compact-available')).toBe(true);
+      internals.state_abyssPrivate.set('mode', 'tasks');
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+      const header = activeDocument.body.createDiv();
+      const controls = header.createDiv();
+      layout.appendChild(header);
+      internals.compactPaneAccess_abyssPrivate.attachHeader(header, controls);
+      expect(controls.contains(details)).toBe(true);
+      expect(details.classList.contains('is-compact-available')).toBe(true);
+      expect(lists.classList.contains('is-compact-available')).toBe(true);
+      resizeTo(609);
+      expect(lists.classList.contains('is-compact-available')).toBe(false);
+      resizeTo(929);
+      expect(details.classList.contains('is-compact-available')).toBe(false);
+      resizeTo(608);
+      internals.compactPaneAccess_abyssPrivate.reset();
+      expect(lists.classList.contains('is-compact-available')).toBe(false);
+      expect(details.classList.contains('is-compact-available')).toBe(false);
+      expect(internals.state_abyssPrivate.get('taskStack')).toEqual([]);
+    });
+
     it('reconciles compact-pane ownership at the exact 58rem and 38rem boundaries', () => {
       activeDocument.body.appendChild(view.containerEl);
       const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));

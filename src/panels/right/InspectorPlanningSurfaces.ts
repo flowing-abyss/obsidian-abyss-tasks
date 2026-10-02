@@ -688,10 +688,7 @@ export class InspectorPlanningSurfaces {
     const target = taskNodeRef(task);
     if (root == null || !('source' in root)) return;
 
-    const popover = this.#host.root().createDiv({
-      cls: 'abyss-popover abyss-recurrence-popover abyss-popover-anchored',
-      attr: { role: 'dialog', 'aria-modal': 'false' },
-    });
+    const { popover, inline } = this.#createRecurrencePopover();
     const dismissalFocus = this.#beginRecurrenceIntent(anchor, restoring?.intent);
     const handle = mountRecurrenceEditor({
       container: popover,
@@ -709,7 +706,7 @@ export class InspectorPlanningSurfaces {
     this.#recurrenceDraftEditor = { target, handle, surface: popover };
     const title = popover.querySelector<HTMLElement>('.abyss-recurrence-title');
     if (title !== null && title.id !== '') popover.setAttribute('aria-labelledby', title.id);
-    this.positionAnchoredSurface(popover, anchor, 'below-start');
+    this.#placeRecurrencePopover(popover, anchor, inline);
     const placementCleanup = this.#anchoredSurfaceCleanups.get(popover);
     const editorCleanup = (): void => {
       handle.destroy();
@@ -724,6 +721,22 @@ export class InspectorPlanningSurfaces {
       this.#dismissRecurrencePopover(popover, handle);
     });
     if (restoring === undefined) this.#deferRecurrenceFocus(handle);
+  }
+
+  #placeRecurrencePopover(popover: HTMLElement, anchor: HTMLElement, inline: boolean): void {
+    if (!inline) this.positionAnchoredSurface(popover, anchor, 'below-start');
+  }
+
+  #createRecurrencePopover(): { popover: HTMLElement; inline: boolean } {
+    const surfaceRoot = this.#host.root();
+    const chips = surfaceRoot.querySelector<HTMLElement>(':scope > .abyss-chips-row');
+    const inline = surfaceRoot.closest('.abyss-modal') !== null && chips !== null;
+    const popover = surfaceRoot.createDiv({
+      cls: `abyss-popover abyss-recurrence-popover ${inline ? 'abyss-recurrence-popover-inline' : 'abyss-popover-anchored'}`,
+      attr: { role: 'dialog', 'aria-modal': 'false' },
+    });
+    if (inline) chips.after(popover);
+    return { popover, inline };
   }
 
   #deferRecurrenceFocus(handle: RecurrenceEditorHandle): void {
