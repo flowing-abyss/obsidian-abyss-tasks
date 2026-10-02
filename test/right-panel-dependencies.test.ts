@@ -1,4 +1,4 @@
-import { Platform } from 'obsidian';
+import { Platform, TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import type { RightPanel } from '../src/panels/RightPanel';
@@ -1098,6 +1098,157 @@ describe('inspector dependency navigation', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('retains the focused blocker title through a real unrelated-file update', async () => {
+    const selected = '- [ ] Current ⛔ blocker\nSelected sentinel.\n';
+    const blocker = '\n- [ ] Blocker 🆔 blocker\nBlocker sentinel.\n';
+    const unrelated = '\n- [ ] Unrelated\nUnrelated sentinel.\n';
+    const h = await harness(selected, 'Current', {
+      'blocker.md': blocker,
+      'unrelated.md': unrelated,
+    });
+    const file = h.app.vault.getAbstractFileByPath('unrelated.md');
+    if (!(file instanceof TFile)) throw new Error('Missing unrelated fixture');
+    const beforeRefs = [h.node('Current').target, h.node('Blocker').target];
+    const title = button(h.el, '[data-dependency-direction="blocked-by"] .abyss-dep-title');
+    title.focus();
+    expect(activeDocument.activeElement).toBe(title);
+    const expectedUnrelated = unrelated.replace('Unrelated\n', 'Unrelated edited\n');
+    await h.app.vault.modify(file, expectedUnrelated);
+    await flushMicrotasks(30);
+    expect([h.node('Current').target, h.node('Blocker').target]).toEqual(beforeRefs);
+    expect(await h.read()).toBe(selected);
+    expect(await h.app.vault.read(file)).toBe(expectedUnrelated);
+    const blockerFile = h.app.vault.getAbstractFileByPath('blocker.md');
+    if (!(blockerFile instanceof TFile)) throw new Error('Missing blocker fixture');
+    expect(await h.app.vault.read(blockerFile)).toBe(blocker);
+    const current = button(h.el, '[data-dependency-direction="blocked-by"] .abyss-dep-title');
+    expect(current.isConnected).toBe(true);
+    expect(activeDocument.activeElement).toBe(current);
+  });
+
+  it('retains the original blocker menu through an unrelated update and writes only its target', async () => {
+    const selected = '- [ ] Current ⛔ blocker\nSelected sentinel.\n';
+    const blocker = '\n- [ ] Blocker 🆔 blocker\nBlocker sentinel.\n';
+    const unrelated = '\n- [ ] Unrelated\nUnrelated sentinel.\n';
+    const h = await harness(selected, 'Current', {
+      'blocker.md': blocker,
+      'unrelated.md': unrelated,
+    });
+    const file = h.app.vault.getAbstractFileByPath('unrelated.md');
+    const blockerFile = h.app.vault.getAbstractFileByPath('blocker.md');
+    if (!(file instanceof TFile) || !(blockerFile instanceof TFile))
+      throw new Error('Missing fixtures');
+    const beforeRefs = [h.node('Current').target, h.node('Blocker').target];
+    const marker = button(h.el, '[data-dependency-direction="blocked-by"] .abyss-status-marker');
+    vi.useFakeTimers();
+    try {
+      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      vi.runOnlyPendingTimers();
+    } finally {
+      vi.useRealTimers();
+    }
+    const menu = expectDefined(
+      activeDocument.body.querySelector<HTMLElement>('.abyss-status-popover'),
+    );
+    const focused = activeDocument.activeElement;
+    expect(menu.contains(focused)).toBe(true);
+    const expectedUnrelated = unrelated.replace('Unrelated\n', 'Unrelated edited\n');
+    await h.app.vault.modify(file, expectedUnrelated);
+    await flushMicrotasks(30);
+    expect([h.node('Current').target, h.node('Blocker').target]).toEqual(beforeRefs);
+    expect(await h.read()).toBe(selected);
+    expect(await h.app.vault.read(file)).toBe(expectedUnrelated);
+    expect(menu.isConnected).toBe(true);
+    expect(activeDocument.body.querySelector('.abyss-status-popover')).toBe(menu);
+    expect(activeDocument.activeElement).toBe(focused);
+    const status = expectDefined(
+      buildDefaultTaskStatuses().find((def) => def.core && def.type === 'in-progress'),
+    );
+    expect(status.symbol).toBe('/');
+    expectDefined(
+      [...menu.querySelectorAll<HTMLElement>('.abyss-status-popover-row')].find(
+        (row) => row.querySelector('.abyss-status-popover-name')?.textContent === status.name,
+      ),
+    ).click();
+    await flushMicrotasks(30);
+    expect(await h.app.vault.read(blockerFile)).toBe(blocker.replace('- [ ]', '- [/]'));
+    expect(await h.read()).toBe(selected);
+    expect(await h.app.vault.read(file)).toBe(expectedUnrelated);
+    expect(h.node('Blocker').node.statusSymbol).toBe('/');
+    expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Current']);
+  });
+
+  it('refreshes live search candidates while keeping unchanged dependency sections and query', async () => {
+    const selected = '- [ ] Current ⛔ blocker\nSelected sentinel.\n';
+    const blocker = '\n- [ ] Blocker 🆔 blocker\nBlocker sentinel.\n';
+    const unrelated = '\n- [ ] Unrelated\nUnrelated sentinel.\n';
+    const h = await harness(selected, 'Current', {
+      'blocker.md': blocker,
+      'unrelated.md': unrelated,
+    });
+    button(h.el, '.abyss-dep-badge-body').click();
+    const input = search(h.el, 'Candidate');
+    const sections = [...h.el.querySelectorAll('.abyss-dep-section')];
+    const matches = () =>
+      [
+        ...h.el.querySelectorAll('.abyss-dep-search-option[role="option"] .abyss-dep-search-title'),
+      ].filter((el) => el.textContent === 'Candidate');
+    expect(matches()).toHaveLength(0);
+    const file = h.app.vault.getAbstractFileByPath('unrelated.md');
+    if (!(file instanceof TFile)) throw new Error('Missing unrelated fixture');
+    await h.app.vault.modify(file, unrelated.replace('Unrelated\n', 'Candidate\n'));
+    await flushMicrotasks(30);
+    expect(matches()).toHaveLength(1);
+    expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
+    expect(input.value).toBe('Candidate');
+    expect(input.isConnected).toBe(true);
+    expect([...h.el.querySelectorAll('.abyss-dep-section')]).toEqual(sections);
+    expect(sections.every((section) => section.isConnected)).toBe(true);
+    expect(await h.read()).toBe(selected);
+    expect(await h.app.vault.read(file)).toBe(unrelated.replace('Unrelated\n', 'Candidate\n'));
+  });
+
+  it('disposes old interactions on a full rebuild, retains the new sections and closes on destroy', async () => {
+    const selected = '- [ ] Current ⛔ blocker\nSelected sentinel.\n';
+    const unrelated = '\n- [ ] Unrelated\nUnrelated sentinel.\n';
+    const h = await harness(selected, 'Current', {
+      'blocker.md': '\n- [ ] Blocker 🆔 blocker\nBlocker sentinel.\n',
+      'unrelated.md': unrelated,
+    });
+    const marker = button(h.el, '[data-dependency-direction="blocked-by"] .abyss-status-marker');
+    marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const oldMenu = expectDefined(
+      activeDocument.body.querySelector<HTMLElement>('.abyss-status-popover'),
+    );
+    const oldSections = [...h.el.querySelectorAll('.abyss-dep-section')];
+    h.state.updateInspectorSelection([h.node('Current').root]);
+    expect(oldMenu.isConnected).toBe(false);
+    expect(oldSections.every((section) => !section.isConnected)).toBe(true);
+    const currentSections = [...h.el.querySelectorAll('.abyss-dep-section')];
+    expect(currentSections).toHaveLength(2);
+    expect(
+      button(h.el, '[data-dependency-direction="blocked-by"] .abyss-dep-title').textContent,
+    ).toBe('Blocker');
+    currentSections[0]?.classList.add('is-drop-target', 'is-drop-disabled');
+    const file = h.app.vault.getAbstractFileByPath('unrelated.md');
+    if (!(file instanceof TFile)) throw new Error('Missing unrelated fixture');
+    await h.app.vault.modify(file, unrelated.replace('Unrelated\n', 'Unrelated edited\n'));
+    await flushMicrotasks(30);
+    expect([...h.el.querySelectorAll('.abyss-dep-section')]).toEqual(currentSections);
+    expect(h.el.querySelector('.is-drop-target,.is-drop-disabled')).toBeNull();
+    button(h.el, '[data-dependency-direction="blocked-by"] .abyss-status-marker').dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
+    const currentMenu = expectDefined(
+      activeDocument.body.querySelector<HTMLElement>('.abyss-status-popover'),
+    );
+    h.panel.destroy();
+    expect(currentMenu.isConnected).toBe(false);
+    await h.app.vault.modify(file, unrelated);
+    await flushMicrotasks(30);
+    expect(activeDocument.body.querySelector('.abyss-status-popover')).toBeNull();
   });
 
   it('closes a dependency status menu before refreshing its relation row', async () => {
