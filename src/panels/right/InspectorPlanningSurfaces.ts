@@ -258,6 +258,8 @@ export class InspectorPlanningSurfaces {
         readonly surface: HTMLElement;
         readonly input: HTMLInputElement;
         readonly target: TaskNodeRef;
+        readonly opener: HTMLElement;
+        openingFocusPending: boolean;
         submitted: boolean;
       }
     | undefined;
@@ -269,8 +271,20 @@ export class InspectorPlanningSurfaces {
       !entry.submitted &&
       entry.surface.isConnected &&
       entry.input.isConnected &&
-      entry.input.ownerDocument.activeElement === entry.input &&
+      (entry.input.ownerDocument.activeElement === entry.input ||
+        (entry.openingFocusPending && this.#canFocusOpeningInput(entry.input, entry.opener))) &&
       sameTaskNodeRef(entry.target, target)
+    );
+  }
+
+  #canFocusOpeningInput(input: HTMLInputElement, opener: HTMLElement): boolean {
+    const active = input.ownerDocument.activeElement;
+    return (
+      active === input ||
+      active === opener ||
+      active === input.ownerDocument.body ||
+      active === this.#host.root() ||
+      active === null
     );
   }
 
@@ -825,7 +839,15 @@ export class InspectorPlanningSurfaces {
       cls: 'abyss-date-input',
       attr: { type: 'date', value: datePopoverValue(task, field) ?? '' },
     });
-    const entry = { surface: pop, input, target: taskNodeRef(task), submitted: false };
+    const ownerWindow = input.ownerDocument.defaultView;
+    const entry = {
+      surface: pop,
+      input,
+      target: taskNodeRef(task),
+      opener: anchor,
+      openingFocusPending: ownerWindow !== null,
+      submitted: false,
+    };
     this.#typedInput = entry;
     const draft = bindSegmentedInputCommit({
       input,
@@ -837,8 +859,24 @@ export class InspectorPlanningSurfaces {
         this.#removeAnchoredSurface(pop);
       },
     });
-    this.#host.root().ownerDocument.defaultView?.setTimeout(() => {
-      input.focus();
+    const focusTimer = ownerWindow?.setTimeout(() => {
+      if (this.#typedInput !== entry) return;
+      try {
+        const stack = this.#host.stack();
+        const selected = stack[stack.length - 1];
+        if (
+          this.#host.mounted() &&
+          selected !== undefined &&
+          this.hasFocusedTypedInputFor(taskNodeRef(selected)) &&
+          this.#canFocusOpeningInput(input, anchor)
+        )
+          input.focus();
+      } finally {
+        if (this.#typedInput === entry) {
+          entry.openingFocusPending = false;
+          this.#host.onTypedInputReleased();
+        }
+      }
     }, 0);
 
     this.#renderPopoverClear(inputRow, 'Clear date', () => {
@@ -852,6 +890,8 @@ export class InspectorPlanningSurfaces {
     this.#dismissMenuOnOutsideClick(pop, anchor, undefined, {
       focusLeaveDelay: 200,
       onCleanup: () => {
+        clearOptionalTimer(ownerWindow, focusTimer);
+        entry.openingFocusPending = false;
         draft.cancel();
         restorePopupRole(anchor, previousPopupRole);
         this.#releaseTypedInput(pop);
@@ -1073,7 +1113,14 @@ export class InspectorPlanningSurfaces {
     );
     const input = surface.querySelector<HTMLInputElement>('.abyss-tag-input');
     if (input !== null) {
-      this.#typedInput = { surface, input, target: taskNodeRef(task), submitted: false };
+      this.#typedInput = {
+        surface,
+        input,
+        target: taskNodeRef(task),
+        opener: anchor,
+        openingFocusPending: false,
+        submitted: false,
+      };
     }
     anchor.addClass('abyss-chip-add--hidden');
     this.#dismissMenuOnOutsideClick(

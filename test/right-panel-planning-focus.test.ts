@@ -183,6 +183,37 @@ describe('inspector planning focus continuity', () => {
     },
   );
 
+  it('keeps a normally opened date editor when a held tag releases its pending render', async () => {
+    const h = await hosted(continuityBase);
+    activate(control(h, '[aria-label="Add tag"]'));
+    await flushMicrotasks();
+    const tagInput = control<HTMLInputElement>(h, '.abyss-tag-input');
+    tagInput.value = 'qasp1aa-draft';
+    tagInput.dispatchEvent(new Event('input', { bubbles: true }));
+    await h.app.vault.modify(h.file, `\n${continuityExternal}`);
+    await flushMicrotasks(40);
+    expect(h.el.querySelector('.abyss-tag-input')).toBe(tagInput);
+    expect(activeDocument.activeElement).toBe(tagInput);
+    expect(await h.read()).toBe(continuityExternal);
+
+    const chip = dateChip(h);
+    // The document capture listener dismisses the tag before the chip's ordinary click handler.
+    activate(chip);
+    const dateInput = control<HTMLInputElement>(h, '.abyss-date-input');
+    expect(tagInput.isConnected).toBe(false);
+    await flushMicrotasks(40);
+    expect(dateInput.isConnected).toBe(true);
+    expect(h.el.querySelector('.abyss-date-input')).toBe(dateInput);
+    expect(activeDocument.activeElement).toBe(dateInput);
+    expect(await h.read()).toBe(continuityExternal);
+
+    key(dateInput, 'Escape');
+    await flushMicrotasks(40);
+    expect(h.el.querySelector('.abyss-date-input')).toBeNull();
+    expectRebuiltFocus(chip, dateChip(h));
+    expect(await h.read()).toBe(continuityExternal);
+  });
+
   it.each(['outside', 'switch', 'destroy'] as const)(
     'releases a held editor without stale writes or focus after %s',
     async (kind) => {

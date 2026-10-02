@@ -84,6 +84,10 @@ only tag-suggestion `listNodes` queries and live root, Markdown Component, selec
 retained dependency-resolution and planning-target reconstruction callbacks. Typed call-time command
 arrows forward to RightPanel;
 all application execution, selection epochs, drafts/recovery, Undo and history remain in the shell.
+The date entry also protects its initial opener/neutral focus until its existing owner-window
+focus timer settles. That timer checks the current connected entry and live selected reference,
+never takes focus from another control, and rechecks deferred rendering after settlement;
+normal cleanup cancels the same timer before releasing the entry.
 For a focused, unsubmitted date/tag entry whose full task-node reference is unchanged, the shell
 coalesces destructive renders until ordinary entry release. PlanningSurfaces retains the connected
 input and original command target, marks submission before command invocation and reports release
