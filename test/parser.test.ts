@@ -516,3 +516,13 @@ describe('markdownText preserves link markup', () => {
     expect(t.text).toBe('Task `#task`');
   });
 });
+
+describe('ordinary Unicode task tags', () => {
+  it('extracts ordinary Unicode/nested tags without changing authored spelling', () => {
+    const raw = '- [ ] Work #работа #café #日本語 #work/子 #123 #bad//child `#code` [[#link]]';
+    const task = parseTask(raw, { filePath: 'f.md', line: 0 });
+    expect(task?.text).toBe('Work #123 #bad//child `#code` 🔗 #link');
+    expect(task?.text).toContain('#123');
+    expect(task?.text).toContain('#bad//child');
+  });
+});

@@ -1,4 +1,5 @@
 import { collapseWikiLinks, parseLinks } from '../../../markdown/links';
+import { sameTag } from '../../../markdown/tagSyntax';
 import { type StatusCatalog } from '../../domain/StatusCatalog';
 import { parseRecurrenceRule } from '../../domain/recurrence';
 import {
@@ -407,7 +408,12 @@ function invalid(
 }
 
 function normalizedTags(tags: readonly string[]): string[] {
-  return [...new Set(tags.map((tag) => (tag.startsWith('#') ? tag : `#${tag}`)))];
+  const result: string[] = [];
+  for (const value of tags) {
+    const tag = value.startsWith('#') ? value : `#${value}`;
+    if (!result.some((existing) => sameTag(existing, tag))) result.push(tag);
+  }
+  return result;
 }
 
 function tagsAreValid(tags: Iterable<string>): boolean {
@@ -418,7 +424,8 @@ function contentWithoutTags(parsed: ParsedTaskLine, removals: ReadonlySet<string
   let content = parsed.original;
   for (const span of [...(parsed.occurrences.get('tag') ?? [])].reverse()) {
     const tag = parsed.original.slice(span.from, span.to);
-    if (removals.has(tag)) content = removeSpan(content, span);
+    if ([...removals].some((candidate) => sameTag(candidate, tag)))
+      content = removeSpan(content, span);
   }
   return content;
 }
@@ -923,7 +930,9 @@ function prepareTagChange(
   const candidate = parseTaskLine(content);
   if (candidate === null) return invalidTaskSyntax();
   const present = new Set(candidate.tags);
-  const pending = additions.filter((tag) => !present.has(tag));
+  const pending = additions.filter(
+    (tag) => ![...present].some((existing) => sameTag(existing, tag)),
+  );
   if (pending.length === 0) return { type: 'prepared', content, fields: [] };
   return insertTags(content, candidate, pending);
 }

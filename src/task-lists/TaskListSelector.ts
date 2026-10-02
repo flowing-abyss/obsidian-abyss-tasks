@@ -1,4 +1,6 @@
 import type { ListSelection } from '../app/AppState';
+import { resolveListViewStateKey } from '../app/listViewState';
+import { sameTag } from '../markdown/tagSyntax';
 import type { CalendarSettings, ListViewState, PropertyFilter } from '../settings/types';
 import {
   resolveEffectiveTagGroups,
@@ -64,7 +66,7 @@ function visitTaskTags(
 }
 
 function taskTreeHasTag(task: TaskSnapshot, tag: string): boolean {
-  return visitTaskTags(task, (candidate) => candidate === tag);
+  return visitTaskTags(task, (candidate) => sameTag(candidate, tag));
 }
 
 function taskTreeTags(task: TaskSnapshot): readonly string[] {
@@ -92,7 +94,9 @@ function selectedInbox(task: TaskSnapshot, settings: CalendarSettings): boolean 
   const normalized = normalizeTaskTagInput(settings.inbox.tag);
   const inboxTag = normalized?.length === 1 ? normalized[0] : undefined;
   const tagged =
-    settings.inbox.mode !== 'untagged' && inboxTag !== undefined && task.tags.includes(inboxTag);
+    settings.inbox.mode !== 'untagged' &&
+    inboxTag !== undefined &&
+    task.tags.some((candidate) => sameTag(candidate, inboxTag));
   const untagged = settings.inbox.mode !== 'tag' && task.tags.length === 0;
   return tagged || untagged;
 }
@@ -110,7 +114,23 @@ function selectedTagGroup(
   groupId: string,
   groups: readonly EffectiveTagGroup[],
 ): boolean {
-  const group = groups.find((candidate) => candidate.id === groupId);
+  const configuredIds = new Set(
+    groups
+      .filter((candidate) => candidate.origin === 'configured')
+      .map((candidate) => candidate.id),
+  );
+  const key = resolveListViewStateKey({ type: 'group', groupId }, undefined, configuredIds);
+  const group =
+    groups.find((candidate) => candidate.id === groupId) ??
+    groups.find(
+      (candidate) =>
+        candidate.origin === 'discovered' &&
+        resolveListViewStateKey(
+          { type: 'group', groupId: candidate.id },
+          undefined,
+          configuredIds,
+        ) === key,
+    );
   if (group == null) return false;
   return visitTaskTags(task, (tag) => tagMatchesGroup(tag, group));
 }
@@ -122,7 +142,7 @@ function statusTypeOf(task: TaskSnapshot): TaskStatusType {
 
 function matchesProperty(task: TaskSnapshot, filter: PropertyFilter): boolean {
   if (filter.type === 'tag') {
-    return task.tags.includes(filter.value);
+    return task.tags.some((candidate) => sameTag(candidate, filter.value));
   }
   if (filter.type === 'file') return task.source.filePath === filter.filePath;
   if (filter.type === 'time') return String(task.planning.time) === filter.value;

@@ -1,6 +1,7 @@
 import { Menu, Notice, setIcon, type App, type TFile } from 'obsidian';
 import type { AppState, ListSelection } from '../app/AppState';
-import { isListViewCustomized, listSelectionToKey } from '../app/listViewState';
+import { isListViewCustomized, resolveListViewStateKey } from '../app/listViewState';
+import { sameTag } from '../markdown/tagSyntax';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
 import {
@@ -10,7 +11,7 @@ import {
 } from '../projects/projectCreation';
 import { projectStatusDisplayName } from '../projects/status';
 import type { CalendarSettings } from '../settings/types';
-import type { TagManager } from '../tags/TagManager';
+import { TagGroupValidationError, type TagManager } from '../tags/TagManager';
 import { isTagNavigationArchived, resolveEffectiveTagGroups } from '../tags/effectiveTagGroups';
 import { tagSettingsFailureNotice } from '../tags/tagSettingsFailure';
 import { collectTaskNodeTags } from '../tags/taskTagCatalog';
@@ -219,7 +220,11 @@ export class LeftPanel {
   /** Append the "customized" dot after a container label when its saved view
    *  state differs from defaults (group/sort/show changed or any filter set). */
   private appendCustomDot_abyssPrivate(labelParent: HTMLElement, sel: ListSelection): void {
-    const key = listSelectionToKey(sel);
+    const key = resolveListViewStateKey(
+      sel,
+      this.settings_abyssPrivate.listViewStates,
+      new Set(this.settings_abyssPrivate.tagGroups.map((g) => g.id)),
+    );
     const vs = this.settings_abyssPrivate.listViewStates?.[key];
     if (vs != null && isListViewCustomized(vs, key)) {
       labelParent.createSpan({
@@ -585,7 +590,8 @@ export class LeftPanel {
     failure: InlineAddFailure,
     error: unknown,
   ): void {
-    console.error('[abyss-tasks] Could not finish the inline add', error);
+    if (!(error instanceof TagGroupValidationError))
+      console.error('[abyss-tasks] Could not finish the inline add', error);
     new Notice(failure.notice);
     if (!this.canRetryInlineAdd_abyssPrivate(session, failure)) {
       this.finishInlineAdd_abyssPrivate(session);
@@ -843,7 +849,7 @@ export class LeftPanel {
     const inboxTag = normalized?.length === 1 ? normalized[0] : undefined;
     const withTag =
       inbox.mode !== 'untagged' && inboxTag !== undefined
-        ? allOpen.filter((t) => t.tags.includes(inboxTag))
+        ? allOpen.filter((t) => t.tags.some((candidate) => sameTag(candidate, inboxTag)))
         : [];
     const includeUntagged = inbox.mode !== 'tag';
     const untagged = includeUntagged ? allOpen.filter((t) => t.tags.length === 0) : [];

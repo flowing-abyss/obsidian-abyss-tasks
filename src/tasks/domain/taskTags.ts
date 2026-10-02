@@ -1,3 +1,4 @@
+import { sameTag, tagComparisonKey } from '../../markdown/tagSyntax';
 import { isCanonicalTaskTag, parseTaskLineSourceModel } from './taskLineSourceModel';
 
 function normalizeToken(token: string): string | undefined {
@@ -18,8 +19,8 @@ export function normalizeTaskTagInput(input: string): readonly string[] | undefi
     if (/^#*$/u.test(raw)) continue;
     const tag = normalizeToken(raw);
     if (tag === undefined) return undefined;
-    if (seen.has(tag)) continue;
-    seen.add(tag);
+    if (seen.has(tagComparisonKey(tag))) continue;
+    seen.add(tagComparisonKey(tag));
     tags.push(tag);
   }
   return tags;
@@ -100,8 +101,8 @@ function withoutLineEnding(source: string): { readonly content: string; readonly
 function duplicateOccurrences(occurrences: readonly TagOccurrence[]): readonly TagOccurrence[] {
   const seen = new Set<string>();
   return occurrences.filter(({ tag }) => {
-    if (seen.has(tag)) return true;
-    seen.add(tag);
+    if (seen.has(tagComparisonKey(tag))) return true;
+    seen.add(tagComparisonKey(tag));
     return false;
   });
 }
@@ -118,8 +119,12 @@ function rootTagsAfterInitial(
 ): ReadonlySet<string> {
   const removed = new Set(initial?.remove ?? []);
   return new Set([
-    ...occurrences.map(({ tag }) => tag).filter((tag) => !removed.has(tag)),
-    ...(initial?.add ?? []).filter((tag) => !removed.has(tag)),
+    ...occurrences
+      .map(({ tag }) => tag)
+      .filter((tag) => ![...removed].some((candidate) => sameTag(candidate, tag))),
+    ...(initial?.add ?? []).filter(
+      (tag) => ![...removed].some((candidate) => sameTag(candidate, tag)),
+    ),
   ]);
 }
 
@@ -134,11 +139,13 @@ function linePolicy(
   const tags = rootLine
     ? rootTagsAfterInitial(occurrences, initial)
     : new Set(occurrences.map(({ tag }) => tag));
-  const removesInbox = inboxTag !== undefined && [...tags].some((tag) => tag !== inboxTag);
+  const removesInbox = inboxTag !== undefined && [...tags].some((tag) => !sameTag(tag, inboxTag));
   const inboxAlreadyRemoved =
-    inboxTag !== undefined && initial?.remove?.includes(inboxTag) === true;
+    inboxTag !== undefined && initial?.remove?.some((tag) => sameTag(tag, inboxTag)) === true;
   const inboxOccurrences =
-    removesInbox && !inboxAlreadyRemoved ? occurrences.filter(({ tag }) => tag === inboxTag) : [];
+    removesInbox && !inboxAlreadyRemoved
+      ? occurrences.filter(({ tag }) => sameTag(tag, inboxTag))
+      : [];
   const removals = [
     ...new Map([...duplicates, ...inboxOccurrences].map((item) => [item.from, item])).values(),
   ].sort((left, right) => left.from - right.from);
@@ -153,7 +160,7 @@ function withoutInitialInbox(
   if (inboxTag === undefined || !removesInbox) return initial;
   return {
     ...initial,
-    ...(initial.add !== undefined && { add: initial.add.filter((tag) => tag !== inboxTag) }),
+    ...(initial.add !== undefined && { add: initial.add.filter((tag) => !sameTag(tag, inboxTag)) }),
   };
 }
 

@@ -1,3 +1,4 @@
+import { sameTag, tagComparisonKey, tagHasPrefix } from '../markdown/tagSyntax';
 import type { CalendarSettings, TagGroup } from '../settings/types';
 import { normalizeTaskTagInput } from '../tasks';
 
@@ -20,11 +21,11 @@ export function normalizeTagPrefix(input: string): string | undefined {
 }
 
 export function discoveredPrefixGroupId(prefix: string): string {
-  return `discovered:prefix:${encodeURIComponent(prefix)}`;
+  return `discovered:prefix:${encodeURIComponent(tagComparisonKey(prefix))}`;
 }
 
 export function discoveredTagGroupId(tag: string): string {
-  return `discovered:tag:${encodeURIComponent(tag)}`;
+  return `discovered:tag:${encodeURIComponent(tagComparisonKey(tag))}`;
 }
 
 export function prefixForDiscoveredGroupId(id: string): string | undefined {
@@ -37,30 +38,20 @@ export function prefixForDiscoveredGroupId(id: string): string | undefined {
   }
 }
 
-export function tagForDiscoveredGroupId(id: string): string | undefined {
-  const marker = 'discovered:tag:';
-  if (!id.startsWith(marker)) return undefined;
-  try {
-    return decodeURIComponent(id.slice(marker.length).replace(/::\d+$/u, ''));
-  } catch {
-    return undefined;
-  }
-}
-
 export function tagMatchesGroup(tag: string, group: TagMatchGroup): boolean {
   if (group.mode === 'prefix') {
     const prefix = normalizeTagPrefix(group.prefix ?? '');
-    return prefix !== undefined && (tag === `#${prefix}` || tag.startsWith(`#${prefix}/`));
+    return prefix !== undefined && tagHasPrefix(tag, `#${prefix}`);
   }
-  return (group.tags ?? []).some((candidate) => oneTag(candidate) === tag);
+  return (group.tags ?? []).some((candidate) => sameTag(oneTag(candidate) ?? '', tag));
 }
 
 export function isTagNavigationArchived(settings: CalendarSettings, tag: string): boolean {
-  if (settings.archivedTags.includes(tag)) return true;
+  if (settings.archivedTags.some((candidate) => sameTag(candidate, tag))) return true;
   if (
     settings.archivedTagPrefixes.some((input) => {
       const prefix = normalizeTagPrefix(input);
-      return prefix !== undefined && (tag === `#${prefix}` || tag.startsWith(`#${prefix}/`));
+      return prefix !== undefined && tagHasPrefix(tag, `#${prefix}`);
     })
   ) {
     return true;
@@ -83,12 +74,16 @@ export function effectiveGroupCaptureTag(
 }
 
 function normalizedObservedTags(tags: readonly string[]): string[] {
-  const normalized = new Set<string>();
+  const normalized = new Map<string, string>();
   for (const value of tags) {
     const tag = oneTag(value);
-    if (tag !== undefined) normalized.add(tag);
+    if (tag !== undefined) {
+      const key = tagComparisonKey(tag),
+        previous = normalized.get(key);
+      if (previous === undefined || tag < previous) normalized.set(key, tag);
+    }
   }
-  return [...normalized].sort((left, right) => left.localeCompare(right));
+  return [...normalized.values()].sort((left, right) => left.localeCompare(right));
 }
 
 function configuredGroups(settings: CalendarSettings): EffectiveTagGroup[] {
@@ -138,13 +133,6 @@ function uniqueDiscoveredId(preferred: string, occupied: Set<string>): string {
   return `${preferred}::${suffix}`;
 }
 
-export function collisionFreeDiscoveredGroupId(
-  settings: Pick<CalendarSettings, 'tagGroups'>,
-  preferred: string,
-): string {
-  return uniqueDiscoveredId(preferred, new Set(settings.tagGroups.map(({ id }) => id)));
-}
-
 function reserveDiscoveredId(
   candidate: DiscoveredCandidate,
   occupied: Set<string>,
@@ -181,35 +169,33 @@ export function resolveEffectiveTagGroups(
   const unclaimed = observed.filter(
     (tag) => !configured.some((group) => tagMatchesGroup(tag, group)),
   );
-  const archivedPrefixes = new Set(
-    settings.archivedTagPrefixes
-      .map(normalizeTagPrefix)
-      .filter((prefix): prefix is string => prefix !== undefined),
-  );
-  const branchPrefixes = new Set<string>(archivedPrefixes);
-  for (const tag of unclaimed) {
-    const slash = tag.indexOf('/');
-    if (slash > 1) branchPrefixes.add(tag.slice(1, slash));
-  }
+  const { archivedPrefixes, branchPrefixes } = discoveredPrefixes(settings, unclaimed);
 
   const discovered: DiscoveredCandidate[] = [];
-  for (const prefix of branchPrefixes) {
+  for (const [key, prefix] of branchPrefixes) {
     if (
       configured.some(
-        (group) => group.mode === 'prefix' && normalizeTagPrefix(group.prefix ?? '') === prefix,
+        (group) =>
+          group.mode === 'prefix' && sameTag(normalizeTagPrefix(group.prefix ?? '') ?? '', prefix),
       )
     ) {
       continue;
     }
     discovered.push(
-      reserveDiscoveredId(discoveredPrefix(prefix, archivedPrefixes.has(prefix)), occupiedIds),
+      reserveDiscoveredId(discoveredPrefix(prefix, archivedPrefixes.has(key)), occupiedIds),
     );
   }
   for (const tag of unclaimed) {
     const top = tag.slice(1).split('/')[0] ?? '';
-    if (top !== '' && branchPrefixes.has(top)) continue;
+    if (top !== '' && branchPrefixes.has(tagComparisonKey(top))) continue;
     discovered.push(
-      reserveDiscoveredId(discoveredTag(tag, settings.archivedTags.includes(tag)), occupiedIds),
+      reserveDiscoveredId(
+        discoveredTag(
+          tag,
+          settings.archivedTags.some((candidate) => sameTag(candidate, tag)),
+        ),
+        occupiedIds,
+      ),
     );
   }
   discovered.sort((left, right) => {
@@ -217,4 +203,29 @@ export function resolveEffectiveTagGroups(
     return byKey === 0 ? left.group.id.localeCompare(right.group.id) : byKey;
   });
   return [...configured, ...discovered.map(({ group }) => group)];
+}
+
+function discoveredPrefixes(
+  settings: CalendarSettings,
+  unclaimed: readonly string[],
+): { archivedPrefixes: ReadonlySet<string>; branchPrefixes: ReadonlyMap<string, string> } {
+  const archivedPrefixes = new Set<string>();
+  const branchPrefixes = new Map<string, string>();
+  const addPrefix = (prefix: string): void => {
+    const key = tagComparisonKey(prefix),
+      previous = branchPrefixes.get(key);
+    if (previous === undefined || prefix < previous) branchPrefixes.set(key, prefix);
+  };
+  for (const input of settings.archivedTagPrefixes) {
+    const prefix = normalizeTagPrefix(input);
+    if (prefix === undefined) continue;
+    archivedPrefixes.add(tagComparisonKey(prefix));
+    addPrefix(prefix);
+  }
+  for (const tag of unclaimed) {
+    const slash = tag.indexOf('/');
+    if (slash > 1) addPrefix(tag.slice(1, slash));
+  }
+
+  return { archivedPrefixes, branchPrefixes };
 }

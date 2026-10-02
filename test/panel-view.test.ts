@@ -52,7 +52,12 @@ function workspaceState(app: App): { activeLeaf: WorkspaceLeaf | null } {
 
 function makeTagManager(app: App, settings: CalendarSettings = DEFAULT_SETTINGS): TagManager {
   const save = vi.fn().mockResolvedValue(undefined);
-  return new TagManager(app, settings, save);
+  return new TagManager(app, settings, save, {
+    check: () => 'ready',
+    apply: async (_change, applyLive) => {
+      applyLive();
+    },
+  });
 }
 
 useRealMoment();

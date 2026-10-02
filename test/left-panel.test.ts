@@ -149,7 +149,12 @@ function makePanel(
     archivedTags,
   };
   const save = vi.fn().mockResolvedValue(undefined);
-  const tm = new TagManager(null as never, merged, save);
+  const tm = new TagManager(null as never, merged, save, {
+    check: () => 'ready',
+    apply: async (_change, applyLive) => {
+      applyLive();
+    },
+  });
   const queries = (store as unknown as { taskQueries: TaskApplicationApi['queries'] }).taskQueries;
   const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
     type: 'io-error',
@@ -278,7 +283,12 @@ describe('LeftPanel smart lists', () => {
     state.set('selectedList', 'today');
     const store = makeStubStore([]);
     const save = vi.fn().mockResolvedValue(undefined);
-    const tm = new TagManager(null as never, DEFAULT_SETTINGS, save);
+    const tm = new TagManager(null as never, DEFAULT_SETTINGS, save, {
+      check: () => 'ready',
+      apply: async (_change, applyLive) => {
+        applyLive();
+      },
+    });
     const panel = makeLeftPanelForTest(state, store, DEFAULT_SETTINGS, tm, null as never);
     const el = freshContainer();
     panel.mount(el);
@@ -362,7 +372,12 @@ describe('LeftPanel tag groups (prefix mode)', () => {
       ...DEFAULT_SETTINGS,
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     };
-    const tm = new TagManager(null as never, settings, save);
+    const tm = new TagManager(null as never, settings, save, {
+      check: () => 'ready',
+      apply: async (_change, applyLive) => {
+        applyLive();
+      },
+    });
     const panel = makeLeftPanelForTest(state, store, settings, tm, null as never);
     const el = freshContainer();
     panel.mount(el);
@@ -402,7 +417,12 @@ describe('LeftPanel tag groups (prefix mode)', () => {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     };
     const save = vi.fn().mockResolvedValue(undefined);
-    const tm = new TagManager(null as never, settings, save);
+    const tm = new TagManager(null as never, settings, save, {
+      check: () => 'ready',
+      apply: async (_change, applyLive) => {
+        applyLive();
+      },
+    });
     const panel = makeLeftPanelForTest(state, store, settings, tm, null as never);
     const el = freshContainer();
     panel.mount(el);
@@ -426,7 +446,12 @@ describe('LeftPanel tag groups (prefix mode)', () => {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     };
     const save = vi.fn().mockResolvedValue(undefined);
-    const tm = new TagManager(null as never, settings, save);
+    const tm = new TagManager(null as never, settings, save, {
+      check: () => 'ready',
+      apply: async (_change, applyLive) => {
+        applyLive();
+      },
+    });
     const panel = makeLeftPanelForTest(state, store, settings, tm, null as never);
     const el = freshContainer();
     panel.mount(el);
@@ -447,7 +472,12 @@ describe('LeftPanel tag groups (prefix mode)', () => {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     };
     const save = vi.fn().mockResolvedValue(undefined);
-    const tm = new TagManager(null as never, settings, save);
+    const tm = new TagManager(null as never, settings, save, {
+      check: () => 'ready',
+      apply: async (_change, applyLive) => {
+        applyLive();
+      },
+    });
     const panel = makeLeftPanelForTest(state, store, settings, tm, null as never);
     const el = freshContainer();
     panel.mount(el);
@@ -513,7 +543,12 @@ describe('LeftPanel tag groups (prefix mode)', () => {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     };
     const save = vi.fn().mockResolvedValue(undefined);
-    const tm = new TagManager(null as never, settings, save);
+    const tm = new TagManager(null as never, settings, save, {
+      check: () => 'ready',
+      apply: async (_change, applyLive) => {
+        applyLive();
+      },
+    });
     const panel = makeLeftPanelForTest(state, store, settings, tm, null as never);
     const el = freshContainer();
     panel.mount(el);
@@ -1147,7 +1182,7 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(onRenamed).toHaveBeenCalledOnce();
     expect(Notice).toHaveBeenCalledOnce();
     const notice = firstNoticeText();
-    expect(notice).toContain('settings were not saved');
+    expect(notice).toContain('tag/view preferences were not fully saved');
     expect(notice).not.toContain('Tag renamed across');
   });
 
@@ -1269,7 +1304,12 @@ describe('LeftPanel lifecycle', () => {
     const state = new AppState();
     const store = makeStubStore([]);
     const save = vi.fn().mockResolvedValue(undefined);
-    const tm = new TagManager(null as never, DEFAULT_SETTINGS, save);
+    const tm = new TagManager(null as never, DEFAULT_SETTINGS, save, {
+      check: () => 'ready',
+      apply: async (_change, applyLive) => {
+        applyLive();
+      },
+    });
     const panel = makeLeftPanelForTest(state, store, DEFAULT_SETTINGS, tm, null as never);
     const el = freshContainer();
     panel.mount(el);
@@ -1284,7 +1324,12 @@ describe('LeftPanel lifecycle', () => {
     const state = new AppState();
     const store = makeStubStore([]);
     const save = vi.fn().mockResolvedValue(undefined);
-    const tm = new TagManager(null as never, DEFAULT_SETTINGS, save);
+    const tm = new TagManager(null as never, DEFAULT_SETTINGS, save, {
+      check: () => 'ready',
+      apply: async (_change, applyLive) => {
+        applyLive();
+      },
+    });
     const panel = makeLeftPanelForTest(state, store, DEFAULT_SETTINGS, tm, null as never);
     const el = freshContainer();
     panel.mount(el);
@@ -1306,7 +1351,12 @@ describe('LeftPanel lifecycle', () => {
     const state = new AppState();
     const store = makeStubStore([]);
     const save = vi.fn().mockResolvedValue(undefined);
-    const tm = new TagManager(null as never, DEFAULT_SETTINGS, save);
+    const tm = new TagManager(null as never, DEFAULT_SETTINGS, save, {
+      check: () => 'ready',
+      apply: async (_change, applyLive) => {
+        applyLive();
+      },
+    });
     const panel = makeLeftPanelForTest(state, store, DEFAULT_SETTINGS, tm, null as never);
     const el = freshContainer();
     panel.mount(el);
@@ -1322,7 +1372,12 @@ describe('LeftPanel lifecycle', () => {
     state.set('mode', 'search');
     const store = makeStubStore([]);
     const save = vi.fn().mockResolvedValue(undefined);
-    const tm = new TagManager(null as never, DEFAULT_SETTINGS, save);
+    const tm = new TagManager(null as never, DEFAULT_SETTINGS, save, {
+      check: () => 'ready',
+      apply: async (_change, applyLive) => {
+        applyLive();
+      },
+    });
     const panel = makeLeftPanelForTest(state, store, DEFAULT_SETTINGS, tm, null as never);
     const el = freshContainer();
     panel.mount(el);
@@ -1816,7 +1871,12 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     };
     const save = vi.fn().mockResolvedValue(undefined);
     const saveViewState = vi.fn().mockResolvedValue(undefined);
-    const tm = new TagManager(null as never, merged, save);
+    const tm = new TagManager(null as never, merged, save, {
+      check: () => 'ready',
+      apply: async (_change, applyLive) => {
+        applyLive();
+      },
+    });
     const fullProjects = (opts.projects ?? []).map((p) => ({
       frontmatter: {},
       tags: [],
@@ -2881,4 +2941,39 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       error: failure,
     });
   });
+});
+
+describe('configured promoted group customization identity', () => {
+  it('uses only the configured exact key for a discovered-looking ID', () => {
+    const id = 'discovered:tag:%23Work';
+    const ownKey = `group:${id}`,
+      aliasKey = 'group:discovered:tag:%23work';
+    const custom = {
+      groupBy: 'priority' as const,
+      sortBy: { field: 'date' as const, dir: 'asc' as const },
+      filters: [],
+    };
+    const groups = [
+      { id, name: 'Promoted Work', mode: 'manual' as const, tags: ['#Work', '#Other'] },
+    ];
+    const missing = makePanel([], { tagGroups: groups, listViewStates: { [aliasKey]: custom } });
+    expect(missing.el.querySelector('.abyss-left-custom-dot')).toBeNull();
+    missing.panel.destroy();
+    const present = makePanel([], {
+      tagGroups: groups,
+      listViewStates: { [aliasKey]: custom, [ownKey]: custom },
+    });
+    expect(present.el.querySelector('.abyss-left-custom-dot')).not.toBeNull();
+    expect(present.merged.listViewStates?.[aliasKey]).toEqual(custom);
+    present.panel.destroy();
+  });
+});
+
+it('keeps a case-alias discovered prefix selection visibly active', () => {
+  const { panel, el, state } = makePanel([task({ tags: ['#Work/子'] })], { tagGroups: [] });
+  state.set('selectedList', { type: 'group', groupId: 'discovered:prefix:Work' });
+  expect(el.querySelector('.abyss-tag-group-header.is-active .abyss-left-label')?.textContent).toBe(
+    'Work',
+  );
+  panel.destroy();
 });

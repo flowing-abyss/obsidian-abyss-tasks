@@ -1,5 +1,7 @@
 import { Menu, Notice, setIcon, type App } from 'obsidian';
 import type { AppState, ListSelection } from '../../app/AppState';
+import { resolveListViewStateKey } from '../../app/listViewState';
+import { sameTag } from '../../markdown/tagSyntax';
 import type { CalendarSettings } from '../../settings/types';
 import { RenameTagModal } from '../../tags/RenameTagModal';
 import type { TagManager } from '../../tags/TagManager';
@@ -84,8 +86,10 @@ export class TagNavigation {
 
   renderPinnedTag(parent: HTMLElement, tag: string, allNodes: readonly TaskNodeSnapshot[]): void {
     const sel = this.#state.get('selectedList');
-    const isActive = typeof sel === 'object' && sel.type === 'tag' && sel.tag === tag;
-    const count = this.#countMatchingRoots(allNodes, ({ node }) => node.tags.includes(tag));
+    const isActive = typeof sel === 'object' && sel.type === 'tag' && sameTag(sel.tag, tag);
+    const count = this.#countMatchingRoots(allNodes, ({ node }) =>
+      node.tags.some((candidate) => sameTag(candidate, tag)),
+    );
 
     const row = parent.createDiv({
       cls: `abyss-left-item abyss-pinned-tag${isActive ? ' is-active' : ''}`,
@@ -118,8 +122,10 @@ export class TagNavigation {
     allNodes: readonly TaskNodeSnapshot[],
   ): void {
     const sel = this.#state.get('selectedList');
-    const isActive = typeof sel === 'object' && sel.type === 'tag' && sel.tag === tag;
-    const count = this.#countMatchingRoots(allNodes, ({ node }) => node.tags.includes(tag));
+    const isActive = typeof sel === 'object' && sel.type === 'tag' && sameTag(sel.tag, tag);
+    const count = this.#countMatchingRoots(allNodes, ({ node }) =>
+      node.tags.some((candidate) => sameTag(candidate, tag)),
+    );
 
     const row = parent.createDiv({
       cls: `abyss-left-item abyss-tag-leaf${isActive ? ' is-active' : ''}`,
@@ -157,12 +163,12 @@ export class TagNavigation {
     if (this.#renderSingleTagGroup(parent, group, allNodes)) return;
     const sel = this.#state.get('selectedList');
     const isGroupActive =
-      typeof sel === 'object' && sel.type === 'group' && sel.groupId === group.id;
+      typeof sel === 'object' && sel.type === 'group' && this.#selectionMatchesGroup(sel, group);
     const tags = this.#resolveGroupTags(group, allNodes).filter(
       (tag) => !isTagNavigationArchived(this.#settings, tag),
     );
     const hasActiveChild = tags.some(
-      (t) => typeof sel === 'object' && sel.type === 'tag' && sel.tag === t,
+      (t) => typeof sel === 'object' && sel.type === 'tag' && sameTag(sel.tag, t),
     );
     this.#expandActiveTagGroup(group.id, hasActiveChild);
     const isExpanded = this.#expandedGroups.has(group.id);
@@ -179,7 +185,7 @@ export class TagNavigation {
   ): boolean {
     const soleTag = group.mode === 'manual' && group.tags?.length === 1 ? group.tags[0] : undefined;
     if (soleTag === undefined) return false;
-    if (!this.#settings.archivedTags.includes(soleTag)) {
+    if (!this.#settings.archivedTags.some((candidate) => sameTag(candidate, soleTag))) {
       this.#renderTagLeaf(parent, group, soleTag, allNodes);
     }
     return true;
@@ -261,8 +267,10 @@ export class TagNavigation {
     const label = prefix !== undefined && prefix.length > 0 ? tag.replace(`#${prefix}/`, '') : tag;
     const selected = this.#state.get('selectedList');
     const isActive =
-      typeof selected === 'object' && selected.type === 'tag' && selected.tag === tag;
-    const count = this.#countMatchingRoots(allNodes, ({ node }) => node.tags.includes(tag));
+      typeof selected === 'object' && selected.type === 'tag' && sameTag(selected.tag, tag);
+    const count = this.#countMatchingRoots(allNodes, ({ node }) =>
+      node.tags.some((candidate) => sameTag(candidate, tag)),
+    );
     const child = parent.createDiv({
       cls: `abyss-left-item abyss-tag-child${isActive ? ' is-active' : ''}`,
     });
@@ -312,7 +320,7 @@ export class TagNavigation {
   }
 
   #showChildTagMenu(e: MouseEvent, tag: string): void {
-    const isPinned = this.#settings.pinnedTags.includes(tag);
+    const isPinned = this.#settings.pinnedTags.some((candidate) => sameTag(candidate, tag));
     const menu = new Menu();
     menu.addItem((item) =>
       item
@@ -387,7 +395,9 @@ export class TagNavigation {
     }
 
     if (flattenedTag !== undefined && flattenedTag !== '') {
-      const isPinned = this.#settings.pinnedTags.includes(flattenedTag);
+      const isPinned = this.#settings.pinnedTags.some((candidate) =>
+        sameTag(candidate, flattenedTag),
+      );
       menu.addItem((item) =>
         item
           .setTitle(isPinned ? 'Unpin' : 'Pin')
@@ -422,11 +432,11 @@ export class TagNavigation {
     const saved = await this.#runTagSettingsAction(
       this.#tagManager.archiveTag(tag),
       'archive tag',
-      () => !this.#settings.archivedTags.includes(tag),
+      () => !this.#settings.archivedTags.some((candidate) => sameTag(candidate, tag)),
     );
     if (!saved) return;
     const selected = this.#state.get('selectedList');
-    if (typeof selected === 'object' && selected.type === 'tag' && selected.tag === tag) {
+    if (typeof selected === 'object' && selected.type === 'tag' && sameTag(selected.tag, tag)) {
       this.#navigation.openList('today');
     }
   }
@@ -470,12 +480,18 @@ export class TagNavigation {
 
   #selectionMatchesGroup(selected: ListSelection, group: EffectiveTagGroup): boolean {
     if (typeof selected !== 'object') return false;
-    if (selected.type === 'group') return selected.groupId === group.id;
+    if (selected.type === 'group') {
+      const ids = new Set(this.#settings.tagGroups.map((candidate) => candidate.id));
+      return (
+        resolveListViewStateKey(selected, undefined, ids) ===
+        resolveListViewStateKey({ type: 'group', groupId: group.id }, undefined, ids)
+      );
+    }
     return (
       selected.type === 'tag' &&
       group.mode === 'manual' &&
       group.tags?.length === 1 &&
-      selected.tag === group.tags[0]
+      sameTag(selected.tag, group.tags[0] ?? '')
     );
   }
 
@@ -628,10 +644,10 @@ export class TagNavigation {
         if (
           tag.includes('/') &&
           tagMatchesGroup(tag, group) &&
-          !this.#isClaimedAutomaticChild(group, tag)
-        ) {
+          !this.#isClaimedAutomaticChild(group, tag) &&
+          ![...found].some((candidate) => sameTag(candidate, tag))
+        )
           found.add(tag);
-        }
       }
     }
     return Array.from(found).sort((left, right) => left.localeCompare(right));

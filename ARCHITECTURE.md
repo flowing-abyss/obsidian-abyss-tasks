@@ -738,6 +738,20 @@ Obsidian's public vault adapter. `data.json` owns static configuration; adjacent
 One composed `CalendarSettings` object remains the runtime authority. Panels do not receive separate
 settings copies.
 
+Shared [tag syntax](src/markdown/tagSyntax.ts) defines Unicode/nested non-numeric validity and
+locale-independent case comparison. Scanners retain their own context/source ranges; commands
+preserve authored tag spelling and unrelated Markdown. Derived discovered IDs use lowercase
+identity; configured group IDs remain exact. Saved view reads/stores resolve existing case aliases
+without deleting or rebinding physical keys, and configured IDs always use their exact key.
+
+Explicit tag rename stages decoded preferences and entire raw entries through the coordinator's
+[pure tag view transform](src/settings/tagViewState.ts), including inactive keys, filters and unknown
+extensions. Conflicting physical aliases or occupied destinations refuse before vault writes.
+Static tag settings retain their existing rollback boundary; a later view-write failure retains staged
+preferences for ordinary retry. Older queued saves cannot replace a newer raw staging base.
+TagManager notifies every registered PanelNavigator through a non-writing tag rebase in one state
+batch; project path rebasing and all writer authorities remain unchanged.
+
 [`ViewStatePathOwner`](src/settings/ViewStatePathOwner.ts), created by `src/main.ts` when settings
 load, keeps saved view state that names a note path in step with vault deletes and renames: Kanban
 ranks, project list states, and `file` filters. A delete forgets the note's own ranks and list

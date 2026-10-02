@@ -18,7 +18,12 @@ function makeManager(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
   };
   const save = vi.fn().mockResolvedValue(undefined);
   // App is not needed for settings-only tests; pass null cast
-  const tm = new TagManager(null as never, settings, save);
+  const tm = new TagManager(null as never, settings, save, {
+    check: () => 'ready',
+    apply: async (_change, applyLive) => {
+      applyLive();
+    },
+  });
   return { tm, settings, save };
 }
 
@@ -257,5 +262,17 @@ describe('TagManager configured group mutations', () => {
     rejectDelete(new Error('older save failed'));
     await expect(olderDelete).rejects.toThrow('older save failed');
     expect(remove.settings.tagGroups).toEqual([second]);
+  });
+});
+
+describe('ordinary manual input compatibility', () => {
+  it('preserves Unicode labels as valid tags and refuses empty segments without saving', async () => {
+    const { tm, settings, save } = makeManager({ tagGroups: [] });
+    await tm.createManualGroup('Работа café/子');
+    expect(settings.tagGroups[0]?.tags).toEqual(['#работа-café/子']);
+    const before = structuredClone(settings.tagGroups);
+    await expect(tm.createManualGroup('bad//child')).rejects.toThrow();
+    expect(settings.tagGroups).toEqual(before);
+    expect(save).toHaveBeenCalledTimes(1);
   });
 });

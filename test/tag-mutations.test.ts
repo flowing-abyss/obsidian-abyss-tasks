@@ -124,6 +124,23 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       );
     });
 
+    it('mutates Unicode tags case-insensitively while preserving other authored bytes', async () => {
+      const source = '- [ ] task `#Работа` [[Note#café]] #Работа #café/子 🆔 keep ^block\r\n';
+      const h = await makeHarness(adapter, source);
+      const result = await h.tasks.execute({
+        type: 'patch',
+        target: rootTarget(h, source),
+        patch: { tags: { add: ['café/子', '日本', '日本'], remove: ['работа'] } },
+      });
+      expect(result).toMatchObject({
+        type: 'ok',
+        outcome: { type: 'task', task: { tags: ['#café/子', '#日本'] } },
+      });
+      expect(await h.read()).toBe(
+        '- [ ] task `#Работа` [[Note#café]] #café/子 #日本 🆔 keep ^block\r\n',
+      );
+    });
+
     it('lets removal win and reports a byte-identical no-op', async () => {
       const source = '- [ ] task #keep\n';
       const h = await makeHarness(adapter, source);

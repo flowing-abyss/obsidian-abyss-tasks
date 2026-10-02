@@ -29,6 +29,7 @@ module.exports = {
       to: {
         pathNot: [
           '^src/tasks/domain/',
+          '^src/markdown/tagSyntax[.]ts$',
           '^rrule$',
           '^node_modules/rrule/',
           '^node_modules/[.]pnpm/rrule@',

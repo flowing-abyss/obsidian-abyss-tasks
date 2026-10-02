@@ -2,8 +2,8 @@ import { setIcon } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import {
   isListViewCustomized,
-  listSelectionToKey,
   normalizeStatusGroups,
+  resolveListViewStateKey,
   statusGroupsEqual,
 } from '../../app/listViewState';
 import { noteNameOfPath } from '../../markdown/noteName';
@@ -48,7 +48,11 @@ export class ListViewControls {
   }
 
   initializeListViewState(): void {
-    const key = listSelectionToKey(this.#options.state.get('selectedList'));
+    const key = resolveListViewStateKey(
+      this.#options.state.get('selectedList'),
+      this.#options.settings.listViewStates,
+      new Set(this.#options.settings.tagGroups.map((g) => g.id)),
+    );
     const viewState = this.#options.settings.listViewStates?.[key] ?? getListViewDefaults(key);
     this.#options.state.set('centerListViewState', viewState);
   }
@@ -125,7 +129,11 @@ export class ListViewControls {
   }
 
   activeListKey(): string {
-    return listSelectionToKey(this.#options.state.get('selectedList'));
+    return resolveListViewStateKey(
+      this.#options.state.get('selectedList'),
+      this.#options.settings.listViewStates,
+      new Set(this.#options.settings.tagGroups.map((g) => g.id)),
+    );
   }
 
   renderViewStateButton(container: HTMLElement): HTMLButtonElement {

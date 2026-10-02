@@ -1,4 +1,5 @@
 import { Modal, setIcon, type App } from 'obsidian';
+import { sameTag } from '../markdown/tagSyntax';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 
 type TagState = 'checked' | 'partial' | 'removing' | 'unchecked';
@@ -89,18 +90,22 @@ export class TagPickerModal extends Modal {
   private effectiveState_abyssPrivate(tag: string): TagState {
     if (this.pending_abyssPrivate.has(tag)) {
       if (this.pending_abyssPrivate.get(tag) ?? false) return 'checked';
-      return this.partialTags_abyssPrivate.has(tag) ? 'removing' : 'unchecked';
+      return [...this.partialTags_abyssPrivate].some((candidate) => sameTag(candidate, tag))
+        ? 'removing'
+        : 'unchecked';
     }
-    if (this.currentTags_abyssPrivate.has(tag)) return 'checked';
-    if (this.partialTags_abyssPrivate.has(tag)) return 'partial';
+    if ([...this.currentTags_abyssPrivate].some((candidate) => sameTag(candidate, tag)))
+      return 'checked';
+    if ([...this.partialTags_abyssPrivate].some((candidate) => sameTag(candidate, tag)))
+      return 'partial';
     return 'unchecked';
   }
 
   private toggle_abyssPrivate(tag: string): void {
     const state = this.effectiveState_abyssPrivate(tag);
-    if (this.currentTags_abyssPrivate.has(tag)) {
+    if ([...this.currentTags_abyssPrivate].some((candidate) => sameTag(candidate, tag))) {
       this.toggleCurrentTag_abyssPrivate(tag, state);
-    } else if (this.partialTags_abyssPrivate.has(tag)) {
+    } else if ([...this.partialTags_abyssPrivate].some((candidate) => sameTag(candidate, tag))) {
       this.togglePartialTag_abyssPrivate(tag, state);
     } else {
       if (state === 'unchecked') this.pending_abyssPrivate.set(tag, true);
@@ -129,7 +134,9 @@ export class TagPickerModal extends Modal {
     this.listEl_abyssPrivate.empty();
     const filtered = this.filteredTags_abyssPrivate(query);
     const selected = filtered.filter(
-      (tag) => this.currentTags_abyssPrivate.has(tag) || this.partialTags_abyssPrivate.has(tag),
+      (tag) =>
+        [...this.currentTags_abyssPrivate].some((candidate) => sameTag(candidate, tag)) ||
+        [...this.partialTags_abyssPrivate].some((candidate) => sameTag(candidate, tag)),
     );
     this.renderSelected_abyssPrivate(selected);
     this.renderHierarchy_abyssPrivate(filtered.filter((tag) => !selected.includes(tag)));
@@ -210,7 +217,10 @@ export class TagPickerModal extends Modal {
     item.addEventListener('click', () => {
       this.toggle_abyssPrivate(tag);
     });
-    if (this.currentTags_abyssPrivate.has(tag) || this.partialTags_abyssPrivate.has(tag))
+    if (
+      [...this.currentTags_abyssPrivate].some((candidate) => sameTag(candidate, tag)) ||
+      [...this.partialTags_abyssPrivate].some((candidate) => sameTag(candidate, tag))
+    )
       this.renderRemoveButton_abyssPrivate(row, tag);
   }
 

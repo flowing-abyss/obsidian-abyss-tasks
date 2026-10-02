@@ -467,7 +467,7 @@ async function makePanel(
     commentTimeContext?: CommentTimeContextProvider,
     interactionOwnership?: InteractionOwnershipPort,
   ]
-): Promise<{ panel: RightPanel; state: AppState; app: App; el: HTMLElement }> {
+): Promise<{ panel: RightPanel; state: AppState; app: App; el: HTMLElement; index: TaskIndex }> {
   const app = await createAppWithFiles(files);
   const state = new AppState();
   const statusCatalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
@@ -499,7 +499,7 @@ async function makePanel(
   mountedPanels.push(panel);
   const el = freshContainer();
   panel.mount(el);
-  return { panel, state, app, el };
+  return { panel, state, app, el, index };
 }
 
 describe('RightPanel interaction ownership', () => {
@@ -3581,5 +3581,42 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     );
     expect(timeOnly.textContent).toBe('⏰ 15:00');
     expect(timeOnly.getAttribute('aria-label')).toBe('Change time, currently 15:00, no duration');
+  });
+});
+
+describe('case-compatible selected child input', () => {
+  it('keeps authored Work spelling, proven child successor and focus after typed work/new', async () => {
+    const source = '- [ ] Parent #parent\n  - [ ] Child #Work\n  - [ ] Sibling #sibling\n';
+    const { state, app, el, index } = await makePanel({ 'case.md': source });
+    activeDocument.body.append(el);
+    const root = expectDefined(index.list()[0]),
+      child = expectDefined(root.subtasks[0]);
+    state.set('taskStack', [root, child]);
+    click(
+      expectDefined(
+        Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chip-add')).find(
+          (e) => e.textContent === '+ tag',
+        ),
+      ),
+    );
+    const input = expectDefined(el.querySelector<HTMLInputElement>('.abyss-tag-input'));
+    expect(document.activeElement).toBe(input);
+    input.value = '#work #new';
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+    await tick();
+    expect(await app.vault.read(app.vault.getAbstractFileByPath('case.md') as never)).toBe(
+      '- [ ] Parent #parent\n  - [ ] Child #Work #new\n  - [ ] Sibling #sibling\n',
+    );
+    const stack = state.get('taskStack');
+    expect(stack).toHaveLength(2);
+    expect(stack[1]?.title).toBe('Child');
+    expect(stack[1]?.tags).toEqual(['#Work', '#new']);
+    expect(stack[0]?.subtasks[1]?.tags).toEqual(['#sibling']);
+    expect(el.querySelector('.abyss-tag-input')).toBeNull();
+    expect((document.activeElement as HTMLElement).textContent).toBe('+ tag');
+    el.remove();
   });
 });

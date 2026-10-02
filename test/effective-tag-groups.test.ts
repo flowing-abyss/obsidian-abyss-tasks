@@ -220,3 +220,19 @@ describe('resolveEffectiveTagGroups', () => {
     expect(tagMatchesGroup('#work/other', promoted)).toBe(true);
   });
 });
+
+describe('case-compatible discovery', () => {
+  it('uses one deterministic discovered identity while preserving representative spelling', () => {
+    const groups = resolveEffectiveTagGroups(settings({ tagGroups: [] }), ['#work', '#Work']);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.id).toBe(discoveredTagGroupId('#work'));
+    expect(tagMatchesGroup('#WORK', expectDefined(groups[0]))).toBe(true);
+  });
+});
+
+it('uses one authored representative for case-equivalent archived and observed prefixes', () => {
+  const settings = { ...DEFAULT_SETTINGS, tagGroups: [], archivedTagPrefixes: ['Work'] };
+  const groups = resolveEffectiveTagGroups(settings, ['#work/子', '#Work/Other']);
+  expect(groups).toHaveLength(1);
+  expect(groups[0]).toMatchObject({ id: 'discovered:prefix:work', name: 'Work', archived: true });
+});

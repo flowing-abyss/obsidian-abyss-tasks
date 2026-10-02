@@ -1,5 +1,8 @@
 import { Platform, TFile, type CachedMetadata, type TAbstractFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import { DEFAULT_SETTINGS, getListViewDefaults } from '../../src/settings/defaults';
+import { resolveEffectiveTagGroups } from '../../src/tags/effectiveTagGroups';
+import { selectTaskList } from '../../src/task-lists/TaskListSelector';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import * as taskTypes from '../../src/tasks/domain/types';
 import { localDate } from '../../src/tasks/domain/validation';
@@ -1757,5 +1760,37 @@ describe('TaskIndex lifecycle and events', () => {
     if (freshSource.target.type !== 'subtask') throw new Error('expected nested source');
     expect(freshSource.target.ref.originalBlock).toContain('nested');
     index.destroy();
+  });
+});
+
+describe('ordinary tag identity through the real index', () => {
+  it('finds Unicode and both case spellings with one discovered identity and exact-list membership', async () => {
+    const app = await createAppWithFiles({
+        'tags.md': '- [ ] One #Work #работа\n- [ ] Two #work #café/子\n',
+      }),
+      index = new TaskIndex(app, { statusCatalog: canonicalStatusCatalog() });
+    await index.initialize();
+    try {
+      expect(index.list({ tag: '#WORK' }).map((t) => t.title)).toEqual(['One', 'Two']);
+      expect(index.list({ tag: '#работа' }).map((t) => t.title)).toEqual(['One']);
+      const tasks = index.list(),
+        groups = resolveEffectiveTagGroups(
+          { ...DEFAULT_SETTINGS, tagGroups: [] },
+          tasks.flatMap((t) => t.tags),
+        );
+      expect(groups.filter((g) => g.id === 'discovered:tag:%23work')).toHaveLength(1);
+      expect(
+        selectTaskList({
+          tasks,
+          selection: { type: 'tag', tag: '#WORK' },
+          viewState: getListViewDefaults('inbox'),
+          settings: DEFAULT_SETTINGS,
+          today: localDate('2026-10-03'),
+          nowMs: 0,
+        }).map((t) => t.title),
+      ).toEqual(['One', 'Two']);
+    } finally {
+      index.destroy();
+    }
   });
 });

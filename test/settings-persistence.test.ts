@@ -1,6 +1,7 @@
-// @vitest-environment node
+// @vitest-environment jsdom
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
+import { AppState } from '../src/app/AppState';
 import { initializeProjectPropertyDefinitions } from '../src/projects/initializeProjectPropertyDefinitions';
 import { buildConfiguredProjectFieldCatalog } from '../src/projects/projectFields';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
@@ -14,12 +15,14 @@ import {
   type SettingsPersistencePort,
 } from '../src/settings/persistence';
 import { removeConfiguredProjectProperty } from '../src/settings/projectTableSettings';
+import { TagManager } from '../src/tags/TagManager';
+import { PanelNavigator } from '../src/views/panelNavigation';
 import {
   CALENDAR_SETTINGS_OWNERS,
   PROJECT_SETTINGS_OWNERS,
 } from './architecture/settingsOwnership';
 import priorSerializerFixture from './fixtures/settings-persistence/cc84b5d-property-definitions-roundtrip.json';
-import { expectDefined } from './helpers';
+import { createAppWithFiles, expectDefined } from './helpers';
 import { TYPESCRIPT_PROGRAM_TIMEOUT_MS } from './support/timeouts';
 
 const STATE_PATH = '.test-config/plugins/abyss-tasks/state.json';
@@ -1349,3 +1352,232 @@ describe('complete known settings ownership', () => {
       expect(staticOutput['projects']).not.toHaveProperty(key);
   });
 });
+
+describe('explicit tag rename view continuity', () => {
+  it('preserves active/inactive preferences, filters and raw extensions through real rename and away/back', async () => {
+    const old = '#work',
+      next = '#работа',
+      other = 'tag:#other';
+    const port = memoryPort(
+      markedStatic({ tagGroups: [{ id: 'work', name: 'Work', mode: 'manual', tags: [old] }] }),
+      stateEnvelope({
+        listViewStates: {
+          [`tag:${old}`]: {
+            groupBy: 'date',
+            sortBy: { field: 'title', dir: 'asc' },
+            filters: [],
+            qaSp1iUnknown: { keep: 'source' },
+          },
+          'group:discovered:tag:%23work': {
+            groupBy: 'priority',
+            sortBy: { field: 'title', dir: 'desc' },
+            filters: [],
+          },
+          [other]: {
+            groupBy: 'none',
+            sortBy: { field: 'title', dir: 'asc' },
+            filters: [{ type: 'tag', value: old }],
+            qaSp1iUnknown: { keep: 'other' },
+          },
+        },
+      }),
+    );
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    const app = await createAppWithFiles({
+      'a.md': '- [ ] A #work #work/child\n',
+      'b.md': 'body #work sentinel\n',
+    });
+    const state = new AppState();
+    state.set('selectedList', { type: 'tag', tag: old });
+    const navigator = new PanelNavigator(
+      state,
+      settings,
+      { calendarView: () => 'month', setCalendarView: () => {}, openQuickCapture: () => {} },
+      () => coordinator.saveViewState(settings),
+    );
+    navigator.openList({ type: 'tag', tag: old });
+    const manager = new TagManager(app, settings, () => coordinator.saveSettings(settings), {
+      check: (change) => coordinator.checkTagRename(settings, change),
+      apply: async (change, applyLive) => {
+        const pending = coordinator.renameTagViewState(settings, change);
+        try {
+          applyLive();
+        } finally {
+          await pending;
+        }
+      },
+    });
+    const otherState = new AppState();
+    const otherNavigator = new PanelNavigator(
+      otherState,
+      settings,
+      { calendarView: () => 'month', setCalendarView: () => {}, openQuickCapture: () => {} },
+      () => coordinator.saveViewState(settings),
+    );
+    otherNavigator.openList({ type: 'tag', tag: '#other' });
+    manager.registerSelectedListState({
+      applyTagRename: (change) => {
+        navigator.followTagRename(change);
+      },
+    });
+    manager.registerSelectedListState({
+      applyTagRename: (change) => {
+        otherNavigator.followTagRename(change);
+      },
+    });
+    expect(await manager.renameTagExact(old, next)).toMatchObject({ type: 'ok' });
+    await coordinator.saveViewState(settings);
+    const views = savedTagViews(port);
+    expect(views[`tag:${next}`]).toMatchObject({ qaSp1iUnknown: { keep: 'source' } });
+    expect(views[`tag:${old}`]).toBeUndefined();
+    expect(views[`group:discovered:tag:${encodeURIComponent(next)}`]).toMatchObject({
+      groupBy: 'priority',
+    });
+    expect(views[other]).toMatchObject({
+      filters: [{ type: 'tag', value: next }],
+      qaSp1iUnknown: { keep: 'other' },
+    });
+    expect(otherState.get('selectedList')).toEqual({ type: 'tag', tag: '#other' });
+    expect(otherState.get('centerListViewState').filters).toEqual([{ type: 'tag', value: next }]);
+    expect(await app.vault.read(app.vault.getAbstractFileByPath('a.md') as never)).toBe(
+      '- [ ] A #работа #work/child\n',
+    );
+    expect(await app.vault.read(app.vault.getAbstractFileByPath('b.md') as never)).toBe(
+      'body #работа sentinel\n',
+    );
+    navigator.openList('today');
+    navigator.openList({ type: 'tag', tag: next });
+    expect(state.get('centerListViewState').groupBy).toBe('date');
+  });
+});
+
+describe('tag view rename refusal and queue guards', () => {
+  async function fixture(entries: Record<string, unknown>, unavailable = false) {
+    const port = memoryPort(markedStatic(), stateEnvelope({ listViewStates: entries }));
+    if (unavailable)
+      port.state.read = async () => {
+        throw new Error('unavailable');
+      };
+    const coordinator = new SettingsPersistenceCoordinator(port),
+      { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    const app = await createAppWithFiles({ 'rename.md': '- [ ] A #work\n' });
+    const manager = new TagManager(app, settings, () => coordinator.saveSettings(settings), {
+      check: (change) => coordinator.checkTagRename(settings, change),
+      apply: async (change, applyLive) => {
+        const pending = coordinator.renameTagViewState(settings, change);
+        try {
+          applyLive();
+        } finally {
+          await pending;
+        }
+      },
+    });
+    return { port, coordinator, settings, app, manager };
+  }
+  const entry = {
+    groupBy: 'date',
+    sortBy: { field: 'title', dir: 'asc' },
+    filters: [],
+    extension: { keep: true },
+  };
+  it('refuses an occupied destination before vault/static/state writes', async () => {
+    const { port, manager, app } = await fixture({ 'tag:#work': entry, 'tag:#new': entry });
+    const before = port.stateText;
+    const process = vi.spyOn(app.vault, 'process');
+    port.writes = [];
+    expect(await manager.renameTagExact('#work', '#new')).toEqual({
+      type: 'invalid',
+      reason: 'view-state-conflict',
+    });
+    expect(process).not.toHaveBeenCalled();
+    expect(port.writes).toEqual([]);
+    expect(port.stateText).toBe(before);
+  });
+  it('refuses two physical case aliases in preflight and synchronous staging, even equal preferences', async () => {
+    const { port, manager, coordinator, settings, app } = await fixture({
+      'tag:#Work': entry,
+      'tag:#work': entry,
+    });
+    const before = port.stateText,
+      decoded = structuredClone(settings.listViewStates),
+      process = vi.spyOn(app.vault, 'process');
+    port.writes = [];
+    expect(await manager.renameTagExact('#work', '#WORK')).toEqual({
+      type: 'invalid',
+      reason: 'view-state-conflict',
+    });
+    expect(() =>
+      coordinator.renameTagViewState(settings, {
+        oldTag: '#work',
+        newTag: '#WORK',
+        scope: 'exact',
+      }),
+    ).toThrow();
+    expect(process).not.toHaveBeenCalled();
+    expect(settings.listViewStates).toEqual(decoded);
+    expect(port.writes).toEqual([]);
+    expect(port.stateText).toBe(before);
+  });
+  it('keeps a single case-only physical alias with its complete extension', async () => {
+    const { port, manager } = await fixture({ 'tag:#Work': entry });
+    expect(await manager.renameTagExact('#work', '#WORK')).toMatchObject({ type: 'ok' });
+    const states = savedTagViews(port);
+    expect(states['tag:#Work']).toEqual(entry);
+    expect(states['tag:#WORK']).toBeUndefined();
+  });
+  it('refuses suspended state before any vault write', async () => {
+    const { manager, app, port } = await fixture({}, true);
+    const process = vi.spyOn(app.vault, 'process');
+    port.writes = [];
+    expect(await manager.renameTagExact('#work', '#new')).toEqual({
+      type: 'invalid',
+      reason: 'view-state-unavailable',
+    });
+    expect(process).not.toHaveBeenCalled();
+    expect(port.writes).toEqual([]);
+  });
+  it('retains staged extensions after state-write failure and persists them on ordinary save retry', async () => {
+    const { port, coordinator, settings, manager } = await fixture({ 'tag:#work': entry });
+    const write = port.state.write;
+    port.state.write = vi.fn().mockRejectedValueOnce(new Error('disk')).mockImplementation(write);
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await manager.renameTagExact('#work', '#new')).toMatchObject({ type: 'settings-error' });
+    expect(settings.listViewStates?.['tag:#new']?.groupBy).toBe('date');
+    await coordinator.saveViewState(settings);
+    expect(savedTagViews(port)['tag:#new']).toMatchObject({ extension: { keep: true } });
+    expect(logged).toHaveBeenCalledTimes(1);
+  });
+  it('does not let a queued older normal save erase staged raw extensions', async () => {
+    const { port, coordinator, settings } = await fixture({ 'tag:#work': entry });
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+      write = port.state.write;
+    port.state.write = async (path, data) => {
+      await wait;
+      await write(path, data);
+    };
+    settings.sectionCollapse.tags = true;
+    const older = coordinator.saveViewState(settings);
+    const renamed = coordinator.renameTagViewState(settings, {
+      oldTag: '#work',
+      newTag: '#new',
+      scope: 'exact',
+    });
+    release();
+    await older;
+    await renamed;
+    await coordinator.saveViewState(settings);
+    expect(savedTagViews(port)['tag:#new']).toMatchObject({ extension: { keep: true } });
+    expect(savedTagViews(port)['tag:#work']).toBeUndefined();
+  });
+});
+
+function savedTagViews(port: MemoryPort): Record<string, Record<string, unknown>> {
+  const state = JSON.parse(expectDefined(port.stateText)) as {
+    views: { listViewStates: Record<string, Record<string, unknown>> };
+  };
+  return state.views.listViewStates;
+}

@@ -37,7 +37,12 @@ async function harness(surface: 'panel' | 'modal', source: string, selected: str
     const view = new PanelView(
       leaf,
       DEFAULT_SETTINGS,
-      new TagManager(app, DEFAULT_SETTINGS, async () => {}),
+      new TagManager(app, DEFAULT_SETTINGS, async () => {}, {
+        check: () => 'ready',
+        apply: async (_change, applyLive) => {
+          applyLive();
+        },
+      }),
       application.index,
       application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
       application.statusRegistry,

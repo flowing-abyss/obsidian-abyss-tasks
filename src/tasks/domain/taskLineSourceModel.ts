@@ -1,3 +1,4 @@
+import { normalizeTag, TAG_CHARACTER_SOURCE } from '../../markdown/tagSyntax';
 import { matchesUnlessPreceded } from './precedingCodePoint';
 import { inlineCodeRanges, parseLinkRanges, type SourceRange } from './taskLineAtomicRanges';
 import type { OnCompletion, TaskPriority } from './types';
@@ -70,9 +71,8 @@ export interface TaskLineSourceModel {
 type Candidate = TaskLineSourceCarrier;
 
 const TASK_LINE_RE = /^[\s>]*- \[(.)\]/u;
-const TASK_TAG_BODY = String.raw`[\w-]+(?:\/[\w-]+)*`;
+const TASK_TAG_BODY = `${TAG_CHARACTER_SOURCE}+(?:/${TAG_CHARACTER_SOURCE}+)*`;
 const TASK_TAG_ADJACENT = String.raw`(?:[#\p{L}\p{M}\p{N}\p{Pc}/-]|\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier}|\uFE0F|\u200D)`;
-const TASK_TAG_RE = new RegExp(String.raw`^#${TASK_TAG_BODY}$`, 'u');
 // `isTaskTagAdjacent` refuses a match that continues a word, a path, another tag, or an emoji.
 const TAG_RE = new RegExp(String.raw`#${TASK_TAG_BODY}(?!${TASK_TAG_ADJACENT})`, 'gu');
 const TASK_TAG_ADJACENT_RE = new RegExp(`^${TASK_TAG_ADJACENT}$`, 'u');
@@ -130,7 +130,7 @@ export function isTaskDependencyId(value: string): boolean {
 
 /** The tag grammar accepted by both the canonical task parser and task mutations. */
 export function isCanonicalTaskTag(value: string): boolean {
-  return TASK_TAG_RE.test(value);
+  return normalizeTag(value) === value;
 }
 
 /** A tag must not continue a word, a path, another tag, or an emoji sequence. */
@@ -229,6 +229,7 @@ function includesExactCandidate(
 
 function pushTagCandidates(candidates: Candidate[], body: string, bodyFrom: number): void {
   for (const match of matchesUnlessPreceded(TAG_RE, body, isTaskTagAdjacent)) {
+    if (!isCanonicalTaskTag(match[0])) continue;
     candidates.push({
       kind: 'tag',
       from: bodyFrom + match.index,

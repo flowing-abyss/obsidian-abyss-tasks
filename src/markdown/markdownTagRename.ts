@@ -1,11 +1,15 @@
 import { inlineCodeRanges, type SourceRange } from './inlineCode';
 import { matchesUnlessPreceded, replaceUnlessPreceded } from './precedingCodePoint';
 
-export type TagRenameScope = 'exact' | 'prefix';
+import {
+  normalizeTag,
+  sameTag,
+  TAG_CHARACTER_SOURCE as TAG_CHARACTER,
+  tagHasPrefix,
+  type TagRenameScope,
+} from './tagSyntax';
+export { normalizeTag, type TagRenameScope } from './tagSyntax';
 
-const TAG_CHARACTER = String.raw`(?:[\p{L}\p{M}\p{N}\p{Pc}-]|\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier}|\uFE0F|\u200D)`;
-const VALID_TAG = new RegExp(String.raw`^#${TAG_CHARACTER}+(?:/${TAG_CHARACTER}+)*$`, 'u');
-const ALL_NUMERIC = /^\p{N}+$/u;
 // `isHashMark` refuses a match right after another hash mark.
 const MARKDOWN_TAG = new RegExp(
   String.raw`#${TAG_CHARACTER}+(?:/${TAG_CHARACTER}+)*(?!${TAG_CHARACTER}|/)`,
@@ -17,32 +21,15 @@ function isHashMark(previous: string): boolean {
   return previous === '#';
 }
 
-export function normalizeTag(value: string): string | null {
-  const trimmed = value.trim();
-  const tag = trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
-  if (!VALID_TAG.test(tag)) return null;
-  return ALL_NUMERIC.test(tag.slice(1).replace(/\//gu, '')) ? null : tag;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-}
-
-function replacementPattern(tag: string, scope: TagRenameScope): RegExp {
-  const suffix = scope === 'exact' ? `(?!${TAG_CHARACTER}|/)` : `(?=/|(?!${TAG_CHARACTER}|/))`;
-  // `transformBodyTags` passes `isHashMark`, which refuses a match right after another hash mark.
-  return new RegExp(`${escapeRegExp(tag)}${suffix}`, 'gu');
-}
-
 function replaceCanonicalTag(
   value: string,
   oldTag: string,
   newTag: string,
   scope: TagRenameScope,
 ): string {
-  if (value === oldTag) return newTag;
-  if (scope === 'prefix' && value.startsWith(`${oldTag}/`)) {
-    return `${newTag}${value.slice(oldTag.length)}`;
+  if (sameTag(value, oldTag)) return newTag;
+  if (scope === 'prefix' && tagHasPrefix(value, oldTag)) {
+    return `${newTag}/${value.split('/').slice(oldTag.split('/').length).join('/')}`;
   }
   return value;
 }
@@ -1385,14 +1372,14 @@ function transformBodyTags(
 ): string {
   const excluded = markdownSemanticLiteralRanges(source);
   let rangeIndex = 0;
-  return replaceUnlessPreceded(replacementPattern(oldTag, scope), source, isHashMark, (match) => {
+  return replaceUnlessPreceded(MARKDOWN_TAG, source, isHashMark, (match) => {
     const offset = match.index;
     while (excluded[rangeIndex] != null && (excluded[rangeIndex]?.to ?? 0) <= offset) rangeIndex++;
     const range = excluded[rangeIndex];
     if ((range != null && range.from <= offset && offset < range.to) || isEscaped(source, offset)) {
       return match[0];
     }
-    return newTag;
+    return replaceCanonicalTag(match[0], oldTag, newTag, scope);
   });
 }
 

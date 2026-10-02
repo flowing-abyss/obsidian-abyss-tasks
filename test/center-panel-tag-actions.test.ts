@@ -214,7 +214,12 @@ function makeCenter(
     archivedTags: [],
   };
   const save = vi.fn().mockResolvedValue(undefined);
-  const tm = new TagManager(null as never, s, save);
+  const tm = new TagManager(null as never, s, save, {
+    check: () => 'ready',
+    apply: async (_change, applyLive) => {
+      applyLive();
+    },
+  });
   const store = makeStubStore(tasks);
   const queries = (store as unknown as { taskQueries: TaskApplicationApi['queries'] }).taskQueries;
   const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({

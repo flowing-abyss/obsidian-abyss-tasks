@@ -1,3 +1,4 @@
+import { renameTagSelection } from '../src/settings/tagViewState';
 // test/tag-manager-files.test.ts
 import { describe, expect, it, vi } from 'vitest';
 import type { ListSelection } from '../src/app/AppState';
@@ -26,7 +27,12 @@ async function makeManager(files: Record<string, string> = {}) {
   };
   const save = vi.fn().mockResolvedValue(undefined);
   const app = await createAppWithFiles(files);
-  const tm = new TagManager(app, settings, save);
+  const tm = new TagManager(app, settings, save, {
+    check: () => 'ready',
+    apply: async (_change, applyLive) => {
+      applyLive();
+    },
+  });
   return { tm, app, settings, save };
 }
 
@@ -816,15 +822,18 @@ describe('TagManager exact and prefix vault rename', () => {
   });
 
   it('rebases stable discovered group selections after exact and prefix rename', async () => {
-    const { tm } = await makeManager();
+    const { tm, settings } = await makeManager();
     let selected: ListSelection = {
       type: 'group',
       groupId: discoveredPrefixGroupId('work'),
     };
     tm.registerSelectedListState({
-      getSelectedList: () => selected,
-      setSelectedList: (next) => {
-        selected = next;
+      applyTagRename: (change) => {
+        selected = renameTagSelection(
+          selected,
+          change,
+          new Set(settings.tagGroups.map((g) => g.id)),
+        );
       },
     });
 
@@ -896,9 +905,12 @@ describe('TagManager exact and prefix vault rename', () => {
       settings.tagGroups.push(...configured);
       let selected: ListSelection = { type: 'group', groupId: selectedId };
       tm.registerSelectedListState({
-        getSelectedList: () => selected,
-        setSelectedList: (next) => {
-          selected = next;
+        applyTagRename: (change) => {
+          selected = renameTagSelection(
+            selected,
+            change,
+            new Set(settings.tagGroups.map((g) => g.id)),
+          );
         },
       });
 
@@ -935,9 +947,12 @@ describe('TagManager exact and prefix vault rename', () => {
     });
     let selected: ListSelection = { type: 'group', groupId: id };
     tm.registerSelectedListState({
-      getSelectedList: () => selected,
-      setSelectedList: (next) => {
-        selected = next;
+      applyTagRename: (change) => {
+        selected = renameTagSelection(
+          selected,
+          change,
+          new Set(settings.tagGroups.map((g) => g.id)),
+        );
       },
     });
 
