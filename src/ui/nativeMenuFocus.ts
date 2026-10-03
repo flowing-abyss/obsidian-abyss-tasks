@@ -1,4 +1,5 @@
 import type { Menu } from 'obsidian';
+import { isImeOwnedEvent } from './ime';
 
 /**
  * Shows a plugin-owned Obsidian DOM menu and transfers focus into its first
@@ -22,6 +23,20 @@ export function showMenuAtMouseEventWithFocus(
   const surface = Array.from(ownerDocument.querySelectorAll<HTMLElement>('.menu')).find(
     (candidate) => !existingMenus.has(candidate),
   );
+  // Native capture may detach this surface; the dismissal event still traverses it.
+  surface?.addEventListener('keydown', (keyEvent) => {
+    if (
+      keyEvent.key !== 'Escape' ||
+      keyEvent.ctrlKey ||
+      keyEvent.metaKey ||
+      keyEvent.altKey ||
+      keyEvent.shiftKey ||
+      isImeOwnedEvent(keyEvent)
+    )
+      return;
+    keyEvent.preventDefault();
+    keyEvent.stopPropagation();
+  });
   const firstItem = surface?.querySelector<HTMLElement>('.menu-item:not(.is-disabled)');
   if (firstItem != null) {
     firstItem.tabIndex = 0;
