@@ -1,3 +1,4 @@
+import { outgoingTaskLinkValues } from '../../src/task-lists/taskLinkValues';
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import type { ListSelection } from '../../src/app/AppState';
@@ -667,4 +668,48 @@ describe('source and outgoing note sorting', () => {
       expect(sorted('desc')).toEqual(['none', 'beta', 'older', 'newer']);
     },
   );
+});
+
+describe('complete outgoing sequence ordering', () => {
+  const fixtures = [
+    ['zoe', 'A/tasks.md', '[[Alice]] [[Zoe]]', '2026-01-01'],
+    ['bob-new', 'A/tasks.md', '[[Bob]] [[Alice]] [[Bob|alias]]', '2026-03-01'],
+    ['bob-old', 'A/tasks.md', '[[Alice]] [[Bob]]', '2026-02-01'],
+    ['prefix', 'A/tasks.md', '[[Alice]]', '2026-04-01'],
+    ['none', 'A/tasks.md', 'none', '2026-01-01'],
+    ['unresolved-z', 'Z/tasks.md', '[[Missing]]', '2026-01-01'],
+    ['unresolved-a', 'A/tasks.md', '[[Missing]]', '2026-03-01'],
+  ] as const;
+  const tasks = fixtures.map(([title, filePath, markdownTitle, created], line) =>
+    task({
+      title,
+      markdownTitle,
+      source: { filePath, line },
+      planning: { created },
+    }),
+  );
+  const outgoingLinks = new Map(
+    tasks.map((value) => [
+      `${value.source.filePath}:${value.source.line}`,
+      outgoingTaskLinkValues(value, (target) =>
+        target === 'Missing' ? undefined : `People/${target}.md`,
+      ),
+    ]),
+  );
+  it.each([
+    ['asc', ['prefix', 'bob-old', 'bob-new', 'zoe', 'unresolved-a', 'unresolved-z', 'none']],
+    ['desc', ['none', 'unresolved-z', 'unresolved-a', 'zoe', 'bob-old', 'bob-new', 'prefix']],
+  ] as const)('compares every label/identity before creation in %s order', (dir, expected) => {
+    expect(
+      selectTaskList({
+        tasks,
+        outgoingLinks,
+        selection: 'inbox',
+        settings: { ...DEFAULT_SETTINGS, inbox: { ...DEFAULT_SETTINGS.inbox, mode: 'untagged' } },
+        viewState: { groupBy: 'none', sortBy: { field: 'outgoing-link', dir }, filters: [] },
+        today,
+        nowMs: 0,
+      }).map((value) => value.title),
+    ).toEqual(expected);
+  });
 });

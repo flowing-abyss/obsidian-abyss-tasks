@@ -24,8 +24,16 @@ export function taskSelectionPath(
   root: TaskSnapshot,
   node: TaskSelectionNode,
 ): TaskSelectionNode[] | undefined {
+  return taskSelectionRefPath(root, taskNodeRef(node));
+}
+
+/** Exact ancestor references and one unique direct child at every step. */
+export function taskSelectionRefPath(
+  root: TaskSnapshot,
+  target: TaskNodeRef,
+): TaskSelectionNode[] | undefined {
   const descendants: TaskNodeRef[] = [];
-  let ref = taskNodeRef(node);
+  let ref = target;
   while (ref.type === 'subtask') {
     descendants.push(ref);
     ref = ref.ref.parent;

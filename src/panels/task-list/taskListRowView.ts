@@ -19,10 +19,12 @@ export interface MountedTaskListRows {
 }
 
 function mountGroupHeader(container: HTMLElement, row: TaskListGroupRow): HTMLElement {
-  return container.createDiv({
+  const header = container.createDiv({
     cls: row.first ? 'abyss-group-header abyss-group-header--first' : 'abyss-group-header',
     text: `${row.label}  ${row.count}`,
   });
+  if (row.sourcePath !== undefined) header.setAttribute('aria-label', row.sourcePath);
+  return header;
 }
 
 function mountRow(

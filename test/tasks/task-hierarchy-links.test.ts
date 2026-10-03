@@ -88,3 +88,51 @@ it('includes empty-alt images only in source reference authority with exact offs
   ]);
   expect(parseLinks(text)).toEqual([]);
 });
+
+it.each([
+  '[label](other(one).md)',
+  '[label](<other.md>)',
+  '[label](other.md "title")',
+  '[outer [inner]](other.md)',
+  '<img src="photo.png">',
+])(
+  'rejects complex source-reference syntax rather than claiming complete recognition: %s',
+  (text) => {
+    expect(
+      rebaseMarkdownSourceReferences(text, {
+        sourcePath: 'folder/source.md',
+        destinationPath: 'else/target.md',
+        movedAnchors: new Set(),
+        resolver: { resolve: () => 'folder/other.md', linktext: () => '../folder/other.md' },
+      }),
+    ).toBeUndefined();
+  },
+);
+
+it('preserves supported code and escaped references next to rebased image references', () => {
+  const text = '> - [x] Move `[](missing.md)` \\[[missing]] ![photo](photo.png)\r\n';
+  expect(
+    rebaseMarkdownSourceReferences(text, {
+      sourcePath: 'folder/source.md',
+      destinationPath: 'else/target.md',
+      movedAnchors: new Set(),
+      resolver: references,
+    }),
+  ).toBe('> - [x] Move `[](missing.md)` \\[[missing]] ![photo](folder/photo.png)\r\n');
+});
+
+it.each([
+  ['ordinary prose without brackets', 'ordinary prose without brackets'],
+  ['literal [aside]', undefined],
+  ['literal \\[aside\\]', 'literal \\[aside\\]'],
+  ['- [ ] task\n  12. [x] child', '- [ ] task\n  12. [x] child'],
+])('bounds literal bracket recognition explicitly: %s', (text, expected) => {
+  expect(
+    rebaseMarkdownSourceReferences(text, {
+      sourcePath: 'folder/source.md',
+      destinationPath: 'else/target.md',
+      movedAnchors: new Set(),
+      resolver: references,
+    }),
+  ).toBe(expected);
+});

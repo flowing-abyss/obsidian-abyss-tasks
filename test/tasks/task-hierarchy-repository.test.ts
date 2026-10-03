@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { expectDefined, flushMicrotasks } from '../helpers';
+import { unprovedHierarchyReferences } from '../support/hierarchyReferenceFixtures';
 import { hierarchyHarness as harness } from '../support/taskHierarchyHarness';
 describe('hierarchy repository transaction', () => {
   it('writes destination first, removes a task-empty source, and publishes only the complete move', async () => {
@@ -326,4 +327,37 @@ it.each([
   expect(await h.read('source.md')).toBe(source);
   expect(await h.read('target.md')).toBe('- [ ] Parent\n');
   expect(h.publications).toEqual([]);
+});
+
+it.each(unprovedHierarchyReferences)(
+  'rejects unproved outgoing references without writing either note: %s',
+  async (source) => {
+    const destination = '- [ ] Parent\n\n[id]: https://example.com/different\n';
+    const h = await harness({ 'source.md': source, 'target.md': destination });
+    await h.app.vault.create('photo.png', 'image fixture');
+    await h.app.vault.create('other.md', 'linked note');
+    vi.spyOn(h.app.metadataCache, 'getFirstLinkpathDest').mockImplementation((target) =>
+      target === 'photo.png' || target === 'other.md' ? h.file(target) : null,
+    );
+    await flushMicrotasks();
+    const publications = [...h.publications];
+    const process = vi.spyOn(h.app.vault, 'process');
+    expect(await h.service.execute(h.command)).toMatchObject({ type: 'invalid' });
+    expect(process).not.toHaveBeenCalled();
+    expect(await h.read('source.md')).toBe(source);
+    expect(await h.read('target.md')).toBe(destination);
+    expect(h.publications).toEqual(publications);
+  },
+);
+
+it('retains reference-style outgoing meaning for same-note reparenting', async () => {
+  const source = '- [ ] Move [label][id]\n- [ ] Parent\n\n[id]: https://example.com/original\n';
+  const h = await harness({ 'source.md': source, 'target.md': '- [ ] Other\n' });
+  const parent = expectDefined(h.index.list({ filePath: 'source.md' })[1]);
+  expect(
+    await h.service.execute({ ...h.command, parent: { type: 'task', ref: parent.ref } }),
+  ).toMatchObject({ type: 'ok' });
+  expect(await h.read('source.md')).toBe(
+    '- [ ] Parent\n    - [ ] Move [label][id]\n\n[id]: https://example.com/original\n',
+  );
 });

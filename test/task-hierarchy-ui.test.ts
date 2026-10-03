@@ -476,3 +476,38 @@ describe('task hierarchy surfaces', () => {
     expect(messages).toHaveLength(1);
   });
 });
+
+it.each(['promote-subtask', 'reparent-task'] as const)(
+  'omits task source and arbitrary thrown data from %s diagnostics',
+  async (type) => {
+    const sentinel = 'PRIVATE_TASK_SOURCE_SENTINEL';
+    const h = await mounted({
+      'source.md': `- [ ] Move\n  - [ ] ${sentinel}\n`,
+      'target.md': '- [ ] Parent\n',
+    });
+    const child = expectDefined(h.source.subtasks[0]);
+    const messages: string[] = [];
+    notices(messages);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    h.execute.mockRejectedValueOnce(new Error(sentinel.repeat(100)));
+    await executeTaskHierarchy(
+      h.state,
+      { queries: h.index, execute: h.execute },
+      type === 'promote-subtask'
+        ? { type, subtask: child.ref }
+        : { type, source: taskNodeRef(child), parent: taskNodeRef(h.parent) },
+      () => true,
+    );
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error.mock.calls[0]?.[1]).toEqual({
+      operation: type,
+      phase: 'unexpected',
+      sourcePath: 'source.md',
+      destinationPath: type === 'promote-subtask' ? 'source.md' : 'target.md',
+      cause: 'command-rejected',
+    });
+    expect(JSON.stringify(error.mock.calls)).not.toContain(sentinel);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatch(/Inspect/);
+  },
+);

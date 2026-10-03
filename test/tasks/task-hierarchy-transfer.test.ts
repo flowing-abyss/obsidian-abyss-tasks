@@ -6,6 +6,7 @@ import {
   type HierarchyEndpoint,
 } from '../../src/tasks/infrastructure/markdown/taskHierarchyTransfer';
 import { expectDefined } from '../helpers';
+import { unprovedHierarchyReferences } from '../support/hierarchyReferenceFixtures';
 
 const editor = new TaskBlockEditor(() => '    ');
 function endpoint(
@@ -169,3 +170,30 @@ it('transfers images after mixed fences with exact code bytes and new relative d
     '- [ ] Parent\r\n    - [ ] Move\r\n      ~~~js\r\n      console.log("`");\r\n      ~~~\r\n      ![](../folder/photo.png) ![photo](../folder/photo.png) `![](missing.png)`\r\n',
   );
 });
+
+it.each(unprovedHierarchyReferences)(
+  'rejects unproved outgoing source before preparing: %s',
+  (source) => {
+    const destination = '- [ ] Parent\n\n[id]: https://example.com/different\n';
+    const result = prepareHierarchyTransfer({
+      contents: new Map([
+        ['A/source.md', source],
+        ['B/target.md', destination],
+      ]),
+      source: endpoint('A/source.md', source),
+      parent: endpoint('B/target.md', destination),
+      editor,
+      rewrite: (text, sourcePath, destinationPath, movedAnchors) =>
+        rebaseMarkdownSourceReferences(text, {
+          sourcePath,
+          destinationPath,
+          movedAnchors,
+          resolver: {
+            resolve: (target) => `A/${target}`,
+            linktext: (path) => `../${path}`,
+          },
+        }),
+    });
+    expect(result).toEqual({ type: 'invalid' });
+  },
+);

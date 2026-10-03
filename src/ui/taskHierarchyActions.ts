@@ -16,6 +16,7 @@ import {
   rootTaskNodeRef,
   taskNodeRef,
   taskSelectionPath,
+  taskSelectionRefPath,
   type TaskSelectionNode,
 } from './taskSelection';
 
@@ -43,27 +44,7 @@ function livePath(queries: TaskQueryApi, target: TaskNodeRef): TaskSelectionNode
     !sameTaskNodeRef(taskNodeRef(result.task), { type: 'task', ref: rootTaskNodeRef(target) })
   )
     return undefined;
-  return pathInRoot(result.task, target);
-}
-
-function pathInRoot(root: TaskSnapshot, target: TaskNodeRef): TaskSelectionNode[] | undefined {
-  if (!sameTaskNodeRef(taskNodeRef(root), { type: 'task', ref: rootTaskNodeRef(target) }))
-    return undefined;
-  const chain: TaskNodeRef[] = [];
-  let current = target;
-  while (current.type === 'subtask') {
-    chain.unshift(current);
-    current = current.ref.parent;
-  }
-  const stack: TaskSelectionNode[] = [root];
-  for (const child of chain) {
-    const matches = stack[stack.length - 1]?.subtasks.filter((node) =>
-      sameTaskNodeRef(taskNodeRef(node), child),
-    );
-    if (matches?.length !== 1 || matches[0] === undefined) return undefined;
-    stack.push(matches[0]);
-  }
-  return stack;
+  return taskSelectionRefPath(result.task, target);
 }
 
 interface HierarchyDropOptions {
@@ -207,7 +188,7 @@ function movedSelection(
   const start = selection.findIndex((node) => sameTaskNodeRef(taskNodeRef(node), source));
   if (start === -1) return undefined;
   if (!exactSelectionPath(selectedRoot, selection)) return undefined;
-  const destination = pathInRoot(moved.root, moved.target);
+  const destination = taskSelectionRefPath(moved.root, moved.target);
   if (destination === undefined) return undefined;
   return carryDescendants(destination, selection.slice(start));
 }
@@ -299,8 +280,15 @@ export async function executeTaskHierarchy(
     let result: TaskCommandResult;
     try {
       result = await tasks.execute(command);
-    } catch (error: unknown) {
-      console.error('[abyss-tasks] Could not transfer task hierarchy', { command, error });
+    } catch {
+      console.error('[abyss-tasks] Could not transfer task hierarchy', {
+        operation: command.type,
+        phase: 'unexpected',
+        sourcePath: rootTaskNodeRef(source).filePath,
+        destinationPath: rootTaskNodeRef(command.type === 'reparent-task' ? command.parent : source)
+          .filePath,
+        cause: 'command-rejected',
+      });
       result = unknownHierarchyResult(command);
     }
     presentTaskCommandResult(result);

@@ -16,7 +16,7 @@ import {
   type TaskSnapshot,
   type TaskStatusType,
 } from '../tasks';
-import type { TaskLinkValues } from './taskLinkValues';
+import type { TaskLinkValue, TaskLinkValues } from './taskLinkValues';
 import { todayTaskCategory } from './todayTaskCategory';
 
 export interface TaskListSelectionInput {
@@ -34,8 +34,8 @@ export interface TaskListSelectionInput {
 /** What an ordering needs beyond the tasks themselves, read once rather than per comparison. */
 interface TaskOrder {
   readonly input: TaskListSelectionInput;
-  /** Canonical first outgoing note path, derived before comparisons. */
-  readonly linkOrder: ReadonlyMap<TaskSnapshot, string>;
+  /** Distinct outgoing labels/identities in canonical order, derived before comparisons. */
+  readonly linkOrder: ReadonlyMap<TaskSnapshot, readonly TaskLinkValue[]>;
   /** Tracked totals by task, so a sort walks each subtree once instead of on every comparison. */
   readonly trackedMs: ReadonlyMap<TaskSnapshot, number>;
 }
@@ -156,6 +156,29 @@ function compareOptional(left: string | undefined, right: string | undefined): n
   return left.localeCompare(right);
 }
 
+function compareLinkValue(left: TaskLinkValue, right: TaskLinkValue): number {
+  const label = left.label.localeCompare(right.label);
+  return label !== 0 ? label : left.key.localeCompare(right.key);
+}
+
+function compareLinkSequence(
+  left: readonly TaskLinkValue[] | undefined,
+  right: readonly TaskLinkValue[] | undefined,
+): number {
+  if (left === right) return 0;
+  if (left === undefined) return 1;
+  if (right === undefined) return -1;
+  for (let index = 0; index < Math.min(left.length, right.length); index++) {
+    const a = left[index];
+    const b = right[index];
+    if (a !== undefined && b !== undefined) {
+      const order = compareLinkValue(a, b);
+      if (order !== 0) return order;
+    }
+  }
+  return left.length - right.length;
+}
+
 function compareCreated(left: TaskSnapshot, right: TaskSnapshot): number {
   const a = left.planning.created;
   const b = right.planning.created;
@@ -178,7 +201,7 @@ function compare(left: TaskSnapshot, right: TaskSnapshot, order: TaskOrder): num
   if (field === 'title') return left.title.localeCompare(right.title);
   if (field === 'source-note') return left.source.filePath.localeCompare(right.source.filePath);
   if (field === 'outgoing-link')
-    return compareOptional(order.linkOrder.get(left), order.linkOrder.get(right));
+    return compareLinkSequence(order.linkOrder.get(left), order.linkOrder.get(right));
   if (field === 'tag') return compareOptional(left.tags[0], right.tags[0]);
   if (field === 'tracked') {
     return (order.trackedMs.get(left) ?? 0) - (order.trackedMs.get(right) ?? 0);
@@ -232,8 +255,10 @@ export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnap
     linkOrder: new Map(
       matching.flatMap((task) => {
         const values = input.outgoingLinks?.get(`${task.source.filePath}:${task.source.line}`);
-        const first = values?.map((value) => value.target).sort((a, b) => a.localeCompare(b))[0];
-        return first === undefined ? [] : [[task, first] as const];
+        const sequence = [...new Map(values?.map((value) => [value.key, value])).values()].sort(
+          compareLinkValue,
+        );
+        return sequence.length === 0 ? [] : [[task, sequence] as const];
       }),
     ),
     trackedMs:

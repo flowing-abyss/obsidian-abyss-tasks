@@ -1,4 +1,5 @@
 import { consumeMarkdownFenceLine, type MarkdownFence } from './fences';
+import { inlineCodeRanges, type SourceRange } from './inlineCode';
 import { markdownLinkTargetParts } from './linkTarget';
 import {
   aliasSeparator,
@@ -35,8 +36,61 @@ export function rebaseMarkdownLinks(
   return result;
 }
 
+/**
+ * Accept only the existing single-line token forms. Uncovered brackets may be reference links
+ * whose definitions live elsewhere; multiline code needs block parsing to prove its scope.
+ * This stricter transfer guard grants no new ordinary editable-link or clipboard authority.
+ */
+function provenReferences(text: string): LinkToken[] | undefined {
+  const code = inlineCodeRanges(text);
+  if (code.some(({ from, to }) => /[\r\n]/u.test(text.slice(from, to)))) return undefined;
+  const tokens = parseSourceReferences(text);
+  if (
+    tokens.some(
+      (token) =>
+        /[\r\n]/u.test(token.raw) || (token.type === 'md' && /[()\s<>]/u.test(token.target)),
+    )
+  )
+    return undefined;
+  const ranges = [
+    ...code,
+    ...tokens.map((token) => ({ from: token.index, to: token.index + token.raw.length })),
+    // A task checkbox is structural syntax, not an outgoing reference.
+    ...text.matchAll(/^[\t >]*(?:[-*+]|\d+[.)]) \[[^\r\n]\]/gmu),
+  ]
+    .map((range) =>
+      'from' in range ? range : { from: range.index, to: range.index + range[0].length },
+    )
+    .sort((a, b) => a.from - b.from);
+  return hasUnprovedReference(text, ranges) ? undefined : tokens;
+}
+
+function hasUnprovedReference(text: string, ranges: readonly SourceRange[]): boolean {
+  let cursor = 0;
+  let at = 0;
+  while (at < text.length) {
+    while ((ranges[cursor]?.to ?? Infinity) <= at) cursor++;
+    const range = ranges[cursor];
+    if (range !== undefined && range.from <= at) {
+      at = range.to;
+      continue;
+    }
+    if (text[at] === '\\') {
+      at += escapedReferenceLength(text, at);
+    } else if (text[at] === '[' || text[at] === '<') return true;
+    at++;
+  }
+  return false;
+}
+
+/** Retain the shared reader's escaped-wiki convention and escaped punctuation. */
+function escapedReferenceLength(text: string, at: number): number {
+  const escapedWiki = /^\[\[[^[\]\r\n]+\]\]/u.exec(text.slice(at + 1));
+  return escapedWiki?.[0].length ?? 1;
+}
+
 /** Fences separate inline parsing regions; tokens still refer to original source offsets. */
-function referencesOutsideFences(text: string): LinkToken[] {
+function referencesOutsideFences(text: string): LinkToken[] | undefined {
   let fence: MarkdownFence | undefined;
   let from = 0;
   let at = 0;
@@ -51,12 +105,13 @@ function referencesOutsideFences(text: string): LinkToken[] {
     at += line.length + 1;
   }
   if (from < text.length) ranges.push({ from, to: text.length });
-  return ranges.flatMap((range) =>
-    parseSourceReferences(text.slice(range.from, range.to)).map((token) => ({
-      ...token,
-      index: token.index + range.from,
-    })),
-  );
+  const tokens: LinkToken[] = [];
+  for (const range of ranges) {
+    const proven = provenReferences(text.slice(range.from, range.to));
+    if (proven === undefined) return undefined;
+    tokens.push(...proven.map((token) => ({ ...token, index: token.index + range.from })));
+  }
+  return tokens;
 }
 
 function replaceTarget(link: LinkToken, target: string): string | undefined {
@@ -97,7 +152,10 @@ export function rebaseMarkdownSourceReferences(
   transfer: SourceReferenceTransfer,
 ): string | undefined {
   let result = text;
-  for (const link of [...referencesOutsideFences(text)].reverse()) {
+  const references = referencesOutsideFences(text);
+  if (references === undefined) return undefined;
+  references.reverse();
+  for (const link of references) {
     const target = transferredTarget(link, transfer);
     if (target === undefined) return undefined;
     if (target === link.target) continue;

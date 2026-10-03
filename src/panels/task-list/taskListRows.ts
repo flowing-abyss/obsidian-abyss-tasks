@@ -29,6 +29,7 @@ export interface TaskListGroupRow {
   readonly label: string;
   readonly count: number;
   readonly first: boolean;
+  readonly sourcePath?: string;
 }
 
 /** One visual occurrence of a root task, with its separate physical source identity. */
@@ -126,6 +127,7 @@ function groupedRows(
       kind: 'group',
       key: `group:${grouping.by}:${group.key}`,
       label: group.label,
+      ...(grouping.by === 'source-note' && { sourcePath: group.key }),
       count: group.tasks.length,
       first: rows.length === 0,
     });

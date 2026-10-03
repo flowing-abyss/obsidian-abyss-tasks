@@ -157,7 +157,16 @@ The pure transfer uses canonical root blocks and owned subtree ranges, changes o
 prefix and source references inside the moved range, and preserves existing metadata, duration,
 comments, tracking entries, and imported Markdown. Promotion inserts after the complete old root.
 Shared Markdown reference tokenization includes embeds for transfers while ordinary `parseLinks`
-continues to exclude them; shared fence parsing prevents rewriting code examples.
+continues to exclude them; shared fence parsing prevents rewriting code examples. Cross-note
+transfer additionally proves the bounded single-line reference inventory before any write. It rejects
+uncovered bracket/HTML syntax (including empty-label and reference-style links), complex Markdown
+destinations, and multiline inline-code spans whose block scope cannot be proved. For example,
+`[](note.md)`, `[![image](photo.png)](note.md)`, `[text][id]`, and even literal `[aside]`
+are rejected because their reference meaning is not proved; escaped `\[aside\]`, task checkboxes,
+ordinary `[[note]]`, `[text](note.md)`, `![](photo.png)`, and single-line code/fenced examples
+retain their supported behavior. This is a conservative transfer boundary, not exhaustive Markdown
+parsing. Same-note hierarchy changes preserve those authored forms without reference rebasing.
+Ordinary editable-link and Projects clipboard policies remain unchanged.
 
 Structural authority separately proves the complete indexed predecessor population, exact source
 bytes, complete candidate population, and surviving root transitions. It supports disappearing and

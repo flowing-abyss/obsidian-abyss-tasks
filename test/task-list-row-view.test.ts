@@ -116,3 +116,23 @@ it('mounts each outgoing occurrence with its own address and element', () => {
   expect(new Set(cards.map(([, card]) => card)).size).toBe(2);
   for (const [key, card] of cards) expect(mounted.element(key)).toBe(card);
 });
+
+it('gives source-note headers their full physical path through the host tooltip', () => {
+  const container = freshContainer();
+  const list = buildTaskListRows(
+    [
+      task({ source: { filePath: 'Work/Projects/Unique.md', line: 0 } }),
+      task({ source: { filePath: 'Work/Shared.md', line: 0 } }),
+      task({ source: { filePath: 'Home/Shared.md', line: 0 } }),
+    ],
+    { by: 'source-note' },
+  );
+  const mounted = mountTaskListRows(container, list, renderCard);
+  for (const path of ['Work/Projects/Unique.md', 'Work/Shared.md', 'Home/Shared.md']) {
+    const header = mounted.element(`group:source-note:${path}`);
+    expect(header?.getAttribute('aria-label')).toBe(path);
+  }
+  expect(mounted.element('group:source-note:Work/Projects/Unique.md')?.textContent).toBe(
+    'Unique  1',
+  );
+});
