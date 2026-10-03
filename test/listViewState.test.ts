@@ -1,6 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { isListViewCustomized, listSelectionToKey } from '../src/app/listViewState';
+import {
+  isListViewCustomized,
+  isListViewOptionsCustomized,
+  listSelectionToKey,
+} from '../src/app/listViewState';
 import { getListViewDefaults } from '../src/settings/defaults';
 import type { ListViewState } from '../src/settings/types';
 
@@ -11,6 +15,57 @@ function withoutStatusGroups(state: ListViewState): ListViewState {
   delete result.statusGroups;
   return result;
 }
+
+describe('isListViewOptionsCustomized', () => {
+  it('ignores property filters while retaining broader customization', () => {
+    const filtered = { ...base('tag:#work'), filters: [{ type: 'tag' as const, value: '#home' }] };
+    expect(isListViewOptionsCustomized(filtered, 'tag:#work')).toBe(false);
+    expect(isListViewCustomized(filtered, 'tag:#work')).toBe(true);
+  });
+
+  it('detects group and sort differences', () => {
+    expect(isListViewOptionsCustomized({ ...base('inbox'), groupBy: 'priority' }, 'inbox')).toBe(
+      true,
+    );
+    expect(
+      isListViewOptionsCustomized(
+        { ...base('inbox'), sortBy: { field: 'title', dir: 'asc' } },
+        'inbox',
+      ),
+    ).toBe(true);
+    expect(
+      isListViewOptionsCustomized(
+        { ...base('inbox'), sortBy: { field: 'date', dir: 'desc' } },
+        'inbox',
+      ),
+    ).toBe(true);
+  });
+
+  it('compares normalized Show values against Active without order sensitivity', () => {
+    expect(isListViewOptionsCustomized(withoutStatusGroups(base('inbox')), 'inbox')).toBe(true);
+    expect(
+      isListViewOptionsCustomized(
+        { ...base('inbox'), statusGroups: ['todo', 'in-progress', 'done', 'cancelled'] },
+        'inbox',
+      ),
+    ).toBe(true);
+    expect(
+      isListViewOptionsCustomized(
+        { ...base('inbox'), statusGroups: ['in-progress', 'todo'] },
+        'inbox',
+      ),
+    ).toBe(false);
+  });
+
+  it('respects Today and tag grouping defaults', () => {
+    expect(isListViewOptionsCustomized(base('today'), 'today')).toBe(false);
+    expect(isListViewOptionsCustomized({ ...base('today'), groupBy: 'none' }, 'today')).toBe(true);
+    expect(isListViewOptionsCustomized(base('tag:#work'), 'tag:#work')).toBe(false);
+    expect(
+      isListViewOptionsCustomized({ ...base('tag:#work'), groupBy: 'date' }, 'tag:#work'),
+    ).toBe(true);
+  });
+});
 
 describe('isListViewCustomized', () => {
   it('returns false for a container at its defaults', () => {

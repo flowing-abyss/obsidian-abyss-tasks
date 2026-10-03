@@ -239,7 +239,9 @@ property-filter labels, chip insertion/removal, deduplication and sort/group/sta
 It is constructed once before CalendarMode with the same settings entry and save callback, plus
 call-time root and date-format callbacks. Updates change the settings entry, start the existing
 async save action, then notify AppState synchronously. The shell retains headers, filter debounce,
-formatDate and lifecycle close ordering.
+formatDate and lifecycle close ordering. Initial and retained-header Sort & group indicators share
+`isListViewOptionsCustomized` (group/sort/show only); property filters still activate the broader
+left-list customization dot and Reset through `isListViewCustomized`.
 
 [`TaskSearch`](src/panels/center/TaskSearch.ts) owns Search input/results, coalesced frame
 refresh and result-card navigation. Constructed once, it reads the same persisted task list and

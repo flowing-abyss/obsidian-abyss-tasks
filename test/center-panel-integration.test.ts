@@ -1002,6 +1002,10 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
 
     try {
       panel.mount(container);
+      const button = expectDefined(
+        container.querySelector<HTMLButtonElement>('.abyss-view-state-btn'),
+      );
+      expect(button.classList.contains('abyss-view-state-btn--active')).toBe(false);
       state.set('centerListViewState', {
         ...state.get('centerListViewState'),
         filters: [
@@ -1012,9 +1016,17 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       await flushMicrotasks();
       const header = expectDefined(container.querySelector<HTMLElement>('.abyss-center-header'));
       expect(labels()).toEqual(['#work', '#home']);
+      expect(container.querySelector('.abyss-view-state-btn')).toBe(button);
+      expect(button.classList.contains('abyss-view-state-btn--active')).toBe(false);
 
       state.set('centerListViewState', { ...state.get('centerListViewState'), groupBy: 'none' });
       await flushMicrotasks();
+
+      expect(button.classList.contains('abyss-view-state-btn--active')).toBe(true);
+      state.set('centerListViewState', { ...state.get('centerListViewState'), groupBy: 'date' });
+      await flushMicrotasks();
+      expect(container.querySelector('.abyss-view-state-btn')).toBe(button);
+      expect(button.classList.contains('abyss-view-state-btn--active')).toBe(false);
 
       expect(container.querySelector('.abyss-center-header')).toBe(header);
       expect(labels()).toEqual(['#work', '#home']);

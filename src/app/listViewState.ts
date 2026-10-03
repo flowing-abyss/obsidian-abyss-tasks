@@ -91,12 +91,16 @@ export function statusGroupsEqual(
  * has any saved customization", filters included.
  */
 export function isListViewCustomized(vs: ListViewState, listKey: string): boolean {
+  return isListViewOptionsCustomized(vs, listKey) || vs.filters.length > 0;
+}
+
+/** Sort & group indicator excludes property filters, which have their own chips. */
+export function isListViewOptionsCustomized(vs: ListViewState, listKey: string): boolean {
   const defaults = getListViewDefaults(listKey);
   return (
     vs.groupBy !== defaults.groupBy ||
     vs.sortBy.field !== defaults.sortBy.field ||
     vs.sortBy.dir !== defaults.sortBy.dir ||
-    !statusGroupsEqual(vs.statusGroups, defaults.statusGroups) ||
-    vs.filters.length > 0
+    !statusGroupsEqual(vs.statusGroups, defaults.statusGroups)
   );
 }
