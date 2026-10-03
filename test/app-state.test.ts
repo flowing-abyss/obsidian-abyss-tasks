@@ -980,3 +980,59 @@ describe('AppState', () => {
     });
   });
 });
+
+describe('AppState task selection intent', () => {
+  it('advances on explicit reselection including the same array without changing selectionBegun delivery', () => {
+    const state = new AppState();
+    const stack = [task()];
+    const begun = vi.fn();
+    state.onTaskSelectionBegun(begun);
+    state.set('taskStack', stack);
+    const first = state.taskSelectionIntentGeneration;
+    state.set('taskStack', stack);
+    expect(state.taskSelectionIntentGeneration).toBe(first + 1);
+    expect(begun).toHaveBeenCalledTimes(1);
+    state.updateInspectorSelection([expectDefined(stack[0])]);
+    expect(state.taskSelectionIntentGeneration).toBe(first + 1);
+    state.navigateInspectorSelection(stack);
+    expect(state.taskSelectionIntentGeneration).toBe(first + 2);
+    expect(begun).toHaveBeenCalledTimes(1);
+  });
+  it('counts valid dependency/back navigation and mode changes, but keeps reconciliation neutral', () => {
+    const state = new AppState();
+    state.set('taskStack', [inspectorLocation('A').root]);
+    const first = state.taskSelectionIntentGeneration;
+    state.openInspectorDependency(inspectorLocation('B'));
+    expect(state.taskSelectionIntentGeneration).toBe(first + 1);
+    state.backInspectorDependency();
+    expect(state.taskSelectionIntentGeneration).toBe(first + 2);
+    state.backInspectorDependency();
+    expect(state.taskSelectionIntentGeneration).toBe(first + 2);
+    state.set('mode', 'calendar');
+    expect(state.taskSelectionIntentGeneration).toBe(first + 3);
+    state.set('mode', 'tasks');
+    expect(state.taskSelectionIntentGeneration).toBe(first + 4);
+    state.set('mode', 'tasks');
+    expect(state.taskSelectionIntentGeneration).toBe(first + 4);
+    state.clearReconciledTaskSelection();
+    expect(state.taskSelectionIntentGeneration).toBe(first + 4);
+    state.set('taskStack', []);
+    expect(state.taskSelectionIntentGeneration).toBe(first + 5);
+  });
+  it('exposes the new intent to synchronous listeners and refuses reentrant intents before advancing', () => {
+    const state = new AppState();
+    const observed: number[] = [];
+    state.on('taskStack', () => {
+      observed.push(state.taskSelectionIntentGeneration);
+      expect(() => {
+        state.navigateInspectorSelection([]);
+      }).toThrow();
+      expect(() => {
+        state.set('taskStack', state.get('taskStack'));
+      }).toThrow();
+    });
+    state.set('taskStack', [task()]);
+    expect(observed).toEqual([1]);
+    expect(state.taskSelectionIntentGeneration).toBe(1);
+  });
+});

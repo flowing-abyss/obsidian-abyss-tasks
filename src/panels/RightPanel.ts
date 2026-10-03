@@ -64,6 +64,7 @@ import {
   type RightPanelDraftBundle,
   type RightPanelDraftState,
 } from '../ui/taskDraftContinuity';
+import { bindTaskHierarchyDrop, executeTaskHierarchy } from '../ui/taskHierarchyActions';
 import { rebuildTaskSelection, rootTaskRef, taskNodeLine, taskNodeRef } from '../ui/taskSelection';
 import { taskRemovalInverse } from '../ui/taskUndoNotice';
 import {
@@ -99,6 +100,7 @@ export interface RightPanelMutationLifecycle {
   readonly phase: 'started' | 'settled';
   readonly ref: TaskRef;
   readonly token: object;
+  readonly operation?: 'hierarchy';
 }
 
 interface SubmittedDraft {
@@ -367,6 +369,7 @@ export class RightPanel {
         executePlanningPatch: (task, patch) => this.executePlanningPatch_abyssPrivate(task, patch),
         archiveRootTask: (ref) => this.archiveRootTask_abyssPrivate(ref),
         deleteTask: (task) => this.deleteTask_abyssPrivate(task),
+        promoteSubtask: (task) => this.promoteSubtask_abyssPrivate(task),
       },
     });
     this.dependencies_abyssPrivate = this.createDependencies_abyssPrivate();
@@ -1457,7 +1460,7 @@ export class RightPanel {
         },
       });
       crumb.addEventListener('click', () => {
-        this.state_abyssPrivate.updateInspectorSelection(stack.slice(0, index + 1));
+        this.state_abyssPrivate.navigateInspectorSelection(stack.slice(0, index + 1));
       });
     }
   }
@@ -1551,6 +1554,65 @@ export class RightPanel {
       this.planningSurfaces_abyssPrivate.renderContextMenu(task, menuBtn);
     });
     this.onRenderHeaderActions_abyssPrivate?.(headerActions);
+    if (this.tasks_abyssPrivate !== undefined) {
+      const tasks = this.tasks_abyssPrivate;
+      this.md_abyssPrivate.register(
+        bindTaskHierarchyDrop(header, {
+          state: this.state_abyssPrivate,
+          tasks,
+          parent: () => {
+            const stack = this.state_abyssPrivate.get('taskStack');
+            const current = stack[stack.length - 1];
+            return current !== undefined && sameTaskNodeRef(taskNodeRef(current), taskNodeRef(task))
+              ? taskNodeRef(current)
+              : undefined;
+          },
+          execute: (command) => this.executeHierarchyCommand_abyssPrivate(command),
+        }),
+      );
+    }
+  }
+
+  private async executeHierarchyCommand_abyssPrivate(
+    command: Extract<TaskCommand, { type: 'reparent-task' | 'promote-subtask' }>,
+  ): Promise<void> {
+    if (this.tasks_abyssPrivate === undefined) return;
+    const source =
+      command.type === 'reparent-task'
+        ? command.source
+        : { type: 'subtask' as const, ref: command.subtask };
+    const ref = rootRefForPlanningTarget(source);
+    const token = {};
+    this.onMutationLifecycle_abyssPrivate?.({
+      phase: 'started',
+      ref,
+      token,
+      operation: 'hierarchy',
+    });
+    try {
+      await executeTaskHierarchy(
+        this.state_abyssPrivate,
+        this.tasks_abyssPrivate,
+        command,
+        () => this.mounted_abyssPrivate,
+      );
+    } finally {
+      this.onMutationLifecycle_abyssPrivate?.({
+        phase: 'settled',
+        ref,
+        token,
+        operation: 'hierarchy',
+      });
+    }
+  }
+
+  private async promoteSubtask_abyssPrivate(task: TaskLike): Promise<void> {
+    const target = taskNodeRef(task);
+    if (target.type !== 'subtask' || this.tasks_abyssPrivate === undefined) return;
+    await this.executeHierarchyCommand_abyssPrivate({
+      type: 'promote-subtask',
+      subtask: target.ref,
+    });
   }
 
   /** A submitted draft as recovery restores it: without its focus once a control holds focus. */

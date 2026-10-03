@@ -36,6 +36,7 @@ import { runAsyncAction } from '../ui/runAsyncAction';
 import { showStatusMenuAt } from '../ui/statusMenu';
 import { type CreationResultDescription } from '../ui/taskCommandResult';
 import type { TaskDependencyLookup } from '../ui/taskDependencyPresentation';
+import { bindTaskHierarchyDrop, executeTaskHierarchy } from '../ui/taskHierarchyActions';
 import { startTaskNodeDrag } from '../ui/taskNodeDrag';
 import { renderedTaskNodeElements } from '../ui/taskPresentationIdentity';
 import { taskNodeRef } from '../ui/taskSelection';
@@ -174,6 +175,7 @@ export class CenterPanel {
   private readonly projectManager_abyssPrivate: ProjectManager | null;
   private readonly tasks_abyssPrivate: TaskApplicationApi | undefined;
   private endTaskDrag_abyssPrivate: (() => void) | undefined;
+  private mounted_abyssPrivate = false;
   private readonly commentTimeContext_abyssPrivate: CommentTimeContextProvider | undefined;
   private readonly onCreationResult_abyssPrivate: (
     result: TaskCommandResult,
@@ -449,6 +451,7 @@ export class CenterPanel {
   }
 
   mount(container: HTMLElement): void {
+    this.mounted_abyssPrivate = true;
     this.el = container;
     this.initializeOwnedUi_abyssPrivate();
     this.listViewControls_abyssPrivate.initializeListViewState();
@@ -740,6 +743,7 @@ export class CenterPanel {
   }
 
   destroy(): void {
+    this.mounted_abyssPrivate = false;
     this.wholeCardFocus_abyssPrivate = null;
     this.cardReturn_abyssPrivate = null;
     this.renderCardFocus_abyssPrivate = null;
@@ -1191,6 +1195,26 @@ export class CenterPanel {
     card.addEventListener('drop', (event) => {
       this.handleTaskCardDrop_abyssPrivate(event, card, task);
     });
+    if (this.tasks_abyssPrivate !== undefined) {
+      const tasks = this.tasks_abyssPrivate;
+      this.md_abyssPrivate.register(
+        bindTaskHierarchyDrop(card, {
+          state: this.state_abyssPrivate,
+          tasks,
+          parent: () =>
+            this.state_abyssPrivate.get('mode') === 'tasks'
+              ? { type: 'task', ref: task.ref }
+              : undefined,
+          execute: (command) =>
+            executeTaskHierarchy(
+              this.state_abyssPrivate,
+              tasks,
+              command,
+              () => this.mounted_abyssPrivate && this.el.isConnected,
+            ),
+        }),
+      );
+    }
   }
 
   private canDropProjectOnTask_abyssPrivate(task: TaskSnapshot): boolean {

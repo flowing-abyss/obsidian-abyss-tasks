@@ -87,6 +87,7 @@ interface InspectorPlanningCommands {
   readonly executePlanningPatch: (task: TaskLike, patch: TaskPatch) => Promise<TaskCommandResult>;
   readonly archiveRootTask: (ref: TaskRef) => Promise<void>;
   readonly deleteTask: (task: TaskLike) => Promise<void>;
+  readonly promoteSubtask: (task: TaskLike) => Promise<void>;
 }
 interface InspectorPlanningSurfacesOptions {
   readonly app: App;
@@ -1294,6 +1295,12 @@ export class InspectorPlanningSurfaces {
       this.#createContextMenuItem(menu, 'abyss-context-item', 'Archive', () => {
         this.#removeAnchoredSurface(menu);
         runAsyncAction(this.#commands.archiveRootTask(contextTarget.ref));
+      });
+    }
+    if (contextTarget.type === 'subtask') {
+      this.#createContextMenuItem(menu, 'abyss-context-item', 'Make independent task', () => {
+        this.#removeAnchoredSurface(menu);
+        runAsyncAction(this.#commands.promoteSubtask(task));
       });
     }
     this.#createContextMenuItem(

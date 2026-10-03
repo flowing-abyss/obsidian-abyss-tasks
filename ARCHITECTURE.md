@@ -177,6 +177,30 @@ Inbound links outside the moved subtree remain unchanged, including links elsewh
 note or in third notes; explicit links to the old source's moved block IDs can therefore become
 stale. Markdown block and dependency IDs within the moved subtree remain intact.
 
+Hierarchy presentation is shared by [`taskHierarchyActions`](src/ui/taskHierarchyActions.ts).
+Existing centre cards and the inspector header preview exact live endpoints through the public
+`hierarchyWouldCycle` boundary, after tag/project/attachment handlers; inspector relation drags
+retain dependency meaning. The ordinary selected-subtask menu sends `promote-subtask`. AppState's
+single drag payload is claimed once per drop, independent of outgoing-link row occurrences.
+
+AppState owns a transient selection-intent generation outside its published/persisted data. Explicit
+selection, inspector navigation (including dependency Back), and effective mode changes advance
+it; query refreshes and unavailable-result clears remain neutral. Hierarchy success can hand off
+only a captured exact descendant path inside the moved subtree, with unchanged intent and a live
+owner. It expires unsafe history, uses the proven outcome and current exact query path, and emits
+no new selection-begun event or focus request. Unchanged or failed operations never select.
+Root reparenting retains the existing removal hold through outcome application so a task inheriting
+the source line cannot inherit selection; promotion keeps ordinary containing-root reconciliation.
+
+RightPanel discriminates hierarchy mutation lifecycle events from ordinary draft writes. TaskModal
+holds a continuation only for that opening's hierarchy tokens, deferring automatic clean close when
+an affected selected root becomes unavailable. Settlement retains proven successor or later user
+selection, restores an unchanged full-reference exact source path after failure, or closes an empty
+clean modal after its continuations settle. Dirty detached drafts remain recoverable; manual close
+is immediate and settlements from earlier openings are inert. Delete/archive lifetimes retain their
+existing early-publication close behavior. Hierarchy partial/unknown results use the existing command
+notice boundary with both paths; nested copies never enter the root-only move recovery modal.
+
 [`TagManager`](src/tags/TagManager.ts) owns navigation tag settings, promotion, appearance, ordering,
 and rollback. Effective groups combine configured groups with public root/subtask tags; discovery
 is derived until an appearance or reorder action persists a group. Suggestions likewise use public

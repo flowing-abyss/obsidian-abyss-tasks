@@ -542,6 +542,7 @@ describe('inspector context menu tracking item', () => {
         ['separator', ''],
         ['menuitem', 'Open in note'],
         ['separator', ''],
+        ['menuitem', 'Make independent task'],
         ['menuitem', 'Delete sub-task'],
       ],
     );

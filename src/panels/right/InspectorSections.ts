@@ -594,7 +594,7 @@ export class InspectorSections {
     });
     label.addEventListener('click', () => {
       const stack = this.#state.get('taskStack');
-      this.#state.updateInspectorSelection([...stack, sub]);
+      this.#state.navigateInspectorSelection([...stack, sub]);
     });
     renderRowRemove(
       titleRow,

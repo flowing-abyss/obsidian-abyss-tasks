@@ -167,12 +167,20 @@ export class AppState {
   private readonly selectionBegunListeners = new Set<SelectionBegunListener>();
   /** A `set` of the selection changed it; its listeners hear of it once the change is delivered. */
   private selectionBegun = false;
+  private selectionIntentGeneration = 0;
+
+  get taskSelectionIntentGeneration(): number {
+    return this.selectionIntentGeneration;
+  }
 
   get<K extends keyof AppStateData>(key: K): AppStateData[K] {
     return this.data[key];
   }
 
   set<K extends keyof AppStateData>(key: K, value: AppStateData[K]): void {
+    if (key === 'taskStack' || (key === 'mode' && value !== this.data.mode)) {
+      this.beginSelectionIntent(key);
+    }
     if (key === 'draggingTaskNode') {
       this.setValue(
         'draggingTaskNode',
@@ -180,11 +188,8 @@ export class AppState {
       );
       return;
     }
-    if (key === 'taskStack' && this.data.inspectorBackStack.length > 0) {
-      this.batch(() => {
-        this.setValue('inspectorBackStack', Object.freeze([]));
-        this.setValue(key, value, true);
-      });
+    if (key === 'taskStack') {
+      this.assignTaskSelection(value as AppStateData['taskStack'], true);
       return;
     }
     if (key === 'inspectorBackStack') {
@@ -210,7 +215,32 @@ export class AppState {
     };
   }
 
-  /** Refresh or navigate within the current frame without beginning a new selection. */
+  private beginSelectionIntent(key: keyof AppStateData): void {
+    if (this.delivering) throw new AppStateReentrantMutationError(key);
+    this.selectionIntentGeneration++;
+  }
+
+  private assignTaskSelection(stack: TaskSelectionNode[], beginsSelection: boolean): void {
+    if (this.data.inspectorBackStack.length > 0) {
+      this.batch(() => {
+        this.setValue('inspectorBackStack', Object.freeze([]));
+        this.setValue('taskStack', stack, beginsSelection);
+      });
+    } else this.setValue('taskStack', stack, beginsSelection);
+  }
+
+  /** Explicit navigation within the current inspector frame, retaining dependency history. */
+  navigateInspectorSelection(stack: TaskSelectionNode[]): void {
+    this.beginSelectionIntent('taskStack');
+    this.updateInspectorSelection(stack);
+  }
+
+  /** An unavailable query result clears selection/history without revoking a pending handoff. */
+  clearReconciledTaskSelection(): void {
+    this.assignTaskSelection([], true);
+  }
+
+  /** Refresh the current frame without beginning a new selection or navigation intent. */
   updateInspectorSelection(stack: TaskSelectionNode[]): void {
     this.setValue('taskStack', stack);
   }
@@ -243,7 +273,7 @@ export class AppState {
           Object.freeze([...this.data.inspectorBackStack, previous]),
         );
       }
-      this.updateInspectorSelection(freeze([...destination.taskStack]));
+      this.navigateInspectorSelection(freeze([...destination.taskStack]));
     });
   }
 
@@ -256,7 +286,7 @@ export class AppState {
     if (destination === undefined) return false;
     this.batch(() => {
       this.setValue('inspectorBackStack', Object.freeze(frames.slice(0, -1)));
-      this.updateInspectorSelection(freeze([...destination.taskStack]));
+      this.navigateInspectorSelection(freeze([...destination.taskStack]));
     });
     return true;
   }

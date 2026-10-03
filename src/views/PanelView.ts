@@ -563,7 +563,7 @@ export class PanelView extends ItemView {
       settings: this.settings_abyssPrivate,
       tasks: this.createInspectorTasks_abyssPrivate(selectionTasks),
       onMutationLifecycle: (event) => {
-        this.trackOwnWrite_abyssPrivate(event);
+        if (event.operation !== 'hierarchy') this.trackOwnWrite_abyssPrivate(event);
       },
       commentTimeContext: this.commentTimeContext_abyssPrivate,
       interactionOwnership: this.interactionRegistry_abyssPrivate,
@@ -946,7 +946,7 @@ export class PanelView extends ItemView {
       this.right_abyssPrivate.detachDraftState(draft);
       return;
     }
-    this.state_abyssPrivate.set('taskStack', []);
+    this.state_abyssPrivate.clearReconciledTaskSelection();
     this.right_abyssPrivate.detachDraftState(draft);
   }
 

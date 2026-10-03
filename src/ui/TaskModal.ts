@@ -1,27 +1,30 @@
 import type { App } from 'obsidian';
 import { AppState } from '../app/AppState';
-import { RightPanel } from '../panels/RightPanel';
+import { RightPanel, type RightPanelMutationLifecycle } from '../panels/RightPanel';
 import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
-import type {
-  CommentTimeContextProvider,
-  TaskApplicationApi,
-  TaskIndexEvent,
-  TaskQueryApi,
-  TaskRef,
-  TaskResolution,
-  TaskSnapshot,
+import {
+  sameTaskNodeRef,
+  type CommentTimeContextProvider,
+  type TaskApplicationApi,
+  type TaskIndexEvent,
+  type TaskQueryApi,
+  type TaskRef,
+  type TaskResolution,
+  type TaskSnapshot,
 } from '../tasks';
 import { isRealmHTMLElement } from './domRealm';
 import { isImeOwnedEvent } from './ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 import { presentTaskCommandResult } from './taskCommandResult';
-import { isDirtyDraftBundle } from './taskDraftContinuity';
+import { isDirtyDraftBundle, type RightPanelDraftBundle } from './taskDraftContinuity';
 import {
   rebuildTaskSelection,
   renamedRootSelection,
   rootTaskRef,
   selectedRootResolution,
+  taskNodeRef,
+  taskSelectionPath,
   type TaskSelectionNode,
 } from './taskSelection';
 import { deviceTrackedTimeContext, type TrackingSurface } from './timeTracking/TimeBadge';
@@ -36,6 +39,15 @@ interface TaskModalOptions {
   readonly tasks?: TaskApplicationApi | undefined;
   readonly commentTimeContext?: CommentTimeContextProvider | undefined;
   readonly interactionOwnership?: InteractionOwnershipPort | undefined;
+}
+
+interface HierarchyContinuation {
+  readonly state: AppState;
+  readonly intent: number;
+  readonly ref: TaskRef;
+  readonly selection: readonly TaskSelectionNode[];
+  deferredClose: boolean;
+  draft: RightPanelDraftBundle | undefined;
 }
 
 export class TaskModal {
@@ -58,6 +70,7 @@ export class TaskModal {
   private ownedWriteRef_abyssPrivate: TaskRef | undefined = undefined;
   private ownershipToken_abyssPrivate: { release(): void } | null = null;
   private timeTracking_abyssPrivate: TrackingSurface | undefined;
+  private readonly hierarchyContinuations_abyssPrivate = new Map<object, HierarchyContinuation>();
 
   constructor(options: TaskModalOptions) {
     const {
@@ -109,6 +122,7 @@ export class TaskModal {
     }
 
     const panelEl = modal.createDiv({ cls: 'abyss-right abyss-modal-body' });
+    const openingState = this.innerState_abyssPrivate;
     this.innerPanel_abyssPrivate = new RightPanel({
       state: this.innerState_abyssPrivate,
       app: this.app_abyssPrivate,
@@ -119,7 +133,9 @@ export class TaskModal {
         this.renderCloseButton_abyssPrivate(actions);
       },
       onMutationLifecycle: (event) => {
-        this.trackOwnWrite_abyssPrivate(event);
+        if (this.innerState_abyssPrivate !== openingState) return;
+        if (event.operation === 'hierarchy') this.trackHierarchy_abyssPrivate(event, openingState);
+        else this.trackOwnWrite_abyssPrivate(event);
       },
       commentTimeContext: this.commentTimeContext_abyssPrivate,
       interactionOwnership: this.interactionOwnership_abyssPrivate,
@@ -204,6 +220,7 @@ export class TaskModal {
   }
 
   close(): void {
+    this.hierarchyContinuations_abyssPrivate.clear();
     this.opener_abyssPrivate = null;
     const ownershipToken = this.ownershipToken_abyssPrivate;
     this.ownershipToken_abyssPrivate = null;
@@ -227,6 +244,94 @@ export class TaskModal {
     this.modalEl_abyssPrivate = null;
     this.backdropEl_abyssPrivate?.remove();
     this.backdropEl_abyssPrivate = null;
+  }
+
+  private trackHierarchy_abyssPrivate(event: RightPanelMutationLifecycle, state: AppState): void {
+    if (event.phase === 'started') {
+      this.hierarchyContinuations_abyssPrivate.set(event.token, {
+        state,
+        intent: state.taskSelectionIntentGeneration,
+        ref: event.ref,
+        selection: [...state.get('taskStack')],
+        deferredClose: false,
+        draft: undefined,
+      });
+      return;
+    }
+    const continuation = this.hierarchyContinuations_abyssPrivate.get(event.token);
+    this.hierarchyContinuations_abyssPrivate.delete(event.token);
+    if (continuation !== undefined) this.settleHierarchy_abyssPrivate(continuation);
+  }
+
+  private settleHierarchy_abyssPrivate(continuation: HierarchyContinuation): void {
+    const state = continuation.state;
+    if (
+      !continuation.deferredClose ||
+      this.innerState_abyssPrivate !== state ||
+      this.modalEl_abyssPrivate === null ||
+      state.get('taskStack').length > 0
+    )
+      return;
+    const restored = this.exactHierarchyRestoration_abyssPrivate(continuation);
+    if (restored !== undefined) {
+      state.updateInspectorSelection(restored.selection);
+      this.innerPanel_abyssPrivate?.restoreDraftState(continuation.draft, restored.root);
+      return;
+    }
+    if (
+      this.hierarchyContinuations_abyssPrivate.size === 0 &&
+      !this.hasDirtyHierarchyDraft_abyssPrivate(continuation)
+    )
+      this.close();
+  }
+
+  private hasDirtyHierarchyDraft_abyssPrivate(continuation: HierarchyContinuation): boolean {
+    return (
+      isDirtyDraftBundle(continuation.draft) ||
+      isDirtyDraftBundle(this.innerPanel_abyssPrivate?.captureDraftState())
+    );
+  }
+
+  private exactHierarchyRestoration_abyssPrivate(
+    continuation: HierarchyContinuation,
+  ): { root: TaskSnapshot; selection: TaskSelectionNode[] } | undefined {
+    if (continuation.state.taskSelectionIntentGeneration !== continuation.intent) return undefined;
+    const resolution = this.queries_abyssPrivate?.resolve(continuation.ref);
+    if (
+      resolution?.type !== 'exact' ||
+      !this.sameRef_abyssPrivate(resolution.task.ref, continuation.ref)
+    )
+      return undefined;
+    const selected = continuation.selection[continuation.selection.length - 1];
+    if (selected === undefined) return undefined;
+    const restored = taskSelectionPath(resolution.task, selected);
+    if (
+      restored?.length !== continuation.selection.length ||
+      !restored.every((node, index) => {
+        const prior = continuation.selection[index];
+        return prior !== undefined && sameTaskNodeRef(taskNodeRef(node), taskNodeRef(prior));
+      })
+    )
+      return undefined;
+    return { root: resolution.task, selection: restored };
+  }
+
+  private deferHierarchyClose_abyssPrivate(
+    stack: readonly TaskSelectionNode[],
+    draft: RightPanelDraftBundle | undefined,
+  ): boolean {
+    const root = stack[0];
+    if (root === undefined) return false;
+    const continuations = [...this.hierarchyContinuations_abyssPrivate.values()].filter(
+      (candidate) =>
+        candidate.state === this.innerState_abyssPrivate &&
+        this.sameRef_abyssPrivate(candidate.ref, rootTaskRef(root)),
+    );
+    for (const continuation of continuations) {
+      continuation.deferredClose = true;
+      continuation.draft = draft;
+    }
+    return continuations.length > 0;
   }
 
   private onIndexEvent_abyssPrivate(event: TaskIndexEvent): void {
@@ -282,8 +387,16 @@ export class TaskModal {
       this.innerPanel_abyssPrivate?.detachDraftState(draft);
       return;
     }
-    this.innerState_abyssPrivate?.set('taskStack', []);
+    this.detachUnavailableHierarchy_abyssPrivate(stack, draft);
+  }
+
+  private detachUnavailableHierarchy_abyssPrivate(
+    stack: readonly TaskSelectionNode[],
+    draft: RightPanelDraftBundle | undefined,
+  ): void {
+    this.innerState_abyssPrivate?.clearReconciledTaskSelection();
     this.innerPanel_abyssPrivate?.detachDraftState(draft);
+    if (this.deferHierarchyClose_abyssPrivate(stack, draft)) return;
     if (!isDirtyDraftBundle(draft)) this.close();
   }
 
