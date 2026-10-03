@@ -1,5 +1,5 @@
 // Exercise the real launcher/adapters against a package shim whose descendant
-// holds stdout open. Only the adapter deadline is accelerated in fixture copies.
+// holds stdout open. Advance the real adapter deadline only after process readiness.
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
 import {
@@ -14,11 +14,12 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const aiRoot = path.dirname(fileURLToPath(import.meta.url));
-const deadline = 500;
+const deadline = 30_000;
+const realSetTimeout = globalThis.setTimeout;
+const realClearTimeout = globalThis.clearTimeout;
 
 function alive(pid) {
   try {
@@ -34,7 +35,7 @@ async function waitFor(predicate, timeout = 1500) {
   const until = performance.now() + timeout;
   while (!predicate()) {
     if (performance.now() >= until) return false;
-    await delay(20);
+    await new Promise((resolve) => realSetTimeout(resolve, 20));
   }
   return true;
 }
@@ -68,9 +69,8 @@ setTimeout(() => process.exit(0), 5000);
 `,
   );
   const suffix = harness === 'opencode' ? 'js' : 'ts';
-  const source = readFileSync(path.join(aiRoot, 'scripts', harness, `codegraph.${suffix}`), 'utf8');
   const adapter = path.join(ai, `adapter.${suffix}`);
-  writeFileSync(adapter, source.replace('30_000', String(deadline)));
+  copyFileSync(path.join(aiRoot, 'scripts', harness, `codegraph.${suffix}`), adapter);
   if (stalledLauncher) {
     writeFileSync(
       path.join(ai, 'codegraph.mjs'),
@@ -125,15 +125,17 @@ async function prompt(f, harness) {
 for (const harness of ['opencode', 'pi']) {
   test(`${harness} returns empty context at its deadline and discards partial output`, async (t) => {
     const f = fixture(t, harness);
-    const started = performance.now();
+    t.mock.timers.enable({ apis: ['setTimeout'] });
     const pending = prompt(f, harness);
-    assert.ok(await waitFor(() => existsSync(f.workerPid)), 'fixture descendant started');
+    assert.ok(await waitFor(() => existsSync(f.workerPid), 5000), 'fixture descendant started');
+    const started = performance.now();
+    t.mock.timers.tick(deadline);
     let timeout;
     try {
       const result = await Promise.race([
         pending,
         new Promise((_resolve, reject) => {
-          timeout = setTimeout(
+          timeout = realSetTimeout(
             () => reject(new Error('prompt remained blocked past its deadline')),
             1000,
           );
@@ -148,7 +150,7 @@ for (const harness of ['opencode', 'pi']) {
         harness === 'opencode' ? [{ type: 'text', text: 'How does greet work?' }] : undefined,
       );
     } finally {
-      clearTimeout(timeout);
+      realClearTimeout(timeout);
     }
   });
 
@@ -161,14 +163,16 @@ for (const harness of ['opencode', 'pi']) {
     },
     async (t) => {
       const f = fixture(t, harness, true);
+      t.mock.timers.enable({ apis: ['setTimeout'] });
       const pending = prompt(f, harness);
-      assert.ok(await waitFor(() => existsSync(f.workerPid)), 'launcher started');
+      assert.ok(await waitFor(() => existsSync(f.workerPid), 5000), 'launcher started');
+      t.mock.timers.tick(deadline);
       let timeout;
       try {
         const result = await Promise.race([
           pending,
           new Promise((_resolve, reject) => {
-            timeout = setTimeout(
+            timeout = realSetTimeout(
               () => reject(new Error('adapter waited for launcher close')),
               1000,
             );
@@ -180,15 +184,17 @@ for (const harness of ['opencode', 'pi']) {
         );
         assert.ok(f.pids().every(alive), 'the return must precede launcher close');
       } finally {
-        clearTimeout(timeout);
+        realClearTimeout(timeout);
       }
     },
   );
 
   test(`${harness} cancellation terminates the launcher, shim and pipe-holding descendant`, async (t) => {
     const f = fixture(t, harness);
+    t.mock.timers.enable({ apis: ['setTimeout'] });
     const pending = prompt(f, harness);
-    assert.ok(await waitFor(() => existsSync(f.workerPid)), 'fixture descendant started');
+    assert.ok(await waitFor(() => existsSync(f.workerPid), 5000), 'fixture descendant started');
+    t.mock.timers.tick(deadline);
     const pids = f.pids();
     assert.equal(pids.length, 3);
     assert.ok(
