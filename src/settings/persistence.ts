@@ -72,6 +72,8 @@ const GROUP_BY_VALUES = new Set<ListViewState['groupBy']>([
   'priority',
   'tag',
   'status',
+  'source-note',
+  'outgoing-link',
 ]);
 const SORT_FIELD_VALUES = new Set<ListViewState['sortBy']['field']>([
   'date',
@@ -80,6 +82,8 @@ const SORT_FIELD_VALUES = new Set<ListViewState['sortBy']['field']>([
   'tag',
   'status',
   'tracked',
+  'source-note',
+  'outgoing-link',
 ]);
 const STATUS_VALUES = new Set(TYPE_ORDER);
 const MALFORMED_VIEW_NOTICE =
@@ -475,7 +479,10 @@ function mergeListViewStates(
     const entry = isRecord(base[key]) ? detached(base[key]) : {};
     delete entry['show'];
     entry['groupBy'] = value.groupBy;
-    entry['sortBy'] = detached(value.sortBy);
+    entry['sortBy'] = {
+      ...(isRecord(entry['sortBy']) ? detached(entry['sortBy']) : {}),
+      ...detached(value.sortBy),
+    };
     entry['filters'] = detached(value.filters);
     if (value.statusGroups === undefined) delete entry['statusGroups'];
     else entry['statusGroups'] = detached(value.statusGroups);

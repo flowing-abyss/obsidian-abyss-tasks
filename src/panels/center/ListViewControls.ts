@@ -190,6 +190,8 @@ export class ListViewControls {
       priority: 'Priority',
       tag: 'Tag',
       status: 'Status',
+      'source-note': 'Source note',
+      'outgoing-link': 'Outgoing link',
     };
     return {
       kind: 'single',
@@ -204,6 +206,7 @@ export class ListViewControls {
         label,
         value,
         isDefault: value === defaults.groupBy,
+        ...this.#noteDescription(value),
       })),
       onSelect: (value) => {
         const viewState = this.#options.state.get('centerListViewState');
@@ -223,6 +226,8 @@ export class ListViewControls {
       'tag',
       'status',
       'tracked',
+      'source-note',
+      'outgoing-link',
     ];
     return {
       kind: 'single',
@@ -241,6 +246,7 @@ export class ListViewControls {
         },
         value: field,
         isDefault: field === defaults.sortBy.field,
+        ...this.#noteDescription(field),
       })),
       onSelect: (value) => {
         const viewState = this.#options.state.get('centerListViewState');
@@ -255,7 +261,20 @@ export class ListViewControls {
     };
   }
 
+  #noteDescription(value: string): { description?: string } {
+    if (value === 'source-note')
+      return { description: 'Source note: the file containing the task' };
+    if (value === 'outgoing-link')
+      return {
+        description:
+          'Outgoing link: wiki notes linked in the task title; a task appears in each linked note group',
+      };
+    return {};
+  }
+
   #capitalize(value: string): string {
+    if (value === 'source-note') return 'Source note';
+    if (value === 'outgoing-link') return 'Outgoing link';
     return value.charAt(0).toUpperCase() + value.slice(1);
   }
 

@@ -237,6 +237,25 @@ multi-selection from DOM mounting. `TaskRowSelection` works against an explicit 
 and Tags; other surfaces reuse card rendering without acquiring that selection model. CenterPanel
 owns selection across renders and mode changes.
 
+List organization can use the exact containing source-note path or outgoing wiki-note links in the
+root title. `taskLinkValues` derives links once per organization pass with the shared Markdown
+tokenizer and a host-supplied resolver. Resolved paths retain exact case; aliases, headings, and
+blocks share note identity. Unresolved targets retain source context. Shared `markdown/linkTarget`
+owns target/subpath parsing; the Projects helper is a compatibility export of that parser.
+
+Outgoing-link groups show a task in each linked note group. Logical and mounted row keys identify
+visual occurrences; each row also carries its physical file/line key. Selection, ranges, keyboard
+navigation, and focus receipts retain occurrence keys. Focus restoration also checks the full task
+reference and yields to outside focus. Menu counts and command lists deduplicate physical tasks in
+visual order. Archive rebasing preserves selected occurrence groups through proven source-line
+successors. Running timers retain all mounted badge elements per physical root and clear them at
+render/disposal boundaries.
+
+The `source-note` and `outgoing-link` group/sort choices are additive saved list enums in `state.json`.
+Existing defaults and schema version remain unchanged, and list sort merges preserve unknown nested
+extensions. Older binaries may use their existing fallback for these choices; task Markdown needs
+no migration.
+
 `mountTaskListRows` currently mounts every row. The logical/mounted distinction is a boundary for
 future windowing, not an implemented virtual task list. Actions use the snapshots and order that
 produced the cards; DOM access serves rendering, pointer targeting, focus, and reveal.

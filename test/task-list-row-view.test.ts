@@ -93,3 +93,26 @@ describe('NO_MOUNTED_TASK_LIST_ROWS', () => {
     expect(NO_MOUNTED_TASK_LIST_ROWS.element('n.md:0')).toBeUndefined();
   });
 });
+
+it('mounts each outgoing occurrence with its own address and element', () => {
+  const linked = task({ source: { filePath: 'n.md', line: 0 } });
+  const list = buildTaskListRows([linked], {
+    by: 'outgoing-link',
+    values: new Map([
+      [
+        'n.md:0',
+        [
+          { key: 'note:Alice.md', label: 'Alice', target: 'Alice.md' },
+          { key: 'note:Bob.md', label: 'Bob', target: 'Bob.md' },
+        ],
+      ],
+    ]),
+  });
+  const container = freshContainer();
+  const mounted = mountTaskListRows(container, list, renderCard);
+  const cards = [...mounted.cards()];
+  expect(cards).toHaveLength(2);
+  expect(new Set(cards.map(([key]) => key)).size).toBe(2);
+  expect(new Set(cards.map(([, card]) => card)).size).toBe(2);
+  for (const [key, card] of cards) expect(mounted.element(key)).toBe(card);
+});

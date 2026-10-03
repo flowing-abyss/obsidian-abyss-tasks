@@ -143,9 +143,17 @@ export type PropertyFilter =
   | { type: 'date'; value: string };
 
 export interface ListViewState {
-  groupBy: 'none' | 'date' | 'priority' | 'tag' | 'status';
+  groupBy: 'none' | 'date' | 'priority' | 'tag' | 'status' | 'source-note' | 'outgoing-link';
   sortBy: {
-    field: 'date' | 'priority' | 'title' | 'tag' | 'status' | 'tracked';
+    field:
+      | 'date'
+      | 'priority'
+      | 'title'
+      | 'tag'
+      | 'status'
+      | 'tracked'
+      | 'source-note'
+      | 'outgoing-link';
     dir: 'asc' | 'desc';
   };
   filters: PropertyFilter[];

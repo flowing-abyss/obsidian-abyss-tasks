@@ -27,7 +27,7 @@ import {
   calendarPatchCommand,
   isForecastCalendarTask,
 } from '../../views/calendarOccurrences';
-import { taskRowKey } from '../task-list/taskListRows';
+import { rebaseTaskRowKey, taskRowKey, type TaskListRows } from '../task-list/taskListRows';
 import type { TaskRowSelection } from '../task-list/taskRowSelection';
 
 interface TaskCommandsOptions {
@@ -38,6 +38,7 @@ interface TaskCommandsOptions {
   readonly interactionOwnership: InteractionOwnershipPort;
   readonly projectManager: ProjectManager | null;
   readonly selection: TaskRowSelection;
+  readonly rows: () => TaskListRows;
   readonly onSelectionChanged: () => void;
 }
 
@@ -49,6 +50,7 @@ export class TaskCommands {
   readonly #interactionOwnership: InteractionOwnershipPort;
   readonly #projectManager: ProjectManager | null;
   readonly #selection: TaskRowSelection;
+  readonly #rows: () => TaskListRows;
   readonly #onSelectionChanged: () => void;
   readonly #completionConfirmationAbortController = new AbortController();
 
@@ -60,6 +62,7 @@ export class TaskCommands {
     this.#interactionOwnership = options.interactionOwnership;
     this.#projectManager = options.projectManager;
     this.#selection = options.selection;
+    this.#rows = options.rows;
     this.#onSelectionChanged = options.onSelectionChanged;
   }
 
@@ -75,7 +78,9 @@ export class TaskCommands {
     if (tasks == null) return;
     const pending = selectedTasks.map((task) => ({
       task,
-      selected: this.#selection.has(taskRowKey(task)),
+      selected: this.#rows()
+        .occurrencesOf(taskRowKey(task))
+        .filter((key) => this.#selection.has(key)),
     }));
     const session: TaskArchiveSession | undefined = await tasks.planArchive?.();
     for (let next = pending[0]; next !== undefined; next = pending[0]) {
@@ -95,25 +100,29 @@ export class TaskCommands {
   }
 
   #refreshArchiveSelection(
-    pending: Array<{ task: TaskSnapshot; selected: boolean }>,
+    pending: Array<{ task: TaskSnapshot; selected: string[] }>,
     queries: TaskQueryApi,
   ): void {
     // Each removal can shift every remaining root in the file. Consume the proven
     // transition now, before the next write replaces that reconciliation evidence.
     const kept: string[] = [];
     for (const remaining of pending) {
+      const previous = taskRowKey(remaining.task);
       const resolution = queries.resolve(remaining.task.ref);
       if (resolution.type === 'exact') remaining.task = resolution.task;
       else if (resolution.type === 'rebased') remaining.task = resolution.current;
       else continue;
-      if (remaining.selected) kept.push(taskRowKey(remaining.task));
+      remaining.selected = remaining.selected.map((key) =>
+        rebaseTaskRowKey(key, previous, taskRowKey(remaining.task)),
+      );
+      kept.push(...remaining.selected);
     }
     this.#selection.replaceWith(kept);
   }
 
   #removeArchivedSelection(task: TaskSnapshot, result: TaskCommandResult): void {
     if (result.type !== 'ok' || result.outcome.type !== 'archived') return;
-    this.#selection.delete(taskRowKey(task));
+    for (const key of this.#rows().occurrencesOf(taskRowKey(task))) this.#selection.delete(key);
     const current = this.#state.get('taskStack')[0];
     if (current != null && this.#sameTaskRef(rootTaskRef(current), task.ref)) {
       this.#state.set('taskStack', []);

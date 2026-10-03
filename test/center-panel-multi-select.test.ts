@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TagManager } from '../src/tags/TagManager';
 import type { TaskApplicationApi, TaskCommandResult, TaskRef, TaskSnapshot } from '../src/tasks';
 import {
+  appWithFiles,
   dispatchImeKey,
   expectDefined,
   freshContainer,
@@ -49,7 +50,7 @@ function makeCenter(
   const panel = makeCenterPanelForTest(
     state,
     store,
-    null as never,
+    appWithFiles({}),
     settings,
     tm,
     undefined,
@@ -881,4 +882,78 @@ describe('CenterPanel multi-selection', () => {
     const dashboard = renderDashboardList(panel, el, 'a.md');
     expect(dashboard.querySelector('.abyss-center-empty')?.textContent).toBe('No tasks yet');
   });
+});
+
+describe('outgoing-link repeated cards', () => {
+  it('selects both occurrences independently, counts one physical task, and traverses both', () => {
+    const linked = task({
+      markdownTitle: 'Ask [[Alice]] [[Bob]]',
+      tags: ['#task/inbox'],
+      source: { filePath: 'tasks.md', line: 0 },
+    });
+    const { panel, el, state } = makeCenter([linked]);
+    attach(el);
+    state.set('centerListViewState', {
+      ...state.get('centerListViewState'),
+      groupBy: 'outgoing-link',
+    });
+    const rows = cards(el);
+    expect(rows).toHaveLength(2);
+    click(expectDefined(rows[0]), { ctrlKey: true });
+    click(expectDefined(rows[1]), { metaKey: true });
+    expect(selectedLines(el)).toEqual(['0', '0']);
+    expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('1 task selected');
+    expect(
+      (
+        panel as unknown as { selectedTasksInVisualOrder_abyssPrivate(): TaskSnapshot[] }
+      ).selectedTasksInVisualOrder_abyssPrivate(),
+    ).toEqual([linked]);
+    click(expectDefined(rows[0]));
+    key(expectDefined(rows[0]), 'ArrowDown');
+    expect(activeDocument.activeElement).toBe(rows[1]);
+    panel.destroy();
+  });
+});
+
+it('retains only the selected outgoing occurrence when an archive fails after a sibling was removed', async () => {
+  const first = task({
+    markdownTitle: '[[Alice]] [[Bob]]',
+    tags: ['#task/inbox'],
+    source: { filePath: 'tasks.md', line: 0 },
+  });
+  const second = task({
+    markdownTitle: '[[Alice]] [[Bob]]',
+    tags: ['#task/inbox'],
+    source: { filePath: 'tasks.md', line: 1 },
+  });
+  const execute = vi
+    .fn<(ref: TaskRef) => Promise<TaskCommandResult>>()
+    .mockResolvedValueOnce({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'archived', ref: first.ref, filePath: 'archive.md' },
+    })
+    .mockResolvedValueOnce({
+      type: 'invalid',
+      issues: [{ code: 'destination-unavailable', field: 'destination' }],
+    });
+  const application: TaskApplicationApi = {
+    queries: makeStubStore([first, second]).queries,
+    execute: vi.fn(),
+    planArchive: vi.fn().mockResolvedValue({ type: 'ready', filePath: 'archive.md', execute }),
+  };
+  const { panel, el, state } = makeCenter([first, second], application);
+  state.set('centerListViewState', {
+    ...state.get('centerListViewState'),
+    groupBy: 'outgoing-link',
+  });
+  const rows = cards(el);
+  expect(rows).toHaveLength(4);
+  click(expectDefined(rows[0]), { ctrlKey: true });
+  click(expectDefined(rows[2]), { ctrlKey: true });
+  click(expectDefined(rows[3]), { ctrlKey: true });
+  await taskCommandsOf(panel).archiveTasks([first, second]);
+  expect(selectedLines(el)).toEqual(['1']);
+  expect(rows[3]?.classList.contains('abyss-multi-selected')).toBe(true);
+  panel.destroy();
 });

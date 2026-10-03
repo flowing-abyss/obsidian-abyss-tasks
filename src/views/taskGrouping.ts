@@ -1,4 +1,6 @@
+import { noteNameOfPath, withoutMarkdownExtension } from '../markdown/noteName';
 import type { StatusRegistry } from '../status/StatusRegistry';
+import type { TaskLinkValue, TaskLinkValues } from '../task-lists/taskLinkValues';
 import type { TaskSnapshot, TaskStatusType } from '../tasks';
 
 const PRIORITY_LABELS: Record<string, string> = {
@@ -184,4 +186,75 @@ export function filterTasksByStatusGroups(
     const type = registry.bySymbol(t.statusSymbol)?.type ?? 'todo';
     return allowed.has(type);
   });
+}
+
+/** Canonical note names; same-name notes show their paths instead of ambiguous basenames. */
+function orderedNoteGroups(
+  groups: TaskGroup[],
+  paths: ReadonlyMap<string, string> = new Map(),
+): TaskGroup[] {
+  const labels = new Map<string, number>();
+  for (const group of groups) labels.set(group.label, (labels.get(group.label) ?? 0) + 1);
+  return groups
+    .map((group) => ({
+      ...group,
+      label:
+        (labels.get(group.label) ?? 0) > 1
+          ? (paths.get(group.key) ?? withoutMarkdownExtension(group.key))
+          : group.label,
+    }))
+    .sort((a, b) => {
+      const labelOrder = a.label.localeCompare(b.label);
+      return labelOrder !== 0 ? labelOrder : a.key.localeCompare(b.key);
+    });
+}
+
+export function groupTasksBySourceNote(tasks: readonly TaskSnapshot[]): TaskGroup[] {
+  const buckets = new Map<string, TaskSnapshot[]>();
+  for (const task of tasks) appendToBucket(buckets, task.source.filePath, task);
+  return orderedNoteGroups(
+    [...buckets].map(([key, tasks]) => ({ key, label: noteNameOfPath(key), tasks })),
+  );
+}
+
+function appendLinkedTask(
+  groups: Map<string, TaskGroup>,
+  link: TaskLinkValue,
+  task: TaskSnapshot,
+): void {
+  const group = groups.get(link.key);
+  if (group === undefined)
+    groups.set(link.key, { key: link.key, label: link.label, tasks: [task] });
+  else group.tasks.push(task);
+}
+
+function disambiguatedLinkLabel(link: TaskLinkValue, sourcePath: string): string {
+  return link.key.startsWith('note:')
+    ? withoutMarkdownExtension(link.target)
+    : `${link.target} (${sourcePath})`;
+}
+
+export function groupTasksByOutgoingLink(
+  tasks: readonly TaskSnapshot[],
+  values: TaskLinkValues,
+): TaskGroup[] {
+  const groups = new Map<string, TaskGroup>();
+  const paths = new Map<string, string>();
+  const missing: TaskSnapshot[] = [];
+  const roots = new Map(tasks.map((task) => [`${task.source.filePath}:${task.source.line}`, task]));
+  for (const task of roots.values()) {
+    const links = values.get(`${task.source.filePath}:${task.source.line}`) ?? [];
+    if (links.length === 0) missing.push(task);
+    const seen = new Set<string>();
+    for (const link of links) {
+      if (seen.has(link.key)) continue;
+      seen.add(link.key);
+      paths.set(link.key, disambiguatedLinkLabel(link, task.source.filePath));
+      appendLinkedTask(groups, link, task);
+    }
+  }
+  const ordered = orderedNoteGroups([...groups.values()], paths);
+  if (missing.length > 0)
+    ordered.push({ key: 'no-outgoing-links', label: 'No outgoing links', tasks: missing });
+  return ordered;
 }

@@ -6765,9 +6765,16 @@ describe('CenterPanel search mode — empty query hint', () => {
 
 describe('CenterPanel actual centre focus continuity', () => {
   fixedToday('2026-10-02');
-  async function mounted(settings: CalendarSettings = DEFAULT_SETTINGS, nativeWrites = false) {
+  async function mounted(
+    settings: CalendarSettings = DEFAULT_SETTINGS,
+    nativeWrites = false,
+    outgoing = false,
+  ) {
     const before =
-      '- [ ] first #task/inbox 📅 2026-10-02\n- [ ] second #task/inbox 📅 2026-10-02\n- [ ] other #task/inbox';
+      '- [ ] first #task/inbox 📅 2026-10-02\n- [ ] second #task/inbox 📅 2026-10-02\n- [ ] other #task/inbox'.replace(
+        'first #',
+        outgoing ? 'first [[Alice]] [[Bob]] #' : 'first #',
+      );
     const addItem = methodOf(Menu.prototype, 'addItem');
     const add = vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, cb) {
       return addItem.call(this, (item) => {
@@ -6794,6 +6801,11 @@ describe('CenterPanel actual centre focus continuity', () => {
     const el = document.body.createDiv();
     h.panel.mount(el);
     h.state.set('selectedList', { type: 'project', path: 'focus.md' });
+    if (outgoing)
+      h.state.set('centerListViewState', {
+        ...h.state.get('centerListViewState'),
+        groupBy: 'outgoing-link',
+      });
     const off = h.index.subscribe(() => {
       h.panel.refresh();
     });
@@ -6812,6 +6824,44 @@ describe('CenterPanel actual centre focus continuity', () => {
       },
     };
   }
+  it('returns menus and unrelated publications to Bob, then yields to native note focus', async () => {
+    const h = await mounted(DEFAULT_SETTINGS, false, true);
+    let menu: Menu | undefined;
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+      this: Menu,
+    ) {
+      menu = this.setParentElement(document.body);
+      return this;
+    });
+    const outside = document.body.createEl('input');
+    try {
+      expect(h.cards()).toHaveLength(4);
+      const bob = expectDefined(h.cards()[1]);
+      bob.click();
+      bob.focus();
+      bob.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      expectDefined(menu).hide();
+      expect(document.activeElement).toBe(bob);
+      expect(h.cards().filter((card) => card.classList.contains('is-selected'))).toEqual([bob]);
+      const file = h.app.vault.getAbstractFileByPath('focus.md');
+      if (!(file instanceof TFile)) throw new Error('fixture');
+      await h.app.vault.process(file, (text) => text.replace('other #', 'other changed #'));
+      await vi.advanceTimersByTimeAsync(25);
+      const nextBob = expectDefined(h.cards()[1]);
+      expect(bob.isConnected).toBe(false);
+      expect(document.activeElement).toBe(nextBob);
+      nextBob.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      outside.focus();
+      expectDefined(menu).hide();
+      h.panel.refresh();
+      await vi.advanceTimersByTimeAsync(25);
+      expect(document.activeElement).toBe(outside);
+    } finally {
+      outside.remove();
+      show.mockRestore();
+      h.cleanup();
+    }
+  });
   it('retains the exact focused root after actual other-root vault publication and ArrowDown', async () => {
     const h = await mounted();
     try {
@@ -7181,4 +7231,28 @@ describe('CenterPanel actual centre focus continuity', () => {
       h.cleanup();
     }
   });
+});
+
+it('offers readable source-note and outgoing-link controls with explanatory hover text', () => {
+  const state = new AppState();
+  const panel = makeStaticPanel(state, []);
+  const el = document.body.createDiv();
+  try {
+    panel.mount(el);
+    expectDefined(el.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    const options = [...el.querySelectorAll<HTMLButtonElement>('.abyss-view-state-option')];
+    const source = expectDefined(
+      options.find((option) => option.textContent.includes('Source note')),
+    );
+    const outgoing = expectDefined(
+      options.find((option) => option.textContent.includes('Outgoing link')),
+    );
+    expect(source.getAttribute('aria-label')).toContain('containing');
+    expect(outgoing.getAttribute('aria-label')).toContain('wiki');
+    outgoing.click();
+    expect(state.get('centerListViewState').groupBy).toBe('outgoing-link');
+  } finally {
+    panel.destroy();
+    el.remove();
+  }
 });

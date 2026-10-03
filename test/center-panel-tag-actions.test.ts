@@ -7,6 +7,7 @@ import { TagManager } from '../src/tags/TagManager';
 import { localDate, type TaskApplicationApi, type TaskSnapshot } from '../src/tasks';
 import { TagPickerModal } from '../src/ui/TagPickerModal';
 import {
+  appWithFiles,
   expectDefined,
   flushMicrotasks,
   loseFocusOnRemoval,
@@ -228,10 +229,20 @@ function makeCenter(
     cause: 'test',
     contentState: 'unchanged',
   });
-  const panel = makeCenterPanelForTest(state, store, null as never, s, tm, undefined, null, null, {
-    queries,
-    execute,
-  });
+  const panel = makeCenterPanelForTest(
+    state,
+    store,
+    appWithFiles({}),
+    s,
+    tm,
+    undefined,
+    null,
+    null,
+    {
+      queries,
+      execute,
+    },
+  );
   const createElement = methodOf(ownerDocument, 'createElement');
   const el = createElement.call(ownerDocument, 'div');
   panel.mount(el);
@@ -1117,7 +1128,9 @@ describe('CenterPanel task date context menus', () => {
         const originalCard = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
         originalCard.focus();
         openMenu(originalCard);
-        items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+        expectDefined(expectDefined(items.find((item) => item.title__ === 'Set date…')).onClick__)(
+          new MouseEvent('click'),
+        );
         const input = expectDefined(
           el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
         );
@@ -1848,4 +1861,133 @@ describe('CenterPanel inbox tasks (new inbox object)', () => {
     const cards = el.querySelectorAll('.abyss-task-card');
     expect(cards).toHaveLength(1);
   });
+});
+
+describe('outgoing occurrence date focus', () => {
+  it.each(['escape', 'save', 'outside', 'replaced'] as const)(
+    'keeps Bob occurrence authority on %s',
+    async (mode) => {
+      const items = captureMenu();
+      const linked = task({
+        markdownTitle: '[[Alice]] [[Bob]]',
+        tags: ['#task/inbox'],
+        source: { filePath: 'tasks.md', line: 0 },
+      });
+      const tasks = [linked];
+      const h = makeCenter(tasks);
+      activeDocument.body.append(h.el);
+      const outside = activeDocument.body.createEl('input');
+      h.state.set('centerListViewState', {
+        ...h.state.get('centerListViewState'),
+        groupBy: 'outgoing-link',
+      });
+      const rows = () => [...h.el.querySelectorAll<HTMLElement>('.abyss-task-card')];
+      const bob = expectDefined(rows()[1]);
+      try {
+        bob.click();
+        bob.focus();
+        openMenu(bob);
+        expectDefined(expectDefined(items.find((item) => item.title__ === 'Set date…')).onClick__)(
+          new MouseEvent('click'),
+        );
+        const input = expectDefined(
+          h.el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input'),
+        );
+        if (mode === 'escape') {
+          input.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+          );
+          expect(activeDocument.activeElement).toBe(bob);
+        } else {
+          let release: (() => void) | undefined;
+          const held = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          h.execute.mockImplementation(async () => {
+            await held;
+            return changedTaskResult(linked);
+          });
+          input.value = '2026-08-02';
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          if (mode === 'outside') outside.focus();
+          release?.();
+          await flushMicrotasks();
+          const result = changedTaskResult(linked);
+          if (result.type !== 'ok' || result.outcome.type !== 'task') throw new Error('fixture');
+          tasks[0] =
+            mode === 'replaced'
+              ? { ...linked, ref: { ...linked.ref, revision: 'external-replacement' } }
+              : result.outcome.task;
+          h.panel.refresh();
+          if (mode === 'outside') expect(activeDocument.activeElement).toBe(outside);
+          else if (mode === 'replaced') expect(rows()).not.toContain(activeDocument.activeElement);
+          else expect(activeDocument.activeElement).toBe(rows()[1]);
+        }
+      } finally {
+        h.panel.destroy();
+        outside.remove();
+        h.el.remove();
+      }
+    },
+  );
+});
+
+describe('repeated outgoing rows command boundary', () => {
+  it.each(['#work', 'Delete all', 'Archive all', 'In progress'])(
+    'submits %s only once per physical task from a range with repeated rows',
+    async (label) => {
+      const items = captureMenu();
+      const linked = task({
+        markdownTitle: '[[Alice]] [[Bob]]',
+        tags: ['#task/inbox'],
+        source: { filePath: 'tasks.md', line: 0 },
+      });
+      const other = task({
+        markdownTitle: '[[Carol]]',
+        tags: ['#task/inbox'],
+        source: { filePath: 'tasks.md', line: 1 },
+      });
+      const h = makeCenter([linked, other], {}, ['#work']);
+      activeDocument.body.append(h.el);
+      h.state.set('centerListViewState', {
+        ...h.state.get('centerListViewState'),
+        groupBy: 'outgoing-link',
+      });
+      const rows = [...h.el.querySelectorAll<HTMLElement>('.abyss-task-card')];
+      expect(rows).toHaveLength(3);
+      expectDefined(rows[0]).click();
+      expectDefined(rows[2]).dispatchEvent(
+        new MouseEvent('click', { bubbles: true, shiftKey: true }),
+      );
+      expect(h.el.querySelectorAll('.abyss-multi-selected')).toHaveLength(3);
+      openMenu(expectDefined(rows[1]));
+      expect(items.some((item) => item.title__ === '2 tasks selected')).toBe(true);
+      if (label === 'Archive all')
+        h.execute.mockImplementation(async (command) => ({
+          type: 'ok',
+          changed: true,
+          outcome: {
+            type: 'archived',
+            ref: command.type === 'archive' ? command.ref : linked.ref,
+            filePath: 'archive.md',
+          },
+        }));
+      const action = expectDefined(
+        items.find((item) => item.title__ === (label === '#work' ? '#work  (0/2)' : label)),
+      );
+      action.onClick__?.(new MouseEvent('click'));
+      await flushMicrotasks();
+      expect(h.execute).toHaveBeenCalledTimes(2);
+      const refs = h.execute.mock.calls.map(([command]) => {
+        if ('ref' in command) return command.ref;
+        if ('target' in command && 'ref' in command.target) return command.target.ref;
+        return undefined;
+      });
+      expect(refs).toEqual(
+        label === 'Delete all' ? [other.ref, linked.ref] : [linked.ref, other.ref],
+      );
+      h.panel.destroy();
+      h.el.remove();
+    },
+  );
 });

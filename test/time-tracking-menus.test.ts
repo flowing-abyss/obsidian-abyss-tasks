@@ -571,3 +571,27 @@ describe('inspector context menu tracking item', () => {
     expect(inspectorItem(harness.el, 'Pause tracking')).toBeUndefined();
   });
 });
+
+it('ticks every outgoing occurrence and releases previous render badges', async () => {
+  const clock = fakeTickWindow();
+  const h = await center(RUNNING_SESSION.replace('Alpha', 'Alpha [[Alice]] [[Bob]]'), clock.win);
+  h.state.set('centerListViewState', {
+    ...h.state.get('centerListViewState'),
+    groupBy: 'outgoing-link',
+  });
+  const badges = () => [
+    ...h.el.querySelectorAll<HTMLElement>('.abyss-task-time-badge.is-tracking'),
+  ];
+  const old = badges();
+  expect(old).toHaveLength(2);
+  h.advance(MINUTE);
+  clock.tick();
+  expect(old.map((badge) => badge.textContent)).toEqual(['1h 36m', '1h 36m']);
+  h.panel.refresh();
+  h.advance(MINUTE);
+  clock.tick();
+  expect(badges().map((badge) => badge.textContent)).toEqual(['1h 37m', '1h 37m']);
+  expect(old.map((badge) => badge.textContent)).toEqual(['1h 36m', '1h 36m']);
+  h.panel.destroy();
+  expect(clock.running()).toBe(false);
+});

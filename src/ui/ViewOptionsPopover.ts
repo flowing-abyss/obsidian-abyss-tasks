@@ -15,6 +15,7 @@ export interface ViewOptionAction {
 export interface ViewOption {
   readonly label: string | (() => string);
   readonly value: string;
+  readonly description?: string;
   readonly isDefault?: boolean;
   readonly disabled?: boolean;
   readonly required?: boolean;
@@ -529,6 +530,7 @@ function renderSingleOptions(
       option.value === currentActiveValue(spec),
     );
     button.disabled = option.disabled === true;
+    if (option.description !== undefined) button.setAttribute('aria-label', option.description);
     if (option.isDefault === true) {
       button.createSpan({ cls: 'abyss-view-state-option-default', text: 'Default' });
     }

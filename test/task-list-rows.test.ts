@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildTaskListRows,
   NO_TASK_LIST_ROWS,
+  rebaseTaskRowKey,
   taskListGrouping,
   taskRowKey,
   taskStackRowKey,
@@ -12,7 +13,7 @@ import {
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import type { TaskSnapshot } from '../src/tasks';
-import { subtask, task, type TaskFixtureInput } from './helpers';
+import { expectDefined, subtask, task, type TaskFixtureInput } from './helpers';
 
 const TODAY = '2026-06-26';
 const TOMORROW = '2026-06-27';
@@ -227,4 +228,57 @@ describe('NO_TASK_LIST_ROWS', () => {
     expect(NO_TASK_LIST_ROWS.indexOf('list.md:0')).toBe(-1);
     expect(NO_TASK_LIST_ROWS.task('list.md:0')).toBeUndefined();
   });
+});
+
+describe('note organization occurrences', () => {
+  it('mounts one independently addressable occurrence per outgoing note and a no-link bucket', () => {
+    const linked = at(2);
+    const values = new Map([
+      [
+        taskRowKey(linked),
+        [
+          { key: 'note:People/Alice.md', label: 'Alice', target: 'People/Alice.md' },
+          { key: 'note:People/Bob.md', label: 'Bob', target: 'People/Bob.md' },
+        ],
+      ],
+    ]);
+    const list = buildTaskListRows([linked, linked, at(3)], { by: 'outgoing-link', values });
+    const cards = list.rows.filter((row) => row.kind === 'task');
+    expect(cards).toHaveLength(3);
+    expect(new Set(cards.map((row) => row.key)).size).toBe(3);
+    expect(cards.map((row) => row.taskKey)).toEqual(['list.md:2', 'list.md:2', 'list.md:3']);
+    expect(list.occurrencesOf('list.md:2')).toEqual(cards.slice(0, 2).map((row) => row.key));
+    expect(list.physicalKey(expectDefined(cards[1]).key)).toBe('list.md:2');
+    expect(list.rows.filter((row) => row.kind === 'group').map((row) => row.label)).toEqual([
+      'Alice',
+      'Bob',
+      'No outgoing links',
+    ]);
+  });
+  it('keeps same-name source notes separate and disambiguates their labels', () => {
+    const list = buildTaskListRows(
+      [
+        task({ source: { filePath: 'B/Tasks.md', line: 0 } }),
+        task({ source: { filePath: 'A/Tasks.md', line: 0 } }),
+      ],
+      { by: 'source-note' },
+    );
+    expect(list.rows.filter((row) => row.kind === 'group').map((row) => row.label)).toEqual([
+      'A/Tasks',
+      'B/Tasks',
+    ]);
+    expect(list.taskKeys).toEqual(['A/Tasks.md:0', 'B/Tasks.md:0']);
+  });
+});
+
+it('rebases an occurrence address without changing its group and rejects unrelated keys', () => {
+  expect(
+    rebaseTaskRowKey(
+      '["task-occurrence","outgoing-link","note:Bob.md","list.md:2"]',
+      'list.md:2',
+      'list.md:1',
+    ),
+  ).toBe('["task-occurrence","outgoing-link","note:Bob.md","list.md:1"]');
+  expect(rebaseTaskRowKey('list.md:2', 'list.md:2', 'list.md:1')).toBe('list.md:1');
+  expect(rebaseTaskRowKey('list.md:3', 'list.md:2', 'list.md:1')).toBe('list.md:3');
 });

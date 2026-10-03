@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import type { LinkToken } from '../src/markdown/links';
 import { TaskCommands } from '../src/panels/center/TaskCommands';
+import { buildTaskListRows } from '../src/panels/task-list/taskListRows';
 import { TaskRowSelection } from '../src/panels/task-list/taskRowSelection';
 import type { ProjectManager } from '../src/projects/ProjectManager';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -131,6 +132,7 @@ async function fixture() {
     interactionOwnership: noInteractionOwnership,
     projectManager: { moveTaskToProject: move } as unknown as ProjectManager,
     selection,
+    rows: () => buildTaskListRows(tasks.queries.list(), { by: 'none' }),
     onSelectionChanged,
   });
   return { commands, execute, tasks, move, selection, onSelectionChanged, app };

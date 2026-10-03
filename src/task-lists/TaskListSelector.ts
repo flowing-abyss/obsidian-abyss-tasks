@@ -16,6 +16,7 @@ import {
   type TaskSnapshot,
   type TaskStatusType,
 } from '../tasks';
+import type { TaskLinkValues } from './taskLinkValues';
 import { todayTaskCategory } from './todayTaskCategory';
 
 export interface TaskListSelectionInput {
@@ -27,11 +28,14 @@ export interface TaskListSelectionInput {
   /** The one instant a running timer is read against, so every row of a pass agrees on it. */
   readonly nowMs: number;
   readonly textQuery?: string;
+  readonly outgoingLinks?: TaskLinkValues;
 }
 
 /** What an ordering needs beyond the tasks themselves, read once rather than per comparison. */
 interface TaskOrder {
   readonly input: TaskListSelectionInput;
+  /** Canonical first outgoing note path, derived before comparisons. */
+  readonly linkOrder: ReadonlyMap<TaskSnapshot, string>;
   /** Tracked totals by task, so a sort walks each subtree once instead of on every comparison. */
   readonly trackedMs: ReadonlyMap<TaskSnapshot, number>;
 }
@@ -161,15 +165,20 @@ function compareCreated(left: TaskSnapshot, right: TaskSnapshot): number {
   return a.localeCompare(b);
 }
 
+function compareDate(left: TaskSnapshot, right: TaskSnapshot): number {
+  const dateOrder = compareOptional(dateOf(left), dateOf(right));
+  return dateOrder !== 0 ? dateOrder : compareOptional(left.planning.time, right.planning.time);
+}
+
 function compare(left: TaskSnapshot, right: TaskSnapshot, order: TaskOrder): number {
   const { input } = order;
   const field = input.viewState.sortBy.field;
-  if (field === 'date') {
-    const dateOrder = compareOptional(dateOf(left), dateOf(right));
-    return dateOrder !== 0 ? dateOrder : compareOptional(left.planning.time, right.planning.time);
-  }
+  if (field === 'date') return compareDate(left, right);
   if (field === 'priority') return left.priority.localeCompare(right.priority);
   if (field === 'title') return left.title.localeCompare(right.title);
+  if (field === 'source-note') return left.source.filePath.localeCompare(right.source.filePath);
+  if (field === 'outgoing-link')
+    return compareOptional(order.linkOrder.get(left), order.linkOrder.get(right));
   if (field === 'tag') return compareOptional(left.tags[0], right.tags[0]);
   if (field === 'tracked') {
     return (order.trackedMs.get(left) ?? 0) - (order.trackedMs.get(right) ?? 0);
@@ -220,6 +229,13 @@ export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnap
     );
   const order: TaskOrder = {
     input,
+    linkOrder: new Map(
+      matching.flatMap((task) => {
+        const values = input.outgoingLinks?.get(`${task.source.filePath}:${task.source.line}`);
+        const first = values?.map((value) => value.target).sort((a, b) => a.localeCompare(b))[0];
+        return first === undefined ? [] : [[task, first] as const];
+      }),
+    ),
     trackedMs:
       input.viewState.sortBy.field === 'tracked'
         ? trackedTotals(matching, input.nowMs)

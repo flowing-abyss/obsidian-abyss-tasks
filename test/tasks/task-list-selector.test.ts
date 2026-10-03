@@ -631,3 +631,40 @@ describe('selectTaskList sorted by tracked time', () => {
     ).toEqual(['first', 'second']);
   });
 });
+
+describe('source and outgoing note sorting', () => {
+  const alpha = task({
+    title: 'older',
+    planning: { created: '2026-01-01' },
+    source: { filePath: 'A/Tasks.md', line: 0 },
+  });
+  const newer = task({
+    title: 'newer',
+    planning: { created: '2026-02-01' },
+    source: { filePath: 'A/Tasks.md', line: 1 },
+  });
+  const beta = task({ title: 'beta', source: { filePath: 'B/Tasks.md', line: 0 } });
+  const none = task({ title: 'none', source: { filePath: 'C/Tasks.md', line: 0 } });
+  it.each(['source-note', 'outgoing-link'] as const)(
+    'sorts %s with creation tie-break preserved in both directions',
+    (field) => {
+      const outgoingLinks = new Map([
+        ['A/Tasks.md:0', [{ key: 'note:Alice.md', label: 'Alice', target: 'Alice.md' }]],
+        ['A/Tasks.md:1', [{ key: 'note:Alice.md', label: 'Alice', target: 'Alice.md' }]],
+        ['B/Tasks.md:0', [{ key: 'note:Bob.md', label: 'Bob', target: 'Bob.md' }]],
+      ]);
+      const sorted = (dir: 'asc' | 'desc') =>
+        selectTaskList({
+          tasks: [newer, none, beta, alpha],
+          selection: 'inbox',
+          settings: { ...DEFAULT_SETTINGS, inbox: { ...DEFAULT_SETTINGS.inbox, mode: 'untagged' } },
+          viewState: { groupBy: 'none', sortBy: { field, dir }, filters: [] },
+          today,
+          nowMs: 0,
+          outgoingLinks,
+        }).map((value) => value.title);
+      expect(sorted('asc')).toEqual(['older', 'newer', 'beta', 'none']);
+      expect(sorted('desc')).toEqual(['none', 'beta', 'older', 'newer']);
+    },
+  );
+});

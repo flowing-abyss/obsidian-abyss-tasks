@@ -37,7 +37,7 @@ import type { TaskCommands } from './TaskCommands';
 interface TaskCardRendererHost {
   component(): Component;
   dependenciesFor: TaskDependencyLookup;
-  mountInteractions(card: HTMLElement, task: TaskSnapshot): void;
+  mountInteractions(card: HTMLElement, task: TaskSnapshot, rowKey?: string): void;
   openStatusMenu(event: MouseEvent, task: TaskSnapshot): void;
   formatDate(date: LocalDate): string;
   getDateClass(date: LocalDate): string;
@@ -58,10 +58,10 @@ interface TaskCardRendererOptions {
   readonly host: TaskCardRendererHost;
 }
 
-/** One rendered card badge a tick can repaint without asking the index anything again. */
+/** All rendered badges for one physical root, repainted without querying the index. */
 interface RunningCardBadge {
   readonly total: TrackedTotal;
-  readonly value: HTMLElement;
+  readonly values: HTMLElement[];
 }
 
 /** How a card badge names the root a running entry belongs to, for the tick that repaints it. */
@@ -105,7 +105,7 @@ export class TaskCardRenderer {
     container: HTMLElement,
     task: TaskSnapshot,
     tagGroups: readonly EffectiveTagGroup[],
-    flags: { readonly selected: boolean; readonly showDelete: boolean },
+    flags: { readonly selected: boolean; readonly showDelete: boolean; readonly rowKey?: string },
   ): HTMLElement {
     const isSelected = flags.selected;
     const card = container.createDiv({
@@ -115,12 +115,13 @@ export class TaskCardRenderer {
     applyTaskPresentationIdentity(card, task.ref);
     card.dataset['filePath'] = task.source.filePath;
     card.dataset['line'] = String(task.source.line);
+    if (flags.rowKey !== undefined) card.dataset['rowKey'] = flags.rowKey;
 
     const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
     this.#renderStatus(mainRow, task);
     this.#renderBody(mainRow, task);
     this.#renderMetadata(mainRow, task, tagGroups);
-    this.#host.mountInteractions(card, task);
+    this.#host.mountInteractions(card, task, flags.rowKey);
     this.syncDeleteButton(card, flags.showDelete ? task : undefined);
     return card;
   }
@@ -212,18 +213,23 @@ export class TaskCardRenderer {
     if (!running) return;
     const address = trackingRootAddress(task.ref);
     badge.dataset['trackingRoot'] = address;
-    this.#runningBadges.set(address, { total, value });
+    const existing = this.#runningBadges.get(address);
+    if (existing === undefined) this.#runningBadges.set(address, { total, values: [value] });
+    else existing.values.push(value);
   }
 
   paintTracking({ nowMs, active }: TrackingTickerState): void {
     const badges = this.#runningBadges;
     if (badges.size === 0) return;
-    for (const entry of active) {
-      // The entry already carries its root's address, so a tick reads a string rather than builds one.
-      const badge = badges.get(entry.rootAddress);
+    const roots = new Set(active.map((entry) => entry.rootAddress));
+    for (const address of roots) {
+      // Multiple running descendants still compute their root's total only once per tick.
+      const badge = badges.get(address);
       if (badge === undefined) continue;
       const tracked = formatTrackedDuration(totalMs(badge.total, nowMs));
-      if (badge.value.textContent !== tracked) badge.value.setText(tracked);
+      for (const value of badge.values) {
+        if (value.isConnected && value.textContent !== tracked) value.setText(tracked);
+      }
     }
   }
 

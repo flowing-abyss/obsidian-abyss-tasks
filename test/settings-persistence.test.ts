@@ -1710,3 +1710,36 @@ function savedTagViews(port: MemoryPort): Record<string, Record<string, unknown>
   };
   return state.views.listViewStates;
 }
+
+describe('note list organization persistence', () => {
+  it.each(['source-note', 'outgoing-link'])(
+    'roundtrips %s with nested unknown extensions',
+    async (field) => {
+      const port = memoryPort(
+        markedStatic(),
+        stateEnvelope({
+          listViewStates: {
+            inbox: {
+              groupBy: field,
+              sortBy: { field, dir: 'desc', futureSort: 7 },
+              filters: [],
+              futureList: true,
+            },
+          },
+        }),
+      );
+      const coordinator = new SettingsPersistenceCoordinator(port);
+      const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      expect(loaded.settings.listViewStates?.['inbox']?.groupBy).toBe(field);
+      expect(loaded.settings.listViewStates?.['inbox']?.sortBy.field).toBe(field);
+      await coordinator.saveViewState(loaded.settings);
+      const saved = JSON.parse(expectDefined(port.stateText)) as {
+        views: {
+          listViewStates: { inbox: { sortBy: Record<string, unknown>; futureList: boolean } };
+        };
+      };
+      expect(saved.views.listViewStates.inbox.sortBy['futureSort']).toBe(7);
+      expect(saved.views.listViewStates.inbox.futureList).toBe(true);
+    },
+  );
+});
