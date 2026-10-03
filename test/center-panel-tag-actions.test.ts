@@ -551,9 +551,75 @@ describe('CenterPanel task date context menus', () => {
     },
   });
 
-  it('moves focus from the task card into the newly mounted native menu', () => {
-    const menu = createFragment().createDiv();
-    menu.className = 'menu';
+  it.each(['single', 'bulk'] as const)(
+    'consumes native menu Escape before workspace fallback for a %s task menu',
+    (kind) => {
+      const menu = createFragment().createDiv();
+      menu.className = 'menu';
+      const firstItem = menu.createDiv({ cls: 'menu-item', text: 'Today' });
+      captureMenu();
+      let shown: Menu | undefined;
+      vi.mocked(methodOf(Menu.prototype, 'showAtMouseEvent')).mockImplementation(function (
+        this: Menu,
+      ) {
+        shown = this.setParentElement(document.body);
+        activeDocument.body.append(menu);
+        return this;
+      });
+      const { el, panel } = makeCenter(kind === 'bulk' ? [first, second] : [first]);
+      activeDocument.body.append(el);
+      const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
+      const ownerWindow = expectDefined(el.ownerDocument.defaultView);
+      const fallback = vi.fn();
+      const nativeCapture = (event: KeyboardEvent): void => {
+        if (event.key !== 'Escape') return;
+        menu.remove();
+        expectDefined(shown).hide();
+      };
+      const workspaceBubble = (event: KeyboardEvent): void => {
+        if (event.key === 'Escape' && !event.defaultPrevented) fallback();
+      };
+      ownerWindow.addEventListener('keydown', nativeCapture, true);
+      ownerWindow.addEventListener('keydown', workspaceBubble);
+
+      try {
+        if (kind === 'bulk') {
+          for (const selected of el.querySelectorAll<HTMLElement>('.abyss-task-card'))
+            selected.dispatchEvent(
+              new ownerWindow.MouseEvent('click', { bubbles: true, ctrlKey: true }),
+            );
+        }
+        const selectedBefore = [...el.querySelectorAll('.abyss-multi-selected')];
+        expect(selectedBefore).toHaveLength(kind === 'bulk' ? 2 : 0);
+        card.focus();
+        openMenu(card);
+
+        expect(el.ownerDocument.activeElement).toBe(firstItem);
+        expect(firstItem.tabIndex).toBe(0);
+        const escape = new ownerWindow.KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        });
+        firstItem.dispatchEvent(escape);
+
+        expect(menu.isConnected).toBe(false);
+        expect(fallback).not.toHaveBeenCalled();
+        expect(escape.defaultPrevented).toBe(true);
+        expect(el.ownerDocument.activeElement).toBe(card);
+        expect([...el.querySelectorAll('.abyss-multi-selected')]).toEqual(selectedBefore);
+      } finally {
+        ownerWindow.removeEventListener('keydown', nativeCapture, true);
+        ownerWindow.removeEventListener('keydown', workspaceBubble);
+        panel.destroy();
+        menu.remove();
+        el.remove();
+      }
+    },
+  );
+
+  it('passes unrelated, modified and IME-owned keys through the native menu', () => {
+    const menu = createFragment().createDiv({ cls: 'menu' });
     const firstItem = menu.createDiv({ cls: 'menu-item', text: 'Today' });
     captureMenu();
     let shown: Menu | undefined;
@@ -567,18 +633,52 @@ describe('CenterPanel task date context menus', () => {
     const { el, panel } = makeCenter([first]);
     activeDocument.body.append(el);
     const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
+    const ownerWindow = expectDefined(el.ownerDocument.defaultView);
+    const bubbled: KeyboardEvent[] = [];
+    const observeBubble = (event: KeyboardEvent): void => {
+      bubbled.push(event);
+    };
+    ownerWindow.addEventListener('keydown', observeBubble);
+    const cases: Array<KeyboardEventInit & { legacyKeyCode?: number }> = [
+      { key: 'ArrowDown' },
+      { key: 'Escape', ctrlKey: true },
+      { key: 'Escape', metaKey: true },
+      { key: 'Escape', altKey: true },
+      { key: 'Escape', shiftKey: true },
+      { key: 'Escape', isComposing: true },
+      { key: 'Process' },
+      { key: 'Escape', legacyKeyCode: 229 },
+    ];
 
     try {
       card.focus();
       openMenu(card);
+      for (const { legacyKeyCode, ...init } of cases) {
+        const keyEvent = new ownerWindow.KeyboardEvent('keydown', {
+          ...init,
+          bubbles: true,
+          cancelable: true,
+        });
+        if (legacyKeyCode !== undefined)
+          Object.defineProperty(keyEvent, 'keyCode', { value: legacyKeyCode });
+        firstItem.dispatchEvent(keyEvent);
+        expect(keyEvent.defaultPrevented).toBe(false);
+        expect(bubbled[bubbled.length - 1]).toBe(keyEvent);
+      }
 
-      expect(activeDocument.activeElement).toBe(firstItem);
-      expect(menu.contains(activeDocument.activeElement)).toBe(true);
-      expect(firstItem.tabIndex).toBe(0);
       menu.remove();
       expectDefined(shown).hide();
-      expect(activeDocument.activeElement).toBe(card);
+      panel.destroy();
+      const bodyEscape = new ownerWindow.KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      el.ownerDocument.body.dispatchEvent(bodyEscape);
+      expect(bodyEscape.defaultPrevented).toBe(false);
+      expect(bubbled[bubbled.length - 1]).toBe(bodyEscape);
     } finally {
+      ownerWindow.removeEventListener('keydown', observeBubble);
       panel.destroy();
       menu.remove();
       el.remove();
