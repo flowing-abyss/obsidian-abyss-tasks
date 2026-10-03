@@ -5466,6 +5466,10 @@ body.abyss-modal-open .popover.hover-popover {
   box-shadow: var(--shadow-s, none);
 }
 
+.abyss-center-controls > .abyss-view-state-popover {
+  width: min(260px, var(--abyss-view-state-max-width));
+}
+
 .abyss-view-state-row {
   border-bottom: 1px solid var(--background-modifier-border-hover);
 }

@@ -112,11 +112,14 @@ describe('TagPickerModal', () => {
     expect(search.ownerDocument.activeElement).toBe(tagButton(modal, '#b'));
   });
 
-  it('clamps navigation at tag endpoints and keeps navigating from a toggled tag', () => {
+  it('returns above the first tag to search, clamps below the last, and navigates toggled tags', () => {
     const { modal } = makeTagPicker({ currentTags: [], partialTags: [], tags: ['#a/one', '#b'] });
     const first = tagButton(modal, '#a/one');
     first.focus();
     first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    const search = expectDefined(modal.contentEl.querySelector<HTMLInputElement>('input'));
+    expect(activeDocument.activeElement).toBe(search);
+    search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     expect(activeDocument.activeElement).toBe(first);
     const label = expectDefined(first.querySelector('.abyss-tag-picker-label'));
     label.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
@@ -130,6 +133,43 @@ describe('TagPickerModal', () => {
     toggled.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
     expect(activeDocument.activeElement).toBe(tagButton(modal, '#a/one'));
   });
+
+  it.each([
+    { query: 'one', tag: '#a/one', currentTags: [], tags: ['#a/one', '#b'] },
+    { query: 'all', tag: '#all', currentTags: ['#all'], tags: ['#all', '#some'] },
+    { query: 'some', tag: '#some', currentTags: [], tags: ['#all', '#some'] },
+  ])(
+    'returns from the first filtered tag to the existing search and retains query/caret: $tag',
+    (fixture) => {
+      const { modal } = makeTagPicker({ ...fixture, partialTags: [] });
+      const search = expectDefined(modal.contentEl.querySelector<HTMLInputElement>('input'));
+      search.value = fixture.query;
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+      search.focus();
+      search.setSelectionRange(1, 2, 'backward');
+      search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      const first = tagButton(modal, fixture.tag);
+      expect(activeDocument.activeElement).toBe(first);
+
+      const arrowUp = new KeyboardEvent('keydown', {
+        key: 'ArrowUp',
+        bubbles: true,
+        cancelable: true,
+      });
+      first.dispatchEvent(arrowUp);
+
+      expect(arrowUp.defaultPrevented).toBe(true);
+      expect(activeDocument.activeElement).toBe(search);
+      expect(modal.contentEl.querySelector('input')).toBe(search);
+      expect(search.value).toBe(fixture.query);
+      expect(search.selectionStart).toBe(1);
+      expect(search.selectionEnd).toBe(2);
+      expect(search.selectionDirection).toBe('backward');
+      search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      expect(activeDocument.activeElement).toBe(first);
+      expect(tagButton(modal, fixture.tag)).toBe(first);
+    },
+  );
 
   it('leaves arrows untouched when filtering has no tag choices', () => {
     const { modal } = makeTagPicker();
@@ -330,6 +370,11 @@ describe('TagPickerModal', () => {
 
     const checked = tagButton(modal, '#some');
     expect(checked.getAttribute('aria-pressed')).toBe('true');
+    expect(activeDocument.activeElement).toBe(checked);
+    checked.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    expect(activeDocument.activeElement).toBe(search);
+    expect(search.value).toBe('some');
+    search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     expect(activeDocument.activeElement).toBe(checked);
 
     checked.click();

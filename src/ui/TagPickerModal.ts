@@ -128,6 +128,11 @@ export class TagPickerModal extends Modal {
     let index = origin === null ? -1 : buttons.indexOf(origin);
     if (target === this.searchEl_abyssPrivate) index = direction === 1 ? -1 : buttons.length;
     else if (index < 0) return;
+    else if (index === 0 && direction === -1) {
+      event.preventDefault();
+      this.searchEl_abyssPrivate.focus({ preventScroll: true });
+      return;
+    }
     const next = buttons[Math.min(buttons.length - 1, Math.max(0, index + direction))];
     if (next === undefined) return;
     event.preventDefault();
