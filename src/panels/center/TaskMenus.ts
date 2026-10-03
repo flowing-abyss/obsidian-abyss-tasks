@@ -27,6 +27,12 @@ import type { TaskCommands } from './TaskCommands';
 interface TaskMenusHost {
   showTaskMenu(menu: Menu, event: MouseEvent, card: HTMLElement): void;
   applyBulkDuePreset(card: HTMLElement, tasks: readonly TaskSnapshot[], value: LocalDate): void;
+  applyBulkTaskTags(
+    card: HTMLElement,
+    tasks: readonly TaskSnapshot[],
+    add: readonly string[],
+    remove: readonly string[],
+  ): void;
   openDatePicker(anchor: HTMLElement, tasks: readonly TaskSnapshot[]): void;
   openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void;
   addFilter(filter: PropertyFilter): void;
@@ -276,33 +282,38 @@ export class TaskMenus {
     return '';
   }
 
-  #makeBulkTagRemoveHandler(selectedTasks: TaskSnapshot[], pinnedTag: string): () => void {
+  #makeBulkTagRemoveHandler(
+    card: HTMLElement,
+    selectedTasks: TaskSnapshot[],
+    pinnedTag: string,
+  ): () => void {
     return () => {
-      runAsyncAction(
-        Promise.all(
-          selectedTasks.map((task) => this.#options.commands.patchTaskTags(task, [], [pinnedTag])),
-        ),
-      );
+      this.#options.host.applyBulkTaskTags(card, selectedTasks, [], [pinnedTag]);
     };
   }
 
-  #makeBulkTagAddHandler(selectedTasks: TaskSnapshot[], pinnedTag: string): () => void {
+  #makeBulkTagAddHandler(
+    card: HTMLElement,
+    selectedTasks: TaskSnapshot[],
+    pinnedTag: string,
+  ): () => void {
     return () => {
-      runAsyncAction(
-        Promise.all(
-          selectedTasks.map((task) => this.#options.commands.patchTaskTags(task, [pinnedTag], [])),
-        ),
-      );
+      this.#options.host.applyBulkTaskTags(card, selectedTasks, [pinnedTag], []);
     };
   }
 
-  #addBulkTagItem(menu: Menu, pinnedTag: string, selectedTasks: TaskSnapshot[]): void {
+  #addBulkTagItem(
+    menu: Menu,
+    pinnedTag: string,
+    selectedTasks: TaskSnapshot[],
+    card: HTMLElement,
+  ): void {
     const count = selectedTasks.filter((task) => task.tags.includes(pinnedTag)).length;
     const allHave = count === selectedTasks.length;
     const indicator = this.#bulkTagIndicator(count, selectedTasks.length);
     const clickHandler = allHave
-      ? this.#makeBulkTagRemoveHandler(selectedTasks, pinnedTag)
-      : this.#makeBulkTagAddHandler(selectedTasks, pinnedTag);
+      ? this.#makeBulkTagRemoveHandler(card, selectedTasks, pinnedTag)
+      : this.#makeBulkTagAddHandler(card, selectedTasks, pinnedTag);
     menu.addItem((item) =>
       item
         .setTitle(`${indicator}${pinnedTag}  (${count}/${selectedTasks.length})`)
@@ -402,7 +413,7 @@ export class TaskMenus {
     );
     this.#addBulkDateMenuItems(menu, selectedTasks, card);
     for (const pinnedTag of this.#options.settings.pinnedTags) {
-      this.#addBulkTagItem(menu, pinnedTag, selectedTasks);
+      this.#addBulkTagItem(menu, pinnedTag, selectedTasks, card);
     }
     this.#addBulkPropertyMenuItems(menu, selectedTasks, firstSelectedTask);
     this.#addBulkActionMenuItems(menu, selectedTasks);
