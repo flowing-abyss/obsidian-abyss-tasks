@@ -312,3 +312,18 @@ it('transfers recognized legacy time and oversize duration without creation norm
   expect(await h.service.execute(h.command)).toMatchObject({ type: 'ok' });
   expect(await h.read('target.md')).toBe('- [ ] Parent\n    - [ ] Move ⏰ 23:00 ⏱️ 99h\n');
 });
+
+it.each([
+  '  ![](missing.png)\n',
+  '  before `\n  ~~~js\n  code\n  ~~~\n  ![photo](missing.png) `inline`\n',
+  '  ~~~js\n  console.log("`");\n  ~~~\n  ![photo](missing.png) `inline`\n',
+])('rejects unresolved transferred images before any write: %s', async (body) => {
+  const source = `- [ ] Move\n${body}`;
+  const h = await harness({ 'source.md': source, 'target.md': '- [ ] Parent\n' });
+  const process = vi.spyOn(h.app.vault, 'process');
+  expect(await h.service.execute(h.command)).toMatchObject({ type: 'invalid' });
+  expect(process).not.toHaveBeenCalled();
+  expect(await h.read('source.md')).toBe(source);
+  expect(await h.read('target.md')).toBe('- [ ] Parent\n');
+  expect(h.publications).toEqual([]);
+});

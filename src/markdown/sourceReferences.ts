@@ -35,17 +35,28 @@ export function rebaseMarkdownLinks(
   return result;
 }
 
-function fencedRanges(text: string): ReadonlyArray<{ from: number; to: number }> {
+/** Fences separate inline parsing regions; tokens still refer to original source offsets. */
+function referencesOutsideFences(text: string): LinkToken[] {
   let fence: MarkdownFence | undefined;
   let from = 0;
+  let at = 0;
   const ranges: Array<{ from: number; to: number }> = [];
   for (const line of text.split('\n')) {
     const consumed = consumeMarkdownFenceLine(fence, line);
     fence = consumed.fence;
-    if (!consumed.isContent) ranges.push({ from, to: from + line.length });
-    from += line.length + 1;
+    if (!consumed.isContent) {
+      if (from < at) ranges.push({ from, to: at });
+      from = at + line.length + 1;
+    }
+    at += line.length + 1;
   }
-  return ranges;
+  if (from < text.length) ranges.push({ from, to: text.length });
+  return ranges.flatMap((range) =>
+    parseSourceReferences(text.slice(range.from, range.to)).map((token) => ({
+      ...token,
+      index: token.index + range.from,
+    })),
+  );
 }
 
 function replaceTarget(link: LinkToken, target: string): string | undefined {
@@ -85,10 +96,8 @@ export function rebaseMarkdownSourceReferences(
   text: string,
   transfer: SourceReferenceTransfer,
 ): string | undefined {
-  const excluded = fencedRanges(text);
   let result = text;
-  for (const link of [...parseSourceReferences(text)].reverse()) {
-    if (excluded.some((range) => link.index >= range.from && link.index < range.to)) continue;
+  for (const link of [...referencesOutsideFences(text)].reverse()) {
     const target = transferredTarget(link, transfer);
     if (target === undefined) return undefined;
     if (target === link.target) continue;

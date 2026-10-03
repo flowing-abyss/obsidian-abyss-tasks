@@ -194,3 +194,13 @@ describe('project table clipboard', () => {
     ).toBe('[Anna](../../People/Anna%20Smith#Details)');
   });
 });
+
+it('keeps empty and nonempty images outside clipboard link rewriting', () => {
+  const text = '![](photo.png) ![photo](photo.png) ![[photo.png]]';
+  expect(
+    rebaseProjectClipboardLinks(text, 'folder/source.md', 'else/target.md', {
+      resolve: () => 'folder/photo.png',
+      linktext: () => '../folder/photo.png',
+    }),
+  ).toBe(text);
+});

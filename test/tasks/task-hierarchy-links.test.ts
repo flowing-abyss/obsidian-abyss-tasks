@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { parseLinks } from '../../src/markdown/links';
+import { parseLinks, parseSourceReferences } from '../../src/markdown/links';
 import { rebaseMarkdownSourceReferences } from '../../src/markdown/sourceReferences';
 
 const references = {
@@ -55,4 +55,36 @@ it('does not grant ordinary link edits authority over images or embeds', () => {
   expect(parseLinks('![[source]] ![image](photo.png) [[source]]')).toMatchObject([
     { raw: '[[source]]', index: 32 },
   ]);
+});
+
+it.each([
+  ['![](photo.png)', '![](../folder/photo.png)'],
+  ['![](missing.png)', undefined],
+  [
+    'before `\n~~~js\ncode\n~~~\n![photo](photo.png) `inline`',
+    'before `\n~~~js\ncode\n~~~\n![photo](../folder/photo.png) `inline`',
+  ],
+  ['before `\n~~~js\ncode\n~~~\n![photo](missing.png) `inline`', undefined],
+  [
+    '~~~js\nconsole.log("`");\n~~~\n![photo](photo.png) `inline`',
+    '~~~js\nconsole.log("`");\n~~~\n![photo](../folder/photo.png) `inline`',
+  ],
+  ['~~~js\nconsole.log("`");\n~~~\n![photo](missing.png) `inline`', undefined],
+])('rebases or rejects image references outside code: %s', (text, expected) => {
+  expect(
+    rebaseMarkdownSourceReferences(text, {
+      sourcePath: 'folder/source.md',
+      destinationPath: 'else/target.md',
+      movedAnchors: new Set(),
+      resolver: { ...references, linktext: () => '../folder/photo.png' },
+    }),
+  ).toBe(expected);
+});
+it('includes empty-alt images only in source reference authority with exact offsets', () => {
+  const text = '![](photo.png) [](/empty) ![photo](photo.png)';
+  expect(parseSourceReferences(text)).toMatchObject([
+    { raw: '[](photo.png)', index: 1, display: '' },
+    { raw: '[photo](photo.png)', index: 27, display: 'photo' },
+  ]);
+  expect(parseLinks(text)).toEqual([]);
 });

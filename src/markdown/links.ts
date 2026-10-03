@@ -178,11 +178,11 @@ function pushMarkdownMatches(
   matches: LinkMatch[],
   input: string,
   inlineCode: readonly SourceRange[],
+  markdown: RegExp,
 ): void {
   // A backslash always takes the next character, and a match that starts with `!` is an image.
   // Group 3 passes over an escaped `\`, `[`, or `!`. The pattern is global and never matches
   // empty text, so each search starts where the previous match ended.
-  const markdown = /!?\[((?:[^\\[\]]|\\[^])+)\]\(((?:[^\\)]|\\[^])+)\)|(\\[\\[!])/gu;
   const scope = markdownLinkScope(input);
   const rangeCursor = { index: 0 };
   let match: RegExpExecArray | null;
@@ -191,6 +191,7 @@ function pushMarkdownMatches(
       continue;
     }
     const text = match[1] ?? '';
+    if (text === '' && !match[0].startsWith('!')) continue;
     const target = match[2] ?? '';
     matches.push({
       from: match.index,
@@ -213,12 +214,17 @@ function pushMarkdownMatches(
  * Parse [[wiki]], [[wiki|alias]] and [md](url) links in document order. Embeds and images are not
  * links, and no link starts inside one.
  */
-function linkMatches(input: string): LinkMatch[] {
+function linkMatches(input: string, sourceReferences = false): LinkMatch[] {
   if (!input.includes('[')) return [];
   const inlineCode = inlineCodeRanges(input);
   const matches: LinkMatch[] = [];
   pushWikiMatches(matches, input, inlineCode);
-  pushMarkdownMatches(matches, input, inlineCode);
+  // Only source transfer recognizes empty image labels. Ordinary edit/title parsing retains
+  // its established pattern, also mirrored by the task domain's atomic ranges.
+  const markdown = sourceReferences
+    ? /!?\[((?:[^\\[\]]|\\[^])*)\]\(((?:[^\\)]|\\[^])+)\)|(\\[\\[!])/gu
+    : /!?\[((?:[^\\[\]]|\\[^])+)\]\(((?:[^\\)]|\\[^])+)\)|(\\[\\[!])/gu;
+  pushMarkdownMatches(matches, input, inlineCode, markdown);
   return nonOverlappingMatches(matches);
 }
 
@@ -229,7 +235,7 @@ export function parseLinks(input: string): LinkToken[] {
 
 /** Source transfer includes embeds/images, without changing ordinary link-edit authority. */
 export function parseSourceReferences(input: string): LinkToken[] {
-  return linkMatches(input).flatMap((match) => {
+  return linkMatches(input, true).flatMap((match) => {
     const token = match.token ?? match.reference;
     return token === undefined ? [] : [token];
   });

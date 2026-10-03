@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { rebaseMarkdownSourceReferences } from '../../src/markdown/sourceReferences';
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import {
   prepareHierarchyTransfer,
@@ -137,5 +138,34 @@ it('leaves inbound links outside the moved range unchanged in both authorized no
   expect(contents(result, 'source.md')).toBe('- [ ] Stays [[source#^move]]\n');
   expect(contents(result, 'target.md')).toBe(
     '- [ ] Parent [[source#^move]]\n    - [ ] Move ^move\n',
+  );
+});
+
+it('transfers images after mixed fences with exact code bytes and new relative destinations', () => {
+  const source =
+    '- [ ] Move\r\n  ~~~js\r\n  console.log("`");\r\n  ~~~\r\n  ![](photo.png) ![photo](photo.png) `![](missing.png)`\r\n';
+  const destination = '- [ ] Parent\r\n';
+  const result = prepareHierarchyTransfer({
+    contents: new Map([
+      ['source.md', source],
+      ['target.md', destination],
+    ]),
+    source: endpoint('source.md', source),
+    parent: endpoint('target.md', destination),
+    editor,
+    rewrite: (text, sourcePath, destinationPath, movedAnchors) =>
+      rebaseMarkdownSourceReferences(text, {
+        sourcePath,
+        destinationPath,
+        movedAnchors,
+        resolver: {
+          resolve: (target) => (target === 'photo.png' ? 'folder/photo.png' : undefined),
+          linktext: () => '../folder/photo.png',
+        },
+      }),
+  });
+  expect(contents(result, 'source.md')).toBe('');
+  expect(contents(result, 'target.md')).toBe(
+    '- [ ] Parent\r\n    - [ ] Move\r\n      ~~~js\r\n      console.log("`");\r\n      ~~~\r\n      ![](../folder/photo.png) ![photo](../folder/photo.png) `![](missing.png)`\r\n',
   );
 });
