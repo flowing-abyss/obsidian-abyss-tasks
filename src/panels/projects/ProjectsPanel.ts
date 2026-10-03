@@ -180,17 +180,27 @@ export class ProjectsPanel {
     if (el === null || tableHost === null) return;
     const view = this.state_abyssPrivate.get('projectsPanel');
     if (view.view === 'table') {
-      this.dashboardHost_abyssPrivate?.remove();
-      this.dashboardHost_abyssPrivate = null;
-      el.appendChild(tableHost);
-      if (!tableAlreadyCurrent) {
-        this.tableView_abyssPrivate?.update(this.projectStore_abyssPrivate.list());
-      }
+      this.restoreOverview_abyssPrivate(tableHost, el, tableAlreadyCurrent);
       return;
     }
     this.tableView_abyssPrivate?.captureViewportBeforeHide();
     tableHost.remove();
     this.renderDashboard_abyssPrivate(view.path);
+  }
+
+  private restoreOverview_abyssPrivate(
+    tableHost: HTMLElement,
+    el: HTMLElement,
+    tableAlreadyCurrent: boolean,
+  ): void {
+    const dashboard = this.dashboardHost_abyssPrivate;
+    const allowFocus = dashboard?.contains(tableHost.ownerDocument.activeElement) === true;
+    dashboard?.remove();
+    this.dashboardHost_abyssPrivate = null;
+    el.appendChild(tableHost);
+    if (!tableAlreadyCurrent)
+      this.tableView_abyssPrivate?.update(this.projectStore_abyssPrivate.list());
+    if (dashboard !== null) this.tableView_abyssPrivate?.restoreDashboardFocus(allowFocus);
   }
 
   private renderDashboard_abyssPrivate(path: string): void {

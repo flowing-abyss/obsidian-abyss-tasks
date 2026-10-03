@@ -552,12 +552,17 @@ describe('ProjectsTableView', () => {
     const cell = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-name-cell'));
     cell.focus();
     cell.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+    cell.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true }));
     const data = transfer();
     cell.dispatchEvent(clipboardEvent('copy', data));
     const lines = data.getData('text/plain').split('\n');
     expect(lines).toHaveLength(500);
-    expect(lines[0]?.split('\t')[0]).toBe('P0000');
-    expect(lines[499]?.split('\t')[0]).toBe('P0499');
+    expect(lines).toEqual(
+      Array.from(
+        { length: 500 },
+        (_, index) => `P${String(index).padStart(4, '0')}\t\t60% (6/10)\t2026-09-01\t2026-09-30`,
+      ),
+    );
     expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(60);
   });
 
@@ -5931,7 +5936,18 @@ describe('ProjectsTableView', () => {
       occurrences[1]?.querySelector<HTMLElement>('[data-column-id="status"]'),
     );
     firstName.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const down = new MouseEvent('mousedown', {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      shiftKey: true,
+    });
+    secondStatus.dispatchEvent(down);
+    if (!down.defaultPrevented) secondStatus.focus();
+    secondStatus.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, shiftKey: true }));
     secondStatus.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+    expect(down.defaultPrevented).toBe(true);
+    expect(activeDocument.activeElement).toBe(secondStatus);
     expect(host.querySelectorAll('.abyss-project-table-cell.is-selected')).toHaveLength(4);
 
     secondStatus.dispatchEvent(
@@ -6106,6 +6122,72 @@ describe('ProjectsTableView', () => {
     expect(applyEdits).toHaveBeenCalledOnce();
     expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain('read-only');
   });
+
+  it.each(['Delete', 'single Paste', 'mismatched Paste'])(
+    'refuses the complete Name+Budget group on Cmd+A then %s without any batch or note write',
+    async (action) => {
+      const texts = {
+        'Projects/A.md': '---\nBudget: 1\nOwner: group\n---\n# A\n',
+        'Projects/B.md': '---\nBudget: 2\nOwner: group\n---\n# B\n',
+        'Projects/C.md': '---\nBudget: 3\nOwner: other\n---\n# C\n',
+      };
+      const app = await createAppWithFiles(texts);
+      const config = settings();
+      config.projects.table.columns = [
+        { id: 'name', visible: true },
+        { id: 'property:Budget', visible: true },
+      ];
+      config.projects.table.groupBy = 'property:Owner';
+      config.projects.table.sortBy = { field: 'none', dir: 'asc' };
+      const applyEdits = vi.fn(async () => ({ applied: [], failed: [] }));
+      const { host } = mount(
+        [
+          project({ path: 'Projects/A.md', name: 'A', frontmatter: { Budget: 1, Owner: 'group' } }),
+          project({ path: 'Projects/B.md', name: 'B', frontmatter: { Budget: 2, Owner: 'group' } }),
+          project({ path: 'Projects/C.md', name: 'C', frontmatter: { Budget: 3, Owner: 'other' } }),
+        ],
+        {
+          app,
+          settings: config,
+          catalog: catalog([
+            { name: 'Budget', type: 'number' },
+            { name: 'Owner', type: 'text' },
+          ]),
+          applyEdits,
+        },
+      );
+      const cell = expectDefined(
+        host.querySelector<HTMLElement>(
+          '[data-project-path="Projects/A.md"] [data-column-id="property:Budget"]',
+        ),
+      );
+      cell.focus();
+      cell.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+      expect(host.querySelectorAll('.is-selected.abyss-project-table-cell')).toHaveLength(4);
+      cell.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: action === 'Delete' ? 'Delete' : 'v',
+          ctrlKey: action !== 'Delete',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      if (action !== 'Delete')
+        cell.dispatchEvent(
+          clipboardEvent(
+            'paste',
+            transfer({ 'text/plain': action === 'single Paste' ? '7' : '7\n8' }),
+          ),
+        );
+      await flushMicrotasks();
+      expect(applyEdits).not.toHaveBeenCalled();
+      expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain(
+        'Name is read-only',
+      );
+      for (const [path, text] of Object.entries(texts))
+        expect(await app.vault.read(expectDefined(app.vault.getFileByPath(path)))).toBe(text);
+    },
+  );
 
   it('captures malformed external TSV synchronously in the table paste failure boundary', () => {
     const applyEdits = vi.fn();
@@ -7021,7 +7103,7 @@ describe('ProjectsTableView', () => {
     expect(host.querySelector('[data-project-path="Projects/Needle.md"]')).not.toBeNull();
   });
 
-  it('shows the empty states only while a grouped Table lists no group', () => {
+  it('shows empty states for zero visible projects but not a collapsed nonempty group', async () => {
     const { host, view, config } = mount([]);
     const empty = () => host.querySelector<HTMLElement>('.abyss-projects-empty');
     expect(config.projects.table.groupBy).toBe('status');
@@ -7032,17 +7114,26 @@ describe('ProjectsTableView', () => {
 
     view.update([project({})]);
     expect(empty()).toBeNull();
+    const toggle = expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
+    );
+    toggle.click();
+    await flushMicrotasks();
+    expect(host.querySelector('.abyss-project-table-row')).toBeNull();
+    expect(empty()).toBeNull();
+    toggle.click();
+    await flushMicrotasks();
     const search = expectDefined(host.querySelector<HTMLInputElement>('.abyss-center-search'));
     search.value = 'nothing matches this';
     search.dispatchEvent(new Event('input', { bubbles: true }));
     expect(empty()?.textContent).toBe('No matching projects');
 
-    // Without grouping the model always lists its one group, so no empty state shows (finding 6).
+    // An ungrouped empty projection still reports its actual visible count.
     config.projects.table.groupBy = 'none';
     view.update([project({})]);
     expect(host.querySelector('.abyss-project-table-row')).toBeNull();
-    expect(empty()).toBeNull();
+    expect(empty()?.textContent).toBe('No matching projects');
     view.update([]);
-    expect(empty()).toBeNull();
+    expect(empty()?.textContent).toBe('No projects yet');
   });
 });

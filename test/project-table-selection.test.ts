@@ -106,4 +106,53 @@ describe('ProjectTableSelection', () => {
     selection.clear();
     expect(selection.focus).toBeUndefined();
   });
+  it('keeps matching Area membership across interleaved status occurrences and releases it for ranges', () => {
+    const interleaved = [
+      cell('a@active', 'Projects/A.md', 'area:A', 'name'),
+      cell('a@active', 'Projects/A.md', 'area:A', 'start'),
+      cell('b@active', 'Projects/B.md', 'area:B', 'name'),
+      cell('b@active', 'Projects/B.md', 'area:B', 'start'),
+      cell('a@done', 'Projects/A.md', 'area:A', 'name'),
+      cell('a@done', 'Projects/A.md', 'area:A', 'start'),
+      cell('b@done', 'Projects/B.md', 'area:B', 'name'),
+      cell('b@done', 'Projects/B.md', 'area:B', 'start'),
+    ];
+    const selection = new ProjectTableSelection();
+    selection.select(expectDefined(interleaved[1]), interleaved, false);
+    selection.selectCurrentGroup(interleaved);
+    expect(selection.anchor).toEqual(interleaved[0]);
+    expect(selection.focus).toEqual(interleaved[5]);
+    expect(selection.selected(interleaved)).toEqual([
+      interleaved[0],
+      interleaved[1],
+      interleaved[4],
+      interleaved[5],
+    ]);
+    selection.move('up', interleaved, true);
+    expect(selection.selected(interleaved)).toEqual(interleaved.slice(0, 4));
+    selection.selectCurrentGroup(interleaved);
+    selection.select(expectDefined(interleaved[4]), interleaved, true);
+    expect(selection.selected(interleaved)).toEqual([interleaved[2], interleaved[4]]);
+    selection.selectCurrentGroup(interleaved);
+    selection.reconcile(
+      interleaved.map((c) => (c.occurrenceId === 'a@done' ? { ...c, groupKey: 'area:B' } : c)),
+    );
+    expect(selection.selected(interleaved)).toEqual([]);
+  });
+
+  it('skips a missing same-field cell without wrapping or changing fields at the edge', () => {
+    const sparse = [
+      cell('a', 'A.md', 'g', 'name'),
+      cell('a', 'A.md', 'g', 'start'),
+      cell('b', 'B.md', 'g', 'name'),
+      cell('c', 'C.md', 'g', 'name'),
+      cell('c', 'C.md', 'g', 'start'),
+    ];
+    const selection = new ProjectTableSelection();
+    selection.select(expectDefined(sparse[1]), sparse, false);
+    expect(selection.move('down', sparse, false)).toEqual(sparse[4]);
+    expect(selection.move('down', sparse, false)).toBeUndefined();
+    expect(selection.focus).toEqual(sparse[4]);
+    expect(selection.move('up', sparse, false)).toEqual(sparse[1]);
+  });
 });

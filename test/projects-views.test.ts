@@ -250,6 +250,7 @@ describe('ProjectsPanel dispatch', () => {
       projectProperties,
     });
     const el = freshContainer();
+    activeDocument.body.append(el);
     panel.mount(el);
     const search = expectDefined(el.querySelector<HTMLInputElement>('.abyss-center-search'));
     const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-project-table-scroll'));
@@ -257,13 +258,22 @@ describe('ProjectsPanel dispatch', () => {
     search.dispatchEvent(new Event('input', { bubbles: true }));
     scroll.scrollTop = 33;
 
-    expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-table-name')).click();
+    const name = expectDefined(el.querySelector<HTMLElement>('.abyss-project-table-name-cell'));
+    name.focus();
+    expectDefined(name.querySelector<HTMLButtonElement>('.abyss-project-table-name')).focus();
+    expectDefined(name.querySelector<HTMLButtonElement>('.abyss-project-table-name')).click();
     expect(el.querySelector('.abyss-projects-dashboard')).not.toBeNull();
-    expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-back')).click();
+    scroll.scrollTop = 0;
+    const back = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-back'));
+    back.focus();
+    back.click();
 
     expect(el.querySelector<HTMLInputElement>('.abyss-center-search')).toBe(search);
     expect(search.value).toBe('A');
     expect(scroll.scrollTop).toBe(33);
+    expect(activeDocument.activeElement).toBe(name);
+    name.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect((activeDocument.activeElement as HTMLElement).dataset['columnId']).toBe('status');
   });
 
   it('keeps the selected Kanban card and board scroll positions when returning from a dashboard', async () => {
@@ -276,6 +286,7 @@ describe('ProjectsPanel dispatch', () => {
       projectProperties,
     });
     const el = freshContainer();
+    activeDocument.body.append(el);
     panel.mount(el);
     const board = expectDefined(el.querySelector<HTMLElement>('.abyss-project-kanban-scroll'));
     const column = expectDefined(
@@ -287,14 +298,47 @@ describe('ProjectsPanel dispatch', () => {
     card.click();
     expect(panel.selectedProjectPath()).toBe('Projects/A.md');
 
+    expectDefined(card.querySelector<HTMLButtonElement>('.abyss-project-table-name')).focus();
     expectDefined(card.querySelector<HTMLButtonElement>('.abyss-project-table-name')).click();
     expect(el.querySelector('.abyss-projects-dashboard')).not.toBeNull();
-    expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-back')).click();
+    board.scrollLeft = 0;
+    column.scrollTop = 0;
+    const back = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-back'));
+    back.focus();
+    back.click();
 
     expect(el.querySelector<HTMLElement>('.abyss-project-kanban-scroll')).toBe(board);
     expect(board.scrollLeft).toBe(47);
     expect(column.scrollTop).toBe(31);
+    const name = expectDefined(card.querySelector<HTMLElement>('[data-column-id="name"]'));
+    expect(activeDocument.activeElement).toBe(name);
+    name.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(activeDocument.activeElement).not.toBe(name);
     expect(panel.selectedProjectPath()).toBe('Projects/A.md');
+  });
+
+  it('restores the Table viewport without taking current external input focus on programmatic Back', () => {
+    const state = new AppState();
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
+      projectProperties,
+    });
+    const el = freshContainer();
+    activeDocument.body.append(el);
+    panel.mount(el);
+    const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-project-table-scroll'));
+    const name = expectDefined(el.querySelector<HTMLElement>('.abyss-project-table-name-cell'));
+    name.focus();
+    scroll.scrollTop = 33;
+    expectDefined(name.querySelector<HTMLButtonElement>('button')).click();
+    scroll.scrollTop = 0;
+    const outside = activeDocument.body.createEl('input');
+    outside.focus();
+    state.set('projectsPanel', { view: 'table' });
+    expect(scroll.scrollTop).toBe(33);
+    expect(activeDocument.activeElement).toBe(outside);
+    panel.destroy();
+    outside.remove();
+    el.remove();
   });
 
   it('keeps the Timeline scroll position when returning from a dashboard', () => {

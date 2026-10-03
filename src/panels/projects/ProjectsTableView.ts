@@ -550,6 +550,8 @@ export class ProjectsTableView {
     timeline: { selection: new ProjectTableSelection(), search: '' },
   };
   private selectedKeys_abyssPrivate = new Set<string>();
+  private dashboardFocus_abyssPrivate:
+    { mode: ProjectOverviewMode; identity: ProjectTableSelectableCell } | undefined;
   private overviewMode_abyssPrivate: ProjectOverviewMode;
   private mounted_abyssPrivate = false;
   private timelineInteractionRevision_abyssPrivate = 0;
@@ -917,9 +919,42 @@ export class ProjectsTableView {
 
   captureViewportBeforeHide(): void {
     this.timelineInteractionRevision_abyssPrivate++;
+    const surface = this.activeSurface_abyssPrivate();
+    const cell =
+      surface === undefined
+        ? undefined
+        : cellContaining(
+            surface.renderedCells(),
+            this.root_abyssPrivate.ownerDocument.activeElement,
+          );
+    if (this.root_abyssPrivate.isConnected) {
+      this.dashboardFocus_abyssPrivate =
+        cell === undefined
+          ? undefined
+          : { mode: this.overviewMode_abyssPrivate, identity: cell.identity };
+    }
     this.tableSurface_abyssPrivate.captureViewportBeforeHide();
     this.kanbanView_abyssPrivate?.captureViewportBeforeHide();
     this.timelineView_abyssPrivate?.captureViewportBeforeHide();
+  }
+
+  restoreDashboardFocus(allowFocus: boolean): void {
+    const retained = this.dashboardFocus_abyssPrivate;
+    this.dashboardFocus_abyssPrivate = undefined;
+    if (
+      !allowFocus ||
+      retained?.mode !== this.overviewMode_abyssPrivate ||
+      !this.root_abyssPrivate.isConnected ||
+      !this.mounted_abyssPrivate ||
+      !this.sameCell_abyssPrivate(this.selection_abyssPrivate.focus, retained.identity)
+    )
+      return;
+    const cell = this.activeSurface_abyssPrivate()
+      ?.renderedCells()
+      .find((candidate) => this.sameCell_abyssPrivate(candidate.identity, retained.identity));
+    if (cell?.element.isConnected !== true) return;
+    cell.element.focus({ preventScroll: true });
+    this.syncSelection_abyssPrivate();
   }
 
   mount(projects: readonly Project[]): void {
@@ -953,6 +988,7 @@ export class ProjectsTableView {
   }
 
   destroy(): void {
+    this.dashboardFocus_abyssPrivate = undefined;
     this.mounted_abyssPrivate = false;
     this.timelineInteractionRevision_abyssPrivate++;
     this.creationInteractionRevision_abyssPrivate++;
@@ -1303,7 +1339,7 @@ export class ProjectsTableView {
 
   private selectAndRevealCreationCell_abyssPrivate(cell: RenderedCellContext): void {
     this.selectCell_abyssPrivate(cell, false);
-    this.revealSelectionCell_abyssPrivate(cell);
+    this.activeSurface_abyssPrivate()?.scrollCellIntoView(cell, 'created-project');
   }
 
   private relaxCreationProjection_abyssPrivate(project: Project): void {
@@ -2566,6 +2602,14 @@ export class ProjectsTableView {
 
   private decorateProjectCell_abyssPrivate(rendered: RenderedCellContext): void {
     const cell = rendered.element;
+    cell.addEventListener('mousedown', (event) => {
+      if (
+        event.button === 0 &&
+        event.shiftKey &&
+        !this.isCellActionTarget_abyssPrivate(event.target, cell)
+      )
+        event.preventDefault();
+    });
     cell.addEventListener('click', (event) => {
       if (!this.isCellActionTarget_abyssPrivate(event.target, cell)) {
         this.selectCell_abyssPrivate(rendered, event.shiftKey);
@@ -2813,8 +2857,14 @@ export class ProjectsTableView {
   }
 
   private ensureSelectionFocus_abyssPrivate(cell: RenderedCellContext): void {
-    if (!this.sameCell_abyssPrivate(this.selection_abyssPrivate.focus, cell.identity)) {
-      this.selection_abyssPrivate.select(cell.identity, this.selectableCells_abyssPrivate(), false);
+    const cells = this.selectableCells_abyssPrivate();
+    if (
+      !this.sameCell_abyssPrivate(this.selection_abyssPrivate.focus, cell.identity) &&
+      !this.selection_abyssPrivate
+        .selected(cells)
+        .some((candidate) => this.sameCell_abyssPrivate(candidate, cell.identity))
+    ) {
+      this.selection_abyssPrivate.select(cell.identity, cells, false);
     }
   }
 
@@ -3072,6 +3122,9 @@ export class ProjectsTableView {
     bounds: TableSelectionBounds,
   ): void {
     try {
+      for (const cell of this.selectedCells_abyssPrivate()) {
+        if (!editableField(cell.field)) throw new Error(`${cell.field.label} is read-only`);
+      }
       const mappings = resolveProjectPasteRectangle(source, {
         selection: bounds,
         focus: bounds.focus,

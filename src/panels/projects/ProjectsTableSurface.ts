@@ -241,6 +241,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   #rowsDirty = false;
   #model: ProjectTableModel | undefined;
   #rows: readonly ProjectTableRow[] = [];
+  #pendingViewport: { scrollTop: number; scrollLeft: number } | undefined;
   #cells: ProjectOverviewCells = NO_PROJECT_OVERVIEW_CELLS;
   #projects: readonly Project[] = [];
   #search = '';
@@ -293,7 +294,11 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   render(projects: readonly Project[], search: string, hooks: ProjectOverviewRenderHooks): void {
     this.#projects = projects;
     this.#search = search;
-    const scrollLeft = this.scroll.scrollLeft;
+    const pending =
+      this.scroll.isConnected && this.scroll.hidden === false && this.#context.isActive()
+        ? this.#pendingViewport
+        : undefined;
+    const scrollLeft = pending?.scrollLeft ?? this.scroll.scrollLeft;
     const focusedIdentity = this.#focusedCellIdentity();
     const availableWidth = this.scroll.clientWidth;
 
@@ -304,6 +309,10 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     const table = this.#table ?? this.#createTable();
     this.#reconcileHeader(table, columns);
     this.#applyWidth(availableWidth);
+    if (pending !== undefined) {
+      this.scroll.scrollTop = pending.scrollTop;
+      this.#pendingViewport = undefined;
+    }
     this.#renderBody(table, model, columns);
     this.#updateResponsiveNamePinning(availableWidth);
     this.#finishReconciliation(hooks, this.scroll.scrollTop, scrollLeft, focusedIdentity);
@@ -377,10 +386,16 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   }
 
   captureViewportBeforeHide(): void {
-    // The Table does not keep its scroll across a dashboard round trip yet.
+    if (this.scroll.isConnected && this.#context.isActive() && this.scroll.hidden === false) {
+      this.#pendingViewport = {
+        scrollTop: this.scroll.scrollTop,
+        scrollLeft: this.scroll.scrollLeft,
+      };
+    }
   }
 
   destroy(): void {
+    this.#pendingViewport = undefined;
     this.#clearGroupDropStates();
     this.#activeRowDrag = undefined;
     this.#renderedCells = [];
@@ -589,7 +604,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
       const element = this.#mountRow(body, item, model, rows);
       mounted.push({ key: item.key, element });
     }
-    if (model.groups.length === 0) {
+    if (model.uniqueVisibleCount === 0) {
       const row = body.createEl('tr');
       row.createEl('td', {
         cls: 'abyss-projects-empty',

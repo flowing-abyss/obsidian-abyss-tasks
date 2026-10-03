@@ -46,7 +46,7 @@ export interface ProjectsOverviewSurface<TCell extends ProjectOverviewSurfaceCel
   cells(): ProjectOverviewCells;
   renderedCells(): readonly TCell[];
   revealCell(identity: ProjectTableSelectableCell): void;
-  scrollCellIntoView(cell: TCell): void;
+  scrollCellIntoView(cell: TCell, purpose?: 'cell' | 'created-project'): void;
   editorFrame(cell: TCell | undefined): ProjectOverviewEditorFrame;
   revealProject(path: string): void;
   occurrenceElement(cell: TCell): HTMLElement;

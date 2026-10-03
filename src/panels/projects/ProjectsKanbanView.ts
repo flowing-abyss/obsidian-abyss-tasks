@@ -186,6 +186,8 @@ export class ProjectsKanbanView<
   private readonly collapsedGroups_abyssPrivate = new Set<string>();
   private projects_abyssPrivate: readonly Project[] = [];
   private search_abyssPrivate = '';
+  private pendingViewport_abyssPrivate:
+    { scrollLeft: number; columnTops: ReadonlyMap<string, number> } | undefined;
   private mounted_abyssPrivate = false;
   private selectedPath_abyssPrivate: string | undefined;
   private visibleCells_abyssPrivate: TCell[] = [];
@@ -238,10 +240,25 @@ export class ProjectsKanbanView<
     this.projects_abyssPrivate = projects;
     this.search_abyssPrivate = search;
     hooks.publish(this.render_abyssPrivate());
+    if (
+      this.root.isConnected &&
+      this.scroll.isConnected &&
+      this.root.hidden === false &&
+      this.pendingViewport_abyssPrivate !== undefined
+    ) {
+      const pending = this.pendingViewport_abyssPrivate;
+      this.pendingViewport_abyssPrivate = undefined;
+      this.scroll.scrollLeft = pending.scrollLeft;
+      for (const [key, column] of this.columns_abyssPrivate) {
+        const top = pending.columnTops.get(key);
+        if (top !== undefined) column.body.scrollTop = top;
+      }
+    }
     hooks.settleSelection();
   }
 
   destroy(): void {
+    this.pendingViewport_abyssPrivate = undefined;
     this.mounted_abyssPrivate = false;
     this.dragFocusRevision_abyssPrivate += 1;
     this.root.removeEventListener('pointerdown', this.handleBoardInteraction_abyssPrivate, true);
@@ -426,11 +443,18 @@ export class ProjectsKanbanView<
     // Every card of an expanded column and group is mounted, so each listed cell is rendered.
   }
 
-  scrollCellIntoView(cell: TCell): void {
+  scrollCellIntoView(cell: TCell, purpose: 'cell' | 'created-project' = 'cell'): void {
     const body = cell.element.closest<HTMLElement>('.abyss-project-kanban-column-body');
     if (body === null) return;
     const header = this.columnHeader_abyssPrivate(cell.element);
-    scrollIntoUsableViewport(cell.element, {
+    const card = this.occurrenceElement(cell);
+    const cardBox = card.getBoundingClientRect();
+    const boardBox = this.scroll.getBoundingClientRect();
+    const bodyBox = body.getBoundingClientRect();
+    const usableTop = Math.max(bodyBox.top, header?.getBoundingClientRect().bottom ?? bodyBox.top);
+    const fits = cardBox.width <= boardBox.width && cardBox.height <= bodyBox.bottom - usableTop;
+    const target = purpose === 'created-project' && fits ? card : cell.element;
+    scrollIntoUsableViewport(target, {
       horizontal: this.scroll,
       vertical: body,
       ...(header === undefined ? {} : { header }),
@@ -448,7 +472,19 @@ export class ProjectsKanbanView<
   }
 
   captureViewportBeforeHide(): void {
-    // The board does not keep its scroll across a dashboard round trip yet.
+    if (
+      this.root.isConnected &&
+      this.scroll.isConnected &&
+      this.root.hidden === false &&
+      this.mounted_abyssPrivate
+    ) {
+      this.pendingViewport_abyssPrivate = {
+        scrollLeft: this.scroll.scrollLeft,
+        columnTops: new Map(
+          Array.from(this.columns_abyssPrivate, ([key, column]) => [key, column.body.scrollTop]),
+        ),
+      };
+    }
   }
 
   private columnHeader_abyssPrivate(element: HTMLElement): HTMLElement | undefined {
