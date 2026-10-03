@@ -1706,7 +1706,7 @@ describe('renderTimedBlocksForDay', () => {
       expect(minutes).toBeLessThan(24 * 60);
     });
 
-    it('an extreme downward drag on the resize handle clamps onDurationChange to a one-day cap, not an unbounded value', () => {
+    it('an extreme downward drag on the resize handle clamps onDurationChange to the remaining day, not an unbounded value', () => {
       const container = freshContainer();
       const onDurationChange = vi.fn();
       const t = task({ planning: { time: '10:00', duration: 60 } });
@@ -1723,7 +1723,7 @@ describe('renderTimedBlocksForDay', () => {
       window.dispatchEvent(new PointerEvent('pointerup', { clientY: 100 + 100000, pointerId: 1 }));
       expect(onDurationChange).toHaveBeenCalledTimes(1);
       const [, minutes] = onDurationChange.mock.calls[0] as [unknown, number];
-      expect(minutes).toBe(24 * 60);
+      expect(minutes).toBe(14 * 60);
     });
 
     it('an ordinary in-range drag is unaffected by the new clamp', () => {
@@ -3275,5 +3275,69 @@ describe('calendar surface style contract', () => {
       rtl.body.remove();
       style.remove();
     }
+  });
+});
+
+describe('compatibility timed preview day bounds', () => {
+  it('bounds a legacy move preview and restores all source geometry on cancel', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const source = task({ planning: { time: '20:30', duration: 5940 } });
+    renderTimedBlocksForDay(
+      container,
+      [
+        source,
+        task({ source: { filePath: 'other.md' }, planning: { time: '20:30', duration: 60 } }),
+      ],
+      cbs,
+    );
+    const block = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-block'));
+    const original = {
+      top: block.style.top,
+      height: block.style.height,
+      minHeight: block.style.minHeight,
+      width: block.style.width,
+      left: block.style.left,
+      constrained: block.classList.contains('is-height-constrained'),
+      label: block.querySelector('.abyss-tg-block-subtitle')?.textContent,
+    };
+    block.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientY: 100, pointerId: 81 }),
+    );
+    window.dispatchEvent(new PointerEvent('pointermove', { clientY: 100000, pointerId: 81 }));
+    expect(block.style.top).toBe('1140px');
+    expect(block.style.height).toBe('12px');
+    expect(block.style.minHeight).toBe('12px');
+    expect(block.classList.contains('is-height-constrained')).toBe(true);
+    expect(block.style.width).toBe(original.width);
+    expect(block.style.left).toBe(original.left);
+    expect(block.querySelector('.abyss-tg-block-subtitle')?.textContent).toBe('23:45–24:00 (15m)');
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 81 }));
+    expect({
+      top: block.style.top,
+      height: block.style.height,
+      minHeight: block.style.minHeight,
+      width: block.style.width,
+      left: block.style.left,
+      constrained: block.classList.contains('is-height-constrained'),
+      label: block.querySelector('.abyss-tg-block-subtitle')?.textContent,
+    }).toEqual(original);
+    expect(cbs.onTimeChange).not.toHaveBeenCalled();
+  });
+
+  it('keeps a last-minute compatibility resize within its one remaining minute', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const source = task({ planning: { time: '23:59', duration: 60 } });
+    renderTimedBlocksForDay(container, [source], cbs);
+    const block = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-block'));
+    const handle = expectDefined(block.querySelector<HTMLElement>('.abyss-tg-resize-handle'));
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientY: 100, pointerId: 82 }),
+    );
+    window.dispatchEvent(new PointerEvent('pointermove', { clientY: 100000, pointerId: 82 }));
+    expect(block.style.height).toBe('0.8px');
+    window.dispatchEvent(new PointerEvent('pointerup', { clientY: 100000, pointerId: 82 }));
+    expect(cbs.onDurationChange).toHaveBeenCalledWith(source, 1);
   });
 });

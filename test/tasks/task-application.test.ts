@@ -2138,3 +2138,45 @@ describe('TaskApplicationService recurrence completion routing', () => {
     expect(completeRecurrence).toHaveBeenCalledOnce();
   });
 });
+
+it('reports a conflict without replaying a time edit over a concurrently changed companion duration', async () => {
+  const previous = {
+    ...snapshot(),
+    planning: { time: localTime('20:30'), duration: durationMinutes(5940) },
+  };
+  const current = {
+    ...previous,
+    ref: { ...previous.ref, revision: 'external' },
+    planning: { time: localTime('20:30'), duration: durationMinutes(60) },
+  };
+  const edit = vi
+    .fn<TaskRepository['edit']>()
+    .mockResolvedValueOnce({ type: 'rebased', previous, current, evidence: 'authority-transition' })
+    .mockResolvedValueOnce({
+      type: 'committed',
+      outcome: { type: 'task', task: current },
+      changed: true,
+    });
+  const application = new TaskApplicationService(
+    exactQueries(previous),
+    {
+      supportsRevisionPreconditions: true,
+      edit,
+      editBatch: vi.fn(),
+      createDependencySubtask: vi.fn(),
+      completeRecurrence: vi.fn(),
+      create: vi.fn(),
+      move: vi.fn(),
+    },
+    statuses,
+    clock,
+  );
+  await expect(
+    application.execute({
+      type: 'patch',
+      target: { type: 'task', ref: previous.ref },
+      patch: { time: { type: 'set', value: localTime('21:00') } },
+    }),
+  ).resolves.toEqual({ type: 'conflict', current });
+  expect(edit).toHaveBeenCalledOnce();
+});

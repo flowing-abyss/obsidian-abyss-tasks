@@ -23,7 +23,7 @@ import type {
   TaskPlanning,
   TaskSnapshot,
 } from '../../src/tasks/domain/types';
-import { localDate } from '../../src/tasks/domain/validation';
+import { durationMinutes, localDate, localTime } from '../../src/tasks/domain/validation';
 import { taskQueryApi, type TestTaskQueries } from '../helpers';
 
 function snapshot(markdownTitle = 'Task', revision = 'old'): TaskSnapshot {
@@ -1425,4 +1425,131 @@ describe('TaskApplicationService one-shot retry', () => {
       expect(completeRecurrence).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('timed duration retry ownership', () => {
+  it.each([
+    'patch-time',
+    'move-time-slot',
+    'set-time-slot',
+    'patch-pair',
+    'patch-duration',
+  ] as const)(
+    'recognizes the normalized effect and rejects a concurrent duration for %s',
+    (kind) => {
+      const previous = {
+        ...snapshot(),
+        planning: {
+          due: localDate('2026-08-11'),
+          time: localTime('20:30'),
+          duration: durationMinutes(5940),
+        },
+      };
+      let command: TaskEditRequest['command'];
+      if (kind === 'move-time-slot') {
+        command = { type: kind, ref: previous.ref, days: 0, time: localTime('21:00') };
+      } else if (kind === 'set-time-slot') {
+        command = {
+          type: kind,
+          ref: previous.ref,
+          date: localDate('2026-08-11'),
+          time: localTime('21:00'),
+        };
+      } else {
+        command = {
+          type: 'patch',
+          target: { type: 'task', ref: previous.ref },
+          patch: {
+            ...(kind === 'patch-duration'
+              ? {}
+              : { time: { type: 'set' as const, value: localTime('21:00') } }),
+            ...(kind === 'patch-time'
+              ? {}
+              : { duration: { type: 'set' as const, value: durationMinutes(1200) } }),
+          },
+        };
+      }
+      const current = {
+        ...snapshot('Task', 'new'),
+        planning: {
+          ...previous.planning,
+          time: localTime(kind === 'patch-duration' ? '20:30' : '21:00'),
+          duration: durationMinutes(kind === 'patch-duration' ? 210 : 180),
+        },
+      };
+      const mutation = preparedFor(previous, command, 'field-compare');
+      expect(retryAgainst(mutation, previous, current).type).toBe('edit');
+      expect(
+        retryAgainst(mutation, previous, {
+          ...current,
+          planning: { ...previous.planning, duration: durationMinutes(60) },
+        }).type,
+      ).toBe('unsafe');
+      expect(
+        retryAgainst(mutation, previous, {
+          ...current,
+          planning: previous.planning,
+          tags: ['#external'],
+        }).type,
+      ).toBe('edit');
+    },
+  );
+});
+
+it('retains a concurrent duration when a time-only retry cannot write that companion', () => {
+  const previous = {
+    ...snapshot(),
+    planning: { time: localTime('09:00'), duration: durationMinutes(60) },
+  };
+  const current = {
+    ...snapshot('Task', 'new'),
+    planning: { time: localTime('09:00'), duration: durationMinutes(90) },
+  };
+  const command: TaskEditRequest['command'] = {
+    type: 'patch',
+    target: { type: 'task', ref: previous.ref },
+    patch: { time: { type: 'set', value: localTime('10:00') } },
+  };
+  expect(
+    retryAgainst(preparedFor(previous, command, 'field-compare'), previous, current).type,
+  ).toBe('edit');
+});
+
+it('does not retry a child time edit over a duration hidden from its planning projection', () => {
+  const previous = snapshot();
+  const child = subtask(previous, {
+    planning: { time: localTime('20:30') },
+    ref: {
+      parent: { type: 'task', ref: previous.ref },
+      relativeLine: 1,
+      originalBlock: '  - [ ] child ⏰ 20:30 ⏱️ 99h',
+    },
+  });
+  const base = { ...previous, subtasks: [child] };
+  const currentRoot = snapshot('Task', 'new');
+  const changedChild = {
+    ...child,
+    ref: {
+      ...child.ref,
+      parent: { type: 'task' as const, ref: currentRoot.ref },
+      originalBlock: '  - [ ] child ⏰ 20:30 ⏱️ 1h',
+    },
+  };
+  const command: TaskEditRequest['command'] = {
+    type: 'patch',
+    target: { type: 'subtask', ref: child.ref },
+    patch: { time: { type: 'set', value: localTime('21:00') } },
+  };
+  const mutation = preparedFor(base, command, 'field-compare', command.target);
+  expect(retryAgainst(mutation, base, { ...currentRoot, subtasks: [changedChild] }).type).toBe(
+    'unsafe',
+  );
+  expect(
+    retryAgainst(mutation, base, {
+      ...currentRoot,
+      subtasks: [
+        { ...changedChild, ref: { ...changedChild.ref, originalBlock: child.ref.originalBlock } },
+      ],
+    }).type,
+  ).toBe('edit');
 });

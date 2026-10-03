@@ -190,6 +190,7 @@ describe('task architecture ESLint boundaries', () => {
 // start is paid once for both suites. Their rule reads scopes, not types.
 const pureFiles = [
   'src/task-lists/todayTaskCategory.ts',
+  'src/tasks/domain/taskDuration.ts',
   'src/projects/projectTableModel.ts',
   'src/projects/projectKanbanModel.ts',
   'src/projects/projectTimelineModel.ts',
@@ -261,6 +262,19 @@ describe('project lexical policy', () => {
           endColumn: 11,
         },
       ]);
+    },
+    LINTER_TIMEOUT_MS,
+  );
+
+  it(
+    'accepts explicit duration and time inputs in the duration domain helper',
+    async () => {
+      expect(
+        await check(
+          'src/tasks/domain/taskDuration.ts',
+          'export function bounded(duration: number, remaining: number): number { return Math.min(duration, remaining); }',
+        ),
+      ).toEqual([]);
     },
     LINTER_TIMEOUT_MS,
   );

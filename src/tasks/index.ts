@@ -94,3 +94,5 @@ export type {
   TimeEntryRef,
 } from './domain/types';
 export { durationMinutes, localDate, localTime } from './domain/validation';
+
+export { clampDurationToDay } from './domain/taskDuration';

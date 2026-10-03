@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   capMinHeightsPx,
+  layoutTimedDay,
   MIN_BLOCK_HEIGHT_PX,
   minutesToPixels,
   minutesToTimeString,
@@ -129,13 +130,13 @@ describe('capMinHeightsPx', () => {
     expect(firstCap).toBeLessThan(MIN_BLOCK_HEIGHT_PX);
     expect(firstCap).toBeCloseTo(minutesToPixels(10) - 2, 5);
     // The last (only remaining) occupant of its column has nothing after it to crowd into.
-    expect(caps.get(expectDefined(second))).toBe(Infinity);
+    expect(caps.get(expectDefined(second))).toBe(712);
   });
 
-  it('a lone block in its column (no next occupant) is uncapped (Infinity), so the full CSS min-height is free to apply', () => {
+  it('a lone block in its column (no next occupant) is capped at day end, with enough room for the full CSS minimum', () => {
     const positioned = packOverlaps([timedBlockInput(9 * 60, 60)]);
     const caps = capMinHeightsPx(positioned);
-    expect(caps.get(expectDefined(positioned[0]))).toBe(Infinity);
+    expect(caps.get(expectDefined(positioned[0]))).toBe(720);
   });
 
   it('a generous gap between two same-column blocks yields a cap comfortably above MIN_BLOCK_HEIGHT_PX (no clamping needed)', () => {
@@ -150,7 +151,32 @@ describe('capMinHeightsPx', () => {
     const positioned = packOverlaps([timedBlockInput(9 * 60, 10), timedBlockInput(9 * 60, 10)]);
     expect(new Set(positioned.map((b) => b.column)).size).toBe(2);
     const caps = capMinHeightsPx(positioned);
-    expect(caps.get(expectDefined(positioned[0]))).toBe(Infinity);
-    expect(caps.get(expectDefined(positioned[1]))).toBe(Infinity);
+    expect(caps.get(expectDefined(positioned[0]))).toBe(720);
+    expect(caps.get(expectDefined(positioned[1]))).toBe(720);
+  });
+});
+
+describe('bounded day geometry', () => {
+  it.each([
+    [1230, 5940, 210],
+    [1439, 60, 1],
+    [0, 1500, 1440],
+  ])('bounds %i + %i to %i before overlap packing', (start, duration, expected) => {
+    const input = timedBlockInput(start, duration);
+    const result = layoutTimedDay([input]);
+    const block = expectDefined(result.positioned[0]);
+    expect(block.durationMinutes).toBe(expected);
+    expect(block.startMinutes + block.durationMinutes).toBeLessThanOrEqual(1440);
+    expect(result.minHeightCaps.get(block)).toBeCloseTo((1440 - start) * 0.8);
+    expect(input.durationMinutes).toBe(duration);
+  });
+
+  it('bounds positive infinity and invalid durations without corrupting overlap packing', () => {
+    const result = layoutTimedDay([
+      timedBlockInput(1439, Infinity),
+      timedBlockInput(1439, NaN, 'nan.md'),
+    ]);
+    expect(result.positioned.map((block) => block.durationMinutes)).toEqual([1, 1]);
+    expect(result.positioned.map((block) => block.columns)).toEqual([2, 2]);
   });
 });

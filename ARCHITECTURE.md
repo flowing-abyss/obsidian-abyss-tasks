@@ -115,6 +115,14 @@ or comment identifies an occurrence; the repository must find the corresponding 
 before replacing it. Missing or synthetic joined-fragment targets fail instead of authorizing an
 edit to another link.
 
+Timed task edits normalize duration at the codec's final correlated candidate, using the domain
+`clampDurationToDay` rule. Only explicit time/duration edits and newly created task lines acquire
+that normalization; legacy reads and unrelated edits preserve authored bytes. Untimed durations
+can exceed one day. The existing duration token writer retains validation and source ownership.
+Retries compare the effective requested timing and protect any implicit companion-duration write.
+Subtask projections do not expose duration, so a subtask time-edit retry requires an unchanged
+original block; concurrent edits within that block require a fresh user action.
+
 ### Creation, transfer, and tags
 
 `TaskCaptureApplicationApi` retains a creation session with a frozen destination, local date,
@@ -239,6 +247,12 @@ centre shell. CalendarCommands translates gestures into public task commands; th
 selects Today, Week, or Month. Calendar policy/content helpers receive time and data explicitly.
 Capture placement belongs to the grid; CaptureSessions retains the capture session. Calendar
 collaborators use their owning document/window and release scheduled work on teardown.
+
+The shared timed-day layout bounds effective durations before overlap packing and caps minimum
+heights at the next block or day end. Labels and gesture origins consume this derived geometry,
+including for legacy overflow and recurrence forecasts, without writing source. Move previews
+project the final time-only command candidate at the destination: a legacy oversized duration can
+therefore occupy more of the day when moved earlier. Preview boxes remain bounded by day end.
 
 ### Inspector sessions and interaction continuity
 

@@ -9,7 +9,10 @@ import {
   type TaskCommand,
   type TaskSnapshot,
 } from '../src/tasks';
-import { task, taskQueryApi } from './helpers';
+import { canonicalStatusCatalog, task, taskQueryApi } from './helpers';
+
+import { applyTaskCommand } from '../src/tasks/infrastructure/markdown/applyTaskCommand';
+import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 
 vi.mock('obsidian', async () => {
   const actual = await vi.importActual<typeof ObsidianModule>('obsidian');
@@ -217,5 +220,34 @@ describe('CalendarCommands field setters', () => {
     h.execute.mockResolvedValueOnce({ type: 'invalid', issues: [{ code: 'invalid-target' }] });
     await h.commands.setDue(timed, '2026-09-26');
     expect(Notice).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('calendar writes use the authored duration invariant', () => {
+  it.each([
+    [5940, '09:00', 1, '⏰ 09:00 ⏱️ 15h 📅 2026-09-21'],
+    [5940, '23:45', 0, '⏰ 23:45 ⏱️ 15m 📅 2026-09-20'],
+    [5940, '20:30', 1, '⏰ 20:30 ⏱️ 3h30m 📅 2026-09-21'],
+    [60, '09:00', 1, '⏰ 09:00 ⏱️ 1h 📅 2026-09-21'],
+  ])('commits %i minutes at %s after a %i-day move', async (duration, time, dayDelta, expected) => {
+    const timed = task({ planning: { due: '2026-09-20', time: '20:30', duration } });
+    const h = harness();
+    await h.commands.commitTimedMove(timed, {
+      destination: 'time-grid',
+      date: localDate(dayDelta === 0 ? '2026-09-20' : '2026-09-21'),
+      dayDelta,
+      startMinutes: Number(time.slice(0, 2)) * 60 + Number(time.slice(3)),
+    });
+    const command = h.lastCommand();
+    expect(command?.type).toBe('move-time-slot');
+    if (command?.type !== 'move-time-slot') return;
+    const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
+    expect(
+      applyTaskCommand(
+        codec,
+        `- [ ] Task ⏰ 20:30 ⏱️ ${duration === 60 ? '1h' : '99h'} 📅 2026-09-20`,
+        command,
+      ),
+    ).toEqual({ type: 'changed', content: `- [ ] Task ${expected}` });
   });
 });

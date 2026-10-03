@@ -71,6 +71,24 @@ function applyInitialPatch(
   return undefined;
 }
 
+/** Newly authored raw timing follows the same final-candidate rule as field edits. */
+function normalizeSourceLines(
+  codec: TaskMarkdownCodec,
+  sourceLines: string[],
+): CreateTaskBlockResult | undefined {
+  for (const [index, sourceLine] of sourceLines.entries()) {
+    const parsed = codec.parseLine(sourceLine, { filePath: '', line: index });
+    if (parsed?.planning.time === undefined) continue;
+    const result = codec.applyLineEdit(sourceLine, {
+      type: 'set-time',
+      value: parsed.planning.time,
+    });
+    if (result.type === 'invalid') return result;
+    sourceLines[index] = result.content;
+  }
+  return undefined;
+}
+
 function stampSourceLines(
   codec: TaskMarkdownCodec,
   sourceLines: readonly string[],
@@ -97,6 +115,8 @@ export function createTaskBlock(
   if (validation !== undefined) return validation;
   const patch = applyInitialPatch(codec, sourceLines, draft.initial);
   if (patch !== undefined) return patch;
+  const normalized = normalizeSourceLines(codec, sourceLines);
+  if (normalized !== undefined) return normalized;
   const updated = sourceLines.join('\n');
   return {
     type: 'created',

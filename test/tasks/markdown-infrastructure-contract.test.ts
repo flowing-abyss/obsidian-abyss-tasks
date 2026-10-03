@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskEditCommand } from '../../src/tasks/application/TaskRepository';
 import type { TaskRef } from '../../src/tasks/domain/types';
-import { localDate } from '../../src/tasks/domain/validation';
+import { durationMinutes, localDate, localTime } from '../../src/tasks/domain/validation';
 import { applyTaskCommand } from '../../src/tasks/infrastructure/markdown/applyTaskCommand';
 import { createTaskBlock } from '../../src/tasks/infrastructure/markdown/createTaskBlock';
 import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
@@ -201,5 +201,45 @@ describe('markdown infrastructure contracts', () => {
         addCreatedDate: true,
       }),
     ).toMatchObject({ type: 'invalid' });
+  });
+});
+
+describe('creation duration normalization', () => {
+  it('normalizes every newly authored timed line with no initial patch', () => {
+    expect(
+      createTaskBlock(codec, {
+        markdownBody: 'Root ⏰ 20:30 ⏱️ 99h\n  - [ ] Child ⏰ 23:59 ⏱️ 1h',
+        today: localDate('2026-07-20'),
+        addCreatedDate: false,
+      }),
+    ).toEqual({
+      type: 'created',
+      content: '- [ ] Root ⏰ 20:30 ⏱️ 3h30m\n  - [ ] Child ⏰ 23:59 ⏱️ 1m',
+    });
+  });
+
+  it('uses initial time and duration together before normalizing raw creation text', () => {
+    expect(
+      createTaskBlock(codec, {
+        markdownBody: 'Root ⏰ 23:59 ⏱️ 99h',
+        initial: {
+          time: { type: 'set', value: localTime('09:00') },
+          duration: { type: 'set', value: durationMinutes(600) },
+        },
+        today: localDate('2026-07-20'),
+        addCreatedDate: false,
+      }),
+    ).toEqual({ type: 'created', content: '- [ ] Root ⏰ 09:00 ⏱️ 10h' });
+  });
+
+  it('normalizes raw timing when the initial patch only changes unrelated metadata', () => {
+    expect(
+      createTaskBlock(codec, {
+        markdownBody: 'Root ⏰ 20:30 ⏱️ 99h',
+        initial: { priority: { type: 'set', value: 'A' } },
+        today: localDate('2026-07-20'),
+        addCreatedDate: false,
+      }),
+    ).toEqual({ type: 'created', content: '- [ ] Root ⏰ 20:30 ⏱️ 3h30m 🔺' });
   });
 });

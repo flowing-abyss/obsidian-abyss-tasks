@@ -129,3 +129,12 @@ describe('duration parsing', () => {
     expect(line).toBe('- [ ] gym ⏱️'); // formatTaskLine must not silently delete it either
   });
 });
+
+it('reads legacy overflow unchanged but bounds an explicit duration edit', () => {
+  const source = '- [ ] gym ⏰ 20:30 ⏱️ 99h';
+  expect(parseTask(source, { filePath: 'f.md', line: 0 })?.duration).toBe(5940);
+  expect(codec.applyLineEdit(source, { type: 'set-duration', value: 1200 })).toEqual({
+    type: 'changed',
+    content: '- [ ] gym ⏰ 20:30 ⏱️ 3h30m',
+  });
+});

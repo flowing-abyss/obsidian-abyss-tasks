@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { firstVisibleWeekDate } from '../src/domain/weekGridOffset';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
+import { localDate } from '../src/tasks';
 import { taskSnapshotForCalendarOccurrence } from '../src/views/calendarOccurrences';
 import * as spanLayout from '../src/views/spanLayout';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
@@ -1788,4 +1789,157 @@ describe('materialized child all-day movement', () => {
     view.destroy();
     restore();
   });
+});
+
+describe('legacy duration display bounds', () => {
+  it.each([
+    ['20:30', 5940, '168px', '20:30–24:00 (3h30m)'],
+    ['23:59', 60, '0.8px', '23:59–24:00 (1m)'],
+  ])(
+    'bounds %s duration in committed blocks without task commands',
+    (time, duration, height, label) => {
+      const container = freshContainer();
+      const cb = callbacks();
+      const view = new WeekTimeGridView(cb);
+      const legacy = task({ planning: { due: '2026-07-06', time, duration } });
+      view.render(
+        container,
+        [legacy],
+        resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
+      );
+      const block = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-block'));
+      expect(block.style.height).toBe(height);
+      expect(block.querySelector('.abyss-tg-block-subtitle')?.textContent).toBe(label);
+      if (time === '23:59') {
+        expect(block.style.minHeight).toBe('0.8px');
+        expect(block.classList.contains('is-height-constrained')).toBe(true);
+        measureTimedColumns(container);
+        vi.spyOn(block, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 1251.2, 100, 0.8));
+        expectDefined(
+          block.querySelector<HTMLElement>('[data-boundary="create-span"]'),
+        ).dispatchEvent(
+          new PointerEvent('pointerdown', {
+            bubbles: true,
+            button: 0,
+            clientX: 50,
+            clientY: 1251.5,
+            pointerId: 72,
+          }),
+        );
+        window.dispatchEvent(
+          new PointerEvent('pointermove', { clientX: 150, clientY: 1251.5, pointerId: 72 }),
+        );
+        const preview = expectDefined(
+          container.querySelector<HTMLElement>('.abyss-tg-boundary-preview'),
+        );
+        expect(preview.style.height).toBe('0.8px');
+        expect(
+          preview
+            .querySelector('.abyss-calendar-preview-shell')
+            ?.classList.contains('is-height-constrained'),
+        ).toBe(true);
+        window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 72 }));
+      } else {
+        expect(block.classList.contains('is-height-constrained')).toBe(false);
+      }
+      expect(legacy.planning.duration).toBe(duration);
+      expect(cb.onDurationChange).not.toHaveBeenCalled();
+      expect(cb.onTimeChange).not.toHaveBeenCalled();
+      view.destroy();
+    },
+  );
+
+  it.each([
+    {
+      duration: 5940,
+      sourceHeight: 168,
+      initialLabel: '20:30–24:00 (3h30m)',
+      earlierLabel: '09:00–24:00 (15h)',
+      earlierHeight: '720px',
+    },
+    {
+      duration: 60,
+      sourceHeight: 48,
+      initialLabel: '20:30–21:30 (1h)',
+      earlierLabel: '09:00–10:00 (1h)',
+      earlierHeight: '48px',
+    },
+  ])(
+    'uses the final candidate for a moved $duration-minute preview and a bounded gesture origin',
+    ({ duration, sourceHeight, initialLabel, earlierLabel, earlierHeight }) => {
+      const container = freshContainer();
+      const cb = { ...callbacks(), onTimedMove: vi.fn() };
+      const view = new WeekTimeGridView(cb);
+      view.render(
+        container,
+        [task({ planning: { due: '2026-07-06', time: '20:30', duration } })],
+        resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
+      );
+      measureTimedColumns(container);
+      const source = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-block'));
+      vi.spyOn(source, 'getBoundingClientRect').mockReturnValue(
+        new DOMRect(0, 1084, 100, sourceHeight),
+      );
+      source.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: 50,
+          clientY: 1088,
+          pointerId: 71,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 150, clientY: 1088, pointerId: 71 }),
+      );
+      const preview = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-drag-preview'));
+      expect(preview.querySelector('.abyss-tg-block-subtitle')?.textContent).toBe(initialLabel);
+      expect(preview.style.height).toBe(`${sourceHeight}px`);
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 150, clientY: 1244, pointerId: 71 }),
+      );
+      expect(preview.querySelector('.abyss-tg-block-subtitle')?.textContent).toBe(
+        '23:45–24:00 (15m)',
+      );
+      expect(preview.style.height).toBe('12px');
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 150, clientY: 536, pointerId: 71 }),
+      );
+      expect(preview.querySelector('.abyss-tg-block-subtitle')?.textContent).toBe(earlierLabel);
+      expect(preview.style.height).toBe(earlierHeight);
+      window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 71 }));
+      expect(cb.onTimedMove).not.toHaveBeenCalled();
+      view.destroy();
+    },
+  );
+});
+
+it('bounds forecast clone duration without modifying the source planning', () => {
+  const source = task({
+    recurrence: 'every day',
+    planning: { due: '2026-07-06', time: '20:30', duration: 5940 },
+  });
+  const forecast = taskSnapshotForCalendarOccurrence({
+    kind: 'forecast',
+    key: 'forecast-late',
+    source: { root: source, node: source, target: { type: 'task', ref: source.ref } },
+    planning: { ...source.planning, due: localDate('2026-07-07') },
+    referenceDate: localDate('2026-07-07'),
+    ordinal: 1,
+  });
+  const container = freshContainer();
+  const cb = callbacks();
+  const view = new WeekTimeGridView(cb);
+  view.render(
+    container,
+    [forecast],
+    resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
+  );
+  const block = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-block'));
+  expect(block.style.height).toBe('168px');
+  expect(block.textContent).toContain('20:30–24:00 (3h30m)');
+  expect(source.planning.duration).toBe(5940);
+  expect(forecast.planning.duration).toBe(5940);
+  expect(cb.onDurationChange).not.toHaveBeenCalled();
+  view.destroy();
 });

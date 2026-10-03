@@ -178,6 +178,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/calendar/calendarCommands.ts',
     'src/views/timegrid/dragGeometry.ts',
   ],
+  clampDurationToDay: ['src/views/timegrid/timedInteractions.ts'],
   cloneTaskSnapshot: ['src/app/AppState.ts', 'src/panels/RightPanel.ts'],
   durationMinutes: ['src/panels/calendar/calendarCommands.ts', 'src/panels/RightPanel.ts'],
   entryDurationMs: ['src/ui/timeTracking/TimeEntriesPopover.ts'],

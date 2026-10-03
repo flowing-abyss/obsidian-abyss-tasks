@@ -750,6 +750,13 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   min-height: calc(1.6em + 4px);
 }
 
+/* Padding must not impose a box-height floor on blocks constrained by day end or a neighbor. */
+.abyss-tg-block.is-height-constrained,
+.abyss-calendar-preview[data-density='regular']
+  > .abyss-calendar-preview-shell.is-height-constrained {
+  padding-block: 0;
+}
+
 /* Checkbox + title share one row (not stacked): the marker is an inline span but the
    title is block-level, so without this row wrapper the title used to force a line
    break after the checkbox. */

@@ -84,8 +84,7 @@ const MIN_BLOCK_GAP_MARGIN_PX = 2;
  *
  * Returns, for each block (keyed by object identity — safe since `packOverlaps` already
  * allocates a fresh object per input), the maximum height in pixels it may occupy before
- * reaching the next block sharing its column (or `Infinity` if it's the last/only occupant of
- * that column, in which case the CSS min-height is free to apply in full).
+ * reaching the next block sharing its column or the end of the day, whichever comes first.
  */
 export function capMinHeightsPx(positioned: PositionedBlock[]): Map<PositionedBlock, number> {
   const byColumn = blocksByColumn(positioned);
@@ -118,7 +117,7 @@ function addColumnCaps(
       next == null
         ? Infinity
         : minutesToPixels(next.startMinutes - current.startMinutes) - MIN_BLOCK_GAP_MARGIN_PX;
-    caps.set(current, gapPx);
+    caps.set(current, Math.min(gapPx, minutesToPixels(1440 - current.startMinutes)));
   }
 }
 
@@ -173,6 +172,18 @@ export function packOverlaps(blocks: readonly TimedBlockInput[]): PositionedBloc
 
 /** Shared committed/preview timed layout pass. */
 export function layoutTimedDay(inputs: readonly TimedBlockInput[]): TimedDayLayout {
-  const positioned = packOverlaps(inputs);
+  const bounded = inputs
+    .filter(
+      (input) =>
+        Number.isFinite(input.startMinutes) && input.startMinutes >= 0 && input.startMinutes < 1440,
+    )
+    .map((input) => ({
+      ...input,
+      durationMinutes: Math.min(
+        Math.max(1, Number.isNaN(input.durationMinutes) ? 1 : input.durationMinutes),
+        1440 - input.startMinutes,
+      ),
+    }));
+  const positioned = packOverlaps(bounded);
   return { positioned, minHeightCaps: capMinHeightsPx(positioned) };
 }

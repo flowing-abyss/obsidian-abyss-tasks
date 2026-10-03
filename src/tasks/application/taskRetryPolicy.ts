@@ -1,5 +1,11 @@
 import type { ClockReading } from '../domain/clock';
-import type { TaskCommand, TaskCommandResult, TaskStatusTarget } from '../domain/commands';
+import type {
+  FieldUpdate,
+  TaskCommand,
+  TaskCommandResult,
+  TaskPatch,
+  TaskStatusTarget,
+} from '../domain/commands';
 import { shiftLocalDate } from '../domain/localDateMath';
 import {
   taskNodeChain as childChain,
@@ -8,6 +14,7 @@ import {
   rebaseTaskNode,
   taskMutationNodeRef,
 } from '../domain/taskCommandTargets';
+import { clampDurationToDay } from '../domain/taskDuration';
 import { reconcileTaskNodeRef, type RebaseEvidence } from '../domain/taskReconciliation';
 import type { TimeEntrySnapshot } from '../domain/timeTracking';
 import type {
@@ -238,12 +245,77 @@ function shiftedPlanningHolds(context: SchedulingContext, days: number): boolean
   return planningField(context, anchor, shiftedDate(context, anchor, days));
 }
 
+function updatedValue<T>(
+  previous: T | undefined,
+  update: FieldUpdate<T> | undefined,
+): T | undefined {
+  if (update === undefined) return previous;
+  return update.type === 'set' ? update.value : undefined;
+}
+
+function normalizedDuration(
+  time: TaskSnapshot['planning']['time'],
+  duration: TaskSnapshot['planning']['duration'],
+): TaskSnapshot['planning']['duration'] {
+  return time !== undefined && duration !== undefined
+    ? clampDurationToDay(time, duration)
+    : duration;
+}
+
+/** Time and duration share one effective candidate, including implicit duration writes. */
+function timingPreconditionHolds(
+  previous: TaskStatusSnapshot,
+  current: TaskStatusSnapshot,
+  patch: Pick<TaskPatch, 'time' | 'duration'>,
+): boolean {
+  if (patch.time === undefined && patch.duration === undefined) return true;
+  if (!('source' in previous) || !('source' in current)) {
+    // Child projections omit duration: only exact source proves its implicit write safe.
+    return patch.time === undefined || restorationSource(previous) === restorationSource(current);
+  }
+  return rootTimingPreconditionHolds(previous, current, patch);
+}
+
+function unchangedOrRequested(previous: unknown, current: unknown, requested: unknown): boolean {
+  return previous === current || current === requested;
+}
+
+function rootTimingPreconditionHolds(
+  previous: TaskSnapshot,
+  current: TaskSnapshot,
+  patch: Pick<TaskPatch, 'time' | 'duration'>,
+): boolean {
+  const time = updatedValue(previous.planning.time, patch.time);
+  const duration = updatedValue(previous.planning.duration, patch.duration);
+  const effectiveDuration = normalizedDuration(time, duration);
+  const currentTime = updatedValue(current.planning.time, patch.time);
+  const currentDuration = updatedValue(current.planning.duration, patch.duration);
+  const currentEffective = normalizedDuration(currentTime, currentDuration);
+  const compareTime = patch.time !== undefined || effectiveDuration !== currentEffective;
+  const compareDuration =
+    patch.duration !== undefined ||
+    effectiveDuration !== duration ||
+    currentEffective !== currentDuration;
+  return (
+    (!compareTime || unchangedOrRequested(previous.planning.time, current.planning.time, time)) &&
+    (!compareDuration ||
+      unchangedOrRequested(
+        previous.planning.duration,
+        current.planning.duration,
+        effectiveDuration,
+      ))
+  );
+}
+
 function moveTimeSlotHolds(
   context: SchedulingContext,
   command: Extract<TaskEditCommand, { readonly type: 'move-time-slot' }>,
 ): boolean {
   return (
-    shiftedPlanningHolds(context, command.days) && planningField(context, 'time', command.time)
+    shiftedPlanningHolds(context, command.days) &&
+    timingPreconditionHolds(context.previous, context.current, {
+      time: { type: 'set', value: command.time },
+    })
   );
 }
 
@@ -264,8 +336,12 @@ function setTimeSlotHolds(
 ): boolean {
   return (
     planningField(context, context.anchor, command.date) &&
-    planningField(context, 'time', command.time) &&
-    (command.duration === undefined || planningField(context, 'duration', command.duration))
+    timingPreconditionHolds(context.previous, context.current, {
+      time: { type: 'set', value: command.time },
+      ...(command.duration === undefined
+        ? {}
+        : { duration: { type: 'set', value: command.duration } }),
+    })
   );
 }
 
@@ -380,7 +456,10 @@ function patchPreconditionHolds(
   previous: TaskSnapshot | SubtaskSnapshot,
   current: TaskSnapshot | SubtaskSnapshot,
 ): boolean {
-  const fields = Object.keys(command.patch).filter((field) => field !== 'tags');
+  if (!timingPreconditionHolds(previous, current, command.patch)) return false;
+  const fields = Object.keys(command.patch).filter(
+    (field) => !['tags', 'time', 'duration'].includes(field),
+  );
   return fields.every((field) => {
     const update = command.patch[field as keyof typeof command.patch];
     return (

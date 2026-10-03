@@ -1,12 +1,13 @@
 import { collapseWikiLinks, parseLinks } from '../../../markdown/links';
 import { sameTag } from '../../../markdown/tagSyntax';
-import { type StatusCatalog } from '../../domain/StatusCatalog';
 import { parseRecurrenceRule } from '../../domain/recurrence';
 import {
   editRecurrenceIterationTaskLine,
   type RecurrenceTaskLineEdit,
   type RecurrenceTaskLineEditResult,
 } from '../../domain/recurrenceIteration';
+import { type StatusCatalog } from '../../domain/StatusCatalog';
+import { clampDurationToDay } from '../../domain/taskDuration';
 import {
   isCanonicalTaskTag,
   isTaskDependencyId,
@@ -1059,6 +1060,55 @@ function applyPreparedLineEdit(
   };
 }
 
+/** Normalize only after all requested fields have formed their final candidate. */
+function normalizeTimedDuration(
+  statusCatalog: StatusCatalog,
+  parsed: ParsedTaskLine,
+): AppliedLineEdit {
+  const { time, duration } = parsed.planning;
+  if (time === undefined || duration === undefined) return unchangedLine(parsed);
+  let bounded: number;
+  try {
+    bounded = clampDurationToDay(localTime(time), validatedDurationMinutes(duration));
+  } catch {
+    // Unparsed/invalid companions remain opaque unless explicitly edited.
+    return unchangedLine(parsed);
+  }
+  if (bounded === duration) return unchangedLine(parsed);
+  const issues = duplicateIssue(parsed, 'time', 'time');
+  if (issues.length > 0) return invalidTaskResult(issues);
+  return applyPreparedLineEdit(statusCatalog, parsed, {
+    type: 'set-duration',
+    value: bounded,
+  });
+}
+
+function timingEditFields(edits: readonly LineEdit[]): TaskValidationField[] {
+  return edits.flatMap((edit) => {
+    if (edit.type === 'set-time') return ['time'];
+    return edit.type === 'set-duration' ? ['duration'] : [];
+  });
+}
+
+function finalizeLineEdits(
+  statusCatalog: StatusCatalog,
+  original: string,
+  candidate: ParsedTaskLine,
+  { fields, normalize }: { fields: Set<TaskValidationField>; normalize: boolean },
+): LineEditResult {
+  const result = normalize
+    ? normalizeTimedDuration(statusCatalog, candidate)
+    : unchangedLine(candidate);
+  if (result.type === 'invalid') return result;
+  const final = result.type === 'applied' ? result.parsed : candidate;
+  if (result.type === 'applied') {
+    for (const field of result.fields) fields.add(field);
+  }
+  const issues = validateTaskChange(validationState(statusCatalog, final), fields);
+  if (issues.length > 0) return invalidTaskResult(issues);
+  return { type: final.original === original ? 'unchanged' : 'changed', content: final.original };
+}
+
 /** Omit source-scanner coordinates/carriers from the codec's public line shape. */
 function taskLineFields({
   contentEnd: _contentEnd,
@@ -1143,19 +1193,7 @@ export class TaskMarkdownCodec {
   }
 
   applyLineEdit(original: string, edit: LineEdit): LineEditResult {
-    const parsed = parseTaskLine(original);
-    if (parsed == null) return invalidTaskSyntax();
-    const prepared = prepareLineEdit(this.statusCatalog, parsed, edit);
-    if (prepared.type !== 'prepared') return prepared;
-    if (prepared.content === original) return { type: 'unchanged', content: original };
-    const applied = applyPreparedLineEdit(this.statusCatalog, parsed, edit, prepared);
-    if (applied.type !== 'applied') return applied;
-    const issues = validateTaskChange(
-      validationState(this.statusCatalog, applied.parsed),
-      new Set(prepared.fields),
-    );
-    if (issues.length > 0) return invalidTaskResult(issues);
-    return { type: 'changed', content: prepared.content };
+    return this.applyLineEdits(original, [edit]);
   }
 
   /** Applies correlated field edits as one candidate and validates only the final state. */
@@ -1168,21 +1206,19 @@ export class TaskMarkdownCodec {
     if (before == null) return invalidTaskSyntax();
 
     let current = before;
-    let content = original;
-    const changedFields = new Set<TaskValidationField>(requestedFields);
+    const timingFields = timingEditFields(edits);
+    const changedFields = new Set<TaskValidationField>([...requestedFields, ...timingFields]);
     for (const edit of edits) {
       const applied = applyPreparedLineEdit(this.statusCatalog, current, edit);
       if (applied.type === 'invalid') return applied;
       if (applied.type === 'unchanged') continue;
-      content = applied.content;
       for (const field of applied.fields) changedFields.add(field);
       current = applied.parsed;
     }
-    const issues = validateTaskChange(validationState(this.statusCatalog, current), changedFields);
-    if (issues.length > 0) return invalidTaskResult(issues);
-    return content === original
-      ? { type: 'unchanged', content: original }
-      : { type: 'changed', content };
+    return finalizeLineEdits(this.statusCatalog, original, current, {
+      fields: changedFields,
+      normalize: timingFields.length > 0,
+    });
   }
   parseLine(original: string, source: ParseSource): ParsedTaskLine | null {
     return parseTaskLine(original, source);

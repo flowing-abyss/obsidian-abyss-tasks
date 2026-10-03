@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parseLinks } from '../../src/markdown/links';
 import { parseTaskLineSourceModel } from '../../src/tasks/domain/taskLineSourceModel';
 import type { TaskRef } from '../../src/tasks/domain/types';
-import { localDate, localTime } from '../../src/tasks/domain/validation';
+import { durationMinutes, localDate, localTime } from '../../src/tasks/domain/validation';
 import { applyTaskCommand } from '../../src/tasks/infrastructure/markdown/applyTaskCommand';
 import {
   TaskMarkdownCodec,
@@ -2405,4 +2405,120 @@ describe('authored task marker offsets', () => {
       content: '> \t12) [ ] Changed #keep\r\n',
     });
   });
+});
+
+describe('authored timed duration', () => {
+  const overflow = '- [ ] Task ⏰ 20:30 ⏱️ 99h 📅 2026-07-20';
+
+  it.each(['20:30', '21:00'])('normalizes even an idempotent explicit time edit to %s', (time) => {
+    expect(codec.applyLineEdit(overflow, { type: 'set-time', value: time })).toEqual({
+      type: 'changed',
+      content:
+        time === '20:30'
+          ? '- [ ] Task ⏰ 20:30 ⏱️ 3h30m 📅 2026-07-20'
+          : '- [ ] Task ⏰ 21:00 ⏱️ 3h 📅 2026-07-20',
+    });
+  });
+
+  it('normalizes duration against the existing time', () => {
+    expect(codec.applyLineEdit(overflow, { type: 'set-duration', value: 1200 })).toEqual({
+      type: 'changed',
+      content: '- [ ] Task ⏰ 20:30 ⏱️ 3h30m 📅 2026-07-20',
+    });
+  });
+
+  it('normalizes only the final correlated candidate regardless of edit order', () => {
+    for (const edits of [
+      [
+        { type: 'set-duration' as const, value: 600 },
+        { type: 'set-time' as const, value: '09:00' },
+      ],
+      [
+        { type: 'set-time' as const, value: '09:00' },
+        { type: 'set-duration' as const, value: 600 },
+      ],
+    ]) {
+      expect(codec.applyLineEdits(overflow, edits)).toEqual({
+        type: 'changed',
+        content: '- [ ] Task ⏰ 09:00 ⏱️ 10h 📅 2026-07-20',
+      });
+    }
+  });
+
+  it.each([
+    { type: 'set-title' as const, markdownTitle: 'Changed' },
+    { type: 'change-tags' as const, add: ['#tag'], remove: [] },
+    { type: 'set-date' as const, field: 'due' as const, value: '2026-07-21' },
+  ])('retains oversized source bytes during unrelated $type', (edit) => {
+    const result = codec.applyLineEdit(overflow, edit);
+    expect(result.type).toBe('changed');
+    if (result.type !== 'invalid') expect(result.content).toContain('⏰ 20:30 ⏱️ 99h');
+  });
+
+  it('clears time without reducing an untimed duration and clears duration without adding a default', () => {
+    expect(codec.applyLineEdit(overflow, { type: 'set-time', value: null })).toEqual({
+      type: 'changed',
+      content: '- [ ] Task ⏱️ 99h 📅 2026-07-20',
+    });
+    expect(codec.applyLineEdit(overflow, { type: 'set-duration', value: null })).toEqual({
+      type: 'changed',
+      content: '- [ ] Task ⏰ 20:30 📅 2026-07-20',
+    });
+    expect(codec.applyLineEdit('- [ ] Task', { type: 'set-duration', value: 5940 })).toEqual({
+      type: 'changed',
+      content: '- [ ] Task ⏱️ 99h',
+    });
+  });
+
+  it.each(['⏰ 20:30 ⏱️ 99h ⏱️ 1h', '⏰ 20:30 ⏰ 21:00 ⏱️ 99h'])(
+    'rejects an ambiguous or malformed normalized pair: %s',
+    (metadata) => {
+      expect(
+        codec.applyLineEdit(`- [ ] Task ${metadata}`, { type: 'set-time', value: '21:00' }).type,
+      ).toBe('invalid');
+    },
+  );
+
+  it('applies the invariant through patch, set-time-slot and move-time-slot commands', () => {
+    const commands = [
+      {
+        type: 'patch' as const,
+        target: { type: 'task' as const, ref },
+        patch: {
+          time: { type: 'set' as const, value: localTime('21:00') },
+          duration: { type: 'set' as const, value: durationMinutes(1200) },
+        },
+      },
+      {
+        type: 'set-time-slot' as const,
+        ref,
+        date: localDate('2026-07-20'),
+        time: localTime('21:00'),
+      },
+      { type: 'move-time-slot' as const, ref, days: 0, time: localTime('21:00') },
+    ];
+    for (const command of commands) {
+      expect(applyTaskCommand(codec, overflow, command)).toEqual({
+        type: 'changed',
+        content: '- [ ] Task ⏰ 21:00 ⏱️ 3h 📅 2026-07-20',
+      });
+    }
+  });
+});
+
+it('normalizes a fresh child time edit through the existing public patch contract', () => {
+  expect(
+    applyTaskCommand(codec, '  - [ ] Child ⏰ 20:30 ⏱️ 99h', {
+      type: 'patch',
+      target: {
+        type: 'subtask',
+        ref: {
+          parent: { type: 'task', ref },
+          relativeLine: 1,
+          originalBlock: '  - [ ] Child ⏰ 20:30 ⏱️ 99h',
+        },
+      },
+      patch: { time: { type: 'set', value: localTime('21:00') } },
+    }),
+  ).toEqual({ type: 'changed', content: '  - [ ] Child ⏰ 21:00 ⏱️ 3h' });
 });

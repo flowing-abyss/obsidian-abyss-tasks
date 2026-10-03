@@ -1,5 +1,6 @@
 import { formatDurationFromMinutes } from '../../parser/TaskParser';
 import {
+  clampDurationToDay,
   localTime,
   shiftLocalDate,
   durationMinutes as validatedDurationMinutes,
@@ -275,6 +276,23 @@ function timedPreviewText(startMinutes: number, durationMinutes: number): string
   )} (${formatDurationFromMinutes(durationMinutes)})`;
 }
 
+/** Match the final time-only command candidate while retaining the source snapshot. */
+function movedDuration(binding: TimedInteractionBinding, startMinutes: number): number {
+  return clampDurationToDay(
+    localTime(minutesToTimeString(startMinutes)),
+    binding.task.planning.duration ?? validatedDurationMinutes(60),
+  );
+}
+
+function applyTimedPreviewHeight(preview: HTMLElement, startMinutes: number, height: number): void {
+  const boundedHeight = Math.min(height, minutesToPixels(1440 - startMinutes));
+  preview.style.top = `${minutesToPixels(startMinutes)}px`;
+  preview.style.height = `${boundedHeight}px`;
+  const shell = preview.querySelector<HTMLElement>('.abyss-calendar-preview-shell');
+  if (shell != null)
+    shell.classList.toggle('is-height-constrained', boundedHeight < MIN_BLOCK_HEIGHT_PX);
+}
+
 function minimumPreviewHeight(source: HTMLElement): number {
   const inlineMinimum = Number.parseFloat(source.style.minHeight);
   return Number.isFinite(inlineMinimum) ? inlineMinimum : MIN_BLOCK_HEIGHT_PX;
@@ -339,6 +357,9 @@ function clearAllDayPreviewGeometry(preview: HTMLElement): void {
   preview.style.removeProperty('width');
   preview.style.removeProperty('top');
   preview.style.removeProperty('height');
+  preview
+    .querySelector<HTMLElement>('.abyss-calendar-preview-shell')
+    ?.classList.remove('is-height-constrained');
 }
 
 class TimedPreviewRenderer {
@@ -372,7 +393,7 @@ class TimedPreviewRenderer {
     if (host == null) return;
     const timeLabel =
       target.destination === 'time-grid'
-        ? timedPreviewText(target.startMinutes, this.binding.durationMinutes)
+        ? timedPreviewText(target.startMinutes, movedDuration(this.binding, target.startMinutes))
         : 'All day';
     const preview = this.replace({
       target,
@@ -392,8 +413,14 @@ class TimedPreviewRenderer {
   private applyTimedMoveGeometry(preview: HTMLElement, target: Readonly<TimedDragTarget>): void {
     preview.classList.remove('is-all-day');
     applyPreviewPacking(preview, this.binding, target, target.date);
-    preview.style.top = `${minutesToPixels(target.startMinutes)}px`;
-    preview.style.height = `${this.geometry.sourceRect.height}px`;
+    applyTimedPreviewHeight(
+      preview,
+      target.startMinutes,
+      Math.max(
+        minutesToPixels(movedDuration(this.binding, target.startMinutes)),
+        this.geometry.sourceRect.height,
+      ),
+    );
   }
 
   private renderDuration(target: Readonly<TimedVerticalResizeTarget>): void {
@@ -407,11 +434,11 @@ class TimedPreviewRenderer {
       ),
     });
     applyPreviewPacking(preview, this.binding, target, this.binding.segmentDate);
-    preview.style.top = `${minutesToPixels(target.startMinutes)}px`;
-    preview.style.height = `${Math.max(
-      minutesToPixels(target.durationMinutes),
-      minimumPreviewHeight(this.binding.source),
-    )}px`;
+    applyTimedPreviewHeight(
+      preview,
+      target.startMinutes,
+      Math.max(minutesToPixels(target.durationMinutes), minimumPreviewHeight(this.binding.source)),
+    );
     const host = this.geometry.originColumn.hour;
     if (preview.parentElement !== host) host.appendChild(preview);
   }
@@ -429,8 +456,7 @@ class TimedPreviewRenderer {
       ),
     });
     applyPreviewPacking(preview, this.binding, target, target.date);
-    preview.style.top = this.binding.source.style.top;
-    preview.style.height = `${this.geometry.sourceRect.height}px`;
+    applyTimedPreviewHeight(preview, this.binding.startMinutes, this.geometry.sourceRect.height);
     if (preview.parentElement !== column.hour) column.hour.appendChild(preview);
   }
 

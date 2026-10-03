@@ -352,14 +352,28 @@ function applyTimedBlockGeometry(
   layout: PositionedBlock,
   minHeightCap: number,
 ): void {
-  block.style.top = `${minutesToPixels(layout.startMinutes)}px`;
-  const heightPx = minutesToPixels(layout.durationMinutes);
-  block.style.height = `${heightPx}px`;
-  if (minHeightCap < MIN_BLOCK_HEIGHT_PX)
-    block.style.minHeight = `${Math.max(heightPx, minHeightCap)}px`;
+  applyTimedBlockVerticalGeometry(block, layout, minHeightCap);
   const widthPct = 100 / layout.columns;
   block.style.width = `${widthPct}%`;
   block.style.left = `${layout.column * widthPct}%`;
+}
+
+function applyTimedBlockVerticalGeometry(
+  block: HTMLElement,
+  layout: TimedBlockInput,
+  minHeightCap: number,
+): void {
+  block.style.top = `${minutesToPixels(layout.startMinutes)}px`;
+  const heightPx = minutesToPixels(layout.durationMinutes);
+  block.style.height = `${heightPx}px`;
+  const constrained = minHeightCap < MIN_BLOCK_HEIGHT_PX;
+  block.classList.toggle('is-height-constrained', constrained);
+  if (constrained) block.style.minHeight = `${Math.max(heightPx, minHeightCap)}px`;
+  else block.style.removeProperty('min-height');
+}
+
+function timedBlockLabel(layout: TimedBlockInput): string {
+  return `${minutesToTimeString(layout.startMinutes)}–${minutesToTimeString(layout.startMinutes + layout.durationMinutes)} (${formatDurationFromMinutes(layout.durationMinutes)})`;
 }
 
 function applyTimedBlockColor(block: HTMLElement, task: TaskSnapshot, tagGroups: TagGroup[]): void {
@@ -385,7 +399,7 @@ function renderTimedBlockContent(
   renderTimedContent(
     block,
     {
-      timeLabel: `${minutesToTimeString(layout.startMinutes)}–${minutesToTimeString(layout.startMinutes + layout.durationMinutes)} (${formatDurationFromMinutes(layout.durationMinutes)})`,
+      timeLabel: timedBlockLabel(layout),
       title: task.title,
       ...(task.recurrence != null && task.recurrence.length > 0 && { recurrence: task.recurrence }),
       actionable: occurrence.kind === 'materialized' && terminal,
@@ -683,8 +697,43 @@ function pointerDeltaMinutes(event: PointerEvent, startY: number): number {
   return snapMinutes(((event.clientY - startY) / minutesToPixels(60)) * 60, SNAP_MINUTES);
 }
 
+function applyCompatibilityPreview(
+  block: HTMLElement,
+  task: TaskSnapshot,
+  startMinutes: number,
+  durationMinutes: number,
+): void {
+  const { positioned, minHeightCaps } = layoutTimedDay([{ task, startMinutes, durationMinutes }]);
+  const layout = positioned[0];
+  if (layout === undefined) return;
+  applyTimedBlockVerticalGeometry(block, layout, minHeightCaps.get(layout) ?? Infinity);
+  const subtitle = block.querySelector<HTMLElement>('.abyss-tg-block-subtitle');
+  if (subtitle != null) subtitle.textContent = timedBlockLabel(layout);
+}
+
+function compatibilityGeometryRestorer(block: HTMLElement): () => void {
+  const geometry = {
+    top: block.style.top,
+    height: block.style.height,
+    minHeight: block.style.minHeight,
+  };
+  const constrained = block.classList.contains('is-height-constrained');
+  const subtitle = block.querySelector<HTMLElement>('.abyss-tg-block-subtitle');
+  const label = subtitle?.textContent ?? '';
+  return () => {
+    Object.assign(block.style, geometry);
+    block.classList.toggle('is-height-constrained', constrained);
+    if (subtitle != null) subtitle.textContent = label;
+  };
+}
+
+function compatibilityResizeDuration(start: number, duration: number, delta: number): number {
+  return Math.min(MAX_DURATION_MINUTES - start, Math.max(SNAP_MINUTES, duration + delta));
+}
+
 function attachDrag(input: LegacyDragInput): void {
   const { block, handle, initialStart, initialDuration, callbacks, task } = input;
+  const restoreGeometry = compatibilityGeometryRestorer(block);
   let mode: 'move' | 'resize' | null = null;
   let startY = 0;
   let startMinutes = initialStart;
@@ -701,13 +750,15 @@ function attachDrag(input: LegacyDragInput): void {
     const deltaMinutes = pointerDeltaMinutes(e, startY);
     if (mode === 'move') {
       const next = Math.min(MAX_START_MINUTES, Math.max(0, startMinutes + deltaMinutes));
-      block.style.top = `${minutesToPixels(next)}px`;
-    } else {
-      const next = Math.min(
-        MAX_DURATION_MINUTES,
-        Math.max(SNAP_MINUTES, startDuration + deltaMinutes),
+      applyCompatibilityPreview(
+        block,
+        task,
+        next,
+        task.planning.duration ?? DEFAULT_DURATION_MINUTES,
       );
-      block.style.height = `${minutesToPixels(next)}px`;
+    } else {
+      const next = compatibilityResizeDuration(startMinutes, startDuration, deltaMinutes);
+      applyCompatibilityPreview(block, task, startMinutes, next);
     }
   };
 
@@ -739,7 +790,7 @@ function attachDrag(input: LegacyDragInput): void {
     } else {
       callbacks.onDurationChange(
         task,
-        Math.min(MAX_DURATION_MINUTES, Math.max(SNAP_MINUTES, startDuration + deltaMinutes)),
+        compatibilityResizeDuration(startMinutes, startDuration, deltaMinutes),
       );
     }
     cleanup();
@@ -750,11 +801,7 @@ function attachDrag(input: LegacyDragInput): void {
   // never mutate source geometry and do not enter this branch.
   const onPointerCancel = (): void => {
     if (mode == null) return;
-    if (mode === 'move') {
-      block.style.top = `${minutesToPixels(startMinutes)}px`;
-    } else {
-      block.style.height = `${minutesToPixels(startDuration)}px`;
-    }
+    restoreGeometry();
     cleanup();
   };
 

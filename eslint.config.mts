@@ -423,6 +423,7 @@ export default defineConfig(
   {
     files: [
       'src/task-lists/todayTaskCategory.ts',
+      'src/tasks/domain/taskDuration.ts',
       'src/projects/projectGroupCollapse.ts',
       'src/projects/projectTableModel.ts',
       'src/projects/projectKanbanModel.ts',
