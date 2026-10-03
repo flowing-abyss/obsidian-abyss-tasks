@@ -423,6 +423,8 @@ export default defineConfig(
   {
     files: [
       'src/task-lists/todayTaskCategory.ts',
+      'src/tasks/domain/taskSearchTypes.ts',
+      'src/tasks/domain/taskSearchProjection.ts',
       'src/tasks/domain/taskDuration.ts',
       'src/tasks/domain/taskHierarchy.ts',
       'src/tasks/infrastructure/markdown/taskHierarchyTransfer.ts',

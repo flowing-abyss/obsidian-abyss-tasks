@@ -85,6 +85,7 @@ import {
   type PreparedMutation,
   type RetryPolicy,
 } from './taskRetryPolicy';
+import type { TaskReadProjectionApi } from './TaskSearchApi';
 import { TimeTrackingService } from './TimeTrackingService';
 
 function uniqueInOrder(values: readonly string[]): string[] {
@@ -460,7 +461,7 @@ function sameFilePath(left: string, right: string): boolean {
 }
 
 type TaskApplicationServiceDependencies = [
-  queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi,
+  queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi & TaskReadProjectionApi,
   repository: TaskRepository,
   statusCatalog: StatusCatalog,
   clock: Clock | LegacyClock,
@@ -479,7 +480,10 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   // service lifetime and is bounded so revision churn cannot retain an unbounded snapshot history.
   private readonly recentOutcomes_abyssPrivate = new Map<string, RecentOutcome>();
 
-  readonly queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
+  readonly queries: TaskQueryApi &
+    TaskDependencyQueryApi &
+    TimeTrackingQueryApi &
+    TaskReadProjectionApi;
   private readonly dependencies_abyssPrivate: TaskDependencyService;
   private readonly tracking_abyssPrivate: TimeTrackingService;
   private readonly diagnostics_abyssPrivate: TaskDiagnosticSink;

@@ -4,7 +4,12 @@ import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { localDate, type TaskCommand, type TaskSnapshot } from '../src/tasks';
+import {
+  localDate,
+  type TaskApplicationApi,
+  type TaskCommand,
+  type TaskSnapshot,
+} from '../src/tasks';
 import { presentTaskCommandResult } from '../src/ui/taskCommandResult';
 import {
   calendarMutationTarget,
@@ -21,6 +26,7 @@ import {
   expectDefined,
   flushMicrotasks,
   resolvedConfig,
+  taskQueryApi,
   useRealMoment,
 } from './helpers';
 import { setCalendarDate, setCalendarViewType } from './support/panelHarness';
@@ -73,7 +79,7 @@ async function harness(markdown: string) {
     occurrenceFor: calendarOccurrenceForRender,
     dependenciesFor: (task: TaskSnapshot) => {
       const target = calendarMutationTarget(task);
-      return target === undefined ? undefined : index.dependencies(target);
+      return target === undefined ? undefined : index.dependencySummary(target);
     },
     onToggle: async (task: TaskSnapshot) => {
       await send({
@@ -123,12 +129,12 @@ async function harness(markdown: string) {
 }
 
 type Harness = Awaited<ReturnType<typeof harness>>;
-function mountCenter(h: Harness): CenterPanel {
+function mountCenter(h: Harness, queries: TaskApplicationApi['queries'] = h.index): CenterPanel {
   const panel = new CenterPanel({
     state: h.state,
     app: h.app,
     settings: { ...DEFAULT_SETTINGS, inbox: { ...DEFAULT_SETTINGS.inbox, mode: 'untagged' } },
-    queries: h.index,
+    queries,
     statusRegistry: h.statusRegistry,
     projectStore: null,
     projectManager: null,
@@ -178,6 +184,28 @@ function physicalActivation(control: HTMLElement, type: 'pointer' | 'touch'): vo
 }
 
 describe('center dependency indicator DOM', () => {
+  it('constructs the first real card badge without list/listNodes or rich dependency reads', async () => {
+    const h = await harness('- [ ] Blocker 🆔 a\n- [ ] Current ⛔ a\n');
+    const roots = h.index.list();
+    const queries = taskQueryApi({ list: () => roots });
+    vi.spyOn(h.index, 'list').mockImplementation(() => {
+      throw new Error('full list');
+    });
+    vi.spyOn(h.index, 'listNodes').mockImplementation(() => {
+      throw new Error('full nodes');
+    });
+    vi.spyOn(h.index, 'dependencies').mockImplementation(() => {
+      throw new Error('rich dependencies');
+    });
+    mountCenter(h, queries);
+    const card = [...h.el.querySelectorAll('.abyss-task-card')].find(
+      (row) => row.querySelector('.abyss-task-title')?.textContent === 'Current',
+    );
+    expect(
+      expectDefined(card).querySelector('[data-dependency-count="blocked-by"]')?.textContent,
+    ).toBe('1');
+  });
+
   it.each([
     { suffix: '', dependent: '', counts: [], type: 'none' },
     { suffix: ' ⛔ a', dependent: '', counts: ['1'], type: 'blocked-by' },

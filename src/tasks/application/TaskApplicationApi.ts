@@ -5,6 +5,7 @@ import type {
   TaskNodeSnapshot,
 } from '../domain/taskDependencies';
 import type { TaskResolution } from '../domain/taskReconciliation';
+import type { TaskDependencySummary } from '../domain/taskSearchTypes';
 import type { TrackedEntry, TrackedTotal } from '../domain/timeTracking';
 import type {
   DateRange,
@@ -16,6 +17,7 @@ import type {
   TaskSnapshot,
   TaskStatus,
 } from '../domain/types';
+import type { TaskReadProjectionApi } from './TaskSearchApi';
 
 export interface TaskQuery {
   readonly filePath?: string;
@@ -60,7 +62,10 @@ export interface TimeTrackingQueryApi {
 }
 
 export interface TaskApplicationApi {
-  readonly queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
+  readonly queries: TaskQueryApi &
+    TaskDependencyQueryApi &
+    TimeTrackingQueryApi &
+    TaskReadProjectionApi;
   /** Includes atomic linked-child creation; presentation never sequences repository edits. */
   execute(command: TaskCommand): Promise<TaskCommandResult>;
   /** Freezes the archive destination (including its date) for one single- or multi-root action. */
@@ -81,6 +86,7 @@ export type TaskArchiveSession =
 export interface TaskDependencyQueryApi {
   listNodes(query?: TaskQuery): readonly TaskNodeSnapshot[];
   dependencies(target: TaskNodeRef): TaskDependencyProjection;
+  dependencySummary(target: TaskNodeRef): TaskDependencySummary;
   dependencyEligibility(
     blocker: TaskNodeRef,
     dependent: TaskNodeRef,

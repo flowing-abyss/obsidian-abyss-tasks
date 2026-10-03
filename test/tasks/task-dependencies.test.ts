@@ -31,6 +31,28 @@ function graph(tasks: readonly TaskSnapshot[]) {
 }
 
 describe('task dependency graph', () => {
+  it('same structural address with multiple revisions preserves standalone exact behavior', () => {
+    const blocker = root('blocker');
+    const original = task({
+      dependsOn: ['blocker'],
+      source: { filePath: 'same.md' },
+      ref: { revision: 'old' },
+    });
+    const revised = task({
+      dependsOn: [],
+      source: { filePath: 'same.md' },
+      ref: { revision: 'new' },
+    });
+    const model = graph([blocker, original, revised]);
+    expect(model.dependencies(target(original)).activeBlockedByCount).toBe(1);
+    expect(model.dependencies(target(revised)).activeBlockedByCount).toBe(0);
+    expect(model.eligibility(target(blocker), target(original))).toEqual({
+      type: 'rejected',
+      reason: 'duplicate',
+    });
+    expect(model.eligibility(target(blocker), target(revised))).toEqual({ type: 'allowed' });
+  });
+
   it('enumerates roots and nested nodes in source order with complete structural paths', () => {
     const a = root('a');
     const child = subtask({ title: 'child', ref: { parent: target(a), relativeLine: 2 } });

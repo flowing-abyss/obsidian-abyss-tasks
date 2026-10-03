@@ -6,6 +6,7 @@ import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import type { CalendarSettings, ResolvedConfig } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
+import { collectTaskNodeTags } from '../src/tags/taskTagCatalog';
 import type {
   SubtaskSnapshot,
   TaskApplicationApi,
@@ -20,10 +21,12 @@ import type {
 import type { TimeTrackingQueryApi } from '../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
 import type { TaskDiagnosticSink } from '../src/tasks/application/TaskDependencyService';
+import type { TaskReadProjectionApi } from '../src/tasks/application/TaskSearchApi';
 import { systemClock, type Clock } from '../src/tasks/domain/clock';
 import type { CommentTimestamp } from '../src/tasks/domain/commentTimestamp';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import { enumerateTaskNodes } from '../src/tasks/domain/taskDependencies';
+import { TaskSearchError } from '../src/tasks/domain/taskSearchTypes';
 import { localDate } from '../src/tasks/domain/validation';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
@@ -227,7 +230,10 @@ export function queryApiForTasks(
 }
 
 /** Every query capability a test double has to supply, matching `TaskApplicationApi.queries`. */
-export type TestTaskQueries = TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
+export type TestTaskQueries = TaskQueryApi &
+  TaskDependencyQueryApi &
+  TimeTrackingQueryApi &
+  TaskReadProjectionApi;
 
 /**
  * Real time tracking answers for a stub, projected from whatever tasks the stub currently lists.
@@ -256,7 +262,26 @@ function timeTrackingQueryApi(getTasks: () => readonly TaskSnapshot[]): TimeTrac
 
 export function taskQueryApi(overrides: Partial<TestTaskQueries> = {}): TestTaskQueries {
   const api: TestTaskQueries = {
-    listNodes: () => [],
+    listNodes: (query) => enumerateTaskNodes(api.list(query)),
+    observedTags: () => collectTaskNodeTags(api.listNodes()),
+    dependencySummary: (target) => {
+      const { activeBlockedByCount, activeBlocksCount } = api.dependencies(target);
+      return { activeBlockedByCount, activeBlocksCount };
+    },
+    async *organization(request, signal) {
+      if (signal.aborted) throw new TaskSearchError('aborted', 'Search cancelled');
+      if (api.listNodes().length > 0 || (request.roots?.length ?? 0) > 0)
+        throw new Error('Search reads require configuredTaskApplication');
+      if (request.expectedGeneration !== 0)
+        throw new TaskSearchError('stale', 'Task generation changed');
+      yield { generation: 0, items: [] };
+    },
+    resolveSearchPage: async (hits, signal) => {
+      if (signal.aborted) throw new TaskSearchError('aborted', 'Search cancelled');
+      if (hits.length > 0 || api.listNodes().length > 0)
+        throw new Error('Search reads require configuredTaskApplication');
+      return [];
+    },
     dependencies: () => ({
       blockedBy: [],
       blocks: [],

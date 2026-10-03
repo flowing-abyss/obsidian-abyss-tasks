@@ -112,10 +112,23 @@ function address(target: TaskNodeRef): string {
   return JSON.stringify([current.ref.filePath, current.ref.line, ...path]);
 }
 
-function revisionAddress(target: TaskNodeRef): string {
+type RevisionLookup<T> = Map<string, Map<string, T>>;
+function rootRevision(target: TaskNodeRef): string {
   let root = target;
   while (root.type === 'subtask') root = root.ref.parent;
-  return JSON.stringify([address(target), root.ref.revision]);
+  return root.ref.revision;
+}
+function revisionGet<T>(
+  lookup: ReadonlyMap<string, ReadonlyMap<string, T>>,
+  target: TaskNodeRef,
+): T | undefined {
+  return lookup.get(rootRevision(target))?.get(address(target));
+}
+function revisionSet<T>(lookup: RevisionLookup<T>, target: TaskNodeRef, value: T): void {
+  const revision = rootRevision(target);
+  const entries = lookup.get(revision) ?? new Map<string, T>();
+  entries.set(address(target), value);
+  lookup.set(revision, entries);
 }
 
 function reaches(
@@ -144,10 +157,10 @@ function isActive(
 }
 
 function exact(
-  byRevision: ReadonlyMap<string, TaskNodeSnapshot>,
+  byRevision: ReadonlyMap<string, ReadonlyMap<string, TaskNodeSnapshot>>,
   ref: TaskNodeRef,
 ): TaskNodeSnapshot | undefined {
-  const node = byRevision.get(revisionAddress(ref));
+  const node = revisionGet(byRevision, ref);
   return node !== undefined && sameTaskNodeRef(node.target, ref) ? node : undefined;
 }
 
@@ -196,7 +209,7 @@ function dependencyIndexes(
   input: readonly TaskNodeSnapshot[],
   without?: DependencyEdge,
 ): {
-  byRevision: ReadonlyMap<string, TaskNodeSnapshot>;
+  byRevision: ReadonlyMap<string, ReadonlyMap<string, TaskNodeSnapshot>>;
   addresses: ReadonlySet<string>;
   byId: ReadonlyMap<string, readonly TaskNodeSnapshot[]>;
   prerequisites: ReadonlyMap<TaskNodeSnapshot, readonly TaskNodeSnapshot[]>;
@@ -206,12 +219,9 @@ function dependencyIndexes(
   const prerequisites = new Map<TaskNodeSnapshot, TaskNodeSnapshot[]>();
   const dependents = new Map<TaskNodeSnapshot, TaskNodeSnapshot[]>();
 
-  const requested = new Map(input.map((node) => [revisionAddress(node.target), node.target]));
-  const nodes = enumerateTaskNodes([...new Set(input.map((node) => node.root))]).filter((node) => {
-    const ref = requested.get(revisionAddress(node.target));
-    return ref !== undefined && sameTaskNodeRef(ref, node.target);
-  });
-  const byRevision = new Map(nodes.map((node) => [revisionAddress(node.target), node]));
+  const nodes = input;
+  const byRevision: RevisionLookup<TaskNodeSnapshot> = new Map();
+  for (const node of nodes) revisionSet(byRevision, node.target, node);
   const addresses = new Set(nodes.map((node) => address(node.target)));
   for (const node of nodes) {
     const id = node.node.dependencyId;
@@ -240,7 +250,8 @@ function dependencyIndexes(
   return { byRevision, addresses, byId, prerequisites, dependents };
 }
 
-export function buildTaskDependencyGraph(
+/** Internal shared rules; borrowed results must stay behind the index's detached read boundary. */
+export function assembleTaskDependencyGraph(
   input: readonly TaskNodeSnapshot[],
   statusForSymbol: (symbol: string) => TaskStatus,
   without?: DependencyEdge,
@@ -270,14 +281,14 @@ export function buildTaskDependencyGraph(
                   ? 'active'
                   : 'satisfied',
             }));
-      return freeze({
+      return {
         blockedBy,
         blocks,
         activeBlockedByCount: blockedBy.filter(
           (row) => row.type !== 'unavailable' && row.state === 'active',
         ).length,
         activeBlocksCount: blocks.filter((row) => row.state === 'active').length,
-      });
+      };
     },
     eligibility(blockerRef: TaskNodeRef, dependentRef: TaskNodeRef): TaskDependencyEligibility {
       const blocker = exact(byRevision, blockerRef);
@@ -289,5 +300,24 @@ export function buildTaskDependencyGraph(
       if (blocker === dependent) return { type: 'rejected', reason: 'self' };
       return pairEligibility(byId, prerequisites, blocker, dependent);
     },
+  };
+}
+
+/** Defensive public builder; assembly itself also serves the index's private borrowed adapter. */
+export function buildTaskDependencyGraph(
+  input: readonly TaskNodeSnapshot[],
+  statusForSymbol: (symbol: string) => TaskStatus,
+  without?: DependencyEdge,
+): TaskDependencyGraph {
+  const requested: RevisionLookup<TaskNodeRef> = new Map();
+  for (const node of input) revisionSet(requested, node.target, node.target);
+  const nodes = enumerateTaskNodes([...new Set(input.map((node) => node.root))]).filter((node) => {
+    const ref = revisionGet(requested, node.target);
+    return ref !== undefined && sameTaskNodeRef(ref, node.target);
+  });
+  const graph = assembleTaskDependencyGraph(nodes, statusForSymbol, without);
+  return {
+    dependencies: (target) => freeze(graph.dependencies(target)),
+    eligibility: (blocker, dependent) => graph.eligibility(blocker, dependent),
   };
 }

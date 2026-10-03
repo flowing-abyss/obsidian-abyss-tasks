@@ -11,7 +11,6 @@ import {
   shiftLocalDate,
   subtreeRunning,
   type LocalDate,
-  type TaskNodeSnapshot,
   type TaskPriority,
   type TaskSnapshot,
 } from '../../tasks';
@@ -37,7 +36,7 @@ interface TaskMenusHost {
   openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void;
   addFilter(filter: PropertyFilter): void;
   tagCatalog(): {
-    readonly nodes: readonly TaskNodeSnapshot[];
+    readonly tags: readonly string[];
     readonly groups: readonly EffectiveTagGroup[];
   };
   tagColor(tag: string, groups: readonly EffectiveTagGroup[]): string | undefined;
@@ -369,7 +368,7 @@ export class TaskMenus {
       (tag) => this.#options.host.tagColor(tag, catalog.groups),
       currentTags,
       new Set(),
-      collectTaskTags(catalog.nodes, this.#options.settings, [...currentTags]),
+      collectTaskTags(catalog.tags, this.#options.settings, [...currentTags]),
       handleCommit,
       this.#options.interactionOwnership,
     ).open();
@@ -395,7 +394,7 @@ export class TaskMenus {
       (tag) => this.#options.host.tagColor(tag, catalog.groups),
       currentTags,
       partialTags,
-      collectTaskTags(catalog.nodes, this.#options.settings, [...currentTags, ...partialTags]),
+      collectTaskTags(catalog.tags, this.#options.settings, [...currentTags, ...partialTags]),
       handleBulkCommit,
       this.#options.interactionOwnership,
     ).open();

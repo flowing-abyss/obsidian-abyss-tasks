@@ -96,6 +96,24 @@ describe('task architecture ESLint boundaries', () => {
       },
     ],
     [
+      'src/tasks/domain/taskSearchProjection.ts',
+      "import '../application/TaskSearchApi';",
+      {
+        ruleId: 'no-restricted-imports',
+        message:
+          "'../application/TaskSearchApi' import is restricted from being used by a pattern. Task domain may import sibling domain modules and shared pure tag syntax.",
+      },
+    ],
+    [
+      'src/panels/center/TaskSearch.ts',
+      "import '../../tasks/application/TaskSearchSource';",
+      {
+        ruleId: 'no-restricted-imports',
+        message:
+          "'../../tasks/application/TaskSearchSource' import is restricted from being used by a pattern. Presentation imports task contracts only through src/tasks/index.ts.",
+      },
+    ],
+    [
       'src/tasks/domain/validation.ts',
       "import { Notice } from 'obsidian';",
       {
@@ -190,6 +208,8 @@ describe('task architecture ESLint boundaries', () => {
 // start is paid once for both suites. Their rule reads scopes, not types.
 const pureFiles = [
   'src/task-lists/todayTaskCategory.ts',
+  'src/tasks/domain/taskSearchTypes.ts',
+  'src/tasks/domain/taskSearchProjection.ts',
   'src/tasks/domain/taskDuration.ts',
   'src/tasks/domain/taskHierarchy.ts',
   'src/tasks/infrastructure/markdown/taskHierarchyTransfer.ts',

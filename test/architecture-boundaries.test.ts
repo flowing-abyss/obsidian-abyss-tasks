@@ -139,11 +139,9 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/right/InspectorPlanningSurfaces.ts',
   ],
   TaskQueryApi: ['src/main.ts'],
-  TaskDependencyQueryApi: [
-    'src/main.ts',
-    'src/panels/right/InspectorPlanningSurfaces.ts',
-    'src/panels/right/InspectorDependencies.ts',
-  ],
+  TaskDependencyQueryApi: ['src/main.ts', 'src/panels/right/InspectorDependencies.ts'],
+  TaskReadProjectionApi: ['src/panels/right/InspectorPlanningSurfaces.ts'],
+  TaskDependencySummary: ['src/ui/taskDependencyPresentation.ts'],
   TaskDependencyEligibility: ['src/ui/dependencySearch.ts'],
   TaskDependencyProjection: ['src/panels/right/InspectorDependencies.ts'],
   TaskDependencyRelation: ['src/panels/right/InspectorDependencies.ts'],
@@ -254,14 +252,13 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
   'TaskQueryApi.subscribeReconciled': 'src/projects/ProjectStore.ts',
   'TaskDependencyQueryApi.listNodes': [
     'src/panels/right/InspectorDependencies.ts',
-    'src/panels/right/InspectorPlanningSurfaces.ts',
     'src/panels/left/TagNavigation.ts',
   ],
   'TaskDependencyQueryApi.dependencies': [
     'src/panels/RightPanel.ts',
-    'src/panels/CenterPanel.ts',
     'src/panels/right/InspectorDependencies.ts',
   ],
+  'TaskDependencyQueryApi.dependencySummary': 'src/panels/CenterPanel.ts',
   'TaskDependencyQueryApi.dependencyEligibility': 'src/panels/right/InspectorDependencies.ts',
 };
 

@@ -10,7 +10,6 @@ import {
   tagMatchesGroup,
   type EffectiveTagGroup,
 } from '../tags/effectiveTagGroups';
-import { collectTaskNodeTags } from '../tags/taskTagCatalog';
 import { selectTaskList } from '../task-lists/TaskListSelector';
 import { outgoingTaskLinkValues, type TaskLinkValues } from '../task-lists/taskLinkValues';
 import {
@@ -20,7 +19,6 @@ import {
   type TaskApplicationApi,
   type TaskCaptureApplicationApi,
   type TaskCommandResult,
-  type TaskNodeSnapshot,
   type TaskQueryApi,
   type TaskRef,
   type TaskSnapshot,
@@ -1082,7 +1080,9 @@ export class CenterPanel {
 
   private readonly dependenciesFor_abyssPrivate: TaskDependencyLookup = (task) => {
     const target = calendarMutationTarget(task);
-    return target === undefined ? undefined : this.tasks_abyssPrivate?.queries.dependencies(target);
+    return target === undefined
+      ? undefined
+      : this.tasks_abyssPrivate?.queries.dependencySummary(target);
   };
 
   /**
@@ -1510,13 +1510,13 @@ export class CenterPanel {
   }
 
   private taskTagCatalog_abyssPrivate(): {
-    readonly nodes: readonly TaskNodeSnapshot[];
+    readonly tags: readonly string[];
     readonly groups: readonly EffectiveTagGroup[];
   } {
-    const nodes = this.tasks_abyssPrivate?.queries.listNodes() ?? [];
+    const tags = this.tasks_abyssPrivate?.queries.observedTags() ?? [];
     return {
-      nodes,
-      groups: resolveEffectiveTagGroups(this.settings_abyssPrivate, collectTaskNodeTags(nodes)),
+      tags,
+      groups: resolveEffectiveTagGroups(this.settings_abyssPrivate, tags),
     };
   }
 

@@ -246,7 +246,7 @@ function makeCenter(
   const createElement = methodOf(ownerDocument, 'createElement');
   const el = createElement.call(ownerDocument, 'div');
   panel.mount(el);
-  return { el, state, tm, execute, panel };
+  return { el, state, tm, execute, panel, queries };
 }
 
 function changedTaskResult(
@@ -375,6 +375,40 @@ describe('CenterPanel drag source', () => {
     const endEv = new MouseEvent('dragend', { bubbles: true });
     card.dispatchEvent(endEv);
     expect(state.get('draggingTaskNode')).toBeNull();
+  });
+});
+
+describe('detached tag catalog menus', () => {
+  it('opens the real tag menu without list/listNodes using observed strings and configured tags', () => {
+    const items = captureMenu();
+    const t = task({ tags: ['#task/inbox'] });
+    const { el, panel, queries } = makeCenter([t], {}, ['#configured']);
+    vi.spyOn(queries, 'observedTags').mockReturnValue(['#child', '#third']);
+    vi.spyOn(queries, 'list').mockImplementation(() => {
+      throw new Error('full list');
+    });
+    vi.spyOn(queries, 'listNodes').mockImplementation(() => {
+      throw new Error('full nodes');
+    });
+    const opened: TagPickerModal[] = [];
+    vi.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
+      if (!(this instanceof TagPickerModal)) throw new Error('expected tag picker');
+      opened.push(this);
+      this.onOpen();
+    });
+    try {
+      openMenu(expectDefined(el.querySelector<HTMLElement>('.abyss-task-card')));
+      items.find((item) => item.title__ === 'Set tag…')?.onClick__?.(new MouseEvent('click'));
+      const modal = expectDefined(opened[0]);
+      expect(
+        [...modal.contentEl.querySelectorAll('[data-tag]')].map((button) =>
+          button.getAttribute('data-tag'),
+        ),
+      ).toEqual(expect.arrayContaining(['#child', '#third', '#configured']));
+    } finally {
+      for (const modal of opened) modal.onClose();
+      panel.destroy();
+    }
   });
 });
 

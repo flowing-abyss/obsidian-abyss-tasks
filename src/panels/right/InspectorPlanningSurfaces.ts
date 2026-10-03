@@ -6,7 +6,7 @@ import type { CalendarSettings } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import { colorForTag } from '../../tags/tagColor';
 import { collectTaskTags } from '../../tags/taskTagCatalog';
-import type { TaskDependencyQueryApi } from '../../tasks';
+import type { TaskReadProjectionApi } from '../../tasks';
 import {
   localDate,
   sameTaskNodeRef,
@@ -93,7 +93,7 @@ interface InspectorPlanningSurfacesOptions {
   readonly app: App;
   readonly settings: CalendarSettings | undefined;
   readonly statusRegistry: StatusRegistry;
-  readonly queries: Pick<TaskDependencyQueryApi, 'listNodes'> | undefined;
+  readonly queries: Pick<TaskReadProjectionApi, 'observedTags'> | undefined;
   readonly interactionOwnership: InteractionOwnershipPort;
   readonly timeTracking: TrackingSurface | undefined;
   readonly host: InspectorPlanningHost;
@@ -1105,7 +1105,7 @@ export class InspectorPlanningSurfaces {
     const surface = showTagDropdown(
       container,
       collectTaskTags(
-        this.#queries?.listNodes() ?? [],
+        this.#queries?.observedTags() ?? [],
         this.#settings ?? DEFAULT_SETTINGS,
         task.tags,
       ),

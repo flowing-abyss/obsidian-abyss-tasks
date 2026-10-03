@@ -36,6 +36,10 @@ async function opened() {
   const queries: TaskApplicationApi['queries'] = {
     list: h.index.list.bind(h.index),
     listNodes: h.index.listNodes.bind(h.index),
+    dependencySummary: h.index.dependencySummary.bind(h.index),
+    observedTags: h.index.observedTags.bind(h.index),
+    organization: h.index.organization.bind(h.index),
+    resolveSearchPage: h.index.resolveSearchPage.bind(h.index),
     forCalendarProjection: h.index.forCalendarProjection.bind(h.index),
     dependencies: h.index.dependencies.bind(h.index),
     dependencyEligibility: h.index.dependencyEligibility.bind(h.index),

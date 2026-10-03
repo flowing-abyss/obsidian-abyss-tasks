@@ -17,11 +17,20 @@ import type {
   TaskQueryApi,
   TimeTrackingQueryApi,
 } from '../application/TaskApplicationApi';
+import type { TaskReadProjectionApi } from '../application/TaskSearchApi';
+import type {
+  TaskSearchDocument,
+  TaskSearchFileVersion,
+  TaskSearchSource,
+  TaskSearchSourceEvent,
+  TaskSearchSourceNode,
+  TaskSearchSourceState,
+} from '../application/TaskSearchSource';
 import { cloneTaskSnapshot, taskSnapshotWithStatuses } from '../domain/cloneTaskSnapshot';
 import type { TaskResolutionCandidate } from '../domain/commands';
 import type { StatusCatalog } from '../domain/StatusCatalog';
 import {
-  buildTaskDependencyGraph,
+  assembleTaskDependencyGraph,
   enumerateTaskNodes,
   type TaskDependencyEligibility,
   type TaskDependencyGraph,
@@ -38,6 +47,22 @@ import {
   type TaskResolution,
   type VisualEvidence,
 } from '../domain/taskReconciliation';
+import {
+  nodeAtSearchAddress,
+  observedTaskTags,
+  taskOrganizationRecord,
+  taskTreeNodes,
+} from '../domain/taskSearchProjection';
+import {
+  TaskSearchError,
+  type TaskDependencySummary,
+  type TaskOrganizationBatch,
+  type TaskOrganizationRecord,
+  type TaskOrganizationRequest,
+  type TaskSearchAddress,
+  type TaskSearchHit,
+  type TaskSearchHydratedHit,
+} from '../domain/taskSearchTypes';
 import type { OffsetAt } from '../domain/timeEntry';
 import type { TrackedEntry, TrackedTotal } from '../domain/timeTracking';
 import {
@@ -66,6 +91,7 @@ import {
 import { TimeEntryIndex } from './TimeEntryIndex';
 
 export interface TaskIndexOptions {
+  readonly readYield?: (signal: AbortSignal) => Promise<void>;
   readonly statusCatalog: StatusCatalog;
   readonly refAuthority?: TaskRefAuthority;
   readonly excludeSource?: (source: TaskSourceMetadata) => boolean;
@@ -81,6 +107,64 @@ export interface TaskSourceMetadata {
   readonly filePath: string;
   readonly tags: readonly string[];
   readonly frontmatter: Readonly<Record<string, unknown>>;
+}
+
+/** Use the host random source already used by TaskRefAuthority, including mobile runtimes. */
+function searchEpoch(): string {
+  const values = new Uint32Array(4);
+  window.crypto.getRandomValues(values);
+  return [...values].map((value) => value.toString(36)).join('-');
+}
+
+/** Raw own-node fields; link syntax remains in those fields and links has no separate projection yet. */
+function sourceTaskSearchDocument(
+  coordinate: TaskSearchSourceNode,
+  node: TaskNodeSnapshot['node'],
+  catalog: StatusCatalog,
+): TaskSearchDocument {
+  return {
+    ...coordinate,
+    title: node.markdownTitle,
+    description: node.description ?? '',
+    comments: node.comments.map((comment) => comment.text).join('\n'),
+    tags: node.tags.join(' '),
+    metadata: [
+      catalog.statusForSymbol(node.statusSymbol),
+      catalog.ruleForSymbol(node.statusSymbol)?.id,
+      node.priority,
+      node.planning.created,
+      node.planning.start,
+      node.planning.scheduled,
+      node.planning.due,
+      node.planning.completion,
+      node.planning.cancelled,
+      node.planning.time,
+      node.recurrence,
+      node.dependencyId,
+      ...node.dependsOn,
+    ].join(' '),
+    links: '',
+    sourcePath: coordinate.order.filePath,
+  };
+}
+
+function immutableSearchEvent(event: TaskSearchSourceEvent): TaskSearchSourceEvent {
+  if (event.type === 'files')
+    return Object.freeze({
+      ...event,
+      files: Object.freeze(event.files.map((file) => Object.freeze({ ...file }))),
+    });
+  if (event.type === 'state')
+    return Object.freeze({ ...event, state: Object.freeze({ ...event.state }) });
+  return Object.freeze({ ...event });
+}
+
+function freezeDetached<T>(value: T): T {
+  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) freezeDetached(child);
+    Object.freeze(value);
+  }
+  return value;
 }
 
 const deviceOffsetAt: OffsetAt = (epochMs) => -new Date(epochMs).getTimezoneOffset();
@@ -885,8 +969,25 @@ function activeRecurringSources(
 }
 
 export class TaskIndex
-  implements TaskQueryApi, TaskDependencyQueryApi, TimeTrackingQueryApi, TaskSnapshotState
+  implements
+    TaskQueryApi,
+    TaskDependencyQueryApi,
+    TimeTrackingQueryApi,
+    TaskSnapshotState,
+    TaskReadProjectionApi
 {
+  private readonly searchEpoch_abyssPrivate = searchEpoch();
+  private searchGeneration_abyssPrivate = 0;
+  private nextSearchId_abyssPrivate = 1;
+  private searchFailure_abyssPrivate: { readonly cause: unknown } | undefined;
+  private readonly searchListeners_abyssPrivate = new Set<(event: TaskSearchSourceEvent) => void>();
+  private readonly searchFiles_abyssPrivate = new Map<string, number>();
+  private readonly searchTags_abyssPrivate = new Map<string, readonly string[]>();
+  private readonly searchIdsByFile_abyssPrivate = new Map<string, number[]>();
+  private readonly searchCoordinates_abyssPrivate = new Map<
+    number,
+    TaskSearchSourceNode & { readonly version: number }
+  >();
   private readonly taskMap_abyssPrivate = new Map<string, readonly TaskSnapshot[]>();
   private readonly timeEntryIndex_abyssPrivate = new TimeEntryIndex();
   private readonly calendarDateIndex_abyssPrivate = new TaskDateIndex<CalendarTaskSource>(
@@ -933,6 +1034,10 @@ export class TaskIndex
   setStatusCatalog(statusCatalog: StatusCatalog): void {
     this.statusCatalog_abyssPrivate = statusCatalog;
     this.dependencyGraph_abyssPrivate = undefined;
+    this.publishSearch_abyssPrivate({
+      type: 'semantics',
+      generation: ++this.searchGeneration_abyssPrivate,
+    });
   }
 
   async refreshSourceExclusion(excludeSource: TaskIndexOptions['excludeSource']): Promise<void> {
@@ -950,7 +1055,13 @@ export class TaskIndex
   async initialize(): Promise<void> {
     if (this.initialized_abyssPrivate || this.destroyed_abyssPrivate) return;
     this.initialization_abyssPrivate ??= this.performInitialization_abyssPrivate();
-    await this.initialization_abyssPrivate;
+    try {
+      await this.initialization_abyssPrivate;
+    } catch (cause) {
+      this.searchFailure_abyssPrivate = { cause };
+      this.publishSearch_abyssPrivate({ type: 'state', state: this.searchState_abyssPrivate() });
+      throw cause;
+    }
   }
 
   private async performInitialization_abyssPrivate(): Promise<void> {
@@ -972,7 +1083,330 @@ export class TaskIndex
     await this.drainPendingReads_abyssPrivate();
     if (this.destroyed_abyssPrivate) return;
     this.initialized_abyssPrivate = true;
+    this.publishSearch_abyssPrivate({ type: 'state', state: this.searchState_abyssPrivate() });
     this.publish_abyssPrivate({ type: 'initialized' });
+  }
+
+  searchSource(): TaskSearchSource {
+    return {
+      subscribe: (listener) => {
+        this.searchListeners_abyssPrivate.add(listener);
+        return {
+          state: this.searchState_abyssPrivate(),
+          unsubscribe: () => {
+            this.searchListeners_abyssPrivate.delete(listener);
+          },
+        };
+      },
+      files: () => {
+        this.checkSearchReady_abyssPrivate();
+        return [...this.searchFiles_abyssPrivate]
+          .map(([path, version]) => ({ path, version }))
+          .sort((a, b) => a.path.localeCompare(b.path));
+      },
+      nodes: (file) => this.searchNodes_abyssPrivate(file),
+      documents: (file) => this.searchDocuments_abyssPrivate(file),
+      address: (id) => this.searchAddress_abyssPrivate(id),
+    };
+  }
+
+  observedTags(): readonly string[] {
+    return observedTaskTags(
+      [...this.searchTags_abyssPrivate.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .flatMap(([, tags]) => tags),
+    );
+  }
+
+  private searchState_abyssPrivate(): TaskSearchSourceState {
+    const generation = this.searchGeneration_abyssPrivate;
+    if (this.destroyed_abyssPrivate) return { type: 'disposed', generation };
+    if (this.searchFailure_abyssPrivate !== undefined)
+      return { type: 'failed', generation, cause: this.searchFailure_abyssPrivate.cause };
+    return { type: this.initialized_abyssPrivate ? 'ready' : 'initializing', generation };
+  }
+
+  private publishSearch_abyssPrivate(event: TaskSearchSourceEvent): void {
+    const detached = immutableSearchEvent(event);
+    for (const listener of [...this.searchListeners_abyssPrivate]) {
+      try {
+        listener(detached);
+      } catch {
+        console.error('[abyss-tasks] task search source listener failed', {
+          phase: 'source-publication',
+          backend: 'canonical',
+          generation: this.searchGeneration_abyssPrivate,
+          pathCount: event.type === 'files' ? event.files.length : 0,
+        });
+      }
+    }
+  }
+
+  private checkSearchReady_abyssPrivate(signal?: AbortSignal): void {
+    if (signal?.aborted === true) throw new TaskSearchError('aborted', 'Search cancelled');
+    const state = this.searchState_abyssPrivate();
+    if (state.type === 'disposed') throw new TaskSearchError('disposed', 'Task index disposed');
+    if (state.type !== 'ready') throw new TaskSearchError('unavailable', 'Task index unavailable');
+  }
+
+  private async awaitSearchReady_abyssPrivate(signal: AbortSignal): Promise<void> {
+    if (this.searchState_abyssPrivate().type === 'initializing' && !signal.aborted) {
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = (): void => {
+          this.searchListeners_abyssPrivate.delete(listener);
+          signal.removeEventListener('abort', abort);
+        };
+        const abort = (): void => {
+          cleanup();
+          reject(new TaskSearchError('aborted', 'Search cancelled'));
+        };
+        const listener = (): void => {
+          if (this.searchState_abyssPrivate().type === 'initializing') return;
+          cleanup();
+          resolve();
+        };
+        this.searchListeners_abyssPrivate.add(listener);
+        signal.addEventListener('abort', abort, { once: true });
+      });
+    }
+    this.checkSearchReady_abyssPrivate(signal);
+  }
+
+  private checkSearchFile_abyssPrivate(file: TaskSearchFileVersion): void {
+    this.checkSearchReady_abyssPrivate();
+    if (this.searchFiles_abyssPrivate.get(file.path) !== file.version)
+      throw new TaskSearchError('stale', 'Task file changed');
+  }
+
+  private *searchNodes_abyssPrivate(file: TaskSearchFileVersion): Iterable<TaskSearchSourceNode> {
+    this.checkSearchFile_abyssPrivate(file);
+    // A prefix is shared across partial/overlapping iterators; only the next requested node allocates.
+    const ids = this.searchIdsByFile_abyssPrivate.get(file.path) ?? [];
+    this.searchIdsByFile_abyssPrivate.set(file.path, ids);
+    let offset = 0;
+    for (const root of this.taskMap_abyssPrivate.get(file.path) ?? []) {
+      const rootId = ids[offset] ?? this.nextSearchId_abyssPrivate;
+      for (const task of taskTreeNodes(root)) {
+        this.checkSearchFile_abyssPrivate(file);
+        let id = ids[offset++];
+        if (id === undefined) {
+          id = this.nextSearchId_abyssPrivate++;
+          this.searchCoordinates_abyssPrivate.set(id, {
+            id,
+            rootId,
+            version: file.version,
+            order: {
+              filePath: file.path,
+              line: root.source.line,
+              childLines: task.path.map((child) => child.ref.relativeLine),
+            },
+          });
+          ids.push(id);
+        }
+        const coordinate = this.searchCoordinates_abyssPrivate.get(id);
+        if (coordinate === undefined) throw new TaskSearchError('stale', 'Task changed');
+        yield {
+          id,
+          rootId: coordinate.rootId,
+          order: { ...coordinate.order, childLines: [...coordinate.order.childLines] },
+        };
+      }
+    }
+    this.checkSearchFile_abyssPrivate(file);
+  }
+
+  private searchAddress_abyssPrivate(id: number): TaskSearchAddress | undefined {
+    if (this.destroyed_abyssPrivate) return undefined;
+    const coordinate = this.searchCoordinates_abyssPrivate.get(id);
+    if (
+      coordinate === undefined ||
+      this.searchFiles_abyssPrivate.get(coordinate.order.filePath) !== coordinate.version
+    )
+      return undefined;
+    return {
+      epoch: this.searchEpoch_abyssPrivate,
+      version: coordinate.version,
+      rootId: coordinate.rootId,
+      childLines: [...coordinate.order.childLines],
+    };
+  }
+
+  private currentSearchRoot_abyssPrivate(address: TaskSearchAddress): TaskSnapshot | undefined {
+    if (address.epoch !== this.searchEpoch_abyssPrivate) return undefined;
+    const root = this.searchCoordinates_abyssPrivate.get(address.rootId);
+    if (
+      root === undefined ||
+      root.rootId !== root.id ||
+      root.order.childLines.length !== 0 ||
+      root.version !== address.version ||
+      this.searchFiles_abyssPrivate.get(root.order.filePath) !== address.version
+    )
+      return undefined;
+    return this.taskMap_abyssPrivate
+      .get(root.order.filePath)
+      ?.find((task) => task.source.line === root.order.line);
+  }
+
+  private *searchDocuments_abyssPrivate(file: TaskSearchFileVersion): Iterable<TaskSearchDocument> {
+    for (const coordinate of this.searchNodes_abyssPrivate(file)) {
+      this.checkSearchFile_abyssPrivate(file);
+      const address = this.searchAddress_abyssPrivate(coordinate.id);
+      const root = address === undefined ? undefined : this.currentSearchRoot_abyssPrivate(address);
+      if (root === undefined || address === undefined)
+        throw new TaskSearchError('stale', 'Task changed');
+      const { node } = nodeAtSearchAddress(root, address);
+      yield sourceTaskSearchDocument(coordinate, node, this.statusCatalog_abyssPrivate);
+    }
+    this.checkSearchFile_abyssPrivate(file);
+  }
+
+  async resolveSearchPage(
+    hits: readonly TaskSearchHit[],
+    signal: AbortSignal,
+  ): Promise<readonly TaskSearchHydratedHit[]> {
+    await this.awaitSearchReady_abyssPrivate(signal);
+    if (hits.length > 200 || new Set(hits.map((hit) => hit.address.rootId)).size > 50)
+      throw new TaskSearchError('invalid-request', 'Search page too large');
+    const roots = new Map<number, TaskSnapshot>();
+    const output: TaskSearchHydratedHit[] = [];
+    for (const hit of hits) {
+      this.checkSearchReady_abyssPrivate(signal);
+      const canonical = this.currentSearchRoot_abyssPrivate(hit.address);
+      if (canonical === undefined) throw new TaskSearchError('stale', 'Task changed');
+      let detached = roots.get(hit.address.rootId);
+      if (detached === undefined) {
+        detached = taskSnapshotWithStatuses(canonical, (symbol) =>
+          this.statusCatalog_abyssPrivate.statusForSymbol(symbol),
+        );
+        roots.set(hit.address.rootId, detached);
+      }
+      output.push({
+        hit: {
+          score: hit.score,
+          address: { ...hit.address, childLines: [...hit.address.childLines] },
+        },
+        task: nodeAtSearchAddress(detached, hit.address),
+      });
+    }
+    return output;
+  }
+
+  private checkSearchGeneration_abyssPrivate(generation: number, signal: AbortSignal): void {
+    this.checkSearchReady_abyssPrivate(signal);
+    if (generation !== this.searchGeneration_abyssPrivate)
+      throw new TaskSearchError('stale', 'Task generation changed');
+  }
+
+  private *allOrganizationAddresses_abyssPrivate(
+    filePath: string | undefined,
+  ): Iterable<TaskSearchAddress> {
+    for (const file of this.searchSource().files()) {
+      if (filePath !== undefined && file.path !== filePath) continue;
+      for (const node of this.searchNodes_abyssPrivate(file)) {
+        if (node.id !== node.rootId) continue;
+        yield {
+          epoch: this.searchEpoch_abyssPrivate,
+          version: file.version,
+          rootId: node.id,
+          childLines: [],
+        };
+      }
+    }
+  }
+
+  private *organizationAddresses_abyssPrivate(
+    request: TaskOrganizationRequest,
+  ): Iterable<TaskSearchAddress> {
+    if (request.roots === undefined) {
+      yield* this.allOrganizationAddresses_abyssPrivate(request.filePath);
+      return;
+    }
+    const seen = new Set<number>();
+    for (const address of request.roots) {
+      if (address.childLines.length !== 0)
+        throw new TaskSearchError('invalid-request', 'Expected root address');
+      const root = this.currentSearchRoot_abyssPrivate(address);
+      if (root === undefined) throw new TaskSearchError('stale', 'Task changed');
+      if (seen.has(address.rootId)) continue;
+      seen.add(address.rootId);
+      if (request.filePath === undefined || root.source.filePath === request.filePath)
+        yield address;
+    }
+  }
+
+  async *organization(
+    request: TaskOrganizationRequest,
+    signal: AbortSignal,
+  ): AsyncIterable<TaskOrganizationBatch> {
+    await this.awaitSearchReady_abyssPrivate(signal);
+    const generation = request.expectedGeneration;
+    this.checkSearchGeneration_abyssPrivate(generation, signal);
+    let items: TaskOrganizationRecord[] = [];
+    let emitted = false;
+    for (const address of this.organizationAddresses_abyssPrivate(request)) {
+      this.checkSearchGeneration_abyssPrivate(generation, signal);
+      const root = this.currentSearchRoot_abyssPrivate(address);
+      if (root === undefined) throw new TaskSearchError('stale', 'Task changed');
+      items.push(
+        taskOrganizationRecord(
+          root,
+          address,
+          this.statusCatalog_abyssPrivate.statusForSymbol(root.statusSymbol),
+        ),
+      );
+      if (items.length < 200) continue;
+      this.checkSearchGeneration_abyssPrivate(generation, signal);
+      yield { generation, items };
+      emitted = true;
+      items = [];
+      await (this.options_abyssPrivate.readYield?.(signal) ??
+        new Promise<void>((resolve) => window.setTimeout(resolve, 0)));
+      this.checkSearchGeneration_abyssPrivate(generation, signal);
+    }
+    this.checkSearchGeneration_abyssPrivate(generation, signal);
+    if (items.length > 0 || !emitted) yield { generation, items };
+    this.checkSearchGeneration_abyssPrivate(generation, signal);
+  }
+
+  private updateSearchFile_abyssPrivate(path: string, tasks: readonly TaskSnapshot[]): void {
+    for (const id of this.searchIdsByFile_abyssPrivate.get(path) ?? [])
+      this.searchCoordinates_abyssPrivate.delete(id);
+    this.searchIdsByFile_abyssPrivate.delete(path);
+    const generation = ++this.searchGeneration_abyssPrivate;
+    const version = tasks.length > 0 ? generation : null;
+    if (version === null) {
+      this.searchFiles_abyssPrivate.delete(path);
+      this.searchTags_abyssPrivate.delete(path);
+    } else {
+      this.searchFiles_abyssPrivate.set(path, version);
+      this.searchTags_abyssPrivate.set(
+        path,
+        observedTaskTags(
+          tasks.flatMap((root) => [...taskTreeNodes(root)].flatMap(({ node }) => node.tags)),
+        ),
+      );
+    }
+    this.publishSearch_abyssPrivate({ type: 'files', generation, files: [{ path, version }] });
+  }
+
+  private borrowedDependencyNodes_abyssPrivate(): readonly TaskNodeSnapshot[] {
+    return [...this.taskMap_abyssPrivate.values()]
+      .flat()
+      .sort(stableTaskOrder)
+      .flatMap((root) => [...taskTreeNodes(root)])
+      .map((task) => ({
+        ...task,
+        node: {
+          ...task.node,
+          status: this.statusCatalog_abyssPrivate.statusForSymbol(task.node.statusSymbol),
+        },
+      }));
+  }
+
+  dependencySummary(target: TaskNodeRef): TaskDependencySummary {
+    const { activeBlockedByCount, activeBlocksCount } =
+      this.currentDependencyGraph_abyssPrivate().dependencies(target);
+    return { activeBlockedByCount, activeBlocksCount };
   }
 
   list(query?: TaskQuery): readonly TaskSnapshot[] {
@@ -991,7 +1425,32 @@ export class TaskIndex
   }
 
   dependencies(target: TaskNodeRef): TaskDependencyProjection {
-    return this.currentDependencyGraph_abyssPrivate().dependencies(target);
+    const projection = this.currentDependencyGraph_abyssPrivate().dependencies(target);
+    const roots = new Map<TaskSnapshot, TaskSnapshot>();
+    const detach = (task: TaskNodeSnapshot): TaskNodeSnapshot => {
+      let root = roots.get(task.root);
+      if (root === undefined) {
+        root = taskSnapshotWithStatuses(task.root, (symbol) =>
+          this.statusCatalog_abyssPrivate.statusForSymbol(symbol),
+        );
+        roots.set(task.root, root);
+      }
+      return nodeAtSearchAddress(root, {
+        epoch: '',
+        version: 0,
+        rootId: 0,
+        childLines: task.path.map((child) => child.ref.relativeLine),
+      });
+    };
+    return freezeDetached({
+      ...projection,
+      blockedBy: projection.blockedBy.map((row) => {
+        if (row.type === 'resolved') return { ...row, task: detach(row.task) };
+        if (row.type === 'ambiguous') return { ...row, candidates: row.candidates.map(detach) };
+        return { ...row };
+      }),
+      blocks: projection.blocks.map((row) => ({ ...row, task: detach(row.task) })),
+    });
   }
 
   dependencyEligibility(
@@ -1001,11 +1460,11 @@ export class TaskIndex
   ): TaskDependencyEligibility {
     if (options === undefined)
       return this.currentDependencyGraph_abyssPrivate().eligibility(blocker, dependent);
-    const nodes = this.listNodes();
+    const nodes = this.borrowedDependencyNodes_abyssPrivate();
     const status = (symbol: string): ReturnType<StatusCatalog['statusForSymbol']> =>
       this.statusCatalog_abyssPrivate.statusForSymbol(symbol);
     const original = options.without;
-    const relation = buildTaskDependencyGraph(nodes, status)
+    const relation = assembleTaskDependencyGraph(nodes, status)
       .dependencies(original.dependent)
       .blockedBy.find((row) => row.dependencyId === original.dependencyId);
     if (
@@ -1015,12 +1474,13 @@ export class TaskIndex
       !sameTaskNodeRef(dependent, original.blocker)
     )
       return { type: 'rejected', reason: 'unavailable' };
-    return buildTaskDependencyGraph(nodes, status, original).eligibility(blocker, dependent);
+    return assembleTaskDependencyGraph(nodes, status, original).eligibility(blocker, dependent);
   }
 
   private currentDependencyGraph_abyssPrivate(): TaskDependencyGraph {
-    this.dependencyGraph_abyssPrivate ??= buildTaskDependencyGraph(this.listNodes(), (symbol) =>
-      this.statusCatalog_abyssPrivate.statusForSymbol(symbol),
+    this.dependencyGraph_abyssPrivate ??= assembleTaskDependencyGraph(
+      this.borrowedDependencyNodes_abyssPrivate(),
+      (symbol) => this.statusCatalog_abyssPrivate.statusForSymbol(symbol),
     );
     return this.dependencyGraph_abyssPrivate;
   }
@@ -1111,6 +1571,12 @@ export class TaskIndex
   destroy(): void {
     if (this.destroyed_abyssPrivate) return;
     this.destroyed_abyssPrivate = true;
+    this.publishSearch_abyssPrivate({ type: 'state', state: this.searchState_abyssPrivate() });
+    this.searchListeners_abyssPrivate.clear();
+    this.searchFiles_abyssPrivate.clear();
+    this.searchTags_abyssPrivate.clear();
+    this.searchCoordinates_abyssPrivate.clear();
+    this.searchIdsByFile_abyssPrivate.clear();
     for (const ref of this.metadataCacheRefs_abyssPrivate)
       this.app_abyssPrivate.metadataCache.offref(ref);
     for (const ref of this.vaultRefs_abyssPrivate) this.app_abyssPrivate.vault.offref(ref);
@@ -1482,6 +1948,7 @@ export class TaskIndex
     this.dependencyGraph_abyssPrivate = undefined;
     if (tasks.length > 0) this.taskMap_abyssPrivate.set(filePath, tasks);
     else this.taskMap_abyssPrivate.delete(filePath);
+    this.updateSearchFile_abyssPrivate(filePath, tasks);
     const sources = calendarSources(tasks);
     this.calendarDateIndex_abyssPrivate.updateFile(filePath, sources);
     this.timeEntryIndex_abyssPrivate.updateFile(filePath, tasks);
@@ -1666,6 +2133,8 @@ export class TaskIndex
   }
 
   private removeFile_abyssPrivate(filePath: string): void {
+    if (this.searchFiles_abyssPrivate.has(filePath))
+      this.updateSearchFile_abyssPrivate(filePath, []);
     this.dependencyGraph_abyssPrivate = undefined;
     this.taskMap_abyssPrivate.delete(filePath);
     this.calendarDateIndex_abyssPrivate.updateFile(filePath, []);

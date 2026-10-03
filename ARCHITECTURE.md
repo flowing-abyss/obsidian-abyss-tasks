@@ -60,7 +60,7 @@ capabilities instead of constructing alternate task repositories or indexes.
 | [Presentation](src/panels/)                      | Composes views and interactions over public task capabilities; owns no task Markdown writer                                                                               |
 
 The public capabilities are `TaskQueryApi`, `TaskDependencyQueryApi`, `TimeTrackingQueryApi`,
-`TaskApplicationApi`, and `TaskCaptureApplicationApi`. The application exposes all three query
+`TaskReadProjectionApi`, `TaskApplicationApi`, and `TaskCaptureApplicationApi`. The application exposes all four query
 capabilities through `queries`. Add public exports only for a real consumer. Domain and application
 code cannot import Obsidian or presentation; infrastructure cannot import UI.
 
@@ -128,6 +128,35 @@ Root timing retries require faithful source projections; opaque or ambiguous tim
 rather than treating an invalid authored time as absent.
 Subtask projections do not expose duration, so a subtask time-edit retry requires an unchanged
 original block; concurrent edits within that block require a fresh user action.
+
+### Canonical read projections
+
+`TaskIndex` owns a disposable private search-source port over its accepted task store. It publishes
+initializing, ready, failed and disposed states, accepted file changes and status-semantic changes.
+Global publication generations protect organization streams; exact handles use a session epoch,
+accepted file version, numeric root ID and child-relative-line path. The compact directory retains
+only coordinates and versions, never a second source block or serialized task reference. IDs are
+never reused within the index lifetime and accepted replacement removes the file's old handles.
+Unrelated file updates preserve exact handles for unchanged files.
+
+The source allocates compact handles one node per iterator step, reusing prefixes across partial
+and overlapping iterators without extracting text. It projects each node's own Markdown,
+comments, tags and scalar metadata when documents are requested. Link syntax currently remains in
+those own text fields; the separate `links` field is empty. This boundary does not resolve outgoing
+links. Organization emits detached root scalars, tree tags and tracked totals in batches of at most
+200, checking its requested generation before traversal, each yield and completion. Its read-yield
+hook cooperates between slices. Presentation still resolves outgoing grouping links through
+`taskLinkValues` and evaluates open timer totals at its explicit instant.
+
+Exact hydration accepts at most 200 occurrences and 50 distinct roots, validates every address,
+detaches each requested canonical root once and reconstructs ordinary root/subtask refs against that
+page's detached trees. It never invokes proof-rebasing `resolve` or guesses child positions. Invalid
+bounds, stale authority, cancellation and unavailable lifecycle states have typed outcomes; no
+Notice belongs to this read boundary. Existing list, resolve and command contracts remain intact.
+
+Observed tag strings are maintained per accepted file. Card/status badges use dependency counts
+without hydrating relation trees; tag menus and inspector tag suggestions consume those detached
+strings with the existing configured/selected tag policy. These reads introduce no persisted data.
 
 ### Creation, transfer, and tags
 
@@ -228,6 +257,11 @@ views through the settings coordinator.
 
 Tasks-compatible `🆔` and `⛔` Markdown carriers store dependencies. The index derives relations
 from persisted roots and subtasks, excluding recurrence forecasts, without rewriting declarations.
+The standalone graph defensively detaches and freezes its input; the index privately borrows
+canonical nodes with current status scalars and uses the same graph assembly and reverse-edge
+rules. Rich queries detach each requested neighbor root once and freeze only their detached result.
+Graph exact-reference maps key first by the existing revision string, then by the small structural
+address, preserving multiple revisions without serializing source-bearing revisions into new keys.
 
 [`TaskDependencyService`](src/tasks/application/TaskDependencyService.ts) owns dependency commands,
 linked subtask creation, and completion checks against the live status catalog. Query eligibility
