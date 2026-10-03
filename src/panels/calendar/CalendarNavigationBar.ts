@@ -1,5 +1,6 @@
 import { setIcon } from 'obsidian';
 import { openAnchoredPopover, type AnchoredPopover } from '../../ui/anchoredPopover';
+import { isRealmHTMLElement } from '../../ui/domRealm';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import { calendarTitle, type CalendarMoment } from './calendarDateNavigation';
 import type { CalViewType } from './calendarViewType';
@@ -53,6 +54,24 @@ export class CalendarNavigationBar {
   mount(parent: HTMLElement): void {
     const { callbacks } = this.options_abyssPrivate;
     const nav = parent.createDiv({ cls: 'abyss-cal-nav' });
+    nav.addEventListener('focusin', (event) => {
+      const target = event.target;
+      if (
+        !isRealmHTMLElement(target) ||
+        !nav.isConnected ||
+        !target.isConnected ||
+        !nav.contains(target) ||
+        nav.clientWidth <= 0 ||
+        nav.scrollWidth <= nav.clientWidth
+      )
+        return;
+      const bounds = nav.getBoundingClientRect();
+      const left = bounds.left + nav.clientLeft;
+      const right = left + nav.clientWidth;
+      const control = target.getBoundingClientRect();
+      if (control.left < left) nav.scrollLeft += control.left - left;
+      else if (control.right > right) nav.scrollLeft += control.right - right;
+    });
     const left = nav.createDiv({ cls: 'abyss-cal-nav-left' });
     const prevButton = left.createEl('button', {
       cls: 'abyss-cal-nav-btn',

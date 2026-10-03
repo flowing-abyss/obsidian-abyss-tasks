@@ -129,6 +129,93 @@ describe('CalendarNavigationBar callbacks', () => {
   });
 });
 
+describe('CalendarNavigationBar focus visibility', () => {
+  function geometry(nav: HTMLElement, control: HTMLElement, left: number, right: number): void {
+    Object.defineProperties(nav, {
+      clientLeft: { configurable: true, value: 2 },
+      clientWidth: { configurable: true, value: 200 },
+      scrollWidth: { configurable: true, value: 320 },
+    });
+    vi.spyOn(nav, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 20, 204, 40));
+    vi.spyOn(control, 'getBoundingClientRect').mockReturnValue(
+      new DOMRect(left, 24, right - left, 32),
+    );
+  }
+
+  it.each([
+    { edge: 'right', left: 280, right: 340, start: 0, width: 200, extent: 320, want: 38 },
+    { edge: 'left', left: 80, right: 120, start: 100, width: 200, extent: 320, want: 78 },
+    { edge: 'visible', left: 140, right: 180, start: 40, width: 200, extent: 320, want: 40 },
+    { edge: 'no overflow', left: 280, right: 340, start: 0, width: 200, extent: 200, want: 0 },
+    { edge: 'zero width', left: 280, right: 340, start: 0, width: 0, extent: 320, want: 0 },
+  ])(
+    'reveals $edge focus only within the toolbar strip',
+    ({ left, right, start, width, extent, want }) => {
+      const h = harness();
+      const nav = h.button('.abyss-cal-nav');
+      const control = h.button('.abyss-cal-view-btn:last-child');
+      geometry(nav, control, left, right);
+      Object.defineProperties(nav, {
+        clientWidth: { value: width },
+        scrollWidth: { value: extent },
+      });
+      nav.scrollLeft = start;
+      nav.scrollTop = 13;
+      h.owner.scrollLeft = 17;
+      h.owner.scrollTop = 29;
+
+      control.focus({ preventScroll: true });
+
+      expect(document.activeElement).toBe(control);
+      expect(nav.scrollLeft).toBe(want);
+      expect(nav.scrollTop).toBe(13);
+      expect(h.owner.scrollLeft).toBe(17);
+      expect(h.owner.scrollTop).toBe(29);
+    },
+  );
+
+  it('reveals the restored view button while focusView protects ancestor scroll', () => {
+    const h = harness();
+    const nav = h.button('.abyss-cal-nav');
+    const month = h.button('.abyss-cal-view-btn:last-child');
+    geometry(nav, month, 280, 340);
+    h.owner.scrollTop = 29;
+
+    expect(h.bar.focusView('month')).toBe(true);
+
+    expect(document.activeElement).toBe(month);
+    expect(nav.scrollLeft).toBe(38);
+    expect(h.owner.scrollTop).toBe(29);
+  });
+
+  it.each(['month', 'year'])(
+    'keeps %s picker focus outside the strip and reveals its returning anchor',
+    (kind) => {
+      const h = harness();
+      const nav = h.button('.abyss-cal-nav');
+      const anchor = h.button(`.abyss-cal-nav-${kind}`);
+      geometry(nav, anchor, 80, 120);
+      nav.scrollLeft = 100;
+
+      anchor.click();
+
+      const option = h.button(`.abyss-${kind}-picker-btn.is-active`);
+      expect(document.activeElement).toBe(option);
+      expect(nav.contains(option)).toBe(false);
+      expect(nav.scrollLeft).toBe(100);
+      vi.spyOn(option, 'getBoundingClientRect').mockReturnValue(new DOMRect(400, 24, 40, 32));
+      option.blur();
+      option.focus({ preventScroll: true });
+      expect(nav.scrollLeft).toBe(100);
+
+      h.bar.closePicker(true);
+
+      expect(document.activeElement).toBe(anchor);
+      expect(nav.scrollLeft).toBe(78);
+    },
+  );
+});
+
 describe('CalendarNavigationBar pickers', () => {
   it('opens the month picker with the current month active and reports a selection', () => {
     const h = harness('month', moment('2026-09-23'));
