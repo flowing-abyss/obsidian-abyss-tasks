@@ -39,6 +39,7 @@ const privateOwners = new Set([
   'AnchoredRecurrenceEditorController',
   'LeftPanel',
   'TaskIndex',
+  'MiniSearchTaskEngine',
   'TaskApplicationService',
   'TimeTrackingService',
   'TrackingTicker',

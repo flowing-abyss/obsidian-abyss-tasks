@@ -1,5 +1,6 @@
 import { inlineCodeRanges, type SourceRange } from './inlineCode';
 import { noteNameOfPath, withoutMarkdownExtension } from './noteName';
+import type { SearchLinkSpan, SearchTextValue } from './searchTextTypes';
 
 // Link regexes shared across parsing and collapsing.
 const WIKILINK_RE = /\[\[([^[\]]+)\]\]/gu;
@@ -57,6 +58,7 @@ interface LinkMatch {
   readonly token: LinkToken | undefined;
   readonly titleLabel: string | undefined;
   readonly reference?: LinkToken;
+  readonly search: SearchLinkSpan;
 }
 
 /**
@@ -163,6 +165,7 @@ function pushWikiMatches(
       continue;
     }
     matches.push({
+      search: wikiSearchSpan(match),
       from: match.index,
       to: match.index + match[0].length,
       ...(match[1] === '!' && {
@@ -194,6 +197,12 @@ function pushMarkdownMatches(
     if (text === '' && !match[0].startsWith('!')) continue;
     const target = match[2] ?? '';
     matches.push({
+      search: markdownSearchSpan(
+        { from: match.index, to: match.index + match[0].length },
+        text,
+        target,
+        match[0].startsWith('!'),
+      ),
       from: match.index,
       to: match.index + match[0].length,
       reference: markdownToken(
@@ -226,6 +235,72 @@ function linkMatches(input: string, sourceReferences = false): LinkMatch[] {
     : /!?\[((?:[^\\[\]]|\\[^])+)\]\(((?:[^\\)]|\\[^])+)\)|(\\[\\[!])/gu;
   pushMarkdownMatches(matches, input, inlineCode, markdown);
   return nonOverlappingMatches(matches);
+}
+
+/** Value-only search view of the same scan that owns editable occurrences. */
+export function searchLinkSpans(source: string): readonly SearchLinkSpan[] {
+  return linkMatches(source).map((match) => match.search);
+}
+
+function sourceValue(text: string, from: number): SearchTextValue {
+  return {
+    text,
+    map:
+      text === ''
+        ? []
+        : [{ visible: { from: 0, to: text.length }, source: [{ from, to: from + text.length }] }],
+  };
+}
+function wikiSearchSpan(match: RegExpExecArray): SearchLinkSpan {
+  const content = match[2] ?? '',
+    from = match.index,
+    length = match[0].length;
+  const embed = match[1] === '!';
+  const contentStart = from + (embed ? 3 : 2);
+  const { target, alias } = readWikiContent(content);
+  const targetStart = contentStart + content.indexOf(target);
+  const destination = sourceValue(target, targetStart);
+  let label: SearchTextValue;
+  if (alias !== undefined && (alias !== '' || !embed)) {
+    const pipe = content.indexOf('|');
+    label = sourceValue(alias, contentStart + pipe + 1 + content.slice(pipe + 1).indexOf(alias));
+  } else {
+    const [path, subpath] = splitSubpath(target);
+    const name = noteNameOfPath(path);
+    const basenameStart = path.lastIndexOf('/') + 1;
+    const nameValue = sourceValue(name, targetStart + basenameStart);
+    const subpathValue = sourceValue(subpath, targetStart + path.length);
+    label = {
+      text: name + subpath,
+      map: [
+        ...nameValue.map,
+        ...subpathValue.map.map((run) => ({
+          ...run,
+          visible: { from: run.visible.from + name.length, to: run.visible.to + name.length },
+        })),
+      ],
+    };
+  }
+  return {
+    source: { from, to: from + length },
+    kind: embed ? 'embed' : 'wiki',
+    label,
+    destination,
+  };
+}
+function markdownSearchSpan(
+  source: SourceRange,
+  text: string,
+  target: string,
+  embed: boolean,
+): SearchLinkSpan {
+  const labelStart = source.from + (embed ? 2 : 1);
+  return {
+    source,
+    kind: embed ? 'embed' : 'markdown',
+    label: sourceValue(text, labelStart),
+    destination: sourceValue(target, labelStart + text.length + 2),
+  };
 }
 
 /** Keep editable source tokens in their original document order and offsets. */

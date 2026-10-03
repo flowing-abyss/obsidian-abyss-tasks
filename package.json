@@ -52,7 +52,7 @@
     ]
   },
   "release": {
-    "mainJsBudgetBytes": 1227776,
+    "mainJsBudgetBytes": 1233920,
     "stylesCssBudgetBytes": 181248
   },
   "keywords": [
@@ -73,9 +73,11 @@
     "pnpm": ">=12"
   },
   "dependencies": {
+    "minisearch": "7.2.0",
     "rrule": "2.8.1"
   },
   "devDependencies": {
+    "@colbymchenry/codegraph": "1.6.1",
     "@commitlint/cli": "21.2.3",
     "@commitlint/config-conventional": "21.2.3",
     "@commitlint/types": "21.2.3",
@@ -112,7 +114,6 @@
     "stylelint-declaration-block-no-ignored-properties": "3.0.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.71.0",
-    "vitest": "5.0.3",
-    "@colbymchenry/codegraph": "1.6.1"
+    "vitest": "5.0.3"
   }
 }

@@ -145,9 +145,13 @@ Unrelated file updates preserve exact handles for unchanged files.
 The source allocates compact handles one node per iterator step, reusing prefixes across partial
 and overlapping iterators without extracting text. Document projection uses the current borrowed
 node during that same walk, avoiding repeated root and sibling searches. It projects each node's own
-Markdown, comments, tags and scalar metadata when documents are requested. Link syntax currently remains in
-those own text fields; the separate `links` field is empty. This boundary does not resolve outgoing
-links. Organization emits detached root scalars, tree tags and tracked totals in batches of at most
+Markdown, comments, tags and scalar metadata when documents are requested. The infrastructure
+`taskSearchDocuments` adapter consumes shared `markdown/searchText` visible projections for each
+field and separately indexes authored link destinations. Comments are projected independently
+before joining for retrieval. Metadata contains canonical planning, duration, priority, recurrence
+and dependency values; status rules and checkbox markers are excluded. Status-catalog changes
+advance semantic generation and organization/counts without changing text documents. This boundary
+does not resolve outgoing links. Organization emits detached root scalars, tree tags and tracked totals in batches of at most
 200, checking its requested generation before traversal, each yield and completion. Its read-yield
 hook cooperates between slices. Presentation still resolves outgoing grouping links through
 `taskLinkValues` and evaluates open timer totals at its explicit instant.
@@ -161,6 +165,35 @@ Notice belongs to this read boundary. Existing list, resolve and command contrac
 Observed tag strings are maintained per accepted file. Card/status badges use dependency counts
 without hydrating relation trees; tag menus and inspector tag suggestions consume those detached
 strings with the existing configured/selected tag policy. These reads introduce no persisted data.
+
+### Inward full-text matching
+
+`TaskSearchEngine` is an inward application port implemented by one pinned MiniSearch 7.2.0
+instance. The disposable engine indexes own-node fields once with no stored fields; its companion
+maps retain numeric IDs, root IDs, file membership and source order only. Exact refs remain with
+TaskIndex. Root matching requires all distinct query tokens across fields and descendants; node
+matching restricts coverage to that node's title, tags and optionally source path. Root relevance
+combines the strongest node with a capped contribution from the rest, discounts children and
+orders exact title coverage before typo alternatives. File preference breaks nonempty relevance
+ties; blank browse uses it before stable source order. Replacements discard prior file handles;
+explicit vacuum releases stale postings. These contracts have no public barrel or UI consumer yet.
+
+The pure `searchMatchPolicy` owns NFC/lowercase normalization, code-point edit limits, exact short
+swaps, final-token prefixes and UTF-16 match ranges. Word segmentation is injected, with a
+Unicode/CJK fallback. Queries are bounded before segmentation; punctuation-only queries are not
+match-all. MiniSearch measures edits in UTF-16 units, so normal retrieval allows at most twice the
+semantic budget and its derived-term `boostDocument` hook rejects out-of-policy words before
+scoring or coverage. Swap branches remain exact. This retains MiniSearch ranking and a linear
+number of query branches, without a second index or corpus scanner. Only this engine file may
+import MiniSearch; other infrastructure package imports remain restricted.
+
+Shared `markdown/searchText` owns visible text and original-field provenance. It consumes the
+existing link scanner's value-only search spans and inline-code ranges, preserving editable link
+occurrence numbering. Balanced delimiters and punctuation escapes share one projection pass;
+code contents and compact embed labels retain their own policy. Prose excludes recognized HTML
+scaffolding. Visible aliases and destinations have separate UTF-16 source maps; removed markup
+creates gaps, and no generated attachment decoration becomes searchable authored text. The helper
+imports no task layer and grants no write authority.
 
 ### Creation, transfer, and tags
 

@@ -214,12 +214,13 @@ describe('canonical search source', () => {
       subscription.unsubscribe();
     },
   );
-  it('status semantics without note write invalidates generation and updates vocabulary', async () => {
+  it('status semantics invalidates generation without changing text documents', async () => {
     const index = await openedIndex('- [ ] Blocker 🆔 a\n- [ ] Dependent ⛔ a');
     const source = index.searchSource();
     const events: TaskSearchSourceEvent[] = [];
     const before = source.subscribe((event) => events.push(event)).state.generation;
     const file = expectDefined(source.files()[0]);
+    const documentsBefore = [...source.documents(file)];
     const target = expectDefined(index.listNodes()[1]).target;
     expect(index.dependencySummary(target).activeBlockedByCount).toBe(1);
     index.setStatusCatalog(
@@ -227,7 +228,15 @@ describe('canonical search source', () => {
     );
     expect(source.files()).toEqual([file]);
     expect(events).toEqual([{ type: 'semantics', generation: before + 1 }]);
-    expect([...source.documents(file)][0]?.metadata).toContain('done closed-space');
+    expect([...source.documents(file)]).toEqual(documentsBefore);
+    expect([...source.documents(file)][0]?.metadata).not.toContain('closed-space');
+    const batches = [];
+    for await (const batch of index.organization({ expectedGeneration: before + 1 }, signal()))
+      batches.push(batch);
+    expect(batches.flatMap((batch) => batch.items.map((item) => item.status))).toEqual([
+      'done',
+      'done',
+    ]);
     expect(index.dependencySummary(target).activeBlockedByCount).toBe(0);
     await expect(
       index.organization({ expectedGeneration: before }, signal())[Symbol.asyncIterator]().next(),

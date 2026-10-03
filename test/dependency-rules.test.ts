@@ -31,6 +31,9 @@ it('rejects each task boundary by its stable rule name', async () => {
     'markdown-imports-no-task-layer',
     'task-application-depends-inward',
     'task-domain-is-pure',
+    'task-domain-is-pure',
+    'task-infrastructure-depends-inward',
+    'task-infrastructure-depends-inward',
     'task-infrastructure-depends-inward',
     'task-presentation-uses-public-entry',
     'task-presentation-uses-public-entry',
@@ -44,10 +47,13 @@ it('rejects each task boundary by its stable rule name', async () => {
     'markdown-imports-no-task-layer:src/markdown/invalid-task-layer.ts->src/tasks/domain/value.ts',
     'task-application-depends-inward:src/tasks/application/invalid-outward.ts->src/tasks/infrastructure/valid.ts',
     'task-domain-is-pure:src/tasks/domain/invalid-external.ts->src/settings/value.ts',
+    'task-domain-is-pure:src/tasks/domain/invalid-markdown.ts->src/markdown/valid.ts',
     'task-infrastructure-depends-inward:src/tasks/infrastructure/invalid-outward.ts->src/settings/value.ts',
+    'task-infrastructure-depends-inward:src/tasks/infrastructure/invalid-package.ts->../../../node_modules/.pnpm/minisearch@7.2.0/node_modules/minisearch/dist/umd/index.js',
+    'task-infrastructure-depends-inward:src/tasks/infrastructure/search/invalid-package.ts->../../../node_modules/.pnpm/rrule@2.8.1/node_modules/rrule/dist/es5/rrule.js',
     'task-presentation-uses-public-entry:src/panels/invalid-deep-dynamic.ts->src/tasks/domain/value.ts',
     'task-presentation-uses-public-entry:src/panels/invalid-deep-type.ts->src/tasks/domain/value.ts',
   ]);
-  expect(graph.summary.error).toBe(7);
+  expect(graph.summary.error).toBe(10);
   expect(graph.summary.warn).toBe(0);
 });

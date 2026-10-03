@@ -47,12 +47,31 @@ module.exports = {
       name: 'task-infrastructure-depends-inward',
       comment: 'Task infrastructure may depend only on inward task layers, Markdown, and Obsidian.',
       severity: 'error',
-      from: { path: '^src/tasks/infrastructure/' },
+      from: {
+        path: '^src/tasks/infrastructure/',
+        pathNot: '^src/tasks/infrastructure/search/MiniSearchTaskEngine[.]ts$',
+      },
       to: {
         pathNot: [
           '^src/tasks/(?:infrastructure|application|domain)/',
           '^src/markdown/',
           '^obsidian$',
+        ],
+      },
+    },
+    {
+      name: 'task-search-engine-depends-inward',
+      comment: 'Only the disposable search engine may acquire the pinned MiniSearch index.',
+      severity: 'error',
+      from: { path: '^src/tasks/infrastructure/search/MiniSearchTaskEngine[.]ts$' },
+      to: {
+        pathNot: [
+          '^src/tasks/(?:infrastructure|application|domain)/',
+          '^src/markdown/',
+          '^obsidian$',
+          '^minisearch$',
+          '^(?:[.][.]/)*node_modules/minisearch/',
+          '^(?:[.][.]/)*node_modules/[.]pnpm/minisearch@',
         ],
       },
     },

@@ -82,6 +82,7 @@ import {
 import { TaskLocator } from './markdown/TaskLocator';
 import { TaskMarkdownCodec } from './markdown/TaskMarkdownCodec';
 import { projectTaskSnapshot } from './markdown/TaskSnapshotProjector';
+import { taskSearchDocument } from './search/taskSearchDocuments';
 import { calendarDatesForPlanning, calendarRangeForPlanning, TaskDateIndex } from './TaskDateIndex';
 import {
   type RootRevisionOverride,
@@ -114,38 +115,6 @@ function searchEpoch(): string {
   const values = new Uint32Array(4);
   window.crypto.getRandomValues(values);
   return [...values].map((value) => value.toString(36)).join('-');
-}
-
-/** Raw own-node fields; link syntax remains in those fields and links has no separate projection yet. */
-function sourceTaskSearchDocument(
-  coordinate: TaskSearchSourceNode,
-  node: TaskNodeSnapshot['node'],
-  catalog: StatusCatalog,
-): TaskSearchDocument {
-  return {
-    ...coordinate,
-    title: node.markdownTitle,
-    description: node.description ?? '',
-    comments: node.comments.map((comment) => comment.text).join('\n'),
-    tags: node.tags.join(' '),
-    metadata: [
-      catalog.statusForSymbol(node.statusSymbol),
-      catalog.ruleForSymbol(node.statusSymbol)?.id,
-      node.priority,
-      node.planning.created,
-      node.planning.start,
-      node.planning.scheduled,
-      node.planning.due,
-      node.planning.completion,
-      node.planning.cancelled,
-      node.planning.time,
-      node.recurrence,
-      node.dependencyId,
-      ...node.dependsOn,
-    ].join(' '),
-    links: '',
-    sourcePath: coordinate.order.filePath,
-  };
 }
 
 function immutableSearchEvent(event: TaskSearchSourceEvent): TaskSearchSourceEvent {
@@ -1258,7 +1227,7 @@ export class TaskIndex
 
   private *searchDocuments_abyssPrivate(file: TaskSearchFileVersion): Iterable<TaskSearchDocument> {
     yield* this.projectSearchNodes_abyssPrivate(file, (coordinate, node) =>
-      sourceTaskSearchDocument(coordinate, node, this.statusCatalog_abyssPrivate),
+      taskSearchDocument(coordinate, node),
     );
   }
 

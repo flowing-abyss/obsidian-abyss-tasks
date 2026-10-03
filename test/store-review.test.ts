@@ -39,8 +39,11 @@ describe('README', () => {
   });
 
   // Every runtime package is bundled into main.js, so a new one needs its own notice decision.
-  it('bundles rrule as the only runtime package', () => {
-    expect(Object.keys(readManifest('package.json').dependencies ?? {})).toEqual(['rrule']);
+  it('keeps the reviewed runtime package inventory exact', () => {
+    expect(Object.keys(readManifest('package.json').dependencies ?? {})).toEqual([
+      'minisearch',
+      'rrule',
+    ]);
   });
 });
 
