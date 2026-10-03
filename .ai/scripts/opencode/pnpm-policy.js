@@ -1,19 +1,23 @@
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // This file lives under `.ai/scripts/opencode/` and is symlinked into
-// `.opencode/plugins/`. Walk up from its real (symlink-resolved) location to
-// find the `.ai` root, so this keeps working no matter how deep it's nested.
+// `.opencode/plugins/` (hard-linked on Windows). Loaders can report either
+// the source or mirrored path, so walk up to `.ai` or an ancestor containing it.
 const hooksDir = path.join(findAiRoot(fileURLToPath(import.meta.url)), 'hooks');
 
 function findAiRoot(fromPath) {
   let dir = path.dirname(fromPath);
 
   while (path.basename(dir) !== '.ai') {
+    if (existsSync(path.join(dir, '.ai'))) {
+      return path.join(dir, '.ai');
+    }
     const parent = path.dirname(dir);
     if (parent === dir) {
-      throw new Error(`Could not find an ".ai" ancestor directory above ${fromPath}`);
+      throw new Error(`Could not find an ".ai" directory at or above ${fromPath}`);
     }
     dir = parent;
   }

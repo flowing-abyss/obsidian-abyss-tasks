@@ -31,3 +31,20 @@ jobs:
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
       - run: pnpm run ci
+
+  commit-messages:
+    name: Commit messages
+    # The commit-msg hook already cleans agent attribution out of local
+    # commits; this catches the ones that skipped it (--no-verify, commits
+    # made through the GitHub API) before they can be merged.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check for agent attribution
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node .ai/hooks/strip-agent-attribution.mjs --check "$BASE_SHA..$HEAD_SHA"

@@ -8,6 +8,17 @@
 // artifacts. A stale ledger misread as current progress makes controllers
 // skip whole task sequences — plan-scoping removes that failure structurally.
 //
+// Basename slugs collide when two plans share a filename (docs/alpha/plan.md
+// vs docs/beta/plan.md), so each workspace records its owning plan's path in
+// a plan-path marker (repo-relative in-repo, absolute outside — plans under
+// the gitignored docs/ of the main checkout are outside a worktree). A
+// workspace owned by a different plan is skipped and the slug disambiguated
+// with the plan's parent-directory name, then a counter. A workspace with no
+// marker predates the marker scheme and is adopted for the current plan so
+// in-flight workspaces keep resolving — which means the first collision on
+// such a legacy workspace adopts instead of detecting; acceptable,
+// marker-less workspaces age out as plans finish.
+//
 // The workspace lives in the working tree (not under .git/) because Claude Code
 // treats .git/ as a protected path and denies agent writes there — which blocks
 // an implementer subagent from writing its report file. A self-ignoring
@@ -23,7 +34,7 @@
 // macOS, and Linux — same usage, same stdout/exit-code contract.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 export class CliError extends Error {
@@ -46,13 +57,60 @@ export function resolveWorkspace(planFile) {
     throw new CliError(2, `cannot derive a workspace name from: ${planFile}`);
   }
 
-  const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+  // Native realpath: on Windows it also expands 8.3 short names (RUNNER~1), which
+  // git's toplevel never uses — the plan and root must be spelled the same way.
+  const root = realpathSync.native(
+    execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim(),
+  );
   const base = path.join(root, '.superpowers', 'sdd');
-  const dir = path.join(base, slug);
-  mkdirSync(dir, { recursive: true });
+  const { planId, parent } = identifyPlan(planFile, root);
+
+  let dir = path.join(base, slug);
+  if (!owns(dir, planId)) {
+    dir = path.join(base, `${slug}-${parent}`);
+    for (let n = 2; !owns(dir, planId); n++) {
+      dir = path.join(base, `${slug}-${parent}-${n}`);
+    }
+  }
   writeFileSync(path.join(base, '.gitignore'), '*\n');
 
   return dir;
+}
+
+/**
+ * The plan's marker value — repo-relative (with `/` separators) when it lives
+ * under the repo root, absolute otherwise — computed from physical paths so
+ * relative, absolute, and `../` spellings of one plan compare equal.
+ */
+function identifyPlan(planFile, root) {
+  const planDir = realpathSync.native(path.dirname(path.resolve(planFile)));
+  const planAbs = path.join(planDir, path.basename(planFile));
+  const relative = path.relative(root, planAbs);
+  const inRepo =
+    relative !== '' &&
+    relative !== '..' &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative);
+
+  return {
+    planId: inRepo ? relative.split(path.sep).join('/') : planAbs,
+    parent: path.basename(planDir),
+  };
+}
+
+/**
+ * True when the workspace at `dir` is (or becomes) this plan's: an existing
+ * marker must name this plan; a missing marker means a new workspace or a
+ * pre-marker legacy one, and either way the plan claims it by writing one.
+ */
+function owns(dir, planId) {
+  const marker = path.join(dir, 'plan-path');
+  if (existsSync(marker)) {
+    return readFileSync(marker, 'utf8').trim() === planId;
+  }
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(marker, `${planId}\n`);
+  return true;
 }
 
 if (import.meta.main) {

@@ -34,8 +34,9 @@
     "test:ai": "node --test \".ai/**/*.test.mjs\"",
     "verify": "pnpm format:check && pnpm lint && pnpm lint:css && pnpm lint:store && pnpm typecheck && pnpm arch && pnpm deadcode && pnpm test:ai && pnpm test:coverage && pnpm build && pnpm release:artifacts && pnpm lint:css:artifact && pnpm release:check && pnpm audit:dependencies",
     "ci": "pnpm verify",
-    "prepare": "husky && node .ai/setup.mjs",
-    "lint:css:artifact": "node tooling/check-css.mjs --artifact dist/styles.css"
+    "prepare": "husky && node .ai/setup.mjs && pnpm run codegraph:setup",
+    "lint:css:artifact": "node tooling/check-css.mjs --artifact dist/styles.css",
+    "codegraph:setup": "node .ai/setup-codegraph.mjs"
   },
   "nano-staged": {
     "*.{ts,cts,mts,tsx,js,cjs,mjs,jsx}": [
@@ -111,6 +112,7 @@
     "stylelint-declaration-block-no-ignored-properties": "3.0.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.70.0",
-    "vitest": "5.0.1"
+    "vitest": "5.0.1",
+    "@colbymchenry/codegraph": "1.6.1"
   }
 }

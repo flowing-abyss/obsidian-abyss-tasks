@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "codegraph prompt-hook"
+            "command": "node \"$CLAUDE_PROJECT_DIR/.ai/codegraph.mjs\" prompt-hook"
           }
         ]
       }
@@ -39,5 +39,10 @@
   },
   "permissions": {
     "allow": ["mcp__codegraph__*"]
+  },
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
   }
 }

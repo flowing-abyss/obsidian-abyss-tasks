@@ -95,12 +95,15 @@ Typical loop: `pnpm dev` → `obsidian plugin:reload id=abyss-tasks`.
 Prefer CodeGraph for dependency discovery, blast-radius analysis, unfamiliar code,
 and cross-module refactoring. For obvious local changes, prefer ordinary Read/Search.
 
-Step 2 of `using-git-worktrees` automatically initializes/syncs each checkout's own
-ignored `.codegraph/` as best effort, including the main checkout. Before a batch
-of graph queries, check for `.codegraph/codegraph.db` at the current checkout root
-and run `codegraph sync` there; repeat after edits. Always pass that absolute root
-(`git rev-parse --show-toplevel`) as MCP `codegraph_explore.projectPath`, or run
-`codegraph explore` from that root. MCP can discover a new index without restarting,
+The lockfile-pinned `@colbymchenry/codegraph` package runs through
+`.ai/codegraph.mjs`; no global install is needed. `prepare` and Step 2 of
+`using-git-worktrees` initialize/sync each checkout's own ignored `.codegraph/`
+as best effort, including the main checkout (`pnpm codegraph:setup`). Before a
+batch of graph queries, check for `.codegraph/codegraph.db` at the current checkout
+root and run `pnpm exec codegraph sync` there; repeat after edits. Always pass that
+absolute root (`git rev-parse --show-toplevel`) as MCP
+`codegraph_explore.projectPath`, or run `pnpm exec codegraph explore` from that
+root. MCP can discover a new index without restarting,
 but cross-project queries do not start a watcher. If the local index is missing,
 sync fails, or results report another worktree/stale files, use Read/Search.
 This project policy takes precedence over CodeGraph's generic agent guidance.

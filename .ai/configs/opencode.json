@@ -12,7 +12,7 @@
     },
     "codegraph": {
       "type": "local",
-      "command": ["codegraph", "serve", "--mcp"],
+      "command": ["node", ".ai/codegraph.mjs", "serve", "--mcp"],
       "enabled": true
     },
     "github": {

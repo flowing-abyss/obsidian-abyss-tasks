@@ -1,1 +1,2 @@
+node .ai/hooks/strip-agent-attribution.mjs "$1"
 pnpm exec commitlint --edit "$1"

@@ -9,8 +9,9 @@
     },
     "codegraph": {
       "type": "stdio",
-      "command": "codegraph",
-      "args": ["serve", "--mcp"]
+      "command": "node",
+      "args": [".ai/codegraph.mjs", "serve", "--mcp"],
+      "alwaysLoad": true
     },
     "github": {
       "type": "http",

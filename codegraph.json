@@ -1,0 +1,4 @@
+{
+  "exclude": [".ai/skills/"],
+  "deprioritize": [".ai/"]
+}

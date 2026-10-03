@@ -174,12 +174,48 @@ Step 2, from before that directory change.
 **If `GIT_DIR == GIT_COMMON`:** Normal repo, no worktree to clean up. Done.
 
 **If `WORKTREE_PATH` is under `.worktrees/` or `worktrees/`:** Superpowers
-created this worktree — we own cleanup:
+created this worktree — we own cleanup.
+
+**Rescue local docs first.** This project gitignores `docs/` (specs, plans,
+notes stay local), and `git worktree remove` deletes ignored files without
+refusing — the guard below never sees them. List what the worktree holds:
+
+```bash
+find "$WORKTREE_PATH/docs" -type f 2>/dev/null
+```
+
+Move each file to the same path under `docs/` here in the main checkout.
+If a different file with that name already exists here, ask your human
+partner which to keep — never overwrite it silently. Then remove the
+worktree:
 
 ```bash
 git worktree remove "$WORKTREE_PATH"
 git worktree prune  # Self-healing: clean up any stale registrations
 ```
+
+**If removal is refused** (`contains modified or untracked files`): the
+worktree holds files that exist nowhere else — uncommitted plans, notes,
+or scratch work. Never `--force` on your own initiative. Show your human
+partner what is at stake and ask:
+
+```bash
+git -C "$WORKTREE_PATH" status --porcelain -uall
+```
+
+```
+Worktree removal refused — these files were never committed:
+
+<file list>
+
+1. Commit them to <branch> before cleanup
+2. Move them into <main repo root>
+3. Delete them (unrecoverable)
+
+Which?
+```
+
+Carry out the choice, then remove the worktree.
 
 **Otherwise:** The host environment owns this workspace — leave it in
 place. If your platform provides a workspace-exit tool, use it.
@@ -203,6 +239,8 @@ place. If your platform provides a workspace-exit tool, use it.
 | "'Yeah, get rid of it' counts as confirmation" | Only the typed word `discard` authorizes deletion. |
 | "The PR is up, so the worktree is clutter now" | PR feedback gets fixed in that worktree. It stays until the work lands. |
 | "This other worktree looks stale — I'll clean it too" | Clean up only worktrees under `.worktrees/` or `worktrees/`. Everything else belongs to the host. |
+| "Removal refused — `--force` is just finishing the cleanup" | The refusal means files exist only in that worktree. `--force` destroys them permanently. Show your human partner and ask. |
+| "Removal went through, so nothing was left behind" | `docs/` is ignored, and ignored files never block removal — they are deleted with it. Move the worktree's local docs out first. |
 | "The merged-result failure is probably flaky" | A failing merged result stops everything. Branch and worktree stay put while you investigate. |
 | "The base branch is obviously main" | Confirm the fork point or ask. Merging into the wrong base is expensive to undo. |
 | "The push was rejected — force-push will fix it" | A rejected push means the remote moved. Investigate; force-push only on your human partner's explicit request. |

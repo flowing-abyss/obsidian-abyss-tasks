@@ -139,12 +139,16 @@ function checkVersionsConsistency(manifest) {
 }
 
 function checkMainJs(manifest) {
-  if (!existsSync('main.js')) {
+  let artifact;
+  try {
+    artifact = readFileSync('main.js');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
     errors.push('main.js is missing — run `pnpm run build` first.');
     return;
   }
 
-  const bytes = statSync('main.js').size;
+  const bytes = artifact.length;
   if (bytes === 0) {
     errors.push('main.js is empty.');
     return;
@@ -156,7 +160,7 @@ function checkMainJs(manifest) {
   }
 
   if (manifest?.isDesktopOnly === false) {
-    const mainJs = readFileSync('main.js', 'utf8');
+    const mainJs = artifact.toString('utf8');
     checkNoDesktopOnlyRequires(mainJs);
     checkNoLookbehinds(mainJs);
   }

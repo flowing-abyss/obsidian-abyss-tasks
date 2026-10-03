@@ -4,6 +4,8 @@
 // Using the recorded per-task BASE (not HEAD~1) keeps multi-commit tasks intact.
 //
 // Usage: node review-package.mjs PLAN_FILE BASE HEAD [OUTFILE]
+// Exit: 2 on a bad argument or revision; 3 when HEAD is not a descendant of
+// BASE or the range holds no commits.
 // Default OUTFILE: <repo-root>/.superpowers/sdd/<plan-basename>/review-<base7>..<head7>.diff
 // (named per range, so a re-review after fixes gets a distinct fresh file).
 //
@@ -25,6 +27,15 @@ function git(args) {
 function verifyRevision(rev) {
   try {
     execFileSync('git', ['rev-parse', '--verify', '--quiet', rev], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isAncestor(base, head) {
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', base, head], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -74,6 +85,17 @@ if (import.meta.main) {
   if (!verifyRevision(head)) {
     console.error(`bad HEAD: ${head}`);
     process.exit(2);
+  }
+
+  // Range guards (exit 3): a wrong-branch HEAD yields a range that is empty or
+  // not rooted at BASE; either would silently produce a bogus review package.
+  if (!isAncestor(base, head)) {
+    console.error(`HEAD is not a descendant of BASE: ${base}..${head}`);
+    process.exit(3);
+  }
+  if (git(['rev-list', '--count', `${base}..${head}`]).trim() === '0') {
+    console.error(`empty commit range: ${base}..${head}`);
+    process.exit(3);
   }
 
   let out = explicitOut;

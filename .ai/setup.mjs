@@ -66,7 +66,9 @@ const links = [
   // Harness plugins live outside the configs mirror, in `.ai/scripts/`, so the
   // community directory's review doesn't read them as plugin code.
   ['.opencode/plugins/pnpm-policy.js', '.ai/scripts/opencode/pnpm-policy.js'],
+  ['.opencode/plugins/codegraph.js', '.ai/scripts/opencode/codegraph.js'],
   ['.pi/extensions/pnpm-policy.ts', '.ai/scripts/pi/pnpm-policy.ts'],
+  ['.pi/extensions/codegraph.ts', '.ai/scripts/pi/codegraph.ts'],
 
   // Claude Code's local CodeGraph installer writes project instructions here.
   // Keep it on the same canonical source as every other agent instruction file.
