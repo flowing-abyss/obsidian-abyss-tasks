@@ -5,8 +5,14 @@ import { DEFAULT_SETTINGS, getListViewDefaults } from '../../src/settings/defaul
 import type { ListViewState } from '../../src/settings/types';
 import { discoveredPrefixGroupId } from '../../src/tags/effectiveTagGroups';
 import { searchTaskList, selectTaskList } from '../../src/task-lists/TaskListSelector';
-import type { LocalDate, SubtaskSnapshot, TaskSnapshot, TimeEntrySnapshot } from '../../src/tasks';
-import { taskFromCodecLine } from '../helpers';
+import {
+  localDate,
+  type LocalDate,
+  type SubtaskSnapshot,
+  type TaskSnapshot,
+  type TimeEntrySnapshot,
+} from '../../src/tasks';
+import { task, taskFromCodecLine } from '../helpers';
 
 function snapshot(
   title: string,
@@ -102,6 +108,51 @@ describe('selectTaskList', () => {
     ['project', { type: 'project', path: 'Projects/A.md' }, ['project']],
   ] as const)('selects the %s list', (_name, selection, expected) => {
     expect(titles(tasks, selection)).toEqual(expected);
+  });
+
+  it('keeps Today membership date-only and respects requested completed statuses', () => {
+    const candidates = [
+      task({
+        title: 'completed due today',
+        source: { line: 0 },
+        status: 'done',
+        planning: { due: '2026-10-03' },
+      }),
+      task({
+        title: 'completed overlap',
+        source: { line: 1 },
+        status: 'done',
+        planning: { due: '2026-10-02', scheduled: '2026-10-03' },
+      }),
+      task({ title: 'open due today', source: { line: 2 }, planning: { due: '2026-10-03' } }),
+      task({
+        title: 'past scheduled only',
+        source: { line: 3 },
+        status: 'done',
+        planning: { scheduled: '2026-10-02' },
+      }),
+      task({
+        title: 'scheduled today before future due',
+        source: { line: 4 },
+        status: 'done',
+        planning: { due: '2026-10-04', scheduled: '2026-10-03' },
+      }),
+    ];
+    expect(
+      selectTaskList({
+        tasks: candidates,
+        selection: 'today',
+        viewState: {
+          groupBy: 'date',
+          sortBy: { field: 'title', dir: 'asc' },
+          filters: [],
+          statusGroups: ['done'],
+        },
+        settings: DEFAULT_SETTINGS,
+        today: localDate('2026-10-03'),
+        nowMs: Date.parse('2026-10-03T12:00:00Z'),
+      }).map((candidate) => candidate.title),
+    ).toEqual(['completed due today', 'completed overlap', 'scheduled today before future due']);
   });
 
   it('matches a normalized legacy Inbox tag setting', () => {

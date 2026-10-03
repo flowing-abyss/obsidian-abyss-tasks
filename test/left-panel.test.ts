@@ -170,12 +170,6 @@ function makePanel(
   return { panel, state, el, tm, execute, merged, save };
 }
 
-function today(): string {
-  return (window as unknown as { moment: (inp?: unknown) => { format(f: string): string } })
-    .moment()
-    .format('YYYY-MM-DD');
-}
-
 describe('LeftPanel smart lists', () => {
   it('does not add a redundant Lists heading above the smart-list rows', () => {
     const { el } = makePanel();
@@ -241,19 +235,80 @@ describe('LeftPanel smart lists', () => {
     expect(inboxRow.querySelector('.abyss-left-count')?.textContent).toBe('1');
   });
 
-  it('countToday matches only due/scheduled === today', () => {
-    const t = today();
-    const tasks = [
-      task({ status: 'open', planning: { due: t } }),
-      task({ status: 'open', planning: { scheduled: t } }),
-      task({ status: 'open', presentation: {} }),
-      task({ status: 'open', planning: { due: '2020-01-01' } }),
-      task({ status: 'done', planning: { due: t } }),
+  it('countToday splits unique today and overdue roots', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 3, 12));
+    const todayTasks = Array.from({ length: 10 }, (_, line) =>
+      task({
+        source: { line },
+        planning: line < 5 ? { due: '2026-10-03' } : { scheduled: '2026-10-03' },
+      }),
+    );
+    const overdueTasks = [
+      task({ source: { line: 10 }, planning: { due: '2026-10-02' } }),
+      task({
+        source: { line: 11 },
+        planning: { due: '2026-10-02', scheduled: '2026-10-03' },
+      }),
     ];
-    const { el } = makePanel(tasks);
-    const rows = el.querySelectorAll('.abyss-left-item');
-    const todayRow = expectDefined(rows[1]);
-    expect(todayRow.querySelector('.abyss-left-count')?.textContent).toBe('2');
+    const excluded = [
+      task({ source: { line: 12 }, status: 'done', planning: { due: '2026-10-03' } }),
+      task({ source: { line: 13 }, status: 'cancelled', planning: { due: '2026-10-02' } }),
+      task({ source: { line: 14 }, status: 'in-progress', planning: { scheduled: '2026-10-03' } }),
+      task({ source: { line: 15 }, planning: { scheduled: '2026-10-02' } }),
+      task({ source: { line: 16 } }),
+    ];
+    try {
+      for (const [candidates, badge, explanation] of [
+        [
+          [
+            ...todayTasks,
+            ...overdueTasks,
+            ...excluded,
+            task({
+              source: { line: 11 },
+              ref: { revision: 'another-detached-snapshot' },
+              planning: { due: '2026-10-02', scheduled: '2026-10-03' },
+            }),
+          ],
+          '10+2',
+          '10 today, 2 overdue',
+        ],
+        [todayTasks, '10', '10 today, 0 overdue'],
+        [overdueTasks, '0+2', '0 today, 2 overdue'],
+      ] as const) {
+        const { el, panel, execute, save } = makePanel([...candidates]);
+        try {
+          const todayRow = expectDefined(el.querySelectorAll('.abyss-left-item')[1]);
+          const count = expectDefined(todayRow.querySelector('.abyss-left-count'));
+          expect(count.textContent).toBe(badge);
+          expect(count.getAttribute('aria-label')).toBe(explanation);
+          panel.refresh();
+          expect(execute).not.toHaveBeenCalled();
+          expect(save).not.toHaveBeenCalled();
+        } finally {
+          panel.destroy();
+        }
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('omits the Today badge when both today and overdue counts are zero', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 3, 12));
+    try {
+      const { panel, el } = makePanel([]);
+      try {
+        const todayRow = expectDefined(el.querySelectorAll('.abyss-left-item')[1]);
+        expect(todayRow.querySelector('.abyss-left-count')).toBeNull();
+      } finally {
+        panel.destroy();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('countUpcoming matches due ?? scheduled > today', () => {
@@ -1659,7 +1714,8 @@ describe('LeftPanel inbox logic (new inbox object)', () => {
     const { el } = makePanel([inlineOnly], {
       inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: true },
     });
-    const inboxCount = el.querySelector('.abyss-left-item .abyss-left-count')?.textContent;
+    const inboxRow = expectDefined(el.querySelector('.abyss-left-item'));
+    const inboxCount = inboxRow.querySelector('.abyss-left-count')?.textContent;
 
     expect(inboxCount).toBeUndefined();
   });

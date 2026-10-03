@@ -15,8 +15,11 @@ import { TagGroupValidationError, type TagManager } from '../tags/TagManager';
 import { isTagNavigationArchived, resolveEffectiveTagGroups } from '../tags/effectiveTagGroups';
 import { tagSettingsFailureNotice } from '../tags/tagSettingsFailure';
 import { collectTaskNodeTags } from '../tags/taskTagCatalog';
+import { todayTaskCategory } from '../task-lists/todayTaskCategory';
 import {
+  localDate,
   normalizeTaskTagInput,
+  type LocalDate,
   type TaskApplicationApi,
   type TaskQueryApi,
   type TaskSnapshot,
@@ -249,7 +252,8 @@ export class LeftPanel {
 
     const allTasks = [...this.queries_abyssPrivate.list()];
     const allNodes = this.tasks_abyssPrivate.queries.listNodes();
-    const today = window.moment().format('YYYY-MM-DD');
+    const today = localDate(window.moment().format('YYYY-MM-DD'));
+    const { todayCount, overdue } = this.countToday_abyssPrivate(allTasks, today);
 
     this.el_abyssPrivate.createDiv({ cls: 'abyss-left-section' }, (section) => {
       this.renderSmartList_abyssPrivate(
@@ -264,7 +268,8 @@ export class LeftPanel {
         'today',
         'Today',
         'calendar',
-        this.countToday_abyssPrivate(allTasks, today),
+        overdue > 0 ? `${todayCount}+${overdue}` : String(todayCount),
+        `${todayCount} today, ${overdue} overdue`,
       );
       this.renderSmartList_abyssPrivate(
         section,
@@ -747,9 +752,9 @@ export class LeftPanel {
   }
 
   private renderSmartList_abyssPrivate(
-    ...args: [HTMLElement, ListSelection, string, string, number]
+    ...args: [HTMLElement, ListSelection, string, string, number | string, string?]
   ): void {
-    const [parent, selection, label, icon, count] = args;
+    const [parent, selection, label, icon, count, tooltip] = args;
     const current = this.state_abyssPrivate.get('selectedList');
     const isActive = current === selection;
     const row = parent.createDiv({ cls: `abyss-left-item${isActive ? ' is-active' : ''}` });
@@ -760,8 +765,12 @@ export class LeftPanel {
     left.createSpan({ cls: 'abyss-left-label', text: label });
     this.appendCustomDot_abyssPrivate(left, selection);
 
-    if (count > 0) {
-      row.createSpan({ cls: 'abyss-left-count', text: String(count) });
+    if (typeof count === 'string' ? count !== '0' : count > 0) {
+      row.createSpan({
+        cls: 'abyss-left-count',
+        text: String(count),
+        ...(tooltip === undefined ? {} : { attr: { 'aria-label': tooltip } }),
+      });
     }
 
     row.addEventListener('click', () => {
@@ -864,11 +873,24 @@ export class LeftPanel {
     }).length;
   }
 
-  private countToday_abyssPrivate(tasks: TaskSnapshot[], today: string): number {
-    return tasks.filter((t) => {
-      if (t.status !== 'open') return false;
-      return String(t.planning.due) === today || String(t.planning.scheduled) === today;
-    }).length;
+  private countToday_abyssPrivate(
+    tasks: readonly TaskSnapshot[],
+    today: LocalDate,
+  ): { todayCount: number; overdue: number } {
+    let todayCount = 0;
+    let overdue = 0;
+    const seen = new Set<string>();
+    for (const task of tasks) {
+      if (task.status !== 'open') continue;
+      const category = todayTaskCategory(task, today);
+      if (category === undefined) continue;
+      const key = `${task.source.filePath}:${task.source.line}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (category === 'overdue') overdue += 1;
+      else todayCount += 1;
+    }
+    return { todayCount, overdue };
   }
 
   private countUpcoming_abyssPrivate(tasks: TaskSnapshot[], today: string): number {

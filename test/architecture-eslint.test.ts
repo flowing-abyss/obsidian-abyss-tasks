@@ -189,6 +189,7 @@ describe('task architecture ESLint boundaries', () => {
 // The project lexical policy rows lint through the same instance, so the project service's cold
 // start is paid once for both suites. Their rule reads scopes, not types.
 const pureFiles = [
+  'src/task-lists/todayTaskCategory.ts',
   'src/projects/projectTableModel.ts',
   'src/projects/projectKanbanModel.ts',
   'src/projects/projectTimelineModel.ts',
@@ -260,6 +261,19 @@ describe('project lexical policy', () => {
           endColumn: 11,
         },
       ]);
+    },
+    LINTER_TIMEOUT_MS,
+  );
+
+  it(
+    'accepts explicit Today planning and date inputs without ambient state',
+    async () => {
+      expect(
+        await check(
+          'src/task-lists/todayTaskCategory.ts',
+          'export function category(due: string, today: string): boolean { return due < today; }',
+        ),
+      ).toEqual([]);
     },
     LINTER_TIMEOUT_MS,
   );

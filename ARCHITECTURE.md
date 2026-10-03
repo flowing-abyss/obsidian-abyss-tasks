@@ -204,6 +204,11 @@ do not acquire independent task writers or duplicate shell subscriptions.
 | [TaskModal](src/ui/TaskModal.ts)                    | A local AppState and the same inspector, with its own interaction lifetime, owner document, and tracking surface                                 |
 | [CalendarSettingsTab](src/settings/SettingsTab.ts)  | Settings staging, commit/retry, semantic rebuild, and shared lifecycle; section owners render their controls                                     |
 
+Today list membership and sidebar counts share the date-only
+[`todayTaskCategory`](src/task-lists/todayTaskCategory.ts), supplied an explicit local date. Past due
+dates take precedence over scheduling today. The list selector retains its configured status filters;
+LeftPanel counts unique open roots by file and line and displays separate today/overdue totals.
+
 ### Centre services, rows, and calendar
 
 CenterPanel shares these services across its task surfaces. They depend on task contracts and host

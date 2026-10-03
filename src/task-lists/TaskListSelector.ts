@@ -16,6 +16,7 @@ import {
   type TaskSnapshot,
   type TaskStatusType,
 } from '../tasks';
+import { todayTaskCategory } from './todayTaskCategory';
 
 export interface TaskListSelectionInput {
   readonly tasks: readonly TaskSnapshot[];
@@ -85,7 +86,7 @@ function selectedNamedList(
   today: LocalDate,
 ): boolean {
   if (selection === 'inbox') return selectedInbox(task, settings);
-  if (selection === 'today') return selectedToday(task, today);
+  if (selection === 'today') return todayTaskCategory(task, today) !== undefined;
   const date = task.planning.due ?? task.planning.scheduled;
   return date !== undefined && date > today;
 }
@@ -99,14 +100,6 @@ function selectedInbox(task: TaskSnapshot, settings: CalendarSettings): boolean 
     task.tags.some((candidate) => sameTag(candidate, inboxTag));
   const untagged = settings.inbox.mode !== 'tag' && task.tags.length === 0;
   return tagged || untagged;
-}
-
-function selectedToday(task: TaskSnapshot, today: LocalDate): boolean {
-  return (
-    task.planning.due === today ||
-    task.planning.scheduled === today ||
-    (task.planning.due !== undefined && task.planning.due < today)
-  );
 }
 
 function selectedTagGroup(
