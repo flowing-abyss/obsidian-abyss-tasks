@@ -1611,6 +1611,41 @@ describe('source-proven timing retries', () => {
       retryAgainst(preparedFor(previous, command, 'field-compare'), previous, current).type,
     ).toBe(expected);
   });
+  it.each(['0m', '0h', '00:00'])(
+    'rejects introduced, removed and unchanged opaque zero duration %s',
+    (duration) => {
+      const opaque = `- [ ] Task ⏰ 09:00 ⏱️ ${duration}`;
+      expect(timingSnapshot(opaque).planning.duration).toBeUndefined();
+      for (const [before, after] of [
+        ['- [ ] Task ⏰ 09:00 ⏱️ 1h', opaque],
+        [opaque, '- [ ] Task ⏰ 09:00'],
+        [opaque, `- [ ] Other ⏰ 09:00 ⏱️ ${duration}`],
+      ] as const) {
+        const previous = timingSnapshot(before);
+        const current = timingSnapshot(after, 'new');
+        const command: TaskEditRequest['command'] = {
+          type: 'patch',
+          target: { type: 'task', ref: previous.ref },
+          patch: { time: { type: 'set', value: localTime('10:00') } },
+        };
+        expect(
+          retryAgainst(preparedFor(previous, command, 'field-compare'), previous, current).type,
+        ).toBe('unsafe');
+      }
+    },
+  );
+  it('retains a safe time-only retry when duration is genuinely absent', () => {
+    const previous = timingSnapshot('- [ ] Task ⏰ 09:00');
+    const current = timingSnapshot('- [ ] Other ⏰ 09:00', 'new');
+    const command: TaskEditRequest['command'] = {
+      type: 'patch',
+      target: { type: 'task', ref: previous.ref },
+      patch: { time: { type: 'set', value: localTime('10:00') } },
+    };
+    expect(
+      retryAgainst(preparedFor(previous, command, 'field-compare'), previous, current).type,
+    ).toBe('edit');
+  });
   it('proves why an opaque time cannot borrow the absent-time effective duration', () => {
     const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
     const source = '- [ ] Task ⏰ 99:99 ⏱️ 24h';

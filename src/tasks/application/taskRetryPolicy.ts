@@ -287,7 +287,8 @@ function faithfulTimingSource(task: TaskSnapshot): boolean {
     (['time', 'duration'] as const).every(
       (kind) =>
         source.planning[kind] === task.planning[kind] &&
-        (source.occurrences.get(kind)?.length ?? 0) <= 1 &&
+        (source.occurrences.get(kind)?.length ?? 0) ===
+          (source.planning[kind] === undefined ? 0 : 1) &&
         !source.spans.some((span) => span.malformedKind === kind),
     )
   );
