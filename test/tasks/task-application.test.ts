@@ -114,6 +114,7 @@ function service(
   return new TaskApplicationService(
     taskQueries,
     {
+      hierarchy: vi.fn(),
       editBatch: vi.fn(),
       createDependencySubtask: vi.fn(),
       completeRecurrence,
@@ -140,6 +141,7 @@ describe('TaskApplicationService planning commands', () => {
       queries(),
       {
         edit,
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence: vi.fn(),
@@ -610,6 +612,7 @@ describe('TaskApplicationService planning commands', () => {
       queries(),
       {
         edit,
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence: vi.fn(),
@@ -1029,6 +1032,7 @@ describe('TaskApplicationService planning commands', () => {
       queries(),
       {
         edit,
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence: vi.fn(),
@@ -1066,6 +1070,7 @@ describe('TaskApplicationService planning commands', () => {
   ])('preserves the structured repository result $type', async (result) => {
     const repository: TaskRepository = {
       edit: vi.fn().mockResolvedValue(result),
+      hierarchy: vi.fn(),
       editBatch: vi.fn(),
       createDependencySubtask: vi.fn(),
       completeRecurrence: vi.fn(),
@@ -1082,6 +1087,7 @@ describe('TaskApplicationService planning commands', () => {
   it('maps an unexpected adapter rejection without leaking task Markdown', async () => {
     const repository: TaskRepository = {
       edit: vi.fn().mockRejectedValue(new Error('- [ ] secret task')),
+      hierarchy: vi.fn(),
       editBatch: vi.fn(),
       createDependencySubtask: vi.fn(),
       completeRecurrence: vi.fn(),
@@ -1126,6 +1132,7 @@ describe('TaskApplicationService planning commands', () => {
       queries(),
       {
         edit,
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence: vi.fn(),
@@ -1644,6 +1651,7 @@ describe('TaskApplicationService planning commands', () => {
       exactQueries,
       {
         edit,
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence: vi.fn(),
@@ -1761,6 +1769,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
       exactQueries(current),
       {
         edit,
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence,
@@ -1859,6 +1868,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
       exactQueries(recurringSnapshot()),
       {
         edit,
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence,
@@ -1920,6 +1930,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
       laggingQueries,
       {
         edit,
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence,
@@ -2039,6 +2050,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
       laggingQueries,
       {
         edit,
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence,
@@ -2107,6 +2119,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
       laggingQueries,
       {
         edit,
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence,
@@ -2162,6 +2175,7 @@ it('reports a conflict without replaying a time edit over a concurrently changed
     {
       supportsRevisionPreconditions: true,
       edit,
+      hierarchy: vi.fn(),
       editBatch: vi.fn(),
       createDependencySubtask: vi.fn(),
       completeRecurrence: vi.fn(),

@@ -1,6 +1,5 @@
-import { aliasSeparator, buildLinkRaw, parseLinks, writtenAlias } from '../../markdown/links';
+import { rebaseMarkdownLinks } from '../../markdown/sourceReferences';
 import type { ProjectFieldCatalogItem } from '../../projects/projectFields';
-import { projectTableLinkTargetParts } from '../../projects/projectTableLinkTarget';
 
 export const PROJECT_TABLE_CLIPBOARD_TYPE = 'application/x-abyss-project-table';
 
@@ -444,27 +443,6 @@ export function deduplicateProjectCellAssignments<
   return [...unique.values()];
 }
 
-function rebaseString(
-  value: string,
-  sourcePath: string,
-  destinationPath: string,
-  rebaser: ProjectLinkRebaser,
-): string {
-  const links = parseLinks(value);
-  let result = value;
-  for (const link of [...links].reverse()) {
-    const { resolverTarget, subpath, externalTarget } = projectTableLinkTargetParts(link);
-    if (externalTarget !== undefined) continue;
-    const resolved = rebaser.resolve(resolverTarget, sourcePath);
-    if (resolved === undefined) continue;
-    const linktext = rebaser.linktext(resolved, destinationPath);
-    const target = `${link.type === 'md' ? encodeURI(linktext) : linktext}${subpath}`;
-    const raw = buildLinkRaw(link.type, target, writtenAlias(link), aliasSeparator(link));
-    result = `${result.slice(0, link.index)}${raw}${result.slice(link.index + link.raw.length)}`;
-  }
-  return result;
-}
-
 export function rebaseProjectClipboardLinks(
   value: unknown,
   sourcePath: string,
@@ -472,7 +450,8 @@ export function rebaseProjectClipboardLinks(
   rebaser: ProjectLinkRebaser,
 ): unknown {
   if (sourcePath.length === 0 || sourcePath === destinationPath) return copyValue(value);
-  if (typeof value === 'string') return rebaseString(value, sourcePath, destinationPath, rebaser);
+  if (typeof value === 'string')
+    return rebaseMarkdownLinks(value, sourcePath, destinationPath, rebaser);
   if (Array.isArray(value)) {
     return value.map((entry) =>
       rebaseProjectClipboardLinks(entry, sourcePath, destinationPath, rebaser),

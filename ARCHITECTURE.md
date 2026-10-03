@@ -147,6 +147,36 @@ source revision continuity on retry; identical Markdown alone cannot authorize r
 sessions freeze the date-expanded destination and share note preparation across a batch. They return
 an `archived` outcome because the destination is outside public queries.
 
+Hierarchy commands (`reparent-task` and `promote-subtask`) dispatch to
+[`TaskHierarchyService`](src/tasks/application/TaskHierarchyService.ts), which resolves both
+endpoints and captures immutable revision preconditions without entering the one-root edit/retry
+path. Same-parent operations return unchanged without writing or handing off selection. The
+repository passes its existing `Vault.process` capability into
+[`taskHierarchyTransaction`](src/tasks/infrastructure/obsidian/taskHierarchyTransaction.ts).
+The pure transfer uses canonical root blocks and owned subtree ranges, changes only the required
+prefix and source references inside the moved range, and preserves existing metadata, duration,
+comments, tracking entries, and imported Markdown. Promotion inserts after the complete old root.
+Shared Markdown reference tokenization includes embeds for transfers while ordinary `parseLinks`
+continues to exclude them; shared fence parsing prevents rewriting code examples.
+
+Structural authority separately proves the complete indexed predecessor population, exact source
+bytes, complete candidate population, and surviving root transitions. It supports disappearing and
+newly promoted roots, including task-empty source notes; ordinary edit batches retain their equal
+correspondence checks. Surviving roots retain explicit authority continuity, while new roots receive
+fresh revisions. The transform's physical moved-line locator identifies a node in the committed
+snapshots and grants no independent write authority.
+
+Same-note hierarchy changes use one process callback. Cross-note changes write the destination
+first, then the source. Batch installation proves every resulting root, the moved node's parent,
+and owned mutation completion synchronously before publishing any candidate snapshots. Failure
+compensation restores only exact owned bytes and verifies both notes. Unproved restoration returns
+a structured hierarchy partial result naming both paths, reconciles readable current content,
+and never retries the destructive phase. Phase/path diagnostics use the injected application sink;
+callback failures do not alter compensation. Only source and destination notes are authorized.
+Inbound links outside the moved subtree remain unchanged, including links elsewhere in either
+note or in third notes; explicit links to the old source's moved block IDs can therefore become
+stale. Markdown block and dependency IDs within the moved subtree remain intact.
+
 [`TagManager`](src/tags/TagManager.ts) owns navigation tag settings, promotion, appearance, ordering,
 and rollback. Effective groups combine configured groups with public root/subtask tags; discovery
 is derived until an appearance or reorder action persists a group. Suggestions likewise use public

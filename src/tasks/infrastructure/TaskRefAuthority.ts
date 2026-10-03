@@ -42,6 +42,11 @@ export interface ExactSourceMutation {
   readonly roots: readonly ProvenRootRevisionOverride[];
 }
 
+export interface StructuralSourceMutation extends Omit<ExactSourceMutation, 'roots'> {
+  readonly roots: readonly RootRevisionOverride[];
+  readonly transitions: readonly ProvenRootRevisionOverride[];
+}
+
 export interface OwnedSourceMutation {
   forward(path: string, current: string): string | undefined;
   restore(path: string, current: string): string | undefined;
@@ -55,6 +60,7 @@ export type TaskRefStageResult =
   { readonly type: 'staged'; readonly token: object } | { readonly type: 'conflict' };
 
 export interface TaskSnapshotState {
+  currentRoots?(filePath: string): readonly RootRevisionOverride[];
   /** For duplicate sources, supplied transaction occurrence lines must match the indexed population. */
   currentRoot(
     filePath: string,
@@ -114,7 +120,7 @@ interface PendingTransition {
 }
 
 interface OwnedSource {
-  readonly source: ExactSourceMutation;
+  readonly source: Omit<ExactSourceMutation, 'roots'>;
   token: object;
 }
 
@@ -240,15 +246,110 @@ export class TaskRefAuthority {
     return this.stageTransition(transition);
   }
 
+  reserveStructuralMutation(
+    sources: readonly StructuralSourceMutation[],
+    currentPopulation: (path: string) => readonly RootRevisionOverride[],
+  ): OwnedSourceMutation | undefined {
+    if (
+      sources.length === 0 ||
+      new Set(sources.map(({ filePath }) => filePath)).size !== sources.length ||
+      sources.some(
+        (source) => !this.validStructuralSource(source, currentPopulation(source.filePath)),
+      )
+    )
+      return undefined;
+    return this.reserveSources(sources, (source) =>
+      this.stageContent(
+        {
+          filePath: source.filePath,
+          candidateFingerprint: taskRefContentFingerprint(source.after),
+          candidateLength: source.after.length,
+          roots: source.roots,
+        },
+        source.transitions,
+      ),
+    );
+  }
+
+  private validStructuralSource(
+    source: StructuralSourceMutation,
+    current: readonly RootRevisionOverride[],
+  ): boolean {
+    const same = (a: RootRevisionOverride, b: RootRevisionOverride | undefined): boolean =>
+      a.line === b?.line && a.source === b.source && a.revision === b.revision;
+    if (
+      current.length !== source.predecessors.length ||
+      !current.every((root, index) => same(root, source.predecessors[index]))
+    )
+      return false;
+    if (
+      !this.exactPopulation(source.before, source.predecessors) ||
+      !this.exactPopulation(source.after, source.roots) ||
+      !this.newStructuralRootsAreFresh(source)
+    )
+      return false;
+    return (
+      new Set(source.transitions.map(({ previousRevision }) => previousRevision)).size ===
+        source.transitions.length &&
+      new Set(source.transitions.map(({ revision }) => revision)).size ===
+        source.transitions.length &&
+      source.transitions.every(
+        (root) =>
+          source.predecessors.some(({ revision }) => revision === root.previousRevision) &&
+          source.roots.some((candidate) => same(root, candidate)),
+      )
+    );
+  }
+
+  private newStructuralRootsAreFresh(source: StructuralSourceMutation): boolean {
+    return source.roots.every(
+      (root) =>
+        source.transitions.some(({ revision }) => revision === root.revision) ||
+        (this.evidence(root.revision)?.generation !== '0' &&
+          !source.predecessors.some(({ revision }) => revision === root.revision)),
+    );
+  }
+
+  private exactPopulation(content: string, roots: readonly RootRevisionOverride[]): boolean {
+    const blocks = new TaskBlockEditor().rootBlocks(content);
+    return (
+      blocks.length === roots.length &&
+      new Set(roots.map(({ revision }) => revision)).size === roots.length &&
+      roots.every(
+        (root, index) =>
+          root.line === blocks[index]?.line &&
+          root.source === blocks[index].source &&
+          this.evidence(root.revision)?.source === root.source,
+      )
+    );
+  }
+
   /** All-or-none reservation; only this owner can publish its exact candidates or originals. */
   reserveMutation(sources: readonly ExactSourceMutation[]): OwnedSourceMutation | undefined {
+    return this.reserveSources(sources, (source) =>
+      this.stageBatch(
+        {
+          filePath: source.filePath,
+          candidateFingerprint: taskRefContentFingerprint(source.after),
+          candidateLength: source.after.length,
+          roots: source.roots,
+        },
+        source.roots.map(({ previousRevision }) => previousRevision),
+      ),
+    );
+  }
+
+  private reserveSources<T extends Omit<ExactSourceMutation, 'roots'>>(
+    sources: readonly T[],
+    stage: (source: T) => TaskRefStageResult,
+  ): OwnedSourceMutation | undefined {
     const owned = new Map<string, OwnedSource>();
     const release = (): void => {
       for (const { token } of owned.values()) this.abort(token);
       owned.clear();
     };
     try {
-      if (!this.stageMutationSources(sources, owned)) {
+      if (!this.stageMutationSources(sources, owned, stage)) {
         release();
         return undefined;
       }
@@ -308,20 +409,13 @@ export class TaskRefAuthority {
     };
   }
 
-  private stageMutationSources(
-    sources: readonly ExactSourceMutation[],
+  private stageMutationSources<T extends Omit<ExactSourceMutation, 'roots'>>(
+    sources: readonly T[],
     owned: Map<string, OwnedSource>,
+    stage: (source: T) => TaskRefStageResult,
   ): boolean {
     for (const source of sources) {
-      const staged = this.stageBatch(
-        {
-          filePath: source.filePath,
-          candidateFingerprint: taskRefContentFingerprint(source.after),
-          candidateLength: source.after.length,
-          roots: source.roots,
-        },
-        source.roots.map(({ previousRevision }) => previousRevision),
-      );
+      const staged = stage(source);
       if (staged.type !== 'staged') return false;
       owned.set(source.filePath, { source: { ...source }, token: staged.token });
       if (!this.retainPredecessors(staged.token, source.before, source.predecessors)) return false;

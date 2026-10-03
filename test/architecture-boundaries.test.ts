@@ -91,6 +91,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/right/InspectorPlanningSurfaces.ts',
   ],
   MoveRecovery: ['src/ui/TaskMoveRecoveryModal.ts'],
+  TaskHierarchyRecovery: ['src/ui/taskCommandResult.ts'],
   normalizeTaskTagInput: [
     'src/settings/SettingsTab.ts',
     'src/task-lists/TaskListSelector.ts',

@@ -1313,6 +1313,14 @@ export class TaskIndex
     return this.previewContent(filePath, content);
   }
 
+  currentRoots(filePath: string): readonly RootRevisionOverride[] {
+    return (this.taskMap_abyssPrivate.get(filePath) ?? []).map((root) => ({
+      line: root.source.line,
+      source: root.source.originalBlock,
+      revision: root.ref.revision,
+    }));
+  }
+
   currentRoot(
     filePath: string,
     line: number,

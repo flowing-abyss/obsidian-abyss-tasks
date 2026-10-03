@@ -12,6 +12,8 @@ type RootlessCommand = Extract<
   TaskCommand,
   {
     type:
+      | 'reparent-task'
+      | 'promote-subtask'
       | 'create'
       | 'add-dependency'
       | 'remove-dependency'
@@ -29,6 +31,8 @@ export type RootedTaskCommand = Exclude<TaskCommand, RootlessCommand>;
  */
 function isRootless(command: TaskCommand): command is RootlessCommand {
   return (
+    command.type === 'reparent-task' ||
+    command.type === 'promote-subtask' ||
     command.type === 'create' ||
     command.type === 'start-tracking' ||
     command.type === 'stop-tracking' ||

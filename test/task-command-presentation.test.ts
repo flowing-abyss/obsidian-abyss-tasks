@@ -620,3 +620,33 @@ describe('task command result presentation', () => {
     expect(noticeCalls()).toEqual([[message]]);
   });
 });
+
+describe('hierarchy partial descriptions', () => {
+  it.each(['copied-source-remains', 'unknown'] as const)(
+    'describes %s without claiming an unproved copy',
+    (state) => {
+      const before = noticeCalls().length;
+      presentTaskCommandResult({
+        type: 'partial',
+        operation: 'hierarchy',
+        recovery: {
+          source: { type: 'task', ref: { filePath: 'from.md', line: 0, revision: 'r' } },
+          sourcePath: 'from.md',
+          destinationPath: 'to.md',
+          state,
+          cause: 'io-error',
+        },
+      });
+      const message = String(noticeCalls()[before]?.[0]);
+      expect(message).toContain('from.md');
+      expect(message).toContain('to.md');
+      if (state === 'unknown') {
+        expect(message).toContain('unconfirmed');
+        expect(message).not.toContain('was copied');
+      } else {
+        expect(message).toContain('copied');
+        expect(message).toContain('original');
+      }
+    },
+  );
+});

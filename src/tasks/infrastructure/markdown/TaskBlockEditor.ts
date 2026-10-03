@@ -1214,6 +1214,26 @@ function editContext(
 export class TaskBlockEditor {
   constructor(private readonly indentUnit_abyssPrivate: () => TaskIndentUnit = () => '\t') {}
 
+  hierarchyInsertion(
+    content: string,
+    block: TaskRootBlock,
+    target: TaskBlockTarget,
+  ): { readonly line: number; readonly prefix: string } | undefined {
+    const context = editContext(content, block, target, this.indentUnit_abyssPrivate());
+    if (context === undefined) return undefined;
+    let insertion = subtaskInsertionLine(context);
+    let fence: MarkdownFence | undefined;
+    for (let line = context.parentLine; line < insertion; line++) {
+      fence = consumeMarkdownFenceLine(fence, context.lines[line]?.text ?? '').fence;
+    }
+    while (fence !== undefined && insertion < blockEndLine(context)) {
+      fence = consumeMarkdownFenceLine(fence, context.lines[insertion]?.text ?? '').fence;
+      insertion++;
+    }
+    if (fence !== undefined) return undefined;
+    return { line: insertion, prefix: nestedLinePrefix(context) };
+  }
+
   ownedTaskSubtree(
     rootBlock: string,
     ownerRelativeLine: number,

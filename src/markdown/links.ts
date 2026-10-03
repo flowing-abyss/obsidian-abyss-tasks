@@ -56,6 +56,7 @@ interface LinkMatch {
   readonly to: number;
   readonly token: LinkToken | undefined;
   readonly titleLabel: string | undefined;
+  readonly reference?: LinkToken;
 }
 
 /**
@@ -164,6 +165,9 @@ function pushWikiMatches(
     matches.push({
       from: match.index,
       to: match.index + match[0].length,
+      ...(match[1] === '!' && {
+        reference: wikiToken(match[0].slice(1), match[2] ?? '', match.index + 1),
+      }),
       token: match[1] === '!' ? undefined : wikiToken(match[0], match[2] ?? '', match.index),
       titleLabel: match[1] === '!' ? wikiTitleLabel(match[2] ?? '') : undefined,
     });
@@ -186,13 +190,21 @@ function pushMarkdownMatches(
     if (match[3] !== undefined || insideOrderedRange(match.index, inlineCode, rangeCursor)) {
       continue;
     }
+    const text = match[1] ?? '';
+    const target = match[2] ?? '';
     matches.push({
       from: match.index,
       to: match.index + match[0].length,
+      reference: markdownToken(
+        match[0].replace(/^!/u, ''),
+        text,
+        target,
+        match.index + Number(match[0].startsWith('!')),
+      ),
       token: match[0].startsWith('!')
         ? undefined
-        : markdownToken(match[0], match[1] ?? '', match[2] ?? '', match.index),
-      titleLabel: match[0].startsWith('!') ? (match[1] ?? '') : undefined,
+        : markdownToken(match[0], text, target, match.index),
+      titleLabel: match[0].startsWith('!') ? text : undefined,
     });
   }
 }
@@ -213,6 +225,14 @@ function linkMatches(input: string): LinkMatch[] {
 /** Keep editable source tokens in their original document order and offsets. */
 export function parseLinks(input: string): LinkToken[] {
   return linkMatches(input).flatMap((match) => (match.token === undefined ? [] : [match.token]));
+}
+
+/** Source transfer includes embeds/images, without changing ordinary link-edit authority. */
+export function parseSourceReferences(input: string): LinkToken[] {
+  return linkMatches(input).flatMap((match) => {
+    const token = match.token ?? match.reference;
+    return token === undefined ? [] : [token];
+  });
 }
 
 /** Replace recognized title embeds/images before host rendering, without granting link authority. */

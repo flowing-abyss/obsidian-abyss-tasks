@@ -96,3 +96,5 @@ export type {
 export { durationMinutes, localDate, localTime } from './domain/validation';
 
 export { clampDurationToDay } from './domain/taskDuration';
+
+export type { TaskHierarchyRecovery } from './domain/taskHierarchy';

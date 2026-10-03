@@ -20,6 +20,7 @@ import {
   taskNodeAtSourcePath as snapshotForTarget,
   taskMutationNodeRef,
 } from '../domain/taskCommandTargets';
+import { isHierarchyCommand, type TaskHierarchyCommand } from '../domain/taskHierarchy';
 import { reconcileTaskNodeRef, type TaskResolution } from '../domain/taskReconciliation';
 import {
   applyTaskCreationTagPolicy,
@@ -65,6 +66,7 @@ import type {
   TaskDestinationProvider,
   TaskDestinationResolution,
 } from './TaskDestinationProvider';
+import { TaskHierarchyService } from './TaskHierarchyService';
 import type {
   RecurrenceCompletionRequest,
   RecurrenceCompletionRevisionRequest,
@@ -203,7 +205,7 @@ type DependencyCommand = Extract<
 type TrackingCommand = Extract<TaskCommand, { readonly type: 'start-tracking' | 'stop-tracking' }>;
 type ExistingTaskCommand = Exclude<
   TaskCommand,
-  DependencyCommand | TrackingCommand | { readonly type: 'create' }
+  TaskHierarchyCommand | DependencyCommand | TrackingCommand | { readonly type: 'create' }
 >;
 type EditableTaskCommand = Exclude<ExistingTaskCommand, { readonly type: 'move' | 'archive' }>;
 type PreparedTaskCommand =
@@ -615,6 +617,12 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   }
 
   private async executeCommand_abyssPrivate(command: TaskCommand): Promise<TaskCommandResult> {
+    if (isHierarchyCommand(command))
+      return new TaskHierarchyService(
+        this.queries,
+        this.repository_abyssPrivate,
+        this.diagnostics_abyssPrivate,
+      ).execute(command);
     const restorationIssues = subtaskRestorationIssues(command);
     if (restorationIssues.length > 0) return invalidTaskResult(restorationIssues);
     if ('dependent' in command) return await this.dependencies_abyssPrivate.execute(command);

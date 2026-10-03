@@ -11,6 +11,7 @@ import type { AtomDateTime } from '../domain/commentTimestamp';
 import type { RecurrencePolicy } from '../domain/recurrence';
 import { taskCommandMutationTarget, taskNodeRootRef } from '../domain/taskCommandTargets';
 import type { DependencyDirection } from '../domain/taskDependencies';
+import type { TaskHierarchyCommand, TaskHierarchyRecovery } from '../domain/taskHierarchy';
 import { isTaskDependencyId } from '../domain/taskLineSourceModel';
 import type { RebaseEvidence, RootReconciliationBasis } from '../domain/taskReconciliation';
 import type {
@@ -33,6 +34,7 @@ type AddSubtaskLifecycle =
 export type TaskEditCommand =
   | Exclude<
       TaskCommand,
+      | TaskHierarchyCommand
       | { readonly type: 'create' }
       | { readonly type: 'move' }
       | { readonly type: 'set-status' | 'toggle-completion' }
@@ -210,6 +212,21 @@ export interface ReverseDependencyRequest {
   readonly diagnostic: (phase: DependencyReversalPhase, cause: string) => void;
 }
 
+export type TaskHierarchyPhase =
+  | 'preflight'
+  | 'reservation'
+  | 'destination-write'
+  | 'source-write'
+  | 'postcondition'
+  | 'rollback'
+  | 'restoration-proof';
+export interface TaskHierarchyRequest {
+  readonly diagnostic?: (phase: TaskHierarchyPhase, cause: string, path?: string) => void;
+  readonly command: TaskHierarchyCommand;
+  readonly source: RevisionPrecondition;
+  readonly parent?: RevisionPrecondition;
+}
+
 export interface TaskMoveRequest extends RevisionPrecondition {
   readonly destination: TaskDestination;
 }
@@ -236,6 +253,11 @@ export type TaskRepositoryResult =
   | { readonly type: 'not-found'; readonly target: TaskMutationTarget }
   | { readonly type: 'ambiguous'; readonly candidates: readonly TaskResolutionCandidate[] }
   | { readonly type: 'invalid'; readonly issues: readonly TaskIssue[] }
+  | {
+      readonly type: 'partial';
+      readonly operation: 'hierarchy';
+      readonly recovery: TaskHierarchyRecovery;
+    }
   | { readonly type: 'partial'; readonly operation: 'move'; readonly recovery: MoveRecovery }
   | { readonly type: 'partial'; readonly operation: 'archive'; readonly recovery: ArchiveRecovery }
   | {
@@ -246,6 +268,7 @@ export type TaskRepositoryResult =
     };
 
 export interface TaskRepository {
+  hierarchy(request: TaskHierarchyRequest): Promise<TaskRepositoryResult>;
   /** Production adapters opt in to immutable revision preconditions. */
   readonly supportsRevisionPreconditions?: true;
   edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult>;

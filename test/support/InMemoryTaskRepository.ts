@@ -1,3 +1,4 @@
+import type { TaskHierarchyRequest } from '../../src/tasks/application/TaskRepository';
 import {
   dependencyMetadataIssues,
   subtaskRestorationGapIsCurrent,
@@ -57,6 +58,7 @@ import {
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
 import { type TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { recoverTimeEntryRemoval } from '../../src/tasks/infrastructure/markdown/timeEntryRemovalRecovery';
+import { taskHierarchyTransaction } from '../../src/tasks/infrastructure/obsidian/taskHierarchyTransaction';
 import { preparedRevisionResult } from '../../src/tasks/infrastructure/preparedRevisionResult';
 import {
   prepareTaskEditBatch,
@@ -70,6 +72,7 @@ import {
   type TaskRefAuthority,
   type TaskSnapshotState,
 } from '../../src/tasks/infrastructure/TaskRefAuthority';
+import { createAppWithFiles } from '../helpers';
 import { expectDefined } from './../helpers';
 
 type LocateResult = ReturnType<TaskLocator['locate']>;
@@ -681,6 +684,23 @@ export class InMemoryTaskRepository implements TaskRepository {
 
   setContent(path: string, content: string): void {
     this.files.set(path, content);
+  }
+
+  async hierarchy(request: TaskHierarchyRequest): Promise<TaskRepositoryResult> {
+    const app = await createAppWithFiles(Object.fromEntries(this.files));
+    return taskHierarchyTransaction(app, request, {
+      authority: this.options.refAuthority,
+      state: this.options.snapshotState,
+      editor: this.editor,
+      parse: this.options.snapshotsFromContent,
+      processFile: async (file, transform) => {
+        const content = this.files.get(file.path);
+        if (content === undefined) throw new Error('Missing hierarchy source');
+        const next = transform(content);
+        this.files.set(file.path, next);
+        await app.vault.modify(file, next);
+      },
+    });
   }
 
   async create(destination: TaskDestination, draft: TaskDraft): Promise<TaskRepositoryResult> {

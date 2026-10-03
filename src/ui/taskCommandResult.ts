@@ -3,6 +3,7 @@ import {
   parseRecurrenceRule,
   type TaskApplicationApi,
   type TaskCommandResult,
+  type TaskHierarchyRecovery,
   type TaskSnapshot,
 } from '../tasks';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
@@ -234,6 +235,16 @@ function describeBlocked(result: Extract<TaskCommandResult, { readonly type: 'bl
   return `${action} or remove the dependency first${suffix}`;
 }
 
+function describeHierarchyPartial(recovery: TaskHierarchyRecovery): CommandErrorDescription {
+  return {
+    message:
+      recovery.state === 'unknown'
+        ? `The hierarchy transfer's final state is unconfirmed. Inspect ${recovery.sourcePath} and ${recovery.destinationPath} before taking further action.`
+        : `The task was copied to ${recovery.destinationPath}, but the original remains in ${recovery.sourcePath}. Inspect both notes before taking further action.`,
+    requiresRecovery: true,
+  };
+}
+
 function describeCommandError(
   result: Exclude<TaskCommandResult, { readonly type: 'ok' }>,
 ): CommandErrorDescription {
@@ -260,6 +271,7 @@ function describeCommandError(
     case 'io-error':
       return describeIoError(result.cause);
     case 'partial':
+      if (result.operation === 'hierarchy') return describeHierarchyPartial(result.recovery);
       return {
         message: 'The task was copied, but the original could not be removed.',
         requiresRecovery: true,

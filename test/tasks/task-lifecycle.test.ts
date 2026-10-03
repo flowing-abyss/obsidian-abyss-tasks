@@ -811,6 +811,7 @@ describe('TaskApplicationService lifecycle routing', () => {
       queries,
       {
         edit,
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence: vi.fn(),
@@ -869,6 +870,7 @@ describe('TaskApplicationService lifecycle routing', () => {
       queries,
       {
         edit: vi.fn(),
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence: vi.fn(),
@@ -959,6 +961,7 @@ describe('TaskApplicationService lifecycle routing', () => {
         queries,
         {
           edit: vi.fn(),
+          hierarchy: vi.fn(),
           editBatch: vi.fn(),
           createDependencySubtask: vi.fn(),
           completeRecurrence: vi.fn(),
@@ -994,6 +997,7 @@ describe('TaskApplicationService lifecycle routing', () => {
       queries,
       {
         edit: vi.fn(),
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence: vi.fn(),
@@ -1044,6 +1048,7 @@ describe('TaskApplicationService lifecycle routing', () => {
       queries,
       {
         edit: vi.fn(),
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence: vi.fn(),
@@ -1104,6 +1109,7 @@ describe('TaskApplicationService lifecycle routing', () => {
       queries,
       {
         edit: vi.fn(),
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence: vi.fn(),
@@ -1171,6 +1177,7 @@ describe('TaskApplicationService lifecycle routing', () => {
       queries,
       {
         edit: vi.fn(),
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence: vi.fn(),
@@ -1207,6 +1214,7 @@ describe('TaskApplicationService lifecycle routing', () => {
       queries,
       {
         edit: vi.fn(),
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence: vi.fn(),
@@ -1242,6 +1250,7 @@ describe('TaskApplicationService lifecycle routing', () => {
       queries,
       {
         edit: vi.fn(),
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence: vi.fn(),
@@ -1281,6 +1290,7 @@ describe('TaskApplicationService lifecycle routing', () => {
       queries,
       {
         edit: vi.fn(),
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence: vi.fn(),

@@ -20,6 +20,8 @@ const entry = { parent: child, relativeLine: 2, originalMarkdown: entryMarkdown 
 const date = tasks.localDate('2026-09-06');
 const destination = { filePath: 'other.md', insertion: { type: 'append' as const } };
 const cases = {
+  'reparent-task': { command: { type: 'reparent-task', source: child, parent }, target: undefined },
+  'promote-subtask': { command: { type: 'promote-subtask', subtask }, target: undefined },
   create: {
     command: {
       type: 'create',

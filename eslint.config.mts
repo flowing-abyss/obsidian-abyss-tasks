@@ -424,6 +424,10 @@ export default defineConfig(
     files: [
       'src/task-lists/todayTaskCategory.ts',
       'src/tasks/domain/taskDuration.ts',
+      'src/tasks/domain/taskHierarchy.ts',
+      'src/tasks/infrastructure/markdown/taskHierarchyTransfer.ts',
+      'src/markdown/sourceReferences.ts',
+      'src/markdown/fences.ts',
       'src/projects/projectGroupCollapse.ts',
       'src/projects/projectTableModel.ts',
       'src/projects/projectKanbanModel.ts',

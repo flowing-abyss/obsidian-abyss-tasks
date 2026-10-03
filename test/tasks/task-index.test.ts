@@ -356,6 +356,7 @@ describe('TaskIndex lifecycle and events', () => {
       index,
       {
         edit,
+        hierarchy: vi.fn(),
         editBatch: vi.fn(),
         createDependencySubtask: vi.fn(),
         completeRecurrence: vi.fn(),

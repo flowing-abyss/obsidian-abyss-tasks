@@ -1,5 +1,10 @@
 import type { ActiveBlockingRelation, DependencyDirection } from './taskDependencies';
 import type {
+  TaskHierarchyCommand,
+  TaskHierarchyOutcome,
+  TaskHierarchyRecovery,
+} from './taskHierarchy';
+import type {
   CommentRef,
   DurationMinutes,
   LocalDate,
@@ -62,6 +67,7 @@ export interface CreateDependencySubtaskCommand {
 }
 
 export type TaskCommand =
+  | TaskHierarchyCommand
   | CreateDependencySubtaskCommand
   | {
       readonly type: 'create';
@@ -214,6 +220,7 @@ export interface TimeEntryRemovalRecovery {
 }
 
 export type TaskCommandOutcome =
+  | TaskHierarchyOutcome
   | DependencyCommandOutcome
   | DependencySubtaskCreationOutcome
   | {
@@ -267,6 +274,11 @@ export type TaskCommandResult =
   | { readonly type: 'not-found'; readonly target: TaskMutationTarget }
   | { readonly type: 'ambiguous'; readonly candidates: readonly TaskResolutionCandidate[] }
   | { readonly type: 'invalid'; readonly issues: readonly TaskIssue[] }
+  | {
+      readonly type: 'partial';
+      readonly operation: 'hierarchy';
+      readonly recovery: TaskHierarchyRecovery;
+    }
   | { readonly type: 'partial'; readonly operation: 'move'; readonly recovery: MoveRecovery }
   | { readonly type: 'partial'; readonly operation: 'archive'; readonly recovery: ArchiveRecovery }
   | {

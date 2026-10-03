@@ -1,4 +1,5 @@
 import { TFile, type App } from 'obsidian';
+import type { TaskHierarchyRequest } from '../../application/TaskRepository';
 import {
   dependencyMetadataIssues,
   taskEditMutationTarget as mutationTarget,
@@ -101,6 +102,7 @@ import {
   type TaskSnapshotState,
 } from '../TaskRefAuthority';
 import { reverseDependency } from './reverseDependency';
+import { taskHierarchyTransaction } from './taskHierarchyTransaction';
 
 type LocateResult = ReturnType<TaskLocator['locate']>;
 
@@ -1888,6 +1890,16 @@ export class ObsidianTaskRepository implements TaskRepository {
       (transaction, content) => this.editBatchContent_abyssPrivate(request, transaction, content),
       (file, transaction) => this.rejectBatch_abyssPrivate(file, request, transaction),
     );
+  }
+
+  hierarchy(request: TaskHierarchyRequest): Promise<TaskRepositoryResult> {
+    return taskHierarchyTransaction(this.app_abyssPrivate, request, {
+      authority: this.authority_abyssPrivate,
+      state: this.state_abyssPrivate,
+      editor: this.editor_abyssPrivate,
+      parse: this.parse_abyssPrivate,
+      processFile: (file, transform) => this.processFile_abyssPrivate(file, transform),
+    });
   }
 
   reverseDependency(request: ReverseDependencyRequest): Promise<TaskRepositoryResult> {

@@ -135,6 +135,22 @@ for (const [index, [source]] of denied.entries()) {
   sourceMap.set(repoFile(`src/ui/storage-probe-${index}.ts`), prelude + source);
 }
 sourceMap.set(repoFile('src/ui/storage-safe.ts'), prelude + safe);
+sourceMap.set(
+  repoFile('src/tasks/infrastructure/obsidian/taskHierarchyTransaction.ts'),
+  `${prelude}
+export async function taskHierarchyTransaction(): Promise<void> {
+  await app.vault.process(file, content => content);
+}
+`,
+);
+sourceMap.set(
+  repoFile('src/tasks/infrastructure/obsidian/hierarchy-capability-probe.ts'),
+  `${prelude}
+declare const processFile: (file: TFile, transform: (content: string) => string) => Promise<void>;
+await processFile(file, content => content);
+`,
+);
+
 for (const [index, [source]] of assignmentExtractions.entries()) {
   sourceMap.set(repoFile(`src/ui/storage-assignment-${index}.ts`), prelude + source);
 }
@@ -249,6 +265,19 @@ describe('resolved Obsidian storage authority', () => {
     'accepts reads, provisioning of folders/binary files, ports and unrelated method names',
     () => {
       expect(accesses('src/ui/storage-safe.ts')).toEqual([]);
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
+
+  it(
+    'keeps hierarchy writes on the injected capability instead of granting another Vault.process owner',
+    () => {
+      const found = accesses('src/tasks/infrastructure/obsidian/taskHierarchyTransaction.ts');
+      expect(found).toMatchObject([{ api: 'Vault.process', owner: 'taskHierarchyTransaction' }]);
+      expect(storageAuthorityViolations(found, [])).toHaveLength(1);
+      expect(accesses('src/tasks/infrastructure/obsidian/hierarchy-capability-probe.ts')).toEqual(
+        [],
+      );
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
   );

@@ -162,6 +162,7 @@ async function liveCatalogHarness(mutableType: 'in-progress' | 'done' = 'in-prog
     index,
     {
       edit,
+      hierarchy: vi.fn(),
       editBatch: vi.fn(),
       createDependencySubtask: vi.fn(),
       completeRecurrence: vi.fn(),

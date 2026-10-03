@@ -41,6 +41,7 @@ import type {
   TaskEditBatchRequest,
   TaskEditCommand,
   TaskEditRequest,
+  TaskHierarchyPhase,
   TaskRepository,
   TaskRepositoryResult,
 } from './TaskRepository';
@@ -85,7 +86,9 @@ interface TaskCommandDiagnostic {
     | 'cross-file-edge-write'
     | 'close-others'
     | 'completion-follow-up'
-    | `reversal-${DependencyReversalPhase}`;
+    | `reversal-${DependencyReversalPhase}`
+    | `hierarchy-${TaskHierarchyPhase}`;
+  readonly path?: string;
   readonly cause: string;
 }
 export type TaskDiagnosticSink = (diagnostic: TaskCommandDiagnostic, error?: unknown) => void;
