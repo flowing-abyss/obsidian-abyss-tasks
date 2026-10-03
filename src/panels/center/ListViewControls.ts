@@ -2,6 +2,7 @@ import { setIcon } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import {
   isListViewCustomized,
+  isListViewOptionsCustomized,
   listSelectionToKey,
   normalizeStatusGroups,
   resolveListViewStateKey,
@@ -139,12 +140,7 @@ export class ListViewControls {
 
   renderViewStateButton(container: HTMLElement): HTMLButtonElement {
     const vs = this.#options.state.get('centerListViewState');
-    const defaults = getListViewDefaults(this.#savedStateKey());
-    const isNonDefault =
-      vs.groupBy !== defaults.groupBy ||
-      vs.sortBy.field !== defaults.sortBy.field ||
-      vs.sortBy.dir !== defaults.sortBy.dir ||
-      !statusGroupsEqual(vs.statusGroups, defaults.statusGroups);
+    const isNonDefault = isListViewOptionsCustomized(vs, this.#savedStateKey());
 
     const btn = container.createEl('button', {
       cls: `abyss-view-state-btn${isNonDefault ? ' abyss-view-state-btn--active' : ''}`,

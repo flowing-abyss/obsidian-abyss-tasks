@@ -1,6 +1,6 @@
 import { Component, type App, type Menu } from 'obsidian';
 import type { AppState } from '../app/AppState';
-import { isListViewCustomized, listSelectionToKey } from '../app/listViewState';
+import { isListViewOptionsCustomized, listSelectionToKey } from '../app/listViewState';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
 import type { CalendarSettings } from '../settings/types';
@@ -933,7 +933,7 @@ export class CenterPanel {
     const viewState = this.state_abyssPrivate.get('centerListViewState');
     shell.viewButton.toggleClass(
       'abyss-view-state-btn--active',
-      isListViewCustomized(viewState, this.listViewControls_abyssPrivate.activeListKey()),
+      isListViewOptionsCustomized(viewState, this.listViewControls_abyssPrivate.activeListKey()),
     );
     const { filterInput } = shell;
     const filter = this.state_abyssPrivate.get('centerFilter');

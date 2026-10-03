@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { ListViewControls } from '../src/panels/center/ListViewControls';
-import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import type { ListViewState } from '../src/settings/types';
 import { noInteractionOwnership } from '../src/ui/interactionOwnership';
 import { deferred, makeStubStore } from './helpers';
@@ -110,5 +110,36 @@ describe('case-compatible physical saved keys', () => {
     expect(settings.listViewStates['group:discovered:tag:%23work']?.groupBy).toBe('priority');
     controls.initializeListViewState();
     expect(state.get('centerListViewState').filters).toEqual([{ type: 'tag', value: '#new' }]);
+  });
+});
+
+describe('initial list options indicator', () => {
+  it('renders filter-only inactive and a real group customization active', () => {
+    const state = new AppState();
+    state.set('selectedList', { type: 'tag', tag: '#work' });
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const store = makeStubStore([]);
+    const container = activeDocument.body.createDiv();
+    const controls = new ListViewControls({
+      state,
+      settings,
+      statusRegistry: store.statusRegistry,
+      interactionOwnership: noInteractionOwnership,
+      saveViewState: async () => {},
+      host: { root: () => container, formatDate: (value) => value },
+    });
+    const filtered: ListViewState = {
+      ...getListViewDefaults('tag:#work'),
+      filters: [{ type: 'tag', value: '#home' }],
+    };
+    state.set('centerListViewState', filtered);
+    expect(
+      controls.renderViewStateButton(container).classList.contains('abyss-view-state-btn--active'),
+    ).toBe(false);
+    state.set('centerListViewState', { ...filtered, groupBy: 'priority' });
+    expect(
+      controls.renderViewStateButton(container).classList.contains('abyss-view-state-btn--active'),
+    ).toBe(true);
+    container.remove();
   });
 });
