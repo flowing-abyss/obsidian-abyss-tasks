@@ -235,7 +235,7 @@ describe('LeftPanel smart lists', () => {
     expect(inboxRow.querySelector('.abyss-left-count')?.textContent).toBe('1');
   });
 
-  it('countToday splits unique today and overdue roots', () => {
+  it('countToday splits unique active today and overdue roots', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 9, 3, 12));
     const todayTasks = Array.from({ length: 10 }, (_, line) =>
@@ -244,17 +244,28 @@ describe('LeftPanel smart lists', () => {
         planning: line < 5 ? { due: '2026-10-03' } : { scheduled: '2026-10-03' },
       }),
     );
+    todayTasks.push(
+      task({ source: { line: 14 }, status: 'in-progress', planning: { due: '2026-10-03' } }),
+      task({ source: { line: 17 }, status: 'in-progress', planning: { scheduled: '2026-10-03' } }),
+    );
     const overdueTasks = [
       task({ source: { line: 10 }, planning: { due: '2026-10-02' } }),
       task({
         source: { line: 11 },
         planning: { due: '2026-10-02', scheduled: '2026-10-03' },
       }),
+      task({ source: { line: 18 }, status: 'in-progress', planning: { due: '2026-10-02' } }),
+      task({
+        source: { line: 19 },
+        status: 'in-progress',
+        planning: { due: '2026-10-02', scheduled: '2026-10-03' },
+      }),
     ];
     const excluded = [
       task({ source: { line: 12 }, status: 'done', planning: { due: '2026-10-03' } }),
       task({ source: { line: 13 }, status: 'cancelled', planning: { due: '2026-10-02' } }),
-      task({ source: { line: 14 }, status: 'in-progress', planning: { scheduled: '2026-10-03' } }),
+      task({ source: { line: 20 }, status: 'done', planning: { due: '2026-10-02' } }),
+      task({ source: { line: 21 }, status: 'cancelled', planning: { scheduled: '2026-10-03' } }),
       task({ source: { line: 15 }, planning: { scheduled: '2026-10-02' } }),
       task({ source: { line: 16 } }),
     ];
@@ -270,20 +281,38 @@ describe('LeftPanel smart lists', () => {
               ref: { revision: 'another-detached-snapshot' },
               planning: { due: '2026-10-02', scheduled: '2026-10-03' },
             }),
+            task({
+              source: { line: 19 },
+              ref: { revision: 'detached-in-progress-snapshot' },
+              status: 'in-progress',
+              planning: { due: '2026-10-02', scheduled: '2026-10-03' },
+            }),
           ],
-          '10+2',
-          '10 today, 2 overdue',
+          '12+4',
+          '12 today, 4 overdue',
         ],
-        [todayTasks, '10', '10 today, 0 overdue'],
-        [overdueTasks, '0+2', '0 today, 2 overdue'],
+        [todayTasks, '12', '12 today, 0 overdue'],
+        [overdueTasks, '0+4', '0 today, 4 overdue'],
       ] as const) {
-        const { el, panel, execute, save } = makePanel([...candidates]);
+        const { el, panel, state, execute, save } = makePanel([...candidates]);
         try {
           const todayRow = expectDefined(el.querySelectorAll('.abyss-left-item')[1]);
           const count = expectDefined(todayRow.querySelector('.abyss-left-count'));
           expect(count.textContent).toBe(badge);
           expect(count.getAttribute('aria-label')).toBe(explanation);
+          state.set('centerFilter', 'no visible match');
+          state.set('centerListViewState', {
+            ...state.get('centerListViewState'),
+            groupBy: 'status',
+            statusGroups: ['done'],
+            filters: [{ type: 'tag', value: '#hidden' }],
+          });
           panel.refresh();
+          const refreshedRow = expectDefined(el.querySelectorAll('.abyss-left-item')[1]);
+          expect(refreshedRow.querySelector('.abyss-left-count')?.textContent).toBe(badge);
+          expect(refreshedRow.querySelector('.abyss-left-count')?.getAttribute('aria-label')).toBe(
+            explanation,
+          );
           expect(execute).not.toHaveBeenCalled();
           expect(save).not.toHaveBeenCalled();
         } finally {

@@ -3404,23 +3404,40 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 /* Header */
 .abyss-right-header {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--size-4-2);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: calc(1.4em + 2 * var(--size-4-1)) auto;
+  column-gap: var(--size-4-1);
+  font-size: 17px;
+  line-height: 1.4;
   padding: var(--size-4-2) var(--size-4-3);
   position: relative;
   border-bottom: 1px solid var(--background-modifier-border);
 }
 
+.abyss-right-header > :is(.abyss-status-marker, .abyss-status-control) {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
+  margin: 0;
+}
+
+.abyss-right-header > .abyss-status-control > .abyss-status-marker {
+  margin: 0;
+}
+
 .abyss-right-title {
-  flex: 1;
-  font-size: 17px;
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: start;
+  font-size: inherit;
+  line-height: inherit;
   font-weight: 600;
   border: none;
   background: transparent;
   color: var(--text-normal);
   outline: none;
-  padding: var(--size-2-1) var(--size-4-1);
+  padding: var(--size-4-1);
   border-radius: 4px;
   min-width: 0;
 }
@@ -3431,7 +3448,6 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-right-title-view {
   min-height: var(--input-height, 30px);
-  padding: var(--size-4-1) var(--size-2-3);
   border-radius: var(--radius-s);
   cursor: text;
   white-space: pre-wrap;
@@ -3468,6 +3484,9 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-right-header-actions {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: center;
   display: flex;
   gap: var(--size-4-1);
   flex-shrink: 0;
@@ -3476,6 +3495,9 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-right-action-btn {
   width: 28px;
   height: 28px;
+  padding: 0;
+  box-sizing: border-box;
+  flex-shrink: 0;
   border: none;
   background: transparent;
   border-radius: 4px;
@@ -5000,24 +5022,19 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 /* Tag picker multi-select modal */
 .abyss-tag-picker-modal .modal-content {
-  padding: 0;
+  padding: var(--size-4-1);
   overflow: hidden;
 }
 
 .abyss-tag-picker-search {
   width: 100%;
-  padding: 10px var(--size-4-4);
-  border: none;
-  border-bottom: 1px solid var(--divider-color);
-  background: transparent;
-  font-size: var(--font-ui-medium);
-  outline: none;
   box-sizing: border-box;
 }
 
 .abyss-tag-picker-list {
   max-height: 320px;
   overflow-y: auto;
+  scroll-padding-block: var(--size-4-1);
   padding: var(--size-4-1) 0;
 }
 

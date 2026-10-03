@@ -278,7 +278,8 @@ do not acquire independent task writers or duplicate shell subscriptions.
 Today list membership and sidebar counts share the date-only
 [`todayTaskCategory`](src/task-lists/todayTaskCategory.ts), supplied an explicit local date. Past due
 dates take precedence over scheduling today. The list selector retains its configured status filters;
-LeftPanel counts unique open roots by file and line and displays separate today/overdue totals.
+LeftPanel counts unique active roots (open and in-progress) by file and line and displays separate
+today/overdue totals.
 
 ### Centre services, rows, and calendar
 

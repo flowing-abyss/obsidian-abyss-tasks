@@ -1,4 +1,4 @@
-import type { App } from 'obsidian';
+import { setIcon, type App } from 'obsidian';
 import { AppState } from '../app/AppState';
 import { RightPanel, type RightPanelMutationLifecycle } from '../panels/RightPanel';
 import type { CalendarSettings } from '../settings/types';
@@ -193,10 +193,10 @@ export class TaskModal {
       return;
     }
     const closeBtn = parent.createEl('button');
-    closeBtn.className = 'abyss-right-action-btn abyss-modal-close-btn';
+    closeBtn.className = 'clickable-icon abyss-right-action-btn abyss-modal-close-btn';
     closeBtn.setAttribute('aria-label', 'Close');
     closeBtn.setAttribute('title', 'Close');
-    closeBtn.textContent = '✕';
+    setIcon(closeBtn, 'x');
     closeBtn.addEventListener('click', () => {
       this.closeFromUser_abyssPrivate();
     });

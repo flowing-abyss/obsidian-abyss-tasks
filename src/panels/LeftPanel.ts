@@ -879,9 +879,10 @@ export class LeftPanel {
   ): { todayCount: number; overdue: number } {
     let todayCount = 0;
     let overdue = 0;
+    const activeStatuses = ['open', 'in-progress'];
     const seen = new Set<string>();
     for (const task of tasks) {
-      if (task.status !== 'open') continue;
+      if (!activeStatuses.includes(task.status)) continue;
       const category = todayTaskCategory(task, today);
       if (category === undefined) continue;
       const key = `${task.source.filePath}:${task.source.line}`;

@@ -1539,8 +1539,7 @@ export class RightPanel {
     this.sections_abyssPrivate.renderTitleBlock(header, task);
     const headerActions = header.createDiv({ cls: 'abyss-right-header-actions' });
     const menuBtn = headerActions.createEl('button', {
-      cls: 'abyss-right-action-btn',
-      text: '⋯',
+      cls: 'clickable-icon abyss-right-action-btn',
       attr: {
         title: 'More actions',
         'aria-label': 'More actions',
@@ -1548,6 +1547,7 @@ export class RightPanel {
         'aria-expanded': 'false',
       },
     });
+    setIcon(menuBtn, 'ellipsis');
     this.planningSurfaces_abyssPrivate.registerPlanningControl('more-actions', menuBtn);
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();

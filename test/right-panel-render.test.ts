@@ -172,7 +172,7 @@ describe('RightPanel recurrence editor integration', () => {
 
     const more = expectDefined(
       Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-right-action-btn')).find(
-        (button) => button.textContent === '⋯',
+        (button) => button.getAttribute('aria-label') === 'More actions',
       ),
     );
     click(more);
@@ -216,7 +216,7 @@ describe('RightPanel recurrence editor integration', () => {
     state.set('taskStack', [root]);
     const more = expectDefined(
       Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-right-action-btn')).find(
-        (button) => button.textContent === '⋯',
+        (button) => button.getAttribute('aria-label') === 'More actions',
       ),
     );
 
@@ -273,7 +273,7 @@ describe('RightPanel recurrence editor integration', () => {
     try {
       const more = expectDefined(
         Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-right-action-btn')).find(
-          (button) => button.textContent === '⋯',
+          (button) => button.getAttribute('aria-label') === 'More actions',
         ),
       );
       click(more);
