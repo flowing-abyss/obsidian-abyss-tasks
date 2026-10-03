@@ -69,8 +69,8 @@ export class CalendarNavigationBar {
       const left = bounds.left + nav.clientLeft;
       const right = left + nav.clientWidth;
       const control = target.getBoundingClientRect();
-      if (control.left < left) nav.scrollLeft += control.left - left;
-      else if (control.right > right) nav.scrollLeft += control.right - right;
+      if (control.left < left) nav.scrollLeft += Math.floor(control.left - left);
+      else if (control.right > right) nav.scrollLeft += Math.ceil(control.right - right);
     });
     const left = nav.createDiv({ cls: 'abyss-cal-nav-left' });
     const prevButton = left.createEl('button', {
