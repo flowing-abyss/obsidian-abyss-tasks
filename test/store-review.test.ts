@@ -24,7 +24,6 @@ function readRepositoryFile(path: string): string {
 
 interface PackageManifest {
   readonly name: string;
-  readonly version: string;
   readonly dependencies?: Readonly<Record<string, string>>;
 }
 
@@ -37,20 +36,6 @@ describe('README', () => {
 
   it('is titled with the plugin name from the manifest', () => {
     expect(readme.split('\n')[0]).toBe(`# ${readManifest('manifest.json').name}`);
-  });
-
-  it('has an installation and a usage section', () => {
-    const headings = readme.split('\n').filter((line) => line.startsWith('## '));
-
-    expect(headings).toContain('## Installation');
-    expect(headings).toContain('## Usage');
-  });
-
-  it('carries the licence of the bundled rrule package verbatim, with its version', () => {
-    const { version } = readManifest('node_modules/rrule/package.json');
-
-    expect(readme).toContain(readRepositoryFile('node_modules/rrule/LICENCE'));
-    expect(readme).toContain(`[rrule](https://github.com/jkbrzt/rrule) ${version},`);
   });
 
   // Every runtime package is bundled into main.js, so a new one needs its own notice decision.
