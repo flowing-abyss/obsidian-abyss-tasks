@@ -1030,6 +1030,22 @@ describe('RightPanel.renderTask', () => {
     );
   });
 
+  it('owns its full-title host tooltip label and updates it when selection changes', async () => {
+    const { state, el } = await makePanel();
+    const first = 'First full title beyond a truncated inspector preview '.repeat(6);
+    const second = 'Second full title with a different selected task '.repeat(5);
+    state.set('taskStack', [task({ title: first, markdownTitle: `**${first}**` })]);
+    expect(el.querySelector('.abyss-right-title-view')?.getAttribute('aria-label')).toBe(first);
+    state.set('taskStack', [
+      task({
+        title: second,
+        markdownTitle: `**${second}**`,
+        ref: { filePath: 'f.md', line: 1, revision: 'second' },
+      }),
+    ]);
+    expect(el.querySelector('.abyss-right-title-view')?.getAttribute('aria-label')).toBe(second);
+  });
+
   it('keeps title links navigating through the shared Markdown renderer without entering edit mode', async () => {
     vi.useFakeTimers();
     vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, target) => {

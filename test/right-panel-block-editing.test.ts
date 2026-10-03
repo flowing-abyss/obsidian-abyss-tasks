@@ -804,6 +804,7 @@ describe('RightPanel block editing', () => {
       try {
         const view = expectDefined(container.querySelector<HTMLElement>('.abyss-right-title-view'));
         expect(view.title).toBe(plain);
+        expect(view.getAttribute('aria-label')).toBe(plain);
         view.click();
         await flushMicrotasks();
         const editor = expectDefined(
@@ -827,6 +828,7 @@ describe('RightPanel block editing', () => {
           container.querySelector<HTMLElement>('.abyss-right-title-view'),
         );
         expect(returned.title).toBe(finish === 'Enter' ? updatedPlain : plain);
+        expect(returned.getAttribute('aria-label')).toBe(finish === 'Enter' ? updatedPlain : plain);
         returned.click();
         expect(container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')?.value).toBe(
           finish === 'Enter' ? updatedMarkdown : markdownTitle,
