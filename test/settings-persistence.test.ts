@@ -89,6 +89,91 @@ function stateEnvelope(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe('SettingsPersistenceCoordinator migration', () => {
+  it('saves independent group collapse through state only and reloads it', async () => {
+    const port = memoryPort(legacySettings(), undefined);
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    settings.projects.table.collapsedGroups = ['["status","id:open"]'];
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    expect(settings.projects.timeline.collapsedGroups).toEqual([]);
+    settings.projects.timeline.collapsedGroups = ['["property:Owner","link:alice.md"]'];
+    port.writes.length = 0;
+    await coordinator.saveViewState(settings);
+    expect(port.writes).toEqual([STATE_PATH]);
+    const loaded = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+    expect(loaded.settings.projects.table.collapsedGroups).toEqual(['["status","id:open"]']);
+    expect(loaded.settings.projects.timeline?.collapsedGroups).toEqual([
+      '["property:Owner","link:alice.md"]',
+    ]);
+  });
+
+  it.each([undefined, 'invalid', [7, 'saved', 'saved']])(
+    'normalizes collapse %j and retains malformed recovery and future siblings',
+    async (collapsedGroups) => {
+      const table = {
+        ...DEFAULT_SETTINGS.projects.table,
+        collapsedGroups,
+        futureTable: { keep: 7 },
+      };
+      const timeline = {
+        ...buildDefaultProjectTimelineSettings(DEFAULT_SETTINGS.projects.table),
+        collapsedGroups,
+        futureTimeline: { keep: 9 },
+      };
+      const port = memoryPort(markedStatic(), stateEnvelope({ projects: { table, timeline } }));
+      const coordinator = new SettingsPersistenceCoordinator(port);
+      const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      const expected = Array.isArray(collapsedGroups) ? ['saved'] : [];
+      expect(settings.projects.table.collapsedGroups).toEqual(expected);
+      expect(settings.projects.timeline?.collapsedGroups).toEqual(expected);
+      await coordinator.saveViewState(settings);
+      const saved = JSON.parse(port.stateText ?? '') as {
+        views: { projects: { table: unknown; timeline: unknown } };
+        recovery?: { malformedViews?: { projectTable?: unknown; projectTimeline?: unknown } };
+      };
+      expect(saved.views.projects.table).toMatchObject({
+        collapsedGroups: expected,
+        futureTable: { keep: 7 },
+      });
+      expect(saved.views.projects.timeline).toMatchObject({
+        collapsedGroups: expected,
+        futureTimeline: { keep: 9 },
+      });
+      if (collapsedGroups !== undefined) {
+        expect(saved.recovery?.malformedViews?.projectTable).toEqual(table);
+        expect(saved.recovery?.malformedViews?.projectTimeline).toEqual(timeline);
+      }
+    },
+  );
+
+  it('retries a rejected collapse save without losing either view or unknown state', async () => {
+    const port = memoryPort(
+      markedStatic(),
+      stateEnvelope({
+        projects: { table: { ...DEFAULT_SETTINGS.projects.table, futureTable: true } },
+      }),
+    );
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    settings.projects.table.collapsedGroups = ['["status","id:open"]'];
+    const before = port.stateText;
+    const write = port.state.write;
+    port.state.write = async () => {
+      throw new Error('disk full');
+    };
+    await expect(coordinator.saveViewState(settings)).rejects.toThrow('disk full');
+    expect(port.stateText).toBe(before);
+    port.state.write = write;
+    await coordinator.saveViewState(settings);
+    const loaded = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+    expect(loaded.settings.projects.table.collapsedGroups).toEqual(['["status","id:open"]']);
+    const saved = JSON.parse(port.stateText ?? '') as {
+      views: { projects: { table: { futureTable: unknown } } };
+    };
+    expect(saved.views.projects.table.futureTable).toBe(true);
+    expect(port.writes).toEqual([STATE_PATH]);
+  });
+
   it('rebuilds missing view defaults from static configured properties without discovery', async () => {
     const data = markedStatic();
     const projects = data['projects'] as Record<string, unknown>;

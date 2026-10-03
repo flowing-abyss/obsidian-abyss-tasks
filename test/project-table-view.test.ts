@@ -24,7 +24,10 @@ import type {
 import { createOwnedInferredPropertyClear } from '../src/projects/projectEdits';
 import type { ProjectFieldCatalogItem } from '../src/projects/projectFields';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
-import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
+import {
+  buildDefaultProjectTimelineSettings,
+  normalizeProjectTimelineSettings,
+} from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
@@ -4177,6 +4180,9 @@ describe('ProjectsTableView', () => {
     config.projects.table.sortBy = { field: 'name', dir: 'desc' };
     config.projects.table.hiddenStatuses = [`id:${active.id}`];
     config.projects.table.progress = 'bar';
+    config.projects.table.collapsedGroups = ['["status","none"]'];
+    config.projects.timeline = buildDefaultProjectTimelineSettings(config.projects.table);
+    config.projects.timeline.collapsedGroups = ['timeline-only'];
     config.projects.table.dateDisplay = 'relative';
     expectDefined(config.projects.table.columns.find(({ id }) => id === 'start')).dateDisplay =
       'relative';
@@ -4203,6 +4209,8 @@ describe('ProjectsTableView', () => {
     expect(config.projects.table.groupBy).toBe('status');
     expect(config.projects.table.sortBy).toEqual({ field: 'start', dir: 'asc' });
     expect(config.projects.table.hiddenStatuses).toEqual([]);
+    expect(config.projects.table.collapsedGroups).toEqual([]);
+    expect(config.projects.timeline.collapsedGroups).toEqual(['timeline-only']);
     expect(config.projects.table.progress).toBeUndefined();
     expect(config.projects.table.dateDisplay).toBeUndefined();
     expect(host.querySelector('.abyss-view-state-reset-btn')).toBeNull();
@@ -4379,6 +4387,170 @@ describe('ProjectsTableView', () => {
     expectDefined(toggle.closest('td')).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(0);
+  });
+
+  it.each(['table', 'timeline'] as const)(
+    'creation reveal expands only the active %s view and preserves unrelated saved groups',
+    async (mode) => {
+      const config = settings();
+      const key = JSON.stringify(['status', `id:${active.id}`]);
+      config.projects.table.collapsedGroups = [key, 'hidden-table'];
+      config.projects.timeline = buildDefaultProjectTimelineSettings(config.projects.table);
+      config.projects.timeline.collapsedGroups = [key, 'hidden-timeline'];
+      config.projects.overviewView = mode;
+      let resolveCreate: ((path: string) => void) | undefined;
+      const createProject = () =>
+        new Promise<string>((resolve) => {
+          resolveCreate = resolve;
+        });
+      const item = project({});
+      const created = project({ path: 'Projects/Fresh.md', name: 'Fresh' });
+      const { host, view } = mount([item], { settings: config, createProject });
+      expectDefined(host.querySelector<HTMLButtonElement>('.abyss-projects-new')).click();
+      const input = expectDefined(
+        host.querySelector<HTMLInputElement>('.abyss-project-creation-name'),
+      );
+      input.value = 'Fresh';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      view.update([item, created]);
+      expectDefined(resolveCreate)('Projects/Fresh.md');
+      await flushMicrotasks();
+      expect(config.projects.table.collapsedGroups).toEqual(
+        mode === 'table' ? ['hidden-table'] : [key, 'hidden-table'],
+      );
+      expect(config.projects.timeline.collapsedGroups).toEqual(
+        mode === 'timeline' ? ['hidden-timeline'] : [key, 'hidden-timeline'],
+      );
+      const surface = expectDefined(
+        host.querySelector<HTMLElement>(
+          mode === 'table' ? '.abyss-project-table-scroll' : '.abyss-project-timeline',
+        ),
+      );
+      expect(surface.querySelector('.is-just-created')).not.toBeNull();
+    },
+  );
+
+  it('keeps a loaded default Timeline uncustomized', () => {
+    const config = settings();
+    config.projects.timeline = normalizeProjectTimelineSettings(
+      buildDefaultProjectTimelineSettings(config.projects.table),
+      config.projects.table,
+    );
+    config.projects.overviewView = 'timeline';
+    const { host } = mount([project({})], { settings: config });
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    expect(host.querySelector('.abyss-view-state-btn--active')).toBeNull();
+  });
+
+  it('offers reset for collapse alone and clears only the active view', async () => {
+    const config = settings();
+    config.projects.table.collapsedGroups = ['hidden-table'];
+    config.projects.timeline = buildDefaultProjectTimelineSettings(config.projects.table);
+    config.projects.timeline.collapsedGroups = ['hidden-timeline'];
+    const { host, view } = mount([project({})], { settings: config });
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    expectDefined(host.querySelector<HTMLButtonElement>('.abyss-view-state-reset-btn')).click();
+    await flushMicrotasks();
+    expect(config.projects.table.collapsedGroups).toEqual([]);
+    expect(config.projects.timeline.collapsedGroups).toEqual(['hidden-timeline']);
+    destroyMountedView(view);
+    config.projects.table.collapsedGroups = ['table-survives'];
+    config.projects.overviewView = 'timeline';
+    const next = mount([project({})], { settings: config });
+    expectDefined(next.host.querySelector<HTMLButtonElement>('.abyss-view-state-btn')).click();
+    expectDefined(
+      next.host.querySelector<HTMLButtonElement>('.abyss-view-state-reset-btn'),
+    ).click();
+    await flushMicrotasks();
+    expect(config.projects.timeline.collapsedGroups).toEqual([]);
+    expect(config.projects.table.collapsedGroups).toEqual(['table-survives']);
+  });
+
+  it('saves collapse to original Timeline settings when a removed group field falls back', async () => {
+    const config = settings();
+    config.projects.propertyDefinitionsVersion = 1;
+    config.projects.timeline = buildDefaultProjectTimelineSettings(config.projects.table);
+    config.projects.timeline.groupBy = 'property:Removed';
+    config.projects.table.collapsedGroups = ['table-survives'];
+    config.projects.overviewView = 'timeline';
+    const { host, view } = mount([project({})], { settings: config });
+    expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-timeline-group-header'),
+    ).click();
+    await flushMicrotasks();
+    expect(config.projects.timeline.collapsedGroups).toEqual([
+      JSON.stringify(['status', `id:${active.id}`]),
+    ]);
+    expect(config.projects.timeline.groupBy).toBe('property:Removed');
+    expect(config.projects.table.collapsedGroups).toEqual(['table-survives']);
+    view.update([project({})]);
+    expect(
+      host.querySelector('.abyss-project-timeline-group-header')?.getAttribute('aria-expanded'),
+    ).toBe('false');
+  });
+
+  it('namespaces the same value independently under two grouping fields', async () => {
+    const config = settings();
+    config.projects.table.groupBy = 'property:Owner';
+    const item = project({ frontmatter: { Owner: 'Ada', creator: 'Ada' } });
+    const { host, view } = mount([item], {
+      settings: config,
+      catalog: catalog([
+        { name: 'Owner', type: 'text' },
+        { name: 'creator', type: 'text' },
+      ]),
+    });
+    expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
+    ).click();
+    await flushMicrotasks();
+    const original = structuredClone(config.projects.table.collapsedGroups);
+    config.projects.table.groupBy = 'property:creator';
+    view.update([item]);
+    expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(1);
+    expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
+    ).click();
+    await flushMicrotasks();
+    expect(config.projects.table.collapsedGroups).toHaveLength(2);
+    config.projects.table.groupBy = 'property:Owner';
+    view.update([item]);
+    expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(0);
+    expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
+    ).click();
+    await flushMicrotasks();
+    expect(config.projects.table.collapsedGroups).toHaveLength(1);
+    expect(config.projects.table.collapsedGroups).not.toEqual(original);
+  });
+
+  it('persists Table collapse and reads saved updates across hidden groups and remounts', async () => {
+    const item = project({});
+    const config = settings();
+    const { host, view, saveSettings } = mount([item], { settings: config });
+    expectDefined(
+      host.querySelector<HTMLButtonElement>('.abyss-project-table-group-toggle'),
+    ).click();
+    await flushMicrotasks();
+    expect(config.projects.table.collapsedGroups).toEqual([
+      JSON.stringify(['status', `id:${active.id}`]),
+    ]);
+    expect(saveSettings).toHaveBeenCalledOnce();
+    view.update([]);
+    view.update([item]);
+    expect(host.querySelectorAll('.abyss-project-table-row')).toHaveLength(0);
+    destroyMountedView(view);
+    const next = mount([item], { settings: config });
+    expect(next.host.querySelectorAll('.abyss-project-table-row')).toHaveLength(0);
+    config.projects.table.groupBy = 'none';
+    next.view.update([item]);
+    expect(next.host.querySelectorAll('.abyss-project-table-row')).toHaveLength(1);
+    config.projects.table.groupBy = 'status';
+    next.view.update([item]);
+    expect(next.host.querySelectorAll('.abyss-project-table-row')).toHaveLength(0);
+    config.projects.table.collapsedGroups = [];
+    next.view.update([item]);
+    expect(next.host.querySelectorAll('.abyss-project-table-row')).toHaveLength(1);
   });
 
   it('keeps collapsed group keys stable across project refreshes', () => {

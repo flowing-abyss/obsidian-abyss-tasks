@@ -13,6 +13,7 @@ describe('project Timeline settings', () => {
     table.groupBy = 'property:Owner';
     table.sortBy = { field: 'end', dir: 'desc' };
     table.hiddenStatuses = ['id:done'];
+    table.collapsedGroups = ['["status","id:done"]'];
 
     const timeline = buildDefaultProjectTimelineSettings(table);
     timeline.sortBy.field = 'start';
@@ -26,6 +27,7 @@ describe('project Timeline settings', () => {
       ],
       showEmptyFields: true,
       descriptionLines: 0,
+      collapsedGroups: [],
       groupBy: 'property:Owner',
       sortBy: { field: 'start', dir: 'desc' },
       hiddenStatuses: ['id:done', 'none'],
@@ -75,6 +77,9 @@ describe('project Timeline settings', () => {
   });
 
   it('reports malformed known fields while allowing future keys', () => {
+    expect(isMalformedProjectTimelineSettings({ collapsedGroups: [1] })).toBe(true);
+    expect(isMalformedProjectTimelineSettings({ collapsedGroups: 'invalid' })).toBe(true);
+    expect(isMalformedProjectTimelineSettings({ collapsedGroups: ['saved', 'saved'] })).toBe(false);
     expect(isMalformedProjectTimelineSettings({ scale: 'year' })).toBe(false);
     expect(isMalformedProjectTimelineSettings({ scale: 'century' })).toBe(true);
     expect(isMalformedProjectTimelineSettings({ fields: [{ id: '', visible: true }] })).toBe(true);

@@ -1,5 +1,9 @@
 import { Component } from 'obsidian';
 import type { ProjectFieldCatalogItem, ProjectTableSettings } from '../../projects/projectFields';
+import {
+  projectGroupCollapseKey,
+  setProjectGroupCollapsed,
+} from '../../projects/projectGroupCollapse';
 import type { ProjectValuePresentation } from '../../projects/projectPropertyDefinitions';
 import {
   buildProjectTableModel,
@@ -216,7 +220,7 @@ export interface ProjectsTableSurfaceContext {
   readonly paste: (event: ClipboardEvent) => void;
   readonly rowDrag: ProjectTableRowDrag;
   /** Runs an action once the open editor has finished, as a group toggle does. */
-  readonly finishEditorBefore: (action: () => void) => void;
+  readonly changeViewState: (mutation: () => void) => void;
   /** Renders the overview again. */
   readonly render: () => void;
   /** Runs after each window pass, so the rows it mounted show the selection. */
@@ -235,7 +239,6 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   readonly #context: ProjectsTableSurfaceContext;
   readonly #host: HTMLElement;
   #columnCleanup: (() => void) | undefined;
-  readonly #collapsedGroups = new Set<string>();
   readonly #viewport = new ProjectTableViewport();
   #spacers = new Map<string, HTMLTableRowElement>();
   #rowsDirty = false;
@@ -374,7 +377,11 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     const group = model.groups.find(({ projects }) =>
       projects.some((project) => project.path === path),
     );
-    if (group !== undefined && this.#collapsedGroups.delete(group.key)) this.#context.render();
+    if (group !== undefined && this.isGroupCollapsed(group.key)) {
+      this.#context.changeViewState(() => {
+        this.#setGroupCollapsed(group.key, false);
+      });
+    }
   }
 
   occurrenceElement(cell: RenderedCellContext): HTMLElement {
@@ -417,7 +424,21 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   }
 
   isGroupCollapsed(key: string): boolean {
-    return this.#collapsedGroups.has(key);
+    const field = this.#context.modelInput().settings.groupBy;
+    return (
+      this.#context
+        .tableSettings()
+        .collapsedGroups?.includes(projectGroupCollapseKey(field, key)) ?? false
+    );
+  }
+
+  #setGroupCollapsed(key: string, collapsed: boolean): void {
+    const settings = this.#context.tableSettings();
+    settings.collapsedGroups = setProjectGroupCollapsed(
+      settings.collapsedGroups,
+      projectGroupCollapseKey(this.#context.modelInput().settings.groupBy, key),
+      collapsed,
+    );
   }
 
   /** Reconciles the window again, as a finished row drag does. */
@@ -534,7 +555,9 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
       model,
       grouped: this.#context.grouped(),
       columns,
-      collapsedGroups: this.#collapsedGroups,
+      collapsedGroups: new Set(
+        model.groups.filter(({ key }) => this.isGroupCollapsed(key)).map(({ key }) => key),
+      ),
       effectiveField: this.#context.effectiveField,
     });
     this.#rows = rows;
@@ -724,7 +747,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     const colSpan = Math.max(1, columnCount);
     if (rendered.cell.colSpan !== colSpan) rendered.cell.colSpan = colSpan;
     writeOptionalAttribute(rendered.button, 'data-group-key', key);
-    const collapsed = this.#collapsedGroups.has(key);
+    const collapsed = this.isGroupCollapsed(key);
     writeClass(rendered.element, 'is-collapsed', collapsed);
     writeOptionalAttribute(rendered.button, 'aria-expanded', String(!collapsed));
     const chevronIcon = collapsed ? 'chevron-right' : 'chevron-down';
@@ -783,10 +806,8 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     cell.addEventListener('click', (event) => {
       if (event.target instanceof Element && event.target.closest('a') !== null) return;
       const key = rendered.context.key;
-      this.#context.finishEditorBefore(() => {
-        if (this.#collapsedGroups.has(key)) this.#collapsedGroups.delete(key);
-        else this.#collapsedGroups.add(key);
-        this.#context.render();
+      this.#context.changeViewState(() => {
+        this.#setGroupCollapsed(key, !this.isGroupCollapsed(key));
       });
     });
     this.#bindGroupDropTarget(row, () => rendered.context.key);

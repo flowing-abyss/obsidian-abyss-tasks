@@ -34,6 +34,7 @@ export interface ProjectColumn {
 }
 
 export interface ProjectTableSettings {
+  collapsedGroups?: string[];
   columns: ProjectColumn[];
   showDescription: boolean;
   progress?: ProjectTableProgressDisplay;

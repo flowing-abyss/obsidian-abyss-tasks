@@ -8,6 +8,10 @@ import {
   type ProjectColumn,
   type ProjectFieldCatalogItem,
 } from '../../projects/projectFields';
+import {
+  projectGroupCollapseKey,
+  setProjectGroupCollapsed,
+} from '../../projects/projectGroupCollapse';
 import type { ProjectTableGroup } from '../../projects/projectTableModel';
 import {
   projectTimelineAxisLayout,
@@ -69,6 +73,8 @@ export interface ProjectsTimelineViewContext<
   TCell extends ProjectTimelineCellContext,
 > extends ProjectTimelineRangeCommitter {
   readonly settings: () => ProjectTimelineSettings;
+  /** The original saved view, independently of effective schema fallbacks. */
+  readonly savedSettings: () => ProjectTimelineSettings;
   readonly modelInput: () => Omit<ProjectTimelineModelInput, 'projects' | 'settings' | 'search'>;
   /** The field each cell edits, which an owned clear may retype; `cells()` lists it. */
   readonly effectiveField: ProjectOverviewFieldResolver;
@@ -291,7 +297,6 @@ export class ProjectsTimelineView<
   private readonly axisCells_abyssPrivate: HTMLElement;
   private readonly groupsHost_abyssPrivate: HTMLElement;
   private readonly groups_abyssPrivate = new Map<string, RenderedGroup<TCell>>();
-  private readonly collapsedGroups_abyssPrivate = new Set<string>();
   private visibleCells_abyssPrivate: TCell[] = [];
   private cells_abyssPrivate: ProjectOverviewCells = NO_PROJECT_OVERVIEW_CELLS;
   private projects_abyssPrivate: readonly Project[] = [];
@@ -485,7 +490,7 @@ export class ProjectsTimelineView<
 
   visibleRow(occurrenceId: string): ProjectTimelineRow | undefined {
     for (const group of this.model_abyssPrivate?.groups ?? []) {
-      if (this.collapsedGroups_abyssPrivate.has(group.key)) continue;
+      if (this.isGroupCollapsed_abyssPrivate(group.key)) continue;
       const row = group.rows.find((candidate) => candidate.occurrenceId === occurrenceId);
       if (row !== undefined) return row;
     }
@@ -528,8 +533,8 @@ export class ProjectsTimelineView<
 
   revealProject(path: string): void {
     const located = this.findLocatedRow_abyssPrivate(path);
-    if (located !== undefined && this.collapsedGroups_abyssPrivate.delete(located.groupKey)) {
-      this.render_abyssPrivate(false);
+    if (located !== undefined && this.isGroupCollapsed_abyssPrivate(located.groupKey)) {
+      this.changeGroupCollapsed_abyssPrivate(located.groupKey, false);
     }
     const row = this.findRow_abyssPrivate(path);
     if (row === undefined) return;
@@ -730,7 +735,11 @@ export class ProjectsTimelineView<
       model,
       settings: this.context_abyssPrivate.settings(),
       fields: input.fields,
-      collapsedGroups: this.collapsedGroups_abyssPrivate,
+      collapsedGroups: new Set(
+        model.groups
+          .filter(({ key }) => this.isGroupCollapsed_abyssPrivate(key))
+          .map(({ key }) => key),
+      ),
       effectiveField: this.context_abyssPrivate.effectiveField,
     });
     if (this.preparedScaleChange_abyssPrivate) {
@@ -978,7 +987,7 @@ export class ProjectsTimelineView<
       const group =
         this.groups_abyssPrivate.get(model.key) ?? this.createGroup_abyssPrivate(model.key);
       this.groups_abyssPrivate.set(model.key, group);
-      const collapsed = this.collapsedGroups_abyssPrivate.has(model.key);
+      const collapsed = this.isGroupCollapsed_abyssPrivate(model.key);
       group.header.hidden = !grouped;
       group.header.setAttribute('aria-expanded', String(!collapsed));
       group.chevron.empty();
@@ -1494,14 +1503,36 @@ export class ProjectsTimelineView<
     return undefined;
   }
 
+  private isGroupCollapsed_abyssPrivate(key: string): boolean {
+    return (
+      this.context_abyssPrivate
+        .savedSettings()
+        .collapsedGroups?.includes(
+          projectGroupCollapseKey(this.context_abyssPrivate.settings().groupBy, key),
+        ) ?? false
+    );
+  }
+
+  private setGroupCollapsed_abyssPrivate(key: string, collapsed: boolean): void {
+    const settings = this.context_abyssPrivate.savedSettings();
+    settings.collapsedGroups = setProjectGroupCollapsed(
+      settings.collapsedGroups,
+      projectGroupCollapseKey(this.context_abyssPrivate.settings().groupBy, key),
+      collapsed,
+    );
+  }
+
   private toggleGroup_abyssPrivate(key: string): void {
+    this.changeGroupCollapsed_abyssPrivate(key);
+  }
+
+  private changeGroupCollapsed_abyssPrivate(key: string, collapsed?: boolean): void {
     this.context_abyssPrivate
       .requestViewChange(() => {
-        if (this.collapsedGroups_abyssPrivate.has(key)) {
-          this.collapsedGroups_abyssPrivate.delete(key);
-        } else {
-          this.collapsedGroups_abyssPrivate.add(key);
-        }
+        this.setGroupCollapsed_abyssPrivate(
+          key,
+          collapsed ?? !this.isGroupCollapsed_abyssPrivate(key),
+        );
       })
       .catch((error: unknown) => {
         console.error('[abyss-tasks] Could not change project Timeline view', error);

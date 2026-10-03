@@ -324,7 +324,10 @@ sorting, filtering, grouping, and unique visible counts. Kanban and Timeline reu
 supplies one render instant for all models and tracked totals; pure models never read ambient time.
 Link groups use resolved note paths as identity while retaining raw values and source context for
 rendering and edits. Each view has independent saved organization, initially derived from Table
-when first requested.
+when first requested. Table and Timeline group collapse is independent saved organization in
+`state.json`, namespaced by the active grouping field. Collapse defaults empty rather than being
+copied from Table into Timeline. Hidden groups retain their saved collapse; reset and reveal change
+only the owning view through the existing view-state mutation flow.
 
 `ProjectsPanel` owns a retained [`ProjectsTableView`](src/panels/projects/ProjectsTableView.ts)
 overview controller. The controller shares toolbar, field rendering, editor boundary, mutation

@@ -422,6 +422,7 @@ export default defineConfig(
   },
   {
     files: [
+      'src/projects/projectGroupCollapse.ts',
       'src/projects/projectTableModel.ts',
       'src/projects/projectKanbanModel.ts',
       'src/projects/projectTimelineModel.ts',

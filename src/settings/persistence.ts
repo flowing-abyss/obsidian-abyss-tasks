@@ -280,7 +280,7 @@ function isMalformedProjectTable(value: unknown): boolean {
     hasMalformedProjectTablePresentation(value) ||
     (value['groupBy'] !== undefined && typeof value['groupBy'] !== 'string') ||
     isMalformedProjectTableSort(value['sortBy']) ||
-    isMalformedHiddenStatuses(value['hiddenStatuses'])
+    ['hiddenStatuses', 'collapsedGroups'].some((key) => isMalformedHiddenStatuses(value[key]))
   );
 }
 
@@ -541,6 +541,8 @@ function mergeProjectTimeline(
   rawSort['dir'] = current.sortBy.dir;
   base['sortBy'] = rawSort;
   base['hiddenStatuses'] = detached(current.hiddenStatuses);
+  if (current.collapsedGroups === undefined) delete base['collapsedGroups'];
+  else base['collapsedGroups'] = detached(current.collapsedGroups);
   base['scale'] = current.scale;
   if (current.fields === undefined) delete base['fields'];
   else base['fields'] = mergeColumns(base['fields'], current.fields);
@@ -568,6 +570,8 @@ function mergeProjectTable(
   table['groupBy'] = current.groupBy;
   table['sortBy'] = detached(current.sortBy);
   table['hiddenStatuses'] = detached(current.hiddenStatuses);
+  if (current.collapsedGroups === undefined) delete table['collapsedGroups'];
+  else table['collapsedGroups'] = detached(current.collapsedGroups);
   return table;
 }
 

@@ -70,6 +70,7 @@ function mount(
   const mountedView: { current?: ProjectsTimelineView<Cell> } = {};
   const view = new ProjectsTimelineView<Cell>(host, {
     settings: () => settings,
+    savedSettings: () => settings,
     modelInput: () => ({
       nowMs: Date.UTC(2026, 8, 20),
       fields,
@@ -182,6 +183,28 @@ function mockTimelineGeometry(
 }
 
 describe('ProjectsTimelineView', () => {
+  it('reads current saved collapse after filtering and grouping switches', async () => {
+    const item = project('Projects/A.md', '2026-09-01');
+    const { host, view, settings } = mount([item]);
+    const key = JSON.stringify(['status', `id:${item.statusId}`]);
+    settings.collapsedGroups = [key];
+    view.update([item], '');
+    expect(view.cells().identities).toHaveLength(0);
+    view.update([item], 'absent');
+    expect(settings.collapsedGroups).toEqual([key]);
+    settings.groupBy = 'none';
+    view.update([item], '');
+    expect(view.cells().identities.length).toBeGreaterThan(0);
+    settings.groupBy = 'status';
+    view.update([item], '');
+    expect(
+      host.querySelector('.abyss-project-timeline-group-header')?.getAttribute('aria-expanded'),
+    ).toBe('false');
+    settings.collapsedGroups = [];
+    view.update([item], '');
+    expect(view.cells().identities.length).toBeGreaterThan(0);
+  });
+
   it('raises the row and summary that hold the edited cell, one cell at a time', () => {
     const { host, view } = mount([
       project('Projects/A.md', '2026-09-10', '2026-09-12'),
@@ -1122,10 +1145,14 @@ describe('ProjectsTimelineView', () => {
     header.click();
     await Promise.resolve();
     expect(header.getAttribute('aria-expanded')).toBe('false');
+    expect(settings.collapsedGroups).toEqual([
+      JSON.stringify(['status', `id:${DEFAULT_SETTINGS.projects.statuses[0]?.id}`]),
+    ]);
 
     view.revealProject('Projects/A.md');
 
     expect(header.getAttribute('aria-expanded')).toBe('true');
+    expect(settings.collapsedGroups).toEqual([]);
     expect(
       expectDefined(header.closest('.abyss-project-timeline-group')).querySelector<HTMLElement>(
         '.abyss-project-timeline-group-body',

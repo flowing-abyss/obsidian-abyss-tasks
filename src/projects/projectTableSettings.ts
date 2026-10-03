@@ -70,6 +70,7 @@ export function buildDefaultProjectTableSettings(): ProjectTableSettings {
     groupBy: 'status',
     sortBy: { field: 'start', dir: 'asc' },
     hiddenStatuses: [],
+    collapsedGroups: [],
   };
 }
 
@@ -132,6 +133,12 @@ function normalizeSort(
   };
 }
 
+function normalizedCollapsedGroups(value: unknown): string[] {
+  return Array.isArray(value)
+    ? [...new Set(value.filter((entry): entry is string => typeof entry === 'string'))]
+    : [];
+}
+
 /** Deep-fills table defaults while retaining valid saved custom columns and presentation details. */
 export function normalizeProjectTableSettings(value: unknown): ProjectTableSettings {
   const defaults = buildDefaultProjectTableSettings();
@@ -162,6 +169,7 @@ export function normalizeProjectTableSettings(value: unknown): ProjectTableSetti
       typeof value['groupBy'] === 'string' ? remapDescription(value['groupBy']) : defaults.groupBy,
     sortBy: { ...sortBy, field: remapDescription(sortBy.field) },
     hiddenStatuses,
+    collapsedGroups: normalizedCollapsedGroups(value['collapsedGroups']),
     ...(progress === undefined ? {} : { progress }),
     ...(dateDisplay === undefined ? {} : { dateDisplay }),
   };

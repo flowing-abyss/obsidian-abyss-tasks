@@ -15,6 +15,7 @@ const LEGACY_TIMELINE_FIELDS: readonly ProjectColumn[] = [
 ];
 
 export interface ProjectTimelineSettings {
+  collapsedGroups?: string[];
   groupBy: string;
   sortBy: ProjectTableSettings['sortBy'];
   hiddenStatuses: string[];
@@ -113,6 +114,7 @@ export function buildDefaultProjectTimelineSettings(
     groupBy: table.groupBy,
     sortBy: { ...table.sortBy },
     hiddenStatuses: [...table.hiddenStatuses],
+    collapsedGroups: [],
     scale: 'month',
     fields: LEGACY_TIMELINE_FIELDS.map((field) => ({ ...field })),
     showEmptyFields: true,
@@ -172,6 +174,7 @@ export function normalizeProjectTimelineSettings(
     groupBy: typeof raw['groupBy'] === 'string' ? raw['groupBy'] : defaults.groupBy,
     sortBy: normalizedSort(raw['sortBy'], defaults.sortBy),
     hiddenStatuses: uniqueStrings(raw['hiddenStatuses']) ?? defaults.hiddenStatuses,
+    collapsedGroups: uniqueStrings(raw['collapsedGroups']) ?? [],
     scale: normalizedScale(raw['scale']),
     ...(fields === undefined ? {} : { fields }),
     ...(showEmptyFields === undefined ? {} : { showEmptyFields }),
@@ -219,6 +222,10 @@ export function isMalformedProjectTimelineSettings(raw: unknown): boolean {
     ),
     optional(
       raw['hiddenStatuses'],
+      (value) => Array.isArray(value) && value.every((entry) => typeof entry === 'string'),
+    ),
+    optional(
+      raw['collapsedGroups'],
       (value) => Array.isArray(value) && value.every((entry) => typeof entry === 'string'),
     ),
     optional(raw['scale'], (value) =>

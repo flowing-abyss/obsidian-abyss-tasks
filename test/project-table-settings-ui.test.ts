@@ -417,6 +417,7 @@ describe('renderProjectTableSettings', () => {
 
   it('persists alignment in view state and reset removes the saved key', async () => {
     const projects = buildDefaultProjectsSettings();
+    projects.table.collapsedGroups = ['hidden-group'];
     const saveViewState = vi.fn().mockResolvedValue(undefined);
     const container = document.body.createDiv();
     renderProjectTableSettings({
@@ -452,6 +453,7 @@ describe('renderProjectTableSettings', () => {
       'alignment',
     );
     expect(saveViewState).toHaveBeenCalledTimes(2);
+    expect(projects.table.collapsedGroups).toEqual(['hidden-group']);
   });
 
   it('embeds status controls once inside the expanded Status property', () => {

@@ -449,6 +449,7 @@ describe('projects migration', () => {
       groupBy: 'status',
       sortBy: { field: 'start', dir: 'asc' },
       hiddenStatuses: [],
+      collapsedGroups: [],
     });
     expect(projects['view']).toBe('external-build-value');
     expect(projects['workNoteCompatibility']).toEqual({ enabled: true });

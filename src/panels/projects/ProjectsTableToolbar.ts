@@ -78,6 +78,10 @@ function isTimelineSettings(
   return 'scale' in settings;
 }
 
+function hasCollapsedGroups(settings: ProjectTableSettings): boolean {
+  return (settings.collapsedGroups?.length ?? 0) > 0;
+}
+
 function isCustomized(settings: ProjectTableSettings): boolean {
   const defaults = buildDefaultProjectTableSettings();
   return (
@@ -86,6 +90,7 @@ function isCustomized(settings: ProjectTableSettings): boolean {
     settings.sortBy.dir !== defaults.sortBy.dir ||
     settings.showDescription !== defaults.showDescription ||
     settings.hiddenStatuses.length > 0 ||
+    hasCollapsedGroups(settings) ||
     (settings.progress ?? 'full') !== 'full' ||
     settings.dateDisplay !== undefined ||
     settings.columns.some(({ dateDisplay }) => dateDisplay !== undefined)

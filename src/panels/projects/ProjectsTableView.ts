@@ -736,8 +736,11 @@ export class ProjectsTableView {
           this.dropProjectIntoGroup_abyssPrivate(transfer, active, key);
         },
       },
-      finishEditorBefore: (action) => {
-        this.finishEditorBeforeAction(action);
+      changeViewState: (mutation) => {
+        runAsyncAction(
+          this.requestViewChange_abyssPrivate(mutation),
+          'Could not change project Table view',
+        );
       },
       render: () => {
         this.renderTable_abyssPrivate();
@@ -834,6 +837,7 @@ export class ProjectsTableView {
     table.groupBy = defaults.groupBy;
     table.sortBy = defaults.sortBy;
     table.hiddenStatuses = defaults.hiddenStatuses;
+    table.collapsedGroups = [];
     table.showDescription = defaults.showDescription;
     delete table.progress;
     delete table.dateDisplay;
@@ -1588,6 +1592,7 @@ export class ProjectsTableView {
   private createTimelineView_abyssPrivate(): ProjectsTimelineView<RenderedCellContext> {
     const timeline = new ProjectsTimelineView<RenderedCellContext>(this.root_abyssPrivate, {
       settings: () => this.effectiveTimelineSettings_abyssPrivate(),
+      savedSettings: () => this.ensureTimelineSettings_abyssPrivate(),
       modelInput: () => ({
         nowMs: this.trackedNowMs_abyssPrivate,
         fields: this.renderFields_abyssPrivate(),
