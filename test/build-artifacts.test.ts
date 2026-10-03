@@ -283,6 +283,8 @@ describe('production JavaScript artifact', () => {
       return obsidian;
     });
     const app = appWithFiles({});
+    // Obsidian installs the plugin directory before loading its entry point.
+    await app.vault.adapter.mkdir(`${app.vault.configDir}/plugins/abyss-tasks`);
     (app.workspace as unknown as { layoutReady: boolean }).layoutReady = false;
     const notices = vi.spyOn(
       obsidian.Notice.prototype as unknown as {

@@ -888,6 +888,8 @@ describe('TaskCalendarPlugin onunload', () => {
 describe('TaskCalendarPlugin openPanel', () => {
   it('opens and reuses the registered panel, closes its surface on replacement, and detaches the leaf', async () => {
     const app = await createAppWithFiles({});
+    // Obsidian installs the plugin directory before loading its entry point.
+    await app.vault.adapter.mkdir(`${app.vault.configDir}/plugins/${MANIFEST.id}`);
     const errors = vi.spyOn(console, 'error');
     const warnings = vi.spyOn(console, 'warn');
     const plugin = new TaskCalendarPlugin(app, MANIFEST);
@@ -969,6 +971,8 @@ const SETTLE_STEP_MS = 10;
 /** The plugin's own owner, index, and panel over the lifecycle notes, with the panel open. */
 async function pluginWithOpenPanel() {
   const app = await createAppWithFiles(LIFECYCLE_NOTES);
+  // Obsidian installs the plugin directory before loading its entry point.
+  await app.vault.adapter.mkdir(`${app.vault.configDir}/plugins/${MANIFEST.id}`);
   const plugin = new TaskCalendarPlugin(app, MANIFEST);
   vi.spyOn(plugin, 'loadData').mockResolvedValue(null);
   const registerCommand = vi.spyOn(plugin, 'addCommand');
