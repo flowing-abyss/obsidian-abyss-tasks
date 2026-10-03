@@ -540,6 +540,10 @@ export class CenterPanel {
   private handlePanelKeyDown_abyssPrivate(event: KeyboardEvent): void {
     if (isImeOwnedEvent(event)) return;
     if (event.key === 'Escape' && this.rowSelection_abyssPrivate.isActive()) {
+      if (this.state_abyssPrivate.get('mode') === 'tasks') {
+        event.preventDefault();
+        event.stopPropagation();
+      }
       this.clearTaskSelection_abyssPrivate();
       return;
     }

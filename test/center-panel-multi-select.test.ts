@@ -402,15 +402,86 @@ describe('CenterPanel multi-selection', () => {
     expect(card.getAttribute('aria-describedby')).toBe(externalDescription.id);
   });
 
-  it('Escape key clears selection', () => {
-    const { el } = makeCenter([t1, t2]);
-    const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
-    expectDefined(cards[0]).dispatchEvent(
-      new MouseEvent('click', { bubbles: true, ctrlKey: true }),
-    );
-    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    expect(expectDefined(cards[0]).classList.contains('abyss-multi-selected')).toBe(false);
+  it('consumes Escape when clearing selection before workspace fallback', () => {
+    const { el, panel, state } = makeCenter([t1, t2]);
+    attach(el);
+    const first = expectDefined(cards(el)[0]);
+    const second = expectDefined(cards(el)[1]);
+    click(first, { ctrlKey: true });
+    click(second, { ctrlKey: true });
+    expect(selectedLines(el)).toEqual(['0', '1']);
+    first.focus();
+    const ownerWindow = expectDefined(el.ownerDocument.defaultView);
+    const fallback = vi.fn();
+    const observe = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && !event.defaultPrevented) fallback();
+    };
+    ownerWindow.addEventListener('keydown', observe);
+    try {
+      const handled = key(first, 'Escape');
+      expect(selectedLines(el)).toEqual([]);
+      expect(handled.defaultPrevented).toBe(true);
+      expect(fallback).not.toHaveBeenCalled();
+      expect(el.ownerDocument.activeElement).toBe(first);
+
+      expect(key(first, 'Escape').defaultPrevented).toBe(false);
+      expect(fallback).toHaveBeenCalledTimes(1);
+      state.set('mode', 'calendar');
+      expect(key(el, 'Escape').defaultPrevented).toBe(false);
+      expect(fallback).toHaveBeenCalledTimes(2);
+      panel.destroy();
+      expect(key(el, 'Escape').defaultPrevented).toBe(false);
+      expect(fallback).toHaveBeenCalledTimes(3);
+    } finally {
+      ownerWindow.removeEventListener('keydown', observe);
+      panel.destroy();
+      el.remove();
+    }
   });
+
+  it.each(['anchor-only', 'multi'] as const)(
+    'leaves Calendar Escape to workspace when list state is retained (%s)',
+    (kind) => {
+      const { el, panel, state } = makeCenter([t1, t2]);
+      attach(el);
+      const first = expectDefined(cards(el)[0]);
+      const second = expectDefined(cards(el)[1]);
+      click(first);
+      if (kind === 'multi') click(second, { shiftKey: true });
+      expect(selectedLines(el)).toEqual(kind === 'multi' ? ['0', '1'] : []);
+      const ownerWindow = expectDefined(el.ownerDocument.defaultView);
+      const fallback = vi.fn();
+      const observe = (event: KeyboardEvent): void => {
+        if (event.key === 'Escape' && !event.defaultPrevented) fallback();
+      };
+      ownerWindow.addEventListener('keydown', observe);
+      try {
+        state.set('mode', 'calendar');
+        const dayButton = (): HTMLButtonElement =>
+          expectDefined(
+            [...el.querySelectorAll<HTMLButtonElement>('.abyss-cal-view-switcher button')].find(
+              (button) => button.textContent === 'Day',
+            ),
+          );
+        dayButton().click();
+        const day = dayButton();
+        day.focus();
+        expect(el.ownerDocument.activeElement).toBe(day);
+
+        const escape = key(day, 'Escape');
+        expect(escape.defaultPrevented).toBe(false);
+        expect(fallback).toHaveBeenCalledOnce();
+        state.set('mode', 'tasks');
+        expect(selectedLines(el)).toEqual([]);
+        expect(key(el, 'Escape').defaultPrevented).toBe(false);
+        expect(fallback).toHaveBeenCalledTimes(2);
+      } finally {
+        ownerWindow.removeEventListener('keydown', observe);
+        panel.destroy();
+        el.remove();
+      }
+    },
+  );
 
   it.each(['composing', 'legacy'] as const)(
     'leaves IME-owned Escape and arrows to the IME (%s)',
