@@ -44,7 +44,6 @@ jobs:
             main.js
             manifest.json
             dist/styles.css
-            THIRD_PARTY_NOTICES.txt
 
       - name: Build changelog from commits
         id: release_notes
@@ -79,4 +78,4 @@ jobs:
             --title="$tag" \
             --draft \
             --notes "$RELEASE_NOTES" \
-            main.js manifest.json dist/styles.css THIRD_PARTY_NOTICES.txt
+            main.js manifest.json dist/styles.css
