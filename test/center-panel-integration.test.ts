@@ -4802,6 +4802,48 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     expect(content).toContain(`- [ ] stand-up ⏰ 10:00 ➕ ${TODAY} 📅 ${date}`);
   });
 
+  it.each(['Enter', 'Escape'])(
+    'a day-end grid click opens a valid capture and handles %s through the existing session',
+    async (key) => {
+      const { panel, el, app } = await makeClickToCreatePanel();
+      try {
+        expectDefined(
+          Array.from(el.querySelectorAll<HTMLElement>('.abyss-cal-view-btn')).find(
+            (button) => button.textContent === 'Day',
+          ),
+        ).click();
+        const hourColumnEl = expectDefined(el.querySelector<HTMLElement>('.abyss-tg-hour-column'));
+        vi.spyOn(hourColumnEl, 'getBoundingClientRect').mockReturnValue({
+          top: -96.015625,
+          left: 0,
+        } as DOMRect);
+        const before = await readMd(app, 'inbox.md');
+        hourColumnEl.dispatchEvent(new MouseEvent('click', { bubbles: true, clientY: 1053 }));
+        await flushMicrotasks();
+
+        const input = expectDefined(
+          el.querySelector<HTMLInputElement>('.abyss-tg-quick-add-input'),
+        );
+        expect(input.placeholder).toBe('Task at 23:45…');
+        expect(await readMd(app, 'inbox.md')).toBe(before);
+        setCaptureDraft(input, 'late capture');
+        pressCaptureKey(input, key);
+        await flushMicrotasks();
+
+        const after = await readMd(app, 'inbox.md');
+        if (key === 'Enter') {
+          expect(after).toContain('- [ ] late capture ⏰ 23:45');
+        } else {
+          expect(after).toBe(before);
+          expect(el.querySelector('.abyss-tg-quick-add-input')).toBeNull();
+        }
+      } finally {
+        panel.destroy();
+        el.remove();
+      }
+    },
+  );
+
   it('clicking on an existing timed block in the hour grid does not open the quick-add', async () => {
     const { panel, state } = await makePanel(
       { 't.md': `- [ ] timed ⏰ 09:00 📅 ${TODAY}` },

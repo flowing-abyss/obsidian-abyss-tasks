@@ -105,7 +105,10 @@ function bindCreateAtTime(
     );
     if (blockedTarget !== null) return;
     const offsetY = event.clientY - column.getBoundingClientRect().top;
-    const snapped = Math.max(0, snapMinutes(pixelsToMinutes(offsetY), DROP_SNAP_MINUTES));
+    const snapped = Math.min(
+      24 * 60 - DROP_SNAP_MINUTES,
+      Math.max(0, snapMinutes(pixelsToMinutes(offsetY), DROP_SNAP_MINUTES)),
+    );
     onCreateAtTime(date, minutesToTimeString(snapped));
   });
 }

@@ -372,6 +372,21 @@ describe('renderHourGrid', () => {
     expect(onCreateAtTime).toHaveBeenCalledWith('2026-07-10', '01:00');
   });
 
+  it.each([
+    { top: -96.015625, clientY: 1053, expected: '23:45' },
+    { top: 100, clientY: 706, expected: '12:45' },
+    { top: 100, clientY: 700, expected: '12:30' },
+  ])('snaps an empty-grid click to an in-day start $expected', ({ top, clientY, expected }) => {
+    const onCreateAtTime = vi.fn();
+    const handles = renderHourGrid(freshContainer(), ['2026-07-10'], undefined, onCreateAtTime);
+    const hourColumnEl = expectDefined(handles.days[0]).hourColumnEl;
+    vi.spyOn(hourColumnEl, 'getBoundingClientRect').mockReturnValue({ top, left: 0 } as DOMRect);
+
+    hourColumnEl.dispatchEvent(new MouseEvent('click', { bubbles: true, clientY }));
+
+    expect(onCreateAtTime).toHaveBeenCalledExactlyOnceWith('2026-07-10', expected);
+  });
+
   it('clicking on an existing timed block does not also fire onCreateAtTime', () => {
     const container = freshContainer();
     const onCreateAtTime = vi.fn();
