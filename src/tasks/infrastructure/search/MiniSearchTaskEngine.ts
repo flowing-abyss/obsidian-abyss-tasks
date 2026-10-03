@@ -41,6 +41,12 @@ const boosts = {
   links: 1,
   sourcePath: 1,
 };
+interface IndexedNode extends TaskSearchSourceNode {
+  readonly astralFields: number;
+}
+function hasAstralWordPoint(term: string): boolean {
+  return /[\u{10000}-\u{10ffff}]/u.test(term);
+}
 interface NodeScore {
   readonly tokens: Map<number, number>;
   readonly exactTitle: Set<number>;
@@ -137,9 +143,11 @@ function recordResult(
 }
 class MiniSearchTaskEngine implements TaskSearchEngine {
   private readonly mini_abyssPrivate: MiniSearch<TaskSearchDocument>;
-  private readonly nodes_abyssPrivate = new Map<number, TaskSearchSourceNode>();
+  private readonly nodes_abyssPrivate = new Map<number, IndexedNode>();
   private readonly files_abyssPrivate = new Map<string, Set<number>>();
   private readonly replacing_abyssPrivate = new Set<string>();
+  private readonly astralFieldCounts_abyssPrivate = fields.map(() => 0);
+  private indexingAstralFields_abyssPrivate = 0;
   private disposed_abyssPrivate = false;
   constructor(segment: SearchWordSegmenter) {
     this.mini_abyssPrivate = new MiniSearch({
@@ -147,7 +155,14 @@ class MiniSearchTaskEngine implements TaskSearchEngine {
       storeFields: [],
       autoVacuum: false,
       tokenize: (text) => segment(text).map((word) => word.text),
-      processTerm: normalizeSearchWord,
+      processTerm: (term, field) => {
+        const normalized = normalizeSearchWord(term);
+        if (field !== undefined && hasAstralWordPoint(normalized)) {
+          const index = fields.indexOf(field as TaskSearchField);
+          if (index >= 0) this.indexingAstralFields_abyssPrivate |= 1 << index;
+        }
+        return normalized;
+      },
     });
   }
   private check_abyssPrivate(): void {
@@ -160,10 +175,15 @@ class MiniSearchTaskEngine implements TaskSearchEngine {
   add(documents: readonly TaskSearchDocument[]): void {
     this.check_abyssPrivate();
     for (const document of documents) {
+      this.indexingAstralFields_abyssPrivate = 0;
       this.mini_abyssPrivate.add(document);
+      const astralFields = this.indexingAstralFields_abyssPrivate;
+      this.indexingAstralFields_abyssPrivate = 0;
+      this.adjustAstralFields_abyssPrivate(astralFields, 1);
       this.nodes_abyssPrivate.set(document.id, {
         id: document.id,
         rootId: document.rootId,
+        astralFields,
         order: { ...document.order, childLines: [...document.order.childLines] },
       });
       const ids = this.files_abyssPrivate.get(document.order.filePath) ?? new Set<number>();
@@ -179,10 +199,18 @@ class MiniSearchTaskEngine implements TaskSearchEngine {
     this.check_abyssPrivate();
     for (const id of this.files_abyssPrivate.get(path) ?? []) {
       this.mini_abyssPrivate.discard(id);
+      this.adjustAstralFields_abyssPrivate(this.nodes_abyssPrivate.get(id)?.astralFields ?? 0, -1);
       this.nodes_abyssPrivate.delete(id);
     }
     this.files_abyssPrivate.delete(path);
     this.replacing_abyssPrivate.delete(path);
+  }
+  private adjustAstralFields_abyssPrivate(mask: number, delta: 1 | -1): void {
+    for (let index = 0; index < fields.length; index++) {
+      if ((mask & (1 << index)) !== 0)
+        this.astralFieldCounts_abyssPrivate[index] =
+          (this.astralFieldCounts_abyssPrivate[index] ?? 0) + delta;
+    }
   }
   search(request: TaskSearchEngineRequest): readonly TaskSearchEngineHit[] {
     this.check_abyssPrivate();
@@ -201,13 +229,32 @@ class MiniSearchTaskEngine implements TaskSearchEngine {
     token: SearchToken,
     request: TaskSearchEngineRequest,
   ): Iterable<SearchResult> {
+    const selectedFields = searchFields(request);
+    const needsCodePointCandidates =
+      hasAstralWordPoint(token.term) ||
+      selectedFields.some(
+        (field) => (this.astralFieldCounts_abyssPrivate[fields.indexOf(field)] ?? 0) > 0,
+      );
+    const normalToken = { ...token, swaps: [] };
+    const acceptedTerms = new Map<string, number>();
+    const acceptTerm = (_id: unknown, term: string): number => {
+      const cached = acceptedTerms.get(term);
+      if (cached !== undefined) return cached;
+      const accepted = Number(matchesSearchTerm(term, normalToken));
+      acceptedTerms.set(term, accepted);
+      return accepted;
+    };
     const branches = [
-      { text: token.term, fuzzy: token.edits * 2, prefix: token.prefix },
+      {
+        text: token.term,
+        fuzzy: token.edits * (needsCodePointCandidates ? 2 : 1),
+        prefix: token.prefix,
+      },
       ...token.swaps.map((text) => ({ text, fuzzy: 0, prefix: false })),
     ];
     for (const branch of branches) {
       const results = this.mini_abyssPrivate.search(branch.text, {
-        fields: searchFields(request),
+        fields: selectedFields,
         boost: boosts,
         fuzzy: branch.fuzzy,
         prefix: branch.prefix,
@@ -216,8 +263,7 @@ class MiniSearchTaskEngine implements TaskSearchEngine {
         // MiniSearch 7.2.0 measures UTF-16 edits; its derived-term hook excludes
         // broader candidates before they enter either BM25 scores or match evidence.
         // https://github.com/lucaong/minisearch/blob/v7.2.0/src/MiniSearch.ts#L1903
-        boostDocument: (_id, term) =>
-          branch.text !== token.term ? 1 : Number(matchesSearchTerm(term, { ...token, swaps: [] })),
+        ...(branch.text === token.term ? { boostDocument: acceptTerm } : {}),
       });
       for (const result of results) {
         const node = this.nodes_abyssPrivate.get(Number(result.id));
@@ -250,6 +296,8 @@ class MiniSearchTaskEngine implements TaskSearchEngine {
     this.nodes_abyssPrivate.clear();
     this.files_abyssPrivate.clear();
     this.replacing_abyssPrivate.clear();
+    this.astralFieldCounts_abyssPrivate.fill(0);
+    this.indexingAstralFields_abyssPrivate = 0;
   }
 }
 export function createMiniSearchTaskEngine(segment: SearchWordSegmenter): TaskSearchEngine {

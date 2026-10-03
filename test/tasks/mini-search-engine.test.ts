@@ -5,7 +5,12 @@ import type {
   TaskSearchEngineRequest,
 } from '../../src/tasks/application/TaskSearchEngine';
 import type { TaskSearchDocument } from '../../src/tasks/application/TaskSearchSource';
-import { fallbackSearchWords, prepareSearchQuery } from '../../src/tasks/domain/searchMatchPolicy';
+import * as matchPolicy from '../../src/tasks/domain/searchMatchPolicy';
+import {
+  fallbackSearchWords,
+  matchesSearchText,
+  prepareSearchQuery,
+} from '../../src/tasks/domain/searchMatchPolicy';
 import { createMiniSearchTaskEngine } from '../../src/tasks/infrastructure/search/MiniSearchTaskEngine';
 const engines: TaskSearchEngine[] = [];
 afterEach(() => {
@@ -207,10 +212,143 @@ it('rejects wider UTF-16 candidates before they contribute coverage or score', (
     document(1, { title: 'abcd abxy' }),
     document(2, { title: 'abxy zzzz' }),
     document(3, { title: 'abcd wxyz' }),
+    document(4, { title: '𐐀𐐀𐐀𐐀' }),
   ]);
   expect(search(value, 'abcd anchor')).toEqual([]);
   expect(search(value, 'abcd zzzz')).toEqual([]);
   const results = search(value, 'abcd');
   expect(results.map((hit) => hit.id)).toEqual([1, 3]);
   expect(results[0]?.score).toBe(results[1]?.score);
+});
+
+describe('conditional UTF-16 candidate radius', () => {
+  it.each([
+    ['ab', 0],
+    ['abc', 1],
+    ['abcd', 1],
+    ['abcde', 2],
+    ['a'.repeat(65), 0],
+  ])('keeps the original radius for BMP query %s and BMP vocabulary', (query, radius) => {
+    const value = engine([document(1, { title: query })]);
+    const spy = vi.spyOn(MiniSearch.prototype, 'search');
+    expect(search(value, query).map((hit) => hit.id)).toEqual([1]);
+    expect(spy.mock.calls[0]?.[1]?.fuzzy).toBe(radius);
+  });
+
+  it.each([
+    ['abc', 'ab𐐀', 2],
+    ['ab𐐀', 'abc', 2],
+    ['abc', 'ab𐐀c', 2],
+    ['ab𐐀c', 'abc', 2],
+    ['abcde', 'ab𐐀𐐀e', 4],
+    ['ab𐐀𐐀e', 'abcde', 4],
+  ])('agrees with code-point policy in both directions: %s -> %s', (query, title, radius) => {
+    // The final one-letter anchor prevents prefix matches masking insert/delete errors.
+    const prepared = prepareSearchQuery(`${query} z`, fallbackSearchWords);
+    expect(matchesSearchText(`${title} z`, prepared, fallbackSearchWords)).toBe(true);
+    const value = engine([document(1, { title: `${title} z` })]);
+    const spy = vi.spyOn(MiniSearch.prototype, 'search');
+    expect(search(value, `${query} z`).map((hit) => hit.id)).toEqual([1]);
+    expect(spy.mock.calls[0]?.[1]?.fuzzy).toBe(radius);
+    expect(spy.mock.calls.length).toBeLessThanOrEqual(5);
+    for (const [text, options] of spy.mock.calls.slice(1)) {
+      expect(options).toMatchObject({ fuzzy: 0, prefix: false });
+      expect(text).not.toBe(query);
+    }
+  });
+
+  it.each(['description', 'comments', 'metadata', 'links', 'sourcePath'] as const)(
+    'widens only searched fields when astral words occur in %s',
+    (field) => {
+      const value = engine([document(1, { title: 'abc', [field]: 'ab𐐀' })]);
+      const spy = vi.spyOn(MiniSearch.prototype, 'search');
+      search(value, 'abc', { kind: 'nodes' });
+      expect(spy.mock.calls[0]?.[1]?.fuzzy).toBe(1);
+      spy.mockClear();
+      search(value, 'abc');
+      expect(spy.mock.calls[0]?.[1]?.fuzzy).toBe(field === 'sourcePath' ? 1 : 2);
+      spy.mockClear();
+      search(value, 'abc', { includeSourcePath: true });
+      expect(spy.mock.calls[0]?.[1]?.fuzzy).toBe(2);
+    },
+  );
+
+  it('does not widen for emoji discarded by segmentation', () => {
+    const value = engine([document(1, { title: 'abc 😀', tags: '🔥', sourcePath: '😀.md' })]);
+    const spy = vi.spyOn(MiniSearch.prototype, 'search');
+    search(value, 'abc 😀', { includeSourcePath: true });
+    expect(spy.mock.calls[0]?.[1]?.fuzzy).toBe(1);
+  });
+
+  it('updates presence through multi-batch replacement, removal, vacuum and disposal', async () => {
+    const value = engine([document(1, { title: 'abc' })]);
+    const spy = vi.spyOn(MiniSearch.prototype, 'search');
+    const check = (radius: number, ids: number[]) => {
+      spy.mockClear();
+      expect(search(value, 'abc').map((hit) => hit.id)).toEqual(ids);
+      expect(spy.mock.calls[0]?.[1]?.fuzzy).toBe(radius);
+    };
+    check(1, [1]);
+    value.replaceBegin('b.md');
+    value.add([
+      document(2, { title: 'ab𐐀 ab𐐀', order: { filePath: 'b.md', line: 0, childLines: [] } }),
+    ]);
+    value.add([
+      document(3, { title: 'ab𐐀', order: { filePath: 'b.md', line: 1, childLines: [] } }),
+    ]);
+    expect(() => search(value, 'abc')).toThrow(expect.objectContaining({ code: 'unavailable' }));
+    value.replaceCommit('b.md');
+    spy.mockClear();
+    expect(new Set(search(value, 'abc').map((hit) => hit.id))).toEqual(new Set([1, 2, 3]));
+    expect(spy.mock.calls[0]?.[1]?.fuzzy).toBe(2);
+    value.replaceBegin('b.md');
+    value.add([
+      document(4, { title: 'unrelated', order: { filePath: 'b.md', line: 0, childLines: [] } }),
+    ]);
+    value.replaceCommit('b.md');
+    check(1, [1]);
+    value.add([document(5, { tags: 'ab𐐀', order: { filePath: 'c.md', line: 0, childLines: [] } })]);
+    value.add([document(6, { tags: 'ab𐐀', order: { filePath: 'd.md', line: 0, childLines: [] } })]);
+    value.remove('c.md');
+    check(2, [1, 6]);
+    value.remove('d.md');
+    value.remove('d.md');
+    check(1, [1]);
+    await value.vacuum();
+    const fresh = engine([
+      document(1, { title: 'abc' }),
+      document(4, { title: 'unrelated', order: { filePath: 'b.md', line: 0, childLines: [] } }),
+    ]);
+    expect(search(value, 'abc')).toEqual(search(fresh, 'abc'));
+    value.add([document(7, { title: 'ab𐐀' })]);
+    check(2, [1, 7]);
+    value.dispose();
+    value.dispose();
+    expect(() => search(value, 'abc')).toThrow(expect.objectContaining({ code: 'disposed' }));
+    expect(() => {
+      value.add([document(8, { title: 'ab𐐀' })]);
+    }).toThrow(expect.objectContaining({ code: 'disposed' }));
+    spy.mockClear();
+    search(fresh, 'abc');
+    expect(spy.mock.calls[0]?.[1]?.fuzzy).toBe(1);
+  });
+
+  it('caches accepted and rejected terms across documents/fields only within the query', () => {
+    const value = engine([
+      document(1, { title: 'abc abx axx', tags: 'abc abx axx', description: '𐐀𐐀𐐀' }),
+      document(2, { title: 'abc abx axx', tags: 'abc abx axx' }),
+    ]);
+    const spy = vi.spyOn(matchPolicy, 'matchesSearchTerm');
+    expect(search(value, 'abc').map((hit) => hit.id)).toEqual([1, 2]);
+    const terms = spy.mock.calls.map(([term]) => term);
+    expect(terms).toContain('axx');
+    expect(terms).toContain('abx');
+    expect(terms).toHaveLength(new Set(terms).size);
+    spy.mockClear();
+    search(value, 'abc');
+    expect(spy.mock.calls.map(([term]) => term)).toEqual(terms);
+    spy.mockClear();
+    expect(search(value, 'axx').map((hit) => hit.id)).toEqual([1, 2]);
+    expect(spy.mock.calls.some(([term]) => term === 'axx')).toBe(true);
+  });
 });

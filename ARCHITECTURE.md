@@ -170,7 +170,9 @@ strings with the existing configured/selected tag policy. These reads introduce 
 
 `TaskSearchEngine` is an inward application port implemented by one pinned MiniSearch 7.2.0
 instance. The disposable engine indexes own-node fields once with no stored fields; its companion
-maps retain numeric IDs, root IDs, file membership and source order only. Exact refs remain with
+maps retain numeric IDs, root IDs, file membership, source order and per-node astral-field bits.
+Seven field counts track live documents containing astral word tokens; replacements, removals and
+disposal release this presence metadata without retaining another vocabulary. Exact refs remain with
 TaskIndex. Root matching requires all distinct query tokens across fields and descendants; node
 matching restricts coverage to that node's title, tags and optionally source path. Root relevance
 combines the strongest node with a capped contribution from the rest, discounts children and
@@ -181,11 +183,14 @@ explicit vacuum releases stale postings. These contracts have no public barrel o
 The pure `searchMatchPolicy` owns NFC/lowercase normalization, code-point edit limits, exact short
 swaps, final-token prefixes and UTF-16 match ranges. Word segmentation is injected, with a
 Unicode/CJK fallback. Queries are bounded before segmentation; punctuation-only queries are not
-match-all. MiniSearch measures edits in UTF-16 units, so normal retrieval allows at most twice the
-semantic budget and its derived-term `boostDocument` hook rejects out-of-policy words before
-scoring or coverage. Swap branches remain exact. This retains MiniSearch ranking and a linear
-number of query branches, without a second index or corpus scanner. Only this engine file may
-import MiniSearch; other infrastructure package imports remain restricted.
+match-all. MiniSearch measures edits in UTF-16 units. A normal branch retains its original radius
+when the query and searched fields contain only BMP words; an astral query word or live astral word
+in a searched field permits at most twice the semantic budget. Discarded emoji and excluded fields
+cannot trigger widening. Its derived-term `boostDocument` hook rejects out-of-policy words before
+scoring or coverage, caching acceptance per original token only during that query. Swap branches
+remain exact. This retains MiniSearch ranking and a linear number of query branches, without a
+second index or corpus scanner. Only this engine file may import MiniSearch; other infrastructure
+package imports remain restricted.
 
 Shared `markdown/searchText` owns visible text and original-field provenance. It consumes the
 existing link scanner's value-only search spans and inline-code ranges, preserving editable link
