@@ -2455,10 +2455,10 @@ describe('authored timed duration', () => {
     if (result.type !== 'invalid') expect(result.content).toContain('⏰ 20:30 ⏱️ 99h');
   });
 
-  it('clears time without reducing an untimed duration and clears duration without adding a default', () => {
+  it('bounds a cleared time to a day and clears duration without adding a default', () => {
     expect(codec.applyLineEdit(overflow, { type: 'set-time', value: null })).toEqual({
       type: 'changed',
-      content: '- [ ] Task ⏱️ 99h 📅 2026-07-20',
+      content: '- [ ] Task ⏱️ 24h 📅 2026-07-20',
     });
     expect(codec.applyLineEdit(overflow, { type: 'set-duration', value: null })).toEqual({
       type: 'changed',
@@ -2466,7 +2466,7 @@ describe('authored timed duration', () => {
     });
     expect(codec.applyLineEdit('- [ ] Task', { type: 'set-duration', value: 5940 })).toEqual({
       type: 'changed',
-      content: '- [ ] Task ⏱️ 99h',
+      content: '- [ ] Task ⏱️ 24h',
     });
   });
 
@@ -2521,4 +2521,65 @@ it('normalizes a fresh child time edit through the existing public patch contrac
       patch: { time: { type: 'set', value: localTime('21:00') } },
     }),
   ).toEqual({ type: 'changed', content: '  - [ ] Child ⏰ 21:00 ⏱️ 3h' });
+});
+
+describe('untimed within-day duration writes', () => {
+  it.each([
+    [1500, '24h'],
+    [1440, '24h'],
+    [1320, '22h'],
+  ])('normalizes a new %i minute duration to %s without adding time or date', (value, expected) => {
+    expect(
+      codec.applyLineEdit('- [ ] Task', { type: 'set-duration', value: Number(value) }),
+    ).toEqual({ type: 'changed', content: `- [ ] Task ⏱️ ${expected}` });
+  });
+  it('normalizes idempotent oversized duration and only the final correlated candidate', () => {
+    expect(codec.applyLineEdit('- [ ] Task ⏱️ 25h', { type: 'set-duration', value: 1500 })).toEqual(
+      { type: 'changed', content: '- [ ] Task ⏱️ 24h' },
+    );
+    for (const edits of [
+      [
+        { type: 'set-time' as const, value: null },
+        { type: 'set-duration' as const, value: 1500 },
+      ],
+      [
+        { type: 'set-duration' as const, value: 1500 },
+        { type: 'set-time' as const, value: null },
+      ],
+    ])
+      expect(codec.applyLineEdits('- [ ] Task ⏰ 23:59 ⏱️ 99h', edits)).toEqual({
+        type: 'changed',
+        content: '- [ ] Task ⏱️ 24h',
+      });
+  });
+  it('reads legacy duration and preserves it through unrelated edits', () => {
+    const source = '- [ ] Task ⏱️ 99h';
+    expect(parse(source).planning.duration).toBe(5940);
+    for (const edit of [
+      { type: 'set-title' as const, markdownTitle: 'Changed' },
+      { type: 'change-tags' as const, add: ['#tag'], remove: [] },
+      { type: 'set-date' as const, field: 'due' as const, value: '2026-07-21' },
+      { type: 'set-status' as const, symbol: '/', today: '2026-07-21', addCompletionDate: false },
+    ]) {
+      const result = codec.applyLineEdit(source, edit);
+      expect(result.type).toBe('changed');
+      if (result.type !== 'invalid') expect(result.content).toContain('⏱️ 99h');
+    }
+  });
+  it.each(['⏰ 99:99', '⏰ nope', '⏰'])(
+    'keeps an opaque companion %s instead of treating it as absent',
+    (time) => {
+      expect(
+        codec.applyLineEdit(`- [ ] Task ${time} ⏱️ 99h`, { type: 'set-duration', value: 1500 }),
+      ).toEqual({ type: 'changed', content: `- [ ] Task ${time} ⏱️ 25h` });
+    },
+  );
+  it.each(['⏱️ 25h ⏱️ 99h', '⏰ 20:30 ⏰ 21:00 ⏱️ 99h'])(
+    'rejects ambiguous timing %s',
+    (timing) => {
+      expect(
+        codec.applyLineEdit(`- [ ] Task ${timing}`, { type: 'set-duration', value: 1500 }).type,
+      ).toBe('invalid');
+    },
+  );
 });

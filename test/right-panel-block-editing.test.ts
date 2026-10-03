@@ -5,6 +5,7 @@ import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { TaskApplicationApi, TaskCommandResult, TaskSnapshot } from '../src/tasks';
 import type { TaskRef } from '../src/tasks/domain/types';
+import { createTaskBlock } from '../src/tasks/infrastructure/markdown/createTaskBlock';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { projectTaskSnapshot } from '../src/tasks/infrastructure/markdown/TaskSnapshotProjector';
 import { taskNodeRef } from '../src/ui/taskSelection';
@@ -572,15 +573,40 @@ describe('RightPanel block editing', () => {
     async (order) => {
       for (const nested of [false, true])
         for (const kind of ['subtask', 'comment'] as const)
-          await verifyContinuousEntry(order, nested, kind);
+          await verifyContinuousEntry(order, nested, kind, '');
     },
   );
+
+  it.each(['result-first', 'index-first'] as const)(
+    'continues normalized ordinary child creation through %s reconciliation',
+    async (order) => {
+      for (const nested of [false, true]) {
+        const parent = await verifyContinuousEntry(order, nested, 'subtask', ' ⏱️ 25h');
+        expect(parent.subtasks.slice(-2).map((child) => child.ref.originalBlock.trim())).toEqual([
+          '- [ ] First ⏱️ 24h',
+          '- [ ] Second ⏱️ 24h',
+        ]);
+      }
+    },
+  );
+
+  function createdEntry(kind: 'subtask' | 'comment', text: string): string {
+    if (kind === 'comment') return `- 2026-09-20T12:00:00+07:00: ${text}`;
+    const created = createTaskBlock(new TaskMarkdownCodec(canonicalStatusCatalog()), {
+      markdownBody: text,
+      today: '2026-09-20' as never,
+      addCreatedDate: false,
+    });
+    if (created.type !== 'created') throw new Error('Invalid child fixture');
+    return created.content;
+  }
 
   async function verifyContinuousEntry(
     order: 'result-first' | 'index-first',
     nested: boolean,
     kind: 'subtask' | 'comment',
-  ): Promise<void> {
+    suffix: string,
+  ): Promise<ReturnType<typeof entryParent>> {
     const selectedPath = nested ? [0] : [];
     const isSubtask = kind === 'subtask';
     let markdown = nested ? '- [ ] Root\n\t- [ ] Nested owner\n\t\t- [ ] Grandchild' : '- [ ] Root';
@@ -591,7 +617,7 @@ describe('RightPanel block editing', () => {
         throw new Error('Unexpected command');
       const parent = entryParent(current, selectedPath);
       expect(command.parent).toEqual(taskNodeRef(parent));
-      markdown += `${nested ? '\n\t\t' : '\n\t'}${kind === 'subtask' ? '- [ ]' : '- 2026-09-20T12:00:00+07:00:'} ${command.text}`;
+      markdown += `${nested ? '\n\t\t' : '\n\t'}${createdEntry(kind, command.text)}`;
       const next = sourceSnapshot(markdown, command.text);
       if (order === 'index-first') {
         const selection = panel.selectionForOwnedTransition(
@@ -621,7 +647,7 @@ describe('RightPanel block editing', () => {
           container.querySelector<HTMLInputElement | HTMLTextAreaElement>(entrySelector(kind)),
         );
         input.focus();
-        input.value = text;
+        input.value = `${text}${suffix}`;
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
         await flushMicrotasks(20);
         const replacement = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(
@@ -643,6 +669,7 @@ describe('RightPanel block editing', () => {
       expect(entries).toHaveLength(selectedPath.length > 0 && isSubtask ? 3 : 2);
       expect(execute).toHaveBeenCalledTimes(2);
       expect(container.querySelector('.abyss-detached-draft')).toBeNull();
+      return parent;
     } finally {
       panel.destroy();
     }

@@ -3,7 +3,7 @@ import type { LocalDate, TaskRef } from '../../domain/types';
 import type { TaskIssue } from '../../domain/validation';
 import { invalidTaskResult, invalidTaskSyntax } from '../../domain/validation';
 import { applyTaskCommand } from './applyTaskCommand';
-import { creationLineIssues, stampCreatedDate } from './createTaskLine';
+import { creationLineIssues, normalizeCreatedTaskLine, stampCreatedDate } from './createTaskLine';
 import { TaskBlockEditor } from './TaskBlockEditor';
 import { type TaskMarkdownCodec } from './TaskMarkdownCodec';
 
@@ -77,12 +77,7 @@ function normalizeSourceLines(
   sourceLines: string[],
 ): CreateTaskBlockResult | undefined {
   for (const [index, sourceLine] of sourceLines.entries()) {
-    const parsed = codec.parseLine(sourceLine, { filePath: '', line: index });
-    if (parsed?.planning.time === undefined) continue;
-    const result = codec.applyLineEdit(sourceLine, {
-      type: 'set-time',
-      value: parsed.planning.time,
-    });
+    const result = normalizeCreatedTaskLine(codec, sourceLine);
     if (result.type === 'invalid') return result;
     sourceLines[index] = result.content;
   }

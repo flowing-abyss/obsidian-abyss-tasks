@@ -24,7 +24,42 @@ import type {
   TaskSnapshot,
 } from '../../src/tasks/domain/types';
 import { durationMinutes, localDate, localTime } from '../../src/tasks/domain/validation';
-import { taskQueryApi, type TestTaskQueries } from '../helpers';
+import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
+import { projectTaskSnapshot } from '../../src/tasks/infrastructure/markdown/TaskSnapshotProjector';
+import {
+  canonicalStatusCatalog,
+  expectDefined,
+  taskQueryApi,
+  type TestTaskQueries,
+} from '../helpers';
+
+function timingSnapshot(source: string, revision = 'old'): TaskSnapshot {
+  const statusCatalog = canonicalStatusCatalog();
+  return expectDefined(
+    projectTaskSnapshot({
+      codec: new TaskMarkdownCodec(statusCatalog),
+      statusCatalog,
+      filePath: 'tasks.md',
+      lines: [source],
+      line: 0,
+      exactBlock: source,
+      ref: { filePath: 'tasks.md', line: 0, revision },
+      presentation: { linkCount: 0 },
+      offsetAt: () => 0,
+    }),
+  );
+}
+
+function plannedSnapshot(planning: TaskPlanning, revision = 'old'): TaskSnapshot {
+  const fields = [
+    planning.start === undefined ? '' : `🛫 ${planning.start}`,
+    planning.scheduled === undefined ? '' : `⏳ ${planning.scheduled}`,
+    planning.due === undefined ? '' : `📅 ${planning.due}`,
+    planning.time === undefined ? '' : `⏰ ${planning.time}`,
+    planning.duration === undefined ? '' : `⏱️ ${planning.duration}m`,
+  ].filter(Boolean);
+  return timingSnapshot(`- [ ] Task ${fields.join(' ')}`.trim(), revision);
+}
 
 function snapshot(markdownTitle = 'Task', revision = 'old'): TaskSnapshot {
   return {
@@ -419,7 +454,7 @@ describe('prepareRetry', () => {
     },
   ])('accepts already-requested scheduling intent: $command.type', ({ command, planning }) => {
     const base = snapshot();
-    const current = { ...snapshot('Task', 'new'), planning };
+    const current = plannedSnapshot(planning, 'new');
     expect(
       prepareRetry(prepared(command, 'field-compare'), {
         type: 'rebased',
@@ -1041,8 +1076,8 @@ describe('prepareRetry', () => {
   }>)(
     'accepts already-applied scheduling intent: $name',
     ({ planning, command, currentPlanning }) => {
-      const base = { ...snapshot(), planning };
-      const current = { ...snapshot('Task', 'new'), planning: currentPlanning };
+      const base = plannedSnapshot(planning);
+      const current = plannedSnapshot(currentPlanning, 'new');
       const editCommand = command(base.ref);
 
       expect(
@@ -1438,14 +1473,7 @@ describe('timed duration retry ownership', () => {
   ] as const)(
     'recognizes the normalized effect and rejects a concurrent duration for %s',
     (kind) => {
-      const previous = {
-        ...snapshot(),
-        planning: {
-          due: localDate('2026-08-11'),
-          time: localTime('20:30'),
-          duration: durationMinutes(5940),
-        },
-      };
+      const previous = timingSnapshot('- [ ] Task ⏰ 20:30 ⏱️ 99h 📅 2026-08-11');
       let command: TaskEditRequest['command'];
       if (kind === 'move-time-slot') {
         command = { type: kind, ref: previous.ref, days: 0, time: localTime('21:00') };
@@ -1470,42 +1498,35 @@ describe('timed duration retry ownership', () => {
           },
         };
       }
-      const current = {
-        ...snapshot('Task', 'new'),
-        planning: {
-          ...previous.planning,
-          time: localTime(kind === 'patch-duration' ? '20:30' : '21:00'),
-          duration: durationMinutes(kind === 'patch-duration' ? 210 : 180),
-        },
-      };
+      const current = timingSnapshot(
+        kind === 'patch-duration'
+          ? '- [ ] Task ⏰ 20:30 ⏱️ 3h30m 📅 2026-08-11'
+          : '- [ ] Task ⏰ 21:00 ⏱️ 3h 📅 2026-08-11',
+        'new',
+      );
       const mutation = preparedFor(previous, command, 'field-compare');
       expect(retryAgainst(mutation, previous, current).type).toBe('edit');
       expect(
-        retryAgainst(mutation, previous, {
-          ...current,
-          planning: { ...previous.planning, duration: durationMinutes(60) },
-        }).type,
+        retryAgainst(
+          mutation,
+          previous,
+          timingSnapshot('- [ ] Task ⏰ 20:30 ⏱️ 1h 📅 2026-08-11', 'new'),
+        ).type,
       ).toBe('unsafe');
       expect(
-        retryAgainst(mutation, previous, {
-          ...current,
-          planning: previous.planning,
-          tags: ['#external'],
-        }).type,
+        retryAgainst(
+          mutation,
+          previous,
+          timingSnapshot('- [ ] Task #external ⏰ 20:30 ⏱️ 99h 📅 2026-08-11', 'new'),
+        ).type,
       ).toBe('edit');
     },
   );
 });
 
 it('retains a concurrent duration when a time-only retry cannot write that companion', () => {
-  const previous = {
-    ...snapshot(),
-    planning: { time: localTime('09:00'), duration: durationMinutes(60) },
-  };
-  const current = {
-    ...snapshot('Task', 'new'),
-    planning: { time: localTime('09:00'), duration: durationMinutes(90) },
-  };
+  const previous = timingSnapshot('- [ ] Task ⏰ 09:00 ⏱️ 1h');
+  const current = timingSnapshot('- [ ] Task ⏰ 09:00 ⏱️ 1h30m', 'new');
   const command: TaskEditRequest['command'] = {
     type: 'patch',
     target: { type: 'task', ref: previous.ref },
@@ -1553,4 +1574,67 @@ it('does not retry a child time edit over a duration hidden from its planning pr
       ],
     }).type,
   ).toBe('edit');
+});
+
+describe('source-proven timing retries', () => {
+  it.each([
+    ['absent time normalized result', '- [ ] Task ⏱️ 99h', '- [ ] Task ⏱️ 24h', 'edit'],
+    ['unrelated title edit', '- [ ] Task ⏱️ 99h', '- [ ] Other ⏱️ 99h', 'edit'],
+    ['unrelated tag edit', '- [ ] Task ⏱️ 99h', '- [ ] Task #external ⏱️ 99h', 'edit'],
+    ['new valid start changes cap', '- [ ] Task ⏱️ 99h', '- [ ] Task ⏰ 20:30 ⏱️ 99h', 'unsafe'],
+    [
+      'opaque time concurrent duration',
+      '- [ ] Task ⏰ 99:99 ⏱️ 99h',
+      '- [ ] Task ⏰ 99:99 ⏱️ 24h',
+      'unsafe',
+    ],
+    [
+      'opaque time unrelated edit',
+      '- [ ] Task ⏰ 99:99 ⏱️ 99h',
+      '- [ ] Other ⏰ 99:99 ⏱️ 99h',
+      'unsafe',
+    ],
+    ['bare time marker', '- [ ] Task ⏰ ⏱️ 99h', '- [ ] Other ⏰ ⏱️ 99h', 'unsafe'],
+    ['opaque time introduced', '- [ ] Task ⏱️ 99h', '- [ ] Task ⏰ 99:99 ⏱️ 99h', 'unsafe'],
+    ['opaque time removed', '- [ ] Task ⏰ 99:99 ⏱️ 99h', '- [ ] Task ⏱️ 99h', 'unsafe'],
+    ['opaque time repaired', '- [ ] Task ⏰ 99:99 ⏱️ 99h', '- [ ] Task ⏰ 00:00 ⏱️ 99h', 'unsafe'],
+    ['duplicate duration', '- [ ] Task ⏱️ 99h ⏱️ 25h', '- [ ] Other ⏱️ 99h ⏱️ 25h', 'unsafe'],
+  ])('%s', (_name, before, after, expected) => {
+    const previous = timingSnapshot(before);
+    const current = timingSnapshot(after, 'new');
+    const command: TaskEditRequest['command'] = {
+      type: 'patch',
+      target: { type: 'task', ref: previous.ref },
+      patch: { duration: { type: 'set', value: durationMinutes(1500) } },
+    };
+    expect(
+      retryAgainst(preparedFor(previous, command, 'field-compare'), previous, current).type,
+    ).toBe(expected);
+  });
+  it('proves why an opaque time cannot borrow the absent-time effective duration', () => {
+    const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
+    const source = '- [ ] Task ⏰ 99:99 ⏱️ 24h';
+    expect(timingSnapshot(source).planning.time).toBeUndefined();
+    expect(codec.applyLineEdit(source, { type: 'set-duration', value: 1500 })).toEqual({
+      type: 'changed',
+      content: '- [ ] Task ⏰ 99:99 ⏱️ 25h',
+    });
+  });
+  it('recognizes explicit time-clear capped to 24h and duration-clear without a default', () => {
+    const previous = timingSnapshot('- [ ] Task ⏰ 20:30 ⏱️ 99h');
+    for (const [patch, source] of [
+      [{ time: { type: 'clear' as const } }, '- [ ] Task ⏱️ 24h'],
+      [{ duration: { type: 'clear' as const } }, '- [ ] Task ⏰ 20:30'],
+    ] as const) {
+      const current = timingSnapshot(source, 'new');
+      const command: TaskEditRequest['command'] = {
+        type: 'patch',
+        target: { type: 'task', ref: previous.ref },
+        patch,
+      };
+      expect(
+        retryAgainst(preparedFor(previous, command, 'field-compare'), previous, current).type,
+      ).toBe('edit');
+    }
+  });
 });

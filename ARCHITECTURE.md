@@ -115,11 +115,17 @@ or comment identifies an occurrence; the repository must find the corresponding 
 before replacing it. Missing or synthetic joined-fragment targets fail instead of authorizing an
 edit to another link.
 
-Timed task edits normalize duration at the codec's final correlated candidate, using the domain
+Task timing edits normalize duration at the codec's final correlated candidate, using the domain
 `clampDurationToDay` rule. Only explicit time/duration edits and newly created task lines acquire
-that normalization; legacy reads and unrelated edits preserve authored bytes. Untimed durations
-can exceed one day. The existing duration token writer retains validation and source ownership.
+that normalization; legacy reads, unrelated edits, and transfers preserve authored bytes. Without a
+start time, new duration is capped at 24 hours; an explicit start caps it to the remaining day,
+including after a later time edit. Clearing time retains at most 24 hours without restoring discarded
+overflow. Ordinary and linked-child creation share this normalization; their result proof accepts
+only the exact canonical duration change. The existing duration token writer retains validation
+and source ownership.
 Retries compare the effective requested timing and protect any implicit companion-duration write.
+Root timing retries require faithful source projections; opaque or ambiguous timing fails closed
+rather than treating an invalid authored time as absent.
 Subtask projections do not expose duration, so a subtask time-edit retry requires an unchanged
 original block; concurrent edits within that block require a fresh user action.
 

@@ -243,3 +243,26 @@ describe('creation duration normalization', () => {
     ).toEqual({ type: 'created', content: '- [ ] Root ⏰ 20:30 ⏱️ 3h30m 🔺' });
   });
 });
+
+it('normalizes raw untimed root and nested creation without inventing dates or time', () => {
+  expect(
+    createTaskBlock(codec, {
+      markdownBody: 'Root ⏱️ 25h\n  - [ ] Child ⏱️ 99h\n  - [ ] Short ⏱️ 22h',
+      today: localDate('2026-07-20'),
+      addCreatedDate: false,
+    }),
+  ).toEqual({
+    type: 'created',
+    content: '- [ ] Root ⏱️ 24h\n  - [ ] Child ⏱️ 24h\n  - [ ] Short ⏱️ 22h',
+  });
+});
+it('normalizes typed untimed creation after the initial patch', () => {
+  expect(
+    createTaskBlock(codec, {
+      markdownBody: 'Root ⏰ 23:59 ⏱️ 99h',
+      initial: { time: { type: 'clear' }, duration: { type: 'set', value: durationMinutes(1500) } },
+      today: localDate('2026-07-20'),
+      addCreatedDate: false,
+    }),
+  ).toEqual({ type: 'created', content: '- [ ] Root ⏱️ 24h' });
+});

@@ -2,7 +2,7 @@ import type { DependencyDirection } from '../../domain/taskDependencies';
 import { isTaskDependencyId } from '../../domain/taskLineSourceModel';
 import type { LocalDate } from '../../domain/types';
 import type { TaskIssue } from '../../domain/validation';
-import type { ParsedTaskLine, TaskMarkdownCodec } from './TaskMarkdownCodec';
+import type { LineEditResult, ParsedTaskLine, TaskMarkdownCodec } from './TaskMarkdownCodec';
 
 function isCalendarDate(value: string): boolean {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
@@ -56,6 +56,14 @@ export function stampCreatedDate(parsed: ParsedTaskLine, today: LocalDate): stri
   return `${before} ➕ ${today} ${after}`;
 }
 
+/** Only newly authored lines enter this shared creation normalization boundary. */
+export function normalizeCreatedTaskLine(codec: TaskMarkdownCodec, source: string): LineEditResult {
+  const parsed = codec.parseLine(source, { filePath: '', line: 0 });
+  return parsed?.planning.duration === undefined
+    ? { type: 'unchanged', content: source }
+    : codec.applyLineEdit(source, { type: 'set-duration', value: parsed.planning.duration });
+}
+
 /** The single-line creation path shares validation and lifecycle stamping with root capture. */
 function createTaskLine(
   codec: TaskMarkdownCodec,
@@ -66,7 +74,11 @@ function createTaskLine(
   const source = `- [ ] ${text}`;
   const parsed = codec.parseLine(source, { filePath: '', line: 0 });
   if (parsed == null || creationLineIssues(codec, parsed).length > 0) return undefined;
-  return createdDate === undefined ? source : stampCreatedDate(parsed, createdDate);
+  const normalized = normalizeCreatedTaskLine(
+    codec,
+    createdDate === undefined ? source : stampCreatedDate(parsed, createdDate),
+  );
+  return normalized.type === 'invalid' ? undefined : normalized.content;
 }
 
 interface LinkedTaskInput {

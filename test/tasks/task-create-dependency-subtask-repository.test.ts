@@ -288,3 +288,40 @@ it('restores authority and original bytes after a rejected process observes its 
   expect(h.index.list({ filePath: path })[0]).toEqual(h.root);
   expect(h.index.authoritySuccessor(h.root.ref)).toBeUndefined();
 });
+
+describe('linked nested creation applies the same duration policy in both repositories', () => {
+  for (const adapter of ['in-memory', 'obsidian'] as const) {
+    for (const direction of ['blocks', 'blocked-by'] as const) {
+      it.each([
+        ['⏱️ 25h', '⏱️ 24h'],
+        ['⏰ 20:30 ⏱️ 22h', '⏰ 20:30 ⏱️ 3h30m'],
+      ])(
+        `${adapter} ${direction} normalizes %s without editing existing duration`,
+        async (input, expected) => {
+          const original = '- [ ] Root ⏱️ 99h\n  - [ ] Current ⏱️ 99h\n';
+          const h = await harness(adapter, original, original);
+          const current = expectDefined(h.root.subtasks[0]);
+          try {
+            const result = linkedOutcome(
+              await h.repository.createDependencySubtask({
+                ...h.request,
+                baseTarget: { type: 'subtask', ref: current.ref },
+                text: `Child ${input}`,
+                direction,
+                addCreatedDate: false,
+              }),
+            );
+            const parentEdge = direction === 'blocks' ? '🆔 current_id' : '⛔ child_id';
+            const childEdge = direction === 'blocks' ? '⛔ current_id' : '🆔 child_id';
+            expect(await h.read()).toBe(
+              `- [ ] Root ⏱️ 99h\n  - [ ] Current ⏱️ 99h ${parentEdge}\n  \t- [ ] Child ${expected} ${childEdge}\n`,
+            );
+            expect(result.direction).toBe(direction);
+          } finally {
+            h.index.destroy();
+          }
+        },
+      );
+    }
+  }
+});

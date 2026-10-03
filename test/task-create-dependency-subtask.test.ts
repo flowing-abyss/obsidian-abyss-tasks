@@ -408,3 +408,32 @@ describe('public atomic dependency subtask creation', () => {
     );
   });
 });
+
+describe('linked creation duration boundaries', () => {
+  for (const direction of ['blocks', 'blocked-by'] as const) {
+    it.each([
+      ['⏱️ 25h', '⏱️ 24h'],
+      ['⏰ 20:30 ⏱️ 22h', '⏰ 20:30 ⏱️ 3h30m'],
+      ['⏱️ 22h', '⏱️ 22h'],
+    ])(
+      `normalizes a new ${direction} child %s and proves its public result`,
+      async (input, expected) => {
+        for (const nested of [false, true]) {
+          const prefix = nested ? '- [ ] Root ⏱️ 99h\n' : '';
+          const indent = nested ? '  ' : '';
+          const h = await harness(`${prefix}${indent}- [ ] Current ⏱️ 99h\n`, undefined, false);
+          const result = outcome(await h.create(direction, `Child ${input}`));
+          const parentEdge = direction === 'blocks' ? '🆔' : '⛔';
+          const childEdge = direction === 'blocks' ? '⛔' : '🆔';
+          const childIndent = nested ? '  \t' : '\t';
+          expect(await h.read()).toBe(
+            `${prefix}${indent}- [ ] Current ⏱️ 99h ${parentEdge} 00000000\n${childIndent}- [ ] Child ${expected} ${childEdge} 00000000\n`,
+          );
+          expect(result.child.target).toEqual(h.node('Child').target);
+          expect(h.node('Current').node.planning.time).toBeUndefined();
+          expect(h.diagnostics).not.toHaveBeenCalled();
+        }
+      },
+    );
+  }
+});

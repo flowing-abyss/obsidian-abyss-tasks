@@ -1,7 +1,9 @@
 import type { CreateDependencySubtaskCommand } from './commands';
+import { clampDurationToDay } from './taskDuration';
 import { parseTaskLineSourceModel, type TaskLineSourceModel } from './taskLineSourceModel';
 import { applyTaskCreationTagPolicy, type TaskInboxTagPolicy } from './taskTags';
 import type { SubtaskSnapshot, TaskSnapshot } from './types';
+import { durationMinutes, formatDurationMinutes, localTime } from './valueObjects';
 
 export interface TaskCreationProofPolicy {
   readonly taskPrefix: string;
@@ -13,6 +15,7 @@ function submittedContent(
   model: TaskLineSourceModel,
   omitCreated: boolean,
   linked: boolean,
+  normalizedDuration?: string,
 ): string {
   return JSON.stringify(
     model.spans
@@ -25,8 +28,36 @@ function submittedContent(
             ...(omitCreated ? ['created'] : []),
           ].includes(span.kind),
       )
-      .map((span) => [span.kind, model.original.slice(span.from, span.to).trim()]),
+      .map((span) => [
+        span.kind,
+        span.kind === 'duration' && normalizedDuration !== undefined
+          ? normalizedDuration
+          : model.original.slice(span.from, span.to).trim(),
+      ]),
   );
+}
+
+/** Only the submitted token may differ, and only by the canonical creation cap. */
+function submittedDuration(model: TaskLineSourceModel): string | null | undefined {
+  const { time, duration } = model.planning;
+  if (duration === undefined) return undefined;
+  if (
+    (['time', 'duration'] as const).some(
+      (kind) =>
+        (model.occurrences.get(kind)?.length ?? 0) > 1 ||
+        model.spans.some((span) => span.malformedKind === kind),
+    )
+  )
+    return null;
+  try {
+    const bounded = clampDurationToDay(
+      time === undefined ? undefined : localTime(time),
+      durationMinutes(duration),
+    );
+    return bounded === duration ? undefined : `⏱️ ${formatDurationMinutes(bounded)}`;
+  } catch {
+    return null;
+  }
 }
 
 /** Evidence for the one direct child appended by this command, including its submitted source. */
@@ -64,9 +95,11 @@ export function matchesSubmittedChild(
   const input = parseTaskLineSourceModel(`- [ ] ${prepared}`);
   const actual = parseTaskLineSourceModel(child.ref.originalBlock);
   if (input === null || actual === null) return false;
+  const duration = submittedDuration(input);
+  if (duration === null) return false;
   return (
     validSubmittedLine(input, actual, text, linked) &&
-    submittedContent(input, false, linked) ===
+    submittedContent(input, false, linked, duration) ===
       submittedContent(
         actual,
         input.planning.created === undefined && (policy?.addCreatedDate ?? true),

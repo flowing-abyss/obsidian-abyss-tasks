@@ -1061,15 +1061,18 @@ function applyPreparedLineEdit(
 }
 
 /** Normalize only after all requested fields have formed their final candidate. */
-function normalizeTimedDuration(
+function normalizeTaskDuration(
   statusCatalog: StatusCatalog,
   parsed: ParsedTaskLine,
 ): AppliedLineEdit {
   const { time, duration } = parsed.planning;
-  if (time === undefined || duration === undefined) return unchangedLine(parsed);
+  if (duration === undefined || hasMalformedKind(parsed, 'time')) return unchangedLine(parsed);
   let bounded: number;
   try {
-    bounded = clampDurationToDay(localTime(time), validatedDurationMinutes(duration));
+    bounded = clampDurationToDay(
+      time === undefined ? undefined : localTime(time),
+      validatedDurationMinutes(duration),
+    );
   } catch {
     // Unparsed/invalid companions remain opaque unless explicitly edited.
     return unchangedLine(parsed);
@@ -1097,7 +1100,7 @@ function finalizeLineEdits(
   { fields, normalize }: { fields: Set<TaskValidationField>; normalize: boolean },
 ): LineEditResult {
   const result = normalize
-    ? normalizeTimedDuration(statusCatalog, candidate)
+    ? normalizeTaskDuration(statusCatalog, candidate)
     : unchangedLine(candidate);
   if (result.type === 'invalid') return result;
   const final = result.type === 'applied' ? result.parsed : candidate;

@@ -15,6 +15,7 @@ import {
   taskMutationNodeRef,
 } from '../domain/taskCommandTargets';
 import { clampDurationToDay } from '../domain/taskDuration';
+import { parseTaskLineSourceModel } from '../domain/taskLineSourceModel';
 import { reconcileTaskNodeRef, type RebaseEvidence } from '../domain/taskReconciliation';
 import type { TimeEntrySnapshot } from '../domain/timeTracking';
 import type {
@@ -257,9 +258,7 @@ function normalizedDuration(
   time: TaskSnapshot['planning']['time'],
   duration: TaskSnapshot['planning']['duration'],
 ): TaskSnapshot['planning']['duration'] {
-  return time !== undefined && duration !== undefined
-    ? clampDurationToDay(time, duration)
-    : duration;
+  return duration === undefined ? undefined : clampDurationToDay(time, duration);
 }
 
 /** Time and duration share one effective candidate, including implicit duration writes. */
@@ -280,11 +279,26 @@ function unchangedOrRequested(previous: unknown, current: unknown, requested: un
   return previous === current || current === requested;
 }
 
+/** Lossy timing projections cannot prove the codec's effective write candidate. */
+function faithfulTimingSource(task: TaskSnapshot): boolean {
+  const source = parseTaskLineSourceModel(task.source.originalMarkdown);
+  return (
+    source !== null &&
+    (['time', 'duration'] as const).every(
+      (kind) =>
+        source.planning[kind] === task.planning[kind] &&
+        (source.occurrences.get(kind)?.length ?? 0) <= 1 &&
+        !source.spans.some((span) => span.malformedKind === kind),
+    )
+  );
+}
+
 function rootTimingPreconditionHolds(
   previous: TaskSnapshot,
   current: TaskSnapshot,
   patch: Pick<TaskPatch, 'time' | 'duration'>,
 ): boolean {
+  if (!faithfulTimingSource(previous) || !faithfulTimingSource(current)) return false;
   const time = updatedValue(previous.planning.time, patch.time);
   const duration = updatedValue(previous.planning.duration, patch.duration);
   const effectiveDuration = normalizedDuration(time, duration);

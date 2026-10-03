@@ -13,6 +13,14 @@ describe('clampDurationToDay', () => {
     expect(clampDurationToDay(localTime(time), durationMinutes(duration))).toBe(expected);
   });
 
+  it.each([
+    [1500, 1440],
+    [1440, 1440],
+    [1320, 1320],
+  ])('bounds an untimed %i minute block to %i', (duration, expected) => {
+    expect(clampDurationToDay(undefined, durationMinutes(duration))).toBe(expected);
+  });
+
   it('keeps the standalone duration value capable of representing 99 hours', () => {
     expect(durationMinutes(5940)).toBe(5940);
   });
