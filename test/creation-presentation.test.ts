@@ -24,7 +24,14 @@ import {
 import type { CalendarOccurrence } from '../src/views/calendarOccurrences';
 import { applyOccurrenceDomState } from '../src/views/timegrid/renderTaskMeta';
 import { cssRuleContaining, cssValue } from './cssHelpers';
-import { expectDefined, freshContainer, methodOf, task, useRealMoment } from './helpers';
+import {
+  expectDefined,
+  freshContainer,
+  methodOf,
+  task,
+  taskQueryApi,
+  useRealMoment,
+} from './helpers';
 
 async function loadStylesFixture(): Promise<string> {
   if (!Platform.isDesktop) throw new Error('CSS fixture requires the desktop test runtime');
@@ -61,7 +68,7 @@ function queryHarness(initial: TaskResolution): {
   let resolution = initial;
   const listeners = new Set<(event: TaskIndexEvent) => void>();
   return {
-    queries: {
+    queries: taskQueryApi({
       list: () => [],
       forCalendarProjection: () => ({ materialized: [], recurringSources: [] }),
       resolve: () => resolution,
@@ -70,7 +77,7 @@ function queryHarness(initial: TaskResolution): {
         return () => listeners.delete(listener);
       },
       subscribeReconciled: () => () => {},
-    },
+    }),
     setResolution: (next) => {
       resolution = next;
     },
@@ -214,10 +221,10 @@ describe('task presentation identity', () => {
 
   it('applies the same canonical identity in the shared list and project task-card renderer', () => {
     const snapshot = task({ source: { filePath: 'capture.md', line: 8 } });
-    const queries: TaskQueryApi = {
-      ...queryHarness(exact(snapshot)).queries,
+    const queries: TaskQueryApi = taskQueryApi({
+      resolve: () => exact(snapshot),
       list: () => [snapshot],
-    };
+    });
     const state = new AppState();
     state.set('selectedList', 'inbox');
     const panel = new CenterPanel({
@@ -352,7 +359,7 @@ describe('CreationPresentationController', () => {
     const second = task({ source: { filePath: 'capture.md', line: 2 } });
     const resolutions = new Map<string, TaskResolution>();
     const listeners = new Set<(event: TaskIndexEvent) => void>();
-    const queries: TaskQueryApi = {
+    const queries: TaskQueryApi = taskQueryApi({
       list: () => [],
       forCalendarProjection: () => ({ materialized: [], recurringSources: [] }),
       resolve: (ref) => resolutions.get(taskReconciliationKey(ref)) ?? { type: 'not-found', ref },
@@ -361,7 +368,7 @@ describe('CreationPresentationController', () => {
         return () => listeners.delete(listener);
       },
       subscribeReconciled: () => () => {},
-    };
+    });
     const host = freshContainer();
     const root = freshContainer();
     measurePresentationRoot(root);
@@ -392,13 +399,13 @@ describe('CreationPresentationController', () => {
     const first = expectDefined(snapshots[0]);
     const last = expectDefined(snapshots[20]);
     const resolutions = new Map<string, TaskResolution>();
-    const queries: TaskQueryApi = {
+    const queries: TaskQueryApi = taskQueryApi({
       list: () => [],
       forCalendarProjection: () => ({ materialized: [], recurringSources: [] }),
       resolve: (ref) => resolutions.get(taskReconciliationKey(ref)) ?? { type: 'not-found', ref },
       subscribe: () => () => {},
       subscribeReconciled: () => () => {},
-    };
+    });
     const host = freshContainer();
     const root = freshContainer();
     measurePresentationRoot(root);

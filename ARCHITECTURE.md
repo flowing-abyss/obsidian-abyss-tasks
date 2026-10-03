@@ -60,8 +60,10 @@ capabilities instead of constructing alternate task repositories or indexes.
 | [Presentation](src/panels/)                      | Composes views and interactions over public task capabilities; owns no task Markdown writer                                                                               |
 
 The public capabilities are `TaskQueryApi`, `TaskDependencyQueryApi`, `TimeTrackingQueryApi`,
-`TaskReadProjectionApi`, `TaskApplicationApi`, and `TaskCaptureApplicationApi`. The application exposes all four query
-capabilities through `queries`. Add public exports only for a real consumer. Domain and application
+`TaskApplicationApi`, and `TaskCaptureApplicationApi`. Observed tag discovery belongs to
+`TaskQueryApi`. The application also composes the inward `TaskReadProjectionApi` through `queries`;
+its organization/hydration port has no direct public barrel export. It inherits the observed-tag
+signature from `TaskQueryApi`. Add public exports only for a real consumer. Domain and application
 code cannot import Obsidian or presentation; infrastructure cannot import UI.
 
 [`src/parser/`](src/parser/) adapts canonical task data to legacy presentation. It may import codec
@@ -135,13 +137,15 @@ original block; concurrent edits within that block require a fresh user action.
 initializing, ready, failed and disposed states, accepted file changes and status-semantic changes.
 Global publication generations protect organization streams; exact handles use a session epoch,
 accepted file version, numeric root ID and child-relative-line path. The compact directory retains
-only coordinates and versions, never a second source block or serialized task reference. IDs are
-never reused within the index lifetime and accepted replacement removes the file's old handles.
+only coordinates, accepted root ordinals and versions, never a second source block or serialized
+task reference. Exact root lookup indexes the accepted file array by ordinal after version validation.
+IDs are never reused within the index lifetime and accepted replacement removes the file's old handles.
 Unrelated file updates preserve exact handles for unchanged files.
 
 The source allocates compact handles one node per iterator step, reusing prefixes across partial
-and overlapping iterators without extracting text. It projects each node's own Markdown,
-comments, tags and scalar metadata when documents are requested. Link syntax currently remains in
+and overlapping iterators without extracting text. Document projection uses the current borrowed
+node during that same walk, avoiding repeated root and sibling searches. It projects each node's own
+Markdown, comments, tags and scalar metadata when documents are requested. Link syntax currently remains in
 those own text fields; the separate `links` field is empty. This boundary does not resolve outgoing
 links. Organization emits detached root scalars, tree tags and tracked totals in batches of at most
 200, checking its requested generation before traversal, each yield and completion. Its read-yield

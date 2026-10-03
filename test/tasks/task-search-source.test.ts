@@ -1,6 +1,7 @@
 import { TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
+import type { TaskApplicationApi } from '../../src/tasks';
 import type { TaskSearchSourceEvent } from '../../src/tasks/application/TaskSearchSource';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import * as searchProjection from '../../src/tasks/domain/taskSearchProjection';
@@ -28,6 +29,20 @@ async function openedIndex(markdown: string) {
   return index;
 }
 const signal = () => new AbortController().signal;
+
+async function patchFirstTask(index: TaskIndex, tasks: TaskApplicationApi): Promise<void> {
+  const target = expectDefined(index.listNodes()[0]).target;
+  if (target.type !== 'task') throw new Error('expected root');
+  expect(
+    (
+      await tasks.execute({
+        type: 'patch',
+        target,
+        patch: { markdownTitle: { type: 'set', value: 'New' } },
+      })
+    ).type,
+  ).toBe('ok');
+}
 
 describe('canonical search source', () => {
   it('subscribes after readiness and rejects an address after accepted replacement', async () => {
@@ -97,7 +112,7 @@ describe('canonical search source', () => {
   });
 
   it.each(['commit', 'command', 'rename', 'delete', 'exclude'] as const)(
-    'bootstrap %s cannot revive a blocked old read',
+    'blocked bootstrap %s keeps pre-ready reads pending and rejects their superseded generation',
     async (action) => {
       const app = await createAppWithFiles({ 'a.md': '- [ ] Old\n' });
       let release!: () => void;
@@ -120,64 +135,85 @@ describe('canonical search source', () => {
       const { index, tasks } = configuredTaskApplication(app, DEFAULT_SETTINGS, {
         authority: true,
       });
-      if (action === 'command') index.installCommittedContent('a.md', '- [ ] Old\n');
       indexes.push(index);
       const source = index.searchSource();
+      const events: TaskSearchSourceEvent[] = [];
+      const subscription = source.subscribe((event) => events.push(event));
+      expect(subscription.state.type).toBe('initializing');
+      index.installCommittedContent('a.md', '- [ ] Old\n');
+      const accepted = expectDefined(events.find((event) => event.type === 'files'));
+      const acceptedFile = expectDefined(accepted.files[0]);
+      if (acceptedFile.version === null) throw new Error('missing accepted version');
       const initializing = index.initialize();
       await ready;
+      const earlyDocuments = source.documents({
+        path: acceptedFile.path,
+        version: acceptedFile.version,
+      });
+      expect(() => earlyDocuments[Symbol.iterator]().next()).toThrow(
+        expect.objectContaining({ code: 'unavailable' }),
+      );
+      const earlyBatches = index.organization(
+        { expectedGeneration: accepted.generation },
+        signal(),
+      );
+      const iterator = earlyBatches[Symbol.asyncIterator]();
+      let settled = false;
+      const pending = iterator.next().then(
+        (batch) => {
+          settled = true;
+          return { type: 'success', batch };
+        },
+        (error: unknown) => {
+          settled = true;
+          return { type: 'error', error };
+        },
+      );
+      await flushMicrotasks();
+      expect(settled).toBe(false);
       const file = app.vault.getAbstractFileByPath('a.md');
       if (!(file instanceof TFile)) throw new Error('missing file');
       if (action === 'commit') index.installCommittedContent('a.md', '- [ ] New\n');
-      if (action === 'command') {
-        const target = expectDefined(index.listNodes()[0]).target;
-        if (target.type !== 'task') throw new Error('expected root');
-        expect(
-          (
-            await tasks.execute({
-              type: 'patch',
-              target,
-              patch: { markdownTitle: { type: 'set', value: 'New' } },
-            })
-          ).type,
-        ).toBe('ok');
-      }
+      if (action === 'command') await patchFirstTask(index, tasks);
       if (action === 'rename') await app.vault.rename(file, 'b.md');
       if (action === 'delete') await app.fileManager.trashFile(file);
       if (action === 'exclude') await index.refreshSourceExclusion(() => true);
+      if (action === 'command') {
+        metadataChangedEmitter(app)(file, '- [ ] Old\n', { listItems: [] });
+      }
+      await flushMicrotasks(20);
+      expect(settled).toBe(false);
       release();
       await initializing;
+      const state = source.subscribe(() => {}).state;
+      expect(state.type).toBe('ready');
+      expect(state.generation).toBeGreaterThan(accepted.generation);
+      expect(events[events.length - 1]).toEqual({ type: 'state', state });
+      expect(await pending).toMatchObject({ type: 'error', error: { code: 'stale' } });
+      const expected = {
+        commit: [['a.md', 'New']],
+        command: [['a.md', 'New']],
+        rename: [['b.md', 'Old']],
+        delete: [],
+        exclude: [],
+      }[action];
       const docs = source.files().flatMap((file) => [...source.documents(file)]);
-      expect(docs.map((doc) => [doc.order.filePath, doc.title])).toEqual(
-        {
-          commit: [['a.md', 'New']],
-          command: [['a.md', 'New']],
-          rename: [['b.md', 'Old']],
-          delete: [],
-          exclude: [],
-        }[action],
-      );
+      expect(docs.map((doc) => [doc.order.filePath, doc.title])).toEqual(expected);
+      const batches = [];
+      for await (const batch of index.organization(
+        { expectedGeneration: state.generation },
+        signal(),
+      ))
+        batches.push(batch);
+      expect(batches).toHaveLength(1);
+      expect(batches.map((batch) => batch.generation)).toEqual([state.generation]);
+      expect(
+        batches.flatMap((batch) => batch.items.map((item) => [item.source.filePath, item.title])),
+      ).toEqual(expected);
+      expect(index.list().map((task) => [task.source.filePath, task.title])).toEqual(expected);
+      subscription.unsubscribe();
     },
   );
-  it('before-ready organization waits and never announces an empty completed result', async () => {
-    const app = await createAppWithFiles({ 'a.md': '- [ ] Waiting' });
-    const index = new TaskIndex(app, { statusCatalog: canonicalStatusCatalog() });
-    indexes.push(index);
-    const batches = index.organization({ expectedGeneration: 1 }, signal());
-    const pending = batches[Symbol.asyncIterator]().next();
-    let completed = false;
-    const observed = pending.then(() => {
-      completed = true;
-    });
-    await flushMicrotasks();
-    expect(completed).toBe(false);
-    await index.initialize();
-    const batch = await pending;
-    await observed;
-    expect(batch.done).toBe(false);
-    if (batch.done !== true)
-      expect(batch.value.items.map((item) => item.title)).toEqual(['Waiting']);
-  });
-
   it('status semantics without note write invalidates generation and updates vocabulary', async () => {
     const index = await openedIndex('- [ ] Blocker 🆔 a\n- [ ] Dependent ⛔ a');
     const source = index.searchSource();
@@ -286,6 +322,78 @@ describe('canonical search source', () => {
       ],
     ]);
   });
+  it.each(['documents', 'organization'] as const)(
+    'many-root %s reads perform only linear source-coordinate work',
+    async (read) => {
+      const count = 1000;
+      const index = await openedIndex(
+        Array.from({ length: count }, (_, i) => `- [ ] Root ${i}`).join('\n'),
+      );
+      const enumerate = searchProjection.taskTreeNodes;
+      const instrumented = new WeakSet<object>();
+      let lineReads = 0;
+      vi.spyOn(searchProjection, 'taskTreeNodes').mockImplementation(function* (root) {
+        if (!instrumented.has(root)) {
+          instrumented.add(root);
+          const line = root.source.line;
+          Object.defineProperty(root.source, 'line', {
+            get: () => {
+              lineReads++;
+              return line;
+            },
+          });
+        }
+        yield* enumerate(root);
+      });
+      const source = index.searchSource();
+      const titles: string[] = [];
+      if (read === 'documents') {
+        for (const doc of source.documents(expectDefined(source.files()[0])))
+          titles.push(doc.title);
+      } else {
+        const generation = source.subscribe(() => {}).state.generation;
+        for await (const batch of index.organization({ expectedGeneration: generation }, signal()))
+          titles.push(...batch.items.map((item) => item.title));
+      }
+      expect(titles).toHaveLength(count);
+      expect(titles[0]).toBe('Root 0');
+      expect(titles[count - 1]).toBe('Root 999');
+      expect(lineReads).toBeLessThanOrEqual(count * 10);
+    },
+  );
+
+  it('wide child document traversal performs only linear child-coordinate work', async () => {
+    const count = 500;
+    const index = await openedIndex(
+      ['- [ ] Root', ...Array.from({ length: count }, (_, i) => `  - [ ] Child ${i}`)].join('\n'),
+    );
+    const enumerate = searchProjection.taskTreeNodes;
+    const instrumented = new WeakSet<object>();
+    let lineReads = 0;
+    vi.spyOn(searchProjection, 'taskTreeNodes').mockImplementation(function* (root) {
+      for (const task of enumerate(root)) {
+        if (task.target.type === 'subtask' && !instrumented.has(task.target.ref)) {
+          const ref = task.target.ref;
+          instrumented.add(ref);
+          const line = ref.relativeLine;
+          Object.defineProperty(ref, 'relativeLine', {
+            get: () => {
+              lineReads++;
+              return line;
+            },
+          });
+        }
+        yield task;
+      }
+    });
+    const source = index.searchSource();
+    const docs = [...source.documents(expectDefined(source.files()[0]))];
+    expect(docs).toHaveLength(count + 1);
+    expect(docs[1]?.title).toBe('Child 0');
+    expect(docs[count]?.title).toBe('Child 499');
+    expect(lineReads).toBeLessThanOrEqual(count * 6);
+  });
+
   it('allocates one compact handle per yield and reuses prefixes across overlapping iterators', async () => {
     const index = await openedIndex('- [ ] Root\n  - [ ] Child\n- [ ] Other');
     const source = index.searchSource();

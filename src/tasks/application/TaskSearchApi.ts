@@ -4,8 +4,9 @@ import type {
   TaskSearchHit,
   TaskSearchHydratedHit,
 } from '../domain/taskSearchTypes';
+import type { TaskQueryApi } from './TaskApplicationApi';
 export { TaskSearchError } from '../domain/taskSearchTypes';
-export interface TaskReadProjectionApi {
+export interface TaskReadProjectionApi extends Pick<TaskQueryApi, 'observedTags'> {
   organization(
     request: TaskOrganizationRequest,
     signal: AbortSignal,
@@ -14,5 +15,4 @@ export interface TaskReadProjectionApi {
     hits: readonly TaskSearchHit[],
     signal: AbortSignal,
   ): Promise<readonly TaskSearchHydratedHit[]>;
-  observedTags(): readonly string[];
 }

@@ -6,7 +6,7 @@ import type { CalendarSettings } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import { colorForTag } from '../../tags/tagColor';
 import { collectTaskTags } from '../../tags/taskTagCatalog';
-import type { TaskReadProjectionApi } from '../../tasks';
+import type { TaskQueryApi } from '../../tasks';
 import {
   localDate,
   sameTaskNodeRef,
@@ -93,7 +93,7 @@ interface InspectorPlanningSurfacesOptions {
   readonly app: App;
   readonly settings: CalendarSettings | undefined;
   readonly statusRegistry: StatusRegistry;
-  readonly queries: Pick<TaskReadProjectionApi, 'observedTags'> | undefined;
+  readonly queries: Pick<TaskQueryApi, 'observedTags'> | undefined;
   readonly interactionOwnership: InteractionOwnershipPort;
   readonly timeTracking: TrackingSurface | undefined;
   readonly host: InspectorPlanningHost;

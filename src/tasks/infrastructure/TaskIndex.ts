@@ -986,7 +986,7 @@ export class TaskIndex
   private readonly searchIdsByFile_abyssPrivate = new Map<string, number[]>();
   private readonly searchCoordinates_abyssPrivate = new Map<
     number,
-    TaskSearchSourceNode & { readonly version: number }
+    TaskSearchSourceNode & { readonly version: number; readonly rootOrdinal: number }
   >();
   private readonly taskMap_abyssPrivate = new Map<string, readonly TaskSnapshot[]>();
   private readonly timeEntryIndex_abyssPrivate = new TimeEntryIndex();
@@ -1179,12 +1179,19 @@ export class TaskIndex
   }
 
   private *searchNodes_abyssPrivate(file: TaskSearchFileVersion): Iterable<TaskSearchSourceNode> {
+    yield* this.projectSearchNodes_abyssPrivate(file, (coordinate) => coordinate);
+  }
+
+  private *projectSearchNodes_abyssPrivate<T>(
+    file: TaskSearchFileVersion,
+    project: (coordinate: TaskSearchSourceNode, node: TaskSnapshot | SubtaskSnapshot) => T,
+  ): Iterable<T> {
     this.checkSearchFile_abyssPrivate(file);
     // A prefix is shared across partial/overlapping iterators; only the next requested node allocates.
     const ids = this.searchIdsByFile_abyssPrivate.get(file.path) ?? [];
     this.searchIdsByFile_abyssPrivate.set(file.path, ids);
     let offset = 0;
-    for (const root of this.taskMap_abyssPrivate.get(file.path) ?? []) {
+    for (const [rootOrdinal, root] of (this.taskMap_abyssPrivate.get(file.path) ?? []).entries()) {
       const rootId = ids[offset] ?? this.nextSearchId_abyssPrivate;
       for (const task of taskTreeNodes(root)) {
         this.checkSearchFile_abyssPrivate(file);
@@ -1195,6 +1202,7 @@ export class TaskIndex
             id,
             rootId,
             version: file.version,
+            rootOrdinal,
             order: {
               filePath: file.path,
               line: root.source.line,
@@ -1205,11 +1213,14 @@ export class TaskIndex
         }
         const coordinate = this.searchCoordinates_abyssPrivate.get(id);
         if (coordinate === undefined) throw new TaskSearchError('stale', 'Task changed');
-        yield {
-          id,
-          rootId: coordinate.rootId,
-          order: { ...coordinate.order, childLines: [...coordinate.order.childLines] },
-        };
+        yield project(
+          {
+            id,
+            rootId: coordinate.rootId,
+            order: { ...coordinate.order, childLines: [...coordinate.order.childLines] },
+          },
+          task.node,
+        );
       }
     }
     this.checkSearchFile_abyssPrivate(file);
@@ -1242,22 +1253,13 @@ export class TaskIndex
       this.searchFiles_abyssPrivate.get(root.order.filePath) !== address.version
     )
       return undefined;
-    return this.taskMap_abyssPrivate
-      .get(root.order.filePath)
-      ?.find((task) => task.source.line === root.order.line);
+    return this.taskMap_abyssPrivate.get(root.order.filePath)?.[root.rootOrdinal];
   }
 
   private *searchDocuments_abyssPrivate(file: TaskSearchFileVersion): Iterable<TaskSearchDocument> {
-    for (const coordinate of this.searchNodes_abyssPrivate(file)) {
-      this.checkSearchFile_abyssPrivate(file);
-      const address = this.searchAddress_abyssPrivate(coordinate.id);
-      const root = address === undefined ? undefined : this.currentSearchRoot_abyssPrivate(address);
-      if (root === undefined || address === undefined)
-        throw new TaskSearchError('stale', 'Task changed');
-      const { node } = nodeAtSearchAddress(root, address);
-      yield sourceTaskSearchDocument(coordinate, node, this.statusCatalog_abyssPrivate);
-    }
-    this.checkSearchFile_abyssPrivate(file);
+    yield* this.projectSearchNodes_abyssPrivate(file, (coordinate, node) =>
+      sourceTaskSearchDocument(coordinate, node, this.statusCatalog_abyssPrivate),
+    );
   }
 
   async resolveSearchPage(

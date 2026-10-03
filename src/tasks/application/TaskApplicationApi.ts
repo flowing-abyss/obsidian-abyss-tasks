@@ -46,6 +46,7 @@ export interface CalendarProjectionSources {
 }
 
 export interface TaskQueryApi {
+  observedTags(): readonly string[];
   list(query?: TaskQuery): readonly TaskSnapshot[];
   forCalendarProjection(dates: readonly LocalDate[]): CalendarProjectionSources;
   resolve(ref: TaskRef): TaskResolution;
