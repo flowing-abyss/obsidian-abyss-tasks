@@ -138,7 +138,12 @@ function recordResult(
     exactTitle: new Set<number>(),
   };
   score.tokens.set(tokenIndex, Math.max(score.tokens.get(tokenIndex) ?? 0, result.score));
-  if (result.match[token.term]?.includes('title') === true) score.exactTitle.add(tokenIndex);
+  if (
+    Object.prototype.hasOwnProperty.call(result.match, token.term) &&
+    result.match[token.term]?.includes('title') === true
+  ) {
+    score.exactTitle.add(tokenIndex);
+  }
   scores.set(id, score);
 }
 class MiniSearchTaskEngine implements TaskSearchEngine {

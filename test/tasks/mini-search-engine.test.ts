@@ -50,6 +50,21 @@ function search(
   });
 }
 describe('single MiniSearch task engine', () => {
+  it.each(['roots', 'nodes'] as const)(
+    'keeps exact and derived constructor matches in %s, with the exact title first',
+    (kind) => {
+      const value = engine([
+        document(1, { title: 'constructors' }),
+        document(2, { title: 'constructer' }),
+        document(3, { title: 'constructor' }),
+        document(4, { title: 'unrelated' }),
+      ]);
+      const hits = search(value, 'constructor', { kind });
+      expect(hits.map((hit) => hit.id).sort((a, b) => a - b)).toEqual([1, 2, 3]);
+      expect(hits[0]?.id).toBe(3);
+      expect(hits.every((hit) => Number.isFinite(hit.score) && hit.score > 0)).toBe(true);
+    },
+  );
   it('AND-covers root title, third tag and descendant fields, without leaking to a sibling picker node', () => {
     const value = engine([
       document(1, { title: 'Release', tags: '#one #two #budget' }),

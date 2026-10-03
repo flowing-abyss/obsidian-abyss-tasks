@@ -49,18 +49,20 @@ export function searchTextSourceRanges(
   return ranges;
 }
 function valueOf(pieces: readonly Piece[]): SearchTextValue {
-  let text = '';
+  const chunks: string[] = [];
+  let length = 0;
   const map: SearchTextMapRun[] = [];
   for (const piece of pieces) {
     if (piece.text === '') continue;
-    const from = text.length;
-    text += piece.text;
-    const next = { visible: { from, to: text.length }, source: piece.source };
+    const from = length;
+    chunks.push(piece.text);
+    length += piece.text.length;
+    const next = { visible: { from, to: length }, source: piece.source };
     const merged = mergeIdentityRuns(map[map.length - 1], next);
     if (merged === undefined) map.push(next);
     else map[map.length - 1] = merged;
   }
-  return { text, map };
+  return { text: chunks.join(''), map };
 }
 function identitySource(run: SearchTextMapRun): SourceRange | undefined {
   const source = run.source[0];
@@ -92,25 +94,28 @@ function piecesOf(value: SearchTextValue): Piece[] {
 function codePieces(source: string, range: SourceRange, offset: number): Piece[] {
   let delimiter = 1;
   while (source[range.from + delimiter] === '`') delimiter++;
-  const raw = source.slice(range.from + delimiter, range.to - delimiter);
-  const normalized = raw.replace(/\r\n|[\r\n]/gu, ' ');
-  const trim = normalized.startsWith(' ') && normalized.endsWith(' ') && /[^ ]/u.test(normalized);
-  const pieces = normalizedCodePieces(
-    source,
-    { from: range.from + delimiter, to: range.to - delimiter },
-    offset,
-  );
-  return trim ? pieces.slice(1, -1) : pieces;
-}
-function normalizedCodePieces(source: string, range: SourceRange, offset: number): Piece[] {
-  const pieces: Piece[] = [];
-  for (let i = range.from; i < range.to; i++) {
-    const from = i;
-    let text = source[i] ?? '';
-    if (text === '\r' && source[i + 1] === '\n') i++;
-    if (text === '\r' || text === '\n') text = ' ';
-    pieces.push({ text, source: [{ from: offset + from, to: offset + i + 1 }] });
+  let from = range.from + delimiter,
+    to = range.to - delimiter;
+  const raw = source.slice(from, to);
+  // Trim one normalized space at either edge, accounting for a CRLF's two source units.
+  if (/^[ \r\n]/u.test(raw) && /[ \r\n]$/u.test(raw) && /[^ \r\n]/u.test(raw)) {
+    from += raw.startsWith('\r\n') ? 2 : 1;
+    to -= raw.endsWith('\r\n') ? 2 : 1;
   }
+  return normalizedCodePieces(source.slice(from, to), offset + from);
+}
+function identityPiece(source: string, from: number, to: number, offset: number): Piece {
+  return { text: source.slice(from, to), source: [{ from: offset + from, to: offset + to }] };
+}
+function normalizedCodePieces(source: string, offset: number): Piece[] {
+  const pieces: Piece[] = [];
+  let at = 0;
+  for (const newline of source.matchAll(/\r\n|[\r\n]/gu)) {
+    if (at < newline.index) pieces.push(identityPiece(source, at, newline.index, offset));
+    at = newline.index + newline[0].length;
+    pieces.push({ text: ' ', source: [{ from: offset + newline.index, to: offset + at }] });
+  }
+  if (at < source.length) pieces.push(identityPiece(source, at, source.length, offset));
   return pieces;
 }
 
@@ -218,7 +223,7 @@ function balancedPieces(
     closeDelimiter(closer, stack, removed);
     if (closer.open && closer.remaining > 0) stack.push(closer);
   }
-  return pieces.filter((_, index) => !removed.has(index));
+  return removed.size === 0 ? pieces : pieces.filter((_, index) => !removed.has(index));
 }
 function literalPiece(source: string, start: number, offset: number): Piece {
   let at = start;
@@ -232,26 +237,32 @@ function literalPiece(source: string, start: number, offset: number): Piece {
     delimiter: !escaped && '*_~'.includes(text),
   };
 }
+function appendLiteralPieces(pieces: Piece[], source: string, offset: number): void {
+  // Only syntax can split an identity run. The same pass handles prose and Markdown labels.
+  const boundaries = /[\\*_~]/gu;
+  let at = 0;
+  for (const boundary of source.matchAll(boundaries)) {
+    if (boundary.index < at) continue; // A punctuation escape already consumed this delimiter.
+    if (at < boundary.index) pieces.push(identityPiece(source, at, boundary.index, offset));
+    const piece = literalPiece(source, boundary.index, offset);
+    pieces.push(piece);
+    at = (piece.source[0]?.to ?? offset + boundary.index + 1) - offset;
+  }
+  if (at < source.length) pieces.push(identityPiece(source, at, source.length, offset));
+}
 function inlineProjection(
   source: string,
   offset: number,
   replacements: readonly Replacement[],
 ): SearchTextValue {
   const pieces: Piece[] = [];
-  let at = 0,
-    next = 0;
-  while (at < source.length) {
-    const replacement = replacements[next];
-    if (at === replacement?.range.from) {
-      for (const piece of replacement.pieces) pieces.push(piece);
-      at = replacement.range.to;
-      next++;
-      continue;
-    }
-    const piece = literalPiece(source, at, offset);
-    pieces.push(piece);
-    at += (piece.source[0]?.to ?? offset + at + 1) - (offset + at);
+  let at = 0;
+  for (const replacement of replacements) {
+    appendLiteralPieces(pieces, source.slice(at, replacement.range.from), offset + at);
+    for (const piece of replacement.pieces) pieces.push(piece);
+    at = replacement.range.to;
   }
+  appendLiteralPieces(pieces, source.slice(at), offset + at);
   return valueOf(balancedPieces(pieces, source, offset));
 }
 function escapedAt(source: string, at: number): boolean {

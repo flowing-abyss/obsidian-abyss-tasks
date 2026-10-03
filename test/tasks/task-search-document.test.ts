@@ -61,3 +61,33 @@ it('feeds authored canonical Markdown through the shared projection into the rea
   }
   engine.dispose();
 });
+
+it('projects untruncated large own-node fields through the canonical source traversal', async () => {
+  const app = await createAppWithFiles({});
+  const index = new TaskIndex(app, { statusCatalog: canonicalStatusCatalog() });
+  indexes.push(index);
+  await index.initialize();
+  const plain = 'ordinary prose '.repeat(8192);
+  const code = '**literal** '.repeat(8192);
+  index.installCommittedContent(
+    'large.md',
+    [
+      `- [ ] ${plain}**bud**get`,
+      `  - > ${plain}[**la**bel](target) ${plain}<i>end</i>`,
+      `  - \` ${code} \``,
+      '  - first **bounded',
+      '  - second** comment',
+      '  - [ ] child',
+    ].join('\n'),
+  );
+  const source = index.searchSource();
+  const documents = [...source.documents(expectDefined(source.files()[0]))];
+  expect(documents).toHaveLength(2);
+  expect(documents[0]).toMatchObject({
+    title: `${plain}budget`,
+    description: `${plain}label ${plain}end`,
+    comments: `${code}\nfirst **bounded\nsecond** comment`,
+    links: 'target',
+  });
+  expect(documents[1]).toMatchObject({ title: 'child', description: '', comments: '', links: '' });
+});

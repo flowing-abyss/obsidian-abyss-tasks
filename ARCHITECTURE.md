@@ -198,7 +198,11 @@ occurrence numbering. Balanced delimiters and punctuation escapes share one proj
 code contents and compact embed labels retain their own policy. Prose excludes recognized HTML
 scaffolding. Visible aliases and destinations have separate UTF-16 source maps; removed markup
 creates gaps, and no generated attachment decoration becomes searchable authored text. The helper
-imports no task layer and grants no write authority.
+emits contiguous literal and code contents as runs, splitting at syntax or normalization boundaries
+before assembling text and provenance. Mixed prose and Markdown link labels use this same pass;
+ordinary spans do not create a temporary object graph per UTF-16 unit. Projection still completes
+synchronously within each requested source document. The helper imports no task layer and grants
+no write authority.
 
 ### Creation, transfer, and tags
 

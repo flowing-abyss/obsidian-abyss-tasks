@@ -114,3 +114,75 @@ it('uses authored delimiter flanking around code and link syntax', () => {
   expect(projectSearchText('a*`bud`*get', 'title').visible.text).toBe('a*bud*get');
   expect(projectSearchText('*[ label](target)*', 'title').visible.text).toBe(' label');
 });
+
+it.each(['title', 'prose'] as const)(
+  'keeps a large literal %s field untruncated with precise interior UTF-16 origins',
+  (presentation) => {
+    const source = 'word 😀 e\u0301 中文 '.repeat(8192);
+    const value = projectSearchText(source, presentation).visible;
+    expect(value.text).toBe(source);
+    expect(value.map).toEqual([
+      { visible: { from: 0, to: source.length }, source: [{ from: 0, to: source.length }] },
+    ]);
+    expect(searchTextSourceRanges(value, { from: 65537, to: 65555 })).toEqual([
+      { from: 65537, to: 65555 },
+    ]);
+  },
+);
+
+it('keeps long code contents literal while mapping normalized newlines and trimmed edge spaces', () => {
+  const literal = '**raw** \\* [[Target]] 😀 '.repeat(4096);
+  const source = `\` \r\n${literal}\r\nnext\rtail\n \``;
+  const value = projectSearchText(source, 'prose').visible;
+  expect(value.text).toBe(` ${literal} next tail `);
+  expect(searchTextSourceRanges(value, { from: 0, to: 1 })).toEqual([{ from: 2, to: 4 }]);
+  expect(searchTextSourceRanges(value, { from: 1, to: 1 + literal.length })).toEqual([
+    { from: 4, to: 4 + literal.length },
+  ]);
+  expect(
+    searchTextSourceRanges(value, { from: 1 + literal.length, to: 2 + literal.length }),
+  ).toEqual([{ from: 4 + literal.length, to: 6 + literal.length }]);
+  expect(
+    searchTextSourceRanges(value, { from: value.text.length - 1, to: value.text.length }),
+  ).toEqual([{ from: source.length - 3, to: source.length - 2 }]);
+  expect(projectSearchText(source, 'prose').destinations).toEqual([]);
+});
+
+it('preserves formatting gaps, link-label offsets and code precedence between long prose runs', () => {
+  const n = 65536;
+  const prose = 'a'.repeat(n);
+  const code = 'b'.repeat(n);
+  const source = `${prose}**bud**get \` ${code} \` [**la**bel](target)<i>${prose}</i> \\* unmatched*`;
+  const result = projectSearchText(source, 'prose');
+  expect(result.visible.text).toBe(`${prose}budget ${code} label${prose} * unmatched*`);
+  expect(searchTextSourceRanges(result.visible, { from: n - 1, to: n + 6 })).toEqual([
+    { from: n - 1, to: n },
+    { from: n + 2, to: n + 5 },
+    { from: n + 7, to: n + 10 },
+  ]);
+  expect(searchTextSourceRanges(result.visible, { from: n + 7, to: 2 * n + 7 })).toEqual([
+    { from: n + 13, to: 2 * n + 13 },
+  ]);
+  expect(searchTextSourceRanges(result.visible, { from: 2 * n + 8, to: 2 * n + 13 })).toEqual([
+    { from: 2 * n + 19, to: 2 * n + 21 },
+    { from: 2 * n + 23, to: 2 * n + 26 },
+  ]);
+  expect(result.destinations).toEqual([
+    {
+      text: 'target',
+      map: [{ visible: { from: 0, to: 6 }, source: [{ from: 2 * n + 28, to: 2 * n + 34 }] }],
+    },
+  ]);
+});
+
+it('projects a long Markdown label with original-field offsets through the same delimiter pass', () => {
+  const label = 'x'.repeat(65536);
+  const value = projectSearchText(`before [**${label}**tail](dest)`, 'title').visible;
+  expect(value.text).toBe(`before ${label}tail`);
+  expect(
+    searchTextSourceRanges(value, { from: 7 + label.length - 1, to: value.text.length }),
+  ).toEqual([
+    { from: 10 + label.length - 1, to: 10 + label.length },
+    { from: 12 + label.length, to: 16 + label.length },
+  ]);
+});
