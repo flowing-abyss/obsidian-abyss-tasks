@@ -15,6 +15,14 @@ allowedDeprecatedVersions:
 overrides:
   'moment@>=2.29.2 <2.31.0': '2.31.0'
 
+# Temporary acceptance of GHSA-vfj7-8cjw-p6xm in dev-only braces 3.0.3 (Stylelint).
+# Nested external glob patterns can exhaust the stack; current lint inputs are trusted paths.
+# Remove after adopting an official compatible patched braces resolution.
+# Manual review due 2026-10-17 (no automatic expiry); revisit sooner for runtime/untrusted patterns.
+audit:
+  ignore:
+    - GHSA-vfj7-8cjw-p6xm
+
 allowBuilds:
   '@parcel/watcher': false
   classic-level: true
