@@ -56,8 +56,26 @@ function runPromptHook(payload: { prompt: string; cwd: string }): Promise<string
       stdio: ['pipe', 'pipe', 'ignore'],
       windowsHide: true,
     });
-    const timer = setTimeout(() => child.kill(), PROMPT_HOOK_TIMEOUT_MS);
     let stdout = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      stdout = '';
+      // A descendant can retain stdout after the wrapper exits. Settle now,
+      // discard incomplete context, and stop the launcher/process tree.
+      resolve('');
+      if (process.platform === 'win32') {
+        // Windows kill() terminates the wrapper without running its handlers.
+        spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+          stdio: 'ignore',
+          windowsHide: true,
+        }).on('error', () => child.kill());
+      } else {
+        child.kill();
+      }
+      child.stdout.destroy();
+      child.stdin.destroy();
+    }, PROMPT_HOOK_TIMEOUT_MS);
 
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
@@ -70,7 +88,7 @@ function runPromptHook(payload: { prompt: string; cwd: string }): Promise<string
     });
     child.on('close', () => {
       clearTimeout(timer);
-      resolve(stdout.trim());
+      resolve(timedOut ? '' : stdout.trim());
     });
     child.stdin.end(JSON.stringify({ hook_event_name: 'UserPromptSubmit', ...payload }));
   });

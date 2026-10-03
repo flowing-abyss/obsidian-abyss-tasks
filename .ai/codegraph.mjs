@@ -15,7 +15,7 @@
 // `node_modules/.bin/codegraph`, which is a shell script on POSIX and a
 // `.cmd` on Windows — neither spawns portably without a shell.
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -62,8 +62,7 @@ if (isPromptHook) {
   }
 }
 
-const result = spawnSync(process.execPath, [entry, ...args], {
-  input: hookPayload,
+const options = {
   stdio: [isPromptHook ? 'pipe' : 'inherit', 'inherit', 'inherit'],
   windowsHide: true,
   env: {
@@ -73,15 +72,58 @@ const result = spawnSync(process.execPath, [entry, ...args], {
     // rather than letting the npm shim record this short-lived wrapper.
     CODEGRAPH_HOST_PPID: process.env.CODEGRAPH_HOST_PPID ?? String(process.ppid),
   },
-});
+};
 
-if (result.error) {
-  process.stderr.write(`codegraph: ${result.error.message}\n`);
+if (isPromptHook) {
+  runPromptHook();
+} else {
+  // Keep MCP and CLI execution unchanged; only prompts need cancellation.
+  const result = spawnSync(process.execPath, [entry, ...args], options);
+  if (result.error) {
+    process.stderr.write(`codegraph: ${result.error.message}\n`);
+  }
+  process.exit(result.status ?? 1);
 }
 
-// Exit 2 from a UserPromptSubmit hook blocks the prompt outright, so the
-// prompt hook always reports success; everything else keeps its real status.
-process.exit(isPromptHook ? 0 : (result.status ?? 1));
+function runPromptHook() {
+  const child = spawn(process.execPath, [entry, ...args], {
+    ...options,
+    // The package shim spawns the native tool. A separate POSIX process group
+    // lets cancellation stop that whole chain, including a stalled descendant.
+    detached: process.platform !== 'win32',
+  });
+  let cancelled = false;
+  const cancel = () => {
+    if (cancelled || !child.pid) return;
+    cancelled = true;
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      }).on('error', () => child.kill());
+    } else {
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch (error) {
+        if (error.code !== 'ESRCH') throw error;
+      }
+    }
+  };
+  process.once('SIGTERM', cancel);
+  process.once('SIGINT', cancel);
+  child.stdin.on('error', () => {});
+  child.on('error', (error) => {
+    process.stderr.write(`codegraph: ${error.message}\n`);
+  });
+  child.on('close', () => {
+    process.removeListener('SIGTERM', cancel);
+    process.removeListener('SIGINT', cancel);
+    // Wait for the direct child to be reaped. Exit 2 blocks prompts, so every
+    // prompt-hook outcome, including cancellation, still succeeds.
+    process.exit(0);
+  });
+  child.stdin.end(hookPayload);
+}
 
 /** The hook's JSON payload from stdin, or null when there is none to read. */
 function readHookPayload() {
