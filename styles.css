@@ -3407,7 +3407,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-rows: calc(1.4em + 2 * var(--size-4-1)) auto;
-  column-gap: var(--size-4-1);
+  gap: 0 var(--size-4-1);
   font-size: 17px;
   line-height: 1.4;
   padding: var(--size-4-2) var(--size-4-3);
