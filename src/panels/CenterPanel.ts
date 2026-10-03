@@ -354,6 +354,15 @@ export class CenterPanel {
         applyBulkDuePreset: (card, tasks, value) => {
           this.applyBulkDuePreset_abyssPrivate(card, tasks, value);
         },
+        applyBulkTaskTags: (card, tasks, add, remove) => {
+          this.runBulkMenuAction_abyssPrivate(card, (onResult) =>
+            Promise.all(
+              tasks.map((task) =>
+                this.taskCommands_abyssPrivate.patchTaskTags(task, add, remove, onResult),
+              ),
+            ),
+          );
+        },
         openDatePicker: (anchor, selectedTasks) => {
           this.openTaskDatePicker_abyssPrivate(anchor, selectedTasks);
         },
@@ -1298,6 +1307,15 @@ export class CenterPanel {
     tasks: readonly TaskSnapshot[],
     value: LocalDate,
   ): void {
+    this.runBulkMenuAction_abyssPrivate(card, (onResult) =>
+      this.taskCommands_abyssPrivate.applyBulkDuePreset(tasks, value, onResult),
+    );
+  }
+
+  private runBulkMenuAction_abyssPrivate(
+    card: HTMLElement,
+    action: (onResult: (task: TaskSnapshot, result: TaskCommandResult) => void) => Promise<unknown>,
+  ): void {
     const existing = this.cardReturn_abyssPrivate;
     const record =
       existing?.opener === card ? existing : this.armCardReturn_abyssPrivate(card, 'menu');
@@ -1306,24 +1324,22 @@ export class CenterPanel {
       if (record !== existing) record.hidden = true;
     }
     runAsyncAction(
-      this.taskCommands_abyssPrivate
-        .applyBulkDuePreset(tasks, value, (submitted, result) => {
-          if (
-            record == null ||
-            this.cardReturn_abyssPrivate !== record ||
-            !this.sameCardRef_abyssPrivate(submitted.ref, record.original.ref)
-          )
-            return;
-          if (result.type === 'ok' && result.outcome.type === 'task')
-            record.ref = result.outcome.task.ref;
-          else this.cardReturn_abyssPrivate = null;
-        })
-        .finally(() => {
-          if (record != null && this.cardReturn_abyssPrivate === record) {
-            record.pending = false;
-            this.finishCardReturn_abyssPrivate();
-          }
-        }),
+      action((submitted, result) => {
+        if (
+          record == null ||
+          this.cardReturn_abyssPrivate !== record ||
+          !this.sameCardRef_abyssPrivate(submitted.ref, record.original.ref)
+        )
+          return;
+        if (result.type === 'ok' && result.outcome.type === 'task')
+          record.ref = result.outcome.task.ref;
+        else this.cardReturn_abyssPrivate = null;
+      }).finally(() => {
+        if (record != null && this.cardReturn_abyssPrivate === record) {
+          record.pending = false;
+          this.finishCardReturn_abyssPrivate();
+        }
+      }),
     );
   }
 

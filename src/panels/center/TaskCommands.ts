@@ -124,21 +124,22 @@ export class TaskCommands {
     task: TaskSnapshot,
     add: readonly string[],
     remove: readonly string[],
+    onResult?: (task: TaskSnapshot, result: TaskCommandResult) => void,
   ): Promise<void> {
     const ref = task.ref;
     if (this.#tasks == null) return;
-    presentTaskCommandResult(
-      await this.#tasks.execute({
-        type: 'patch',
-        target: { type: 'task', ref },
-        patch: {
-          tags: {
-            ...(add.length > 0 && { add }),
-            ...(remove.length > 0 && { remove }),
-          },
+    const result = await this.#tasks.execute({
+      type: 'patch',
+      target: { type: 'task', ref },
+      patch: {
+        tags: {
+          ...(add.length > 0 && { add }),
+          ...(remove.length > 0 && { remove }),
         },
-      }),
-    );
+      },
+    });
+    presentTaskCommandResult(result);
+    onResult?.(task, result);
   }
 
   async deleteTask(task: TaskSnapshot): Promise<void> {
