@@ -5466,7 +5466,7 @@ body.abyss-modal-open .popover.hover-popover {
   box-shadow: var(--shadow-s, none);
 }
 
-.abyss-center-controls > .abyss-view-state-popover {
+.abyss-center-controls:not(.abyss-project-table-controls) > .abyss-view-state-popover {
   width: min(260px, var(--abyss-view-state-max-width));
 }
 
