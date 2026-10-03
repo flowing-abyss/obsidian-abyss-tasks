@@ -4,10 +4,12 @@ import { nativeInteractionBlocksPanelShortcuts } from '../ui/nativeInteractionBl
 import type { QuickCaptureCoordinator } from '../ui/taskCapture/QuickCaptureCoordinator';
 
 export type CompactPane = 'left' | 'right';
+export type CompactPaneOpenReason = 'automatic' | 'button';
 
 export interface PendingCompactPane {
   readonly pane: CompactPane;
   readonly moveFocus: boolean;
+  readonly reason?: CompactPaneOpenReason;
 }
 
 export interface CompactPaneAccessElements {
@@ -55,6 +57,7 @@ export class CompactPaneAccess {
   #compactPaneRefresh: (() => void) | undefined;
   #compactHeaderResizeObserver: ResizeObserver | undefined = undefined;
   #compactPaneOpen: CompactPane | null = null;
+  #compactPaneOpenReason: CompactPaneOpenReason | undefined;
   #compactLeftCollapsed = false;
   #compactRightCollapsed = false;
   #pendingCompactPane: PendingCompactPane | undefined = undefined;
@@ -233,6 +236,7 @@ export class CompactPaneAccess {
       return;
     }
     const path = event.composedPath();
+    if (this.#preservesExplicitDetails(path, elements.layout)) return;
     const activePane = pane === 'left' ? elements.left : elements.right;
     if (
       path.includes(activePane) ||
@@ -244,15 +248,23 @@ export class CompactPaneAccess {
     this.close(false);
   }
 
+  #preservesExplicitDetails(path: EventTarget[], layout: HTMLElement): boolean {
+    return (
+      this.#compactPaneOpen === 'right' &&
+      this.#compactPaneOpenReason === 'button' &&
+      !path.includes(layout)
+    );
+  }
+
   #toggleCompactPane(pane: CompactPane): void {
     if (this.#compactPaneOpen === pane) {
       this.close(true);
       return;
     }
-    this.open(pane, true);
+    this.open(pane, true, 'button');
   }
 
-  open(pane: CompactPane, moveFocus: boolean): void {
+  open(pane: CompactPane, moveFocus: boolean, reason: CompactPaneOpenReason = 'automatic'): void {
     const elements = this.#compactPaneElements;
     if (
       elements == null ||
@@ -263,15 +275,25 @@ export class CompactPaneAccess {
     }
     const quickCapture = this.#options.captureState();
     if (quickCapture != null && quickCapture.phase !== 'closed') {
-      if (quickCapture.isSubmitting) this.#pendingCompactPane = { pane, moveFocus };
+      if (quickCapture.isSubmitting) this.#pendingCompactPane = { pane, moveFocus, reason };
       return;
     }
+    this.#showCompactPane(elements, pane, moveFocus, reason);
+  }
+
+  #showCompactPane(
+    elements: CompactPaneAccessElements,
+    pane: CompactPane,
+    moveFocus: boolean,
+    reason: CompactPaneOpenReason,
+  ): void {
     const activePane = pane === 'left' ? elements.left : elements.right;
     const inactivePane = pane === 'left' ? elements.right : elements.left;
     activePane.addClass('is-compact-open');
     inactivePane.removeClass('is-compact-open');
     this.#setCompactPaneButtonState(elements.leftButton, 'task lists', pane === 'left');
     this.#setCompactPaneButtonState(elements.rightButton, 'task details', pane === 'right');
+    if (this.#compactPaneOpen !== pane || reason === 'button') this.#compactPaneOpenReason = reason;
     this.#compactPaneOpen = pane;
     if (moveFocus) activePane.focus({ preventScroll: true });
   }
@@ -279,7 +301,7 @@ export class CompactPaneAccess {
   schedule(pending: PendingCompactPane): void {
     void Promise.resolve().then(
       () => {
-        this.open(pending.pane, pending.moveFocus);
+        this.open(pending.pane, pending.moveFocus, pending.reason);
       },
       () => undefined,
     );
@@ -289,6 +311,7 @@ export class CompactPaneAccess {
     const elements = this.#compactPaneElements;
     const pane = this.#compactPaneOpen;
     this.#compactPaneOpen = null;
+    this.#compactPaneOpenReason = undefined;
     if (elements == null) return;
     elements.left.removeClass('is-compact-open');
     elements.right.removeClass('is-compact-open');

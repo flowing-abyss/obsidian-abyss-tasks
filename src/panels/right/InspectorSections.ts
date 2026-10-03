@@ -411,6 +411,7 @@ export class InspectorSections {
       },
     });
     const renderView = (): void => {
+      view.setAttribute('title', task.title);
       renderTaskText(view, task.markdownTitle, {
         presentation: 'title',
         app: this.#app,
@@ -436,7 +437,7 @@ export class InspectorSections {
     task: TaskLike,
     renderView: () => void,
   ): void {
-    // Preserve the height the user stretched the read-mode block to (measure first).
+    // Start editing at the rendered title height, then grow for the complete source.
     const startHeight = view.offsetHeight;
     view.hide();
     const ta = header.createEl('textarea', { cls: 'abyss-right-title abyss-right-title-edit' });
@@ -444,12 +445,10 @@ export class InspectorSections {
     view.insertAdjacentElement('afterend', ta);
     ta.value = task.markdownTitle;
     this.#enablePaste(ta, task);
-    // Auto-grow to content, but never below the stretched height.
-    let autoHeight = '';
+    // Auto-grow to content, but never below the initial title height.
     const grow = (): void => {
       ta.setCssStyles({ height: 'auto' });
       ta.setCssStyles({ height: `${Math.max(ta.scrollHeight, startHeight)}px` });
-      autoHeight = ta.style.height;
     };
     ta.addEventListener('input', grow);
     ta.ownerDocument.defaultView?.setTimeout(() => {
@@ -462,7 +461,6 @@ export class InspectorSections {
       if (!lifecycle.begin()) return;
       // Let any in-flight paste insert its link into the value before we save/remove.
       await whenPasteSettled(ta);
-      const resizedHeight = ta.style.height !== autoHeight ? ta.offsetHeight : undefined;
       if (save && ta.value !== task.markdownTitle) {
         const saved = await this.#commands.saveTaskTitle(task, ta.value.trim());
         if (!saved) {
@@ -472,7 +470,7 @@ export class InspectorSections {
         }
       }
       lifecycle.close();
-      if (resizedHeight !== undefined) view.setCssStyles({ height: `${resizedHeight}px` });
+      view.style.removeProperty('height');
       ta.remove();
       view.show();
       renderView();

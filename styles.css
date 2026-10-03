@@ -3398,9 +3398,9 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 /* Header */
 .abyss-right-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--size-4-2);
-  padding: var(--size-4-3) var(--size-4-4) 10px;
+  padding: var(--size-4-2) var(--size-4-3);
   position: relative;
   border-bottom: 1px solid var(--background-modifier-border);
 }
@@ -3427,9 +3427,15 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   padding: var(--size-4-1) var(--size-2-3);
   border-radius: var(--radius-s);
   cursor: text;
-  overflow: auto;
-  resize: vertical; /* user can stretch the block */
   white-space: pre-wrap;
+}
+
+:is(.abyss-right-title-view, .abyss-right-title-view > .abyss-md) {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 

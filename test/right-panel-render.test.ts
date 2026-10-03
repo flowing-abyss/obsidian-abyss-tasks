@@ -1,4 +1,4 @@
-import { MarkdownView, Platform, TFile, type App } from 'obsidian';
+import { MarkdownRenderer, MarkdownView, Platform, TFile, type App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
@@ -1014,6 +1014,46 @@ describe('RightPanel.renderTask', () => {
     expect(state.get('taskStack')).toEqual([parent]);
   });
 
+  it('shows the full plain title as a tooltip without shortening its Markdown edit source', async () => {
+    const title =
+      'A long title that should remain complete even when its read mode spans many lines '.repeat(
+        5,
+      );
+    const markdownTitle = `**${title}** [[Target|open note]]`;
+    const { state, el } = await makePanel();
+    state.set('taskStack', [task({ title, markdownTitle })]);
+    const view = expectDefined(el.querySelector<HTMLElement>('.abyss-right-title-view'));
+    expect(view.title).toBe(title);
+    click(view);
+    expect(el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')?.value).toBe(
+      markdownTitle,
+    );
+  });
+
+  it('keeps title links navigating through the shared Markdown renderer without entering edit mode', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, target) => {
+      const paragraph = target.createEl('p');
+      paragraph.createEl('a', {
+        text: 'Open note',
+        cls: 'internal-link',
+        attr: { 'data-href': 'Target' },
+      });
+    });
+    const { app, state, el } = await makePanel();
+    activeDocument.body.append(el);
+    const openLink = vi.spyOn(app.workspace, 'openLinkText').mockResolvedValue();
+    state.set('taskStack', [task({ title: 'Open note', markdownTitle: '[[Target|Open note]]' })]);
+    await vi.runOnlyPendingTimersAsync();
+    const title = expectDefined(el.querySelector<HTMLElement>('.abyss-right-title-view'));
+    const anchor = expectDefined(title.querySelector<HTMLAnchorElement>('.abyss-md > a'));
+    click(anchor);
+    await vi.runOnlyPendingTimersAsync();
+    expect(openLink).toHaveBeenCalledWith('Target', 'f.md', false);
+    expect(el.querySelector('.abyss-right-title-edit')).toBeNull();
+    el.remove();
+  });
+
   it('title view renders idle; clicking it enters edit mode with markdownText', async () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'My task' })]);
@@ -1166,7 +1206,7 @@ describe('RightPanel.renderTask', () => {
     },
   );
 
-  it('keeps an explicit title display resize, while carrying a manual editor resize across close', async () => {
+  it('allows manual editor resizing and returns the title to its compact natural height on close', async () => {
     vi.useFakeTimers();
     const markdownTitle = `[Short link label](https://example.test/${'long-url-segment/'.repeat(25)})`;
     const { panel, state, el } = await makePanel();
@@ -1193,7 +1233,7 @@ describe('RightPanel.renderTask', () => {
       expect(editor.style.height).toBe('420px');
       editor.dispatchEvent(new FocusEvent('blur'));
       await vi.runOnlyPendingTimersAsync();
-      expect(view.style.height).toBe('88px');
+      expect(view.style.height).toBe('');
 
       click(view);
       const resizedEditor = expectDefined(
@@ -1209,12 +1249,13 @@ describe('RightPanel.renderTask', () => {
       });
       await vi.runOnlyPendingTimersAsync();
       resizedEditor.setCssStyles({ height: '275px' });
+      expect(resizedEditor.style.height).toBe('275px');
       resizedEditor.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
       );
       await vi.runOnlyPendingTimersAsync();
 
-      expect(view.style.height).toBe('275px');
+      expect(view.style.height).toBe('');
     } finally {
       panel.destroy();
       el.remove();

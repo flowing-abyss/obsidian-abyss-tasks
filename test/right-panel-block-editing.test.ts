@@ -782,6 +782,62 @@ describe('RightPanel block editing', () => {
     }
   });
 
+  it.each(['Enter', 'Escape'] as const)(
+    'preserves a full long title through %s',
+    async (finish) => {
+      const plain =
+        'Complete title source remains available beyond the visible two-line preview '.repeat(6);
+      const markdownTitle = `**${plain}**`;
+      const updatedPlain = `${plain}updated`;
+      const updatedMarkdown = `${markdownTitle} updated`;
+      const initial = { ...snapshot('old'), title: plain, markdownTitle };
+      const updated = { ...snapshot('new'), title: updatedPlain, markdownTitle: updatedMarkdown };
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'task', task: updated },
+      });
+      const { panel } = await panelWith(initial, execute);
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      panel.mount(container);
+      try {
+        const view = expectDefined(container.querySelector<HTMLElement>('.abyss-right-title-view'));
+        expect(view.title).toBe(plain);
+        view.click();
+        await flushMicrotasks();
+        const editor = expectDefined(
+          container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'),
+        );
+        expect(editor.value).toBe(markdownTitle);
+        editor.value = updatedMarkdown;
+        editor.dispatchEvent(
+          new KeyboardEvent('keydown', { key: finish, bubbles: true, cancelable: true }),
+        );
+        await flushMicrotasks(20);
+        expect(container.querySelector('.abyss-right-title-edit')).toBeNull();
+        if (finish === 'Enter') {
+          expect(execute).toHaveBeenCalledExactlyOnceWith({
+            type: 'patch',
+            target: { type: 'task', ref: initial.ref },
+            patch: { markdownTitle: { type: 'set', value: updatedMarkdown } },
+          });
+        } else expect(execute).not.toHaveBeenCalled();
+        const returned = expectDefined(
+          container.querySelector<HTMLElement>('.abyss-right-title-view'),
+        );
+        expect(returned.title).toBe(finish === 'Enter' ? updatedPlain : plain);
+        returned.click();
+        expect(container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')?.value).toBe(
+          finish === 'Enter' ? updatedMarkdown : markdownTitle,
+        );
+      } finally {
+        panel.destroy();
+        container.remove();
+      }
+    },
+  );
+
   it('preserves the full DOM draft bundle when an add-comment command is a no-op', async () => {
     const initial = snapshot('old');
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({

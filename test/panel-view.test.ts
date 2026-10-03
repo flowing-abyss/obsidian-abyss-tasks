@@ -1231,6 +1231,93 @@ async function editToday(panel: RemovalPanel, edit: (content: string) => string)
 }
 
 describe('PanelView compact details on a begun selection', () => {
+  it('closes automatic details outside the layout but preserves explicitly opened details', async () => {
+    const panel = await openRemovalPanel();
+    const outside = activeDocument.body.createEl('button');
+    const pointer = (target: HTMLElement): void => {
+      target.dispatchEvent(new Event('pointerdown', { bubbles: true, composed: true }));
+    };
+    try {
+      const { right, details } = compactLayout(panel);
+      panel.select('First');
+      pointer(outside);
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+      details.click();
+      pointer(outside);
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      // A repeated selection goes through the real automatic-open caller.
+      openTrackedTask(panel, 'First');
+      pointer(outside);
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      pointer(right);
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      pointer(panel.card('Second'));
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+      panel.select('Second');
+      pointer(outside);
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+    } finally {
+      outside.remove();
+      await panel.close();
+    }
+  });
+
+  it.each(['escape', 'selection', 'mode', 'resize', 'button'] as const)(
+    'clears explicit details intent after closing through %s',
+    async (close) => {
+      const panel = await openRemovalPanel();
+      const outside = activeDocument.body.createEl('button');
+      try {
+        const { right, details } = compactLayout(panel);
+        panel.select('First');
+        details.click();
+        details.click();
+        const layout = expectDefined(
+          panel.view.contentEl.querySelector<HTMLElement>('.abyss-layout'),
+        );
+        if (close === 'escape')
+          right.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+          );
+        if (close === 'selection') panel.state.set('taskStack', []);
+        if (close === 'mode') panel.state.set('mode', 'calendar');
+        if (close === 'resize') {
+          setGeometry(layout, rect(0, 0, 1200, 480));
+          window.dispatchEvent(new Event('resize'));
+        }
+        if (close === 'button') details.click();
+        expect(right.classList.contains('is-compact-open')).toBe(false);
+        if (close === 'mode') panel.state.set('mode', 'tasks');
+        if (close === 'resize') compactLayout(panel);
+        panel.select('First');
+        expect(right.classList.contains('is-compact-open')).toBe(true);
+        outside.dispatchEvent(new Event('pointerdown', { bubbles: true, composed: true }));
+        expect(right.classList.contains('is-compact-open')).toBe(false);
+      } finally {
+        outside.remove();
+        await panel.close();
+      }
+    },
+  );
+
+  it('keeps explicit left-pane outside dismissal unchanged', async () => {
+    const panel = await openRemovalPanel();
+    const outside = activeDocument.body.createEl('button');
+    try {
+      compactLayout(panel);
+      const left = expectDefined(panel.view.contentEl.querySelector<HTMLElement>('.abyss-left'));
+      expectDefined(
+        panel.view.contentEl.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--left'),
+      ).click();
+      expect(left.classList.contains('is-compact-open')).toBe(true);
+      outside.dispatchEvent(new Event('pointerdown', { bubbles: true, composed: true }));
+      expect(left.classList.contains('is-compact-open')).toBe(false);
+    } finally {
+      outside.remove();
+      await panel.close();
+    }
+  });
+
   it('reopens the hidden details when the selected card is tapped again', async () => {
     const panel = await openRemovalPanel();
     try {
@@ -1959,6 +2046,10 @@ describe('PanelView', () => {
       expect(present).toHaveBeenCalledWith(result, expect.objectContaining({ kind: 'success' }));
       expect(internals.interactionRegistry_abyssPrivate.allows('openCalendar')).toBe(true);
       expect(right.classList.contains('is-compact-open')).toBe(true);
+      const outside = activeDocument.body.createEl('button');
+      outside.dispatchEvent(new Event('pointerdown', { bubbles: true, composed: true }));
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      outside.remove();
     });
 
     it('opens the requested compact pane after a capture whose presentation fails', async () => {
@@ -2008,7 +2099,11 @@ describe('PanelView', () => {
       await flushMicrotasks(0);
 
       expect(takePending).toHaveBeenCalledOnce();
-      expect(takePending.mock.results[0]?.value).toEqual({ pane: 'right', moveFocus: true });
+      expect(takePending.mock.results[0]?.value).toEqual({
+        pane: 'right',
+        moveFocus: true,
+        reason: 'button',
+      });
       expect(internals.compactPaneAccess_abyssPrivate.takePending()).toBeUndefined();
       expect(internals.quickCapture_abyssPrivate.phase).toBe('closed');
       expect(right.classList.contains('is-compact-open')).toBe(true);

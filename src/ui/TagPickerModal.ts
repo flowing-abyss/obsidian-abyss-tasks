@@ -1,5 +1,7 @@
 import { Modal, setIcon, type App } from 'obsidian';
 import { sameTag } from '../markdown/tagSyntax';
+import { isRealmHTMLElement } from './domRealm';
+import { isImeOwnedEvent } from './ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 
 type TagState = 'checked' | 'partial' | 'removing' | 'unchecked';
@@ -14,6 +16,21 @@ function pressedState(state: TagState): string {
   return state === 'checked' ? 'true' : 'false';
 }
 
+function tagNavigationDirection(event: KeyboardEvent): -1 | 1 | undefined {
+  if (
+    isImeOwnedEvent(event) ||
+    event.defaultPrevented ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.altKey ||
+    event.shiftKey
+  )
+    return undefined;
+  if (event.key === 'ArrowDown') return 1;
+  if (event.key === 'ArrowUp') return -1;
+  return undefined;
+}
+
 export class TagPickerModal extends Modal {
   private readonly getTagColor_abyssPrivate: (tag: string) => string | undefined;
   private readonly currentTags_abyssPrivate: Set<string>;
@@ -25,6 +42,7 @@ export class TagPickerModal extends Modal {
   private searchEl_abyssPrivate!: HTMLInputElement;
   private listEl_abyssPrivate!: HTMLElement;
   private allTags_abyssPrivate: string[] = [];
+  private cancelScheduledFocus_abyssPrivate: (() => void) | undefined = undefined;
   private ownershipToken_abyssPrivate: { release(): void } | null = null;
 
   constructor(
@@ -48,6 +66,9 @@ export class TagPickerModal extends Modal {
     this.interactionOwnership_abyssPrivate = ownership ?? noInteractionOwnership;
     this.modalEl.addClass('abyss-tag-picker-modal');
     this.setTitle('Select tags');
+    this.contentEl.addEventListener('keydown', (event) => {
+      this.navigateTags_abyssPrivate(event);
+    });
   }
 
   override onOpen(): void {
@@ -82,9 +103,36 @@ export class TagPickerModal extends Modal {
 
     this.listEl_abyssPrivate = contentEl.createDiv({ cls: 'abyss-tag-picker-list' });
     this.renderList_abyssPrivate('');
-    window.setTimeout(() => {
-      this.searchEl_abyssPrivate.focus();
-    }, 10);
+    this.cancelScheduledFocus_abyssPrivate?.();
+    const ownerWindow = contentEl.ownerDocument.defaultView;
+    if (ownerWindow !== null) {
+      const timer = ownerWindow.setTimeout(() => {
+        this.cancelScheduledFocus_abyssPrivate = undefined;
+        this.searchEl_abyssPrivate.focus();
+      }, 10);
+      this.cancelScheduledFocus_abyssPrivate = () => {
+        ownerWindow.clearTimeout(timer);
+      };
+    }
+  }
+
+  private navigateTags_abyssPrivate(event: KeyboardEvent): void {
+    const direction = tagNavigationDirection(event);
+    if (direction === undefined) return;
+    const target = event.target;
+    if (!isRealmHTMLElement(target)) return;
+    const buttons = Array.from(
+      this.listEl_abyssPrivate.querySelectorAll<HTMLButtonElement>('[data-tag]'),
+    );
+    const origin = target.closest<HTMLButtonElement>('[data-tag]');
+    let index = origin === null ? -1 : buttons.indexOf(origin);
+    if (target === this.searchEl_abyssPrivate) index = direction === 1 ? -1 : buttons.length;
+    else if (index < 0) return;
+    const next = buttons[Math.min(buttons.length - 1, Math.max(0, index + direction))];
+    if (next === undefined) return;
+    event.preventDefault();
+    next.focus({ preventScroll: true });
+    next.scrollIntoView({ block: 'nearest' });
   }
 
   private effectiveState_abyssPrivate(tag: string): TagState {
@@ -248,6 +296,8 @@ export class TagPickerModal extends Modal {
   }
 
   override onClose(): void {
+    this.cancelScheduledFocus_abyssPrivate?.();
+    this.cancelScheduledFocus_abyssPrivate = undefined;
     const ownershipToken = this.ownershipToken_abyssPrivate;
     this.ownershipToken_abyssPrivate = null;
     ownershipToken?.release();

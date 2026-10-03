@@ -1,5 +1,5 @@
 import { App, Modal } from 'obsidian';
-import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { TagPickerModal } from '../src/ui/TagPickerModal';
 import { expectDefined, methodOf } from './helpers';
 
@@ -79,13 +79,169 @@ function tagButton(modal: TagPickerModal, tag: string): HTMLButtonElement {
   return expectDefined(modal.contentEl.querySelector<HTMLButtonElement>(`[data-tag="${tag}"]`));
 }
 
+beforeEach(() => {
+  // jsdom does not implement the browser scroll boundary.
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    writable: true,
+    value: vi.fn(),
+  });
+});
+
 afterEach(() => {
+  Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
   vi.useRealTimers();
   vi.restoreAllMocks();
   activeDocument.body.empty();
 });
 
 describe('TagPickerModal', () => {
+  it('moves from search to the first or last filtered tag with arrows, skipping headings', () => {
+    const { modal } = makeTagPicker({ currentTags: [], partialTags: [], tags: ['#a/one', '#b'] });
+    const search = expectDefined(modal.contentEl.querySelector<HTMLInputElement>('input'));
+    search.focus();
+    search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(search.ownerDocument.activeElement).toBe(tagButton(modal, '#a/one'));
+    search.focus();
+    search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    expect(search.ownerDocument.activeElement).toBe(tagButton(modal, '#b'));
+    search.value = 'b';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    search.focus();
+    search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    expect(search.ownerDocument.activeElement).toBe(tagButton(modal, '#b'));
+  });
+
+  it('clamps navigation at tag endpoints and keeps navigating from a toggled tag', () => {
+    const { modal } = makeTagPicker({ currentTags: [], partialTags: [], tags: ['#a/one', '#b'] });
+    const first = tagButton(modal, '#a/one');
+    first.focus();
+    first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    expect(activeDocument.activeElement).toBe(first);
+    const label = expectDefined(first.querySelector('.abyss-tag-picker-label'));
+    label.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    const last = tagButton(modal, '#b');
+    expect(activeDocument.activeElement).toBe(last);
+    last.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(activeDocument.activeElement).toBe(last);
+    last.click();
+    const toggled = tagButton(modal, '#b');
+    expect(activeDocument.activeElement).toBe(toggled);
+    toggled.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    expect(activeDocument.activeElement).toBe(tagButton(modal, '#a/one'));
+  });
+
+  it('leaves arrows untouched when filtering has no tag choices', () => {
+    const { modal } = makeTagPicker();
+    const search = expectDefined(modal.contentEl.querySelector<HTMLInputElement>('input'));
+    search.value = 'missing';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    search.focus();
+    for (const key of ['ArrowDown', 'ArrowUp']) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      search.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(activeDocument.activeElement).toBe(search);
+    }
+  });
+
+  it.each([
+    { key: ' ' },
+    { key: 'b' },
+    { key: 'Enter' },
+    { key: 'ArrowDown', isComposing: true },
+    { key: 'Process' },
+    { key: 'ArrowDown', ctrlKey: true },
+    { key: 'ArrowDown', metaKey: true },
+    { key: 'ArrowDown', altKey: true },
+    { key: 'ArrowDown', shiftKey: true },
+  ])('leaves ordinary search and composition/modifier events untouched: %j', (init) => {
+    const { modal, onCommit } = makeTagPicker();
+    const search = expectDefined(modal.contentEl.querySelector<HTMLInputElement>('input'));
+    search.focus();
+    const event = new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true });
+    search.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(activeDocument.activeElement).toBe(search);
+    modal.onClose();
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it('leaves legacy composition arrows and arrows from remove controls untouched', () => {
+    const { modal } = makeTagPicker();
+    const search = expectDefined(modal.contentEl.querySelector<HTMLInputElement>('input'));
+    search.focus();
+    const composing = new KeyboardEvent('keydown', {
+      key: 'ArrowDown',
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(composing, 'keyCode', { value: 229 });
+    search.dispatchEvent(composing);
+    expect(composing.defaultPrevented).toBe(false);
+    expect(activeDocument.activeElement).toBe(search);
+    const remove = expectDefined(
+      modal.contentEl.querySelector<HTMLButtonElement>('[data-remove-tag]'),
+    );
+    remove.focus();
+    const arrow = new KeyboardEvent('keydown', {
+      key: 'ArrowDown',
+      bubbles: true,
+      cancelable: true,
+    });
+    remove.dispatchEvent(arrow);
+    expect(arrow.defaultPrevented).toBe(false);
+    expect(activeDocument.activeElement).toBe(remove);
+  });
+
+  it('prevents scrolling only for handled navigation and scrolls the focused tag into view', () => {
+    const { modal } = makeTagPicker();
+    const first = tagButton(modal, '#all');
+    const scroll = vi.fn();
+    first.scrollIntoView = scroll;
+    const search = expectDefined(modal.contentEl.querySelector<HTMLInputElement>('input'));
+    search.focus();
+    const arrow = new KeyboardEvent('keydown', {
+      key: 'ArrowDown',
+      bubbles: true,
+      cancelable: true,
+    });
+    search.dispatchEvent(arrow);
+    expect(arrow.defaultPrevented).toBe(true);
+    expect(activeDocument.activeElement).toBe(first);
+    expect(scroll).toHaveBeenCalledWith({ block: 'nearest' });
+  });
+
+  it('schedules initial search focus in the document window that owns the modal', () => {
+    vi.useFakeTimers();
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = expectDefined(frame.contentDocument);
+    const ownerWindow = expectDefined(ownerDocument.defaultView);
+    const schedule = vi.spyOn(ownerWindow, 'setTimeout');
+    const { modal } = makeTagPicker({}, false);
+    ownerDocument.body.append(ownerDocument.adoptNode(modal.containerEl));
+    modal.onOpen();
+    expect(schedule).toHaveBeenCalledWith(expect.any(Function), 10);
+    vi.advanceTimersByTime(10);
+    expect(ownerDocument.activeElement).toBe(modal.contentEl.querySelector('input'));
+    modal.onClose();
+  });
+
+  it('cancels delayed focus on close before the same modal opens again', () => {
+    vi.useFakeTimers();
+    const { modal } = makeTagPicker();
+    vi.advanceTimersByTime(5);
+    modal.onClose();
+    modal.onOpen();
+    const outside = activeDocument.body.createEl('button');
+    outside.focus();
+    vi.advanceTimersByTime(5);
+    expect(activeDocument.activeElement).toBe(outside);
+    vi.advanceTimersByTime(5);
+    expect(activeDocument.activeElement).toBe(modal.contentEl.querySelector('input'));
+    modal.onClose();
+  });
+
   it('acquires one blocking owner per open and releases it once on close', () => {
     const app = new App();
     (app.metadataCache as unknown as { getTags: () => Record<string, number> }).getTags =
