@@ -4,9 +4,8 @@
 // broken links, dangling formal skill references, and the specific hook
 // registrations this template actually depends on. It does not generally
 // check Markdown prose, workflow explanations, or hardcoded skill lists.
-// Only the setup.mjs rows about links it must replace or refuse build a
-// fixture checkout, a small temporary one that leaves this checkout's links
-// alone.
+// Setup rows use small temporary checkouts to exercise link ownership and
+// CodeGraph settings preservation without changing this checkout's state.
 
 import { strict as assert } from 'node:assert';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -20,6 +19,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -179,6 +179,77 @@ test('the CodeGraph launcher runs the lockfile-pinned devDependency', () => {
   });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), pinned);
+});
+
+test('CodeGraph setup preserves existing Claude local settings byte-for-byte', (t) => {
+  const checkout = realpathSync(mkdtempSync(path.join(tmpdir(), 'codegraph-settings-')));
+  t.after(() => rmSync(checkout, { recursive: true, force: true }));
+  mkdirSync(path.join(checkout, '.ai'));
+  mkdirSync(path.join(checkout, '.claude'));
+  copyFileSync(
+    path.join(aiRoot, 'setup-codegraph.mjs'),
+    path.join(checkout, '.ai', 'setup-codegraph.mjs'),
+  );
+  const settingsPath = path.join(checkout, '.claude', 'settings.local.json');
+  const originalBytes = Buffer.from(
+    [
+      '{',
+      '\t"permissions": { "allow": ["Read", "Bash(pnpm test:*)"], "deny": ["Read(.env)"] },',
+      '\t"enabledMcpjsonServers": ["filesystem"],',
+      '\t"userExtension": { "label": "Личные настройки", "nested": { "enabled": true } }',
+      '}',
+      '',
+    ].join('\r\n'),
+  );
+  writeFileSync(settingsPath, originalBytes);
+
+  // Keep the real setup orchestration; the stand-in records commands and
+  // creates only this disposable checkout's database, with no installed tool.
+  writeFileSync(
+    path.join(checkout, '.ai', 'codegraph.mjs'),
+    [
+      "import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';",
+      "import path from 'node:path';",
+      'const args = process.argv.slice(2);',
+      "appendFileSync('codegraph-calls.jsonl', JSON.stringify(args) + '\\n');",
+      "if (args[0] === 'init') {",
+      "  const directory = path.join(args[2], '.codegraph');",
+      '  mkdirSync(directory, { recursive: true });',
+      "  writeFileSync(path.join(directory, 'codegraph.db'), 'fixture database');",
+      '}',
+      '',
+    ].join('\n'),
+  );
+
+  for (let run = 0; run < 2; run++) {
+    const result = spawnSync(
+      process.execPath,
+      [path.join(checkout, '.ai', 'setup-codegraph.mjs')],
+      {
+        cwd: checkout,
+        encoding: 'utf8',
+        env: { ...process.env, CI: '' },
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, '');
+    assert.deepEqual(
+      readFileSync(settingsPath),
+      originalBytes,
+      'setup changed Claude local settings bytes',
+    );
+  }
+
+  const calls = readFileSync(path.join(checkout, 'codegraph-calls.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(calls, [
+    ['init', '--yes', checkout],
+    ['sync', '--quiet', checkout],
+    ['sync', '--quiet', checkout],
+  ]);
 });
 
 describe('without an installed CodeGraph package', () => {
