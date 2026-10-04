@@ -22,6 +22,7 @@ export interface TaskListSurfaceOptions {
 }
 
 interface TaskListScroll {
+  readonly revealKey?: string;
   readonly top: number;
   readonly anchor: RowAnchor | undefined;
 }
@@ -116,6 +117,7 @@ export class TaskListSurface implements MountedTaskListRows {
       this.#reconcile(false, {
         top: this.#viewport.reveal(key, top, this.#height()),
         anchor: undefined,
+        revealKey: key,
       });
     });
     return this.element(key);
@@ -349,12 +351,22 @@ export class TaskListSurface implements MountedTaskListRows {
     this.#readFocus();
     const nativeTop = target?.top ?? this.#top();
     const anchor = target?.anchor;
-    this.#renderWindow(update, nativeTop, this.#anchorKey(anchor));
-    const measuredTop = this.#measure(nativeTop, anchor);
-    const corrected = measuredTop ?? target?.top;
+    const revealKey = target?.revealKey;
+    this.#renderWindow(update, nativeTop, revealKey ?? this.#anchorKey(anchor));
+    this.#measureWindow(nativeTop, target);
+  }
+  #measureWindow(top: number, target: TaskListScroll | undefined): void {
+    const revealKey = target?.revealKey;
+    const measuredTop = this.#measure(top, target?.anchor);
+    let corrected = measuredTop ?? target?.top;
     if (measuredTop !== undefined) {
-      // Establish the new extent before a native setter can clamp the anchor correction.
-      this.#renderWindow(false, measuredTop);
+      // Reveal owns its requested key, even when the destination grows beyond its estimate.
+      corrected =
+        revealKey === undefined
+          ? measuredTop
+          : this.#viewport.reveal(revealKey, measuredTop, this.#height());
+      // Establish the new extent before a native setter can clamp the correction.
+      this.#renderWindow(false, corrected, revealKey);
     }
     if (corrected !== undefined) this.#writeTop(corrected);
   }

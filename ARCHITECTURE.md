@@ -503,8 +503,10 @@ Measurement accepts an optional pre-replacement anchor: TaskListSurface, Kanban,
 retain that key through synchronous replacement and measurement, so a tall row's old within-row
 offset cannot become an estimated neighbor's anchor. Native owners temporarily include that row
 when reconciling its replacement window. Ordinary scroll measurement omits the anchor, and explicit
-reveal starts from its own current target; no retained anchor outlives the reconciliation. Task lists
-supply offsets from the host's actual content origin, including padding and nested-host borders,
+reveal starts from its own current target; no retained anchor outlives the reconciliation.
+TaskListSurface keeps the explicit reveal key through destination measurement and recomputes its
+reveal position before the final window and native write, so taller measured destination rows cannot
+evict the requested row. Task lists supply offsets from the host's actual content origin, including padding and nested-host borders,
 while retaining negative displacement when the scroller still shows preceding dashboard content.
 [`projectTableViewport`](src/panels/projects/projectTableViewport.ts) adapts the existing Table
 estimates and signatures to that neutral module. Logical projection, sorting, and grouping still

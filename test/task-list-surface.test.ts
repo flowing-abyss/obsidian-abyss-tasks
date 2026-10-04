@@ -903,3 +903,47 @@ describe('task anchor through replacement estimates', () => {
     expect(h.writes).not.toHaveBeenCalled();
   });
 });
+
+describe('explicit task reveal through destination measurement', () => {
+  it.each([172, 900])(
+    'retains the requested far row with actual height%s through native clamping and observer frames',
+    (height) => {
+      const h = harness(true);
+      h.size(390, 684);
+      for (let index = 0; index < 4000; index++) h.heights.set(`n.md:${index}`, height);
+      h.surface.update(rows(4000), { ...presentation, estimate: () => 64 });
+      h.style('fontWeight', '800');
+      const key = 'n.md:3999';
+      const requested = expectDefined(h.surface.reveal(key));
+      const checkVisible = () => {
+        expect(h.reportFailure).not.toHaveBeenCalled();
+        expect(h.surface.element(key)).toBe(requested);
+        expect(requested.isConnected).toBe(true);
+        const rect = requested.getBoundingClientRect();
+        expect(rect.bottom).toBeGreaterThan(0);
+        expect(rect.top).toBeLessThan(684);
+        expect(Number.isFinite(h.scroll.scrollTop)).toBe(true);
+        expect(h.scroll.scrollTop).toBeGreaterThan(0);
+        expect([...h.surface.cards()].length).toBeLessThan(30);
+      };
+      checkVisible();
+      const initialTop = h.scroll.scrollTop;
+      for (let frame = 0; frame < 3; frame++) {
+        h.resize();
+        h.scrollTo(h.scroll.scrollTop);
+        h.frame();
+        checkVisible();
+      }
+      expect(h.scroll.scrollTop).toBe(initialTop);
+      // A tall row already intersects: repeating reveal must retain that native viewport.
+      h.writes.mockClear();
+      expect(h.surface.reveal(key)).toBe(requested);
+      expect(h.writes).not.toHaveBeenCalled();
+      h.scrollTo(initialTop - 0.5);
+      h.frame();
+      expect(h.scroll.scrollTop).toBe(initialTop - 0.5);
+      expect(h.writes).not.toHaveBeenCalled();
+      checkVisible();
+    },
+  );
+});
