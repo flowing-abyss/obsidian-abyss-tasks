@@ -250,6 +250,8 @@ describe('project owner scheduler lifetimes', () => {
     card.dataset['projectPath'] = 'Project.md';
     const release = vi.fn();
     const controller = new ProjectKanbanDragController(h.host, h.host, {
+      hitTest: () => undefined,
+      pin: () => () => {},
       begin: () => release,
       capture: () => ({
         projectPath: 'Project.md',
@@ -293,6 +295,8 @@ describe('project owner scheduler lifetimes', () => {
     const h = surface(true);
     const add = vi.spyOn(window, 'addEventListener');
     const controller = new ProjectKanbanDragController(h.host, h.host, {
+      hitTest: () => undefined,
+      pin: () => () => {},
       begin: () => () => {},
       capture: () => {
         throw new Error('unused');

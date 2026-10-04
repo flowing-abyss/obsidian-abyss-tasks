@@ -484,8 +484,23 @@ key vector per replacement; final scroll clamping happens when a window's height
 [`projectTableViewport`](src/panels/projects/projectTableViewport.ts) adapts the existing Table
 estimates and signatures to that neutral module. Logical projection, sorting, and grouping still
 process the full collection.
-Table and centre Tasks/dashboard lists have windowed rows; Kanban cards and Timeline rows have no
-new virtual mounting layer. `CenterPanel` owns one [`TaskListSurface`](src/panels/task-list/TaskListSurface.ts)
+Table, centre Tasks/dashboard lists, and Kanban cards have windowed rows; Timeline rows remain eager.
+[`ProjectKanbanColumnViewport`](src/panels/projects/projectKanbanViewport.ts) owns each column's
+RowViewport, sparse spacers, measurements, pins, native bindings, and one loaded Markdown Component
+per mounted card/header. The view supplies full logical rows and keyed card rendering; mounted cells
+remain a logical-order subset. Column shells, horizontal layout, and independent vertical offsets
+survive eviction. Visible columns plus one neighboring column activate; offscreen interaction pins
+retain only their sparse rows. Same-project/group moves across status columns transfer the mount,
+loaded Component, and existing pin-release tokens before either column reconciles, preserving cell
+contexts and focus. Eviction removes cell references before unloading Markdown once.
+[`projectKanbanRows`](src/panels/projects/projectKanbanRows.ts) computes insertion over full logical
+geometry, excluding the physical source even across duplicate occurrences. Drag owns capture,
+preview, hover delay, auto-scroll, and commit; it retargets the last pointer after edge scrolling.
+[`ProjectKanbanHoverViewport`](src/panels/projects/projectKanbanHoverViewport.ts) composes the same
+native owner for bounded title-only forecast rows. Completion validates source existence and focus
+ownership before reveal and again before focusing. Native failures reach the existing surface/drag
+reporter; destroyed callbacks publish nothing.
+`CenterPanel` owns one [`TaskListSurface`](src/panels/task-list/TaskListSurface.ts)
 for the active task host. Tasks use their list scroller; dashboard tasks use the dashboard scroller
 and a content-relative origin. Full logical occurrence order drives selection and physical writes
 remain deduplicated. Keyed `TaskCardRenderer.mount` instances own Markdown Components and current

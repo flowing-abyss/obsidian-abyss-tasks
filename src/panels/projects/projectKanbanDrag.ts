@@ -4,10 +4,18 @@ import type {
   ProjectKanbanDropSource,
   ProjectKanbanDropTarget,
 } from './projectKanbanDrop';
+import { ProjectKanbanHoverViewport } from './projectKanbanHoverViewport';
+import type { KanbanViewportRow } from './projectKanbanRows';
 
 const PROJECT_KANBAN_DRAG_TYPE = 'application/x-abyss-project-kanban-card';
 
 export interface ProjectKanbanDragAdapter {
+  readonly hitTest: (
+    clientX: number,
+    clientY: number,
+    source: ProjectKanbanDropSource,
+  ) => { target: ProjectKanbanDropTarget; lineHost: HTMLElement; lineTop: number } | undefined;
+  readonly pin: (card: HTMLElement) => () => void;
   readonly begin: () => () => void;
   readonly capture: (card: HTMLElement) => ProjectKanbanDropSource;
   readonly preview: (
@@ -32,6 +40,7 @@ interface ProvisionalGesture {
   readonly card: HTMLElement;
   readonly origin: EventTarget | null;
   readonly pointerId: number;
+  readonly unpin: () => void;
 }
 
 interface ActivePreview {
@@ -89,17 +98,20 @@ function validInternalTransfer(event: Event, source: ProjectKanbanDropSource): b
 }
 
 function nextVisibleCardPath(card: HTMLElement, sourcePath: string): string | undefined {
-  const zone =
-    card.closest<HTMLElement>('.abyss-project-kanban-group, .abyss-project-kanban-hover-group') ??
-    card.closest<HTMLElement>('.abyss-project-kanban-column, .abyss-project-kanban-hover-preview');
+  const zone = card.closest<HTMLElement>(
+    '.abyss-project-kanban-column, .abyss-project-kanban-hover-preview',
+  );
   if (zone === null) return undefined;
   const cards = Array.from(
     zone.querySelectorAll<HTMLElement>(
       '.abyss-project-kanban-card, .abyss-project-kanban-hover-card',
     ),
   );
+  const groupKey = card.closest<HTMLElement>('[data-group-key]')?.dataset['groupKey'];
   const index = cards.indexOf(card);
   for (let next = index + 1; next < cards.length; next += 1) {
+    if (cards[next]?.closest<HTMLElement>('[data-group-key]')?.dataset['groupKey'] !== groupKey)
+      return undefined;
     const path = cards[next]?.dataset['projectPath'];
     if (path !== undefined && path !== sourcePath) return path;
   }
@@ -199,6 +211,9 @@ export class ProjectKanbanDragController {
   private point_abyssPrivate: { x: number; y: number } | undefined;
   private verticalScroller_abyssPrivate: HTMLElement | undefined;
   private suppressClickPath_abyssPrivate: string | undefined;
+  private hoverViewport_abyssPrivate: ProjectKanbanHoverViewport | undefined;
+  private hoverGroups_abyssPrivate: readonly ProjectTableGroup[] = [];
+  private hoverContent_abyssPrivate: HTMLElement | undefined;
 
   constructor(
     private readonly root_abyssPrivate: HTMLElement,
@@ -244,6 +259,10 @@ export class ProjectKanbanDragController {
     this.window_abyssPrivate?.removeEventListener('blur', this.windowBlur_abyssPrivate);
   }
 
+  cancel(): void {
+    this.cleanup_abyssPrivate(false);
+  }
+
   clearPreview(): void {
     this.clearVisuals_abyssPrivate();
   }
@@ -260,6 +279,7 @@ export class ProjectKanbanDragController {
       card,
       origin: event.target,
       pointerId: pointer.pointerId,
+      unpin: this.adapter_abyssPrivate.pin(card),
     };
     this.provisionalTabIndex_abyssPrivate = card.getAttribute('tabindex');
     card.removeAttribute('tabindex');
@@ -305,7 +325,12 @@ export class ProjectKanbanDragController {
       image.className = 'abyss-project-kanban-card abyss-project-kanban-drag-image';
       this.root_abyssPrivate.ownerDocument.body.append(image);
       transfer.setDragImage(image, 18, 18);
-      release = this.adapter_abyssPrivate.begin();
+      const unpin = this.adapter_abyssPrivate.pin(card);
+      const end = this.adapter_abyssPrivate.begin();
+      release = () => {
+        unpin();
+        end();
+      };
       card.addClass('is-dragging');
       return { card, source, image, release };
     } catch (error) {
@@ -327,6 +352,7 @@ export class ProjectKanbanDragController {
 
   private releaseProvisional_abyssPrivate(): void {
     const provisional = this.provisional_abyssPrivate;
+    provisional?.unpin();
     const tabIndex = this.provisionalTabIndex_abyssPrivate;
     this.provisional_abyssPrivate = undefined;
     this.provisionalTabIndex_abyssPrivate = undefined;
@@ -348,12 +374,10 @@ export class ProjectKanbanDragController {
     const active = this.active_abyssPrivate;
     if (active === undefined || !(event.target instanceof Element)) return;
     const mouse = event as MouseEvent;
-    const target = targetFromElement(
-      event.target,
-      mouse.clientY,
-      active.source.projectPath,
-      active.card,
-    );
+    const hit = this.logicalHit_abyssPrivate(mouse.clientX, mouse.clientY, active.source);
+    const target =
+      hit?.target ??
+      targetFromElement(event.target, mouse.clientY, active.source.projectPath, active.card);
     if (target === undefined) return;
     const plan = this.adapter_abyssPrivate.preview(active.source, target);
     event.preventDefault();
@@ -361,15 +385,23 @@ export class ProjectKanbanDragController {
     if (transfer !== undefined) transfer.dropEffect = plan.allowed ? 'move' : 'none';
     const column = event.target.closest<HTMLElement>('.abyss-project-kanban-column');
     const visualTarget = this.visualTarget_abyssPrivate(event.target, column);
-    this.showPlan_abyssPrivate(visualTarget, plan);
+    this.showPlan_abyssPrivate(visualTarget, plan, hit);
     this.point_abyssPrivate = { x: mouse.clientX, y: mouse.clientY };
     this.startAutoScroll_abyssPrivate(event.target);
+    this.updateOverlay_abyssPrivate(column, event.target, plan);
+  };
+
+  private updateOverlay_abyssPrivate(
+    column: HTMLElement | null,
+    target: Element,
+    plan: ProjectKanbanDropPlan,
+  ): void {
     if (column?.matches('.is-collapsed, .is-compact-empty') === true) {
       this.scheduleOverlay_abyssPrivate(column, plan);
-    } else if (this.overlay_abyssPrivate?.contains(event.target) !== true) {
+    } else if (this.overlay_abyssPrivate?.contains(target) !== true) {
       this.cancelOverlay_abyssPrivate();
     }
-  };
+  }
 
   private visualTarget_abyssPrivate(target: Element, column: HTMLElement | null): Element {
     if (
@@ -400,8 +432,16 @@ export class ProjectKanbanDragController {
     const projectedGroup = zone.querySelector<HTMLElement>(
       `[data-group-key="${CSS.escape(plan.insertion.groupKey)}"]`,
     );
-    const actualGroup = group ?? projectedGroup;
-    const card = this.insertionCard_abyssPrivate(actualGroup ?? zone, plan);
+    const card = this.insertionCard_abyssPrivate(
+      zone.closest('.abyss-project-kanban-column, .abyss-project-kanban-hover-preview') ?? zone,
+      plan,
+    );
+    const actualGroup =
+      card?.closest<HTMLElement>(
+        '.abyss-project-kanban-group, .abyss-project-kanban-hover-group',
+      ) ??
+      group ??
+      projectedGroup;
     const host =
       actualGroup?.querySelector<HTMLElement>('.abyss-project-kanban-group-body') ??
       actualGroup ??
@@ -433,7 +473,11 @@ export class ProjectKanbanDragController {
     beforeGroup?.before(line);
   }
 
-  private showPlan_abyssPrivate(target: Element, plan: ProjectKanbanDropPlan): void {
+  private showPlan_abyssPrivate(
+    target: Element,
+    plan: ProjectKanbanDropPlan,
+    hit?: { lineHost: HTMLElement; lineTop: number },
+  ): void {
     this.clearPreview_abyssPrivate();
     const group = target.closest<HTMLElement>(
       '.abyss-project-kanban-group, .abyss-project-kanban-hover-group',
@@ -445,10 +489,17 @@ export class ProjectKanbanDragController {
     if (zone === null) return;
     zone.addClass(plan.allowed ? 'is-drop-target' : 'is-drop-disabled');
     zone.setAttribute('title', plan.message);
-    const line =
-      plan.allowed && plan.insertion.kind !== 'none'
-        ? this.insertionLine_abyssPrivate(zone, group, plan)
-        : undefined;
+    let line: HTMLElement | undefined;
+    if (plan.allowed && plan.insertion.kind !== 'none') {
+      line =
+        hit === undefined
+          ? this.insertionLine_abyssPrivate(zone, group, plan)
+          : hit.lineHost.createDiv({ cls: 'abyss-project-kanban-insertion-line' });
+    }
+    if (hit !== undefined)
+      line?.setCssProps({
+        '--abyss-project-kanban-insertion-top': `${Math.max(0, hit.lineTop)}px`,
+      });
     this.preview_abyssPrivate = { elements: [zone], ...(line === undefined ? {} : { line }) };
   }
 
@@ -472,7 +523,12 @@ export class ProjectKanbanDragController {
     this.hoverColumn_abyssPrivate = column;
     this.hoverTimer_abyssPrivate = this.window_abyssPrivate?.setTimeout(() => {
       this.hoverTimer_abyssPrivate = undefined;
-      if (plan.allowed) this.openOverlay_abyssPrivate(column, plan);
+      if (this.active_abyssPrivate === undefined || !column.isConnected) return;
+      try {
+        if (plan.allowed) this.openOverlay_abyssPrivate(column, plan);
+      } catch (error) {
+        this.adapter_abyssPrivate.reportFailure(error);
+      }
     }, 450);
   }
 
@@ -488,9 +544,39 @@ export class ProjectKanbanDragController {
     overlay.style.top = `${column.offsetTop}px`;
     overlay.createDiv({ cls: 'abyss-project-kanban-hover-title', text: projected.status.label });
     const body = overlay.createDiv({ cls: 'abyss-project-kanban-hover-body' });
-    for (const group of projected.groups) {
-      this.renderOverlayGroup_abyssPrivate(column, body, group);
-    }
+    this.hoverGroups_abyssPrivate = projected.groups;
+    this.hoverContent_abyssPrivate = body;
+    const rows: KanbanViewportRow[] = projected.groups.flatMap((group) => [
+      {
+        kind: 'group' as const,
+        key: `header:${group.key}`,
+        groupKey: group.key,
+        estimatedHeight: group.label.length > 0 ? 32 : 8,
+        measurementRevision: group.label,
+      },
+      ...group.projects.map((project) => ({
+        kind: 'card' as const,
+        key: `${group.key}\u0000${project.path}`,
+        groupKey: group.key,
+        projectPath: project.path,
+        estimatedHeight: 42,
+        measurementRevision: project.name,
+      })),
+    ]);
+    this.hoverViewport_abyssPrivate = new ProjectKanbanHoverViewport(
+      body,
+      rows,
+      (host, row) => {
+        const group = this.hoverGroups_abyssPrivate.find(
+          (candidate) => candidate.key === row.groupKey,
+        );
+        if (group === undefined) throw new Error('Project forecast group is no longer available');
+        return this.renderOverlayGroup_abyssPrivate(column, host, group, row);
+      },
+      (error) => {
+        this.adapter_abyssPrivate.reportFailure(error);
+      },
+    );
     this.overlay_abyssPrivate = overlay;
     this.positionOverlay_abyssPrivate(column, overlay);
     this.showPlan_abyssPrivate(overlay, plan);
@@ -500,33 +586,34 @@ export class ProjectKanbanDragController {
     column: HTMLElement,
     body: HTMLElement,
     group: ProjectTableGroup,
-  ): void {
+    row: KanbanViewportRow,
+  ): HTMLElement {
     const groupElement = body.createDiv({ cls: 'abyss-project-kanban-hover-group' });
     groupElement.dataset['groupKey'] = group.key;
-    const currentGroup = column.querySelector<HTMLElement>(
-      `[data-group-key="${CSS.escape(group.key)}"]`,
-    );
-    if (currentGroup === null) groupElement.dataset['projected'] = 'true';
-    const sourcePath = currentGroup?.dataset['sourcePath'] ?? group.sourcePath;
+    const currentGroup = columnGroups(column).find((candidate) => candidate.key === group.key);
+    if (currentGroup === undefined) groupElement.dataset['projected'] = 'true';
+    const sourcePath = currentGroup?.sourcePath ?? group.sourcePath;
     if (sourcePath !== undefined) groupElement.dataset['sourcePath'] = sourcePath;
     Reflect.set(
       groupElement,
       '__abyssGroupValue',
-      currentGroup === null ? group.value : Reflect.get(currentGroup, '__abyssGroupValue'),
+      currentGroup === undefined ? group.value : currentGroup.value,
     );
-    if (group.label.length > 0) {
+    if (row.kind === 'group' && group.label.length > 0) {
       groupElement.createDiv({
         cls: 'abyss-project-kanban-hover-group-title',
         text: group.label,
       });
     }
-    for (const project of group.projects) {
+    const project = group.projects.find((candidate) => candidate.path === row.projectPath);
+    if (row.kind === 'card' && project !== undefined) {
       groupElement.createDiv({
         cls: 'abyss-project-kanban-hover-card',
         text: project.name,
         attr: { 'data-project-path': project.path },
       });
     }
+    return groupElement;
   }
 
   private positionOverlay_abyssPrivate(column: HTMLElement, overlay: HTMLElement): void {
@@ -572,12 +659,10 @@ export class ProjectKanbanDragController {
       this.adapter_abyssPrivate.reportFailure(new Error('Invalid project card drag'));
       return;
     }
-    const target = targetFromElement(
-      event.target,
-      (event as MouseEvent).clientY,
-      active.source.projectPath,
-      active.card,
-    );
+    const point = event as MouseEvent;
+    const target =
+      this.logicalHit_abyssPrivate(point.clientX, point.clientY, active.source)?.target ??
+      targetFromElement(event.target, point.clientY, active.source.projectPath, active.card);
     if (target === undefined) return;
     event.preventDefault();
     this.cleanup_abyssPrivate(true);
@@ -611,6 +696,56 @@ export class ProjectKanbanDragController {
     event.stopImmediatePropagation();
   };
 
+  private logicalHit_abyssPrivate(
+    x: number,
+    y: number,
+    source: ProjectKanbanDropSource,
+  ): { target: ProjectKanbanDropTarget; lineHost: HTMLElement; lineTop: number } | undefined {
+    return (
+      this.hoverHit_abyssPrivate(x, y, source) ?? this.adapter_abyssPrivate.hitTest(x, y, source)
+    );
+  }
+
+  private hoverHit_abyssPrivate(
+    x: number,
+    y: number,
+    source: ProjectKanbanDropSource,
+  ): { target: ProjectKanbanDropTarget; lineHost: HTMLElement; lineTop: number } | undefined {
+    const host = this.hoverContent_abyssPrivate;
+    const overlay = this.overlay_abyssPrivate;
+    if (host === undefined || overlay === undefined || !containsPoint(host, x, y)) return undefined;
+    const insertion = this.hoverViewport_abyssPrivate?.hitTest(
+      y - host.getBoundingClientRect().top + Math.max(0, host.scrollTop),
+      source.projectPath,
+    );
+    const group = this.hoverGroups_abyssPrivate.find(
+      (candidate) => candidate.key === insertion?.groupKey,
+    );
+    const statusKey = overlay.dataset['statusKey'];
+    if (insertion === undefined || group === undefined || statusKey === undefined) return undefined;
+    return {
+      target: {
+        status: { key: statusKey, value: overlay.dataset['statusValue'] ?? null },
+        group: this.hoverGroupTarget_abyssPrivate(group),
+        ...(insertion.beforePath === undefined ? {} : { beforePath: insertion.beforePath }),
+      },
+      lineHost: host,
+      lineTop: insertion.top,
+    };
+  }
+  private hoverGroupTarget_abyssPrivate(
+    group: ProjectTableGroup,
+  ): NonNullable<ProjectKanbanDropTarget['group']> {
+    return {
+      key: group.key,
+      value: group.value,
+      projected: !columnGroups(this.hoverColumn_abyssPrivate).some(
+        (candidate) => candidate.key === group.key,
+      ),
+      ...(group.sourcePath === undefined ? {} : { sourcePath: group.sourcePath }),
+    };
+  }
+
   private startAutoScroll_abyssPrivate(target: Element): void {
     this.verticalScroller_abyssPrivate =
       target.closest<HTMLElement>('.abyss-project-kanban-hover-body') ??
@@ -620,10 +755,32 @@ export class ProjectKanbanDragController {
       this.frame_abyssPrivate = undefined;
       const point = this.point_abyssPrivate;
       if (point === undefined || this.active_abyssPrivate === undefined) return;
-      this.scrollAtEdge_abyssPrivate(this.scroll_abyssPrivate, point.x, true);
-      const vertical = this.verticalScroller_abyssPrivate;
-      if (vertical !== undefined) this.scrollAtEdge_abyssPrivate(vertical, point.y, false);
-      this.frame_abyssPrivate = this.window_abyssPrivate?.requestAnimationFrame(tick);
+      if (!this.root_abyssPrivate.isConnected || this.root_abyssPrivate.hidden === true) {
+        this.cleanup_abyssPrivate(false);
+        return;
+      }
+      try {
+        this.scrollAtEdge_abyssPrivate(this.scroll_abyssPrivate, point.x, true);
+        const vertical = this.verticalScroller_abyssPrivate;
+        if (vertical !== undefined) this.scrollAtEdge_abyssPrivate(vertical, point.y, false);
+        const active = this.active_abyssPrivate;
+        const hit = this.logicalHit_abyssPrivate(point.x, point.y, active.source);
+        if (hit !== undefined) {
+          this.verticalScroller_abyssPrivate =
+            hit.lineHost.closest<HTMLElement>(
+              '.abyss-project-kanban-hover-body, .abyss-project-kanban-column-body',
+            ) ?? undefined;
+          this.showPlan_abyssPrivate(
+            hit.lineHost,
+            this.adapter_abyssPrivate.preview(active.source, hit.target),
+            hit,
+          );
+        }
+        this.frame_abyssPrivate = this.window_abyssPrivate?.requestAnimationFrame(tick);
+      } catch (error) {
+        this.cleanup_abyssPrivate(false);
+        this.adapter_abyssPrivate.reportFailure(error);
+      }
     };
     this.frame_abyssPrivate = this.window_abyssPrivate?.requestAnimationFrame(tick);
   }
@@ -639,6 +796,7 @@ export class ProjectKanbanDragController {
     let delta = 0;
     if (coordinate < start + 32) delta = -10;
     else if (coordinate > end - 32) delta = 10;
+    if (delta === 0) return;
     if (horizontal) element.scrollLeft += delta;
     else element.scrollTop += delta;
   }
@@ -649,6 +807,10 @@ export class ProjectKanbanDragController {
       this.hoverTimer_abyssPrivate = undefined;
     }
     this.hoverColumn_abyssPrivate = undefined;
+    this.hoverViewport_abyssPrivate?.destroy();
+    this.hoverViewport_abyssPrivate = undefined;
+    this.hoverContent_abyssPrivate = undefined;
+    this.hoverGroups_abyssPrivate = [];
     this.overlay_abyssPrivate?.remove();
     this.overlay_abyssPrivate = undefined;
   }
@@ -678,4 +840,16 @@ export class ProjectKanbanDragController {
 
 function expectBodyOrUndefined(column: HTMLElement | null): HTMLElement | undefined {
   return column?.querySelector<HTMLElement>('.abyss-project-kanban-column-body') ?? undefined;
+}
+
+function columnGroups(column: HTMLElement | undefined): readonly ProjectTableGroup[] {
+  return column === undefined
+    ? []
+    : ((Reflect.get(column, '__abyssKanbanGroups') as readonly ProjectTableGroup[] | undefined) ??
+        []);
+}
+
+function containsPoint(element: HTMLElement, x: number, y: number): boolean {
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
 }

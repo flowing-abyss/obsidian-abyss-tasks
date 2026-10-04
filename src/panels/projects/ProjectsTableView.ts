@@ -1649,6 +1649,15 @@ export class ProjectsTableView {
 
   private createKanbanView_abyssPrivate(): ProjectsKanbanView<RenderedCellContext> {
     const board = new ProjectsKanbanView<RenderedCellContext>(this.root_abyssPrivate, {
+      copy: (event) => {
+        this.handleCopy_abyssPrivate(event);
+      },
+      paste: (event) => {
+        this.handlePaste_abyssPrivate(event);
+      },
+      windowRendered: () => {
+        this.patchSelection_abyssPrivate();
+      },
       beginDrag: () => this.beginProjectDrag_abyssPrivate(),
       settings: () => this.effectiveKanbanSettings_abyssPrivate(),
       modelInput: () => ({
@@ -1666,9 +1675,9 @@ export class ProjectsTableView {
         this.selectCell_abyssPrivate(cell, false);
       },
       requestViewChange: (mutation) => this.requestViewChange_abyssPrivate(mutation),
-      renderGroupContent: (marker, label, group) => {
+      renderGroupContent: (marker, label, group, markdown) => {
         this.renderGroupContent_abyssPrivate(
-          { marker, host: label, component: this.markdown_abyssPrivate },
+          { marker, host: label, component: markdown },
           group,
           group.presentation?.color,
         );
@@ -1960,6 +1969,7 @@ export class ProjectsTableView {
 
   private renderKanbanCell_abyssPrivate(options: {
     readonly host: HTMLElement;
+    readonly markdown: Component;
     readonly project: Project;
     readonly field: ProjectFieldCatalogItem;
     readonly column: ProjectColumn | undefined;
@@ -1985,6 +1995,7 @@ export class ProjectsTableView {
   private renderOverviewCell_abyssPrivate(
     options: {
       readonly host: HTMLElement;
+      readonly markdown?: Component;
       readonly project: Project;
       readonly field: ProjectFieldCatalogItem;
       readonly column?: ProjectColumn | undefined;
@@ -2007,6 +2018,7 @@ export class ProjectsTableView {
       ownedClear,
       element: options.host,
       contentSignature: '',
+      ...(options.markdown === undefined ? {} : { markdown: options.markdown }),
     };
     rendered.identity = {
       occurrenceId: options.occurrenceId,

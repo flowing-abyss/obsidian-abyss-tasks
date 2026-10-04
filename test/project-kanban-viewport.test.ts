@@ -1,0 +1,446 @@
+import { describe, expect, it } from 'vitest';
+import { kanbanInsertion, type KanbanViewportRow } from '../src/panels/projects/projectKanbanRows';
+import { RowViewport } from '../src/panels/virtualization/rowViewport';
+import { expectDefined } from './helpers';
+
+const card = (projectPath: string, groupKey = 'g'): KanbanViewportRow => ({
+  kind: 'card',
+  key: `${groupKey}:${projectPath}`,
+  groupKey,
+  projectPath,
+  estimatedHeight: 40,
+  measurementRevision: '1',
+});
+const header = (groupKey: string): KanbanViewportRow => ({
+  kind: 'group',
+  key: groupKey,
+  groupKey,
+  estimatedHeight: 20,
+  measurementRevision: '1',
+});
+function insertion(rows: readonly KanbanViewportRow[], y: number, source = 'a') {
+  const viewport = new RowViewport();
+  viewport.replace(rows);
+  return kanbanInsertion(rows, viewport, y, source);
+}
+
+describe('logical Kanban insertion', () => {
+  it('resolves an unmounted neighbor and excludes the dragged physical project', () => {
+    const rows = ['a', 'b', 'c'].map((path) => card(path));
+    expect(insertion(rows, 35)).toEqual({ groupKey: 'g', beforePath: 'b', top: 40 });
+    expect(insertion(rows, 119)).toEqual({ groupKey: 'g', top: 120 });
+  });
+  it('keeps header, occupied gap and end positions inside their owning group', () => {
+    const rows = [header('g'), card('a'), card('b'), header('h'), card('c', 'h')];
+    expect(insertion(rows, 0)).toEqual({ groupKey: 'g', beforePath: 'b', top: 60 });
+    expect(insertion(rows, 99)).toEqual({ groupKey: 'g', top: 100 });
+    expect(insertion(rows, 101)).toEqual({ groupKey: 'h', beforePath: 'c', top: 120 });
+    expect(insertion(rows, 999)).toEqual({ groupKey: 'h', top: 160 });
+  });
+  it('excludes duplicate physical occurrences without crossing a group boundary', () => {
+    const rows = [header('g'), card('a'), header('h'), card('a', 'h'), card('c', 'h')];
+    expect(insertion(rows, 21)).toEqual({ groupKey: 'g', top: 60 });
+    expect(insertion(rows, 81)).toEqual({ groupKey: 'h', beforePath: 'c', top: 120 });
+  });
+  it('handles a collapsed header and empty projection without inventing neighbors', () => {
+    expect(insertion([header('g'), header('h')], 1)).toEqual({ groupKey: 'g', top: 20 });
+    expect(insertion([], 1)).toBeUndefined();
+    expect(insertion([card('b')], Number.NaN)).toBeUndefined();
+  });
+});
+
+import { afterEach, vi } from 'vitest';
+import { ProjectKanbanColumnViewport } from '../src/panels/projects/projectKanbanViewport';
+
+const owners: ProjectKanbanColumnViewport[] = [];
+afterEach(() => {
+  owners.splice(0).forEach((owner) => {
+    owner.destroy();
+  });
+  document.body.replaceChildren();
+  vi.restoreAllMocks();
+});
+function nativeColumn(count = 1000) {
+  const scroll = document.body.createDiv();
+  Object.defineProperty(scroll, 'clientHeight', { value: 200 });
+  const host = scroll.createDiv();
+  const cleaned: string[] = [];
+  const unloaded: string[] = [];
+  const errors: unknown[] = [];
+  const owner = new ProjectKanbanColumnViewport({
+    host,
+    scroll,
+    mount(parent, row, markdown) {
+      const element = parent.createDiv({ text: row.key });
+      element.tabIndex = 0;
+      markdown.register(() => unloaded.push(row.key));
+      return {
+        element,
+        update(next) {
+          element.textContent = next.key;
+        },
+        destroy() {
+          cleaned.push(row.key);
+          element.remove();
+        },
+      };
+    },
+    mountedChanged() {},
+    reportFailure: (error) => errors.push(error),
+  });
+  owners.push(owner);
+  const rows = Array.from({ length: count }, (_, index) => card(String(index)));
+  owner.update(rows, false);
+  return { owner, host, scroll, rows, cleaned, unloaded, errors };
+}
+describe('native Kanban columns', () => {
+  it.each([1000, 10000])(
+    'bounds %s cards, reveals synchronously, and unloads evicted Markdown',
+    (count) => {
+      const { owner, host, cleaned, unloaded, errors } = nativeColumn(count);
+      expect(host.children.length).toBeLessThan(20);
+      expect(owner.element('g:900')).toBeUndefined();
+      expect(owner.reveal('g:900')?.textContent).toBe('g:900');
+      expect(cleaned).toContain('g:0');
+      expect(unloaded).toEqual(cleaned);
+      expect(errors).toEqual([]);
+    },
+  );
+  it('keeps pinned offscreen nodes connected and focused without moving them', () => {
+    const { owner, host, scroll } = nativeColumn();
+    const element = owner.reveal('g:0');
+    element?.focus();
+    const release = owner.pin('g:0');
+    scroll.scrollTop = 20000;
+    owner.reveal('g:500');
+    expect(owner.element('g:0')).toBe(element);
+    expect(document.activeElement).toBe(element);
+    expect(host.firstElementChild).toBe(element);
+    owner.setActive(false);
+    expect(owner.element('g:500')).toBeUndefined();
+    expect(owner.element('g:0')).toBe(element);
+    element?.blur();
+    release();
+    expect(owner.element('g:0')).toBeUndefined();
+  });
+  it('does not normalize ordinary fractional or elastic native scroll offsets', () => {
+    const { scroll } = nativeColumn();
+    const callbacks: FrameRequestCallback[] = [];
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    let value = 23.75;
+    const write = vi.fn((next: number) => {
+      value = next;
+    });
+    Object.defineProperty(scroll, 'scrollTop', {
+      get: () => value,
+      set: write,
+      configurable: true,
+    });
+    scroll.dispatchEvent(new Event('scroll'));
+    callbacks.splice(0).forEach((callback) => {
+      callback(0);
+    });
+    value = -3.5;
+    scroll.dispatchEvent(new Event('scroll'));
+    callbacks.splice(0).forEach((callback) => {
+      callback(0);
+    });
+    expect(write).not.toHaveBeenCalled();
+  });
+  it('unloads every mounted Component exactly once after its mount cleanup', () => {
+    const { owner, cleaned, unloaded } = nativeColumn();
+    owner.destroy();
+    owner.destroy();
+    expect(unloaded).toEqual(cleaned);
+    expect(new Set(unloaded).size).toBe(unloaded.length);
+    expect(unloaded.length).toBeGreaterThan(0);
+  });
+});
+
+it('transfers a card Component and its existing release token to another column owner', () => {
+  const source = nativeColumn(1);
+  const destination = nativeColumn(0);
+  const release = source.owner.pin('g:0');
+  const element = source.owner.element('g:0');
+  const row = { ...card('0'), key: 'moved:0' };
+  destination.owner.setActive(false);
+  expect(source.owner.transferTo(destination.owner, 'g:0', row)).toBe(true);
+  destination.owner.update([row], false);
+  source.owner.update([], false);
+  source.owner.destroy();
+  expect(destination.owner.element('moved:0')).toBe(element);
+  expect(source.unloaded).toEqual([]);
+  release();
+  expect(destination.owner.element('moved:0')).toBeUndefined();
+  expect(source.cleaned).toEqual(['g:0']);
+  expect(source.unloaded).toEqual(['g:0']);
+});
+
+import { ProjectKanbanHoverViewport } from '../src/panels/projects/projectKanbanHoverViewport';
+it('bounds a collapsed-column title preview and resolves an unmounted logical target', () => {
+  const host = document.body.createDiv();
+  Object.defineProperty(host, 'clientHeight', { value: 200 });
+  const rows = Array.from({ length: 10000 }, (_, index) => card(String(index)));
+  const owner = new ProjectKanbanHoverViewport(
+    host,
+    rows,
+    (parent, row) => parent.createDiv({ text: row.projectPath ?? row.key }),
+    (error) => {
+      throw error;
+    },
+  );
+  expect(host.children.length).toBeLessThan(20);
+  expect(owner.hitTest(20001, '0')).toEqual({ groupKey: 'g', beforePath: '500', top: 20000 });
+  owner.destroy();
+  expect(host.children).toHaveLength(0);
+});
+
+it('reports a live mount failure once and releases partial Markdown resources', () => {
+  const host = document.body.createDiv();
+  const errors: unknown[] = [];
+  let released = 0;
+  const failure = new Error('Cannot render card');
+  const owner = new ProjectKanbanColumnViewport({
+    host,
+    scroll: host,
+    mount(parent, _row, markdown) {
+      parent.createDiv({ text: 'partial card' });
+      markdown.register(() => {
+        released++;
+      });
+      throw failure;
+    },
+    mountedChanged() {},
+    reportFailure(error) {
+      errors.push(error);
+    },
+  });
+  owners.push(owner);
+  expect(() => {
+    owner.update([card('a')], false);
+  }).not.toThrow();
+  expect(errors).toEqual([failure]);
+  expect(released).toBe(1);
+  expect(host.textContent).toBe('');
+});
+
+it('ignores captured column and hover callbacks after destruction', () => {
+  const callbacks: FrameRequestCallback[] = [];
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    callbacks.push(callback);
+    return callbacks.length;
+  });
+  const column = nativeColumn();
+  const host = document.body.createDiv();
+  const errors: unknown[] = [];
+  const hover = new ProjectKanbanHoverViewport(
+    host,
+    [card('a')],
+    (parent, row) => parent.createDiv({ text: row.key }),
+    (error) => {
+      errors.push(error);
+    },
+  );
+  column.owner.destroy();
+  hover.destroy();
+  callbacks.forEach((callback) => {
+    callback(0);
+  });
+  expect(column.errors).toEqual([]);
+  expect(errors).toEqual([]);
+  expect(host.children).toHaveLength(0);
+  expect(column.host.children).toHaveLength(0);
+});
+
+it('places a newly pinned offscreen card between its exact sparse spacers', () => {
+  const { owner, host } = nativeColumn();
+  const release = owner.pin('g:900');
+  const pinned = owner.element('g:900');
+  expect(
+    pinned?.previousElementSibling?.classList.contains('abyss-project-kanban-viewport-spacer'),
+  ).toBe(true);
+  expect(
+    pinned?.nextElementSibling?.classList.contains('abyss-project-kanban-viewport-spacer'),
+  ).toBe(true);
+  expect(host.lastElementChild?.getAttribute('style')).toContain('3960px');
+  release();
+});
+
+it('updates retained hover titles and never writes ordinary fractional or elastic offsets', () => {
+  const callbacks: FrameRequestCallback[] = [];
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    callbacks.push(callback);
+    return callbacks.length;
+  });
+  const host = document.body.createDiv();
+  const owner = new ProjectKanbanHoverViewport(
+    host,
+    [card('a')],
+    (parent, row) => parent.createDiv({ text: row.measurementRevision }),
+    (error) => {
+      throw error;
+    },
+  );
+  owner.update([{ ...card('a'), measurementRevision: 'renamed' }]);
+  expect(host.textContent).toBe('renamed');
+  let top = 1.25;
+  const write = vi.fn((value: number) => {
+    top = value;
+  });
+  Object.defineProperty(host, 'scrollTop', { get: () => top, set: write });
+  host.dispatchEvent(new Event('scroll'));
+  callbacks.splice(0).forEach((callback) => {
+    callback(0);
+  });
+  top = -2.75;
+  host.dispatchEvent(new Event('scroll'));
+  callbacks.splice(0).forEach((callback) => {
+    callback(0);
+  });
+  expect(write).not.toHaveBeenCalled();
+  owner.destroy();
+});
+
+it('does not move an established pinned source subtree while arranging new neighbors', () => {
+  const { owner, host } = nativeColumn();
+  const source: Node = expectDefined(owner.element('g:3'));
+  const release = owner.pin('g:3');
+  const insert = vi.spyOn(host, 'insertBefore');
+  owner.reveal('g:900');
+  expect(insert.mock.calls.some(([element]) => element === source)).toBe(false);
+  release();
+});
+
+import { ProjectKanbanDragController } from '../src/panels/projects/projectKanbanDrag';
+import type {
+  ProjectKanbanDropSource,
+  ProjectKanbanDropTarget,
+} from '../src/panels/projects/projectKanbanDrop';
+it('retargets the logical drag neighbor after edge scrolling without another pointer event', async () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    frames.push(callback);
+    return frames.length;
+  });
+  const root = document.body.createDiv();
+  const board = root.createDiv();
+  const column = board.createDiv({
+    cls: 'abyss-project-kanban-column',
+    attr: { 'data-status-key': 'g' },
+  });
+  const scroll = column.createDiv({ cls: 'abyss-project-kanban-column-body' });
+  const cardElement = scroll.createDiv({
+    cls: 'abyss-project-kanban-card',
+    attr: { 'data-project-path': 'a' },
+  });
+  const source: ProjectKanbanDropSource = {
+    projectPath: 'a',
+    statusKey: 'g',
+    group: { key: 'all', value: null },
+    statusGuard: {
+      fieldId: 'status',
+      fieldType: 'status',
+      sourceProperty: 'status',
+      expectedValue: 'Active',
+      expectedExists: true,
+    },
+    settingsGuard: { groupBy: 'none', sortField: 'none', sortDirection: 'asc' },
+  };
+  const seen: ProjectKanbanDropTarget[] = [];
+  const committed: ProjectKanbanDropTarget[] = [];
+  let pins = 0;
+  const controller = new ProjectKanbanDragController(root, board, {
+    begin: () => () => {},
+    capture: () => source,
+    pin() {
+      pins++;
+      return () => {
+        pins--;
+      };
+    },
+    hitTest() {
+      return {
+        target: {
+          status: { key: 'g', value: 'Active' },
+          beforePath: scroll.scrollTop > 0 ? 'unmounted-next' : 'initial',
+        },
+        lineHost: scroll,
+        lineTop: scroll.scrollTop,
+      };
+    },
+    preview(_source, target) {
+      seen.push(target);
+      return { allowed: false, message: 'preview only' };
+    },
+    async commit(_source, target) {
+      committed.push(target);
+    },
+    reportFailure(error) {
+      throw error;
+    },
+  });
+  vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue({
+    x: 0,
+    y: 0,
+    left: 0,
+    top: 0,
+    right: 300,
+    bottom: 200,
+    width: 300,
+    height: 200,
+    toJSON() {},
+  });
+  const values = new Map<string, string>();
+  const transfer = {
+    types: ['application/x-abyss-project-kanban-card'],
+    setData(type: string, value: string) {
+      values.set(type, value);
+    },
+    getData(type: string) {
+      return values.get(type) ?? '';
+    },
+    setDragImage() {},
+    effectAllowed: '',
+    dropEffect: '',
+  };
+  const drag = (type: string) => {
+    const event = new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      clientX: 150,
+      clientY: 190,
+    });
+    Object.defineProperty(event, 'dataTransfer', { value: transfer });
+    return event;
+  };
+  cardElement.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+  cardElement.dispatchEvent(drag('dragstart'));
+  expect(pins).toBe(1);
+  cardElement.dispatchEvent(drag('dragover'));
+  frames.shift()?.(0);
+  expect(scroll.scrollTop).toBe(10);
+  expect(seen[seen.length - 1]?.beforePath).toBe('unmounted-next');
+  cardElement.dispatchEvent(drag('drop'));
+  await Promise.resolve();
+  expect(committed[0]?.beforePath).toBe('unmounted-next');
+  expect(pins).toBe(0);
+  controller.destroy();
+});
+
+it('cancels native work and evicts unowned mounts when its column is detached', () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    frames.push(callback);
+    return frames.length;
+  });
+  const column = nativeColumn();
+  column.scroll.remove();
+  frames.splice(0).forEach((callback) => {
+    callback(0);
+  });
+  expect(column.owner.element('g:0')).toBeUndefined();
+  expect(column.errors).toEqual([]);
+});

@@ -595,3 +595,25 @@ it('backs the finite virtual row height contract with its native producer and sc
     }),
   ).toEqual([]);
 });
+
+it('backs Kanban column and hover spacing with a finite native spacer variable', async () => {
+  const { default: ts } = await import('typescript');
+  const source = ts.sys.readFile(
+    ts.sys.resolvePath('src/panels/projects/projectKanbanViewport.ts'),
+  );
+  if (source === undefined) throw new Error('Missing Kanban native owner');
+  const runtime = discoverRuntimeVariables(source);
+  expect(runtime.produced).toContain('--abyss-project-kanban-spacer-height');
+  expect(contracts.runtime.produced).toContain('--abyss-project-kanban-spacer-height');
+  const { loadPluginStyles, cssDeclarationsFor } = await import('./helpers');
+  const spacer = cssDeclarationsFor(
+    await loadPluginStyles(),
+    '.abyss-project-kanban-viewport-spacer',
+  );
+  expect(
+    analyzeCss(`.abyss-project-kanban-viewport-spacer { ${spacer} }`, {
+      file: 'fixture.css',
+      contracts: { ...fixtureContracts, runtime },
+    }),
+  ).toEqual([]);
+});
