@@ -32,6 +32,10 @@ export class ProjectKanbanColumnViewport {
   #active = true;
   #retireIncoming = false;
   #destroyed = false;
+  #layout = '';
+  #layoutRevision = 0;
+  #layoutDirty = true;
+  #nativeCleanup: (() => void) | undefined;
 
   constructor(options: ProjectKanbanColumnViewportOptions) {
     this.#options = options;
@@ -43,13 +47,47 @@ export class ProjectKanbanColumnViewport {
     const top = Math.max(0, this.#options.scroll.scrollTop);
     const anchor = preserveAnchor ? this.#viewport.captureAnchor(top) : undefined;
     this.#rows = rows;
-    this.#viewport.replace(rows);
-    const restored = this.#viewport.restoreAnchor(anchor, top);
+    this.#replace();
+    const restored = this.#checkLayout(this.#viewport.restoreAnchor(anchor, top));
     const target = this.#viewport.window(restored, this.#options.scroll.clientHeight, []).scrollTop;
     this.#render(target, true);
     this.#retireIncoming = !this.#active && this.#incoming.size > 0;
     this.#incoming.clear();
     if (target !== top) this.#options.scroll.scrollTop = target;
+  }
+
+  #replace(): void {
+    this.#viewport.replace(
+      this.#rows.map((row) => ({
+        ...row,
+        measurementRevision: `${this.#layoutRevision}:${row.measurementRevision}`,
+      })),
+    );
+  }
+  #checkLayout(top: number): number {
+    if (!this.#active || this.#window === null) return top;
+    const { host, scroll } = this.#options;
+    if (scroll.clientHeight <= 0 || host.clientWidth <= 0) {
+      this.#layoutDirty = true;
+      return top;
+    }
+    const style = this.#window.getComputedStyle(host);
+    const signature = JSON.stringify([
+      host.clientWidth,
+      style.fontFamily,
+      style.fontSize,
+      style.lineHeight,
+      style.fontWeight,
+      style.fontStyle,
+      style.letterSpacing,
+    ]);
+    if (!this.#layoutDirty && this.#layout === signature) return top;
+    const anchor = this.#viewport.captureAnchor(Math.max(0, top));
+    this.#layout = signature;
+    this.#layoutDirty = false;
+    this.#layoutRevision++;
+    this.#replace();
+    return top + this.#viewport.restoreAnchor(anchor, Math.max(0, top)) - Math.max(0, top);
   }
 
   reveal(key: string): HTMLElement | undefined {
@@ -127,6 +165,7 @@ export class ProjectKanbanColumnViewport {
     if (active) this.#bind();
     else this.#unbind();
     this.#render(Math.max(0, this.#options.scroll.scrollTop));
+    if (active) this.#schedule();
   }
   destroy(): void {
     if (this.#destroyed) return;
@@ -277,10 +316,28 @@ export class ProjectKanbanColumnViewport {
     this.#unbind();
     this.#window = owner;
     this.#options.scroll.addEventListener('scroll', this.#schedule, { passive: true });
-    owner?.addEventListener('resize', this.#schedule);
+    const fonts =
+      owner === null
+        ? undefined
+        : (Reflect.get(owner.document, 'fonts') as FontFaceSet | undefined);
+    const generation = this.#generation;
+    const schedule = (): void => {
+      if (generation === this.#generation) this.#schedule();
+    };
+    const fontChanged = (): void => {
+      if (generation !== this.#generation) return;
+      this.#layoutDirty = true;
+      schedule();
+    };
+    owner?.addEventListener('resize', schedule);
+    fonts?.addEventListener('loadingdone', fontChanged);
+    this.#nativeCleanup = () => {
+      owner?.removeEventListener('resize', schedule);
+      fonts?.removeEventListener('loadingdone', fontChanged);
+    };
     const Observer = owner?.ResizeObserver;
     if (Observer !== undefined) {
-      this.#observer = new Observer(this.#schedule);
+      this.#observer = new Observer(schedule);
       this.#observer.observe(this.#options.scroll);
       for (const { mount } of this.#mounts.values()) this.#observer.observe(mount.element);
     }
@@ -290,7 +347,9 @@ export class ProjectKanbanColumnViewport {
     if (this.#frame !== undefined) this.#window?.cancelAnimationFrame(this.#frame);
     this.#frame = undefined;
     this.#options.scroll.removeEventListener('scroll', this.#schedule);
-    this.#window?.removeEventListener('resize', this.#schedule);
+    this.#nativeCleanup?.();
+    this.#nativeCleanup = undefined;
+    this.#layoutDirty = true;
     this.#observer?.disconnect();
     this.#observer = undefined;
     this.#window = null;
@@ -307,17 +366,18 @@ export class ProjectKanbanColumnViewport {
       }
       try {
         this.#bind();
-        const top = Math.max(0, this.#options.scroll.scrollTop);
+        const nativeTop = this.#options.scroll.scrollTop;
+        const top = this.#checkLayout(nativeTop);
         const measured = this.#viewport.measure(
           [...this.#mounts].map(([key, { mount }]) => ({
             key,
             height: mount.element.getBoundingClientRect().height,
           })),
-          top,
+          Math.max(0, top),
         );
-        this.#render(measured.scrollTop);
-        if (measured.changed && measured.scrollTop !== top)
-          this.#options.scroll.scrollTop = measured.scrollTop;
+        const corrected = top + measured.scrollTop - Math.max(0, top);
+        this.#render(corrected);
+        if (corrected !== nativeTop) this.#options.scroll.scrollTop = corrected;
       } catch (error) {
         this.#options.reportFailure(error);
       }

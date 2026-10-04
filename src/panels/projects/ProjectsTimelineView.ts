@@ -1047,6 +1047,9 @@ export class ProjectsTimelineView<
       style?.fontFamily,
       style?.fontSize,
       style?.lineHeight,
+      style?.fontWeight,
+      style?.fontStyle,
+      style?.letterSpacing,
     ]);
   }
 

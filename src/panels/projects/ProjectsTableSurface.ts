@@ -159,6 +159,7 @@ export interface ReconcileProjectCellOptions {
 
 /** Where a group header's status dot and label render, and the component its links load in. */
 interface GroupContentTarget {
+  readonly onFailure: () => void;
   readonly marker: HTMLElement;
   readonly host: HTMLElement;
   readonly component: Component;
@@ -226,6 +227,7 @@ export interface ProjectsTableSurfaceContext {
   readonly render: () => void;
   /** Runs after each window pass, so the rows it mounted show the selection. */
   readonly windowRendered: () => void;
+  readonly reportRenderFailure: (error: unknown) => void;
 }
 
 /**
@@ -258,7 +260,16 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   #headerSignature = '';
   #columnResizePreview = false;
   #visibleColumns: readonly VisibleProjectColumn[] = [];
-  readonly #resizeObserver: ResizeObserver | undefined;
+  #resizeObserver: ResizeObserver | undefined;
+  #owner: Window | null = null;
+  #nativeCleanup: (() => void) | undefined;
+  #frame: number | undefined;
+  #generation = 0;
+  #layout = '';
+  #layoutRevision = 0;
+  #layoutDirty = true;
+  #failed = false;
+  #destroyed = false;
 
   constructor(context: ProjectsTableSurfaceContext) {
     this.#context = context;
@@ -270,17 +281,6 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     this.#host = this.scroll.createDiv({
       cls: 'abyss-project-table-host',
     });
-    const resizeObserver =
-      this.scroll.ownerDocument.defaultView === null
-        ? undefined
-        : Reflect.get(this.scroll.ownerDocument.defaultView, 'ResizeObserver');
-    if (typeof resizeObserver === 'function') {
-      const ResizeObserverClass = resizeObserver as ResizeObserverConstructor;
-      this.#resizeObserver = new ResizeObserverClass(() => {
-        this.#handleResize();
-      });
-      this.#resizeObserver.observe(this.scroll);
-    }
   }
 
   show(): void {
@@ -289,6 +289,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
 
   hide(): void {
     this.scroll.hidden = true;
+    this.#unbind();
   }
 
   /**
@@ -296,6 +297,14 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
    * scroll height, then settles the selection before restoring scroll and focus.
    */
   render(projects: readonly Project[], search: string, hooks: ProjectOverviewRenderHooks): void {
+    this.#failed = false;
+    this.#guard(() => {
+      this.#render(projects, search, hooks);
+    });
+  }
+
+  #render(projects: readonly Project[], search: string, hooks: ProjectOverviewRenderHooks): void {
+    this.#bind();
     this.#projects = projects;
     this.#search = search;
     const pending =
@@ -317,7 +326,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
       this.scroll.scrollTop = pending.scrollTop;
       this.#pendingViewport = undefined;
     }
-    this.#renderBody(table, model, columns);
+    this.#renderBody(table, model, columns, availableWidth);
     this.#updateResponsiveNamePinning(availableWidth);
     this.#finishReconciliation(hooks, this.scroll.scrollTop, scrollLeft, focusedIdentity);
   }
@@ -332,12 +341,20 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
 
   /** Scrolls an offscreen row into the window, which mounts it. */
   revealCell(identity: ProjectTableSelectableCell): void {
-    this.scroll.scrollTop = this.#viewport.reveal(
+    this.#guard(() => {
+      this.#revealCell(identity);
+    });
+  }
+
+  #revealCell(identity: ProjectTableSelectableCell): void {
+    this.#bind();
+    this.#renderVisible(this.scroll.scrollTop);
+    const top = this.#viewport.reveal(
       identity.occurrenceId,
       this.scroll.scrollTop,
       this.#viewportHeight(),
     );
-    this.#renderWindow();
+    this.#renderVisible(top);
   }
 
   /** Scrolls a mounted cell below the sticky header and right of a pinned Name column. */
@@ -403,6 +420,8 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   }
 
   destroy(): void {
+    this.#destroyed = true;
+    this.#unbind();
     this.#pendingViewport = undefined;
     this.#clearGroupDropStates();
     this.#activeRowDrag = undefined;
@@ -411,7 +430,6 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     this.#destroyViewport();
     this.#columnCleanup?.();
     this.#columnCleanup = undefined;
-    this.#resizeObserver?.disconnect();
   }
 
   /** A rendered group, which controller validation reads during a row drag. */
@@ -459,14 +477,116 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     return rows;
   }
 
+  #guard(action: () => void): void {
+    if (this.#destroyed || this.#failed) return;
+    try {
+      action();
+    } catch (error) {
+      this.#failed = true;
+      this.#renderedCells = this.#renderedCells.filter((cell) => cell.element.isConnected);
+      this.#context.reportRenderFailure(error);
+    }
+  }
+
+  #bind(): void {
+    if (this.#destroyed || this.scroll.hidden === true || !this.#context.isActive()) return;
+    const owner = this.scroll.ownerDocument.defaultView;
+    if (owner === this.#owner) return;
+    this.#unbind();
+    this.#owner = owner;
+    if (owner === null) return;
+    const fonts = Reflect.get(owner.document, 'fonts') as FontFaceSet | undefined;
+    const generation = this.#generation;
+    const schedule = (): void => {
+      if (generation !== this.#generation || this.#destroyed || this.#frame !== undefined) return;
+      this.#frame = owner.requestAnimationFrame(() => {
+        if (generation !== this.#generation || this.#destroyed) return;
+        this.#frame = undefined;
+        this.#guard(() => {
+          this.#handleResize();
+        });
+      });
+    };
+    const fontChanged = (): void => {
+      if (generation !== this.#generation) return;
+      this.#layoutDirty = true;
+      schedule();
+    };
+    owner.addEventListener('resize', schedule);
+    fonts?.addEventListener('loadingdone', fontChanged);
+    this.#nativeCleanup = () => {
+      owner.removeEventListener('resize', schedule);
+      fonts?.removeEventListener('loadingdone', fontChanged);
+    };
+    const Observer = Reflect.get(owner, 'ResizeObserver') as ResizeObserverConstructor | undefined;
+    if (Observer !== undefined) {
+      this.#resizeObserver = new Observer(schedule);
+      this.#resizeObserver.observe(this.scroll);
+      if (this.#table !== undefined) this.#resizeObserver.observe(this.#table);
+    }
+  }
+
+  #unbind(): void {
+    this.#generation++;
+    if (this.#frame !== undefined) this.#owner?.cancelAnimationFrame(this.#frame);
+    this.#frame = undefined;
+    this.#resizeObserver?.disconnect();
+    this.#resizeObserver = undefined;
+    this.#nativeCleanup?.();
+    this.#nativeCleanup = undefined;
+    this.#owner = null;
+    this.#layoutDirty = true;
+  }
+
   #handleResize(): void {
-    if (!this.#context.isActive()) return;
-    this.#renderWindow();
-    // A column drag owns the live widths until it commits or cancels. Reapplying the saved
-    // widths here would revert its preview every time the observed table changes size.
-    if (this.#columnResizePreview) return;
-    this.#applyWidth();
-    this.#updateResponsiveNamePinning();
+    if (!this.#context.isActive() || this.scroll.hidden === true || !this.scroll.isConnected)
+      return;
+    const availableWidth = this.scroll.clientWidth;
+    // Width reset after a cancelled preview also applies while layout is suspended.
+    if (!this.#columnResizePreview) this.#applyWidth(availableWidth);
+    if (this.scroll.clientHeight <= 0 || availableWidth <= 0) {
+      this.#layoutDirty = true;
+      return;
+    }
+    this.#bind();
+    this.#renderVisible(this.scroll.scrollTop, availableWidth);
+    this.#updateResponsiveNamePinning(availableWidth);
+  }
+
+  #checkLayout(top: number, availableWidth: number): number {
+    const table = this.#table;
+    if (
+      table === undefined ||
+      this.#owner === null ||
+      availableWidth <= 0 ||
+      this.scroll.clientHeight <= 0
+    )
+      return top;
+    const style = this.#owner.getComputedStyle(table);
+    const signature = JSON.stringify([
+      availableWidth,
+      [...table.querySelectorAll<HTMLElement>('col')].map((col) => col.style.width),
+      style.fontFamily,
+      style.fontSize,
+      style.lineHeight,
+      style.fontWeight,
+      style.fontStyle,
+      style.letterSpacing,
+    ]);
+    if (!this.#layoutDirty && signature === this.#layout) return top;
+    const anchor = this.#viewport.captureAnchor(Math.max(0, top));
+    this.#layout = signature;
+    this.#layoutDirty = false;
+    this.#layoutRevision++;
+    this.#replaceGeometry();
+    return top + this.#viewport.restoreAnchor(anchor, Math.max(0, top)) - Math.max(0, top);
+  }
+
+  #replaceGeometry(): void {
+    this.#viewport.replace(
+      this.#rows.map(({ key, project }) => ({ key, height: project === undefined ? 32 : 34 })),
+      String(this.#layoutRevision),
+    );
   }
 
   #destroyViewport(): void {
@@ -545,6 +665,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     table: HTMLTableElement,
     model: ProjectTableModel,
     columns: readonly VisibleProjectColumn[],
+    availableWidth: number,
   ): void {
     const body = this.#body ?? table.createEl('tbody');
     this.#body = body;
@@ -563,10 +684,9 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     });
     this.#rows = rows;
     this.#cells = cells;
-    this.#viewport.replace(
-      rows.map(({ key, project }) => ({ key, height: project === undefined ? 32 : 34 })),
-    );
-    this.#renderWindow();
+    this.#replaceGeometry();
+    const top = this.#viewport.window(this.scroll.scrollTop, this.#viewportHeight(), []).scrollTop;
+    this.#renderVisible(top, availableWidth);
   }
 
   #viewportHeight(): number {
@@ -577,30 +697,50 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   }
 
   readonly #renderWindow = (): void => {
+    this.#guard(() => {
+      this.#renderVisible(this.scroll.scrollTop);
+    });
+  };
+
+  #renderVisible(requestedTop: number, availableWidth = this.scroll.clientWidth): void {
     const body = this.#body;
     const model = this.#model;
-    if (!this.#context.isActive() || body === undefined || model === undefined) return;
+    if (
+      !this.#context.isActive() ||
+      this.scroll.hidden === true ||
+      body === undefined ||
+      model === undefined
+    )
+      return;
+    this.#bind();
     const pinned = this.#pinnedRows();
-    let top = this.scroll.scrollTop;
-    // One measured correction pass fills newly exposed rows without scheduling a work queue.
+    let top = this.#checkLayout(requestedTop, availableWidth);
+    let extentChanged = false;
+    // Extent is reconciled before a real correction; ordinary native scroll is never normalized.
     for (let pass = 0; pass < 2; pass++) {
       const window = this.#viewport.window(top, this.#viewportHeight(), pinned);
-      this.scroll.scrollTop = window.scrollTop;
       const mounted = this.#reconcileWindow(body, model, window.segments);
-      this.scroll.scrollTop = window.scrollTop;
       const correction = this.#viewport.measure(
         mounted.map(({ key, element }) => ({
           key,
           height: element.getBoundingClientRect().height,
         })),
-        window.scrollTop,
+        Math.max(0, top),
       );
+      extentChanged = correction.changed;
       if (!correction.changed) break;
-      top = correction.scrollTop;
+      top += correction.scrollTop - Math.max(0, top);
     }
+    if (extentChanged)
+      this.#reconcileWindow(
+        body,
+        model,
+        this.#viewport.window(top, this.#viewportHeight(), pinned).segments,
+      );
+    if (top !== this.scroll.scrollTop) this.scroll.scrollTop = top;
     this.#rowsDirty = false;
     this.#context.windowRendered();
-  };
+  }
 
   #reconcileWindow(
     body: HTMLTableSectionElement,
@@ -741,8 +881,24 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   }
 
   #reconcileGroupRow(options: RenderGroupOptions): HTMLTableRowElement {
+    const { key } = options;
+    const existing = this.#renderedGroupRows.get(key);
+    const rendered = existing ?? this.#createGroupRow(options);
+    try {
+      return this.#patchGroupRow(rendered, options);
+    } catch (error) {
+      rendered.contentSignature = '';
+      if (existing === undefined) {
+        this.#context.markdown.removeChild(rendered.markdown);
+        rendered.element.remove();
+        this.#renderedGroupRows.delete(key);
+      }
+      throw error;
+    }
+  }
+
+  #patchGroupRow(rendered: RenderedGroupRow, options: RenderGroupOptions): HTMLTableRowElement {
     const { key, label, value, sourcePath, count, columnCount, statuses, presentation } = options;
-    const rendered = this.#renderedGroupRows.get(key) ?? this.#createGroupRow(options);
     rendered.context = { key, label, value, ...(sourcePath === undefined ? {} : { sourcePath }) };
     writeOptionalAttribute(rendered.element, 'data-group-key', key);
     const colSpan = Math.max(1, columnCount);
@@ -796,7 +952,14 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   ): void {
     rendered.contentSignature = signature;
     this.#context.renderGroupContent(
-      { marker: rendered.statusDot, host: rendered.label, component: rendered.markdown },
+      {
+        marker: rendered.statusDot,
+        host: rendered.label,
+        component: rendered.markdown,
+        onFailure: () => {
+          rendered.contentSignature = '';
+        },
+      },
       options,
       color,
     );
@@ -892,19 +1055,29 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   #reconcileProjectRow(options: RenderProjectRowOptions): RenderedProjectRow {
     const { project, group, grouped } = options;
     const occurrenceId = projectTableOccurrenceId(group.key, project.path);
+    const existing = this.#renderedProjectRows.get(occurrenceId);
     const renderedRow =
-      this.#renderedProjectRows.get(occurrenceId) ??
-      this.#createProjectRow(options.body, project, group.key, occurrenceId);
-    renderedRow.project = project;
-    renderedRow.groupKey = group.key;
-    renderedRow.occurrenceId = occurrenceId;
-    const row = renderedRow.element;
-    writeOptionalAttribute(row, 'data-project-path', project.path);
-    writeOptionalAttribute(row, 'data-occurrence-id', occurrenceId);
-    writeOptionalAttribute(row, 'data-group-key', group.key);
-    if (row.draggable !== grouped) row.draggable = grouped;
-    this.#reconcileProjectCells(renderedRow, options, occurrenceId);
-    return renderedRow;
+      existing ?? this.#createProjectRow(options.body, project, group.key, occurrenceId);
+    try {
+      renderedRow.project = project;
+      renderedRow.groupKey = group.key;
+      renderedRow.occurrenceId = occurrenceId;
+      const row = renderedRow.element;
+      writeOptionalAttribute(row, 'data-project-path', project.path);
+      writeOptionalAttribute(row, 'data-occurrence-id', occurrenceId);
+      writeOptionalAttribute(row, 'data-group-key', group.key);
+      if (row.draggable !== grouped) row.draggable = grouped;
+      this.#reconcileProjectCells(renderedRow, options, occurrenceId);
+      return renderedRow;
+    } catch (error) {
+      if (existing === undefined) {
+        renderedRow.dragCleanup?.();
+        this.#context.markdown.removeChild(renderedRow.markdown);
+        renderedRow.element.remove();
+        this.#renderedProjectRows.delete(occurrenceId);
+      }
+      throw error;
+    }
   }
 
   #createProjectRow(

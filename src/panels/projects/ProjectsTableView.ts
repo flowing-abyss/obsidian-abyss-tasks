@@ -709,6 +709,9 @@ export class ProjectsTableView {
   /** What the Table surface reads from the controller: settings, rendering, and commands. */
   private tableSurfaceContext_abyssPrivate(): ProjectsTableSurfaceContext {
     return {
+      reportRenderFailure: (error) => {
+        this.reportRenderFailure_abyssPrivate('table', error);
+      },
       root: this.root_abyssPrivate,
       markdown: this.markdown_abyssPrivate,
       isActive: () => this.mounted_abyssPrivate && this.overviewMode_abyssPrivate === 'table',
@@ -1597,10 +1600,7 @@ export class ProjectsTableView {
   private createTimelineView_abyssPrivate(): ProjectsTimelineView<RenderedCellContext> {
     const timeline = new ProjectsTimelineView<RenderedCellContext>(this.root_abyssPrivate, {
       reportRenderFailure: (error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        this.feedback_abyssPrivate.setText(message);
-        console.error('[abyss-tasks] Could not render project Timeline', { cause: error });
-        new Notice(`Could not render project Timeline: ${message}`);
+        this.reportRenderFailure_abyssPrivate('timeline', error);
       },
       copy: (event) => {
         this.handleCopy_abyssPrivate(event);
@@ -1724,6 +1724,9 @@ export class ProjectsTableView {
           this.linkRebaser_abyssPrivate(),
         ),
       commitDrop: (build) => this.commitBoardDrop_abyssPrivate(build),
+      reportRenderFailure: (error) => {
+        this.reportRenderFailure_abyssPrivate('kanban', error);
+      },
       reportDropFailure: (error) => {
         this.reportBoardDropFailure_abyssPrivate(error);
       },
@@ -1776,6 +1779,36 @@ export class ProjectsTableView {
       }
       return result;
     });
+  }
+
+  private reportRenderFailure_abyssPrivate(mode: ProjectOverviewMode, error: unknown): void {
+    if (!this.mounted_abyssPrivate) return;
+    const surface = { table: 'Table', kanban: 'Kanban', timeline: 'Timeline' }[mode];
+    const message = error instanceof Error ? error.message : String(error);
+    this.feedback_abyssPrivate.setText(message);
+    console.error(`[abyss-tasks] Could not render project ${surface}`, { cause: error });
+    new Notice(`Could not render project ${surface}: ${message}`);
+  }
+
+  private contentFailure_abyssPrivate(
+    component: Component,
+    mode: ProjectOverviewMode,
+    onFailure?: () => void,
+  ): { isCurrent: () => boolean; onRenderFailure: (error: unknown) => void } {
+    let current = true;
+    let reported = false;
+    component.register(() => {
+      current = false;
+    });
+    return {
+      isCurrent: () => current,
+      onRenderFailure: (error) => {
+        if (!current || reported) return;
+        reported = true;
+        onFailure?.();
+        this.reportRenderFailure_abyssPrivate(mode, error);
+      },
+    };
   }
 
   private reportBoardDropFailure_abyssPrivate(error: unknown): void {
@@ -2137,7 +2170,12 @@ export class ProjectsTableView {
   }
 
   private renderGroupContent_abyssPrivate(
-    target: { marker: HTMLElement; host: HTMLElement; component: Component },
+    target: {
+      marker: HTMLElement;
+      host: HTMLElement;
+      component: Component;
+      onFailure?: () => void;
+    },
     group: Pick<ProjectTableGroup, 'key' | 'label' | 'value' | 'sourcePath' | 'presentation'>,
     color: string | undefined,
   ): void {
@@ -2155,19 +2193,34 @@ export class ProjectsTableView {
     }
     const content = component.addChild(new Component());
     this.groupContent_abyssPrivate.set(component, content);
-    let current = true;
-    content.register(() => {
-      current = false;
-    });
-    renderTaskText(host, value, {
-      app: this.context_abyssPrivate.app,
-      sourcePath,
-      component: content,
-      linkEventOwner: content,
-      isCurrent: () => current,
-      beforeOpenLink: () => this.requestFinishActiveEditor(),
-      exactLinkLabel: exactGroupLinkLabel(value, label),
-    });
+    this.renderGroupText_abyssPrivate(target, { value, sourcePath, label }, content);
+  }
+
+  private renderGroupText_abyssPrivate(
+    target: { host: HTMLElement; component: Component; onFailure?: () => void },
+    group: { value: string; sourcePath: string; label: string },
+    content: Component,
+  ): void {
+    const { host, component } = target;
+    const { value, sourcePath, label } = group;
+    try {
+      renderTaskText(host, value, {
+        app: this.context_abyssPrivate.app,
+        sourcePath,
+        component: content,
+        linkEventOwner: content,
+        ...this.contentFailure_abyssPrivate(
+          content,
+          this.overviewMode_abyssPrivate,
+          target.onFailure,
+        ),
+        beforeOpenLink: () => this.requestFinishActiveEditor(),
+        exactLinkLabel: exactGroupLinkLabel(value, label),
+      });
+    } catch (error) {
+      this.releaseGroupContent_abyssPrivate(component);
+      throw error;
+    }
   }
 
   private releaseGroupContent_abyssPrivate(component: Component): void {
@@ -2426,10 +2479,22 @@ export class ProjectsTableView {
     component: Component,
     options: RenderProjectCellContentOptions,
   ): void {
-    let current = true;
-    component.register(() => {
-      current = false;
-    });
+    try {
+      this.renderProjectCellContents_abyssPrivate(content, rendered, component, options);
+    } catch (error) {
+      rendered.resources.removeChild(component);
+      rendered.contentMarkdown = undefined;
+      rendered.contentSignature = '';
+      throw error;
+    }
+  }
+
+  private renderProjectCellContents_abyssPrivate(
+    content: HTMLElement,
+    rendered: RenderedCellContext,
+    component: Component,
+    options: RenderProjectCellContentOptions,
+  ): void {
     const { preferredColumn, showNameDescription, presentation = 'table' } = options;
     const includeNameDescription = showNameDescription ?? true;
     const descriptionField = findProjectFieldById(this.fields_abyssPrivate, 'description');
@@ -2450,7 +2515,9 @@ export class ProjectsTableView {
       ...(compiledPresets === undefined ? {} : { compiledPresets }),
       app: this.context_abyssPrivate.app,
       component,
-      isCurrent: () => current,
+      ...this.contentFailure_abyssPrivate(component, presentation, () => {
+        rendered.contentSignature = '';
+      }),
       beforeOpenLink: () => this.requestFinishActiveEditor(),
       openProject: (path) => {
         this.finishEditorBeforeAction(() => {

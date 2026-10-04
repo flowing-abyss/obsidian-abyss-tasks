@@ -1,4 +1,4 @@
-import { RowViewport, type RowWindow } from '../virtualization/rowViewport';
+import { RowViewport, type RowAnchor, type RowWindow } from '../virtualization/rowViewport';
 
 interface TableViewportRow {
   readonly key: string;
@@ -9,14 +9,22 @@ interface TableViewportRow {
 export class ProjectTableViewport {
   readonly #viewport = new RowViewport();
 
-  replace(rows: readonly TableViewportRow[]): void {
+  replace(rows: readonly TableViewportRow[], measurementRevision = 'table'): void {
     this.#viewport.replace(
       rows.map((row) => ({
         key: row.key,
         estimatedHeight: row.height,
-        measurementRevision: 'table',
+        measurementRevision,
       })),
     );
+  }
+
+  captureAnchor(top: number): RowAnchor | undefined {
+    return this.#viewport.captureAnchor(top);
+  }
+
+  restoreAnchor(anchor: RowAnchor | undefined, fallbackTop: number): number {
+    return this.#viewport.restoreAnchor(anchor, fallbackTop);
   }
 
   measure(

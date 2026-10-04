@@ -363,8 +363,26 @@ describe('ProjectsTableView', () => {
     return { ...fixture, scroll, projects };
   }
 
+  function ownerFrames(): () => void {
+    const frames = new Map<number, FrameRequestCallback>();
+    let next = 0;
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.set(++next, callback);
+      return next;
+    });
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+      frames.delete(id);
+    });
+    return () => {
+      const pending = [...frames.values()];
+      frames.clear();
+      for (const callback of pending) callback(0);
+    };
+  }
+
   /** Replaces `ResizeObserver` with one the test fires, and returns the function that fires it. */
   function stubResizeObserver(): () => void {
+    const flushFrames = ownerFrames();
     let resize: (() => void) | undefined;
     class TestResizeObserver {
       constructor(callback: ResizeObserverCallback) {
@@ -378,6 +396,7 @@ describe('ProjectsTableView', () => {
     vi.stubGlobal('ResizeObserver', TestResizeObserver);
     return () => {
       resize?.();
+      flushFrames();
     };
   }
 
@@ -401,6 +420,7 @@ describe('ProjectsTableView', () => {
   });
 
   it('remeasures the viewport when theme changes resize the table content', () => {
+    const flushFrames = ownerFrames();
     const observers: Array<{ targets: Element[]; trigger(): void }> = [];
     class TestResizeObserver {
       readonly targets: Element[] = [];
@@ -427,6 +447,7 @@ describe('ProjectsTableView', () => {
     for (const observer of observers) {
       if (observer.targets.includes(table)) observer.trigger();
     }
+    flushFrames();
     expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(original);
     expect(host.querySelector('[data-project-path="Projects/P0000.md"]')).not.toBeNull();
     expect(host.querySelector('[data-project-path="Projects/P0005.md"]')).not.toBeNull();
@@ -444,7 +465,8 @@ describe('ProjectsTableView', () => {
     scroll.scrollTop = 999999;
     scroll.dispatchEvent(new Event('scroll'));
     expect(host.querySelector('[data-project-path="Projects/P0499.md"]')).not.toBeNull();
-    expect(scroll.scrollTop).toBeLessThan(18000);
+    // Native overscroll is used for lookup without rewriting the browser-owned offset.
+    expect(scroll.scrollTop).toBe(999999);
   });
 
   it('keeps each drop run end where the original rule drew it while the window changes', () => {
@@ -3655,6 +3677,7 @@ describe('ProjectsTableView', () => {
   });
 
   it('keeps the live column resize preview when the table resize observer fires', async () => {
+    const flushFrames = ownerFrames();
     const resizeObservers: Array<{ trigger(): void }> = [];
     class TestResizeObserver {
       constructor(private readonly callback: ResizeObserverCallback) {
@@ -3693,6 +3716,7 @@ describe('ProjectsTableView', () => {
     const savedTableWidth = table.style.width;
     const triggerResize = (): void => {
       for (const observer of resizeObservers) observer.trigger();
+      flushFrames();
     };
 
     expectDefined(

@@ -1,4 +1,4 @@
-import { Component, MarkdownRenderer } from 'obsidian';
+import { Component, MarkdownRenderer, Notice } from 'obsidian';
 import { Component as MockComponent } from 'obsidian-test-mocks/obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
@@ -816,7 +816,9 @@ function recordOwnerFrames() {
   const pending = new Map<number, FrameRequestCallback>();
   let next = 0;
   let executed = 0;
+  const callbacks: FrameRequestCallback[] = [];
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    callbacks.push(callback);
     pending.set(++next, callback);
     return next;
   });
@@ -831,6 +833,7 @@ function recordOwnerFrames() {
       }
     },
     executed: () => executed,
+    callbacks,
   };
 }
 function ownedComponentCounts(component: Component): { children: number; cleanups: number } {
@@ -1311,9 +1314,24 @@ describe.each(cases)('full-range resource audit in $mode', (testCase) => {
 });
 
 describe.each(cases)('native layout audit in $mode', (testCase) => {
-  it('invalidates an offscreen measured row after a font/theme wrapping change', () => {
+  it.each([
+    'style',
+    'font completion',
+    'font-weight',
+    'font-style',
+    'letter-spacing',
+    'width',
+    'resume',
+    ...(testCase.mode === 'Table' ? ['column preview'] : []),
+  ])('invalidates an offscreen measured row after %s', (change) => {
+    Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
+    let width = 600;
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => width);
     const frames = recordOwnerFrames();
     const resources = recordVirtualSurfaceResources();
+    const resize = (): void => {
+      for (const callback of resources.callbacks) callback([], {} as ResizeObserver);
+    };
     let tall = true;
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
       this: HTMLElement,
@@ -1350,11 +1368,63 @@ describe.each(cases)('native layout audit in $mode', (testCase) => {
     );
     const scroll = testCase.viewport(h.surface, lastCell.element).vertical;
     const before = scroll.scrollTop;
+    const currentElement = lastCell.element;
+    scroll.scrollLeft = 17.25;
+    resize();
+    frames.flush();
+    expect(scroll.scrollTop).toBe(before);
+    expect(lastCell.element).toBe(currentElement);
+    expect(scroll.scrollLeft).toBe(17.25);
     tall = false;
-    const layoutStyle = { 'font-size': `${24}px` };
-    h.host.setCssProps(layoutStyle);
-    h.host.querySelector<HTMLElement>('.abyss-project-timeline')?.setCssProps(layoutStyle);
-    for (const callback of resources.callbacks) callback([], {} as ResizeObserver);
+    const root = expectDefined(
+      h.host.querySelector<HTMLElement>(
+        {
+          Table: '.abyss-project-table',
+          Kanban: '.abyss-project-kanban-window',
+          Timeline: '.abyss-project-timeline',
+        }[testCase.mode],
+      ),
+    );
+    const priorFont = window.getComputedStyle(root).fontSize;
+    if (change === 'style') {
+      const layoutStyle = { 'font-size': `${24}px` };
+      root.setCssProps(layoutStyle);
+      expect(window.getComputedStyle(root).fontSize).not.toBe(priorFont);
+      resize();
+    } else if (['font-weight', 'font-style', 'letter-spacing'].includes(change)) {
+      const property = change;
+      const beforeMetric = window.getComputedStyle(root).getPropertyValue(property);
+      const values: Record<string, string> = {
+        'font-weight': '900',
+        'font-style': 'italic',
+        'letter-spacing': '2px',
+      };
+      const value = values[property];
+      root.setCssProps({ [property]: expectDefined(value) });
+      expect(window.getComputedStyle(root).getPropertyValue(property)).not.toBe(beforeMetric);
+      resize();
+    } else if (change === 'width') {
+      width = 500;
+      resize();
+    } else if (change === 'column preview') {
+      const columns = JSON.stringify(h.settings.table.columns);
+      const handle = expectDefined(
+        h.host.querySelector<HTMLElement>('.abyss-project-column-resize'),
+      );
+      handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 100 }));
+      document.dispatchEvent(new PointerEvent('pointermove', { clientX: 200 }));
+      resize();
+      frames.flush();
+      expect(JSON.stringify(h.settings.table.columns)).toBe(columns);
+    } else if (change === 'resume') {
+      h.surface.captureViewportBeforeHide();
+      h.surface.hide();
+      h.surface.show();
+      h.view.update(h.projects);
+    } else {
+      expect(window.getComputedStyle(root).fontSize).toBe(priorFont);
+      root.ownerDocument.fonts.dispatchEvent(new Event('loadingdone'));
+    }
     frames.flush();
     h.surface.revealCell(last);
     frames.flush();
@@ -1362,8 +1432,20 @@ describe.each(cases)('native layout audit in $mode', (testCase) => {
   });
 });
 
+function invokeHeldListeners(
+  listeners: ReadonlyArray<EventListenerOrEventListenerObject | null>,
+  type: string,
+): void {
+  for (const listener of listeners) if (typeof listener === 'function') listener(new Event(type));
+}
+
 describe.each(cases)('live native document audit in $mode', (testCase) => {
   it('recreates the active native size observer after adopting its real mounted host', async () => {
+    const oldFonts = new EventTarget();
+    Object.defineProperty(document, 'fonts', { value: oldFonts, configurable: true });
+    const oldFontAdds = vi.spyOn(oldFonts, 'addEventListener');
+    const oldFontRemoves = vi.spyOn(oldFonts, 'removeEventListener');
+    const oldWindowAdds = vi.spyOn(window, 'addEventListener');
     const mainFrames = recordOwnerFrames();
     const resources = recordVirtualSurfaceResources();
     const h = mountSurface(testCase, 97, (settings) => {
@@ -1372,10 +1454,18 @@ describe.each(cases)('live native document audit in $mode', (testCase) => {
       if (settings.timeline !== undefined) settings.timeline.groupBy = 'none';
     });
     mainFrames.flush();
+    const oldCallbacks = [...resources.callbacks];
+    for (const callback of oldCallbacks) callback([], {} as ResizeObserver);
+    const oldFrames = [...mainFrames.callbacks];
+    const oldResizeListeners = oldWindowAdds.mock.calls.filter(([type]) => type === 'resize');
     const iframe = document.body.createEl('iframe');
     const doc = expectDefined(iframe.contentDocument);
     const win = expectDefined(iframe.contentWindow);
-    Object.defineProperty(doc, 'fonts', { value: new EventTarget(), configurable: true });
+    const FontTarget = Reflect.get(win, 'EventTarget') as typeof EventTarget;
+    const newFonts = new FontTarget();
+    const newFontAdds = vi.spyOn(newFonts, 'addEventListener');
+    const newFontRemoves = vi.spyOn(newFonts, 'removeEventListener');
+    Object.defineProperty(doc, 'fonts', { value: newFonts, configurable: true });
     Object.defineProperty(win, 'ResizeObserver', {
       value: window.ResizeObserver,
       configurable: true,
@@ -1402,10 +1492,39 @@ describe.each(cases)('live native document audit in $mode', (testCase) => {
     for (const callback of pending.splice(0)) callback(0);
     await finishMarkdown();
     expect(construct).toHaveBeenCalled();
+    const bindings = construct.mock.calls.length;
+    for (const callback of resources.callbacks.slice(oldCallbacks.length))
+      callback([], {} as ResizeObserver);
+    const newPending = pending.length;
+    expect(newPending).toBeGreaterThan(0);
+    for (const callback of oldCallbacks) callback([], {} as ResizeObserver);
+    for (const callback of oldFrames) callback(0);
+    invokeHeldListeners(
+      oldFontAdds.mock.calls.map(([, listener]) => listener),
+      'loadingdone',
+    );
+    invokeHeldListeners(
+      oldResizeListeners.map(([, listener]) => listener),
+      'resize',
+    );
+    expect(oldFontRemoves.mock.calls).toHaveLength(oldFontAdds.mock.calls.length);
+    mainFrames.flush();
+    expect(pending).toHaveLength(newPending);
+    for (const callback of pending.splice(0)) callback(0);
+    newFonts.dispatchEvent(new Event('loadingdone'));
+    expect(pending.length).toBeGreaterThan(0);
+    for (const callback of pending.splice(0)) callback(0);
+    h.view.update(h.projects);
+    expect(construct).toHaveBeenCalledTimes(bindings);
     const mountedBefore = h.surface.renderedCells().length;
     expect(mountedBefore).toBeGreaterThan(0);
     h.view.destroy();
     mounted.delete(h.view);
+    expect(newFontRemoves.mock.calls).toHaveLength(newFontAdds.mock.calls.length);
+    invokeHeldListeners(
+      newFontAdds.mock.calls.map(([, listener]) => listener),
+      'loadingdone',
+    );
     for (const callback of pending.splice(0)) callback(0);
     for (const callback of resources.callbacks) callback([], {} as ResizeObserver);
     mainFrames.flush();
@@ -1496,4 +1615,281 @@ describe.each(cases)('owning thrown mount failure in $mode', (testCase) => {
       expect(h.applyEdits).not.toHaveBeenCalled();
     },
   );
+});
+
+it.each([1200.25, -0.75])('never writes ordinary Table native scroll %s', (top) => {
+  const frames = recordOwnerFrames();
+  const h = mountSurface(expectDefined(cases[0]), 997);
+  frames.flush();
+  const scroll = expectDefined(h.host.querySelector<HTMLElement>('.abyss-project-table-scroll'));
+  const write = vi.fn();
+  Object.defineProperty(scroll, 'scrollTop', { configurable: true, get: () => top, set: write });
+  scroll.scrollLeft = 17.25;
+  scroll.dispatchEvent(new Event('scroll'));
+  frames.flush();
+  expect(write).not.toHaveBeenCalled();
+  expect(scroll.scrollLeft).toBe(17.25);
+});
+
+function recordedNotices() {
+  return vi
+    .spyOn(
+      Notice.prototype as unknown as { constructor__(message: unknown): void },
+      'constructor__',
+    )
+    .mockImplementation(() => {});
+}
+
+describe.each(cases)('finite failure recovery in $mode', (testCase) => {
+  it.each([false, true])(
+    'reports and retries one failed content generation (group=%s)',
+    async (group) => {
+      const frames = recordOwnerFrames();
+      const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const notices = recordedNotices();
+      const h = mountSurface(testCase, 0, (settings) => {
+        configureLifetimeFields(settings);
+        if (group) {
+          settings.table.groupBy = 'property:Link';
+          expectDefined(settings.kanban).groupBy = 'property:Link';
+          expectDefined(settings.timeline).groupBy = 'property:Link';
+        }
+      });
+      let failure:
+        { holder: HTMLElement; owner: Component; reject: (error: Error) => void } | undefined;
+      let failed = false;
+      const render = vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (...args) => {
+        const [, , holder, , owner] = args;
+        const label = holder.closest('.abyss-projects-group-label') !== null;
+        if (!failed && label === group) {
+          failed = true;
+          await new Promise<void>((_resolve, reject) => {
+            failure = { holder, owner, reject };
+          });
+        } else holder.createSpan({ text: 'rendered successfully' });
+      });
+      const listed = lifetimeProjects(h.projects);
+      h.view.update(listed);
+      frames.flush();
+      await finishMarkdown();
+      const pending = expectDefined(failure);
+      const unload = vi.spyOn(pending.owner, 'unload');
+      pending.reject(new Error('retry this generation'));
+      await finishMarkdown();
+      expect(diagnostic).toHaveBeenCalledOnce();
+      expect(notices).toHaveBeenCalledOnce();
+      expect(notices.mock.calls[0]?.[0]).toContain(testCase.mode);
+      expect(h.host.querySelector('[role="alert"]')?.textContent).toContain(
+        'retry this generation',
+      );
+      const previousCalls = render.mock.calls.length;
+      h.view.update(listed);
+      frames.flush();
+      await finishMarkdown();
+      expect(render.mock.calls.length).toBeGreaterThan(previousCalls);
+      expect(pending.holder.isConnected).toBe(false);
+      expect(unload).toHaveBeenCalledOnce();
+      expect(h.host.textContent).toContain('rendered successfully');
+      expect(diagnostic).toHaveBeenCalledOnce();
+      expect(notices).toHaveBeenCalledOnce();
+      expect(h.applyEdits).not.toHaveBeenCalled();
+    },
+  );
+});
+
+it.each(['update', 'reveal', 'frame'] as const)(
+  'Table cleans failed content during %s and recovers around a pinned editor',
+  async (entry) => {
+    const frames = recordOwnerFrames();
+    const resources = recordVirtualSurfaceResources();
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const notices = recordedNotices();
+    const render = vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(600);
+    const h = mountSurface(expectDefined(cases[0]), 997, configureLifetimeFields);
+    const listed = lifetimeProjects(h.projects);
+    h.view.update(listed);
+    frames.flush();
+    await finishMarkdown();
+    const pinned = expectDefined(nameCell(h.surface.renderedCells(), 'Projects/A.md'));
+    pinned.element.addClass('is-editor-anchor', 'is-editing');
+    const input = pinned.element.createEl('input');
+    input.value = 'ongoing draft';
+    input.focus();
+    const rowOwner = pinned.markdown;
+    const healthyField = pinned.resources;
+    const priorOwnerCount = ownedComponentCounts(healthyField);
+    let failedOwner: Component | undefined;
+    render.mockImplementationOnce((...args) => {
+      const owner = args[4];
+      failedOwner = owner;
+      owner.addChild(new Component());
+      throw new Error('partial mount unavailable');
+    });
+    const scroll = expectDefined(h.host.querySelector<HTMLElement>('.abyss-project-table-scroll'));
+    if (entry === 'update') h.view.update(lifetimeProjects(h.projects, 1));
+    else if (entry === 'reveal')
+      h.surface.revealCell(
+        expectDefined(nameCell(h.surface.cells().cells, expectDefined(listed[900]).path)).identity,
+      );
+    else {
+      scroll.scrollTop = 30000;
+      for (const callback of resources.callbacks) callback([], {} as ResizeObserver);
+      expect(() => {
+        frames.flush();
+      }).not.toThrow();
+    }
+    expect(diagnostic).toHaveBeenCalledOnce();
+    expect(notices).toHaveBeenCalledOnce();
+    const failedContent = expectDefined(failedOwner);
+    expect(resources.liveComponents.has(failedContent)).toBe(false);
+    expect(ownedComponentCounts(failedContent).children).toBe(0);
+    expect(pinned.element.isConnected).toBe(true);
+    expect(pinned.markdown).toBe(rowOwner);
+    expect(pinned.resources).toBe(healthyField);
+    expect(ownedComponentCounts(healthyField)).toEqual(priorOwnerCount);
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe('ongoing draft');
+    const attempts = render.mock.calls.length;
+    for (const callback of resources.callbacks) callback([], {} as ResizeObserver);
+    scroll.dispatchEvent(new Event('scroll'));
+    frames.flush();
+    expect(render).toHaveBeenCalledTimes(attempts);
+    expect(diagnostic).toHaveBeenCalledOnce();
+    h.view.update(lifetimeProjects(h.projects, 2));
+    frames.flush();
+    await finishMarkdown();
+    expect(render.mock.calls.length).toBeGreaterThan(attempts);
+    expect(pinned.element.isConnected).toBe(true);
+    expect(input.isConnected).toBe(true);
+    expect(input.value).toBe('ongoing draft');
+    expect(h.applyEdits).not.toHaveBeenCalled();
+    h.view.destroy();
+    mounted.delete(h.view);
+    expect(resources.liveComponents.size).toBe(0);
+  },
+);
+
+it('Table native failure leaves the actual controller editor and its draft focused', async () => {
+  const frames = recordOwnerFrames();
+  const render = vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const h = mountSurface(expectDefined(cases[0]), 997, configureLifetimeFields);
+  h.view.update(lifetimeProjects(h.projects));
+  frames.flush();
+  await finishMarkdown();
+  const cell = expectDefined(
+    h.surface.renderedCells().find((item) => item.field.id === 'property:Link'),
+  );
+  cell.element.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  const editor = expectDefined(
+    h.host.querySelector<HTMLInputElement | HTMLTextAreaElement>('.abyss-project-editor-input'),
+  );
+  editor.value = 'Unsubmitted draft';
+  editor.focus();
+  render.mockImplementationOnce(() => {
+    throw new Error('new distant row failed');
+  });
+  h.surface.revealCell(
+    expectDefined(nameCell(h.surface.cells().cells, expectDefined(h.projects[900]).path)).identity,
+  );
+  expect(diagnostic).toHaveBeenCalledOnce();
+  expect(cell.element.isConnected).toBe(true);
+  expect(document.activeElement).toBe(editor);
+  expect(editor.value).toBe('Unsubmitted draft');
+  expect(h.applyEdits).not.toHaveBeenCalled();
+});
+
+describe.each(cases)('native fractional anchor in $mode', (testCase) => {
+  it('preserves a surviving fractional offset and pinned node across font completion', () => {
+    Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(600);
+    const frames = recordOwnerFrames();
+    let tall = true;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const path =
+        this.dataset['projectPath'] ??
+        this.querySelector<HTMLElement>('.abyss-project-kanban-card')?.dataset['projectPath'];
+      const isRow = [
+        'abyss-project-table-row',
+        'abyss-project-kanban-group',
+        'abyss-project-timeline-row',
+      ].some((name) => this.classList.contains(name));
+      return rectangle(0, 0, 600, isRow && path === 'Projects/A.md' && tall ? 10000 : 0);
+    });
+    const h = mountSurface(testCase, 997, (settings) => {
+      settings.table.groupBy = 'none';
+      if (settings.kanban !== undefined) settings.kanban.groupBy = 'none';
+      if (settings.timeline !== undefined) settings.timeline.groupBy = 'none';
+    });
+    frames.flush();
+    const target = expectDefined(
+      nameCell(h.surface.cells().cells, expectDefined(h.projects[700]).path),
+    );
+    h.surface.revealCell(target.identity);
+    frames.flush();
+    const mountedCell = expectDefined(
+      h.surface
+        .renderedCells()
+        .find((cell) => cell.identity.occurrenceId === target.identity.occurrenceId),
+    );
+    const element = mountedCell.element;
+    element.focus();
+    const scroll = testCase.viewport(h.surface, element).vertical;
+    scroll.scrollTop += 0.25;
+    scroll.scrollLeft = 17.25;
+    const before = scroll.scrollTop;
+    tall = false;
+    document.fonts.dispatchEvent(new Event('loadingdone'));
+    frames.flush();
+    expect(scroll.scrollTop).toBeLessThan(before);
+    expect(scroll.scrollTop % 1).toBe(0.25);
+    expect(scroll.scrollLeft).toBe(17.25);
+    expect(element.isConnected).toBe(true);
+    expect(document.activeElement).toBe(element);
+    expect(h.applyEdits).not.toHaveBeenCalled();
+  });
+});
+
+it('Table removes a newly failed group content owner and retries its original group', async () => {
+  const frames = recordOwnerFrames();
+  const resources = recordVirtualSurfaceResources();
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const notices = recordedNotices();
+  const h = mountSurface(expectDefined(cases[0]), 0, (settings) => {
+    configureLifetimeFields(settings);
+    settings.table.groupBy = 'property:Link';
+  });
+  let failedOwner: Component | undefined;
+  const render = vi.spyOn(MarkdownRenderer, 'render').mockImplementation((...args) => {
+    const [, , holder, , owner] = args;
+    if (failedOwner === undefined && holder.closest('.abyss-projects-group-label') !== null) {
+      failedOwner = owner;
+      owner.addChild(new Component());
+      throw new Error('group mount failed');
+    }
+    return Promise.resolve();
+  });
+  const listed = lifetimeProjects(h.projects);
+  expect(() => {
+    h.view.update(listed);
+  }).not.toThrow();
+  expect(diagnostic).toHaveBeenCalledOnce();
+  expect(notices).toHaveBeenCalledOnce();
+  const failed = expectDefined(failedOwner);
+  expect(resources.liveComponents.has(failed)).toBe(false);
+  expect(ownedComponentCounts(failed).children).toBe(0);
+  const calls = render.mock.calls.length;
+  h.view.update(listed);
+  frames.flush();
+  await finishMarkdown();
+  expect(render.mock.calls.length).toBeGreaterThan(calls);
+  expect(h.surface.renderedCells().length).toBeGreaterThan(0);
+  expect(diagnostic).toHaveBeenCalledOnce();
+  expect(h.applyEdits).not.toHaveBeenCalled();
+  h.view.destroy();
+  mounted.delete(h.view);
+  expect(resources.liveComponents.size).toBe(0);
 });

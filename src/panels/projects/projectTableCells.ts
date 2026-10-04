@@ -118,6 +118,7 @@ interface RenderProjectTableCellOptions {
   readonly app: App;
   readonly component: Component;
   readonly isCurrent?: () => boolean;
+  readonly onRenderFailure?: (error: unknown) => void;
   readonly beforeOpenLink: () => Promise<boolean>;
   readonly openProject: (path: string) => void;
   readonly onRemoveListValue: (index: number) => void;
@@ -196,6 +197,7 @@ function renderValueText(
     component: options.component,
     linkEventOwner: options.component,
     ...(options.isCurrent === undefined ? {} : { isCurrent: options.isCurrent }),
+    ...(options.onRenderFailure === undefined ? {} : { onRenderFailure: options.onRenderFailure }),
     beforeOpenLink: options.beforeOpenLink,
     ...(presentation.link === undefined
       ? {}

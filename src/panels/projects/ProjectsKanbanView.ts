@@ -139,6 +139,7 @@ export interface ProjectsKanbanViewContext<TCell extends ProjectKanbanCellContex
       readonly afterApplied?: () => void;
     },
   ) => Promise<ProjectEditResult>;
+  readonly reportRenderFailure: (error: unknown) => void;
   readonly reportDropFailure: (error: unknown) => void;
   readonly createProject: (anchor: HTMLElement, statusId: string) => void;
 }
@@ -819,7 +820,7 @@ export class ProjectsKanbanView<
         this.mountedChanged_abyssPrivate();
       },
       reportFailure: (error) => {
-        this.context_abyssPrivate.reportDropFailure(error);
+        this.context_abyssPrivate.reportRenderFailure(error);
       },
     });
     viewport.setActive(false);

@@ -607,8 +607,17 @@ Projects passes these finite content children as the shared Markdown helper's ex
 owners; callers that omit that option keep their existing event behavior. Content invalidation
 uses the helper's existing current-generation guard to suppress retired wiring and render failures;
 it does not cancel native Markdown work, whose holder remains unique to that retired generation.
-Native render failures reach the controller's render feedback,
-diagnostic, and Notice boundary; date mutation failures retain their separate committer boundary.
+Native project owners compose measured heights with their wrapping-width/font revisions and
+owner-document metric generations. Font completion and reactivation invalidate offscreen measurements
+while preserving logical anchors and fractional offsets; ordinary scroll does not normalize native
+positions. Table rebinds its observer, font listeners and pending frame to the current owning window;
+retired callbacks cannot act on a replacement binding. Layout-only passes retain row/field ownership.
+Table guards initial, public reveal and native render passes, retires failed partial content/mounts,
+and allows explicit updates to retry without disturbing unrelated editors. Finite cell and group
+content generations report live asynchronous failures once through the controller render feedback,
+diagnostic and Notice boundary;
+retired generations stay quiet and failed signatures remain retryable. Render feedback is separate
+from drag/drop, date and other mutation feedback.
 
 Overview creation retains a session with a configured status. ProjectManager prepares the note
 through NoteTemplateService and applies status through serialized metadata mutation. ProjectStore

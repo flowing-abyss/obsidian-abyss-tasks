@@ -32,6 +32,9 @@ export class ProjectTimelineRows {
   #active = true;
   #destroyed = false;
   #failed = false;
+  #metricRevision = 0;
+  #metricsDirty = true;
+  #nativeCleanup: (() => void) | undefined;
 
   constructor(options: ProjectTimelineRowsOptions) {
     this.#options = options;
@@ -51,7 +54,7 @@ export class ProjectTimelineRows {
     const anchor = preserveAnchor ? this.#viewport.captureAnchor(top) : undefined;
     const previousHeight = this.#totalHeight();
     this.#rows = rows;
-    this.#viewport.replace(rows);
+    this.#replace();
     const restored = this.#viewport.restoreAnchor(anchor, top);
     const totalHeight = this.#totalHeight();
     const target =
@@ -60,6 +63,26 @@ export class ProjectTimelineRows {
         : restored;
     this.#render(target, true);
     if (target !== top) this.#options.scroll.scrollTop = target;
+  }
+
+  #replace(): void {
+    if (this.#metricsDirty) {
+      this.#metricRevision++;
+      this.#metricsDirty = false;
+    }
+    this.#viewport.replace(
+      this.#rows.map((row) => ({
+        ...row,
+        measurementRevision: `${this.#metricRevision}:${row.measurementRevision}`,
+      })),
+    );
+  }
+
+  #refreshMetrics(top: number): number {
+    if (!this.#metricsDirty) return top;
+    const anchor = this.#viewport.captureAnchor(Math.max(0, top));
+    this.#replace();
+    return top + this.#viewport.restoreAnchor(anchor, Math.max(0, top)) - Math.max(0, top);
   }
 
   reveal(key: string): HTMLElement | undefined {
@@ -104,6 +127,7 @@ export class ProjectTimelineRows {
     if (active) this.#bind();
     else this.#unbind();
     this.#render(Math.max(0, this.#options.scroll.scrollTop));
+    if (active) this.#schedule();
   }
   destroy(): void {
     if (this.#destroyed) return;
@@ -283,11 +307,27 @@ export class ProjectTimelineRows {
     if (this.#window === owner) return;
     this.#unbind();
     this.#window = owner;
+    if (owner === null) return;
     this.#options.scroll.addEventListener('scroll', this.#schedule, { passive: true });
-    owner?.addEventListener('resize', this.#schedule);
-    const Observer = owner?.ResizeObserver;
+    const fonts = Reflect.get(owner.document, 'fonts') as FontFaceSet | undefined;
+    const generation = this.#generation;
+    const schedule = (): void => {
+      if (generation === this.#generation) this.#schedule();
+    };
+    const fontChanged = (): void => {
+      if (generation !== this.#generation) return;
+      this.#metricsDirty = true;
+      schedule();
+    };
+    owner.addEventListener('resize', schedule);
+    fonts?.addEventListener('loadingdone', fontChanged);
+    this.#nativeCleanup = () => {
+      owner.removeEventListener('resize', schedule);
+      fonts?.removeEventListener('loadingdone', fontChanged);
+    };
+    const Observer = Reflect.get(owner, 'ResizeObserver') as typeof ResizeObserver | undefined;
     if (Observer !== undefined) {
-      this.#observer = new Observer(this.#schedule);
+      this.#observer = new Observer(schedule);
       this.#observer.observe(this.#options.scroll);
       for (const { mount } of this.#mounts.values()) this.#observer.observe(mount.element);
     }
@@ -297,7 +337,9 @@ export class ProjectTimelineRows {
     if (this.#frame !== undefined) this.#window?.cancelAnimationFrame(this.#frame);
     this.#frame = undefined;
     this.#options.scroll.removeEventListener('scroll', this.#schedule);
-    this.#window?.removeEventListener('resize', this.#schedule);
+    this.#nativeCleanup?.();
+    this.#nativeCleanup = undefined;
+    this.#metricsDirty = true;
     this.#observer?.disconnect();
     this.#observer = undefined;
     this.#window = null;
@@ -317,17 +359,18 @@ export class ProjectTimelineRows {
         this.#render(0);
         return;
       }
-      const top = Math.max(0, this.#options.scroll.scrollTop);
+      const nativeTop = this.#options.scroll.scrollTop;
+      const top = this.#refreshMetrics(nativeTop);
       const measured = this.#viewport.measure(
         [...this.#mounts].map(([key, { mount }]) => ({
           key,
           height: mount.element.getBoundingClientRect().height,
         })),
-        top,
+        Math.max(0, top),
       );
-      this.#render(measured.scrollTop);
-      if (measured.changed && measured.scrollTop !== top)
-        this.#options.scroll.scrollTop = measured.scrollTop;
+      const corrected = top + measured.scrollTop - Math.max(0, top);
+      this.#render(corrected);
+      if (corrected !== nativeTop) this.#options.scroll.scrollTop = corrected;
     } catch (error) {
       this.#report(error);
     }
