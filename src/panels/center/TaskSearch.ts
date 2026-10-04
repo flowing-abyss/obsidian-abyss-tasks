@@ -123,8 +123,17 @@ export class TaskSearch {
   constructor(options: TaskSearchOptions) {
     this.#options = options;
   }
-  refresh(): boolean {
+  refresh(reason: 'view' | 'source' | 'projects' | 'links' = 'view'): boolean {
     if (!this.#live()) return false;
+    if (reason === 'source' || reason === 'projects') return true;
+    if (reason === 'links') {
+      const view = this.#options.view();
+      if (
+        view.list.groupBy !== 'outgoing-link' &&
+        (view.relevance || view.list.sortBy.field !== 'outgoing-link')
+      )
+        return true;
+    }
     this.#schedule(this.#currentQuery());
     return true;
   }

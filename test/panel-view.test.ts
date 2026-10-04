@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { type AppState, type ListSelection } from '../src/app/AppState';
 import type { CenterPanel } from '../src/panels/CenterPanel';
 import { ProjectManager } from '../src/projects/ProjectManager';
+import type { ProjectStore } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
@@ -46,7 +47,7 @@ import {
   useRealMoment,
 } from './helpers';
 import { taskCommandsOf } from './support/panelHarness';
-import { canonicalSearchForIndex } from './support/taskSearchHarness';
+import { canonicalSearchForIndex, createCanonicalSearchHarness } from './support/taskSearchHarness';
 import { searchUiCompleted } from './support/taskSearchUiHarness';
 
 function workspaceState(app: App): { activeLeaf: WorkspaceLeaf | null } {
@@ -3342,11 +3343,38 @@ describe('PanelView', () => {
       }).not.toThrow();
     });
 
-    it('recomputes rendered tag contrast when Obsidian emits css-change', () => {
-      const panels = view as unknown as { center_abyssPrivate: { refresh(): void } };
-      const refresh = vi.spyOn(panels.center_abyssPrivate, 'refresh');
-      app.workspace.trigger('css-change');
-      expect(refresh).toHaveBeenCalledOnce();
+    it('recomputes rendered tag contrast when Obsidian emits css-change', async () => {
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      settings.tagGroups.push({
+        id: 'work',
+        name: 'Work',
+        mode: 'prefix',
+        prefix: 'work',
+        color: '#ffffff',
+      });
+      document.body.setCssProps({ '--background-primary': '#ffffff' });
+      const content = `- [ ] Root #work 📅 ${window.moment().format('YYYY-MM-DD')}`;
+      await app.vault.create('tasks.md', content);
+      taskApplication.index.installCommittedContent('tasks.md', content);
+      state.set('mode', 'calendar');
+      const item = expectDefined(
+        view.contentEl.querySelector<HTMLElement>('.abyss-mg-plain, .abyss-mg-deadline-marker'),
+      );
+      expect(item.style.getPropertyValue('--abyss-tag-text-color')).toBe(
+        'var(--abyss-tag-text-dark)',
+      );
+      document.body.setCssProps({ '--background-primary': '#000000' });
+      try {
+        app.workspace.trigger('css-change');
+        const updated = expectDefined(
+          view.contentEl.querySelector<HTMLElement>('.abyss-mg-plain, .abyss-mg-deadline-marker'),
+        );
+        expect(updated.style.getPropertyValue('--abyss-tag-text-color')).toBe(
+          'var(--abyss-tag-text-light)',
+        );
+      } finally {
+        document.body.style.removeProperty('--background-primary');
+      }
     });
 
     it('refreshes the selected group title after static tag settings change', () => {
@@ -4320,5 +4348,475 @@ it('injects the actual canonical service into a mounted PanelView Search owner',
     search.dispose();
     application.index.destroy();
     view.containerEl.remove();
+  }
+});
+
+/** Control only the host presentation boundary; search/index/panel remain real. */
+function panelFrames(owner: Window) {
+  let next = 0;
+  const frames = new Map<number, FrameRequestCallback>();
+  vi.spyOn(owner, 'requestAnimationFrame').mockImplementation((callback) => {
+    frames.set(++next, callback);
+    return next;
+  });
+  vi.spyOn(owner, 'cancelAnimationFrame').mockImplementation((id) => {
+    frames.delete(id);
+  });
+  return {
+    frames,
+    present() {
+      for (const [id, callback] of [...frames]) {
+        frames.delete(id);
+        callback(0);
+      }
+    },
+  };
+}
+
+async function prewarmPanel(initialize = true) {
+  const h = await createCanonicalSearchHarness(
+    { 'tasks.md': '- [ ] needle' },
+    structuredClone(DEFAULT_SETTINGS),
+    initialize,
+  );
+  const frames = panelFrames(window);
+  const views: PanelView[] = [];
+  async function mount(ready = true, hidden = false) {
+    h.app.workspace.layoutReady = ready;
+    const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(h.app);
+    const view = new PanelView(
+      leaf,
+      structuredClone(DEFAULT_SETTINGS),
+      makeTagManager(h.app),
+      h.index,
+      h.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+      h.statusRegistry,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      h.search,
+    );
+    views.push(view);
+    document.body.append(view.containerEl);
+    view.containerEl.hidden = hidden;
+    setGeometry(view.containerEl, rect(20, 20, 640, 480));
+    setGeometry(view.contentEl, rect(20, 20, 640, 480));
+    let migrate: (owner: Window) => void = () => {};
+    vi.spyOn(view.contentEl, 'onWindowMigrated').mockImplementation((callback) => {
+      migrate = callback;
+      return () => {};
+    });
+    await view.onOpen();
+    return { view, migrate };
+  }
+  return {
+    ...h,
+    frames,
+    mount,
+    async dispose() {
+      for (const view of views) {
+        await view.onClose();
+        view.containerEl.remove();
+      }
+      h.close();
+      vi.restoreAllMocks();
+    },
+  };
+}
+
+describe('PanelView useful shared prewarm', () => {
+  it.each([true, false])(
+    'presents the mounted visible shell before preparation, layout ready first: %s',
+    async (ready) => {
+      const h = await prewarmPanel();
+      try {
+        const { view } = await h.mount(ready);
+        expect(view.contentEl.querySelector('.abyss-center-header')).not.toBeNull();
+        expect(h.backends).toHaveLength(0);
+        if (!ready) {
+          h.frames.present();
+          expect(h.backends).toHaveLength(0);
+          (h.app.workspace as unknown as { setLayoutReady__(): void }).setLayoutReady__();
+        }
+        expect(h.frames.frames.size).toBe(1);
+        // A visible sidebar is useful even when the editor owns the active leaf.
+        expect(h.app.workspace.getActiveViewOfType(PanelView)).not.toBe(view);
+        h.frames.present();
+        expect(h.backends).toHaveLength(0);
+        await vi.waitFor(() => {
+          expect(h.backends).toHaveLength(1);
+        });
+        const cursor = await h.search.open(
+          { kind: 'roots', query: 'needle' },
+          new AbortController().signal,
+        );
+        expect(cursor.total).toBe(1);
+        h.search.release(cursor);
+        h.app.workspace.trigger('layout-change');
+        h.app.workspace.trigger('resize');
+        expect(h.frames.frames.size).toBe(0);
+      } finally {
+        await h.dispose();
+      }
+    },
+  );
+
+  it('leaves hidden restored and zero-area panels cold until a visible opportunity', async () => {
+    const h = await prewarmPanel();
+    try {
+      const { view } = await h.mount(true, true);
+      h.frames.present();
+      await flushMicrotasks();
+      expect(h.backends).toHaveLength(0);
+      view.containerEl.hidden = false;
+      setGeometry(view.contentEl, rect(0, 0, 0, 0));
+      h.app.workspace.trigger('layout-change');
+      expect(h.frames.frames.size).toBe(0);
+      setGeometry(view.contentEl, rect(20, 20, 640, 480));
+      h.app.workspace.trigger('active-leaf-change', null);
+      h.frames.present();
+      await vi.waitFor(() => {
+        expect(h.backends).toHaveLength(1);
+      });
+    } finally {
+      await h.dispose();
+    }
+  });
+
+  it('rechecks hidden frame and task callbacks without consuming the later opportunity', async () => {
+    const h = await prewarmPanel();
+    try {
+      const { view } = await h.mount();
+      view.containerEl.hidden = true;
+      h.frames.present();
+      expect(h.frames.frames.size).toBe(0);
+      view.containerEl.hidden = false;
+      h.app.workspace.trigger('resize');
+      h.frames.present();
+      view.containerEl.hidden = true;
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 10));
+      expect(h.backends).toHaveLength(0);
+      view.containerEl.hidden = false;
+      h.app.workspace.trigger('layout-change');
+      h.frames.present();
+      await vi.waitFor(() => {
+        expect(h.backends).toHaveLength(1);
+      });
+    } finally {
+      await h.dispose();
+    }
+  });
+
+  it.each(['frame', 'task', 'layout'] as const)(
+    'close cancels a pending %s and never starts late work',
+    async (phase) => {
+      const h = await prewarmPanel();
+      try {
+        const { view } = await h.mount(phase !== 'layout');
+        if (phase === 'task') h.frames.present();
+        await view.onClose();
+        (h.app.workspace as unknown as { setLayoutReady__(): void }).setLayoutReady__();
+        h.app.workspace.trigger('resize');
+        h.frames.present();
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 10));
+        expect(h.backends).toHaveLength(0);
+        expect(h.frames.frames.size).toBe(0);
+      } finally {
+        await h.dispose();
+      }
+    },
+  );
+
+  it.each(['frame', 'task'] as const)(
+    'cancels the old owner %s callback and schedules only through the migrated owner',
+    async (phase) => {
+      const h = await prewarmPanel();
+      const iframe = document.body.createEl('iframe');
+      try {
+        const owner = expectDefined(iframe.contentWindow);
+        const migrated = panelFrames(owner);
+        const { view, migrate } = await h.mount();
+        if (phase === 'task') h.frames.present(); // old owner's task is queued
+        owner.document.body.append(view.containerEl);
+        migrate(owner);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 10));
+        expect(h.backends).toHaveLength(0);
+        expect(migrated.frames.size).toBe(1);
+        migrated.present();
+        await vi.waitFor(() => {
+          expect(h.backends).toHaveLength(1);
+        });
+      } finally {
+        await h.dispose();
+        iframe.remove();
+      }
+    },
+  );
+
+  it('two panels and early input join one preparation, and close/reopen retains its backend', async () => {
+    const h = await prewarmPanel();
+    try {
+      h.scheduler.hold();
+      const first = await h.mount();
+      await h.mount();
+      const state = (first.view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      state.set('mode', 'search');
+      const input = expectDefined(
+        first.view.contentEl.querySelector<HTMLInputElement>('.abyss-search-global'),
+      );
+      input.value = 'needle';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await vi.waitFor(() => {
+        expect(h.backends).toHaveLength(1);
+      });
+      expect(h.backends[0]?.searchCalls).toBe(0);
+      h.frames.present();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 10));
+      expect(h.backends).toHaveLength(1);
+      await h.scheduler.flush();
+      await searchUiCompleted(
+        expectDefined(first.view.contentEl.querySelector<HTMLElement>('.abyss-center')),
+      );
+      expect(first.view.contentEl.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+      expect(h.backends[0]?.searchCalls).toBe(1);
+      await first.view.onClose();
+      await h.mount();
+      h.frames.present();
+      const cursor = await h.search.open(
+        { kind: 'roots', query: 'needle' },
+        new AbortController().signal,
+      );
+      expect(cursor.total).toBe(1);
+      expect(h.backends).toHaveLength(1);
+      h.search.release(cursor);
+    } finally {
+      await h.dispose();
+    }
+  });
+
+  it('one accepted task change replaces Search once while preserving inspector reconciliation', async () => {
+    const h = await prewarmPanel();
+    try {
+      const { view } = await h.mount();
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      state.set('mode', 'search');
+      const input = expectDefined(
+        view.contentEl.querySelector<HTMLInputElement>('.abyss-search-global'),
+      );
+      input.value = 'needle';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+      await searchUiCompleted(root);
+      state.set('taskStack', [expectDefined(h.index.list()[0])]);
+      const calls = expectDefined(h.backends[0]).searchCalls;
+      const request = Number(root.dataset['searchRequest']);
+      h.index.installCommittedContent('tasks.md', '- [ ] needle updated');
+      await searchUiCompleted(root);
+      expect(expectDefined(h.backends[0]).searchCalls - calls).toBe(1);
+      expect(Number(root.dataset['searchRequest']) - request).toBe(2);
+      expect(root.textContent).toContain('needle updated');
+      expect(state.get('taskStack')[0]).toMatchObject({ title: 'needle updated' });
+    } finally {
+      await h.dispose();
+    }
+  });
+});
+
+it.each(['search', 'tasks'] as const)(
+  'PanelView host CSS/project notifications retain a completed %s request and page',
+  async (mode) => {
+    const h = await prewarmPanel();
+    try {
+      h.index.installCommittedContent(
+        'tasks.md',
+        Array.from({ length: 101 }, (_, i) => `- [ ] needle ${i}`).join('\n'),
+      );
+      const { view } = await h.mount();
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        projectStore_abyssPrivate: ProjectStore;
+      };
+      const state = internals.state_abyssPrivate;
+      state.set('selectedList', 'inbox');
+      state.set('mode', mode);
+      const input = expectDefined(
+        view.contentEl.querySelector<HTMLInputElement>(
+          mode === 'search' ? '.abyss-search-global' : '.abyss-center-search',
+        ),
+      );
+      input.value = 'needle';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+      await searchUiCompleted(root);
+      expectDefined(root.querySelector<HTMLButtonElement>('[aria-label="Next page"]')).click();
+      await searchUiCompleted(root);
+      const card = expectDefined(root.querySelector<HTMLElement>('.abyss-task-card'));
+      if (mode === 'tasks') {
+        card.click();
+        card.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
+        expect(root.querySelectorAll('.abyss-multi-selected')).toHaveLength(1);
+      }
+      const request = root.dataset['searchRequest'];
+      const calls = h.backends[0]?.searchCalls;
+      internals.projectStore_abyssPrivate.refresh();
+      h.app.workspace.trigger('css-change');
+      h.app.workspace.trigger('resize');
+      h.app.metadataCache.trigger('resolved');
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
+      expect(root.dataset['searchRequest']).toBe(request);
+      expect(h.backends[0]?.searchCalls).toBe(calls);
+      expect(card.isConnected).toBe(true);
+      if (mode === 'tasks') expect(root.querySelectorAll('.abyss-multi-selected')).toHaveLength(1);
+      expect(root.textContent).toContain('needle 50');
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+it('passive panel preparation failure is sanitized, quiet and never rearmed by layout events', async () => {
+  const h = await prewarmPanel();
+  const notice = vi
+    .spyOn(Notice.prototype as unknown as { constructor__(s: string): void }, 'constructor__')
+    .mockImplementation(() => {});
+  const sentinel = 'PRIVATE source query task text';
+  let failed = false;
+  const off = h.search.subscribe((state) => {
+    failed = state.phase === 'failed';
+  });
+  vi.spyOn(h.source, 'documents').mockImplementation(() => {
+    throw new Error(sentinel);
+  });
+  try {
+    await h.mount();
+    h.frames.present();
+    await vi.waitFor(() => {
+      expect(failed).toBe(true);
+    });
+    expect(notice).not.toHaveBeenCalled();
+    expect(h.diagnostics.length).toBeGreaterThan(0);
+    expect(JSON.stringify(h.diagnostics)).not.toContain(sentinel);
+    const attempts = h.backends.length;
+    h.app.workspace.trigger('layout-change');
+    h.app.workspace.trigger('resize');
+    h.frames.present();
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 10));
+    expect(h.backends).toHaveLength(attempts);
+  } finally {
+    off();
+    await h.dispose();
+  }
+});
+
+it('closing a panel waiting on an already started build leaves shared preparation alive', async () => {
+  const h = await prewarmPanel();
+  try {
+    h.scheduler.hold();
+    const { view } = await h.mount();
+    h.frames.present();
+    await vi.waitFor(() => {
+      expect(h.backends).toHaveLength(1);
+    });
+    await view.onClose();
+    await h.scheduler.flush();
+    const cursor = await h.search.open(
+      { kind: 'roots', query: 'needle' },
+      new AbortController().signal,
+    );
+    expect(cursor.total).toBe(1);
+    expect(h.backends).toHaveLength(1);
+    h.search.release(cursor);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it('visible prewarm waits on canonical bootstrap and early input joins that same source preparation', async () => {
+  const h = await prewarmPanel(false);
+  try {
+    seedTaskCache(h.app, 'tasks.md', [{ task: ' ', parent: -1, line: 0 }]);
+    const { view } = await h.mount();
+    h.frames.present();
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 10));
+    expect(h.backends).toHaveLength(0);
+    const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+    state.set('mode', 'search');
+    const input = expectDefined(
+      view.contentEl.querySelector<HTMLInputElement>('.abyss-search-global'),
+    );
+    input.value = 'needle';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
+    expect(h.backends).toHaveLength(0);
+    await h.index.initialize();
+    await searchUiCompleted(
+      expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center')),
+    );
+    expect(h.backends).toHaveLength(1);
+    expect(h.backends[0]?.searchCalls).toBe(1);
+    expect(view.contentEl.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it.each(['edit', 'rename', 'delete'] as const)(
+  'panel preparation publishes latest canonical %s while its shared build is held',
+  async (action) => {
+    const h = await prewarmPanel();
+    try {
+      h.scheduler.hold();
+      await h.mount();
+      h.frames.present();
+      await vi.waitFor(() => {
+        expect(h.backends).toHaveLength(1);
+      });
+      const file = expectDefined(h.app.vault.getFileByPath('tasks.md'));
+      if (action === 'edit') {
+        await h.app.vault.modify(file, '- [ ] needle updated\n- [ ] needle added');
+        h.index.installCommittedContent(file.path, '- [ ] needle updated\n- [ ] needle added');
+      } else if (action === 'rename') await h.app.vault.rename(file, 'renamed.md');
+      else await h.app.fileManager.trashFile(file);
+      await flushMicrotasks(20);
+      await h.scheduler.flush();
+      const cursor = await h.search.open(
+        { kind: 'roots', query: 'needle' },
+        new AbortController().signal,
+      );
+      expect(cursor.total).toBe({ delete: 0, edit: 2, rename: 1 }[action]);
+      const page = await h.search.read(cursor, 0, 50, new AbortController().signal);
+      const hydrated = await h.search.resolvePage(page.hits, new AbortController().signal);
+      expect(hydrated.map((hit) => hit.task.root.source.filePath)).toEqual(
+        { delete: [], edit: ['tasks.md', 'tasks.md'], rename: ['renamed.md'] }[action],
+      );
+      expect(h.backends).toHaveLength(1);
+      h.search.release(cursor);
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+it('a detached or off-viewport panel keeps its later visible prewarm opportunity', async () => {
+  const h = await prewarmPanel();
+  try {
+    const { view } = await h.mount();
+    view.containerEl.remove();
+    h.frames.present();
+    expect(h.frames.frames.size).toBe(0);
+    expect(h.backends).toHaveLength(0);
+    document.body.append(view.containerEl);
+    setGeometry(view.contentEl, rect(10000, 10000, 640, 480));
+    h.app.workspace.trigger('layout-change');
+    expect(h.frames.frames.size).toBe(0);
+    setGeometry(view.contentEl, rect(20, 20, 640, 480));
+    h.app.workspace.trigger('resize');
+    h.frames.present();
+    await vi.waitFor(() => {
+      expect(h.backends).toHaveLength(1);
+    });
+  } finally {
+    await h.dispose();
   }
 });

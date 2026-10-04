@@ -215,12 +215,18 @@ no write authority.
 The composition root owns one lazy `TaskSearchService` for the plugin lifetime and exposes its
 read-only public `search: TaskSearchApi` capability. PanelView passes that same service into
 CenterPanel; panel lifetimes own only query controllers and subscriptions. Panel lifetimes do not
-own or rebuild the service. Unload disposes search before TaskIndex.
+own or rebuild the service. PanelView uses public `prepare(signal)` once per mounted lifetime,
+only after workspace readiness, completed mount, visible connected ancestors and positive viewport
+geometry. Its captured owner-window frame followed by a task gives the shell a presentation
+opportunity, with eligibility and owner checks at both callbacks. Hidden or migrated pending work
+is cancelled and can use a later visible opportunity. Closing cancels callbacks and that panel's
+wait; early input and other panels join the same plugin-owned preparation. Passive failures consume
+the opportunity without a Notice or timer retry. Unload disposes search before TaskIndex.
 
 The service subscribes before its source snapshot, publishes accepted generations synchronously,
 and coalesces dirty paths to their latest accepted versions. It projects only changed files through
 `begin/add/commit`, checks versions across cooperative yields, and publishes readiness after every
-dirty path has replayed. The infrastructure service's `prepare(signal)` joins this same pump without
+dirty path has replayed. The service's `prepare(signal)` joins this same pump without
 allocating a cursor; `open` captures its query generation after preparation. Repeated readiness with
 unchanged versions and generation leaves the ready backend and live cursors intact. Normal batches are bounded to 128 documents and a conservative 256 KiB
 UTF-8 payload estimate; one acknowledged batch is in flight, with oversized documents sent alone
@@ -510,6 +516,15 @@ query/view refreshes. Each refresh cancels the old controller and releases its r
 resets the failure episode; empty or invalid input preserves it. Close/reopen creates a new surface
 lifetime. Passive preparation failures remain quiet outside active nonempty Search. No global Notice
 registry is involved.
+
+CenterPanel's narrow `refresh(view | source | projects | links)` routing preserves ordinary
+Tasks/Projects refreshes. Mounted Search and nonempty Tasks filters consume source changes through
+the shared service; PanelView's public query subscription still refreshes navigation and reconciles
+the inspector without scheduling duplicate Search work. ProjectStore notifications keep their owning
+surfaces current without resetting plain Search/filter retrieval. Host note/link notifications only
+restart those surfaces for outgoing grouping or explicit non-relevance outgoing sort. Genuine view,
+settings and time organization changes retain their refresh path. CSS changes preserve completed
+Search/filter requests while ordinary calendar repaint recomputes theme-dependent tag contrast.
 
 Abort/stale supersession is silent and expired cursors restart once. Live preparation failures become
 unavailable inline; raw cancellation-shaped errors without matching owner/source invalidation

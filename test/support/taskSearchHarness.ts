@@ -1,6 +1,7 @@
 import type { CalendarSettings } from '../../src/settings/types';
 import type {
   TaskSearchBackend,
+  TaskSearchDiagnostic,
   TaskSearchMutation,
   TaskSearchScheduler,
 } from '../../src/tasks/application/TaskSearchBackend';
@@ -169,22 +170,37 @@ export function createTaskSearchHarness() {
 export async function createCanonicalSearchHarness(
   files: Record<string, string>,
   settings: CalendarSettings,
+  initialize = true,
 ) {
   const app = await createAppWithFiles(files);
   const parts = configuredTaskApplication(app, settings, { authority: true });
-  await parts.index.initialize();
-  for (const [path, text] of Object.entries(files)) parts.index.installCommittedContent(path, text);
+  if (initialize) {
+    await parts.index.initialize();
+    for (const [path, text] of Object.entries(files))
+      parts.index.installCommittedContent(path, text);
+  }
   const source = parts.index.searchSource();
+  const backends: FakeSearchBackend[] = [];
+  const diagnostics: TaskSearchDiagnostic[] = [];
+  const scheduler = new ControlledSearchScheduler();
   const search = new TaskSearchService({
     source,
     reads: parts.index,
     segment: fallbackSearchWords,
-    scheduler: new ControlledSearchScheduler(),
-    createBackend: async () =>
-      new TaskSearchRuntime(createMiniSearchTaskEngine(fallbackSearchWords)),
-    diagnose: () => {},
+    scheduler,
+    createBackend: async () => {
+      const backend = new FakeSearchBackend();
+      backends.push(backend);
+      return backend;
+    },
+    diagnose: (value) => {
+      diagnostics.push(value);
+    },
   });
   return {
+    diagnostics,
+    backends,
+    scheduler,
     app,
     ...parts,
     source,

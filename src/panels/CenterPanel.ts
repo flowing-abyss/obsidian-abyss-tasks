@@ -589,7 +589,7 @@ export class CenterPanel {
 
   private subscribeToLinkOrganization_abyssPrivate(): void {
     const refresh = (): void => {
-      this.taskSearch_abyssPrivate.refresh();
+      this.taskSearch_abyssPrivate.refresh('links');
     };
     if (this.searchApi_abyssPrivate === undefined) return;
     const vault = this.app_abyssPrivate.vault;
@@ -852,9 +852,9 @@ export class CenterPanel {
       this.abandonTaskDateFocus_abyssPrivate();
   }
 
-  refresh(): void {
+  refresh(reason: 'view' | 'source' | 'projects' | 'links' = 'view'): void {
     if (this.refreshMountedProjects_abyssPrivate(this.state_abyssPrivate.get('mode'))) return;
-    if (this.taskSearch_abyssPrivate.refresh()) return;
+    if (this.taskSearch_abyssPrivate.refresh(reason)) return;
     this.render_abyssPrivate();
   }
 

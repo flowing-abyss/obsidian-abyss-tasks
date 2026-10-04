@@ -1331,3 +1331,28 @@ it('unload cancels startup through the real composed browser backend', async () 
     vi.unstubAllGlobals();
   }
 });
+
+it('plugin load and canonical workspace bootstrap alone leave search backend cold', async () => {
+  const factory = vi.spyOn(browserSearch.BrowserTaskSearchBackend, 'create');
+  const constructed: unknown[] = [];
+  vi.stubGlobal(
+    'Worker',
+    class {
+      constructor() {
+        constructed.push(this);
+      }
+    },
+  );
+  const plugin = makePlugin();
+  try {
+    await plugin.onload();
+    plugin.app.workspace.setLayoutReady__();
+    await plugin.taskIndex.initialize();
+    await flushMicrotasks();
+    expect(constructed).toHaveLength(0);
+    expect(factory).not.toHaveBeenCalled();
+  } finally {
+    plugin.onunload();
+    vi.unstubAllGlobals();
+  }
+});

@@ -75,7 +75,11 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
 };
 
 const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
-  TaskSearchApi: ['src/panels/center/TaskSearch.ts', 'src/panels/task-list/TaskSearchPages.ts'],
+  TaskSearchApi: [
+    'src/panels/center/TaskSearch.ts',
+    'src/panels/task-list/TaskSearchPages.ts',
+    'src/views/PanelView.ts',
+  ],
   TaskReadProjectionApi: ['src/panels/center/TaskSearch.ts'],
   TaskSearchState: ['src/panels/center/TaskSearch.ts'],
   TaskSearchError: ['src/ui/searchStatus.ts'],
@@ -257,6 +261,7 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
   'TaskQueryApi.resolve': 'src/views/PanelView.ts',
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',
   'TaskQueryApi.subscribeReconciled': 'src/projects/ProjectStore.ts',
+  'TaskSearchApi.prepare': 'src/views/PanelView.ts',
   'TaskSearchApi.open': 'src/panels/center/TaskSearch.ts',
   'TaskSearchApi.read': 'src/panels/center/TaskSearch.ts',
   'TaskSearchApi.release': 'src/panels/center/TaskSearch.ts',

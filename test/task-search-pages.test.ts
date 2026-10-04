@@ -10,6 +10,7 @@ function pageSearchApi() {
     throw new Error('Unexpected service call');
   };
   const api: TaskSearchApi = {
+    prepare: vi.fn(unexpected),
     open: vi.fn(unexpected),
     read: vi.fn(unexpected),
     release: vi.fn(unexpected),

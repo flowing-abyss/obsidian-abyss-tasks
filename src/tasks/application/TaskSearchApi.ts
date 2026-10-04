@@ -62,6 +62,7 @@ export type TaskSearchState =
   | { readonly phase: 'failed'; readonly generation: number; readonly episode: number }
   | { readonly phase: 'disposed'; readonly generation: number };
 export interface TaskSearchApi {
+  prepare(signal: AbortSignal): Promise<void>;
   open(request: TaskSearchRequest, signal: AbortSignal): Promise<TaskSearchCursor>;
   read(
     cursor: TaskSearchCursor,

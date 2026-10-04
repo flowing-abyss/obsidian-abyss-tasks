@@ -191,6 +191,11 @@ export class PanelView extends ItemView {
   private readonly projectManager_abyssPrivate: ProjectManager | undefined;
   private timeTracking_abyssPrivate: TrackingSurface | undefined;
   private railTracking_abyssPrivate: RailTrackingWidgetHandle | undefined;
+  private searchWait_abyssPrivate: AbortController | undefined = undefined;
+  private panelsMounted_abyssPrivate = false;
+  private searchOpportunityConsumed_abyssPrivate = false;
+  private cancelSearchPresentation_abyssPrivate: (() => void) | undefined = undefined;
+  private searchOpportunitiesCleanup_abyssPrivate: (() => void) | undefined = undefined;
 
   constructor(leaf: WorkspaceLeaf, ...dependencies: PanelViewDependencies) {
     super(leaf);
@@ -258,6 +263,9 @@ export class PanelView extends ItemView {
   }
 
   override onOpen(): Promise<void> {
+    this.searchWait_abyssPrivate = new AbortController();
+    this.panelsMounted_abyssPrivate = false;
+    this.searchOpportunityConsumed_abyssPrivate = false;
     this.contentEl.empty();
     this.contentEl.addClass('abyss-panel-view');
 
@@ -295,7 +303,81 @@ export class PanelView extends ItemView {
     this.subscribeToQueries_abyssPrivate();
     this.refreshHostHeader_abyssPrivate();
     this.watchPhoneKeyboard_abyssPrivate();
+    this.panelsMounted_abyssPrivate = true;
+    this.registerSearchOpportunities_abyssPrivate();
+    this.checkSearchOpportunity_abyssPrivate();
     return Promise.resolve();
+  }
+
+  private registerSearchOpportunities_abyssPrivate(): void {
+    const wait = this.searchWait_abyssPrivate;
+    const workspace = this.app.workspace;
+    const check = (): void => {
+      if (this.searchWait_abyssPrivate === wait && wait?.signal.aborted === false)
+        this.checkSearchOpportunity_abyssPrivate();
+    };
+    const refs = [
+      workspace.on('layout-change', check),
+      workspace.on('active-leaf-change', check),
+      workspace.on('resize', check),
+    ];
+    this.searchOpportunitiesCleanup_abyssPrivate = () => {
+      for (const ref of refs) workspace.offref(ref);
+    };
+    workspace.onLayoutReady(check);
+  }
+
+  private canPrepareSearch_abyssPrivate(owner: NonNullable<Document['defaultView']>): boolean {
+    return (
+      this.panelsMounted_abyssPrivate &&
+      this.searchWait_abyssPrivate?.signal.aborted === false &&
+      this.app.workspace.layoutReady &&
+      this.contentEl.isConnected &&
+      this.contentEl.ownerDocument.defaultView === owner &&
+      hasVisibleAncestors(this.contentEl, owner) &&
+      hasPresentedPanelGeometry(this.containerEl, owner) &&
+      hasPresentedPanelGeometry(this.contentEl, owner)
+    );
+  }
+
+  /** A frame and a task offer the mounted shell a presentation opportunity, not a paint guarantee. */
+  private checkSearchOpportunity_abyssPrivate(): void {
+    const owner = this.contentEl.ownerDocument.defaultView;
+    if (owner === null || !this.canPrepareSearch_abyssPrivate(owner)) {
+      this.cancelSearchPresentation_abyssPrivate?.();
+      return;
+    }
+    const search = this.search_abyssPrivate;
+    if (
+      search === undefined ||
+      this.searchOpportunityConsumed_abyssPrivate ||
+      this.cancelSearchPresentation_abyssPrivate !== undefined
+    )
+      return;
+    const wait = this.searchWait_abyssPrivate;
+    if (wait === undefined) return;
+    let timer: number | undefined;
+    const current = (): boolean =>
+      this.searchWait_abyssPrivate === wait && this.canPrepareSearch_abyssPrivate(owner);
+    const frame = owner.requestAnimationFrame(() => {
+      if (!current()) {
+        this.cancelSearchPresentation_abyssPrivate?.();
+        return;
+      }
+      timer = owner.setTimeout(() => {
+        this.cancelSearchPresentation_abyssPrivate = undefined;
+        if (!current()) return;
+        this.searchOpportunityConsumed_abyssPrivate = true;
+        search.prepare(wait.signal).catch(() => {
+          // The shared service owns sanitized failure diagnostics; only active input owns a Notice.
+        });
+      }, 0);
+    });
+    this.cancelSearchPresentation_abyssPrivate = () => {
+      owner.cancelAnimationFrame(frame);
+      if (timer !== undefined) owner.clearTimeout(timer);
+      this.cancelSearchPresentation_abyssPrivate = undefined;
+    };
   }
 
   /**
@@ -553,7 +635,10 @@ export class PanelView extends ItemView {
       onCreationResult: (result, description) => {
         this.presentCreationResult_abyssPrivate(result, description);
       },
-      onRenderComplete: (root) => this.creationPresentation_abyssPrivate?.afterRender(root),
+      onRenderComplete: (root) => {
+        this.creationPresentation_abyssPrivate?.afterRender(root);
+        this.checkSearchOpportunity_abyssPrivate();
+      },
       interactionOwnership: this.interactionRegistry_abyssPrivate,
       navigation: this.panelNavigation_abyssPrivate,
       onSaveViewState: this.onSaveViewState_abyssPrivate,
@@ -595,7 +680,7 @@ export class PanelView extends ItemView {
   private registerProjectUpdates_abyssPrivate(projectStore: ProjectStore): void {
     this.projectStoreUnsub_abyssPrivate = projectStore.onUpdate(() => {
       this.left_abyssPrivate.refresh();
-      this.center_abyssPrivate.refresh();
+      this.center_abyssPrivate.refresh('projects');
     });
   }
 
@@ -603,7 +688,13 @@ export class PanelView extends ItemView {
     this.registerEvent(
       this.app.workspace.on('css-change', () => {
         this.compactPaneAccess_abyssPrivate.refreshWidth();
-        this.center_abyssPrivate.refresh();
+        const mode = this.state_abyssPrivate.get('mode');
+        if (
+          mode !== 'search' &&
+          !(mode === 'tasks' && this.state_abyssPrivate.get('centerFilter').length > 0)
+        )
+          this.center_abyssPrivate.refresh();
+        this.checkSearchOpportunity_abyssPrivate();
       }),
     );
 
@@ -735,6 +826,8 @@ export class PanelView extends ItemView {
     this.bindPanelShortcuts_abyssPrivate();
     this.shortcutMigrationCleanup_abyssPrivate = this.contentEl.onWindowMigrated(() => {
       this.bindPanelShortcuts_abyssPrivate();
+      this.cancelSearchPresentation_abyssPrivate?.();
+      this.checkSearchOpportunity_abyssPrivate();
     });
   }
 
@@ -828,7 +921,8 @@ export class PanelView extends ItemView {
     this.queryUnsub_abyssPrivate = this.queries_abyssPrivate.subscribe((event) => {
       this.rebaseRetiredDiscoveredPrefix_abyssPrivate();
       this.left_abyssPrivate.refresh();
-      if (this.state_abyssPrivate.get('mode') !== 'calendar') this.center_abyssPrivate.refresh();
+      if (this.state_abyssPrivate.get('mode') !== 'calendar')
+        this.center_abyssPrivate.refresh('source');
       const stack = this.state_abyssPrivate.get('taskStack');
       if (stack.length === 0) return;
       const root = stack[0];
@@ -855,6 +949,11 @@ export class PanelView extends ItemView {
   }
 
   override async onClose(): Promise<void> {
+    this.panelsMounted_abyssPrivate = false;
+    this.searchWait_abyssPrivate?.abort();
+    this.cancelSearchPresentation_abyssPrivate?.();
+    this.searchOpportunitiesCleanup_abyssPrivate?.();
+    this.searchOpportunitiesCleanup_abyssPrivate = undefined;
     this.compactPaneAccess_abyssPrivate.reset();
     this.destroyInteractionControllers_abyssPrivate();
     this.releaseSubscriptions_abyssPrivate();

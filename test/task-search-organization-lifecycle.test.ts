@@ -148,3 +148,110 @@ it('captures minimal settings before admission and refreshes same-generation mem
     vi.restoreAllMocks();
   }
 });
+
+it.each(['search', 'tasks'] as const)(
+  'preserves completed %s page, request and selection across unrelated host/project/source routing',
+  async (mode) => {
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': Array.from({ length: 101 }, (_, i) => `- [ ] needle ${i}`).join('\n') },
+      structuredClone(DEFAULT_SETTINGS),
+      mode,
+    );
+    try {
+      h.query('needle');
+      await h.completed();
+      const next = h.root.querySelector<HTMLButtonElement>('[aria-label="Next page"]');
+      expect(next).not.toBeNull();
+      next?.click();
+      await h.completed();
+      const card = h.root.querySelector<HTMLElement>('.abyss-task-card');
+      expect(card).not.toBeNull();
+      if (mode === 'tasks') {
+        card?.click();
+        card?.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
+      }
+      const request = h.root.dataset['searchRequest'];
+      const calls = h.backends[0]?.searchCalls;
+      const selected = h.root.querySelectorAll('.abyss-multi-selected').length;
+      const inspector = h.state.get('taskStack')[0];
+      const unrelated = await h.app.vault.create('unrelated.md', 'No tasks');
+      h.app.vault.trigger('create', unrelated);
+      h.app.metadataCache.trigger('resolved');
+      await h.app.fileManager.trashFile(unrelated);
+      h.app.vault.trigger('delete', unrelated);
+      h.panel.refresh('projects');
+      h.panel.refresh('source');
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
+      expect(h.root.dataset['searchRequest']).toBe(request);
+      expect(h.backends[0]?.searchCalls).toBe(calls);
+      expect(card?.isConnected).toBe(true);
+      expect(h.root.querySelectorAll('.abyss-multi-selected')).toHaveLength(selected);
+      expect(h.state.get('taskStack')[0]).toBe(inspector);
+      expect(h.root.textContent).toContain('needle 50');
+    } finally {
+      h.dispose();
+      vi.restoreAllMocks();
+    }
+  },
+);
+
+it.each([
+  ['group', true, 'search'],
+  ['sort', false, 'search'],
+  ['relevance-sort', false, 'search'],
+  ['group', true, 'tasks'],
+  ['sort', false, 'tasks'],
+] as const)('refreshes only actual outgoing dependency: %s', async (kind, relevance, mode) => {
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': '- [ ] needle [[Target]]' },
+    structuredClone(DEFAULT_SETTINGS),
+    mode,
+  );
+  try {
+    // Configure the actual transient Search session; no replacement organization oracle.
+    const view = h.panel['searchView_abyssPrivate'];
+    h.panel['searchView_abyssPrivate'] = {
+      relevance: kind === 'relevance-sort' ? true : relevance,
+      list: {
+        ...view.list,
+        groupBy: kind === 'group' ? 'outgoing-link' : 'none',
+        sortBy: { field: 'outgoing-link', dir: 'asc' },
+      },
+    };
+    if (mode === 'tasks')
+      h.state.set('centerListViewState', h.panel['searchView_abyssPrivate'].list);
+    let target: string | undefined;
+    vi.spyOn(h.app.metadataCache, 'getFirstLinkpathDest').mockImplementation(() =>
+      target === undefined ? null : h.app.vault.getFileByPath(target),
+    );
+    h.query('needle');
+    await h.completed();
+    const request = h.root.dataset['searchRequest'];
+    const generation = h.root.dataset['searchGeneration'];
+    const file = await h.app.vault.create('Target.md', '');
+    target = file.path;
+    h.app.vault.trigger('create', file);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
+    if (kind === 'relevance-sort') {
+      expect(h.root.dataset['searchRequest']).toBe(request);
+      return;
+    }
+    await h.completed();
+    expect(h.root.dataset['searchRequest']).not.toBe(request);
+    expect(h.root.dataset['searchGeneration']).toBe(generation);
+    let previous = h.root.dataset['searchRequest'];
+    await h.app.vault.rename(file, 'Renamed.md');
+    target = file.path;
+    h.app.vault.trigger('rename', file, 'Target.md');
+    await h.completed();
+    expect(h.root.dataset['searchRequest']).not.toBe(previous);
+    if (kind === 'group') expect(h.root.textContent).toContain('Renamed');
+    previous = h.root.dataset['searchRequest'];
+    h.app.metadataCache.trigger('resolved');
+    await h.completed();
+    expect(h.root.dataset['searchRequest']).not.toBe(previous);
+  } finally {
+    h.dispose();
+    vi.restoreAllMocks();
+  }
+});
