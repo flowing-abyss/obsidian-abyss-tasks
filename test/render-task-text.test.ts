@@ -239,3 +239,47 @@ describe('renderTaskText link occurrence pairing', () => {
     );
   });
 });
+
+it('reports rejected live Markdown once through its owner and suppresses disposed renders', async () => {
+  const failure = new Error('Markdown failure');
+  vi.spyOn(MarkdownRenderer, 'render').mockRejectedValue(failure);
+  const report = vi.fn();
+  const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {});
+  let live = true;
+  const options = {
+    app: {} as App,
+    sourcePath: 'tasks.md',
+    component: new Component(),
+    presentation: 'title' as const,
+    isCurrent: () => live,
+    onRenderFailure: report,
+  };
+  renderTaskText(document.body.createDiv(), '**title**', options);
+  await Promise.resolve();
+  expect(report.mock.calls).toEqual([[failure]]);
+  live = false;
+  renderTaskText(document.body.createDiv(), '**title**', options);
+  await Promise.resolve();
+  expect(report).toHaveBeenCalledTimes(1);
+  expect(diagnostics).not.toHaveBeenCalled();
+});
+
+it('does not wire obsolete connected Markdown after its live guard expires', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
+    holder.createEl('a', { cls: 'internal-link', text: 'Note', attr: { 'data-href': 'Note' } });
+  });
+  const trigger = vi.fn();
+  const host = document.body.createDiv();
+  let live = true;
+  renderTaskText(host, '[[Note]]', {
+    app: { workspace: { trigger } } as unknown as App,
+    sourcePath: 'tasks.md',
+    component: new Component(),
+    isCurrent: () => live,
+  });
+  live = false;
+  await vi.runAllTimersAsync();
+  host.querySelector('a')?.dispatchEvent(new MouseEvent('mouseover'));
+  expect(trigger).not.toHaveBeenCalled();
+});

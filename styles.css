@@ -2195,6 +2195,20 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   font-size: 14px;
 }
 
+/* This host owns its anchor corrections; other scrollers retain native anchoring. */
+.abyss-task-list-surface {
+  display: flow-root;
+  overflow-anchor: none;
+}
+
+.abyss-task-list-surface > .abyss-virtual-row-spacer {
+  height: var(--abyss-virtual-row-height);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  pointer-events: none;
+}
+
 .abyss-group-header {
   padding: var(--size-4-4) var(--size-4-4) var(--size-2-3);
   font-size: 10px;

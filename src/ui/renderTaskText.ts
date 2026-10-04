@@ -10,6 +10,8 @@ import { runAsyncAction } from './runAsyncAction';
 
 export interface RenderTaskTextOptions {
   readonly presentation?: 'title';
+  readonly isCurrent?: () => boolean;
+  readonly onRenderFailure?: (error: unknown) => void;
   app: App;
   sourcePath: string;
   component: Component;
@@ -36,10 +38,18 @@ export function renderTaskText(
     return;
   }
   const holder = el.createSpan({ cls: 'abyss-md' });
-  runAsyncAction(
-    MarkdownRenderer.render(opts.app, presented, holder, opts.sourcePath, opts.component),
-    'Could not render task text',
+  const rendering = MarkdownRenderer.render(
+    opts.app,
+    presented,
+    holder,
+    opts.sourcePath,
+    opts.component,
   );
+  if (opts.onRenderFailure === undefined) runAsyncAction(rendering, 'Could not render task text');
+  else
+    void rendering.catch((error: unknown) => {
+      if (opts.isCurrent?.() !== false) opts.onRenderFailure?.(error);
+    });
   // Unwrap the single wrapping <p> MarkdownRenderer emits so titles stay inline.
   const ownerWindow = holder.ownerDocument.defaultView;
   if (ownerWindow === null) return;
@@ -48,17 +58,30 @@ export function renderTaskText(
     opts.component.removeChild(wiring);
     // The list may have re-rendered (filter keystroke, store update) and detached this
     // node before the macrotask ran — skip the wasted work in that case.
-    if (!holder.isConnected) return;
-    const p = holder.querySelector(':scope > p');
-    if (p != null && holder.childElementCount === 1) {
-      while (p.firstChild != null) holder.appendChild(p.firstChild);
-      p.remove();
+    if (!holder.isConnected || opts.isCurrent?.() === false) return;
+    try {
+      finishRender(holder, tokens, opts);
+    } catch (error) {
+      if (opts.onRenderFailure !== undefined) opts.onRenderFailure(error);
+      else
+        runAsyncAction(
+          Promise.reject(error instanceof Error ? error : new Error(String(error))),
+          'Could not render task text',
+        );
     }
-    wireLinks(holder, tokens, opts);
   }, 0);
   wiring.register(() => {
     ownerWindow.clearTimeout(timer);
   });
+}
+
+function finishRender(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTextOptions): void {
+  const p = holder.querySelector(':scope > p');
+  if (p != null && holder.childElementCount === 1) {
+    while (p.firstChild != null) holder.appendChild(p.firstChild);
+    p.remove();
+  }
+  wireLinks(holder, tokens, opts);
 }
 
 function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTextOptions): void {

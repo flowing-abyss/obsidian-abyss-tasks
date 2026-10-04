@@ -318,17 +318,33 @@ visual occurrences; each row also carries its physical file/line key. Selection,
 navigation, and focus receipts retain occurrence keys. Focus restoration also checks the full task
 reference and yields to outside focus. Menu counts and command lists deduplicate physical tasks in
 visual order. Archive rebasing preserves selected occurrence groups through proven source-line
-successors. Running timers retain all mounted badge elements per physical root and clear them at
-render/disposal boundaries.
+successors. Running timers retain mounted badge elements per physical root. Legacy render-wide badges clear
+at render boundaries; row-owned badges unregister on content replacement or eviction and survive
+legacy refresh. Both read the shared ticker time without new subscriptions.
 
 The `source-note` and `outgoing-link` group/sort choices are additive saved list enums in `state.json`.
 Existing defaults and schema version remain unchanged, and list sort merges preserve unknown nested
 extensions. Older binaries may use their existing fallback for these choices; task Markdown needs
 no migration.
 
-`mountTaskListRows` currently mounts every row. The logical/mounted distinction is a boundary for
-future windowing, not an implemented virtual task list. Actions use the snapshots and order that
-produced the cards; DOM access serves rendering, pointer targeting, focus, and reveal.
+`TaskListSurface` implements bounded keyed row mounts over `RowViewport`, with sparse interaction
+and focus pins, synchronous reveal, revision-aware measurements, and content-relative anchoring.
+It owns its document's observer, animation frame, font/resize/scroll listeners, inert spacers, and
+row eviction. Ordinary native scrolling never writes normalized geometry back to the scroller.
+Hidden/detached surfaces suspend work; resume revalidates layout and document ownership. Initial
+render and deferred native failures pass once to the supplied owner; failed native passes stop
+until an explicit refresh. `mountTaskListRows` remains the eager adapter for existing callers;
+CenterPanel has not yet activated the bounded adapter.
+
+`TaskCardRenderer.mount` owns one loaded Component per row, disposable Markdown generations,
+and its own badge registrations. Its optional `TaskCardInteractionContext` gives whole-card hosts
+the row Component and a current snapshot getter: ordinary events read current authority, while
+started commands retain their captured reference. Explicit row updates refresh status, dependency blocking, and metadata even when the task reference
+is unchanged. The shared `StatusMarker` primitive refreshes checkbox/wrapper semantics in place; a
+focused status marker survives while the row body refreshes. Focused Markdown links retain their
+rendered source generation until focus leaves, while timers, status, and metadata stay current. The optional host failure reporter receives live asynchronous render failures;
+legacy callers retain shared asynchronous diagnostics. DOM access serves rendering, pointer
+targeting, focus, and reveal; logical rows remain the authority for ordering.
 
 [`CalendarMode`](src/panels/calendar/CalendarMode.ts) owns date/view state, calendar view lifetime,
 navigation, query-driven patches, and forecast presentation. Its host interface connects it to the

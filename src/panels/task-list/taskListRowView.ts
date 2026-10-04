@@ -27,7 +27,7 @@ function mountGroupHeader(container: HTMLElement, row: TaskListGroupRow): HTMLEl
   return header;
 }
 
-function mountRow(
+export function mountTaskListRow(
   container: HTMLElement,
   row: TaskListRow,
   renderTask: (container: HTMLElement, row: TaskListTaskRow) => HTMLElement,
@@ -47,7 +47,7 @@ export function mountTaskListRows(
   const elements = new Map<string, HTMLElement>();
   const cards: Array<readonly [string, HTMLElement]> = [];
   for (const row of rows.rows) {
-    const element = mountRow(container, row, renderTask);
+    const element = mountTaskListRow(container, row, renderTask);
     elements.set(row.key, element);
     if (row.kind === 'task') cards.push([row.key, element]);
   }

@@ -162,7 +162,8 @@ export const contracts = {
     '72px': '--size-4-18',
   },
   runtime: {
-    produced: [],
+    // Exact native spacer producer/consumer is exercised by css-policy.test.ts.
+    produced: ['--abyss-virtual-row-height'],
     consumed: ['--abyss-tag-text-light', '--abyss-tag-text-dark'],
   },
   exceptions: [
