@@ -250,7 +250,8 @@ reads. Empty root queries return empty; empty node browse uses compact canonical
 creating an engine. Source failure and recovery are observable through immediate state subscriptions.
 Retry against a still-failed source settles as failed in a new episode; it cannot reinitialize the
 canonical source. Later source readiness retains that failure until another explicit Retry.
-Inline query execution and initial dependency-graph construction remain synchronous limitations.
+Inline query execution remains synchronous. Dependency construction has an inward cooperative
+readiness operation; existing synchronous readers still retain a potentially blocking compatibility path.
 
 ### Creation, transfer, and tags
 
@@ -352,10 +353,29 @@ views through the settings coordinator.
 Tasks-compatible `🆔` and `⛔` Markdown carriers store dependencies. The index derives relations
 from persisted roots and subtasks, excluding recurrence forecasts, without rewriting declarations.
 The standalone graph defensively detaches and freezes its input; the index privately borrows
-canonical nodes with current status scalars and uses the same graph assembly and reverse-edge
-rules. Rich queries detach each requested neighbor root once and freeze only their detached result.
+canonical nodes and classifies status through the captured catalog using the same graph assembly
+and reverse-edge rules. Rich queries detach each requested neighbor root once and freeze only their detached result.
 Graph exact-reference maps key first by the existing revision string, then by the small structural
 address, preserving multiple revisions without serializing source-bearing revisions into new keys.
+
+One resumable domain assembly serves the synchronous driver and TaskIndex's inward
+`prepareDependencies(expectedGeneration, signal)`. Root collection, node registration, declared
+prerequisite IDs and ambiguous candidate expansion have work checkpoints. TaskIndex advances at most
+128 units between existing read-scheduler yields, including a yield before collection. Global native
+stable sorting retains the existing comparator and tie order, isolated between scheduling boundaries;
+its synchronous cost remains a measured limitation. No clock or scheduler enters the domain.
+
+TaskIndex owns one completed graph and one pending preparation tied to the accepted search
+generation. Waiters share construction but own cancellation separately; losing the final waiter
+closes unfinished traversal and cancels its scheduled continuation. Accepted replacements, deletion,
+exclusion, rename, status semantics, failure and destruction invalidate pending/completed state.
+Canonical replacement/deletion precedes cancellation callbacks and source notification. Only a
+complete, current, live graph publishes, with pending ownership cleared before waiters settle.
+A synchronous reader can drain the same suspended cursor; success precedes scheduler cancellation,
+and late continuations cannot replace or clear newer work. Finished caches survive caller closure.
+Failures use typed read outcomes and sanitized diagnostics; there is no automatic synchronous retry.
+This operation remains inward, without public API publication or presentation gating. Ordinary
+synchronous queries, dense graph queries, and rich relation detachment retain their existing costs.
 
 [`TaskDependencyService`](src/tasks/application/TaskDependencyService.ts) owns dependency commands,
 linked subtask creation, and completion checks against the live status catalog. Query eligibility

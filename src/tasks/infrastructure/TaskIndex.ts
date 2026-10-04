@@ -30,7 +30,7 @@ import { cloneTaskSnapshot, taskSnapshotWithStatuses } from '../domain/cloneTask
 import type { TaskResolutionCandidate } from '../domain/commands';
 import type { StatusCatalog } from '../domain/StatusCatalog';
 import {
-  assembleTaskDependencyGraph,
+  assembleTaskDependencyGraphSteps,
   enumerateTaskNodes,
   type TaskDependencyEligibility,
   type TaskDependencyGraph,
@@ -937,6 +937,23 @@ function activeRecurringSources(
   );
 }
 
+type DependencyAssembly = Generator<void | 'boundary', TaskDependencyGraph | undefined>;
+function drainDependencyAssembly(iterator: DependencyAssembly): TaskDependencyGraph {
+  let step = iterator.next();
+  while (step.done !== true) step = iterator.next();
+  if (step.value === undefined)
+    throw new TaskSearchError('unavailable', 'Dependency graph unavailable');
+  return step.value;
+}
+
+interface DependencyPreparation {
+  readonly generation: number;
+  iterator: DependencyAssembly | undefined;
+  readonly controller: AbortController;
+  readonly waiters: Set<(error?: TaskSearchError) => void>;
+  settled: boolean;
+}
+
 export class TaskIndex
   implements
     TaskQueryApi,
@@ -987,6 +1004,7 @@ export class TaskIndex
   private destroyed_abyssPrivate = false;
   private statusCatalog_abyssPrivate: StatusCatalog;
   private dependencyGraph_abyssPrivate: TaskDependencyGraph | undefined;
+  private dependencyPreparation_abyssPrivate: DependencyPreparation | undefined;
   private readonly blockEditor_abyssPrivate = new TaskBlockEditor();
   private readonly locator_abyssPrivate: TaskLocator;
   private excludeSource_abyssPrivate: TaskIndexOptions['excludeSource'];
@@ -1002,7 +1020,7 @@ export class TaskIndex
 
   setStatusCatalog(statusCatalog: StatusCatalog): void {
     this.statusCatalog_abyssPrivate = statusCatalog;
-    this.dependencyGraph_abyssPrivate = undefined;
+    this.invalidateDependencies_abyssPrivate();
     this.publishSearch_abyssPrivate({
       type: 'semantics',
       generation: ++this.searchGeneration_abyssPrivate,
@@ -1028,6 +1046,9 @@ export class TaskIndex
       await this.initialization_abyssPrivate;
     } catch (cause) {
       this.searchFailure_abyssPrivate = { cause };
+      this.invalidateDependencies_abyssPrivate(
+        new TaskSearchError('unavailable', 'Task index unavailable'),
+      );
       this.publishSearch_abyssPrivate({ type: 'state', state: this.searchState_abyssPrivate() });
       throw cause;
     }
@@ -1360,18 +1381,167 @@ export class TaskIndex
     this.publishSearch_abyssPrivate({ type: 'files', generation, files: [{ path, version }] });
   }
 
-  private borrowedDependencyNodes_abyssPrivate(): readonly TaskNodeSnapshot[] {
-    return [...this.taskMap_abyssPrivate.values()]
-      .flat()
-      .sort(stableTaskOrder)
-      .flatMap((root) => [...taskTreeNodes(root)])
-      .map((task) => ({
-        ...task,
-        node: {
-          ...task.node,
-          status: this.statusCatalog_abyssPrivate.statusForSymbol(task.node.statusSymbol),
-        },
-      }));
+  private *dependencyAssembly_abyssPrivate(
+    catalog: StatusCatalog,
+    without?: Parameters<TaskDependencyQueryApi['dependencyEligibility']>[2],
+  ): DependencyAssembly {
+    const roots: TaskSnapshot[] = [];
+    for (const file of this.taskMap_abyssPrivate.values()) {
+      for (const root of file) {
+        roots.push(root);
+        yield;
+      }
+    }
+    // Native stable sort is a measured synchronous limitation, isolated from adjacent batches.
+    yield 'boundary';
+    roots.sort(stableTaskOrder);
+    yield 'boundary';
+    function* nodes(): Iterable<TaskNodeSnapshot> {
+      for (const root of roots) yield* taskTreeNodes(root);
+    }
+    return yield* assembleTaskDependencyGraphSteps(
+      nodes(),
+      (symbol) => catalog.statusForSymbol(symbol),
+      without?.without,
+    );
+  }
+
+  /** Inward readiness operation; callers must recheck generation before using synchronous reads. */
+  async prepareDependencies(expectedGeneration: number, signal: AbortSignal): Promise<void> {
+    await this.awaitSearchReady_abyssPrivate(signal);
+    this.checkSearchGeneration_abyssPrivate(expectedGeneration, signal);
+    if (this.dependencyGraph_abyssPrivate !== undefined) return;
+    let record = this.dependencyPreparation_abyssPrivate;
+    const start = record === undefined;
+    if (record === undefined) {
+      record = {
+        generation: expectedGeneration,
+        iterator: this.dependencyAssembly_abyssPrivate(this.statusCatalog_abyssPrivate),
+        controller: new AbortController(),
+        waiters: new Set(),
+        settled: false,
+      };
+      this.dependencyPreparation_abyssPrivate = record;
+    }
+    const preparation = record;
+    const waiting = new Promise<void>((resolve, reject) => {
+      const settle = (error?: TaskSearchError): void => {
+        signal.removeEventListener('abort', abort);
+        preparation.waiters.delete(settle);
+        if (error === undefined) resolve();
+        else reject(error);
+      };
+      const abort = (): void => {
+        settle(new TaskSearchError('aborted', 'Dependency preparation cancelled'));
+        if (!preparation.settled && preparation.waiters.size === 0)
+          this.settleDependencyPreparation_abyssPrivate(preparation);
+      };
+      preparation.waiters.add(settle);
+      signal.addEventListener('abort', abort, { once: true });
+    });
+    if (start)
+      this.driveDependencyPreparation_abyssPrivate(preparation).catch((cause: unknown) => {
+        this.failDependencyPreparation_abyssPrivate(preparation, cause);
+      });
+    await waiting;
+  }
+
+  private invalidateDependencies_abyssPrivate(
+    error = new TaskSearchError('stale', 'Task generation changed'),
+  ): void {
+    this.dependencyGraph_abyssPrivate = undefined;
+    const record = this.dependencyPreparation_abyssPrivate;
+    if (record !== undefined) this.settleDependencyPreparation_abyssPrivate(record, error);
+  }
+
+  private settleDependencyPreparation_abyssPrivate(
+    record: DependencyPreparation,
+    error?: TaskSearchError,
+  ): void {
+    if (record.settled) return;
+    record.settled = true;
+    if (this.dependencyPreparation_abyssPrivate === record)
+      this.dependencyPreparation_abyssPrivate = undefined;
+    const iterator = record.iterator;
+    record.iterator = undefined;
+    iterator?.return(undefined);
+    for (const settle of record.waiters) settle(error);
+    // Success and waiter settlement precede cancellation of a suspended scheduler continuation.
+    record.controller.abort();
+  }
+
+  private advanceDependencyPreparation_abyssPrivate(
+    record: DependencyPreparation,
+  ): IteratorResult<void | 'boundary', TaskDependencyGraph | undefined> {
+    this.checkSearchGeneration_abyssPrivate(record.generation, record.controller.signal);
+    if (
+      record.settled ||
+      this.dependencyPreparation_abyssPrivate !== record ||
+      record.iterator === undefined
+    )
+      throw new TaskSearchError('stale', 'Dependency preparation superseded');
+    const step = record.iterator.next();
+    if (step.done === true) {
+      this.checkSearchGeneration_abyssPrivate(record.generation, record.controller.signal);
+      if (step.value === undefined || this.dependencyPreparation_abyssPrivate !== record)
+        throw new TaskSearchError('stale', 'Dependency preparation superseded');
+      this.dependencyGraph_abyssPrivate = step.value;
+      this.settleDependencyPreparation_abyssPrivate(record);
+    }
+    return step;
+  }
+
+  private async driveDependencyPreparation_abyssPrivate(
+    record: DependencyPreparation,
+  ): Promise<void> {
+    while (!record.settled) {
+      this.checkSearchGeneration_abyssPrivate(record.generation, record.controller.signal);
+      await this.yieldDependencies_abyssPrivate(record.controller.signal);
+      if (this.dependencyPreparation_abyssPrivate !== record) return;
+      for (let unit = 0; unit < 128; unit++) {
+        const step = this.advanceDependencyPreparation_abyssPrivate(record);
+        if (step.done === true || step.value === 'boundary') break;
+      }
+    }
+  }
+
+  private yieldDependencies_abyssPrivate(signal: AbortSignal): Promise<void> {
+    if (this.options_abyssPrivate.readYield !== undefined)
+      return this.options_abyssPrivate.readYield(signal);
+    return new Promise<void>((resolve, reject) => {
+      const finish = (): void => {
+        signal.removeEventListener('abort', abort);
+        resolve();
+      };
+      const timer = window.setTimeout(finish, 0);
+      const abort = (): void => {
+        window.clearTimeout(timer);
+        signal.removeEventListener('abort', abort);
+        reject(new TaskSearchError('aborted', 'Dependency preparation cancelled'));
+      };
+      signal.addEventListener('abort', abort, { once: true });
+    });
+  }
+
+  private failDependencyPreparation_abyssPrivate(
+    record: DependencyPreparation,
+    cause: unknown,
+  ): TaskSearchError {
+    const error =
+      cause instanceof TaskSearchError
+        ? cause
+        : new TaskSearchError('unavailable', 'Dependency preparation failed');
+    if (!record.settled) {
+      if (error.code === 'unavailable')
+        console.error('[abyss-tasks] dependency preparation failed', {
+          phase: 'dependency-preparation',
+          backend: 'canonical',
+          generation: record.generation,
+          pathCount: this.taskMap_abyssPrivate.size,
+        });
+      this.settleDependencyPreparation_abyssPrivate(record, error);
+    }
+    return error;
   }
 
   dependencySummary(target: TaskNodeRef): TaskDependencySummary {
@@ -1431,11 +1601,8 @@ export class TaskIndex
   ): TaskDependencyEligibility {
     if (options === undefined)
       return this.currentDependencyGraph_abyssPrivate().eligibility(blocker, dependent);
-    const nodes = this.borrowedDependencyNodes_abyssPrivate();
-    const status = (symbol: string): ReturnType<StatusCatalog['statusForSymbol']> =>
-      this.statusCatalog_abyssPrivate.statusForSymbol(symbol);
     const original = options.without;
-    const relation = assembleTaskDependencyGraph(nodes, status)
+    const relation = this.currentDependencyGraph_abyssPrivate()
       .dependencies(original.dependent)
       .blockedBy.find((row) => row.dependencyId === original.dependencyId);
     if (
@@ -1445,15 +1612,29 @@ export class TaskIndex
       !sameTaskNodeRef(dependent, original.blocker)
     )
       return { type: 'rejected', reason: 'unavailable' };
-    return assembleTaskDependencyGraph(nodes, status, original).eligibility(blocker, dependent);
+    return drainDependencyAssembly(
+      this.dependencyAssembly_abyssPrivate(this.statusCatalog_abyssPrivate, options),
+    ).eligibility(blocker, dependent);
   }
 
   private currentDependencyGraph_abyssPrivate(): TaskDependencyGraph {
-    this.dependencyGraph_abyssPrivate ??= assembleTaskDependencyGraph(
-      this.borrowedDependencyNodes_abyssPrivate(),
-      (symbol) => this.statusCatalog_abyssPrivate.statusForSymbol(symbol),
+    if (this.dependencyGraph_abyssPrivate !== undefined) return this.dependencyGraph_abyssPrivate;
+    const pending = this.dependencyPreparation_abyssPrivate;
+    if (pending !== undefined) {
+      try {
+        let step = this.advanceDependencyPreparation_abyssPrivate(pending);
+        while (step.done !== true) step = this.advanceDependencyPreparation_abyssPrivate(pending);
+        if (step.value !== undefined) return step.value;
+      } catch (cause) {
+        throw this.failDependencyPreparation_abyssPrivate(pending, cause);
+      }
+    }
+    const graph = drainDependencyAssembly(
+      this.dependencyAssembly_abyssPrivate(this.statusCatalog_abyssPrivate),
     );
-    return this.dependencyGraph_abyssPrivate;
+    if (!this.destroyed_abyssPrivate && this.searchFailure_abyssPrivate === undefined)
+      this.dependencyGraph_abyssPrivate = graph;
+    return graph;
   }
 
   /** Frozen projections shared by reference; consumers read them and must not mutate them. */
@@ -1542,6 +1723,10 @@ export class TaskIndex
   destroy(): void {
     if (this.destroyed_abyssPrivate) return;
     this.destroyed_abyssPrivate = true;
+    this.taskMap_abyssPrivate.clear();
+    this.invalidateDependencies_abyssPrivate(
+      new TaskSearchError('disposed', 'Task index disposed'),
+    );
     this.publishSearch_abyssPrivate({ type: 'state', state: this.searchState_abyssPrivate() });
     this.searchListeners_abyssPrivate.clear();
     this.searchFiles_abyssPrivate.clear();
@@ -1559,8 +1744,6 @@ export class TaskIndex
     this.pendingReconciledFiles_abyssPrivate.clear();
     this.fileLifecycles_abyssPrivate = new WeakMap();
     this.pendingReads_abyssPrivate.clear();
-    this.taskMap_abyssPrivate.clear();
-    this.dependencyGraph_abyssPrivate = undefined;
     this.fileGenerations_abyssPrivate.clear();
     this.committedContents_abyssPrivate.clear();
     this.reconciliationTransitions_abyssPrivate.clear();
@@ -1916,9 +2099,9 @@ export class TaskIndex
   }
 
   private installFileTasks_abyssPrivate(filePath: string, tasks: readonly TaskSnapshot[]): void {
-    this.dependencyGraph_abyssPrivate = undefined;
     if (tasks.length > 0) this.taskMap_abyssPrivate.set(filePath, tasks);
     else this.taskMap_abyssPrivate.delete(filePath);
+    this.invalidateDependencies_abyssPrivate();
     this.updateSearchFile_abyssPrivate(filePath, tasks);
     const sources = calendarSources(tasks);
     this.calendarDateIndex_abyssPrivate.updateFile(filePath, sources);
@@ -2104,10 +2287,10 @@ export class TaskIndex
   }
 
   private removeFile_abyssPrivate(filePath: string): void {
+    this.taskMap_abyssPrivate.delete(filePath);
+    this.invalidateDependencies_abyssPrivate();
     if (this.searchFiles_abyssPrivate.has(filePath))
       this.updateSearchFile_abyssPrivate(filePath, []);
-    this.dependencyGraph_abyssPrivate = undefined;
-    this.taskMap_abyssPrivate.delete(filePath);
     this.calendarDateIndex_abyssPrivate.updateFile(filePath, []);
     this.timeEntryIndex_abyssPrivate.removeFile(filePath);
     this.recurringSourcesByFile_abyssPrivate.delete(filePath);

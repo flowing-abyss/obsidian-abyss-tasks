@@ -205,61 +205,124 @@ interface DependencyEdge {
   readonly dependent: TaskNodeRef;
 }
 
-function dependencyIndexes(
-  input: readonly TaskNodeSnapshot[],
+/** Synchronous compatibility driver over the same checkpointed assembly. */
+export function assembleTaskDependencyGraph(
+  input: Iterable<TaskNodeSnapshot>,
+  statusForSymbol: (symbol: string) => TaskStatus,
   without?: DependencyEdge,
-): {
-  byRevision: ReadonlyMap<string, ReadonlyMap<string, TaskNodeSnapshot>>;
-  addresses: ReadonlySet<string>;
-  byId: ReadonlyMap<string, readonly TaskNodeSnapshot[]>;
-  prerequisites: ReadonlyMap<TaskNodeSnapshot, readonly TaskNodeSnapshot[]>;
-  dependents: ReadonlyMap<TaskNodeSnapshot, readonly TaskNodeSnapshot[]>;
-} {
+): TaskDependencyGraph {
+  const cursor = assembleTaskDependencyGraphSteps(input, statusForSymbol, without);
+  let step = cursor.next();
+  while (step.done !== true) step = cursor.next();
+  return step.value;
+}
+
+interface DependencyIndexes {
+  byRevision: RevisionLookup<TaskNodeSnapshot>;
+  addresses: Set<string>;
+  byId: Map<string, TaskNodeSnapshot[]>;
+  prerequisites: Map<TaskNodeSnapshot, TaskNodeSnapshot[]>;
+  dependents: Map<TaskNodeSnapshot, TaskNodeSnapshot[]>;
+}
+
+function* dependencyIndexes(
+  input: Iterable<TaskNodeSnapshot>,
+  without?: DependencyEdge,
+): Generator<void, DependencyIndexes> {
   const byId = new Map<string, TaskNodeSnapshot[]>();
   const prerequisites = new Map<TaskNodeSnapshot, TaskNodeSnapshot[]>();
   const dependents = new Map<TaskNodeSnapshot, TaskNodeSnapshot[]>();
-
-  const nodes = input;
   const byRevision: RevisionLookup<TaskNodeSnapshot> = new Map();
-  for (const node of nodes) revisionSet(byRevision, node.target, node);
-  const addresses = new Set(nodes.map((node) => address(node.target)));
-  for (const node of nodes) {
+  const addresses = new Set<string>();
+  const nodes: TaskNodeSnapshot[] = [];
+  for (const node of input) {
+    nodes.push(node);
+    revisionSet(byRevision, node.target, node);
+    addresses.add(address(node.target));
     const id = node.node.dependencyId;
-    if (id === undefined) continue;
-    const matches = byId.get(id) ?? [];
-    matches.push(node);
-    byId.set(id, matches);
+    if (id !== undefined) {
+      const matches = byId.get(id) ?? [];
+      matches.push(node);
+      byId.set(id, matches);
+    }
+    yield;
   }
+  yield* dependencyEdges(nodes, { byId, prerequisites, dependents }, without);
+  return { byRevision, addresses, byId, prerequisites, dependents };
+}
+
+function includesDependencyEdge(
+  blocker: TaskNodeSnapshot,
+  dependent: TaskNodeSnapshot,
+  without?: DependencyEdge,
+): boolean {
+  return (
+    without === undefined ||
+    !sameTaskNodeRef(dependent.target, without.dependent) ||
+    !sameTaskNodeRef(blocker.target, without.blocker)
+  );
+}
+
+function* dependencyEdges(
+  nodes: readonly TaskNodeSnapshot[],
+  {
+    byId,
+    prerequisites,
+    dependents,
+  }: Pick<DependencyIndexes, 'byId' | 'prerequisites' | 'dependents'>,
+  without?: DependencyEdge,
+): Generator<void> {
   for (const dependent of nodes) {
-    const blockers = [...new Set(dependent.node.dependsOn)]
-      .flatMap((id) => byId.get(id) ?? [])
-      .filter(
-        (blocker) =>
-          without === undefined ||
-          !sameTaskNodeRef(dependent.target, without.dependent) ||
-          !sameTaskNodeRef(blocker.target, without.blocker),
-      );
+    const blockers: TaskNodeSnapshot[] = [];
     prerequisites.set(dependent, blockers);
-    for (const blocker of blockers) {
+    const seen = new Set<string>();
+    yield;
+    for (const id of dependent.node.dependsOn) {
+      const duplicate = seen.has(id);
+      seen.add(id);
+      yield;
+      if (duplicate) continue;
+      yield* expandDependencyCandidates(
+        byId.get(id) ?? [],
+        dependent,
+        { blockers, dependents },
+        without,
+      );
+    }
+  }
+}
+
+function* expandDependencyCandidates(
+  candidates: readonly TaskNodeSnapshot[],
+  dependent: TaskNodeSnapshot,
+  {
+    blockers,
+    dependents,
+  }: { blockers: TaskNodeSnapshot[]; dependents: Map<TaskNodeSnapshot, TaskNodeSnapshot[]> },
+  without?: DependencyEdge,
+): Generator<void> {
+  for (const blocker of candidates) {
+    if (includesDependencyEdge(blocker, dependent, without)) {
+      blockers.push(blocker);
       const matches = dependents.get(blocker) ?? [];
       matches.push(dependent);
       dependents.set(blocker, matches);
     }
+    yield;
   }
-
-  return { byRevision, addresses, byId, prerequisites, dependents };
 }
 
-/** Internal shared rules; borrowed results must stay behind the index's detached read boundary. */
-export function assembleTaskDependencyGraph(
-  input: readonly TaskNodeSnapshot[],
+/** Inward borrowed assembly. Each yield completes one node, declared ID or expanded edge. */
+export function* assembleTaskDependencyGraphSteps(
+  input: Iterable<TaskNodeSnapshot>,
   statusForSymbol: (symbol: string) => TaskStatus,
   without?: DependencyEdge,
-): TaskDependencyGraph {
-  const { byRevision, addresses, byId, prerequisites, dependents } = dependencyIndexes(
+): Generator<void, TaskDependencyGraph> {
+  const { byRevision, addresses, byId, prerequisites, dependents } = yield* dependencyIndexes(
     input,
     without,
   );
+  // No final traversal: the closure retains only the query indexes.
   return {
     dependencies(target: TaskNodeRef): TaskDependencyProjection {
       const node = exact(byRevision, target);
