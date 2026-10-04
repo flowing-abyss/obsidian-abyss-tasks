@@ -95,6 +95,7 @@ export interface ProjectsTimelineViewContext<
   readonly requestViewChange: (mutation: () => void) => Promise<boolean>;
   readonly requestNavigation: (action: () => void) => void;
   readonly requestScaleChange: (scale: ProjectTimelineSettings['scale']) => Promise<boolean>;
+  readonly releaseCell: (cell: TCell) => void;
   readonly renderGroupContent: (
     marker: HTMLElement,
     label: HTMLElement,
@@ -1446,6 +1447,7 @@ export class ProjectsTimelineView<
   ): void {
     for (const [fieldId, cell] of row.cells) {
       if (retained.has(fieldId)) continue;
+      this.context_abyssPrivate.releaseCell(cell);
       const fieldRow = cell.element.closest('.abyss-project-timeline-field');
       if (fieldRow === null) cell.element.remove();
       else fieldRow.remove();

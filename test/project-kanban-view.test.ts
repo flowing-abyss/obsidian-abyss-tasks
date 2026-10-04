@@ -1,4 +1,4 @@
-import { MarkdownRenderer, Menu, Notice, type Component } from 'obsidian';
+import { MarkdownRenderer, Menu, Notice } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { isProjectKanbanCustomized } from '../src/panels/projects/ProjectKanbanOptions';
@@ -3597,13 +3597,17 @@ describe('project Kanban overview', () => {
       const board = (
         view as unknown as {
           kanbanView_abyssPrivate: {
-            renderedCells(): ReadonlyArray<{ element: HTMLElement; markdown?: Component }>;
+            renderedCells(): readonly RenderedCellContext[];
           };
         }
       ).kanbanView_abyssPrivate;
-      const markdown = expectDefined(
-        board.renderedCells().find((cell) => cell.element === focusedCell)?.markdown,
+      const retainedCell = expectDefined(
+        board.renderedCells().find((cell) => cell.element === focusedCell),
       );
+      const markdown = retainedCell.markdown;
+      const fieldOwner = retainedCell.resources;
+      const fieldUnload = vi.spyOn(fieldOwner, 'unload');
+      const oldName = expectDefined(retainedCell.element.querySelector('button'));
       const destination = expectDefined(settings.projects.statuses[1 - sourceIndex]);
       const unload = vi.spyOn(markdown, 'unload');
       const start = expectDefined(card.querySelector<HTMLElement>('[data-column-id="start"]'));
@@ -3616,6 +3620,9 @@ describe('project Kanban overview', () => {
         ),
       );
       expect(moved).toBe(card);
+      expect(board.renderedCells().find((cell) => cell.element === focusedCell)).toBe(retainedCell);
+      expect(retainedCell.resources).toBe(fieldOwner);
+      expect(fieldUnload).not.toHaveBeenCalled();
       expect(activeDocument.activeElement).toBe(focusedCell);
       expect(board.renderedCells().find((cell) => cell.element === focusedCell)?.markdown).toBe(
         markdown,
@@ -3634,8 +3641,17 @@ describe('project Kanban overview', () => {
       expect(select).toHaveBeenCalledOnce();
       expect(select.mock.calls[0]?.[0].project.frontmatter['start']).toBe('2026-09-04');
       expect(unload).not.toHaveBeenCalled();
+      const currentContent = expectDefined(retainedCell.contentMarkdown);
+      const contentUnload = vi.spyOn(currentContent, 'unload');
+      const currentName = expectDefined(retainedCell.element.querySelector('button'));
+      const open = vi.spyOn(view, 'finishEditorBeforeAction');
       expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban')).focus();
       view.update([]);
+      expect(fieldUnload).toHaveBeenCalledOnce();
+      expect(contentUnload).toHaveBeenCalledOnce();
+      oldName.click();
+      currentName.click();
+      expect(open).not.toHaveBeenCalled();
       expect(unload).toHaveBeenCalledOnce();
       expect(start.isConnected).toBe(false);
       const calls = select.mock.calls.length;

@@ -592,11 +592,19 @@ successful previews until existing projected-source reconciliation retires them.
 that authority into native pins and invalidates gestures before collapse, hide, detach, or disposal
 can evict their nodes. Actual row focus and explicit editor ownership also pin rows, including
 pickers relocated outside the row. Mount cleanup removes view-owned cell references, DOM, and
-explicit row listeners before the native owner unloads Markdown once. Shared cell-host handlers for all three surfaces register with the
-actual row Component and become inert during that single unload; transferred Kanban rows retain
-that same owner and current-context callbacks. Individual field removal within a surviving row
-still has the row lifetime; it does not introduce a separate cell resource owner. Native render
-failures reach the controller's render feedback,
+explicit row listeners before the native owner unloads Markdown once. In all three project surfaces,
+each mounted row Component owns stable field-resource children. Those children own the cell-host
+handlers and one replaceable content Component for Markdown resources and descendant handlers.
+Content updates remove the previous content child; individual field retirement removes its field
+child through the controller's internal release callback. Both operations remove parent membership
+as well as unload resources. Native row owners still perform final row unload exactly once, and
+Kanban transfers preserve the row, field children, and current-context host callbacks.
+Group-label rendering similarly replaces one content child of its supplied group-row Component.
+Projects passes these finite content children as the shared Markdown helper's explicit link-event
+owners; callers that omit that option keep their existing event behavior. Content invalidation
+uses the helper's existing current-generation guard to suppress retired wiring and render failures;
+it does not cancel native Markdown work, whose holder remains unique to that retired generation.
+Native render failures reach the controller's render feedback,
 diagnostic, and Notice boundary; date mutation failures retain their separate committer boundary.
 
 Overview creation retains a session with a configured status. ProjectManager prepares the note

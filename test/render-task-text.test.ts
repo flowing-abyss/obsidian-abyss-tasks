@@ -106,6 +106,82 @@ describe('renderTaskText link occurrence pairing', () => {
     expect(onEditLink).not.toHaveBeenCalled();
   });
 
+  it('removes opted-in link events with their finite content owner', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
+      holder.createEl('a', {
+        cls: 'internal-link',
+        text: 'Project',
+        attr: { 'data-href': 'Project' },
+      });
+    });
+    const parent = new Component();
+    parent.load();
+    const content = parent.addChild(new Component());
+    const openLinkText = vi.fn().mockResolvedValue(undefined);
+    const trigger = vi.fn();
+    const host = document.body.createDiv();
+    renderTaskText(host, '[[Project]]', {
+      app: { workspace: { openLinkText, trigger } } as unknown as App,
+      sourcePath: 'tasks.md',
+      component: content,
+      linkEventOwner: content,
+      onEditLink: vi.fn(),
+    });
+    await vi.runAllTimersAsync();
+    const anchor = expectDefined(host.querySelector('a'));
+    anchor.dispatchEvent(new MouseEvent('click', { cancelable: true }));
+    anchor.dispatchEvent(new MouseEvent('mouseover'));
+    await Promise.resolve();
+    expect(openLinkText).toHaveBeenCalledOnce();
+    expect(trigger).toHaveBeenCalledOnce();
+    parent.removeChild(content);
+    openLinkText.mockClear();
+    trigger.mockClear();
+    for (const type of ['click', 'mouseover', 'contextmenu']) {
+      const event = new MouseEvent(type, { cancelable: true });
+      anchor.dispatchEvent(event);
+      expect.soft(event.defaultPrevented, type).toBe(false);
+    }
+    await Promise.resolve();
+    expect.soft(openLinkText).not.toHaveBeenCalled();
+    expect.soft(trigger).not.toHaveBeenCalled();
+    parent.unload();
+  });
+
+  it.each([undefined, false])(
+    'adds no parent-retained link cleanups for default interactiveLinks=%s',
+    async (interactiveLinks) => {
+      vi.useFakeTimers();
+      vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
+        holder.createEl('a', {
+          cls: 'internal-link',
+          text: 'Project',
+          attr: { 'data-href': 'Project' },
+        });
+      });
+      const component = new Component();
+      component.load();
+      const events = vi.spyOn(component, 'registerDomEvent');
+      const cleanups = vi.spyOn(component, 'register');
+      const host = document.body.createDiv();
+      for (let cycle = 0; cycle < 20; cycle++) {
+        renderTaskText(host, '[[Project]]', {
+          app: {} as App,
+          sourcePath: 'tasks.md',
+          component,
+          ...(interactiveLinks === undefined ? {} : { interactiveLinks }),
+          ...(interactiveLinks === false ? { linkEventOwner: component } : {}),
+          onEditLink: vi.fn(),
+        });
+        await vi.runAllTimersAsync();
+      }
+      expect(events).not.toHaveBeenCalled();
+      expect(cleanups).not.toHaveBeenCalled();
+      component.unload();
+    },
+  );
+
   it('cancels pending link wiring when its row component is unloaded', () => {
     vi.useFakeTimers();
     vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
@@ -283,3 +359,29 @@ it('does not wire obsolete connected Markdown after its live guard expires', asy
   host.querySelector('a')?.dispatchEvent(new MouseEvent('mouseover'));
   expect(trigger).not.toHaveBeenCalled();
 });
+
+it.each([undefined, true, false])(
+  'preserves default diagnostics only for live isCurrent=%s',
+  async (current) => {
+    const failure = new Error('Markdown default failure');
+    vi.spyOn(MarkdownRenderer, 'render').mockRejectedValue(failure);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const component = new Component();
+    component.load();
+    renderTaskText(document.body.createDiv(), '[[Project]]', {
+      app: {} as App,
+      component,
+      sourcePath: 'tasks.md',
+      ...(current === undefined ? {} : { isCurrent: () => current }),
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    if (current === false) expect(log).not.toHaveBeenCalled();
+    else
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        '[abyss-tasks] Could not render task text',
+        failure,
+      );
+    component.unload();
+  },
+);

@@ -15,6 +15,8 @@ export interface RenderTaskTextOptions {
   app: App;
   sourcePath: string;
   component: Component;
+  /** Finite content-generation owner, removed from its parent when this text retires. */
+  readonly linkEventOwner?: Component;
   interactiveLinks?: boolean;
   onEditLink?: ((occurrenceIndex: number, token: LinkToken) => void) | undefined;
   beforeOpenLink?: (() => Promise<boolean>) | undefined;
@@ -45,7 +47,15 @@ export function renderTaskText(
     opts.sourcePath,
     opts.component,
   );
-  if (opts.onRenderFailure === undefined) runAsyncAction(rendering, 'Could not render task text');
+  if (opts.onRenderFailure === undefined)
+    runAsyncAction(
+      opts.isCurrent === undefined
+        ? rendering
+        : rendering.catch((error: unknown) => {
+            if (opts.isCurrent?.() !== false) throw error;
+          }),
+      'Could not render task text',
+    );
   else
     void rendering.catch((error: unknown) => {
       if (opts.isCurrent?.() !== false) opts.onRenderFailure?.(error);
@@ -93,7 +103,7 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
   // Link click navigates; never bubble to the card/row handler. Obsidian's global
   // internal-link handler is bypassed by stopPropagation, so open the note ourselves.
   anchors.forEach((a) => {
-    a.addEventListener('click', (e) => {
+    registerLinkEvent(opts, a, 'click', (e) => {
       e.stopPropagation();
       if (!a.hasClass('internal-link')) return; // external links keep their default nav
       e.preventDefault();
@@ -110,7 +120,7 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
       }
     });
     // Arm Obsidian's page-preview (hover) popover for internal links.
-    a.addEventListener('mouseover', (e) => {
+    registerLinkEvent(opts, a, 'mouseover', (e) => {
       if (!a.hasClass('internal-link')) return;
       const href = a.getAttribute('data-href') ?? '';
       if (href.length > 0) {
@@ -136,7 +146,7 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
     if (occurrenceIndex === undefined || occurrenceIndex < 0) return;
     const token = tokens[occurrenceIndex];
     if (token === undefined) return;
-    a.addEventListener('contextmenu', (e) => {
+    registerLinkEvent(opts, a, 'contextmenu', (e) => {
       e.preventDefault();
       e.stopPropagation();
       const menu = new Menu();
@@ -144,6 +154,16 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
       showMenuAtMouseEventWithFocus(menu, e);
     });
   });
+}
+
+function registerLinkEvent<K extends keyof HTMLElementEventMap>(
+  opts: RenderTaskTextOptions,
+  anchor: HTMLAnchorElement,
+  type: K,
+  handler: (event: HTMLElementEventMap[K]) => void,
+): void {
+  if (opts.linkEventOwner === undefined) anchor.addEventListener(type, handler);
+  else opts.linkEventOwner.registerDomEvent(anchor, type, handler);
 }
 
 function buildEditLinkItem(

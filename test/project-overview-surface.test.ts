@@ -1,4 +1,5 @@
 import { Component, MarkdownRenderer } from 'obsidian';
+import { Component as MockComponent } from 'obsidian-test-mocks/obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import type {
@@ -831,13 +832,30 @@ function recordOwnerFrames() {
     executed: () => executed,
   };
 }
-function ownedMarkdownResources(groupResources?: Set<Component>): Set<Component> {
+function ownedComponentCounts(component: Component): { children: number; cleanups: number } {
+  const observed = MockComponent.fromOriginalType__(component);
+  let children = observed._children.length;
+  let cleanups = observed.cleanups__.length;
+  for (const child of observed._children) {
+    const nested = ownedComponentCounts(child.asOriginalType__());
+    children += nested.children;
+    cleanups += nested.cleanups;
+  }
+  return { children, cleanups };
+}
+function ownedMarkdownResources(
+  groupResources?: Set<Component>,
+  groupContent?: Set<Component>,
+): Set<Component> {
   const live = new Set<Component>();
   vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (...args) => {
     const [, , holder, , owner] = args;
     const resource = owner.addChild(new Component());
     live.add(resource);
-    if (holder.closest('.abyss-projects-group-label') !== null) groupResources?.add(resource);
+    if (holder.closest('.abyss-projects-group-label') !== null) {
+      groupResources?.add(resource);
+      groupContent?.add(owner);
+    }
     resource.register(() => {
       live.delete(resource);
       groupResources?.delete(resource);
@@ -878,6 +896,10 @@ describe.each(cases)('retained row field/content resources in $mode', (testCase)
     const cells = heldLifetimeCells(h.surface);
     expect(cells).toHaveLength(4);
     const row = expectDefined(cells[0]?.markdown);
+    const fieldUnloads = cells.map((cell) => vi.spyOn(cell.resources, 'unload'));
+    const contentUnloads = cells.map((cell) =>
+      vi.spyOn(expectDefined(cell.contentMarkdown), 'unload'),
+    );
     const unload = vi.spyOn(row, 'unload');
     const name = expectDefined(nameCell(h.surface.renderedCells(), 'Projects/A.md'));
     const held = cells.flatMap((cell) =>
@@ -897,6 +919,10 @@ describe.each(cases)('retained row field/content resources in $mode', (testCase)
     expect(nameCell(h.surface.renderedCells(), 'Projects/A.md')).toBe(name);
     expect(name.markdown).toBe(row);
     expect(unload).not.toHaveBeenCalled();
+    for (const cell of cells)
+      expect(MockComponent.fromOriginalType__(row)._children).not.toContain(cell.resources);
+    for (const retired of [...fieldUnloads, ...contentUnloads])
+      expect(retired).toHaveBeenCalledOnce();
     const calls = selection.mock.calls.length;
     for (const cell of cells) {
       expect(cell.element.isConnected).toBe(false);
@@ -920,7 +946,154 @@ describe.each(cases)('retained row field/content resources in $mode', (testCase)
     expect.soft(h.applyEdits).not.toHaveBeenCalled();
     expect.soft(errors).not.toHaveBeenCalled();
     expect.soft(h.host.querySelector('.abyss-project-cell-editor')).toBeNull();
+    h.view.destroy();
+    mounted.delete(h.view);
+    expect(unload).toHaveBeenCalledOnce();
+    for (const retired of [...fieldUnloads, ...contentUnloads])
+      expect(retired).toHaveBeenCalledOnce();
   });
+
+  it('retires only old content while stable hosts use current fields exactly once', async () => {
+    const frames = recordOwnerFrames();
+    ownedMarkdownResources();
+    const h = mountSurface(testCase, 0, configureLifetimeFields);
+    h.view.update(lifetimeProjects(h.projects));
+    frames.flush();
+    await finishMarkdown();
+    const cells = heldLifetimeCells(h.surface);
+    const name = expectDefined(nameCell(h.surface.renderedCells(), 'Projects/A.md'));
+    const oldName = expectDefined(name.element.querySelector('button'));
+    const old = cells.flatMap((cell) =>
+      Array.from(cell.element.querySelectorAll('a, button, input')),
+    );
+    const open = vi.spyOn(h.app.workspace, 'openLinkText');
+    const hover = vi.spyOn(h.app.workspace, 'trigger');
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const select = vi.spyOn(
+      h.view as unknown as {
+        selectCell_abyssPrivate(cell: RenderedCellContext, extend: boolean): void;
+      },
+      'selectCell_abyssPrivate',
+    );
+    h.view.update(
+      lifetimeProjects(h.projects, 1).map((item) => ({ ...item, name: `${item.name} updated` })),
+    );
+    frames.flush();
+    await finishMarkdown();
+    expect(heldLifetimeCells(h.surface)).toEqual(cells);
+    for (const node of [...old, oldName]) {
+      expect(node.isConnected).toBe(false);
+      for (const type of ['click', 'mouseover', 'change']) {
+        const event = new MouseEvent(type, { cancelable: true });
+        node.dispatchEvent(event);
+        expect.soft(event.defaultPrevented).toBe(false);
+      }
+    }
+    await flushMicrotasks();
+    expect.soft(h.applyEdits).not.toHaveBeenCalled();
+    expect.soft(open).not.toHaveBeenCalled();
+    expect.soft(hover.mock.calls.filter(([type]) => type === 'hover-link')).toEqual([]);
+    expect.soft(errors).not.toHaveBeenCalled();
+    select.mockClear();
+    const flag = expectDefined(cells.find((cell) => cell.field.id === 'property:Flag'));
+    flag.element.dispatchEvent(new MouseEvent('click'));
+    expect(select).toHaveBeenCalledOnce();
+    expect(select.mock.calls[0]?.[0].project.frontmatter['Flag']).toBe(false);
+    const input = expectDefined(flag.element.querySelector('input'));
+    input.checked = true;
+    input.dispatchEvent(new Event('change'));
+    await flushMicrotasks();
+    expect(h.applyEdits).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])(
+    'does not wire or report retired Markdown after late callbacks (group labels=%s)',
+    async (groupLabels) => {
+      const frames = recordOwnerFrames();
+      const pending: Array<{
+        holder: HTMLElement;
+        readonly reject: (error: Error) => void;
+        readonly finish: () => void;
+      }> = [];
+      vi.spyOn(MarkdownRenderer, 'render').mockImplementation(
+        (_app, _text, holder) =>
+          new Promise<void>((resolve, reject) => {
+            holder.createEl('a', {
+              cls: 'internal-link',
+              text: 'Old',
+              attr: { 'data-href': 'Old' },
+            });
+            pending.push({
+              holder,
+              reject,
+              finish: () => {
+                holder.append('Late renderer content');
+                resolve();
+              },
+            });
+          }),
+      );
+      const h = mountSurface(testCase, 0, (settings) => {
+        configureLifetimeFields(settings);
+        if (groupLabels) {
+          settings.table.groupBy = 'property:Link';
+          expectDefined(settings.kanban).groupBy = 'property:Link';
+          expectDefined(settings.timeline).groupBy = 'property:Link';
+        }
+      });
+      const callbacks: Array<() => void> = [];
+      const setTimer = setTimeout;
+      vi.spyOn(window, 'setTimeout').mockImplementation((handler, timeout) => {
+        callbacks.push(() => {
+          handler();
+        });
+        return setTimer(handler, timeout);
+      });
+      h.view.update(lifetimeProjects(h.projects));
+      frames.flush();
+      expect(pending).toHaveLength(groupLabels ? 6 : 3);
+      const retired = pending.splice(0);
+      const late = callbacks.splice(0);
+      if (groupLabels)
+        h.settings.propertyDefinitions['property:Link'] = {
+          type: 'text',
+          presets: [{ value: '[[Target0]]', displayName: 'New group label' }],
+        };
+      h.view.update(lifetimeProjects(h.projects, groupLabels ? 0 : 1));
+      frames.flush();
+      const current = expectDefined(
+        heldLifetimeCells(h.surface).find((cell) => cell.field.id === 'property:Link'),
+      );
+      await finishMarkdown();
+      const html = current.element.innerHTML;
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const open = vi.spyOn(h.app.workspace, 'openLinkText');
+      const hover = vi.spyOn(h.app.workspace, 'trigger');
+      for (const [index, { holder, reject, finish }] of retired.entries()) {
+        // A captured native callback may arrive even after cancellation. Reconnection must not
+        // grant a retired render permission to wire links or publish its failure.
+        document.body.append(holder);
+        if (index % 2 === 0) reject(new Error('retired Markdown failure'));
+        else finish();
+      }
+      for (const callback of late) callback();
+      for (const { holder } of retired) {
+        const anchor = expectDefined(holder.querySelector('a'));
+        anchor.dispatchEvent(new MouseEvent('click', { cancelable: true }));
+        anchor.dispatchEvent(new MouseEvent('mouseover'));
+      }
+      await finishMarkdown();
+      expect.soft(errors).not.toHaveBeenCalled();
+      expect.soft(open).not.toHaveBeenCalled();
+      expect.soft(hover.mock.calls.filter(([type]) => type === 'hover-link')).toEqual([]);
+      expect(current.element.innerHTML).toBe(html);
+      h.view.destroy();
+      mounted.delete(h.view);
+      for (const { reject } of pending) reject(new Error('unloaded Markdown failure'));
+      await flushMicrotasks();
+      expect.soft(errors).not.toHaveBeenCalled();
+    },
+  );
 
   it('bounds settled Markdown child membership over twenty content and field replacements', async () => {
     const frames = recordOwnerFrames();
@@ -931,6 +1104,8 @@ describe.each(cases)('retained row field/content resources in $mode', (testCase)
     await finishMarkdown();
     const name = expectDefined(nameCell(h.surface.renderedCells(), 'Projects/A.md'));
     const retained = live.size;
+    const row = name.markdown;
+    const baseline = ownedComponentCounts(row);
     expect(retained).toBeGreaterThan(0);
     for (let cycle = 1; cycle <= 20; cycle++) {
       h.view.update(lifetimeProjects(h.projects, cycle));
@@ -941,12 +1116,16 @@ describe.each(cases)('retained row field/content resources in $mode', (testCase)
       frames.flush();
       await finishMarkdown();
       expect(nameCell(h.surface.renderedCells(), 'Projects/A.md')).toBe(name);
+      const settled = ownedComponentCounts(row);
+      expect.soft(settled.children).toBeLessThanOrEqual(baseline.children);
+      expect.soft(settled.cleanups).toBeLessThanOrEqual(baseline.cleanups);
     }
     if (testCase.mode !== 'Table') expect(frames.executed()).toBeGreaterThan(0);
     expect.soft(live.size).toBeLessThanOrEqual(retained);
     h.view.destroy();
     mounted.delete(h.view);
     expect(live.size).toBe(0);
+    expect(ownedComponentCounts(row)).toEqual({ children: 0, cleanups: 0 });
   });
 });
 
@@ -954,7 +1133,9 @@ describe.each(cases)('retained group label resources in $mode', (testCase) => {
   it('retires replaced label anchors and children while retaining the header', async () => {
     const frames = recordOwnerFrames();
     const groups = new Set<Component>();
-    const live = ownedMarkdownResources(groups);
+    const groupContent = new Set<Component>();
+    const children = vi.spyOn(Component.prototype, 'addChild');
+    const live = ownedMarkdownResources(groups, groupContent);
     const h = mountSurface(testCase, 0, (settings) => {
       configureLifetimeFields(settings);
       settings.table.groupBy = 'property:Link';
@@ -975,6 +1156,12 @@ describe.each(cases)('retained group label resources in $mode', (testCase) => {
     const anchor = expectDefined(header.querySelector<HTMLElement>('a.internal-link'));
     const retained = live.size;
     const retainedGroups = groups.size;
+    const groupOwners = [...groupContent].map((content) => {
+      const index = children.mock.calls.findIndex(([child]) => child === content);
+      const owner = children.mock.contexts[index];
+      if (!(owner instanceof Component)) throw new Error('Group content was not parent-owned');
+      return { owner, counts: ownedComponentCounts(owner) };
+    });
     expect(retainedGroups).toBeGreaterThan(0);
     const open = vi.spyOn(h.app.workspace, 'openLinkText');
     const hover = vi.spyOn(h.app.workspace, 'trigger');
@@ -987,6 +1174,11 @@ describe.each(cases)('retained group label resources in $mode', (testCase) => {
       frames.flush();
       await finishMarkdown();
       expect(labelHeader()).toBe(header);
+      for (const { owner, counts } of groupOwners) {
+        const settled = ownedComponentCounts(owner);
+        expect.soft(settled.children).toBeLessThanOrEqual(counts.children);
+        expect.soft(settled.cleanups).toBeLessThanOrEqual(counts.cleanups);
+      }
     }
     expect(anchor.isConnected).toBe(false);
     anchor.dispatchEvent(new MouseEvent('click', { cancelable: true }));
@@ -1001,5 +1193,7 @@ describe.each(cases)('retained group label resources in $mode', (testCase) => {
     mounted.delete(h.view);
     expect(live.size).toBe(0);
     expect(groups.size).toBe(0);
+    for (const { owner } of groupOwners)
+      expect(ownedComponentCounts(owner)).toEqual({ children: 0, cleanups: 0 });
   });
 });

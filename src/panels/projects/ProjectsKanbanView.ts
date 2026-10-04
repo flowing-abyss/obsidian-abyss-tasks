@@ -114,6 +114,7 @@ export interface ProjectsKanbanViewContext<TCell extends ProjectKanbanCellContex
   }) => TCell;
   readonly selectCell: (cell: TCell) => void;
   readonly requestViewChange: (mutation: () => void) => Promise<boolean>;
+  readonly releaseCell: (cell: TCell) => void;
   readonly renderGroupContent: (
     marker: HTMLElement,
     label: HTMLElement,
@@ -1287,6 +1288,7 @@ export class ProjectsKanbanView<
     for (const [fieldId, cell] of card.cells) {
       if (retained.has(fieldId)) continue;
       if (cell.element === card.descriptionContent || cell.element === card.progress) continue;
+      this.context_abyssPrivate.releaseCell(cell);
       const row = cell.element.closest('.abyss-project-kanban-field');
       if (row !== null) row.remove();
       else cell.element.empty();

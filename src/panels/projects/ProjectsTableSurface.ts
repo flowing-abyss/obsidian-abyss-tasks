@@ -210,6 +210,7 @@ export interface ProjectsTableSurfaceContext {
   readonly effectiveField: ProjectOverviewFieldResolver;
   /** Creates or patches one cell of a row with the controller's cell renderer. */
   readonly reconcileCell: (options: ReconcileProjectCellOptions) => RenderedCellContext;
+  readonly releaseCell: (cell: RenderedCellContext) => void;
   readonly renderGroupContent: (
     target: GroupContentTarget,
     group: Pick<ProjectTableGroup, 'key' | 'label' | 'value' | 'sourcePath' | 'presentation'>,
@@ -948,6 +949,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     }
     for (const [columnId, cell] of row.cells) {
       if (retainedColumns.has(columnId)) continue;
+      this.#context.releaseCell(cell);
       cell.element.remove();
       row.cells.delete(columnId);
     }

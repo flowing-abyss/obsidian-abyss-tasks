@@ -101,6 +101,7 @@ function mount(
       cell.element.setText(typeof value === 'string' ? value : item.name);
       return cell;
     },
+    releaseCell: () => {},
     selectCell: (cell) => {
       selected.push(cell);
     },
