@@ -535,6 +535,16 @@ export class ProjectsKanbanView<
     });
   }
 
+  /** Keeps the current card alive while its picker may be focused outside this board. */
+  pinEditorCell(element: HTMLElement): () => void {
+    const cell = this.visibleCells_abyssPrivate.find((candidate) => candidate.element === element);
+    const key = cell?.identity.occurrenceId;
+    const column = key === undefined ? undefined : this.rowModels_abyssPrivate.get(key)?.column;
+    if (key === undefined || column?.viewport.element(key)?.contains(element) !== true)
+      return () => {};
+    return column.viewport.pin(key);
+  }
+
   editorFrame(cell: TCell | undefined): ProjectOverviewEditorFrame {
     const stickyHeader =
       cell === undefined ? undefined : this.columnHeader_abyssPrivate(cell.element);

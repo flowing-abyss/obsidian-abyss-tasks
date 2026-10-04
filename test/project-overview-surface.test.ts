@@ -13,7 +13,13 @@ import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTime
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { ProjectsSettings } from '../src/settings/types';
-import { appWithFiles, expectDefined, flushMicrotasks, freshContainer } from './helpers';
+import {
+  appWithFiles,
+  expectDefined,
+  flushMicrotasks,
+  freshContainer,
+  objectMatching,
+} from './helpers';
 
 type Surface = ProjectsOverviewSurface<RenderedCellContext>;
 
@@ -452,4 +458,203 @@ describe.each(cases)('project overview surface contract: $mode', (testCase) => {
         .map(({ disconnected }) => disconnected),
     ).toEqual(testCase.observesScroll ? [true] : []);
   });
+});
+
+function mountHorizontalPicker(kind: 'status' | 'list' | 'tags') {
+  const host = freshContainer();
+  document.body.append(host);
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const base = expectDefined(settings.projects.statuses[0]);
+  settings.projects.statuses = Array.from({ length: 6 }, (_, index) => ({
+    ...base,
+    id: `picker-${index}`,
+    name: `Picker ${index}`,
+  }));
+  const property = kind === 'tags' ? 'tags' : 'Custom';
+  const fieldId = kind === 'status' ? 'status' : `property:${property}`;
+  settings.projects.propertyDefinitions[`property:${property}`] = {
+    type: kind === 'status' ? 'list' : kind,
+  };
+  settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+  settings.projects.kanban.fields = [{ id: fieldId, visible: true }];
+  settings.projects.kanban.showEmptyFields = true;
+  const listed = settings.projects.statuses.flatMap((status) =>
+    Array.from({ length: 50 }, (_, index) =>
+      project({
+        path: `Projects/${status.id}-${index}.md`,
+        name: `Project ${String(index).padStart(2, '0')}`,
+        statusId: status.id,
+        frontmatter: { status: status.name, [property]: [] },
+      }),
+    ),
+  );
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    if (this.matches('.abyss-project-kanban-scroll')) return rectangle(0, 0, 400, 500);
+    if (this.matches('.abyss-project-kanban-column')) {
+      const index = settings.projects.statuses.findIndex(
+        (status) => `id:${status.id}` === this.dataset['statusKey'],
+      );
+      const left = index * 200 - (this.parentElement?.scrollLeft ?? 0);
+      return rectangle(left, 0, left + 200, 500);
+    }
+    return rectangle(0, 0, 0, 0);
+  });
+  const applyEdits = vi.fn(async (): Promise<ProjectEditResult> => ({
+    applied: [],
+    failed: [{ path: 'Projects/picker-0-0.md', message: 'Source changed' }],
+  }));
+  const view = new ProjectsTableView(host, {
+    app: appWithFiles(Object.fromEntries(listed.map(({ path }) => [path, '']))),
+    state: new AppState(),
+    settings,
+    catalog: {
+      ...catalog(),
+      list: () => [{ name: property, type: kind === 'status' ? 'list' : kind }],
+      values: () => ['Next'],
+    },
+    saveViewState: vi.fn().mockResolvedValue(undefined),
+    applyEdits,
+    history: new ProjectEditHistory(applyEdits),
+    createProject: vi.fn().mockResolvedValue(undefined),
+    openProject: vi.fn(),
+    revalidateSourceObservation: vi.fn().mockResolvedValue(false),
+  });
+  mounted.add(view);
+  view.mount(listed);
+  expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Kanban view"]')).click();
+  const surface = expectDefined((view as unknown as SurfaceInternals).kanbanView_abyssPrivate);
+  const rendered = expectDefined(surface.renderedCells().find((cell) => cell.field.id === fieldId));
+  const column = expectDefined(
+    rendered.element.closest<HTMLElement>('.abyss-project-kanban-column'),
+  );
+  const unloaded = vi.fn();
+  expectDefined(rendered.markdown).register(() => {
+    unloaded(host.querySelector('.abyss-project-cell-editor') !== null);
+  });
+  rendered.element.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  const input = expectDefined(host.querySelector<HTMLInputElement>('[role="combobox"]'));
+  const editorHost = expectDefined(input.closest<HTMLElement>('.abyss-project-cell-editor-host'));
+  expect(column.contains(input)).toBe(false);
+  expect(document.activeElement).toBe(input);
+  return {
+    host,
+    view,
+    settings,
+    surface,
+    rendered,
+    column,
+    input,
+    editorHost,
+    applyEdits,
+    unloaded,
+  };
+}
+
+it.each(['status', 'list', 'tags'] as const)(
+  'retains the root-level %s picker anchor and failed draft across horizontal deactivation',
+  async (kind) => {
+    const {
+      host,
+      view,
+      settings,
+      surface,
+      rendered,
+      column,
+      input,
+      editorHost,
+      applyEdits,
+      unloaded,
+    } = mountHorizontalPicker(kind);
+    surface.scroll.scrollLeft = 600;
+    surface.scroll.dispatchEvent(new Event('scroll'));
+    expect(rendered.element.isConnected).toBe(true);
+    expect(column.querySelectorAll('.abyss-project-kanban-card')).toHaveLength(1);
+    expect(unloaded).not.toHaveBeenCalled();
+    expect(
+      surface.renderedCells().find((cell) => cell.element === rendered.element)?.markdown,
+    ).toBe(rendered.markdown);
+    const fieldId = { status: 'status', list: 'property:Custom', tags: 'property:tags' }[kind];
+    const chosen = kind === 'status' ? 'Picker 1' : 'Next';
+    const option = expectDefined(
+      Array.from(editorHost.querySelectorAll<HTMLElement>('[role="option"]')).find(
+        (element) => element.dataset['value'] === chosen,
+      ),
+    );
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    option.click();
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledOnce();
+    expect(applyEdits).toHaveBeenCalledWith([
+      objectMatching({
+        path: 'Projects/picker-0-0.md',
+        field: objectMatching({
+          id: fieldId,
+        }),
+        value: kind === 'status' ? 'Picker 1' : ['Next'],
+        expectedValue: kind === 'status' ? 'Picker 0' : [],
+      }),
+    ]);
+    expect(error).toHaveBeenCalledOnce();
+    expect(editorHost.querySelector('.abyss-project-editor-error')?.textContent).toContain(
+      'Source changed',
+    );
+    expect(option.getAttribute('aria-selected')).toBe('true');
+    expect(input.isConnected).toBe(true);
+    expect(rendered.element.isConnected).toBe(true);
+    expect(unloaded).not.toHaveBeenCalled();
+    if (kind !== 'status') {
+      delete settings.projects.propertyDefinitions[fieldId];
+      view.refreshFields();
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+      await flushMicrotasks();
+      expect(applyEdits).toHaveBeenCalledOnce();
+      expect(editorHost.querySelector('.abyss-project-editor-error')?.textContent).toContain(
+        'configuration changed',
+      );
+    }
+    view.destroy();
+    expect(unloaded).toHaveBeenCalledExactlyOnceWith(false);
+    expect(input.isConnected).toBe(false);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledOnce();
+    expect(host.querySelector('.abyss-project-kanban-card')).toBeNull();
+  },
+);
+
+it.each(['Escape', 'Tab'])(
+  'releases a horizontally offscreen picker anchor after %s closes it',
+  async (key) => {
+    const { host, surface, rendered, input, unloaded, applyEdits } =
+      mountHorizontalPicker('status');
+    surface.scroll.scrollLeft = 600;
+    surface.scroll.dispatchEvent(new Event('scroll'));
+    expect(rendered.element.isConnected).toBe(true);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+    await flushMicrotasks();
+    expect(input.isConnected).toBe(false);
+    expect(host.querySelector('.abyss-project-cell-editor-host')).toBeNull();
+    expect(unloaded).toHaveBeenCalledExactlyOnceWith(false);
+    expect(applyEdits).not.toHaveBeenCalled();
+    // Normal close can reveal a fresh focused cell; moving away evicts it without a stale pin.
+    surface.scroll.scrollLeft = 600;
+    surface.scroll.dispatchEvent(new Event('scroll'));
+    expect(rendered.element.isConnected).toBe(false);
+  },
+);
+
+it('releases an offscreen picker without revealing over later outside focus', async () => {
+  const { surface, input, rendered, unloaded } = mountHorizontalPicker('status');
+  surface.scroll.scrollLeft = 600;
+  surface.scroll.dispatchEvent(new Event('scroll'));
+  const outside = document.body.createEl('button', { text: 'Outside' });
+  outside.focus();
+  await flushMicrotasks();
+  expect(input.isConnected).toBe(false);
+  expect(rendered.element.isConnected).toBe(false);
+  expect(unloaded).toHaveBeenCalledExactlyOnceWith(false);
+  expect(document.activeElement).toBe(outside);
+  expect(surface.scroll.scrollLeft).toBe(600);
 });

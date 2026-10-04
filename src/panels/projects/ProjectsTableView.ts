@@ -1000,8 +1000,8 @@ export class ProjectsTableView {
     this.tableSurface_abyssPrivate.invalidateDragPreview();
     this.pendingAction_abyssPrivate?.replace?.();
     this.pendingAction_abyssPrivate = undefined;
-    this.activeEditor_abyssPrivate?.positionCleanup();
     this.activeEditor_abyssPrivate?.handle.destroy();
+    this.activeEditor_abyssPrivate?.positionCleanup();
     this.activeEditor_abyssPrivate = undefined;
     this.clearOverviewState_abyssPrivate();
     this.tableSurface_abyssPrivate.destroy();
@@ -3591,6 +3591,7 @@ export class ProjectsTableView {
 
   private activateEditor_abyssPrivate(request: MountedEditorRequest): () => void {
     const { project, field, cell, anchor, host, handle } = request;
+    const releaseCard = this.kanbanView_abyssPrivate?.pinEditorCell(cell);
     if (handle.preferredWidth !== undefined) {
       host.addClass('is-picker');
       this.root_abyssPrivate.appendChild(host);
@@ -3604,14 +3605,18 @@ export class ProjectsTableView {
       ...(field.id === 'description' ? { avoid: cell } : {}),
       ...(handle.preferredWidth === undefined ? {} : { preferredWidth: handle.preferredWidth }),
     });
+    const cleanup = (): void => {
+      positionCleanup();
+      releaseCard?.();
+    };
     this.activeEditor_abyssPrivate = {
       projectPath: project.path,
       columnId: field.id,
       handle,
-      positionCleanup,
+      positionCleanup: cleanup,
     };
     handle.focus();
-    return positionCleanup;
+    return cleanup;
   }
 
   private editCell_abyssPrivate(

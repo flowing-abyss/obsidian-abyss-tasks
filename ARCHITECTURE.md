@@ -492,7 +492,11 @@ remain a logical-order subset. Column shells, horizontal layout, and independent
 survive eviction. Visible columns plus one neighboring column activate; offscreen interaction pins
 retain only their sparse rows. Same-project/group moves across status columns transfer the mount,
 loaded Component, and existing pin-release tokens before either column reconciles, preserving cell
-contexts and focus. Eviction removes cell references before unloading Markdown once.
+contexts and focus. The controller acquires `ProjectsKanbanView.pinEditorCell` for the current
+mounted card before relocating a picker to the overview root. That finite pin survives horizontal
+deactivation and failed saves; the existing editor cleanup releases it only after the editor handle
+is invalidated on close or destruction. Eviction removes cell references before unloading Markdown
+once.
 [`projectKanbanRows`](src/panels/projects/projectKanbanRows.ts) computes insertion over full logical
 geometry, excluding the physical source even across duplicate occurrences. Drag owns capture,
 preview, hover delay, auto-scroll, and commit; it retargets the last pointer after edge scrolling.

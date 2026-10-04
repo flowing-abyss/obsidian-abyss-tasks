@@ -67,6 +67,7 @@ function nativeColumn(count = 1000) {
   const cleaned: string[] = [];
   const unloaded: string[] = [];
   const errors: unknown[] = [];
+  const reconciled = vi.fn();
   const owner = new ProjectKanbanColumnViewport({
     host,
     scroll,
@@ -85,13 +86,13 @@ function nativeColumn(count = 1000) {
         },
       };
     },
-    mountedChanged() {},
+    mountedChanged: reconciled,
     reportFailure: (error) => errors.push(error),
   });
   owners.push(owner);
   const rows = Array.from({ length: count }, (_, index) => card(String(index)));
   owner.update(rows, false);
-  return { owner, host, scroll, rows, cleaned, unloaded, errors };
+  return { owner, host, scroll, rows, cleaned, unloaded, errors, reconciled };
 }
 describe('native Kanban columns', () => {
   it.each([1000, 10000])(
@@ -124,12 +125,17 @@ describe('native Kanban columns', () => {
     expect(owner.element('g:0')).toBeUndefined();
   });
   it('does not normalize ordinary fractional or elastic native scroll offsets', () => {
-    const { scroll } = nativeColumn();
     const callbacks: FrameRequestCallback[] = [];
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
       callbacks.push(callback);
       return callbacks.length;
     });
+    const { scroll, reconciled } = nativeColumn();
+    expect(callbacks).toHaveLength(1);
+    callbacks.splice(0).forEach((callback) => {
+      callback(0);
+    });
+    expect(reconciled).toHaveBeenCalledTimes(2);
     let value = 23.75;
     const write = vi.fn((next: number) => {
       value = next;
@@ -140,14 +146,19 @@ describe('native Kanban columns', () => {
       configurable: true,
     });
     scroll.dispatchEvent(new Event('scroll'));
+    expect(callbacks).toHaveLength(1);
     callbacks.splice(0).forEach((callback) => {
       callback(0);
     });
+    expect(reconciled).toHaveBeenCalledTimes(3);
+    expect(write).not.toHaveBeenCalled();
     value = -3.5;
     scroll.dispatchEvent(new Event('scroll'));
+    expect(callbacks).toHaveLength(1);
     callbacks.splice(0).forEach((callback) => {
       callback(0);
     });
+    expect(reconciled).toHaveBeenCalledTimes(4);
     expect(write).not.toHaveBeenCalled();
   });
   it('unloads every mounted Component exactly once after its mount cleanup', () => {
