@@ -1,11 +1,12 @@
 import type { TaskCommand, TaskCommandResult } from '../domain/commands';
 import type {
+  DependencyDirection,
   TaskDependencyEligibility,
   TaskDependencyProjection,
   TaskNodeSnapshot,
 } from '../domain/taskDependencies';
 import type { TaskResolution } from '../domain/taskReconciliation';
-import type { TaskDependencySummary } from '../domain/taskSearchTypes';
+import type { TaskDependencySummary, TaskSearchAddress } from '../domain/taskSearchTypes';
 import type { TrackedEntry, TrackedTotal } from '../domain/timeTracking';
 import type {
   DateRange,
@@ -84,7 +85,26 @@ export type TaskArchiveSession =
       execute(ref: TaskRef): Promise<TaskCommandResult>;
     };
 
+export interface TaskSearchEligibilityRequest {
+  readonly expectedGeneration: number;
+  readonly current: TaskNodeRef;
+  readonly direction: DependencyDirection;
+  readonly addresses: readonly TaskSearchAddress[];
+}
+
+export interface TaskSearchEligibilityBatch {
+  readonly generation: number;
+  readonly items: ReadonlyArray<{
+    readonly address: TaskSearchAddress;
+    readonly eligibility: TaskDependencyEligibility;
+  }>;
+}
+
 export interface TaskDependencyQueryApi {
+  searchEligibility(
+    request: TaskSearchEligibilityRequest,
+    signal: AbortSignal,
+  ): Promise<TaskSearchEligibilityBatch>;
   prepareDependencies(expectedGeneration: number, signal: AbortSignal): Promise<void>;
   listNodes(query?: TaskQuery): readonly TaskNodeSnapshot[];
   dependencies(target: TaskNodeRef): TaskDependencyProjection;

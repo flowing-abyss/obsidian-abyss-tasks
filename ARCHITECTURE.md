@@ -399,6 +399,30 @@ synchronous card dependency badge. The same request and generation must remain c
 hydration, preparation, mounting, and Markdown completion. Inspector and other ordinary synchronous
 queries can still take over preparation; dense queries and rich relation detachment retain their costs.
 
+`TaskDependencyQueryApi.searchEligibility` is a bounded compact read consumed by
+[`TaskDependencySearchProvider`](src/ui/TaskDependencySearchProvider.ts). It accepts at most 30
+opaque addresses, a global generation and an exact current root/subtask reference. TaskIndex joins
+its existing cooperative graph preparation, validates current identity without reconciliation,
+reconstructs borrowed candidates through the existing handle lookup, and uses the same graph rules
+as ordinary eligibility. Candidate checks yield through the existing bounded-read scheduler and
+recheck the global generation before returning; no borrowed snapshot escapes or rejected root is
+hydrated.
+
+The provider subscribes before opening one node/random cursor and captures current target and
+direction for that session. Each page evaluates at most 90 compact candidates, retains at most 30
+included addresses/reasons, then hydrates that final set once. Siblings across scan batches share
+one detached root in the returned page. Context always includes path and line; self/duplicate/inverse
+candidates are omitted and other rejections reuse the picker's shared labels. Sessions retain no
+rich page/root cache. Blank browse creates no fulltext index, and the last page retains its cursor
+for backward reads. Source invalidation, closure and owner abort cancel only the owned session;
+new page requests supersede pending work. Fresh selection hydrates the exact address again and
+reruns generation-bound eligibility. Commands remain the final write authority.
+
+The provider factory is staged for picker composition; InspectorDependencies still owns the live
+synchronous picker path. Its existing option shape is preserved, while compact results add a
+required address through `DependencySearchCandidate`. No modal, keyboard, status or rendering
+ownership has moved in this phase.
+
 [`TaskDependencyService`](src/tasks/application/TaskDependencyService.ts) owns dependency commands,
 linked subtask creation, and completion checks against the live status catalog. Query eligibility
 is advisory: commands revalidate identity, graph constraints, and blockers at the write boundary,

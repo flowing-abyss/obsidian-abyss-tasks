@@ -9,6 +9,8 @@ export type {
   TaskDependencyQueryApi,
   TaskIndexEvent,
   TaskQueryApi,
+  TaskSearchEligibilityBatch,
+  TaskSearchEligibilityRequest,
   TimeTrackingQueryApi,
 } from './application/TaskApplicationApi';
 export { cloneTaskSnapshot } from './domain/cloneTaskSnapshot';

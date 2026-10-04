@@ -91,7 +91,7 @@ function dependencySearchContext(
   return repeated ? `${path}:${taskNodeLine(task.root, task.node) + 1}` : path;
 }
 
-function rejectionLabel(
+export function rejectionLabel(
   reason: Extract<TaskDependencyEligibility, { type: 'rejected' }>['reason'],
 ): string {
   const labels = {

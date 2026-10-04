@@ -15,6 +15,8 @@ import type {
   TaskIndexEvent,
   TaskQuery,
   TaskQueryApi,
+  TaskSearchEligibilityBatch,
+  TaskSearchEligibilityRequest,
   TimeTrackingQueryApi,
 } from '../application/TaskApplicationApi';
 import type { TaskReadProjectionApi } from '../application/TaskSearchApi';
@@ -1639,6 +1641,49 @@ export class TaskIndex
       }),
       blocks: projection.blocks.map((row) => ({ ...row, task: detach(row.task) })),
     });
+  }
+
+  async searchEligibility(
+    request: TaskSearchEligibilityRequest,
+    signal: AbortSignal,
+  ): Promise<TaskSearchEligibilityBatch> {
+    if (request.addresses.length > 30)
+      throw new TaskSearchError('invalid-request', 'Dependency candidate batch too large');
+    await this.prepareDependencies(request.expectedGeneration, signal);
+    this.checkSearchGeneration_abyssPrivate(request.expectedGeneration, signal);
+    this.checkSearchCurrent_abyssPrivate(request.current);
+    const items: Array<TaskSearchEligibilityBatch['items'][number]> = [];
+    for (const address of request.addresses) {
+      this.checkSearchGeneration_abyssPrivate(request.expectedGeneration, signal);
+      const root = this.currentSearchRoot_abyssPrivate(address);
+      if (root === undefined) throw new TaskSearchError('stale', 'Task changed');
+      const candidate = nodeAtSearchAddress(root, address).target;
+      const eligibility =
+        request.direction === 'blocks'
+          ? this.dependencyEligibility(request.current, candidate)
+          : this.dependencyEligibility(candidate, request.current);
+      items.push({ address: { ...address, childLines: [...address.childLines] }, eligibility });
+      await this.yieldDependencies_abyssPrivate(signal);
+    }
+    this.checkSearchGeneration_abyssPrivate(request.expectedGeneration, signal);
+    return { generation: request.expectedGeneration, items };
+  }
+
+  private checkSearchCurrent_abyssPrivate(current: TaskNodeRef): void {
+    const childLines: number[] = [];
+    let target = current;
+    while (target.type === 'subtask') {
+      childLines.unshift(target.ref.relativeLine);
+      target = target.ref.parent;
+    }
+    const ref = target.ref;
+    const root = this.taskMap_abyssPrivate
+      .get(ref.filePath)
+      ?.find((task) => task.ref.line === ref.line);
+    if (root === undefined) throw new TaskSearchError('stale', 'Task changed');
+    const borrowed = nodeAtSearchAddress(root, { epoch: '', version: 0, rootId: 0, childLines });
+    if (!sameTaskNodeRef(borrowed.target, current))
+      throw new TaskSearchError('stale', 'Task changed');
   }
 
   dependencyEligibility(

@@ -75,6 +75,8 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
 };
 
 const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
+  TaskSearchEligibilityRequest: ['src/ui/TaskDependencySearchProvider.ts'],
+  TaskSearchEligibilityBatch: ['src/ui/TaskDependencySearchProvider.ts'],
   createSearchWordSegmenter: ['src/panels/center/TaskSearch.ts'],
   matchSearchText: ['src/ui/markSearchText.ts'],
   prepareSearchQuery: ['src/panels/center/TaskSearch.ts'],
@@ -84,15 +86,22 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskSearchContext: ['src/panels/center/TaskCardRenderer.ts'],
   TaskSearchExcerpt: ['src/panels/center/TaskCardRenderer.ts'],
   TaskSearchApi: [
+    'src/ui/TaskDependencySearchProvider.ts',
     'src/panels/center/TaskSearch.ts',
     'src/panels/task-list/TaskSearchPages.ts',
     'src/views/PanelView.ts',
   ],
   TaskReadProjectionApi: ['src/panels/center/TaskSearch.ts'],
-  TaskSearchState: ['src/panels/center/TaskSearch.ts'],
-  TaskSearchError: ['src/ui/searchStatus.ts'],
-  TaskSearchAddress: ['src/task-lists/taskSearchOrganization.ts'],
-  TaskSearchHit: ['src/task-lists/taskSearchOrganization.ts'],
+  TaskSearchState: ['src/panels/center/TaskSearch.ts', 'src/ui/TaskDependencySearchProvider.ts'],
+  TaskSearchError: ['src/ui/searchStatus.ts', 'src/ui/TaskDependencySearchProvider.ts'],
+  TaskSearchAddress: [
+    'src/task-lists/taskSearchOrganization.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+  ],
+  TaskSearchHit: [
+    'src/task-lists/taskSearchOrganization.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+  ],
   TaskSearchHydratedHit: ['src/panels/task-list/TaskSearchPages.ts'],
   TaskOrganizationRecord: ['src/task-lists/taskSearchOrganization.ts'],
   ArchiveRecovery: ['src/ui/TaskArchiveRecoveryModal.ts'],
@@ -159,7 +168,11 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/right/InspectorPlanningSurfaces.ts',
   ],
   TaskQueryApi: ['src/main.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
-  TaskDependencyQueryApi: ['src/main.ts', 'src/panels/right/InspectorDependencies.ts'],
+  TaskDependencyQueryApi: [
+    'src/main.ts',
+    'src/panels/right/InspectorDependencies.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+  ],
   TaskDependencySummary: ['src/ui/taskDependencyPresentation.ts'],
   TaskDependencyEligibility: ['src/ui/dependencySearch.ts'],
   TaskDependencyProjection: ['src/panels/right/InspectorDependencies.ts'],
@@ -271,16 +284,30 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',
   'TaskQueryApi.subscribeReconciled': 'src/projects/ProjectStore.ts',
   'TaskSearchApi.prepare': ['src/views/PanelView.ts', 'src/panels/center/TaskSearch.ts'],
-  'TaskSearchApi.open': 'src/panels/center/TaskSearch.ts',
-  'TaskSearchApi.read': 'src/panels/center/TaskSearch.ts',
-  'TaskSearchApi.release': 'src/panels/center/TaskSearch.ts',
+  'TaskSearchApi.open': [
+    'src/panels/center/TaskSearch.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+  ],
+  'TaskSearchApi.read': [
+    'src/panels/center/TaskSearch.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+  ],
+  'TaskSearchApi.release': [
+    'src/panels/center/TaskSearch.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+  ],
   'TaskSearchApi.resolvePage': [
+    'src/ui/TaskDependencySearchProvider.ts',
     'src/panels/task-list/TaskSearchPages.ts',
     'src/panels/center/TaskSearch.ts',
   ],
-  'TaskSearchApi.subscribe': 'src/panels/center/TaskSearch.ts',
+  'TaskSearchApi.subscribe': [
+    'src/panels/center/TaskSearch.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+  ],
   'TaskReadProjectionApi.organization': 'src/panels/center/TaskSearch.ts',
   'TaskReadProjectionApi.resolveSearchPage': 'src/tasks/infrastructure/search/TaskSearchService.ts',
+  'TaskDependencyQueryApi.searchEligibility': 'src/ui/TaskDependencySearchProvider.ts',
   'TaskDependencyQueryApi.prepareDependencies': 'src/panels/CenterPanel.ts',
   'TaskDependencyQueryApi.listNodes': [
     'src/panels/right/InspectorDependencies.ts',
@@ -900,13 +927,24 @@ function publicInterfaceMembers(): string[] {
 }
 
 function propertyAccesses(path: string): ReadonlySet<string> {
+  return propertyAccessesIn(syntax(path));
+}
+
+function propertyAccessesIn(module: ts.SourceFile): ReadonlySet<string> {
   const names = new Set<string>();
   const visit = (node: ts.Node): void => {
     if (ts.isPropertyAccessExpression(node)) names.add(node.name.text);
     ts.forEachChild(node, visit);
   };
-  visit(syntax(path));
+  visit(module);
   return names;
+}
+
+function compactEligibilityConsumerViolations(path: string, module: ts.SourceFile): string[] {
+  const consumers = PUBLIC_INTERFACE_MEMBER_CONSUMERS['TaskDependencyQueryApi.searchEligibility'];
+  return propertyAccessesIn(module).has('searchEligibility') && consumers !== path
+    ? [`${path}:searchEligibility`]
+    : [];
 }
 
 function searchConstructionSites(path: string, module: ts.SourceFile): string[] {
@@ -1235,6 +1273,32 @@ describe('task architecture boundaries', () => {
       ).toBe(true);
     }
   });
+
+  it(
+    'confines compact eligibility consumption to the real dependency provider',
+    () => {
+      const provider = 'src/ui/TaskDependencySearchProvider.ts';
+      const allowed = syntaxFromText(provider, 'queries.searchEligibility(request, signal)');
+      expect(compactEligibilityConsumerViolations(provider, allowed)).toEqual([]);
+      const unrelated = 'src/panels/probe.ts';
+      expect(compactEligibilityConsumerViolations(unrelated, allowed)).toEqual([
+        'src/panels/probe.ts:searchEligibility',
+      ]);
+      expect(
+        compactEligibilityConsumerViolations(
+          unrelated,
+          syntaxFromText(unrelated, 'queries.dependencyEligibility(blocker, dependent)'),
+        ),
+      ).toEqual([]);
+      expect(
+        sourceFiles().flatMap((absolute) => {
+          const path = repoPath(absolute);
+          return compactEligibilityConsumerViolations(path, syntax(path));
+        }),
+      ).toEqual([]);
+    },
+    SOURCE_WALK_TIMEOUT_MS,
+  );
 
   it('keeps every public application/query member exercised by a named production consumer', () => {
     expect(publicInterfaceMembers()).toEqual(

@@ -262,6 +262,14 @@ function timeTrackingQueryApi(getTasks: () => readonly TaskSnapshot[]): TimeTrac
 
 export function taskQueryApi(overrides: Partial<TestTaskQueries> = {}): TestTaskQueries {
   const api: TestTaskQueries = {
+    searchEligibility: async (request, signal) => {
+      if (signal.aborted) throw new TaskSearchError('aborted', 'Search cancelled');
+      if (request.addresses.length > 0 || api.listNodes().length > 0)
+        throw new Error('Search reads require configuredTaskApplication');
+      if (request.expectedGeneration !== 0)
+        throw new TaskSearchError('stale', 'Task generation changed');
+      return { generation: 0, items: [] };
+    },
     prepareDependencies: async () => {
       if (api.listNodes().length > 0)
         throw new Error('Dependency readiness requires configuredTaskApplication');
