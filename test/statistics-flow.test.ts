@@ -35,6 +35,13 @@ it('keeps creation outcomes separate from completion events and their exact evid
       .evidence('completed', 0, 50)
       .rows.map((r) => r.title),
   ).toEqual(['B', 'D']);
+  const section = required(required(view).sections[0]);
+  const recurringSeries = required(section.charts[0]).series.filter(
+    (series) => series.muted === true,
+  );
+  expect(recurringSeries.length).toBeGreaterThan(0);
+  for (const series of recurringSeries)
+    expect(section.legend.find((legend) => legend.key === series.key)?.muted).toBe(series.muted);
 });
 it('preserves missing current ages and excludes archived open nodes', async () => {
   const tasks = Array.from({ length: 104 }, (_, i) => task(`missing${i}`));

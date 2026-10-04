@@ -422,6 +422,7 @@ export default defineConfig(
   },
   {
     files: [
+      'src/panels/statistics/statisticsFormat.ts',
       'src/statistics/index.ts',
       'src/statistics/statisticsAllocation.ts',
       'src/statistics/statisticsTimeline.ts',

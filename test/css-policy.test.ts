@@ -1,6 +1,11 @@
 import { Platform } from 'obsidian';
 import stylelint from 'stylelint';
 import { describe, expect, it } from 'vitest';
+import {
+  statisticsNumber,
+  statisticsSeriesOpacity,
+  statisticsSeriesPaint,
+} from '../src/panels/statistics/statisticsFormat';
 import { contracts } from '../tooling/css-contracts.mjs';
 import { analyzeCss, discoverRuntimeVariables } from '../tooling/css-policy.mjs';
 import { CHILD_PROCESS_TIMEOUT_MS } from './support/timeouts';
@@ -428,7 +433,10 @@ it('keeps the two dynamic tag text consumers tied to the real luminance choice',
     expect(tagFillTextColorVar(element, '#000000')).toBe('var(--abyss-tag-text-light)');
     document.body.setCssProps({ '--background-primary': '#ffffff' });
     expect(tagFillTextColorVar(element, '#ffffff')).toBe('var(--abyss-tag-text-dark)');
-    expect(contracts.runtime.consumed).toEqual(['--abyss-tag-text-light', '--abyss-tag-text-dark']);
+    expect(contracts.runtime.consumed.filter((name) => name.startsWith('--abyss-tag-'))).toEqual([
+      '--abyss-tag-text-light',
+      '--abyss-tag-text-dark',
+    ]);
   } finally {
     element.remove();
     if (prior === '') document.body.style.removeProperty('--background-primary');
@@ -574,4 +582,69 @@ it('discovers the range coordinate from its real source owner', async () => {
       contracts: { ...fixtureContracts, runtime },
     }),
   ).toEqual([]);
+});
+
+describe('Statistics semantic paint contracts', () => {
+  it('enrolls exactly the documented external tooltip consumers and rejects unknown variables', async () => {
+    const names = [
+      '--ts-chart-tooltip-background',
+      '--ts-chart-tooltip-color',
+      '--ts-chart-tooltip-border',
+      '--ts-chart-tooltip-border-radius',
+      '--ts-chart-tooltip-shadow',
+      '--ts-chart-tooltip-max-width',
+      '--ts-chart-tooltip-padding',
+      '--ts-chart-tooltip-font',
+    ];
+    expect(
+      contracts.runtime.consumed.filter((name) => name.startsWith('--ts-chart-tooltip-')),
+    ).toEqual(names);
+    const { default: ts } = await import('typescript');
+    const css = ts.sys.readFile(ts.sys.resolvePath('styles.css'));
+    if (css === undefined) throw new Error('Missing Statistics surface styles');
+    for (const name of names) expect(css).toContain(`${name}:`);
+    expect(
+      analyzeCss('.abyss-statistics { --ts-chart-tooltip-color: var(--text-normal); }', {
+        file: 'fixture.css',
+        contracts: { ...fixtureContracts, runtime: contracts.runtime },
+      }),
+    ).toEqual([]);
+    expect(
+      analyzeCss('.abyss-statistics { color: var(--ts-chart-tooltip-unknown); }', {
+        file: 'fixture.css',
+        contracts: { ...fixtureContracts, runtime: contracts.runtime },
+      }).map((issue) => issue.ruleId),
+    ).toContain('abyss/known-variable');
+  });
+  it('keeps a category identity across ordering and single-category scopes', () => {
+    const a = { key: 'A', tone: 'accent' as const },
+      b = { key: 'B', tone: 'accent' as const };
+    expect(statisticsSeriesPaint(a, [a, b])).toBe(statisticsSeriesPaint(a, [b, a]));
+    expect(statisticsSeriesPaint(a, [a, b])).toBe(statisticsSeriesPaint(a, [a]));
+  });
+  it('accepts finite host-derived series paints and rejects a fabricated token', () => {
+    const peers = Array.from({ length: 13 }, (_, i) => ({
+      key: `category:${i}`,
+      tone: 'accent' as const,
+    }));
+    const paints = peers.map((peer) => statisticsSeriesPaint(peer, peers));
+    expect(new Set(paints).size).toBe(13);
+    for (const paint of paints)
+      expect(analyze(`.abyss-statistics-swatch { color: ${paint}; }`)).toEqual([]);
+    expect(
+      analyze('.abyss-statistics-swatch { color: var(--statistics-fabricated); }').map(
+        (issue) => issue.ruleId,
+      ),
+    ).toContain('abyss/known-variable');
+    expect(statisticsSeriesPaint({ key: 'ordinary', tone: 'created' }, peers)).toBe(
+      statisticsSeriesPaint({ key: 'recurring', tone: 'created', muted: true }, peers),
+    );
+    expect(
+      statisticsSeriesOpacity({ key: 'recurring', tone: 'created', muted: true }),
+    ).toBeLessThan(statisticsSeriesOpacity({ key: 'ordinary', tone: 'created' }));
+  });
+  it('never formats a measured tiny interval or fractional mean as zero', () => {
+    expect(statisticsNumber(0.00025)).toBe('0.00025');
+    expect(statisticsNumber(0)).toBe('0');
+  });
 });

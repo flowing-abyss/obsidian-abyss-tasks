@@ -281,7 +281,13 @@ class Timeline {
         accessibleLabel: 'Recorded intervals in the selected local week',
         kind: 'timeline',
         layout: this.dense ? 'density' : undefined,
-        x: numeric('Time of day', 1440),
+        x: {
+          ...numeric('Time of day', 1440),
+          tickLabels: Array.from(
+            { length: 25 },
+            (_, hour) => [hour * 60, `${String(hour).padStart(2, '0')}:00`] as const,
+          ),
+        },
         y: bands(
           'Local day',
           this.days.map((lane) => dateOf(lane.day)),

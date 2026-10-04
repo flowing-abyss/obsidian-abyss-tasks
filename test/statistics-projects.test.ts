@@ -249,3 +249,22 @@ it('exposes per-event date coverage for matching scoped terminal populations', a
     true,
   );
 });
+it('provides civil date tick labels for cumulative bucket coordinates', async () => {
+  const dataset = required(
+    await prepareStatisticsDataset(
+      source([task('dated', { planning: { created: date('2026-10-01') } })]),
+      [],
+      work,
+    ),
+  );
+  const view = required(
+    await new StatisticsSession(dataset).view(request({ view: 'movement', period: '7d' }), work),
+  );
+  const axis = required(required(view.sections[0]).charts[0]).x;
+  expect(axis.type).toBe('number');
+  if (axis.type === 'number') {
+    expect(axis.tickLabels).toContainEqual([1, '2026-09-28']);
+    expect(axis.tickLabels).toContainEqual([7, '2026-10-04']);
+    expect(axis.tickLabels?.some(([value]) => value === 0)).toBe(false);
+  }
+});

@@ -9731,3 +9731,63 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 .abyss-tracked-row.is-finished .abyss-tracked-row-title {
   color: var(--text-muted);
 }
+
+/* Statistics owns these documented TanStack 1.0.0 local-tooltip inputs. */
+.abyss-statistics {
+  --ts-chart-tooltip-background: var(--background-secondary);
+  --ts-chart-tooltip-color: var(--text-normal);
+  --ts-chart-tooltip-border: 1px solid var(--background-modifier-border);
+  --ts-chart-tooltip-border-radius: var(--radius-s);
+  --ts-chart-tooltip-shadow: var(--shadow-s, none);
+  --ts-chart-tooltip-max-width: min(24rem, 90%);
+  --ts-chart-tooltip-padding: var(--size-4-2) var(--size-4-3);
+  --ts-chart-tooltip-font: var(--font-ui-small) / var(--line-height-tight)
+    var(--font-interface, var(--font-interface-theme));
+}
+
+.abyss-statistics-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: var(--size-4-4);
+  min-width: 0;
+}
+
+.abyss-statistics-chart {
+  grid-column: 1 / -1;
+  margin: 0;
+  min-width: 0;
+}
+
+.abyss-statistics-chart--facet {
+  grid-column: auto;
+}
+
+.abyss-statistics-chart-caption {
+  margin-bottom: var(--size-4-1);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-medium);
+  overflow-wrap: anywhere;
+}
+
+.abyss-statistics-chart-surface {
+  position: relative;
+  min-width: 0;
+  color: var(--text-normal);
+  font-family: var(--font-interface, var(--font-interface-theme));
+}
+
+.abyss-statistics-chart-svg {
+  display: block;
+  max-width: 100%;
+}
+
+.abyss-statistics-chart-svg:focus-visible {
+  outline: 2px solid var(--background-modifier-border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-s);
+}
+
+.abyss-statistics-tooltip {
+  overflow-wrap: anywhere;
+}

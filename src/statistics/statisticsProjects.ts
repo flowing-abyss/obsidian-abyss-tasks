@@ -132,7 +132,12 @@ class Movement {
       kind: 'lines',
       layout: 'facets',
       facet: { key, label: group.label },
-      x: numeric('Period buckets', this.ctx.calendar.buckets.length),
+      x: {
+        ...numeric('Date', this.ctx.calendar.buckets.length),
+        tickLabels: this.ctx.calendar.buckets.map(
+          (bucket, index) => [index + 1, bucket.key] as const,
+        ),
+      },
       y: numeric('Cumulative tasks', this.maximum),
       series,
       marks,

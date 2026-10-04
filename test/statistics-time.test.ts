@@ -446,3 +446,31 @@ it('exposes sub-hour gap geometry inside dense local-clock cells', async () => {
   ]);
   expect(model.evidence(required(mark.selectionId), 700, 50).rows[0]?.contributionMinutes).toBe(30);
 });
+it('supplies explicit local clock labels for timeline and hourly patterns', async () => {
+  const v = await views([
+    task('timed', { timeEntries: [closed('2026-10-01T09:00Z', '2026-10-01T10:00Z')] }),
+  ]);
+  const timeline = required(required((await v.get('timeline')).sections[0]).charts[0]).x;
+  const patterns = required(required((await v.get('patterns')).sections[0]).charts[0]).x;
+  if (timeline.type !== 'number' || patterns.type !== 'number')
+    throw new Error('Expected numeric clock axes');
+  expect(timeline.tickLabels).toContainEqual([540, '09:00']);
+  expect(timeline.tickLabels).toContainEqual([1440, '24:00']);
+  expect(patterns.tickLabels).toContainEqual([9, '09:00']);
+});
+it('names recorded minutes, elapsed exposure and fractional mean in pattern detail', async () => {
+  const v = await views(
+    [
+      task('tiny', {
+        timeEntries: [closed('2026-10-01T09:00:00.000Z', '2026-10-01T09:00:00.015Z')],
+      }),
+    ],
+    { period: 'today', nowMs: Date.parse('2026-10-01T12:00Z') },
+  );
+  const chart = required(required((await v.get('patterns')).sections[0]).charts[0]);
+  const positive = required(chart.marks.find((mark) => mark.x === 9 && mark.y === 'Thu'));
+  const unavailable = required(chart.marks.find((mark) => mark.x === 15 && mark.y === 'Thu'));
+  expect(positive.detail).toContain('0.00025 recorded minutes / 1 elapsed exposure hours');
+  expect(positive.detail).toContain('mean 0.00025 minutes per hour');
+  expect(unavailable.detail).toContain('No elapsed exposure');
+});

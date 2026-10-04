@@ -6,6 +6,7 @@ export type StatisticsAxis =
       readonly label: string;
       readonly unit?: string | undefined;
       readonly ticks?: readonly number[] | undefined;
+      readonly tickLabels?: ReadonlyArray<readonly [number, string]> | undefined;
     }
   | {
       readonly type: 'band';
@@ -71,7 +72,12 @@ export interface StatisticsChartModel {
     readonly label: string;
   }>;
 }
-export function numeric(label: string, max: number, min = 0, unit?: string): StatisticsAxis {
+export function numeric(
+  label: string,
+  max: number,
+  min = 0,
+  unit?: string,
+): Extract<StatisticsAxis, { type: 'number' }> {
   return { type: 'number', label, domain: [min, Math.max(min + 1, max)], unit };
 }
 export function bands(label: string, categories: readonly string[]): StatisticsAxis {

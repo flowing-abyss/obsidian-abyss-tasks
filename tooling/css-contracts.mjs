@@ -163,7 +163,20 @@ export const contracts = {
   },
   runtime: {
     produced: [],
-    consumed: ['--abyss-tag-text-light', '--abyss-tag-text-dark'],
+    // The pinned external DOM host reads only these documented inputs inside our local tooltip.
+    // https://github.com/TanStack/charts/blob/v1.0.0/docs/reference/focus-and-interaction.md#css-variables
+    consumed: [
+      '--abyss-tag-text-light',
+      '--abyss-tag-text-dark',
+      '--ts-chart-tooltip-background',
+      '--ts-chart-tooltip-color',
+      '--ts-chart-tooltip-border',
+      '--ts-chart-tooltip-border-radius',
+      '--ts-chart-tooltip-shadow',
+      '--ts-chart-tooltip-max-width',
+      '--ts-chart-tooltip-padding',
+      '--ts-chart-tooltip-font',
+    ],
   },
   exceptions: [
     {

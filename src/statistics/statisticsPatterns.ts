@@ -161,6 +161,10 @@ export async function patternsSection(
     denominator: required(hours[cell]),
     weight: hours[cell] === 0 ? undefined : value / required(hours[cell]),
     state: hours[cell] === 0 ? ('unavailable' as const) : ('measured' as const),
+    detail:
+      hours[cell] === 0
+        ? 'No elapsed exposure for this local calendar hour'
+        : `${value} recorded minutes / ${required(hours[cell])} elapsed exposure hours; mean ${value / required(hours[cell])} minutes per hour`,
     selectionId: e.entryQuery(`pattern:${cell}`, (entry) => {
       if (!inScope(required(dataset.tasks[entry.owner]), r.scope)) return undefined;
       const s = span(entry, c.startMs, c.endMs, r.nowMs);
@@ -180,7 +184,13 @@ export async function patternsSection(
         id: 'patterns',
         accessibleLabel: 'Weekday by hour recorded minutes divided by calendar exposure',
         kind: 'heatmap',
-        x: numeric('Local hour', 24),
+        x: {
+          ...numeric('Local hour', 24),
+          tickLabels: Array.from(
+            { length: 24 },
+            (_, hour) => [hour, `${String(hour).padStart(2, '0')}:00`] as const,
+          ),
+        },
         y: bands('Weekday', DAYS),
         series: [],
         marks,

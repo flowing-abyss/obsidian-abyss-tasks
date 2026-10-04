@@ -137,6 +137,7 @@ export interface StatisticsMetric {
   readonly context?: string | undefined;
 }
 export interface StatisticsLegend {
+  readonly muted?: boolean | undefined;
   readonly key: string;
   readonly label: string;
   readonly tone: StatisticsTone;

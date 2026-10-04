@@ -198,7 +198,7 @@ describe('production JavaScript artifact', () => {
 
   beforeAll(() => {
     directory = mkdtempSync(path.join(tmpdir(), 'abyss-production-artifact-'));
-    for (const file of ['src', 'tsconfig.json']) {
+    for (const file of ['src', 'tsconfig.json', 'THIRD_PARTY_NOTICES.txt']) {
       symlinkSync(path.join(root, file), path.join(directory, file));
     }
     writeFileSync(
@@ -230,6 +230,30 @@ describe('production JavaScript artifact', () => {
     expect(buildStatus, buildError).toBe(0);
     expect(Buffer.byteLength(code)).toBeLessThanOrEqual(pkg.release.mainJsBudgetBytes);
     expect(code).not.toContain(suffix);
+  });
+  it('ships the exact installed license texts for the approved runtime inventory', () => {
+    for (const file of [
+      'node_modules/@tanstack/charts/LICENSE',
+      'node_modules/.pnpm/d3-array@3.2.4/node_modules/d3-array/LICENSE',
+      'node_modules/.pnpm/d3-scale@4.0.2/node_modules/d3-scale/LICENSE',
+      'node_modules/.pnpm/d3-shape@3.2.0/node_modules/d3-shape/LICENSE',
+      'node_modules/.pnpm/internmap@2.0.3/node_modules/internmap/LICENSE',
+      'node_modules/rrule/LICENCE',
+    ])
+      expect(code.includes(readFileSync(path.join(root, file), 'utf8').trim()), file).toBe(true);
+    const notices = readFileSync(path.join(root, 'THIRD_PARTY_NOTICES.txt'), 'utf8');
+    expect(code.includes(notices.trim())).toBe(true);
+    expect([...notices.matchAll(/^Package: (.+)$/gm)].map((match) => match[1])).toEqual([
+      '@tanstack/charts@1.0.0',
+      'd3-array@3.2.4',
+      'd3-scale@4.0.2',
+      'd3-shape@3.2.0',
+      'internmap@2.0.3',
+      'rrule@2.8.1',
+    ]);
+    const policy = readFileSync(path.join(root, 'pnpm-workspace.yaml'), 'utf8');
+    expect(policy).toMatch(/^minimumReleaseAge: 1440$/m);
+    expect(policy).not.toContain('minimumReleaseAgeExclude');
   });
 
   it('ships no lookbehind, which iOS before 16.4 cannot compile', () => {

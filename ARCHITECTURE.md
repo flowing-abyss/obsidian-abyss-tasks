@@ -206,6 +206,35 @@ allocating discarded rows, and every page is limited to 50 records. Chart caps b
 with page actions and omitted-node/edge evidence preserving the full populations. Chart axes, series,
 marks and semantic metadata contain no engine, DOM or raw style types; source refs stay in evidence.
 
+### Statistics chart rendering
+
+[`StatisticsChart`](src/panels/statistics/StatisticsChart.ts) is the data-only mount/update/destroy
+port. [`TanStackStatisticsChart`](src/panels/statistics/TanStackStatisticsChart.ts) is the sole
+TanStack Charts import boundary. It converts model coordinates, endpoints, explicit numeric tick
+labels and semantic states into public SVG marks; task classification and evidence selection stay
+with the pure model and the owning mode. Selection callbacks expose only opaque selection IDs.
+Each complete options update replaces its generation, so callbacks from superseded options are
+inert even when a later model reuses a selection string. Engine construction/update failures
+propagate to the owning mode.
+
+[`StatisticsCharts`](src/panels/statistics/StatisticsCharts.ts) retains keyed mounts for the current
+section, updates surviving charts, destroys removed charts, and omits charts with no marks. Suspend
+releases hosts while retaining the models; resume remounts when visibility or owner document changes.
+Each host belongs to its own document/window and delegates responsive layout and disposal to the
+engine. Facet headings are chart-owned; section headings and legends belong to the mode.
+
+[`statisticsFormat`](src/panels/statistics/statisticsFormat.ts) is an engine-free presentation helper
+shared by charts and mode legends. Fixed event tones use semantic host colors, recurring series
+retain muted opacity, and categorical series use a finite host-token palette keyed by identity and
+the section's complete peer list. Tooltip variables are declared on the plugin-owned Statistics
+surface and enrolled as exact external CSS consumers; tooltips remain inside that surface.
+
+[`THIRD_PARTY_NOTICES.txt`](THIRD_PARTY_NOTICES.txt) retains the pinned runtime license inventory,
+including the chart dependencies actually retained by the adapter's bundle analysis. The esbuild
+banner embeds those original notices in development and production `main.js`; their bytes remain
+inside the existing build/release budget checks. Artifact tests assert the installed texts and the
+exact approved package roster. The plugin's own license remains separate.
+
 ### Creation, transfer, and tags
 
 `TaskCaptureApplicationApi` retains a creation session with a frozen destination, local date,
