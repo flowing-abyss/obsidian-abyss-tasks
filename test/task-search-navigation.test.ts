@@ -1,4 +1,4 @@
-import { MarkdownRenderer, Menu } from 'obsidian';
+import { MarkdownRenderer, Menu, Notice } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { TaskSearch, TaskSearchOptions } from '../src/panels/center/TaskSearch';
 import type { TaskSearchReveal } from '../src/panels/center/TaskSearchReveal';
@@ -538,3 +538,138 @@ it('aborts exact activation hydration immediately on a newer inspector intent', 
     h.dispose();
   }
 });
+
+it.each(['reveal', 'filter'] as const)(
+  'settles completed %s results after terminal backend failure without losing exact selection',
+  async (surface) => {
+    const notice = vi
+      .spyOn(
+        Notice.prototype as unknown as { constructor__(message: string): void },
+        'constructor__',
+      )
+      .mockImplementation(() => {});
+    const h = await navigationSearchHarness(2);
+    const hydration = vi.spyOn(h.search, 'resolvePage');
+    const preparation = vi.spyOn(h.search, 'prepare');
+    const phases: string[] = [];
+    const unsubscribe = h.search.subscribe((state) => phases.push(state.phase));
+    const input = (text: string): void => {
+      const element = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-center-search'));
+      element.value = text;
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    try {
+      await h.activateChild();
+      await h.completed();
+      expect(h.state.get('centerFilter')).toBe('');
+      expect(h.receipt()?.address.childLines).toEqual([2, 2]);
+      if (surface === 'filter') {
+        input('needle');
+        await h.completed();
+      }
+      // Exhaust real worker recovery, then let the inline-backed surface finish too.
+      for (const index of [0, 1]) {
+        expectDefined(h.backends[index]).crash();
+        await h.completed();
+      }
+      // The render receipt precedes #run's finally: drain its owner task turn before crashing.
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      expect(hydration.mock.settledResults.length).toBeGreaterThan(0);
+      expect(hydration.mock.settledResults.every((result) => result.type === 'fulfilled')).toBe(
+        true,
+      );
+      expect(preparation.mock.settledResults.every((result) => result.type === 'fulfilled')).toBe(
+        true,
+      );
+      expect(h.root.dataset['searchPhase']).toBe('complete');
+      expect(h.root.dataset['searchLogicalResults']).toBe(surface === 'reveal' ? '2' : '1');
+      const before = h.captureNavigation();
+      const status = h.root.querySelector('.abyss-search-status');
+      expectDefined(h.backends[2]).crash();
+      expect(phases[phases.length - 1]).toBe('failed');
+      expect(h.root.dataset['searchPhase']).toBe('error');
+      expect(h.root.getAttribute('aria-busy')).toBe('false');
+      expect(h.root.dataset['searchLogicalResults']).toBeUndefined();
+      expect(h.root.querySelector('.abyss-search-paging')?.textContent).toBe('');
+      expect(status?.textContent).toContain('Could not load task results');
+      expect(notice).toHaveBeenCalledTimes(1);
+      expect(h.captureNavigation()).toEqual(before);
+
+      // Passive reveal refresh cannot recover the service or create a second notification.
+      h.panel.refresh();
+      await expect(h.completed()).rejects.toThrow();
+      expect(notice).toHaveBeenCalledTimes(1);
+      expect(h.captureNavigation()).toEqual(before);
+      input('needle ');
+      await expect(h.completed()).rejects.toThrow();
+      input('needle  ');
+      await expect(h.completed()).rejects.toThrow();
+      expect(h.root.querySelector('.abyss-search-status')).toBe(status);
+      expect(notice).toHaveBeenCalledTimes(1);
+      expect(h.backends).toHaveLength(3);
+      expect(h.state.get('taskStack')).toEqual(before.taskStack);
+
+      // Only eligible ordinary input, after the existing service cooldown, recovers.
+      const now = h.scheduler.now();
+      vi.spyOn(h.scheduler, 'now').mockReturnValue(now + 5001);
+      input('needle');
+      await h.completed();
+      expect(phases[phases.length - 1]).toBe('ready');
+      expect(h.root.dataset['searchLogicalResults']).toBe('1');
+      expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+      expect(h.state.get('mode')).toBe(before.mode);
+      expect(h.state.get('selectedList')).toEqual(before.selectedList);
+      expect(h.state.get('taskStack')).toEqual(before.taskStack);
+      expect(notice).toHaveBeenCalledTimes(1);
+      h.search.dispose();
+      h.search.dispose();
+      expect(h.root.dataset['searchPhase']).toBe('error');
+      expect(h.root.getAttribute('aria-busy')).toBe('false');
+      expect(h.root.dataset['searchLogicalResults']).toBeUndefined();
+      expect(notice).toHaveBeenCalledTimes(2);
+    } finally {
+      unsubscribe();
+      h.dispose();
+    }
+  },
+);
+
+it.each(['live', 'failed-live', 'closed', 'detached'] as const)(
+  'handles service disposal for a completed %s reveal without leaking notifications',
+  async (owner) => {
+    const notice = vi
+      .spyOn(
+        Notice.prototype as unknown as { constructor__(message: string): void },
+        'constructor__',
+      )
+      .mockImplementation(() => {});
+    const h = await navigationSearchHarness(2);
+    try {
+      await h.activateChild();
+      await h.completed();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      const before = h.captureNavigation();
+      if (owner === 'failed-live') {
+        for (const index of [0, 1]) {
+          expectDefined(h.backends[index]).crash();
+          await h.completed();
+        }
+        expectDefined(h.backends[2]).crash();
+        expect(h.root.dataset['searchPhase']).toBe('error');
+      }
+      if (owner === 'closed') h.panel.destroy();
+      if (owner === 'detached') h.root.remove();
+      h.search.dispose();
+      h.search.dispose();
+      if (owner === 'live' || owner === 'failed-live') {
+        expect(h.root.dataset['searchPhase']).toBe('error');
+        expect(h.root.getAttribute('aria-busy')).toBe('false');
+        expect(h.root.dataset['searchLogicalResults']).toBeUndefined();
+        expect(h.captureNavigation()).toEqual(before);
+      }
+      expect(notice).toHaveBeenCalledTimes(owner === 'live' || owner === 'failed-live' ? 1 : 0);
+    } finally {
+      h.dispose();
+    }
+  },
+);

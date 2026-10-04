@@ -252,10 +252,10 @@ export class TaskSearch {
     }
     if (
       (state.phase === 'failed' || state.phase === 'disposed') &&
-      this.#currentQuery().trim() !== ''
+      (this.#currentQuery().trim() !== '' || this.#options.host.currentReveal() !== undefined)
     ) {
       this.#cancelPending();
-      this.#status?.fail(
+      this.#handleFailure(
         this.#request,
         new TaskSearchError('unavailable', 'Task results unavailable'),
       );
@@ -375,6 +375,11 @@ export class TaskSearch {
       }
       return;
     }
+    this.#failResults(request, error);
+  }
+  #failResults(request: number, error: unknown): void {
+    this.#root?.removeAttribute('data-search-logical-results');
+    this.#paging?.empty();
     this.#status?.fail(request, error);
   }
   #endChangedReveal(): void {
