@@ -7,6 +7,9 @@ import { StatusRegistry } from '../src/status/StatusRegistry';
 import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import { createTrackingActions } from '../src/ui/timeTracking/trackingActions';
 import { expectDefined, fixedToday, methodOf, task, taskQueryApi } from './helpers';
+import { useTaskPanelViewport } from './support/taskPanelViewport';
+
+useTaskPanelViewport();
 
 fixedToday('2026-10-02');
 

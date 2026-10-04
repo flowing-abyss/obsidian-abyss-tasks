@@ -1,5 +1,5 @@
 import { Menu } from 'obsidian';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { type CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -7,17 +7,48 @@ import { TagManager } from '../src/tags/TagManager';
 import type { TaskApplicationApi, TaskCommandResult, TaskRef, TaskSnapshot } from '../src/tasks';
 import {
   appWithFiles,
+  deferred,
   dispatchImeKey,
   expectDefined,
   freshContainer,
   makeStubStore,
   methodOf,
   task,
+  taskQueryApi,
   useRealMoment,
 } from './helpers';
 import { makeCenterPanelForTest, taskCommandsOf } from './support/panelHarness';
 
 useRealMoment();
+
+const viewportFrames = new Map<number, FrameRequestCallback>();
+beforeEach(() => {
+  viewportFrames.clear();
+  let frame = 0;
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    viewportFrames.set(++frame, callback);
+    return frame;
+  });
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+    viewportFrames.delete(id);
+  });
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(900);
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(700);
+  Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+});
+function flushViewport(): void {
+  const frames = [...viewportFrames.values()];
+  viewportFrames.clear();
+  for (const callback of frames) callback(0);
+}
 
 afterEach(() => {
   activeDocument.querySelectorAll('.abyss-test-center-attached').forEach((element) => {
@@ -59,6 +90,7 @@ function makeCenter(
     application,
   );
   const el = freshContainer();
+  attach(el);
   panel.mount(el);
   return { el, state, panel };
 }
@@ -202,7 +234,7 @@ describe('CenterPanel multi-selection', () => {
     expect(liveMutations()).toHaveLength(0);
     expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('');
     observer.disconnect();
-    expect(live.isConnected).toBe(false);
+    expect(live.isConnected).toBe(true);
   });
 
   it('mutates the live region once for each real 0 to 1 to 2 to 1 to 0 count transition', () => {
@@ -537,7 +569,6 @@ describe('CenterPanel multi-selection', () => {
       arrow === 'ArrowDown' ? expectDefined(visibleCards[0]) : expectDefined(visibleCards[2]);
     expect(state.get('taskStack')).toEqual([expected]);
     expect(activeDocument.activeElement).toBe(expectedCard);
-    expect(methodOf(expectedCard, 'scrollIntoView')).toHaveBeenCalledWith({ block: 'nearest' });
     expect(selectedLines(el)).toEqual([]);
     el.remove();
   });
@@ -956,4 +987,287 @@ it('retains only the selected outgoing occurrence when an archive fails after a 
   expect(selectedLines(el)).toEqual(['1']);
   expect(rows[3]?.classList.contains('abyss-multi-selected')).toBe(true);
   panel.destroy();
+});
+
+describe('windowed Tasks integration', () => {
+  function largeTasks(): TaskSnapshot[] {
+    return Array.from({ length: 1200 }, (_, line) =>
+      task({
+        title: `Task ${line}`,
+        tags: ['#task/inbox'],
+        source: { filePath: 'large.md', line },
+      }),
+    );
+  }
+  it('reveals logical arrow targets outside the mounted window and keeps DOM bounded', () => {
+    const tasks = largeTasks();
+    const { el, state, panel } = makeCenter(tasks);
+    state.set('taskStack', [expectDefined(tasks[998])]);
+    key(el, 'ArrowDown');
+    expect(state.get('taskStack')).toEqual([tasks[999]]);
+    expect(activeDocument.activeElement?.getAttribute('data-line')).toBe('999');
+    expect(cards(el).length).toBeLessThanOrEqual(100);
+    panel.destroy();
+  });
+  it('extends a logical range across windows without mounting the selection', () => {
+    const { el, state, panel } = makeCenter(largeTasks());
+    click(expectDefined(cards(el)[0]));
+    for (let i = 0; i < 120; i++) key(el, 'ArrowDown', { shiftKey: true });
+    expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('121 tasks selected');
+    expect(activeDocument.activeElement?.getAttribute('data-line')).toBe('120');
+    expect(state.get('taskStack')[0]).toMatchObject({ source: { line: 0 } });
+    expect(cards(el).length).toBeLessThanOrEqual(100);
+    panel.destroy();
+  });
+  it('preserves fractional and elastic native scrolling without completing an application render', () => {
+    const { el, panel } = makeCenter(largeTasks());
+    const complete = vi.spyOn(
+      panel as unknown as { completeTaskCardRender_abyssPrivate(): void },
+      'completeTaskCardRender_abyssPrivate',
+    );
+    const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.scrollTop = 12000.25;
+    scroll.dispatchEvent(new Event('scroll'));
+    flushViewport();
+    expect(scroll.scrollTop).toBe(12000.25);
+    expect(cards(el).length).toBeLessThanOrEqual(100);
+    expect(cards(el)[0]?.dataset['line']).not.toBe('0');
+    scroll.scrollTop = -1.5;
+    scroll.dispatchEvent(new Event('scroll'));
+    flushViewport();
+    expect(scroll.scrollTop).toBe(-1.5);
+    expect(complete).not.toHaveBeenCalled();
+    panel.destroy();
+  });
+});
+
+describe('offscreen date focus authorization', () => {
+  it.each([false, true])(
+    'reveals an exact offscreen source only while focus authority remains (%s outside)',
+    async (outsideFocus) => {
+      const tasks = Array.from({ length: 1200 }, (_, line) =>
+        task({
+          title: `Task ${line}`,
+          tags: ['#task/inbox'],
+          source: { filePath: 'large.md', line },
+        }),
+      );
+      const { el, panel } = makeCenter(tasks);
+      const original = expectDefined(tasks[0]);
+      const card = expectDefined(cards(el)[0]);
+      card.focus();
+      let resolve!: (value: boolean) => void;
+      vi.spyOn(taskCommandsOf(panel), 'setTaskDue').mockImplementation(
+        () =>
+          new Promise<boolean>((done) => {
+            resolve = done;
+          }),
+      );
+      panel['pickTaskDate_abyssPrivate']([original], '2026-10-08', card.dataset['rowKey']);
+      const outside = activeDocument.body.createEl('input');
+      if (outsideFocus) outside.focus();
+      else card.blur();
+      const complete = vi.spyOn(
+        panel as unknown as { completeTaskCardRender_abyssPrivate(): void },
+        'completeTaskCardRender_abyssPrivate',
+      );
+      const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+      scroll.scrollTop = 25000.25;
+      scroll.dispatchEvent(new Event('scroll'));
+      flushViewport();
+      expect(complete).not.toHaveBeenCalled();
+      resolve(true);
+      await Promise.resolve();
+      panel.refresh();
+      if (outsideFocus) {
+        expect(activeDocument.activeElement).toBe(outside);
+        expect(scroll.scrollTop).toBe(25000.25);
+      } else {
+        expect(activeDocument.activeElement?.getAttribute('data-line')).toBe('0');
+        expect(scroll.scrollTop).toBeLessThan(100);
+      }
+      outside.remove();
+      panel.destroy();
+    },
+  );
+});
+
+it('pins an open recurrence editor across scrolling and cancels it when its task is filtered out', () => {
+  const tasks = Array.from({ length: 1200 }, (_, line) =>
+    task({ title: `Task ${line}`, tags: ['#task/inbox'], source: { filePath: 'large.md', line } }),
+  );
+  const { el, panel, state } = makeCenter(tasks);
+  const card = expectDefined(cards(el)[0]);
+  panel['openRecurrenceEditor_abyssPrivate'](card, expectDefined(tasks[0]));
+  const editor = expectDefined(activeDocument.querySelector('.abyss-recurrence-popover'));
+  const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+  scroll.scrollTop = 20000;
+  scroll.dispatchEvent(new Event('scroll'));
+  flushViewport();
+  expect(card.isConnected).toBe(true);
+  panel.refresh();
+  expect(editor.isConnected).toBe(true);
+  state.set('centerFilter', 'unmatched task title');
+  expect(editor.isConnected).toBe(false);
+  expect(card.isConnected).toBe(false);
+  panel.destroy();
+});
+
+it('does not reveal a stale date opener while cancelling a replaced source before reconciliation', () => {
+  const tasks = Array.from({ length: 1200 }, (_, line) =>
+    task({ title: `Task ${line}`, tags: ['#task/inbox'], source: { filePath: 'large.md', line } }),
+  );
+  const { el, panel } = makeCenter(tasks);
+  const original = expectDefined(tasks[0]);
+  const card = expectDefined(cards(el)[0]);
+  panel['openTaskDatePicker_abyssPrivate'](card, [original]);
+  const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+  scroll.scrollTop = 25000.25;
+  scroll.dispatchEvent(new Event('scroll'));
+  flushViewport();
+  tasks[0] = { ...original, ref: { ...original.ref, revision: 'external-replacement' } };
+  panel.refresh();
+  expect(scroll.scrollTop).toBe(25000.25);
+  expect(el.querySelector('.abyss-date-picker-popover')).toBeNull();
+  expect(activeDocument.activeElement).not.toBe(card);
+  panel.destroy();
+});
+
+it('selects all outgoing occurrences across windows while deduplicating physical task targets', () => {
+  const tasks = Array.from({ length: 1200 }, (_, line) =>
+    task({
+      title: `Task ${line}`,
+      markdownTitle: `Task ${line} [[Alice]] [[Bob]]`,
+      tags: ['#task/inbox'],
+      source: { filePath: 'large.md', line },
+    }),
+  );
+  const { el, state, panel } = makeCenter(tasks);
+  state.set('centerListViewState', {
+    ...state.get('centerListViewState'),
+    groupBy: 'outgoing-link',
+  });
+  const first = expectDefined(cards(el)[0]);
+  click(first);
+  const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+  scroll.scrollTop = 1e9;
+  scroll.dispatchEvent(new Event('scroll'));
+  flushViewport();
+  const mounted = cards(el);
+  const last = expectDefined(mounted[mounted.length - 1]);
+  expect(last.dataset['line']).toBe('1199');
+  click(last, { shiftKey: true });
+  expect(panel['rowSelection_abyssPrivate'].size).toBe(2400);
+  expect(panel['selectedTasksInVisualOrder_abyssPrivate']()).toEqual(tasks);
+  expect(cards(el).length).toBeLessThanOrEqual(100);
+  panel.destroy();
+});
+
+it('retains a native drag source while scrolling and releases it when Escape cancels', () => {
+  const tasks = Array.from({ length: 1200 }, (_, line) =>
+    task({ title: `Task ${line}`, tags: ['#task/inbox'], source: { filePath: 'large.md', line } }),
+  );
+  const { el, state, panel } = makeCenter(tasks);
+  const card = expectDefined(cards(el)[0]);
+  card.dispatchEvent(new Event('dragstart'));
+  const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+  scroll.scrollTop = 25000;
+  scroll.dispatchEvent(new Event('scroll'));
+  flushViewport();
+  expect(card.isConnected).toBe(true);
+  expect(state.get('draggingTaskNode')?.task.root).toEqual(tasks[0]);
+  key(el, 'Escape');
+  flushViewport();
+  expect(state.get('draggingTaskNode')).toBeNull();
+  expect(card.isConnected).toBe(false);
+  panel.destroy();
+});
+
+it.each([false, true])(
+  'returns a delayed recurrence successor only while its original return authority remains (%s outside)',
+  async (outsideFocus) => {
+    const original = task({
+      title: 'Original',
+      planning: { due: '2026-10-04' },
+      tags: ['#task/inbox'],
+      source: { filePath: 'large.md', line: 0 },
+    });
+    const successor = { ...original, ref: { ...original.ref, revision: 'owned-successor' } };
+    const tasks = [
+      original,
+      ...Array.from({ length: 1199 }, (_, index) =>
+        task({
+          title: `Task ${index + 1}`,
+          tags: ['#task/inbox'],
+          source: { filePath: 'large.md', line: index + 1 },
+        }),
+      ),
+    ];
+    const pending = deferred<TaskCommandResult>();
+    const application: TaskApplicationApi = {
+      queries: taskQueryApi(),
+      execute: vi.fn(() => pending.promise),
+    };
+    const { el, panel } = makeCenter(tasks, application);
+    const card = expectDefined(cards(el)[0]);
+    card.focus();
+    panel['openRecurrenceEditor_abyssPrivate'](card, original);
+    expectDefined(
+      activeDocument.querySelector<HTMLElement>('[data-recurrence-preset="weekly"]'),
+    ).click();
+    const save = expectDefined(
+      activeDocument.querySelector<HTMLButtonElement>('.abyss-recurrence-save'),
+    );
+    expect(save.disabled).toBe(false);
+    save.focus();
+    save.click();
+    const outside = activeDocument.body.createEl('input');
+    if (outsideFocus) outside.focus();
+    const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.scrollTop = 25000.25;
+    scroll.dispatchEvent(new Event('scroll'));
+    flushViewport();
+    tasks[0] = successor;
+    panel.refresh();
+    pending.resolve({ type: 'ok', changed: true, outcome: { type: 'task', task: successor } });
+    await Promise.resolve();
+    await Promise.resolve();
+    if (outsideFocus) {
+      expect(activeDocument.activeElement).toBe(outside);
+      expect(scroll.scrollTop).toBe(25000.25);
+    } else {
+      expect(activeDocument.activeElement?.getAttribute('data-line')).toBe('0');
+      expect(scroll.scrollTop).toBeLessThan(100);
+    }
+    panel.destroy();
+    outside.remove();
+  },
+);
+
+it('reveals an exact offscreen Search destination in the bounded list without moving focus', () => {
+  const tasks = Array.from({ length: 1200 }, (_, line) =>
+    task({
+      title: `Task ${String(line).padStart(4, '0')}`,
+      tags: ['#task/inbox'],
+      source: { filePath: 'large.md', line },
+    }),
+  );
+  const { el, state } = makeCenter(tasks);
+  const target = expectDefined(tasks[1199]);
+  state.set('searchQuery', target.title);
+  state.set('mode', 'search');
+  const result = expectDefined(el.querySelector<HTMLElement>('.abyss-task-title'));
+  const outside = el.ownerDocument.body.createEl('input');
+  outside.focus();
+  result.click();
+  expect(state.get('mode')).toBe('tasks');
+  expect(state.get('selectedList')).toBe('inbox');
+  expect(state.get('taskStack')).toEqual([target]);
+  expect(el.querySelector('.abyss-task-card[data-line="1199"]')).not.toBeNull();
+  expect(
+    expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll')).scrollTop,
+  ).toBeGreaterThan(50000);
+  expect(cards(el).length).toBeLessThanOrEqual(100);
+  expect(el.ownerDocument.activeElement).toBe(outside);
+  outside.remove();
 });

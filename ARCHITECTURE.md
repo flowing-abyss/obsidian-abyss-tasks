@@ -339,8 +339,8 @@ place while ordinary neighbors move, and intentional scroll corrections follow t
 Ordinary native scrolling never writes normalized geometry back to the scroller.
 Hidden/detached surfaces suspend work; resume revalidates layout and document ownership. Initial
 render and deferred native failures pass once to the supplied owner; failed native passes stop
-until an explicit refresh. `mountTaskListRows` remains the eager adapter for existing callers;
-CenterPanel has not yet activated the bounded adapter.
+until an explicit refresh. CenterPanel uses this adapter for Tasks and project-dashboard lists;
+`mountTaskListRows` remains the eager adapter for Search until its separate integration.
 
 `TaskCardRenderer.mount` owns one loaded Component per row, disposable Markdown generations,
 and its own badge registrations. Its optional `TaskCardInteractionContext` gives whole-card hosts
@@ -484,8 +484,30 @@ key vector per replacement; final scroll clamping happens when a window's height
 [`projectTableViewport`](src/panels/projects/projectTableViewport.ts) adapts the existing Table
 estimates and signatures to that neutral module. Logical projection, sorting, and grouping still
 process the full collection.
-Table has windowed rows; centre task lists, Kanban cards, and Timeline rows have no new virtual
-mounting layer.
+Table and centre Tasks/dashboard lists have windowed rows; Kanban cards and Timeline rows have no
+new virtual mounting layer. `CenterPanel` owns one [`TaskListSurface`](src/panels/task-list/TaskListSurface.ts)
+for the active task host. Tasks use their list scroller; dashboard tasks use the dashboard scroller
+and a content-relative origin. Full logical occurrence order drives selection and physical writes
+remain deduplicated. Keyed `TaskCardRenderer.mount` instances own Markdown Components and current
+snapshot interactions; eviction unloads each row. Native scrolling only reconciles mounts and
+selection visuals, without completing an application render or advancing its focus generation.
+Explicit reveal checks captured source and focus ownership before scrolling and again before focus.
+Native focus and bounded menu/editor/drag owners retain rows; invalidation cancels UI ownership
+before eviction without cancelling submitted commands. Search remains eager.
+
+A same-project dashboard refresh retains its dashboard/task/capture hosts while updating current
+project presentation. `ProjectsPanel` invokes its `unmountTasks(): void` owner callback when leaving
+or replacing a dashboard, after capturing overview focus-return eligibility and before removing the
+host. `CenterPanel` releases its surface and active capture/editor ownership there. Ordinary Tasks
+and dashboard refreshes keep the same capture input connected, preserving selection and IME state.
+List/project capture results carry an optional per-result `CreationRevealAuthority` through the
+existing CenterPanel/PanelView callback. CaptureSessions owns request/input-focus validity;
+CenterPanel binds it to the originating surface and list/query revision and reveals the exact
+canonical TaskRef without moving focus. `CreationPresentationController` remains the only pending
+reference, publication retry, expiry, and highlight owner. Its in-flight guard prevents reentrant
+reveal; initial successful presentation consumes scrolling authority, so eviction/remount can only
+reapply remaining highlight. Revoked scoped results cannot fall back to legacy scrolling. Calendar
+and other creation callers retain their existing unscoped presentation behavior.
 
 All three surfaces reconcile keyed DOM and update surviving listeners' contexts. Table and Kanban
 retain viewport offsets across dashboard detachment; explicit Back can restore the exact retained

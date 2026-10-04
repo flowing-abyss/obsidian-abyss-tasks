@@ -14,6 +14,12 @@ const ANNOUNCEMENT_TIMEOUT_MS = 4_000;
 const NORMAL_HIGHLIGHT_MS = 1_100;
 const REDUCED_HIGHLIGHT_MS = 800;
 
+/** A single capture result may reveal only while its originating interaction still owns it. */
+export interface CreationRevealAuthority {
+  isCurrent(): boolean;
+  reveal(ref: TaskRef): HTMLElement | undefined;
+}
+
 interface PendingPresentation {
   readonly id: number;
   lookupRef: TaskRef;
@@ -22,6 +28,8 @@ interface PendingPresentation {
   highlightUntil?: number;
   highlightedElement?: HTMLElement | undefined;
   timeout: number;
+  readonly revealAuthority?: CreationRevealAuthority;
+  revealing?: boolean;
 }
 
 function relevantPath(event: TaskIndexEvent, path: string): boolean {
@@ -152,7 +160,11 @@ export class CreationPresentationController {
     });
   }
 
-  present(result: TaskCommandResult, description: CreationResultDescription): void {
+  present(
+    result: TaskCommandResult,
+    description: CreationResultDescription,
+    revealAuthority?: CreationRevealAuthority,
+  ): void {
     if (this.destroyed) return;
     this.announce(description);
     if (
@@ -165,6 +177,7 @@ export class CreationPresentationController {
     }
 
     const entry: PendingPresentation = {
+      ...(revealAuthority === undefined ? {} : { revealAuthority }),
       id: ++this.nextId,
       lookupRef: result.outcome.task.ref,
       expiresAt: this.options.now() + PRESENTATION_TIMEOUT_MS,
@@ -249,13 +262,35 @@ export class CreationPresentationController {
     if (entry.highlightedElement != null && !root.contains(entry.highlightedElement)) {
       this.releaseHighlight(entry);
     }
-    if (entry.resolvedRef === undefined) return;
+    if (entry.resolvedRef === undefined || entry.revealing === true) return;
+    if (!this.readyForPresentation(entry)) return;
     const matches = renderedTaskElements(root, entry.resolvedRef);
     if (matches.length === 0) return;
     const target = matches.find((element) => visibleWithin(root, element)) ?? matches[0];
     if (target == null) return;
     if (entry.highlightUntil === undefined) this.startHighlight(entry);
     this.highlight(root, entry, target);
+  }
+
+  private readyForPresentation(entry: PendingPresentation): boolean {
+    return (
+      entry.highlightUntil !== undefined ||
+      entry.revealAuthority === undefined ||
+      this.revealInitial(entry)
+    );
+  }
+
+  private revealInitial(entry: PendingPresentation): boolean {
+    const authority = entry.revealAuthority;
+    if (authority === undefined || entry.resolvedRef === undefined || !authority.isCurrent())
+      return false;
+    entry.revealing = true;
+    try {
+      const target = authority.reveal(entry.resolvedRef);
+      return target !== undefined && authority.isCurrent();
+    } finally {
+      entry.revealing = false;
+    }
   }
 
   private startHighlight(entry: PendingPresentation): void {
@@ -274,7 +309,7 @@ export class CreationPresentationController {
       entry.highlightedElement = element;
     }
     element.classList.add('is-just-created');
-    if (newlyBound && !visibleWithin(root, element)) {
+    if (newlyBound && entry.revealAuthority === undefined && !visibleWithin(root, element)) {
       element.scrollIntoView({
         behavior: this.options.reducedMotion() ? 'auto' : 'smooth',
         block: 'nearest',

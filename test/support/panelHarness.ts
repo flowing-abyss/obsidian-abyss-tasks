@@ -16,6 +16,9 @@ import type { CalendarSettings } from '../../src/settings/types';
 import type { TagManager } from '../../src/tags/TagManager';
 import type { TaskApplicationApi } from '../../src/tasks';
 import { expectDefined, type TestTaskHarness } from '../helpers';
+import { useTaskPanelViewport } from './taskPanelViewport';
+
+useTaskPanelViewport();
 
 // The center and left panels built for tests, and the calendar state a center panel's calendar
 // mode keeps. test/helpers.ts loads no presentation module, so a suite that builds a panel takes

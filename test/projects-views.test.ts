@@ -152,6 +152,116 @@ describe('ProjectsPanel dispatch', () => {
     onChange: () => () => {},
   };
 
+  it('refreshes dashboard data while keeping the task host and live input connected', () => {
+    let project = proj({ frontmatter: { description: 'Before' } });
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: project.path });
+    const store = {
+      list: () => [project],
+      get: () => project,
+      onSourceObservation: () => () => {},
+    } as never;
+    const panel = new ProjectsPanel(state, store, stubMgr, DEFAULT_SETTINGS, null as never, {
+      projectProperties,
+      renderTasks: (host) => {
+        if (host.querySelector('input') === null) host.createEl('input');
+      },
+    });
+    const el = activeDocument.body.createDiv();
+    panel.mount(el);
+    const host = expectDefined(el.querySelector('.abyss-project-tasks'));
+    const input = expectDefined(host.querySelector('input'));
+    input.value = 'Capture draft';
+    input.focus();
+    input.setSelectionRange(2, 5);
+    project = {
+      ...project,
+      name: 'Renamed',
+      frontmatter: { description: 'After' },
+      stats: { ...project.stats, done: 3 },
+    };
+    panel.refresh();
+    expect(el.querySelector('.abyss-project-tasks')).toBe(host);
+    expect(input.isConnected).toBe(true);
+    expect(activeDocument.activeElement).toBe(input);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([2, 5]);
+    expect(el.querySelector('.abyss-project-dashboard-title')?.textContent).toBe('Renamed');
+    expect(el.querySelector('.abyss-project-description')?.textContent).toBe('After');
+    expect(el.querySelector('.abyss-progress-label')?.textContent).toBe('3/4');
+    panel.destroy();
+    el.remove();
+  });
+
+  it('preserves the task anchor and fractional offset when dashboard description height changes', () => {
+    let project = proj({ frontmatter: { description: 'Short' } });
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: project.path });
+    const store = {
+      list: () => [project],
+      get: () => project,
+      onSourceObservation: () => () => {},
+    } as never;
+    const panel = new ProjectsPanel(state, store, stubMgr, DEFAULT_SETTINGS, null as never, {
+      projectProperties,
+    });
+    const el = activeDocument.body.createDiv();
+    panel.mount(el);
+    const dashboard = expectDefined(
+      el.querySelector<HTMLElement>('.abyss-project-dashboard-session'),
+    );
+    const tasks = expectDefined(dashboard.querySelector<HTMLElement>('.abyss-project-tasks'));
+    tasks.getBoundingClientRect = () =>
+      ({
+        top:
+          100 +
+          (dashboard.querySelector('.abyss-project-description')?.textContent.length ?? 0) * 10 -
+          dashboard.scrollTop,
+      }) as DOMRect;
+    dashboard.scrollTop = 612.25;
+    const before = tasks.getBoundingClientRect().top;
+    project = { ...project, frontmatter: { description: 'A much longer description' } };
+    panel.refresh();
+    expect(tasks.getBoundingClientRect().top).toBe(before);
+    expect(dashboard.scrollTop).toBe(812.25);
+    panel.destroy();
+    el.remove();
+  });
+
+  it.each([false, true])(
+    'captures exact overview return focus before task ownership teardown (%s outside)',
+    (outsideFocus) => {
+      const state = new AppState();
+      let taskHost: HTMLElement | undefined;
+      const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
+        projectProperties,
+        renderTasks: (host) => {
+          taskHost = host;
+          if (host.querySelector('input') === null) host.createEl('input');
+        },
+        unmountTasks: () => {
+          taskHost?.empty();
+        },
+      });
+      const el = activeDocument.body.createDiv();
+      panel.mount(el);
+      const name = expectDefined(el.querySelector<HTMLElement>('.abyss-project-table-name-cell'));
+      name.focus();
+      expectDefined(name.querySelector<HTMLButtonElement>('button')).click();
+      const input = expectDefined(taskHost?.querySelector('input'));
+      input.focus();
+      panel.refresh();
+      expect(activeDocument.activeElement).toBe(input);
+      const outside = activeDocument.body.createEl('input');
+      if (outsideFocus) outside.focus();
+      state.set('projectsPanel', { view: 'table' });
+      expect(input.isConnected).toBe(false);
+      expect(activeDocument.activeElement).toBe(outsideFocus ? outside : name);
+      panel.destroy();
+      el.remove();
+      outside.remove();
+    },
+  );
+
   it('renders the table view by default', () => {
     const state = new AppState();
     const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
@@ -392,7 +502,7 @@ describe('ProjectsPanel dispatch', () => {
 
         panel.refresh();
 
-        expect(dashboard(el)).not.toBe(before);
+        expect(dashboard(el)).toBe(before);
         expect(dashboard(el).scrollTop).toBe(612);
       } finally {
         panel.destroy();

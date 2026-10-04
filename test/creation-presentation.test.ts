@@ -25,6 +25,7 @@ import type { CalendarOccurrence } from '../src/views/calendarOccurrences';
 import { applyOccurrenceDomState } from '../src/views/timegrid/renderTaskMeta';
 import { cssRuleContaining, cssValue } from './cssHelpers';
 import { expectDefined, freshContainer, methodOf, task, useRealMoment } from './helpers';
+import { useTaskPanelViewport } from './support/taskPanelViewport';
 
 async function loadStylesFixture(): Promise<string> {
   if (!Platform.isDesktop) throw new Error('CSS fixture requires the desktop test runtime');
@@ -35,6 +36,7 @@ async function loadStylesFixture(): Promise<string> {
 
 const css = await loadStylesFixture();
 useRealMoment();
+useTaskPanelViewport();
 
 function exact(taskSnapshot: TaskSnapshot): TaskResolution {
   return { type: 'exact', task: taskSnapshot, basis: { observed: taskSnapshot } };
@@ -229,7 +231,10 @@ describe('task presentation identity', () => {
     });
     const listHost = freshContainer();
     panel.mount(listHost);
-    const projectHost = freshContainer();
+    expect(
+      listHost.querySelector<HTMLElement>('.abyss-task-card')?.dataset['abyssTaskRefKey'],
+    ).toBe(taskPresentationKey(snapshot.ref));
+    const projectHost = listHost.createDiv();
 
     (
       panel as unknown as {
@@ -237,9 +242,6 @@ describe('task presentation identity', () => {
       }
     ).renderProjectTasks_abyssPrivate(projectHost, 'capture.md');
 
-    expect(
-      listHost.querySelector<HTMLElement>('.abyss-task-card')?.dataset['abyssTaskRefKey'],
-    ).toBe(taskPresentationKey(snapshot.ref));
     expect(
       projectHost.querySelector<HTMLElement>('.abyss-task-card')?.dataset['abyssTaskRefKey'],
     ).toBe(taskPresentationKey(snapshot.ref));
@@ -820,5 +822,64 @@ describe('new-task feedback CSS', () => {
 
     expect(emptyRule).toMatch(/opacity\s*:\s*0/u);
     expect(emptyRule).not.toMatch(/(?:display|visibility|content-visibility)\s*:/u);
+  });
+});
+
+describe('scoped virtual creation reveal', () => {
+  it('retries through the existing pending result and reveals once without recursive render completion', () => {
+    const snapshot = task({ source: { filePath: 'capture.md', line: 999 } });
+    const h = controllerHarness({ type: 'not-found', ref: snapshot.ref });
+    let target: HTMLElement | undefined;
+    const reveal = vi.fn(() => {
+      h.controller.afterRender(h.root);
+      target = renderIdentity(h.root, snapshot.ref);
+      target.scrollIntoView = vi.fn();
+      return target;
+    });
+    const result = successfulCreation(snapshot);
+    h.controller.afterRender(h.root);
+    h.controller.present(result, describeTaskCreationResult(result), {
+      isCurrent: () => true,
+      reveal,
+    });
+    expect(reveal).not.toHaveBeenCalled();
+    h.queries.setResolution(exact(snapshot));
+    h.queries.emit();
+    expect(reveal).toHaveBeenCalledExactlyOnceWith(snapshot.ref);
+    expect(target?.classList.contains('is-just-created')).toBe(true);
+    target?.remove();
+    h.controller.afterRender(h.root);
+    expect(reveal).toHaveBeenCalledTimes(1);
+    const remounted = renderIdentity(h.root, snapshot.ref);
+    remounted.getBoundingClientRect = () => rect(10, 2000, 100, 40);
+    const scroll = vi.fn();
+    remounted.scrollIntoView = scroll;
+    h.controller.afterRender(h.root);
+    expect(remounted.classList.contains('is-just-created')).toBe(true);
+    expect(scroll).not.toHaveBeenCalled();
+    h.controller.destroy();
+  });
+  it('never falls back to legacy scrolling after per-result capture authority is revoked', () => {
+    const snapshot = task({ source: { filePath: 'capture.md', line: 999 } });
+    const h = controllerHarness({ type: 'not-found', ref: snapshot.ref });
+    let valid = true;
+    const reveal = vi.fn();
+    h.controller.afterRender(h.root);
+    const result = successfulCreation(snapshot);
+    h.controller.present(result, describeTaskCreationResult(result), {
+      isCurrent: () => valid,
+      reveal,
+    });
+    valid = false;
+    const target = renderIdentity(h.root, snapshot.ref);
+    target.getBoundingClientRect = () => rect(10, 2000, 100, 40);
+    const scroll = vi.fn();
+    target.scrollIntoView = scroll;
+    h.queries.setResolution(exact(snapshot));
+    h.queries.emit();
+    h.controller.afterRender(h.root);
+    expect(reveal).not.toHaveBeenCalled();
+    expect(scroll).not.toHaveBeenCalled();
+    h.controller.destroy();
   });
 });

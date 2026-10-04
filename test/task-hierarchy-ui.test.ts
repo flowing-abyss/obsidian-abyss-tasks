@@ -17,6 +17,9 @@ import {
 } from './helpers';
 import { notices } from './support/inspectorHarness';
 import { hierarchyHarness } from './support/taskHierarchyHarness';
+import { useTaskPanelViewport } from './support/taskPanelViewport';
+
+useTaskPanelViewport();
 
 useRealMoment();
 const cleanups: Array<() => void> = [];

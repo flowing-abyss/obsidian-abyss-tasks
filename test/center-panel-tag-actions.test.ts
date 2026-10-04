@@ -18,6 +18,7 @@ import {
   useRealMoment,
 } from './helpers';
 import { makeCenterPanelForTest } from './support/panelHarness';
+import { prepareTaskPanelViewport } from './support/taskPanelViewport';
 
 useRealMoment();
 
@@ -245,6 +246,7 @@ function makeCenter(
   );
   const createElement = methodOf(ownerDocument, 'createElement');
   const el = createElement.call(ownerDocument, 'div');
+  prepareTaskPanelViewport(el);
   panel.mount(el);
   return { el, state, tm, execute, panel };
 }
@@ -791,8 +793,8 @@ describe('CenterPanel task date context menus', () => {
       input.dispatchEvent(new Event('change', { bubbles: true }));
 
       const replacement = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
-      expect(originalCard.isConnected).toBe(false);
-      expect(replacement).not.toBe(originalCard);
+      expect(originalCard.isConnected).toBe(true);
+      expect(replacement).toBe(originalCard);
       expect(replacement.dataset['filePath']).toBe('a.md');
       expect(replacement.dataset['line']).toBe('0');
       expect(activeDocument.activeElement).toBe(replacement);
@@ -824,8 +826,8 @@ describe('CenterPanel task date context menus', () => {
 
       const replacement = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
       expect(execute).toHaveBeenCalledOnce();
-      expect(originalCard.isConnected).toBe(false);
-      expect(replacement).not.toBe(originalCard);
+      expect(originalCard.isConnected).toBe(true);
+      expect(replacement).toBe(originalCard);
       expect(activeDocument.activeElement).toBe(replacement);
     } finally {
       panel.destroy();
@@ -843,10 +845,11 @@ describe('CenterPanel task date context menus', () => {
       const original = await settleChangedCustomDate(el, items);
 
       el.ownerDocument.defaultView?.dispatchEvent(new Event('blur'));
+      original.blur();
       panel.refresh();
 
       const replacement = el.querySelector<HTMLElement>('.abyss-task-card');
-      expect(original.isConnected).toBe(false);
+      expect(original.isConnected).toBe(true);
       expect(replacement).not.toBeNull();
       expect(activeDocument.activeElement).toBe(activeDocument.body);
     } finally {
@@ -869,10 +872,11 @@ describe('CenterPanel task date context menus', () => {
       el.ownerDocument.body.dispatchEvent(
         ownerEvent(ownerWindow, 'pointerdown', { bubbles: true, cancelable: true }),
       );
+      original.blur();
       panel.refresh();
 
       const replacement = el.querySelector<HTMLElement>('.abyss-task-card');
-      expect(original.isConnected).toBe(false);
+      expect(original.isConnected).toBe(true);
       expect(replacement).not.toBeNull();
       expect(activeDocument.activeElement).toBe(activeDocument.body);
     } finally {
@@ -899,7 +903,7 @@ describe('CenterPanel task date context menus', () => {
 
         panel.refresh();
 
-        expect(original.isConnected).toBe(false);
+        expect(original.isConnected).toBe(true);
         expect(activeDocument.activeElement).toBe(target);
       } finally {
         panel.destroy();
@@ -944,6 +948,7 @@ describe('CenterPanel task date context menus', () => {
       const ownerActiveAfterPrimaryDeparture = ownerDocument.activeElement;
 
       ownerWindow.dispatchEvent(ownerEvent(ownerWindow, 'blur'));
+      original.blur();
       panel.refresh();
       const finalReplacement = el.querySelector<HTMLElement>('.abyss-task-card');
       const ownerActiveAfterOwnerBlur = ownerDocument.activeElement;
@@ -952,10 +957,10 @@ describe('CenterPanel task date context menus', () => {
 
       expect(original.isConnected).toBe(false);
       expect(ownerReplacement).not.toBeNull();
-      expect(ownerReplacement).not.toBe(original);
+      expect(ownerReplacement).toBe(original);
       expect(ownerActiveAfterPrimaryDeparture).toBe(ownerReplacement);
       expect(finalReplacement).not.toBeNull();
-      expect(finalReplacement).not.toBe(ownerReplacement);
+      expect(finalReplacement).toBe(ownerReplacement);
       expect(ownerActiveAfterOwnerBlur).toBe(ownerDocument.body);
       expect(focusRegistration).toBeDefined();
       expect(pointerRegistration).toBeDefined();
@@ -1028,8 +1033,8 @@ describe('CenterPanel task date context menus', () => {
         ),
       );
       expect(execute).toHaveBeenCalledTimes(2);
-      expect(originalTrigger.isConnected).toBe(false);
-      expect(firstReplacement.isConnected).toBe(false);
+      expect(originalTrigger.isConnected).toBe(true);
+      expect(firstReplacement.isConnected).toBe(true);
       expect(finalReplacement.isConnected).toBe(true);
       expect(activeDocument.activeElement).toBe(finalReplacement);
     } finally {
@@ -1207,8 +1212,8 @@ describe('CenterPanel task date context menus', () => {
 
       expect(execute).toHaveBeenCalledTimes(2);
       expect(replacements).toHaveLength(2);
-      expect(originalTrigger.isConnected).toBe(false);
-      expect(expectDefined(replacements[0]).isConnected).toBe(false);
+      expect(originalTrigger.isConnected).toBe(true);
+      expect(expectDefined(replacements[0]).isConnected).toBe(true);
       expect(expectDefined(replacements[1]).isConnected).toBe(true);
       expect(activeDocument.activeElement).toBe(replacements[1]);
     } finally {
@@ -1237,6 +1242,7 @@ describe('CenterPanel task date context menus', () => {
       input.dispatchEvent(new Event('change', { bubbles: true }));
       await flushMicrotasks();
 
+      card.blur();
       panel.refresh();
 
       expect(activeDocument.activeElement).toBe(activeDocument.body);
@@ -1309,6 +1315,7 @@ describe('CenterPanel task date context menus', () => {
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
       );
 
+      (activeDocument.activeElement as HTMLElement | null)?.blur();
       panel.refresh();
 
       expect(activeDocument.activeElement).toBe(activeDocument.body);
@@ -1518,7 +1525,7 @@ describe('CenterPanel task date context menus', () => {
       const replacement = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
       expect(enter.defaultPrevented).toBe(true);
       expect(execute).toHaveBeenCalledOnce();
-      expect(card.isConnected).toBe(false);
+      expect(card.isConnected).toBe(true);
       expect(activeDocument.activeElement).toBe(replacement);
     } finally {
       panel.destroy();
@@ -1551,14 +1558,14 @@ describe('CenterPanel task date context menus', () => {
 
   it('picks nothing when a render removes a keyboard custom date', async () => {
     const items = captureMenu();
-    const { el, execute, panel } = makeCenter([first]);
+    const { el, execute, panel, state } = makeCenter([first]);
     activeDocument.body.append(el);
 
     try {
       const { card, popover, input } = await openCustomDateDraft(el, items);
       loseFocusOnRemoval(popover, input, card);
 
-      panel.refresh();
+      state.set('centerFilter', 'unmatched task');
       await flushMicrotasks();
 
       // Picking on the focusout that the render's removal fires would write the typed date.
@@ -1591,7 +1598,7 @@ describe('CenterPanel task date context menus', () => {
       // CenterPanel revokes its focus continuity on pointerdown, so a flush that armed it after
       // the press would pull focus back to the card.
       expect(execute).toHaveBeenCalledOnce();
-      expect(card.isConnected).toBe(false);
+      expect(card.isConnected).toBe(true);
       expect(activeDocument.activeElement).toBe(activeDocument.body);
     } finally {
       panel.destroy();
@@ -1628,12 +1635,12 @@ describe('CenterPanel task date context menus', () => {
     }
   });
 
-  it.each(['refresh', 'destroy'] as const)(
+  it.each(['filter', 'destroy'] as const)(
     'removes picker document listeners when the panel %s removes its owner DOM',
     (lifecycle) => {
       vi.useFakeTimers();
       const items = captureMenu();
-      const { el, panel } = makeCenter([first]);
+      const { el, panel, state } = makeCenter([first]);
       const ownerDocument = el.ownerDocument;
       const addListener = vi.spyOn(ownerDocument, 'addEventListener');
       const removeListener = vi.spyOn(ownerDocument, 'removeEventListener');
@@ -1646,7 +1653,8 @@ describe('CenterPanel task date context menus', () => {
       const keydown = added.find(([type]) => type === 'keydown')?.[1];
       const mousedown = added.find(([type]) => type === 'mousedown')?.[1];
 
-      panel[lifecycle]();
+      if (lifecycle === 'filter') state.set('centerFilter', 'unmatched task');
+      else panel.destroy();
 
       const removed = removeListener.mock.calls as unknown as Array<
         [string, EventListenerOrEventListenerObject, boolean | EventListenerOptions | undefined]
@@ -1660,7 +1668,7 @@ describe('CenterPanel task date context menus', () => {
           type === 'mousedown' && listener === mousedown && options === true,
       );
       ownerDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-      if (lifecycle === 'refresh') panel.destroy();
+      if (lifecycle === 'filter') panel.destroy();
 
       expect(keydown).toBeDefined();
       expect(mousedown).toBeDefined();

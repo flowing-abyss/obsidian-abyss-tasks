@@ -12,10 +12,15 @@ import type { ProjectCellChange, ProjectEditResult } from '../../projects/projec
 import type { CalendarSettings } from '../../settings/types';
 import { changeProjectStatus, openProjectNote } from '../../ui/projectActions';
 import { runAsyncAction } from '../../ui/runAsyncAction';
-import { refreshProjectDashboardStatus, renderProjectDashboard } from './ProjectsDashboardView';
+import {
+  refreshProjectDashboard,
+  refreshProjectDashboardStatus,
+  renderProjectDashboard,
+} from './ProjectsDashboardView';
 import { ProjectsTableView } from './ProjectsTableView';
 
 export interface ProjectsPanelOptions {
+  unmountTasks?: () => void;
   renderTasks?: (host: HTMLElement, path: string) => void;
   saveViewState?: () => Promise<void>;
   saveStatic?: () => Promise<void>;
@@ -29,6 +34,7 @@ export class ProjectsPanel {
   private readonly projectManager_abyssPrivate: ProjectManager;
   private readonly settings_abyssPrivate: CalendarSettings;
   private readonly app_abyssPrivate: App;
+  private readonly unmountTasks_abyssPrivate: () => void;
   private readonly renderTasks_abyssPrivate: (host: HTMLElement, path: string) => void;
   private readonly saveViewState_abyssPrivate: () => Promise<void>;
   private readonly saveStatic_abyssPrivate: (() => Promise<void>) | undefined;
@@ -50,6 +56,7 @@ export class ProjectsPanel {
     this.projectManager_abyssPrivate = projectManager;
     this.settings_abyssPrivate = settings;
     this.app_abyssPrivate = app;
+    this.unmountTasks_abyssPrivate = opts.unmountTasks ?? (() => {});
     this.renderTasks_abyssPrivate = opts.renderTasks ?? ((): void => {});
     this.saveViewState_abyssPrivate = opts.saveViewState ?? (async (): Promise<void> => {});
     this.saveStatic_abyssPrivate = opts.saveStatic;
@@ -195,6 +202,7 @@ export class ProjectsPanel {
   ): void {
     const dashboard = this.dashboardHost_abyssPrivate;
     const allowFocus = dashboard?.contains(tableHost.ownerDocument.activeElement) === true;
+    if (dashboard !== null) this.unmountTasks_abyssPrivate();
     dashboard?.remove();
     this.dashboardHost_abyssPrivate = null;
     el.appendChild(tableHost);
@@ -207,9 +215,21 @@ export class ProjectsPanel {
     const el = this.el_abyssPrivate;
     if (el === null) return;
     const previous = this.dashboardHost_abyssPrivate;
+    if (
+      previous !== null &&
+      this.dashboardPath_abyssPrivate === path &&
+      refreshProjectDashboard(
+        previous,
+        this.projectStore_abyssPrivate.get(path),
+        this.renderTasks_abyssPrivate,
+        this.settings_abyssPrivate.projects.statuses,
+      )
+    )
+      return;
     // A render of the project already shown keeps its place; opening a project starts at its top.
     const scrollTop =
       previous !== null && this.dashboardPath_abyssPrivate === path ? previous.scrollTop : 0;
+    if (previous !== null) this.unmountTasks_abyssPrivate();
     previous?.remove();
     const host = el.createDiv({ cls: 'abyss-project-dashboard-session' });
     this.dashboardHost_abyssPrivate = host;

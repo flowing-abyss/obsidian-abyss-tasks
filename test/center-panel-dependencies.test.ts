@@ -242,7 +242,7 @@ describe('center dependency indicator DOM', () => {
         group.click();
         expect(h.state.get('taskStack')[0]?.title).toBe('Current');
       }
-      expect(expectDefined(card).querySelector('.abyss-task-desc')).toBeNull();
+      expect(expectDefined(card).querySelector<HTMLElement>('.abyss-task-desc')?.hidden).toBe(true);
     },
   );
 

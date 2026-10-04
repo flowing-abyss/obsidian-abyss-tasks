@@ -15,6 +15,9 @@ import {
   flushMicrotasks,
   useRealMoment,
 } from './helpers';
+import { useTaskPanelViewport } from './support/taskPanelViewport';
+
+useTaskPanelViewport();
 
 useRealMoment();
 

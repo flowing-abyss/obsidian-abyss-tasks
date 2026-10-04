@@ -23,6 +23,9 @@ import {
   useRealMoment,
 } from './helpers';
 
+import { useTaskPanelViewport } from './support/taskPanelViewport';
+
+useTaskPanelViewport();
 useRealMoment();
 const cleanups: Array<() => void> = [];
 afterEach(() => {

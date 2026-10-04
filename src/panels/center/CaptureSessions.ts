@@ -7,6 +7,7 @@ import type {
   TaskCommandResult,
   TaskNodeSnapshot,
 } from '../../tasks';
+import type { CreationRevealAuthority } from '../../ui/creation/CreationPresentationController';
 import { isRealmHTMLElement } from '../../ui/domRealm';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { CaptureSurface } from '../../ui/taskCapture/CaptureSurface';
@@ -44,6 +45,9 @@ interface PanelCaptureSession {
   returnFocus?: HTMLElement;
   restoreFocusOnClose: boolean;
   focusOnMount: boolean;
+  revealEpoch: number;
+  revealAuthority?: CreationRevealAuthority | undefined;
+  releaseRevealFocus?: (() => void) | undefined;
 }
 
 interface CaptureSessionsOptions {
@@ -54,7 +58,9 @@ interface CaptureSessionsOptions {
   readonly onCreationResult: (
     result: TaskCommandResult,
     description: CreationResultDescription,
+    revealAuthority?: CreationRevealAuthority,
   ) => void;
+  readonly captureReveal?: (isCurrent: () => boolean) => CreationRevealAuthority;
   readonly root: () => HTMLElement;
 }
 
@@ -68,12 +74,14 @@ export class CaptureSessions {
   #activeCapture: PanelCaptureSession | null = null;
   readonly #state: AppState;
   readonly #root: () => HTMLElement;
+  readonly #captureReveal: CaptureSessionsOptions['captureReveal'];
   readonly #onCreationResult: CaptureSessionsOptions['onCreationResult'];
 
   constructor(options: CaptureSessionsOptions) {
     this.#state = options.state;
     this.#root = options.root;
     this.#onCreationResult = options.onCreationResult;
+    this.#captureReveal = options.captureReveal;
     this.#captureTargets =
       options.application != null
         ? new CaptureTargetResolver(
@@ -91,6 +99,7 @@ export class CaptureSessions {
     if (placement.type === 'list') {
       host.dataset['abyssCaptureSelection'] = placement.selectionKey;
     }
+    if (host.querySelector('.abyss-add-task-trigger') !== null) return;
     const trigger = host.createEl('button', {
       cls: 'abyss-add-task-trigger',
       attr: { type: 'button' },
@@ -134,7 +143,7 @@ export class CaptureSessions {
             if (current?.requestId === requestId && description.kind !== 'success') {
               current.restoreFocusOnClose = false;
             }
-            this.#onCreationResult(result, description);
+            this.#onCreationResult(result, description, this.#resultRevealAuthority(current));
           },
           onRequestClose: () => {
             this.#closeCaptureByRequestId(requestId);
@@ -147,11 +156,31 @@ export class CaptureSessions {
           ...(returnFocus !== null && { returnFocus }),
           restoreFocusOnClose: false,
           focusOnMount: true,
+          revealEpoch: 0,
         };
         this.#activeCapture = session;
         this.remountActiveCapture();
+        if (!isCalendarCapturePlacement(placement)) {
+          session.revealAuthority = this.#captureReveal?.(
+            () =>
+              this.#activeCapture === session &&
+              session.controller.snapshot().phase === 'idle' &&
+              session.surface?.input.isConnected === true &&
+              session.surface.input.ownerDocument.activeElement === session.surface.input,
+          );
+        }
       }),
     );
+  }
+
+  #resultRevealAuthority(session: PanelCaptureSession | null): CreationRevealAuthority | undefined {
+    const authority = session?.revealAuthority;
+    if (session === null || authority === undefined) return undefined;
+    const epoch = session.revealEpoch;
+    return {
+      isCurrent: () => session.revealEpoch === epoch && authority.isCurrent(),
+      reveal: (ref) => authority.reveal(ref),
+    };
   }
 
   remountActiveCapture(): void {
@@ -203,6 +232,13 @@ export class CaptureSessions {
         : 'default';
     const surface = new CaptureSurface(host, active.controller, { ...options, presentation });
     this.#applyCaptureInputClass(surface, active.placement);
+    const revokeReveal = (): void => {
+      active.revealEpoch++;
+    };
+    surface.input.addEventListener('blur', revokeReveal);
+    active.releaseRevealFocus = () => {
+      surface.input.removeEventListener('blur', revokeReveal);
+    };
     active.surface = surface;
     active.host = host;
     this.#focusNewCaptureSurface(active, surface);
@@ -244,6 +280,9 @@ export class CaptureSessions {
     if (active == null || surface == null) return;
     active.focusOnMount =
       active.focusOnMount || surface.input.ownerDocument.activeElement === surface.input;
+    active.revealEpoch++;
+    active.releaseRevealFocus?.();
+    active.releaseRevealFocus = undefined;
     active.surface = undefined;
     active.host = undefined;
     surface.destroy();
