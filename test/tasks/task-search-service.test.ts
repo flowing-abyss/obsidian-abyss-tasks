@@ -1,11 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import type { TaskSearchBackend } from '../../src/tasks/application/TaskSearchBackend';
+import { fallbackSearchWords } from '../../src/tasks/domain/searchMatchPolicy';
+import { TaskSearchError } from '../../src/tasks/domain/taskSearchTypes';
+import { createMiniSearchTaskEngine } from '../../src/tasks/infrastructure/search/MiniSearchTaskEngine';
+import { TaskSearchRuntime } from '../../src/tasks/infrastructure/search/TaskSearchRuntime';
+import { TaskSearchService } from '../../src/tasks/infrastructure/search/TaskSearchService';
 import { deferred, expectDefined } from '../helpers';
 import {
   assertNoRevision,
+  ControlledSearchScheduler,
   createCanonicalSearchHarness,
   createTaskSearchHarness,
+  FakeSearchSource,
   nodeDocuments,
 } from '../support/taskSearchHarness';
 const signal = () => new AbortController().signal;
@@ -680,4 +687,179 @@ it('synchronous disposal from recovery publication cannot restart the failed sou
     code: 'disposed',
   });
   expect(ensure).not.toHaveBeenCalled();
+});
+
+it.each(['open', 'read'] as const)(
+  'recovers live %s failures once, falls back, then respects input cooldown',
+  async (operation) => {
+    const h = createTaskSearchHarness();
+    const states: string[] = [];
+    h.service.subscribe((state) => states.push(state.phase));
+    vi.spyOn(h.scheduler, 'now').mockReturnValue(100);
+    h.source.ready([nodeDocuments(3)]);
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const cursor = await h.service.open({ kind: 'roots', query: 'needle' }, signal());
+        const backend = expectDefined(h.backends[attempt]);
+        vi.spyOn(backend, operation).mockRejectedValue(new Error('private field/path/query'));
+        const pending =
+          operation === 'open'
+            ? h.service.open({ kind: 'roots', query: 'needle' }, signal())
+            : h.service.read(cursor, 0, 1, signal());
+        await expect(pending).rejects.toMatchObject({ code: 'unavailable' });
+        expect(
+          (h.service as unknown as { pendingPages: Map<string, unknown> }).pendingPages.size,
+        ).toBe(0);
+        expect((backend as unknown as { vectors: Map<string, unknown> }).vectors.size).toBe(0);
+      }
+      expect(states[states.length - 1]).toBe('failed');
+      expect(h.backends).toHaveLength(3);
+      vi.spyOn(h.scheduler, 'now').mockReturnValue(5099);
+      await expect(
+        h.service.open({ kind: 'roots', query: 'needle' }, signal()),
+      ).rejects.toMatchObject({ code: 'unavailable' });
+      expect(h.backends).toHaveLength(3);
+      vi.spyOn(h.scheduler, 'now').mockReturnValue(5100);
+      const cursors = await Promise.all([
+        h.service.open({ kind: 'nodes', query: 'needle' }, signal()),
+        h.service.open({ kind: 'nodes', query: 'needle' }, signal()),
+      ]);
+      expect(cursors.map((cursor) => cursor.total)).toEqual([3, 3]);
+      expect(h.backends).toHaveLength(4);
+    } finally {
+      h.service.dispose();
+    }
+  },
+);
+
+it.each(['open', 'read'] as const)(
+  'keeps expected %s rejection outcomes quiet and sanitized',
+  async (operation) => {
+    const h = createTaskSearchHarness();
+    h.source.ready([nodeDocuments(3)]);
+    try {
+      for (const code of [
+        'aborted',
+        'stale',
+        'invalid-request',
+        'invalid-query',
+        'cursor-expired',
+      ] as const) {
+        const cursor = await h.service.open({ kind: 'roots', query: 'needle' }, signal());
+        const backend = expectDefined(h.backends[0]);
+        vi.spyOn(backend, operation).mockRejectedValueOnce(
+          new TaskSearchError(code, 'private field/path/query'),
+        );
+        const pending =
+          operation === 'open'
+            ? h.service.open({ kind: 'roots', query: 'needle' }, signal())
+            : h.service.read(cursor, 0, 1, signal());
+        const error: unknown = await pending.catch((error: unknown) => error);
+        expect(error).toMatchObject({ code });
+        expect(String(error)).not.toContain('private');
+        expect(h.backends).toHaveLength(1);
+        h.service.release(cursor);
+      }
+    } finally {
+      h.service.dispose();
+    }
+  },
+);
+
+it.each(['aborted', 'stale', 'replaced', 'released'] as const)(
+  'does not let a late read failure recover a %s request',
+  async (stop) => {
+    const h = createTaskSearchHarness();
+    h.source.ready([nodeDocuments(3)]);
+    const caller = new AbortController();
+    const cursor = await h.service.open({ kind: 'roots', query: 'needle' }, signal());
+    const backend = expectDefined(h.backends[0]);
+    const held = deferred<void>();
+    vi.spyOn(backend, 'read').mockImplementationOnce(async () => {
+      await held.promise;
+      throw new Error('private obsolete backend');
+    });
+    const pending = h.service.read(cursor, 0, 1, caller.signal).catch((error: unknown) => error);
+    if (stop === 'aborted') caller.abort();
+    if (stop === 'stale') h.source.replace('a.md', nodeDocuments(4));
+    if (stop === 'replaced') backend.crash();
+    if (stop === 'released') h.service.release(cursor);
+    await h.service.prepare(signal());
+    held.resolve();
+    expect(await pending).toMatchObject({
+      code: {
+        replaced: 'unavailable',
+        released: 'cursor-expired',
+        aborted: 'aborted',
+        stale: 'stale',
+      }[stop],
+    });
+    expect(h.backends).toHaveLength(stop === 'replaced' ? 2 : 1);
+    const next = await h.service.open({ kind: 'roots', query: 'needle' }, signal());
+    expect((await h.service.read(next, 0, 10, signal())).hits).toHaveLength(
+      stop === 'stale' ? 4 : 3,
+    );
+    h.service.dispose();
+  },
+);
+
+it('recovers one shared failed forward page for a live waiter after the first waiter aborts', async () => {
+  const h = createTaskSearchHarness();
+  h.source.ready([nodeDocuments(3)]);
+  const cursor = await h.service.open({ kind: 'roots', query: 'needle' }, signal());
+  const held = deferred<void>();
+  vi.spyOn(expectDefined(h.backends[0]), 'read').mockImplementationOnce(async () => {
+    await held.promise;
+    throw new Error('private read failure');
+  });
+  const cancelled = new AbortController();
+  const old = h.service.read(cursor, 0, 1, cancelled.signal).catch((error: unknown) => error);
+  cancelled.abort();
+  expect(await old).toMatchObject({ code: 'aborted' });
+  const live = h.service.read(cursor, 0, 1, signal()).catch((error: unknown) => error);
+  held.resolve();
+  expect(await live).toMatchObject({ code: 'unavailable' });
+  await h.service.prepare(signal());
+  expect(h.backends).toHaveLength(2);
+  h.service.dispose();
+});
+
+it('treats a raw cancellation-shaped inline engine exception as a live operational failure', async () => {
+  const source = new FakeSearchSource();
+  source.ready([nodeDocuments(2)]);
+  const engine = createMiniSearchTaskEngine(fallbackSearchWords);
+  const states: unknown[] = [];
+  const diagnostics: unknown[] = [];
+  const service = new TaskSearchService({
+    source,
+    reads: { observedTags: () => [], async *organization() {}, resolveSearchPage: async () => [] },
+    segment: fallbackSearchWords,
+    scheduler: new ControlledSearchScheduler(),
+    createBackend: async (mode) => {
+      if (mode === 'worker') throw new Error('Worker unavailable');
+      return new TaskSearchRuntime(engine);
+    },
+    diagnose: (value) => {
+      diagnostics.push(value);
+    },
+  });
+  service.subscribe((state) => {
+    states.push(state);
+  });
+  try {
+    await service.prepare(signal());
+    expect(states).toContainEqual({ phase: 'ready', generation: 1, compatibility: true });
+    vi.spyOn(engine, 'search').mockImplementation(() => {
+      throw new DOMException('private engine content', 'AbortError');
+    });
+    const error: unknown = await service
+      .open({ kind: 'roots', query: 'needle' }, signal())
+      .catch((error: unknown) => error);
+    expect(error).toMatchObject({ code: 'unavailable' });
+    expect(states[states.length - 1]).toEqual({ phase: 'failed', generation: 1, episode: 1 });
+    expect(String(error)).not.toContain('private');
+    expect(JSON.stringify(diagnostics)).not.toContain('private');
+  } finally {
+    service.dispose();
+  }
 });

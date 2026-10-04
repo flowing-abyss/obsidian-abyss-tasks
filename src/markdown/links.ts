@@ -394,34 +394,45 @@ export interface AnchorDescriptor {
   href: string;
 }
 
-/**
- * For each anchor (in document order), find the parseLinks token it represents.
- * Returns, per anchor index, the matched token's occurrence index (its index in
- * `tokens`) or -1 if the anchor matches no token (e.g. an auto-linked bare URL).
- * Each token is consumed by at most one anchor; matching is by display text or
- * link target, scanning the first not-yet-consumed matching token.
- */
-export function pairAnchorsToTokens(anchors: AnchorDescriptor[], tokens: LinkToken[]): number[] {
-  const consumed = new Array(tokens.length).fill(false) as boolean[];
-  return anchors.map((a) => {
-    for (let k = 0; k < tokens.length; k++) {
-      if (consumed[k] ?? false) continue;
-      const token = tokens[k];
-      if (token !== undefined && anchorMatchesToken(a, token)) {
-        consumed[k] = true;
-        return k;
-      }
-    }
-    return -1;
-  });
+/** Destination evidence never falls back to a coincidentally equal display label. */
+function anchorDestination(target: string): string {
+  // Internal note links may omit .md, including before a heading. Preserve the full path:
+  // equal basenames in different folders do not prove equal authored destinations.
+  if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/iu.test(target)) return target;
+  const [path, subpath] = splitSubpath(target);
+  return withoutMarkdownExtension(path) + subpath;
 }
-
-function anchorMatchesToken(a: AnchorDescriptor, token: LinkToken): boolean {
-  const text = a.text.trim();
-  if (Boolean(text) && text === token.display) return true;
-  if (a.href.length === 0) return false;
-  if (token.type === 'wiki') {
-    return a.href === token.target || unaliasedDisplay(a.href) === unaliasedDisplay(token.target);
+/**
+ * Propose ordered occurrences only when their destination group has exactly as many
+ * rendered anchors. Extra/generated or missing anchors make that entire identity ambiguous;
+ * omit that group without stealing occurrences from another destination. The renderer must
+ * additionally prove each anchor's source span before these candidates authorize editing.
+ */
+function anchorGroups(
+  tokens: readonly LinkToken[],
+): Map<string, { tokens: number[]; anchors: number[] }> {
+  const groups = new Map<string, { tokens: number[]; anchors: number[] }>();
+  for (const [index, token] of tokens.entries()) {
+    const key = anchorDestination(token.target);
+    let group = groups.get(key);
+    if (group === undefined) {
+      group = { tokens: [], anchors: [] };
+      groups.set(key, group);
+    }
+    group.tokens.push(index);
   }
-  return a.href === token.target;
+  return groups;
+}
+export function pairAnchorsToTokens(anchors: AnchorDescriptor[], tokens: LinkToken[]): number[] {
+  const groups = anchorGroups(tokens);
+  for (const [index, anchor] of anchors.entries()) {
+    if (anchor.href !== '') groups.get(anchorDestination(anchor.href))?.anchors.push(index);
+  }
+  const paired: number[] = anchors.map(() => -1);
+  for (const group of groups.values()) {
+    if (group.tokens.length !== group.anchors.length) continue;
+    for (const [index, anchor] of group.anchors.entries())
+      paired[anchor] = group.tokens[index] ?? -1;
+  }
+  return paired;
 }

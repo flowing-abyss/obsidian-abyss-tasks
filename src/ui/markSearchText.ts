@@ -1,8 +1,10 @@
-import type { SearchTextProjection } from '../markdown/searchText';
+import type { SourceRange } from '../markdown/inlineCode';
+import { searchTextSourceRanges, type SearchTextProjection } from '../markdown/searchText';
 import { matchSearchText, type PreparedSearchQuery, type SearchWordSegmenter } from '../tasks';
 
 interface TextRun {
   readonly node: Text;
+  readonly anchor: HTMLAnchorElement | undefined;
   readonly start: number;
   readonly end: number;
 }
@@ -25,11 +27,11 @@ function skipElement(element: Element): boolean {
 function renderedText(container: HTMLElement): { text: string; runs: TextRun[] } {
   let text = '';
   const runs: TextRun[] = [];
-  function walk(node: Node): void {
+  function walk(node: Node, anchor?: HTMLAnchorElement): void {
     if (node.nodeType === 3) {
       const start = text.length;
       text += node.nodeValue ?? '';
-      runs.push({ node: node as Text, start, end: text.length });
+      runs.push({ node: node as Text, anchor, start, end: text.length });
       return;
     }
     if (node.nodeType !== 1) return;
@@ -41,7 +43,8 @@ function renderedText(container: HTMLElement): { text: string; runs: TextRun[] }
     }
     const block = blocks.has(element.tagName);
     if (block) text += '\n';
-    for (const child of element.childNodes) walk(child);
+    const owner = element.tagName === 'A' ? (element as HTMLAnchorElement) : anchor;
+    for (const child of element.childNodes) walk(child, owner);
     if (block) text += '\n';
   }
   for (const node of container.childNodes) walk(node);
@@ -56,8 +59,8 @@ function skipWhitespace(text: string, at: number): number {
   return cursor;
 }
 /** Only identical non-whitespace text with corresponding whitespace runs is provable. */
-function align(projected: string, rendered: string): Map<number, number> | undefined {
-  const offsets = new Map<number, number>();
+function align(projected: string, rendered: string): AlignmentRun[] | undefined {
+  const offsets: AlignmentRun[] = [];
   let source = skipWhitespace(projected, 0),
     actual = skipWhitespace(rendered, 0);
   while (source < projected.length) {
@@ -68,9 +71,69 @@ function align(projected: string, rendered: string): Map<number, number> | undef
       continue;
     }
     if (projected[source] !== rendered[actual]) return undefined;
-    offsets.set(source++, actual++);
+    appendAlignment(offsets, source, actual);
+    source++;
+    actual++;
   }
   return rendered.slice(actual).trim() === '' ? offsets : undefined;
+}
+interface AlignmentRun extends MarkRange {
+  readonly actual: number;
+}
+function appendAlignment(offsets: AlignmentRun[], source: number, actual: number): void {
+  const previous = offsets[offsets.length - 1];
+  if (previous?.end === source) previous.end++;
+  else offsets.push({ start: source, end: source + 1, actual });
+}
+function alignedOffset(runs: readonly AlignmentRun[], offset: number): number | undefined {
+  let low = 0,
+    high = runs.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if ((runs[middle]?.end ?? 0) <= offset) low = middle + 1;
+    else high = middle;
+  }
+  const run = runs[low];
+  return run !== undefined && offset >= run.start ? run.actual + offset - run.start : undefined;
+}
+function projectedOffset(runs: readonly AlignmentRun[], offset: number): number | undefined {
+  let low = 0,
+    high = runs.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    const run = runs[middle];
+    if (run !== undefined && run.actual + run.end - run.start <= offset) low = middle + 1;
+    else high = middle;
+  }
+  const run = runs[low];
+  return run !== undefined && offset >= run.actual ? run.start + offset - run.actual : undefined;
+}
+/** Shares whole-field alignment with marks; only anchor spans with exact source evidence escape. */
+export function renderedAnchorSources(
+  container: HTMLElement,
+  projection: SearchTextProjection,
+): ReadonlyMap<HTMLAnchorElement, readonly SourceRange[]> {
+  const { text, runs } = renderedText(container);
+  const offsets = align(projection.visible.text, text);
+  const sources = new Map<HTMLAnchorElement, readonly SourceRange[]>();
+  if (offsets === undefined) return sources;
+  for (const [anchor, range] of anchorRanges(runs)) {
+    const from = projectedOffset(offsets, range.start),
+      to = projectedOffset(offsets, range.end - 1);
+    if (from !== undefined && to !== undefined)
+      sources.set(anchor, searchTextSourceRanges(projection.visible, { from, to: to + 1 }));
+  }
+  return sources;
+}
+function anchorRanges(runs: readonly TextRun[]): Map<HTMLAnchorElement, MarkRange> {
+  const ranges = new Map<HTMLAnchorElement, MarkRange>();
+  for (const run of runs) {
+    if (run.anchor === undefined || run.start === run.end) continue;
+    const previous = ranges.get(run.anchor);
+    if (previous === undefined) ranges.set(run.anchor, { start: run.start, end: run.end });
+    else previous.end = run.end;
+  }
+  return ranges;
 }
 function mergeRanges(ranges: MarkRange[]): MarkRange[] {
   ranges.sort((a, b) => {
@@ -88,13 +151,13 @@ function mergeRanges(ranges: MarkRange[]): MarkRange[] {
 }
 function matchedRanges(
   text: string,
-  offsets: Map<number, number>,
+  offsets: readonly AlignmentRun[],
   matching: { query: PreparedSearchQuery; segment: SearchWordSegmenter },
 ): MarkRange[] {
   const ranges: MarkRange[] = [];
   for (const match of matchSearchText(text, matching.query, matching.segment)) {
-    const start = offsets.get(match.start),
-      end = offsets.get(match.end - 1);
+    const start = alignedOffset(offsets, match.start),
+      end = alignedOffset(offsets, match.end - 1);
     if (start !== undefined && end !== undefined) ranges.push({ start, end: end + 1 });
   }
   return mergeRanges(ranges);
@@ -122,7 +185,30 @@ export function markSearchText(
   const { text, runs } = renderedText(container);
   const offsets = align(projection.visible.text, text);
   if (offsets === undefined) return;
-  runs.reverse();
-  for (const range of matchedRanges(projection.visible.text, offsets, { query, segment }))
-    for (const run of runs) wrapFragment(container, run, range);
+  wrapRanges(container, runs, matchedRanges(projection.visible.text, offsets, { query, segment }));
+}
+function wrapRanges(
+  container: HTMLElement,
+  runs: readonly TextRun[],
+  ranges: readonly MarkRange[],
+): void {
+  let index = runs.length - 1;
+  for (const range of ranges) index = wrapRange(container, runs, index, range);
+}
+function wrapRange(
+  container: HTMLElement,
+  runs: readonly TextRun[],
+  startIndex: number,
+  range: MarkRange,
+): number {
+  let index = startIndex;
+  while (index >= 0 && (runs[index]?.start ?? 0) >= range.end) index--;
+  for (let at = index; at >= 0; at--) {
+    const run = runs[at];
+    if (run === undefined || run.end <= range.start) break;
+    wrapFragment(container, run, range);
+    // A run spanning several matches stays available; every disjoint run is skipped once.
+    if (run.start >= range.start) index = at - 1;
+  }
+  return index;
 }

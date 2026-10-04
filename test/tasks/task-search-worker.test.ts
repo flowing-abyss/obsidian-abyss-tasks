@@ -485,3 +485,55 @@ it('ready followed by lifecycle cancellation cannot return a disposed startup as
   expect(worker.terminated).toBe(true);
   expect(revoked).toEqual([worker.url]);
 });
+
+it.each(['open', 'read'] as const)(
+  'recovers a request-specific Worker %s failure without a crash notification',
+  async (operation) => {
+    const source = new FakeSearchSource();
+    source.ready([nodeDocuments(3)]);
+    const diagnostics: unknown[] = [];
+    const crashes = vi.fn();
+    const service = new TaskSearchService({
+      source,
+      reads: {
+        observedTags: () => [],
+        async *organization() {},
+        resolveSearchPage: async () => [],
+      },
+      segment: fallbackSearchWords,
+      scheduler: new ControlledSearchScheduler(),
+      createBackend: async () => {
+        const backend = await BrowserTaskSearchBackend.create('source');
+        backend.subscribeFailure(crashes);
+        return backend;
+      },
+      diagnose: (diagnostic) => diagnostics.push(diagnostic),
+    });
+    const signal = new AbortController().signal;
+    try {
+      const cursor = await service.open({ kind: 'roots', query: 'needle' }, signal);
+      const worker = expectDefined(ControlledWorker.instances[0]);
+      vi.spyOn(worker.runtime, operation).mockRejectedValue(new Error('private authored content'));
+      await expect(
+        operation === 'open'
+          ? service.open({ kind: 'roots', query: 'needle' }, signal)
+          : service.read(cursor, 0, 1, signal),
+      ).rejects.toMatchObject({ code: 'unavailable' });
+      expect(crashes).not.toHaveBeenCalled();
+      expect(worker.terminated).toBe(true);
+      expect(
+        worker.incoming.some(
+          (reply) =>
+            (reply as TaskSearchReply).type === 'failure' && (reply as { id: number }).id > 0,
+        ),
+      ).toBe(true);
+      const next = await service.open({ kind: 'roots', query: 'needle' }, signal);
+      expect((await service.read(next, 0, 10, signal)).hits).toHaveLength(3);
+      expect(ControlledWorker.instances).toHaveLength(2);
+      expect(diagnostics).toHaveLength(1);
+      expect(JSON.stringify(diagnostics)).not.toContain('private');
+    } finally {
+      service.dispose();
+    }
+  },
+);

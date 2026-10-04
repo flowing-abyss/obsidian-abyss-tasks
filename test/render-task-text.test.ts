@@ -2,6 +2,7 @@ import { Component, MarkdownRenderer, Menu, type App, type MenuItem } from 'obsi
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderTaskText } from '../src/ui/renderTaskText';
 import { deferred, expectDefined } from './helpers';
+import { captureMenus, mockReadingView } from './support/linkEditHarness';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -71,6 +72,29 @@ describe('inline task title presentation', () => {
 });
 
 describe('renderTaskText link occurrence pairing', () => {
+  it.each(['Folder/Note.md', 'Folder/Note#Heading', 'Folder/Note#Heading#Nested', '#Heading'])(
+    'preserves exact edit identity for the host reading-view label of %s',
+    async (target) => {
+      mockReadingView();
+      const menus = captureMenus();
+      const onEditLink = vi.fn();
+      const host = document.body.createDiv();
+      const raw = `[[${target}]]`;
+      const receipt = renderTaskText(host, `Before ${raw} after`, {
+        app: {} as App,
+        sourcePath: 'tasks.md',
+        component: new Component(),
+        onEditLink,
+      });
+      expect(await receipt.settled).toEqual({ type: 'ready' });
+      expectDefined(host.querySelector('a')).dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+      );
+      expectDefined(menus[0]).pick('Edit link…');
+      expect(onEditLink).toHaveBeenCalledWith(0, expect.objectContaining({ raw, index: 7 }));
+    },
+  );
+
   it('renders an exact link label without installing interactive link behavior', async () => {
     vi.useFakeTimers();
     vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
@@ -187,7 +211,9 @@ describe('renderTaskText link occurrence pairing', () => {
   ])('pairs the real link outside inline code as occurrence zero', async (source, href, raw) => {
     vi.useFakeTimers();
     vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
-      holder.createEl('code', { text: raw });
+      if (source.startsWith('!')) holder.appendText('📎 Very long preview name');
+      else holder.createEl('code', { text: raw });
+      holder.appendText(' ');
       const anchor = holder.createEl('a', { text: 'Same' });
       anchor.setAttribute('href', href);
     });
@@ -409,4 +435,128 @@ it('keeps an explicit plain Markdown field synchronous', async () => {
   expect(el.textContent).toBe('ordinary field');
   expect(render).not.toHaveBeenCalled();
   expect(await receipt.settled).toEqual({ type: 'ready' });
+});
+
+it.each([
+  { block: 'HTML', label: 'authored' },
+  { block: 'HTML', label: 'https://one.example' },
+  { block: 'indented-code', label: 'authored' },
+  { block: 'indented-code', label: 'https://one.example' },
+])(
+  'does not let a generated anchor replace an unrendered $block token labeled $label',
+  async ({ block, label }) => {
+    const url = 'https://one.example';
+    const markdown =
+      block === 'HTML'
+        ? `<div>\n[${label}](${url})\n</div>\n\n${url}`
+        : `    [${label}](${url})\n\n${url}`;
+    // Contract fixture for https://obsidian.md/help/html: Markdown inside an HTML block
+    // and CommonMark indented-code blocks remains literal. This exercises the real wiring seam,
+    // not a native renderer claim.
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
+      expect(source).toBe(markdown);
+      if (block === 'HTML') holder.createDiv().appendText(`\n[${label}](${url})\n`);
+      else holder.createEl('pre').createEl('code').appendText(`[${label}](${url})\n`);
+      holder.createEl('p').createEl('a', { text: url, attr: { href: url } });
+    });
+    const menu = vi.spyOn(Menu.prototype, 'addItem');
+    const onEditLink = vi.fn();
+    const host = document.body.createDiv();
+    const render = renderTaskText(host, markdown, {
+      app: {} as App,
+      sourcePath: 'tasks.md',
+      component: new Component(),
+      presentation: 'markdown',
+      onEditLink,
+    });
+    expect(await render.settled).toEqual({ type: 'ready' });
+    const anchor = expectDefined(host.querySelector('a'));
+    anchor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(menu).not.toHaveBeenCalled();
+    expect(onEditLink).not.toHaveBeenCalled();
+    const open = vi.fn((event: MouseEvent) => {
+      expect(event.defaultPrevented).toBe(false);
+      event.preventDefault(); // Avoid jsdom attempting navigation after observing the real listener.
+    });
+    anchor.addEventListener('click', open);
+    anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(open).toHaveBeenCalledOnce();
+    expect(host.textContent).toContain(`[${label}](${url})`);
+  },
+);
+
+it('withholds a same-label generated anchor even when complete rendered text and destination counts align', async () => {
+  const label = 'same';
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _source, holder) => {
+    holder.appendText('same ');
+    holder.createEl('a', { text: label, attr: { href: 'target' } });
+  });
+  const menu = vi.spyOn(Menu.prototype, 'addItem');
+  const host = document.body.createDiv();
+  const receipt = renderTaskText(host, '[same](target) same', {
+    app: {} as App,
+    sourcePath: 'a.md',
+    component: new Component(),
+    onEditLink: vi.fn(),
+  });
+  expect(await receipt.settled).toEqual({ type: 'ready' });
+  expect(host.textContent).toBe('same same');
+  expectDefined(host.querySelector('a')).dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+  );
+  expect(menu).not.toHaveBeenCalled();
+});
+
+it('retains exact edit occurrences throughout a fragmented field of repeated identical authored links', async () => {
+  const label = 'same';
+  const count = 512;
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _source, holder) => {
+    for (let index = 0; index < count; index++) {
+      holder.createEl('a', { text: label, attr: { href: 'target' } });
+      holder.appendText(' ');
+    }
+  });
+  let edit: (() => void) | undefined;
+  vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (
+    this: Menu,
+    build: (item: MenuItem) => unknown,
+  ) {
+    build({
+      setTitle() {
+        return this;
+      },
+      setIcon() {
+        return this;
+      },
+      onClick(callback: () => void) {
+        edit = callback;
+        return this;
+      },
+    } as unknown as MenuItem);
+    return this;
+  });
+  vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+    return this;
+  });
+  const onEditLink = vi.fn();
+  const host = document.body.createDiv();
+  const receipt = renderTaskText(host, '[same](target) '.repeat(count), {
+    app: {} as App,
+    sourcePath: 'a.md',
+    component: new Component(),
+    onEditLink,
+  });
+  expect(await receipt.settled).toEqual({ type: 'ready' });
+  const anchors = host.querySelectorAll('a');
+  expect(anchors).toHaveLength(count);
+  for (const index of [0, 255, 511]) {
+    expectDefined(anchors[index]).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
+    expectDefined(edit)();
+    expect(onEditLink).toHaveBeenLastCalledWith(
+      index,
+      expect.objectContaining({ raw: '[same](target)', index: index * 15 }),
+    );
+  }
 });

@@ -518,6 +518,7 @@ export class TaskSearchService implements TaskSearchApi {
     const empty = request.query.trim() === '';
     this.checkGeneration(generation, signal);
     const backend = empty ? undefined : this.backend;
+    const run = this.run;
     if (!empty && backend === undefined)
       throw new TaskSearchError('unavailable', 'Search unavailable');
     // Register the allocation before building either kind of vector. Its ID can release a
@@ -552,11 +553,40 @@ export class TaskSearchService implements TaskSearchApi {
       }
       return owner.cursor;
     } catch (error) {
-      const code = owner.retired;
-      this.retire(owner.cursor.id, 'unavailable');
-      if (code !== undefined) throw new TaskSearchError(code, 'Search allocation unavailable');
-      throw error;
+      const failure = this.operationError(error, owner, run, signal);
+      this.retire(owner.cursor.id, failure.code);
+      throw failure;
     }
+  }
+  private operationError(
+    error: unknown,
+    owner: Ownership,
+    run: AbortController,
+    signal: AbortSignal,
+  ): TaskSearchError {
+    let code: TaskSearchErrorCode = 'unavailable';
+    if (signal.aborted) code = 'aborted';
+    else if (owner.retired !== undefined) code = owner.retired;
+    else if (owner.cursor.generation !== this.generation) code = 'stale';
+    else if (error instanceof TaskSearchError) code = error.code;
+    const expected = code !== 'unavailable' && code !== 'disposed';
+    if (!expected && this.ownsOperation(owner, run, signal)) {
+      this.recover('execution');
+      code = 'unavailable';
+    }
+    return new TaskSearchError(code, 'Search operation unavailable');
+  }
+  private ownsOperation(owner: Ownership, run: AbortController, signal: AbortSignal): boolean {
+    return (
+      this.run === run &&
+      !run.signal.aborted &&
+      this.backend === owner.backend &&
+      owner.backend !== undefined &&
+      this.cursors.get(owner.cursor.id) === owner &&
+      owner.retired === undefined &&
+      !signal.aborted &&
+      owner.cursor.generation === this.generation
+    );
   }
   private makeRoom(): void {
     if (this.cursors.size < 4) return;
@@ -624,7 +654,13 @@ export class TaskSearchService implements TaskSearchApi {
       );
     validateSearchPage(cursor, owner.cursor, offset, limit);
     this.checkForwardOffset(owner, offset);
-    const page = await abortable(this.numericPage(owner, offset, limit), signal);
+    const run = this.run;
+    const reading = this.numericPage(owner, offset, limit).catch((error: unknown) => {
+      const failure = this.operationError(error, owner, run, signal);
+      if (!signal.aborted) this.retire(owner.cursor.id, failure.code);
+      throw failure;
+    });
+    const page = await abortable(reading, signal);
     const ids = page.hits;
     const done = page.done;
     this.checkGeneration(cursor.generation, signal);
@@ -670,10 +706,17 @@ export class TaskSearchService implements TaskSearchApi {
       return pending.page.then((page) => this.pendingSlice(page, offset, limit));
     const entry: { end: number | undefined; page: Promise<TaskSearchBackendPage> } = {
       end: undefined,
-      page: owner.backend.read(owner.backendCursor, offset, limit).then((page) => {
-        entry.end = page.offset + page.hits.length;
-        return page;
-      }),
+      page: owner.backend
+        .read(owner.backendCursor, offset, limit)
+        .then((page) => {
+          entry.end = page.offset + page.hits.length;
+          return page;
+        })
+        .catch((error: unknown) => {
+          if (this.pendingPages.get(owner.cursor.id) === entry)
+            this.pendingPages.delete(owner.cursor.id);
+          throw error;
+        }),
     };
     this.pendingPages.set(owner.cursor.id, entry);
     return entry.page;

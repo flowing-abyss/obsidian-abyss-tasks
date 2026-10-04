@@ -25,21 +25,30 @@ function appendRange(ranges: SourceRange[], range: SourceRange): void {
   if (last?.to === range.from) ranges[ranges.length - 1] = { from: last.from, to: range.to };
   else if (last?.from !== range.from || last.to !== range.to) ranges.push(range);
 }
+function firstSourceRun(value: SearchTextValue, offset: number): number {
+  // Runs are disjoint and ordered by visible offset; callers need not order their matches.
+  let low = 0,
+    high = value.map.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if ((value.map[middle]?.visible.to ?? 0) <= offset) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
 export function searchTextSourceRanges(
   value: SearchTextValue,
   visible: SourceRange,
 ): readonly SourceRange[] {
   const ranges: SourceRange[] = [];
-  for (const run of value.map) {
+  if (visible.from >= visible.to) return ranges;
+  for (let index = firstSourceRun(value, visible.from); index < value.map.length; index++) {
+    const run = value.map[index];
+    if (run === undefined || run.visible.from >= visible.to) break;
     const from = Math.max(visible.from, run.visible.from),
       to = Math.min(visible.to, run.visible.to);
-    if (from >= to) continue;
-    const source = run.source[0];
-    if (
-      run.source.length === 1 &&
-      source !== undefined &&
-      source.to - source.from === run.visible.to - run.visible.from
-    ) {
+    const source = identitySource(run);
+    if (source !== undefined) {
       appendRange(ranges, {
         from: source.from + from - run.visible.from,
         to: source.from + to - run.visible.from,
@@ -167,14 +176,42 @@ function consumeDelimiterPair(opener: Delimiter, closer: Delimiter, removed: Set
 function sameDelimiter(piece: Piece | undefined, char: string): boolean {
   return piece?.delimiter === true && piece.text === char;
 }
-function closeDelimiter(closer: Delimiter, stack: Delimiter[], removed: Set<number>): void {
+function delimiterClass(run: Delimiter): string {
+  return `${run.char}${Number(run.close)}${run.length % 3}`;
+}
+function nearestOpener(
+  closer: Delimiter,
+  stack: readonly Delimiter[],
+  classes: ReadonlyMap<string, readonly number[]>,
+): number {
+  let index = -1;
+  // Pair compatibility depends only on character, close capability and original length mod 3.
+  // At most 18 class tops replace a scan of every incompatible opener. A popped run leaves
+  // both stacks once, preserving the original nearest-opener/crossing rule in amortized O(n).
+  for (const candidates of classes.values()) {
+    const top = candidates[candidates.length - 1];
+    const opener = top === undefined ? undefined : stack[top];
+    if (top !== undefined && top > index && opener !== undefined && canPair(opener, closer))
+      index = top;
+  }
+  return index;
+}
+function closeDelimiter(
+  closer: Delimiter,
+  stack: Delimiter[],
+  classes: Map<string, number[]>,
+  removed: Set<number>,
+): void {
   while (closer.close && closer.remaining > 0) {
-    let index = stack.length - 1;
-    while (index >= 0 && !canPair(stack[index] as Delimiter, closer)) index--;
+    const index = nearestOpener(closer, stack, classes);
     const opener = stack[index];
     if (opener === undefined) break;
     consumeDelimiterPair(opener, closer, removed);
-    stack.splice(index + Number(opener.remaining > 0));
+    const keep = index + Number(opener.remaining > 0);
+    while (stack.length > keep) {
+      const removedOpener = stack.pop();
+      if (removedOpener !== undefined) classes.get(delimiterClass(removedOpener))?.pop();
+    }
   }
 }
 function authoredFlanking(
@@ -218,10 +255,20 @@ function balancedPieces(
   offset: number,
 ): readonly Piece[] {
   const stack: Delimiter[] = [],
+    classes = new Map<string, number[]>(),
     removed = new Set<number>();
   for (const closer of delimiterRuns(pieces, source, offset)) {
-    closeDelimiter(closer, stack, removed);
-    if (closer.open && closer.remaining > 0) stack.push(closer);
+    closeDelimiter(closer, stack, classes, removed);
+    if (closer.open && closer.remaining > 0) {
+      const key = delimiterClass(closer);
+      let candidates = classes.get(key);
+      if (candidates === undefined) {
+        candidates = [];
+        classes.set(key, candidates);
+      }
+      candidates.push(stack.length);
+      stack.push(closer);
+    }
   }
   return removed.size === 0 ? pieces : pieces.filter((_, index) => !removed.has(index));
 }
@@ -309,9 +356,16 @@ function codeReplacements(source: string, offset: number): Replacement[] {
     pieces: codePieces(source, range, offset),
   }));
 }
-function linkReplacement(link: SearchLinkSpan): Replacement {
+function linkReplacement(link: SearchLinkSpan, renderedLabel?: string): Replacement {
   let label = link.label;
-  if (link.kind === 'markdown') {
+  if (renderedLabel !== undefined) {
+    // Render evidence may substitute an already destination-matched anchor's host label. Its
+    // entire text still belongs to this exact token span; search indexing never supplies this.
+    label = {
+      text: renderedLabel,
+      map: [{ visible: { from: 0, to: renderedLabel.length }, source: [link.source] }],
+    };
+  } else if (link.kind === 'markdown') {
     const from = link.label.map[0]?.source[0]?.from ?? link.source.from;
     label = inlineProjection(link.label.text, from, codeReplacements(link.label.text, from));
   }
@@ -334,10 +388,13 @@ function nonOverlapping(replacements: Replacement[]): Replacement[] {
 export function projectSearchText(
   source: string,
   presentation: 'title' | 'prose',
+  renderedLinkLabels?: ReadonlyMap<number, string>,
 ): SearchTextProjection {
   const replacements = [
     ...codeReplacements(source, 0),
-    ...searchLinkSpans(source).map(linkReplacement),
+    ...searchLinkSpans(source).map((link) =>
+      linkReplacement(link, renderedLinkLabels?.get(link.source.from)),
+    ),
   ];
   if (presentation === 'prose') replacements.push(...proseHtml(source));
   const accepted = nonOverlapping(replacements);

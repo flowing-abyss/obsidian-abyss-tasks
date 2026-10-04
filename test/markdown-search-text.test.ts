@@ -186,3 +186,44 @@ it('projects a long Markdown label with original-field offsets through the same 
     { from: 12 + label.length, to: 16 + label.length },
   ]);
 });
+
+it.each([
+  ['b_ ', 'b_ '],
+  ['b**c ', 'bc '],
+])('keeps unmatched opener runs literal before incompatible closers %s', (closers, rendered) => {
+  const count = 2048;
+  const source = '*a '.repeat(count) + closers.repeat(count);
+  const value = projectSearchText(source, 'prose').visible;
+  expect(value.text).toBe('*a '.repeat(count) + rendered.repeat(count));
+  expect(searchTextSourceRanges(value, { from: 0, to: 3 * count })).toEqual([
+    { from: 0, to: 3 * count },
+  ]);
+});
+
+it.each([
+  ['*a _b* c_', 'a _b c_'],
+  ['*a **b** c*', 'a b c'],
+  ['*a b**c d*', 'a b**c d'],
+])('preserves nesting and crossing after incompatible delimiters: %s', (source, visible) => {
+  expect(projectSearchText(source, 'prose').visible.text).toBe(visible);
+});
+
+it('looks up fragmented source ranges without revisiting disjoint map runs', () => {
+  for (const count of [256, 1024]) {
+    const value = projectSearchText('**needle** '.repeat(count), 'prose').visible;
+    let visits = 0;
+    const map = new Proxy(value.map, {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && /^\d+$/u.test(key)) visits++;
+        return Reflect.get(target, key, receiver) as unknown;
+      },
+    });
+    for (let index = count - 1; index >= 0; index--) {
+      expect(
+        searchTextSourceRanges({ ...value, map }, { from: index * 7, to: index * 7 + 6 }),
+      ).toEqual([{ from: index * 11 + 2, to: index * 11 + 8 }]);
+    }
+    // Arbitrary query order needs logarithmic lookup, then only the intersecting runs.
+    expect(visits).toBeLessThan(count * (Math.ceil(Math.log2(map.length)) + 4));
+  }
+});

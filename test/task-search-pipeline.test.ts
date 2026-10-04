@@ -262,3 +262,34 @@ it('maps repeated link labels to their own full-field occurrences', async () => 
     h.close();
   }
 });
+
+it('retains full fragmented field provenance while choosing later distinct-token evidence', async () => {
+  const count = 512;
+  const field = '**needle** '.repeat(count).trimEnd();
+  const h = await pipeline(
+    'needle zebra',
+    ['- [ ] needle', `  - > ${field}`, '  - 2026-10-04: needle', '  - 2026-10-04: zebra'].join(
+      '\n',
+    ),
+  );
+  try {
+    expect(h.context.excerpts.map((excerpt) => [excerpt.field, excerpt.commentLine])).toEqual([
+      ['title', undefined],
+      ['description', undefined],
+      ['comment', 3],
+    ]);
+    const description = expectDefined(h.context.excerpts[1]);
+    expect(description.markdown).toBe(field);
+    expect(description.text).toBe('needle '.repeat(count).trimEnd());
+    expect(description.matches).toHaveLength(count);
+    for (const [index, match] of description.matches.entries()) {
+      expect(match).toMatchObject({
+        start: index * 7,
+        end: index * 7 + 6,
+        sourceRanges: [{ from: index * 11 + 2, to: index * 11 + 8 }],
+      });
+    }
+  } finally {
+    h.close();
+  }
+});

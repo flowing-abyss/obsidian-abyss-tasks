@@ -206,7 +206,9 @@ scaffolding. Visible aliases and destinations have separate UTF-16 source maps; 
 creates gaps, and no generated attachment decoration becomes searchable authored text. The helper
 emits contiguous literal and code contents as runs, splitting at syntax or normalization boundaries
 before assembling text and provenance. Mixed prose and Markdown link labels use this same pass;
-ordinary spans do not create a temporary object graph per UTF-16 unit. Projection still completes
+ordinary spans do not create a temporary object graph per UTF-16 unit. Delimiter pairing tracks
+a finite set of character/flanking/modulo classes, so incompatible opener runs do not cause repeated
+full-stack scans. Source-range lookup skips disjoint ordered map runs. Projection still completes
 synchronously within each requested source document. The helper imports no task layer and grants
 no write authority.
 
@@ -249,7 +251,11 @@ a runtime Worker failure rebuilds once, repeated failure selects inline, and fai
 settles unavailable. Later nonempty ordinary input may start one shared recovery attempt after a
 five-second injected-clock cooldown; time, passive preparation and progress notifications never
 schedule a retry. Caller cancellation ends only that caller's wait. Diagnostics contain phase/backend/generation/path count and sanitized
-errors. User notices remain a surface responsibility.
+errors. Live backend open/read failures enter this same recovery owner independently of crash
+notifications, after proving the captured run, backend, allocation, generation and caller are current.
+Expected control/validation outcomes remain quiet and sanitized; obsolete backend errors cannot
+restart a replacement. Failed forward transport pages release their pending-page ownership, while
+cancelling one waiter cannot suppress recovery for another live waiter. User notices remain a surface responsibility.
 
 The service maps numeric hits through current source addresses and delegates exact bounded hydration
 to TaskIndex. Root cursors advance forward and release on their final delivered page. Node cursors
@@ -626,7 +632,8 @@ keeps its authority. The expired surface drops Search counts and remains usable 
 The internal pure `tasks/infrastructure/search/taskSearchContext` helper computes at most three
 matched fields from one detached hydrated root, with full authored fields, separate comment-relative
 lines, exact child-relative-line paths and UTF-16 source provenance from `markdown/searchText` and
-`searchMatchPolicy`. A bounded collector prefers distinct query-token coverage, then canonical order.
+`searchMatchPolicy`. A bounded collector prefers distinct query-token coverage, then canonical order,
+retaining only the at-most-32-token coverage set per candidate instead of repeatedly flattening matches.
 Link destinations are separately labeled evidence; scalar metadata has no fabricated source range.
 Documents and this helper share `taskSearchMetadata`. The public task barrel exposes that evidence
 and the shared matcher directly to TaskSearch and TaskCardRenderer. The barrel is the single facade;
@@ -646,7 +653,9 @@ passed through the existing TaskCommands edit-link operation. Evidence offsets g
 
 `markSearchText` aligns the shared projected visible text with actual owner-document text nodes,
 allowing only corresponding whitespace runs and rendered block boundaries. A whole-field mismatch
-omits marks. Proven matched ranges wrap text fragments without replacing anchors or their listeners.
+omits marks. Alignment retains non-whitespace runs rather than a per-character offset map; ordered
+interval lookup and a reverse sweep skip disjoint provenance and DOM runs. Proven matched ranges
+wrap text fragments without replacing anchors or their listeners.
 Marks run in the existing onRendered callback after link wiring and before the same receipt is ready;
 there is no timer completion barrier.
 
@@ -753,7 +762,18 @@ without links also reaches the host renderer; genuine plain single-line fields s
 Project values retain their ordinary Markdown contract.
 
 Editable links keep original source offsets and occurrence order even when display labels change
-length; inert labels gain no edit authority. Forecast/continuation titles share
+length; inert labels gain no edit authority. Anchor pairing requires path-preserving destination
+identity; labels cannot override contradictory destinations. A destination group with extra or missing
+rendered anchors is ambiguous and gets no edit wiring. Ordered repeated authored occurrences retain
+their original indices. Before installing edit listeners, renderTaskText also requires whole-field
+alignment and maps each anchor's text span through the shared projection into that exact authored
+token's source span. This proof substitutes the destination-matched host label at the candidate token
+to support full wiki paths and heading labels; indexing keeps its original search projection.
+Destination counts alone are not source proof: HTML-block literals or displaced
+generated anchors can leave equal counts. Title embed transformations must preserve the original
+raw token sequence before their presented offsets are used. Unprovable fields/anchors omit editing.
+Internal `.md` omission preserves folders and subpaths; basename coincidence never grants edit
+authority. Ordinary opening and search marks remain independent. Forecast/continuation titles share
 [`plainGhostTaskTitle`](src/ui/plainGhostTaskTitle.ts) and remain inert.
 
 ## Projects

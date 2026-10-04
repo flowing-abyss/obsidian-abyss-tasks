@@ -568,3 +568,170 @@ it('uses the shared fallback for retrieved CJK fields when Intl segmentation is 
     vi.unstubAllGlobals();
   }
 });
+
+it.each(['root-description', 'root-comment', 'child-description', 'child-comment'] as const)(
+  'keeps generated colliding anchors out of exact %s edit authority',
+  async (kind) => {
+    const source =
+      'https://one.example [https://one.example](https://one.example) [https://one.example](https://two.example)';
+    const replacement = '[changed](https://three.example)';
+    const updated = `https://one.example [https://one.example](https://one.example) ${replacement}`;
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, authored, holder) => {
+      expect([source, updated]).toContain(authored);
+      for (const [index, href] of [
+        'https://one.example',
+        'https://one.example',
+        authored === source ? 'https://two.example' : 'https://three.example',
+      ].entries()) {
+        if (index > 0) holder.appendText(' ');
+        holder.createEl('a', {
+          text: index === 2 && authored === updated ? 'changed' : 'https://one.example',
+          attr: { href },
+        });
+      }
+    });
+    let edit: (() => void) | undefined;
+    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (
+      this: Menu,
+      build: (item: MenuItem) => unknown,
+    ) {
+      let title = '';
+      build({
+        setTitle(value: string) {
+          title = value;
+          return this;
+        },
+        setIcon() {
+          return this;
+        },
+        onClick(callback: () => void) {
+          if (title === 'Edit link…') edit = callback;
+          return this;
+        },
+      } as unknown as MenuItem);
+      return this;
+    });
+    vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+      return this;
+    });
+    vi.spyOn(LinkEditModal.prototype, 'open').mockImplementation(function (this: LinkEditModal) {
+      (this as unknown as { onSave_abyssPrivate: (text: string) => void }).onSave_abyssPrivate(
+        replacement,
+      );
+    });
+    const fixture = linkedFixture(kind);
+    const h = await mountCanonicalSearchUi(
+      {
+        'a.md': (kind === 'root-comment'
+          ? fixture.markdown.replace(linkedField, 'earlier comment')
+          : fixture.markdown
+        ).replaceAll(linkedField, source),
+      },
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    try {
+      const execute = vi.spyOn(h.tasks, 'execute');
+      h.query('https');
+      await h.completed();
+      const fields = [...h.root.querySelectorAll('.abyss-search-context-text')].filter(
+        (field) => field.querySelector('a') !== null,
+      );
+      const field = expectDefined(fields[fields.length - 1]);
+      // Observe link wiring without opening the unrelated enclosing card menu.
+      field.addEventListener('contextmenu', (event) => {
+        event.stopPropagation();
+      });
+      const anchors = [...field.querySelectorAll('a')];
+      expect(anchors).toHaveLength(3);
+      for (const anchor of anchors.slice(0, 2)) {
+        expect(anchor.querySelector('mark')).not.toBeNull();
+        anchor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        expect(edit).toBeUndefined();
+      }
+      expect(execute).not.toHaveBeenCalled();
+      expectDefined(anchors[2]).dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+      );
+      expectDefined(edit)();
+      await vi.waitFor(() => {
+        expect(execute).toHaveBeenCalled();
+      });
+      const command = expectDefined(execute.mock.calls[0]?.[0]);
+      expect(command).toMatchObject({ type: 'edit-link', occurrence: 1, replacement });
+      if (command.type !== 'edit-link') throw new Error('Wrong command');
+      expect(command.target.type).toBe(fixture.field);
+      if (command.target.type === 'comment')
+        expect(command.target.ref.relativeLine).toBe(fixture.child ? 1 : 2);
+      const target =
+        command.target.type === 'comment' ? command.target.ref.parent : command.target.target;
+      if (fixture.child)
+        expect(target).toMatchObject({
+          type: 'subtask',
+          ref: {
+            relativeLine: 1,
+            parent: {
+              type: 'subtask',
+              ref: {
+                relativeLine: 1,
+                parent: { type: 'task', ref: { filePath: 'a.md', line: 0 } },
+              },
+            },
+          },
+        });
+      else expect(target).toMatchObject({ type: 'task', ref: { filePath: 'a.md', line: 0 } });
+      await vi.waitFor(() => {
+        const root = h.index.list()[0];
+        const node = fixture.child ? root?.subtasks[0]?.subtasks[0] : root;
+        expect(fieldText(node, fixture.field)).toBe(updated);
+        if (kind === 'root-comment') expect(node?.comments[0]?.text).toBe('earlier comment');
+      });
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each(['authored', 'https://one.example'])(
+  'withholds matched-field edit authority when raw HTML hides an authored token labeled %s',
+  async (label) => {
+    const url = 'https://one.example';
+    const source = `<div>\n[${label}](${url})\n</div>\n\n${url}`;
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
+      expect(markdown).toBe(source);
+      holder.createDiv().appendText(`\n[${label}](${url})\n`);
+      holder.createEl('p').createEl('a', { text: url, attr: { href: url } });
+    });
+    const h = await mountCanonicalSearchUi(
+      {
+        'a.md': `- [ ] root\n${source
+          .split('\n')
+          .map((line) => `  - > ${line}`)
+          .join('\n')}`,
+      },
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    try {
+      const execute = vi.spyOn(h.tasks, 'execute');
+      const menu = vi.spyOn(Menu.prototype, 'addItem');
+      h.query('https');
+      await h.completed();
+      const field = expectDefined(
+        [...h.root.querySelectorAll('.abyss-search-context-text')].find(
+          (field) => field.querySelector('a') !== null,
+        ),
+      );
+      field.addEventListener('contextmenu', (event) => {
+        event.stopPropagation();
+      });
+      expectDefined(field.querySelector('a')).dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+      );
+      expect(menu).not.toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
+      expect(field.textContent).toContain(`[${label}](${url})`);
+      expect(field.querySelector('mark')).toBeNull();
+    } finally {
+      h.dispose();
+    }
+  },
+);

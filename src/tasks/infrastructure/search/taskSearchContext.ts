@@ -124,13 +124,21 @@ function semanticEvidence(
     matches,
   };
 }
-function coverage(excerpts: readonly TaskSearchExcerpt[]): number {
-  return new Set(excerpts.flatMap((excerpt) => excerpt.matches.map((match) => match.queryToken)))
-    .size;
+interface SelectedEvidence {
+  readonly excerpt: TaskSearchExcerpt;
+  readonly tokens: ReadonlySet<number>;
+}
+function coverage(excerpts: readonly SelectedEvidence[]): number {
+  const tokens = new Set<number>();
+  for (const excerpt of excerpts) for (const token of excerpt.tokens) tokens.add(token);
+  return tokens.size;
 }
 /** Only the selected three fields and one candidate are retained, never a root/corpus context cache. */
-function collect(selected: TaskSearchExcerpt[], candidate: TaskSearchExcerpt | undefined): void {
-  if (candidate === undefined) return;
+function collect(selected: SelectedEvidence[], excerpt: TaskSearchExcerpt | undefined): void {
+  if (excerpt === undefined) return;
+  const tokens = new Set<number>();
+  for (const match of excerpt.matches) tokens.add(match.queryToken);
+  const candidate = { excerpt, tokens };
   if (selected.length < 3) {
     selected.push(candidate);
     return;
@@ -175,7 +183,7 @@ export function taskSearchContext(
   query: PreparedSearchQuery,
   segment: SearchWordSegmenter,
 ): TaskSearchContext {
-  const excerpts: TaskSearchExcerpt[] = [];
+  const excerpts: SelectedEvidence[] = [];
   for (const current of nodes({
     node: root,
     address: { ...address, childLines: [] },
@@ -183,5 +191,5 @@ export function taskSearchContext(
   })) {
     for (const evidence of nodeEvidence(current, { query, segment })) collect(excerpts, evidence);
   }
-  return { excerpts };
+  return { excerpts: excerpts.map((selected) => selected.excerpt) };
 }

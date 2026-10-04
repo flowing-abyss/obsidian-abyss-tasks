@@ -5,6 +5,8 @@ import {
   parseLinks,
   type LinkToken,
 } from '../markdown/links';
+import { projectSearchText } from '../markdown/searchText';
+import { renderedAnchorSources } from './markSearchText';
 import { showMenuAtMouseEventWithFocus } from './nativeMenuFocus';
 import { runAsyncAction } from './runAsyncAction';
 import type { TaskRenderOutcome, TaskTextRender } from './taskRenderScope';
@@ -114,7 +116,7 @@ function renderMarkdownText(
       while (p.firstChild !== null) holder.appendChild(p.firstChild);
       p.remove();
     }
-    wireLinks(holder, tokens, opts);
+    wireLinks(holder, tokens, opts, presented);
     opts.onRendered?.(holder);
     complete({ type: 'ready' });
   })();
@@ -128,8 +130,16 @@ function renderMarkdownText(
   return receipt;
 }
 
-function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTextOptions): void {
+function wireLinks(
+  holder: HTMLElement,
+  tokens: LinkToken[],
+  opts: RenderTaskTextOptions,
+  presented: string,
+): void {
   const anchors = Array.from(holder.querySelectorAll('a'));
+  // Prove identity before an explicitly supplied display label can replace rendered text.
+  const occurrences =
+    opts.onEditLink === undefined ? [] : editableOccurrences(holder, anchors, tokens, presented);
   if (opts.exactLinkLabel !== undefined && anchors.length === 1) {
     anchors[0]?.setText(opts.exactLinkLabel);
   }
@@ -170,11 +180,6 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
     });
   });
   if (opts.onEditLink == null) return;
-  const descriptors = anchors.map((a) => ({
-    text: a.textContent,
-    href: a.getAttribute('data-href') ?? a.getAttribute('href') ?? '',
-  }));
-  const occurrences = pairAnchorsToTokens(descriptors, tokens);
   anchors.forEach((a, i) => {
     const occurrenceIndex = occurrences[i];
     if (occurrenceIndex === undefined || occurrenceIndex < 0) return;
@@ -187,6 +192,46 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
       menu.addItem(buildEditLinkItem(occurrenceIndex, token, opts));
       showMenuAtMouseEventWithFocus(menu, e);
     });
+  });
+}
+
+function editableOccurrences(
+  holder: HTMLElement,
+  anchors: HTMLAnchorElement[],
+  tokens: LinkToken[],
+  presented: string,
+): number[] {
+  // Title embed labels can change source offsets, but cannot create new editable occurrences.
+  const presentedTokens = parseLinks(presented);
+  if (
+    presentedTokens.length !== tokens.length ||
+    presentedTokens.some((token, index) => token.raw !== tokens[index]?.raw)
+  )
+    return [];
+  const descriptors = anchors.map((anchor) => ({
+    text: anchor.textContent,
+    href: anchor.getAttribute('data-href') ?? anchor.getAttribute('href') ?? '',
+  }));
+  const candidates = pairAnchorsToTokens(descriptors, tokens);
+  const labels = new Map<number, string>();
+  for (const [index, occurrence] of candidates.entries()) {
+    const token = presentedTokens[occurrence],
+      anchor = anchors[index];
+    if (token !== undefined && anchor !== undefined) labels.set(token.index, anchor.textContent);
+  }
+  const sources = renderedAnchorSources(holder, projectSearchText(presented, 'prose', labels));
+  return candidates.map((occurrence, index) => {
+    const token = presentedTokens[occurrence],
+      anchor = anchors[index];
+    const ranges = anchor === undefined ? undefined : sources.get(anchor);
+    return token !== undefined &&
+      ranges !== undefined &&
+      ranges.length > 0 &&
+      ranges.every(
+        (range) => range.from >= token.index && range.to <= token.index + token.raw.length,
+      )
+      ? occurrence
+      : -1;
   });
 }
 
