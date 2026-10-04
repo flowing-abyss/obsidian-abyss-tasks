@@ -3057,41 +3057,58 @@ it('retains one lease and cursor through an unchanged synchronous inspector rend
   expect(subscribe).not.toHaveBeenCalled();
 });
 
-it('TaskModal dependency picker owns Find under the modal lease and Escape closes only the picker', async () => {
-  const h = await harness('- [ ] Current 🆔 current\n- [ ] Candidate 🆔 candidate\n');
-  const ownership = { acquire: vi.fn(() => ({ release: vi.fn() })) };
-  const modal = new TaskModal({
-    app: h.app,
-    statusRegistry: testStatusRegistry(),
-    settings: DEFAULT_SETTINGS,
-    queries: h.index,
-    tasks: h.api,
-    search: h.search,
-    interactionOwnership: ownership,
-  });
-  cleanups.unshift(() => {
-    modal.close();
-  });
-  modal.open(h.node('Current').root);
-  const el = button(activeDocument.body, '.abyss-modal-body');
-  button(el, '.abyss-dep-badge-body').click();
-  const input = await search(el, 'Candidate');
-  const control = button(el, '.abyss-dep-search-create');
-  control.focus();
-  const find = new KeyboardEvent('keydown', {
-    code: 'KeyF',
-    ctrlKey: true,
-    bubbles: true,
-    cancelable: true,
-  });
-  control.dispatchEvent(find);
-  expect(find.defaultPrevented).toBe(true);
-  expect(document.activeElement).toBe(input);
-  expect(input.selectionEnd).toBe(9);
-  input.dispatchEvent(
-    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
-  );
-  expect(el.querySelector('.abyss-dep-search')).toBeNull();
-  expect(el.isConnected).toBe(true);
-  expect(ownership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
-});
+it.each(['Next', 'Previous'])(
+  'TaskModal dependency picker owns Find and Escape after focused %s paging',
+  async (label) => {
+    const candidates = Array.from({ length: 31 }, (_, i) => `- [ ] Candidate ${i} 🆔 c${i}`).join(
+      '\n',
+    );
+    const h = await harness(`- [ ] Current 🆔 current\n${candidates}\n`);
+    const ownership = { acquire: vi.fn(() => ({ release: vi.fn() })) };
+    const modal = new TaskModal({
+      app: h.app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.api,
+      search: h.search,
+      interactionOwnership: ownership,
+    });
+    cleanups.unshift(() => {
+      modal.close();
+    });
+    modal.open(h.node('Current').root);
+    const el = button(activeDocument.body, '.abyss-modal-body');
+    button(el, '.abyss-dep-badge-body').click();
+    const input = await search(el, 'Candidate');
+    const control = button(el, '.abyss-dep-search-create');
+    control.focus();
+    const find = new KeyboardEvent('keydown', {
+      code: 'KeyF',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    control.dispatchEvent(find);
+    expect(find.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(input);
+    expect(input.selectionEnd).toBe(9);
+    const picker = expectDefined(input.closest<HTMLElement>('.abyss-dep-search'));
+    if (label === 'Previous') {
+      button(picker, '[aria-label="Next page"]').click();
+      await searchUiCompleted(picker);
+    }
+    const pager = button(picker, `[aria-label="${label} page"]`);
+    pager.focus();
+    pager.click();
+    await searchUiCompleted(picker);
+    const focused = expectDefined(document.activeElement);
+    focused.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    expect(el.querySelector('.abyss-dep-search')).toBeNull();
+    expect(el.isConnected).toBe(true);
+    expect(focused).toBe(input);
+    expect(ownership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
+  },
+);

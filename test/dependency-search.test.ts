@@ -157,6 +157,111 @@ it('bounds mounted options, crosses Arrow boundaries and returns from the final 
   expect(ui.active()?.textContent).toContain('Candidate 30');
   expect(open).toHaveBeenCalledTimes(1);
 });
+it.each([
+  ['Next', 'pager'],
+  ['Previous', 'pager'],
+  ['Next', 'direction'],
+  ['Previous', 'direction'],
+] as const)('preserves focus while replacing a %s page (focus=%s)', async (label, focus) => {
+  const h = await fixture();
+  const held = deferred<void>();
+  let hold = false;
+  const original = h.callbacks.provider.open.bind(h.callbacks.provider);
+  h.callbacks.provider.open = async (...args) => {
+    const session = await original(...args);
+    const page = session.page.bind(session);
+    session.page = async (...args) => {
+      if (hold) await held.promise;
+      return page(...args);
+    };
+    return session;
+  };
+  const ui = h.mount();
+  try {
+    ui.query('  Candidate  ');
+    await ui.completed();
+    const pager = (name: string) =>
+      expectDefined(
+        ui.handle.element.querySelector<HTMLButtonElement>(`[aria-label="${name} page"]`),
+      );
+    if (label === 'Previous') {
+      pager('Next').click();
+      await ui.completed();
+    }
+    ui.key('Home');
+    const selected = ui.active()?.textContent;
+    const control = pager(label);
+    const focused =
+      focus === 'pager'
+        ? control
+        : expectDefined(
+            ui.handle.element.querySelector<HTMLButtonElement>('[data-direction="blocks"]'),
+          );
+    focused.focus();
+    expect(activeDocument.activeElement).toBe(focused);
+    hold = true;
+    control.click();
+    const retained = focus === 'pager' ? ui.input : focused;
+    expect(control.isConnected).toBe(false);
+    expect(retained.isConnected).toBe(true);
+    expect(activeDocument.activeElement).toBe(retained);
+    expect(ui.input.value).toBe('  Candidate  ');
+    expect(ui.active()).toBeNull();
+    expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(0);
+    held.resolve();
+    await ui.completed();
+    expect(activeDocument.activeElement).toBe(retained);
+    expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(30);
+    expect(pager('Previous').disabled).toBe(label === 'Previous');
+    expect(pager('Next').disabled).toBe(false);
+    expect(ui.active()).toBeNull();
+    pager(label === 'Next' ? 'Previous' : 'Next').click();
+    await ui.completed();
+    expect(ui.active()?.textContent).toBe(selected);
+    expect(h.writes).toEqual([]);
+    expect(h.creates).toEqual([]);
+  } finally {
+    held.resolve();
+  }
+});
+
+it.each(['pager', 'direction', 'outside'] as const)(
+  'preserves focus across source publication (focus=%s)',
+  async (focus) => {
+    const h = await fixture();
+    const ui = h.mount();
+    ui.query('  Candidate  ');
+    await ui.completed();
+    const pager = expectDefined(
+      ui.handle.element.querySelector<HTMLButtonElement>('[aria-label="Next page"]'),
+    );
+    let focused: HTMLElement = pager;
+    if (focus === 'direction')
+      focused = expectDefined(
+        ui.handle.element.querySelector<HTMLButtonElement>('[data-direction="blocks"]'),
+      );
+    else if (focus === 'outside') focused = activeDocument.body.createEl('input');
+    focused.focus();
+    expect(activeDocument.activeElement).toBe(focused);
+    h.index.installCommittedContent('other.md', '- [ ] Other');
+    const retained = focus === 'pager' ? ui.input : focused;
+    expect(retained.isConnected).toBe(true);
+    expect(activeDocument.activeElement).toBe(retained);
+    expect(pager.isConnected).toBe(false);
+    if (focus === 'outside') {
+      await flushMicrotasks(30);
+      expect(ui.handle.element.isConnected).toBe(false);
+    } else {
+      await ui.completed();
+      expect(ui.input.value).toBe('  Candidate  ');
+      expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(30);
+    }
+    expect(activeDocument.activeElement).toBe(retained);
+    expect(h.writes).toEqual([]);
+    expect(h.creates).toEqual([]);
+  },
+);
+
 it.each(['blocks', 'blocked-by'] as const)(
   'freshly resolves the exact selected target in %s',
   async (direction) => {

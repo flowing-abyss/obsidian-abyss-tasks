@@ -307,7 +307,8 @@ class DependencySearchController {
     );
   }
   #dropPage(): void {
-    if (this.view.list.contains(this.view.element.ownerDocument.activeElement))
+    const active = this.view.element.ownerDocument.activeElement;
+    if (this.view.list.contains(active) || this.view.paging.contains(active))
       focusWithoutScroll(this.view.input);
     this.#options = [];
     this.#page = undefined;
