@@ -1,4 +1,4 @@
-import { Menu } from 'obsidian';
+import { Component, MarkdownRenderer, Menu } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { type CenterPanel } from '../src/panels/CenterPanel';
@@ -10,6 +10,7 @@ import {
   deferred,
   dispatchImeKey,
   expectDefined,
+  flushMicrotasks,
   freshContainer,
   makeStubStore,
   methodOf,
@@ -18,6 +19,7 @@ import {
   useRealMoment,
 } from './helpers';
 import { makeCenterPanelForTest, taskCommandsOf } from './support/panelHarness';
+import { recordVirtualSurfaceResources } from './support/virtualSurfaceResources';
 
 useRealMoment();
 
@@ -1270,4 +1272,172 @@ it('reveals an exact offscreen Search destination in the bounded list without mo
   expect(cards(el).length).toBeLessThanOrEqual(100);
   expect(el.ownerDocument.activeElement).toBe(outside);
   outside.remove();
+});
+
+it.each([{ ctrlKey: true }, { metaKey: true }])(
+  'selects all logical occurrences directly with Mod+A and archives each physical task once (%j)',
+  async (modifier) => {
+    const tasks = Array.from({ length: 1200 }, (_, line) =>
+      task({
+        title: `Task ${line}`,
+        markdownTitle: `Task ${line} [[Alice]] [[Bob]]`,
+        tags: ['#task/inbox'],
+        source: { filePath: 'large.md', line },
+      }),
+    );
+    const execute = vi.fn(async (ref: TaskRef): Promise<TaskCommandResult> => ({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'archived', ref, filePath: 'archive.md' },
+    }));
+    const planArchive = vi
+      .fn()
+      .mockResolvedValue({ type: 'ready', filePath: 'archive.md', execute });
+    const application: TaskApplicationApi = {
+      queries: makeStubStore(tasks).queries,
+      execute: vi.fn(),
+      planArchive,
+    };
+    const { el, state, panel } = makeCenter(tasks, application);
+    state.set('centerListViewState', {
+      ...state.get('centerListViewState'),
+      groupBy: 'outgoing-link',
+    });
+    flushViewport();
+    const first = expectDefined(cards(el)[0]);
+    first.focus();
+    const event = key(first, 'a', modifier);
+    expect(event.defaultPrevented).toBe(true);
+    expect(panel['rowSelection_abyssPrivate'].size).toBe(2400);
+    expect(panel['selectedTasksInVisualOrder_abyssPrivate']()).toEqual(tasks);
+    expect(cards(el).length).toBeLessThanOrEqual(100);
+    await taskCommandsOf(panel).archiveTasks(panel['selectedTasksInVisualOrder_abyssPrivate']());
+    expect(planArchive).toHaveBeenCalledOnce();
+    expect(execute.mock.calls.map(([ref]) => ref)).toEqual(tasks.map(({ ref }) => ref));
+    expect(new Set(execute.mock.calls.map(([ref]) => ref))).toHaveLength(1200);
+    panel.destroy();
+  },
+);
+
+it.each(['tasks', 'dashboard', 'search'] as const)(
+  'bounds real %s Component/badge/native resources over twenty full-range cycles at both scales',
+  async (mode) => {
+    const mountedCounts: number[] = [];
+    for (const count of [1000, 10000]) {
+      const resources = recordVirtualSurfaceResources();
+      const markdown = new Set<Component>();
+      vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (...args) => {
+        const [, , holder, , owner] = args;
+        const child = owner.addChild(new Component());
+        markdown.add(child);
+        child.register(() => markdown.delete(child));
+        holder.createEl('a', {
+          cls: 'internal-link',
+          text: 'Target',
+          attr: { 'data-href': 'Target' },
+        });
+      });
+      const tasks = Array.from({ length: count }, (_, line) =>
+        task({
+          title: `Task ${line}`,
+          markdownTitle: `Task ${line} [[Target]]`,
+          tags: ['#task/inbox'],
+          source: { filePath: 'large.md', line },
+        }),
+      );
+      const { el, state, panel } = makeCenter(tasks);
+      if (mode === 'dashboard') {
+        state.set('mode', 'projects');
+        renderDashboardList(panel, el, 'large.md');
+      } else if (mode === 'search') {
+        state.set('searchQuery', 'Task');
+        state.set('mode', 'search');
+      }
+      const surface = expectDefined(panel['taskSurface_abyssPrivate']).surface;
+      resources.installObserver();
+      surface.suspend();
+      surface.resume();
+      flushViewport();
+      await flushMicrotasks();
+      const keys = surface.rows.taskKeys;
+      expect(keys).toHaveLength(count);
+      const first = expectDefined(keys[0]);
+      const last = expectDefined(keys[keys.length - 1]);
+      const pin = surface.pin(first);
+      const retained = resources.counts();
+      const retainedMarkdown = markdown.size;
+      expect(retained.components).toBeGreaterThan(0);
+      expect(retainedMarkdown).toBeGreaterThan(0);
+      const initialMounted = [...surface.cards()].length;
+      mountedCounts.push(initialMounted);
+      for (let cycle = 0; cycle < 20; cycle++) {
+        surface.reveal(last);
+        flushViewport();
+        surface.reveal(first);
+        flushViewport();
+        await flushMicrotasks();
+        expect(resources.counts()).toEqual(retained);
+        expect(markdown.size).toBeLessThanOrEqual(retainedMarkdown);
+        expect([...surface.cards()].length).toBeLessThanOrEqual(initialMounted + 1);
+        expect(el.querySelectorAll('.abyss-task-time-badge').length).toBeLessThanOrEqual(
+          initialMounted + 1,
+        );
+      }
+      pin();
+      panel.destroy();
+      flushViewport();
+      expect(resources.liveComponents.size).toBe(0);
+      expect(resources.observers.size).toBe(0);
+      expect(resources.observed.size).toBe(0);
+      expect(markdown.size).toBe(0);
+      expect(viewportFrames.size).toBe(0);
+      // Mounted panel/global listeners must be released; document's lazy jsdom delegates are excluded.
+      expect(resources.nativeListeners.size).toBe(0);
+      vi.restoreAllMocks();
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(900);
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(700);
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        viewportFrames.set(viewportFrames.size + 1, callback);
+        return viewportFrames.size;
+      });
+      vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) =>
+        viewportFrames.delete(id),
+      );
+    }
+    expect(expectDefined(mountedCounts[1])).toBeLessThanOrEqual(
+      expectDefined(mountedCounts[0]) * 1.1,
+    );
+  },
+);
+
+it('retires held task title links when their actual content generation is evicted', async () => {
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (...args) => {
+    const holder = args[2];
+    holder.createEl('a', { cls: 'internal-link', text: 'Target', attr: { 'data-href': 'Target' } });
+  });
+  const tasks = Array.from({ length: 1200 }, (_, line) =>
+    task({
+      markdownTitle: `Task ${line} [[Target]]`,
+      tags: ['#task/inbox'],
+      source: { filePath: 'large.md', line },
+    }),
+  );
+  const { el, panel } = makeCenter(tasks);
+  flushViewport();
+  await flushMicrotasks();
+  const anchor = expectDefined(cards(el)[0]?.querySelector<HTMLElement>('a.internal-link'));
+  const open = vi.spyOn(panel['app_abyssPrivate'].workspace, 'openLinkText');
+  const hover = vi.spyOn(panel['app_abyssPrivate'].workspace, 'trigger');
+  const surface = expectDefined(panel['taskSurface_abyssPrivate']).surface;
+  surface.reveal(expectDefined(surface.rows.taskKeys[surface.rows.taskKeys.length - 1]));
+  flushViewport();
+  expect(anchor.isConnected).toBe(false);
+  const click = new MouseEvent('click', { cancelable: true });
+  anchor.dispatchEvent(click);
+  anchor.dispatchEvent(new MouseEvent('mouseover'));
+  await flushMicrotasks();
+  expect.soft(click.defaultPrevented).toBe(false);
+  expect.soft(open).not.toHaveBeenCalled();
+  expect.soft(hover.mock.calls.filter(([type]) => type === 'hover-link')).toEqual([]);
+  panel.destroy();
 });

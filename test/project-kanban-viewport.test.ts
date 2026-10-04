@@ -60,8 +60,9 @@ afterEach(() => {
   document.body.replaceChildren();
   vi.restoreAllMocks();
 });
-function nativeColumn(count = 1000) {
+function nativeColumn(count = 1000, doc = document) {
   const scroll = document.body.createDiv();
+  doc.body.append(scroll);
   Object.defineProperty(scroll, 'clientHeight', { value: 200 });
   const host = scroll.createDiv();
   const cleaned: string[] = [];
@@ -454,4 +455,57 @@ it('cancels native work and evicts unowned mounts when its column is detached', 
   });
   expect(column.owner.element('g:0')).toBeUndefined();
   expect(column.errors).toEqual([]);
+});
+
+it.each(['document', 'group', 'project', 'header', 'duplicate'] as const)(
+  'rejects a %s transfer without changing source ownership or its pin release',
+  (reason) => {
+    const source = nativeColumn(1);
+    const frame = document.body.createEl('iframe');
+    const doc = reason === 'document' ? expectDefined(frame.contentDocument) : document;
+    const destination = nativeColumn(reason === 'duplicate' ? 1 : 0, doc);
+    const element = expectDefined(source.owner.element('g:0'));
+    const release = source.owner.pin('g:0');
+    const row =
+      reason === 'header'
+        ? header('g')
+        : {
+            ...card(reason === 'project' ? 'other' : '0'),
+            key: reason === 'duplicate' ? 'g:0' : 'moved:0',
+            groupKey: reason === 'group' ? 'other' : 'g',
+          };
+    expect(source.owner.transferTo(destination.owner, 'g:0', row)).toBe(false);
+    expect(source.owner.element('g:0')).toBe(element);
+    expect(source.unloaded).toEqual([]);
+    expect(source.cleaned).toEqual([]);
+    if (reason !== 'duplicate') expect(destination.owner.element(row.key)).toBeUndefined();
+    source.owner.setActive(false);
+    expect(source.owner.element('g:0')).toBe(element);
+    release();
+    release();
+    expect(source.owner.element('g:0')).toBeUndefined();
+    expect(source.unloaded).toEqual(['g:0']);
+    expect(source.cleaned).toEqual(['g:0']);
+    source.owner.destroy();
+    destination.owner.destroy();
+    expect(source.unloaded).toEqual(['g:0']);
+  },
+);
+it('admits a same-document transfer once and rejects a duplicate source acquisition', () => {
+  const source = nativeColumn(1);
+  const destination = nativeColumn(0);
+  const element = source.owner.element('g:0');
+  const release = source.owner.pin('g:0');
+  const row = { ...card('0'), key: 'moved:0' };
+  expect(source.owner.transferTo(destination.owner, 'g:0', row)).toBe(true);
+  expect(source.owner.transferTo(destination.owner, 'g:0', row)).toBe(false);
+  destination.owner.update([row], false);
+  source.owner.destroy();
+  expect(destination.owner.element(row.key)).toBe(element);
+  expect(source.unloaded).toEqual([]);
+  destination.owner.setActive(false);
+  release();
+  destination.owner.destroy();
+  expect(source.unloaded).toEqual(['g:0']);
+  expect(source.cleaned).toEqual(['g:0']);
 });

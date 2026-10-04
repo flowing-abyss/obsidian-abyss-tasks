@@ -89,13 +89,7 @@ export class ProjectKanbanColumnViewport {
     const entry = this.#mounts.get(oldKey);
     const oldIndex = this.#viewport.rowBounds(oldKey)?.index;
     const oldRow = oldIndex === undefined ? undefined : this.#rows[oldIndex];
-    if (
-      this.#destroyed ||
-      destination.#destroyed ||
-      entry === undefined ||
-      destination.#mounts.has(newRow.key)
-    )
-      return false;
+    if (entry === undefined || !destination.#acceptsTransfer(this, newRow.key)) return false;
     if (!sameCard(oldRow, newRow)) return false;
     this.#observer?.unobserve(entry.mount.element);
     this.#mounts.delete(oldKey);
@@ -104,6 +98,14 @@ export class ProjectKanbanColumnViewport {
     destination.#observer?.observe(entry.mount.element);
     this.#transferPins(destination, oldKey, newRow.key);
     return true;
+  }
+  #acceptsTransfer(source: ProjectKanbanColumnViewport, key: string): boolean {
+    return (
+      !source.#destroyed &&
+      !this.#destroyed &&
+      source.#options.host.ownerDocument === this.#options.host.ownerDocument &&
+      !this.#mounts.has(key)
+    );
   }
   #transferPins(destination: ProjectKanbanColumnViewport, oldKey: string, newKey: string): void {
     for (const token of this.#pins)
