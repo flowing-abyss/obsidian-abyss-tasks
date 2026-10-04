@@ -15,6 +15,7 @@ import type { ProjectStore } from '../../src/projects/ProjectStore';
 import type { CalendarSettings } from '../../src/settings/types';
 import type { TagManager } from '../../src/tags/TagManager';
 import type { TaskApplicationApi } from '../../src/tasks';
+import type { TrackingSurface } from '../../src/ui/timeTracking/TimeBadge';
 import { expectDefined, type TestTaskHarness } from '../helpers';
 import { useTaskPanelViewport } from './taskPanelViewport';
 
@@ -34,6 +35,7 @@ type CenterPanelTestArgs = readonly [
   projectStore?: ProjectStore | null,
   projectManager?: ProjectManager | null,
   tasks?: TaskApplicationApi,
+  timeTracking?: TrackingSurface,
 ];
 
 export function makeCenterPanelForTest(
@@ -47,6 +49,7 @@ export function makeCenterPanelForTest(
     projectStore = null,
     projectManager = null,
     tasks,
+    timeTracking,
   ]: CenterPanelTestArgs
 ): CenterPanel {
   const application = tasks ?? taskHarness;
@@ -60,6 +63,7 @@ export function makeCenterPanelForTest(
     projectStore,
     projectManager,
     tasks: application,
+    timeTracking,
   });
 }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { kanbanInsertion, type KanbanViewportRow } from '../src/panels/projects/projectKanbanRows';
 import { RowViewport } from '../src/panels/virtualization/rowViewport';
 import { expectDefined } from './helpers';
+import { recordVirtualSurfaceResources } from './support/virtualSurfaceResources';
 
 const card = (projectPath: string, groupKey = 'g'): KanbanViewportRow => ({
   kind: 'card',
@@ -63,7 +64,7 @@ afterEach(() => {
 function nativeColumn(count = 1000, doc = document) {
   const scroll = document.body.createDiv();
   doc.body.append(scroll);
-  Object.defineProperty(scroll, 'clientHeight', { value: 200 });
+  Object.defineProperty(scroll, 'clientHeight', { value: 200, configurable: true });
   const host = scroll.createDiv();
   const cleaned: string[] = [];
   const unloaded: string[] = [];
@@ -508,4 +509,124 @@ it('admits a same-document transfer once and rejects a duplicate source acquisit
   destination.owner.destroy();
   expect(source.unloaded).toEqual(['g:0']);
   expect(source.cleaned).toEqual(['g:0']);
+});
+
+it('plateaus real hover owners over twenty scroll cycles at both scales and disposes captured work', () => {
+  const counts: number[] = [];
+  for (const count of [1000, 10000]) {
+    const resources = recordVirtualSurfaceResources();
+    const frames = new Map<number, FrameRequestCallback>();
+    let next = 0;
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.set(++next, callback);
+      return next;
+    });
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => frames.delete(id));
+    const flush = () => {
+      const callbacks = [...frames.values()];
+      frames.clear();
+      for (const callback of callbacks) callback(0);
+    };
+    const host = document.body.createDiv();
+    Object.defineProperty(host, 'clientHeight', { value: 200 });
+    const failure = vi.fn();
+    const rows = Array.from({ length: count }, (_, index) => card(String(index)));
+    const owner = new ProjectKanbanHoverViewport(
+      host,
+      rows,
+      (parent, row) => parent.createDiv({ text: row.projectPath ?? row.key }),
+      failure,
+    );
+    flush();
+    const retained = resources.counts();
+    expect(retained.components).toBeGreaterThan(0);
+    expect(retained.observers).toBe(1);
+    counts.push(host.children.length);
+    for (let cycle = 0; cycle < 20; cycle++) {
+      host.scrollTop = count * 40 - 200;
+      host.dispatchEvent(new Event('scroll'));
+      flush();
+      expect(host.textContent).toContain(String(count - 1));
+      host.scrollTop = 0;
+      host.dispatchEvent(new Event('scroll'));
+      flush();
+      expect(resources.counts()).toEqual(retained);
+    }
+    host.dispatchEvent(new Event('scroll'));
+    const late = [...frames.values()];
+    owner.destroy();
+    for (const callback of late) callback(0);
+    for (const callback of resources.callbacks) callback([], {} as ResizeObserver);
+    flush();
+    expect(resources.counts()).toEqual({ components: 0, listeners: 0, observers: 0, targets: 0 });
+    expect(host.children).toHaveLength(0);
+    expect(failure).not.toHaveBeenCalled();
+    host.remove();
+    vi.restoreAllMocks();
+  }
+  expect(expectDefined(counts[1])).toBeLessThanOrEqual(expectDefined(counts[0]) * 1.1);
+});
+
+it('rebinds a live adopted column to its document and ignores old-owner/disposed native callbacks', () => {
+  const resources = recordVirtualSurfaceResources();
+  const frame = document.body.createEl('iframe');
+  const doc = expectDefined(frame.contentDocument);
+  const win = expectDefined(frame.contentWindow);
+  Object.defineProperty(win, 'ResizeObserver', {
+    value: window.ResizeObserver,
+    configurable: true,
+  });
+  const mainFrames: FrameRequestCallback[] = [];
+  const adoptedFrames: FrameRequestCallback[] = [];
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    mainFrames.push(callback);
+    return mainFrames.length;
+  });
+  const mainCancel = vi.spyOn(window, 'cancelAnimationFrame');
+  vi.spyOn(win, 'requestAnimationFrame').mockImplementation((callback) => {
+    adoptedFrames.push(callback);
+    return adoptedFrames.length;
+  });
+  const adoptedCancel = vi.spyOn(win, 'cancelAnimationFrame');
+  const h = nativeColumn();
+  h.scroll.dispatchEvent(new Event('scroll'));
+  const old = [...mainFrames];
+  doc.body.append(h.scroll);
+  h.owner.update(h.rows, false);
+  expect(mainCancel).toHaveBeenCalled();
+  expect(resources.observers.size).toBe(1);
+  expect(resources.observed.has(h.scroll)).toBe(true);
+  const pendingBeforeOld = adoptedFrames.length;
+  for (const callback of old) callback(0);
+  expect(adoptedFrames).toHaveLength(pendingBeforeOld);
+  for (const callback of adoptedFrames.splice(0)) callback(0);
+  h.scroll.dispatchEvent(new Event('scroll'));
+  expect(adoptedFrames).toHaveLength(1);
+  expectDefined(adoptedFrames.shift())(0);
+  h.scroll.dispatchEvent(new Event('scroll'));
+  const late = [...adoptedFrames];
+  h.owner.destroy();
+  expect(adoptedCancel).toHaveBeenCalled();
+  for (const callback of late) callback(0);
+  for (const callback of resources.callbacks) callback([], {} as ResizeObserver);
+  expect(resources.liveComponents.size).toBe(0);
+  expect(resources.observers.size).toBe(0);
+  expect(resources.observed.size).toBe(0);
+  expect(h.host.children).toHaveLength(0);
+  expect(h.errors).toEqual([]);
+});
+
+it('keeps zero-size Kanban hidden without row mounts and preserves its offset across hide/show', () => {
+  const h = nativeColumn();
+  h.owner.reveal('g:900');
+  const before = h.scroll.scrollTop;
+  h.owner.setActive(false);
+  Object.defineProperty(h.scroll, 'clientHeight', { value: 0, configurable: true });
+  h.owner.update(h.rows, false);
+  expect(h.host.querySelector('[tabindex]')).toBeNull();
+  expect(h.scroll.scrollTop).toBe(before);
+  Object.defineProperty(h.scroll, 'clientHeight', { value: 200, configurable: true });
+  h.owner.setActive(true);
+  expect(h.owner.element('g:900')).toBeDefined();
+  expect(h.scroll.scrollTop).toBe(before);
 });

@@ -566,3 +566,52 @@ it('contains a later native frame failure after a supplied throw-mode update', (
   h.frame();
   expect(h.reportFailure).toHaveBeenCalledTimes(1);
 });
+
+it('invalidates offscreen font measurements through the actual font completion event', () => {
+  const h = harness();
+  h.heights.set('n.md:0', 96);
+  h.surface.update(rows(100), presentation);
+  h.surface.reveal('n.md:99');
+  h.heights.clear();
+  document.fonts.dispatchEvent(new Event('loadingdone'));
+  h.frame();
+  h.surface.reveal('n.md:99');
+  expect(h.scroll.scrollTop).toBe(4320);
+});
+
+it('rebinds adopted task rows and cancels old native work before disposing new-owner callbacks', () => {
+  const h = harness();
+  h.surface.update(rows(100), presentation);
+  h.scrollTo(1000);
+  const frame = document.body.createEl('iframe');
+  const doc = expectDefined(frame.contentDocument);
+  const win = expectDefined(frame.contentWindow);
+  Object.defineProperty(doc, 'fonts', { value: new EventTarget(), configurable: true });
+  Object.defineProperty(win, 'ResizeObserver', {
+    value: window.ResizeObserver,
+    configurable: true,
+  });
+  const pending: FrameRequestCallback[] = [];
+  vi.spyOn(win, 'requestAnimationFrame').mockImplementation((callback) => {
+    pending.push(callback);
+    return pending.length;
+  });
+  const cancel = vi.spyOn(win, 'cancelAnimationFrame').mockImplementation(() => {});
+  doc.body.append(h.scroll);
+  h.surface.update(rows(100), presentation);
+  expect(h.pending()).toBe(0);
+  expect(h.surface.element('n.md:20')?.ownerDocument).toBe(doc);
+  h.scroll.dispatchEvent(new Event('scroll'));
+  expect(pending).toHaveLength(1);
+  expectDefined(pending.shift())(0);
+  h.scroll.dispatchEvent(new Event('scroll'));
+  const late = [...pending];
+  h.surface.destroy();
+  expect(cancel).toHaveBeenCalled();
+  late.forEach((callback) => {
+    callback(0);
+  });
+  expect(h.observed.size).toBe(0);
+  expect(h.host.children).toHaveLength(0);
+  expect(h.reportFailure).not.toHaveBeenCalled();
+});

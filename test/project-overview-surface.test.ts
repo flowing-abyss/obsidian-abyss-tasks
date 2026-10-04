@@ -22,6 +22,7 @@ import {
   freshContainer,
   objectMatching,
 } from './helpers';
+import { recordVirtualSurfaceResources } from './support/virtualSurfaceResources';
 
 type Surface = ProjectsOverviewSurface<RenderedCellContext>;
 
@@ -1196,4 +1197,303 @@ describe.each(cases)('retained group label resources in $mode', (testCase) => {
     for (const { owner } of groupOwners)
       expect(ownedComponentCounts(owner)).toEqual({ children: 0, cleanups: 0 });
   });
+});
+
+describe.each(cases)('full-range resource audit in $mode', (testCase) => {
+  it('plateaus actual mounted owners over twenty cycles at 1000 and 10000 projects', async () => {
+    const mountedCounts: number[] = [];
+    for (const count of [1000, 10000]) {
+      const frames = recordOwnerFrames();
+      const resources = recordVirtualSurfaceResources();
+      const markdown = ownedMarkdownResources();
+      const h = mountSurface(testCase, count - 3, (settings) => {
+        configureLifetimeFields(settings);
+        settings.table.groupBy = 'none';
+        if (settings.kanban !== undefined) settings.kanban.groupBy = 'none';
+        if (settings.timeline !== undefined) settings.timeline.groupBy = 'none';
+      });
+      h.view.update(lifetimeProjects(h.projects));
+      frames.flush();
+      await finishMarkdown();
+      expect(h.surface.cells().rowIds).toHaveLength(count);
+      const first = expectDefined(h.surface.renderedCells()[0]);
+      const last = expectDefined(
+        h.surface.cells().identities[h.surface.cells().identities.length - 1],
+      );
+      let release: () => void;
+      if (testCase.mode === 'Table') {
+        first.element.addClass('is-editor-anchor');
+        release = () => {
+          first.element.removeClass('is-editor-anchor');
+        };
+      } else if (testCase.mode === 'Kanban') {
+        release = (
+          h.surface as Surface & { pinEditorCell(el: HTMLElement): () => void }
+        ).pinEditorCell(first.element);
+      } else {
+        const timeline = h.surface as Surface & {
+          setEditingCell(el: HTMLElement | undefined): void;
+        };
+        timeline.setEditingCell(first.element);
+        release = () => {
+          timeline.setEditingCell(undefined);
+        };
+      }
+      const retained = resources.counts();
+      const initial = h.surface.renderedCells().length;
+      const retainedMarkdown = markdown.size;
+      mountedCounts.push(initial);
+      expect(retained.components).toBeGreaterThan(0);
+      expect(retained.observers).toBeGreaterThan(0);
+      expect(retainedMarkdown).toBeGreaterThan(0);
+      for (let cycle = 0; cycle < 20; cycle++) {
+        h.surface.revealCell(last);
+        frames.flush();
+        h.surface.revealCell(first.identity);
+        frames.flush();
+        await finishMarkdown();
+        expect(first.element.isConnected).toBe(true);
+        expect(resources.counts()).toEqual(retained);
+        expect(markdown.size).toBeLessThanOrEqual(retainedMarkdown);
+        expect(h.surface.renderedCells().length).toBeLessThanOrEqual(initial);
+      }
+      release();
+      h.view.destroy();
+      mounted.delete(h.view);
+      frames.flush();
+      expect(resources.counts()).toEqual({ components: 0, listeners: 0, observers: 0, targets: 0 });
+      expect(markdown.size).toBe(0);
+      h.host.remove();
+      vi.restoreAllMocks();
+    }
+    expect(expectDefined(mountedCounts[1])).toBeLessThanOrEqual(
+      expectDefined(mountedCounts[0]) * 1.1,
+    );
+  });
+
+  it('keeps a large collapsed group header-only and reveals its last logical project', async () => {
+    const frames = recordOwnerFrames();
+    const h = mountSurface(testCase, 9997, (settings) => {
+      settings.table.groupBy = 'status';
+      if (settings.kanban !== undefined) settings.kanban.groupBy = 'property:Budget';
+      if (settings.timeline !== undefined) settings.timeline.groupBy = 'status';
+    });
+    // One real group contains every project, independent of the extra status columns.
+    const all = h.projects.map((item) => ({
+      ...item,
+      frontmatter: { Budget: 42 },
+      statusId: expectDefined(h.projects[0]).statusId,
+    }));
+    h.view.update(all);
+    frames.flush();
+    const toggle =
+      testCase.mode === 'Kanban'
+        ? expectDefined(
+            h.host.querySelector<HTMLElement>('.abyss-project-kanban-group-header:not([hidden])'),
+          )
+        : testCase.groupHeader(h.host, 'Projects/A.md');
+    toggle.click();
+    await finishMarkdown();
+    frames.flush();
+    expect(h.surface.cells().rowIds).toHaveLength(0);
+    expect(h.surface.renderedCells()).toHaveLength(0);
+    expect(toggle.isConnected).toBe(true);
+    expect(h.host.querySelector('.abyss-project-table-count')?.textContent).toBe('10000 projects');
+    const last = expectDefined(all[all.length - 1]);
+    h.surface.revealProject(last.path);
+    frames.flush();
+    expect(h.surface.cells().rowIds).toHaveLength(10000);
+    h.surface.revealCell(expectDefined(nameCell(h.surface.cells().cells, last.path)).identity);
+    frames.flush();
+    expect(nameCell(h.surface.renderedCells(), last.path)).toBeDefined();
+    expect(h.surface.renderedCells().length).toBeLessThan(200);
+  });
+});
+
+describe.each(cases)('native layout audit in $mode', (testCase) => {
+  it('invalidates an offscreen measured row after a font/theme wrapping change', () => {
+    const frames = recordOwnerFrames();
+    const resources = recordVirtualSurfaceResources();
+    let tall = true;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const isRow = [
+        'abyss-project-table-row',
+        'abyss-project-kanban-group',
+        'abyss-project-timeline-row',
+      ].some((name) => this.classList.contains(name));
+      const path =
+        this.dataset['projectPath'] ??
+        this.querySelector<HTMLElement>('.abyss-project-kanban-card')?.dataset['projectPath'];
+      let height = 0;
+      if (isRow && path === 'Projects/A.md') height = tall ? 10000 : 80;
+      return rectangle(0, 0, 600, height);
+    });
+    const h = mountSurface(testCase, 997, (settings) => {
+      settings.table.groupBy = 'none';
+      if (settings.kanban !== undefined) settings.kanban.groupBy = 'none';
+      if (settings.timeline !== undefined) settings.timeline.groupBy = 'none';
+    });
+    frames.flush();
+    expect(h.surface.renderedCells().some((cell) => cell.project.path === 'Projects/A.md')).toBe(
+      true,
+    );
+    const last = expectDefined(
+      nameCell(h.surface.cells().cells, expectDefined(h.projects[h.projects.length - 1]).path),
+    ).identity;
+    h.surface.revealCell(last);
+    frames.flush();
+    h.surface.revealCell(last);
+    const lastCell = expectDefined(
+      h.surface.renderedCells().find((cell) => cell.identity.occurrenceId === last.occurrenceId),
+    );
+    const scroll = testCase.viewport(h.surface, lastCell.element).vertical;
+    const before = scroll.scrollTop;
+    tall = false;
+    const layoutStyle = { 'font-size': `${24}px` };
+    h.host.setCssProps(layoutStyle);
+    h.host.querySelector<HTMLElement>('.abyss-project-timeline')?.setCssProps(layoutStyle);
+    for (const callback of resources.callbacks) callback([], {} as ResizeObserver);
+    frames.flush();
+    h.surface.revealCell(last);
+    frames.flush();
+    expect(scroll.scrollTop).toBeLessThan(before);
+  });
+});
+
+describe.each(cases)('live native document audit in $mode', (testCase) => {
+  it('recreates the active native size observer after adopting its real mounted host', async () => {
+    const mainFrames = recordOwnerFrames();
+    const resources = recordVirtualSurfaceResources();
+    const h = mountSurface(testCase, 97, (settings) => {
+      settings.table.groupBy = 'none';
+      if (settings.kanban !== undefined) settings.kanban.groupBy = 'none';
+      if (settings.timeline !== undefined) settings.timeline.groupBy = 'none';
+    });
+    mainFrames.flush();
+    const iframe = document.body.createEl('iframe');
+    const doc = expectDefined(iframe.contentDocument);
+    const win = expectDefined(iframe.contentWindow);
+    Object.defineProperty(doc, 'fonts', { value: new EventTarget(), configurable: true });
+    Object.defineProperty(win, 'ResizeObserver', {
+      value: window.ResizeObserver,
+      configurable: true,
+    });
+    const construct = vi.fn();
+    const Observer = window.ResizeObserver;
+    Object.defineProperty(win, 'ResizeObserver', {
+      configurable: true,
+      value: class extends Observer {
+        constructor(callback: ResizeObserverCallback) {
+          super(callback);
+          construct();
+        }
+      },
+    });
+    const pending: FrameRequestCallback[] = [];
+    vi.spyOn(win, 'requestAnimationFrame').mockImplementation((callback) => {
+      pending.push(callback);
+      return pending.length;
+    });
+    vi.spyOn(win, 'cancelAnimationFrame').mockImplementation(() => {});
+    doc.body.append(h.host);
+    h.view.update(h.projects);
+    for (const callback of pending.splice(0)) callback(0);
+    await finishMarkdown();
+    expect(construct).toHaveBeenCalled();
+    const mountedBefore = h.surface.renderedCells().length;
+    expect(mountedBefore).toBeGreaterThan(0);
+    h.view.destroy();
+    mounted.delete(h.view);
+    for (const callback of pending.splice(0)) callback(0);
+    for (const callback of resources.callbacks) callback([], {} as ResizeObserver);
+    mainFrames.flush();
+    expect(resources.observers.size).toBe(0);
+    expect(resources.observed.size).toBe(0);
+    expect(resources.liveComponents.size).toBe(0);
+    expect(pending).toHaveLength(0);
+  });
+});
+
+describe.each(cases)('owning background text failure in $mode', (testCase) => {
+  it.each(['initial', 'later'] as const)(
+    'reports a live %s rejected text render once in the owning visible alert',
+    async (phase) => {
+      const frames = recordOwnerFrames();
+      const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const render = vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
+      const h = mountSurface(testCase, 997, configureLifetimeFields);
+      let reject!: (error: Error) => void;
+      const failNext = () =>
+        render.mockImplementationOnce(
+          () =>
+            new Promise<void>((_resolve, fail) => {
+              reject = fail;
+            }),
+        );
+      if (phase === 'initial') failNext();
+      h.view.update(lifetimeProjects(h.projects));
+      frames.flush();
+      await finishMarkdown();
+      if (phase === 'later') {
+        failNext();
+        const target = expectDefined(
+          nameCell(h.surface.cells().cells, expectDefined(h.projects[h.projects.length - 1]).path),
+        );
+        h.surface.revealCell(target.identity);
+        frames.flush();
+      }
+      const error = new Error('project text unavailable');
+      reject(error);
+      await finishMarkdown();
+      expect(diagnostic).toHaveBeenCalledTimes(1);
+      expect(diagnostic.mock.calls[0]?.[0]).toMatch(/^\[abyss-tasks\]/u);
+      expect(
+        h.host.querySelector('.abyss-project-table-feedback[role="alert"]')?.textContent,
+      ).toContain(error.message);
+      expect(h.applyEdits).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe.each(cases)('owning thrown mount failure in $mode', (testCase) => {
+  it.each(['initial', 'later'] as const)(
+    'contains a live %s thrown mounted-field render and reports once visibly',
+    async (phase) => {
+      const frames = recordOwnerFrames();
+      const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const render = vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
+      const h = mountSurface(testCase, 997, configureLifetimeFields);
+      const error = new Error('project mount unavailable');
+      const failNext = () =>
+        render.mockImplementationOnce(() => {
+          throw error;
+        });
+      if (phase === 'initial') {
+        failNext();
+        expect(() => {
+          h.view.update(lifetimeProjects(h.projects));
+        }).not.toThrow();
+      } else {
+        h.view.update(lifetimeProjects(h.projects));
+        frames.flush();
+        await finishMarkdown();
+        failNext();
+        const target = expectDefined(
+          nameCell(h.surface.cells().cells, expectDefined(h.projects[h.projects.length - 1]).path),
+        );
+        expect(() => {
+          h.surface.revealCell(target.identity);
+        }).not.toThrow();
+      }
+      await finishMarkdown();
+      expect(diagnostic).toHaveBeenCalledTimes(1);
+      expect(diagnostic.mock.calls[0]?.[0]).toMatch(/^\[abyss-tasks\]/u);
+      expect(
+        h.host.querySelector('.abyss-project-table-feedback[role="alert"]')?.textContent,
+      ).toContain(error.message);
+      expect(h.applyEdits).not.toHaveBeenCalled();
+    },
+  );
 });

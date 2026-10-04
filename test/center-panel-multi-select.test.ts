@@ -4,7 +4,14 @@ import { AppState } from '../src/app/AppState';
 import { type CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TagManager } from '../src/tags/TagManager';
-import type { TaskApplicationApi, TaskCommandResult, TaskRef, TaskSnapshot } from '../src/tasks';
+import {
+  taskNodeAddress,
+  type TaskApplicationApi,
+  type TaskCommandResult,
+  type TaskRef,
+  type TaskSnapshot,
+} from '../src/tasks';
+import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import {
   appWithFiles,
   deferred,
@@ -61,10 +68,12 @@ afterEach(() => {
 function makeCenter(
   tasks: TaskSnapshot[],
   application?: TaskApplicationApi,
+  tracking = false,
 ): {
   el: HTMLElement;
   state: AppState;
   panel: CenterPanel;
+  ticker: TrackingTicker | undefined;
 } {
   const state = new AppState();
   state.set('selectedList', 'inbox');
@@ -80,6 +89,9 @@ function makeCenter(
     },
   });
   const store = makeStubStore(tasks);
+  const ticker = tracking
+    ? new TrackingTicker({ queries: store.queries, now: () => 60000, win: window })
+    : undefined;
   const panel = makeCenterPanelForTest(
     state,
     store,
@@ -90,11 +102,23 @@ function makeCenter(
     undefined,
     undefined,
     application,
+    ticker === undefined
+      ? undefined
+      : {
+          ticker,
+          context: () => ({ nowMs: 60000, offsetAt: () => 0 }),
+          actions: {
+            start: async () => {},
+            pause: async () => {},
+            remove: async () => undefined,
+            restore: async () => ({ type: 'ok', outcome: { type: 'stopped' }, changed: false }),
+          },
+        },
   );
   const el = freshContainer();
   attach(el);
   panel.mount(el);
-  return { el, state, panel };
+  return { el, state, panel, ticker };
 }
 
 function cards(el: HTMLElement): HTMLElement[] {
@@ -1344,9 +1368,12 @@ it.each(['tasks', 'dashboard', 'search'] as const)(
           description: '[[Target]]',
           tags: ['#task/inbox'],
           source: { filePath: 'large.md', line },
+          timeEntries: [
+            { relativeLine: 1, originalMarkdown: 'running', state: 'running', startMs: 0 },
+          ],
         }),
       );
-      const { el, state, panel } = makeCenter(tasks);
+      const { el, state, panel, ticker } = makeCenter(tasks, undefined, true);
       if (mode === 'dashboard') {
         state.set('mode', 'projects');
         renderDashboardList(panel, el, 'large.md');
@@ -1370,13 +1397,36 @@ it.each(['tasks', 'dashboard', 'search'] as const)(
       expect(retained.components).toBeGreaterThan(0);
       expect(retainedMarkdown).toBeGreaterThan(0);
       const initialMounted = [...surface.cards()].length;
+      expect(el.querySelectorAll('.abyss-task-time-badge.is-tracking')).toHaveLength(
+        initialMounted,
+      );
+      const renderer = panel['taskCardRenderer_abyssPrivate'];
+      const active = tasks.map((item) => ({
+        filePath: item.source.filePath,
+        root: item.ref,
+        target: { type: 'task' as const, ref: item.ref },
+        address: taskNodeAddress({ type: 'task', ref: item.ref }),
+        rootAddress: taskNodeAddress({ type: 'task', ref: item.ref }),
+        title: item.title,
+        status: item.status,
+        entry: expectDefined(item.timeEntries[0]),
+      }));
+      const heldBadges: HTMLElement[] = [];
       mountedCounts.push(initialMounted);
       for (let cycle = 0; cycle < 20; cycle++) {
         surface.reveal(last);
         flushViewport();
+        const badges = Array.from(el.querySelectorAll<HTMLElement>('.abyss-task-time-badge span'));
+        const retired = expectDefined(badges[badges.length - 1]);
+        heldBadges.push(retired);
         surface.reveal(first);
         flushViewport();
         await flushMicrotasks();
+        document.body.append(retired);
+        const oldText = retired.textContent;
+        renderer.paintTracking({ nowMs: (cycle + 2) * 60000, active });
+        expect(retired.textContent).toBe(oldText);
+        expect(el.querySelector('.abyss-task-time-badge span')?.textContent).toBe(`${cycle + 2}m`);
         expect(resources.counts()).toEqual(retained);
         expect(markdown.size).toBeLessThanOrEqual(retainedMarkdown);
         expect([...surface.cards()].length).toBeLessThanOrEqual(initialMounted + 1);
@@ -1386,6 +1436,13 @@ it.each(['tasks', 'dashboard', 'search'] as const)(
       }
       pin();
       panel.destroy();
+      ticker?.destroy();
+      const texts = heldBadges.map((badge) => badge.textContent);
+      renderer.paintTracking({ nowMs: 3600000, active });
+      expect(heldBadges.map((badge) => badge.textContent)).toEqual(texts);
+      heldBadges.forEach((badge) => {
+        badge.remove();
+      });
       flushViewport();
       expect(resources.liveComponents.size).toBe(0);
       expect(resources.observers.size).toBe(0);
