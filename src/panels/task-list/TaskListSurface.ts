@@ -388,6 +388,7 @@ export class TaskListSurface implements MountedTaskListRows {
     if (errors.length > 0) throw errors[0];
   }
   #resolvePinOrder(): void {
+    if (this.#pins.size === 0) return;
     const revision = this.#revision;
     let conflicting = this.#conflictingPins();
     while (conflicting.length > 0) {
@@ -400,7 +401,9 @@ export class TaskListSurface implements MountedTaskListRows {
   #conflictingPins(): string[] {
     const protectedKeys = new Set(this.#pins.keys());
     if (this.#focusedKey !== undefined) protectedKeys.add(this.#focusedKey);
-    const positions = new Map(this.#rows.rows.map((row, index) => [row.key, index]));
+    const positions = new Map(
+      [...protectedKeys].map((key) => [key, this.#viewport.rowBounds(key)?.index ?? -1]),
+    );
     const current = this.#orderedProtectedKeys(protectedKeys);
     const conflicting = new Set<string>();
     for (const [index, a] of current.entries()) {
