@@ -253,3 +253,23 @@ it('keeps focused rendered link occurrences bound to their rendered source when 
   );
   mount.destroy();
 });
+
+it('does not rebuild a pending focused generation when Markdown cleanup emits focusout during destroy', () => {
+  const render = vi
+    .spyOn(MarkdownRenderer, 'render')
+    .mockImplementation(async (...args: Parameters<typeof MarkdownRenderer.render>) => {
+      const holder = args[2];
+      const owner = args[4];
+      const link = holder.createEl('a', { text: 'A', attr: { href: 'A', tabindex: '0' } });
+      owner.register(() => {
+        link.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+      });
+    });
+  const h = renderer();
+  const flags = { selected: false, showDelete: false };
+  const mount = h.subject.mount(document.body, task({ markdownTitle: '[[A]]' }), [], flags);
+  expectDefined(mount.element.querySelector('a')).focus();
+  mount.update(task({ markdownTitle: '[[B]]' }), [], flags);
+  mount.destroy();
+  expect(render).toHaveBeenCalledTimes(1);
+});

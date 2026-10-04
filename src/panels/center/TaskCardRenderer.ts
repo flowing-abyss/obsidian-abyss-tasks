@@ -189,7 +189,7 @@ export class TaskCardRenderer {
         component: markdown,
         currentTask: () => current.task,
       });
-      this.#bindRefresh(markdown, card, () => pending, rebuild);
+      this.#bindRefresh(markdown, card, () => live && pending, rebuild);
     } catch (error) {
       destroy();
       throw error;
