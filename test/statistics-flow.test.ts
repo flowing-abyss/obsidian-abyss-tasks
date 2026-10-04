@@ -1,0 +1,206 @@
+import { expect, it } from 'vitest';
+import { prepareStatisticsDataset } from '../src/statistics/statisticsDataset';
+import { StatisticsSession } from '../src/statistics/statisticsSession';
+import { required } from '../src/statistics/statisticsWork';
+import { date, request, source, task, work } from './helpers/statisticsFixtures';
+it('keeps creation outcomes separate from completion events and their exact evidence', async () => {
+  const dataset = await prepareStatisticsDataset(
+    source([
+      task('A', { planning: { created: date('2026-10-01') } }),
+      task('B', {
+        status: 'done',
+        planning: { created: date('2026-10-02'), completion: date('2026-10-03') },
+      }),
+      task('C', { planning: { created: date('2026-10-04') } }),
+      task('D', {
+        status: 'done',
+        planning: { created: date('2026-09-01'), completion: date('2026-10-02') },
+      }),
+    ]),
+    [],
+    work,
+  );
+  const view = await new StatisticsSession(required(dataset)).view(request(), work);
+  const metrics = required(view).sections.flatMap((s) => s.metrics);
+  expect(metrics.find((m) => m.id === 'created')?.value).toBe(3);
+  expect(metrics.find((m) => m.id === 'completed')?.value).toBe(2);
+  expect(metrics.find((m) => m.id === 'new-open')?.value).toBe(2);
+  expect(
+    required(view)
+      .evidence('new-open', 0, 50)
+      .rows.map((r) => r.title),
+  ).toEqual(['A', 'C']);
+  expect(
+    required(view)
+      .evidence('completed', 0, 50)
+      .rows.map((r) => r.title),
+  ).toEqual(['B', 'D']);
+});
+it('preserves missing current ages and excludes archived open nodes', async () => {
+  const tasks = Array.from({ length: 104 }, (_, i) => task(`missing${i}`));
+  const dataset = await prepareStatisticsDataset(source(tasks, [task('archived')]), [], work);
+  const view = await new StatisticsSession(required(dataset)).view(request(), work);
+  expect(
+    required(view)
+      .sections.flatMap((s) => s.metrics)
+      .find((m) => m.id === 'open-now')?.value,
+  ).toBe(104);
+  expect(required(view).evidence('age:unknown', 100, 50).rows).toHaveLength(4);
+  expect(required(view).evidence('age:unknown', 0, 1000).rows).toHaveLength(50);
+});
+it('rejects future/reversed completion pairs and uses a nearest-rank P90', async () => {
+  const tasks = [
+    task('one', {
+      status: 'done',
+      planning: { created: date('2026-10-01'), completion: date('2026-10-02') },
+    }),
+    task('three', {
+      status: 'done',
+      planning: { created: date('2026-09-30'), completion: date('2026-10-03') },
+    }),
+    task('future', {
+      status: 'done',
+      planning: { created: date('2026-10-01'), completion: date('2026-10-05') },
+    }),
+    task('reverse', {
+      status: 'done',
+      planning: { created: date('2026-10-04'), completion: date('2026-10-02') },
+    }),
+  ];
+  const ds = await prepareStatisticsDataset(source(tasks), [], work);
+  const view = await new StatisticsSession(required(ds)).view(
+    request({ view: 'completion' }),
+    work,
+  );
+  const metrics = required(required(view).sections[0]).metrics;
+  expect(metrics.find((m) => m.id === 'valid-pairs')?.value).toBe(2);
+  expect(metrics.find((m) => m.id === 'median')?.value).toBe(2);
+  expect(metrics.find((m) => m.id === 'p90')?.value).toBe(3);
+});
+it('cohorts mature only after the last horizon day, retaining cancelled denominators', async () => {
+  const ds = await prepareStatisticsDataset(
+    source([
+      task('done', {
+        status: 'done',
+        planning: { created: date('2026-10-01'), completion: date('2026-10-02') },
+      }),
+      task('cancel', {
+        status: 'cancelled',
+        planning: { created: date('2026-10-02'), cancelled: date('2026-10-03') },
+      }),
+    ]),
+    [],
+    work,
+  );
+  const session = new StatisticsSession(required(ds));
+  const immature = await session.view(
+    request({ view: 'cohorts', nowMs: Date.parse('2026-10-05T12:00Z') }),
+    work,
+  );
+  const mature = await session.view(
+    request({ view: 'cohorts', nowMs: Date.parse('2026-10-06T12:00Z') }),
+    work,
+  );
+  const cell = (v: NonNullable<typeof mature>) =>
+    required(required(required(v.sections[0]).charts[0]).marks.find((m) => m.x === 3));
+  expect(cell(required(immature)).state).toBe('immature');
+  expect(cell(required(mature)).weight).toBe(50);
+  expect(cell(required(mature)).denominator).toBe(2);
+  expect(required(mature).evidence(required(cell(required(mature)).selectionId), 0, 50).total).toBe(
+    2,
+  );
+});
+it('deadlines use saved due date outcomes and retain unknown completion timing', async () => {
+  const ds = await prepareStatisticsDataset(
+    source([
+      task('late', {
+        status: 'done',
+        planning: { due: date('2026-10-01'), completion: date('2026-10-02') },
+      }),
+      task('today', { planning: { due: date('2026-10-04') } }),
+      task('unknown', { status: 'done', planning: { due: date('2026-10-01') } }),
+    ]),
+    [],
+    work,
+  );
+  const view = await new StatisticsSession(required(ds)).view(request({ view: 'deadlines' }), work);
+  expect(required(view).evidence('deadline:late', 0, 50).rows[0]?.title).toBe('late');
+  expect(required(view).evidence('deadline:upcoming', 0, 50).total).toBe(1);
+  expect(required(view).evidence('deadline:unknown', 0, 50).total).toBe(1);
+});
+it('distinguishes missing and future event dates from a measured zero', async () => {
+  const ds = required(
+    await prepareStatisticsDataset(
+      source([
+        task('missing'),
+        task('future', {
+          status: 'done',
+          planning: { created: date('2026-10-05'), completion: date('2026-10-06') },
+        }),
+      ]),
+      [],
+      work,
+    ),
+  );
+  const v = required(await new StatisticsSession(ds).view(request(), work));
+  const metrics = v.sections.flatMap((s) => s.metrics);
+  expect(metrics.find((m) => m.id === 'created-unknown')?.value).toBe(2);
+  expect(metrics.find((m) => m.id === 'completed-unknown')?.value).toBe(1);
+  expect(v.evidence('created-unknown', 0, 50).rows.map((row) => row.title)).toEqual([
+    'missing',
+    'future',
+  ]);
+});
+it('pages the 105th creation cohort without truncating its denominator', async () => {
+  const nodes = Array.from({ length: 105 }, (_, i) =>
+    task(`week${i}`, {
+      planning: {
+        created: date(
+          new Date(Date.parse('2024-01-01') + i * 7 * 86400000).toISOString().slice(0, 10),
+        ),
+      },
+    }),
+  );
+  const ds = required(await prepareStatisticsDataset(source(nodes), [], work)),
+    session = new StatisticsSession(ds);
+  const first = required(await session.view(request({ view: 'cohorts', period: 'all' }), work));
+  expect(required(first.sections[0]).charts[0]?.marks).toHaveLength(520);
+  expect(first.actions).toContainEqual({ type: 'page', label: 'Next groups', page: 1 });
+  const second = required(
+    await session.view(request({ view: 'cohorts', period: 'all', page: 1 }), work),
+  );
+  const mark = required(required(second.sections[0]).charts[0]?.marks[0]);
+  expect(second.evidence(required(mark.selectionId), 0, 50).total).toBe(1);
+});
+it('uses the cohort classifier in cell evidence, including unknown timing', async () => {
+  const ds = required(
+    await prepareStatisticsDataset(
+      source([
+        task('within', {
+          status: 'done',
+          planning: { created: date('2026-10-01'), completion: date('2026-10-02') },
+        }),
+        task('cancelled', { status: 'cancelled', planning: { created: date('2026-10-01') } }),
+        task('unknown', { status: 'done', planning: { created: date('2026-10-01') } }),
+      ]),
+      [],
+      work,
+    ),
+  );
+  const view = required(
+      await new StatisticsSession(ds).view(
+        request({ view: 'cohorts', nowMs: Date.parse('2026-10-06T12:00Z') }),
+        work,
+      ),
+    ),
+    cell = required(
+      required(required(view.sections[0]).charts[0]).marks.find((mark) => mark.x === 3),
+    );
+  expect(cell.state).toBe('unknown');
+  expect(cell.weight).toBeUndefined();
+  expect(view.evidence(required(cell.selectionId), 0, 50).rows.map((row) => row.context)).toEqual([
+    'Within 3 days',
+    'Cancelled',
+    'Unknown timing',
+  ]);
+});

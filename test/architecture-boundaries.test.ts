@@ -86,6 +86,8 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   DateRange: ['src/views/calendarOccurrences.ts'],
   DependencyDirection: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorDependencies.ts'],
   LocalDate: [
+    'src/statistics/types.ts',
+    'src/statistics/statisticsCalendar.ts',
     'src/panels/CenterPanel.ts',
     'src/panels/RightPanel.ts',
     'src/panels/right/InspectorPlanningSurfaces.ts',
@@ -99,13 +101,18 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/ui/tagDropdown.ts',
     'src/ui/taskCapture/CaptureTargetResolver.ts',
   ],
-  OffsetAt: ['src/ui/timeTracking/formatTracked.ts'],
+  OffsetAt: [
+    'src/statistics/types.ts',
+    'src/statistics/statisticsCalendar.ts',
+    'src/ui/timeTracking/formatTracked.ts',
+  ],
   PlanningTarget: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
   RecurrenceParseResult: ['src/ui/recurrence/RecurrenceEditor.ts'],
   RecurrencePolicy: ['src/ui/recurrence/RecurrenceEditor.ts'],
   SubtaskPatch: ['src/panels/RightPanel.ts'],
   SubtaskRef: ['src/panels/RightPanel.ts'],
   SubtaskSnapshot: [
+    'src/statistics/statisticsDataset.ts',
     'src/panels/RightPanel.ts',
     'src/panels/right/inspectorTypes.ts',
     'src/panels/right/InspectorSections.ts',
@@ -124,6 +131,8 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskIndexEvent: ['src/projects/ProjectStore.ts'],
   TaskInsertionPolicy: ['src/main.ts'],
   TaskNodeRef: [
+    'src/statistics/types.ts',
+    'src/statistics/statisticsDataset.ts',
     'src/panels/RightPanel.ts',
     'src/panels/right/InspectorPlanningSurfaces.ts',
     'src/panels/right/InspectorDependencies.ts',
@@ -133,6 +142,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskOccurrenceResult: ['src/ui/recurrence/RecurrenceEditor.ts'],
   TaskPatch: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
   TaskPriority: [
+    'src/statistics/types.ts',
     'src/panels/CenterPanel.ts',
     'src/panels/center/TaskMenus.ts',
     'src/panels/RightPanel.ts',
@@ -140,6 +150,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   ],
   TaskQueryApi: ['src/main.ts'],
   TaskStatisticsSource: ['src/main.ts'],
+  TaskStatisticsSnapshot: ['src/statistics/types.ts', 'src/statistics/statisticsDataset.ts'],
   TaskDependencyQueryApi: [
     'src/main.ts',
     'src/panels/right/InspectorPlanningSurfaces.ts',
@@ -156,6 +167,8 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   ],
   TaskResolution: ['src/views/PanelView.ts'],
   TaskSnapshot: [
+    'src/statistics/types.ts',
+    'src/statistics/statisticsDataset.ts',
     'src/panels/CenterPanel.ts',
     'src/panels/RightPanel.ts',
     'src/panels/right/InspectorPlanningSurfaces.ts',
@@ -163,7 +176,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   ],
   TaskStatusType: ['src/settings/sections/TaskStatusSettings.ts'],
   TaskTextTarget: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorSections.ts'],
-  TimeEntryRef: ['src/ui/timeTracking/trackingActions.ts'],
+  TimeEntryRef: ['src/statistics/types.ts', 'src/ui/timeTracking/trackingActions.ts'],
   TimeEntryRemovalRecovery: ['src/ui/timeTracking/trackingActions.ts'],
   TimeEntrySnapshot: ['src/views/calendarOccurrences.ts'],
   TimeTrackingQueryApi: ['src/main.ts'],
@@ -190,8 +203,14 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   formatTrackedDuration: ['src/projects/projectTableModel.ts'],
   formatTrackedDurationWithSeconds: ['src/ui/timeTracking/TimeEntriesPopover.ts'],
   groupTrackedDays: ['src/ui/timeTracking/RailTrackingWidget.ts'],
-  localDate: ['src/main.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
+  localDate: [
+    'src/statistics/statisticsCalendar.ts',
+    'src/statistics/statisticsDataset.ts',
+    'src/main.ts',
+    'src/panels/right/InspectorPlanningSurfaces.ts',
+  ],
   localDayStartMs: [
+    'src/statistics/statisticsCalendar.ts',
     'src/ui/timeTracking/formatTracked.ts',
     'src/ui/timeTracking/RailTrackingWidget.ts',
     'src/ui/timeTracking/TrackedTasksPopover.ts',
@@ -223,6 +242,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   ],
   shiftLocalDate: ['src/ui/timedBlockKeyboardQueue.ts'],
   shiftLocalDayStartMs: [
+    'src/statistics/statisticsCalendar.ts',
     'src/ui/timeTracking/formatTracked.ts',
     'src/ui/timeTracking/RailTrackingWidget.ts',
   ],

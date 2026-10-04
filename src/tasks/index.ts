@@ -11,7 +11,10 @@ export type {
   TaskQueryApi,
   TimeTrackingQueryApi,
 } from './application/TaskApplicationApi';
-export type { TaskStatisticsSource } from './application/TaskStatisticsSource';
+export type {
+  TaskStatisticsSnapshot,
+  TaskStatisticsSource,
+} from './application/TaskStatisticsSource';
 export { cloneTaskSnapshot } from './domain/cloneTaskSnapshot';
 export type {
   ArchiveRecovery,

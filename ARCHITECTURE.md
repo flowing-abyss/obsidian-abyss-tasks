@@ -167,6 +167,39 @@ releasing in `finally`. Nested releases are idempotent, and publication waits fo
 projections. Successful transfers publish one retained copy; partial transfers expose the actual
 retained copies without content deduplication. This hold grants no storage or mutation authority.
 
+### Pure Statistics observations
+
+[`src/statistics/`](src/statistics/) consumes the public retained source snapshot and explicit
+project path/name descriptors. `prepareStatisticsDataset` flattens every physical node and its
+own entries once, keeps live/archive provenance and structural source refs, inherits recurrence,
+and excludes only date fields identified as invalid or ambiguous by source evidence. Project
+identity uses paths; unknown archive membership, live no-project, and untagged groups have distinct
+synthetic identities. These derived records grant no task mutation authority.
+
+`StatisticsSession` captures explicit time, calendar and scope for eleven engine-neutral views.
+Current open/Aging/dependency populations use live records; retained archive evidence participates
+in historical metrics and time. Global source readiness/issues remain visible independently of
+scoped retained coverage. Every preset ends on the observed local day; tracking additionally clips
+to the exact observation instant. Six/twelve-month windows subtract calendar months from the civil
+exclusive end, clamping the day in the destination month.
+
+Calendar preparation discovers host offset transitions on a shared six-hour UTC grid under the
+supported-provider assumption of at most one transition per cell, bisecting to integer milliseconds.
+An optional immutable exact transition list overrides discovery; its completeness belongs to the
+provider, and its identity participates in invalidation. Pattern exposure uses shared calendar
+segments and circular-hour arithmetic; range updates aggregate long intervals without entry-by-day
+expansion. Owner changes sweep all physical owners before scope. Dependency ranking uses direct
+active degrees; iterative graph diagnostics and one selected downstream traversal avoid per-node
+transitive closures. Normalization, calendar discovery, sorting and cold aggregation share a
+cancellable yielding work port.
+
+The session retains one calendar, one scoped coverage record, and at most one current result per
+view. Evidence registries retain indices or predicates over immutable normalized records; cumulative
+points do not copy prior rows. Dense selections page directly, sparse selections scan without
+allocating discarded rows, and every page is limited to 50 records. Chart caps bound representation,
+with page actions and omitted-node/edge evidence preserving the full populations. Chart axes, series,
+marks and semantic metadata contain no engine, DOM or raw style types; source refs stay in evidence.
+
 ### Creation, transfer, and tags
 
 `TaskCaptureApplicationApi` retains a creation session with a frozen destination, local date,
