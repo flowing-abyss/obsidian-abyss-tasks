@@ -338,6 +338,7 @@ export class TaskListSurface implements MountedTaskListRows {
     const pinned = [...this.#pins.keys()];
     if (this.#focusedKey !== undefined) pinned.push(this.#focusedKey);
     const window = this.#viewport.window(top, this.#height(), pinned);
+    const established = new Set(this.#mounts.keys());
     const desired: HTMLElement[] = [];
     const keys = new Set<string>();
     const oldSpacers = Array.from(
@@ -353,7 +354,7 @@ export class TaskListSurface implements MountedTaskListRows {
     }
     this.#evictOutside(keys);
     for (const spacer of oldSpacers.slice(spacerIndex)) spacer.remove();
-    this.#order(desired);
+    this.#order(desired, established);
     this.#ordered = [...keys];
     this.#options.mountedChanged();
   }
@@ -424,10 +425,14 @@ export class TaskListSurface implements MountedTaskListRows {
       return key !== undefined && keys.has(key) ? [key] : [];
     });
   }
-  #order(desired: readonly HTMLElement[]): void {
+  #order(desired: readonly HTMLElement[], established: ReadonlySet<string>): void {
     const protectedElements = new Set<HTMLElement>();
+    const focused = this.#options.host.ownerDocument.activeElement;
     for (const [key, mount] of this.#mounts)
-      if (key === this.#focusedKey || this.#pins.has(key)) protectedElements.add(mount.element);
+      if (mount.element.contains(focused) || (established.has(key) && this.#pins.has(key)))
+        protectedElements.add(mount.element);
+    // New mounts must first enter logical order. Only established pins own their position;
+    // actual focus is protected regardless of when its row mounted.
     // Move ordinary neighbors around owners; never detach an interaction-owned subtree.
     let next: HTMLElement | null = null;
     for (const element of [...desired].reverse()) {

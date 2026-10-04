@@ -495,3 +495,33 @@ it('keeps a reentrant document-rebind refresh authoritative during owner cancell
   expect(replacement?.isConnected).toBe(true);
   h.surface.destroy();
 });
+
+it('positions a newly mounted offscreen pin above the focused window before protecting it', () => {
+  const h = harness();
+  h.surface.update(rows(100), presentation);
+  h.surface.reveal('n.md:99');
+  const control = expectDefined(h.surface.element('n.md:99')).createEl('input');
+  control.focus();
+  expect(h.surface.element('n.md:0')).toBeUndefined();
+  const canceled = vi.fn();
+  const release = h.surface.pin('n.md:0', canceled);
+  h.frame();
+  const pinned = expectDefined(h.surface.element('n.md:0'));
+  const assertOrder = () => {
+    expect(h.host.firstElementChild).toBe(pinned);
+    expect(h.host.children[1]?.classList.contains('abyss-virtual-row-spacer')).toBe(true);
+    const actual = Array.from(h.host.children).flatMap((element) => {
+      const key = (element as HTMLElement).dataset['key'];
+      return key === undefined ? [] : [key];
+    });
+    expect(actual).toEqual([...h.surface.cards()].map(([key]) => key));
+    expect(document.activeElement).toBe(control);
+    expect(canceled).not.toHaveBeenCalled();
+  };
+  assertOrder();
+  h.resize();
+  h.frame();
+  assertOrder();
+  release();
+  h.surface.destroy();
+});
