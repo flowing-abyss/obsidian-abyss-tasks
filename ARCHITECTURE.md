@@ -453,8 +453,14 @@ Editors retain failed drafts, and navigation uses their shared completion bounda
 [`ProjectsTableSurface`](src/panels/projects/ProjectsTableSurface.ts) owns Table DOM, scrolling,
 row windowing, and physical drag. The controller retains drop planning, validation, writes, and
 history. Editors and native drag sources pin their occurrence rows; evicted rows release listeners
-and Markdown Components. [`projectTableViewport`](src/panels/projects/projectTableViewport.ts)
-owns geometry only. Logical projection, sorting, and grouping still process the full collection.
+and Markdown Components. [`RowViewport`](src/panels/virtualization/rowViewport.ts) owns shared pure
+row geometry: prefix offsets, consumed overscan, sparse pins, revision-aware measurements, reveal,
+and anchor recovery against prior row order. Callers supply explicit rows and content-relative
+offsets; native owners account for sticky occlusion and viewport height. Anchors share an immutable
+key vector per replacement; final scroll clamping happens when a window's height is known.
+[`projectTableViewport`](src/panels/projects/projectTableViewport.ts) adapts the existing Table
+estimates and signatures to that neutral module. Logical projection, sorting, and grouping still
+process the full collection.
 Table has windowed rows; centre task lists, Kanban cards, and Timeline rows have no new virtual
 mounting layer.
 
