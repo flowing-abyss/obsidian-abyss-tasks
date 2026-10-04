@@ -208,6 +208,44 @@ describe('selectTaskList', () => {
     ).toEqual(['root']);
   });
 
+  it.each([
+    ['discovered:prefix:work', false, ['needle']],
+    ['discovered:prefix:WORK', false, ['needle']],
+    ['discovered:prefix:work', true, ['needle configured']],
+    ['discovered:prefix:WORK::1', true, ['needle']],
+  ] as const)(
+    'keeps the full catalog while text filtering %s (collision: %s)',
+    (groupId, collision, want) => {
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      settings.tagGroups = collision
+        ? [
+            {
+              id: 'discovered:prefix:work',
+              name: 'Configured',
+              mode: 'manual',
+              tags: ['#personal'],
+            },
+          ]
+        : [];
+      const tasks = [
+        snapshot('needle', { tags: ['#Work'] }),
+        snapshot('unrelated', { line: 1, tags: ['#work/child'] }),
+        snapshot('needle configured', { line: 2, tags: ['#personal'] }),
+      ];
+      expect(
+        selectTaskList({
+          tasks,
+          selection: { type: 'group', groupId },
+          viewState: withoutStatusGroups(getListViewDefaults('group:work')),
+          settings,
+          today,
+          nowMs: 0,
+          textQuery: 'needle',
+        }).map((task) => task.title),
+      ).toEqual(want);
+    },
+  );
+
   it('applies status and property filters before sorting', () => {
     const candidates = [
       snapshot('Zulu', { priority: 'A', planning: { due: today } }),

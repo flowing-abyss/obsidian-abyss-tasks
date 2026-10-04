@@ -852,6 +852,10 @@ export class CenterPanel {
       this.abandonTaskDateFocus_abyssPrivate();
   }
 
+  onWindowMigrated(): void {
+    this.taskSearch_abyssPrivate.onWindowMigrated();
+  }
+
   refresh(reason: 'view' | 'source' | 'projects' | 'links' = 'view'): void {
     if (this.refreshMountedProjects_abyssPrivate(this.state_abyssPrivate.get('mode'))) return;
     if (this.taskSearch_abyssPrivate.refresh(reason)) return;

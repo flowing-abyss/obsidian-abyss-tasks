@@ -1,4 +1,13 @@
-import { Menu, MenuItem, Notice, Platform, TFile, WorkspaceLeaf, type App } from 'obsidian';
+import {
+  MarkdownRenderer,
+  Menu,
+  MenuItem,
+  Notice,
+  Platform,
+  TFile,
+  WorkspaceLeaf,
+  type App,
+} from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { type AppState, type ListSelection } from '../src/app/AppState';
 import type { CenterPanel } from '../src/panels/CenterPanel';
@@ -4819,4 +4828,176 @@ it('a detached or off-viewport panel keeps its later visible prewarm opportunity
   } finally {
     await h.dispose();
   }
+});
+
+describe('mounted Search window migration', () => {
+  it.each(['search', 'tasks', 'empty-tasks'] as const)(
+    'resumes %s through the new owner and accepts real input with the same backend',
+    async (mode) => {
+      const h = await prewarmPanel();
+      const iframe = document.body.createEl('iframe');
+      try {
+        h.index.installCommittedContent('tasks.md', '- [ ] needle\n- [ ] other');
+        const { view, migrate } = await h.mount();
+        const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+        state.set('mode', mode === 'search' ? 'search' : 'tasks');
+        state.set('selectedList', 'inbox');
+        const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+        const input = expectDefined(
+          root.querySelector<HTMLInputElement>(
+            mode === 'search' ? '.abyss-search-global' : '.abyss-center-search',
+          ),
+        );
+        if (mode !== 'empty-tasks') {
+          input.value = 'needle';
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          await searchUiCompleted(root);
+          expect(root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+        } else {
+          expect(root.querySelectorAll('.abyss-task-card')).toHaveLength(2);
+        }
+        const backend = h.backends[0];
+        const request = Number(root.dataset['searchRequest'] ?? 0);
+        const owner = expectDefined(iframe.contentWindow) as EventWindow;
+        // Match the host's per-window DOM extensions, as in the capture migration tests.
+        vi.spyOn(owner.document, 'createElement').mockImplementation((tag, options) =>
+          owner.document.adoptNode(document.createElement(tag, options)),
+        );
+        const scroll = expectDefined(root.querySelector('.abyss-center-scroll'));
+        vi.spyOn(scroll, 'cloneNode').mockImplementation((deep) =>
+          owner.document.adoptNode(document.importNode(scroll, deep)),
+        );
+        owner.document.body.append(view.containerEl);
+        migrate(owner);
+        expect(root.querySelector('input.abyss-center-search')).toBe(input);
+        expect(input.value).toBe(mode === 'empty-tasks' ? '' : 'needle');
+        input.value = 'other';
+        input.dispatchEvent(new owner.Event('input', { bubbles: true }));
+        await searchUiCompleted(root);
+        expect(Number(root.dataset['searchRequest'])).toBeGreaterThan(request);
+        expect(root.dataset['searchLogicalResults']).toBe('1');
+        expect(root.querySelector('.abyss-task-title')?.textContent).toBe('other');
+        expect(h.backends).toHaveLength(1);
+        if (backend !== undefined) expect(h.backends[0]).toBe(backend);
+        if (mode !== 'search') {
+          input.value = '';
+          input.dispatchEvent(new owner.Event('input', { bubbles: true }));
+          expect(root.querySelectorAll('.abyss-task-card')).toHaveLength(2);
+          expect(root.querySelector('input.abyss-center-search')).toBe(input);
+        }
+      } finally {
+        await h.dispose();
+        iframe.remove();
+      }
+    },
+  );
+
+  it('releases the debounce in its original window before resuming the retained query', async () => {
+    const h = await prewarmPanel();
+    const iframe = document.body.createEl('iframe');
+    try {
+      const { view, migrate } = await h.mount();
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      state.set('mode', 'search');
+      const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+      const input = expectDefined(root.querySelector<HTMLInputElement>('.abyss-search-global'));
+      await searchUiCompleted(root);
+      const setTimer = vi.spyOn(window, 'setTimeout');
+      const clearTimer = vi.spyOn(window, 'clearTimeout');
+      input.value = 'needle';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      const timerAt = setTimer.mock.calls.findIndex(([, delay]) => delay === 60);
+      expect(timerAt).toBeGreaterThanOrEqual(0);
+      const timer = setTimer.mock.results[timerAt]?.value as number;
+      const owner = expectDefined(iframe.contentWindow) as EventWindow;
+      owner.document.body.append(view.containerEl);
+      migrate(owner);
+      expect(clearTimer).toHaveBeenCalledWith(timer);
+      await searchUiCompleted(root);
+      expect(input.value).toBe('needle');
+      expect(root.dataset['searchLogicalResults']).toBe('1');
+      expect(h.backends).toHaveLength(1);
+      expect(h.backends[0]?.searchCalls).toBe(1);
+    } finally {
+      await h.dispose();
+      iframe.remove();
+    }
+  });
+
+  it.each(['cursor', 'Markdown'] as const)(
+    'cancels held %s work and settles the new owner without old completion',
+    async (phase) => {
+      const h = await prewarmPanel();
+      const iframe = document.body.createEl('iframe');
+      const entered = deferred<void>(),
+        release = deferred<void>();
+      let oldSignal: AbortSignal | undefined;
+      try {
+        h.index.installCommittedContent('tasks.md', '- [ ] **needle**\n- [ ] **other**');
+        const { view, migrate } = await h.mount();
+        const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+        state.set('mode', 'search');
+        const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+        const input = expectDefined(root.querySelector<HTMLInputElement>('.abyss-search-global'));
+        let held = false;
+        if (phase === 'cursor') {
+          const read = h.search.read.bind(h.search);
+          vi.spyOn(h.search, 'read').mockImplementation(async (cursor, offset, limit, signal) => {
+            if (!held) {
+              held = true;
+              oldSignal = signal;
+              entered.resolve();
+              await release.promise;
+            }
+            return read(cursor, offset, limit, signal);
+          });
+        }
+        // Obsidian's host renderer is external; retain its real promise boundary and supplied text.
+        vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, el) => {
+          if (phase === 'Markdown' && !held) {
+            held = true;
+            entered.resolve();
+            await release.promise;
+          }
+          el.createEl('strong', { text: markdown.replaceAll('**', '') });
+        });
+        const completions: string[] = [];
+        const observer = new MutationObserver(() => {
+          if (root.dataset['searchPhase'] === 'complete')
+            completions.push(root.dataset['searchRequest'] ?? '');
+        });
+        observer.observe(root, { attributes: true });
+        input.value = 'needle';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await entered.promise;
+        const oldRequest = root.dataset['searchRequest'];
+        expect(root.dataset['searchPhase']).toBe('pending');
+        const backend = h.backends[0];
+        const owner = expectDefined(iframe.contentWindow) as EventWindow;
+        owner.document.body.append(view.containerEl);
+        migrate(owner);
+        if (phase === 'cursor') expect(oldSignal?.aborted).toBe(true);
+        // Migration itself must resume the retained query while the old operation is still held.
+        await searchUiCompleted(root);
+        expect(input.value).toBe('needle');
+        expect(root.querySelector('.abyss-task-title')?.textContent).toBe('needle');
+        input.value = 'other';
+        input.dispatchEvent(new owner.Event('input', { bubbles: true }));
+        await searchUiCompleted(root);
+        const currentRequest = root.dataset['searchRequest'];
+        release.resolve();
+        await flushMicrotasks();
+        expect(root.dataset['searchRequest']).toBe(currentRequest);
+        expect(root.dataset['searchPhase']).toBe('complete');
+        expect(root.querySelector('.abyss-task-title')?.textContent).toBe('other');
+        expect(completions).not.toContain(oldRequest);
+        expect(h.backends).toEqual([backend]);
+        observer.disconnect();
+      } finally {
+        release.resolve();
+        await h.dispose();
+        iframe.remove();
+      }
+    },
+  );
 });

@@ -83,7 +83,7 @@ interface SearchCollection {
 }
 type CapturedOrganization = Omit<
   TaskSearchOrganizationInput,
-  'generation' | 'records' | 'hits' | 'outgoingLinks'
+  'generation' | 'records' | 'hits' | 'outgoingLinks' | 'observedTags'
 >;
 function validatePage(page: TaskSearchPage, cursor: TaskSearchCursor, offset: number): void {
   const end = offset + page.hits.length;
@@ -108,7 +108,8 @@ export class TaskSearch {
   #results: HTMLElement | null = null;
   #status: SearchStatus | null = null;
   #paging: HTMLElement | null = null;
-  #timer: number | null = null;
+  #timer: { owner: Window; id: number } | null = null;
+  #cancelFocus: (() => void) | null = null;
   #pending: AbortController | null = null;
   #unsubscribe: (() => void) | null = null;
   #observed: TaskSearchState | null = null;
@@ -176,9 +177,16 @@ export class TaskSearch {
     this.#results = root.createDiv({ cls: 'abyss-center-scroll' });
     this.#attach(root);
     this.#schedule(input.value, 0);
-    root.ownerDocument.defaultView?.setTimeout(() => {
-      if (this.#input === input && input.isConnected) input.focus();
-    }, 0);
+    const owner = root.ownerDocument.defaultView;
+    if (owner !== null) {
+      const timer = owner.setTimeout(() => {
+        this.#cancelFocus = null;
+        if (this.#owner === owner && this.#input === input && input.isConnected) input.focus();
+      }, 0);
+      this.#cancelFocus = () => {
+        owner.clearTimeout(timer);
+      };
+    }
   }
   renderFilter(root: HTMLElement, results: HTMLElement, query: string): void {
     this.clear();
@@ -238,6 +246,15 @@ export class TaskSearch {
     if (this.#input !== null) this.#input.value = query;
     this.#schedule(query);
   }
+  onWindowMigrated(): void {
+    const owner = this.#root?.ownerDocument.defaultView ?? null;
+    if (owner === this.#owner) return;
+    this.#cancelPending();
+    this.#cancelFocus?.();
+    this.#cancelFocus = null;
+    this.#owner = owner;
+    if (this.#live()) this.#schedule(this.#currentQuery(), 0);
+  }
   #currentQuery(): string {
     return this.#options.state.get(this.#filter ? 'centerFilter' : 'searchQuery');
   }
@@ -249,7 +266,7 @@ export class TaskSearch {
     );
   }
   #cancelPending(): void {
-    if (this.#timer !== null) this.#root?.ownerDocument.defaultView?.clearTimeout(this.#timer);
+    if (this.#timer !== null) this.#timer.owner.clearTimeout(this.#timer.id);
     this.#timer = null;
     this.#pending?.abort();
     this.#pending = null;
@@ -269,13 +286,16 @@ export class TaskSearch {
       this.#empty(request);
       return;
     }
-    this.#timer =
-      this.#root?.ownerDocument.defaultView?.setTimeout(() => {
-        this.#timer = null;
-        void this.#run(request, query).catch((error: unknown) => {
-          this.#handleFailure(request, error);
-        });
-      }, delay) ?? null;
+    const owner = this.#owner;
+    if (owner === null) return;
+    const id = owner.setTimeout(() => {
+      this.#timer = null;
+      if (request !== this.#request || !this.#live()) return;
+      void this.#run(request, query).catch((error: unknown) => {
+        this.#handleFailure(request, error);
+      });
+    }, delay);
+    this.#timer = { owner, id };
   }
   #empty(request: number): void {
     this.#options.host.beginResults();
@@ -585,9 +605,17 @@ export class TaskSearch {
         )
       : new Map();
     this.#organizationPhase(current);
+    this.#assertPreparation(current);
+    const selection = captured.selection;
+    const observedTags =
+      selection !== null && typeof selection === 'object' && selection.type === 'group'
+        ? this.#options.reads?.observedTags()
+        : undefined;
+    this.#assertPreparation(current);
     const organization = await runTaskOrganization(
       organizeTaskSearch({
         ...captured,
+        ...(observedTags === undefined ? {} : { observedTags }),
         generation,
         records: collection.records,
         hits: collection.hits,
@@ -723,6 +751,8 @@ export class TaskSearch {
   }
   clear(): void {
     this.#cancelPending();
+    this.#cancelFocus?.();
+    this.#cancelFocus = null;
     this.#request++;
     this.#unsubscribe?.();
     this.#unsubscribe = null;

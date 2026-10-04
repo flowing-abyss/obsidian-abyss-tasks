@@ -405,3 +405,76 @@ it('rejects an old organization after a status-only semantic generation changes 
     h.dispose();
   }
 });
+
+it.each([
+  {
+    groupId: 'discovered:prefix:work',
+    collision: false,
+    want: 'needle',
+    initial: 2,
+    markdown: '- [ ] needle #work',
+  },
+  {
+    groupId: 'discovered:prefix:WORK',
+    collision: false,
+    want: 'needle',
+    initial: 2,
+    markdown: '- [ ] needle #Work',
+  },
+  {
+    groupId: 'discovered:prefix:work',
+    collision: true,
+    want: 'needle configured',
+    initial: 1,
+    markdown: '- [ ] needle #work',
+  },
+  {
+    groupId: 'discovered:prefix:WORK::1',
+    collision: true,
+    want: 'needle',
+    initial: 2,
+    markdown: '- [ ] needle #work',
+  },
+  {
+    groupId: 'discovered:prefix:work',
+    collision: false,
+    want: 'needle',
+    initial: 2,
+    markdown: '- [ ] needle\n  - [ ] child #Work',
+  },
+] as const)(
+  'Tasks filter retains canonical group $groupId (collision: $collision, $markdown)',
+  async ({ groupId, collision, want, initial, markdown }) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.tagGroups = collision
+      ? [{ id: 'discovered:prefix:work', name: 'Configured', mode: 'manual', tags: ['#personal'] }]
+      : [];
+    const h = await mountCanonicalSearchUi(
+      {
+        'a.md': markdown,
+        'b.md': '- [ ] unrelated #work/child',
+        ...(collision ? { 'c.md': '- [ ] needle configured #personal' } : {}),
+      },
+      settings,
+      'tasks',
+    );
+    try {
+      h.state.set('selectedList', { type: 'group', groupId });
+      expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(initial);
+      vi.spyOn(h.index, 'list').mockImplementation(() => {
+        throw new Error('Full task clone');
+      });
+      vi.spyOn(h.index, 'listNodes').mockImplementation(() => {
+        throw new Error('Full node clone');
+      });
+      h.query('needle');
+      await h.completed();
+      expect(h.root.dataset['searchLogicalResults']).toBe('1');
+      const cards = h.root.querySelectorAll('.abyss-task-card');
+      expect(cards).toHaveLength(1);
+      expect(cards[0]?.querySelector('.abyss-task-title')?.textContent).toBe(want);
+    } finally {
+      h.dispose();
+    }
+  },
+);

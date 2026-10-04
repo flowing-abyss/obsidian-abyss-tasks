@@ -32,6 +32,8 @@ export interface TaskSearchOrganization {
   readonly groupCounts: ReadonlyMap<string, number>;
 }
 export interface TaskSearchOrganizationInput {
+  /** Full canonical tags, independent of query hits, for selected group identity. */
+  readonly observedTags?: readonly string[];
   readonly generation: number;
   readonly records: readonly TaskOrganizationRecord[];
   readonly hits: readonly TaskSearchHit[] | null;

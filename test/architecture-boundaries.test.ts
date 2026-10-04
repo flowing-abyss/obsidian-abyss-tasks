@@ -256,6 +256,7 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
   'TaskQueryApi.list': ['src/panels/CenterPanel.ts', 'src/panels/calendar/calendarCommands.ts'],
   'TaskQueryApi.observedTags': [
     'src/panels/CenterPanel.ts',
+    'src/panels/center/TaskSearch.ts',
     'src/panels/right/InspectorPlanningSurfaces.ts',
   ],
   'TaskQueryApi.resolve': 'src/views/PanelView.ts',

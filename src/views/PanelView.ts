@@ -826,6 +826,7 @@ export class PanelView extends ItemView {
     this.bindPanelShortcuts_abyssPrivate();
     this.shortcutMigrationCleanup_abyssPrivate = this.contentEl.onWindowMigrated(() => {
       this.bindPanelShortcuts_abyssPrivate();
+      this.center_abyssPrivate.onWindowMigrated();
       this.cancelSearchPresentation_abyssPrivate?.();
       this.checkSearchOpportunity_abyssPrivate();
     });

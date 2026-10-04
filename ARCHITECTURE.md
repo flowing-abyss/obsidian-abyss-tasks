@@ -479,7 +479,11 @@ owns selection across renders and mode changes.
 
 Global Search and nonempty Tasks filters use `taskSearchOrganization` over compact canonical
 records, with the same structural membership, property/status filters, comparator and grouping
-routines as ordinary snapshots. All logical matches are organized before slicing. Relevance
+routines as ordinary snapshots. Selected groups resolve through the shared effective-tag catalog
+using canonical observed tags, independently of the query's matching roots. TaskSearch reads the
+existing compact observed-tag port within its generation guards; ordinary selection derives those
+tags from its unfiltered input. Configured IDs and discovered aliases retain the shared identity policy.
+All logical matches are organized before slicing. Relevance
 preserves the engine cursor's complete ordering; explicit sort ties use created date then canonical
 source order. Host outgoing-link resolution remains presentation-owned and link lifecycle/settings/
 project events re-organize even when task text is unchanged. `collectionSteps` defines pure cheap/atom
@@ -514,7 +518,10 @@ Only the live current request in a ready matching service generation can publish
 instance; a retained Tasks shell keeps that status and its mounted subscription across nonempty
 query/view refreshes. Each refresh cancels the old controller and releases its request data. A successful nonempty search
 resets the failure episode; empty or invalid input preserves it. Close/reopen creates a new surface
-lifetime. Passive preparation failures remain quiet outside active nonempty Search. No global Notice
+lifetime. PanelView's existing window-migration hook delegates through CenterPanel to the mounted
+TaskSearch owner. Migration cancels old query/render work and captured-window debounce/focus timers,
+then resumes the retained query through the new window, preserving the input, status owner and shared
+backend. Passive preparation failures remain quiet outside active nonempty Search. No global Notice
 registry is involved.
 
 CenterPanel's narrow `refresh(view | source | projects | links)` routing preserves ordinary

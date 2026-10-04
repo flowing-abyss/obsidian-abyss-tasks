@@ -46,6 +46,8 @@ export type TaskListValue = Pick<
 > & { readonly source: Pick<TaskSnapshot['source'], 'filePath' | 'line'> };
 
 export interface TaskValueSelectionInput<T extends TaskListValue> {
+  /** Canonical catalog input when the candidate tasks have already been narrowed. */
+  readonly observedTags?: readonly string[];
   readonly tasks: readonly T[];
   readonly selection: ListSelection | null;
   readonly viewState: ListViewState;
@@ -259,7 +261,7 @@ function* selectedGroup<T extends TaskListValue>(
   const selection = input.selection;
   if (selection === null || typeof selection === 'string' || selection.type !== 'group')
     return null;
-  const observed = yield* observedTags(input, cooperative);
+  const observed = input.observedTags ?? (yield* observedTags(input, cooperative));
   if (observed === undefined) throw new Error('Observed tags ended without a result');
   const catalog = cooperative
     ? yield* resolveEffectiveTagGroupsSteps(input.settings, observed)
@@ -517,11 +519,18 @@ export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnap
       task.title.toLowerCase().includes(query) ||
       task.source.originalMarkdown.toLowerCase().includes(query),
   );
-  return selectTaskValues({
+  const values: TaskValueSelectionInput<TaskSnapshot> = {
     ...input,
-    tasks,
     treeTags: taskTreeTags,
     trackedMs: (task) => totalMs(subtreeTotal(task), input.nowMs),
+  };
+  const selection = input.selection;
+  return selectTaskValues({
+    ...values,
+    tasks,
+    ...(selection !== null && typeof selection === 'object' && selection.type === 'group'
+      ? { observedTags: drainCollectionSteps(observedTags(values, false)) }
+      : {}),
   });
 }
 
