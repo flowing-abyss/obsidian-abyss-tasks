@@ -8,9 +8,9 @@ import {
   type TaskDependencyQueryApi,
   type TaskDependencyRelation,
   type TaskNodeRef,
+  type TaskSearchApi,
 } from '../../tasks';
 import {
-  dependencySearchOptions,
   focusWithoutScroll,
   mountDependencySearch,
   type DependencyPickerCommitResult,
@@ -25,6 +25,7 @@ import {
   dependencyDirectionLabel,
   dependencyRelationPresentation,
 } from '../../ui/taskDependencyPresentation';
+import type { TaskDependencySearchProvider } from '../../ui/TaskDependencySearchProvider';
 import { startTaskNodeDrag } from '../../ui/taskNodeDrag';
 import { taskNodeRef } from '../../ui/taskSelection';
 import type { InspectorPlanningSurfaces } from './InspectorPlanningSurfaces';
@@ -34,6 +35,8 @@ import type { TaskLike } from './inspectorTypes';
 interface InspectorDependenciesOptions {
   readonly state: AppState;
   readonly queries: TaskDependencyQueryApi | undefined;
+  readonly search: TaskSearchApi | undefined;
+  readonly provider: TaskDependencySearchProvider | undefined;
   readonly statusRegistry: StatusRegistry;
   readonly interactionOwnership: InteractionOwnershipPort;
   readonly surfaces: Pick<
@@ -112,6 +115,8 @@ function updateDependencyBadgeCounts(
 
 export class InspectorDependencies {
   readonly #state: AppState;
+  readonly #searchApi: TaskSearchApi | undefined;
+  readonly #provider: TaskDependencySearchProvider | undefined;
   readonly #queries: TaskDependencyQueryApi | undefined;
   readonly #statusRegistry: StatusRegistry;
   readonly #interactionOwnership: InteractionOwnershipPort;
@@ -128,6 +133,8 @@ export class InspectorDependencies {
   constructor(options: InspectorDependenciesOptions) {
     this.#state = options.state;
     this.#queries = options.queries;
+    this.#searchApi = options.search;
+    this.#provider = options.provider;
     this.#statusRegistry = options.statusRegistry;
     this.#interactionOwnership = options.interactionOwnership;
     this.#surfaces = options.surfaces;
@@ -139,6 +146,7 @@ export class InspectorDependencies {
     this.#disclosure = undefined;
   }
   cancelSearch(): void {
+    if (this.#search !== undefined) this.#surfaces.releasePlacement(this.#search.element);
     this.#search?.destroy();
     this.#search = undefined;
     this.#retainedSearch = undefined;
@@ -629,6 +637,9 @@ export class InspectorDependencies {
 
   showSearch(direction?: DependencyDirection): void {
     this.#surfaces.clearPopovers();
+    const provider = this.#provider,
+      search = this.#searchApi;
+    if (provider === undefined || search === undefined) return;
     this.#searchAnchor =
       direction === undefined
         ? '.abyss-dep-badge-body'
@@ -636,22 +647,22 @@ export class InspectorDependencies {
     this.#search = mountDependencySearch(this.#host.root(), {
       direction: direction ?? 'blocked-by',
       canChangeDirection: direction === undefined,
-      options: (query, chosen) => {
+      provider,
+      search,
+      current: () => {
         const current = this.#host.dependencyTask();
-        const queries = this.#queries;
-        if (queries === undefined || current === undefined) return [];
-        return dependencySearchOptions({
-          current: taskNodeRef(current),
-          direction: chosen,
-          query,
-          tasks: queries.listNodes(),
-          eligibility: (blocker, dependent) => queries.dependencyEligibility(blocker, dependent),
-        });
+        return this.#host.mounted() && current !== undefined ? taskNodeRef(current) : undefined;
       },
       selectExisting: async (option, chosen) => {
         const current = this.#host.dependencyTask();
         if (current === undefined)
           return { type: 'validation-error', message: 'The current task is no longer available.' };
+        const eligibility =
+          chosen === 'blocked-by'
+            ? this.#queries?.dependencyEligibility(option.task.target, taskNodeRef(current))
+            : this.#queries?.dependencyEligibility(taskNodeRef(current), option.task.target);
+        if (eligibility?.type !== 'allowed')
+          return { type: 'validation-error', message: 'Task changed. Select again or edit text.' };
         const committed = await this.#commands.executeDependencyCommand({
           type: 'add-dependency',
           blocker: chosen === 'blocked-by' ? option.task.target : taskNodeRef(current),

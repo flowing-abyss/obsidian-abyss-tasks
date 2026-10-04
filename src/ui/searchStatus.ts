@@ -25,6 +25,12 @@ export class SearchStatus {
     this.root.setAttribute('aria-busy', 'true');
     this.#text.setText('Searching…');
   }
+  cancel(request: number): void {
+    if (request !== this.#request) return;
+    this.root.dataset['searchPhase'] = 'idle';
+    this.root.setAttribute('aria-busy', 'false');
+    this.#text.empty();
+  }
   complete(request: number, generation: number): void {
     if (request !== this.#request) return;
     this.root.dataset['searchGeneration'] = String(generation);

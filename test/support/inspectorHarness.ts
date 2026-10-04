@@ -20,8 +20,10 @@ import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskM
 import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../../src/tasks/infrastructure/TaskRefAuthority';
+import { createTaskDependencySearchProvider } from '../../src/ui/TaskDependencySearchProvider';
 import { rebuildTaskSelection, rootTaskRef } from '../../src/ui/taskSelection';
 import { createAppWithFiles, expectDefined } from '../helpers';
+import { canonicalSearchForIndex, ControlledSearchScheduler } from './taskSearchHarness';
 
 /** Teardown for every harness a test built; each suite drains it in its `afterEach`. */
 export const inspectorCleanups: Array<() => void> = [];
@@ -84,16 +86,24 @@ export async function inspectorHarness(
   const location = node(selected);
   state.set('taskStack', [location.root, ...location.path]);
   const el = activeDocument.body.createDiv();
+  const search = canonicalSearchForIndex(index);
   const panel = new RightPanel({
     state,
     app,
     statusRegistry: new StatusRegistry([...statusDefinitions]),
     settings: DEFAULT_SETTINGS,
     tasks: api,
+    search,
+    dependencySearch: createTaskDependencySearchProvider(
+      search,
+      index,
+      new ControlledSearchScheduler(),
+    ),
   });
   panel.mount(el);
   inspectorCleanups.push(() => {
     panel.destroy();
+    search.dispose();
     index.destroy();
   });
   const file = app.vault.getAbstractFileByPath('tasks.md');
@@ -103,7 +113,7 @@ export async function inspectorHarness(
     expect(content.startsWith('\n')).toBe(true);
     return content.slice(1);
   };
-  return { app, file, panel, el, state, index, node, api, read, repository, diagnostics };
+  return { app, file, search, panel, el, state, index, node, api, read, repository, diagnostics };
 }
 
 export type InspectorHarness = Awaited<ReturnType<typeof inspectorHarness>>;

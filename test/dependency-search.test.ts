@@ -1,821 +1,831 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildTaskDependencyGraph, enumerateTaskNodes } from '../src/tasks/domain/taskDependencies';
-import { dependencySearchOptions, mountDependencySearch } from '../src/ui/dependencySearch';
+import { Notice } from 'obsidian';
+import { afterEach, expect, it, vi } from 'vitest';
+import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { TaskSearchError, type DependencyDirection, type TaskNodeRef } from '../src/tasks';
 import {
-  canonicalStatusCatalog,
-  deferred,
-  dispatchImeKey,
-  expectDefined,
-  flushMicrotasks,
-  task,
-} from './helpers';
+  mountDependencySearch,
+  rejectionLabel,
+  type DependencyPickerCommitResult,
+} from '../src/ui/dependencySearch';
+import { createTaskDependencySearchProvider } from '../src/ui/TaskDependencySearchProvider';
+import { deferred, dispatchImeKey, expectDefined, flushMicrotasks } from './helpers';
+import { createCanonicalSearchHarness } from './support/taskSearchHarness';
+import { searchUiCompleted } from './support/taskSearchUiHarness';
 
+const cleanup: Array<() => void> = [];
 afterEach(() => {
+  cleanup
+    .splice(0)
+    .reverse()
+    .forEach((close) => {
+      close();
+    });
   activeDocument.body.empty();
   vi.restoreAllMocks();
 });
-
-function fixture() {
-  const current = task({
-    title: 'Current',
-    dependencyId: 'current',
-    dependsOn: ['previous'],
-    source: { filePath: 'Project.md', line: 3 },
-  });
-  const roots = [
-    current,
-    task({
-      title: 'Previous',
-      dependencyId: 'previous',
-      dependsOn: ['distant'],
-      source: { filePath: 'A.md' },
-    }),
-    task({ title: 'Distant', dependencyId: 'distant', source: { filePath: 'B.md' } }),
-    task({
-      title: 'Local candidate',
-      description: 'Do not search this description',
-      source: { filePath: 'Project.md', line: 7 },
-    }),
-    task({ title: 'Other candidate', source: { filePath: 'C.md' } }),
-  ];
-  const tasks = enumerateTaskNodes(roots);
-  const graph = buildTaskDependencyGraph(tasks, (symbol) =>
-    canonicalStatusCatalog().statusForSymbol(symbol),
+async function fixture(count = 65, direction: DependencyDirection = 'blocks') {
+  const candidates = Array.from({ length: count }, (_, i) => `- [ ] Candidate ${i} 🆔 c${i}`).join(
+    '\n',
   );
+  const h = await createCanonicalSearchHarness(
+    {
+      'tasks.md': `- [ ] Current 🆔 current\n${candidates}`,
+    },
+    DEFAULT_SETTINGS,
+  );
+  cleanup.push(() => {
+    h.close();
+  });
+  let current: TaskNodeRef | undefined = expectDefined(h.index.listNodes()[0]).target;
+  const writes: Array<{ title: string; direction: DependencyDirection; target: TaskNodeRef }> = [];
+  const creates: Array<readonly [string, DependencyDirection]> = [];
+  const provider = createTaskDependencySearchProvider(h.search, h.index, h.scheduler);
+  const release = vi.fn();
+  const callbacks = {
+    direction,
+    canChangeDirection: true,
+    provider,
+    search: h.search,
+    current: () => current,
+    selectExisting: async (
+      option: { task: { target: TaskNodeRef; node: { title: string } } },
+      chosen: DependencyDirection,
+    ): Promise<DependencyPickerCommitResult> => {
+      writes.push({ title: option.task.node.title, target: option.task.target, direction: chosen });
+      return { type: 'committed' as const };
+    },
+    createNew: async (
+      text: string,
+      chosen: DependencyDirection,
+    ): Promise<DependencyPickerCommitResult> => {
+      creates.push([text, chosen]);
+      return { type: 'committed' as const };
+    },
+    onClose: vi.fn(),
+    ownership: { acquire: () => ({ release }) },
+  };
+  const mount = () => {
+    const handle = mountDependencySearch(activeDocument.body, callbacks);
+    cleanup.push(() => {
+      handle.destroy();
+    });
+    const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
+    const key = (key: string) =>
+      input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    const query = (text: string) => {
+      input.value = text;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const completed = () => searchUiCompleted(handle.element);
+    const active = () => {
+      const id = input.getAttribute('aria-activedescendant');
+      return id === null ? null : activeDocument.getElementById(id);
+    };
+    return { handle, input, key, query, completed, active };
+  };
   return {
-    current: { type: 'task' as const, ref: current.ref },
-    tasks,
-    eligibility: graph.eligibility.bind(graph),
+    ...h,
+    callbacks,
+    mount,
+    writes,
+    creates,
+    release,
+    setCurrent: (ref: TaskNodeRef | undefined) => {
+      current = ref;
+    },
   };
 }
-
-describe('dependency search options', () => {
-  it('distinguishes equal titles in the same note using existing source line context', () => {
-    const { current } = fixture();
-    const tasks = enumerateTaskNodes([
-      task({ title: 'Repeated', source: { filePath: 'Project.md', line: 0 } }),
-      task({ title: 'Repeated', source: { filePath: 'Project.md', line: 8 } }),
-    ]);
-    const options = dependencySearchOptions({
-      current,
-      tasks,
-      query: 'Repeated',
-      eligibility: () => ({ type: 'allowed' }),
-    });
-    expect(options.map(({ context }) => context)).toEqual(['Project.md:1', 'Project.md:9']);
-  });
-
-  it('ranks same-file nodes first and otherwise retains canonical order with both eligible directions', () => {
-    const options = dependencySearchOptions({ ...fixture(), query: 'candidate' });
-    expect(
-      options.map(({ title, context, directions }) => ({ title, context, directions })),
-    ).toEqual([
-      { title: 'Local candidate', context: 'Project.md', directions: ['blocked-by', 'blocks'] },
-      { title: 'Other candidate', context: 'C.md', directions: ['blocked-by', 'blocks'] },
-    ]);
-  });
-
-  it('excludes self and direct duplicate/inverse pairs and disables a cycle in scoped results', () => {
-    const options = dependencySearchOptions({ ...fixture(), query: '', direction: 'blocks' });
-    expect(options.some(({ title }) => title === 'Current' || title === 'Previous')).toBe(false);
-    expect(options.find(({ title }) => title === 'Distant')).toMatchObject({
-      directions: [],
-      disabledReason: 'Would create a cycle',
-    });
-    expect(options.find(({ title }) => title === 'Local candidate')?.directions).toEqual([
-      'blocks',
-    ]);
-  });
-
-  it('matches note context and title, never descriptions', () => {
-    expect(
-      dependencySearchOptions({ ...fixture(), query: 'project.md' }).map(({ title }) => title),
-    ).toEqual(['Local candidate']);
-    expect(dependencySearchOptions({ ...fixture(), query: 'Do not search' })).toEqual([]);
-  });
-
-  it.each([
-    ['ambiguous', 'Multiple tasks use this ID'],
-    ['unavailable', 'Task unavailable'],
-    ['stale', 'Task changed'],
-  ] as const)('disables %s candidates with a concise reason', (reason, disabledReason) => {
-    const options = dependencySearchOptions({
-      ...fixture(),
-      query: 'Local',
-      eligibility: () => ({ type: 'rejected', reason }),
-    });
-    expect(options[0]).toMatchObject({ directions: [], disabledReason });
-  });
+it('paints and focuses the shell before a held real page and never creates while pending', async () => {
+  const h = await fixture();
+  const held = deferred<void>();
+  const original = h.callbacks.provider.open.bind(h.callbacks.provider);
+  h.callbacks.provider.open = async (...args) => {
+    const session = await original(...args);
+    const page = session.page.bind(session);
+    session.page = async (...read) => {
+      await held.promise;
+      return page(...read);
+    };
+    return session;
+  };
+  const ui = h.mount();
+  expect(activeDocument.activeElement).toBe(ui.input);
+  expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(0);
+  ui.query('Candidate');
+  ui.key('Enter');
+  await flushMicrotasks(30);
+  expect(h.creates).toEqual([]);
+  held.resolve();
+  await ui.completed();
+  expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(30);
 });
-
-describe('dependency search keyboard controller', () => {
-  it('rechecks an explicit candidate at Enter even without a refresh notification', async () => {
-    let candidates = dependencySearchOptions({
-      ...fixture(),
-      query: 'candidate',
-      direction: 'blocked-by',
+it('bounds mounted options, crosses Arrow boundaries and returns from the final page on one cursor', async () => {
+  const h = await fixture();
+  const open = vi.spyOn(h.search, 'open');
+  const ui = h.mount();
+  ui.query('Candidate');
+  await ui.completed();
+  ui.key('End');
+  expect(ui.active()?.textContent).toContain('Candidate 29');
+  expect(ui.active()?.getAttribute('aria-posinset')).toBe('30');
+  expect(ui.active()?.getAttribute('aria-setsize')).toBe('65');
+  ui.key('ArrowDown');
+  expect(ui.active()).toBeNull();
+  await ui.completed();
+  expect(ui.active()?.textContent).toContain('Candidate 30');
+  ui.key('ArrowUp');
+  await ui.completed();
+  expect(ui.active()?.textContent).toContain('Candidate 29');
+  ui.key('ArrowDown');
+  await ui.completed();
+  ui.key('End');
+  ui.key('ArrowDown');
+  await ui.completed();
+  expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(5);
+  ui.key('End');
+  expect(ui.active()?.textContent).toContain('Candidate 64');
+  expectDefined(
+    ui.handle.element.querySelector<HTMLButtonElement>('[aria-label="Previous page"]'),
+  ).click();
+  await ui.completed();
+  expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(30);
+  ui.key('Home');
+  expect(ui.active()?.textContent).toContain('Candidate 30');
+  expect(open).toHaveBeenCalledTimes(1);
+});
+it.each(['blocks', 'blocked-by'] as const)(
+  'freshly resolves the exact selected target in %s',
+  async (direction) => {
+    const h = await fixture(2, direction);
+    const resolve = vi.spyOn(h.search, 'resolvePage');
+    const ui = h.mount();
+    ui.query('Candidate 1');
+    await ui.completed();
+    ui.key('ArrowDown');
+    const mounted = expectDefined(
+      h.index.listNodes().find(({ node }) => node.title === 'Candidate 1'),
+    );
+    resolve.mockClear();
+    ui.key('Enter');
+    await vi.waitFor(() => {
+      expect(h.writes).toHaveLength(1);
     });
-    const selectExisting = vi.fn(async () => ({ type: 'committed' as const }));
-    const createNew = vi.fn(async () => ({ type: 'committed' as const }));
-    const handle = mountDependencySearch(activeDocument.body, {
-      direction: 'blocked-by',
-      canChangeDirection: false,
-      options: () => candidates,
-      selectExisting,
-      createNew,
-      onClose: () => {},
+    expect(h.writes[0]).toEqual({ title: 'Candidate 1', direction, target: mounted.target });
+    // The first hydration after Enter is the exact fresh selection; success also opens a new browse page.
+    expect(resolve.mock.calls[0]?.[0]).toHaveLength(1);
+    expect(resolve.mock.calls[0]?.[0]).toHaveLength(1);
+    expect(h.creates).toEqual([]);
+  },
+);
+it('preserves original creation text only after a settled query and no implicit selection', async () => {
+  const h = await fixture(1);
+  const ui = h.mount();
+  ui.query('  Candidate 0  ');
+  await ui.completed();
+  expect(ui.active()).toBeNull();
+  ui.key('Enter');
+  await vi.waitFor(() => {
+    expect(h.creates).toHaveLength(1);
+  });
+  expect(h.creates).toEqual([['  Candidate 0  ', 'blocks']]);
+  expect(ui.input.value).toBe('');
+  expect(activeDocument.activeElement).toBe(ui.input);
+});
+it('discards held direction and current-task replies before mounting or committing', async () => {
+  const h = await fixture(2);
+  const held = deferred<void>();
+  const original = h.callbacks.provider.open.bind(h.callbacks.provider);
+  let first = true;
+  h.callbacks.provider.open = async (...args) => {
+    const session = await original(...args);
+    if (first) {
+      first = false;
+      await held.promise;
+    }
+    return session;
+  };
+  const ui = h.mount();
+  await vi.waitFor(() => {
+    expect(first).toBe(false);
+  });
+  expectDefined(
+    ui.handle.element.querySelector<HTMLButtonElement>('[data-direction="blocked-by"]'),
+  ).click();
+  await ui.completed();
+  held.resolve();
+  await flushMicrotasks(30);
+  ui.key('ArrowDown');
+  ui.key('Enter');
+  await vi.waitFor(() => {
+    expect(h.writes).toHaveLength(1);
+  });
+  expect(h.writes[0]?.direction).toBe('blocked-by');
+  await ui.completed();
+  ui.query('Candidate');
+  await ui.completed();
+  ui.key('ArrowDown');
+  const resolve = h.search.resolvePage.bind(h.search);
+  const wait = deferred<void>();
+  vi.spyOn(h.search, 'resolvePage').mockImplementation(async (...args) => {
+    await wait.promise;
+    return resolve(...args);
+  });
+  ui.key('Enter');
+  h.setCurrent(expectDefined(h.index.listNodes()[1]).target);
+  ui.handle.refresh();
+  wait.resolve();
+  await flushMicrotasks(100);
+  expect(h.writes).toHaveLength(1);
+});
+it('keeps logical selection across refresh and never transfers a disappeared candidate to creation', async () => {
+  const h = await fixture(2);
+  const ui = h.mount();
+  ui.query('Candidate');
+  await ui.completed();
+  ui.key('ArrowDown');
+  ui.handle.refresh();
+  await ui.completed();
+  expect(ui.active()?.textContent).toContain('Candidate 0');
+  h.index.installCommittedContent('tasks.md', '- [ ] Current 🆔 current\n- [ ] Candidate 1 🆔 c1');
+  await ui.completed();
+  ui.key('Enter');
+  await flushMicrotasks(40);
+  expect(h.writes).toEqual([]);
+  expect(h.creates).toEqual([]);
+  expect(ui.handle.element.querySelector('.abyss-dep-search-error')?.textContent).toContain(
+    'Task changed',
+  );
+});
+it.each(['', 'Candidate'])(
+  'uses one failure owner for %j and recovers through ordinary input',
+  async (query) => {
+    const h = await fixture(1);
+    const messages: string[] = [];
+    vi.spyOn(
+      Notice.prototype as unknown as { constructor__(message: string): void },
+      'constructor__',
+    ).mockImplementation((message) => {
+      messages.push(message);
     });
-    const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-    input.value = 'candidate';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-    candidates = candidates.slice(1);
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await flushMicrotasks(20);
-    expect(selectExisting).not.toHaveBeenCalled();
-    expect(createNew).not.toHaveBeenCalled();
-    expect(input.value).toBe('candidate');
-    expect(handle.element.querySelector('.abyss-dep-search-error')?.textContent).toContain(
+    const original = h.callbacks.provider.open.bind(h.callbacks.provider);
+    let fail = true;
+    h.callbacks.provider.open = async (...args) => {
+      if (fail) throw new TaskSearchError('unavailable', 'Unavailable');
+      return original(...args);
+    };
+    const ui = h.mount();
+    ui.query(query);
+    await vi.waitFor(() => {
+      expect(ui.handle.element.dataset['searchPhase']).toBe('error');
+    });
+    ui.key('Enter');
+    expect(h.creates).toEqual([]);
+    ui.query(`${query} `);
+    await vi.waitFor(() => {
+      expect(ui.handle.element.dataset['searchPhase']).toBe('error');
+    });
+    expect(messages).toHaveLength(1);
+    expect(ui.handle.element.querySelector('[aria-label="Retry"]')).toBeNull();
+    fail = false;
+    ui.query('Candidate');
+    await ui.completed();
+    expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(1);
+  },
+);
+it('releases session, listeners and lease once and cancels pending focus on close', async () => {
+  const h = await fixture(1);
+  const release = vi.spyOn(h.search, 'release');
+  const remove = vi.spyOn(activeDocument, 'removeEventListener');
+  const ui = h.mount();
+  await ui.completed();
+  ui.handle.destroy();
+  ui.handle.destroy();
+  ui.handle.close();
+  expect(h.release).toHaveBeenCalledOnce();
+  expect(release).toHaveBeenCalledOnce();
+  expect(remove.mock.calls.filter(([type]) => type === 'focusin')).toHaveLength(1);
+  expect(remove.mock.calls.filter(([type]) => type === 'pointerdown')).toHaveLength(1);
+  const second = h.mount();
+  second.handle.destroy();
+  const outside = activeDocument.body.createEl('input');
+  outside.focus();
+  await new Promise((resolve) => window.setTimeout(resolve, 50));
+  expect(activeDocument.activeElement).toBe(outside);
+  expect(second.handle.element.isConnected).toBe(false);
+});
+it.each(['composing', 'legacy'] as const)(
+  'preserves IME-owned keyboard events (%s)',
+  async (ime) => {
+    const h = await fixture(1);
+    const ui = h.mount();
+    ui.query('Candidate');
+    await ui.completed();
+    expect(
+      ['ArrowDown', 'Enter', 'Escape'].map(
+        (key) => dispatchImeKey(ui.input, key, ime).defaultPrevented,
+      ),
+    ).toEqual([false, false, false]);
+    expect(h.writes).toEqual([]);
+    expect(h.creates).toEqual([]);
+    expect(ui.handle.element.isConnected).toBe(true);
+  },
+);
+it('detaches a held selection, releases owned reads and cannot revive focus after reattachment', async () => {
+  const h = await fixture(2);
+  const ui = h.mount();
+  ui.query('Candidate');
+  await ui.completed();
+  ui.key('ArrowDown');
+  const original = h.search.resolvePage.bind(h.search),
+    held = deferred<void>();
+  vi.spyOn(h.search, 'resolvePage').mockImplementationOnce(async (...args) => {
+    await held.promise;
+    return original(...args);
+  });
+  ui.key('Enter');
+  ui.handle.detach();
+  ui.handle.element.remove();
+  expect(h.release).toHaveBeenCalledOnce();
+  activeDocument.body.append(ui.handle.element);
+  ui.handle.attach();
+  const direction = expectDefined(
+    ui.handle.element.querySelector<HTMLButtonElement>('[data-direction="blocks"]'),
+  );
+  direction.focus();
+  held.resolve();
+  await ui.completed();
+  await flushMicrotasks(30);
+  expect(h.writes).toEqual([]);
+  expect(activeDocument.activeElement).toBe(direction);
+  ui.handle.destroy();
+  expect(h.release).toHaveBeenCalledTimes(2);
+});
+it('automatically restarts an expired owned cursor without turning selected intent into creation', async () => {
+  const h = await fixture(65);
+  const open = vi.spyOn(h.search, 'open');
+  const ui = h.mount();
+  ui.query('Candidate');
+  await ui.completed();
+  ui.key('ArrowDown');
+  vi.spyOn(h.search, 'read').mockRejectedValueOnce(
+    new TaskSearchError('cursor-expired', 'Expired'),
+  );
+  ui.key('End');
+  ui.key('ArrowDown');
+  await ui.completed();
+  expect(open).toHaveBeenCalledTimes(2);
+  expect(ui.active()?.textContent).toContain('Candidate 29');
+  expect(h.creates).toEqual([]);
+});
+it('browses compact source readiness without a backend and uses raw positions after omitted self', async () => {
+  const h = await fixture(35);
+  const ui = h.mount();
+  await ui.completed();
+  expect(h.backends).toHaveLength(0);
+  expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(30);
+  ui.key('Home');
+  expect(ui.active()?.getAttribute('aria-posinset')).toBe('2');
+  expect(ui.active()?.getAttribute('aria-setsize')).toBe('36');
+});
+it('joins real service recovery through ordinary nonempty input after backend failure', async () => {
+  const h = await fixture(2);
+  const messages: string[] = [];
+  vi.spyOn(
+    Notice.prototype as unknown as { constructor__(message: string): void },
+    'constructor__',
+  ).mockImplementation((message) => {
+    messages.push(message);
+  });
+  const options = (h.search as unknown as { options: { createBackend: () => Promise<unknown> } })
+    .options;
+  const backend = vi
+    .spyOn(options, 'createBackend')
+    .mockRejectedValue(new Error('Backend unavailable'));
+  const time = vi.spyOn(h.scheduler, 'now').mockReturnValue(0);
+  const ui = h.mount();
+  ui.query('Candidate');
+  await vi.waitFor(() => {
+    expect(ui.handle.element.dataset['searchPhase']).toBe('error');
+  });
+  expect(messages).toHaveLength(1);
+  ui.key('Enter');
+  expect(h.creates).toEqual([]);
+  backend.mockRestore();
+  time.mockReturnValue(6000);
+  ui.query('Candidate 1');
+  await ui.completed();
+  expect(ui.handle.element.querySelector('[role="option"]')?.textContent).toContain('Candidate 1');
+  expect(messages).toHaveLength(1);
+});
+it('keeps an actual creation busy through refresh after an unsuccessful fresh selection', async () => {
+  const h = await fixture(1);
+  const ui = h.mount();
+  ui.query('Candidate');
+  await ui.completed();
+  ui.key('ArrowDown');
+  vi.spyOn(h.search, 'resolvePage').mockRejectedValueOnce(
+    new TaskSearchError('stale', 'Task changed'),
+  );
+  ui.key('Enter');
+  await vi.waitFor(() => {
+    expect(ui.handle.element.querySelector('.abyss-dep-search-error')?.textContent).toContain(
       'Task changed',
     );
-    handle.destroy();
   });
-
-  it.each(['blocks', 'blocked-by'] as const)(
-    'keeps successive %s creation focused and open',
-    async (direction) => {
-      const createNew = vi.fn(async () => ({ type: 'committed' as const }));
-      const onClose = vi.fn();
-      const handle = mountDependencySearch(activeDocument.body, {
-        direction,
-        canChangeDirection: false,
-        options: () => [],
-        selectExisting: createNew,
-        createNew,
-        onClose,
-      });
-      const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-      for (const text of ['First', 'Second']) {
-        input.value = text;
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-        await flushMicrotasks(20);
-        expect(input.isConnected).toBe(true);
-        expect(input.value).toBe('');
-        expect(activeDocument.activeElement).toBe(input);
-      }
-      expect(createNew.mock.calls).toEqual([
-        ['First', direction],
-        ['Second', direction],
-      ]);
-      expect(onClose).not.toHaveBeenCalled();
-      handle.destroy();
-    },
-  );
-
-  it.each([
-    {
-      canChangeDirection: true,
-      expectedChildren: [
-        'abyss-dep-search-field',
-        'abyss-dep-add abyss-dep-search-option abyss-dep-search-create',
-        'abyss-dep-search-directions',
-        'abyss-dep-search-error',
-        'abyss-dep-search-results',
-      ],
-    },
-    {
-      canChangeDirection: false,
-      expectedChildren: [
-        'abyss-dep-search-field',
-        'abyss-dep-add abyss-dep-search-option abyss-dep-search-create',
-        'abyss-dep-search-error',
-        'abyss-dep-search-results',
-      ],
-    },
-  ])(
-    'places the $canChangeDirection picker controls after the search field',
-    ({ canChangeDirection, expectedChildren }) => {
-      const handle = mountDependencySearch(activeDocument.body, {
-        direction: 'blocked-by',
-        canChangeDirection,
-        options: () => [],
-        selectExisting: async () => ({ type: 'failed' }),
-        createNew: async () => ({ type: 'failed' }),
-        onClose: () => {},
-      });
-
-      const field = expectDefined(
-        handle.element.querySelector<HTMLElement>('.abyss-dep-search-field'),
-      );
-      expect(field.querySelector('svg')).toBeNull();
-      expect(field.querySelector('input')?.placeholder).toBe('Search tasks or add task');
-      expect([...handle.element.children].map((child) => child.className)).toEqual(
-        expectedChildren,
-      );
-      expect(
-        handle.element
-          .querySelector('[role="listbox"]')
-          ?.contains(handle.element.querySelector('.abyss-dep-search-create')),
-      ).toBe(false);
-      handle.destroy();
-    },
-  );
-
-  it('shows the general direction before submission and recomputes options when it changes', () => {
-    const seenDirections: string[] = [];
-    const handle = mountDependencySearch(activeDocument.body, {
-      direction: 'blocked-by',
-      canChangeDirection: true,
-      options: (_query, direction) => {
-        seenDirections.push(direction);
-        return dependencySearchOptions({ ...fixture(), query: 'Distant', direction });
-      },
-      selectExisting: async () => ({ type: 'failed' }),
-      createNew: async () => ({ type: 'failed' }),
-      onClose: () => {},
+  const held = deferred<{ type: 'committed' }>();
+  let calls = 0;
+  h.callbacks.createNew = () => {
+    calls++;
+    return held.promise;
+  };
+  expectDefined(
+    ui.handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
+  ).click();
+  ui.handle.refresh();
+  await ui.completed();
+  expectDefined(
+    ui.handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
+  ).click();
+  expect(calls).toBe(1);
+  expect(ui.input.readOnly).toBe(true);
+  held.resolve({ type: 'committed' });
+  await flushMicrotasks(40);
+});
+it('does not reset a failed Notice episode when a stale restart cannot settle', async () => {
+  const h = await fixture(1);
+  const messages: string[] = [];
+  vi.spyOn(
+    Notice.prototype as unknown as { constructor__(message: string): void },
+    'constructor__',
+  ).mockImplementation((message) => {
+    messages.push(message);
+  });
+  let code: 'unavailable' | 'stale' = 'unavailable';
+  h.callbacks.provider.open = async () => {
+    throw new TaskSearchError(code, 'Unavailable');
+  };
+  const ui = h.mount();
+  ui.query('First');
+  await vi.waitFor(() => {
+    expect(ui.handle.element.dataset['searchPhase']).toBe('error');
+  });
+  code = 'stale';
+  ui.query('Second');
+  await vi.waitFor(() => {
+    expect(ui.handle.element.getAttribute('aria-busy')).toBe('false');
+  });
+  ui.key('Enter');
+  expect(h.creates).toEqual([]);
+  code = 'unavailable';
+  ui.query('Third');
+  await vi.waitFor(() => {
+    expect(ui.handle.element.dataset['searchPhase']).toBe('error');
+  });
+  expect(messages).toHaveLength(1);
+});
+it.each(['blocks', 'blocked-by'] as const)(
+  'keeps a fixed %s section direction and submits a mouse choice through fresh resolve',
+  async (direction) => {
+    const h = await fixture(2, direction);
+    h.callbacks.canChangeDirection = false;
+    const ui = h.mount();
+    ui.query('Candidate 1');
+    await ui.completed();
+    expect(ui.handle.element.querySelector('[data-direction]')).toBeNull();
+    expectDefined(ui.handle.element.querySelector<HTMLButtonElement>('[role="option"]')).click();
+    await vi.waitFor(() => {
+      expect(h.writes).toHaveLength(1);
     });
-
-    const directions = handle.element.querySelectorAll<HTMLButtonElement>('[data-direction]');
-    expect([...directions].map((button) => button.dataset['direction'])).toEqual([
-      'blocked-by',
-      'blocks',
+    expect(h.writes[0]?.direction).toBe(direction);
+    expect(h.writes[0]?.title).toBe('Candidate 1');
+    expect(h.creates).toEqual([]);
+  },
+);
+it.each(['blocks', 'blocked-by'] as const)(
+  'keeps successive %s creation open and focused',
+  async (direction) => {
+    const h = await fixture(1, direction),
+      ui = h.mount();
+    for (const text of ['First', 'Second']) {
+      ui.query(text);
+      await ui.completed();
+      ui.key('Enter');
+      await vi.waitFor(() => {
+        expect(ui.input.value).toBe('');
+      });
+      expect(activeDocument.activeElement).toBe(ui.input);
+      expect(ui.handle.element.isConnected).toBe(true);
+    }
+    expect(h.creates).toEqual([
+      ['First', direction],
+      ['Second', direction],
     ]);
-    expect(directions[0]?.getAttribute('aria-pressed')).toBe('true');
-    expect(directions[1]?.getAttribute('aria-pressed')).toBe('false');
-    expect(seenDirections).toEqual(['blocked-by']);
-    expect(handle.element.querySelector<HTMLButtonElement>('[role="option"]')?.disabled).toBe(
-      false,
+    expect(h.callbacks.onClose).not.toHaveBeenCalled();
+  },
+);
+it('clears explicit selection on ordinary input and ignores settled whitespace Enter', async () => {
+  const h = await fixture(2),
+    ui = h.mount();
+  await ui.completed();
+  ui.key('ArrowDown');
+  expect(ui.active()).not.toBeNull();
+  ui.query('Candidate');
+  expect(ui.active()).toBeNull();
+  await ui.completed();
+  expect(ui.active()).toBeNull();
+  ui.query('  ');
+  await ui.completed();
+  ui.key('Enter');
+  expect(h.creates).toEqual([]);
+  expect(h.writes).toEqual([]);
+});
+it.each([true, false])(
+  'preserves create validation, original draft and duplicate busy protection (general=%s)',
+  async (general) => {
+    const h = await fixture(1);
+    h.callbacks.canChangeDirection = general;
+    const held = deferred<DependencyPickerCommitResult>();
+    let calls = 0;
+    h.callbacks.createNew = () => {
+      calls++;
+      return held.promise;
+    };
+    const ui = h.mount();
+    ui.query('  New linked task  ');
+    await ui.completed();
+    const create = expectDefined(
+      ui.handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
     );
-
-    directions[1]?.click();
-
-    expect(directions[0]?.getAttribute('aria-pressed')).toBe('false');
-    expect(directions[1]?.getAttribute('aria-pressed')).toBe('true');
-    expect(seenDirections).toEqual(['blocked-by', 'blocks']);
-    const option = expectDefined(
-      handle.element.querySelector<HTMLButtonElement>('[role="option"]'),
-    );
-    expect(option.disabled).toBe(true);
-    expect(option.textContent).toContain('Would create a cycle');
-    handle.destroy();
-  });
-
-  it('fixes a section picker direction and omits the direction selector', async () => {
-    const writes: string[] = [];
-    const handle = mountDependencySearch(activeDocument.body, {
-      direction: 'blocks',
-      canChangeDirection: false,
-      options: (query, direction) => dependencySearchOptions({ ...fixture(), query, direction }),
-      selectExisting: async (option, direction) => {
-        writes.push(`${option.title}:${direction}`);
-        return { type: 'committed' };
-      },
-      createNew: async () => ({ type: 'failed' }),
-      onClose: () => {},
-    });
-    expect(handle.element.querySelector('[aria-label="Dependency direction"]')).toBeNull();
-    expect(handle.element.getAttribute('aria-label')).toBe('Add dependency: Blocks');
-    const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-    input.value = 'Local';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await flushMicrotasks();
-    expect(writes).toEqual(['Local candidate:blocks']);
-    expect(handle.element.isConnected).toBe(true);
-    handle.destroy();
-  });
-
-  it('releases controller ownership and document listeners only once when destroyed repeatedly', () => {
-    const release = vi.fn();
-    const remove = vi.spyOn(activeDocument, 'removeEventListener');
-    const handle = mountDependencySearch(activeDocument.body, {
-      direction: 'blocked-by',
-      canChangeDirection: true,
-      options: () => [],
-      selectExisting: async () => ({ type: 'failed' }),
-      createNew: async () => ({ type: 'failed' }),
-      onClose: () => {},
-      ownership: { acquire: () => ({ release }) },
-    });
-    handle.destroy();
-    handle.destroy();
-    handle.close();
-    expect(release).toHaveBeenCalledTimes(1);
-    expect(remove.mock.calls.filter(([type]) => type === 'focusin')).toHaveLength(1);
-    expect(remove.mock.calls.filter(([type]) => type === 'pointerdown')).toHaveLength(1);
-  });
-
-  it('clears explicit result selection when the user types and keeps no implicit active option', () => {
-    const handle = mountDependencySearch(activeDocument.body, {
-      direction: 'blocked-by',
-      canChangeDirection: true,
-      options: (query, direction) => dependencySearchOptions({ ...fixture(), query, direction }),
-      selectExisting: async () => ({ type: 'failed' }),
-      createNew: async () => ({ type: 'failed' }),
-      onClose: () => {},
-    });
-    const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-    expect(input.getAttribute('aria-activedescendant')).not.toBeNull();
-    input.value = 'Local';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    expect(input.getAttribute('aria-activedescendant')).toBeNull();
-    expect(handle.element.querySelector('[aria-selected="true"]')).toBeNull();
-    handle.destroy();
-  });
-
-  it('does not transfer explicit selection to another task after a reactive refresh', async () => {
-    const submissions: string[] = [];
-    let hideLocal = false;
-    const handle = mountDependencySearch(activeDocument.body, {
-      direction: 'blocked-by',
-      canChangeDirection: true,
-      options: (query, direction) => {
-        const options = dependencySearchOptions({ ...fixture(), query, direction });
-        return hideLocal ? options.filter(({ title }) => title !== 'Local candidate') : options;
-      },
-      selectExisting: async (option) => {
-        submissions.push(`existing:${option.title}`);
-        return { type: 'committed' };
-      },
-      createNew: async (text) => {
-        submissions.push(`new:${text}`);
-        return { type: 'committed' };
-      },
-      onClose: () => {},
-    });
-    const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-    input.value = 'candidate';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-    expect(handle.element.querySelector('[aria-selected="true"]')?.textContent).toContain(
-      'Local candidate',
-    );
-
-    hideLocal = true;
-    handle.refresh();
-    expect(input.getAttribute('aria-activedescendant')).toBeNull();
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await flushMicrotasks();
-    expect(submissions).toEqual([]);
-    expect(
-      handle.element.querySelector('.abyss-dep-search-error[role="status"]')?.textContent,
-    ).toMatch(/changed|select/iu);
-    handle.destroy();
-  });
-
-  it.each(['unchanged', 'reordered', 'disabled'] as const)(
-    'retains existing-task intent when refreshed options are %s',
-    async (change) => {
-      const submissions: string[] = [];
-      let refreshed = false;
-      const handle = mountDependencySearch(activeDocument.body, {
-        direction: 'blocked-by',
-        canChangeDirection: true,
-        options: (query, direction) => {
-          const values = dependencySearchOptions({ ...fixture(), query, direction });
-          if (!refreshed || change === 'unchanged') return values;
-          if (change === 'reordered') return [...values].reverse();
-          return values.map((option) =>
-            option.title === 'Local candidate' ? { ...option, directions: [] } : option,
-          );
-        },
-        selectExisting: async (option) => {
-          submissions.push(option.title);
-          return { type: 'committed' };
-        },
-        createNew: async () => {
-          submissions.push('created');
-          return { type: 'committed' };
-        },
-        onClose: () => {},
-      });
-      const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-      input.value = 'candidate';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-      refreshed = true;
-      handle.refresh();
-      const activeId = input.getAttribute('aria-activedescendant');
-      if (change === 'disabled') expect(activeId).toBeNull();
-      else
-        expect(activeDocument.getElementById(expectDefined(activeId))?.textContent).toContain(
-          'Local candidate',
-        );
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      await flushMicrotasks();
-      expect(submissions).toEqual(change === 'disabled' ? [] : ['Local candidate']);
-      handle.destroy();
-    },
-  );
-
-  it.each(['input', 'direction', 'arrow', 'create'] as const)(
-    '%s replaces stale existing-task intent explicitly',
-    async (intent) => {
-      const submissions: string[] = [];
-      let stale = false;
-      const handle = mountDependencySearch(activeDocument.body, {
-        direction: 'blocked-by',
-        canChangeDirection: true,
-        options: (query, direction) =>
-          dependencySearchOptions({ ...fixture(), query, direction }).filter(
-            (option) => !stale || option.title !== 'Local candidate',
-          ),
-        selectExisting: async (option) => {
-          submissions.push(option.title);
-          return { type: 'committed' };
-        },
-        createNew: async (text, direction) => {
-          submissions.push(`${text}:${direction}`);
-          return { type: 'committed' };
-        },
-        onClose: () => {},
-      });
-      const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-      input.value = 'candidate';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-      stale = true;
-      handle.refresh();
-      if (intent === 'input') input.dispatchEvent(new Event('input', { bubbles: true }));
-      if (intent === 'direction')
-        expectDefined(
-          handle.element.querySelector<HTMLButtonElement>('[data-direction="blocks"]'),
-        ).click();
-      if (intent === 'arrow')
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-      if (intent === 'create')
-        expectDefined(
-          handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
-        ).click();
-      else input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      await flushMicrotasks();
-      const created = `candidate:${intent === 'direction' ? 'blocks' : 'blocked-by'}`;
-      expect(submissions).toEqual([intent === 'arrow' ? 'Other candidate' : created]);
-      handle.destroy();
-    },
-  );
-
-  it.each([true, false])(
-    'offers a native Create action with the same busy and error path (general: %s)',
-    async (general) => {
-      const pending = deferred<{ type: 'validation-error'; message: string }>();
-      const submissions: string[] = [];
-      const handle = mountDependencySearch(activeDocument.body, {
-        direction: general ? 'blocked-by' : 'blocks',
-        canChangeDirection: general,
-        options: () => [],
-        selectExisting: async () => ({ type: 'failed' }),
-        createNew: (text, direction) => {
-          submissions.push(`${text}:${direction}`);
-          return pending.promise;
-        },
-        onClose: () => {},
-      });
-      const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-      input.value = '  New linked task  ';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      const create = expectDefined(
-        handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
-      );
-      expect(create.tagName).toBe('BUTTON');
-      expect(create.type).toBe('button');
-      expect(create.tabIndex).toBe(0);
-      expect(create.getAttribute('role')).not.toBe('option');
-      expect(create.textContent).toContain('New linked task');
-      expect(create.closest('[role="listbox"]')).toBeNull();
-      create.focus();
-      create.click();
-      create.click();
-      expect(submissions).toEqual([`New linked task:${general ? 'blocked-by' : 'blocks'}`]);
-      expect(create.disabled).toBe(true);
-      pending.resolve({ type: 'validation-error', message: 'Choose a valid task title' });
-      await flushMicrotasks();
-      expect(create.disabled).toBe(false);
-      expect(handle.element.querySelector('[role="status"]')?.textContent).toBe(
-        'Choose a valid task title',
-      );
-      expect(input.value).toBe('  New linked task  ');
-      expect(activeDocument.activeElement).toBe(input);
-      handle.destroy();
-    },
-  );
-
-  it.each([false, true])(
-    'retries explicit Create after validation without reviving prior selection (stale: %s)',
-    async (stale) => {
-      const submissions: string[] = [];
-      let refresh = false;
-      const handle = mountDependencySearch(activeDocument.body, {
-        direction: 'blocked-by',
-        canChangeDirection: true,
-        options: (query, direction) =>
-          dependencySearchOptions({ ...fixture(), query, direction }).filter(
-            (option) => !stale || !refresh || option.title !== 'Local candidate',
-          ),
-        selectExisting: async () => {
-          submissions.push('existing');
-          return { type: 'committed' };
-        },
-        createNew: async (text) => {
-          submissions.push(`new:${text}`);
-          return submissions.length === 1
-            ? { type: 'validation-error', message: 'Try another task title' }
-            : { type: 'committed' };
-        },
-        onClose: () => {},
-      });
-      const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-      input.value = 'candidate';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-      refresh = true;
-      handle.refresh();
-      expectDefined(
-        handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
-      ).click();
-      await flushMicrotasks();
-      expect(input.getAttribute('aria-activedescendant')).toBeNull();
-      expect(activeDocument.activeElement).toBe(input);
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      await flushMicrotasks();
-      expect(submissions).toEqual(['new:candidate', 'new:candidate']);
-      handle.destroy();
-    },
-  );
-
-  it.each([
-    ['ArrowDown', 'Local candidate'],
-    ['ArrowUp', 'Other candidate'],
-  ] as const)(
-    '%s explicitly chooses an eligible result before Enter submits it',
-    async (key, title) => {
-      const writes: string[] = [];
-      const handle = mountDependencySearch(activeDocument.body, {
-        direction: 'blocked-by',
-        canChangeDirection: true,
-        options: (query, direction) => dependencySearchOptions({ ...fixture(), query, direction }),
-        selectExisting: async (option, direction) => {
-          writes.push(`${option.title}:${direction}`);
-          return { type: 'committed' };
-        },
-        createNew: async () => ({ type: 'failed' }),
-        onClose: () => {},
-      });
-      const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-      input.value = 'candidate';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
-      expect(handle.element.querySelector('[aria-selected="true"]')?.textContent).toContain(title);
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      await flushMicrotasks();
-      expect(writes).toEqual([`${title}:blocked-by`]);
-      expect(handle.element.isConnected).toBe(true);
-      handle.destroy();
-    },
-  );
-
-  it('a mouse click immediately submits the existing result in the chosen direction', async () => {
-    const writes: string[] = [];
-    const handle = mountDependencySearch(activeDocument.body, {
-      direction: 'blocks',
-      canChangeDirection: true,
-      options: (query, direction) => dependencySearchOptions({ ...fixture(), query, direction }),
-      selectExisting: async (option, direction) => {
-        writes.push(`${option.title}:${direction}`);
-        return { type: 'committed' };
-      },
-      createNew: async () => ({ type: 'failed' }),
-      onClose: () => {},
-    });
-    const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-    input.value = 'Local';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    expectDefined(handle.element.querySelector<HTMLButtonElement>('[role="option"]')).click();
-    await flushMicrotasks();
-    expect(writes).toEqual(['Local candidate:blocks']);
-  });
-
-  it('plain Enter creates from typed text even when an existing title exactly matches', async () => {
-    const created: string[] = [];
-    const selected: string[] = [];
-    const handle = mountDependencySearch(activeDocument.body, {
-      direction: 'blocked-by',
-      canChangeDirection: true,
-      options: (query, direction) => dependencySearchOptions({ ...fixture(), query, direction }),
-      selectExisting: async (option) => {
-        selected.push(option.title);
-        return { type: 'committed' };
-      },
-      createNew: async (text, direction) => {
-        created.push(`${text}:${direction}`);
-        return { type: 'committed' };
-      },
-      onClose: () => {},
-    });
-    const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-    input.value = 'Local candidate';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    const affordance = expectDefined(
-      handle.element.querySelector<HTMLElement>('.abyss-dep-search-create'),
-    );
-    expect(affordance.textContent).toBe('Create “Local candidate” as sub-task');
-    expect(handle.element.querySelector('[role="listbox"]')?.contains(affordance)).toBe(false);
-    expect(affordance.getAttribute('role')).not.toBe('option');
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await flushMicrotasks();
-    expect(created).toEqual(['Local candidate:blocked-by']);
-    expect(selected).toEqual([]);
-  });
-
-  it('ignores whitespace Enter and IME Enter', async () => {
-    const submissions: string[] = [];
-    const handle = mountDependencySearch(activeDocument.body, {
-      direction: 'blocked-by',
-      canChangeDirection: true,
-      options: (query, direction) => dependencySearchOptions({ ...fixture(), query, direction }),
-      selectExisting: async () => {
-        submissions.push('existing');
-        return { type: 'committed' };
-      },
-      createNew: async () => {
-        submissions.push('new');
-        return { type: 'committed' };
-      },
-      onClose: () => {},
-    });
-    const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-    input.value = '   ';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    input.value = 'Candidate';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, isComposing: true }),
-    );
-    await flushMicrotasks();
-    expect(submissions).toEqual([]);
-    expect(handle.element.isConnected).toBe(true);
-    handle.destroy();
-  });
-
-  it.each(['composing', 'legacy'] as const)(
-    'leaves IME-owned arrows, Enter, and Escape to the IME (%s)',
-    async (ime) => {
-      const submissions: string[] = [];
-      const onClose = vi.fn();
-      const handle = mountDependencySearch(activeDocument.body, {
-        direction: 'blocked-by',
-        canChangeDirection: true,
-        options: (query, direction) => dependencySearchOptions({ ...fixture(), query, direction }),
-        selectExisting: async () => {
-          submissions.push('existing');
-          return { type: 'committed' };
-        },
-        createNew: async () => {
-          submissions.push('new');
-          return { type: 'committed' };
-        },
-        onClose,
-      });
-      try {
-        const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-        input.value = 'Candidate';
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        const events = ['ArrowDown', 'Enter', 'Escape'].map((key) =>
-          dispatchImeKey(input, key, ime),
-        );
-        await flushMicrotasks();
-
-        // Checking only `isComposing` misses the legacy keyCode 229 Enter, and the surface
-        // Escape handler had no guard at all.
-        expect(events.map((event) => event.defaultPrevented)).toEqual([false, false, false]);
-        expect(submissions).toEqual([]);
-        expect(onClose).not.toHaveBeenCalled();
-        expect(handle.element.isConnected).toBe(true);
-      } finally {
-        handle.destroy();
-      }
-    },
-  );
-
-  it('prevents duplicate submission while a commit is busy', async () => {
-    let finish: ((result: { readonly type: 'failed' }) => void) | undefined;
-    const calls: string[] = [];
-    const pending = new Promise<{ readonly type: 'failed' }>((resolve) => {
-      finish = resolve;
-    });
-    const handle = mountDependencySearch(activeDocument.body, {
-      direction: 'blocked-by',
-      canChangeDirection: true,
-      options: (query, direction) => dependencySearchOptions({ ...fixture(), query, direction }),
-      selectExisting: async () => ({ type: 'failed' }),
-      createNew: (text) => {
-        calls.push(text);
-        return pending;
-      },
-      onClose: () => {},
-    });
-    const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-    input.value = 'New task';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    expect(calls).toEqual(['New task']);
-    expect(handle.element.getAttribute('aria-busy')).toBe('true');
-    finish?.({ type: 'failed' });
-    await flushMicrotasks();
-    expect(handle.element.getAttribute('aria-busy')).toBe('false');
-    handle.destroy();
-  });
-
-  it('shows validation errors inline, preserves the draft and restores input focus', async () => {
-    const handle = mountDependencySearch(activeDocument.body, {
-      direction: 'blocked-by',
-      canChangeDirection: true,
-      options: (query, direction) => dependencySearchOptions({ ...fixture(), query, direction }),
-      selectExisting: async () => ({ type: 'failed' }),
-      createNew: async () => ({ type: 'validation-error', message: 'Choose another title' }),
-      onClose: () => {},
-    });
-    const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-    input.value = 'Repeated';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await flushMicrotasks();
-    expect(handle.element.querySelector('[role="status"]')?.textContent).toBe(
+    expect(create.closest('[role="listbox"]')).toBeNull();
+    expect(create.tabIndex).toBe(0);
+    create.focus();
+    create.click();
+    create.click();
+    ui.key('Enter');
+    expect(calls).toBe(1);
+    expect(create.disabled).toBe(true);
+    expect(ui.input.readOnly).toBe(true);
+    held.resolve({ type: 'validation-error', message: 'Choose another title' });
+    await flushMicrotasks(40);
+    expect(ui.input.value).toBe('  New linked task  ');
+    expect(activeDocument.activeElement).toBe(ui.input);
+    expect(ui.handle.element.querySelector('.abyss-dep-search-error')?.textContent).toBe(
       'Choose another title',
     );
-    expect(input.value).toBe('Repeated');
-    expect(activeDocument.activeElement).toBe(input);
-    expect(handle.element.isConnected).toBe(true);
-    handle.destroy();
-  });
-
-  it('clears an earlier validation error when a different submission begins', async () => {
-    const handle = mountDependencySearch(activeDocument.body, {
-      direction: 'blocked-by',
-      canChangeDirection: true,
-      options: (query, direction) => dependencySearchOptions({ ...fixture(), query, direction }),
-      selectExisting: async () => ({ type: 'failed' }),
-      createNew: async () => ({ type: 'validation-error', message: 'Choose another title' }),
-      onClose: () => {},
-    });
-    const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-    input.value = 'Local';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await flushMicrotasks();
-    const error = expectDefined(
-      handle.element.querySelector<HTMLElement>('.abyss-dep-search-error'),
+    expect(create.disabled).toBe(false);
+    h.callbacks.createNew = async () => {
+      calls++;
+      return { type: 'failed' };
+    };
+    create.click();
+    expect(ui.handle.element.querySelector<HTMLElement>('.abyss-dep-search-error')?.hidden).toBe(
+      true,
     );
-    expect(error.textContent).toBe('Choose another title');
-
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    expect(error.hidden).toBe(true);
-    expect(error.textContent).toBe('');
-    await flushMicrotasks();
-    handle.destroy();
-  });
-
-  it.each(['Escape', 'success then Escape'] as const)(
-    '%s restores invoking focus and releases ownership',
-    async (mode) => {
-      const anchor = activeDocument.body.createEl('button');
-      anchor.focus();
-      const release = vi.fn();
-      const closeArguments: boolean[] = [];
-      const handle = mountDependencySearch(activeDocument.body, {
-        direction: 'blocked-by',
-        canChangeDirection: true,
-        options: (query, direction) => dependencySearchOptions({ ...fixture(), query, direction }),
-        selectExisting: async () => ({ type: 'committed' }),
-        createNew: async () => ({ type: 'committed' }),
-        onClose: (restoreFocus) => {
-          closeArguments.push(restoreFocus);
-          if (restoreFocus) anchor.focus();
-        },
-        ownership: { acquire: () => ({ release }) },
-      });
-      const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
-      if (mode === 'Escape') {
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      } else {
-        input.value = 'New task';
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-        await flushMicrotasks();
-        expect(closeArguments).toEqual([]);
-        expect(release).not.toHaveBeenCalled();
-        expect(activeDocument.activeElement).toBe(input);
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      }
-      expect(closeArguments).toEqual([true]);
-      expect(release).toHaveBeenCalledOnce();
-      expect(activeDocument.activeElement).toBe(anchor);
-    },
+    await flushMicrotasks(40);
+    expect(calls).toBe(2);
+  },
+);
+it.each(['Escape', 'success', 'validation', 'failed'] as const)(
+  'restores opener focus and one lease after %s then Escape',
+  async (outcome) => {
+    const h = await fixture(1);
+    const anchor = activeDocument.body.createEl('button');
+    anchor.focus();
+    h.callbacks.onClose.mockImplementation((restore: boolean) => {
+      if (restore) anchor.focus();
+    });
+    h.callbacks.createNew = async () => {
+      if (outcome === 'success') return { type: 'committed' };
+      if (outcome === 'validation') return { type: 'validation-error', message: 'Invalid title' };
+      return { type: 'failed' };
+    };
+    const ui = h.mount();
+    ui.query('New');
+    await ui.completed();
+    if (outcome !== 'Escape') {
+      ui.key('Enter');
+      await flushMicrotasks(40);
+    }
+    ui.key('Escape');
+    expect(activeDocument.activeElement).toBe(anchor);
+    expect(h.release).toHaveBeenCalledOnce();
+    expect(h.callbacks.onClose).toHaveBeenCalledWith(true);
+  },
+);
+it.each(['unchanged', 'reordered', 'disabled', 'disappeared'] as const)(
+  'preserves explicit selection identity after actual source publication (%s)',
+  async (change) => {
+    const h = await fixture(2, 'blocked-by'),
+      ui = h.mount();
+    ui.query('Candidate');
+    await ui.completed();
+    ui.key('ArrowDown');
+    if (change === 'unchanged') h.index.installCommittedContent('unrelated.md', '- [ ] Unrelated');
+    else if (change === 'reordered')
+      h.index.installCommittedContent(
+        'tasks.md',
+        '- [ ] Current 🆔 current\n- [ ] Candidate 0 🆔 c0\n- [ ] Candidate 🆔 c1',
+      );
+    else if (change === 'disabled') {
+      h.index.installCommittedContent('unrelated.md', '- [ ] Duplicate 🆔 c0');
+    } else
+      h.index.installCommittedContent(
+        'tasks.md',
+        '- [ ] Current 🆔 current\n- [ ] Candidate 1 🆔 c1',
+      );
+    await ui.completed();
+    if (change === 'reordered')
+      expect(ui.handle.element.querySelector('.abyss-dep-search-title')?.textContent).toBe(
+        'Candidate',
+      );
+    const lost = ['disabled', 'disappeared'].includes(change);
+    if (lost) expect(ui.active()).toBeNull();
+    else expect(ui.active()?.textContent).toContain('Candidate 0');
+    ui.key('Enter');
+    await flushMicrotasks(40);
+    expect(h.creates).toEqual([]);
+    expect(h.writes.map(({ title }) => title)).toEqual(lost ? [] : ['Candidate 0']);
+  },
+);
+it.each(['input', 'direction', 'arrow', 'create'] as const)(
+  'replaces stale existing selection only on explicit %s intent',
+  async (intent) => {
+    const h = await fixture(2),
+      ui = h.mount();
+    ui.query('Candidate');
+    await ui.completed();
+    ui.key('ArrowDown');
+    h.index.installCommittedContent(
+      'tasks.md',
+      '- [ ] Current 🆔 current\n- [ ] Candidate 1 🆔 c1',
+    );
+    await ui.completed();
+    if (intent === 'input') {
+      ui.query('Candidate');
+      await ui.completed();
+    }
+    if (intent === 'direction') {
+      expectDefined(
+        ui.handle.element.querySelector<HTMLButtonElement>('[data-direction="blocked-by"]'),
+      ).click();
+      await ui.completed();
+    }
+    if (intent === 'arrow') ui.key('ArrowDown');
+    if (intent === 'create')
+      expectDefined(
+        ui.handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
+      ).click();
+    else ui.key('Enter');
+    await vi.waitFor(() => {
+      expect(h.writes.length + h.creates.length).toBe(1);
+    });
+    if (intent === 'arrow') expect(h.writes[0]?.title).toBe('Candidate 1');
+    else
+      expect(h.creates).toEqual([['Candidate', intent === 'direction' ? 'blocked-by' : 'blocks']]);
+  },
+);
+it('keeps canonical node matching to title, tags and source path while excluding descriptions', async () => {
+  const h = await fixture(1);
+  h.index.installCommittedContent(
+    'tasks.md',
+    '- [ ] Current 🆔 current\n- [ ] Candidate #owned\n  Private description',
   );
+  const ui = h.mount();
+  ui.query('Private description');
+  await ui.completed();
+  expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(0);
+  ui.query('tasks.md');
+  await ui.completed();
+  expect(ui.handle.element.querySelector('[role="option"]')?.textContent).toContain('Candidate');
+  ui.query('owned');
+  await ui.completed();
+  expect(ui.handle.element.querySelector('[role="option"]')?.textContent).toContain('Candidate');
+});
+it.each(['existing', 'create'] as const)(
+  'keeps thrown %s command errors in the existing command boundary',
+  async (action) => {
+    const h = await fixture(1);
+    const messages: string[] = [];
+    vi.spyOn(
+      Notice.prototype as unknown as { constructor__(message: string): void },
+      'constructor__',
+    ).mockImplementation((message) => {
+      messages.push(message);
+    });
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const failure = new Error('Command failed');
+    const fail = async (): Promise<DependencyPickerCommitResult> => {
+      throw failure;
+    };
+    h.callbacks.createNew = fail;
+    h.callbacks.selectExisting = fail;
+    const ui = h.mount();
+    ui.query('Candidate');
+    await ui.completed();
+    if (action === 'existing') ui.key('ArrowDown');
+    ui.key('Enter');
+    await vi.waitFor(() => {
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        '[abyss-tasks] Could not add dependency',
+        failure,
+      );
+    });
+    expect(messages).toEqual([]);
+    expect(ui.handle.element.dataset['searchPhase']).toBe('complete');
+    expect(ui.input.value).toBe('Candidate');
+    expect(ui.input.readOnly).toBe(false);
+  },
+);
+it.each([false, true])(
+  'does not revive existing selection when explicit Create is retried after validation (stale=%s)',
+  async (stale) => {
+    const h = await fixture(2);
+    let calls = 0;
+    h.callbacks.createNew = async () => {
+      calls++;
+      return calls === 1
+        ? { type: 'validation-error', message: 'Try another title' }
+        : { type: 'committed' };
+    };
+    const ui = h.mount();
+    ui.query('Candidate');
+    await ui.completed();
+    ui.key('ArrowDown');
+    if (stale) {
+      h.index.installCommittedContent(
+        'tasks.md',
+        '- [ ] Current 🆔 current\n- [ ] Candidate 1 🆔 c1',
+      );
+      await ui.completed();
+    }
+    expectDefined(
+      ui.handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
+    ).click();
+    await flushMicrotasks(40);
+    expect(ui.active()).toBeNull();
+    expect(ui.input.value).toBe('Candidate');
+    ui.key('Enter');
+    await flushMicrotasks(40);
+    expect(calls).toBe(2);
+    expect(h.writes).toEqual([]);
+  },
+);
+it('clears previous create validation when an existing selection begins', async () => {
+  const h = await fixture(1);
+  h.callbacks.createNew = async () => ({ type: 'validation-error', message: 'Try another title' });
+  const ui = h.mount();
+  ui.query('Candidate');
+  await ui.completed();
+  ui.key('Enter');
+  await flushMicrotasks(40);
+  expect(ui.handle.element.querySelector('.abyss-dep-search-error')?.textContent).toBe(
+    'Try another title',
+  );
+  ui.key('ArrowDown');
+  ui.key('Enter');
+  expect(ui.handle.element.querySelector<HTMLElement>('.abyss-dep-search-error')?.hidden).toBe(
+    true,
+  );
+  await vi.waitFor(() => {
+    expect(h.writes[0]?.title).toBe('Candidate 0');
+  });
+});
+it.each([
+  ['ArrowDown', 'Candidate 0'],
+  ['ArrowUp', 'Candidate 1'],
+] as const)('%s explicitly selects %s before Enter', async (key, title) => {
+  const h = await fixture(2),
+    ui = h.mount();
+  ui.query('Candidate');
+  await ui.completed();
+  ui.key(key);
+  expect(ui.active()?.textContent).toContain(title);
+  ui.key('Enter');
+  await vi.waitFor(() => {
+    expect(h.writes[0]?.title).toBe(title);
+  });
+  expect(h.creates).toEqual([]);
+});
+it('distinguishes equal titles in one note through exact line context without a title count scan', async () => {
+  const h = await fixture(2);
+  h.index.installCommittedContent(
+    'tasks.md',
+    '- [ ] Current 🆔 current\n- [ ] Repeated 🆔 c0\n- [ ] Repeated 🆔 c1',
+  );
+  const ui = h.mount();
+  ui.query('Repeated');
+  await ui.completed();
+  expect(
+    [...ui.handle.element.querySelectorAll('.abyss-dep-search-context')].map(
+      (element) => element.textContent,
+    ),
+  ).toEqual(['tasks.md:2', 'tasks.md:3']);
+});
+
+it.each([
+  ['ambiguous', 'Multiple tasks use this ID'],
+  ['unavailable', 'Task unavailable'],
+  ['stale', 'Task changed'],
+] as const)('preserves the shared %s rejection label', (reason, message) => {
+  expect(rejectionLabel(reason)).toBe(message);
 });

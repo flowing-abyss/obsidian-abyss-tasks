@@ -1,8 +1,10 @@
 import { setIcon, type App } from 'obsidian';
 import { AppState } from '../app/AppState';
+import { createBrowserTaskScheduler } from '../browserTaskScheduler';
 import { RightPanel, type RightPanelMutationLifecycle } from '../panels/RightPanel';
 import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
+import type { TaskSearchApi } from '../tasks';
 import {
   sameTaskNodeRef,
   type CommentTimeContextProvider,
@@ -13,6 +15,10 @@ import {
   type TaskResolution,
   type TaskSnapshot,
 } from '../tasks';
+import {
+  createTaskDependencySearchProvider,
+  type TaskDependencySearchProvider,
+} from './TaskDependencySearchProvider';
 import { isRealmHTMLElement } from './domRealm';
 import { isImeOwnedEvent } from './ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
@@ -37,6 +43,7 @@ interface TaskModalOptions {
   readonly settings?: CalendarSettings | undefined;
   readonly queries?: TaskQueryApi | undefined;
   readonly tasks?: TaskApplicationApi | undefined;
+  readonly search?: TaskSearchApi | undefined;
   readonly commentTimeContext?: CommentTimeContextProvider | undefined;
   readonly interactionOwnership?: InteractionOwnershipPort | undefined;
 }
@@ -55,6 +62,7 @@ export class TaskModal {
   private readonly statusRegistry_abyssPrivate: StatusRegistry;
   private readonly settings_abyssPrivate: CalendarSettings | undefined;
   private readonly queries_abyssPrivate: TaskQueryApi | undefined;
+  private readonly search_abyssPrivate: TaskSearchApi | undefined;
   private readonly tasks_abyssPrivate: TaskApplicationApi | undefined;
   private readonly commentTimeContext_abyssPrivate: CommentTimeContextProvider | undefined;
   private readonly interactionOwnership_abyssPrivate: InteractionOwnershipPort;
@@ -87,6 +95,7 @@ export class TaskModal {
     this.settings_abyssPrivate = settings;
     this.queries_abyssPrivate = queries;
     this.tasks_abyssPrivate = tasks;
+    this.search_abyssPrivate = options.search;
     this.commentTimeContext_abyssPrivate = commentTimeContext;
     this.interactionOwnership_abyssPrivate = ownership ?? noInteractionOwnership;
   }
@@ -129,6 +138,8 @@ export class TaskModal {
       statusRegistry: this.statusRegistry_abyssPrivate,
       settings: this.settings_abyssPrivate,
       tasks: this.tasks_abyssPrivate,
+      search: this.search_abyssPrivate,
+      dependencySearch: this.createDependencySearch_abyssPrivate(),
       onRenderHeaderActions: (actions) => {
         this.renderCloseButton_abyssPrivate(actions);
       },
@@ -165,6 +176,19 @@ export class TaskModal {
       this.closeFromUser_abyssPrivate();
     };
     this.ownerDoc_abyssPrivate.addEventListener('keydown', this.keyHandler_abyssPrivate);
+  }
+
+  private createDependencySearch_abyssPrivate(): TaskDependencySearchProvider | undefined {
+    const search = this.search_abyssPrivate,
+      tasks = this.tasks_abyssPrivate,
+      owner = this.ownerDoc_abyssPrivate?.defaultView;
+    return search === undefined || tasks === undefined || owner == null
+      ? undefined
+      : createTaskDependencySearchProvider(
+          search,
+          tasks.queries,
+          createBrowserTaskScheduler(owner),
+        );
   }
 
   /** The modal hosts its own inspector, so it owns the tick and the write boundary it runs on. */

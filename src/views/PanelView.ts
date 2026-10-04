@@ -1,5 +1,6 @@
 import { ItemView, Notice, Platform, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
 import { AppState, type AppStateData } from '../app/AppState';
+import { createBrowserTaskScheduler } from '../browserTaskScheduler';
 import { CenterPanel } from '../panels/CenterPanel';
 import { LeftPanel } from '../panels/LeftPanel';
 import { RailPanel } from '../panels/RailPanel';
@@ -34,6 +35,10 @@ import type {
   TimeTrackingQueryApi,
 } from '../tasks';
 import { parseRecurrenceRule, taskCommandRootRef, taskNodeAddress } from '../tasks';
+import {
+  createTaskDependencySearchProvider,
+  type TaskDependencySearchProvider,
+} from '../ui/TaskDependencySearchProvider';
 import { CreationPresentationController } from '../ui/creation/CreationPresentationController';
 import { InteractionRegistry } from '../ui/interactionOwnership';
 import { nativeInteractionBlocksPanelShortcuts } from '../ui/nativeInteractionBlocker';
@@ -656,6 +661,8 @@ export class PanelView extends ItemView {
       statusRegistry: this.statusRegistry_abyssPrivate,
       settings: this.settings_abyssPrivate,
       tasks: this.createInspectorTasks_abyssPrivate(selectionTasks),
+      search: this.search_abyssPrivate,
+      dependencySearch: this.createDependencySearch_abyssPrivate(),
       onMutationLifecycle: (event) => {
         if (event.operation !== 'hierarchy') this.trackOwnWrite_abyssPrivate(event);
       },
@@ -663,6 +670,19 @@ export class PanelView extends ItemView {
       interactionOwnership: this.interactionRegistry_abyssPrivate,
       timeTracking,
     });
+  }
+
+  private createDependencySearch_abyssPrivate(): TaskDependencySearchProvider | undefined {
+    const search = this.search_abyssPrivate;
+    if (search === undefined) return undefined;
+    return {
+      open: (query, current, direction, signal) =>
+        createTaskDependencySearchProvider(
+          search,
+          this.tasks_abyssPrivate.queries,
+          createBrowserTaskScheduler(this.contentEl.ownerDocument.defaultView ?? activeWindow),
+        ).open(query, current, direction, signal),
+    };
   }
 
   /** One tick and one write boundary for every tracking control this view hosts. */
@@ -830,6 +850,7 @@ export class PanelView extends ItemView {
     this.shortcutMigrationCleanup_abyssPrivate = this.contentEl.onWindowMigrated(() => {
       this.bindPanelShortcuts_abyssPrivate();
       this.center_abyssPrivate.onWindowMigrated();
+      this.right_abyssPrivate.onWindowMigrated();
       this.cancelSearchPresentation_abyssPrivate?.();
       this.checkSearchOpportunity_abyssPrivate();
     });

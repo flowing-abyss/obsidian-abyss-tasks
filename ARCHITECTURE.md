@@ -418,10 +418,35 @@ for backward reads. Source invalidation, closure and owner abort cancel only the
 new page requests supersede pending work. Fresh selection hydrates the exact address again and
 reruns generation-bound eligibility. Commands remain the final write authority.
 
-The provider factory is staged for picker composition; InspectorDependencies still owns the live
-synchronous picker path. Its existing option shape is preserved, while compact results add a
-required address through `DependencySearchCandidate`. No modal, keyboard, status or rendering
-ownership has moved in this phase.
+PanelView and TaskModal compose the provider from the plugin's shared Search capability,
+application queries and the invoking window's browser scheduler. CenterPanel passes the same
+Search capability to its TaskModal. The modal uses its existing RightPanel and
+InspectorDependencies owner; both directions keep the anchored picker, command callbacks and Undo.
+The old whole-node options callback and InspectorDependencies' eager listNodes read are removed.
+
+The existing picker paints and focuses its input before opening asynchronous candidates, through
+an owned frame followed by a task. It retains only the displayed rich page and numeric Previous
+offset history, mounts at most 30 options, and reuses the temporary Previous/Next controls.
+Keyboard navigation crosses page bounds; Home/End address the mounted slice. Logical selection
+survives refresh without selecting a neighbor, and active-descendant always names a mounted option.
+Raw candidate offsets provide accurate ARIA positions after omitted candidates.
+
+The picker subscribes through the existing public Search state boundary to discard displayed
+pages and restart its owned query on source changes. SearchStatus remains its single read-failure
+Notice/inline owner; ordinary input joins the shared service's recovery policy. Loading or failed
+queries cannot create tasks. Settled creation preserves the original input text and existing
+validation callback. Selection uses the session's fresh exact resolve and checks the current
+request, inspector target, direction and owner before the existing command. InspectorDependencies
+retains its advisory eligibility check, and the command remains final authority.
+
+Synchronous same-owner inspector redraws transport the retained picker DOM without reopening its
+cursor or releasing its lease/listeners. Actual close/detach releases the owned session, mounted
+page, source/document listeners, interaction lease and pending paint work. Reattachment after real
+detachment starts new owned reads for the retained input/direction,
+without retaining older rich pages or disposing Search. A cancelled selection continuation cannot
+refocus or commit after reattachment. PanelView's window-migration hook closes the old inspector
+picker; subsequent opening captures the new window's scheduler. Concurrent modal/inspector
+pickers have independent owned sessions over the one shared service.
 
 [`TaskDependencyService`](src/tasks/application/TaskDependencyService.ts) owns dependency commands,
 linked subtask creation, and completion checks against the live status catalog. Query eligibility

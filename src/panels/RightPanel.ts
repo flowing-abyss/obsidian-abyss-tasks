@@ -1,6 +1,8 @@
 import type { App } from 'obsidian';
 import { Component, Notice, setIcon } from 'obsidian';
 import type { AppState, InspectorHistoryFrame } from '../app/AppState';
+import type { TaskSearchApi } from '../tasks';
+import type { TaskDependencySearchProvider } from '../ui/TaskDependencySearchProvider';
 import { InspectorDependencies } from './right/InspectorDependencies';
 import { InspectorPlanningSurfaces } from './right/InspectorPlanningSurfaces';
 import { InspectorSections } from './right/InspectorSections';
@@ -81,6 +83,8 @@ interface RightPanelOptions {
   readonly settings?: CalendarSettings | undefined;
   readonly onSuccessfulMutation?: ((ref?: TaskRef) => void) | undefined;
   readonly tasks?: TaskApplicationApi | undefined;
+  readonly search?: TaskSearchApi | undefined;
+  readonly dependencySearch?: TaskDependencySearchProvider | undefined;
   readonly onRenderHeaderActions?: ((actions: HTMLElement) => void) | undefined;
   readonly onMutationLifecycle?: ((event: RightPanelMutationLifecycle) => void) | undefined;
   readonly commentTimeContext?: CommentTimeContextProvider | undefined;
@@ -372,14 +376,16 @@ export class RightPanel {
         promoteSubtask: (task) => this.promoteSubtask_abyssPrivate(task),
       },
     });
-    this.dependencies_abyssPrivate = this.createDependencies_abyssPrivate();
+    this.dependencies_abyssPrivate = this.createDependencies_abyssPrivate(options);
     this.sections_abyssPrivate = this.createSections_abyssPrivate();
   }
 
-  private createDependencies_abyssPrivate(): InspectorDependencies {
+  private createDependencies_abyssPrivate(options: RightPanelOptions): InspectorDependencies {
     return new InspectorDependencies({
       state: this.state_abyssPrivate,
       queries: this.tasks_abyssPrivate?.queries,
+      search: options.search,
+      provider: options.dependencySearch,
       statusRegistry: this.statusRegistry_abyssPrivate,
       interactionOwnership: this.interactionOwnership_abyssPrivate,
       surfaces: this.planningSurfaces_abyssPrivate,
@@ -577,6 +583,10 @@ export class RightPanel {
   private trackingNode_abyssPrivate(): TrackedNode | undefined {
     const task = this.dependencyTask_abyssPrivate();
     return task === undefined ? undefined : { snapshot: task, ref: taskNodeRef(task) };
+  }
+
+  onWindowMigrated(): void {
+    this.dependencies_abyssPrivate.cancelSearch();
   }
 
   destroy(): void {

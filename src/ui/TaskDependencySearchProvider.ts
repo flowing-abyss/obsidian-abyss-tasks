@@ -16,19 +16,15 @@ import {
 import { rejectionLabel, type DependencySearchOption } from './dependencySearch';
 import { taskNodeLine } from './taskSelection';
 
-/** The old synchronous picker has no search handles; only compact results carry this seam. */
-interface DependencySearchCandidate extends DependencySearchOption {
-  readonly address: TaskSearchAddress;
-}
-interface DependencyCandidatePage {
+export interface DependencyCandidatePage {
   readonly startOffset: number;
   readonly nextOffset: number;
   readonly totalCandidates: number;
-  readonly options: readonly DependencySearchCandidate[];
+  readonly options: readonly DependencySearchOption[];
   readonly hasMore: boolean;
   readonly budgetExhausted: boolean;
 }
-interface TaskDependencySearchSession {
+export interface TaskDependencySearchSession {
   page(offset: number, signal: AbortSignal): Promise<DependencyCandidatePage>;
   resolve(address: TaskSearchAddress, signal: AbortSignal): Promise<TaskNodeSnapshot>;
   close(): void;
@@ -45,6 +41,7 @@ type SearchCursor = Awaited<ReturnType<TaskSearchApi['open']>>;
 interface IncludedCandidate {
   readonly hit: TaskSearchHit;
   readonly eligibility: TaskDependencyEligibility;
+  readonly offset: number;
 }
 
 export function createTaskDependencySearchProvider(
@@ -243,7 +240,7 @@ class DependencySession implements TaskDependencySearchSession {
       if (eligibility.generation !== cursor.generation)
         throw new TaskSearchError('stale', 'Task generation changed');
       evaluated += batch.hits.length;
-      nextOffset += this.#include(batch.hits, eligibility, included);
+      nextOffset += this.#include(batch.hits, eligibility, included, nextOffset);
       await this.ports.scheduler.yield(signal);
       this.#check(signal);
     }
@@ -254,6 +251,7 @@ class DependencySession implements TaskDependencySearchSession {
     hits: readonly TaskSearchHit[],
     batch: TaskSearchEligibilityBatch,
     included: IncludedCandidate[],
+    offset: number,
   ): number {
     let consumed = 0;
     for (const [index, hit] of hits.entries()) {
@@ -265,7 +263,7 @@ class DependencySession implements TaskDependencySearchSession {
         item.eligibility.type === 'allowed' ||
         !['self', 'duplicate', 'inverse'].includes(item.eligibility.reason)
       )
-        included.push({ hit, eligibility: item.eligibility });
+        included.push({ hit, eligibility: item.eligibility, offset: offset + index });
       if (included.length === 30) break;
     }
     return consumed;
@@ -274,7 +272,7 @@ class DependencySession implements TaskDependencySearchSession {
   async #hydrate(
     included: readonly IncludedCandidate[],
     signal: AbortSignal,
-  ): Promise<readonly DependencySearchCandidate[]> {
+  ): Promise<readonly DependencySearchOption[]> {
     if (included.length === 0) return [];
     const hydrated = await this.ports.search.resolvePage(
       included.map(({ hit }) => hit),
@@ -282,11 +280,13 @@ class DependencySession implements TaskDependencySearchSession {
     );
     this.#check(signal);
     return hydrated.map(({ hit, task }, index) => {
-      const eligibility = included[index]?.eligibility;
-      if (eligibility === undefined)
+      const candidate = included[index];
+      if (candidate === undefined)
         throw new TaskSearchError('unavailable', 'Missing dependency eligibility');
+      const eligibility = candidate.eligibility;
       return {
         address: hit.address,
+        offset: candidate.offset,
         task,
         title: task.node.title,
         context: `${task.root.source.filePath}:${taskNodeLine(task.root, task.node) + 1}`,

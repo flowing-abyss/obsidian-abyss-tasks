@@ -668,6 +668,7 @@ export class CenterPanel {
       statusRegistry: this.statusRegistry_abyssPrivate,
       settings: this.settings_abyssPrivate,
       queries: this.queries_abyssPrivate,
+      search: this.searchApi_abyssPrivate,
       tasks: this.tasks_abyssPrivate,
       commentTimeContext: this.commentTimeContext_abyssPrivate,
       interactionOwnership: this.interactionOwnership_abyssPrivate,

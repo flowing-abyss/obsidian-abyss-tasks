@@ -29,7 +29,24 @@ const categories: ReadonlyArray<{
       const handle = mountDependencySearch(activeDocument.body, {
         direction: 'blocked-by',
         canChangeDirection: true,
-        options: () => [],
+        current: () => ({ type: 'task', ref: task().ref }),
+        provider: {
+          open: async () => {
+            throw new Error('Unused picker read');
+          },
+        },
+        search: {
+          prepare: async () => {},
+          open: async () => {
+            throw new Error('Unused');
+          },
+          read: async () => {
+            throw new Error('Unused');
+          },
+          release: () => {},
+          resolvePage: async () => [],
+          subscribe: () => () => {},
+        },
         selectExisting: async () => ({ type: 'failed' }),
         createNew: async () => ({ type: 'failed' }),
         onClose: () => {},

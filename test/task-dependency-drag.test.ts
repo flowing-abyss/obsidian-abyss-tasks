@@ -13,6 +13,7 @@ import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockE
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
+import { createTaskDependencySearchProvider } from '../src/ui/TaskDependencySearchProvider';
 import { startTaskNodeDrag } from '../src/ui/taskNodeDrag';
 import {
   canonicalStatusCatalog,
@@ -22,6 +23,7 @@ import {
   testStatusRegistry,
   useRealMoment,
 } from './helpers';
+import { canonicalSearchForIndex, ControlledSearchScheduler } from './support/taskSearchHarness';
 
 useRealMoment();
 const cleanups: Array<() => void> = [];
@@ -84,17 +86,25 @@ async function harness(markdown: string, selected = 'B', additionalFiles = {}) {
   });
   center.mount(centerEl);
   const el = activeDocument.body.createDiv();
+  const search = canonicalSearchForIndex(index);
   const panel = new RightPanel({
     state,
     app,
     statusRegistry: testStatusRegistry(),
     settings: DEFAULT_SETTINGS,
     tasks: api,
+    search,
+    dependencySearch: createTaskDependencySearchProvider(
+      search,
+      index,
+      new ControlledSearchScheduler(),
+    ),
   });
   panel.mount(el);
   cleanups.push(() => {
     center.destroy();
     panel.destroy();
+    search.dispose();
     index.destroy();
   });
   const file = app.vault.getAbstractFileByPath('tasks.md');

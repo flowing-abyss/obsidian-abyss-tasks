@@ -86,14 +86,26 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskSearchContext: ['src/panels/center/TaskCardRenderer.ts'],
   TaskSearchExcerpt: ['src/panels/center/TaskCardRenderer.ts'],
   TaskSearchApi: [
+    'src/ui/dependencySearch.ts',
+    'src/ui/TaskModal.ts',
+    'src/panels/RightPanel.ts',
+    'src/panels/right/InspectorDependencies.ts',
     'src/ui/TaskDependencySearchProvider.ts',
     'src/panels/center/TaskSearch.ts',
     'src/panels/task-list/TaskSearchPages.ts',
     'src/views/PanelView.ts',
   ],
   TaskReadProjectionApi: ['src/panels/center/TaskSearch.ts'],
-  TaskSearchState: ['src/panels/center/TaskSearch.ts', 'src/ui/TaskDependencySearchProvider.ts'],
-  TaskSearchError: ['src/ui/searchStatus.ts', 'src/ui/TaskDependencySearchProvider.ts'],
+  TaskSearchState: [
+    'src/panels/center/TaskSearch.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+    'src/ui/dependencySearch.ts',
+  ],
+  TaskSearchError: [
+    'src/ui/searchStatus.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+    'src/ui/dependencySearch.ts',
+  ],
   TaskSearchAddress: [
     'src/task-lists/taskSearchOrganization.ts',
     'src/ui/TaskDependencySearchProvider.ts',
@@ -304,15 +316,13 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
   'TaskSearchApi.subscribe': [
     'src/panels/center/TaskSearch.ts',
     'src/ui/TaskDependencySearchProvider.ts',
+    'src/ui/dependencySearch.ts',
   ],
   'TaskReadProjectionApi.organization': 'src/panels/center/TaskSearch.ts',
   'TaskReadProjectionApi.resolveSearchPage': 'src/tasks/infrastructure/search/TaskSearchService.ts',
   'TaskDependencyQueryApi.searchEligibility': 'src/ui/TaskDependencySearchProvider.ts',
   'TaskDependencyQueryApi.prepareDependencies': 'src/panels/CenterPanel.ts',
-  'TaskDependencyQueryApi.listNodes': [
-    'src/panels/right/InspectorDependencies.ts',
-    'src/panels/left/TagNavigation.ts',
-  ],
+  'TaskDependencyQueryApi.listNodes': ['src/panels/left/TagNavigation.ts'],
   'TaskDependencyQueryApi.dependencies': [
     'src/panels/RightPanel.ts',
     'src/panels/right/InspectorDependencies.ts',

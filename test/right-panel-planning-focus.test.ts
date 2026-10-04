@@ -15,6 +15,7 @@ import {
   subscribeInspectorReconciliation,
   type InspectorHarness,
 } from './support/inspectorHarness';
+import { searchUiCompleted } from './support/taskSearchUiHarness';
 
 useRealMoment();
 
@@ -1045,6 +1046,7 @@ describe('inspector write outcomes', () => {
     const input = control<HTMLInputElement>(h, '.abyss-dep-search input');
     input.value = 'Blocker';
     input.dispatchEvent(new Event('input', { bubbles: true }));
+    await searchUiCompleted(control(h, '.abyss-dep-search'));
     activate(control(h, '.abyss-dep-search-create'));
     await flushMicrotasks();
 
