@@ -13,6 +13,8 @@ import { latestSettingsSaveRevision } from '../src/settings/settingsSaveRevision
 import type { TaskStorageSettings } from '../src/settings/taskStorageSettings';
 import type { CalendarSettings } from '../src/settings/types';
 import { taskNodeAddress, type TrackedEntry } from '../src/tasks';
+import * as browserSearch from '../src/tasks/infrastructure/search/BrowserTaskSearchBackend';
+import type { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import type { PanelNavigator } from '../src/views/panelNavigation';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
 import {
@@ -1247,4 +1249,37 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
       plugin.onunload();
     }
   });
+});
+
+it('composes the browser task scheduler into bounded canonical organization reads', async () => {
+  const yieldTask = vi.fn(async (_signal: AbortSignal) => {});
+  const scheduler = vi.spyOn(browserSearch, 'createBrowserSearchScheduler').mockReturnValue({
+    now: () => 0,
+    yield: yieldTask,
+    delay: async () => {},
+  });
+  const plugin = makePlugin();
+  try {
+    await plugin.onload();
+    const index = plugin.taskIndex as TaskIndex;
+    await index.initialize();
+    index.installCommittedContent(
+      'organization.md',
+      Array.from({ length: 201 }, (_, i) => `- [ ] item ${i}`).join('\n'),
+    );
+    const source = index.searchSource().subscribe(() => {});
+    const sizes: number[] = [];
+    const signal = new AbortController().signal;
+    for await (const batch of index.organization(
+      { expectedGeneration: source.state.generation },
+      signal,
+    ))
+      sizes.push(batch.items.length);
+    expect(sizes).toEqual([200, 1]);
+    expect(yieldTask).toHaveBeenCalledExactlyOnceWith(signal);
+    source.unsubscribe();
+  } finally {
+    plugin.onunload();
+    scheduler.mockRestore();
+  }
 });

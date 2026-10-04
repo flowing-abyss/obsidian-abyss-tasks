@@ -3,7 +3,7 @@ import { Platform } from 'obsidian';
 import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type TaskCalendarPlugin from '../src/main';
-import { appWithFiles, useRealMoment } from './helpers';
+import { appWithFiles, expectDefined, useRealMoment } from './helpers';
 import { CHILD_PROCESS_TIMEOUT_MS, TYPESCRIPT_PROGRAM_TIMEOUT_MS } from './support/timeouts';
 
 const loadNodeTools = async () => {
@@ -231,6 +231,80 @@ describe('production JavaScript artifact', () => {
     expect(buildStatus, buildError).toBe(0);
     expect(Buffer.byteLength(code)).toBeLessThanOrEqual(pkg.release.mainJsBudgetBytes);
     expect(code).not.toContain(suffix);
+  });
+
+  it('embeds a self-contained browser worker and executes its minified ready/add/query protocol', async () => {
+    let workerSource: string | undefined;
+    const parsed = ts.createSourceFile(
+      'main.js',
+      code,
+      ts.ScriptTarget.ES2021,
+      true,
+      ts.ScriptKind.JS,
+    );
+    function visit(node: ts.Node): void {
+      if (ts.isStringLiteral(node) && node.text.startsWith('/* abyss-task-search-worker */'))
+        workerSource = node.text;
+      ts.forEachChild(node, visit);
+    }
+    visit(parsed);
+    expect(workerSource).toBeDefined();
+    const source = expectDefined(workerSource);
+    expect(lookbehindOpeners(source)).toEqual([]);
+    expect(source).not.toMatch(/\brequire\s*\(|\bimport\s*\(/u);
+    const replies: Array<{ type: string; value?: { total: number } }> = [];
+    const scope = {
+      onmessage: undefined as ((event: { data: unknown }) => void) | undefined,
+      postMessage: (reply: { type: string }) => replies.push(reply),
+    };
+    const executeWorker = compileFunction(source, ['self']) as (scope: unknown) => void;
+    executeWorker(scope);
+    const send = async (data: unknown) => {
+      scope.onmessage?.({ data: structuredClone(data) });
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+    };
+    await send({ type: 'init', epoch: 1, id: 0 });
+    expect(replies[0]?.type).toBe('ready');
+    await send({ type: 'mutate', epoch: 1, id: 1, operation: { type: 'begin', path: 'a.md' } });
+    await send({
+      type: 'mutate',
+      epoch: 1,
+      id: 2,
+      operation: {
+        type: 'add',
+        documents: [
+          {
+            id: 1,
+            rootId: 1,
+            order: { filePath: 'a.md', line: 0, childLines: [] },
+            title: 'needle',
+            description: '',
+            comments: '',
+            tags: '',
+            metadata: '',
+            links: '',
+            sourcePath: '',
+          },
+        ],
+      },
+    });
+    await send({ type: 'mutate', epoch: 1, id: 3, operation: { type: 'commit', path: 'a.md' } });
+    await send({ type: 'mutate', epoch: 1, id: 4, operation: { type: 'publish', generation: 1 } });
+    await send({
+      type: 'open',
+      epoch: 1,
+      id: 5,
+      generation: 1,
+      request: {
+        kind: 'roots',
+        includeSourcePath: false,
+        query: {
+          original: 'needle',
+          tokens: [{ term: 'needle', edits: 2, prefix: true, swaps: [] }],
+        },
+      },
+    });
+    expect(replies[replies.length - 1]?.value?.total).toBe(1);
   });
 
   it('ships no lookbehind, which iOS before 16.4 cannot compile', () => {

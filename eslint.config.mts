@@ -423,6 +423,7 @@ export default defineConfig(
   {
     files: [
       'src/task-lists/todayTaskCategory.ts',
+      'src/tasks/infrastructure/search/TaskSearchRuntime.ts',
       'src/tasks/domain/taskSearchTypes.ts',
       'src/tasks/domain/searchMatchPolicy.ts',
       'src/markdown/searchText.ts',

@@ -875,7 +875,42 @@ function propertyAccesses(path: string): ReadonlySet<string> {
   return names;
 }
 
+function searchConstructionSites(path: string, module: ts.SourceFile): string[] {
+  const sites: string[] = [];
+  function visit(node: ts.Node): void {
+    if (ts.isNewExpression(node) && node.expression.getText(module) === 'TaskSearchService')
+      sites.push(path);
+    ts.forEachChild(node, visit);
+  }
+  visit(module);
+  return sites;
+}
+
 describe('task architecture boundaries', () => {
+  it(
+    'owns the shared search service only in the composition root',
+    () => {
+      const sites = sourceFiles().flatMap((absolute) => {
+        const path = repoPath(absolute);
+        return searchConstructionSites(path, syntax(path));
+      });
+      expect(sites).toEqual(['src/main.ts']);
+      expect(
+        searchConstructionSites(
+          'src/panels/probe.ts',
+          syntaxFromText('src/panels/probe.ts', 'new TaskSearchService(options)'),
+        ),
+      ).toEqual(['src/panels/probe.ts']);
+      expect(
+        searchConstructionSites(
+          'src/panels/probe.ts',
+          syntaxFromText('src/panels/probe.ts', 'search.open(request, signal)'),
+        ),
+      ).toEqual([]);
+    },
+    SOURCE_WALK_TIMEOUT_MS,
+  );
+
   it(
     'keeps task domain and application free of ambient time and DOM access',
     () => {

@@ -204,6 +204,45 @@ ordinary spans do not create a temporary object graph per UTF-16 unit. Projectio
 synchronously within each requested source document. The helper imports no task layer and grants
 no write authority.
 
+### Owned browser search
+
+The composition root owns one lazy `TaskSearchService` for the plugin lifetime and exposes its
+read-only `search: TaskSearchApi` capability. It imports this inward contract directly; the public
+barrel and presentation consumers remain staged until real UI integration. Panel lifetimes do not
+own or rebuild the service. Unload disposes search before TaskIndex.
+
+The service subscribes before its source snapshot, publishes accepted generations synchronously,
+and coalesces dirty paths to their latest accepted versions. It projects only changed files through
+`begin/add/commit`, checks versions across cooperative yields, and publishes readiness after every
+dirty path has replayed. Normal batches are bounded to 128 documents and a conservative 256 KiB
+UTF-8 payload estimate; one acknowledged batch is in flight, with oversized documents sent alone
+without truncation. Browser task yields use owned MessageChannel ports (closed on completion or
+abort), with a timer fallback. Main injects the same scheduler into TaskIndex’s existing bounded
+organization-read yield port. A single document projection remains synchronous.
+
+`TaskSearchBackend` defines inward protocol, scheduler and failure ports. `TaskSearchRuntime` owns
+one engine and at most four compact numeric result vectors in either execution mode. Accepted
+publication does not wait for incremental vacuum: maintenance runs after discarded files and reports
+failures through the same backend subscription. The embedded, browser-only Worker uses request IDs
+and epochs; no task refs, source-bearing revisions, addresses or rich snapshots cross that boundary.
+The production build embeds its child IIFE and watches every child input. The browser adapter owns
+startup timeout, requests, Worker and Blob URL. Failed startup selects inline compatibility mode;
+a runtime Worker failure rebuilds once, repeated failure selects inline, and failed inline execution
+requires explicit Retry. Diagnostics contain phase/backend/generation/path count and sanitized
+errors. User notices remain a surface responsibility.
+
+The service maps numeric hits through current source addresses and delegates exact bounded hydration
+to TaskIndex. Root cursors advance forward and release on their final delivered page. Node cursors
+support random pages and remain live after their last page. The open signal owns cursor lifetime;
+per-read cancellation leaves ownership intact, retaining at most one pending forward transport page
+of 200 hits until delivery/release. A service-wide four-cursor LRU covers backend vectors and main-only
+empty browse vectors. Backend vector allocation is serialized and global capacity is released before
+allocation, so backend LRU order cannot evict a second owner after a cancelled read. Its registry contains ownership metadata, not duplicated result vectors.
+Session-random cursor IDs and generation checks reject reload aliases, stale replies and obsolete
+reads. Empty root queries return empty; empty node browse uses compact canonical source order without
+creating an engine. Source failure and recovery are observable through immediate state subscriptions.
+Inline query execution and initial dependency-graph construction remain synchronous limitations.
+
 ### Creation, transfer, and tags
 
 `TaskCaptureApplicationApi` retains a creation session with a frozen destination, local date,

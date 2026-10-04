@@ -4,7 +4,7 @@
     "inlineSources": true,
     "module": "ESNext",
     "target": "ES2021",
-    "lib": ["ES2021", "DOM"],
+    "lib": ["ES2021", "ES2022.Intl", "DOM"],
     "moduleResolution": "bundler",
     "moduleDetection": "force",
     // Explicit so devDependencies cannot silently leak ambient test globals.

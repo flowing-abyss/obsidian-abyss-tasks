@@ -1,3 +1,4 @@
+import taskSearchWorkerSource from 'abyss-task-search-worker';
 import { getAllTags, normalizePath, Notice, Plugin, TFile, type TAbstractFile } from 'obsidian';
 import { extractMarkdownBodyTags } from './markdown/markdownTagRename';
 import { NoteTemplateService } from './notes/NoteTemplateService';
@@ -43,6 +44,11 @@ import {
   TaskDependencyService,
   type TaskDiagnosticSink,
 } from './tasks/application/TaskDependencyService';
+import type { TaskSearchApi } from './tasks/application/TaskSearchApi';
+import type {
+  TaskSearchDiagnostic,
+  TaskSearchScheduler,
+} from './tasks/application/TaskSearchBackend';
 import { systemClock } from './tasks/domain/clock';
 import type { CommentTimeContextProvider } from './tasks/domain/commentTimeLabel';
 import { StatusCatalog } from './tasks/domain/StatusCatalog';
@@ -54,6 +60,14 @@ import { TaskMarkdownCodec } from './tasks/infrastructure/markdown/TaskMarkdownC
 import { nativeTaskIndentUnit } from './tasks/infrastructure/obsidian/nativeTaskIndentation';
 import { ObsidianTaskDestinationProvider } from './tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider';
 import { ObsidianTaskRepository } from './tasks/infrastructure/obsidian/ObsidianTaskRepository';
+import {
+  BrowserTaskSearchBackend,
+  createBrowserSearchScheduler,
+} from './tasks/infrastructure/search/BrowserTaskSearchBackend';
+import { createMiniSearchTaskEngine } from './tasks/infrastructure/search/MiniSearchTaskEngine';
+import { createSearchWordSegmenter } from './tasks/infrastructure/search/searchWordSegmenter';
+import { TaskSearchRuntime } from './tasks/infrastructure/search/TaskSearchRuntime';
+import { TaskSearchService } from './tasks/infrastructure/search/TaskSearchService';
 import { TaskIndex, type TaskSourceMetadata } from './tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from './tasks/infrastructure/TaskRefAuthority';
 import { presentTaskCommandResult } from './ui/taskCommandResult';
@@ -79,6 +93,10 @@ export default class TaskCalendarPlugin extends Plugin {
   queries!: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
   tasks!: TaskApplicationApi & TaskCaptureApplicationApi;
   private taskIndex!: TaskIndex;
+  private taskSearch!: TaskSearchService;
+  get search(): TaskSearchApi {
+    return this.taskSearch;
+  }
   private statusCatalog!: StatusCatalog;
   private statusRegistry!: StatusRegistry;
   private projectManager!: ProjectManager;
@@ -102,10 +120,28 @@ export default class TaskCalendarPlugin extends Plugin {
     this.initializeIndexWhenReady();
   }
 
+  private initializeSearch(scheduler: TaskSearchScheduler): void {
+    const segment = createSearchWordSegmenter();
+    this.taskSearch = new TaskSearchService({
+      source: this.taskIndex.searchSource(),
+      reads: this.taskIndex,
+      segment,
+      scheduler,
+      createBackend: async (mode) =>
+        mode === 'worker'
+          ? BrowserTaskSearchBackend.create(taskSearchWorkerSource)
+          : new TaskSearchRuntime(createMiniSearchTaskEngine(segment)),
+      diagnose: (value: TaskSearchDiagnostic) => {
+        console.error('[abyss-tasks] search operation failed', value);
+      },
+    });
+  }
+
   private initializeTaskServices(): void {
     this.statusCatalog = new StatusCatalog(toStatusRules(this.settings.taskStatuses));
     this.statusRegistry = new StatusRegistry(this.settings.taskStatuses);
     const refAuthority = new TaskRefAuthority();
+    const scheduler = createBrowserSearchScheduler();
     this.effectiveTaskStorage = {
       taskArchivePath: this.settings.taskArchivePath,
       taskIgnoreQuery: this.settings.taskIgnoreQuery,
@@ -114,7 +150,9 @@ export default class TaskCalendarPlugin extends Plugin {
       statusCatalog: this.statusCatalog,
       refAuthority,
       excludeSource: (source) => this.isTaskSourceExcluded(source),
+      readYield: (signal) => scheduler.yield(signal),
     });
+    this.initializeSearch(scheduler);
     const codec = new TaskMarkdownCodec(this.statusCatalog);
     const repository = new ObsidianTaskRepository(this.app, {
       codec,
@@ -300,6 +338,7 @@ export default class TaskCalendarPlugin extends Plugin {
 
   override onunload(): void {
     this.viewStatePaths.flushPendingSave();
+    this.taskSearch.dispose();
     this.taskIndex.destroy();
   }
 
