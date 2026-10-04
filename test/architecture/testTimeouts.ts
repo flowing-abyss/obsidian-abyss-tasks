@@ -4,6 +4,7 @@ import {
   LINTER_TIMEOUT_MS,
   SOURCE_WALK_TIMEOUT_MS,
   TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS,
 } from '../support/timeouts';
 import { isTypeOnlyImport, runtimeReferences, type RuntimeReference } from './runtimeReferences';
 
@@ -25,6 +26,7 @@ const PROGRAM = 2;
 const CHILD = 4;
 const LISTING = 8;
 const PARSE = 16;
+const VIRTUAL_SURFACE_AUDIT = 32;
 
 interface Kind {
   readonly work: string;
@@ -35,6 +37,12 @@ interface Kind {
 
 /** The kinds of heavy work, in the order findings name them, with the limit each one needs. */
 const KINDS: readonly Kind[] = [
+  {
+    work: 'virtual surface audit',
+    limit: 'VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS',
+    value: VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS,
+    signals: VIRTUAL_SURFACE_AUDIT,
+  },
   { work: 'linter', limit: 'LINTER_TIMEOUT_MS', value: LINTER_TIMEOUT_MS, signals: LINTER },
   {
     work: 'program',
@@ -849,7 +857,13 @@ class TimeoutCheck {
     const names = this.visibleNames(scope);
     const source = node.getSourceFile();
     const signalNames = this.signalNamesOf(source);
-    const facts: Facts = { mask: 0, units: new Set() };
+    // Follow the helper's resolved declaration, including import aliases and re-exports. A
+    // same-named local function or another module cannot acquire this heavy-work limit.
+    const audit =
+      ts.isFunctionDeclaration(node) &&
+      node.name?.text === 'runVirtualSurfaceAuditCycles' &&
+      this.fileOf(node).relative === 'test/support/virtualSurfaceAudit.ts';
+    const facts: Facts = { mask: audit ? VIRTUAL_SURFACE_AUDIT : 0, units: new Set() };
     const add = (units: readonly Unit[]): void => {
       for (const unit of units) if (!contains(node, source, unit)) facts.units.add(unit);
     };

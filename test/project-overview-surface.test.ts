@@ -22,6 +22,8 @@ import {
   freshContainer,
   objectMatching,
 } from './helpers';
+import { VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS } from './support/timeouts';
+import { runVirtualSurfaceAuditCycles } from './support/virtualSurfaceAudit';
 import { recordVirtualSurfaceResources } from './support/virtualSurfaceResources';
 
 type Surface = ProjectsOverviewSurface<RenderedCellContext>;
@@ -1208,76 +1210,88 @@ describe.each(cases)('retained group label resources in $mode', (testCase) => {
 });
 
 describe.each(cases)('full-range resource audit in $mode', (testCase) => {
-  it('plateaus actual mounted owners over twenty cycles at 1000 and 10000 projects', async () => {
-    const mountedCounts: number[] = [];
-    for (const count of [1000, 10000]) {
-      const frames = recordOwnerFrames();
-      const resources = recordVirtualSurfaceResources();
-      const markdown = ownedMarkdownResources();
-      const h = mountSurface(testCase, count - 3, (settings) => {
-        configureLifetimeFields(settings);
-        settings.table.groupBy = 'none';
-        if (settings.kanban !== undefined) settings.kanban.groupBy = 'none';
-        if (settings.timeline !== undefined) settings.timeline.groupBy = 'none';
-      });
-      h.view.update(lifetimeProjects(h.projects));
-      frames.flush();
-      await finishMarkdown();
-      expect(h.surface.cells().rowIds).toHaveLength(count);
-      const first = expectDefined(h.surface.renderedCells()[0]);
-      const last = expectDefined(
-        h.surface.cells().identities[h.surface.cells().identities.length - 1],
-      );
-      let release: () => void;
-      if (testCase.mode === 'Table') {
-        first.element.addClass('is-editor-anchor');
-        release = () => {
-          first.element.removeClass('is-editor-anchor');
-        };
-      } else if (testCase.mode === 'Kanban') {
-        release = (
-          h.surface as Surface & { pinEditorCell(el: HTMLElement): () => void }
-        ).pinEditorCell(first.element);
-      } else {
-        const timeline = h.surface as Surface & {
-          setEditingCell(el: HTMLElement | undefined): void;
-        };
-        timeline.setEditingCell(first.element);
-        release = () => {
-          timeline.setEditingCell(undefined);
-        };
-      }
-      const retained = resources.counts();
-      const initial = h.surface.renderedCells().length;
-      const retainedMarkdown = markdown.size;
-      mountedCounts.push(initial);
-      expect(retained.components).toBeGreaterThan(0);
-      expect(retained.observers).toBeGreaterThan(0);
-      expect(retainedMarkdown).toBeGreaterThan(0);
-      for (let cycle = 0; cycle < 20; cycle++) {
-        h.surface.revealCell(last);
-        frames.flush();
-        h.surface.revealCell(first.identity);
+  it(
+    'plateaus actual mounted owners over twenty cycles at 1000 and 10000 projects',
+    async () => {
+      const mountedCounts: number[] = [];
+      for (const count of [1000, 10000]) {
+        const frames = recordOwnerFrames();
+        const resources = recordVirtualSurfaceResources();
+        const markdown = ownedMarkdownResources();
+        const h = mountSurface(testCase, count - 3, (settings) => {
+          configureLifetimeFields(settings);
+          settings.table.groupBy = 'none';
+          if (settings.kanban !== undefined) settings.kanban.groupBy = 'none';
+          if (settings.timeline !== undefined) settings.timeline.groupBy = 'none';
+        });
+        h.view.update(lifetimeProjects(h.projects));
         frames.flush();
         await finishMarkdown();
-        expect(first.element.isConnected).toBe(true);
-        expect(resources.counts()).toEqual(retained);
-        expect(markdown.size).toBeLessThanOrEqual(retainedMarkdown);
-        expect(h.surface.renderedCells().length).toBeLessThanOrEqual(initial);
+        expect(h.surface.cells().rowIds).toHaveLength(count);
+        const first = expectDefined(h.surface.renderedCells()[0]);
+        const last = expectDefined(
+          h.surface.cells().identities[h.surface.cells().identities.length - 1],
+        );
+        let release: () => void;
+        if (testCase.mode === 'Table') {
+          first.element.addClass('is-editor-anchor');
+          release = () => {
+            first.element.removeClass('is-editor-anchor');
+          };
+        } else if (testCase.mode === 'Kanban') {
+          release = (
+            h.surface as Surface & { pinEditorCell(el: HTMLElement): () => void }
+          ).pinEditorCell(first.element);
+        } else {
+          const timeline = h.surface as Surface & {
+            setEditingCell(el: HTMLElement | undefined): void;
+          };
+          timeline.setEditingCell(first.element);
+          release = () => {
+            timeline.setEditingCell(undefined);
+          };
+        }
+        const retained = resources.counts();
+        const initial = h.surface.renderedCells().length;
+        const retainedMarkdown = markdown.size;
+        mountedCounts.push(initial);
+        expect(retained.components).toBeGreaterThan(0);
+        expect(retained.observers).toBeGreaterThan(0);
+        expect(retainedMarkdown).toBeGreaterThan(0);
+        let completedCycles = 0;
+        await runVirtualSurfaceAuditCycles(async () => {
+          h.surface.revealCell(last);
+          frames.flush();
+          h.surface.revealCell(first.identity);
+          frames.flush();
+          await finishMarkdown();
+          expect(first.element.isConnected).toBe(true);
+          expect(resources.counts()).toEqual(retained);
+          expect(markdown.size).toBeLessThanOrEqual(retainedMarkdown);
+          expect(h.surface.renderedCells().length).toBeLessThanOrEqual(initial);
+          completedCycles++;
+        });
+        expect(completedCycles).toBe(20);
+        release();
+        h.view.destroy();
+        mounted.delete(h.view);
+        frames.flush();
+        expect(resources.counts()).toEqual({
+          components: 0,
+          listeners: 0,
+          observers: 0,
+          targets: 0,
+        });
+        expect(markdown.size).toBe(0);
+        h.host.remove();
+        vi.restoreAllMocks();
       }
-      release();
-      h.view.destroy();
-      mounted.delete(h.view);
-      frames.flush();
-      expect(resources.counts()).toEqual({ components: 0, listeners: 0, observers: 0, targets: 0 });
-      expect(markdown.size).toBe(0);
-      h.host.remove();
-      vi.restoreAllMocks();
-    }
-    expect(expectDefined(mountedCounts[1])).toBeLessThanOrEqual(
-      expectDefined(mountedCounts[0]) * 1.1,
-    );
-  });
+      expect(expectDefined(mountedCounts[1])).toBeLessThanOrEqual(
+        expectDefined(mountedCounts[0]) * 1.1,
+      );
+    },
+    VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS,
+  );
 
   it('keeps a large collapsed group header-only and reveals its last logical project', async () => {
     const frames = recordOwnerFrames();

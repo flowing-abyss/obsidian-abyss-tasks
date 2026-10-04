@@ -27,6 +27,8 @@ import {
 } from './helpers';
 import { makeCenterPanelForTest, taskCommandsOf } from './support/panelHarness';
 import { taskViewportOwner } from './support/taskViewportOwner';
+import { VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS } from './support/timeouts';
+import { runVirtualSurfaceAuditCycles } from './support/virtualSurfaceAudit';
 import { recordVirtualSurfaceResources } from './support/virtualSurfaceResources';
 
 useRealMoment();
@@ -1318,8 +1320,21 @@ it.each([{ ctrlKey: true }, { metaKey: true }])(
     const planArchive = vi
       .fn()
       .mockResolvedValue({ type: 'ready', filePath: 'archive.md', execute });
+    // This command fixture never rewrites its snapshots. Keep exact lookups indexed so the
+    // 1200-command selection proof does not add a full fixture scan to every pending rebase.
+    const exactTasks = new Map(
+      tasks.map((item) => [`${item.ref.filePath}:${item.ref.line}`, item]),
+    );
     const application: TaskApplicationApi = {
-      queries: makeStubStore(tasks).queries,
+      queries: {
+        ...makeStubStore(tasks).queries,
+        resolve: (ref) => {
+          const found = exactTasks.get(`${ref.filePath}:${ref.line}`);
+          return found === undefined
+            ? { type: 'not-found', ref }
+            : { type: 'exact', task: found, basis: { observed: found } };
+        },
+      },
       execute: vi.fn(),
       planArchive,
     };
@@ -1414,7 +1429,7 @@ it.each(['tasks', 'dashboard', 'search'] as const)(
       }));
       const heldBadges: HTMLElement[] = [];
       mountedCounts.push(initialMounted);
-      for (let cycle = 0; cycle < 20; cycle++) {
+      await runVirtualSurfaceAuditCycles(async (cycle) => {
         surface.reveal(last);
         flushViewport();
         const badges = Array.from(el.querySelectorAll<HTMLElement>('.abyss-task-time-badge span'));
@@ -1434,7 +1449,8 @@ it.each(['tasks', 'dashboard', 'search'] as const)(
         expect(el.querySelectorAll('.abyss-task-time-badge').length).toBeLessThanOrEqual(
           initialMounted + 1,
         );
-      }
+      });
+      expect(heldBadges).toHaveLength(20);
       pin();
       panel.destroy();
       ticker?.destroy();
@@ -1467,6 +1483,7 @@ it.each(['tasks', 'dashboard', 'search'] as const)(
       expectDefined(mountedCounts[0]) * 1.1,
     );
   },
+  VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS,
 );
 
 it.each(['title', 'desc'])(
