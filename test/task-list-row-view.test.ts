@@ -5,6 +5,7 @@ import {
   type TaskListTaskRow,
 } from '../src/panels/task-list/taskListRows';
 import {
+  mountTaskListRow,
   mountTaskListRows,
   NO_MOUNTED_TASK_LIST_ROWS,
 } from '../src/panels/task-list/taskListRowView';
@@ -135,4 +136,14 @@ it('gives source-note headers their full physical path through the host tooltip'
   expect(mounted.element('group:source-note:Work/Projects/Unique.md')?.textContent).toBe(
     'Unique  1',
   );
+});
+
+it('mounts an isolated non-first logical header without the first-header class', () => {
+  const container = freshContainer();
+  const header = rows.rows.find((row) => row.key === 'group:date:Today');
+  if (header === undefined) throw new Error('Missing Today fixture');
+  const element = mountTaskListRow(container, header, renderCard);
+  expect(container.firstElementChild).toBe(element);
+  expect(element.className).toBe('abyss-group-header');
+  expect(element.textContent).toBe('Today  1');
 });

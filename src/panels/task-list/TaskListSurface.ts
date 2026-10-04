@@ -26,7 +26,7 @@ export class TaskListSurface implements MountedTaskListRows {
   readonly #options: TaskListSurfaceOptions;
   readonly #viewport = new RowViewport();
   readonly #mounts = new Map<string, TaskRowMount>();
-  readonly #pins = new Map<string, Set<object>>();
+  readonly #pins = new Map<string, Set<{ onInvalidated?: () => void }>>();
   #rows: TaskListRows = NO_TASK_LIST_ROWS;
   #presentation: TaskListPresentation | undefined;
   #owner: Window | null = null;
@@ -35,6 +35,8 @@ export class TaskListSurface implements MountedTaskListRows {
   #suspended = false;
   #destroyed = false;
   #failed = false;
+  #revision = 0;
+  #invalidating = false;
   #layoutRevision = 0;
   #width = -1;
   #font = '';
@@ -63,6 +65,7 @@ export class TaskListSurface implements MountedTaskListRows {
   update(rows: TaskListRows, presentation: TaskListPresentation): void {
     if (this.#destroyed) return;
     this.#failed = false;
+    const revision = ++this.#revision;
     this.#guard(() => {
       const top = this.#top();
       const anchor = presentation.preserveAnchor
@@ -71,8 +74,10 @@ export class TaskListSurface implements MountedTaskListRows {
       this.#rows = rows;
       this.#presentation = presentation;
       this.#replace();
-      for (const key of this.#pins.keys())
-        if (this.#viewport.rowBounds(key) === undefined) this.#pins.delete(key);
+      this.#invalidatePins(
+        [...this.#pins.keys()].filter((key) => this.#viewport.rowBounds(key) === undefined),
+      );
+      if (revision !== this.#revision || this.#destroyed) return;
       for (const [key, mount] of this.#mounts)
         if (this.#viewport.rowBounds(key) === undefined) this.#evict(key, mount);
       if (!this.#active()) {
@@ -81,31 +86,29 @@ export class TaskListSurface implements MountedTaskListRows {
         return;
       }
       this.#pendingScroll = undefined;
-      this.#bind();
+      if (!this.#bind()) return;
       this.#checkLayout();
       const restored = this.#viewport.restoreAnchor(anchor, top);
       const clamped = this.#viewport.window(restored, this.#height(), []).scrollTop;
       // Projection changes may shrink the scroll range. Ordinary scroll frames never clamp it.
-      this.#writeTop(restored < 0 ? restored : clamped);
-      this.#reconcile(true);
+      this.#reconcile(true, restored < 0 ? restored : clamped);
     });
   }
 
   reveal(key: string): HTMLElement | undefined {
     if (!this.#active() || this.#viewport.rowBounds(key) === undefined) return undefined;
     this.#guard(() => {
-      this.#bind();
-      this.#checkLayout();
-      this.#writeTop(this.#viewport.reveal(key, this.#top(), this.#height()));
-      this.#reconcile(false);
+      if (!this.#bind()) return;
+      const top = this.#checkLayout() ?? this.#top();
+      this.#reconcile(false, this.#viewport.reveal(key, top, this.#height()));
     });
     return this.element(key);
   }
 
-  pin(key: string): () => void {
-    const token = {};
-    if (!this.#destroyed && this.#viewport.rowBounds(key) !== undefined) {
-      const owners = this.#pins.get(key) ?? new Set<object>();
+  pin(key: string, onInvalidated?: () => void): () => void {
+    const token = onInvalidated === undefined ? {} : { onInvalidated };
+    if (!this.#destroyed && !this.#invalidating && this.#viewport.rowBounds(key) !== undefined) {
+      const owners = this.#pins.get(key) ?? new Set<{ onInvalidated?: () => void }>();
       owners.add(token);
       this.#pins.set(key, owners);
       this.#schedule();
@@ -128,22 +131,24 @@ export class TaskListSurface implements MountedTaskListRows {
     this.#failed = false;
     this.#guard(() => {
       if (!this.#active()) return;
-      this.#bind();
-      this.#checkLayout();
+      if (!this.#bind()) return;
+      let target = this.#checkLayout();
       if (this.#pendingScroll !== undefined) {
         const { anchor, top } = this.#pendingScroll;
         this.#pendingScroll = undefined;
-        this.#writeTop(this.#viewport.restoreAnchor(anchor, top));
+        target = this.#viewport.restoreAnchor(anchor, top);
       }
-      this.#reconcile(false);
+      this.#reconcile(false, target);
     });
   }
   destroy(): void {
     if (this.#destroyed) return;
     this.#destroyed = true;
     this.#unbind();
+    this.#guard(() => {
+      this.#invalidatePins([...this.#pins.keys()]);
+    });
     for (const [key, mount] of this.#mounts) this.#evict(key, mount);
-    this.#pins.clear();
     this.#ordered = [];
     this.#rows = NO_TASK_LIST_ROWS;
     this.#options.host.empty();
@@ -191,7 +196,7 @@ export class TaskListSurface implements MountedTaskListRows {
       })),
     );
   }
-  #checkLayout(): void {
+  #checkLayout(): number | undefined {
     const host = this.#options.host;
     const style = this.#owner?.getComputedStyle(host);
     const font = `${style?.fontFamily}:${style?.fontSize}:${style?.lineHeight}`;
@@ -202,7 +207,7 @@ export class TaskListSurface implements MountedTaskListRows {
     this.#font = font;
     this.#layoutRevision++;
     this.#replace();
-    this.#writeTop(top + this.#viewport.restoreAnchor(anchor, Math.max(0, top)) - Math.max(0, top));
+    return top + this.#viewport.restoreAnchor(anchor, Math.max(0, top)) - Math.max(0, top);
   }
   readonly #schedule = (): void => {
     if (this.#frame !== undefined || this.#failed) return;
@@ -211,7 +216,7 @@ export class TaskListSurface implements MountedTaskListRows {
         this.#unbind();
         return;
       }
-      this.#bind();
+      if (!this.#bind()) return;
       this.#frame = this.#owner?.requestAnimationFrame(() => {
         this.#frame = undefined;
         this.#guard(() => {
@@ -219,21 +224,23 @@ export class TaskListSurface implements MountedTaskListRows {
             this.#unbind();
             return;
           }
-          this.#bind();
-          this.#checkLayout();
-          this.#reconcile(false);
+          if (!this.#bind()) return;
+          this.#reconcile(false, this.#checkLayout());
         });
       });
     });
   };
-  #bind(): void {
+  #bind(): boolean {
     const owner = this.#options.host.ownerDocument.defaultView;
-    if (owner === this.#owner) return;
+    if (owner === this.#owner) return true;
+    const revision = this.#revision;
     this.#unbind();
     // Components and native event registrations belong to the document that mounted them.
+    this.#invalidatePins([...this.#pins.keys()]);
+    if (this.#destroyed || revision !== this.#revision) return false;
     for (const [key, mount] of this.#mounts) this.#evict(key, mount);
     this.#owner = owner;
-    if (owner === null) return;
+    if (owner === null) return true;
     this.#width = -1;
     this.#observer = new owner.ResizeObserver(this.#schedule);
     this.#observer.observe(this.#options.host);
@@ -243,6 +250,7 @@ export class TaskListSurface implements MountedTaskListRows {
     this.#options.host.addEventListener('focusout', this.#schedule);
     owner.addEventListener('resize', this.#schedule);
     this.#options.host.ownerDocument.fonts.addEventListener('loadingdone', this.#fontChanged);
+    return true;
   }
   readonly #fontChanged = (): void => {
     this.#font = '';
@@ -265,7 +273,7 @@ export class TaskListSurface implements MountedTaskListRows {
     this.#mounts.delete(key);
     mount.destroy();
   }
-  #reconcile(update: boolean): void {
+  #readFocus(): void {
     this.#focusedKey = undefined;
     const focused = this.#options.host.ownerDocument.activeElement;
     for (const [key, mount] of this.#mounts)
@@ -273,8 +281,15 @@ export class TaskListSurface implements MountedTaskListRows {
         this.#focusedKey = key;
         break;
       }
-    this.#renderWindow(update);
-    const nativeTop = this.#top();
+  }
+  #reconcile(update: boolean, target?: number): void {
+    this.#readFocus();
+    const revision = this.#revision;
+    this.#resolvePinOrder();
+    if (revision !== this.#revision || this.#destroyed) return;
+    this.#readFocus();
+    const nativeTop = target ?? this.#top();
+    this.#renderWindow(update, nativeTop);
     const measured = this.#viewport.measure(
       [...this.#mounts].map(([key, mount]) => {
         const style = this.#owner?.getComputedStyle(mount.element);
@@ -288,11 +303,13 @@ export class TaskListSurface implements MountedTaskListRows {
       }),
       Math.max(0, nativeTop),
     );
+    let corrected = target;
     if (measured.changed) {
-      this.#writeTop(nativeTop + measured.scrollTop - Math.max(0, nativeTop));
-      // One correction rebuild per pass. ResizeObserver schedules fresh changed sizes.
-      this.#renderWindow(false);
+      corrected = nativeTop + measured.scrollTop - Math.max(0, nativeTop);
+      // Establish the new extent before a native setter can clamp the anchor correction.
+      this.#renderWindow(false, corrected);
     }
+    if (corrected !== undefined) this.#writeTop(corrected);
   }
   #margin(value: string | undefined): number {
     const size = Number.parseFloat(value ?? '');
@@ -317,10 +334,10 @@ export class TaskListSurface implements MountedTaskListRows {
     } else if (update) mount.update(row);
     return mount.element;
   }
-  #renderWindow(update: boolean): void {
+  #renderWindow(update: boolean, top: number): void {
     const pinned = [...this.#pins.keys()];
     if (this.#focusedKey !== undefined) pinned.push(this.#focusedKey);
-    const window = this.#viewport.window(this.#top(), this.#height(), pinned);
+    const window = this.#viewport.window(top, this.#height(), pinned);
     const desired: HTMLElement[] = [];
     const keys = new Set<string>();
     const oldSpacers = Array.from(
@@ -346,12 +363,74 @@ export class TaskListSurface implements MountedTaskListRows {
   #evictOutside(keys: ReadonlySet<string>): void {
     for (const [key, mount] of this.#mounts) if (!keys.has(key)) this.#evict(key, mount);
   }
+  #invalidatePins(keys: readonly string[]): void {
+    const callbacks: Array<() => void> = [];
+    for (const key of keys) {
+      const owners = this.#pins.get(key);
+      this.#pins.delete(key);
+      for (const owner of owners ?? [])
+        if (owner.onInvalidated !== undefined) callbacks.push(owner.onInvalidated);
+    }
+    const errors: unknown[] = [];
+    const invalidating = this.#invalidating;
+    this.#invalidating = true;
+    try {
+      for (const callback of callbacks) {
+        try {
+          callback();
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+    } finally {
+      this.#invalidating = invalidating;
+    }
+    if (errors.length > 0) throw errors[0];
+  }
+  #resolvePinOrder(): void {
+    const revision = this.#revision;
+    let conflicting = this.#conflictingPins();
+    while (conflicting.length > 0) {
+      this.#invalidatePins(conflicting);
+      if (this.#destroyed || revision !== this.#revision) return;
+      this.#readFocus();
+      conflicting = this.#conflictingPins();
+    }
+  }
+  #conflictingPins(): string[] {
+    const protectedKeys = new Set(this.#pins.keys());
+    if (this.#focusedKey !== undefined) protectedKeys.add(this.#focusedKey);
+    const positions = new Map(this.#rows.rows.map((row, index) => [row.key, index]));
+    const current = this.#orderedProtectedKeys(protectedKeys);
+    const conflicting = new Set<string>();
+    for (const [index, a] of current.entries()) {
+      const reversed = current
+        .slice(index + 1)
+        .filter((b) => (positions.get(a) ?? -1) > (positions.get(b) ?? -1));
+      for (const b of reversed) {
+        if (a !== this.#focusedKey) conflicting.add(a);
+        if (b !== this.#focusedKey) conflicting.add(b);
+      }
+    }
+    return [...conflicting];
+  }
+  #orderedProtectedKeys(keys: ReadonlySet<string>): string[] {
+    const elements = new Map([...this.#mounts].map(([key, mount]) => [mount.element, key]));
+    return Array.from(this.#options.host.children).flatMap((element) => {
+      const key = elements.get(element as HTMLElement);
+      return key !== undefined && keys.has(key) ? [key] : [];
+    });
+  }
   #order(desired: readonly HTMLElement[]): void {
-    let previous: HTMLElement | undefined;
-    for (const element of desired) {
-      const before = previous === undefined ? this.#options.host.firstChild : previous.nextSibling;
-      if (before !== element) this.#options.host.insertBefore(element, before);
-      previous = element;
+    const protectedElements = new Set<HTMLElement>();
+    for (const [key, mount] of this.#mounts)
+      if (key === this.#focusedKey || this.#pins.has(key)) protectedElements.add(mount.element);
+    // Move ordinary neighbors around owners; never detach an interaction-owned subtree.
+    let next: HTMLElement | null = null;
+    for (const element of [...desired].reverse()) {
+      if (!protectedElements.has(element) && element.nextSibling !== next)
+        this.#options.host.insertBefore(element, next);
+      next = element;
     }
   }
   #guard(action: () => void): void {

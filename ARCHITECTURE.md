@@ -330,7 +330,13 @@ no migration.
 `TaskListSurface` implements bounded keyed row mounts over `RowViewport`, with sparse interaction
 and focus pins, synchronous reveal, revision-aware measurements, and content-relative anchoring.
 It owns its document's observer, animation frame, font/resize/scroll listeners, inert spacers, and
-row eviction. Ordinary native scrolling never writes normalized geometry back to the scroller.
+row eviction. `pin(key, onInvalidated?)` registers one cancellable interaction acquisition. Conflicting
+non-focus owners are invalidated before reordering; removal, disposal, and document rebind also
+invalidate before eviction. Normal release does not invalidate. Callbacks cancel transient owners,
+not submitted commands; real interaction owners must provide them. Acquisition during cancellation
+is ignored, and reentrant updates supersede the outer pass. The actual focused subtree stays in
+place while ordinary neighbors move, and intentional scroll corrections follow the new DOM extent.
+Ordinary native scrolling never writes normalized geometry back to the scroller.
 Hidden/detached surfaces suspend work; resume revalidates layout and document ownership. Initial
 render and deferred native failures pass once to the supplied owner; failed native passes stop
 until an explicit refresh. `mountTaskListRows` remains the eager adapter for existing callers;
@@ -341,8 +347,9 @@ and its own badge registrations. Its optional `TaskCardInteractionContext` gives
 the row Component and a current snapshot getter: ordinary events read current authority, while
 started commands retain their captured reference. Explicit row updates refresh status, dependency blocking, and metadata even when the task reference
 is unchanged. The shared `StatusMarker` primitive refreshes checkbox/wrapper semantics in place; a
-focused status marker survives while the row body refreshes. Focused Markdown links retain their
-rendered source generation until focus leaves, while timers, status, and metadata stay current. The optional host failure reporter receives live asynchronous render failures;
+focused status marker and Delete control survive refreshes. Only the title or description region
+containing actual focus retains its rendered source generation until focus leaves; the other text
+region, recurrence/count badges, timer creation/removal/totals, status, and metadata stay current. The optional host failure reporter receives live asynchronous render failures;
 legacy callers retain shared asynchronous diagnostics. DOM access serves rendering, pointer
 targeting, focus, and reveal; logical rows remain the authority for ordering.
 

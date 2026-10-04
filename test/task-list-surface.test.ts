@@ -20,7 +20,7 @@ function rows(count: number) {
     { by: 'none' },
   );
 }
-function harness() {
+function harness(clampWrites = false) {
   const scroll = freshContainer();
   document.body.append(scroll);
   Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
@@ -58,7 +58,16 @@ function harness() {
   host.getBoundingClientRect = () => ({ top: origin - top }) as DOMRect;
   scroll.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
   const writes = vi.fn((value: number) => {
-    top = value;
+    const extent = Array.from(host.children).reduce((sum, child) => {
+      const element = child as HTMLElement;
+      return (
+        sum +
+        (element.hasClass('abyss-virtual-row-spacer')
+          ? Number.parseFloat(element.style.getPropertyValue('--abyss-virtual-row-height'))
+          : element.getBoundingClientRect().height)
+      );
+    }, 0);
+    top = clampWrites ? Math.max(0, Math.min(value, origin + extent - height)) : value;
   });
   Object.defineProperties(scroll, {
     clientHeight: { get: () => height },
@@ -68,7 +77,8 @@ function harness() {
   const heights = new Map<string, number>();
   const destroyed: string[] = [];
   const mount = vi.fn((container: HTMLElement, row: TaskListRow) => {
-    const element = container.createDiv({ text: row.kind === 'task' ? row.task.title : row.label });
+    const element = container.createDiv();
+    const label = element.createSpan({ text: row.kind === 'task' ? row.task.title : row.label });
     element.dataset['key'] = row.key;
     element.tabIndex = -1;
     element.getBoundingClientRect = () => ({
@@ -85,7 +95,7 @@ function harness() {
     return {
       element,
       update: (nextRow: TaskListRow) => {
-        element.textContent = nextRow.kind === 'task' ? nextRow.task.title : nextRow.label;
+        label.textContent = nextRow.kind === 'task' ? nextRow.task.title : nextRow.label;
       },
       destroy: () => {
         destroyed.push(row.key);
@@ -327,4 +337,161 @@ it('refreshes snapshots received while hidden before exposing mounts on resume',
   h.size(600, 480);
   h.surface.resume();
   expect(h.surface.element('n.md:0')?.textContent).toBe('Changed while hidden');
+});
+
+it('restores a fractional anchor after prepend against the new mounted DOM extent', () => {
+  const h = harness(true);
+  const list = rows(100);
+  h.surface.update(list, presentation);
+  h.scrollTo(4272.5);
+  h.frame();
+  const original = h.surface.element('n.md:89');
+  const added = Array.from({ length: 100 }, (_, line) =>
+    task({ title: `Added ${line}`, source: { filePath: 'added.md', line } }),
+  );
+  const prior = list.rows.flatMap((row) => (row.kind === 'task' ? [row.task] : []));
+  h.surface.update(buildTaskListRows([...added, ...prior], { by: 'none' }), presentation);
+  expect(h.scroll.scrollTop).toBe(9072.5);
+  expect(h.surface.element('n.md:89')).toBe(original);
+  h.surface.destroy();
+});
+
+it('preserves the actual focused descendant when its row reorders across a sparse pin', () => {
+  const h = harness();
+  const list = rows(100);
+  h.surface.update(list, presentation);
+  h.surface.reveal('n.md:99');
+  const pinned = h.surface.pin('n.md:99');
+  h.surface.reveal('n.md:1');
+  const control = h.surface.element('n.md:1')?.createEl('input');
+  control?.focus();
+  const tasks = list.rows.flatMap((row) => (row.kind === 'task' ? [row.task] : []));
+  h.surface.update(buildTaskListRows([...tasks].reverse(), { by: 'none' }), presentation);
+  expect(document.activeElement).toBe(control);
+  expect(h.surface.element('n.md:1')?.contains(control ?? null)).toBe(true);
+  expect(h.surface.rows.taskKeys[0]).toBe('n.md:99');
+  pinned();
+  h.surface.destroy();
+});
+
+it('invalidates conflicting owners before moving their nodes and keeps snapshots current', () => {
+  const h = harness();
+  const list = rows(100);
+  h.surface.update(list, presentation);
+  const first = expectDefined(h.surface.element('n.md:1'));
+  const control = first.createEl('input');
+  control.focus();
+  h.surface.reveal('n.md:99');
+  const last = expectDefined(h.surface.element('n.md:99'));
+  const canceled = vi.fn(() => {
+    expect(first.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(document.activeElement).toBe(control);
+  });
+  const release = h.surface.pin('n.md:99', canceled);
+  const tasks = list.rows.flatMap((row) => (row.kind === 'task' ? [row.task] : []));
+  const changed = tasks.map((value) => task({ ...value, title: `Updated ${value.title}` }));
+  h.surface.update(buildTaskListRows([...changed].reverse(), { by: 'none' }), presentation);
+  expect(canceled).toHaveBeenCalledExactlyOnceWith();
+  expect(document.activeElement).toBe(control);
+  expect(first.textContent).toBe('Updated Task 1');
+  expect([...h.surface.cards()].map(([key]) => key)).toEqual(
+    h.surface.rows.taskKeys.filter((key) => h.surface.element(key) !== undefined),
+  );
+  release();
+  h.surface.destroy();
+  expect(canceled).toHaveBeenCalledTimes(1);
+});
+
+it('revokes removed and disposed acquisitions before eviction, with idempotent release', () => {
+  const h = harness();
+  h.surface.update(rows(3), presentation);
+  const removed = expectDefined(h.surface.element('n.md:2'));
+  let release = () => {};
+  const canceled = vi.fn(() => {
+    expect(removed.isConnected).toBe(true);
+    release();
+  });
+  release = h.surface.pin('n.md:2', canceled);
+  h.surface.update(rows(2), presentation);
+  expect(canceled).toHaveBeenCalledTimes(1);
+  expect(removed.isConnected).toBe(false);
+  release();
+  const remaining = expectDefined(h.surface.element('n.md:1'));
+  const disposed = vi.fn(() => {
+    expect(remaining.isConnected).toBe(true);
+  });
+  h.surface.pin('n.md:1', disposed);
+  h.surface.destroy();
+  h.surface.destroy();
+  expect(disposed).toHaveBeenCalledTimes(1);
+});
+
+it('reports a throwing cancellation once after revoking every conflicting acquisition', () => {
+  const h = harness();
+  const list = rows(3);
+  h.surface.update(list, presentation);
+  h.surface.element('n.md:0')?.focus();
+  const error = new Error('cancel failed');
+  const first = vi.fn(() => {
+    throw error;
+  });
+  const second = vi.fn();
+  h.surface.pin('n.md:1', first);
+  h.surface.pin('n.md:2', second);
+  const tasks = list.rows.flatMap((row) => (row.kind === 'task' ? [row.task] : []));
+  tasks.reverse();
+  const reverse = buildTaskListRows(tasks, { by: 'none' });
+  h.surface.update(reverse, presentation);
+  expect(first).toHaveBeenCalledTimes(1);
+  expect(second).toHaveBeenCalledTimes(1);
+  expect(h.reportFailure).toHaveBeenCalledExactlyOnceWith(error);
+  h.surface.update(reverse, presentation);
+  expect([...h.surface.cards()].map(([key]) => key)).toEqual(reverse.taskKeys);
+  expect(first).toHaveBeenCalledTimes(1);
+  h.surface.destroy();
+});
+
+it('lets a cancellation reenter update without applying the superseded projection', () => {
+  const h = harness();
+  const list = rows(3);
+  h.surface.update(list, presentation);
+  h.surface.element('n.md:0')?.focus();
+  h.surface.pin('n.md:2', () => {
+    h.surface.update(rows(4), presentation);
+  });
+  const tasks = list.rows.flatMap((row) => (row.kind === 'task' ? [row.task] : []));
+  tasks.reverse();
+  h.surface.update(buildTaskListRows(tasks, { by: 'none' }), presentation);
+  expect(h.surface.rows.taskKeys).toEqual(rows(4).taskKeys);
+  expect([...h.surface.cards()].map(([key]) => key)).toEqual(rows(4).taskKeys);
+  h.surface.destroy();
+});
+
+it('establishes a grown layout extent before restoring its fractional anchor', () => {
+  const h = harness(true);
+  const list = rows(100);
+  h.surface.update(list, presentation);
+  h.scrollTo(4272.5);
+  h.frame();
+  for (const key of list.taskKeys) h.heights.set(key, 96);
+  h.surface.update(list, { ...presentation, revision: 'layout:2', estimate: () => 96 });
+  expect(h.scroll.scrollTop).toBe(8544.5);
+  expect(h.surface.element('n.md:89')).toBeDefined();
+  h.surface.destroy();
+});
+
+it('keeps a reentrant document-rebind refresh authoritative during owner cancellation', () => {
+  const h = harness();
+  h.surface.update(rows(3), presentation);
+  let replacement: HTMLElement | undefined;
+  h.surface.pin('n.md:1', () => {
+    h.surface.update(rows(4), presentation);
+    replacement = h.surface.element('n.md:3');
+  });
+  h.surface.suspend();
+  h.surface.resume();
+  expect(replacement).toBeDefined();
+  expect(h.surface.element('n.md:3')).toBe(replacement);
+  expect(replacement?.isConnected).toBe(true);
+  h.surface.destroy();
 });

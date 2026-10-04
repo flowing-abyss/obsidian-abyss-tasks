@@ -7,7 +7,7 @@ import {
 } from '../src/panels/center/TaskCardRenderer';
 import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { taskNodeAddress, type TaskDependencyProjection, type TaskSnapshot } from '../src/tasks';
-import { expectDefined, task, testStatusRegistry, useRealMoment } from './helpers';
+import { expectDefined, task, taskComment, testStatusRegistry, useRealMoment } from './helpers';
 useRealMoment();
 afterEach(() => {
   vi.useRealTimers();
@@ -272,4 +272,84 @@ it('does not rebuild a pending focused generation when Markdown cleanup emits fo
   mount.update(task({ markdownTitle: '[[B]]' }), [], flags);
   mount.destroy();
   expect(render).toHaveBeenCalledTimes(1);
+});
+
+it('refreshes unrelated content while keeping the identical Delete control focused', () => {
+  const h = renderer();
+  h.subject.beginRender(120000);
+  const flags = { selected: false, showDelete: true };
+  const mount = h.subject.mount(document.body, task({ title: 'Before' }), [], flags);
+  const control = expectDefined(
+    mount.element.querySelector<HTMLButtonElement>('.abyss-task-delete-btn'),
+  );
+  control.focus();
+  mount.update(
+    task({
+      title: 'After',
+      description: 'New description',
+      recurrence: 'every day',
+      comments: [taskComment({ text: 'Comment' })],
+      timeEntries: [{ relativeLine: 2, originalMarkdown: 'running', state: 'running', startMs: 0 }],
+    }),
+    [],
+    flags,
+  );
+  expect(document.activeElement).toBe(control);
+  expect(control.isConnected).toBe(true);
+  expect(mount.element.querySelector('.abyss-task-title')?.textContent).toBe('After');
+  expect(mount.element.querySelector('.abyss-task-desc')?.textContent).toBe('New description');
+  expect(mount.element.querySelector('.abyss-recurrence-badge')).not.toBeNull();
+  expect(mount.element.querySelector('.abyss-task-time-badge')?.textContent).toBe('2m');
+  expect(
+    mount.element.querySelector('.abyss-task-time-badge')?.classList.contains('is-tracking'),
+  ).toBe(true);
+  expect(mount.element.querySelector('.abyss-task-title-row')?.textContent).toContain('1');
+  mount.destroy();
+});
+
+it('reconciles all timer transitions while the original Markdown link keeps focus', () => {
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _text, holder) => {
+    holder.createEl('a', { text: 'A', attr: { href: 'A', tabindex: '0' } });
+  });
+  const h = renderer();
+  h.subject.beginRender(180000);
+  const flags = { selected: false, showDelete: true };
+  const make = (timeEntries: TaskSnapshot['timeEntries']) =>
+    task({ markdownTitle: '[[A]]', timeEntries });
+  const mount = h.subject.mount(document.body, make([]), [], flags);
+  const link = expectDefined(mount.element.querySelector('a'));
+  link.focus();
+  mount.update(
+    make([{ relativeLine: 1, originalMarkdown: 'running', state: 'running', startMs: 0 }]),
+    [],
+    flags,
+  );
+  expect(mount.element.querySelector('.abyss-task-time-badge')?.textContent).toBe('3m');
+  expect(
+    mount.element.querySelector('.abyss-task-time-badge')?.classList.contains('is-tracking'),
+  ).toBe(true);
+  mount.update(
+    make([
+      { relativeLine: 1, originalMarkdown: 'closed', state: 'closed', startMs: 0, endMs: 60000 },
+    ]),
+    [],
+    flags,
+  );
+  expect(mount.element.querySelector('.abyss-task-time-badge')?.textContent).toBe('1m');
+  expect(
+    mount.element.querySelector('.abyss-task-time-badge')?.classList.contains('is-tracking'),
+  ).toBe(false);
+  mount.update(
+    make([
+      { relativeLine: 1, originalMarkdown: 'closed', state: 'closed', startMs: 0, endMs: 120000 },
+    ]),
+    [],
+    flags,
+  );
+  expect(mount.element.querySelector('.abyss-task-time-badge')?.textContent).toBe('2m');
+  mount.update(make([]), [], flags);
+  expect(mount.element.querySelector('.abyss-task-time-badge')).toBeNull();
+  expect(document.activeElement).toBe(link);
+  expect(link.isConnected).toBe(true);
+  mount.destroy();
 });
