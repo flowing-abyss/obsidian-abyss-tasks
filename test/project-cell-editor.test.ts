@@ -11,6 +11,7 @@ import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import type { ProjectPropertyType } from '../src/projects/projectFields';
 import { ProjectPropertySuggest } from '../src/ui/ProjectPropertySuggest';
 import { dispatchImeKey, expectDefined, freshContainer } from './helpers';
+import { projectNativeBindings, projectWindowMigration } from './support/projectWindowMigration';
 
 // An editor listens on its document until it is destroyed, and rows leave theirs open, so an
 // editor from an earlier row could still take focus or react to a later row's events. Each row's
@@ -1991,3 +1992,55 @@ describe('failed editor focus ownership', () => {
     expect(remove).toHaveBeenCalledWith('blur', listener);
   });
 });
+
+it.each(['current-blur', 'old-blur', 'outside-pointer'] as const)(
+  'retained editor adopts native failure focus and dismissal (%s)',
+  async (departure) => {
+    const migration = projectWindowMigration();
+    const oldBindings = projectNativeBindings(document);
+    const container = document.body.createDiv();
+    const frame = document.body.createEl('iframe');
+    const doc = expectDefined(frame.contentDocument);
+    const win = expectDefined(frame.contentWindow);
+    const newBindings = projectNativeBindings(doc);
+    vi.spyOn(doc, 'hasFocus').mockReturnValue(true);
+    let reject: ((error: unknown) => void) | undefined;
+    const pending = new Promise<void>((_resolve, fail) => {
+      reject = fail;
+    });
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'old',
+      catalog: catalog(),
+      save: () => pending,
+      onClose: vi.fn(),
+    });
+    const input = expectDefined(container.querySelector<HTMLInputElement>('input'));
+    doc.body.append(container);
+    migration.notify(container);
+    handle.focus();
+    input.value = 'draft';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    keydown(input, 'Enter');
+    const refocus = vi.spyOn(input, 'focus');
+    if (departure === 'outside-pointer')
+      doc.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    else {
+      (departure === 'current-blur' ? win : window).dispatchEvent(new Event('blur'));
+      win.dispatchEvent(new Event('focus'));
+    }
+    expectDefined(reject)(new ProjectEditValidationError('Conflict'));
+    await settleRender();
+    expect(refocus.mock.calls).toHaveLength(departure === 'old-blur' ? 1 : 0);
+    expect(input.value).toBe('draft');
+    expect(input.isConnected).toBe(true);
+    handle.destroy();
+    expect(migration.bindings.size).toBe(0);
+    for (const { add, remove } of [...oldBindings.audits, ...newBindings.audits])
+      for (const args of add.mock.calls.filter(([type]) => ['blur', 'pointerdown'].includes(type)))
+        expect(remove).toHaveBeenCalledWith(...args);
+    for (const callback of migration.retired) callback();
+  },
+);

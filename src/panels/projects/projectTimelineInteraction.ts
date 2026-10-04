@@ -338,11 +338,13 @@ export class ProjectTimelinePointerInteraction {
   private edgeFrame_abyssPrivate: number | undefined;
   private readonly cursor_abyssPrivate: HTMLElement;
   private readonly tooltip_abyssPrivate: HTMLElement;
-  private readonly ownerWindow_abyssPrivate: Window | undefined;
+  private ownerWindow_abyssPrivate: Window | undefined;
+  private ownerDocument_abyssPrivate: Document | undefined;
+  private nativeCleanup_abyssPrivate: (() => void) | undefined;
+  private readonly migrationCleanup_abyssPrivate: () => void;
+  private edgeRevision_abyssPrivate = 0;
 
   constructor(private readonly context_abyssPrivate: ProjectTimelinePointerInteractionContext) {
-    this.ownerWindow_abyssPrivate =
-      context_abyssPrivate.root.ownerDocument.defaultView ?? undefined;
     this.cursor_abyssPrivate = context_abyssPrivate.root.createDiv({
       cls: 'abyss-project-timeline-cursor',
       attr: { 'aria-hidden': 'true' },
@@ -361,7 +363,12 @@ export class ProjectTimelinePointerInteraction {
     context_abyssPrivate.root.addEventListener('pointerleave', this.pointerLeave_abyssPrivate);
     context_abyssPrivate.root.addEventListener('click', this.click_abyssPrivate, true);
     context_abyssPrivate.root.addEventListener('keydown', this.keydown_abyssPrivate, true);
-    this.ownerWindow_abyssPrivate?.addEventListener('blur', this.blur_abyssPrivate);
+    this.bindOwner_abyssPrivate();
+    this.migrationCleanup_abyssPrivate = context_abyssPrivate.root.onWindowMigrated(
+      this.bindOwner_abyssPrivate,
+    );
+    for (const event of ['pointerdown', 'pointermove', 'pointerup', 'keydown', 'focusin'])
+      context_abyssPrivate.root.addEventListener(event, this.bindOwner_abyssPrivate, true);
   }
 
   destroy(): void {
@@ -377,10 +384,32 @@ export class ProjectTimelinePointerInteraction {
     root.removeEventListener('pointerleave', this.pointerLeave_abyssPrivate);
     root.removeEventListener('click', this.click_abyssPrivate, true);
     root.removeEventListener('keydown', this.keydown_abyssPrivate, true);
-    this.ownerWindow_abyssPrivate?.removeEventListener('blur', this.blur_abyssPrivate);
+    this.migrationCleanup_abyssPrivate();
+    this.nativeCleanup_abyssPrivate?.();
+    for (const event of ['pointerdown', 'pointermove', 'pointerup', 'keydown', 'focusin'])
+      root.removeEventListener(event, this.bindOwner_abyssPrivate, true);
     this.cursor_abyssPrivate.remove();
     this.tooltip_abyssPrivate.remove();
   }
+
+  private readonly bindOwner_abyssPrivate = (): void => {
+    const doc = this.context_abyssPrivate.root.ownerDocument;
+    if (this.destroyed_abyssPrivate || doc === this.ownerDocument_abyssPrivate) return;
+    this.cancelActive();
+    this.nativeCleanup_abyssPrivate?.();
+    this.ownerDocument_abyssPrivate = doc;
+    const win = doc.defaultView;
+    this.ownerWindow_abyssPrivate = win ?? undefined;
+    let live = true;
+    const blur = (): void => {
+      if (live && this.context_abyssPrivate.root.ownerDocument === doc) this.blur_abyssPrivate();
+    };
+    win?.addEventListener('blur', blur);
+    this.nativeCleanup_abyssPrivate = () => {
+      live = false;
+      win?.removeEventListener('blur', blur);
+    };
+  };
 
   private notifyPins_abyssPrivate(): void {
     this.context_abyssPrivate.pinsChanged?.();
@@ -836,9 +865,24 @@ export class ProjectTimelinePointerInteraction {
     }
     if (this.edgeFrame_abyssPrivate !== undefined || this.ownerWindow_abyssPrivate === undefined)
       return;
-    this.edgeFrame_abyssPrivate = this.ownerWindow_abyssPrivate.requestAnimationFrame(
-      this.edgeScrollFrame_abyssPrivate,
-    );
+    this.scheduleEdgeFrame_abyssPrivate();
+  }
+
+  private scheduleEdgeFrame_abyssPrivate(): void {
+    const owner = this.ownerWindow_abyssPrivate;
+    const revision = this.edgeRevision_abyssPrivate;
+    const doc = this.context_abyssPrivate.root.ownerDocument;
+    const frame = owner?.requestAnimationFrame(() => {
+      if (
+        this.destroyed_abyssPrivate ||
+        this.context_abyssPrivate.root.ownerDocument !== doc ||
+        revision !== this.edgeRevision_abyssPrivate ||
+        frame !== this.edgeFrame_abyssPrivate
+      )
+        return;
+      this.edgeScrollFrame_abyssPrivate();
+    });
+    this.edgeFrame_abyssPrivate = frame;
   }
 
   private readonly edgeScrollFrame_abyssPrivate = (): void => {
@@ -850,12 +894,11 @@ export class ProjectTimelinePointerInteraction {
     const day = this.dayAtClientX_abyssPrivate(active.target.track, active.lastClientX);
     if (day !== undefined) active.lastDay = day;
     this.preview_abyssPrivate(active);
-    this.edgeFrame_abyssPrivate = this.ownerWindow_abyssPrivate?.requestAnimationFrame(
-      this.edgeScrollFrame_abyssPrivate,
-    );
+    this.scheduleEdgeFrame_abyssPrivate();
   };
 
   private stopEdgeScroll_abyssPrivate(): void {
+    this.edgeRevision_abyssPrivate += 1;
     this.edgeDirection_abyssPrivate = 0;
     if (this.edgeFrame_abyssPrivate !== undefined) {
       this.ownerWindow_abyssPrivate?.cancelAnimationFrame(this.edgeFrame_abyssPrivate);

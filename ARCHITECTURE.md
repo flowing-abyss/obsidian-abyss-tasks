@@ -522,6 +522,15 @@ preview, hover delay, auto-scroll, and commit; it retargets the last pointer aft
 native owner for bounded title-only forecast rows. Completion validates source existence and focus
 ownership before reveal and again before focusing. Native failures reach the existing surface/drag
 reporter; destroyed callbacks publish nothing.
+Retained Kanban view/drag, Timeline pointer, and cell-editor lifetimes bind native document/window
+listeners through their actual acquisition owners. Obsidian window-migration notifications and local
+interaction wakeups rebind without a render; migration cancels gestures, pointer suppression and
+presentation permission before acquiring the new owner. Old owner callbacks are inert, including
+queued timers/frames with reused numeric IDs. Editor drafts and submitted command receipts survive.
+Kanban's existing drop-focus revision is revoked by outside focus, window departure, hide, and
+migration. The same departure also disables ordinary render fallback focus; window focus returning
+alone cannot restore that permission, while fresh board pointer/keyboard intent can. This does not
+revive a revoked pending drop. Each native owner releases its migration notification at disposal.
 `CenterPanel` owns one [`TaskListSurface`](src/panels/task-list/TaskListSurface.ts)
 for the active task host. Tasks use their list scroller; dashboard tasks use the dashboard scroller
 and a content-relative origin. Full logical occurrence order drives selection and physical writes
@@ -530,6 +539,10 @@ preserving the range and keyboard lead, native focus, and viewport. Interactive 
 modes retain their keyboard ownership. Keyed `TaskCardRenderer.mount` instances own Markdown Components and current
 snapshot interactions; eviction unloads each row. Native scrolling only reconciles mounts and
 selection visuals, without completing an application render or advancing its focus generation.
+Selection announcements recount distinct physical tasks only on selection/projection changes; mounted
+row reconciliation never collects the full logical selection. Host metric revisions include font
+weight, style, and letter spacing alongside family, size, line height, and width, invalidating cached
+offscreen measurements when wrapping changes.
 Explicit reveal checks captured source and focus ownership before scrolling and again before focus.
 Native focus and bounded menu/editor/drag owners retain rows; invalidation cancels UI ownership
 before eviction without cancelling submitted commands. Search uses the same bounded surface while

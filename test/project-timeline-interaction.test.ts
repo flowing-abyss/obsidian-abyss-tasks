@@ -10,6 +10,8 @@ import {
   type ProjectTimelineWindow,
 } from '../src/projects/projectTimelineModel';
 import { expectDefined, flushMicrotasks, freshContainer } from './helpers';
+import { projectNativeBindings, projectWindowMigration } from './support/projectWindowMigration';
+import { taskViewportOwner } from './support/taskViewportOwner';
 
 function pointerEvent(type: string, clientX: number, pointerId = 1): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
@@ -1072,3 +1074,60 @@ it('pins provisional and successful pending previews until projected source chan
   expect(f.pinsChanged).toHaveBeenCalled();
   f.interaction.destroy();
 });
+
+it.each([true, false])(
+  'retained Timeline migrates gestures, edge frames and blur before any render (notification=%s)',
+  async (notify) => {
+    const oldBindings = projectNativeBindings(document);
+    const migration = projectWindowMigration();
+    const oldFrames = new Map<number, FrameRequestCallback>();
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      oldFrames.set(1, cb);
+      return 1;
+    });
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+      oldFrames.delete(id);
+    });
+    const h = mount();
+    h.bar.dispatchEvent(pointerEvent('pointerdown', 30));
+    await flushMicrotasks();
+    h.track.dispatchEvent(pointerEvent('pointermove', 119));
+    const stale = expectDefined(oldFrames.get(1));
+    expect(h.interaction.pinnedOccurrences()).toHaveLength(1);
+    const owner = taskViewportOwner();
+    const newBindings = projectNativeBindings(owner.doc);
+    owner.doc.body.append(h.root);
+    if (notify) migration.notify(h.root);
+    else h.root.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    expect(h.interaction.pinnedOccurrences()).toHaveLength(0);
+    expect(oldFrames.size).toBe(0);
+    h.bar.dispatchEvent(pointerEvent('pointerdown', 30));
+    await flushMicrotasks();
+    h.track.dispatchEvent(pointerEvent('pointermove', 119));
+    expect(owner.frames.size).toBe(1);
+    const left = h.scroll.scrollLeft;
+    stale(0);
+    window.dispatchEvent(new Event('blur'));
+    expect(h.scroll.scrollLeft).toBe(left);
+    expect(h.interaction.pinnedOccurrences()).toHaveLength(1);
+    owner.flush();
+    expect(h.scroll.scrollLeft).toBeGreaterThan(left);
+    owner.win.dispatchEvent(new Event('blur'));
+    expect(h.interaction.pinnedOccurrences()).toHaveLength(0);
+    expect(owner.frames.size).toBe(0);
+    h.bar.dispatchEvent(pointerEvent('pointerdown', 30));
+    await flushMicrotasks();
+    h.track.dispatchEvent(pointerEvent('pointermove', 119));
+    h.track.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(h.interaction.pinnedOccurrences()).toHaveLength(0);
+    h.interaction.destroy();
+    expect(migration.bindings.size).toBe(0);
+    expect(owner.frames.size).toBe(0);
+    expect(h.commitRangeEdit).not.toHaveBeenCalled();
+    for (const { add, remove } of [...oldBindings.audits, ...newBindings.audits])
+      for (const args of add.mock.calls.filter(([type]) => type === 'blur'))
+        expect(remove).toHaveBeenCalledWith(...args);
+    for (const callback of migration.retired) callback();
+    owner.destroy();
+  },
+);

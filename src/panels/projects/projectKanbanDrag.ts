@@ -199,12 +199,19 @@ function insertionLineTop(
 
 /** Owns the native board drag lifecycle, visual forecast, hover overlay, and scrolling cleanup. */
 export class ProjectKanbanDragController {
-  private readonly window_abyssPrivate: Window | null;
+  private window_abyssPrivate: Window | null = null;
+  private ownerDocument_abyssPrivate: Document | undefined;
+  private nativeCleanup_abyssPrivate: (() => void) | undefined;
+  private readonly migrationCleanup_abyssPrivate: () => void;
+  private destroyed_abyssPrivate = false;
+  private presentationRevision_abyssPrivate = 0;
+  private provisionalCleanup_abyssPrivate: (() => void) | undefined;
   private provisional_abyssPrivate: ProvisionalGesture | undefined;
   private provisionalTabIndex_abyssPrivate: string | null | undefined;
   private active_abyssPrivate: ActiveDrag | undefined;
   private preview_abyssPrivate: ActivePreview | undefined;
   private hoverTimer_abyssPrivate: number | undefined;
+  private hoverRevision_abyssPrivate = 0;
   private hoverColumn_abyssPrivate: HTMLElement | undefined;
   private overlay_abyssPrivate: HTMLElement | undefined;
   private frame_abyssPrivate: number | undefined;
@@ -220,7 +227,12 @@ export class ProjectKanbanDragController {
     private readonly scroll_abyssPrivate: HTMLElement,
     private readonly adapter_abyssPrivate: ProjectKanbanDragAdapter,
   ) {
-    this.window_abyssPrivate = root_abyssPrivate.ownerDocument.defaultView;
+    this.bindOwner_abyssPrivate();
+    this.migrationCleanup_abyssPrivate = root_abyssPrivate.onWindowMigrated(
+      this.bindOwner_abyssPrivate,
+    );
+    for (const event of ['pointerdown', 'dragstart', 'dragover', 'drop', 'keydown', 'focusin'])
+      root_abyssPrivate.addEventListener(event, this.bindOwner_abyssPrivate, true);
     root_abyssPrivate.addEventListener('pointerdown', this.pointerDown_abyssPrivate, true);
     root_abyssPrivate.addEventListener('dragstart', this.dragStart_abyssPrivate);
     root_abyssPrivate.addEventListener('dragover', this.dragOver_abyssPrivate);
@@ -228,16 +240,15 @@ export class ProjectKanbanDragController {
     root_abyssPrivate.addEventListener('drop', this.drop_abyssPrivate);
     root_abyssPrivate.addEventListener('dragend', this.dragEnd_abyssPrivate);
     root_abyssPrivate.addEventListener('click', this.click_abyssPrivate, true);
-    root_abyssPrivate.ownerDocument.addEventListener('keydown', this.keydown_abyssPrivate, true);
-    root_abyssPrivate.ownerDocument.addEventListener(
-      'dragover',
-      this.documentDragOver_abyssPrivate,
-      true,
-    );
-    this.window_abyssPrivate?.addEventListener('blur', this.windowBlur_abyssPrivate);
   }
 
   destroy(): void {
+    if (this.destroyed_abyssPrivate) return;
+    this.destroyed_abyssPrivate = true;
+    this.migrationCleanup_abyssPrivate();
+    this.nativeCleanup_abyssPrivate?.();
+    for (const event of ['pointerdown', 'dragstart', 'dragover', 'drop', 'keydown', 'focusin'])
+      this.root_abyssPrivate.removeEventListener(event, this.bindOwner_abyssPrivate, true);
     this.cleanup_abyssPrivate(false);
     this.root_abyssPrivate.removeEventListener('pointerdown', this.pointerDown_abyssPrivate, true);
     this.root_abyssPrivate.removeEventListener('dragstart', this.dragStart_abyssPrivate);
@@ -246,18 +257,37 @@ export class ProjectKanbanDragController {
     this.root_abyssPrivate.removeEventListener('drop', this.drop_abyssPrivate);
     this.root_abyssPrivate.removeEventListener('dragend', this.dragEnd_abyssPrivate);
     this.root_abyssPrivate.removeEventListener('click', this.click_abyssPrivate, true);
-    this.root_abyssPrivate.ownerDocument.removeEventListener(
-      'keydown',
-      this.keydown_abyssPrivate,
-      true,
-    );
-    this.root_abyssPrivate.ownerDocument.removeEventListener(
-      'dragover',
-      this.documentDragOver_abyssPrivate,
-      true,
-    );
-    this.window_abyssPrivate?.removeEventListener('blur', this.windowBlur_abyssPrivate);
   }
+
+  private readonly bindOwner_abyssPrivate = (): void => {
+    const doc = this.root_abyssPrivate.ownerDocument;
+    if (this.destroyed_abyssPrivate || doc === this.ownerDocument_abyssPrivate) return;
+    this.cleanup_abyssPrivate(false);
+    this.nativeCleanup_abyssPrivate?.();
+    this.ownerDocument_abyssPrivate = doc;
+    const win = doc.defaultView;
+    this.window_abyssPrivate = win;
+    let live = true;
+    const keydown = (event: KeyboardEvent): void => {
+      if (live && this.root_abyssPrivate.ownerDocument === doc) this.keydown_abyssPrivate(event);
+    };
+    const dragover = (event: Event): void => {
+      if (live && this.root_abyssPrivate.ownerDocument === doc)
+        this.documentDragOver_abyssPrivate(event);
+    };
+    const blur = (): void => {
+      if (live && this.root_abyssPrivate.ownerDocument === doc) this.windowBlur_abyssPrivate();
+    };
+    doc.addEventListener('keydown', keydown, true);
+    doc.addEventListener('dragover', dragover, true);
+    win?.addEventListener('blur', blur);
+    this.nativeCleanup_abyssPrivate = () => {
+      live = false;
+      doc.removeEventListener('keydown', keydown, true);
+      doc.removeEventListener('dragover', dragover, true);
+      win?.removeEventListener('blur', blur);
+    };
+  };
 
   cancel(): void {
     this.cleanup_abyssPrivate(false);
@@ -286,8 +316,18 @@ export class ProjectKanbanDragController {
     card.ownerDocument.defaultView?.getSelection()?.removeAllRanges();
     card.addClass('is-drag-armed');
     const ownerDocument = card.ownerDocument;
-    ownerDocument.addEventListener('pointerup', this.provisionalPointerEnd_abyssPrivate, true);
-    ownerDocument.addEventListener('pointercancel', this.provisionalPointerEnd_abyssPrivate, true);
+    let live = true;
+    const end = (event: Event): void => {
+      if (live && this.root_abyssPrivate.ownerDocument === ownerDocument)
+        this.provisionalPointerEnd_abyssPrivate(event);
+    };
+    ownerDocument.addEventListener('pointerup', end, true);
+    ownerDocument.addEventListener('pointercancel', end, true);
+    this.provisionalCleanup_abyssPrivate = () => {
+      live = false;
+      ownerDocument.removeEventListener('pointerup', end, true);
+      ownerDocument.removeEventListener('pointercancel', end, true);
+    };
   };
 
   private readonly dragStart_abyssPrivate = (event: Event): void => {
@@ -361,13 +401,8 @@ export class ProjectKanbanDragController {
       if (tabIndex === null) provisional.card.removeAttribute('tabindex');
       else if (tabIndex !== undefined) provisional.card.setAttribute('tabindex', tabIndex);
     }
-    const ownerDocument = this.root_abyssPrivate.ownerDocument;
-    ownerDocument.removeEventListener('pointerup', this.provisionalPointerEnd_abyssPrivate, true);
-    ownerDocument.removeEventListener(
-      'pointercancel',
-      this.provisionalPointerEnd_abyssPrivate,
-      true,
-    );
+    this.provisionalCleanup_abyssPrivate?.();
+    this.provisionalCleanup_abyssPrivate = undefined;
   }
 
   private readonly dragOver_abyssPrivate = (event: Event): void => {
@@ -521,7 +556,17 @@ export class ProjectKanbanDragController {
       return;
     this.cancelOverlay_abyssPrivate();
     this.hoverColumn_abyssPrivate = column;
-    this.hoverTimer_abyssPrivate = this.window_abyssPrivate?.setTimeout(() => {
+    const owner = this.window_abyssPrivate;
+    const revision = this.presentationRevision_abyssPrivate;
+    const doc = this.root_abyssPrivate.ownerDocument;
+    const hoverRevision = this.hoverRevision_abyssPrivate;
+    const timer = owner?.setTimeout(() => {
+      if (
+        !this.ownsPresentation_abyssPrivate(doc, revision) ||
+        hoverRevision !== this.hoverRevision_abyssPrivate ||
+        timer !== this.hoverTimer_abyssPrivate
+      )
+        return;
       this.hoverTimer_abyssPrivate = undefined;
       if (this.active_abyssPrivate === undefined || !column.isConnected) return;
       try {
@@ -530,6 +575,7 @@ export class ProjectKanbanDragController {
         this.adapter_abyssPrivate.reportFailure(error);
       }
     }, 450);
+    this.hoverTimer_abyssPrivate = timer;
   }
 
   private openOverlay_abyssPrivate(column: HTMLElement, plan: AllowedDropPlan): void {
@@ -644,8 +690,9 @@ export class ProjectKanbanDragController {
   private readonly documentDragOver_abyssPrivate = (event: Event): void => {
     if (
       this.active_abyssPrivate !== undefined &&
-      event.target instanceof Node &&
-      !this.root_abyssPrivate.contains(event.target)
+      event.target !== null &&
+      'nodeType' in event.target &&
+      !this.root_abyssPrivate.contains(event.target as Node)
     ) {
       this.clearVisuals_abyssPrivate();
     }
@@ -746,12 +793,23 @@ export class ProjectKanbanDragController {
     };
   }
 
+  private ownsPresentation_abyssPrivate(doc: Document, revision: number): boolean {
+    return (
+      !this.destroyed_abyssPrivate &&
+      this.root_abyssPrivate.ownerDocument === doc &&
+      this.presentationRevision_abyssPrivate === revision
+    );
+  }
+
   private startAutoScroll_abyssPrivate(target: Element): void {
     this.verticalScroller_abyssPrivate =
       target.closest<HTMLElement>('.abyss-project-kanban-hover-body') ??
       expectBodyOrUndefined(target.closest<HTMLElement>('.abyss-project-kanban-column'));
     if (this.frame_abyssPrivate !== undefined) return;
+    const revision = this.presentationRevision_abyssPrivate;
+    const doc = this.root_abyssPrivate.ownerDocument;
     const tick = (): void => {
+      if (!this.ownsPresentation_abyssPrivate(doc, revision)) return;
       this.frame_abyssPrivate = undefined;
       const point = this.point_abyssPrivate;
       if (point === undefined || this.active_abyssPrivate === undefined) return;
@@ -763,19 +821,7 @@ export class ProjectKanbanDragController {
         this.scrollAtEdge_abyssPrivate(this.scroll_abyssPrivate, point.x, true);
         const vertical = this.verticalScroller_abyssPrivate;
         if (vertical !== undefined) this.scrollAtEdge_abyssPrivate(vertical, point.y, false);
-        const active = this.active_abyssPrivate;
-        const hit = this.logicalHit_abyssPrivate(point.x, point.y, active.source);
-        if (hit !== undefined) {
-          this.verticalScroller_abyssPrivate =
-            hit.lineHost.closest<HTMLElement>(
-              '.abyss-project-kanban-hover-body, .abyss-project-kanban-column-body',
-            ) ?? undefined;
-          this.showPlan_abyssPrivate(
-            hit.lineHost,
-            this.adapter_abyssPrivate.preview(active.source, hit.target),
-            hit,
-          );
-        }
+        this.retargetAfterScroll_abyssPrivate(point, this.active_abyssPrivate.source);
         this.frame_abyssPrivate = this.window_abyssPrivate?.requestAnimationFrame(tick);
       } catch (error) {
         this.cleanup_abyssPrivate(false);
@@ -783,6 +829,23 @@ export class ProjectKanbanDragController {
       }
     };
     this.frame_abyssPrivate = this.window_abyssPrivate?.requestAnimationFrame(tick);
+  }
+
+  private retargetAfterScroll_abyssPrivate(
+    point: { x: number; y: number },
+    source: ProjectKanbanDropSource,
+  ): void {
+    const hit = this.logicalHit_abyssPrivate(point.x, point.y, source);
+    if (hit === undefined) return;
+    this.verticalScroller_abyssPrivate =
+      hit.lineHost.closest<HTMLElement>(
+        '.abyss-project-kanban-hover-body, .abyss-project-kanban-column-body',
+      ) ?? undefined;
+    this.showPlan_abyssPrivate(
+      hit.lineHost,
+      this.adapter_abyssPrivate.preview(source, hit.target),
+      hit,
+    );
   }
 
   private scrollAtEdge_abyssPrivate(
@@ -802,6 +865,7 @@ export class ProjectKanbanDragController {
   }
 
   private cancelOverlay_abyssPrivate(): void {
+    this.hoverRevision_abyssPrivate += 1;
     if (this.hoverTimer_abyssPrivate !== undefined) {
       this.window_abyssPrivate?.clearTimeout(this.hoverTimer_abyssPrivate);
       this.hoverTimer_abyssPrivate = undefined;
@@ -816,6 +880,7 @@ export class ProjectKanbanDragController {
   }
 
   private clearVisuals_abyssPrivate(): void {
+    this.presentationRevision_abyssPrivate += 1;
     this.clearPreview_abyssPrivate();
     this.cancelOverlay_abyssPrivate();
     if (this.frame_abyssPrivate !== undefined) {

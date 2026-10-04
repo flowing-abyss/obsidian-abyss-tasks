@@ -202,6 +202,11 @@ export class ProjectsKanbanView<
     DragFocusOwnership
   >();
   private dragFocusRevision_abyssPrivate = 0;
+  private restoreNativeFocus_abyssPrivate = true;
+  private ownerDocument_abyssPrivate: Document | undefined;
+  private nativeCleanup_abyssPrivate: (() => void) | undefined;
+  private readonly migrationCleanup_abyssPrivate: () => void;
+  private destroyed_abyssPrivate = false;
   private updatingWindows_abyssPrivate = false;
   private readonly cellOrder_abyssPrivate = new Map<string, number>();
   private model_abyssPrivate: ProjectKanbanModel | undefined;
@@ -248,7 +253,9 @@ export class ProjectsKanbanView<
     this.scroll.addEventListener('scroll', this.activateColumns_abyssPrivate, { passive: true });
     this.root.addEventListener('pointerdown', this.handleBoardInteraction_abyssPrivate, true);
     this.root.addEventListener('keydown', this.handleBoardInteraction_abyssPrivate, true);
-    this.root.ownerDocument.addEventListener('focusin', this.handleDocumentFocusIn_abyssPrivate);
+    this.bindOwner_abyssPrivate();
+    this.migrationCleanup_abyssPrivate = this.root.onWindowMigrated(this.bindOwner_abyssPrivate);
+    this.root.addEventListener('focusin', this.bindOwner_abyssPrivate, true);
   }
 
   show(): void {
@@ -256,6 +263,7 @@ export class ProjectsKanbanView<
   }
 
   hide(): void {
+    this.revokePresentation_abyssPrivate();
     this.drag_abyssPrivate.cancel();
     this.root.hidden = true;
     for (const column of this.columns_abyssPrivate.values()) column.viewport.setActive(false);
@@ -284,12 +292,15 @@ export class ProjectsKanbanView<
   }
 
   destroy(): void {
+    this.destroyed_abyssPrivate = true;
+    this.migrationCleanup_abyssPrivate();
+    this.nativeCleanup_abyssPrivate?.();
+    this.root.removeEventListener('focusin', this.bindOwner_abyssPrivate, true);
     this.pendingViewport_abyssPrivate = undefined;
     this.mounted_abyssPrivate = false;
     this.dragFocusRevision_abyssPrivate += 1;
     this.root.removeEventListener('pointerdown', this.handleBoardInteraction_abyssPrivate, true);
     this.root.removeEventListener('keydown', this.handleBoardInteraction_abyssPrivate, true);
-    this.root.ownerDocument.removeEventListener('focusin', this.handleDocumentFocusIn_abyssPrivate);
     this.root.removeEventListener('copy', this.context_abyssPrivate.copy);
     this.root.removeEventListener('paste', this.context_abyssPrivate.paste);
     this.scroll.removeEventListener('scroll', this.activateColumns_abyssPrivate);
@@ -338,13 +349,47 @@ export class ProjectsKanbanView<
     return source;
   }
 
+  private readonly bindOwner_abyssPrivate = (): void => {
+    const doc = this.root.ownerDocument;
+    if (this.destroyed_abyssPrivate || doc === this.ownerDocument_abyssPrivate) return;
+    if (this.ownerDocument_abyssPrivate !== undefined) this.revokePresentation_abyssPrivate();
+    this.nativeCleanup_abyssPrivate?.();
+    this.ownerDocument_abyssPrivate = doc;
+    const win = doc.defaultView;
+    let live = true;
+    const focus = (event: FocusEvent): void => {
+      if (live && this.root.ownerDocument === doc) this.handleDocumentFocusIn_abyssPrivate(event);
+    };
+    const blur = (): void => {
+      if (live && this.root.ownerDocument === doc) this.revokePresentation_abyssPrivate();
+    };
+    doc.addEventListener('focusin', focus);
+    win?.addEventListener('blur', blur);
+    this.nativeCleanup_abyssPrivate = () => {
+      live = false;
+      doc.removeEventListener('focusin', focus);
+      win?.removeEventListener('blur', blur);
+    };
+  };
+
   private readonly handleDocumentFocusIn_abyssPrivate = (event: FocusEvent): void => {
-    if (event.target instanceof Node && !this.root.contains(event.target)) {
-      this.dragFocusRevision_abyssPrivate += 1;
+    if (
+      event.target !== null &&
+      'nodeType' in event.target &&
+      !this.root.contains(event.target as Node)
+    ) {
+      this.revokePresentation_abyssPrivate();
     }
   };
 
+  private revokePresentation_abyssPrivate(): void {
+    this.dragFocusRevision_abyssPrivate += 1;
+    this.restoreNativeFocus_abyssPrivate = false;
+  }
+
   private readonly handleBoardInteraction_abyssPrivate = (): void => {
+    this.bindOwner_abyssPrivate();
+    this.restoreNativeFocus_abyssPrivate = true;
     this.dragFocusRevision_abyssPrivate += 1;
   };
 
@@ -483,6 +528,7 @@ export class ProjectsKanbanView<
     source: ProjectKanbanDropSource,
     focus: DragFocusOwnership | undefined,
   ): focus is DragFocusOwnership {
+    this.bindOwner_abyssPrivate();
     return (
       focus?.path === source.projectPath &&
       this.context_abyssPrivate.isLiveProjectPath(source.projectPath) &&
@@ -558,6 +604,8 @@ export class ProjectsKanbanView<
   }
 
   captureViewportBeforeHide(): void {
+    this.revokePresentation_abyssPrivate();
+    this.drag_abyssPrivate.cancel();
     if (
       this.root.isConnected &&
       this.scroll.isConnected &&
@@ -700,12 +748,13 @@ export class ProjectsKanbanView<
   }
 
   private focusedDescendant_abyssPrivate(): HTMLElement | undefined {
+    if (!this.restoreNativeFocus_abyssPrivate) return;
     const active = this.root.ownerDocument.activeElement;
     return active instanceof HTMLElement && this.root.contains(active) ? active : undefined;
   }
 
   private restoreFocusedDescendant_abyssPrivate(focused: HTMLElement | undefined): void {
-    if (focused === undefined) return;
+    if (focused === undefined || !this.restoreNativeFocus_abyssPrivate) return;
     const active = this.root.ownerDocument.activeElement;
     if (this.focusMovedOutsideBoard_abyssPrivate(active)) return;
     if (this.focusedCardVisible_abyssPrivate(focused)) {

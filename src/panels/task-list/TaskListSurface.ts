@@ -210,7 +210,7 @@ export class TaskListSurface implements MountedTaskListRows {
   #checkLayout(): number | undefined {
     const host = this.#options.host;
     const style = this.#owner?.getComputedStyle(host);
-    const font = `${style?.fontFamily}:${style?.fontSize}:${style?.lineHeight}`;
+    const font = `${style?.fontFamily}:${style?.fontSize}:${style?.lineHeight}:${style?.fontWeight}:${style?.fontStyle}:${style?.letterSpacing}`;
     if (host.clientWidth === this.#width && font === this.#font) return;
     const top = this.#top();
     const anchor = this.#viewport.captureAnchor(Math.max(0, top));

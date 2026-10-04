@@ -746,3 +746,34 @@ it('a cancelled same-owner frame cannot consume a newer frame after temporary in
   expect(h.surface.element('n.md:999')?.isConnected).toBe(true);
   h.surface.destroy();
 });
+
+it.each(['fontWeight', 'fontStyle', 'letterSpacing', 'fontSize'] as const)(
+  'invalidates offscreen task heights after a loaded %s change without font loading',
+  (property) => {
+    const h = harness();
+    h.heights.set('n.md:0', 96);
+    h.surface.update(rows(100), presentation);
+    h.surface.reveal('n.md:99');
+    expect(h.scroll.scrollTop).toBe(4368);
+    h.heights.clear();
+    h.resize();
+    h.frame();
+    h.scrollTo(4300.25);
+    h.frame();
+    expect(h.scroll.scrollTop).toBe(4300.25);
+    h.surface.reveal('n.md:99');
+    expect(h.scroll.scrollTop).toBe(4368);
+    h.host.style[property] = {
+      fontWeight: '900',
+      fontStyle: 'italic',
+      letterSpacing: '2px',
+      fontSize: '24px',
+    }[property];
+    h.resize();
+    h.frame();
+    h.surface.reveal('n.md:99');
+    expect(h.scroll.scrollTop).toBe(4320);
+    expect([...h.surface.cards()].length).toBeLessThan(30);
+    h.surface.destroy();
+  },
+);

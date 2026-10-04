@@ -1179,7 +1179,7 @@ export class CenterPanel {
         scroll: host.closest<HTMLElement>('.abyss-project-dashboard-session') ?? host,
         mount: (container, row) => this.mountTaskRow_abyssPrivate(container, row, tagGroups),
         mountedChanged: () => {
-          this.updateSelectionVisuals_abyssPrivate();
+          this.patchMountedSelection_abyssPrivate();
         },
         reportFailure: (error) => {
           this.reportTaskRenderFailure_abyssPrivate(error);
@@ -2105,12 +2105,15 @@ export class CenterPanel {
     scrollHost.scrollIntoView?.({ block: 'nearest' });
   }
 
-  private updateSelectionVisuals_abyssPrivate(): void {
+  private patchMountedSelection_abyssPrivate(): void {
     for (const [key, card] of this.mountedRows_abyssPrivate.cards()) {
       this.patchCardSelection_abyssPrivate(card, key, this.rowSelection_abyssPrivate.has(key));
     }
     this.updateTaskStackSelection_abyssPrivate();
+  }
 
+  private updateSelectionVisuals_abyssPrivate(): void {
+    this.patchMountedSelection_abyssPrivate();
     const live =
       this.el.querySelector<HTMLElement>('.abyss-selection-live') ??
       this.el.createDiv({

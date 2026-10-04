@@ -41,6 +41,8 @@ import {
   objectMatching,
 } from './helpers';
 import { useProjectTableViewport } from './support/projectTableViewport';
+import { projectNativeBindings, projectWindowMigration } from './support/projectWindowMigration';
+import { taskViewportOwner } from './support/taskViewportOwner';
 
 useProjectTableViewport();
 
@@ -244,6 +246,30 @@ function installObsidianDomExtensions(ownerWindow: Window & typeof window): void
 
 function clickView(host: HTMLElement, mode: 'Table' | 'Kanban' | 'Timeline'): void {
   expectDefined(host.querySelector<HTMLButtonElement>(`[aria-label="${mode} view"]`)).click();
+}
+
+function departPendingKanban(
+  departure: string,
+  host: HTMLElement,
+  source: HTMLElement,
+  notify: (host: HTMLElement) => void,
+) {
+  const owner = departure === 'adopt' ? taskViewportOwner() : undefined;
+  if (departure.startsWith('blur') || departure === 'fresh-interaction')
+    window.dispatchEvent(new Event('blur'));
+  if (departure === 'blur-return' || departure === 'blur-focusin')
+    window.dispatchEvent(new Event('focus'));
+  if (departure === 'blur-focusin')
+    source.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+  if (departure === 'fresh-interaction')
+    source.dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift', bubbles: true }));
+  if (owner !== undefined) {
+    owner.doc.body.append(host);
+    notify(host);
+    document.body.append(host);
+    notify(host);
+  }
+  return owner;
 }
 
 function rectangle(left: number, top: number, right: number, bottom: number): DOMRect {
@@ -3119,6 +3145,212 @@ describe('project Kanban overview', () => {
     expect(board.scrollLeft).toBe(19.25);
     expect(sourceBody.scrollTop).toBe(0.25);
     expect(targetBody.scrollTop).toBe(0.75);
+  });
+
+  it('retained Kanban view routes adopted outside focus and releases acquired owners', async () => {
+    const migration = projectWindowMigration();
+    const oldBindings = projectNativeBindings(document);
+    let finishWrite: (() => void) | undefined;
+    const applyEdits = vi.fn(
+      (changes: readonly ProjectCellChange[]) =>
+        new Promise<ProjectEditResult>((resolve) => {
+          finishWrite = () => {
+            resolve(appliedResult(changes));
+          };
+        }),
+    );
+    const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const targetStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const history = new ProjectEditHistory(applyEdits);
+    const { host, settings, view } = mountView(
+      [
+        project({
+          name: 'Z moving',
+          statusId: sourceStatus.id,
+          frontmatter: { status: sourceStatus.name },
+        }),
+        project({
+          path: 'Projects/Neighbor.md',
+          name: 'A source neighbor',
+          statusId: sourceStatus.id,
+          frontmatter: { status: sourceStatus.name },
+        }),
+        project({
+          path: 'Projects/Destination.md',
+          name: 'A target neighbor',
+          statusId: targetStatus.id,
+          frontmatter: { status: targetStatus.name },
+        }),
+      ],
+      { applyEdits, history },
+    );
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    view.refreshFields();
+    const external = activeDocument.body.createEl('button', { text: 'Outside overview' });
+    clickView(host, 'Kanban');
+    const source = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/A.md"]',
+      ),
+    );
+    const target = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${targetStatus.id}"]`,
+      ),
+    );
+    const owner = taskViewportOwner();
+    installObsidianDomExtensions(owner.win);
+    const newBindings = projectNativeBindings(owner.doc);
+    owner.doc.body.append(host);
+    migration.notify(host);
+    source.focus();
+    const data = transfer();
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    source.dispatchEvent(dragEvent('dragstart', data));
+    target.dispatchEvent(dragEvent('drop', data));
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledOnce();
+
+    const outside = owner.doc.body.createEl('input');
+    owner.doc.body.append(outside);
+    outside.focus();
+    const board = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-scroll'));
+    const sourceBody = expectDefined(
+      source
+        .closest('.abyss-project-kanban-column')
+        ?.querySelector<HTMLElement>('.abyss-project-kanban-column-body'),
+    );
+    const targetBody = expectDefined(
+      target.querySelector<HTMLElement>('.abyss-project-kanban-column-body'),
+    );
+    board.scrollLeft = 19.25;
+    sourceBody.scrollTop = 0.25;
+    targetBody.scrollTop = 0.75;
+    finishWrite?.();
+    await flushMicrotasks();
+
+    expect(owner.doc.activeElement).toBe(outside);
+    expect(board.scrollLeft).toBe(19.25);
+    expect(sourceBody.scrollTop).toBe(0.25);
+    expect(targetBody.scrollTop).toBe(0.75);
+    expect(history.canUndo).toBe(true);
+    view.destroy();
+    for (const { add, remove } of [...oldBindings.audits, ...newBindings.audits])
+      for (const args of add.mock.calls.filter(
+        ([type, , options]) => ['blur', 'focusin'].includes(type) && options === undefined,
+      ))
+        expect(remove).toHaveBeenCalledWith(...args);
+    expect(migration.bindings.size).toBe(0);
+    owner.destroy();
+    external.remove();
+  });
+
+  it.each([
+    'blur',
+    'blur-return',
+    'blur-focusin',
+    'fresh-interaction',
+    'hide-return',
+    'adopt',
+    'eligible',
+  ] as const)('pending Kanban drop presentation is revoked by %s', async (departure) => {
+    const migration = projectWindowMigration();
+    let finishWrite: (() => void) | undefined;
+    const applyEdits = vi.fn(
+      (changes: readonly ProjectCellChange[]) =>
+        new Promise<ProjectEditResult>((resolve) => {
+          finishWrite = () => {
+            resolve(appliedResult(changes));
+          };
+        }),
+    );
+    const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const targetStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const history = new ProjectEditHistory(applyEdits);
+    const { host, settings, view } = mountView(
+      [
+        project({
+          name: 'Z moving',
+          statusId: sourceStatus.id,
+          frontmatter: { status: sourceStatus.name },
+        }),
+        project({
+          path: 'Projects/Neighbor.md',
+          name: 'A source neighbor',
+          statusId: sourceStatus.id,
+          frontmatter: { status: sourceStatus.name },
+        }),
+        project({
+          path: 'Projects/Destination.md',
+          name: 'A target neighbor',
+          statusId: targetStatus.id,
+          frontmatter: { status: targetStatus.name },
+        }),
+      ],
+      { applyEdits, history },
+    );
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.collapsedColumns = [`id:${targetStatus.id}`];
+    view.refreshFields();
+    const external = activeDocument.body.createEl('button', { text: 'Outside overview' });
+    clickView(host, 'Kanban');
+    const source = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/A.md"]',
+      ),
+    );
+    const target = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${targetStatus.id}"]`,
+      ),
+    );
+    source.focus();
+    const data = transfer();
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    source.dispatchEvent(dragEvent('dragstart', data));
+    target.dispatchEvent(dragEvent('drop', data));
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledOnce();
+
+    const owner = departPendingKanban(departure, host, source, (element) => {
+      migration.notify(element);
+    });
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+    const board = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-scroll'));
+    const sourceBody = expectDefined(
+      source
+        .closest('.abyss-project-kanban-column')
+        ?.querySelector<HTMLElement>('.abyss-project-kanban-column-body'),
+    );
+    const targetBody = expectDefined(
+      target.querySelector<HTMLElement>('.abyss-project-kanban-column-body'),
+    );
+    board.scrollLeft = 19.25;
+    sourceBody.scrollTop = 0.25;
+    targetBody.scrollTop = 0.75;
+    if (departure === 'hide-return') {
+      view.captureViewportBeforeHide();
+      host.remove();
+      document.body.append(host);
+    }
+    finishWrite?.();
+    await flushMicrotasks();
+
+    if (departure === 'eligible') {
+      expect(settings.projects.kanban.collapsedColumns).not.toContain(`id:${targetStatus.id}`);
+      expect(focus).toHaveBeenCalled();
+    } else {
+      expect(settings.projects.kanban.collapsedColumns).toContain(`id:${targetStatus.id}`);
+      expect(board.scrollLeft).toBe(19.25);
+      expect(sourceBody.scrollTop).toBe(0.25);
+      expect(targetBody.scrollTop).toBe(0.75);
+      if (departure === 'fresh-interaction') expect(focus).toHaveBeenCalled();
+      else expect(focus).not.toHaveBeenCalled();
+    }
+    expect(history.canUndo).toBe(true);
+    view.destroy();
+    owner?.destroy();
+    external.remove();
   });
 
   it('retains a newer board cell selection while a dropped card write is pending', async () => {

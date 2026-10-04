@@ -1735,3 +1735,48 @@ it('scrolls already-active Tasks after transient adoption without a full panel r
   panel.destroy();
   owner.destroy();
 });
+
+it.each([false, true])(
+  'settled task scroll decorates mounts without collecting logical selection (selected=%s)',
+  (selected) => {
+    const tasks = Array.from({ length: 1200 }, (_, line) =>
+      task({
+        title: `Task ${line}`,
+        markdownTitle: `Task ${line} [[Alice]] [[Bob]]`,
+        tags: ['#task/inbox'],
+        source: { filePath: 'large.md', line },
+      }),
+    );
+    const { el, panel, state } = makeCenter(tasks);
+    state.set('centerListViewState', {
+      ...state.get('centerListViewState'),
+      groupBy: 'outgoing-link',
+    });
+    if (selected) key(el, 'a', { ctrlKey: true });
+    expect(el.querySelector('.abyss-selection-live')?.textContent).toBe(
+      selected ? '1200 tasks selected' : '',
+    );
+    const collect = vi.spyOn(
+      panel as unknown as { selectedTasksInVisualOrder_abyssPrivate(): TaskSnapshot[] },
+      'selectedTasksInVisualOrder_abyssPrivate',
+    );
+    const visits = vi.spyOn(panel['rowSelection_abyssPrivate'], 'inOrder');
+    const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.scrollTop = 25000.25;
+    scroll.dispatchEvent(new Event('scroll'));
+    flushViewport();
+    expect(collect).not.toHaveBeenCalled();
+    expect(visits).not.toHaveBeenCalled();
+    expect(cards(el).length).toBeLessThan(100);
+    expect(
+      cards(el).every((card) => card.classList.contains('abyss-multi-selected') === selected),
+    ).toBe(true);
+    if (selected) {
+      tasks.splice(0, 600);
+      panel.refresh();
+      expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('600 tasks selected');
+      expect(panel['selectedTasksInVisualOrder_abyssPrivate']()).toEqual(tasks);
+    }
+    panel.destroy();
+  },
+);

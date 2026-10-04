@@ -5,6 +5,8 @@ import { ProjectCreationPresentation } from '../src/panels/projects/ProjectCreat
 import { ProjectKanbanDragController } from '../src/panels/projects/projectKanbanDrag';
 import { renderProjectTableColumns } from '../src/panels/projects/projectTableColumns';
 import { expectDefined } from './helpers';
+import { projectNativeBindings, projectWindowMigration } from './support/projectWindowMigration';
+import { taskViewportOwner } from './support/taskViewportOwner';
 
 function surface(detached = false) {
   const frame = document.body.createEl('iframe');
@@ -291,6 +293,113 @@ describe('project owner scheduler lifetimes', () => {
     expect(release).toHaveBeenCalledOnce();
   });
 
+  it.each([true, false])(
+    'retained Kanban drag migrates provisional and active native owners without rendering (notification=%s)',
+    (notify) => {
+      const migration = projectWindowMigration();
+      const h = surface();
+      const oldBindings = projectNativeBindings(h.doc);
+      const frames = new Map<number, FrameRequestCallback>();
+      vi.spyOn(h.owner, 'requestAnimationFrame').mockImplementation((callback) => {
+        frames.set(1, callback);
+        return 1;
+      });
+      vi.spyOn(h.owner, 'cancelAnimationFrame').mockImplementation((id) => {
+        frames.delete(id);
+      });
+      const column = h.host.createDiv({ cls: 'abyss-project-kanban-column is-collapsed' });
+      column.dataset['statusKey'] = 'id:active';
+      const card = column.createDiv({ cls: 'abyss-project-kanban-card' });
+      card.dataset['projectPath'] = 'Project.md';
+      const release = vi.fn();
+      const controller = new ProjectKanbanDragController(h.host, h.host, {
+        hitTest: () => undefined,
+        pin: () => () => {},
+        begin: () => release,
+        capture: () => ({
+          projectPath: 'Project.md',
+          statusKey: 'id:active',
+          group: { key: 'all', value: null },
+          statusGuard: {
+            fieldId: 'status',
+            fieldType: 'status',
+            sourceProperty: 'status',
+            expectedValue: 'Active',
+            expectedExists: true,
+          },
+          settingsGuard: { groupBy: 'none', sortField: 'none', sortDirection: 'asc' },
+        }),
+        preview: () => ({ allowed: false, message: 'blocked' }),
+        commit: async () => {},
+        reportFailure: vi.fn(),
+      });
+      card.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+      const start = new Event('dragstart', { bubbles: true, cancelable: true });
+      Object.defineProperty(start, 'dataTransfer', {
+        value: { setData: vi.fn(), setDragImage: vi.fn(), effectAllowed: '' },
+      });
+      card.dispatchEvent(start);
+      column.dispatchEvent(new MouseEvent('dragover', { bubbles: true, cancelable: true }));
+      expect(h.pending.size).toBe(1);
+      expect(frames.size).toBe(1);
+      expect(h.doc.querySelector('.abyss-project-kanban-drag-image')).not.toBeNull();
+      expect(card.classList.contains('is-dragging')).toBe(true);
+      const staleFrame = expectDefined(frames.get(1));
+      const staleTimer = expectDefined([...h.pending.values()][0]);
+      const next = taskViewportOwner();
+      const newBindings = projectNativeBindings(next.doc);
+      next.doc.body.append(h.host);
+      if (notify) migration.notify(h.host);
+      else h.host.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+      expect(h.pending.size).toBe(0);
+      expect(frames.size).toBe(0);
+      expect(h.doc.querySelector('.abyss-project-kanban-drag-image')).toBeNull();
+      expect(card.classList.contains('is-dragging')).toBe(false);
+      expect(release).toHaveBeenCalledOnce();
+      card.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+      expect(card.hasClass('is-drag-armed')).toBe(true);
+      h.doc.dispatchEvent(new Event('pointerup'));
+      expect(card.hasClass('is-drag-armed')).toBe(true);
+      next.doc.dispatchEvent(new Event('pointerup'));
+      expect(card.hasClass('is-drag-armed')).toBe(false);
+      card.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+      card.dispatchEvent(start);
+      column.dispatchEvent(new MouseEvent('dragover', { bubbles: true, cancelable: true }));
+      expect(next.frames.size).toBe(1);
+      const left = h.host.scrollLeft;
+      staleFrame(0);
+      staleTimer();
+      h.owner.dispatchEvent(new Event('blur'));
+      h.doc.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(card.hasClass('is-dragging')).toBe(true);
+      expect(h.host.scrollLeft).toBe(left);
+      next.flush();
+      expect(h.host.scrollLeft).not.toBe(left);
+      next.doc.body.dispatchEvent(new Event('dragover', { bubbles: true }));
+      expect(next.frames.size).toBe(0);
+      column.dispatchEvent(new MouseEvent('dragover', { bubbles: true, cancelable: true }));
+      expect(next.frames.size).toBe(1);
+      next.doc.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(card.hasClass('is-dragging')).toBe(false);
+      expect(next.frames.size).toBe(0);
+      card.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+      next.win.dispatchEvent(new Event('blur'));
+      expect(card.hasClass('is-drag-armed')).toBe(false);
+      controller.destroy();
+      expect(migration.bindings.size).toBe(0);
+      for (const { add, remove } of [...oldBindings.audits, ...newBindings.audits]) {
+        for (const args of add.mock.calls.filter(
+          ([type, , options]) =>
+            ['blur', 'keydown', 'dragover', 'pointerup', 'pointercancel'].includes(type) &&
+            typeof options !== 'object',
+        ))
+          expect(remove).toHaveBeenCalledWith(...args);
+      }
+      for (const callback of migration.retired) callback();
+      next.destroy();
+    },
+  );
+
   it('does not borrow the main window for detached Kanban drag', () => {
     const h = surface(true);
     const add = vi.spyOn(window, 'addEventListener');
@@ -310,4 +419,57 @@ describe('project owner scheduler lifetimes', () => {
     expect(add.mock.calls.filter(([name]) => name === 'blur')).toEqual([]);
     controller.destroy();
   });
+});
+
+it('retained editor cancels old pointer suppression and ignores stale release timers after adoption', async () => {
+  const migration = projectWindowMigration();
+  const h = surface();
+  const next = surface();
+  const oldBindings = projectNativeBindings(h.doc);
+  const newBindings = projectNativeBindings(next.doc);
+  const save = vi.fn().mockResolvedValue(undefined);
+  const editor = mountProjectCellEditor({
+    app: new App(),
+    container: h.host,
+    field: { id: 'description', property: 'description', label: 'Description', type: 'text' },
+    value: 'before',
+    catalog: {
+      list: () => [],
+      inspect: () => ({ kind: 'unavailable' }),
+      values: () => [],
+      onChange: () => () => {},
+    },
+    save,
+    onClose: vi.fn(),
+  });
+  const input = expectDefined(h.host.querySelector('textarea'));
+  input.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+  h.doc.dispatchEvent(new Event('pointerup'));
+  const stale = expectDefined([...h.pending.values()][0]);
+  next.doc.body.append(h.host);
+  migration.notify(h.host);
+  expect(h.pending.size).toBe(0);
+  input.value = 'after';
+  input.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+  stale();
+  h.doc.dispatchEvent(new Event('pointerup'));
+  input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+  await Promise.resolve();
+  expect(save).not.toHaveBeenCalled();
+  next.doc.dispatchEvent(new Event('pointerup'));
+  expect(next.pending.size).toBe(1);
+  next.flush();
+  input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(save).toHaveBeenCalledWith('after');
+  editor.destroy();
+  expect(next.pending.size).toBe(0);
+  expect(migration.bindings.size).toBe(0);
+  for (const { add, remove } of [...oldBindings.audits, ...newBindings.audits])
+    for (const args of add.mock.calls.filter(([type]) =>
+      ['blur', 'pointerdown', 'pointerup', 'pointercancel'].includes(type),
+    ))
+      expect(remove).toHaveBeenCalledWith(...args);
 });
