@@ -378,6 +378,8 @@ interface RemoveListValueRequest extends ProjectCellEditRequest {
 }
 
 interface RenderProjectCellContentOptions {
+  /** The overview caller cannot publish a newly allocated field until content returns. */
+  readonly unpublished?: boolean;
   readonly preferredColumn?: ProjectColumn;
   readonly showNameDescription?: boolean;
   readonly presentation?: ProjectOverviewMode;
@@ -2125,6 +2127,7 @@ export class ProjectsTableView {
         ...(options.column === undefined ? {} : { preferredColumn: options.column }),
         showNameDescription: showOverviewNameDescription(presentation, descriptionLines),
         presentation,
+        unpublished: options.existing === undefined,
       });
     }
     return rendered;
@@ -2485,6 +2488,7 @@ export class ProjectsTableView {
       rendered.resources.removeChild(component);
       rendered.contentMarkdown = undefined;
       rendered.contentSignature = '';
+      if (options.unpublished === true) this.releaseCell_abyssPrivate(rendered);
       throw error;
     }
   }

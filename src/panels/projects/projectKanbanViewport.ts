@@ -32,6 +32,7 @@ export class ProjectKanbanColumnViewport {
   #active = true;
   #retireIncoming = false;
   #destroyed = false;
+  #failed = false;
   #layout = '';
   #layoutRevision = 0;
   #layoutDirty = true;
@@ -43,6 +44,7 @@ export class ProjectKanbanColumnViewport {
 
   update(rows: readonly KanbanViewportRow[], preserveAnchor: boolean): void {
     if (this.#destroyed) return;
+    this.#failed = false;
     this.#bind();
     const top = Math.max(0, this.#options.scroll.scrollTop);
     const anchor = preserveAnchor ? this.#viewport.captureAnchor(top) : undefined;
@@ -208,11 +210,17 @@ export class ProjectKanbanColumnViewport {
     if (total > offset) segments.push({ height: total - offset });
     return segments;
   }
+  #report(error: unknown): void {
+    if (this.#destroyed || this.#failed) return;
+    this.#failed = true;
+    this.#options.reportFailure(error);
+  }
   #render(top: number, update = false): void {
+    if (this.#failed) return;
     try {
       this.#reconcile(top, update);
     } catch (error) {
-      if (!this.#destroyed) this.#options.reportFailure(error);
+      this.#report(error);
     }
   }
   #reconcile(top: number, update: boolean): void {
@@ -355,11 +363,12 @@ export class ProjectKanbanColumnViewport {
     this.#window = null;
   }
   readonly #schedule = (): void => {
-    if (this.#frame !== undefined || !this.#active || this.#destroyed) return;
+    if (this.#frame !== undefined || !this.#active || this.#destroyed || this.#failed) return;
     const generation = this.#generation;
     this.#frame = this.#window?.requestAnimationFrame(() => {
       if (generation !== this.#generation || this.#destroyed || !this.#active) return;
       this.#frame = undefined;
+      if (this.#failed) return;
       if (!this.#options.host.isConnected) {
         this.setActive(false);
         return;
@@ -379,7 +388,7 @@ export class ProjectKanbanColumnViewport {
         this.#render(corrected);
         if (corrected !== nativeTop) this.#options.scroll.scrollTop = corrected;
       } catch (error) {
-        this.#options.reportFailure(error);
+        this.#report(error);
       }
     });
   };

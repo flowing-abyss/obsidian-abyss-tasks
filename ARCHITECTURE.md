@@ -616,7 +616,10 @@ Table guards initial, public reveal and native render passes, retires failed par
 and allows explicit updates to retry without disturbing unrelated editors. Finite cell and group
 content generations report live asynchronous failures once through the controller render feedback,
 diagnostic and Notice boundary;
-retired generations stay quiet and failed signatures remain retryable. Render feedback is separate
+retired generations stay quiet and failed signatures remain retryable. A failed overview field that has
+not reached its row cell map also releases its stable field owner; its creating surface removes
+the unpublished field wrapper. Kanban and Timeline native failures latch only the failed pass:
+ordinary callbacks stay quiet until an explicit update starts a fresh attempt. Render feedback is separate
 from drag/drop, date and other mutation feedback.
 
 Overview creation retains a session with a configured status. ProjectManager prepares the note

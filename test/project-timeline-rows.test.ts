@@ -337,11 +337,15 @@ it('reports a mounting failure once and unloads failed Components without publis
     },
   ];
   owner.update(rows, false);
-  owner.update(rows, false);
+  owner.flush();
+  owner.flush();
   expect(report).toHaveBeenCalledOnce();
+  expect(unload).toHaveBeenCalledOnce();
+  owner.update(rows, false);
+  expect(report).toHaveBeenCalledTimes(2);
   expect(unload).toHaveBeenCalledTimes(2);
   expect(host.querySelector('[data-key]')).toBeNull();
   owner.destroy();
   owner.update(rows, false);
-  expect(report).toHaveBeenCalledOnce();
+  expect(report).toHaveBeenCalledTimes(2);
 });

@@ -1893,3 +1893,202 @@ it('Table removes a newly failed group content owner and retries its original gr
   mounted.delete(h.view);
   expect(resources.liveComponents.size).toBe(0);
 });
+
+function setLinkFieldVisible(settings: ProjectsSettings, visible: boolean): void {
+  for (const field of [
+    ...settings.table.columns,
+    ...expectDefined(settings.kanban).fields,
+    ...expectDefined(expectDefined(settings.timeline).fields),
+  ])
+    if (field.id === 'property:Link') field.visible = visible;
+}
+
+describe.each(cases)('review field publication in $mode', (testCase) => {
+  it('bounds repeated failed additions to a retained row, then retries and removes the field', async () => {
+    const frames = recordOwnerFrames();
+    const resources = recordVirtualSurfaceResources();
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const h = mountSurface(testCase, 0, (settings) => {
+      configureLifetimeFields(settings);
+      setLinkFieldVisible(settings, false);
+    });
+    const listed = lifetimeProjects(h.projects);
+    h.view.update(listed);
+    frames.flush();
+    await finishMarkdown();
+    const name = expectDefined(nameCell(h.surface.renderedCells(), 'Projects/A.md'));
+    const rowElement = expectDefined(
+      name.element.closest<HTMLElement>(
+        '.abyss-project-table-row, .abyss-project-kanban-card, .abyss-project-timeline-row',
+      ),
+    );
+    const wrappers = (): number =>
+      rowElement.querySelectorAll('.abyss-project-kanban-field, .abyss-project-timeline-field')
+        .length;
+    const initialWrappers = wrappers();
+    name.element.addClass('is-editor-anchor', 'is-editing');
+    const draft = name.element.createEl('input');
+    draft.value = 'Healthy draft';
+    draft.focus();
+    const row = name.markdown;
+    const healthyOwner = name.resources;
+    const rowUnload = vi.fn();
+    row.register(rowUnload);
+    const baseline = ownedComponentCounts(row);
+    const failedHosts: HTMLElement[] = [];
+    let failing = true;
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation((...args) => {
+      const host = args[2].closest<HTMLElement>('[data-column-id="property:Link"]');
+      if (failing && host !== null && args[3] === 'Projects/A.md') {
+        failedHosts.push(host);
+        throw new Error('unpublished field failed');
+      }
+      return Promise.resolve();
+    });
+    setLinkFieldVisible(h.settings, true);
+    let firstFailure: ReturnType<typeof ownedComponentCounts> | undefined;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      h.view.update(listed);
+      const counts = ownedComponentCounts(row);
+      firstFailure ??= counts;
+      expect.soft(counts).toEqual(firstFailure);
+      if (testCase.mode !== 'Table') {
+        expect.soft(counts).toEqual(baseline);
+        expect(wrappers()).toBe(initialWrappers);
+      }
+      expect(name.resources).toBe(healthyOwner);
+      expect(name.element.isConnected).toBe(true);
+      expect(rowUnload).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(draft);
+      expect(draft.value).toBe('Healthy draft');
+    }
+    expect(failedHosts).toHaveLength(3);
+    failing = false;
+    h.view.update(listed);
+    frames.flush();
+    await finishMarkdown();
+    const field = expectDefined(
+      h.surface
+        .renderedCells()
+        .find((cell) => cell.project.path === 'Projects/A.md' && cell.field.id === 'property:Link'),
+    );
+    expect(field.markdown).toBe(row);
+    if (testCase.mode !== 'Table') expect(wrappers()).toBe(initialWrappers + 1);
+    expect(
+      field.element.parentElement?.querySelectorAll('[data-column-id="property:Link"]'),
+    ).toHaveLength(1);
+    setLinkFieldVisible(h.settings, false);
+    h.view.update(listed);
+    frames.flush();
+    await finishMarkdown();
+    expect.soft(ownedComponentCounts(row)).toEqual(baseline);
+    expect(wrappers()).toBe(initialWrappers);
+    expect(draft.isConnected).toBe(true);
+    expect(draft.value).toBe('Healthy draft');
+    const select = vi.spyOn(
+      h.view as unknown as {
+        selectCell_abyssPrivate(cell: RenderedCellContext, extend: boolean): void;
+      },
+      'selectCell_abyssPrivate',
+    );
+    for (const host of failedHosts) host.dispatchEvent(new MouseEvent('click'));
+    expect.soft(select).not.toHaveBeenCalled();
+    expect.soft(failedHosts.every((host) => !host.isConnected)).toBe(true);
+    expect(h.applyEdits).not.toHaveBeenCalled();
+    expect(diagnostic).toHaveBeenCalled();
+    h.view.destroy();
+    mounted.delete(h.view);
+    expect(resources.liveComponents.size).toBe(0);
+  });
+});
+
+describe.each(cases)('review native failed passes in $mode', (testCase) => {
+  it.each(['quiet callbacks', 'fresh failure after recovery'] as const)('%s', async (phase) => {
+    Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
+    const frames = recordOwnerFrames();
+    const resources = recordVirtualSurfaceResources();
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const notices = recordedNotices();
+    const render = vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
+    const h = mountSurface(testCase, 997, configureLifetimeFields);
+    const listed = lifetimeProjects(h.projects);
+    h.view.update(listed);
+    frames.flush();
+    await finishMarkdown();
+    const healthy = expectDefined(
+      h.surface.renderedCells().find((cell) => cell.field.id === 'property:Link'),
+    );
+    healthy.element.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const editor = expectDefined(
+      h.host.querySelector<HTMLInputElement>('.abyss-project-editor-input'),
+    );
+    editor.value = 'Retained editor draft';
+    editor.focus();
+    const rowOwner = healthy.markdown;
+    const unload = vi.fn();
+    rowOwner.register(unload);
+    let message = 'first live failure';
+    let attempts = 0;
+    render.mockImplementation(() => {
+      attempts++;
+      throw new Error(message);
+    });
+    const reveal = (index: number): void => {
+      h.surface.revealCell(
+        expectDefined(nameCell(h.surface.cells().cells, expectDefined(listed[index]).path))
+          .identity,
+      );
+    };
+    reveal(900);
+    expect(diagnostic).toHaveBeenCalledOnce();
+    expect(notices).toHaveBeenCalledOnce();
+    const scroll = testCase.viewport(h.surface, healthy.element).vertical;
+    if (phase === 'quiet callbacks') {
+      for (let repeat = 0; repeat < 3; repeat++) {
+        scroll.dispatchEvent(new Event('scroll'));
+        for (const callback of resources.callbacks) callback([], {} as ResizeObserver);
+        document.fonts.dispatchEvent(new Event('loadingdone'));
+        window.dispatchEvent(new Event('resize'));
+        frames.flush();
+      }
+      const retiredCallbacks = [...resources.callbacks];
+      h.surface.hide();
+      h.surface.show();
+      for (const callback of retiredCallbacks) callback([], {} as ResizeObserver);
+      frames.flush();
+      expect.soft(attempts).toBe(1);
+      expect.soft(diagnostic).toHaveBeenCalledOnce();
+      expect.soft(notices).toHaveBeenCalledOnce();
+    }
+    expect(unload).not.toHaveBeenCalled();
+    expect(healthy.element.isConnected).toBe(true);
+    expect(document.activeElement).toBe(editor);
+    expect(editor.value).toBe('Retained editor draft');
+    render.mockResolvedValue(undefined);
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await finishMarkdown();
+    h.view.update(listed);
+    frames.flush();
+    await finishMarkdown();
+    if (phase === 'fresh failure after recovery') {
+      message = 'second live failure';
+      render.mockImplementation(() => {
+        throw new Error(message);
+      });
+      const mountedPaths = new Set(h.surface.renderedCells().map((cell) => cell.project.path));
+      const next = expectDefined(
+        h.surface.cells().cells.find((cell) => !mountedPaths.has(cell.identity.projectPath)),
+      );
+      h.surface.revealCell(next.identity);
+      expect(diagnostic).toHaveBeenCalledTimes(2);
+      expect(notices).toHaveBeenCalledTimes(2);
+      expect(h.host.querySelector('[role="alert"]')?.textContent).toBe(message);
+      scroll.dispatchEvent(new Event('scroll'));
+      for (const callback of resources.callbacks) callback([], {} as ResizeObserver);
+      frames.flush();
+      expect(diagnostic).toHaveBeenCalledTimes(2);
+      expect(notices).toHaveBeenCalledTimes(2);
+    }
+    expect(h.applyEdits).not.toHaveBeenCalled();
+  });
+});

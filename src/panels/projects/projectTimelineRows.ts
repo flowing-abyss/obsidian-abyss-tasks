@@ -41,6 +41,7 @@ export class ProjectTimelineRows {
   }
 
   update(rows: readonly TimelineViewportRow[], preserveAnchor: boolean): void {
+    this.#failed = false;
     try {
       this.#update(rows, preserveAnchor);
     } catch (error) {
@@ -189,6 +190,7 @@ export class ProjectTimelineRows {
     this.#options.reportFailure(error);
   }
   #render(top: number, update = false): void {
+    if (this.#failed) return;
     try {
       this.#reconcile(top, update);
     } catch (error) {
@@ -345,7 +347,7 @@ export class ProjectTimelineRows {
     this.#window = null;
   }
   flush(): void {
-    if (this.#destroyed || !this.#active) return;
+    if (this.#destroyed || !this.#active || this.#failed) return;
     if (this.#frame !== undefined) this.#window?.cancelAnimationFrame(this.#frame);
     this.#frame = undefined;
     try {
@@ -376,7 +378,7 @@ export class ProjectTimelineRows {
     }
   }
   readonly #schedule = (): void => {
-    if (!this.#active || this.#destroyed) return;
+    if (!this.#active || this.#destroyed || this.#failed) return;
     if (!this.#options.host.isConnected || this.#height() <= 0) {
       this.flush();
       return;

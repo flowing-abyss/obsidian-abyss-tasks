@@ -1719,13 +1719,17 @@ it.each(['initial', 'frame'] as const)(
       f.view.scroll.dispatchEvent(new Event('scroll'));
       frames.run();
     }
+    expect(renderFailure).toHaveBeenCalledOnce();
+    f.view.scroll.dispatchEvent(new Event('scroll'));
+    expect(frames.callbacks.size).toBe(0);
+    expect(renderFailure).toHaveBeenCalledOnce();
     f.view.update([], '');
     f.view.update([project('new.md')], '');
-    expect(renderFailure).toHaveBeenCalledOnce();
+    expect(renderFailure).toHaveBeenCalledTimes(2);
     expect(rangeFailure).not.toHaveBeenCalled();
     f.view.destroy();
     for (const callback of frames.callbacks.values()) callback(0);
-    expect(renderFailure).toHaveBeenCalledOnce();
+    expect(renderFailure).toHaveBeenCalledTimes(2);
   },
 );
 

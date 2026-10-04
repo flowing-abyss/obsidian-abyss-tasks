@@ -7445,7 +7445,7 @@ it('shows and diagnoses native Timeline rendering failures at the owning surface
   expect(notices.mock.calls[0]?.[0]).toBe('Could not render project Timeline: Broken renderer');
   expect(log).toHaveBeenCalledOnce();
   view.update([project({})]);
-  expect(log).toHaveBeenCalledOnce();
+  expect(log).toHaveBeenCalledTimes(2);
 });
 
 it('persists lazy Timeline settings and normalized Table columns after their render', () => {

@@ -1257,9 +1257,14 @@ export class ProjectsKanbanView<
       label.setText(item.label);
       let value = row.querySelector<HTMLElement>('.abyss-project-kanban-field-value');
       value ??= row.createDiv({ cls: 'abyss-project-kanban-field-value' });
-      const cell = this.reconcileCell_abyssPrivate(card, value, item.field, item.column);
-      context.visibleCells.push(cell);
-      desiredFields.push(row);
+      try {
+        const cell = this.reconcileCell_abyssPrivate(card, value, item.field, item.column);
+        context.visibleCells.push(cell);
+        desiredFields.push(row);
+      } catch (error) {
+        if (!card.cells.has(item.field.id)) row.remove();
+        throw error;
+      }
     }
     this.reconcileOrder_abyssPrivate(card.fields, desiredFields);
   }

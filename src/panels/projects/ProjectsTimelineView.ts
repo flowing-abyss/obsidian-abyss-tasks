@@ -1350,16 +1350,22 @@ export class ProjectsTimelineView<
     retained.add(field.id);
     const existing = row.cells.get(field.id);
     const host = existing?.element ?? options.parent.createDiv({ cls: options.className });
-    const cell = this.context_abyssPrivate.renderCell({
-      host,
-      markdown: row.markdown,
-      project: item.project,
-      field,
-      ...(options.column === undefined ? {} : { column: options.column }),
-      occurrenceId: item.occurrenceId,
-      groupKey: row.groupKey,
-      ...(existing === undefined ? {} : { existing }),
-    });
+    let cell: TCell;
+    try {
+      cell = this.context_abyssPrivate.renderCell({
+        host,
+        markdown: row.markdown,
+        project: item.project,
+        field,
+        ...(options.column === undefined ? {} : { column: options.column }),
+        occurrenceId: item.occurrenceId,
+        groupKey: row.groupKey,
+        ...(existing === undefined ? {} : { existing }),
+      });
+    } catch (error) {
+      if (existing === undefined) host.remove();
+      throw error;
+    }
     if (cell.element !== host && cell.element.parentElement !== host) host.append(cell.element);
     row.cells.set(field.id, cell);
     if (options.selectable) visibleCells.push(cell);
@@ -1400,17 +1406,22 @@ export class ProjectsTimelineView<
       let label = fieldRow.querySelector<HTMLElement>('.abyss-project-timeline-field-label');
       label ??= fieldRow.createSpan({ cls: 'abyss-project-timeline-field-label' });
       label.setText(metadataItem.label);
-      this.renderRowCell_abyssPrivate({
-        row,
-        item,
-        visibleCells,
-        retained,
-        field: metadataItem.field,
-        parent: fieldRow,
-        className: 'abyss-project-timeline-field-value',
-        selectable: settings.showMetadata,
-        column: metadataItem.column,
-      });
+      try {
+        this.renderRowCell_abyssPrivate({
+          row,
+          item,
+          visibleCells,
+          retained,
+          field: metadataItem.field,
+          parent: fieldRow,
+          className: 'abyss-project-timeline-field-value',
+          selectable: settings.showMetadata,
+          column: metadataItem.column,
+        });
+      } catch (error) {
+        if (existing === undefined) fieldRow.remove();
+        throw error;
+      }
       desiredMetadata.push(fieldRow);
     }
     reconcileOrder(row.metadata, desiredMetadata);
