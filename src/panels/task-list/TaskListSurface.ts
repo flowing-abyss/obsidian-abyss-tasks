@@ -31,6 +31,9 @@ export class TaskListSurface implements MountedTaskListRows {
   #presentation: TaskListPresentation | undefined;
   #owner: Window | null = null;
   #observer: ResizeObserver | undefined;
+  #nativeGeneration = 0;
+  #nativeCleanup: (() => void) | undefined;
+  #binding = false;
   #frame: number | undefined;
   #suspended = false;
   #destroyed = false;
@@ -47,6 +50,7 @@ export class TaskListSurface implements MountedTaskListRows {
   constructor(options: TaskListSurfaceOptions) {
     this.#options = options;
     options.host.addClass('abyss-task-list-surface');
+    this.#listen(true);
   }
 
   get rows(): TaskListRows {
@@ -127,11 +131,13 @@ export class TaskListSurface implements MountedTaskListRows {
 
   suspend(): void {
     this.#suspended = true;
+    this.#listen(false);
     this.#unbind();
   }
   resume(): void {
     if (this.#destroyed) return;
     this.#suspended = false;
+    this.#listen(true);
     this.#failed = false;
     this.#guard(() => {
       if (!this.#active()) return;
@@ -148,6 +154,7 @@ export class TaskListSurface implements MountedTaskListRows {
   destroy(): void {
     if (this.#destroyed) return;
     this.#destroyed = true;
+    this.#listen(false);
     this.#unbind();
     this.#guard(() => {
       this.#invalidatePins([...this.#pins.keys()]);
@@ -214,27 +221,42 @@ export class TaskListSurface implements MountedTaskListRows {
     return top + this.#viewport.restoreAnchor(anchor, Math.max(0, top)) - Math.max(0, top);
   }
   readonly #schedule = (): void => {
-    if (this.#frame !== undefined || this.#failed) return;
+    if (this.#destroyed || this.#suspended || this.#failed || this.#binding) return;
     this.#guard(() => {
+      // A previous window's pending frame cannot coalesce work for an adopted host.
+      if (!this.#bind()) return;
       if (!this.#active()) {
-        this.#unbind();
+        this.#cancelFrame();
         return;
       }
-      if (!this.#bind()) return;
-      this.#frame = this.#owner?.requestAnimationFrame(() => {
+      if (this.#frame !== undefined) return;
+      const generation = this.#nativeGeneration;
+      const owner = this.#owner;
+      const frame: number | undefined = owner?.requestAnimationFrame(() => {
+        if (generation !== this.#nativeGeneration || frame !== this.#frame) return;
         this.#frame = undefined;
+        if (owner.document !== this.#options.host.ownerDocument) {
+          this.#schedule();
+          return;
+        }
         this.#guard(() => {
-          if (!this.#active()) {
-            this.#unbind();
-            return;
-          }
-          if (!this.#bind()) return;
+          if (!this.#active()) return;
           this.#reconcile(false, this.#checkLayout());
         });
       });
+      this.#frame = frame;
     });
   };
   #bind(): boolean {
+    const binding = this.#binding;
+    this.#binding = true;
+    try {
+      return this.#bindOwner();
+    } finally {
+      this.#binding = binding;
+    }
+  }
+  #bindOwner(): boolean {
     const owner = this.#options.host.ownerDocument.defaultView;
     if (owner === this.#owner) return true;
     const revision = this.#revision;
@@ -246,30 +268,49 @@ export class TaskListSurface implements MountedTaskListRows {
     this.#owner = owner;
     if (owner === null) return true;
     this.#width = -1;
-    this.#observer = new owner.ResizeObserver(this.#schedule);
+    const generation = this.#nativeGeneration;
+    const schedule = (): void => {
+      if (generation === this.#nativeGeneration) this.#schedule();
+    };
+    const fontChanged = (): void => {
+      if (generation !== this.#nativeGeneration) return;
+      this.#font = '';
+      schedule();
+    };
+    this.#observer = new owner.ResizeObserver(schedule);
     this.#observer.observe(this.#options.host);
     if (this.#options.scroll !== this.#options.host) this.#observer.observe(this.#options.scroll);
-    this.#options.scroll.addEventListener('scroll', this.#schedule, { passive: true });
-    this.#options.host.addEventListener('focusin', this.#schedule);
-    this.#options.host.addEventListener('focusout', this.#schedule);
-    owner.addEventListener('resize', this.#schedule);
-    this.#options.host.ownerDocument.fonts.addEventListener('loadingdone', this.#fontChanged);
+    owner.addEventListener('resize', schedule);
+    const fonts = owner.document.fonts;
+    fonts.addEventListener('loadingdone', fontChanged);
+    this.#nativeCleanup = () => {
+      owner.removeEventListener('resize', schedule);
+      fonts.removeEventListener('loadingdone', fontChanged);
+    };
     return true;
   }
-  readonly #fontChanged = (): void => {
-    this.#font = '';
-    this.#schedule();
-  };
-  #unbind(): void {
+  #listen(listen: boolean): void {
+    const { host, scroll } = this.#options;
+    for (const [element, event] of [
+      [scroll, 'scroll'],
+      [host, 'focusin'],
+      [host, 'focusout'],
+    ] as const) {
+      if (listen) element.addEventListener(event, this.#schedule, { passive: true });
+      else element.removeEventListener(event, this.#schedule);
+    }
+  }
+  #cancelFrame(): void {
     if (this.#frame !== undefined) this.#owner?.cancelAnimationFrame(this.#frame);
     this.#frame = undefined;
+  }
+  #unbind(): void {
+    this.#nativeGeneration++;
+    this.#cancelFrame();
     this.#observer?.disconnect();
     this.#observer = undefined;
-    this.#options.scroll.removeEventListener('scroll', this.#schedule);
-    this.#options.host.removeEventListener('focusin', this.#schedule);
-    this.#options.host.removeEventListener('focusout', this.#schedule);
-    this.#owner?.removeEventListener('resize', this.#schedule);
-    this.#owner?.document.fonts.removeEventListener('loadingdone', this.#fontChanged);
+    this.#nativeCleanup?.();
+    this.#nativeCleanup = undefined;
     this.#owner = null;
   }
   #evict(key: string, mount: TaskRowMount): void {

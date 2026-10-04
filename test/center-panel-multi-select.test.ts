@@ -26,6 +26,7 @@ import {
   useRealMoment,
 } from './helpers';
 import { makeCenterPanelForTest, taskCommandsOf } from './support/panelHarness';
+import { taskViewportOwner } from './support/taskViewportOwner';
 import { recordVirtualSurfaceResources } from './support/virtualSurfaceResources';
 
 useRealMoment();
@@ -1681,3 +1682,39 @@ it.each(['search', 'projects', 'calendar'] as const)(
     expect(key(el, 'a', { metaKey: true }).defaultPrevented).toBe(false);
   },
 );
+
+it('scrolls already-active Tasks after transient adoption without a full panel render', () => {
+  const tasks = Array.from({ length: 1200 }, (_, line) =>
+    task({
+      title: `Task ${line}`,
+      tags: ['#task/inbox'],
+      source: { filePath: 'adopt.md', line },
+    }),
+  );
+  const { el, panel } = makeCenter(tasks);
+  attach(el);
+  flushViewport();
+  const refresh = vi.spyOn(panel, 'refresh');
+  const completion = vi.spyOn(
+    panel as unknown as {
+      completeTaskCardRender_abyssPrivate(): void;
+    },
+    'completeTaskCardRender_abyssPrivate',
+  );
+  const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+  el.remove();
+  scroll.dispatchEvent(new Event('scroll'));
+  flushViewport();
+  const owner = taskViewportOwner();
+  owner.doc.body.append(el);
+  scroll.scrollTop = 76000.5;
+  scroll.dispatchEvent(new owner.win.Event('scroll'));
+  owner.flush();
+  expect(cards(el).some((card) => Number(card.dataset['line']) > 1100)).toBe(true);
+  expect(cards(el).length).toBeLessThan(100);
+  expect(scroll.scrollTop).toBe(76000.5);
+  expect(refresh).not.toHaveBeenCalled();
+  expect(completion).not.toHaveBeenCalled();
+  panel.destroy();
+  owner.destroy();
+});

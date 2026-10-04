@@ -337,8 +337,13 @@ not submitted commands; real interaction owners must provide them. Acquisition d
 is ignored, and reentrant updates supersede the outer pass. The actual focused subtree stays in
 place while ordinary neighbors move, and intentional scroll corrections follow the new DOM extent.
 Ordinary native scrolling never writes normalized geometry back to the scroller.
-Hidden/detached surfaces suspend work; resume revalidates layout and document ownership. Synchronous
-updates default to reporting through the supplied owner; Search requests per-call propagation so its
+A transient hidden/detached native callback stops mounting and measurement while retaining
+element-local scroll/focus wakeups and current-owner size observation. An adopted host admits its new document
+before coalescing frames, cancels work through the captured old owner, and retires callbacks by
+native generation and frame identity. Ordinary reconnection/scroll therefore recovers without a
+query or application render. Explicit suspension and destruction remove element wakeups as well;
+resume revalidates layout and document ownership. Synchronous updates default to reporting through
+the supplied owner; Search requests per-call propagation so its
 result-pass owner can clean partial mounts and report once without completing the failed pass.
 Deferred native failures remain surface-owned and stop until an explicit refresh. CenterPanel uses
 this adapter for Tasks, project-dashboard lists, and the ordered arrays supplied by Search.

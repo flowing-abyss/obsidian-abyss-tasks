@@ -10,6 +10,7 @@ import type { TaskSnapshot } from '../src/tasks';
 import { PanelNavigator } from '../src/views/panelNavigation';
 import { expectDefined, fixedToday, freshContainer, task, taskQueryApi } from './helpers';
 import { prepareTaskPanelViewport } from './support/taskPanelViewport';
+import { taskViewportOwner } from './support/taskViewportOwner';
 
 fixedToday('2026-06-25');
 const cleanup: Array<() => void> = [];
@@ -544,4 +545,43 @@ describe('Search supplied result viewport', () => {
     expect(h.clock.flush()).toBeGreaterThan(0);
     expect(h.completeResults).toHaveBeenCalledTimes(1);
   });
+});
+
+it('scrolls already-active Search after transient popout adoption without requerying or completing results', () => {
+  const h = harness();
+  h.clock.flush();
+  h.input.value = 'needle';
+  h.input.setSelectionRange(1, 4);
+  h.input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+  const queries = h.list.mock.calls.length;
+  const completions = h.completeResults.mock.calls.length;
+  h.root.remove();
+  h.results.dispatchEvent(new Event('scroll'));
+  h.clock.flush();
+  const owner = taskViewportOwner();
+  owner.doc.body.append(h.root);
+  h.results.scrollTop = 76000.5;
+  h.results.dispatchEvent(new owner.win.Event('scroll'));
+  owner.flush();
+  const mounted = [...h.results.querySelectorAll<HTMLElement>('.abyss-task-card')];
+  expect(mounted.some((card) => Number(card.dataset['line']) > 1100)).toBe(true);
+  expect(mounted.length).toBeLessThan(100);
+  expect(h.list.mock.calls).toHaveLength(queries);
+  expect(h.completeResults.mock.calls).toHaveLength(completions);
+  expect(h.supplied[0]).toHaveLength(1200);
+  expect(h.root.querySelector('.abyss-search-global')).toBe(h.input);
+  expect(h.input.value).toBe('needle');
+  expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([1, 4]);
+  expect(h.results.scrollTop).toBe(76000.5);
+  h.input.dispatchEvent(
+    new owner.win.KeyboardEvent('keydown', {
+      key: 'Escape',
+      isComposing: true,
+      bubbles: true,
+    }),
+  );
+  expect(h.input.isConnected).toBe(true);
+  h.search.clear();
+  h.panel.destroy();
+  owner.destroy();
 });

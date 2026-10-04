@@ -60,6 +60,8 @@ import {
   taskCommandsOf,
 } from './support/panelHarness';
 
+import { taskViewportOwner } from './support/taskViewportOwner';
+
 const TODAY = moment().format('YYYY-MM-DD');
 
 type CalendarViewLabel = 'Day' | 'Week' | 'Month';
@@ -1415,6 +1417,57 @@ describe('CenterPanel shared list capture', () => {
     type: 'io-error',
     cause: 'repository-error',
     contentState: 'unknown',
+  });
+
+  it('keeps the active capture draft and composition while adopted Tasks resume native scrolling', async () => {
+    const snapshots = Array.from({ length: 1200 }, (_, line) =>
+      task({
+        title: `Task ${line}`,
+        planning: { due: TODAY },
+        source: { filePath: 'adopt.md', line },
+      }),
+    );
+    const { panel, state, planCreate, sessionExecute } = captureHarness(
+      async () => successfulCapture(),
+      snapshots,
+    );
+    state.set('selectedList', 'today');
+    const container = freshContainer();
+    panel.mount(container);
+    const owner = taskViewportOwner();
+    try {
+      const input = await openListCapture(container);
+      setCaptureDraft(input, 'unfinished draft');
+      input.setSelectionRange(2, 8);
+      input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      const scroll = expectDefined(container.querySelector<HTMLElement>('.abyss-center-scroll'));
+      container.remove();
+      scroll.dispatchEvent(new Event('scroll'));
+      owner.doc.body.append(container);
+      scroll.scrollTop = 76000;
+      scroll.dispatchEvent(new owner.win.Event('scroll'));
+      owner.flush();
+      expect(
+        [...scroll.querySelectorAll<HTMLElement>('.abyss-task-card')].some(
+          (card) => Number(card.dataset['line']) > 1100,
+        ),
+      ).toBe(true);
+      expect(container.querySelector('.abyss-quick-capture-input')).toBe(input);
+      expect(input.value).toBe('unfinished draft');
+      expect([input.selectionStart, input.selectionEnd]).toEqual([2, 8]);
+      input.dispatchEvent(
+        new owner.win.KeyboardEvent('keydown', {
+          key: 'Enter',
+          isComposing: true,
+          bubbles: true,
+        }),
+      );
+      expect(planCreate).toHaveBeenCalledOnce();
+      expect(sessionExecute).not.toHaveBeenCalled();
+    } finally {
+      panel.destroy();
+      owner.destroy();
+    }
   });
 
   it('keeps one focused session open across consecutive Enter successes', async () => {

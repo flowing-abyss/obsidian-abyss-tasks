@@ -5,6 +5,7 @@ import {
 } from '../src/panels/task-list/TaskListSurface';
 import { buildTaskListRows, type TaskListRow } from '../src/panels/task-list/taskListRows';
 import { expectDefined, freshContainer, task } from './helpers';
+import { taskViewportOwner } from './support/taskViewportOwner';
 
 const presentation: TaskListPresentation = {
   revision: 'layout:1',
@@ -120,7 +121,9 @@ function harness(clampWrites = false) {
     heights,
     writes,
     observed,
+    frames,
     reportFailure,
+    resizeCallback: () => expectDefined(resize),
     origin(value: number) {
       origin = value;
     },
@@ -614,4 +617,132 @@ it('rebinds adopted task rows and cancels old native work before disposing new-o
   expect(h.observed.size).toBe(0);
   expect(h.host.children).toHaveLength(0);
   expect(h.reportFailure).not.toHaveBeenCalled();
+});
+
+it('admits an adopted owner before coalescing a pending old-window frame', () => {
+  const h = harness();
+  h.surface.update(rows(1000), presentation);
+  h.scrollTo(480);
+  const oldFrame = expectDefined([...h.frames.values()][0]);
+  const cancel = vi.spyOn(window, 'cancelAnimationFrame');
+  const owner = taskViewportOwner();
+  owner.doc.body.append(h.scroll);
+  h.scrollTo(47520.5);
+  expect(owner.frames.size).toBe(1);
+  expect(cancel).toHaveBeenCalled();
+  owner.flush();
+  expect(h.surface.element('n.md:999')?.isConnected).toBe(true);
+  expect([...h.surface.cards()].length).toBeLessThan(30);
+  expect(h.surface.rows.taskKeys).toHaveLength(1000);
+  expect(h.scroll.scrollTop).toBe(47520.5);
+  h.scrollTo(24000);
+  const currentFrame = [...owner.frames.values()][0];
+  oldFrame(0);
+  expect([...owner.frames.values()]).toEqual([currentFrame]);
+  owner.flush();
+  expect(h.surface.element('n.md:500')?.isConnected).toBe(true);
+  h.surface.destroy();
+  owner.destroy();
+});
+
+it.each(['same owner', 'adopted owner'] as const)(
+  'recovers from transient inactivity on ordinary scroll in the %s without refreshing',
+  (destination) => {
+    const h = harness();
+    h.surface.update(rows(1000), presentation);
+    h.scroll.remove();
+    h.resize();
+    h.frame();
+    const mounted = h.mount.mock.calls.length;
+    expect(h.pending()).toBe(0);
+    const owner = destination === 'adopted owner' ? taskViewportOwner() : undefined;
+    (owner?.doc ?? document).body.append(h.scroll);
+    h.scrollTo(47520);
+    if (owner === undefined) h.frame();
+    else owner.flush();
+    expect(h.surface.element('n.md:999')?.isConnected).toBe(true);
+    expect(h.mount.mock.calls.length).toBeGreaterThan(mounted);
+    expect([...h.surface.cards()].length).toBeLessThan(30);
+    expect(h.surface.rows.taskKeys).toHaveLength(1000);
+    h.surface.destroy();
+    expect(h.observed.size).toBe(0);
+    expect(owner?.observers.every(({ elements }) => elements.size === 0) ?? true).toBe(true);
+    owner?.destroy();
+  },
+);
+
+it('keeps resize recovery alive after a zero-sized frame without mounting while hidden', () => {
+  const h = harness();
+  h.surface.update(rows(1000), presentation);
+  h.scrollTo(47520);
+  h.size(0, 0);
+  h.frame();
+  const mounted = h.mount.mock.calls.length;
+  h.resize();
+  expect(h.pending()).toBe(0);
+  expect(h.mount).toHaveBeenCalledTimes(mounted);
+  h.size(600, 480);
+  if (h.observed.has(h.scroll)) h.resize();
+  h.frame();
+  expect(h.surface.element('n.md:999')?.isConnected).toBe(true);
+  h.surface.destroy();
+});
+
+it('retired observer, font and frame callbacks cannot change current work or revive a destroyed surface', () => {
+  const h = harness();
+  const fontEvents = vi.spyOn(document.fonts, 'addEventListener');
+  h.surface.update(rows(1000), presentation);
+  const oldResize = h.resizeCallback();
+  const oldFont = expectDefined(fontEvents.mock.calls.find(([name]) => name === 'loadingdone'))[1];
+  h.scrollTo(480);
+  const oldFrame = expectDefined([...h.frames.values()][0]);
+  const owner = taskViewportOwner();
+  owner.doc.body.append(h.scroll);
+  // Explicit update isolates stale-callback safety from admission, tested separately above.
+  h.surface.update(rows(1000), presentation);
+  const deliverOld = () => {
+    oldResize([], {} as ResizeObserver);
+    if (typeof oldFont === 'function') oldFont(new Event('loadingdone'));
+    else oldFont.handleEvent(new Event('loadingdone'));
+    oldFrame(0);
+  };
+  h.scrollTo(47520);
+  const pending = [...owner.frames];
+  const mounts = h.mount.mock.calls.length;
+  deliverOld();
+  expect([...owner.frames]).toEqual(pending);
+  expect(h.mount).toHaveBeenCalledTimes(mounts);
+  owner.flush();
+  expect(h.surface.element('n.md:999')?.isConnected).toBe(true);
+  const requests = owner.request.mock.calls.length;
+  deliverOld();
+  expect(owner.request).toHaveBeenCalledTimes(requests);
+  h.surface.destroy();
+  deliverOld();
+  for (const { callback } of owner.observers) callback([], {} as ResizeObserver);
+  h.scroll.dispatchEvent(new owner.win.Event('scroll'));
+  owner.flush();
+  expect(h.host.children).toHaveLength(0);
+  expect(owner.observers.every(({ elements }) => elements.size === 0)).toBe(true);
+  expect(h.reportFailure).not.toHaveBeenCalled();
+  owner.destroy();
+});
+
+it('a cancelled same-owner frame cannot consume a newer frame after temporary inactivity', () => {
+  const h = harness();
+  h.surface.update(rows(1000), presentation);
+  h.scrollTo(480);
+  const retired = expectDefined([...h.frames.values()][0]);
+  h.size(600, 0);
+  h.resize();
+  h.size(600, 480);
+  h.scrollTo(47520);
+  const current = [...h.frames];
+  const mounted = h.mount.mock.calls.length;
+  retired(0);
+  expect([...h.frames]).toEqual(current);
+  expect(h.mount).toHaveBeenCalledTimes(mounted);
+  h.frame();
+  expect(h.surface.element('n.md:999')?.isConnected).toBe(true);
+  h.surface.destroy();
 });
