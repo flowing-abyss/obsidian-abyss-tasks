@@ -41,7 +41,7 @@ function restoreControlFocus(host: HTMLElement, focused: Element | null): void {
     if (value === null) continue;
     [...host.querySelectorAll<HTMLElement>('button, select')]
       .find((element) => element.getAttribute(attribute) === value)
-      ?.focus();
+      ?.focus({ preventScroll: true });
     return;
   }
 }

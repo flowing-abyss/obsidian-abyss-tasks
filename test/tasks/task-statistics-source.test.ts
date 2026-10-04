@@ -1,5 +1,6 @@
 import { TFile, type CachedMetadata } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { prepareStatisticsDataset } from '../../src/statistics';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import * as timeEntry from '../../src/tasks/domain/timeEntry';
 import { TaskIndex, type TaskIndexOptions } from '../../src/tasks/infrastructure/TaskIndex';
@@ -16,6 +17,7 @@ import {
   metadataChangedEmitter,
   seedTaskCache,
 } from '../helpers';
+import { work } from '../helpers/statisticsFixtures';
 
 const indexes: TaskIndex[] = [];
 afterEach(() => {
@@ -59,6 +61,38 @@ async function harness(
 }
 
 describe('lazy complete task statistics evidence', () => {
+  it.each([1000, 4000])(
+    'shares exact archive provenance without copying it into %i wide/deep descendant keys',
+    async (width) => {
+      const content = `- [ ] Root\n${Array.from(
+        { length: width },
+        (_, i) => `  - [ ] Child ${i}\n`,
+      ).join('')}${Array.from(
+        { length: 32 },
+        (_, depth) => `${'  '.repeat(depth + 1)}- [ ] Deep ${depth}\n`,
+      ).join('')}`;
+      const { index, refAuthority } = await harness({ 'archive/large.md': content });
+      await index.initialize();
+      index.subscribeStatistics(() => {});
+      await index.whenStatisticsSettled();
+      const snapshot = index.readStatistics(),
+        root = expectDefined(snapshot.files[0]?.roots[0]);
+      expect(root.ref.revision).toBe(`statistics:${root.source.originalBlock}`);
+      expect(refAuthority.evidence(root.ref.revision)).toBeUndefined();
+      const dataset = expectDefined(await prepareStatisticsDataset(snapshot, [], work));
+      expect(dataset.tasks).toHaveLength(width + 33);
+      for (const task of dataset.tasks) {
+        let ref = task.ref;
+        while (ref.type === 'subtask') ref = ref.ref.parent;
+        expect(ref.ref).toBe(root.ref);
+        expect(task.key.length).toBeLessThan(160);
+        expect(task.key).not.toContain('statistics:');
+      }
+      expect(dataset.tasks.reduce((bytes, task) => bytes + task.key.length, 0)).toBeLessThan(
+        (width + 33) * 60,
+      );
+    },
+  );
   it('settles accepted work, unchanged work and nested holds without acquiring sources', async () => {
     const { index, app } = await harness({ 'live.md': '- [ ] Old\n' });
     await index.initialize();

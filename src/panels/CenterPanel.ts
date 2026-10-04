@@ -549,7 +549,8 @@ export class CenterPanel {
       this.state_abyssPrivate.on('selectedList', () => {
         this.handleSelectedListChanged_abyssPrivate();
       }),
-      this.state_abyssPrivate.on('mode', () => {
+      this.state_abyssPrivate.on('mode', (_mode, previous) => {
+        if (previous === 'statistics') this.statistics_abyssPrivate?.unmount();
         this.wholeCardFocus_abyssPrivate = null;
         this.cardReturn_abyssPrivate = null;
         this.captureSessions_abyssPrivate.cancelStaleListCapture();

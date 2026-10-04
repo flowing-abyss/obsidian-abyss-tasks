@@ -1,9 +1,115 @@
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { StatisticsEvidence } from '../src/panels/statistics/StatisticsEvidence';
 import { prepareStatisticsDataset, StatisticsSession } from '../src/statistics';
 import { required } from '../src/statistics/statisticsWork';
 import type { TaskStatisticsSource } from '../src/tasks';
+import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
+import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
+import { canonicalStatusCatalog, createAppWithFiles } from './helpers';
 import { closed, date, request, source, task, work } from './helpers/statisticsFixtures';
+const cleanup: Array<() => void> = [];
+afterEach(() => {
+  cleanup.splice(0).forEach((dispose) => {
+    dispose();
+  });
+  vi.restoreAllMocks();
+});
+async function archivedEvidence() {
+  const path = 'archive.md',
+    content = '- [ ] Original ➕ 2026-10-01\n  - [ ] Child ➕ 2026-10-01\n- [ ] Other\n';
+  const app = await createAppWithFiles({ [path]: content });
+  const authority = new TaskRefAuthority();
+  const index = new TaskIndex(app, {
+    statusCatalog: canonicalStatusCatalog(),
+    refAuthority: authority,
+    excludeSource: () => true,
+    statisticsFileKind: () => 'archive',
+  });
+  const element = document.body.createDiv();
+  cleanup.push(() => {
+    index.destroy();
+    element.remove();
+  });
+  await index.initialize();
+  index.subscribeStatistics(() => {});
+  await index.whenStatisticsSettled();
+  const snapshot = index.readStatistics();
+  const model = required(
+    await new StatisticsSession(required(await prepareStatisticsDataset(snapshot, [], work))).view(
+      request(),
+      work,
+    ),
+  );
+  const host = { renderRoot: vi.fn(), select: vi.fn(), openSource: vi.fn(async () => {}) };
+  const queries = {
+    resolve: vi.fn(() => {
+      throw new Error('Archive evidence cannot acquire mutation authority');
+    }),
+  };
+  new StatisticsEvidence(index, queries, host).render(element, model, 'created', vi.fn());
+  const buttons = [...element.querySelectorAll('button')].filter((button) =>
+    button.textContent.startsWith('Open archived source'),
+  );
+  expect(buttons).toHaveLength(2);
+  return { app, index, authority, element, snapshot, content, path, host, buttons };
+}
+it.each(['Original', 'Child'])(
+  'rejects old archived root/child evidence after same-line %s replacement',
+  async (title) => {
+    const h = await archivedEvidence();
+    h.index.installCommittedContent(h.path, h.content.replace('Other', 'Unrelated edit'));
+    await h.index.whenStatisticsSettled();
+    expect(h.index.readStatistics().files[0]?.roots[0]?.ref).toEqual(
+      h.snapshot.files[0]?.roots[0]?.ref,
+    );
+    h.buttons.forEach((button) => {
+      button.click();
+    });
+    expect(h.host.openSource.mock.calls).toEqual([
+      [h.path, 0],
+      [h.path, 1],
+    ]);
+    expect(
+      h.authority.evidence(required(h.snapshot.files[0]?.roots[0]).ref.revision),
+    ).toBeUndefined();
+    h.index.installCommittedContent(h.path, h.content.replace(title, 'Replacement'));
+    await h.index.whenStatisticsSettled();
+    expect(h.index.isStatisticsCurrent(h.index.readStatistics())).toBe(true);
+    h.buttons.forEach((button) => {
+      button.click();
+    });
+    expect(h.host.openSource).toHaveBeenCalledTimes(2);
+    expect(h.element.textContent).toContain('changed or was removed');
+    expect(h.index.readStatistics().files[0]?.roots[0]?.ref).not.toEqual(
+      h.snapshot.files[0]?.roots[0]?.ref,
+    );
+  },
+);
+it('rejects retained archive evidence when its settled current source has an acquisition issue', async () => {
+  const h = await archivedEvidence();
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const read = vi.spyOn(h.app.vault, 'cachedRead').mockRejectedValue(new Error('offline'));
+  await h.index.refreshSourceExclusion(() => true);
+  await h.index.whenStatisticsSettled();
+  const partial = h.index.readStatistics();
+  expect(h.index.isStatisticsCurrent(partial)).toBe(true);
+  expect(partial.files[0]?.roots).toEqual(h.snapshot.files[0]?.roots);
+  expect(partial.issues).toEqual([{ path: h.path, reason: 'read-failed' }]);
+  h.buttons.forEach((button) => {
+    button.click();
+  });
+  expect(h.host.openSource).not.toHaveBeenCalled();
+  expect(h.element.textContent).toContain('changed or was removed');
+  read.mockRestore();
+  await h.index.refreshStatistics();
+  h.buttons.forEach((button) => {
+    button.click();
+  });
+  expect(h.host.openSource.mock.calls).toEqual([
+    [h.path, 0],
+    [h.path, 1],
+  ]);
+});
 it('renders one shared live root with exact matched children, and archives have source-only actions', async () => {
   const root = task('Root');
   const children = [0, 1].map((index) => ({

@@ -18,7 +18,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
-async function harness() {
+async function harness(acceptedSource?: TaskStatisticsSource) {
   const app = await createAppWithFiles({});
   let snapshot = source([task('A', { planning: { created: date('2026-10-01') } })]);
   const listeners = new Set<() => void>();
@@ -45,7 +45,7 @@ async function harness() {
     state: new AppState(),
     app,
     settings: structuredClone(DEFAULT_SETTINGS),
-    source: sourcePort,
+    source: acceptedSource ?? sourcePort,
     projects: { list: () => [], onUpdate: () => () => {}, whenSettled: async () => {} },
     renderer,
     context: () => ({ nowMs, offsetAt: utc }),
@@ -83,6 +83,113 @@ async function harness() {
     },
   };
 }
+it('exposes explicit source Retry for partial results, repeated failure and recovery without routine reads', async () => {
+  const { TaskIndex } = await import('../src/tasks/infrastructure/TaskIndex');
+  const { canonicalStatusCatalog } = await import('./helpers');
+  const app = await createAppWithFiles({
+    'live.md': '- [ ] Useful ➕ 2026-10-01\n',
+    'archive.md': '- [ ] Retained ➕ 2026-10-01\n',
+  });
+  const index = new TaskIndex(app, {
+    statusCatalog: canonicalStatusCatalog(),
+    excludeSource: ({ filePath }) => filePath === 'archive.md',
+    statisticsFileKind: (path) => (path === 'archive.md' ? 'archive' : 'live'),
+  });
+  await index.initialize();
+  cleanups.push(() => {
+    index.destroy();
+  });
+  const h = await harness(index);
+  h.mode.render(h.host);
+  await h.wait();
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const originalRead = app.vault.cachedRead.bind(app.vault);
+  const read = vi
+    .spyOn(app.vault, 'cachedRead')
+    .mockImplementation((file) =>
+      file.path === 'archive.md' ? Promise.reject(new Error('offline')) : originalRead(file),
+    );
+  h.reset();
+  await index.refreshSourceExclusion(({ filePath }) => filePath === 'archive.md');
+  await h.wait();
+  const retry = () =>
+    [...h.host.querySelectorAll('button')].find((button) => button.textContent === 'Retry');
+  expect(h.host.textContent).toContain('partial coverage');
+  expect(h.host.textContent).toContain('archive.md: read-failed');
+  expect(h.host.querySelectorAll('.abyss-statistics-section')).toHaveLength(3);
+  expect(retry()).toBeDefined();
+  const before = read.mock.calls.length;
+  h.reset();
+  h.mode.refresh();
+  await h.wait();
+  expect(read).toHaveBeenCalledTimes(before);
+  h.reset();
+  retry()?.click();
+  await h.wait();
+  expect(read).toHaveBeenCalledTimes(before + 1);
+  expect(retry()).toBeDefined();
+  expect(h.host.textContent).toContain('archive.md: read-failed');
+  read.mockRestore();
+  const recoveredRead = vi.spyOn(app.vault, 'cachedRead');
+  h.reset();
+  retry()?.click();
+  await h.wait();
+  expect(recoveredRead).toHaveBeenCalledTimes(1);
+  expect(index.readStatistics().issues).toEqual([]);
+  expect(retry()).toBeUndefined();
+  expect(h.host.textContent).not.toContain('partial coverage');
+  expect(h.host.textContent).not.toContain('archive.md: read-failed');
+  expect(h.host.textContent).toContain('2 Tasks & subtasks in scope');
+});
+it('captures scroll before teardown and restores after accepted content only on reentry', async () => {
+  const h = await harness();
+  h.mode.render(h.host);
+  await h.wait();
+  const oldRoot = expectDefined(h.host.querySelector<HTMLElement>('.abyss-statistics'));
+  // Model browser clamping at DOM boundaries; native acceptance verifies real layout.
+  Object.defineProperty(oldRoot, 'scrollTop', {
+    get: () => (oldRoot.querySelector('.abyss-statistics-section') === null ? 0 : 340),
+  });
+  h.mode.unmount();
+  const gate = deferred<void>();
+  h.sourcePort.whenStatisticsSettled = () => gate.promise;
+  h.reset();
+  h.mode.render(h.host);
+  const root = expectDefined(h.host.querySelector<HTMLElement>('.abyss-statistics'));
+  let scroll = 0;
+  const writes: number[] = [];
+  Object.defineProperty(root, 'scrollTop', {
+    get: () => scroll,
+    set: (next: number) => {
+      scroll = root.querySelector('.abyss-statistics-section') === null ? 0 : next;
+      writes.push(scroll);
+    },
+  });
+  const userScroll = () => {
+    root.scrollTop = 125;
+  };
+  expect(scroll).toBe(0);
+  gate.resolve();
+  await h.wait();
+  expect(writes).toEqual([340]);
+  expectDefined(h.host.querySelector<HTMLButtonElement>('[aria-label="Scope"]')).focus();
+  const focus = Reflect.get(HTMLElement.prototype, 'focus');
+  vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (
+    this: HTMLElement,
+    options?: FocusOptions,
+  ) {
+    focus.call(this, options);
+    // Browser focus scrolls an offscreen replacement control unless explicitly prevented.
+    if (root.contains(this) && options?.preventScroll !== true) scroll = 0;
+  });
+  userScroll();
+  h.reset();
+  h.replace(source([task('Updated')]));
+  await h.wait();
+  expect(scroll).toBe(125);
+  expect(document.activeElement?.getAttribute('aria-label')).toBe('Scope');
+  expect(writes).toEqual([340, 125]);
+});
 it('retains observation time and controls through real view switches, reusing cached models', async () => {
   const h = await harness();
   const build = vi.spyOn(StatisticsSession.prototype, 'view');

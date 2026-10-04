@@ -1621,7 +1621,7 @@ export class TaskIndex
       filePath: context.filePath,
       line,
       revision: context.noAuthority
-        ? `statistics:${line}`
+        ? `statistics:${exactBlock}`
         : this.reconciledRevision_abyssPrivate({
             ...context.revision,
             line,

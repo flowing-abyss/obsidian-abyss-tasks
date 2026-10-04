@@ -13,7 +13,7 @@ import {
 } from './helpers';
 useRealMoment();
 
-it('remounts retained Statistics charts through the actual PanelView window migration subscription', async () => {
+it('captures scroll before mode layout changes and remounts Statistics through owner migration', async () => {
   const app = await createAppWithFiles({}),
     settings = structuredClone(DEFAULT_SETTINGS);
   const application = configuredTaskApplication(app, settings);
@@ -73,6 +73,19 @@ it('remounts retained Statistics charts through the actual PanelView window migr
     );
     await vi.waitFor(() => {
       expect(view.contentEl.querySelectorAll('svg').length).toBeGreaterThan(0);
+    });
+    const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-statistics'));
+    const layout = expectDefined(view.contentEl.querySelector('.abyss-layout'));
+    // Native proof showed the outgoing layout clamps 263.5 to 257.5 before onCommit renders.
+    Object.defineProperty(root, 'scrollTop', {
+      get: () => (layout.classList.contains('abyss-layout--statistics') ? 263.5 : 257.5),
+    });
+    const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+    state.set('mode', 'tasks');
+    expect(root.isConnected).toBe(false);
+    state.set('mode', 'statistics');
+    await vi.waitFor(() => {
+      expect(view.contentEl.querySelector<HTMLElement>('.abyss-statistics')?.scrollTop).toBe(263.5);
     });
     const oldCharts = [...view.contentEl.querySelectorAll('.abyss-statistics-chart-svg')];
     expect(oldCharts).toHaveLength(3);

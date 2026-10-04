@@ -386,7 +386,7 @@ export async function timeline(
         metrics: [
           metric(
             'week-minutes',
-            'This week',
+            'Selected week',
             model.dayTotals.reduce((a, z) => a + z, 0),
             {
               unit: 'minutes',

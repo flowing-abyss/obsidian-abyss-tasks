@@ -104,7 +104,6 @@ export class StatisticsMode {
     this.forceClock_abyssPrivate = true;
     this.scheduler_abyssPrivate = new StatisticsWorkScheduler(this.owner_abyssPrivate);
     this.root_abyssPrivate = host.createDiv({ cls: 'abyss-statistics' });
-    this.root_abyssPrivate.scrollTop = this.scrollTop_abyssPrivate;
     const header = this.root_abyssPrivate.createDiv({ cls: 'abyss-center-header' });
     const title = header.createEl('h2', { text: 'Statistics' }),
       headerControls = header.createDiv({ cls: 'abyss-center-controls' });
@@ -315,6 +314,9 @@ export class StatisticsMode {
     this.status_abyssPrivate?.setText(text);
     if (!this.background_abyssPrivate)
       new Notice('Could not prepare statistics. Use retry in the panel.');
+    this.showRetry_abyssPrivate();
+  }
+  private showRetry_abyssPrivate(): void {
     if (this.status_abyssPrivate !== undefined)
       statisticsButton(this.status_abyssPrivate, 'Retry', () => {
         void this.retry_abyssPrivate().catch((cause: unknown) => {
@@ -338,6 +340,7 @@ export class StatisticsMode {
     );
   }
   private install_abyssPrivate(model: StatisticsViewModel): void {
+    const restoreScroll = this.model_abyssPrivate === undefined;
     this.model_abyssPrivate = model;
     this.label_abyssPrivate?.setText(
       model.currentState
@@ -355,6 +358,8 @@ export class StatisticsMode {
       );
     this.renderActions_abyssPrivate(model);
     this.options_abyssPrivate.host.renderComplete();
+    if (restoreScroll && this.root_abyssPrivate !== undefined)
+      this.root_abyssPrivate.scrollTop = this.scrollTop_abyssPrivate;
   }
   private sourceStatus_abyssPrivate(model: StatisticsViewModel): void {
     this.status_abyssPrivate?.empty();
@@ -362,10 +367,12 @@ export class StatisticsMode {
       this.status_abyssPrivate?.setText(
         'The task index is still loading. This observation is incomplete.',
       );
-    if (model.coverage.source.sourceIssues.length > 0)
+    if (model.coverage.source.sourceIssues.length > 0) {
       this.status_abyssPrivate?.setText(
         `${model.coverage.source.sourceIssues.length} sources unavailable · partial coverage`,
       );
+      this.showRetry_abyssPrivate();
+    }
   }
   private renderActions_abyssPrivate(model: StatisticsViewModel): void {
     this.actions_abyssPrivate?.empty();
@@ -463,6 +470,7 @@ export class StatisticsMode {
     this.minute_abyssPrivate = undefined;
   }
   unmount(): void {
+    this.scrollTop_abyssPrivate = this.root_abyssPrivate?.scrollTop ?? this.scrollTop_abyssPrivate;
     this.mounted_abyssPrivate = false;
     this.generation_abyssPrivate++;
     this.requested_abyssPrivate = false;
@@ -473,7 +481,6 @@ export class StatisticsMode {
     this.scheduler_abyssPrivate = undefined;
     this.sections_abyssPrivate?.destroy();
     this.sections_abyssPrivate = undefined;
-    this.scrollTop_abyssPrivate = this.root_abyssPrivate?.scrollTop ?? this.scrollTop_abyssPrivate;
     this.root_abyssPrivate?.remove();
     this.root_abyssPrivate = undefined;
     this.model_abyssPrivate = undefined;

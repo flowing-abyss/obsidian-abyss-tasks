@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StatisticsCharts } from '../src/panels/statistics/StatisticsCharts';
 import { TanStackStatisticsChart } from '../src/panels/statistics/TanStackStatisticsChart';
 import type { StatisticsChartModel } from '../src/statistics';
+import { prepareStatisticsDataset, StatisticsSession } from '../src/statistics';
 import { contracts } from '../tooling/css-contracts.mjs';
+import { closed, date, request, source, task, work } from './helpers/statisticsFixtures';
 
 const capture = vi.hoisted<{
   options: Array<{ onSelect?: ((point: unknown) => void) | undefined }>;
@@ -824,6 +826,61 @@ it.each([640, 240])(
     expect(chart.select).toHaveBeenCalledWith('edge');
   },
 );
+it.each(['time', 'age'] as const)('renders and selects dense Aging with zero %s', async (zero) => {
+  const now = Date.parse('2026-10-04T12:00Z');
+  const nodes = Array.from({ length: 601 }, (_, i) =>
+    task(`owner${i}`, {
+      planning: {
+        created: date(
+          new Date(now - (zero === 'time' ? i * 86400000 : 0)).toISOString().slice(0, 10),
+        ),
+      },
+      timeEntries:
+        zero === 'age' && i > 0
+          ? [closed(new Date(now - i * 60000).toISOString(), new Date(now).toISOString())]
+          : [],
+    }),
+  );
+  const dataset = required(await prepareStatisticsDataset(source(nodes), [], work));
+  const view = required(
+    await new StatisticsSession(dataset).view(request({ view: 'aging' }), work),
+  );
+  const value = required(
+    view.sections.flatMap((section) => section.charts).find((chart) => chart.id === 'aging'),
+  );
+  expect(value.layout).toBe('density');
+  expect(value.marks.reduce((sum, mark) => sum + required(mark.weight), 0)).toBe(601);
+  const el = host(document, 240),
+    chart = mount(el, value);
+  const rectangles = marks(el);
+  expect(rectangles).toHaveLength(zero === 'time' ? 30 : 20);
+  for (const rectangle of rectangles) {
+    expect(n(rectangle, 'width')).toBeGreaterThan(0);
+    expect(n(rectangle, 'height')).toBeGreaterThan(0);
+  }
+  const all = new Set<string>();
+  for (const mark of value.marks) {
+    expect(zero === 'time' ? mark.y : mark.x).toBe(0);
+    const bin = Number(mark.key.split(':')[zero === 'time' ? 0 : 1]),
+      bins = zero === 'time' ? 30 : 20;
+    const expected = nodes
+      .filter((_, i) => Math.min(bins - 1, Math.floor((i / 600) * bins)) === bin)
+      .map((node) => node.title)
+      .sort((a, b) => a.localeCompare(b));
+    const page = view.evidence(required(mark.selectionId), 0, 50);
+    expect(page.total).toBe(expected.length);
+    expect(page.rows.map((row) => row.title).sort((a, b) => a.localeCompare(b))).toEqual(expected);
+    page.rows.forEach((row) => all.add(row.title));
+  }
+  expect(all.size).toBe(601);
+  for (const position of ['Home', 'End']) {
+    key(chart.svg(), position);
+    key(chart.svg(), 'Enter');
+    const selection: unknown = chart.select.mock.lastCall?.[0];
+    expect(typeof selection).toBe('string');
+    expect(view.evidence(String(selection), 0, 50).total).toBeGreaterThan(0);
+  }
+});
 it('shows overlapping timeline intervals in separate subrows without changing clock positions', () => {
   const el = host();
   mount(

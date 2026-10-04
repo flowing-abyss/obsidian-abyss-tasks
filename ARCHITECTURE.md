@@ -198,6 +198,12 @@ at most50 suggestions while retaining every project path and tag; duplicate name
 [`StatisticsSections`](src/panels/statistics/StatisticsSections.ts) stages changed chart sections and
 commits only after all mounts succeed, preserving coherent last-good graphs and labels on background
 failure. Requested contexts show loading/error state. The mode owns diagnostic logging and retry.
+Partial source-acquisition diagnostics expose the same explicit Retry without re-reading sources on
+routine refresh. CenterPanel unmounts outgoing Statistics during the mode notification, before the
+outer layout changes; scroll is captured before teardown and restored after the first accepted
+content installation on reentry or owner migration, never on background observation updates.
+Control focus restoration prevents scrolling, and the Statistics scroller disables browser anchoring
+so staged section replacements preserve the user's viewport.
 Shared legends/intensity keys use the same semantic paint as the adapter; explanatory context and
 scope eligibility stay in accessible disclosure controls. Each chart mount supplies a stable unique
 engine resource prefix so SVG clip paths cannot collide across facets or leaves. Accessible chart
@@ -211,6 +217,9 @@ the existing live root card once, and offers exact matched-child selection with 
 Each open revalidates the root and exact descendant reference. Archive rows only open their current
 retained source at its line; they never enter mutation queries or task commands. Recorded transitions
 retain occurrence keys and instants even when the same owner pair repeats.
+Detached archive root revisions carry exact accepted block provenance under a non-authoritative
+Statistics prefix; descendants share that parent reference and their model keys exclude source bytes.
+Source opening rejects both changed block provenance and a current acquisition issue for that path.
 
 ### Pure Statistics observations
 

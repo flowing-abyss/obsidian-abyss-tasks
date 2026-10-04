@@ -338,10 +338,12 @@ class Aging {
   private async bin(): Promise<void> {
     this.dense = this.points.size > 600;
     if (!this.dense) return;
+    this.maxAge = Math.max(1, this.maxAge);
+    this.maxMinutes = Math.max(1, this.maxMinutes);
     const bins = new Map<string, AgePoint>();
     for (const point of this.points.values()) {
-      const x = Math.min(29, Math.floor((point.age / Math.max(1, this.maxAge)) * 30)),
-        y = Math.min(19, Math.floor((point.minutes / Math.max(1, this.maxMinutes)) * 20)),
+      const x = Math.min(29, Math.floor((point.age / this.maxAge) * 30)),
+        y = Math.min(19, Math.floor((point.minutes / this.maxMinutes) * 20)),
         key = `${x}:${y}`,
         cell = bins.get(key) ?? {
           age: (x * this.maxAge) / 30,

@@ -422,6 +422,10 @@ it('uses configured first-day weeks and refreshes immutable chart actions when p
       await session.view({ ...options, page: 1, weekStart: action.weekStart }, work),
     );
     expect(selected.sections[0]?.charts[1]?.marks[0]?.selected).toBe(true);
+    expect(
+      required(selected.sections[0]).metrics.find((metric) => metric.id === 'week-minutes'),
+    ).toMatchObject({ label: 'Selected week' });
+    expect(selected.dateLabel).toBe(first.dateLabel);
   }
 });
 it('exposes sub-hour gap geometry inside dense local-clock cells', async () => {

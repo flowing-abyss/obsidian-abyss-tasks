@@ -68,7 +68,11 @@ export class StatisticsEvidence {
       return taskSelectionRefPath(resolution.task, row.node);
     }
     const snapshot = this.source_abyssPrivate.readStatistics();
-    if (!this.source_abyssPrivate.isStatisticsCurrent(snapshot)) return undefined;
+    if (
+      !this.source_abyssPrivate.isStatisticsCurrent(snapshot) ||
+      snapshot.issues.some((issue) => issue.path === row.filePath)
+    )
+      return undefined;
     const root = snapshot.files
       .find((file) => file.kind === 'archive' && file.path === row.filePath)
       ?.roots.find((root) => sameTaskNodeRef(taskNodeRef(root), rootRef));
