@@ -182,7 +182,7 @@ export class LeftPanel {
   /** Rebuilds only the project section after presentation-only settings changes. */
   refreshProjectSettings(): void {
     const mode = this.state_abyssPrivate.get('mode');
-    if (mode === 'search' || mode === 'projects') return;
+    if (mode === 'search' || mode === 'projects' || mode === 'statistics') return;
     const hold = this.holdInlineAdd_abyssPrivate();
     this.replaceProjectsSection_abyssPrivate();
     this.settleInlineAdd_abyssPrivate(hold);
@@ -248,7 +248,7 @@ export class LeftPanel {
   private renderSections_abyssPrivate(): void {
     const mode = this.state_abyssPrivate.get('mode');
     // The projects mode is a self-contained deep view; search hides the left panel too.
-    if (mode === 'search' || mode === 'projects') return;
+    if (mode === 'search' || mode === 'projects' || mode === 'statistics') return;
 
     const allTasks = [...this.queries_abyssPrivate.list()];
     const allNodes = this.tasks_abyssPrivate.queries.listNodes();

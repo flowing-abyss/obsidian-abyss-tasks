@@ -110,6 +110,29 @@ export class ProjectStore {
   >();
   private sourceRevision_abyssPrivate = 0;
   private settingsSignature_abyssPrivate = '';
+  private acceptedTicket_abyssPrivate = 0;
+  private completedTicket_abyssPrivate = 0;
+  private disposed_abyssPrivate = false;
+  private readonly settlementWaiters_abyssPrivate = new Map<() => void, number>();
+
+  whenSettled(): Promise<void> {
+    if (
+      this.disposed_abyssPrivate ||
+      this.completedTicket_abyssPrivate >= this.acceptedTicket_abyssPrivate
+    )
+      return Promise.resolve();
+    const ticket = this.acceptedTicket_abyssPrivate;
+    return new Promise((resolve) => this.settlementWaiters_abyssPrivate.set(resolve, ticket));
+  }
+
+  private settle_abyssPrivate(ticket: number): void {
+    this.completedTicket_abyssPrivate = Math.max(ticket, this.completedTicket_abyssPrivate);
+    for (const [resolve, target] of this.settlementWaiters_abyssPrivate) {
+      if (target > this.completedTicket_abyssPrivate && !this.disposed_abyssPrivate) continue;
+      this.settlementWaiters_abyssPrivate.delete(resolve);
+      resolve();
+    }
+  }
 
   constructor(
     private readonly app_abyssPrivate: App,
@@ -255,6 +278,7 @@ export class ProjectStore {
   }
 
   private scheduleFlush_abyssPrivate(): void {
+    this.acceptedTicket_abyssPrivate += 1;
     if (this.debounce_abyssPrivate !== undefined) window.clearTimeout(this.debounce_abyssPrivate);
     this.debounce_abyssPrivate = window.setTimeout(() => {
       this.flush_abyssPrivate();
@@ -262,21 +286,27 @@ export class ProjectStore {
   }
 
   private flush_abyssPrivate(): void {
-    // A move that no listener has heard of publishes whatever the flush finds.
-    const before = this.unpublished_abyssPrivate ? undefined : this.cacheSignature_abyssPrivate();
+    this.debounce_abyssPrivate = undefined;
+    const ticket = this.acceptedTicket_abyssPrivate;
+    const full = this.readyFull_abyssPrivate;
     const observedPaths = new Set(this.readyPaths_abyssPrivate);
-    if (this.readyFull_abyssPrivate) {
-      this.recomputeAll_abyssPrivate();
-      for (const path of this.pendingSourceObservations_abyssPrivate.keys())
-        observedPaths.add(path);
-    } else if (this.readyPaths_abyssPrivate.size > 0) {
-      for (const path of this.readyPaths_abyssPrivate) this.updateOne_abyssPrivate(path);
-      this.rebuildCache_abyssPrivate();
-    }
     this.readyFull_abyssPrivate = false;
     this.readyPaths_abyssPrivate.clear();
-    this.notifyIfChanged_abyssPrivate(before);
-    for (const path of observedPaths) this.reconcileSourceObservation_abyssPrivate(path);
+    try {
+      const before = this.unpublished_abyssPrivate ? undefined : this.cacheSignature_abyssPrivate();
+      if (full) {
+        this.recomputeAll_abyssPrivate();
+        for (const path of this.pendingSourceObservations_abyssPrivate.keys())
+          observedPaths.add(path);
+      } else if (observedPaths.size > 0) {
+        for (const path of observedPaths) this.updateOne_abyssPrivate(path);
+        this.rebuildCache_abyssPrivate();
+      }
+      this.notifyIfChanged_abyssPrivate(before);
+      for (const path of observedPaths) this.reconcileSourceObservation_abyssPrivate(path);
+    } finally {
+      this.settle_abyssPrivate(ticket);
+    }
   }
 
   private recordSourceObservation_abyssPrivate(
@@ -519,7 +549,11 @@ export class ProjectStore {
   }
 
   destroy(): void {
+    this.disposed_abyssPrivate = true;
+    this.settle_abyssPrivate(this.acceptedTicket_abyssPrivate);
+    this.readyFull_abyssPrivate = false;
     if (this.debounce_abyssPrivate !== undefined) window.clearTimeout(this.debounce_abyssPrivate);
+    this.debounce_abyssPrivate = undefined;
     this.queryUnsub_abyssPrivate?.();
     this.queryUnsub_abyssPrivate = undefined;
     this.reconciliationUnsub_abyssPrivate?.();

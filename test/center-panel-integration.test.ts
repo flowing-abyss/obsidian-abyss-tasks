@@ -4,6 +4,7 @@ import { AppState } from '../src/app/AppState';
 import { moment } from '../src/obsidianMoment';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
+import type { TaskCardRenderer } from '../src/panels/center/TaskCardRenderer';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
@@ -7297,4 +7298,22 @@ it('offers readable source-note and outgoing-link controls with explanatory hove
     panel.destroy();
     el.remove();
   }
+});
+
+it('Statistics evidence property chips explicitly enter Tasks before changing task filters', () => {
+  const state = new AppState(),
+    settings = structuredClone(DEFAULT_SETTINGS);
+  const root = task({ title: 'Scoped evidence', tags: ['#work'] });
+  const panel = makeStaticPanel(state, [root], settings);
+  state.set('mode', 'statistics');
+  const saved = JSON.stringify(settings);
+  const renderer = (panel as unknown as { taskCardRenderer_abyssPrivate: TaskCardRenderer })
+    .taskCardRenderer_abyssPrivate;
+  const container = freshContainer();
+  renderer.render(container, root, [], { selected: false, showDelete: false });
+  expect(JSON.stringify(settings)).toBe(saved);
+  expectDefined(container.querySelector<HTMLElement>('.abyss-task-tag')).click();
+  expect(state.get('mode')).toBe('tasks');
+  expect(state.get('centerListViewState').filters).toContainEqual({ type: 'tag', value: '#work' });
+  panel.destroy();
 });

@@ -40,7 +40,11 @@ async function datePopulation(
   const known: number[] = [],
     unavailable: number[] = [];
   for (const task of ctx.dataset.tasks) {
-    if (dateApplies(task, field) && inScope(task, ctx.request.scope)) {
+    if (
+      (ctx.request.view !== 'cohorts' || !task.recurring) &&
+      dateApplies(task, field) &&
+      inScope(task, ctx.request.scope)
+    ) {
       const valid =
         field === 'due'
           ? task.due !== undefined
@@ -313,6 +317,47 @@ const RHYTHM_LABELS: Record<string, string> = {
   'completed-unknown': 'Completion date unavailable or future',
   'cancelled-unknown': 'Cancellation date unavailable or future',
 };
+function newOutcomes(metrics: readonly StatisticsMetric[]): StatisticsSection {
+  const values = metrics.filter((value) => value.id.startsWith('new-'));
+  const series = values.map((value, index) => ({
+    key: value.id,
+    label: value.label,
+    tone: required((['neutral', 'completed', 'cancelled'] as const)[index]),
+  }));
+  let total = 0;
+  const marks = values.map((value) => {
+    const start = total;
+    total += value.value ?? 0;
+    return {
+      key: value.id,
+      series: value.id,
+      x: start,
+      x2: total,
+      y: 'New tasks',
+      weight: value.value ?? 0,
+      selectionId: value.selectionId,
+    };
+  });
+  return {
+    id: 'new-outcomes',
+    title: 'Current outcomes of new tasks',
+    context: 'Tasks created in the selected period, classified by their current state.',
+    metrics: values,
+    legend: series,
+    charts: [
+      {
+        id: 'new-outcomes',
+        accessibleLabel: 'Current outcomes of new tasks',
+        kind: 'bars',
+        layout: 'stacked',
+        x: numeric('Tasks', total),
+        y: bands('', ['New tasks']),
+        series,
+        marks,
+      },
+    ],
+  };
+}
 async function rhythm(ctx: StatisticsContext): Promise<StatisticsSection[]> {
   const ids = await rhythmPopulation(ctx),
     chart = await rhythmChart(ctx, ids);
@@ -338,7 +383,7 @@ async function rhythm(ctx: StatisticsContext): Promise<StatisticsSection[]> {
       id: 'events',
       title: 'Recorded task events',
       context: 'Current outcomes of new tasks are separate from recorded completions.',
-      metrics,
+      metrics: metrics.filter((value) => !value.id.startsWith('new-')),
       charts: [chart],
       legend: chart.series,
     },
@@ -350,6 +395,7 @@ async function rhythm(ctx: StatisticsContext): Promise<StatisticsSection[]> {
       charts: [ageChart(ctx, ids)],
       legend: [],
     },
+    newOutcomes(metrics),
   ];
 }
 async function completion({
@@ -438,21 +484,7 @@ async function deadlines(ctx: StatisticsContext): Promise<StatisticsSection[]> {
     await b.step();
   }
   const keys = ['on-time', 'late', 'overdue', 'upcoming', 'cancelled', 'unknown'];
-  const marks: StatisticsMark[] = [];
-  let base = 0;
-  for (const key of keys) {
-    const list = groups.get(key) ?? [];
-    marks.push({
-      key,
-      x: 'Saved due dates',
-      y: base + list.length,
-      y2: base,
-      weight: list.length,
-      series: key,
-      selectionId: e.tasks(`deadline:${key}`, list),
-    });
-    base += list.length;
-  }
+  const { marks, maximum } = await deadlineMarks(ctx, groups, keys);
   return [
     {
       id: 'deadlines',
@@ -468,8 +500,11 @@ async function deadlines(ctx: StatisticsContext): Promise<StatisticsSection[]> {
           accessibleLabel: 'Current outcomes against saved due dates',
           kind: 'bars',
           layout: 'stacked',
-          x: bands('Due cohort', ['Saved due dates']),
-          y: numeric('Tasks', base),
+          x: bands(
+            'Due cohort',
+            c.buckets.map((bucket) => bucket.key),
+          ),
+          y: numeric('Tasks', maximum),
           series: keys.map((key) => ({
             key,
             label: key,
@@ -493,6 +528,45 @@ async function deadlines(ctx: StatisticsContext): Promise<StatisticsSection[]> {
       legend: [],
     },
   ];
+}
+async function deadlineMarks(
+  ctx: StatisticsContext,
+  groups: Map<string, number[]>,
+  keys: readonly string[],
+): Promise<{ marks: StatisticsMark[]; maximum: number }> {
+  const { calendar: c, evidence: e, budget: b, dataset } = ctx;
+  const marks: StatisticsMark[] = [];
+  const buckets = c.buckets.map(() => new Map<string, number[]>());
+  for (const [key, indices] of groups) {
+    e.tasks(`deadline:${key}`, indices);
+    for (const index of indices) {
+      const task = required(dataset.tasks[index]);
+      const bucket = required(buckets[bucketAt(c, dayOf(required(task.due)))]);
+      const list = bucket.get(key) ?? [];
+      list.push(index);
+      bucket.set(key, list);
+      await b.step();
+    }
+  }
+  let maximum = 0;
+  for (let i = 0; i < buckets.length; i++) {
+    let base = 0;
+    for (const key of keys) {
+      const list = required(buckets[i]).get(key) ?? [];
+      marks.push({
+        key: `${i}:${key}`,
+        x: required(c.buckets[i]).key,
+        y: base + list.length,
+        y2: base,
+        weight: list.length,
+        series: key,
+        selectionId: e.tasks(`deadline:${i}:${key}`, list),
+      });
+      base += list.length;
+    }
+    maximum = Math.max(maximum, base);
+  }
+  return { marks, maximum };
 }
 interface Cohort {
   indices: number[];
@@ -543,7 +617,7 @@ async function cohortGroups(ctx: StatisticsContext): Promise<Map<number, Cohort>
   const groups = new Map<number, Cohort>();
   for (const task of ctx.dataset.tasks) {
     const created = datedEvent(task, 'created', ctx.calendar);
-    if (inScope(task, ctx.request.scope) && inPeriod(created, ctx.calendar)) {
+    if (!task.recurring && inScope(task, ctx.request.scope) && inPeriod(created, ctx.calendar)) {
       const week = weekFloor(created, ctx.request.firstDayOfWeek),
         cohort = groups.get(week) ?? {
           indices: [],
@@ -563,6 +637,10 @@ function cohortState(mature: boolean, unknown: number): StatisticsMark['state'] 
   if (!mature) return 'immature';
   return unknown > 0 ? 'unknown' : 'measured';
 }
+function cohortText(mature: boolean, unknown: number, percent: number): string {
+  if (!mature) return '…';
+  return unknown > 0 ? '?' : `${Number(percent.toFixed(1))}%`;
+}
 function cohortMarks(ctx: StatisticsContext, week: number, cohort: Cohort): StatisticsMark[] {
   return HORIZONS.map((horizon, i) => {
     const mature = ctx.calendar.todayDay > cohort.youngest + horizon,
@@ -572,6 +650,7 @@ function cohortMarks(ctx: StatisticsContext, week: number, cohort: Cohort): Stat
       x: horizon,
       y: dateOf(week),
       state: cohortState(mature, cohort.unknown),
+      displayText: cohortText(mature, cohort.unknown, (within / cohort.indices.length) * 100),
       weight: mature && cohort.unknown === 0 ? (within / cohort.indices.length) * 100 : undefined,
       numerator: within,
       denominator: cohort.indices.length,
@@ -602,7 +681,7 @@ async function cohorts(ctx: StatisticsContext): Promise<StatisticsViewModel> {
     [
       {
         id: 'cohorts',
-        title: 'Weekly creation cohorts',
+        title: 'One-off tasks · weekly creation cohorts',
         context:
           'N includes cancellations. A horizon matures after the youngest creation completes its final horizon day.',
         metrics: [
@@ -614,6 +693,7 @@ async function cohorts(ctx: StatisticsContext): Promise<StatisticsViewModel> {
             id: 'cohorts',
             accessibleLabel: 'Completion within fixed horizons by creation week',
             kind: 'heatmap',
+            intensityScale: { domain: [0, 100], unit: '%' },
             x: numeric('Horizon days', 30),
             y: bands('Creation week', shown.map(dateOf)),
             series: [],

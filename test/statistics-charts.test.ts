@@ -714,3 +714,37 @@ describe('keyed chart owner', () => {
     expect(next.children).toHaveLength(0);
   });
 });
+it('renders typed horizontal stacks, supplied cell text and fixed percent intensity', () => {
+  const el = host();
+  mount(
+    el,
+    model({
+      kind: 'bars',
+      layout: 'stacked',
+      x: { type: 'number', label: 'Tasks', domain: [0, 10] },
+      y: { type: 'band', label: 'Project', categories: ['A'] },
+      marks: [{ key: 'one', x: 2, x2: 5, y: 'A', series: 'created', selectionId: 'one' }],
+    }),
+  );
+  expect(n(required(marks(el)[0]), 'width')).toBeGreaterThan(100);
+  expect(Number(el.querySelector('svg')?.getAttribute('viewBox')?.split(' ')[3])).toBeLessThan(120);
+  const heat = host();
+  mount(
+    heat,
+    model({
+      kind: 'heatmap',
+      intensityScale: { domain: [0, 100], unit: '%' },
+      x: { type: 'number', label: 'Days', domain: [0, 3] },
+      y: { type: 'band', label: 'Week', categories: ['A'] },
+      series: [],
+      marks: [
+        { key: 'percent', x: 1, y: 'A', weight: 20, displayText: '20%', state: 'measured' },
+        { key: 'immature', x: 3, y: 'A', displayText: '…', state: 'immature' },
+      ],
+    }),
+  );
+  expect(heat.textContent).toContain('20%');
+  expect(heat.textContent).toContain('…');
+  const measured = marks(heat).find((mark) => mark.getAttribute('fill')?.includes('20%') === true);
+  expect(measured).toBeDefined();
+});

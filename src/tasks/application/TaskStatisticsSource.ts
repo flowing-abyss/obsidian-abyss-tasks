@@ -5,6 +5,8 @@ export interface TaskStatisticsSource {
   readStatistics(): TaskStatisticsSnapshot;
   subscribeStatistics(listener: () => void): () => void;
   refreshStatistics(): Promise<void>;
+  whenStatisticsSettled(): Promise<void>;
+  isStatisticsCurrent(snapshot: TaskStatisticsSnapshot): boolean;
 }
 
 export interface TaskStatisticsDateIssue {

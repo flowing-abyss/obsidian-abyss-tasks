@@ -212,6 +212,7 @@ export default class TaskCalendarPlugin extends Plugin {
           commentTimeContext,
           () => this.saveViewStateWithNotice(),
           this.projectManager,
+          this.taskStatistics,
         ),
     );
   }

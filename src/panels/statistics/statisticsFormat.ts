@@ -96,3 +96,19 @@ export function statisticsMarkDescription(
   if (mark.detail !== undefined) pieces.push(mark.detail);
   return pieces.filter((piece) => piece !== undefined && piece !== '').join('\n');
 }
+
+export type StatisticsIntensity =
+  'unknown' | 'immature' | 'unavailable' | 'zero' | 'low' | 'medium' | 'high';
+export function statisticsIntensityPaint(level: StatisticsIntensity): string {
+  const accent = 'var(--interactive-accent)',
+    background = 'var(--background-primary)';
+  return {
+    unknown: 'var(--text-muted)',
+    immature: 'var(--background-secondary)',
+    unavailable: 'var(--background-modifier-border)',
+    zero: background,
+    low: `color-mix(in srgb, ${accent} 20%, ${background})`,
+    medium: `color-mix(in srgb, ${accent} 50%, ${background})`,
+    high: accent,
+  }[level];
+}

@@ -446,6 +446,7 @@ describe('PanelNavigator', () => {
     ['openCalendar', {}],
     ['openCalendarView', { mode: 'calendar' }],
     ['openProjects', {}],
+    ['openStatistics', {}],
     ['openSearch', {}],
   ] as const)('%s emits exactly one outer commit', (action, options) => {
     const { state, navigator } = harness(options);

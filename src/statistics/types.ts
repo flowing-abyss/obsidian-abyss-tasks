@@ -188,6 +188,7 @@ export interface StatisticsEvidenceRow {
   readonly node: TaskNodeRef;
   readonly entry?: TimeEntryRef | undefined;
   readonly relatedNode?: TaskNodeRef | undefined;
+  readonly atMs?: number | undefined;
   readonly contributionMinutes?: number | undefined;
   readonly context?: string | undefined;
 }

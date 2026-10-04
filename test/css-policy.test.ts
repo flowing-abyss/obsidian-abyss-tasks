@@ -394,6 +394,10 @@ it('ties finite runtime producer families to calls in their actual source owners
   const { default: ts } = await import('typescript');
   const { runtimeFamilies } = await import('../tooling/css-contracts.mjs');
   const expected: Record<string, string[]> = {
+    'src/panels/statistics/StatisticsSections.ts': [
+      '--abyss-statistics-key-opacity',
+      '--abyss-statistics-key-paint',
+    ],
     'src/ui/anchoredPopover.ts': [
       '--abyss-pop-height',
       '--abyss-pop-left',

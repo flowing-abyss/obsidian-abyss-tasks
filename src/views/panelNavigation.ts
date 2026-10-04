@@ -13,6 +13,7 @@ export interface PanelNavigationActions {
   openCalendar(): void;
   openCalendarView(view: CalViewType): void;
   openProjects(): void;
+  openStatistics(): void;
   openSearch(): void;
   openQuickCapture(): void;
   rebaseListIdentity(selection: ListSelection): void;
@@ -63,6 +64,10 @@ export class PanelNavigator implements PanelNavigationActions {
     this.openMode('calendar', () => {
       this.center.setCalendarView(view);
     });
+  }
+
+  openStatistics(): void {
+    this.openMode('statistics');
   }
 
   openProjects(): void {

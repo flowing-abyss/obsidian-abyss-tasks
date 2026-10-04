@@ -474,3 +474,72 @@ it('names recorded minutes, elapsed exposure and fractional mean in pattern deta
   expect(positive.detail).toContain('mean 0.00025 minutes per hour');
   expect(unavailable.detail).toContain('No elapsed exposure');
 });
+
+it('gives repeated owner transitions distinct occurrence identities and event instants', async () => {
+  const ds = required(
+    await prepareStatisticsDataset(
+      source([
+        task('A', {
+          timeEntries: [
+            closed('2026-10-04T08:00Z', '2026-10-04T08:10Z'),
+            closed('2026-10-04T08:20Z', '2026-10-04T08:30Z', 2),
+          ],
+        }),
+        task('B', {
+          timeEntries: [
+            closed('2026-10-04T08:10Z', '2026-10-04T08:20Z'),
+            closed('2026-10-04T08:30Z', '2026-10-04T08:40Z', 2),
+          ],
+        }),
+      ]),
+      [],
+      work,
+    ),
+  );
+  const view = required(await new StatisticsSession(ds).view(request({ view: 'sessions' }), work));
+  const rows = view.evidence('recorded-changes', 0, 50).rows;
+  expect(rows).toHaveLength(3);
+  expect(new Set(rows.map((r) => r.key)).size).toBe(3);
+  expect(rows.map((r) => r.atMs)).toEqual(
+    ['08:10', '08:20', '08:30'].map((t) => Date.parse(`2026-10-04T${t}Z`)),
+  );
+  expect(view.sections[0]?.charts[0]?.x).toMatchObject({
+    categories: [
+      '0',
+      '(0, 5]',
+      '(5, 15]',
+      '(15, 30]',
+      '(30, 60]',
+      '(60, 120]',
+      '(120, 240]',
+      '>240',
+    ],
+  });
+});
+it('uses bounded project series on intervals and explicit measured intensity scales', async () => {
+  const tasks = Array.from({ length: 15 }, (_, i) =>
+    task(`P${i}`, { timeEntries: [closed('2026-10-04T08:00Z', '2026-10-04T08:10Z')] }),
+  );
+  const ds = required(
+    await prepareStatisticsDataset(
+      source(tasks),
+      tasks.map((t) => ({ path: t.ref.filePath, name: t.title })),
+      work,
+    ),
+  );
+  const session = new StatisticsSession(ds);
+  const timeline = required(await session.view(request({ view: 'timeline' }), work));
+  const chart = required(timeline.sections[0]?.charts[0]);
+  expect(chart.series).toHaveLength(13);
+  expect(
+    chart.marks.every((mark) => chart.series.some((series) => series.key === mark.series)),
+  ).toBe(true);
+  const remaining = required(
+    timeline.sections[0]?.legend.find((item) => item.label === 'Remaining projects'),
+  );
+  expect(timeline.evidence(required(remaining.selectionId), 0, 50).total).toBe(3);
+  const patterns = required(await session.view(request({ view: 'patterns' }), work));
+  expect(patterns.sections[0]?.charts[0]?.intensityScale?.unit).toBe(
+    'mean minutes per elapsed hour',
+  );
+});

@@ -11,7 +11,7 @@ import {
 } from '../tasks';
 import { taskNodeRef, type TaskSelectionNode } from '../ui/taskSelection';
 
-export type ViewMode = 'tasks' | 'calendar' | 'search' | 'projects';
+export type ViewMode = 'tasks' | 'calendar' | 'search' | 'projects' | 'statistics';
 
 export type ListSelection =
   | 'inbox'

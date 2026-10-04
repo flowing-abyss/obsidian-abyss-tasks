@@ -167,6 +167,44 @@ releasing in `finally`. Nested releases are idempotent, and publication waits fo
 projections. Successful transfers publish one retained copy; partial transfers expose the actual
 retained copies without content deduplication. This hold grants no storage or mutation authority.
 
+`whenStatisticsSettled()` waits accepted projections and publication holds without activation or
+retry; unchanged work and deactivation release waiters. `isStatisticsCurrent(snapshot)` requires
+exact published identity with no pending or held work. `ProjectStore.whenSettled()` acknowledges
+already accepted flush tickets, including signature-unchanged work and teardown.
+
+### Native Statistics workflow
+
+[`StatisticsMode`](src/panels/statistics/StatisticsMode.ts) is retained by CenterPanel and acquires
+source/project subscriptions only while visible. The main composition supplies the optional source
+capability; the rail exposes Statistics only with that capability. Navigation uses the existing
+project-editor completion boundary. Scope, period, view, week, group and focus remain session state.
+Statistics uses the native right inspector overlay at every width, initially closed; Tasks retains
+its wide docked inspector. Property chips on evidence cards explicitly navigate to Tasks before
+applying normal task filters.
+
+An observation awaits source settlement, captures its snapshot, awaits accepted project work,
+captures current path/name descriptors, then validates source/catalog identity before and after
+preparation. Stale attempts repeat settlement without forcing source refresh. Ordinary control
+switches reuse the normalized dataset/session and captured analysis time; source/catalog changes,
+visible running minutes, local midnight and reactivation renew the observation. Owner-window
+MessageChannel work yields close both ports and release canceled waiters on unmount; a bounded
+owner timer is the fallback. Hidden views do not aggregate.
+
+[`StatisticsControls`](src/panels/statistics/StatisticsControls.ts) prepares a yielding scope inventory
+and keyed label lookup once per normalized dataset. The native searchable SuggestModal renders
+at most50 suggestions while retaining every project path and tag; duplicate names show path context.
+[`StatisticsSections`](src/panels/statistics/StatisticsSections.ts) stages changed chart sections and
+commits only after all mounts succeed, preserving coherent last-good graphs and labels on background
+failure. Requested contexts show loading/error state. The mode owns diagnostic logging and retry.
+Shared legends/intensity keys use the same semantic paint as the adapter; explanatory context and
+scope eligibility stay in accessible disclosure controls.
+
+[`StatisticsEvidence`](src/panels/statistics/StatisticsEvidence.ts) pages50 physical records, renders
+the existing live root card once, and offers exact matched-child selection with shown-record counts.
+Each open revalidates the root and exact descendant reference. Archive rows only open their current
+retained source at its line; they never enter mutation queries or task commands. Recorded transitions
+retain occurrence keys and instants even when the same owner pair repeats.
+
 ### Pure Statistics observations
 
 [`src/statistics/`](src/statistics/) consumes the public retained source snapshot and explicit
@@ -179,7 +217,7 @@ synthetic identities. These derived records grant no task mutation authority.
 `StatisticsSession` captures explicit time, calendar and scope for eleven engine-neutral views.
 Current open/Aging/dependency populations use live records; retained archive evidence participates
 in historical metrics and time. Global source readiness/issues remain visible independently of
-scoped retained coverage. Every preset ends on the observed local day; tracking additionally clips
+scoped retained coverage. Cohorts include only one-off nodes, excluding inherited recurrence. Every preset ends on the observed local day; tracking additionally clips
 to the exact observation instant. Six/twelve-month windows subtract calendar months from the civil
 exclusive end, clamping the day in the destination month.
 

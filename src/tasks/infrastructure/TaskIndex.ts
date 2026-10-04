@@ -1002,6 +1002,14 @@ export class TaskIndex
       : this.statistics_abyssPrivate.subscribe(listener);
   }
 
+  whenStatisticsSettled(): Promise<void> {
+    return this.statistics_abyssPrivate.whenSettled();
+  }
+
+  isStatisticsCurrent(snapshot: TaskStatisticsSnapshot): boolean {
+    return this.statistics_abyssPrivate.isCurrent(snapshot);
+  }
+
   async refreshStatistics(): Promise<void> {
     if (!this.statistics_abyssPrivate.active || this.destroyed_abyssPrivate) return;
     await this.initialize();

@@ -388,9 +388,11 @@ async function findFocus(ctx: StatisticsContext): Promise<number> {
   }
   return -1;
 }
-export async function dependencySections(
-  ctx: StatisticsContext,
-): Promise<{ sections: StatisticsSection[]; actions: StatisticsAction[] }> {
+export async function dependencySections(ctx: StatisticsContext): Promise<{
+  sections: StatisticsSection[];
+  actions: StatisticsAction[];
+  chartActions: Array<readonly [string, StatisticsAction]>;
+}> {
   const graph = new DependencyGraph(ctx.dataset, ctx.budget);
   await graph.build();
   const waiting = await waitingPopulation(ctx, graph);
@@ -408,12 +410,16 @@ export async function dependencySections(
     visible = ranked.slice(page * 12, (page + 1) * 12),
     actions: StatisticsAction[] = pageActions(page, ranked.length, 12),
     charts = [rankChart(ctx, visible, waiting)];
+  const chartActions: Array<readonly [string, StatisticsAction]> = [];
   for (const index of visible)
-    actions.push({
-      type: 'chain',
-      label: `Inspect ${required(ctx.dataset.tasks[index]).title}`,
-      focusKey: required(ctx.dataset.tasks[index]).key,
-    });
+    chartActions.push([
+      `direct:${index}`,
+      {
+        type: 'chain',
+        label: `Inspect ${required(ctx.dataset.tasks[index]).title}`,
+        focusKey: required(ctx.dataset.tasks[index]).key,
+      },
+    ]);
   const metrics = [
     metric(
       'waiting',
@@ -442,6 +448,7 @@ export async function dependencySections(
       },
     ],
     actions,
+    chartActions,
   };
 }
 

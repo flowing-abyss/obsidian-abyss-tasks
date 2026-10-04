@@ -58,6 +58,77 @@ async function harness(
 }
 
 describe('lazy complete task statistics evidence', () => {
+  it('settles accepted work, unchanged work and nested holds without acquiring sources', async () => {
+    const { index, app } = await harness({ 'live.md': '- [ ] Old\n' });
+    await index.initialize();
+    const release = index.subscribeStatistics(() => undefined);
+    await index.refreshStatistics();
+    const read = vi.spyOn(app.vault, 'cachedRead');
+    const before = index.readStatistics();
+    const outer = index.holdStatisticsPublication();
+    const inner = index.holdStatisticsPublication();
+    index.installCommittedContent('live.md', '- [ ] New\n');
+    expect(index.isStatisticsCurrent(before)).toBe(false);
+    let settled = false;
+    const pending = index.whenStatisticsSettled().then(() => {
+      settled = true;
+    });
+    await index.refreshStatistics();
+    inner();
+    inner();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    outer();
+    await pending;
+    expect(index.readStatistics().files[0]?.roots[0]?.title).toBe('New');
+    expect(index.isStatisticsCurrent(index.readStatistics())).toBe(true);
+    index.installCommittedContent('live.md', '- [ ] New\n');
+    await index.whenStatisticsSettled();
+    expect(read).not.toHaveBeenCalled();
+    const hold = index.holdStatisticsPublication();
+    const teardown = index.whenStatisticsSettled();
+    release();
+    await teardown;
+    await index.whenStatisticsSettled();
+    hold();
+  });
+
+  it('retains an in-flight publication hold across hide and reactivation while releasing old waiters', async () => {
+    const { index } = await harness({ 'live.md': '- [ ] Original\n' });
+    await index.initialize();
+    const off = index.subscribeStatistics(() => {});
+    await index.refreshStatistics();
+    const release = index.holdStatisticsPublication();
+    const hidden = index.whenStatisticsSettled();
+    off();
+    await hidden;
+    index.installCommittedContent('live.md', '- [ ] In flight\n');
+    const shown = index.subscribeStatistics(() => {});
+    await index.refreshStatistics();
+    expect(index.isStatisticsCurrent(index.readStatistics())).toBe(false);
+    expect(index.readStatistics().files).toEqual([]);
+    release();
+    await index.whenStatisticsSettled();
+    expect(index.readStatistics().files[0]?.roots[0]?.title).toBe('In flight');
+    shown();
+  });
+
+  it.each(['---\nproject: A\n---\n', '---\nproject: B\n---\n- [ ] Same\n'])(
+    'settles accepted metadata-only and empty-root files: %s',
+    async (content) => {
+      const { index } = await harness({ 'live.md': '' });
+      await index.initialize();
+      index.subscribeStatistics(() => undefined);
+      await index.refreshStatistics();
+      const prior = index.readStatistics();
+      index.installCommittedContent('live.md', content);
+      expect(index.isStatisticsCurrent(prior)).toBe(false);
+      await index.whenStatisticsSettled();
+      expect(index.isStatisticsCurrent(index.readStatistics())).toBe(true);
+      expect(index.readStatistics()).not.toBe(prior);
+    },
+  );
+
   it('publishes ordinary restored tasks before statistics after explicit acquisition retry', async () => {
     const { app, index } = await harness({ 'live.md': '- [ ] Retained\n' }, {}, true);
     await index.initialize();
@@ -318,6 +389,8 @@ describe('lazy complete task statistics evidence', () => {
       files: [],
       issues: [{ path: 'archive/2026.md', reason: 'read-failed' }],
     });
+    await index.whenStatisticsSettled();
+    expect(index.isStatisticsCurrent(index.readStatistics())).toBe(true);
     read.mockRestore();
     await index.refreshStatistics();
     expect(index.readStatistics().files[0]?.roots[0]?.title).toBe('Unavailable');

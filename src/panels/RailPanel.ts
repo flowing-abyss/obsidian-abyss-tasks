@@ -12,6 +12,7 @@ const ITEMS: RailItem[] = [
   { mode: 'tasks', icon: 'list-checks', label: 'Tasks' },
   { mode: 'calendar', icon: 'calendar-days', label: 'Calendar' },
   { mode: 'projects', icon: 'folder-kanban', label: 'Projects' },
+  { mode: 'statistics', icon: 'chart-no-axes-combined', label: 'Statistics' },
   { mode: 'search', icon: 'search', label: 'Search' },
 ];
 
@@ -35,6 +36,7 @@ export class RailPanel {
       };
     },
     private readonly navigation?: PanelNavigationActions,
+    private readonly statisticsAvailable = false,
   ) {}
 
   mount(container: HTMLElement): void {
@@ -67,6 +69,7 @@ export class RailPanel {
 
     const topGroup = this.el.createDiv({ cls: 'abyss-rail-top' });
     for (const item of ITEMS) {
+      if (item.mode === 'statistics' && !this.statisticsAvailable) continue;
       const btn = topGroup.createEl('button', {
         cls: `abyss-rail-btn${mode === item.mode ? ' is-active' : ''}`,
         attr: { 'aria-label': item.label, title: item.label },
@@ -127,6 +130,7 @@ export class RailPanel {
   private openMode(mode: ViewMode): void {
     if (mode === 'tasks') this.navigation?.openTasks();
     else if (mode === 'calendar') this.navigation?.openCalendar();
+    else if (mode === 'statistics') this.navigation?.openStatistics();
     else if (mode === 'projects') this.navigation?.openProjects();
     else this.navigation?.openSearch();
   }

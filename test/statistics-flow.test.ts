@@ -247,3 +247,59 @@ it('discloses scoped due and cohort date eligibility separately from period outc
       expect(metrics.filter((m) => m.role !== 'coverage').every((m) => m.value === 0)).toBe(true);
   }
 });
+
+it('renders due-date bucket stacks with exact segment evidence and one-off cohort display', async () => {
+  const ds = required(
+    await prepareStatisticsDataset(
+      source([
+        task('First', { planning: { due: date('2026-10-01'), created: date('2026-10-01') } }),
+        task('Second', { planning: { due: date('2026-10-02'), created: date('2026-10-01') } }),
+        task('Repeating', { recurrence: 'every day', planning: { created: date('2026-10-01') } }),
+      ]),
+      [],
+      work,
+    ),
+  );
+  const session = new StatisticsSession(ds);
+  const due = required(await session.view(request({ view: 'deadlines' }), work));
+  const chart = required(due.sections[0]?.charts[0]);
+  expect(new Set(chart.marks.map((m) => m.x)).size).toBe(4);
+  const nonempty = chart.marks.filter((m) => (m.weight ?? 0) > 0);
+  expect(nonempty).toHaveLength(2);
+  expect(
+    nonempty.map((m) => due.evidence(required(m.selectionId), 0, 50).rows.map((r) => r.title)),
+  ).toEqual([['First'], ['Second']]);
+  const cohorts = required(await session.view(request({ view: 'cohorts' }), work));
+  const heat = required(cohorts.sections[0]?.charts[0]);
+  expect(heat.intensityScale).toEqual({ domain: [0, 100], unit: '%' });
+  expect(heat.marks[0]).toMatchObject({ denominator: 2, displayText: '0%' });
+});
+it('separates current outcomes of new tasks from event totals in a three-part composition', async () => {
+  const ds = required(
+    await prepareStatisticsDataset(
+      source([
+        task('Open', { planning: { created: date('2026-10-01') } }),
+        task('Done', {
+          status: 'done',
+          planning: { created: date('2026-10-01'), completion: date('2026-10-02') },
+        }),
+        task('Cancelled', {
+          status: 'cancelled',
+          statusSymbol: '-',
+          planning: { created: date('2026-10-01'), cancelled: date('2026-10-02') },
+        }),
+      ]),
+      [],
+      work,
+    ),
+  );
+  const view = required(await new StatisticsSession(ds).view(request(), work));
+  const section = required(view.sections.find((section) => section.id === 'new-outcomes'));
+  expect(view.sections[0]?.metrics.map((metric) => metric.id)).not.toContain('new-open');
+  expect(section.charts[0]?.marks.map((mark) => mark.weight)).toEqual([1, 1, 1]);
+  expect(
+    section.charts[0]?.marks.map(
+      (mark) => view.evidence(required(mark.selectionId), 0, 50).rows[0]?.title,
+    ),
+  ).toEqual(['Open', 'Done', 'Cancelled']);
+});

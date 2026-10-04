@@ -82,6 +82,7 @@ export class CompactPaneAccess {
   }
 
   modeChanged(mode: AppStateData['mode']): void {
+    this.#syncButtonAvailability();
     if (mode !== 'tasks') {
       this.cancelPending();
       this.close(false);
@@ -269,7 +270,8 @@ export class CompactPaneAccess {
     if (
       elements == null ||
       !this.#isCompactPaneCollapsed(pane) ||
-      this.#options.mode() !== 'tasks'
+      (this.#options.mode() !== 'tasks' &&
+        !(this.#options.mode() === 'statistics' && pane === 'right'))
     ) {
       return;
     }
@@ -345,11 +347,11 @@ export class CompactPaneAccess {
   #syncButtonAvailability(): void {
     this.#compactPaneElements?.leftButton.toggleClass(
       'is-compact-available',
-      this.#compactLeftCollapsed,
+      this.#options.mode() !== 'statistics' && this.#compactLeftCollapsed,
     );
     this.#compactPaneElements?.rightButton.toggleClass(
       'is-compact-available',
-      this.#compactRightCollapsed,
+      this.#isCompactPaneCollapsed('right'),
     );
   }
 
@@ -387,6 +389,7 @@ export class CompactPaneAccess {
   }
 
   #isCompactPaneCollapsed(pane: CompactPane): boolean {
+    if (this.#options.mode() === 'statistics') return pane === 'right';
     return pane === 'left' ? this.#compactLeftCollapsed : this.#compactRightCollapsed;
   }
 }

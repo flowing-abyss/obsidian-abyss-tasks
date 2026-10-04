@@ -30,6 +30,7 @@ import type {
   TaskRef,
   TaskResolution,
   TaskSnapshot,
+  TaskStatisticsSource,
   TimeTrackingQueryApi,
 } from '../tasks';
 import { parseRecurrenceRule, taskCommandRootRef, taskNodeAddress } from '../tasks';
@@ -106,6 +107,7 @@ type PanelViewDependencies = [
   commentTimeContext?: CommentTimeContextProvider,
   onSaveViewState?: () => Promise<void>,
   projectManager?: ProjectManager,
+  statisticsSource?: TaskStatisticsSource,
 ];
 
 function hasFinitePositiveBounds(bounds: DOMRect): boolean {
@@ -189,6 +191,8 @@ export class PanelView extends ItemView {
   private timeTracking_abyssPrivate: TrackingSurface | undefined;
   private railTracking_abyssPrivate: RailTrackingWidgetHandle | undefined;
 
+  private readonly statisticsSource_abyssPrivate: TaskStatisticsSource | undefined;
+
   constructor(leaf: WorkspaceLeaf, ...dependencies: PanelViewDependencies) {
     super(leaf);
     const [
@@ -201,7 +205,9 @@ export class PanelView extends ItemView {
       commentTimeContext,
       onSaveViewState = async () => {},
       projectManager,
+      statisticsSource,
     ] = dependencies;
+    this.statisticsSource_abyssPrivate = statisticsSource;
     this.settings_abyssPrivate = settings;
     this.tagManager_abyssPrivate = tagManager;
     this.queries_abyssPrivate = queries;
@@ -519,6 +525,7 @@ export class PanelView extends ItemView {
       this.state_abyssPrivate,
       this.app as never,
       this.panelNavigation_abyssPrivate,
+      this.statisticsSource_abyssPrivate !== undefined,
     );
     this.left_abyssPrivate = new LeftPanel({
       state: this.state_abyssPrivate,
@@ -533,6 +540,7 @@ export class PanelView extends ItemView {
       onSaveViewState: this.onSaveViewState_abyssPrivate,
     });
     this.center_abyssPrivate = new CenterPanel({
+      statisticsSource: this.statisticsSource_abyssPrivate,
       state: this.state_abyssPrivate,
       app: this.app,
       settings: this.settings_abyssPrivate,
@@ -621,6 +629,7 @@ export class PanelView extends ItemView {
 
   private followNoteChange_abyssPrivate(change: NotePathChange): void {
     if (change.type === 'renamed') {
+      this.center_abyssPrivate.followStatisticsNote(change.oldPath, change.path);
       this.panelNavigation_abyssPrivate.followNoteRename(change.oldPath, change.path);
       const panel = this.state_abyssPrivate.get('projectsPanel');
       if (panel.view === 'dashboard' && panel.path === change.oldPath) {
@@ -628,6 +637,7 @@ export class PanelView extends ItemView {
       }
       return;
     }
+    this.center_abyssPrivate.followStatisticsNote(change.path);
     this.panelNavigation_abyssPrivate.followNoteDelete(change.path);
     const panel = this.state_abyssPrivate.get('projectsPanel');
     if (panel.view === 'dashboard' && panel.path === change.path) {

@@ -72,6 +72,13 @@ const privateOwners = new Set([
   'TimedBlockFocusRetention',
   'TagPickerModal',
   'TagGroupAppearanceModal',
+  'StatisticsMode',
+  'StatisticsControls',
+  'StatisticsEvidence',
+  'StatisticsSections',
+  'StatisticsWorkScheduler',
+  'StatisticsCharts',
+  'ScopePicker',
 ]);
 
 function privateOwner(node: ts.Node): string | undefined {

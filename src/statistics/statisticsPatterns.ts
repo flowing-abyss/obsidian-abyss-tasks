@@ -184,6 +184,10 @@ export async function patternsSection(
         id: 'patterns',
         accessibleLabel: 'Weekday by hour recorded minutes divided by calendar exposure',
         kind: 'heatmap',
+        intensityScale: {
+          domain: [0, Math.max(0, ...marks.map((mark) => mark.weight ?? 0))],
+          unit: 'mean minutes per elapsed hour',
+        },
         x: {
           ...numeric('Local hour', 24),
           tickLabels: Array.from(

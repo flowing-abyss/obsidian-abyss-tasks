@@ -1,5 +1,5 @@
 import { arrow } from '@tanstack/charts/arrow';
-import { barY } from '@tanstack/charts/bar';
+import { barX, barY } from '@tanstack/charts/bar';
 import { mountChart } from '@tanstack/charts/dom';
 import { dot } from '@tanstack/charts/dot';
 import { lineY } from '@tanstack/charts/line';
@@ -15,6 +15,7 @@ import type { ChartMark, ChartPoint, ChartPositionScaleOptions } from '@tanstack
 import type { StatisticsAxis, StatisticsChartModel, StatisticsMark } from '../../statistics';
 import type { StatisticsChartHandle, StatisticsChartRenderer } from './StatisticsChart';
 import {
+  statisticsIntensityPaint,
   statisticsMarkDescription,
   statisticsNumber,
   statisticsSeriesOpacity,
@@ -31,6 +32,8 @@ const ACCENT = 'var(--interactive-accent)';
 const NETWORK_MARGIN = { top: 35, left: 55, right: 55, bottom: 20 };
 
 function height(model: StatisticsChartModel): number {
+  if (model.kind === 'bars' && model.x.type === 'number' && model.y.type === 'band')
+    return model.y.categories.length * 28 + 48;
   if (model.y.type === 'band' && (model.kind === 'heatmap' || model.kind === 'timeline'))
     return Math.max(150, model.y.categories.length * (model.kind === 'timeline' ? 36 : 26) + 48);
   return model.facet === undefined ? 250 : 205;
@@ -72,8 +75,7 @@ function axisPolicy(
   width: number,
   side: 'x' | 'y',
 ): Exclude<ChartPositionScaleOptions<Value>['axis'], false | undefined> {
-  const labels =
-    value.type === 'number' ? new Map(value.tickLabels ?? []) : new Map<number, string>();
+  const labels = new Map<string | number, string>(value.tickLabels ?? []);
   const candidates = tickCandidates(value, width);
   const count = side === 'x' ? Math.max(2, Math.floor(width / 105)) : 4;
   const unit = value.type === 'number' ? value.unit : '';
@@ -84,7 +86,7 @@ function axisPolicy(
       size: 0,
       ...(candidates === undefined ? { count } : { values: candidates }),
       format: (tick) =>
-        typeof tick === 'number' ? (labels.get(tick) ?? statisticsNumber(tick, unit)) : tick,
+        labels.get(tick) ?? (typeof tick === 'number' ? statisticsNumber(tick, unit) : tick),
     },
     tickLabels: { fontSize: 11, opacity: 1, thin: { minGap: 9, priority: 'ends' } },
   };
@@ -122,6 +124,17 @@ function seriesMark(
 ): RenderMark {
   const paint = statisticsSeriesPaint(item, model.series),
     opacity = statisticsSeriesOpacity(item);
+  if (model.kind === 'bars' && model.x.type === 'number' && model.y.type === 'band')
+    return barX(rows, {
+      id: `bars:${item.key}`,
+      x1: (mark) => number(mark, 'x'),
+      x2: (mark) => mark.x2 ?? number(mark, 'x'),
+      y: 'y',
+      key: 'key',
+      fill: paint,
+      fillOpacity: opacity,
+      maxThickness: 28,
+    });
   if (model.kind === 'bars')
     return barY(rows, {
       id: `bars:${item.key}`,
@@ -171,17 +184,9 @@ function heatBucket(mark: StatisticsMark, maximum: number): string {
   return fraction < 0.67 ? 'medium' : 'high';
 }
 function heatMarks(model: StatisticsChartModel): RenderMark[] {
-  const maximum = Math.max(0, ...model.marks.map((mark) => mark.weight ?? 0));
-  const buckets = ['unknown', 'immature', 'unavailable', 'zero', 'low', 'medium', 'high'];
-  const colors = [
-    MUTED,
-    'var(--background-secondary)',
-    'var(--background-modifier-border)',
-    BACKGROUND,
-    `color-mix(in srgb, ${ACCENT} 20%, ${BACKGROUND})`,
-    `color-mix(in srgb, ${ACCENT} 50%, ${BACKGROUND})`,
-    ACCENT,
-  ];
+  const maximum =
+    model.intensityScale?.domain[1] ?? Math.max(0, ...model.marks.map((mark) => mark.weight ?? 0));
+  const buckets = ['unknown', 'immature', 'unavailable', 'zero', 'low', 'medium', 'high'] as const;
   const result: RenderMark[] = [];
   for (let i = 0; i < buckets.length; i++) {
     const rows = model.marks.filter((mark) => heatBucket(mark, maximum) === buckets[i]);
@@ -192,7 +197,7 @@ function heatMarks(model: StatisticsChartModel): RenderMark[] {
           x: 'x',
           y: 'y',
           key: 'key',
-          fill: colors[i] ?? ACCENT,
+          fill: statisticsIntensityPaint(buckets[i] ?? 'high'),
           stroke: 'var(--background-modifier-border)',
           strokeWidth: 0.6,
           inset: 1,
@@ -213,9 +218,10 @@ function heatMarks(model: StatisticsChartModel): RenderMark[] {
           fontSize: 11,
           fill: FOREGROUND,
           text: (mark) =>
-            mark.state !== undefined && mark.state !== 'measured'
+            mark.displayText ??
+            (mark.state !== undefined && mark.state !== 'measured'
               ? '—'
-              : statisticsNumber(mark.weight ?? 0),
+              : statisticsNumber(mark.weight ?? 0)),
         }),
       ),
     );
@@ -236,31 +242,52 @@ function timelineRows(model: StatisticsChartModel): StatisticsMark[] {
 function timelineMarks(model: StatisticsChartModel): RenderMark[] {
   if (model.layout === 'density') return densityMarks(model);
   const rows = timelineRows(model);
-  return [
-    rect(rows, {
-      id: 'intervals',
-      x1: 'x',
-      x2: 'x2',
-      x: (mark) => (number(mark, 'x') + (mark.x2 ?? number(mark, 'x'))) / 2,
-      y: 'y',
-      key: 'key',
-      fill: ACCENT,
-      fillOpacity: 0.8,
-      radius: 2,
-      inset: 0,
-    }),
-  ];
+  const series = [...model.series];
+  if (rows.some((mark) => mark.series === undefined))
+    series.push({ key: '', label: '', tone: 'accent' });
+  return series.flatMap((item) => {
+    const values = rows.filter((mark) => (mark.series ?? '') === item.key);
+    return values.length === 0
+      ? []
+      : [
+          rect(values, {
+            id: `intervals:${item.key}`,
+            x1: 'x',
+            x2: 'x2',
+            x: (mark) => (number(mark, 'x') + (mark.x2 ?? number(mark, 'x'))) / 2,
+            y: 'y',
+            key: 'key',
+            fill: statisticsSeriesPaint(item, model.series),
+            fillOpacity: 0.8,
+            radius: 2,
+            inset: 0,
+          }),
+        ];
+  });
 }
 function densityMarks(model: StatisticsChartModel): RenderMark[] {
   const rows = model.kind === 'timeline' ? timelineRows(model) : model.marks;
-  const maximum = Math.max(0, ...rows.map((mark) => mark.weight ?? 0));
-  const paints = [
-    ['zero', BACKGROUND],
-    ['low', `color-mix(in srgb, ${ACCENT} 25%, ${BACKGROUND})`],
-    ['medium', `color-mix(in srgb, ${ACCENT} 55%, ${BACKGROUND})`],
-    ['high', ACCENT],
-  ] as const;
-  return paints.flatMap(([bucket, fill]) => {
+  if (model.kind === 'scatter' && rows.some((mark) => mark.series !== undefined))
+    return model.series.map((item) =>
+      rect(
+        rows.filter((mark) => mark.series === item.key),
+        {
+          id: `density:${item.key}`,
+          x1: 'x',
+          x2: 'x2',
+          y1: 'y',
+          y2: 'y2',
+          key: 'key',
+          fill: statisticsSeriesPaint(item, model.series),
+          inset: 0,
+        },
+      ),
+    );
+  const maximum =
+    model.intensityScale?.domain[1] ?? Math.max(0, ...rows.map((mark) => mark.weight ?? 0));
+  const paints = ['zero', 'low', 'medium', 'high'] as const;
+  return paints.flatMap((bucket) => {
+    const fill = statisticsIntensityPaint(bucket);
     const values = rows.filter((mark) => heatBucket(mark, maximum) === bucket);
     return values.length === 0
       ? []

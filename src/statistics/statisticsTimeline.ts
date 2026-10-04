@@ -275,6 +275,32 @@ class Timeline {
     };
   }
   charts(): StatisticsChartModel[] {
+    const marks = this.dense ? this.densityMarks() : this.intervalMarks();
+    const groups = new Map<string, string>();
+    if (!this.dense)
+      for (const fragment of this.fragments) {
+        const task = required(this.ctx.dataset.tasks[fragment.span.owner]);
+        groups.set(task.projectKey, task.projectName);
+      }
+    const keys = [...groups.keys()].sort(
+      (a, b) =>
+        Number(b === 'unassigned' || b === 'archive:unknown') -
+        Number(a === 'unassigned' || a === 'archive:unknown'),
+    );
+    const visible = new Set(keys.slice(0, 12));
+    const series = keys
+      .slice(0, 12)
+      .map((key) => ({ key, label: required(groups.get(key)), tone: 'accent' as const }));
+    if (keys.length > 12)
+      series.push({ key: 'remaining-projects', label: 'Remaining projects', tone: 'accent' });
+    if (!this.dense)
+      marks.forEach((mark, index) => {
+        const task = required(this.ctx.dataset.tasks[required(this.fragments[index]).span.owner]);
+        marks[index] = {
+          ...mark,
+          series: visible.has(task.projectKey) ? task.projectKey : 'remaining-projects',
+        };
+      });
     return [
       {
         id: 'timeline',
@@ -288,12 +314,26 @@ class Timeline {
             (_, hour) => [hour * 60, `${String(hour).padStart(2, '0')}:00`] as const,
           ),
         },
-        y: bands(
-          'Local day',
-          this.days.map((lane) => dateOf(lane.day)),
-        ),
-        series: [],
-        marks: this.dense ? this.densityMarks() : this.intervalMarks(),
+        y: {
+          type: 'band',
+          label: 'Local day',
+          categories: this.days.map((lane) => dateOf(lane.day)),
+          tickLabels: this.days.map(
+            (lane, i) =>
+              [
+                dateOf(lane.day),
+                `${dateOf(lane.day)} · ${Number((this.dayTotals[i] ?? 0).toFixed(1))} min`,
+              ] as const,
+          ),
+        },
+        series,
+        intensityScale: this.dense
+          ? {
+              domain: [0, Math.max(0, ...marks.map((mark) => mark.weight ?? 0))],
+              unit: 'recorded minutes',
+            }
+          : undefined,
+        marks,
       },
       this.overviewChart(),
     ];
@@ -331,6 +371,11 @@ export async function timeline(
 }> {
   const model = new Timeline(ctx);
   await model.prepare(spans);
+  const charts = model.charts();
+  const series = required(charts[0]).series;
+  const visible = new Set(
+    series.filter((item) => item.key !== 'remaining-projects').map((item) => item.key),
+  );
   return {
     sections: [
       {
@@ -357,8 +402,27 @@ export async function timeline(
             }),
           ),
         ],
-        charts: model.charts(),
-        legend: [],
+        charts,
+        legend: series.map((item) => ({
+          ...item,
+          selectionId: ctx.evidence.entryQuery(`timeline-project:${item.key}`, (entry) => {
+            const task = required(ctx.dataset.tasks[entry.owner]);
+            if (
+              !inScope(task, ctx.request.scope) ||
+              (item.key === 'remaining-projects'
+                ? visible.has(task.projectKey)
+                : task.projectKey !== item.key)
+            )
+              return undefined;
+            const amount = contribution(
+              entry,
+              Math.max(ctx.calendar.startMs, required(model.days[0]).start),
+              Math.min(ctx.calendar.endMs, required(model.days[6]).end),
+              ctx.request.nowMs,
+            );
+            return amount > 0 ? amount : undefined;
+          }),
+        })),
       },
     ],
     actions: model.actions(),

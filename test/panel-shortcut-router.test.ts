@@ -14,6 +14,7 @@ function navigationActions(): PanelNavigationActions {
     openCalendar: vi.fn(),
     openCalendarView: vi.fn(),
     openProjects: vi.fn(),
+    openStatistics: vi.fn(),
     openSearch: vi.fn(),
     openQuickCapture: vi.fn(),
     rebaseListIdentity: vi.fn(),

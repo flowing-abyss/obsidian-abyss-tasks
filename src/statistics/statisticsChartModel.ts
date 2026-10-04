@@ -11,6 +11,7 @@ export type StatisticsAxis =
   | {
       readonly type: 'band';
       readonly categories: readonly string[];
+      readonly tickLabels?: ReadonlyArray<readonly [string, string]> | undefined;
       readonly label: string;
     };
 export interface StatisticsMark {
@@ -23,6 +24,7 @@ export interface StatisticsMark {
   readonly selectionId?: string | undefined;
   readonly label?: string | undefined;
   readonly detail?: string | undefined;
+  readonly displayText?: string | undefined;
   readonly weight?: number | undefined;
   readonly numerator?: number | undefined;
   readonly denominator?: number | undefined;
@@ -62,7 +64,10 @@ export interface StatisticsChartModel {
     readonly selectionId?: string | undefined;
   }>;
   readonly layout?: 'stacked' | 'diverging' | 'facets' | 'density' | undefined;
+  readonly intensityScale?:
+    { readonly domain: readonly [number, number]; readonly unit: string } | undefined;
   readonly facet?: {
+    readonly actionId?: string | undefined;
     readonly key: string | undefined;
     readonly label: string;
   };

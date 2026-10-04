@@ -85,6 +85,15 @@ it('excludes ambiguous first date carriers without losing current physical child
   const v = await new StatisticsSession(required(ds)).view(request(), work);
   expect(required(v).evidence('created', 0, 50).total).toBe(1);
   expect(required(v).evidence('open-now', 0, 50).total).toBe(2);
+  const cohorts = required(
+    await new StatisticsSession(required(ds)).view(request({ view: 'cohorts' }), work),
+  );
+  expect(cohorts.sections[0]?.charts[0]?.marks).toEqual([]);
+  expect(
+    cohorts.sections[0]?.metrics
+      .filter((metric) => metric.role === 'coverage')
+      .every((metric) => metric.value === 0),
+  ).toBe(true);
 });
 it('reuses calendar preparation when only a view changes', async () => {
   let probes = 0;
@@ -271,7 +280,7 @@ it('reconciles all eleven views against the independent ten-role retained-eviden
   ).toEqual([1, 3, 2, 2, 1, 0]);
   const cohorts = await get('cohorts'),
     cells = required(required(cohorts.sections[0]).charts[0]).marks;
-  expect(cells.map((cell) => cell.denominator)).toEqual([7, 7, 7, 7, 7]);
+  expect(cells.map((cell) => cell.denominator)).toEqual([5, 5, 5, 5, 5]);
   expect(required(cells[0]).weight).toBe(0);
   expect(required(cells[1]).state).toBe('immature');
   const allocation = await get('allocation');

@@ -13,6 +13,7 @@ import {
 import { collectTaskNodeTags } from '../tags/taskTagCatalog';
 import { selectTaskList } from '../task-lists/TaskListSelector';
 import { outgoingTaskLinkValues, type TaskLinkValues } from '../task-lists/taskLinkValues';
+import type { TaskStatisticsSource } from '../tasks';
 import {
   localDate,
   type CommentTimeContextProvider,
@@ -41,6 +42,7 @@ import { startTaskNodeDrag } from '../ui/taskNodeDrag';
 import { renderedTaskNodeElements } from '../ui/taskPresentationIdentity';
 import { taskNodeRef } from '../ui/taskSelection';
 import type { TrackingSurface } from '../ui/timeTracking/TimeBadge';
+import { deviceTrackedTimeContext } from '../ui/timeTracking/TimeBadge';
 import {
   calendarMutationTarget,
   calendarOccurrenceForTask,
@@ -61,6 +63,8 @@ import { TaskCommands } from './center/TaskCommands';
 import { TaskMenus } from './center/TaskMenus';
 import { TaskSearch } from './center/TaskSearch';
 import { ProjectsPanel } from './projects/ProjectsPanel';
+import { StatisticsMode } from './statistics/StatisticsMode';
+import { TanStackStatisticsChart } from './statistics/TanStackStatisticsChart';
 import {
   mountTaskListRows,
   NO_MOUNTED_TASK_LIST_ROWS,
@@ -77,6 +81,7 @@ import {
 import { TaskRowSelection } from './task-list/taskRowSelection';
 
 interface CenterPanelOptions {
+  readonly statisticsSource?: TaskStatisticsSource | undefined;
   readonly state: AppState;
   readonly app: App;
   readonly settings: CalendarSettings;
@@ -101,6 +106,7 @@ interface CenterPanelOptions {
 
 export class CenterPanel {
   private el!: HTMLElement;
+  private readonly statistics_abyssPrivate: StatisticsMode | undefined;
   private readonly offs_abyssPrivate: Array<() => void> = [];
   private taskDatePickerCleanup_abyssPrivate: (() => void) | null = null;
   private taskCardRenderGeneration_abyssPrivate = 0;
@@ -249,6 +255,7 @@ export class CenterPanel {
     this.listViewControls_abyssPrivate = this.createListViewControls_abyssPrivate();
     this.taskCardRenderer_abyssPrivate = this.createTaskCardRenderer_abyssPrivate();
     this.taskSearch_abyssPrivate = this.createTaskSearch_abyssPrivate();
+    this.statistics_abyssPrivate = this.createStatistics_abyssPrivate(options);
     this.calendar_abyssPrivate = new CalendarMode({
       state,
       app,
@@ -262,6 +269,62 @@ export class CenterPanel {
     });
   }
 
+  private createStatistics_abyssPrivate(options: CenterPanelOptions): StatisticsMode | undefined {
+    const {
+      state,
+      app,
+      settings,
+      queries,
+      projectStore,
+      timeTracking,
+      onRenderTaskHeaderActions,
+      onRenderComplete = () => {},
+    } = options;
+    let statisticsGroups: readonly EffectiveTagGroup[] = [];
+    return options.statisticsSource === undefined
+      ? undefined
+      : new StatisticsMode({
+          state,
+          app,
+          settings,
+          source: options.statisticsSource,
+          queries,
+          projects: projectStore ?? {
+            list: () => [],
+            onUpdate: () => () => {},
+            whenSettled: async () => {},
+          },
+          renderer: new TanStackStatisticsChart(),
+          context: timeTracking?.context ?? deviceTrackedTimeContext,
+          ticker: timeTracking?.ticker,
+          host: {
+            renderComplete: () => {
+              onRenderComplete(this.el);
+            },
+            header: onRenderTaskHeaderActions,
+            beginEvidence: () => {
+              this.beginTaskCardRender_abyssPrivate();
+              this.md_abyssPrivate.unload();
+              this.md_abyssPrivate = new Component();
+              this.md_abyssPrivate.load();
+              statisticsGroups = this.effectiveTagGroups_abyssPrivate();
+            },
+            renderRoot: (host, root) => {
+              this.taskCardRenderer_abyssPrivate.render(host, root, statisticsGroups, {
+                selected: this.isTaskCardSelected_abyssPrivate(root),
+                showDelete: false,
+              });
+            },
+            select: (stack) => {
+              state.set('taskStack', stack);
+            },
+            openSource: async (path, line) => {
+              await app.workspace.openLinkText(path, '', false, { eState: { line } });
+            },
+          },
+        });
+  }
+
   private createTaskCardRenderer_abyssPrivate(): TaskCardRenderer {
     return new TaskCardRenderer({
       app: this.app_abyssPrivate,
@@ -269,7 +332,13 @@ export class CenterPanel {
       settings: this.settings_abyssPrivate,
       statusRegistry: this.statusRegistry_abyssPrivate,
       commands: this.taskCommands_abyssPrivate,
-      listControls: this.listViewControls_abyssPrivate,
+      listControls: {
+        addPropertyFilter: (filter) => {
+          if (this.state_abyssPrivate.get('mode') === 'statistics')
+            this.navigation_abyssPrivate.openTasks();
+          this.listViewControls_abyssPrivate.addPropertyFilter(filter);
+        },
+      },
       trackingEnabled: this.timeTracking_abyssPrivate !== undefined,
       host: {
         component: () => this.md_abyssPrivate,
@@ -707,7 +776,15 @@ export class CenterPanel {
       this.abandonTaskDateFocus_abyssPrivate();
   }
 
+  followStatisticsNote(oldPath: string, newPath?: string): void {
+    this.statistics_abyssPrivate?.followNote(oldPath, newPath);
+  }
+
   refresh(): void {
+    if (this.state_abyssPrivate.get('mode') === 'statistics') {
+      this.statistics_abyssPrivate?.refresh();
+      return;
+    }
     if (this.refreshMountedProjects_abyssPrivate(this.state_abyssPrivate.get('mode'))) return;
     if (this.taskSearch_abyssPrivate.refresh()) return;
     this.render_abyssPrivate();
@@ -743,6 +820,7 @@ export class CenterPanel {
   }
 
   destroy(): void {
+    this.statistics_abyssPrivate?.destroy();
     this.mounted_abyssPrivate = false;
     this.wholeCardFocus_abyssPrivate = null;
     this.cardReturn_abyssPrivate = null;
@@ -795,6 +873,18 @@ export class CenterPanel {
 
   private render_abyssPrivate(): void {
     const mode = this.state_abyssPrivate.get('mode');
+    if (mode === 'statistics' && this.statistics_abyssPrivate !== undefined) {
+      if (this.el.querySelector('.abyss-statistics') === null) {
+        this.beginTaskCardRender_abyssPrivate();
+        this.prepareRender_abyssPrivate(mode);
+        this.destroyProjectsPanel_abyssPrivate();
+        this.prepareNonCalendarRoot_abyssPrivate();
+        this.el.removeClass('abyss-center--projects');
+      }
+      this.statistics_abyssPrivate.render(this.el);
+      return;
+    }
+    this.statistics_abyssPrivate?.unmount();
     if (this.refreshMountedProjects_abyssPrivate(mode)) return;
     this.beginTaskCardRender_abyssPrivate();
     const retainTaskShell = this.canRetainTaskShell_abyssPrivate(mode);

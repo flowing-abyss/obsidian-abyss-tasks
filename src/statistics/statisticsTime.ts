@@ -65,7 +65,8 @@ async function sessionChart(
   entries: readonly ClosedSession[],
 ): Promise<StatisticsChartModel> {
   const edges = [0, 5, 15, 30, 60, 120, 240, Infinity],
-    bins = edges.map(() => [] as number[]);
+    bins = edges.map(() => [] as number[]),
+    labels = ['0', '(0, 5]', '(5, 15]', '(15, 30]', '(30, 60]', '(60, 120]', '(120, 240]', '>240'];
   for (const item of entries) {
     required(bins[edges.findIndex((edge) => item.minutes <= edge)]).push(item.entry);
     await ctx.budget.step();
@@ -74,12 +75,13 @@ async function sessionChart(
     id: 'session-lengths',
     accessibleLabel: 'Full closed-session length distribution',
     kind: 'bars',
-    x: bands('Minutes', edges.map(String)),
+    x: bands('Minutes', labels),
     y: numeric('Entries', Math.max(0, ...bins.map((bin) => bin.length))),
     series: [],
     marks: bins.map((bin, i) => ({
       key: `session-bin:${i}`,
-      x: String(edges[i]),
+      x: required(labels[i]),
+      label: `${required(labels[i])} minutes`,
       y: bin.length,
       selectionId: ctx.evidence.rows(`session-bin:${i}`, bin.length, (index) =>
         ctx.evidence.entryRow(required(ctx.dataset.entries[required(bin[index])])),
@@ -97,6 +99,8 @@ async function changesSection(ctx: StatisticsContext): Promise<StatisticsSection
         `${transition.gapMs / 60000} minute gap`,
       ),
       relatedNode: required(ctx.dataset.tasks[transition.from]).ref,
+      key: `transition:${transition.from}:${transition.to}:${transition.at}:${index}`,
+      atMs: transition.at,
     };
   });
   return {

@@ -151,6 +151,58 @@ function harness() {
 afterEach(() => vi.useRealTimers());
 
 describe('ProjectStore event convergence', () => {
+  it('settles accepted unchanged batches without notifications and releases teardown waiters', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const store = new ProjectStore(h.app, h.queries, DEFAULT_SETTINGS);
+    store.initialize();
+    const notify = vi.fn();
+    store.onUpdate(notify);
+    h.metadata();
+    await store.whenSettled();
+    h.reconciled([h.file.path]);
+    let done = false;
+    const barrier = store.whenSettled().then(() => {
+      done = true;
+    });
+    await Promise.resolve();
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(150);
+    await barrier;
+    expect(notify).not.toHaveBeenCalled();
+    h.index({ type: 'initialized' });
+    const pending = store.whenSettled();
+    store.destroy();
+    await pending;
+    await store.whenSettled();
+  });
+
+  it('acknowledges a captured flush while keeping reentrant accepted work pending', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const store = new ProjectStore(h.app, h.queries, DEFAULT_SETTINGS);
+    store.initialize();
+    let second: Promise<void> | undefined;
+    let secondDone = false;
+    store.onUpdate(() => {
+      h.reconciled([h.file.path]);
+      second = store.whenSettled().then(() => {
+        secondDone = true;
+      });
+    });
+    h.setTasks([task('done')]);
+    h.reconciled([h.file.path]);
+    const first = store.whenSettled();
+    await vi.advanceTimersByTimeAsync(150);
+    await first;
+    expect(second).toBeDefined();
+    expect(secondDone).toBe(false);
+    await vi.advanceTimersByTimeAsync(150);
+    await second;
+    expect(secondDone).toBe(true);
+    store.destroy();
+  });
+
   it('publishes only a current per-path source observation after the task barrier', async () => {
     vi.useFakeTimers();
     const h = harness();

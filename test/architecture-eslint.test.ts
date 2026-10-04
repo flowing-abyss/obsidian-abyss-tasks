@@ -470,4 +470,35 @@ describe('project lexical policy', () => {
     },
     LINTER_TIMEOUT_MS,
   );
+  it.each([
+    'StatisticsMode',
+    'StatisticsControls',
+    'StatisticsEvidence',
+    'StatisticsSections',
+    'StatisticsWorkScheduler',
+    'StatisticsCharts',
+    'TanStackStatisticsChart',
+  ])(
+    'enforces explicit owner capabilities in %s',
+    async (name) => {
+      const path = `src/panels/statistics/${name}.ts`;
+      expect(await check(path, 'void document;')).toEqual([
+        {
+          ruleId: 'project-policy/ambient',
+          messageId: 'owner',
+          line: 1,
+          column: 6,
+          endLine: 1,
+          endColumn: 14,
+        },
+      ]);
+      expect(
+        await check(
+          path,
+          'export function schedule(owner: Window) { owner.setTimeout(() => {}, 0); }',
+        ),
+      ).toEqual([]);
+    },
+    LINTER_TIMEOUT_MS,
+  );
 });

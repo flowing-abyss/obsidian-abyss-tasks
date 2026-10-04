@@ -5,17 +5,26 @@ import {
   type StatisticsChartModel,
   type StatisticsMark,
 } from './statisticsChartModel';
-import { active, inScope } from './statisticsDataset';
+import { active, inScope, NO_PROJECT } from './statisticsDataset';
 import { dependencySections } from './statisticsDependencies';
-import { age, ageBand, dateEligibility, datedEvent, inPeriod, overdue } from './statisticsFlow';
+import { age, ageBand, datedEvent, dateEligibility, inPeriod, overdue } from './statisticsFlow';
 import { contribution } from './statisticsIntervals';
 import { finish, metric, pageActions } from './statisticsViews';
 import { rankedNumber, required, sorted } from './statisticsWork';
-import type { StatisticsContext, StatisticsTask, StatisticsViewModel } from './types';
+import type {
+  StatisticsAction,
+  StatisticsContext,
+  StatisticsScope,
+  StatisticsSection,
+  StatisticsTask,
+  StatisticsViewModel,
+} from './types';
 const EVENTS = ['created', 'completed', 'cancelled'] as const;
 type EventKind = (typeof EVENTS)[number];
 interface MovementGroup {
   label: string;
+  scope: StatisticsScope;
+  origins: Map<string, number[]>;
   count: number;
   events: Map<EventKind, Map<number, number>>;
 }
@@ -26,6 +35,12 @@ function completionOrigin(
 ): string {
   if (task.created === undefined || dayOf(task.created) > completed) return 'unknown';
   return dayOf(task.created) < calendar.fromDay ? 'before' : 'new';
+}
+function projectScope(task: StatisticsTask): StatisticsScope {
+  if (task.fileKind === 'archive') return { type: 'archive' };
+  return task.projectKey === NO_PROJECT
+    ? { type: 'unassigned' }
+    : { type: 'project', path: task.filePath };
 }
 class Movement {
   readonly groups = new Map<string, MovementGroup>();
@@ -45,6 +60,9 @@ class Movement {
         list = this.origins.get(origin) ?? [];
       list.push(task.index);
       this.origins.set(origin, list);
+      const projectOrigins = group.origins.get(origin) ?? [];
+      projectOrigins.push(task.index);
+      group.origins.set(origin, projectOrigins);
     }
   }
   async prepare(): Promise<void> {
@@ -52,6 +70,8 @@ class Movement {
       if (inScope(task, this.ctx.request.scope)) {
         const group = this.groups.get(task.projectKey) ?? {
           label: task.projectName,
+          scope: projectScope(task),
+          origins: new Map<string, number[]>(),
           count: 0,
           events: new Map<EventKind, Map<number, number>>(),
         };
@@ -131,7 +151,7 @@ class Movement {
       accessibleLabel: `Cumulative retained events · ${group.label}`,
       kind: 'lines',
       layout: 'facets',
-      facet: { key, label: group.label },
+      facet: { key, label: group.label, actionId: `focus:${key}` },
       x: {
         ...numeric('Date', this.ctx.calendar.buckets.length),
         tickLabels: this.ctx.calendar.buckets.map(
@@ -157,7 +177,36 @@ async function movement(ctx: StatisticsContext): Promise<StatisticsViewModel> {
     ),
     page = Math.max(0, Math.floor(ctx.request.page ?? 0)),
     charts: StatisticsChartModel[] = [];
-  for (const key of keys.slice(page * 12, (page + 1) * 12)) charts.push(await model.chart(key));
+  const visible = keys.slice(page * 12, (page + 1) * 12);
+  const chartActions: Array<readonly [string, StatisticsAction]> = [];
+  const originMarks: StatisticsMark[] = [];
+  let originMax = 0;
+  for (const key of visible) {
+    charts.push(await model.chart(key));
+    const group = required(model.groups.get(key));
+    chartActions.push([`focus:${key}`, { type: 'scope', label: group.label, scope: group.scope }]);
+    let base = 0;
+    for (const origin of ['before', 'new', 'unknown']) {
+      const indices = group.origins.get(origin) ?? [];
+      originMarks.push({
+        key: `${key}:${origin}`,
+        x: base,
+        x2: base + indices.length,
+        y: key,
+        series: origin,
+        weight: indices.length,
+        label: group.label,
+        selectionId: ctx.evidence.tasks(`origin:${key}:${origin}`, indices),
+      });
+      base += indices.length;
+    }
+    originMax = Math.max(originMax, base);
+  }
+  const originSeries = [
+    { key: 'before', label: 'Created before period', tone: 'completed' as const },
+    { key: 'new', label: 'Created in period', tone: 'created' as const },
+    { key: 'unknown', label: 'Creation date unknown / invalid', tone: 'muted' as const },
+  ];
   const metrics = ['before', 'new', 'unknown'].map((origin) =>
     metric(
       `completion-origin:${origin}`,
@@ -176,11 +225,59 @@ async function movement(ctx: StatisticsContext): Promise<StatisticsViewModel> {
           'Cumulative retained events classified by current project. Zero origin precedes the period. Missing date series are unavailable; this does not reconstruct historical backlog.',
         metrics: [...metrics, ...(await dateEligibility(ctx, EVENTS))],
         charts,
-        legend: [],
+        legend: EVENTS.map((key) => ({
+          key,
+          label: key[0]?.toUpperCase() + key.slice(1),
+          tone: key,
+        })),
       },
+      originSection({ model, visible, originMax, originSeries, originMarks }),
     ],
     pageActions(page, keys.length, 12),
+    chartActions,
   );
+}
+function originSection({
+  model,
+  visible,
+  originMax,
+  originSeries,
+  originMarks,
+}: {
+  model: Movement;
+  visible: string[];
+  originMax: number;
+  originSeries: StatisticsChartModel['series'];
+  originMarks: StatisticsMark[];
+}): StatisticsSection {
+  return {
+    id: 'completion-origins',
+    title: 'Completions: new work or older work?',
+    context: 'Current project membership; same project page as Movement.',
+    metrics: [],
+    legend: originSeries,
+    charts: [
+      {
+        id: 'completion-origins',
+        accessibleLabel: 'Completed tasks by project and creation origin',
+        kind: 'bars',
+        layout: 'stacked',
+        x: numeric('Completed tasks', originMax),
+        y: {
+          type: 'band',
+          label: 'Project',
+          categories: visible,
+          tickLabels: visible.map((key) => [key, required(model.groups.get(key)).label] as const),
+        },
+        series: originSeries,
+        marks: originMarks,
+      },
+    ],
+  };
+}
+function overdueSeries(overdue: number, count: number): string {
+  if (overdue === count) return 'overdue';
+  return overdue > 0 ? 'mixed' : 'not-overdue';
 }
 interface AgePoint {
   age: number;
@@ -273,6 +370,7 @@ class Aging {
         y2: this.dense ? point.minutes + this.maxMinutes / 20 : undefined,
         weight: point.indices.length,
         overdue: point.overdue,
+        series: overdueSeries(point.overdue, point.indices.length),
         selectionId: this.ctx.evidence.tasks(`aging:${key}`, point.indices),
         detail: `${point.indices.length} tasks; ${point.overdue} overdue`,
       });
@@ -283,7 +381,11 @@ class Aging {
       layout: this.dense ? 'density' : undefined,
       x: numeric('Age', this.maxAge, 0, 'days'),
       y: numeric('Recorded time', this.maxMinutes, 0, 'minutes'),
-      series: [],
+      series: [
+        { key: 'overdue', label: 'Overdue', tone: 'overdue' },
+        { key: 'mixed', label: 'Mixed group', tone: 'cancelled' },
+        { key: 'not-overdue', label: 'Not overdue', tone: 'accent' },
+      ],
       marks,
     };
   }
@@ -369,5 +471,5 @@ export async function projectView(ctx: StatisticsContext): Promise<StatisticsVie
   if (ctx.request.view === 'movement') return movement(ctx);
   if (ctx.request.view === 'aging') return aging(ctx);
   const result = await dependencySections(ctx);
-  return finish(ctx, result.sections, result.actions);
+  return finish(ctx, result.sections, result.actions, result.chartActions);
 }

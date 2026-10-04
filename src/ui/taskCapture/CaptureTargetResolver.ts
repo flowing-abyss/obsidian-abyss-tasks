@@ -20,7 +20,10 @@ export type CaptureContext =
   | { readonly type: 'list'; readonly selection: ListSelection }
   | { readonly type: 'project-dashboard'; readonly path: string }
   | { readonly type: 'project-table'; readonly path: string }
-  | { readonly type: 'default'; readonly source: 'projects' | 'calendar' | 'search' };
+  | {
+      readonly type: 'default';
+      readonly source: 'projects' | 'calendar' | 'search' | 'statistics';
+    };
 
 export interface CaptureTarget {
   readonly label: string;

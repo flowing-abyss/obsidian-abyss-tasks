@@ -201,6 +201,11 @@ export const contracts = {
 };
 // Finite wrappers, scoped to their source owners. Contract tests execute/discover each family.
 export const runtimeFamilies = [
+  {
+    file: 'src/panels/statistics/StatisticsSections.ts',
+    helper: 'setStatisticsKey',
+    prefix: '--abyss-statistics-key-',
+  },
   { file: 'src/ui/anchoredPopover.ts', helper: 'setLength', prefix: '--abyss-pop-' },
   {
     file: 'src/panels/right/InspectorPlanningSurfaces.ts',

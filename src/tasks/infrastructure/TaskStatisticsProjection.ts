@@ -240,6 +240,7 @@ export class TaskStatisticsProjection {
   private generation = 0;
   private fileRevision = 0;
   private holds = 0;
+  private readonly settlementWaiters = new Set<() => void>();
   private running: Promise<void> | undefined;
   private snapshot: TaskStatisticsSnapshot = Object.freeze({
     revision: 0,
@@ -281,6 +282,7 @@ export class TaskStatisticsProjection {
       released = true;
       this.holds -= 1;
       if (this.running === undefined && this.pending.size === 0) this.publish();
+      this.releaseSettled();
     };
   }
 
@@ -317,10 +319,31 @@ export class TaskStatisticsProjection {
     while (this.active && this.running !== undefined) await this.running;
   }
 
+  isCurrent(snapshot: TaskStatisticsSnapshot): boolean {
+    return (
+      snapshot === this.snapshot &&
+      this.running === undefined &&
+      this.pending.size === 0 &&
+      this.holds === 0
+    );
+  }
+
+  whenSettled(): Promise<void> {
+    if (!this.active || this.isCurrent(this.snapshot)) return Promise.resolve();
+    return new Promise((resolve) => this.settlementWaiters.add(resolve));
+  }
+
+  private releaseSettled(): void {
+    if (this.active && !this.isCurrent(this.snapshot)) return;
+    for (const resolve of this.settlementWaiters) resolve();
+    this.settlementWaiters.clear();
+  }
+
   dispose(): void {
     this.generation += 1;
     this.listeners.clear();
     this.pending.clear();
+    this.releaseSettled();
     this.files.clear();
     this.keys.clear();
     this.issues.clear();
@@ -357,6 +380,7 @@ export class TaskStatisticsProjection {
       .finally(() => {
         this.running = undefined;
         if (this.active && this.pending.size > 0) this.schedule();
+        this.releaseSettled();
       });
   }
 

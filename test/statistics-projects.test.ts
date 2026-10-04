@@ -268,3 +268,47 @@ it('provides civil date tick labels for cumulative bucket coordinates', async ()
     expect(axis.tickLabels?.some(([value]) => value === 0)).toBe(false);
   }
 });
+it('binds movement facets and dependency ranks through opaque chart actions, with exact origin stacks', async () => {
+  const nodes = [
+    task('A', {
+      status: 'done',
+      planning: { created: date('2026-09-01'), completion: date('2026-10-01') },
+    }),
+    task('B', { dependencyId: 'B', planning: { created: date('2026-10-01') } }),
+    task('C', { dependsOn: ['B'] }),
+  ];
+  const ds = required(
+    await prepareStatisticsDataset(
+      source(nodes),
+      [
+        { path: 'A.md', name: 'Same' },
+        { path: 'B.md', name: 'Same' },
+      ],
+      work,
+    ),
+  );
+  const session = new StatisticsSession(ds),
+    movement = required(await session.view(request({ view: 'movement' }), work));
+  const facet = required(
+    movement.sections[0]?.charts.find((chart) => chart.facet?.key === 'project:A.md'),
+  );
+  expect(movement.chartActions.find(([id]) => id === facet.facet?.actionId)?.[1]).toMatchObject({
+    type: 'scope',
+    scope: { type: 'project', path: 'A.md' },
+  });
+  const origin = required(
+    movement.sections.find((section) => section.id === 'completion-origins')?.charts[0],
+  );
+  expect(origin.x.type).toBe('number');
+  expect(origin.y.type).toBe('band');
+  const mark = required(origin.marks.find((mark) => mark.series === 'before' && mark.weight === 1));
+  expect(movement.evidence(required(mark.selectionId), 0, 50).rows.map((row) => row.title)).toEqual(
+    ['A'],
+  );
+  const deps = required(await session.view(request({ view: 'dependencies' }), work));
+  const rank = required(deps.sections[0]?.charts[0]?.marks[0]);
+  expect(deps.chartActions.find(([id]) => id === rank.selectionId)?.[1]).toMatchObject({
+    type: 'chain',
+    focusKey: ds.tasks[1]?.key,
+  });
+});
