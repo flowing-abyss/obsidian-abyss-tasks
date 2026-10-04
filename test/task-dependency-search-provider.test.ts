@@ -577,3 +577,108 @@ describe('dependency search provider', () => {
     expect(fresh.root).not.toBe(option.task.root);
   });
 });
+
+describe('empty dependency pages', () => {
+  it.each([
+    ['root', 'changed', 'no-match'],
+    ['root', 'deleted', 'no-match'],
+    ['nested', 'changed', 'no-match'],
+    ['nested', 'deleted', 'no-match'],
+    ['root', 'changed', 'terminal'],
+    ['root', 'deleted', 'terminal'],
+    ['nested', 'changed', 'terminal'],
+    ['nested', 'deleted', 'terminal'],
+  ] as const)('rejects a captured %s ref %s before open (%s)', async (level, change, pageKind) => {
+    const h = await providerHarness({
+      'current.md': '- [ ] Current\n  - [ ] Child\n    - [ ] Nested',
+      'candidate.md': '- [ ] Candidate',
+    });
+    const current =
+      level === 'root'
+        ? h.current.target
+        : expectDefined(h.index.listNodes().find(({ node }) => node.title === 'Nested')).target;
+    const changed =
+      level === 'root' ? '- [ ] Changed' : '- [ ] Current\n  - [ ] Child\n    - [ ] Changed';
+    const deleted = level === 'root' ? '' : '- [ ] Current\n  - [ ] Child';
+    const replacement = change === 'changed' ? changed : deleted;
+    h.index.installCommittedContent('current.md', replacement);
+    const session = await h.provider.open(
+      pageKind === 'no-match' ? 'nonexistentxyz' : 'Candidate',
+      current,
+      'blocks',
+      h.signal,
+    );
+    const evaluate = vi.spyOn(h.index, 'dependencyEligibility');
+    const prepare = vi.spyOn(h.index, 'prepareDependencies');
+    const hydrate = vi.spyOn(h.search, 'resolvePage');
+    const detach = vi.spyOn(snapshots, 'taskSnapshotWithStatuses');
+    await expect(session.page(pageKind === 'no-match' ? 0 : 1, h.signal)).rejects.toMatchObject({
+      code: 'stale',
+    });
+    expect(evaluate).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(hydrate).not.toHaveBeenCalled();
+    expect(detach).not.toHaveBeenCalled();
+  });
+
+  it.each(['nonexistentxyz', ''])(
+    'validates valid empty/terminal pages without candidate work (query=%s)',
+    async (query) => {
+      const h = await providerHarness({ 'current.md': '- [ ] Current' });
+      const session = await h.provider.open(query, h.current.target, 'blocks', h.signal);
+      const eligibility = vi.spyOn(h.index, 'searchEligibility');
+      const prepare = vi.spyOn(h.index, 'prepareDependencies');
+      const evaluate = vi.spyOn(h.index, 'dependencyEligibility');
+      const hydrate = vi.spyOn(h.search, 'resolvePage');
+      const detach = vi.spyOn(snapshots, 'taskSnapshotWithStatuses');
+      const offset = query === '' ? 1 : 0;
+      expect(await session.page(offset, h.signal)).toEqual({
+        startOffset: offset,
+        nextOffset: offset,
+        totalCandidates: offset,
+        options: [],
+        hasMore: false,
+        budgetExhausted: false,
+      });
+      expect(eligibility).toHaveBeenCalledTimes(1);
+      expect(eligibility.mock.calls[0]?.[0]).toMatchObject({
+        current: h.current.target,
+        addresses: [],
+      });
+      expect(prepare).not.toHaveBeenCalled();
+      expect(evaluate).not.toHaveBeenCalled();
+      expect(hydrate).not.toHaveBeenCalled();
+      expect(detach).not.toHaveBeenCalled();
+      if (query === '') expect(h.backends).toHaveLength(0);
+    },
+  );
+
+  it('keeps empty eligibility signal/generation/current authority without graph preparation', async () => {
+    const h = await harness({ 'current.md': '- [ ] Current' });
+    const cursor = await h.search.open({ kind: 'nodes', query: '' }, h.signal);
+    const request = {
+      expectedGeneration: cursor.generation,
+      current: h.current.target,
+      direction: 'blocks' as const,
+      addresses: [],
+    };
+    const prepare = vi.spyOn(h.index, 'prepareDependencies');
+    const evaluate = vi.spyOn(h.index, 'dependencyEligibility');
+    await expect(h.index.searchEligibility(request, h.signal)).resolves.toEqual({
+      generation: cursor.generation,
+      items: [],
+    });
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await expect(h.index.searchEligibility(request, cancelled.signal)).rejects.toMatchObject({
+      code: 'aborted',
+    });
+    h.index.installCommittedContent('other.md', '- [ ] Other');
+    await expect(h.index.searchEligibility(request, h.signal)).rejects.toMatchObject({
+      code: 'stale',
+    });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(evaluate).not.toHaveBeenCalled();
+    expect(h.backends).toHaveLength(0);
+  });
+});

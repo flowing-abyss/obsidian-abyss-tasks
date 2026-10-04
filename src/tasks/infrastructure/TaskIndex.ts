@@ -1649,6 +1649,11 @@ export class TaskIndex
   ): Promise<TaskSearchEligibilityBatch> {
     if (request.addresses.length > 30)
       throw new TaskSearchError('invalid-request', 'Dependency candidate batch too large');
+    if (request.addresses.length === 0) {
+      this.checkSearchGeneration_abyssPrivate(request.expectedGeneration, signal);
+      this.checkSearchCurrent_abyssPrivate(request.current);
+      return { generation: request.expectedGeneration, items: [] };
+    }
     await this.prepareDependencies(request.expectedGeneration, signal);
     this.checkSearchGeneration_abyssPrivate(request.expectedGeneration, signal);
     this.checkSearchCurrent_abyssPrivate(request.current);

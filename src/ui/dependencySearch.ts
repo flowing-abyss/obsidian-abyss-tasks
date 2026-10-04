@@ -462,7 +462,7 @@ class DependencySearchController {
     if (page === undefined || !this.#live(request)) return;
     this.#page = page;
     this.#options = page.options;
-    if (edge !== undefined) this.#selected = this.#edge(edge)?.task.target;
+    if (edge !== undefined) this.#selected = this.#edge(edge)?.task.target ?? this.#selected;
     this.view.createAffordance.removeAttribute('aria-disabled');
     renderSearchOptions(this.view, page.options, this.#direction, this.#select);
     this.view.list.querySelectorAll('[role="option"]').forEach((element) => {
@@ -575,7 +575,7 @@ class DependencySearchController {
     ] as const) {
       const button = paging.createEl('button', {
         text: delta < 0 ? 'Previous' : 'Next',
-        attr: { 'aria-label': label },
+        attr: { 'aria-label': label, 'aria-disabled': String(disabled) },
       });
       button.disabled = disabled;
       button.addEventListener('click', () => {

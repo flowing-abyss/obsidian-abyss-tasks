@@ -23,12 +23,16 @@ afterEach(() => {
   activeDocument.body.empty();
   vi.restoreAllMocks();
 });
-async function fixture(count = 65, direction: DependencyDirection = 'blocks') {
+async function fixture(
+  count = 65,
+  direction: DependencyDirection = 'blocks',
+  files?: Record<string, string>,
+) {
   const candidates = Array.from({ length: count }, (_, i) => `- [ ] Candidate ${i} 🆔 c${i}`).join(
     '\n',
   );
   const h = await createCanonicalSearchHarness(
-    {
+    files ?? {
       'tasks.md': `- [ ] Current 🆔 current\n${candidates}`,
     },
     DEFAULT_SETTINGS,
@@ -829,3 +833,144 @@ it.each([
 ] as const)('preserves the shared %s rejection label', (reason, message) => {
   expect(rejectionLabel(reason)).toBe(message);
 });
+
+function gapFiles(kind: 'disabled' | 'omitted', direction: DependencyDirection) {
+  const gapEnd = kind === 'disabled' ? 60 : 120;
+  const gapIds = Array.from({ length: gapEnd - 30 }, (_, i) => `c${i + 30}`).join(', ');
+  let currentDependencies = '';
+  let gapDependency = '';
+  if (kind === 'disabled') {
+    if (direction === 'blocks') currentDependencies = ' ⛔ bridge';
+    else gapDependency = ' ⛔ bridge';
+  } else if (direction === 'blocks') gapDependency = ' ⛔ current';
+  else currentDependencies = ` ⛔ ${gapIds}`;
+  const bridgeDependencies = direction === 'blocks' ? gapIds : 'current';
+  const candidates = Array.from({ length: gapEnd + 30 }, (_, i) => {
+    const dependency = i >= 30 && i < gapEnd ? gapDependency : '';
+    return `- [ ] Candidate ${String(i).padStart(3, '0')} 🆔 c${i}${dependency}`;
+  });
+  return {
+    'tasks.md': [
+      `- [ ] Current 🆔 current${currentDependencies}`,
+      `- [ ] Bridge 🆔 bridge ⛔ ${bridgeDependencies}`,
+      ...candidates,
+    ].join('\n'),
+  };
+}
+
+it.each([
+  ['disabled', 'ArrowDown', 'blocks'],
+  ['disabled', 'ArrowUp', 'blocks'],
+  ['omitted', 'ArrowDown', 'blocks'],
+  ['omitted', 'ArrowUp', 'blocks'],
+  ['disabled', 'ArrowDown', 'blocked-by'],
+  ['disabled', 'ArrowUp', 'blocked-by'],
+  ['omitted', 'ArrowDown', 'blocked-by'],
+  ['omitted', 'ArrowUp', 'blocked-by'],
+] as const)('preserves selected intent on a %s page via %s (%s)', async (kind, key, direction) => {
+  const h = await fixture(0, direction, gapFiles(kind, direction));
+  const ui = h.mount();
+  const enterGap = async () => {
+    const writeCount = h.writes.length;
+    ui.query('  Candidate  ');
+    await ui.completed();
+    if (key === 'ArrowUp') {
+      for (let page = 0; page < 2; page++) {
+        expectDefined(
+          ui.handle.element.querySelector<HTMLButtonElement>('[aria-label="Next page"]'),
+        ).click();
+        await ui.completed();
+      }
+    }
+    ui.key(key === 'ArrowDown' ? 'End' : 'Home');
+    expect(ui.active()).not.toBeNull();
+    ui.key(key);
+    expect(ui.active()).toBeNull();
+    await ui.completed();
+    const options = ui.handle.element.querySelectorAll<HTMLButtonElement>('[role="option"]');
+    expect(options).toHaveLength(kind === 'disabled' ? 30 : 0);
+    for (const option of options) {
+      expect(option.disabled).toBe(true);
+      expect(option.getAttribute('aria-disabled')).toBe('true');
+      expect(option.textContent).toContain('Would create a cycle');
+    }
+    if (kind === 'omitted')
+      expect(ui.handle.element.textContent).toContain('More matches available');
+    expect(ui.active()).toBeNull();
+    ui.key('Enter');
+    await flushMicrotasks(30);
+    expect(h.creates).toEqual([]);
+    expect(h.writes).toHaveLength(writeCount);
+    expect(ui.handle.element.textContent).toContain('Task changed');
+  };
+  await enterGap();
+  ui.key(key);
+  await ui.completed();
+  const afterGap = kind === 'disabled' ? 'Candidate 060' : 'Candidate 120';
+  const title = key === 'ArrowUp' ? 'Candidate 029' : afterGap;
+  expect(ui.active()?.querySelector('.abyss-dep-search-title')?.textContent).toBe(title);
+  ui.key('Enter');
+  await vi.waitFor(() => {
+    expect(h.writes).toHaveLength(1);
+  });
+  expect(h.writes[0]).toEqual({
+    title,
+    direction,
+    target: expectDefined(h.index.listNodes().find(({ node }) => node.title === title)).target,
+  });
+  expect(h.creates).toEqual([]);
+  await ui.completed();
+  await enterGap();
+  expectDefined(
+    ui.handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
+  ).click();
+  await vi.waitFor(() => {
+    expect(h.creates).toEqual([['  Candidate  ', direction]]);
+  });
+  expect(h.writes).toHaveLength(1);
+});
+
+it.each([false, true])(
+  'keeps pager bounds through command busy and replacement (replace=%s)',
+  async (replace) => {
+    const h = await fixture(31);
+    const command = deferred<DependencyPickerCommitResult>();
+    h.callbacks.createNew = () => command.promise;
+    const ui = h.mount();
+    ui.query('Candidate');
+    await ui.completed();
+    const pager = (label: string) =>
+      expectDefined(
+        ui.handle.element.querySelector<HTMLButtonElement>(`[aria-label="${label} page"]`),
+      );
+    const bounds = (previous: boolean, next: boolean) => {
+      expect(pager('Previous').disabled).toBe(previous);
+      expect(pager('Next').disabled).toBe(next);
+      expect(pager('Previous').getAttribute('aria-disabled')).toBe(String(previous));
+      expect(pager('Next').getAttribute('aria-disabled')).toBe(String(next));
+    };
+    bounds(true, false);
+    pager('Next').click();
+    await ui.completed();
+    bounds(false, true);
+    expectDefined(
+      ui.handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
+    ).click();
+    expect(pager('Previous').disabled).toBe(true);
+    expect(pager('Next').disabled).toBe(true);
+    if (replace) {
+      h.index.installCommittedContent('other.md', '- [ ] Other');
+      await ui.completed();
+      expect(pager('Previous').disabled).toBe(true);
+      expect(pager('Next').disabled).toBe(true);
+    }
+    command.resolve({ type: 'validation-error', message: 'Keep draft' });
+    await vi.waitFor(() => {
+      expect(ui.input.readOnly).toBe(false);
+    });
+    bounds(replace, !replace);
+    pager(replace ? 'Next' : 'Previous').click();
+    await ui.completed();
+    bounds(!replace, replace);
+  },
+);

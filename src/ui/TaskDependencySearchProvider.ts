@@ -201,6 +201,12 @@ class DependencySession implements TaskDependencySearchSession {
     if (cursor === undefined) throw new TaskSearchError('stale', 'Task changed');
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > cursor.total)
       throw new TaskSearchError('invalid-request', 'Invalid candidate offset');
+    if (offset === cursor.total) {
+      const eligibility = await this.#eligibility([], signal);
+      this.#check(signal);
+      if (eligibility.generation !== cursor.generation)
+        throw new TaskSearchError('stale', 'Task generation changed');
+    }
     const { included, nextOffset, evaluated } = await this.#scan(cursor, offset, signal);
     const options = await this.#hydrate(included, signal);
     this.#check(signal);
