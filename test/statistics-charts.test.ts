@@ -118,6 +118,41 @@ function marks(el: HTMLElement, selector = 'rect') {
 function n(el: Element, name: string) {
   return Number(el.getAttribute(name));
 }
+function expectVisible(
+  element: Element,
+  bounds: { left: number; top: number; right: number; bottom: number },
+  svg: SVGSVGElement,
+) {
+  const contains = (left: number, top: number, right: number, bottom: number) => {
+    expect(bounds.left, `${element.tagName} left extent`).toBeGreaterThanOrEqual(left);
+    expect(bounds.top, `${element.tagName} top extent`).toBeGreaterThanOrEqual(top);
+    expect(bounds.right, `${element.tagName} right extent`).toBeLessThanOrEqual(right);
+    expect(bounds.bottom, `${element.tagName} bottom extent`).toBeLessThanOrEqual(bottom);
+  };
+  const viewport = required(svg.getAttribute('viewBox')).split(/\s+/).map(Number);
+  contains(
+    required(viewport[0]),
+    required(viewport[1]),
+    required(viewport[2]),
+    required(viewport[3]),
+  );
+  for (
+    let ancestor: Element | null = element;
+    ancestor !== svg;
+    ancestor = ancestor.parentElement
+  ) {
+    if (ancestor === null) throw new Error('Expected mark inside SVG');
+    const id = ancestor.getAttribute('clip-path')?.match(/^url\(#(.+)\)$/)?.[1];
+    if (id === undefined) continue;
+    const clip = required(required(svg.ownerDocument.getElementById(id)).querySelector('rect'));
+    contains(
+      n(clip, 'x'),
+      n(clip, 'y'),
+      n(clip, 'x') + n(clip, 'width'),
+      n(clip, 'y') + n(clip, 'height'),
+    );
+  }
+}
 
 describe('Statistics chart adapter', () => {
   it('renders explicit diverging endpoints in one shared column and activates semantic evidence', () => {
@@ -244,6 +279,80 @@ describe('Statistics chart adapter', () => {
     key(chart.svg(), 'Enter');
     expect(chart.select).toHaveBeenCalledWith('link');
   });
+  it.each([640, 240])(
+    'keeps origin and first-row network node and label extents visible at width %i',
+    (width) => {
+      const el = host(document, width);
+      const original = model({
+        id: 'dependency-chain',
+        kind: 'network',
+        layout: undefined,
+        x: { type: 'number', label: 'Local layout', domain: [0, 9] },
+        y: { type: 'number', label: 'Local layout', domain: [0, 10] },
+        series: [
+          { key: 'focus', label: 'Selected prerequisite', tone: 'accent' },
+          { key: 'scope', label: 'In scope', tone: 'neutral' },
+        ],
+        marks: Array.from({ length: 9 }, (_, index) => ({
+          key: `node:${index}`,
+          x: index,
+          y: 0,
+          label: 'W'.repeat(24),
+          series: index === 0 ? 'focus' : 'scope',
+          selectionId: `opaque:${index}`,
+        })),
+        edges: [{ from: 'node:0', to: 'node:1', selectionId: 'opaque:edge' }],
+      });
+      const saved = structuredClone(original);
+      const chart = mount(el, original);
+      const circles = marks(el, 'circle');
+      const labels = marks(el, 'text');
+      expect(circles).toHaveLength(9);
+      expect(labels).toHaveLength(9);
+      for (const circle of circles) {
+        const radius = n(circle, 'r') + n(circle, 'stroke-width') / 2;
+        expectVisible(
+          circle,
+          {
+            left: n(circle, 'cx') - radius,
+            top: n(circle, 'cy') - radius,
+            right: n(circle, 'cx') + radius,
+            bottom: n(circle, 'cy') + radius,
+          },
+          chart.svg(),
+        );
+      }
+      for (const label of labels) {
+        const size = n(label, 'font-size');
+        expect(size).toBe(11);
+        expect(label.textContent).toContain('W');
+        // A conservative one-em width per ASCII W covers this fixture beyond the engine's
+        // deterministic JSDOM estimate. SVG uses a middle baseline for Cartesian text.
+        const textWidth = label.textContent.length * size;
+        const anchor = label.getAttribute('text-anchor');
+        let left = n(label, 'x');
+        if (anchor === 'end') left -= textWidth;
+        else if (anchor === 'middle') left -= textWidth / 2;
+        expectVisible(
+          label,
+          {
+            left,
+            top: n(label, 'y') - size / 2,
+            right: left + textWidth,
+            bottom: n(label, 'y') + size / 2,
+          },
+          chart.svg(),
+        );
+      }
+      expect(original).toEqual(saved);
+      key(chart.svg(), 'Home');
+      key(chart.svg(), 'Enter');
+      expect(chart.select).toHaveBeenLastCalledWith('opaque:0');
+      key(chart.svg(), 'ArrowRight');
+      key(chart.svg(), 'Enter');
+      expect(chart.select).toHaveBeenLastCalledWith('opaque:edge');
+    },
+  );
   it('distinguishes density weights without changing model coordinates or populations', () => {
     const element = host();
     const chart = mount(

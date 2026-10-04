@@ -284,6 +284,9 @@ function densityMarks(model: StatisticsChartModel): RenderMark[] {
 function networkMarks(model: StatisticsChartModel, width: number, height: number): RenderMark[] {
   const nodes = new Map(model.marks.map((mark) => [mark.key, mark]));
   const edges: StatisticsMark[] = [];
+  // Each label points into the viewport from its node. Budget one em per character,
+  // including the ellipsis, within that viewport half at constrained widths.
+  const labelLength = Math.max(1, Math.min(24, Math.floor((width / 2 - 4) / 11)));
   for (const [index, edge] of (model.edges ?? []).entries()) {
     const from = nodes.get(edge.from),
       to = nodes.get(edge.to);
@@ -319,10 +322,14 @@ function networkMarks(model: StatisticsChartModel, width: number, height: number
         y: 'y',
         key: 'key',
         text: (mark) =>
-          (mark.label ?? '').length > 24
-            ? `${(mark.label ?? '').slice(0, 23)}…`
+          (mark.label ?? '').length > labelLength
+            ? `${(mark.label ?? '').slice(0, labelLength - 1)}…`
             : (mark.label ?? ''),
-        anchor: 'middle',
+        anchor: (mark) =>
+          model.x.type === 'number' &&
+          number(mark, 'x') > (model.x.domain[0] + model.x.domain[1]) / 2
+            ? 'end'
+            : 'start',
         dy: -16,
         fontSize: 11,
         fill: FOREGROUND,
@@ -467,7 +474,9 @@ export class TanStackStatisticsChart implements StatisticsChartRenderer {
               background: BACKGROUND,
               palette: [ACCENT],
             },
-            clip: true,
+            // Network boundary nodes/labels use the explicit viewport margins; a plot
+            // clip would cut their circles and hide every first-row label at y=0.
+            clip: model.kind !== 'network',
             ...(model.kind === 'network' ? { margin: NETWORK_MARGIN } : {}),
           }),
           focus: 'nearest',
