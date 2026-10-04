@@ -61,7 +61,11 @@ import {
 } from './markdown/taskBlockSyntax';
 import { TaskLocator } from './markdown/TaskLocator';
 import { TaskMarkdownCodec } from './markdown/TaskMarkdownCodec';
-import { projectTaskSnapshot } from './markdown/TaskSnapshotProjector';
+import {
+  projectTaskSnapshot,
+  projectTaskSnapshotSteps,
+  type TaskSnapshotProjection,
+} from './markdown/TaskSnapshotProjector';
 import { calendarDatesForPlanning, calendarRangeForPlanning, TaskDateIndex } from './TaskDateIndex';
 import {
   type RootRevisionOverride,
@@ -1001,14 +1005,31 @@ export class TaskIndex
   async refreshStatistics(): Promise<void> {
     if (!this.statistics_abyssPrivate.active || this.destroyed_abyssPrivate) return;
     await this.initialize();
+    const release = this.statistics_abyssPrivate.hold();
+    try {
+      await this.retryStatisticsAcquisitions_abyssPrivate();
+      this.statistics_abyssPrivate.invalidateAll();
+      await this.statistics_abyssPrivate.settled();
+    } finally {
+      release();
+    }
+  }
+
+  private async retryStatisticsAcquisitions_abyssPrivate(): Promise<void> {
     for (const path of this.statisticsReadFailures_abyssPrivate.keys()) {
       if (!this.statisticsIsActive_abyssPrivate()) return;
-      if (this.statisticsSource_abyssPrivate(path) === undefined) continue;
-      const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
-      if (file instanceof TFile) await this.loadFile_abyssPrivate(file, path, true);
+      if (this.statisticsSource_abyssPrivate(path) !== undefined)
+        await this.retryStatisticsSource_abyssPrivate(path);
     }
-    this.statistics_abyssPrivate.invalidateAll();
-    await this.statistics_abyssPrivate.settled();
+  }
+
+  private async retryStatisticsSource_abyssPrivate(path: string): Promise<void> {
+    const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return;
+    const prior = this.taskMap_abyssPrivate.get(path);
+    if (!(await this.loadFile_abyssPrivate(file, path, true))) return;
+    if (prior !== this.taskMap_abyssPrivate.get(path)) this.queueChanged_abyssPrivate(path);
+    else this.queueReconciled_abyssPrivate(path);
   }
 
   private statisticsIsActive_abyssPrivate(): boolean {
@@ -1391,18 +1412,33 @@ export class TaskIndex
     const context = await this.createStatisticsParseContext_abyssPrivate(path, accepted, current);
     if (context === undefined) return [];
     const snapshots: TaskSnapshot[] = [];
+    const steps = this.statisticsSnapshotSteps_abyssPrivate(accepted, context, snapshots);
     let work = 0;
-    for (const item of accepted.cache.listItems ?? []) {
-      if (!current()) return [];
-      const snapshot = this.parseRootItem_abyssPrivate(item, context);
-      if (snapshot !== undefined) snapshots.push(snapshot);
+    const iterator = steps[Symbol.iterator]();
+    while (current()) {
+      if (iterator.next().done === true) break;
       work += 1;
       if (work >= 1000) {
         await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
         work = 0;
       }
     }
-    return snapshots.sort(stableTaskOrder);
+    return current() ? snapshots.sort(stableTaskOrder) : [];
+  }
+
+  private *statisticsSnapshotSteps_abyssPrivate(
+    accepted: AcceptedStatisticsSource,
+    context: FileParseContext,
+    snapshots: TaskSnapshot[],
+  ): Generator<void> {
+    for (const item of accepted.cache.listItems ?? []) {
+      const projection = this.rootSnapshotProjection_abyssPrivate(item, context);
+      if (projection !== undefined) {
+        const snapshot = yield* projectTaskSnapshotSteps(projection);
+        if (snapshot !== undefined) snapshots.push(snapshot);
+      }
+      yield;
+    }
   }
 
   private acceptStatisticsSource_abyssPrivate(
@@ -1558,6 +1594,14 @@ export class TaskIndex
     item: MetadataListItem,
     context: FileParseContext,
   ): TaskSnapshot | undefined {
+    const projection = this.rootSnapshotProjection_abyssPrivate(item, context);
+    return projection === undefined ? undefined : projectTaskSnapshot(projection);
+  }
+
+  private rootSnapshotProjection_abyssPrivate(
+    item: MetadataListItem,
+    context: FileParseContext,
+  ): TaskSnapshotProjection | undefined {
     if (item.task === undefined || hasTaskAncestor(item, context.itemByLine)) return undefined;
     const line = item.position.start.line;
     const originalMarkdown = context.lines[line] ?? '';
@@ -1577,7 +1621,7 @@ export class TaskIndex
             sourceCount: context.sourceCounts.get(exactBlock) ?? 1,
           }),
     };
-    return projectTaskSnapshot({
+    return {
       codec: context.codec,
       statusCatalog: this.statusCatalog_abyssPrivate,
       filePath: context.filePath,
@@ -1587,7 +1631,7 @@ export class TaskIndex
       ref,
       presentation: context.presentation,
       offsetAt: context.offsetAt,
-    });
+    };
   }
 
   /** Pure infrastructure collaborator used by the repository for immediate command outcomes. */

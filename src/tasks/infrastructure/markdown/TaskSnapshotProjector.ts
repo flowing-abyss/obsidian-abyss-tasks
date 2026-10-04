@@ -170,16 +170,18 @@ function commentSnapshot(input: CommentSnapshotInput): TaskCommentSnapshot {
   return { ref, ...(timestamp != null && { timestamp }), text };
 }
 
-function projectedSubtask(
+function* projectedSubtask(
   context: ProjectionContext,
   parent: TaskNodeRef,
   line: number,
   source: string,
-): { readonly snapshot: SubtaskSnapshot; readonly toLine: number } | undefined {
+): Generator<void, { readonly snapshot: SubtaskSnapshot; readonly toLine: number } | undefined> {
   const prefix = readTaskLinePrefix(source);
   if (prefix == null || /^\s+(.*)/u.exec(source.slice(prefix.prefixEnd)) == null) return undefined;
   const parsed = context.codec.parseLine(source, { filePath: context.filePath, line });
-  return parsed == null ? undefined : projectSubtask(context, line, parent, parsed);
+  if (parsed == null) return undefined;
+  yield;
+  return yield* projectSubtask(context, line, parent, parsed);
 }
 
 interface ProjectedContentTarget {
@@ -238,11 +240,11 @@ function frozenTimeEntries(entries: TimeEntrySnapshot[]): readonly TimeEntrySnap
   return entries.length === 0 ? NO_TIME_ENTRIES : Object.freeze(entries);
 }
 
-function projectChildren(
+function* projectChildren(
   context: ProjectionContext,
   parentLine: number,
   parent: TaskNodeRef,
-): ProjectedChildren {
+): Generator<void, ProjectedChildren> {
   const parentSource = context.lines[parentLine] ?? '';
   const parentIndent = indentation(parentSource);
   const parentQuoteDepth = quoteDepth(parentSource);
@@ -258,12 +260,13 @@ function projectChildren(
     if (source === undefined) break;
     if (isTaskBlockBlankLine(source)) {
       line++;
+      yield;
       continue;
     }
     if (quoteDepth(source) !== parentQuoteDepth || indentation(source) <= parentIndent) break;
     toLine = line;
 
-    const child = projectedSubtask(context, parent, line, source);
+    const child = yield* projectedSubtask(context, parent, line, source);
     if (child != null) {
       subtasks.push(child.snapshot);
       toLine = child.toLine;
@@ -281,6 +284,7 @@ function projectChildren(
       timeEntries,
     });
     line++;
+    yield;
   }
 
   const description = descriptions.join('\n');
@@ -293,25 +297,25 @@ function projectChildren(
   };
 }
 
-function projectSubtask(
+function* projectSubtask(
   context: ProjectionContext,
   line: number,
   parent: TaskNodeRef,
   parsed: NonNullable<ReturnType<TaskMarkdownCodec['parseLine']>>,
-): { readonly snapshot: SubtaskSnapshot; readonly toLine: number } {
+): Generator<void, { readonly snapshot: SubtaskSnapshot; readonly toLine: number }> {
   const temporaryRef = {
     parent,
     relativeLine: line - absoluteNodeLine(parent),
     originalBlock: context.lines[line] ?? '',
   };
   const temporaryNode: TaskNodeRef = { type: 'subtask', ref: temporaryRef };
-  const children = projectChildren(context, line, temporaryNode);
+  const children = yield* projectChildren(context, line, temporaryNode);
   const ref = {
     ...temporaryRef,
     originalBlock: blockFor(context.lines, line, children.toLine),
   };
   const node: TaskNodeRef = { type: 'subtask', ref };
-  const relocatedChildren = relocateChildren(children, node);
+  const relocatedChildren = yield* relocateChildren(children, node);
   const status =
     parsed.planning.cancelled !== undefined && parsed.planning.cancelled.length > 0
       ? 'cancelled'
@@ -347,45 +351,62 @@ function absoluteNodeLine(node: TaskNodeRef): number {
   return absoluteNodeLine(node.ref.parent) + node.ref.relativeLine;
 }
 
-function relocateSubtask(task: SubtaskSnapshot, parent: TaskNodeRef): SubtaskSnapshot {
+function* relocateSubtask(
+  task: SubtaskSnapshot,
+  parent: TaskNodeRef,
+): Generator<void, SubtaskSnapshot> {
   const ref = { ...task.ref, parent };
   const node: TaskNodeRef = { type: 'subtask', ref };
-  return {
-    ...task,
-    ref,
-    subtasks: task.subtasks.map((child) => relocateSubtask(child, node)),
-    comments: task.comments.map((comment) => ({
-      ...comment,
-      ref: { ...comment.ref, parent: node },
-    })),
-  };
+  yield;
+  const relocated = yield* relocateChildren({ ...task, toLine: 0 }, node);
+  return { ...task, ref, subtasks: relocated.subtasks, comments: relocated.comments };
 }
 
-function relocateChildren(children: ProjectedChildren, parent: TaskNodeRef): ProjectedChildren {
-  return {
-    ...children,
-    subtasks: children.subtasks.map((child) => relocateSubtask(child, parent)),
-    comments: children.comments.map((comment) => ({
-      ...comment,
-      ref: { ...comment.ref, parent },
-    })),
-  };
+function* relocateChildren(
+  children: ProjectedChildren,
+  parent: TaskNodeRef,
+): Generator<void, ProjectedChildren> {
+  const subtasks: SubtaskSnapshot[] = [];
+  for (const child of children.subtasks) subtasks.push(yield* relocateSubtask(child, parent));
+  const comments: TaskCommentSnapshot[] = [];
+  for (const comment of children.comments) {
+    comments.push({ ...comment, ref: { ...comment.ref, parent } });
+    yield;
+  }
+  return { ...children, subtasks, comments };
 }
 
+/** Ordinary callers drain the shared canonical traversal synchronously. */
 export function projectTaskSnapshot(projection: TaskSnapshotProjection): TaskSnapshot | undefined {
+  const steps = projectTaskSnapshotSteps(projection);
+  let next = steps.next();
+  while (next.done !== true) next = steps.next();
+  return next.value;
+}
+
+/** Internal physical-node/content steps for cooperative readers; no alternate parsing semantics. */
+export function* projectTaskSnapshotSteps(
+  projection: TaskSnapshotProjection,
+): Generator<void, TaskSnapshot | undefined> {
   const originalMarkdown = projection.lines[projection.line] ?? '';
   const parsed = projection.codec.parseLine(originalMarkdown, {
     filePath: projection.filePath,
     line: projection.line,
   });
   if (parsed == null) return undefined;
+  yield;
   const rootNode: TaskNodeRef = { type: 'task', ref: projection.ref };
   const context: ProjectionContext = projection;
-  const children = projectChildren(context, projection.line, rootNode);
+  const children = yield* projectChildren(context, projection.line, rootNode);
   const status =
     parsed.planning.cancelled !== undefined && parsed.planning.cancelled.length > 0
       ? 'cancelled'
       : projection.statusCatalog.statusForSymbol(parsed.statusSymbol);
+  let linkCount = countLinksIn([parsed.markdownTitle, children.description]);
+  for (const comment of children.comments) {
+    linkCount += countLinksIn([comment.text]);
+    yield;
+  }
   return {
     ref: projection.ref,
     title: parsed.title,
@@ -412,11 +433,7 @@ export function projectTaskSnapshot(projection: TaskSnapshotProjection): TaskSna
     },
     presentation: {
       ...projection.presentation,
-      linkCount: countLinksIn([
-        parsed.markdownTitle,
-        children.description,
-        ...children.comments.map((comment) => comment.text),
-      ]),
+      linkCount,
     },
   };
 }

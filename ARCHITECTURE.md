@@ -138,14 +138,18 @@ activates [`TaskStatisticsProjection`](src/tasks/infrastructure/TaskStatisticsPr
 materializes detached, frozen file evidence and publishes cached, monotonically versioned snapshots.
 Repeated reads are constant-time and return the same object until publication. The last subscription
 release cancels pending projection work and releases the extra file evidence. Explicit Statistics
-refresh retries failed approved acquisitions only while subscribed.
+refresh retries failed approved acquisitions only while subscribed, queues ordinary changed/reconciled
+acceptance, and holds Statistics publication until that reconciliation has been queued.
 
 The composition root admits the committed current archive pattern only when the explicit ignore
 query allows its path, current source tags and frontmatter. Prior archive destinations retained in
 that ignore query stay excluded. Archive roots use the canonical codec and projector in an explicit
 no-authority mode: they never enter ordinary task, calendar, dependency, tracking or reference-authority
 indexes. Archive context preparation consumes the block editor's shared canonical line/root iterator
-in yielding batches; ordinary parsing keeps its synchronous contract. Detached copying schedules by
+in yielding batches. The shared `TaskSnapshotProjector` also exposes canonical traversal steps for
+children, entries, comments and ref relocation within one root; ordinary parsing drains those same
+steps synchronously. Archive acquisition checks generation and yields every 1000 work units across
+roots, including a root with many children or entries. Detached copying schedules by
 physical nodes, comments and entries, with generation checks between batches. Every retained physical node and its own tracking entries remains available in the tree.
 Statistics alone reclassifies every node using the current catalog plus canonical raw cancellation
 precedence. Per-line date issues preserve invalid and ambiguous authored date carriers that validated

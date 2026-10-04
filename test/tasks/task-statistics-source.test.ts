@@ -1,6 +1,7 @@
 import { TFile, type CachedMetadata } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
+import * as timeEntry from '../../src/tasks/domain/timeEntry';
 import { TaskIndex, type TaskIndexOptions } from '../../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../../src/tasks/infrastructure/TaskRefAuthority';
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
@@ -57,6 +58,110 @@ async function harness(
 }
 
 describe('lazy complete task statistics evidence', () => {
+  it('publishes ordinary restored tasks before statistics after explicit acquisition retry', async () => {
+    const { app, index } = await harness({ 'live.md': '- [ ] Retained\n' }, {}, true);
+    await index.initialize();
+    const events: string[] = [];
+    index.subscribe((event) => events.push(event.type));
+    index.subscribeReconciled(() => events.push('reconciled'));
+    index.subscribeStatistics(() => events.push('statistics'));
+    await index.refreshStatistics();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const read = vi.spyOn(app.vault, 'cachedRead').mockRejectedValue(new Error('offline'));
+    await index.refreshSourceExclusion(undefined);
+    await flushMicrotasks();
+    expect(index.list()).toHaveLength(0);
+    read.mockRestore();
+    events.length = 0;
+    await index.refreshStatistics();
+    expect(index.list()[0]?.title).toBe('Retained');
+    expect(events).toEqual(['changed', 'statistics']);
+  });
+
+  it.each([true, false])(
+    'queues accepted retry reconciliation before statistics when metadata changes=%s',
+    async (metadataChanges) => {
+      const original = '---\nproject: First\n---\n- [ ] Same\n';
+      const updated = metadataChanges ? '---\nproject: Second\n---\n- [ ] Same\n' : original;
+      const { app, index, changed } = await harness({ 'live.md': original }, {}, true);
+      await index.initialize();
+      const events: string[] = [];
+      index.subscribe((event) => events.push(event.type));
+      index.subscribeReconciled((paths) => events.push(`reconciled:${paths.join(',')}`));
+      index.subscribeStatistics(() => events.push('statistics'));
+      await index.refreshStatistics();
+      const ordinary = index.list()[0];
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const parser = vi.spyOn(TaskMarkdownCodec.prototype, 'parseLine').mockImplementation(() => {
+        throw new Error('metadata acceptance unavailable');
+      });
+      changed('live.md', updated);
+      await flushMicrotasks();
+      expect(index.list()[0]).toEqual(ordinary);
+      expect(index.readStatistics().issues).toHaveLength(1);
+      parser.mockRestore();
+      await app.vault.adapter.write('live.md', updated);
+      events.length = 0;
+      await index.refreshStatistics();
+      expect(index.list()[0]).toEqual(ordinary);
+      expect(index.readStatistics().issues).toEqual([]);
+      expect(events).toEqual(['reconciled:live.md', 'statistics']);
+    },
+  );
+
+  it.each(['children', 'entries'] as const)(
+    'bounds canonical traversal of one root with 1100 %s and cancels during traversal',
+    async (shape) => {
+      const children = Array.from({ length: 1100 }, (_, number) => `  - [x] Child ${number}`);
+      const entries = Array.from(
+        { length: 1100 },
+        () => '  - 2026-10-01T10:00:00+00:00 → 2026-10-01T10:15:00+00:00',
+      );
+      const content = ['- [x] Parent', ...(shape === 'children' ? children : entries)].join('\n');
+      const { index } = await harness({ 'archive/2026.md': content });
+      await index.initialize();
+      let calls = 0;
+      let beforeYield = -1;
+      let cancelDuringTraversal = false;
+      let release: () => void = () => undefined;
+      const observe = () => {
+        calls += 1;
+        if (calls === 1)
+          queueMicrotask(() => {
+            beforeYield = calls;
+            if (cancelDuringTraversal) release();
+          });
+      };
+      const parseTask = TaskMarkdownCodec.prototype.parseLine.bind(
+        new TaskMarkdownCodec(canonicalStatusCatalog()),
+      );
+      vi.spyOn(TaskMarkdownCodec.prototype, 'parseLine').mockImplementation((...args) => {
+        if (shape === 'children' && args[0].startsWith('  - [x] Child')) observe();
+        return parseTask(...args);
+      });
+      const parseEntry = timeEntry.parseTimeEntryLine;
+      vi.spyOn(timeEntry, 'parseTimeEntryLine').mockImplementation((...args) => {
+        if (shape === 'entries') observe();
+        return parseEntry(...args);
+      });
+      release = index.subscribeStatistics(() => undefined);
+      await index.refreshStatistics();
+      const root = expectDefined(index.readStatistics().files[0]?.roots[0]);
+      expect(shape === 'children' ? root.subtasks : root.timeEntries).toHaveLength(1100);
+      expect(beforeYield).toBeGreaterThan(0);
+      expect(beforeYield).toBeLessThanOrEqual(1000);
+      release();
+      calls = 0;
+      beforeYield = -1;
+      cancelDuringTraversal = true;
+      release = index.subscribeStatistics(() => undefined);
+      await index.refreshStatistics();
+      expect(calls).toBeGreaterThan(0);
+      expect(calls).toBeLessThanOrEqual(1000);
+      expect(index.readStatistics()).toMatchObject({ ready: false, files: [] });
+    },
+  );
+
   it('cancels canonical context preparation before parsing roots after the last lease ends', async () => {
     const content = Array.from({ length: 1100 }, (_, number) => `- [x] Retained ${number}`).join(
       '\n',
