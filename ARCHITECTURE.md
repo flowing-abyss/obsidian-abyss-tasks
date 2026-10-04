@@ -337,10 +337,16 @@ not submitted commands; real interaction owners must provide them. Acquisition d
 is ignored, and reentrant updates supersede the outer pass. The actual focused subtree stays in
 place while ordinary neighbors move, and intentional scroll corrections follow the new DOM extent.
 Ordinary native scrolling never writes normalized geometry back to the scroller.
-Hidden/detached surfaces suspend work; resume revalidates layout and document ownership. Initial
-render and deferred native failures pass once to the supplied owner; failed native passes stop
-until an explicit refresh. CenterPanel uses this adapter for Tasks and project-dashboard lists;
-`mountTaskListRows` remains the eager adapter for Search until its separate integration.
+Hidden/detached surfaces suspend work; resume revalidates layout and document ownership. Synchronous
+updates default to reporting through the supplied owner; Search requests per-call propagation so its
+result-pass owner can clean partial mounts and report once without completing the failed pass.
+Deferred native failures remain surface-owned and stop until an explicit refresh. CenterPanel uses
+this adapter for Tasks, project-dashboard lists, and the ordered arrays supplied by Search.
+Search retains its input and complete logical results outside the mounted window. Same-query refreshes
+retain the surface anchor; changed queries replace row lifetimes. Each retained-card update releases
+and rebinds Search navigation to the current snapshot. Search generations and captured input/results
+invalidate obsolete callbacks before they can render, complete, or report. Later Markdown failures
+belong to live card/text generations and never complete or fail a newer Search pass.
 
 `TaskCardRenderer.mount` owns one loaded Component per row, disposable Markdown generations,
 and its own badge registrations. Its optional `TaskCardInteractionContext` gives whole-card hosts
@@ -512,7 +518,8 @@ snapshot interactions; eviction unloads each row. Native scrolling only reconcil
 selection visuals, without completing an application render or advancing its focus generation.
 Explicit reveal checks captured source and focus ownership before scrolling and again before focus.
 Native focus and bounded menu/editor/drag owners retain rows; invalidation cancels UI ownership
-before eviction without cancelling submitted commands. Search remains eager.
+before eviction without cancelling submitted commands. Search uses the same bounded surface while
+retaining its own query, ordering, input, and navigation semantics.
 
 A same-project dashboard refresh retains its dashboard/task/capture hosts while updating current
 project presentation. `ProjectsPanel` invokes its `unmountTasks(): void` owner callback when leaving

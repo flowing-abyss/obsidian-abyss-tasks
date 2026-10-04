@@ -525,3 +525,44 @@ it('positions a newly mounted offscreen pin above the focused window before prot
   release();
   h.surface.destroy();
 });
+
+it('propagates a supplied synchronous mount failure without reporting and recovers on refresh', () => {
+  const h = harness();
+  const error = new Error('supplied mount');
+  h.surface.update(rows(100), presentation);
+  h.scrollTo(2000);
+  expect(h.pending()).toBe(1);
+  h.mount.mockImplementationOnce(() => {
+    throw error;
+  });
+  expect(() => {
+    h.surface.update(rows(100), presentation, 'throw');
+  }).toThrow(error);
+  expect(h.reportFailure).not.toHaveBeenCalled();
+  expect(h.pending()).toBe(0);
+  h.scrollTo(3000);
+  h.resize();
+  h.frame();
+  expect(h.pending()).toBe(0);
+  h.surface.update(rows(100), presentation, 'throw');
+  expect(h.surface.element('n.md:65')).toBeDefined();
+});
+
+it('contains a later native frame failure after a supplied throw-mode update', () => {
+  const h = harness();
+  const error = new Error('native mount');
+  h.surface.update(rows(100), presentation, 'throw');
+  h.mount.mockImplementationOnce(() => {
+    throw error;
+  });
+  h.scrollTo(2000);
+  expect(h.pending()).toBe(1);
+  expect(() => {
+    h.frame();
+  }).not.toThrow();
+  expect(h.reportFailure).toHaveBeenCalledExactlyOnceWith(error);
+  h.scrollTo(3000);
+  h.resize();
+  h.frame();
+  expect(h.reportFailure).toHaveBeenCalledTimes(1);
+});

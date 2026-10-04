@@ -66,10 +66,9 @@ import { TaskCommands } from './center/TaskCommands';
 import { TaskMenus } from './center/TaskMenus';
 import { TaskSearch } from './center/TaskSearch';
 import { ProjectsPanel } from './projects/ProjectsPanel';
-import { TaskListSurface } from './task-list/TaskListSurface';
+import { TaskListSurface, type TaskRowMount } from './task-list/TaskListSurface';
 import {
   mountTaskListRow,
-  mountTaskListRows,
   NO_MOUNTED_TASK_LIST_ROWS,
   type MountedTaskListRows,
 } from './task-list/taskListRowView';
@@ -79,9 +78,15 @@ import {
   taskListGrouping,
   taskRowKey,
   taskStackRowKey,
+  type TaskListRow,
   type TaskListRows,
 } from './task-list/taskListRows';
 import { TaskRowSelection } from './task-list/taskRowSelection';
+
+interface TaskRowOptions {
+  readonly onCard?: (card: HTMLElement, task: TaskSnapshot) => void | (() => void);
+  readonly failure?: 'report' | 'throw';
+}
 
 interface CenterPanelOptions {
   readonly state: AppState;
@@ -165,6 +170,7 @@ export class CenterPanel {
     readonly host: HTMLElement;
     readonly surface: TaskListSurface;
     tagGroups: readonly EffectiveTagGroup[];
+    onCard: ((card: HTMLElement, task: TaskSnapshot) => void | (() => void)) | undefined;
   } | null = null;
   private outgoingLinks_abyssPrivate: TaskLinkValues = new Map();
   private filterDebounce_abyssPrivate = 0;
@@ -317,6 +323,8 @@ export class CenterPanel {
   }
 
   private createTaskSearch_abyssPrivate(): TaskSearch {
+    let query: string | undefined;
+    let resultHost: HTMLElement | undefined;
     return new TaskSearch({
       state: this.state_abyssPrivate,
       queries: this.queries_abyssPrivate,
@@ -334,13 +342,25 @@ export class CenterPanel {
             this.scrollTaskCardIntoView_abyssPrivate(card);
         },
         beginResults: () => {
+          const nextQuery = this.state_abyssPrivate.get('searchQuery');
+          if (query !== nextQuery) this.destroyTaskSurface_abyssPrivate();
+          query = nextQuery;
           this.beginTaskCardRender_abyssPrivate();
           this.md_abyssPrivate.unload();
           this.md_abyssPrivate = new Component();
           this.md_abyssPrivate.load();
         },
         renderRows: (host, tasks, onCard) => {
-          this.renderFlat_abyssPrivate(host, tasks, this.effectiveTagGroups_abyssPrivate(), onCard);
+          resultHost = host;
+          this.renderFlat_abyssPrivate(host, tasks, this.effectiveTagGroups_abyssPrivate(), {
+            onCard,
+            failure: 'throw',
+          });
+        },
+        failResults: (error) => {
+          if (this.taskSurface_abyssPrivate?.host === resultHost)
+            this.destroyTaskSurface_abyssPrivate();
+          this.reportTaskRenderFailure_abyssPrivate(error);
         },
         completeResults: () => {
           this.completeTaskCardRender_abyssPrivate();
@@ -1100,13 +1120,13 @@ export class CenterPanel {
     container: HTMLElement,
     tasks: TaskSnapshot[],
     tagGroups: readonly EffectiveTagGroup[] = this.effectiveTagGroups_abyssPrivate(),
-    onCard?: (card: HTMLElement, task: TaskSnapshot) => void,
+    options: TaskRowOptions = {},
   ): void {
     this.mountTaskRows_abyssPrivate(
       container,
       buildTaskListRows(tasks, { by: 'none' }),
       tagGroups,
-      onCard,
+      options,
     );
   }
 
@@ -1115,69 +1135,23 @@ export class CenterPanel {
     container: HTMLElement,
     rows: TaskListRows,
     tagGroups: readonly EffectiveTagGroup[],
-    onCard?: (card: HTMLElement, task: TaskSnapshot) => void,
+    options: TaskRowOptions = {},
   ): void {
-    if (this.state_abyssPrivate.get('mode') !== 'search') {
-      this.updateTaskSurface_abyssPrivate(container, rows, tagGroups);
-      return;
-    }
-    this.mountedRows_abyssPrivate = mountTaskListRows(container, rows, (host, row) => {
-      const selected = this.isTaskCardSelected_abyssPrivate(row.task);
-      const card = this.taskCardRenderer_abyssPrivate.render(host, row.task, tagGroups, {
-        selected,
-        rowKey: row.key,
-        showDelete: selected && this.rowSelection_abyssPrivate.size === 0,
-      });
-      onCard?.(card, row.task);
-      return card;
-    });
+    this.updateTaskSurface_abyssPrivate(container, rows, tagGroups, options);
   }
 
   private updateTaskSurface_abyssPrivate(
     host: HTMLElement,
     rows: TaskListRows,
     tagGroups: readonly EffectiveTagGroup[],
+    options: TaskRowOptions = {},
   ): void {
     if (this.taskSurface_abyssPrivate?.host !== host) {
       this.destroyTaskSurface_abyssPrivate();
       const surface = new TaskListSurface({
         host,
         scroll: host.closest<HTMLElement>('.abyss-project-dashboard-session') ?? host,
-        mount: (container, row) => {
-          let card: TaskCardMount | undefined;
-          const element = mountTaskListRow(container, row, (parent, taskRow) => {
-            card = this.taskCardRenderer_abyssPrivate.mount(
-              parent,
-              taskRow.task,
-              this.taskSurface_abyssPrivate?.tagGroups ?? tagGroups,
-              {
-                selected: this.isTaskCardSelected_abyssPrivate(taskRow.task),
-                showDelete: false,
-                rowKey: taskRow.key,
-              },
-            );
-            return card.element;
-          });
-          return {
-            element,
-            update: (next) => {
-              if (next.kind === 'task')
-                card?.update(next.task, this.taskSurface_abyssPrivate?.tagGroups ?? tagGroups, {
-                  selected: this.isTaskCardSelected_abyssPrivate(next.task),
-                  showDelete: false,
-                  rowKey: next.key,
-                });
-              else {
-                element.textContent = `${next.label}  ${next.count}`;
-                element.toggleClass('abyss-group-header--first', next.first);
-              }
-            },
-            destroy: () => {
-              if (card !== undefined) card.destroy();
-              else element.remove();
-            },
-          };
-        },
+        mount: (container, row) => this.mountTaskRow_abyssPrivate(container, row, tagGroups),
         mountedChanged: () => {
           this.updateSelectionVisuals_abyssPrivate();
         },
@@ -1185,23 +1159,80 @@ export class CenterPanel {
           this.reportTaskRenderFailure_abyssPrivate(error);
         },
       });
-      this.taskSurface_abyssPrivate = { host, surface, tagGroups };
+      this.taskSurface_abyssPrivate = { host, surface, tagGroups, onCard: options.onCard };
     }
     this.invalidateTaskInteractions_abyssPrivate(rows);
     const retained = this.taskSurface_abyssPrivate;
     retained.tagGroups = tagGroups;
+    retained.onCard = options.onCard;
     this.mountedRows_abyssPrivate = retained.surface;
-    retained.surface.update(rows, {
-      revision: JSON.stringify([
-        this.settings_abyssPrivate.sourceNoteDisplay,
-        this.settings_abyssPrivate.taskFilePath,
-        tagGroups,
-      ]),
-      preserveAnchor: true,
-      estimate: (row) => (row.kind === 'group' ? 32 : 64),
-      measurementRevision: (row) =>
-        row.kind === 'task' ? row.task.ref.revision : `${row.label}:${row.count}`,
+    retained.surface.update(
+      rows,
+      {
+        revision: JSON.stringify([
+          this.settings_abyssPrivate.sourceNoteDisplay,
+          this.settings_abyssPrivate.taskFilePath,
+          tagGroups,
+        ]),
+        preserveAnchor: true,
+        estimate: (row) => (row.kind === 'group' ? 32 : 64),
+        measurementRevision: (row) =>
+          row.kind === 'task' ? row.task.ref.revision : `${row.label}:${row.count}`,
+      },
+      options.failure ?? 'report',
+    );
+  }
+
+  private mountTaskRow_abyssPrivate(
+    container: HTMLElement,
+    row: TaskListRow,
+    tagGroups: readonly EffectiveTagGroup[],
+  ): TaskRowMount {
+    let card: TaskCardMount | undefined;
+    let releaseNavigation: void | (() => void);
+    const element = mountTaskListRow(container, row, (parent, taskRow) => {
+      card = this.taskCardRenderer_abyssPrivate.mount(
+        parent,
+        taskRow.task,
+        this.taskSurface_abyssPrivate?.tagGroups ?? tagGroups,
+        {
+          selected: this.isTaskCardSelected_abyssPrivate(taskRow.task),
+          showDelete: false,
+          rowKey: taskRow.key,
+        },
+      );
+      try {
+        releaseNavigation = this.taskSurface_abyssPrivate?.onCard?.(card.element, taskRow.task);
+      } catch (error) {
+        card.destroy();
+        throw error;
+      }
+      return card.element;
     });
+    return {
+      element,
+      update: (next) => {
+        if (next.kind === 'task') {
+          if (typeof releaseNavigation === 'function') releaseNavigation();
+          releaseNavigation = undefined;
+          card?.update(next.task, this.taskSurface_abyssPrivate?.tagGroups ?? tagGroups, {
+            selected: this.isTaskCardSelected_abyssPrivate(next.task),
+            showDelete: false,
+            rowKey: next.key,
+          });
+          releaseNavigation = this.taskSurface_abyssPrivate?.onCard?.(element, next.task);
+        } else {
+          element.textContent = `${next.label}  ${next.count}`;
+          element.toggleClass('abyss-group-header--first', next.first);
+        }
+      },
+      destroy: () => {
+        if (typeof releaseNavigation === 'function') releaseNavigation();
+        releaseNavigation = undefined;
+        if (card !== undefined) card.destroy();
+        else element.remove();
+      },
+    };
   }
 
   private pinTaskInteraction_abyssPrivate(

@@ -371,7 +371,7 @@ describe('CenterPanel task-card primary row', () => {
       const titleRow = expectDefined(mainRow.querySelector<HTMLElement>('.abyss-task-title-row'));
       expect(titleRow.querySelector('.abyss-recurrence-badge')).toBeNull();
       expect(titleRow.firstElementChild?.classList.contains('abyss-task-title')).toBe(true);
-      expect(mainRow.querySelector('.abyss-task-desc')).toBeNull();
+      expect(mainRow.querySelector<HTMLElement>('.abyss-task-desc')?.hidden).toBe(true);
     } finally {
       panel.destroy();
     }
@@ -397,7 +397,7 @@ describe('CenterPanel task-card primary row', () => {
       const body = expectDefined(mainRow.querySelector<HTMLElement>('.abyss-task-body'));
       expect(body.querySelector('.abyss-task-title')).not.toBeNull();
       expect(mainRow.querySelector('.abyss-task-meta-right')).not.toBeNull();
-      expect(panel['el'].querySelector('.abyss-task-desc')).toBeNull();
+      expect(panel['el'].querySelector<HTMLElement>('.abyss-task-desc')?.hidden).toBe(true);
     } finally {
       panel.destroy();
     }
@@ -2456,6 +2456,49 @@ describe('CenterPanel.renderSearch', () => {
     );
     expect(list).toHaveBeenCalled();
     expect(forCalendarProjection).not.toHaveBeenCalled();
+    panel.destroy();
+  });
+
+  it('windows Search results and reveals an offscreen destination through the full Tasks list', () => {
+    const tasks = Array.from({ length: 1200 }, (_, line) =>
+      task({ title: `needle ${line}`, source: { filePath: 'search.md', line } }),
+    );
+    const state = new AppState();
+    state.set('mode', 'search');
+    state.set('searchQuery', 'needle 1199');
+    const complete = vi.fn();
+    const panel = new CenterPanel({
+      state,
+      app: {} as App,
+      settings: DEFAULT_SETTINGS,
+      queries: queryApiForSnapshots(() => tasks),
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      onRenderComplete: complete,
+    });
+    withQueuedAnimationFrames((flush) => {
+      panel.mount(freshContainer());
+      flush();
+      const input = expectDefined(
+        panel['el'].querySelector<HTMLInputElement>('.abyss-search-global'),
+      );
+      input.focus();
+      expectDefined(panel['el'].querySelector<HTMLElement>('.abyss-task-card')).click();
+      expect(state.get('mode')).toBe('tasks');
+      expect(state.get('selectedList')).toBe('inbox');
+      expect(state.get('taskStack')[0]).toBe(tasks[1199]);
+      const destination = panel['el'].querySelector<HTMLElement>(
+        '.abyss-task-card[data-line="1199"]',
+      );
+      expect(destination?.isConnected).toBe(true);
+      const scroll = expectDefined(panel['el'].querySelector<HTMLElement>('.abyss-center-scroll'));
+      expect(scroll.scrollTop).toBeGreaterThan(0);
+      expect(panel['el'].querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(100);
+      expect(document.activeElement).not.toBe(destination);
+      const before = complete.mock.calls.length;
+      scroll.dispatchEvent(new Event('scroll'));
+      flush();
+      expect(complete.mock.calls).toHaveLength(before);
+    });
     panel.destroy();
   });
 

@@ -1142,24 +1142,26 @@ describe('CenterPanel task date context menus', () => {
         input.value = '2026-08-02';
         input.dispatchEvent(new Event('change', { bubbles: true }));
         await flushMicrotasks();
+        // Settle native focus/pin work before counting coalesced application result frames.
+        flush();
 
         panel.refresh();
         panel.refresh();
         panel.refresh();
         expect(callbacks).toHaveLength(1);
         flush();
-        const coalescedReplacement = expectDefined(
-          el.querySelector<HTMLElement>('.abyss-task-card'),
-        );
-        expect(originalCard.isConnected).toBe(false);
-        expect(activeDocument.activeElement).toBe(coalescedReplacement);
+        const coalescedCard = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
+        expect(originalCard.isConnected).toBe(true);
+        expect(coalescedCard).toBe(originalCard);
+        expect(activeDocument.activeElement).toBe(coalescedCard);
 
         panel.refresh();
         expect(callbacks).toHaveLength(1);
         flush();
-        const laterReplacement = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
-        expect(coalescedReplacement.isConnected).toBe(false);
-        expect(activeDocument.activeElement).toBe(laterReplacement);
+        const laterCard = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
+        expect(coalescedCard.isConnected).toBe(true);
+        expect(laterCard).toBe(coalescedCard);
+        expect(activeDocument.activeElement).toBe(laterCard);
 
         outside.focus();
         panel.refresh();

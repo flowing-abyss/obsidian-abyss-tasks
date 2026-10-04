@@ -62,7 +62,11 @@ export class TaskListSurface implements MountedTaskListRows {
     }
   }
 
-  update(rows: TaskListRows, presentation: TaskListPresentation): void {
+  update(
+    rows: TaskListRows,
+    presentation: TaskListPresentation,
+    failure: 'report' | 'throw' = 'report',
+  ): void {
     if (this.#destroyed) return;
     this.#failed = false;
     const revision = ++this.#revision;
@@ -92,7 +96,7 @@ export class TaskListSurface implements MountedTaskListRows {
       const clamped = this.#viewport.window(restored, this.#height(), []).scrollTop;
       // Projection changes may shrink the scroll range. Ordinary scroll frames never clamp it.
       this.#reconcile(true, restored < 0 ? restored : clamped);
-    });
+    }, failure);
   }
 
   reveal(key: string): HTMLElement | undefined {
@@ -441,13 +445,14 @@ export class TaskListSurface implements MountedTaskListRows {
       next = element;
     }
   }
-  #guard(action: () => void): void {
+  #guard(action: () => void, failure: 'report' | 'throw' = 'report'): void {
     try {
       action();
     } catch (error) {
       if (this.#frame !== undefined) this.#owner?.cancelAnimationFrame(this.#frame);
       this.#frame = undefined;
       this.#failed = true;
+      if (failure === 'throw') throw error;
       this.#options.reportFailure(error);
     }
   }
