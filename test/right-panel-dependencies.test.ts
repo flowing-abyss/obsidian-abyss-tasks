@@ -3056,3 +3056,42 @@ it('retains one lease and cursor through an unchanged synchronous inspector rend
   expect(release).not.toHaveBeenCalled();
   expect(subscribe).not.toHaveBeenCalled();
 });
+
+it('TaskModal dependency picker owns Find under the modal lease and Escape closes only the picker', async () => {
+  const h = await harness('- [ ] Current 🆔 current\n- [ ] Candidate 🆔 candidate\n');
+  const ownership = { acquire: vi.fn(() => ({ release: vi.fn() })) };
+  const modal = new TaskModal({
+    app: h.app,
+    statusRegistry: testStatusRegistry(),
+    settings: DEFAULT_SETTINGS,
+    queries: h.index,
+    tasks: h.api,
+    search: h.search,
+    interactionOwnership: ownership,
+  });
+  cleanups.unshift(() => {
+    modal.close();
+  });
+  modal.open(h.node('Current').root);
+  const el = button(activeDocument.body, '.abyss-modal-body');
+  button(el, '.abyss-dep-badge-body').click();
+  const input = await search(el, 'Candidate');
+  const control = button(el, '.abyss-dep-search-create');
+  control.focus();
+  const find = new KeyboardEvent('keydown', {
+    code: 'KeyF',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  control.dispatchEvent(find);
+  expect(find.defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(input);
+  expect(input.selectionEnd).toBe(9);
+  input.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
+  expect(el.querySelector('.abyss-dep-search')).toBeNull();
+  expect(el.isConnected).toBe(true);
+  expect(ownership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
+});

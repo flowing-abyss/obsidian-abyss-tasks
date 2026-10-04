@@ -134,13 +134,18 @@ function catalog(): ProjectPropertyCatalog {
 }
 
 /** Mounts the overview on three projects and `extra` fillers, and switches to the case's view. */
-function mountSurface(testCase: SurfaceCase, extra = 0) {
+function mountSurface(
+  testCase: SurfaceCase,
+  extra = 0,
+  configure?: (settings: ProjectsSettings, listed: Project[]) => void,
+) {
   const host = freshContainer();
   activeDocument.body.append(host);
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.projects.propertyDefinitions['property:Budget'] = { type: 'number' };
   testCase.group(settings.projects);
   const listed = [...projects(), ...fillers(extra)];
+  configure?.(settings.projects, listed);
   const applyEdits = vi.fn(async (): Promise<ProjectEditResult> =>
     Promise.resolve({ applied: [], failed: [] }),
   );
@@ -326,6 +331,43 @@ const cases: readonly SurfaceCase[] = [
 ];
 
 describe.each(cases)('project overview surface contract: $mode', (testCase) => {
+  it('matches a displayed property typo without discovering hidden values in the actual view', () => {
+    const { host } = mountSurface(testCase, 0, (settings, listed) => {
+      settings.propertyDefinitions['property:Owner'] = { type: 'text' };
+      settings.propertyDefinitions['property:Secret'] = { type: 'text' };
+      settings.table.columns.push({ id: 'property:Owner', visible: true });
+      settings.kanban?.fields.push({ id: 'property:Owner', visible: true });
+      expectDefined(listed[0]).frontmatter['Owner'] = 'Тест';
+      expectDefined(listed[1]).frontmatter['Secret'] = 'Invisible';
+    });
+    const input = expectDefined(host.querySelector<HTMLInputElement>('.abyss-center-search'));
+    for (const [query, count] of [
+      ['Тсет', '1 project'],
+      ['Invisible', '0 projects'],
+      ['', '3 projects'],
+    ]) {
+      input.value = expectDefined(query);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      expect(host.querySelector('.abyss-project-table-count')?.textContent).toBe(count);
+    }
+  });
+  it('keeps a visible owned search target and fuzzy filtered session through mode switches', () => {
+    const { host, view, surface } = mountSurface(testCase);
+    const search = expectDefined(host.querySelector<HTMLInputElement>('.abyss-center-search'));
+    search.value = 'plannxng';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(surface.cells().identities.length).toBeGreaterThan(0);
+    expect(host.querySelector('.abyss-project-table-count')?.textContent).toBe('1 project');
+    expect(view.localSearchTarget()?.input).toBe(search);
+    host.hidden = true;
+    expect(view.localSearchTarget()).toBeUndefined();
+    host.hidden = false;
+    host.remove();
+    expect(view.localSearchTarget()).toBeUndefined();
+    document.body.append(host);
+    view.destroy();
+    expect(view.localSearchTarget()).toBeUndefined();
+  });
   it('publishes the project count after each render', () => {
     const { host } = mountSurface(testCase);
     const count = expectDefined(host.querySelector<HTMLElement>('.abyss-project-table-count'));

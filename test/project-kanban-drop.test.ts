@@ -1,3 +1,4 @@
+import { createSearchWordSegmenter } from '../src/tasks/infrastructure/search/searchWordSegmenter';
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import type { ProjectKanbanDropInput } from '../src/panels/projects/projectKanbanDrop';
@@ -62,6 +63,7 @@ function planInput(
   board = settings(),
 ): ProjectKanbanDropInput {
   return {
+    segment: createSearchWordSegmenter(),
     nowMs: Date.UTC(2026, 8, 20),
     project: source,
     projects: all,

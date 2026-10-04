@@ -26,7 +26,7 @@ import {
   type TaskSearchState,
   type TaskSnapshot,
 } from '../../tasks';
-import { isImeOwnedEvent } from '../../ui/ime';
+import type { LocalSearchFocusTarget } from '../../ui/localSearchKeys';
 import { SearchStatus } from '../../ui/searchStatus';
 import { TaskRenderScope, type TaskRenderOutcome } from '../../ui/taskRenderScope';
 import { taskSelectionRefPath } from '../../ui/taskSelection';
@@ -180,6 +180,11 @@ export class TaskSearch {
     });
     input.value = this.#options.state.get('searchQuery');
     this.#input = input;
+    input.addEventListener('focus', () => {
+      if (this.#input !== input) return;
+      this.#cancelFocus?.();
+      this.#cancelFocus = null;
+    });
     input.addEventListener('compositionstart', () => {
       this.#composing = true;
       this.#cancelPending();
@@ -191,12 +196,6 @@ export class TaskSearch {
     });
     input.addEventListener('input', () => {
       if (!this.#composing) this.#options.state.set('searchQuery', input.value);
-    });
-    input.addEventListener('keydown', (event) => {
-      if (isImeOwnedEvent(event) || event.key !== 'Escape') return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (root.isConnected) root.focus({ preventScroll: true });
     });
     this.#results = root.createDiv({ cls: 'abyss-center-scroll' });
     this.#attach(root);
@@ -211,6 +210,10 @@ export class TaskSearch {
         owner.clearTimeout(timer);
       };
     }
+  }
+  localSearchTarget(): LocalSearchFocusTarget | undefined {
+    if (this.#root?.isConnected !== true || this.#input?.isConnected !== true) return undefined;
+    return { input: this.#input, owner: this.#root };
   }
   renderFilter(root: HTMLElement, results: HTMLElement, query: string): void {
     this.clear();

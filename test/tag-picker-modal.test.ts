@@ -414,3 +414,27 @@ describe('TagPickerModal', () => {
     }
   });
 });
+
+it('selects the actual modal search from a tag button and cancels pending initial focus', () => {
+  vi.useFakeTimers();
+  const { modal } = makeTagPicker({ tags: ['#Alpha'] });
+  const search = expectDefined(modal.contentEl.querySelector<HTMLInputElement>('input'));
+  search.value = 'Alxha';
+  const button = tagButton(modal, '#Alpha');
+  button.focus();
+  const find = new KeyboardEvent('keydown', {
+    code: 'KeyF',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  button.dispatchEvent(find);
+  expect(find.defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(search);
+  expect(search.selectionEnd).toBe(5);
+  modal.onClose();
+  const outside = document.body.createEl('input');
+  outside.focus();
+  vi.runAllTimers();
+  expect(document.activeElement).toBe(outside);
+});

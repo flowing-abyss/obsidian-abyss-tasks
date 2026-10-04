@@ -120,6 +120,7 @@ export type {
 
 export {
   matchSearchText,
+  matchesSearchText,
   prepareSearchQuery,
   type PreparedSearchQuery,
   type SearchWordSegmenter,

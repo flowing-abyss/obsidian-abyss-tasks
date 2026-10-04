@@ -1,3 +1,4 @@
+import { createSearchWordSegmenter } from '../src/tasks/infrastructure/search/searchWordSegmenter';
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { projectCalendarDay } from '../src/projects/projectDateValue';
@@ -42,6 +43,7 @@ function project(path: string, frontmatter: Record<string, unknown>): Project {
 function input(projects: Project[]) {
   const table = buildDefaultProjectTableSettings();
   return {
+    segment: createSearchWordSegmenter(),
     nowMs: Date.UTC(2026, 8, 20),
     projects,
     fields,

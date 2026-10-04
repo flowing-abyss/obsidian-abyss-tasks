@@ -974,3 +974,25 @@ it.each([false, true])(
     bounds(!replace, replace);
   },
 );
+
+it('owns local Find from dependency controls under its blocking lease, without altering Escape', async () => {
+  const h = await fixture();
+  const p = h.mount();
+  p.query('Candidate');
+  await p.completed();
+  const button = expectDefined(p.handle.element.querySelector<HTMLButtonElement>('button'));
+  button.focus();
+  const find = new KeyboardEvent('keydown', {
+    code: 'KeyF',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  button.dispatchEvent(find);
+  expect(find.defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(p.input);
+  expect(p.input.selectionEnd).toBe(9);
+  p.key('Escape');
+  expect(p.handle.element.isConnected).toBe(false);
+  expect(h.callbacks.onClose).toHaveBeenCalledWith(true);
+});

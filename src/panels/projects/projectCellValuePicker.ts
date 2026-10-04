@@ -1,5 +1,14 @@
-import { Component, setIcon, type App } from 'obsidian';
+import { Component, Platform, setIcon, type App } from 'obsidian';
+import {
+  createSearchWordSegmenter,
+  matchesSearchText,
+  prepareSearchQuery,
+  TaskSearchError,
+  type PreparedSearchQuery,
+  type SearchWordSegmenter,
+} from '../../tasks';
 import { isImeOwnedEvent } from '../../ui/ime';
+import { handleLocalSearchKey } from '../../ui/localSearchKeys';
 import type { ProjectPropertySuggestion } from '../../ui/ProjectPropertySuggest';
 import { renderProjectPropertySuggestion } from '../../ui/ProjectPropertySuggest';
 import {
@@ -61,12 +70,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function matches(choice: PickerChoice, query: string): boolean {
-  const normalized = query.toLocaleLowerCase();
+function matches(
+  choice: PickerChoice,
+  prepared: PreparedSearchQuery,
+  normalized: string,
+  segment: SearchWordSegmenter,
+): boolean {
   if (normalized.length === 0) return true;
   const { label, detail } = choice.suggestion;
-  return [String(choice.value), label, detail ?? ''].some((candidate) =>
-    candidate.toLocaleLowerCase().includes(normalized),
+  return (
+    [String(choice.value), label, detail ?? ''].some((candidate) =>
+      candidate.toLocaleLowerCase().includes(normalized),
+    ) || matchesSearchText([String(choice.value), label, detail ?? ''].join(' '), prepared, segment)
   );
 }
 
@@ -84,6 +99,7 @@ function genericSuggestion(
 }
 
 class ProjectCellValuePicker implements ProjectCellValuePickerControl {
+  private readonly segment_abyssPrivate = createSearchWordSegmenter();
   readonly focusTarget: HTMLInputElement;
   readonly preferredWidth = 264;
   private readonly selected_abyssPrivate: unknown[];
@@ -131,6 +147,7 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
     const availableGroup = this.createGroup_abyssPrivate('Available');
     this.availableGroup_abyssPrivate = availableGroup[0];
     this.availableRows_abyssPrivate = availableGroup[1];
+    this.picker_abyssPrivate.addEventListener('keydown', this.onLocalFind_abyssPrivate);
     this.render_abyssPrivate();
   }
 
@@ -146,7 +163,17 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
     this.render_abyssPrivate();
   }
 
+  private readonly onLocalFind_abyssPrivate = (event: KeyboardEvent): void => {
+    if (event.code === 'KeyF')
+      handleLocalSearchKey(
+        event,
+        { input: this.focusTarget, owner: this.picker_abyssPrivate },
+        Platform.isMacOS ? 'meta' : 'ctrl',
+      );
+  };
+
   destroy(): void {
+    this.picker_abyssPrivate.removeEventListener('keydown', this.onLocalFind_abyssPrivate);
     this.renderComponent_abyssPrivate.unload();
     this.picker_abyssPrivate.remove();
   }
@@ -230,17 +257,24 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
   }
 
   private visibleChoices_abyssPrivate(): PickerChoice[] {
-    const matching = this.choices_abyssPrivate.filter(
-      (choice) =>
-        matches(choice, this.focusTarget.value) &&
-        (!this.options_abyssPrivate.multiple ||
-          this.selectedIndex_abyssPrivate(choice) >= 0 ||
-          this.findSelected_abyssPrivate(choice.value) < 0),
-    );
-    return [
-      ...matching.filter((choice) => this.selectedIndex_abyssPrivate(choice) >= 0),
-      ...matching.filter((choice) => this.selectedIndex_abyssPrivate(choice) < 0),
-    ];
+    try {
+      const prepared = prepareSearchQuery(this.focusTarget.value, this.segment_abyssPrivate);
+      const literal = this.focusTarget.value.toLocaleLowerCase();
+      const matching = this.choices_abyssPrivate.filter(
+        (choice) =>
+          matches(choice, prepared, literal, this.segment_abyssPrivate) &&
+          (!this.options_abyssPrivate.multiple ||
+            this.selectedIndex_abyssPrivate(choice) >= 0 ||
+            this.findSelected_abyssPrivate(choice.value) < 0),
+      );
+      return [
+        ...matching.filter((choice) => this.selectedIndex_abyssPrivate(choice) >= 0),
+        ...matching.filter((choice) => this.selectedIndex_abyssPrivate(choice) < 0),
+      ];
+    } catch (error) {
+      if (error instanceof TaskSearchError && error.code === 'invalid-query') return [];
+      throw error;
+    }
   }
 
   private clearQuery_abyssPrivate(): void {
@@ -426,9 +460,9 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
     }
   }
 
-  private render_abyssPrivate(): void {
+  private render_abyssPrivate(choices = this.visibleChoices_abyssPrivate()): void {
     const previousScrollTop = this.results_abyssPrivate.scrollTop;
-    const visible = new Set(this.visibleChoices_abyssPrivate().map(({ key }) => key));
+    const visible = new Set(choices.map(({ key }) => key));
     if (this.activeKey_abyssPrivate !== undefined && !visible.has(this.activeKey_abyssPrivate)) {
       this.activeKey_abyssPrivate = undefined;
     }
@@ -466,7 +500,7 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
     if (current < 0) next = step > 0 ? 0 : visible.length - 1;
     const bounded = Math.max(0, Math.min(next, visible.length - 1));
     this.activeKey_abyssPrivate = visible[bounded]?.key;
-    this.render_abyssPrivate();
+    this.render_abyssPrivate(visible);
     this.revealActive_abyssPrivate();
   }
 

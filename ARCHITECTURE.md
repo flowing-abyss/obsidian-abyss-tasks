@@ -730,6 +730,19 @@ restoration never writes data or changes task selection. PanelView rebinds short
 native interaction blocking when its document changes. Owners release listeners, observers,
 interaction leases, and scheduled work on teardown.
 
+Local Find and plain-search Escape run through PanelShortcutRouter's existing owning-document
+listener. PanelView proves the active visible leaf and panel event path; the router rejects native
+surfaces, blocking interaction leases and draft/editor paths before consulting CenterPanel's current
+`LocalSearchFocusTarget`. Tasks and Search supply their mounted input; Projects supplies only its
+connected visible overview toolbar, outside an active editor or dashboard. The small `localSearchKeys`
+helper focuses/selects that proven input, or returns plain Escape focus to its surface without changing
+query, results or inspector state. It owns no document registry or scheduled work. Actual picker
+wrappers handle Find within their own lifetime, including TaskModal's dependency picker under the
+modal lease; overlay Escape retains its original close/restore owner. Settings icon search handles
+only events within its own active wrapper. Existing migration/disposal removes document listeners;
+explicit Search focus cancels pending initial autofocus, and picker/settings disposal releases local
+listeners and pending focus.
+
 ### Task text
 
 [`renderTaskText`](src/ui/renderTaskText.ts) shares title-only inline presentation across cards,
@@ -775,6 +788,13 @@ and presentation come from [`projectPropertyPresets`](src/projects/projectProper
 [`projectTableModel`](src/projects/projectTableModel.ts) is the DOM-free source of search, typed
 sorting, filtering, grouping, and unique visible counts. Kanban and Timeline reuse it. The overview
 supplies one render instant for all models and tracked totals; pure models never read ambient time.
+The controller supplies the same production Intl word segmenter used by task Search, with the shared
+capability fallback, explicitly to the pure model. Local project search prepares one shared query
+per filtering pass; Kanban reuses that prepared query across status projections. Discovery combines
+the name with existing displayed-property formatters at the supplied instant, preserving visibility,
+view sessions and organization. Note, tag, property-value and status-icon candidates use the same
+prepared matching policy without indexes or candidate caches, retaining original values, literal
+matching, ordering, limits and create validation.
 Link groups use resolved note paths as identity while retaining raw values and source context for
 rendering and edits. Each view has independent saved organization, initially derived from Table
 when first requested. Table and Timeline group collapse is independent saved organization in

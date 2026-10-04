@@ -8,6 +8,7 @@ import { buildDefaultProjectTableSettings } from '../src/projects/projectTableSe
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { createSearchWordSegmenter } from '../src/tasks/infrastructure/search/searchWordSegmenter';
 import { expectDefined, freshContainer, loadPluginStyles } from './helpers';
 
 interface Cell extends ProjectTimelineCellContext {
@@ -72,6 +73,7 @@ function mount(
     settings: () => settings,
     savedSettings: () => settings,
     modelInput: () => ({
+      segment: createSearchWordSegmenter(),
       nowMs: Date.UTC(2026, 8, 20),
       fields,
       statuses: DEFAULT_SETTINGS.projects.statuses,

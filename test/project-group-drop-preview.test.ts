@@ -1,3 +1,4 @@
+import { createSearchWordSegmenter } from '../src/tasks/infrastructure/search/searchWordSegmenter';
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { forecastProjectGroupDrop } from '../src/panels/projects/projectGroupDropPreview';
@@ -51,6 +52,7 @@ function project(name: string, startValue: string, owner: string): Project {
 
 function input(dir: 'asc' | 'desc' = 'asc'): ProjectTableModelInput {
   return {
+    segment: createSearchWordSegmenter(),
     nowMs: Date.UTC(2026, 8, 20),
     projects: [
       project('A', '2026-09-25', 'A'),

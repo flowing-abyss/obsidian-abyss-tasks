@@ -1,3 +1,4 @@
+import { Platform } from 'obsidian';
 import {
   sameTaskNodeRef,
   TaskSearchError,
@@ -11,6 +12,7 @@ import {
 } from '../tasks';
 import { isImeOwnedEvent } from './ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
+import { handleLocalSearchKey } from './localSearchKeys';
 import { runAsyncAction } from './runAsyncAction';
 import { SearchStatus } from './searchStatus';
 import { dependencyDirectionLabel } from './taskDependencyPresentation';
@@ -176,6 +178,13 @@ export function mountDependencySearch(
   input.addEventListener('keydown', actions.key);
   createAffordance.addEventListener('click', actions.create);
   element.addEventListener('keydown', (event) => {
+    if (
+      !closed &&
+      ownership !== undefined &&
+      event.code === 'KeyF' &&
+      handleLocalSearchKey(event, { input, owner: element }, Platform.isMacOS ? 'meta' : 'ctrl')
+    )
+      return;
     if (event.key !== 'Escape' || isImeOwnedEvent(event)) return;
     event.preventDefault();
     event.stopPropagation();

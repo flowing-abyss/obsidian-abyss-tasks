@@ -32,6 +32,7 @@ import { TaskModal } from '../ui/TaskModal';
 import { isRealmHTMLElement } from '../ui/domRealm';
 import { isImeOwnedEvent } from '../ui/ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
+import type { LocalSearchFocusTarget } from '../ui/localSearchKeys';
 import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
 import { mountAnchoredRecurrenceEditor } from '../ui/recurrence/RecurrenceEditor';
 import { runAsyncAction } from '../ui/runAsyncAction';
@@ -906,6 +907,16 @@ export class CenterPanel {
     const key = this.taskDateFocusContinuityKey_abyssPrivate;
     if (key !== null && this.taskDateTriggerKey_abyssPrivate(target) !== key)
       this.abandonTaskDateFocus_abyssPrivate();
+  }
+
+  localSearchTarget(): LocalSearchFocusTarget | undefined {
+    if (!this.el.isConnected) return undefined;
+    const mode = this.state_abyssPrivate.get('mode');
+    if (mode === 'search') return this.taskSearch_abyssPrivate.localSearchTarget();
+    if (mode === 'projects') return this.projectsPanel_abyssPrivate?.localSearchTarget();
+    if (mode !== 'tasks' || this.taskShell_abyssPrivate?.filterInput.isConnected !== true)
+      return undefined;
+    return { input: this.taskShell_abyssPrivate.filterInput, owner: this.el };
   }
 
   onWindowMigrated(): void {

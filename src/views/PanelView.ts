@@ -863,12 +863,14 @@ export class PanelView extends ItemView {
     this.shortcutRouter_abyssPrivate?.destroy();
     this.shortcutRouter_abyssPrivate = new PanelShortcutRouter({
       ownerDocument,
+      ownerElement: this.contentEl,
       isActive: () => this.ownsPanelShortcuts_abyssPrivate(),
       settings: () => this.settings_abyssPrivate.shortcuts,
       platform: { mod: Platform.isMacOS ? 'meta' : 'ctrl' },
       actions: this.panelNavigation_abyssPrivate,
       registry: interactionRegistry,
       nativeHostBlocks: () => nativeInteractionBlocksPanelShortcuts(ownerDocument),
+      localSearchTarget: () => this.center_abyssPrivate.localSearchTarget(),
     });
     this.shortcutDocument_abyssPrivate = ownerDocument;
   }

@@ -1,6 +1,12 @@
 import { AbstractInputSuggest, Component, Scope, type App } from 'obsidian';
 import type { ProjectValuePresentation } from '../projects/projectPropertyDefinitions';
 import {
+  createSearchWordSegmenter,
+  matchesSearchText,
+  prepareSearchQuery,
+  TaskSearchError,
+} from '../tasks';
+import {
   projectPropertyValuePresentation,
   projectPropertyValuePresentations,
   projectTagLabel,
@@ -39,7 +45,7 @@ export interface ProjectPropertySuggestionRenderingContext {
 }
 
 function matches(value: string | number, query: string): boolean {
-  return String(value).toLocaleLowerCase().includes(query.toLocaleLowerCase());
+  return String(value).toLocaleLowerCase().includes(query);
 }
 
 function suggestionTitleClass(
@@ -118,6 +124,7 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
   private readonly suggestions_abyssPrivate: readonly ProjectPropertySuggestion[];
   private readonly onPick_abyssPrivate: (value: string | number) => void;
   private readonly options_abyssPrivate: ProjectPropertySuggestOptions;
+  private readonly segment_abyssPrivate = createSearchWordSegmenter();
   private browse_abyssPrivate: boolean;
   private open_abyssPrivate = false;
   private renderGeneration_abyssPrivate: Component | undefined;
@@ -168,14 +175,28 @@ export class ProjectPropertySuggest extends AbstractInputSuggest<ProjectProperty
 
   getSuggestions(query: string): ProjectPropertySuggestion[] {
     this.clearRenderGeneration_abyssPrivate();
-    const available = this.suggestions_abyssPrivate.filter(
-      ({ value }) => this.options_abyssPrivate.exclude?.(value) !== true,
-    );
-    if (this.browse_abyssPrivate) return available;
-    return available.filter(
-      ({ value, label, detail }) =>
-        matches(value, query) || matches(label, query) || matches(detail ?? '', query),
-    );
+    try {
+      const prepared = prepareSearchQuery(query, this.segment_abyssPrivate);
+      const available = this.suggestions_abyssPrivate.filter(
+        ({ value }) => this.options_abyssPrivate.exclude?.(value) !== true,
+      );
+      if (this.browse_abyssPrivate) return available;
+      const literal = query.toLocaleLowerCase();
+      return available.filter(
+        ({ value, label, detail }) =>
+          matches(value, literal) ||
+          matches(label, literal) ||
+          matches(detail ?? '', literal) ||
+          matchesSearchText(
+            [String(value), label, detail ?? ''].join(' '),
+            prepared,
+            this.segment_abyssPrivate,
+          ),
+      );
+    } catch (error) {
+      if (error instanceof TaskSearchError && error.code === 'invalid-query') return [];
+      throw error;
+    }
   }
 
   renderSuggestion(suggestion: ProjectPropertySuggestion, element: HTMLElement): void {

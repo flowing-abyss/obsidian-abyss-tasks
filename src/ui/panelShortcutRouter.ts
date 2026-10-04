@@ -6,7 +6,9 @@ import type {
 } from '../settings/shortcuts';
 import { validateShortcuts } from '../settings/shortcuts';
 import type { PanelNavigationActions } from '../views/panelNavigation';
+import { isImeOwnedEvent } from './ime';
 import type { InteractionRegistry } from './interactionOwnership';
+import { handleLocalSearchKey, type LocalSearchFocusTarget } from './localSearchKeys';
 
 const PANEL_SHORTCUT_BLOCKING_SELECTOR = [
   'input',
@@ -87,11 +89,13 @@ export class PanelShortcutRouter {
   constructor(
     private readonly options: {
       readonly ownerDocument: Document;
+      readonly ownerElement?: HTMLElement;
       readonly isActive: () => boolean;
       readonly settings: () => ShortcutSettings;
       readonly platform: ShortcutPlatform;
       readonly actions: PanelNavigationActions;
       readonly registry: InteractionRegistry<ShortcutActionId>;
+      readonly localSearchTarget?: () => LocalSearchFocusTarget | undefined;
       readonly nativeHostBlocks: () => boolean;
     },
   ) {
@@ -110,7 +114,9 @@ export class PanelShortcutRouter {
   private route(event: KeyboardEvent): void {
     if (this.destroyed || !this.options.isActive()) return;
     const current = this.currentShortcuts();
-    if (current === undefined || this.eventIsBlocked(event)) return;
+    if (current === undefined) return;
+    if (this.routeLocalSearch(event)) return;
+    if (this.eventIsBlocked(event)) return;
 
     const match = [...current.bindings.entries()].find(([, bindings]) =>
       bindings.some((binding) => exactShortcutMatch(event, binding)),
@@ -121,6 +127,38 @@ export class PanelShortcutRouter {
     event.stopPropagation();
     event.stopImmediatePropagation();
     dispatchAction(this.options.actions, match[0]);
+  }
+
+  private routeLocalSearch(event: KeyboardEvent): boolean {
+    if (this.localSearchIsBlocked(event)) return false;
+    const owner = this.options.ownerElement;
+    if (owner?.isConnected === true && !event.composedPath().includes(owner)) return false;
+    const target = this.options.localSearchTarget?.();
+    if (target?.owner.ownerDocument !== this.options.ownerDocument) return false;
+    const editable =
+      'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], .cm-editor, .CodeMirror';
+    const blocked = (value: EventTarget | null): boolean => {
+      if (
+        value === target.input ||
+        value === null ||
+        typeof (value as Element).closest !== 'function'
+      )
+        return false;
+      return (value as Element).closest(editable) !== null;
+    };
+    if (blocked(this.options.ownerDocument.activeElement) || event.composedPath().some(blocked))
+      return false;
+    return handleLocalSearchKey(event, target, this.options.platform.mod);
+  }
+
+  private localSearchIsBlocked(event: KeyboardEvent): boolean {
+    return (
+      event.defaultPrevented ||
+      event.repeat ||
+      isImeOwnedEvent(event) ||
+      this.options.nativeHostBlocks() ||
+      !this.options.registry.allows('openSearch')
+    );
   }
 
   private currentShortcuts(): ReturnType<typeof validateShortcuts> | undefined {
@@ -135,7 +173,7 @@ export class PanelShortcutRouter {
     return (
       event.defaultPrevented ||
       event.repeat ||
-      event.isComposing ||
+      isImeOwnedEvent(event) ||
       interactionPathBlocks(event, this.options.ownerDocument) ||
       this.options.nativeHostBlocks()
     );

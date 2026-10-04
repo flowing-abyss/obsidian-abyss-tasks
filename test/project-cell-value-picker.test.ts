@@ -561,3 +561,44 @@ describe('project cell value picker', () => {
     });
   });
 });
+
+it('Find selects the real value picker search from a choice, then disposal removes its local key owner', () => {
+  const host = document.body.createDiv();
+  const handle = mountProjectCellEditor({
+    app: new App(),
+    container: host,
+    field: { id: 'property:Team', property: 'Team', label: 'Team', type: 'list' },
+    value: [],
+    catalog: catalog(['Alpha']),
+    save: vi.fn().mockResolvedValue(undefined),
+    onClose: vi.fn(),
+  });
+  const input = pickerInput(host);
+  input.value = 'Alxha';
+  const choice = option(host, 'Alpha');
+  choice.tabIndex = 0;
+  choice.focus();
+  const find = new KeyboardEvent('keydown', {
+    code: 'KeyF',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  choice.dispatchEvent(find);
+  expect(find.defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(input);
+  expect(input.selectionEnd).toBe(5);
+  const picker = expectDefined(input.closest<HTMLElement>('.abyss-project-value-picker'));
+  handle.destroy();
+  host.append(picker);
+  choice.focus();
+  const disposed = new KeyboardEvent('keydown', {
+    code: 'KeyF',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  choice.dispatchEvent(disposed);
+  expect(disposed.defaultPrevented).toBe(false);
+  host.remove();
+});

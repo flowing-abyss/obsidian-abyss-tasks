@@ -100,7 +100,9 @@ import {
 } from '../../settings/projectTableSettings';
 import { saveSettingsDraft } from '../../settings/settingsSaveFailure';
 import type { CalendarSettings, ProjectStatus } from '../../settings/types';
+import { createSearchWordSegmenter } from '../../tasks';
 import { writeClass, writeOptionalAttribute } from '../../ui/guardedDomWrites';
+import type { LocalSearchFocusTarget } from '../../ui/localSearchKeys';
 import type { ProjectPropertySuggestion } from '../../ui/ProjectPropertySuggest';
 import {
   projectPropertyValuePresentation,
@@ -544,6 +546,7 @@ export class ProjectsTableView {
    * on its own.
    */
   private trackedNowMs_abyssPrivate = Date.now();
+  private readonly segment_abyssPrivate = createSearchWordSegmenter();
   private readonly sessions_abyssPrivate: Record<ProjectOverviewMode, OverviewSession> = {
     table: { selection: new ProjectTableSelection(), search: '' },
     kanban: { selection: new ProjectTableSelection(), search: '' },
@@ -913,6 +916,16 @@ export class ProjectsTableView {
       this.toolbar_abyssPrivate.setSearchValue(this.sessions_abyssPrivate[mode].search);
       this.persistAndRender_abyssPrivate();
     });
+  }
+
+  localSearchTarget(): LocalSearchFocusTarget | undefined {
+    if (
+      !this.mounted_abyssPrivate ||
+      !this.root_abyssPrivate.isConnected ||
+      this.activeEditor_abyssPrivate !== undefined
+    )
+      return undefined;
+    return this.toolbar_abyssPrivate.localSearchTarget();
   }
 
   selectedProjectPath(): string | undefined {
@@ -1389,6 +1402,7 @@ export class ProjectsTableView {
   private singletonVisible_abyssPrivate(project: Project, search: string): boolean {
     const common = {
       nowMs: this.trackedNowMs_abyssPrivate,
+      segment: this.segment_abyssPrivate,
       projects: [project],
       fields: this.renderFields_abyssPrivate(),
       statuses: this.context_abyssPrivate.settings.projects.statuses,
@@ -1547,6 +1561,7 @@ export class ProjectsTableView {
       settings: this.effectiveTableSettings_abyssPrivate(),
       propertyDefinitions: this.context_abyssPrivate.settings.projects.propertyDefinitions,
       nowMs: this.trackedNowMs_abyssPrivate,
+      segment: this.segment_abyssPrivate,
       resolveLink: (target, sourcePath) =>
         this.context_abyssPrivate.app.metadataCache.getFirstLinkpathDest(target, sourcePath)?.path,
     };
@@ -1595,6 +1610,7 @@ export class ProjectsTableView {
       savedSettings: () => this.ensureTimelineSettings_abyssPrivate(),
       modelInput: () => ({
         nowMs: this.trackedNowMs_abyssPrivate,
+        segment: this.segment_abyssPrivate,
         fields: this.renderFields_abyssPrivate(),
         statuses: this.context_abyssPrivate.settings.projects.statuses,
         propertyDefinitions: this.context_abyssPrivate.settings.projects.propertyDefinitions,
@@ -1653,6 +1669,7 @@ export class ProjectsTableView {
       settings: () => this.effectiveKanbanSettings_abyssPrivate(),
       modelInput: () => ({
         nowMs: this.trackedNowMs_abyssPrivate,
+        segment: this.segment_abyssPrivate,
         fields: this.renderFields_abyssPrivate(),
         statuses: this.context_abyssPrivate.settings.projects.statuses,
         propertyDefinitions: this.context_abyssPrivate.settings.projects.propertyDefinitions,

@@ -1,3 +1,4 @@
+import { createSearchWordSegmenter } from '../src/tasks/infrastructure/search/searchWordSegmenter';
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import type { ProjectField, ProjectTableSettings } from '../src/projects/projectFields';
@@ -61,6 +62,7 @@ describe('buildProjectKanbanModel', () => {
     const settings = buildDefaultProjectKanbanSettings(table());
     settings.groupBy = 'status';
     const result = buildProjectKanbanModel({
+      segment: createSearchWordSegmenter(),
       nowMs: Date.UTC(2026, 8, 20),
       projects: [
         project('Planned project', { statusId: 'planned' }),
@@ -81,6 +83,7 @@ describe('buildProjectKanbanModel', () => {
     expect(result.uniqueVisibleCount).toBe(3);
 
     const withoutDone = buildProjectKanbanModel({
+      segment: createSearchWordSegmenter(),
       nowMs: Date.UTC(2026, 8, 20),
       projects: [project('Active project')],
       fields,
@@ -100,6 +103,7 @@ describe('buildProjectKanbanModel', () => {
   it('adds raw and no-status columns only when the source has matching projects', () => {
     const settings = buildDefaultProjectKanbanSettings(table());
     const result = buildProjectKanbanModel({
+      segment: createSearchWordSegmenter(),
       nowMs: Date.UTC(2026, 8, 20),
       projects: [
         project('Visible'),
@@ -135,6 +139,7 @@ describe('buildProjectKanbanModel', () => {
     const settings = buildDefaultProjectKanbanSettings(table());
     settings.hiddenStatuses = ['id:done', 'none'];
     const result = buildProjectKanbanModel({
+      segment: createSearchWordSegmenter(),
       nowMs: Date.UTC(2026, 8, 20),
       projects: [
         project('Visible match'),
@@ -160,6 +165,7 @@ describe('buildProjectKanbanModel', () => {
     settings.groupBy = 'property:owners';
     settings.sortBy = { field: 'name', dir: 'asc' };
     const result = buildProjectKanbanModel({
+      segment: createSearchWordSegmenter(),
       nowMs: Date.UTC(2026, 8, 20),
       projects: [
         project('Shared', { frontmatter: { owners: ['Ada', 'Lin', 'Ada'] } }),
@@ -191,6 +197,7 @@ describe('buildProjectKanbanModel', () => {
     settings.groupBy = 'none';
     settings.sortBy = { field: 'property:budget', dir: 'asc' };
     const sorted = buildProjectKanbanModel({
+      segment: createSearchWordSegmenter(),
       nowMs: Date.UTC(2026, 8, 20),
       projects,
       fields,
@@ -209,6 +216,7 @@ describe('buildProjectKanbanModel', () => {
       'id:active': ['Projects/Two B.md', 'Projects/Ten.md'],
     };
     const manual = buildProjectKanbanModel({
+      segment: createSearchWordSegmenter(),
       nowMs: Date.UTC(2026, 8, 20),
       projects,
       fields,
@@ -228,7 +236,14 @@ describe('buildProjectKanbanModel', () => {
     settings.groupBy = 'property:owners';
     const before = structuredClone({ projects, fields, statuses, settings });
 
-    buildProjectKanbanModel({ nowMs: Date.UTC(2026, 8, 20), projects, fields, statuses, settings });
+    buildProjectKanbanModel({
+      segment: createSearchWordSegmenter(),
+      nowMs: Date.UTC(2026, 8, 20),
+      projects,
+      fields,
+      statuses,
+      settings,
+    });
 
     expect({ projects, fields, statuses, settings }).toEqual(before);
   });

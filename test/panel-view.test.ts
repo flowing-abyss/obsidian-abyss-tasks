@@ -3679,6 +3679,57 @@ describe('PanelView', () => {
       return event;
     }
 
+    it.each(['Table', 'Kanban', 'Timeline'])(
+      'Find/Escape belongs to the visible %s overview, preserving drafts and retained dashboards',
+      (mode) => {
+        const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+        const switcher = expectDefined(
+          view.contentEl.querySelector<HTMLButtonElement>(`[aria-label="${mode} view"]`),
+        );
+        switcher.click();
+        switcher.focus();
+        const input = expectDefined(
+          view.contentEl.querySelector<HTMLInputElement>('[aria-label="Filter projects"]'),
+        );
+        input.value = 'Alxha';
+        const find = new KeyboardEvent('keydown', {
+          code: 'KeyF',
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        });
+        switcher.dispatchEvent(find);
+        expect(find.defaultPrevented).toBe(true);
+        expect(document.activeElement).toBe(input);
+        expect(input.selectionEnd).toBe(5);
+        input.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+        );
+        expect(document.activeElement).toBe(input.closest('.abyss-projects-table'));
+        expect(input.value).toBe('Alxha');
+        state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+        const center = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+        const dashboardFind = new KeyboardEvent('keydown', {
+          code: 'KeyF',
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        });
+        center.dispatchEvent(dashboardFind);
+        expect(dashboardFind.defaultPrevented).toBe(false);
+        state.set('projectsPanel', { view: 'table' });
+        state.set('mode', 'calendar');
+        const calendarFind = new KeyboardEvent('keydown', {
+          code: 'KeyF',
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        });
+        center.dispatchEvent(calendarFind);
+        expect(calendarFind.defaultPrevented).toBe(false);
+      },
+    );
+
     it('opens Q for the focused range occurrence, freezes its project, and restores cell focus', async () => {
       const pending = deferred<TaskCreateSession>();
       const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
@@ -3808,6 +3859,17 @@ describe('PanelView', () => {
       start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
       const editor = expectDefined(start.querySelector<HTMLInputElement>('input'));
 
+      editor.focus();
+      const find = new KeyboardEvent('keydown', {
+        code: 'KeyF',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      editor.dispatchEvent(find);
+      expect(find.defaultPrevented).toBe(false);
+      expect(document.activeElement).toBe(editor);
+      expect(editor.isConnected).toBe(true);
       const typed = pressQ(editor);
 
       expect(typed.defaultPrevented).toBe(false);
@@ -5052,3 +5114,179 @@ it.each(['toggle', 'other-root', 'deleted'] as const)(
     }
   },
 );
+
+it.each(
+  (['tasks', 'search'] as const).flatMap((mode) => [true, false].map((apple) => ({ mode, apple }))),
+)(
+  'owns Find/Escape in the actual $mode shell, Apple primary=$apple without changing results or inspector',
+  async ({ mode, apple }) => {
+    const h = await prewarmPanel();
+    const previousApple = Platform.isMacOS;
+    const previousIos = Platform.isIosApp;
+    const previousAndroid = Platform.isAndroidApp;
+    // The SDK's isMacOS convention covers iPhone/iPad Command as well as desktop Apple hosts.
+    Platform.isMacOS = apple;
+    Platform.isIosApp = apple;
+    Platform.isAndroidApp = !apple;
+    const primary = { ctrlKey: !apple, metaKey: apple };
+    const restorePlatform = (): void => {
+      Platform.isMacOS = previousApple;
+      Platform.isIosApp = previousIos;
+      Platform.isAndroidApp = previousAndroid;
+    };
+    try {
+      const { view, migrate } = await h.mount();
+      let activeView: PanelView | null = view;
+      vi.spyOn(h.app.workspace, 'getActiveViewOfType').mockImplementation((type) =>
+        type === PanelView ? activeView : null,
+      );
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      state.set('mode', mode);
+      state.set('selectedList', 'inbox');
+      const center = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+      const input = expectDefined(
+        center.querySelector<HTMLInputElement>('input.abyss-center-search'),
+      );
+      input.value = 'needle';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await searchUiCompleted(center);
+      const request = center.dataset['searchRequest'];
+      const builds = h.backends.length;
+      const searches = h.backends[0]?.searchCalls;
+      const button = expectDefined(center.querySelector<HTMLButtonElement>('button'));
+      button.focus();
+      const find = new KeyboardEvent('keydown', {
+        key: 'а',
+        code: 'KeyF',
+        ...primary,
+        bubbles: true,
+        cancelable: true,
+      });
+      button.dispatchEvent(find);
+      expect(find.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(input);
+      expect(input.selectionEnd).toBe(6);
+      input.setSelectionRange(2, 2);
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { code: 'KeyF', ...primary, bubbles: true }),
+      );
+      expect(input.selectionStart).toBe(0);
+      const inspector = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-right'));
+      const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+      setGeometry(layout, rect(0, 0, 390, 480));
+      window.dispatchEvent(new Event('resize'));
+      state.set('taskStack', [expectDefined(h.index.list()[0])]);
+      if (mode === 'tasks') expect(inspector.classList.contains('is-compact-open')).toBe(true);
+      const inspectorClass = inspector.className;
+      const stack = state.get('taskStack');
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(escape);
+      expect(escape.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(center);
+      expect(input.value).toBe('needle');
+      expect(inspector.className).toBe(inspectorClass);
+      expect(state.get('taskStack')).toBe(stack);
+      expect(center.dataset['searchRequest']).toBe(request);
+      expect(h.backends).toHaveLength(builds);
+      expect(h.backends[0]?.searchCalls).toBe(searches);
+      const draft = center.createEl('input');
+      draft.value = 'draft';
+      draft.focus();
+      const blocked = new KeyboardEvent('keydown', {
+        code: 'KeyF',
+        ...primary,
+        bubbles: true,
+        cancelable: true,
+      });
+      draft.dispatchEvent(blocked);
+      expect(blocked.defaultPrevented).toBe(false);
+      expect(document.activeElement).toBe(draft);
+      draft.remove();
+      for (const cls of ['menu', 'modal-container']) {
+        const native = document.body.createDiv({ cls });
+        setGeometry(native, rect(0, 0, 200, 200));
+        button.focus();
+        const nativeFind = new KeyboardEvent('keydown', {
+          code: 'KeyF',
+          ...primary,
+          bubbles: true,
+          cancelable: true,
+        });
+        button.dispatchEvent(nativeFind);
+        expect(nativeFind.defaultPrevented).toBe(false);
+        expect(document.activeElement).toBe(button);
+        native.remove();
+      }
+      activeView = null;
+      const inactive = new KeyboardEvent('keydown', {
+        code: 'KeyF',
+        ...primary,
+        bubbles: true,
+        cancelable: true,
+      });
+      center.dispatchEvent(inactive);
+      expect(inactive.defaultPrevented).toBe(false);
+      activeView = view;
+      const frame = document.body.createEl('iframe');
+      const targetDocument = expectDefined(frame.contentDocument);
+      targetDocument.body.append(targetDocument.adoptNode(view.containerEl));
+      migrate(expectDefined(frame.contentWindow));
+      const oldFind = new KeyboardEvent('keydown', {
+        code: 'KeyF',
+        ...primary,
+        bubbles: true,
+        cancelable: true,
+      });
+      document.body.dispatchEvent(oldFind);
+      expect(oldFind.defaultPrevented).toBe(false);
+      const newFind = new KeyboardEvent('keydown', {
+        code: 'KeyF',
+        ...primary,
+        bubbles: true,
+        cancelable: true,
+      });
+      center.dispatchEvent(newFind);
+      expect(newFind.defaultPrevented).toBe(true);
+      expect(targetDocument.activeElement).toBe(input);
+      await view.onClose();
+      const disposed = new KeyboardEvent('keydown', {
+        code: 'KeyF',
+        ...primary,
+        bubbles: true,
+        cancelable: true,
+      });
+      center.dispatchEvent(disposed);
+      expect(disposed.defaultPrevented).toBe(false);
+      frame.remove();
+    } finally {
+      await h.dispose();
+      restorePlatform();
+    }
+  },
+);
+
+it('Find followed by Escape cancels the Search shell pending autofocus', async () => {
+  const h = await prewarmPanel();
+  try {
+    const { view } = await h.mount();
+    vi.spyOn(h.app.workspace, 'getActiveViewOfType').mockImplementation((type) =>
+      type === PanelView ? view : null,
+    );
+    const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+    state.set('mode', 'search');
+    const center = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+    center.dispatchEvent(
+      new KeyboardEvent('keydown', { code: 'KeyF', ctrlKey: true, bubbles: true }),
+    );
+    const input = expectDefined(center.querySelector<HTMLInputElement>('.abyss-search-global'));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 20));
+    expect(document.activeElement).toBe(center);
+  } finally {
+    await h.dispose();
+  }
+});

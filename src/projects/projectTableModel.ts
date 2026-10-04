@@ -1,6 +1,14 @@
 import { exactLinkToken, linkLabel, linkValueLabel } from '../markdown/links';
 import type { ProjectStatus } from '../settings/types';
-import { formatTrackedDuration, totalMs } from '../tasks';
+import {
+  formatTrackedDuration,
+  matchesSearchText,
+  prepareSearchQuery,
+  TaskSearchError,
+  totalMs,
+  type PreparedSearchQuery,
+  type SearchWordSegmenter,
+} from '../tasks';
 import {
   findProjectFieldById,
   isGroupableProjectField,
@@ -15,8 +23,8 @@ import type {
 } from './projectPropertyDefinitions';
 import { sameProjectPropertyName } from './projectPropertyNames';
 import {
-  compileProjectPropertyPresets,
   compiledProjectPropertyPresentation,
+  compileProjectPropertyPresets,
   type CompiledProjectPropertyPresets,
 } from './projectPropertyPresets';
 import { projectTableLinkTargetParts } from './projectTableLinkTarget';
@@ -62,7 +70,8 @@ export interface ProjectTableModelInput {
   fields: readonly ProjectFieldCatalogItem[];
   statuses: readonly ProjectStatus[];
   settings: ProjectTableSettings;
-  search?: string;
+  search?: string | PreparedSearchQuery | null;
+  readonly segment: SearchWordSegmenter;
   resolveLink?: (target: string, sourcePath: string) => string | undefined;
   propertyDefinitions?: Readonly<Record<string, ProjectPropertyDefinition>>;
   /** The instant every running timer is measured against, so one pass reads one clock. */
@@ -277,18 +286,41 @@ function sortProjects(projects: readonly Project[], context: SortContext): Proje
 
 /** The visible text a search runs against, read at the same clock as the rest of the pass. */
 interface SearchContext {
+  readonly segment: SearchWordSegmenter;
+  readonly literal: string;
   readonly fields: readonly ProjectFieldCatalogItem[];
   readonly statuses: readonly ProjectStatus[];
   readonly nowMs: number;
 }
 
-function matchesSearch(project: Project, search: string, context: SearchContext): boolean {
+export function prepareProjectSearch(
+  search: string | PreparedSearchQuery | null,
+  segment: SearchWordSegmenter,
+): PreparedSearchQuery | null {
+  if (typeof search !== 'string') return search;
+  try {
+    return prepareSearchQuery(search, segment);
+  } catch (error) {
+    if (!(error instanceof TaskSearchError) || error.code !== 'invalid-query') throw error;
+    return null;
+  }
+}
+
+function matchesSearch(
+  project: Project,
+  prepared: PreparedSearchQuery | null,
+  context: SearchContext,
+): boolean {
+  if (prepared === null) return false;
+  const search = context.literal;
   if (search.length === 0) return true;
   if (project.name.toLocaleLowerCase().includes(search)) return true;
-  return context.fields.some((field) =>
-    projectTableDisplayValues(project, field, context.statuses, context.nowMs).some((value) =>
-      value.toLocaleLowerCase().includes(search),
-    ),
+  const values = context.fields.flatMap((field) =>
+    projectTableDisplayValues(project, field, context.statuses, context.nowMs),
+  );
+  return (
+    values.some((value) => value.toLocaleLowerCase().includes(search)) ||
+    matchesSearchText([project.name, ...values].join(' '), prepared, context.segment)
   );
 }
 
@@ -467,12 +499,19 @@ export function buildProjectTableModel(input: ProjectTableModelInput): ProjectTa
     .filter(({ visible }) => visible)
     .map(({ id }) => findProjectFieldById(input.fields, id))
     .filter((field) => field !== undefined);
-  const search = input.search?.trim().toLocaleLowerCase() ?? '';
+  const search = prepareProjectSearch(
+    input.search === undefined ? '' : input.search,
+    input.segment,
+  );
+  const literal = search?.original.trim().toLocaleLowerCase() ?? '';
+
   const visibleProjects = input.projects.filter(
     (project) =>
       !hidden.has(statusGroupKey(project)) &&
       matchesSearch(project, search, {
         fields: visibleFields,
+        segment: input.segment,
+        literal,
         statuses: input.statuses,
         nowMs,
       }),

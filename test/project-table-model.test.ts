@@ -20,6 +20,7 @@ import { buildProjectTimelineModel } from '../src/projects/projectTimelineModel'
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import type { ProjectStatus } from '../src/settings/types';
+import { createSearchWordSegmenter } from '../src/tasks/infrastructure/search/searchWordSegmenter';
 import { projectPropertyValuePresentation } from '../src/ui/projectPropertyValuePresentation';
 import { expectDefined } from './helpers';
 
@@ -106,6 +107,7 @@ function model(
     statuses,
     settings,
     search,
+    segment: createSearchWordSegmenter(),
     nowMs: NOW_MS,
     ...(propertyDefinitions === undefined ? {} : { propertyDefinitions }),
   });
@@ -116,6 +118,7 @@ describe('buildProjectTableModel', () => {
     const projects = [project('Zulu'), project('Alpha')];
 
     const model = buildProjectTableModel({
+      segment: createSearchWordSegmenter(),
       nowMs: NOW_MS,
       projects,
       fields,
@@ -207,6 +210,7 @@ describe('buildProjectTableModel', () => {
       statusId: 'active',
     });
     const statusModel = buildProjectTableModel({
+      segment: createSearchWordSegmenter(),
       nowMs: NOW_MS,
       projects: [activeProject],
       fields,
@@ -253,6 +257,7 @@ describe('buildProjectTableModel', () => {
     ];
 
     const result = buildProjectTableModel({
+      segment: createSearchWordSegmenter(),
       nowMs: NOW_MS,
       projects,
       fields: readOnlyFields,
@@ -306,6 +311,7 @@ describe('buildProjectTableModel', () => {
       }),
     ];
     const result = buildProjectTableModel({
+      segment: createSearchWordSegmenter(),
       nowMs: NOW_MS,
       projects,
       fields,
@@ -358,6 +364,7 @@ describe('buildProjectTableModel', () => {
   it('normalizes internal resolver inputs while preserving raw representative links', () => {
     const resolverInputs: Array<readonly [string, string]> = [];
     const result = buildProjectTableModel({
+      segment: createSearchWordSegmenter(),
       nowMs: NOW_MS,
       projects: [
         project('Plain', { frontmatter: { owners: '[[../People/Anna Smith]]' } }),
@@ -400,6 +407,7 @@ describe('buildProjectTableModel', () => {
   it('groups identical absolute URLs independently of source path without folding URL case', () => {
     const url = 'https://Example.com/CaseSensitive?Token=AbC#Part';
     const result = buildProjectTableModel({
+      segment: createSearchWordSegmenter(),
       nowMs: NOW_MS,
       projects: [
         project('One', { frontmatter: { owners: `[First](${url})` } }),
@@ -437,6 +445,7 @@ describe('buildProjectTableModel', () => {
       project('Two', { path: 'Projects/Two/Plan.md', frontmatter: { owners: '[[Team]]' } }),
     ];
     const result = buildProjectTableModel({
+      segment: createSearchWordSegmenter(),
       nowMs: NOW_MS,
       projects,
       fields,
@@ -700,6 +709,7 @@ it('requires one explicit instant across Table, Kanban and Timeline tracked sort
     projects: [timed('Running', 0, [NOW_MS - 10 * MINUTE]), timed('Closed', 5)],
     fields,
     statuses,
+    segment: createSearchWordSegmenter(),
     nowMs: NOW_MS,
     settings,
   };
@@ -744,6 +754,7 @@ describe('project link labels', () => {
   it('labels a group, a cell, and a suggestion with the note name', () => {
     const alpha = project('Alpha', { frontmatter: { owners: '[[Zeta|]]' } });
     const grouped = buildProjectTableModel({
+      segment: createSearchWordSegmenter(),
       nowMs: NOW_MS,
       projects: [alpha],
       fields,
@@ -764,8 +775,10 @@ describe('project link labels', () => {
     ];
     const sorted = model(projects, table({ sortBy: { field: 'property:owners', dir: 'asc' } }));
 
+    // Shared one-edit discovery also admits Beta while keeping existing source order.
     expect(model(projects, table(), 'zeta').groups[0]?.projects.map(({ name }) => name)).toEqual([
       'Alpha',
+      'Beta',
     ]);
     expect(sorted.groups[0]?.projects.map(({ name }) => name)).toEqual(['Beta', 'Alpha']);
   });
@@ -775,6 +788,7 @@ describe('project link labels', () => {
     'groups %s with [[Zeta]]',
     (value) => {
       const result = buildProjectTableModel({
+        segment: createSearchWordSegmenter(),
         nowMs: NOW_MS,
         projects: [
           project('Alpha', { frontmatter: { owners: '[[Zeta]]' } }),
@@ -788,6 +802,55 @@ describe('project link labels', () => {
 
       expect(result.groups.map(({ key }) => key)).toEqual(['link:zeta.md']);
       expect(result.groups[0]?.projects.map(({ name }) => name)).toEqual(['Alpha', 'Beta']);
+    },
+  );
+});
+
+describe('shared prepared project search', () => {
+  it.each(['table', 'kanban', 'timeline'] as const)(
+    'uses only displayed values and prepares once in %s',
+    (mode) => {
+      const segment = vi.fn(createSearchWordSegmenter());
+      const common = {
+        projects: [
+          project('Zulu', { frontmatter: { owners: ['Тест', '東京大学'], secret: 'Invisible' } }),
+          project('Alpha', { frontmatter: { owners: ['Тест', '東京大学'] } }),
+          project('Hidden', { frontmatter: { secret: 'Тест' } }),
+        ],
+        fields,
+        statuses,
+        nowMs: NOW_MS,
+        segment,
+        search: 'Тсет',
+      };
+      const settings = table({
+        columns: [{ id: 'property:owners', visible: true }],
+        sortBy: { field: 'name', dir: 'asc' },
+      });
+      const build = (search: string | null) => {
+        const input = { ...common, search };
+        if (mode === 'kanban')
+          return buildProjectKanbanModel({
+            ...input,
+            settings: { ...buildDefaultProjectKanbanSettings(settings), fields: settings.columns },
+          });
+        if (mode === 'timeline')
+          return buildProjectTimelineModel({
+            ...input,
+            settings: buildDefaultProjectTimelineSettings(settings),
+            tableSettings: settings,
+          });
+        return buildProjectTableModel({ ...input, settings });
+      };
+      expect(build('Тсет').uniqueVisibleCount).toBe(2);
+      expect(segment.mock.calls.filter(([text]) => text === 'Тсет')).toHaveLength(1);
+      expect(build('大学 東京').uniqueVisibleCount).toBe(2);
+      expect(build('Invisible').uniqueVisibleCount).toBe(0);
+      expect(build('x'.repeat(1024 * 1024)).uniqueVisibleCount).toBe(0);
+      expect(build(null).uniqueVisibleCount).toBe(0);
+      expect(build('').uniqueVisibleCount).toBe(3);
+      const sorted = buildProjectTableModel({ ...common, settings });
+      expect(sorted.groups[0]?.projects.map(({ name }) => name)).toEqual(['Alpha', 'Zulu']);
     },
   );
 });

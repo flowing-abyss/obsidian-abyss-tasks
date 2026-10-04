@@ -10,6 +10,7 @@ import type { ProjectCreateRequest } from '../../projects/projectCreation';
 import { ProjectEditHistory } from '../../projects/projectEditHistory';
 import type { ProjectCellChange, ProjectEditResult } from '../../projects/projectEdits';
 import type { CalendarSettings } from '../../settings/types';
+import type { LocalSearchFocusTarget } from '../../ui/localSearchKeys';
 import { changeProjectStatus, openProjectNote } from '../../ui/projectActions';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { refreshProjectDashboardStatus, renderProjectDashboard } from './ProjectsDashboardView';
@@ -127,6 +128,11 @@ export class ProjectsPanel {
     const table = this.tableView_abyssPrivate;
     if (table === null) action();
     else table.finishEditorBeforeAction(action);
+  }
+
+  localSearchTarget(): LocalSearchFocusTarget | undefined {
+    if (this.state_abyssPrivate.get('projectsPanel').view !== 'table') return undefined;
+    return this.tableView_abyssPrivate?.localSearchTarget();
   }
 
   selectedProjectPath(): string | undefined {

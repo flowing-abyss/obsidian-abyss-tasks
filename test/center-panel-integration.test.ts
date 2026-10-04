@@ -2270,6 +2270,8 @@ describe('CenterPanel.renderSearch', () => {
     const focus = vi.spyOn(panel['el'], 'focus');
     const router = new PanelShortcutRouter({
       ownerDocument,
+      ownerElement: panel['el'],
+      localSearchTarget: () => panel.localSearchTarget(),
       isActive: () => true,
       settings: () => DEFAULT_SETTINGS.shortcuts,
       platform: { mod: 'ctrl' },

@@ -14,7 +14,7 @@ import { taskSearchMetadata } from '../../domain/taskSearchMetadata';
 import type { TaskSearchAddress } from '../../domain/taskSearchTypes';
 import type { SubtaskSnapshot, TaskSnapshot } from '../../domain/types';
 
-export type TaskSearchContextField =
+type TaskSearchContextField =
   'title' | 'description' | 'comment' | 'tag' | 'metadata' | 'link-target';
 export interface TaskSearchExcerpt {
   readonly address: TaskSearchAddress;
