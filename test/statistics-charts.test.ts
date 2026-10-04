@@ -854,6 +854,110 @@ it('shows overlapping timeline intervals in separate subrows without changing cl
   expect(required(a).y + required(a).h).toBeLessThanOrEqual(required(b).y);
   expect(required(c).y).toBe(required(b).y);
 });
+it.each([640, 240])('expands folded clock fragments once before packing at %ipx', (width) => {
+  const el = host(document, width);
+  const value = model({
+    kind: 'timeline',
+    layout: undefined,
+    x: { type: 'number', label: 'Clock', domain: [0, 1440] },
+    y: { type: 'band', label: 'Day', categories: ['Sun'] },
+    series: [],
+    marks: [
+      {
+        key: 'source:entry',
+        x: 90,
+        x2: 105,
+        y: 'Sun',
+        weight: 75,
+        selectionId: 'source:entry',
+        label: 'Folded interval',
+        detail: 'One physical tracking entry',
+        clockRanges: [
+          {
+            startMs: 0,
+            endMs: 1800000,
+            offsetMinutes: 120,
+            localStartMinutes: 90,
+            localEndMinutes: 120,
+            startLabel: '01:30 UTC+02:00',
+            endLabel: '02:00 UTC+02:00',
+          },
+          {
+            startMs: 1800000,
+            endMs: 4500000,
+            offsetMinutes: 60,
+            localStartMinutes: 60,
+            localEndMinutes: 105,
+            startLabel: '01:00 UTC+01:00',
+            endLabel: '01:45 UTC+01:00',
+          },
+        ],
+      },
+    ],
+  });
+  const original = structuredClone(value),
+    chart = mount(el, value);
+  const rectangles = marks(el),
+    clip = required(el.querySelector('clipPath rect'));
+  expect(rectangles).toHaveLength(2);
+  for (const [index, [start, end]] of [
+    [60, 105],
+    [90, 120],
+  ].entries()) {
+    const fragment = required(rectangles[index]);
+    expect(n(fragment, 'x')).toBeCloseTo(
+      n(clip, 'x') + (n(clip, 'width') * required(start)) / 1440,
+    );
+    expect(n(fragment, 'width')).toBeCloseTo(
+      (n(clip, 'width') * (required(end) - required(start))) / 1440,
+    );
+  }
+  const [first, second] = rectangles.map((rectangle) => ({
+    y: n(rectangle, 'y'),
+    h: n(rectangle, 'height'),
+  }));
+  expect(required(first).h).toBeCloseTo(required(second).h);
+  expect(required(second).y - required(first).y).toBeCloseTo(required(first).h / 0.8);
+  for (const position of ['Home', 'End']) {
+    key(chart.svg(), position);
+    const tooltip = required(el.querySelector('.abyss-statistics-tooltip')).textContent;
+    expect(tooltip).toContain('01:30 UTC+02:00 – 02:00 UTC+02:00');
+    expect(tooltip).toContain('01:00 UTC+01:00 – 01:45 UTC+01:00');
+    expect(tooltip).toContain('One physical tracking entry');
+    key(chart.svg(), 'Enter');
+  }
+  expect(chart.select.mock.calls).toEqual([['source:entry'], ['source:entry']]);
+  // Numeric lanes and density bypass band packing, but still expand each range once.
+  for (const variant of [
+    {
+      ...value,
+      y: { type: 'number' as const, label: 'Lane', domain: [0, 2] as const },
+      marks: value.marks.map((mark) => ({ ...mark, y: 0, y2: 1 })),
+    },
+    { ...value, layout: 'density' as const },
+  ]) {
+    chart.handle.update(variant);
+    const fragments = marks(el),
+      plot = required(el.querySelector('clipPath rect'));
+    expect(fragments).toHaveLength(2);
+    for (const [index, [start, end]] of [
+      [90, 120],
+      [60, 105],
+    ].entries()) {
+      const fragment = required(fragments[index]);
+      expect(n(fragment, 'x')).toBeCloseTo(
+        n(plot, 'x') + (n(plot, 'width') * required(start)) / 1440,
+      );
+      expect(n(fragment, 'width')).toBeCloseTo(
+        (n(plot, 'width') * (required(end) - required(start))) / 1440,
+      );
+    }
+    key(chart.svg(), 'Home');
+    key(chart.svg(), 'Enter');
+    expect(chart.select).toHaveBeenLastCalledWith('source:entry');
+  }
+  expect(value).toEqual(original);
+});
 it('relayouts horizontal stacks with their axes when the host grows after initial mounting', () => {
   let resized: ResizeObserverCallback | undefined;
   class Observer {

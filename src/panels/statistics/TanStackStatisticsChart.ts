@@ -273,10 +273,10 @@ function timelineRows(model: StatisticsChartModel): StatisticsMark[] {
 }
 /** Pack bounded clock intervals so simultaneous records remain separate selectable marks. */
 function timelineLayout(model: StatisticsChartModel): StatisticsChartModel {
-  if (model.kind !== 'timeline' || model.layout === 'density' || model.y.type !== 'band')
-    return model;
-  const rows = timelineRows(model),
-    marks: StatisticsMark[] = [],
+  if (model.kind !== 'timeline' || model.layout === 'density') return model;
+  const rows = timelineRows(model);
+  if (model.y.type !== 'band') return { ...model, marks: rows };
+  const marks: StatisticsMark[] = [],
     ticks: Array<readonly [number, string]> = [];
   const labels = new Map(model.y.tickLabels);
   let base = 0;
@@ -303,7 +303,7 @@ function timelineLayout(model: StatisticsChartModel): StatisticsChartModel {
 }
 function timelineMarks(model: StatisticsChartModel): RenderMark[] {
   if (model.layout === 'density') return densityMarks(model);
-  const rows = timelineRows(model);
+  const rows = model.marks;
   const series = [...model.series];
   if (rows.some((mark) => mark.series === undefined))
     series.push({ key: '', label: '', tone: 'accent' });
