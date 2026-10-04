@@ -1,20 +1,24 @@
 import type { ListSelection } from '../app/AppState';
+import { stableSortSteps, type CollectionSteps } from '../collectionSteps';
 import type { SearchViewState } from '../panels/center/SearchViewState';
-import type { CalendarSettings } from '../settings/types';
 import { StatusRegistry } from '../status/StatusRegistry';
 import type { LocalDate, TaskOrganizationRecord, TaskSearchAddress, TaskSearchHit } from '../tasks';
 import { shiftLocalDate, totalMs } from '../tasks';
 import {
-  groupTasksByDate,
-  groupTasksByOutgoingLink,
-  groupTasksByPriority,
-  groupTasksBySourceNote,
-  groupTasksByStatus,
-  groupTasksByTag,
+  groupTasksByDateSteps,
+  groupTasksByOutgoingLinkSteps,
+  groupTasksByPrioritySteps,
+  groupTasksBySourceNoteSteps,
+  groupTasksByStatusSteps,
+  groupTasksByTagSteps,
   type TaskGroup,
 } from '../views/taskGrouping';
 import type { TaskLinkValues } from './taskLinkValues';
-import { filterTaskValues, selectTaskValues } from './TaskListSelector';
+import {
+  filterTaskValuesSteps,
+  selectTaskValuesSteps,
+  type TaskOrganizationSettings,
+} from './TaskListSelector';
 export interface TaskSearchOccurrence {
   readonly key: string;
   readonly address: TaskSearchAddress;
@@ -33,84 +37,180 @@ export interface TaskSearchOrganizationInput {
   readonly hits: readonly TaskSearchHit[] | null;
   readonly selection: ListSelection | null;
   readonly view: SearchViewState;
-  readonly settings: CalendarSettings;
+  readonly settings: TaskOrganizationSettings;
   readonly today: LocalDate;
   readonly nowMs: number;
   readonly outgoingLinks: TaskLinkValues;
 }
-export function organizeTaskSearch(input: TaskSearchOrganizationInput): TaskSearchOrganization {
-  const scores = new Map(input.hits?.map((hit) => [hit.address.rootId, hit.score]));
-  const records =
-    input.hits === null ? input.records : input.records.filter((r) => scores.has(r.address.rootId));
-  // Stable canonical order is the last tie break, irrespective of engine relevance ordering.
-  const canonical = input.view.relevance ? records : [...records].sort(compareSource);
-  const selectionInput = {
+function* scoreMap(input: TaskSearchOrganizationInput): CollectionSteps<Map<number, number>> {
+  const scores = new Map<number, number>();
+  for (const hit of input.hits ?? []) {
+    scores.set(hit.address.rootId, hit.score);
+    yield 'cheap';
+  }
+  return scores;
+}
+function* canonicalRecords(
+  input: TaskSearchOrganizationInput,
+  scores: ReadonlyMap<number, number>,
+): CollectionSteps<TaskOrganizationRecord[]> {
+  const canonical: TaskOrganizationRecord[] = [];
+  for (const record of input.records) {
+    if (input.hits === null || scores.has(record.address.rootId)) canonical.push(record);
+    yield 'cheap';
+  }
+  if (input.view.relevance) return canonical;
+  return yield* stableSortSteps(canonical, compareSource);
+}
+function* restoreRelevance(
+  selected: readonly TaskOrganizationRecord[],
+  hits: readonly TaskSearchHit[],
+): CollectionSteps<TaskOrganizationRecord[]> {
+  const byRoot = new Map<number, TaskOrganizationRecord>();
+  const matching: TaskOrganizationRecord[] = [];
+  try {
+    for (const record of selected) {
+      byRoot.set(record.address.rootId, record);
+      yield 'cheap';
+    }
+    for (const hit of hits) {
+      const record = byRoot.get(hit.address.rootId);
+      if (record !== undefined) matching.push(record);
+      yield 'cheap';
+    }
+    return matching;
+  } finally {
+    byRoot.clear();
+  }
+}
+function* matchingRecords(
+  input: TaskSearchOrganizationInput,
+  scores: ReadonlyMap<number, number>,
+): CollectionSteps<TaskOrganizationRecord[]> {
+  const canonical = yield* canonicalRecords(input, scores);
+  if (canonical === undefined) throw new Error('Canonical ordering ended without a result');
+  const selection = {
     ...input,
     tasks: canonical,
     viewState: input.view.list,
     treeTags: (r: TaskOrganizationRecord) => r.treeTags,
     trackedMs: (r: TaskOrganizationRecord) => totalMs(r.tracked, input.nowMs),
   };
-  const selected = input.view.relevance
-    ? filterTaskValues(selectionInput)
-    : selectTaskValues(selectionInput);
-  const selectedByRoot = new Map(selected.map((r) => [r.address.rootId, r]));
-  const matching =
-    input.view.relevance && input.hits !== null
-      ? input.hits.flatMap((hit) => {
-          const record = selectedByRoot.get(hit.address.rootId);
-          return record === undefined ? [] : [record];
-        })
-      : selected;
-  const groupBy = input.view.list.groupBy;
-  const groups = organizationGroups(matching, input);
-  const groupCounts = new Map(groups.map((group) => [group.key, group.tasks.length]));
-  const occurrence = (
-    r: TaskOrganizationRecord,
-    group: { key: string; label: string } | null,
-  ): TaskSearchOccurrence => {
-    const physical = `${r.source.filePath}:${r.source.line}`;
-    return {
-      key:
-        groupBy === 'outgoing-link' && group !== null
-          ? JSON.stringify(['task-occurrence', 'outgoing-link', group.key, physical])
-          : physical,
-      address: r.address,
-      score: scores.get(r.address.rootId) ?? 0,
-      group,
-    };
-  };
+  const selected = yield* input.view.relevance
+    ? filterTaskValuesSteps(selection)
+    : selectTaskValuesSteps(selection);
+  if (selected === undefined) throw new Error('Selection ended without a result');
+  if (input.view.relevance && input.hits !== null)
+    return yield* restoreRelevance(selected, input.hits);
+  return selected;
+}
+function occurrence(
+  record: TaskOrganizationRecord,
+  group: TaskSearchOccurrence['group'],
+  outgoing: boolean,
+  scores: ReadonlyMap<number, number>,
+): TaskSearchOccurrence {
+  const physical = `${record.source.filePath}:${record.source.line}`;
   return {
-    generation: input.generation,
-    rootTotal: matching.length,
-    groupCounts,
-    occurrences:
-      groupBy === 'none'
-        ? matching.map((r) => occurrence(r, null))
-        : groups.flatMap((group) =>
-            group.tasks.map((r) => occurrence(r, { key: group.key, label: group.label })),
-          ),
+    key:
+      outgoing && group !== null
+        ? JSON.stringify(['task-occurrence', 'outgoing-link', group.key, physical])
+        : physical,
+    address: record.address,
+    score: scores.get(record.address.rootId) ?? 0,
+    group,
   };
 }
-function organizationGroups(
+function* appendOccurrences(
+  records: readonly TaskOrganizationRecord[],
+  group: TaskSearchOccurrence['group'],
+  context: {
+    outgoing: boolean;
+    scores: ReadonlyMap<number, number>;
+    output: TaskSearchOccurrence[];
+  },
+): CollectionSteps<boolean> {
+  const { output, outgoing, scores } = context;
+  for (const record of records) {
+    output.push(occurrence(record, group, outgoing, scores));
+    yield 'atom';
+  }
+  return true;
+}
+function* groupedOccurrences(
+  input: TaskSearchOrganizationInput,
+  records: readonly TaskOrganizationRecord[],
+  scores: ReadonlyMap<number, number>,
+  output: { counts: Map<string, number>; occurrences: TaskSearchOccurrence[] },
+): CollectionSteps<boolean> {
+  const groups = yield* organizationGroups(records, input);
+  if (groups === undefined) throw new Error('Grouping ended without a result');
+  for (const group of groups) {
+    output.counts.set(group.key, group.tasks.length);
+    yield 'cheap';
+    const appended = yield* appendOccurrences(
+      group.tasks,
+      { key: group.key, label: group.label },
+      { outgoing: input.view.list.groupBy === 'outgoing-link', scores, output: output.occurrences },
+    );
+    if (appended === undefined) throw new Error('Occurrences ended without a result');
+    group.tasks.length = 0;
+    yield 'cheap';
+  }
+  return true;
+}
+export function* organizeTaskSearch(
+  input: TaskSearchOrganizationInput,
+): CollectionSteps<TaskSearchOrganization> {
+  const scores = yield* scoreMap(input);
+  if (scores === undefined) throw new Error('Scores ended without a result');
+  let matching: TaskOrganizationRecord[] = [],
+    occurrences: TaskSearchOccurrence[] = [];
+  let groupCounts = new Map<string, number>();
+  try {
+    const selected = yield* matchingRecords(input, scores);
+    if (selected === undefined) throw new Error('Matching ended without a result');
+    matching = selected;
+    const rootTotal = matching.length;
+    const appended =
+      input.view.list.groupBy === 'none'
+        ? yield* appendOccurrences(matching, null, { outgoing: false, scores, output: occurrences })
+        : yield* groupedOccurrences(input, matching, scores, { counts: groupCounts, occurrences });
+    if (appended === undefined) throw new Error('Organization ended without a result');
+    return { generation: input.generation, rootTotal, groupCounts, occurrences };
+  } finally {
+    scores.clear();
+    matching = [];
+    occurrences = [];
+    groupCounts = new Map();
+  }
+}
+function* organizationGroups(
   records: readonly TaskOrganizationRecord[],
   input: TaskSearchOrganizationInput,
-): Array<TaskGroup<TaskOrganizationRecord>> {
+): CollectionSteps<Array<TaskGroup<TaskOrganizationRecord>>> {
   switch (input.view.list.groupBy) {
     case 'none':
       return [];
     case 'priority':
-      return groupTasksByPriority(records);
+      return yield* groupTasksByPrioritySteps(records);
     case 'date':
-      return groupTasksByDate(records, input.today, shiftLocalDate(input.today, 1) ?? input.today);
+      return yield* groupTasksByDateSteps(
+        records,
+        input.today,
+        shiftLocalDate(input.today, 1) ?? input.today,
+      );
     case 'tag':
-      return groupTasksByTag(records);
-    case 'status':
-      return groupTasksByStatus(records, new StatusRegistry(input.settings.taskStatuses));
+      return yield* groupTasksByTagSteps(records);
+    case 'status': {
+      const registry = new StatusRegistry(input.settings.taskStatuses);
+      yield 'atom';
+      return yield* groupTasksByStatusSteps(records, registry);
+    }
     case 'source-note':
-      return groupTasksBySourceNote(records);
+      return yield* groupTasksBySourceNoteSteps(records);
     case 'outgoing-link':
-      return groupTasksByOutgoingLink(records, input.outgoingLinks);
+      return yield* groupTasksByOutgoingLinkSteps(records, input.outgoingLinks);
   }
 }
 

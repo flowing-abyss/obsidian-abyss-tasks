@@ -57,3 +57,27 @@ it('rejects each task boundary by its stable rule name', async () => {
   expect(graph.summary.error).toBe(10);
   expect(graph.summary.warn).toBe(0);
 });
+
+it('allows only the neutral browser scheduler bridge and rejects reversed ownership', async () => {
+  const options = await extractDepcruiseOptions(path.join(ROOT, 'dependency-cruiser.config.cjs'));
+  const result = await cruise(['src'], {
+    ...options,
+    baseDir: path.join(ROOT, 'test/fixtures/organization-architecture'),
+    tsConfig: { fileName: path.join(ROOT, 'tsconfig.json') },
+  });
+  const graph = result.output as ICruiseResult;
+  const violations = graph.summary.violations.map(
+    ({ rule, from, to }) => `${rule.name}:${from}->${to}`,
+  );
+  expect(violations).toContain(
+    'browser-task-scheduler-is-neutral:src/browserTaskScheduler.ts->src/tasks/infrastructure/invalid.ts',
+  );
+  expect(violations).toContain(
+    'task-infrastructure-depends-inward:src/tasks/infrastructure/invalid.ts->src/browserTaskScheduler.ts',
+  );
+  expect(violations).toContain(
+    'task-presentation-uses-public-entry:src/panels/invalid.ts->src/tasks/infrastructure/search/BrowserTaskSearchBackend.ts',
+  );
+  expect(violations.some((v) => v.includes(':src/panels/valid.ts->'))).toBe(false);
+  expect(violations.some((v) => v.startsWith('task-browser-scheduler-adapter:'))).toBe(false);
+});

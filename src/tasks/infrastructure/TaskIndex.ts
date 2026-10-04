@@ -1041,44 +1041,91 @@ export class TaskIndex
 
   async initialize(): Promise<void> {
     if (this.initialized_abyssPrivate || this.destroyed_abyssPrivate) return;
-    this.initialization_abyssPrivate ??= this.performInitialization_abyssPrivate();
-    try {
-      await this.initialization_abyssPrivate;
-    } catch (cause) {
-      this.searchFailure_abyssPrivate = { cause };
-      this.invalidateDependencies_abyssPrivate(
-        new TaskSearchError('unavailable', 'Task index unavailable'),
-      );
+    if (this.initialization_abyssPrivate === undefined) {
+      this.initialization_abyssPrivate = Promise.resolve()
+        .then(() => this.performInitialization_abyssPrivate())
+        .catch((cause: unknown) => {
+          if (!this.destroyed_abyssPrivate) {
+            this.searchFailure_abyssPrivate = { cause };
+            this.invalidateDependencies_abyssPrivate(
+              new TaskSearchError('unavailable', 'Task index unavailable'),
+            );
+            this.publishSearch_abyssPrivate({
+              type: 'state',
+              state: this.searchState_abyssPrivate(),
+            });
+          }
+          throw cause;
+        })
+        .finally(() => {
+          this.initialization_abyssPrivate = undefined;
+        });
+      this.searchFailure_abyssPrivate = undefined;
       this.publishSearch_abyssPrivate({ type: 'state', state: this.searchState_abyssPrivate() });
-      throw cause;
     }
+    await this.initialization_abyssPrivate;
+  }
+
+  private initializationActive_abyssPrivate(): boolean {
+    return !this.destroyed_abyssPrivate;
   }
 
   private async performInitialization_abyssPrivate(): Promise<void> {
+    if (!this.initializationActive_abyssPrivate()) return;
     this.registerEvents_abyssPrivate();
     const files = [...this.app_abyssPrivate.vault.getMarkdownFiles()]
       .map((file) => ({ file, path: file.path }))
       .sort((left, right) => left.path.localeCompare(right.path));
     const chunkSize = 50;
     for (let index = 0; index < files.length; index += chunkSize) {
-      await Promise.all(
+      if (!this.initializationActive_abyssPrivate()) return;
+      const settled = await Promise.allSettled(
         files
           .slice(index, index + chunkSize)
-          .map(({ file, path }) => this.loadFile_abyssPrivate(file, path)),
+          .map(({ file, path }) => this.loadInitialFile_abyssPrivate(file, path)),
       );
+      const rejected = settled.find((result) => result.status === 'rejected');
+      if (rejected !== undefined) throw rejected.reason;
       if (index + chunkSize < files.length) {
         await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
       }
     }
     await this.drainPendingReads_abyssPrivate();
     if (this.destroyed_abyssPrivate) return;
+    this.pruneMissingFiles_abyssPrivate();
     this.initialized_abyssPrivate = true;
     this.publishSearch_abyssPrivate({ type: 'state', state: this.searchState_abyssPrivate() });
     this.publish_abyssPrivate({ type: 'initialized' });
   }
 
+  private async loadInitialFile_abyssPrivate(file: TFile, path: string): Promise<boolean> {
+    const priorPath = this.fileLifecycles_abyssPrivate.get(file)?.path;
+    if (
+      priorPath !== undefined &&
+      priorPath !== path &&
+      this.app_abyssPrivate.vault.getAbstractFileByPath(path) === file
+    ) {
+      // Registration may have failed before the rename listener was acquired. Reuse its owner,
+      // retaining accepted-command verification while the fresh bootstrap read reconciles content.
+      const committed = this.committedContents_abyssPrivate.get(priorPath);
+      this.handleVaultRename_abyssPrivate(file, priorPath);
+      if (committed !== undefined && !this.committedContents_abyssPrivate.has(path))
+        this.committedContents_abyssPrivate.set(path, committed);
+    }
+    return this.loadFile_abyssPrivate(file, path);
+  }
+
+  private pruneMissingFiles_abyssPrivate(): void {
+    // A partial listener registration may have missed a deletion before the next attempt.
+    for (const path of this.taskMap_abyssPrivate.keys()) {
+      const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile) || file.extension !== 'md') this.removeFile_abyssPrivate(path);
+    }
+  }
+
   searchSource(): TaskSearchSource {
     return {
+      ensureReady: () => this.initialize(),
       subscribe: (listener) => {
         this.searchListeners_abyssPrivate.add(listener);
         return {
@@ -2113,26 +2160,34 @@ export class TaskIndex
   }
 
   private registerEvents_abyssPrivate(): void {
-    const metadataChanged = this.app_abyssPrivate.metadataCache.on(
-      'changed',
-      (file: TFile, data: string, cache: CachedMetadata) => {
-        this.handleMetadataChanged_abyssPrivate(file, data, cache);
-      },
-    );
-    this.metadataCacheRefs_abyssPrivate.push(metadataChanged);
-    const created = this.app_abyssPrivate.vault.on('create', (file: TAbstractFile) => {
-      this.handleVaultCreate_abyssPrivate(file);
-    });
-    const renamed = this.app_abyssPrivate.vault.on(
-      'rename',
-      (file: TAbstractFile, oldPath: string) => {
-        this.handleVaultRename_abyssPrivate(file, oldPath);
-      },
-    );
-    const deleted = this.app_abyssPrivate.vault.on('delete', (file: TAbstractFile) => {
-      this.handleVaultDelete_abyssPrivate(file);
-    });
-    this.vaultRefs_abyssPrivate.push(created, renamed, deleted);
+    if (this.metadataCacheRefs_abyssPrivate.length === 0)
+      this.metadataCacheRefs_abyssPrivate.push(
+        this.app_abyssPrivate.metadataCache.on(
+          'changed',
+          (file: TFile, data: string, cache: CachedMetadata) => {
+            this.handleMetadataChanged_abyssPrivate(file, data, cache);
+          },
+        ),
+      );
+    // Keep each ref immediately: a later registration can throw without forfeiting ownership.
+    if (this.vaultRefs_abyssPrivate.length === 0)
+      this.vaultRefs_abyssPrivate.push(
+        this.app_abyssPrivate.vault.on('create', (file: TAbstractFile) => {
+          this.handleVaultCreate_abyssPrivate(file);
+        }),
+      );
+    if (this.vaultRefs_abyssPrivate.length === 1)
+      this.vaultRefs_abyssPrivate.push(
+        this.app_abyssPrivate.vault.on('rename', (file: TAbstractFile, oldPath: string) => {
+          this.handleVaultRename_abyssPrivate(file, oldPath);
+        }),
+      );
+    if (this.vaultRefs_abyssPrivate.length === 2)
+      this.vaultRefs_abyssPrivate.push(
+        this.app_abyssPrivate.vault.on('delete', (file: TAbstractFile) => {
+          this.handleVaultDelete_abyssPrivate(file);
+        }),
+      );
   }
 
   private handleMetadataChanged_abyssPrivate(

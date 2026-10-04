@@ -1,4 +1,7 @@
+import { vi } from 'vitest';
 import { AppState } from '../../src/app/AppState';
+import { BrowserTaskCancelled, type BrowserTaskScheduler } from '../../src/browserTaskScheduler';
+import type { TaskSearchOptions } from '../../src/panels/center/TaskSearch';
 import { CenterPanel } from '../../src/panels/CenterPanel';
 import type { CalendarSettings } from '../../src/settings/types';
 import { createCanonicalSearchHarness } from './taskSearchHarness';
@@ -40,6 +43,7 @@ export async function mountCanonicalSearchUi(
   files: Record<string, string>,
   settings: CalendarSettings,
   mode: 'search' | 'tasks' = 'search',
+  organizationScheduler?: TaskSearchOptions['organizationScheduler'],
 ) {
   const h = await createCanonicalSearchHarness(files, settings);
   const state = new AppState();
@@ -47,6 +51,8 @@ export async function mountCanonicalSearchUi(
   state.set('mode', mode);
   const root = document.body.createDiv({ cls: 'abyss-panel-view' });
   const panel = new CenterPanel({
+    organizationScheduler:
+      organizationScheduler ?? (vi.isFakeTimers() ? timerOrganizationScheduler : undefined),
     state,
     app: h.app,
     settings,
@@ -75,5 +81,29 @@ export async function mountCanonicalSearchUi(
       root.remove();
       h.close();
     },
+  };
+}
+
+/** Fake-clock tests need owner task turns governed by the same virtual timer queue. */
+function timerOrganizationScheduler(owner: Window): Pick<BrowserTaskScheduler, 'now' | 'yield'> {
+  return {
+    now: () => owner.performance.now(),
+    yield: (signal) =>
+      new Promise<void>((resolve, reject) => {
+        if (signal.aborted) {
+          reject(new BrowserTaskCancelled());
+          return;
+        }
+        const abort = (): void => {
+          owner.clearTimeout(timer);
+          signal.removeEventListener('abort', abort);
+          reject(new BrowserTaskCancelled());
+        };
+        const timer = owner.setTimeout(() => {
+          signal.removeEventListener('abort', abort);
+          resolve();
+        }, 0);
+        signal.addEventListener('abort', abort, { once: true });
+      }),
   };
 }

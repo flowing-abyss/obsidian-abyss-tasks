@@ -33,6 +33,7 @@ export type TaskSearchSourceEvent =
     }
   | { readonly type: 'semantics'; readonly generation: number };
 export interface TaskSearchSource {
+  ensureReady(): Promise<void>;
   subscribe(listener: (event: TaskSearchSourceEvent) => void): {
     readonly state: TaskSearchSourceState;
     readonly unsubscribe: () => void;

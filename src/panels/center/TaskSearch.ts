@@ -1,16 +1,23 @@
-import type { AppState, ListSelection } from '../../app/AppState';
+import type { AppState } from '../../app/AppState';
+import {
+  BrowserTaskScheduleError,
+  createBrowserTaskScheduler,
+  type BrowserTaskScheduler,
+} from '../../browserTaskScheduler';
 import { moment } from '../../obsidianMoment';
 import type { CalendarSettings } from '../../settings/types';
-import { outgoingTaskLinkValues, type TaskLinkResolver } from '../../task-lists/taskLinkValues';
+import { collectTaskLinkValuesSteps, type TaskLinkResolver } from '../../task-lists/taskLinkValues';
 import {
   organizeTaskSearch,
   type TaskSearchOrganization,
+  type TaskSearchOrganizationInput,
 } from '../../task-lists/taskSearchOrganization';
 import {
   localDate,
   TaskSearchError,
   type TaskOrganizationRecord,
   type TaskReadProjectionApi,
+  type TaskSearchAddress,
   type TaskSearchApi,
   type TaskSearchHit,
   type TaskSearchState,
@@ -20,6 +27,11 @@ import { isImeOwnedEvent } from '../../ui/ime';
 import { SearchStatus } from '../../ui/searchStatus';
 import { TaskRenderScope, type TaskRenderOutcome } from '../../ui/taskRenderScope';
 import type { PanelNavigationActions } from '../../views/panelNavigation';
+import {
+  runTaskOrganization,
+  TaskOrganizationFailure,
+  type TaskOrganizationPhase,
+} from '../task-list/runTaskOrganization';
 import { TaskSearchPages, type TaskSearchPageModel } from '../task-list/TaskSearchPages';
 import type { SearchViewState } from './SearchViewState';
 
@@ -37,7 +49,9 @@ interface TaskSearchHost {
   clearSelection(): void;
   renderControls(host: HTMLElement): void;
 }
-interface TaskSearchOptions {
+export interface TaskSearchOptions {
+  readonly organizationScheduler?:
+    ((owner: Window) => Pick<BrowserTaskScheduler, 'now' | 'yield'>) | undefined;
   readonly state: AppState;
   readonly search: TaskSearchApi | undefined;
   readonly reads: TaskReadProjectionApi | undefined;
@@ -47,10 +61,49 @@ interface TaskSearchOptions {
   readonly navigation: PanelNavigationActions;
   readonly host: TaskSearchHost;
 }
+type TaskSearchCursor = Awaited<ReturnType<TaskSearchApi['open']>>;
+type TaskSearchPage = Awaited<ReturnType<TaskSearchApi['read']>>;
+type OrganizationIterator = ReturnType<
+  ReturnType<TaskReadProjectionApi['organization']>[typeof Symbol.asyncIterator]
+>;
+interface SearchPreparation {
+  readonly root: HTMLElement | null;
+  readonly results: HTMLElement | null;
+  readonly owner: Document['defaultView'] | undefined;
+  readonly request: number;
+  readonly signal: AbortSignal;
+  generation: number | undefined;
+  phase: TaskOrganizationPhase;
+  secondaryCleanup: boolean;
+}
+interface SearchCollection {
+  hits: TaskSearchHit[];
+  roots: TaskSearchAddress[];
+  records: TaskOrganizationRecord[];
+}
+type CapturedOrganization = Omit<
+  TaskSearchOrganizationInput,
+  'generation' | 'records' | 'hits' | 'outgoingLinks'
+>;
+function validatePage(page: TaskSearchPage, cursor: TaskSearchCursor, offset: number): void {
+  const end = offset + page.hits.length;
+  const identity =
+    page.cursor.id === cursor.id &&
+    page.cursor.generation === cursor.generation &&
+    page.offset === offset;
+  const progress = page.done ? end === cursor.total : page.hits.length > 0;
+  if (!identity || !progress || page.hits.length > 200 || end > cursor.total)
+    throw new TaskOrganizationFailure('cursor', 'step');
+}
+function observedBackend(state: TaskSearchState | null): 'unknown' | 'inline' | 'worker' {
+  if (state?.phase !== 'ready') return 'unknown';
+  return state.compatibility ? 'inline' : 'worker';
+}
 /** One mounted query owns collection, compact organization, a bounded page and render receipts. */
 export class TaskSearch {
   readonly #options: TaskSearchOptions;
   #root: HTMLElement | null = null;
+  #owner: Window | null = null;
   #input: HTMLInputElement | null = null;
   #results: HTMLElement | null = null;
   #status: SearchStatus | null = null;
@@ -74,6 +127,10 @@ export class TaskSearch {
     if (!this.#live()) return false;
     this.#schedule(this.#currentQuery());
     return true;
+  }
+  refreshFilter(root: HTMLElement, results: HTMLElement): boolean {
+    if (!this.#filter || this.#root !== root || this.#results !== results) return false;
+    return this.refresh();
   }
   render(root: HTMLElement): void {
     this.clear();
@@ -123,19 +180,9 @@ export class TaskSearch {
     this.#schedule(query);
   }
   #attach(root: HTMLElement): void {
+    this.#owner = root.ownerDocument.defaultView;
     const footer = root.createDiv({ cls: 'abyss-search-footer' });
-    this.#status = new SearchStatus(root, footer, () => {
-      const search = this.#options.search;
-      if (search === undefined) return;
-      void search
-        .retry()
-        .then(() => {
-          if (this.#live()) this.#schedule(this.#currentQuery(), 0);
-        })
-        .catch((error: unknown) => {
-          this.#status?.fail(this.#request, error);
-        });
-    });
+    this.#status = new SearchStatus(root, footer);
     this.#paging = footer.createDiv({ cls: 'abyss-search-paging' });
     const search = this.#options.search;
     if (search !== undefined) {
@@ -154,7 +201,10 @@ export class TaskSearch {
       this.#restart = true;
       this.#status?.pending(++this.#request, this.#query);
     }
-    if (state.phase === 'failed' || state.phase === 'disposed') {
+    if (
+      (state.phase === 'failed' || state.phase === 'disposed') &&
+      this.#currentQuery().trim() !== ''
+    ) {
       this.#cancelPending();
       this.#status?.fail(
         this.#request,
@@ -183,7 +233,11 @@ export class TaskSearch {
     return this.#options.state.get(this.#filter ? 'centerFilter' : 'searchQuery');
   }
   #live(): boolean {
-    return this.#root?.isConnected === true && this.#results?.isConnected === true;
+    return (
+      this.#root?.isConnected === true &&
+      this.#results?.isConnected === true &&
+      this.#root.ownerDocument.defaultView === this.#owner
+    );
   }
   #cancelPending(): void {
     if (this.#timer !== null) this.#root?.ownerDocument.defaultView?.clearTimeout(this.#timer);
@@ -194,6 +248,7 @@ export class TaskSearch {
   #schedule(query: string, delay = 60): void {
     this.#cancelPending();
     this.#query = query;
+    this.#restart = false;
     this.#organization = null;
     this.#generation = null;
     this.#pages?.dispose();
@@ -201,7 +256,7 @@ export class TaskSearch {
     this.#options.host.clearSelection();
     this.#status?.pending(request, query);
     this.#paging?.empty();
-    if (query.length === 0) {
+    if (query.trim().length === 0) {
       this.#empty(request);
       return;
     }
@@ -228,19 +283,15 @@ export class TaskSearch {
     const controller = new AbortController();
     this.#pending = controller;
     try {
-      let organization: TaskSearchOrganization;
-      try {
-        organization = await this.collectOrganization(query, controller.signal);
-      } catch (error) {
-        if (!(error instanceof TaskSearchError) || error.code !== 'cursor-expired') throw error;
-        organization = await this.collectOrganization(query, controller.signal);
-      }
+      const organization = await this.collectOrganization(query, controller.signal);
       if (!this.canPublish(request, organization.generation, controller.signal)) return;
       this.#organization = organization;
       this.#pages?.set(organization);
       await this.#showPage(0, request, controller);
     } catch (error) {
       this.#handleFailure(request, error);
+    } finally {
+      if (this.#pending === controller) this.#pending = null;
     }
   }
   #handleFailure(request: number, error: unknown): void {
@@ -255,79 +306,327 @@ export class TaskSearch {
     }
     this.#status?.fail(request, error);
   }
+  #joinPreparation(current: SearchPreparation, generation: number): void {
+    current.generation = generation;
+  }
+  #cleanupFailed(current: SearchPreparation): void {
+    current.secondaryCleanup = true;
+  }
+  #organizationPhase(current: SearchPreparation): void {
+    current.phase = 'organization';
+  }
+  #preparationInvalidation(current: SearchPreparation): TaskSearchError | undefined {
+    if (
+      current.signal.aborted ||
+      current.request !== this.#request ||
+      !this.#samePreparationOwner(current)
+    )
+      return new TaskSearchError('aborted', 'Search cancelled');
+    if (current.generation === undefined) return undefined;
+    const observed = this.#observed;
+    if (
+      observed?.generation !== current.generation ||
+      observed.phase === 'recovering' ||
+      observed.phase === 'failed' ||
+      observed.phase === 'disposed'
+    )
+      return new TaskSearchError('stale', 'Task generation changed');
+    return undefined;
+  }
+  #samePreparationOwner(current: SearchPreparation): boolean {
+    return (
+      current.root === this.#root &&
+      current.results === this.#results &&
+      current.owner != null &&
+      current.root?.ownerDocument.defaultView === current.owner &&
+      this.#live()
+    );
+  }
+  #assertPreparation(current: SearchPreparation): void {
+    const error = this.#preparationInvalidation(current);
+    if (error !== undefined) throw error;
+  }
+  #captureOrganization(): CapturedOrganization {
+    const { settings } = this.#options;
+    const captured = structuredClone({
+      selection: this.#filter ? this.#options.state.get('selectedList') : null,
+      view: this.#options.view(),
+      settings: {
+        inbox: settings.inbox,
+        taskStatuses: settings.taskStatuses,
+        tagGroups: settings.tagGroups,
+        archivedTags: settings.archivedTags,
+        archivedTagPrefixes: settings.archivedTagPrefixes,
+      },
+    });
+    return { ...captured, today: localDate(moment().format('YYYY-MM-DD')), nowMs: Date.now() };
+  }
+  #organizationScheduler(current: SearchPreparation): Pick<BrowserTaskScheduler, 'now' | 'yield'> {
+    if (current.owner == null) throw new TaskSearchError('aborted', 'Search cancelled');
+    try {
+      return (this.#options.organizationScheduler ?? createBrowserTaskScheduler)(current.owner);
+    } catch {
+      throw new TaskOrganizationFailure('scheduler', 'construction');
+    }
+  }
+  async #handoff(
+    current: SearchPreparation,
+    scheduler: Pick<BrowserTaskScheduler, 'yield'>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    this.#assertPreparation(current);
+    try {
+      await scheduler.yield(signal);
+    } catch (error) {
+      if (error instanceof BrowserTaskScheduleError)
+        throw new TaskOrganizationFailure('scheduler', error.kind, error.cleanupFailed);
+      throw new TaskOrganizationFailure('scheduler', 'rejection');
+    }
+    this.#assertPreparation(current);
+  }
+  async #readCursor(
+    cursor: TaskSearchCursor,
+    current: SearchPreparation,
+    collection: SearchCollection,
+    handoff: () => Promise<void>,
+  ): Promise<void> {
+    const search = this.#options.search;
+    if (search === undefined) throw new TaskSearchError('unavailable', 'Search capability missing');
+    this.#assertPreparation(current);
+    if (this.#observed?.phase !== 'ready')
+      throw new TaskSearchError('stale', 'Task generation changed');
+    this.#generation = cursor.generation;
+    await handoff();
+    let offset = 0;
+    for (;;) {
+      this.#assertPreparation(current);
+      let done: boolean;
+      {
+        const page = await search.read(cursor, offset, 200, current.signal);
+        this.#assertPreparation(current);
+        validatePage(page, cursor, offset);
+        for (const hit of page.hits) {
+          this.#assertPreparation(current);
+          collection.hits.push(hit);
+          collection.roots.push(hit.address);
+        }
+        offset += page.hits.length;
+        done = page.done;
+      }
+      await handoff();
+      if (done) return;
+    }
+  }
+  async #drainCursor(
+    query: string,
+    current: SearchPreparation,
+    collection: SearchCollection,
+    handoff: () => Promise<void>,
+  ): Promise<number> {
+    const search = this.#options.search;
+    if (search === undefined) throw new TaskSearchError('unavailable', 'Search capability missing');
+    const cursor = await search.open({ kind: 'roots', query }, current.signal);
+    this.#joinPreparation(current, cursor.generation);
+    let failed = false,
+      failure: unknown;
+    try {
+      await this.#readCursor(cursor, current, collection, handoff);
+    } catch (error) {
+      failed = true;
+      failure = error;
+    } finally {
+      try {
+        search.release(cursor);
+      } catch {
+        this.#cleanupFailed(current);
+        if (!failed) {
+          failed = true;
+          failure = new TaskOrganizationFailure('cleanup', 'cleanup', true);
+        }
+      }
+    }
+    if (failed) throw failure;
+    return cursor.generation;
+  }
+  async #collectCursor(
+    query: string,
+    current: SearchPreparation,
+    collection: SearchCollection,
+    handoff: () => Promise<void>,
+  ): Promise<number> {
+    current.phase = 'cursor';
+    try {
+      return await this.#drainCursor(query, current, collection, handoff);
+    } catch (error) {
+      if (!(error instanceof TaskSearchError) || error.code !== 'cursor-expired') throw error;
+      this.#assertPreparation(current);
+      collection.hits = [];
+      collection.roots = [];
+      current.generation = undefined;
+      return this.#drainCursor(query, current, collection, handoff);
+    }
+  }
+  async #collectProjection(
+    generation: number,
+    current: SearchPreparation,
+    collection: SearchCollection,
+    handoff: () => Promise<void>,
+  ): Promise<void> {
+    current.phase = 'projection';
+    const reads = this.#options.reads;
+    if (reads === undefined) throw new TaskSearchError('unavailable', 'Search capability missing');
+    const batches = reads.organization(
+      { expectedGeneration: generation, roots: collection.roots },
+      current.signal,
+    );
+    const iterator = batches[Symbol.asyncIterator]();
+    let complete = false,
+      failed = false,
+      failure: unknown;
+    try {
+      await this.#readProjection(iterator, current, collection, handoff);
+      complete = true;
+    } catch (error) {
+      failed = true;
+      failure = error;
+    } finally {
+      if (!complete)
+        try {
+          await iterator.return?.();
+        } catch {
+          this.#cleanupFailed(current);
+          if (!failed) {
+            failed = true;
+            failure = new TaskOrganizationFailure('cleanup', 'cleanup', true);
+          }
+        }
+    }
+    if (failed) throw failure;
+  }
+  async #readProjection(
+    iterator: OrganizationIterator,
+    current: SearchPreparation,
+    collection: SearchCollection,
+    handoff: () => Promise<void>,
+  ): Promise<void> {
+    for (;;) {
+      this.#assertPreparation(current);
+      const next = await iterator.next();
+      this.#assertPreparation(current);
+      if (next.done === true) return;
+      const batch = next.value;
+      if (batch.generation !== current.generation)
+        throw new TaskSearchError('stale', 'Task generation changed');
+      if (batch.items.length > 200) throw new TaskOrganizationFailure('projection', 'step');
+      for (const record of batch.items) {
+        this.#assertPreparation(current);
+        collection.records.push(record);
+      }
+      await handoff();
+    }
+  }
+  #normalizePreparationFailure(current: SearchPreparation, error: unknown): TaskSearchError {
+    const invalid = this.#preparationInvalidation(current);
+    if (invalid !== undefined) return invalid;
+    if (
+      error instanceof TaskSearchError &&
+      (error.code === 'invalid-query' ||
+        error.code === 'cursor-expired' ||
+        error.code === 'unavailable')
+    )
+      return error;
+    const failure =
+      error instanceof TaskOrganizationFailure
+        ? error
+        : new TaskOrganizationFailure(current.phase, 'step');
+    console.error('[abyss-tasks] task organization failed', {
+      phase: failure.phase,
+      category: failure.kind,
+      request: current.request,
+      generation: current.generation,
+      backend: observedBackend(this.#observed),
+      cleanupFailed: current.secondaryCleanup || failure.cleanupFailed,
+    });
+    return new TaskSearchError('unavailable', 'Task organization failed');
+  }
+  async #organizeCollected(
+    current: SearchPreparation,
+    collection: SearchCollection,
+    captured: CapturedOrganization,
+    scheduler: Pick<BrowserTaskScheduler, 'now' | 'yield'>,
+  ): Promise<TaskSearchOrganization> {
+    const generation = current.generation;
+    if (generation === undefined) throw new TaskOrganizationFailure('organization', 'step');
+    const execution = {
+      signal: current.signal,
+      scheduler,
+      assertCurrent: (): void => {
+        this.#assertPreparation(current);
+      },
+      budget: { targetMs: 4, maxSteps: 8192, clockCheckEvery: 32 },
+    };
+    current.phase = 'outgoing-links';
+    const needsOutgoing =
+      captured.view.list.groupBy === 'outgoing-link' ||
+      (!captured.view.relevance && captured.view.list.sortBy.field === 'outgoing-link');
+    const outgoingLinks = needsOutgoing
+      ? await runTaskOrganization(
+          collectTaskLinkValuesSteps(collection.records, this.#options.resolveLink),
+          { ...execution, phase: 'outgoing-links' },
+        )
+      : new Map();
+    this.#organizationPhase(current);
+    const organization = await runTaskOrganization(
+      organizeTaskSearch({
+        ...captured,
+        generation,
+        records: collection.records,
+        hits: collection.hits,
+        outgoingLinks,
+      }),
+      { ...execution, phase: 'organization' },
+    );
+    this.#assertPreparation(current);
+    return organization;
+  }
   private async collectOrganization(
     query: string,
     signal: AbortSignal,
   ): Promise<TaskSearchOrganization> {
-    const { search, reads } = this.#options;
-    if (search === undefined || reads === undefined)
-      throw new TaskSearchError('unavailable', 'Search capability missing');
-    const cursor = await search.open({ kind: 'roots', query }, signal);
-    this.#generation = cursor.generation;
-    const hits: TaskSearchHit[] = [];
-    try {
-      let offset = 0;
-      let done = false;
-      while (!done) {
-        const page = await search.read(cursor, offset, 200, signal);
-        hits.push(...page.hits);
-        offset += page.hits.length;
-        done = page.done;
-      }
-    } finally {
-      search.release(cursor);
-    }
-    const records: TaskOrganizationRecord[] = [];
-    for await (const batch of reads.organization(
-      { expectedGeneration: cursor.generation, roots: hits.map((hit) => hit.address) },
+    const current: SearchPreparation = {
+      root: this.#root,
+      results: this.#results,
+      owner: this.#root?.ownerDocument.defaultView,
+      request: this.#request,
       signal,
-    )) {
-      if (batch.generation !== cursor.generation)
-        throw new TaskSearchError('stale', 'Task generation changed');
-      records.push(...batch.items);
+      generation: undefined,
+      phase: 'context',
+      secondaryCleanup: false,
+    };
+    const continuation = new AbortController();
+    const abort = (): void => {
+      continuation.abort();
+    };
+    const collection: SearchCollection = { hits: [], roots: [], records: [] };
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+    try {
+      this.#assertPreparation(current);
+      const captured = this.#captureOrganization();
+      const scheduler = this.#organizationScheduler(current);
+      const handoff = (): Promise<void> => this.#handoff(current, scheduler, continuation.signal);
+      const generation = await this.#collectCursor(query, current, collection, handoff);
+      await this.#collectProjection(generation, current, collection, handoff);
+      return await this.#organizeCollected(current, collection, captured, scheduler);
+    } catch (error) {
+      throw this.#normalizePreparationFailure(current, error);
+    } finally {
+      continuation.abort();
+      signal.removeEventListener('abort', abort);
+      collection.hits = [];
+      collection.roots = [];
+      collection.records = [];
     }
-    await this.#yield(signal);
-    const outgoingLinks = new Map(
-      records.map((record) => [
-        `${record.source.filePath}:${record.source.line}`,
-        outgoingTaskLinkValues(record, this.#options.resolveLink),
-      ]),
-    );
-    const selection: ListSelection | null = this.#filter
-      ? this.#options.state.get('selectedList')
-      : null;
-    await this.#yield(signal);
-    const organization = organizeTaskSearch({
-      generation: cursor.generation,
-      records,
-      hits,
-      selection,
-      view: this.#options.view(),
-      settings: this.#options.settings,
-      today: localDate(moment().format('YYYY-MM-DD')),
-      nowMs: Date.now(),
-      outgoingLinks,
-    });
-    await this.#yield(signal);
-    return organization;
-  }
-  #yield(signal: AbortSignal): Promise<void> {
-    const win = this.#root?.ownerDocument.defaultView;
-    return new Promise((resolve, reject) => {
-      if (win == null || signal.aborted) {
-        reject(new TaskSearchError('aborted', 'Search cancelled'));
-        return;
-      }
-      const cancel = (): void => {
-        win.clearTimeout(timer);
-        reject(new TaskSearchError('aborted', 'Search cancelled'));
-      };
-      const timer = win.setTimeout(() => {
-        signal.removeEventListener('abort', cancel);
-        resolve();
-      }, 0);
-      signal.addEventListener('abort', cancel, { once: true });
-    });
   }
   async #showPage(index: number, request: number, controller: AbortController): Promise<void> {
     const organization = this.#organization;
@@ -427,6 +726,8 @@ export class TaskSearch {
     this.#input = null;
     this.#results = null;
     this.#root = null;
+    this.#owner = null;
+    this.#observed = null;
     this.#generation = null;
     this.#organization = null;
     this.#restart = false;

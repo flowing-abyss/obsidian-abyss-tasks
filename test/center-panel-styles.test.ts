@@ -646,9 +646,3 @@ describe('Panel hierarchy styles', () => {
     expect(declarationsFor('.abyss-left-count')).toContain('flex-shrink: 0');
   });
 });
-
-it('keeps a hidden Search Retry button hidden under host button display rules', () => {
-  expect(cssDeclarationText(css, '.abyss-panel-view .abyss-search-retry[hidden]')).toContain(
-    'display: none',
-  );
-});

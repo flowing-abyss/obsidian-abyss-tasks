@@ -92,6 +92,8 @@ export class TaskSearchService implements TaskSearchApi {
   private episode = 0;
   private failures = 0;
   private completed = 0;
+  private nextRecoveryAt = 0;
+  private sourceFailed = false;
   constructor(private readonly options: TaskSearchServiceOptions) {
     const subscription = options.source.subscribe((event) => {
       this.accept(event);
@@ -128,12 +130,38 @@ export class TaskSearchService implements TaskSearchApi {
   private accept(event: TaskSearchSourceEvent): void {
     if (this.state.phase === 'disposed') return;
     const failed = this.state.phase === 'failed' ? this.state : undefined;
-    this.generation = event.type === 'state' ? event.state.generation : event.generation;
-    this.invalidate('stale');
+    const generation = event.type === 'state' ? event.state.generation : event.generation;
+    const wasSourceFailed = this.sourceFailed;
+    const previousSource = this.sourceState.type;
+    const previousGeneration = this.generation;
+    this.generation = generation;
+    if (generation !== previousGeneration) this.invalidate('stale');
     if (event.type === 'state' && !this.acceptState(event.state)) return;
     if (event.type === 'files') this.acceptFiles(event.files);
+    if (this.duplicateReadiness(event, previousSource, previousGeneration)) return;
+    this.continueAfterSource(failed, wasSourceFailed);
+  }
+  private duplicateReadiness(
+    event: TaskSearchSourceEvent,
+    previousSource: TaskSearchSourceState['type'],
+    previousGeneration: number,
+  ): boolean {
+    // A duplicate readiness observation neither invalidates live cursors nor republishes the backend.
+    return (
+      event.type === 'state' &&
+      event.state.type === 'ready' &&
+      previousSource === 'ready' &&
+      this.generation === previousGeneration &&
+      this.dirty.size === 0
+    );
+  }
+  private continueAfterSource(
+    failed: Extract<TaskSearchState, { phase: 'failed' }> | undefined,
+    wasSourceFailed: boolean,
+  ): void {
     if (failed !== undefined) {
-      this.emit({ ...failed, generation: this.generation });
+      if (wasSourceFailed && this.sourceState.type === 'ready' && this.wanted) this.beginRecovery();
+      else this.emit({ ...failed, generation: this.generation });
       return;
     }
     let phase: 'idle' | 'waiting' | 'updating' = 'idle';
@@ -143,8 +171,12 @@ export class TaskSearchService implements TaskSearchApi {
   }
   private acceptFiles(files: ReadonlyArray<{ path: string; version: number | null }>): void {
     for (const file of files) {
-      if (file.version === null) this.versions.delete(file.path);
-      else this.versions.set(file.path, file.version);
+      if (file.version === null) {
+        if (!this.versions.delete(file.path)) continue;
+      } else {
+        if (this.versions.get(file.path) === file.version) continue;
+        this.versions.set(file.path, file.version);
+      }
       this.dirty.set(file.path, file.version);
     }
   }
@@ -155,21 +187,29 @@ export class TaskSearchService implements TaskSearchApi {
       return false;
     }
     if (state.type === 'failed') {
+      this.sourceFailed = true;
       this.fail('source');
       return false;
     }
     if (state.type === 'ready') {
-      this.versions.clear();
-      for (const file of this.options.source.files()) {
-        this.versions.set(file.path, file.version);
-        this.dirty.set(file.path, file.version);
-      }
+      this.sourceFailed = false;
+      const files = this.options.source.files();
+      const present = new Set(files.map((file) => file.path));
+      this.acceptFiles(
+        [...this.versions.keys()]
+          .filter((path) => !present.has(path))
+          .map((path) => ({ path, version: null })),
+      );
+      this.acceptFiles(files);
     }
     return true;
   }
   private start(): void {
     if (
       !this.wanted ||
+      (this.state.phase === 'ready' &&
+        this.published === this.generation &&
+        this.dirty.size === 0) ||
       this.pumping ||
       this.sourceState.type !== 'ready' ||
       this.state.phase === 'failed' ||
@@ -343,25 +383,40 @@ export class TaskSearchService implements TaskSearchApi {
     this.start();
   }
   private fail(phase: string): void {
+    if (this.state.phase === 'disposed' || this.state.phase === 'failed') return;
     this.diagnose(phase);
     this.stopBackend();
     this.invalidate('unavailable');
+    this.nextRecoveryAt = this.options.scheduler.now() + 5000;
     this.emit({ phase: 'failed', generation: this.generation, episode: ++this.episode });
   }
-  async retry(): Promise<void> {
-    this.check();
-    this.stopBackend();
-    this.invalidate('unavailable');
+  private beginRecovery(): void {
+    const signal = this.run.signal;
     this.failures = 0;
     this.mode = 'worker';
-    this.wanted = true;
     for (const [path, version] of this.versions) this.dirty.set(path, version);
-    if (this.sourceState.type === 'failed') this.fail('source');
-    else {
-      this.progress('recovering');
-      this.start();
-    }
-    await this.waitReady(new AbortController().signal, true);
+    // Publish synchronously so concurrent ordinary intents join this attempt.
+    this.progress('recovering');
+    if (this.sourceState.type === 'failed') {
+      void Promise.resolve()
+        .then(async () => {
+          checkAbort(signal);
+          await this.options.source.ensureReady();
+          checkAbort(signal);
+          if (this.sourceState.type !== 'ready') this.fail('source');
+          else this.start();
+        })
+        .catch(() => {
+          if (!signal.aborted) this.fail('source');
+        });
+    } else this.start();
+  }
+  /** Shared plugin preparation; cancelling a waiter never cancels the shared build. */
+  async prepare(signal: AbortSignal): Promise<void> {
+    this.check(signal);
+    this.wanted = true;
+    this.start();
+    await this.waitReady(signal, true);
   }
   private check(signal?: AbortSignal): void {
     if (signal !== undefined) checkAbort(signal);
@@ -370,7 +425,7 @@ export class TaskSearchService implements TaskSearchApi {
   private async waitReady(signal: AbortSignal, index: boolean): Promise<void> {
     for (;;) {
       this.check(signal);
-      if (this.sourceState.type === 'failed' || this.state.phase === 'failed')
+      if (this.state.phase === 'failed')
         throw new TaskSearchError('unavailable', 'Search unavailable', this.episode);
       if (
         this.sourceState.type === 'ready' &&
@@ -435,14 +490,15 @@ export class TaskSearchService implements TaskSearchApi {
   async open(request: TaskSearchRequest, signal: AbortSignal): Promise<TaskSearchCursor> {
     this.check(signal);
     const query = prepareSearchQuery(request.query, this.options.segment);
-    await this.waitReady(signal, false);
-    const generation = this.generation;
     const empty = request.query.trim() === '';
-    if (!empty) {
+    if (empty) await this.waitReady(signal, false);
+    else {
       this.wanted = true;
-      this.start();
-      await this.waitReady(signal, true);
+      if (this.state.phase === 'failed' && this.options.scheduler.now() >= this.nextRecoveryAt)
+        this.beginRecovery();
+      await this.prepare(signal);
     }
+    const generation = this.generation;
     const allocate = (): Promise<TaskSearchCursor> =>
       this.allocate(request, query, generation, signal);
     if (empty) return allocate();

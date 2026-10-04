@@ -6,7 +6,7 @@ import type {
   SearchTextProjection,
   SearchTextValue,
 } from './searchTextTypes';
-export type { SearchTextMapRun, SearchTextProjection, SearchTextValue } from './searchTextTypes';
+export type { SearchTextProjection, SearchTextValue } from './searchTextTypes';
 
 interface Piece {
   readonly text: string;

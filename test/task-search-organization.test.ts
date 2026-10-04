@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
+import { drainCollectionSteps } from '../src/collectionSteps';
 import { buildTaskListRows, taskListGrouping } from '../src/panels/task-list/taskListRows';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { ListViewState } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { outgoingTaskLinkValues } from '../src/task-lists/taskLinkValues';
 import { selectTaskList } from '../src/task-lists/TaskListSelector';
-import { organizeTaskSearch } from '../src/task-lists/taskSearchOrganization';
+import {
+  organizeTaskSearch as organizationSteps,
+  type TaskSearchOrganizationInput,
+} from '../src/task-lists/taskSearchOrganization';
 import { localDate } from '../src/tasks';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
+const organizeTaskSearch = (input: TaskSearchOrganizationInput) =>
+  drainCollectionSteps(organizationSteps(input));
 
 const fields: Array<ListViewState['sortBy']['field']> = [
   'date',

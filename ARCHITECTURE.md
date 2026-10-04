@@ -140,7 +140,12 @@ accepted file version, numeric root ID and child-relative-line path. The compact
 only coordinates, accepted root ordinals and versions, never a second source block or serialized
 task reference. Exact root lookup indexes the accepted file array by ordinal after version validation.
 IDs are never reused within the index lifetime and accepted replacement removes the file's old handles.
-Unrelated file updates preserve exact handles for unchanged files.
+Unrelated file updates preserve exact handles for unchanged files. Inward `ensureReady()` joins
+TaskIndex initialization. Rejected initialization releases its shared attempt; a new attempt clears
+the failure latch, reconciles canonical files, and only then publishes ready. Event refs are acquired
+once, including partial registration failures, and remain owned through unload. Bootstrap batches
+settle before re-entry; recovery reconciles missed renames through the existing rename owner, prunes
+vanished partial files through existing removal authority, and preserves committed-command precedence.
 
 The source allocates compact handles one node per iterator step, reusing prefixes across partial
 and overlapping iterators without extracting text. Document projection uses the current borrowed
@@ -215,10 +220,14 @@ own or rebuild the service. Unload disposes search before TaskIndex.
 The service subscribes before its source snapshot, publishes accepted generations synchronously,
 and coalesces dirty paths to their latest accepted versions. It projects only changed files through
 `begin/add/commit`, checks versions across cooperative yields, and publishes readiness after every
-dirty path has replayed. Normal batches are bounded to 128 documents and a conservative 256 KiB
+dirty path has replayed. The infrastructure service's `prepare(signal)` joins this same pump without
+allocating a cursor; `open` captures its query generation after preparation. Repeated readiness with
+unchanged versions and generation leaves the ready backend and live cursors intact. Normal batches are bounded to 128 documents and a conservative 256 KiB
 UTF-8 payload estimate; one acknowledged batch is in flight, with oversized documents sent alone
-without truncation. Browser task yields use owned MessageChannel ports (closed on completion or
-abort), with a timer fallback. Main injects the same scheduler into TaskIndex’s existing bounded
+without truncation. The neutral `browserTaskScheduler` captures an explicit owner window and supplies MessageChannel
+yields with an owner-timer fallback. Each invocation closes both ports and removes listeners/timers
+on completion, abort or acquisition failure; safe scheduling errors carry no arbitrary cause. The
+existing browser backend factory adapts those outcomes to inward Search errors. Main injects the same scheduler into TaskIndex’s existing bounded
 organization-read yield port. A single document projection remains synchronous.
 
 `TaskSearchBackend` defines inward protocol, scheduler and failure ports. `TaskSearchRuntime` owns
@@ -231,7 +240,9 @@ startup timeout, requests, Worker and Blob URL. Backend factories receive the se
 stopping that run cancels startup and immediately terminates/revokes its resources. Individual
 query cancellation does not stop shared startup or bootstrap. Failed startup selects inline compatibility mode;
 a runtime Worker failure rebuilds once, repeated failure selects inline, and failed inline execution
-requires explicit Retry. Diagnostics contain phase/backend/generation/path count and sanitized
+settles unavailable. Later nonempty ordinary input may start one shared recovery attempt after a
+five-second injected-clock cooldown; time, passive preparation and progress notifications never
+schedule a retry. Caller cancellation ends only that caller's wait. Diagnostics contain phase/backend/generation/path count and sanitized
 errors. User notices remain a surface responsibility.
 
 The service maps numeric hits through current source addresses and delegates exact bounded hydration
@@ -249,8 +260,10 @@ The registry contains ownership metadata, not duplicated result vectors.
 Session-random cursor IDs and generation checks reject reload aliases, stale replies and obsolete
 reads. Empty root queries return empty; empty node browse uses compact canonical source order without
 creating an engine. Source failure and recovery are observable through immediate state subscriptions.
-Retry against a still-failed source settles as failed in a new episode; it cannot reinitialize the
-canonical source. Later source readiness retains that failure until another explicit Retry.
+For a failed source, the shared recovery attempt invokes its inward `ensureReady()` once. A genuine
+failed-to-ready source transition resumes wanted preparation once and replays current accepted files.
+Persistent source failure remains terminal until another eligible ordinary intent. No public Retry
+method or control exists; source initialization and the service remain plugin-owned.
 Inline query execution remains synchronous. Dependency construction has an inward cooperative
 readiness operation; existing synchronous readers still retain a potentially blocking compatibility path.
 
@@ -463,8 +476,20 @@ records, with the same structural membership, property/status filters, comparato
 routines as ordinary snapshots. All logical matches are organized before slicing. Relevance
 preserves the engine cursor's complete ordering; explicit sort ties use created date then canonical
 source order. Host outgoing-link resolution remains presentation-owned and link lifecycle/settings/
-project events re-organize even when task text is unchanged. Projection and organization stages
-yield through the owning window; native sorting itself remains synchronous and measured.
+project events re-organize even when task text is unchanged. `collectionSteps` defines pure cheap/atom
+checkpoints and stable cooperative merging with an adjacent-order fast path and one scratch vector.
+Selector, effective-tag catalog and grouping owners share their rule bodies and prepared contexts;
+ordinary synchronous entry points retain native sorting at every sort site. Search composes only
+the cooperative entry points and gates unused catalog, outgoing and comparator-key preparation.
+
+TaskSearch captures only its selected list/view, five organization settings branches and one explicit
+date/time before asynchronous preparation. Every cursor page (including final/empty pages) and every
+projection batch hands off through the captured window. `runTaskOrganization` makes an initial task
+yield, then shares one 4 ms/8,192-step budget across nested organization helpers, checking time after
+every atom and at most 32 cheap steps. Cancellation checks surround every advancement. These tuning
+values do not bound indivisible parser, locale, resolver, configuration, registry, whole-root projection
+or GC work; native measurements remain required. Completed publication retains compact occurrences
+and a bounded hydrated page, with preparation vectors and sort workspaces request-local.
 
 `TaskSearchPages` holds compact logical occurrences and hydrates at most 50 occurrences with each
 distinct root requested once. Headers retain full group counts on continued pages; unique roots
@@ -479,10 +504,18 @@ batch to that cursor's generation (including zero hits), then hydrates and prepa
 Accepted service generations are observed synchronously, so an unrelated accepted update cancels
 the entire old match-set publication even when individual unchanged handles remain hydratable.
 Only the live current request in a ready matching service generation can publish complete.
-`SearchStatus` owns inline busy/error/Retry and one Notice per failed episode within its mounted
-instance; abort/stale supersession is silent, expired cursors restart once, and query text never
-enters diagnostics. Tasks-filter query changes currently remount the status owner, so Notice episode
-suppression does not survive a filter change. This is an unfinished Task4 failure-handling defect.
+`SearchStatus` owns inline busy/error and one Notice per failed episode within its mounted
+instance; a retained Tasks shell keeps that status and its mounted subscription across nonempty
+query/view refreshes. Each refresh cancels the old controller and releases its request data. A successful nonempty search
+resets the failure episode; empty or invalid input preserves it. Close/reopen creates a new surface
+lifetime. Passive preparation failures remain quiet outside active nonempty Search. No global Notice
+registry is involved.
+
+Abort/stale supersession is silent and expired cursors restart once. Live preparation failures become
+unavailable inline; raw cancellation-shaped errors without matching owner/source invalidation
+are operational failures. TaskSearch alone logs safe phase/category, numeric request/generation,
+observed backend and secondary-cleanup metadata. Obsolete requests cannot report or clear newer work.
+Query text, settings, titles, paths and arbitrary exception causes never enter these diagnostics.
 
 `renderTaskText` returns an optional receipt: plain text is synchronous; Markdown becomes ready only
 after the host render Promise, paragraph unwrapping, exact source-token link wiring and onRendered

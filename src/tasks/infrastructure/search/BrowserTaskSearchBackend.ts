@@ -1,3 +1,4 @@
+import { BrowserTaskCancelled, createBrowserTaskScheduler } from '../../../browserTaskScheduler';
 import type { TaskSearchCursor } from '../../application/TaskSearchApi';
 import type {
   TaskSearchBackend,
@@ -165,46 +166,21 @@ export class BrowserTaskSearchBackend implements TaskSearchBackend {
     this.listeners.clear();
   }
 }
-function yieldBrowserTask(signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const channel = new MessageChannel();
-    const cleanup = (): void => {
-      channel.port1.close();
-      channel.port2.close();
-      signal.removeEventListener('abort', abort);
-    };
-    const abort = (): void => {
-      cleanup();
-      reject(new TaskSearchError('aborted', 'Search cancelled'));
-    };
-    channel.port1.onmessage = (): void => {
-      cleanup();
-      resolve();
-    };
-    signal.addEventListener('abort', abort, { once: true });
-    if (signal.aborted) abort();
-    else channel.port2.postMessage(null);
-  });
-}
 export function createBrowserSearchScheduler(): TaskSearchScheduler {
-  const delay = (ms: number, signal: AbortSignal): Promise<void> =>
-    new Promise((resolve, reject) => {
-      const abort = (): void => {
-        window.clearTimeout(timer);
-        signal.removeEventListener('abort', abort);
-        reject(new TaskSearchError('aborted', 'Search cancelled'));
-      };
-      const timer = window.setTimeout(() => {
-        signal.removeEventListener('abort', abort);
-        resolve();
-      }, ms);
-      signal.addEventListener('abort', abort, { once: true });
-      if (signal.aborted) abort();
-    });
+  const scheduler = createBrowserTaskScheduler(window);
+  const adapt = async (action: () => Promise<void>): Promise<void> => {
+    try {
+      await action();
+    } catch (error) {
+      throw new TaskSearchError(
+        error instanceof BrowserTaskCancelled ? 'aborted' : 'unavailable',
+        error instanceof BrowserTaskCancelled ? 'Search cancelled' : 'Search scheduling failed',
+      );
+    }
+  };
   return {
-    now: () => performance.now(),
-    yield: (signal) =>
-      typeof MessageChannel === 'function' ? yieldBrowserTask(signal) : delay(0, signal),
-    delay,
+    now: () => scheduler.now(),
+    yield: (signal) => adapt(() => scheduler.yield(signal)),
+    delay: (ms, signal) => adapt(() => scheduler.delay(ms, signal)),
   };
 }

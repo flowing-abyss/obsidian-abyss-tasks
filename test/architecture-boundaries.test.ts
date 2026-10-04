@@ -262,7 +262,6 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
   'TaskSearchApi.release': 'src/panels/center/TaskSearch.ts',
   'TaskSearchApi.resolvePage': 'src/panels/task-list/TaskSearchPages.ts',
   'TaskSearchApi.subscribe': 'src/panels/center/TaskSearch.ts',
-  'TaskSearchApi.retry': 'src/panels/center/TaskSearch.ts',
   'TaskReadProjectionApi.organization': 'src/panels/center/TaskSearch.ts',
   'TaskReadProjectionApi.resolveSearchPage': 'src/tasks/infrastructure/search/TaskSearchService.ts',
   'TaskDependencyQueryApi.prepareDependencies': 'src/panels/CenterPanel.ts',

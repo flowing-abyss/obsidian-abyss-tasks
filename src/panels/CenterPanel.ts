@@ -55,12 +55,12 @@ import { listSelectionTitle } from '../views/panelTitle';
 import { CalendarMode, type CalendarModeHost } from './calendar/CalendarMode';
 import type { CalViewType } from './calendar/calendarViewType';
 import { CaptureSessions } from './center/CaptureSessions';
-import { ListViewControls } from './center/ListViewControls';
+import { ListViewControls, type ListViewControlsStatePort } from './center/ListViewControls';
 import type { SearchViewState } from './center/SearchViewState';
 import { TaskCardRenderer } from './center/TaskCardRenderer';
 import { TaskCommands } from './center/TaskCommands';
 import { TaskMenus } from './center/TaskMenus';
-import { TaskSearch } from './center/TaskSearch';
+import { TaskSearch, type TaskSearchOptions } from './center/TaskSearch';
 import { ProjectsPanel } from './projects/ProjectsPanel';
 import type { TaskSearchPageModel } from './task-list/TaskSearchPages';
 import {
@@ -85,6 +85,7 @@ interface CenterPanelOptions {
   readonly settings: CalendarSettings;
   readonly queries: TaskQueryApi;
   readonly search?: TaskSearchApi;
+  readonly organizationScheduler?: TaskSearchOptions['organizationScheduler'];
   readonly statusRegistry: StatusRegistry;
   readonly onSaveSettings?: (() => Promise<void>) | undefined;
   readonly projectStore?: ProjectStore | null | undefined;
@@ -264,7 +265,9 @@ export class CenterPanel {
     this.listViewControls_abyssPrivate = this.createListViewControls_abyssPrivate();
     this.searchControls_abyssPrivate = this.createSearchControls_abyssPrivate();
     this.taskCardRenderer_abyssPrivate = this.createTaskCardRenderer_abyssPrivate();
-    this.taskSearch_abyssPrivate = this.createTaskSearch_abyssPrivate();
+    this.taskSearch_abyssPrivate = this.createTaskSearch_abyssPrivate(
+      options.organizationScheduler,
+    );
     this.calendar_abyssPrivate = new CalendarMode({
       state,
       app,
@@ -310,8 +313,11 @@ export class CenterPanel {
     });
   }
 
-  private createTaskSearch_abyssPrivate(): TaskSearch {
+  private createTaskSearch_abyssPrivate(
+    organizationScheduler: TaskSearchOptions['organizationScheduler'],
+  ): TaskSearch {
     return new TaskSearch({
+      organizationScheduler,
       state: this.state_abyssPrivate,
       search: this.searchApi_abyssPrivate,
       reads: this.tasks_abyssPrivate?.queries,
@@ -372,22 +378,26 @@ export class CenterPanel {
       interactionOwnership: this.interactionOwnership_abyssPrivate,
       saveViewState: this.onSaveViewState_abyssPrivate,
       host: { root: () => this.el, formatDate: (value) => this.formatDate_abyssPrivate(value) },
-      statePort: {
-        read: () => this.searchView_abyssPrivate.list,
-        write: (list) => {
-          this.searchView_abyssPrivate = { ...this.searchView_abyssPrivate, list };
-          this.syncSearchHeader_abyssPrivate();
-          this.taskSearch_abyssPrivate.refresh();
-        },
-        relevance: () => this.searchView_abyssPrivate.relevance,
-        setRelevance: (relevance) => {
-          this.searchView_abyssPrivate = { ...this.searchView_abyssPrivate, relevance };
-          this.syncSearchHeader_abyssPrivate();
-          this.taskSearch_abyssPrivate.refresh();
-        },
-        canUseRelevance: () => true,
-      },
+      statePort: this.createSearchStatePort_abyssPrivate(),
     });
+  }
+
+  private createSearchStatePort_abyssPrivate(): ListViewControlsStatePort {
+    return {
+      read: () => this.searchView_abyssPrivate.list,
+      write: (list) => {
+        this.searchView_abyssPrivate = { ...this.searchView_abyssPrivate, list };
+        this.syncSearchHeader_abyssPrivate();
+        this.taskSearch_abyssPrivate.refresh();
+      },
+      relevance: () => this.searchView_abyssPrivate.relevance,
+      setRelevance: (relevance) => {
+        this.searchView_abyssPrivate = { ...this.searchView_abyssPrivate, relevance };
+        this.syncSearchHeader_abyssPrivate();
+        this.taskSearch_abyssPrivate.refresh();
+      },
+      canUseRelevance: () => true,
+    };
   }
 
   private syncSearchHeader_abyssPrivate(): void {
@@ -931,8 +941,18 @@ export class CenterPanel {
   private render_abyssPrivate(): void {
     const mode = this.state_abyssPrivate.get('mode');
     if (this.refreshMountedProjects_abyssPrivate(mode)) return;
-    this.beginTaskCardRender_abyssPrivate();
     const retainTaskShell = this.canRetainTaskShell_abyssPrivate(mode);
+    const shell = this.taskShell_abyssPrivate;
+    if (
+      retainTaskShell &&
+      shell !== null &&
+      this.state_abyssPrivate.get('centerFilter').length > 0 &&
+      this.taskSearch_abyssPrivate.refreshFilter(this.el, shell.scroll)
+    ) {
+      this.syncTaskHeader_abyssPrivate(shell);
+      return;
+    }
+    this.beginTaskCardRender_abyssPrivate();
     this.prepareRender_abyssPrivate(mode, retainTaskShell);
     if (mode !== 'projects') this.destroyProjectsPanel_abyssPrivate();
     if (mode === 'calendar') {

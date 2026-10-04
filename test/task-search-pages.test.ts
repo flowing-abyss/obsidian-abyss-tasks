@@ -14,7 +14,6 @@ function pageSearchApi() {
     read: vi.fn(unexpected),
     release: vi.fn(unexpected),
     subscribe: vi.fn(unexpected),
-    retry: vi.fn(unexpected),
     resolvePage: vi.fn(async (hits: readonly TaskSearchHit[]) => {
       calls.push(hits);
       return hits.map((hit) => ({

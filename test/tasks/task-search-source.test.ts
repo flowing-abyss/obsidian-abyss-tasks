@@ -10,11 +10,13 @@ import {
   canonicalStatusCatalog,
   configuredTaskApplication,
   createAppWithFiles,
+  deferred,
   expectDefined,
   flushMicrotasks,
   metadataChangedEmitter,
   seedTaskCache,
 } from '../helpers';
+import { canonicalSearchForIndex } from '../support/taskSearchHarness';
 
 const indexes: TaskIndex[] = [];
 afterEach(() => {
@@ -108,7 +110,7 @@ describe('canonical search source', () => {
     expect(source.subscribe(() => {}).state.type).toBe('disposed');
     expect(
       events.filter((event) => event.type === 'state').map((event) => event.state.type),
-    ).toEqual(['failed', 'disposed']);
+    ).toEqual(['initializing', 'failed', 'disposed']);
   });
 
   it.each(['commit', 'command', 'rename', 'delete', 'exclude'] as const)(
@@ -434,3 +436,237 @@ describe('canonical search source', () => {
     expect([...source.documents(file)].map((node) => node.id)).toEqual(all.map((node) => node.id));
   });
 });
+
+it('re-enters real initialization once after rejection and releases every registered listener', async () => {
+  const app = await createAppWithFiles({ 'a.md': '- [ ] needle' });
+  const index = new TaskIndex(app, { statusCatalog: canonicalStatusCatalog() });
+  indexes.push(index);
+  const source = index.searchSource();
+  const events: TaskSearchSourceEvent[] = [];
+  source.subscribe((event) => events.push(event));
+  const metadataOn = vi.spyOn(app.metadataCache, 'on');
+  const vaultOn = vi.spyOn(app.vault, 'on');
+  const metadataOff = vi.spyOn(app.metadataCache, 'offref');
+  const vaultOff = vi.spyOn(app.vault, 'offref');
+  const listing = vi.spyOn(app.vault, 'getMarkdownFiles').mockImplementationOnce(() => {
+    throw new Error('transient listing');
+  });
+  await expect(Promise.all([index.initialize(), index.initialize()])).rejects.toThrow(
+    'transient listing',
+  );
+  expect(
+    events.filter((event) => event.type === 'state' && event.state.type === 'failed'),
+  ).toHaveLength(1);
+  await Promise.all([index.initialize(), source.ensureReady()]);
+  expect(source.subscribe(() => {}).state.type).toBe('ready');
+  expect(
+    source
+      .files()
+      .flatMap((file) => [...source.documents(file)])
+      .map((doc) => doc.title),
+  ).toEqual(['needle']);
+  expect(listing).toHaveBeenCalledTimes(2);
+  expect(metadataOn.mock.calls.map(([name]) => name)).toEqual(['changed']);
+  expect(vaultOn.mock.calls.map(([name]) => name)).toEqual(['create', 'rename', 'delete']);
+  index.destroy();
+  expect(metadataOff).toHaveBeenCalledTimes(1);
+  expect(vaultOff).toHaveBeenCalledTimes(3);
+  await source.ensureReady();
+  expect(listing).toHaveBeenCalledTimes(2);
+});
+
+it('retains partial listener ownership and prunes vanished bootstrap files on recovery', async () => {
+  const app = await createAppWithFiles({ 'a.md': '- [ ] needle', 'gone.md': '- [ ] gone' });
+  const index = new TaskIndex(app, { statusCatalog: canonicalStatusCatalog() });
+  indexes.push(index);
+  index.installCommittedContent('gone.md', '- [ ] gone');
+  const on = app.vault.on.bind(app.vault);
+  const metadataOn = vi.spyOn(app.metadataCache, 'on');
+  const vaultOn = vi
+    .spyOn(app.vault, 'on')
+    .mockImplementationOnce(on)
+    .mockImplementationOnce(() => {
+      throw new Error('rename registration');
+    });
+  const off = vi.spyOn(app.vault, 'offref');
+  await expect(index.initialize()).rejects.toThrow('rename registration');
+  const gone = app.vault.getAbstractFileByPath('gone.md');
+  if (!(gone instanceof TFile)) throw new Error('file missing');
+  await app.fileManager.trashFile(gone);
+  await index.initialize();
+  const source = index.searchSource();
+  expect(source.files().map((file) => file.path)).toEqual(['a.md']);
+  expect(metadataOn).toHaveBeenCalledTimes(1);
+  expect(vaultOn.mock.calls.map(([name]) => name)).toEqual([
+    'create',
+    'rename',
+    'rename',
+    'delete',
+  ]);
+  index.destroy();
+  expect(off).toHaveBeenCalledTimes(3);
+});
+
+it.each(['command', 'delete', 'rename'] as const)(
+  'real source recovery preserves %s accepted during partial bootstrap',
+  async (action) => {
+    const app = await createAppWithFiles({ 'a.md': '- [ ] Old', 'b.md': '- [ ] second' });
+    const { index, tasks } = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
+    indexes.push(index);
+    index.installCommittedContent('a.md', '- [ ] Old');
+    const cache = app.metadataCache.getFileCache.bind(app.metadataCache);
+    vi.spyOn(app.metadataCache, 'getFileCache')
+      .mockImplementationOnce(cache)
+      .mockImplementationOnce(() => {
+        throw new Error('partial bootstrap');
+      });
+    await expect(index.initialize()).rejects.toThrow('partial bootstrap');
+    const entered = deferred<void>(),
+      gate = deferred<void>();
+    const read = app.vault.cachedRead.bind(app.vault);
+    vi.spyOn(app.vault, 'cachedRead')
+      .mockImplementationOnce(async () => {
+        entered.resolve();
+        await gate.promise;
+        return '- [ ] Old';
+      })
+      .mockImplementation(read);
+    const recovering = index.initialize();
+    await Promise.race([entered.promise, recovering]);
+    const file = app.vault.getAbstractFileByPath('a.md');
+    if (!(file instanceof TFile)) throw new Error('file missing');
+    if (action === 'command') await patchFirstTask(index, tasks);
+    if (action === 'delete') await app.fileManager.trashFile(file);
+    if (action === 'rename') await app.vault.rename(file, 'renamed.md');
+    gate.resolve();
+    await recovering;
+    const source = index.searchSource();
+    const docs = source.files().flatMap((version) => [...source.documents(version)]);
+    expect(docs.map((doc) => [doc.order.filePath, doc.title])).toEqual(
+      {
+        command: [
+          ['a.md', 'New'],
+          ['b.md', 'second'],
+        ],
+        delete: [['b.md', 'second']],
+        rename: [
+          ['b.md', 'second'],
+          ['renamed.md', 'Old'],
+        ],
+      }[action],
+    );
+  },
+);
+
+it('ordinary input recovers actual initialization and replays accepted files before search readiness', async () => {
+  const app = await createAppWithFiles({ 'a.md': '- [ ] needle' });
+  const index = new TaskIndex(app, { statusCatalog: canonicalStatusCatalog() });
+  indexes.push(index);
+  const listing = vi.spyOn(app.vault, 'getMarkdownFiles').mockImplementationOnce(() => {
+    throw new Error('temporary');
+  });
+  const service = canonicalSearchForIndex(index);
+  try {
+    vi.spyOn(performance, 'now').mockReturnValue(0);
+    await expect(index.initialize()).rejects.toThrow('temporary');
+    await expect(service.open({ kind: 'roots', query: 'needle' }, signal())).rejects.toMatchObject({
+      code: 'unavailable',
+    });
+    const file = await app.vault.create('b.md', '- [ ] needle second');
+    index.installCommittedContent(file.path, '- [ ] needle second');
+    vi.spyOn(performance, 'now').mockReturnValue(5000);
+    const [first, second] = await Promise.all([
+      service.open({ kind: 'roots', query: 'needle' }, signal()),
+      service.open({ kind: 'roots', query: 'needle' }, signal()),
+    ]);
+    expect(first.total).toBe(2);
+    expect(second.total).toBe(2);
+    expect(first.generation).toBe(index.searchSource().subscribe(() => {}).state.generation);
+    expect(listing).toHaveBeenCalledTimes(2);
+  } finally {
+    service.dispose();
+    vi.restoreAllMocks();
+  }
+});
+
+it('settles the whole partial bootstrap batch before allowing recovery to read again', async () => {
+  const app = await createAppWithFiles({ 'a.md': '- [ ] needle', 'b.md': '- [ ] other' });
+  const index = new TaskIndex(app, { statusCatalog: canonicalStatusCatalog() });
+  indexes.push(index);
+  const entered = deferred<void>(),
+    gate = deferred<void>();
+  vi.spyOn(app.vault, 'cachedRead').mockImplementationOnce(async () => {
+    entered.resolve();
+    await gate.promise;
+    return '- [ ] needle';
+  });
+  const cache = app.metadataCache.getFileCache.bind(app.metadataCache);
+  vi.spyOn(app.metadataCache, 'getFileCache')
+    .mockImplementationOnce(cache)
+    .mockImplementationOnce(() => {
+      throw new Error('partial');
+    });
+  let settled = false;
+  const initializing = index.initialize().catch((error: unknown) => {
+    settled = true;
+    return error;
+  });
+  await entered.promise;
+  await flushMicrotasks(10);
+  expect(settled).toBe(false);
+  gate.resolve();
+  expect(await initializing).toBeInstanceOf(Error);
+  await index.initialize();
+  expect(index.searchSource().files()).toHaveLength(2);
+});
+
+it('unload during initialization recovery never reacquires listeners or publishes ready', async () => {
+  const app = await createAppWithFiles({ 'a.md': '- [ ] needle' });
+  const index = new TaskIndex(app, { statusCatalog: canonicalStatusCatalog() });
+  indexes.push(index);
+  const source = index.searchSource();
+  const events: TaskSearchSourceEvent[] = [];
+  source.subscribe((event) => events.push(event));
+  const listing = vi.spyOn(app.vault, 'getMarkdownFiles').mockImplementationOnce(() => {
+    throw new Error('temporary');
+  });
+  await expect(index.initialize()).rejects.toThrow();
+  const recovering = source.ensureReady();
+  index.destroy();
+  await recovering;
+  expect(events.some((event) => event.type === 'state' && event.state.type === 'ready')).toBe(
+    false,
+  );
+  expect(listing).toHaveBeenCalledTimes(1);
+  expect(source.subscribe(() => {}).state.type).toBe('disposed');
+});
+
+it.each([false, true])(
+  'reconciles a missed rename after partial registration with stale cache %s',
+  async (staleCache) => {
+    const app = await createAppWithFiles({ 'a.md': '- [ ] needle' });
+    const index = new TaskIndex(app, { statusCatalog: canonicalStatusCatalog() });
+    indexes.push(index);
+    index.installCommittedContent('a.md', '- [ ] needle');
+    const on = app.vault.on.bind(app.vault);
+    vi.spyOn(app.vault, 'on')
+      .mockImplementationOnce(on)
+      .mockImplementationOnce(() => {
+        throw new Error('rename registration');
+      });
+    await expect(index.initialize()).rejects.toThrow('rename registration');
+    const file = app.vault.getAbstractFileByPath('a.md');
+    if (!(file instanceof TFile)) throw new Error('missing file');
+    await app.vault.rename(file, 'renamed.md');
+    if (staleCache)
+      vi.spyOn(app.vault, 'cachedRead').mockResolvedValue('- [ ] stale before command');
+    await index.searchSource().ensureReady();
+    const source = index.searchSource();
+    expect(
+      source
+        .files()
+        .flatMap((version) => [...source.documents(version)])
+        .map((doc) => [doc.order.filePath, doc.title]),
+    ).toEqual([['renamed.md', 'needle']]);
+  },
+);

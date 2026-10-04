@@ -422,6 +422,9 @@ export default defineConfig(
   },
   {
     files: [
+      'src/collectionSteps.ts',
+      'src/task-lists/TaskListSelector.ts',
+      'src/tags/effectiveTagGroups.ts',
       'src/task-lists/todayTaskCategory.ts',
       'src/tasks/infrastructure/search/TaskSearchRuntime.ts',
       'src/tasks/domain/taskSearchTypes.ts',

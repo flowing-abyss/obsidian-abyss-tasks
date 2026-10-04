@@ -4,29 +4,25 @@ import { TaskSearchError } from '../tasks';
 export class SearchStatus {
   #request = 0;
   #failed = false;
+  #nonempty = false;
   readonly #text: HTMLElement;
-  readonly #retry: HTMLButtonElement;
   constructor(
     private readonly root: HTMLElement,
     host: HTMLElement,
-    retry: () => void,
   ) {
     this.#text = host.createDiv({
       cls: 'abyss-search-status',
       attr: { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
     });
-    this.#retry = host.createEl('button', { cls: 'abyss-search-retry', text: 'Retry' });
-    this.#retry.hidden = true;
-    this.#retry.addEventListener('click', retry);
     root.dataset['searchPhase'] = 'idle';
     root.setAttribute('aria-busy', 'false');
   }
-  pending(request: number, _query: string): void {
+  pending(request: number, query: string): void {
     this.#request = request;
+    this.#nonempty = query.trim() !== '';
     this.root.dataset['searchRequest'] = String(request);
     this.root.dataset['searchPhase'] = 'pending';
     this.root.setAttribute('aria-busy', 'true');
-    this.#retry.hidden = true;
     this.#text.setText('Searching…');
   }
   complete(request: number, generation: number): void {
@@ -35,7 +31,7 @@ export class SearchStatus {
     this.root.dataset['searchPhase'] = 'complete';
     this.root.setAttribute('aria-busy', 'false');
     this.#text.setText('Search complete');
-    this.#failed = false;
+    if (this.#nonempty) this.#failed = false;
   }
   fail(request: number, error: unknown): void {
     if (request !== this.#request) return;
@@ -50,7 +46,6 @@ export class SearchStatus {
     this.root.dataset['searchPhase'] = 'error';
     this.root.setAttribute('aria-busy', 'false');
     this.#text.setText(message);
-    this.#retry.hidden = false;
     if (!invalid && !this.#failed) {
       this.#failed = true;
       new Notice(message);
@@ -61,6 +56,5 @@ export class SearchStatus {
     this.root.dataset['searchPhase'] = 'idle';
     this.root.setAttribute('aria-busy', 'false');
     this.#text.remove();
-    this.#retry.remove();
   }
 }

@@ -9756,7 +9756,3 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 .abyss-panel-view .abyss-search-status {
   margin-bottom: var(--size-4-1);
 }
-
-.abyss-panel-view .abyss-search-retry[hidden] {
-  display: none;
-}

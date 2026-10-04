@@ -173,7 +173,8 @@ it('one crash recovery and repeated worker failure falls back; dirty replay reta
   await expect(h.service.open({ kind: 'roots', query: 'needle' }, signal())).rejects.toMatchObject({
     code: 'unavailable',
   });
-  await h.service.retry();
+  vi.spyOn(h.scheduler, 'now').mockReturnValue(100_000);
+  await h.service.open({ kind: 'roots', query: 'needle' }, signal());
   expect((await h.service.open({ kind: 'roots', query: 'needle' }, signal())).total).toBe(3);
   h.service.dispose();
 });
@@ -217,7 +218,7 @@ it('bootstrap file edit rename delete exclusion dirty replay', async () => {
   h.source.ready([nodeDocuments(260)]);
   h.scheduler.hold();
   const old = h.service.open({ kind: 'roots', query: 'needle' }, signal());
-  const rejected = expect(old).rejects.toMatchObject({ code: 'stale' });
+  const resolved = expect(old).resolves.toMatchObject({ total: 3 });
   // Bootstrap has crossed the backend boundary before the accepted file is superseded.
   for (let i = 0; i < 20; i++) await Promise.resolve();
   h.source.replace('a.md', []);
@@ -231,7 +232,7 @@ it('bootstrap file edit rename delete exclusion dirty replay', async () => {
     })),
   );
   await h.scheduler.flush();
-  await rejected;
+  await resolved;
   expect((await h.service.open({ kind: 'roots', query: 'needle' }, signal())).total).toBe(3);
   h.source.store.delete('renamed.md');
   h.source.emit({
@@ -278,7 +279,7 @@ it('old service cursor cannot alias a new service cursor after reload', async ()
   fresh.service.dispose();
 });
 
-it('failed explicit retry starts a new failure episode with sanitized diagnostics', async () => {
+it('later ordinary input starts a new failure episode with sanitized diagnostics', async () => {
   const h = createTaskSearchHarness();
   h.source.ready([nodeDocuments(2)]);
   const options = (
@@ -297,7 +298,10 @@ it('failed explicit retry starts a new failure episode with sanitized diagnostic
   await expect(h.service.open({ kind: 'roots', query: 'private' }, signal())).rejects.toMatchObject(
     { code: 'unavailable' },
   );
-  await expect(h.service.retry()).rejects.toMatchObject({ code: 'unavailable' });
+  vi.spyOn(h.scheduler, 'now').mockReturnValue(100_000);
+  await expect(h.service.open({ kind: 'roots', query: 'private' }, signal())).rejects.toMatchObject(
+    { code: 'unavailable' },
+  );
   expect(factory).toHaveBeenCalledTimes(4);
   expect(states).toContainEqual(expect.objectContaining({ phase: 'failed', episode: 2 }));
   expect(JSON.stringify(diagnose.mock.calls)).not.toContain('private');
@@ -327,7 +331,7 @@ it('rejects megabyte paste before creating a backend and preserves explicit file
   h.service.dispose();
 });
 
-it('accepted edits remain dirty in a failed episode until explicit retry replays all files', async () => {
+it('accepted edits remain dirty in a failed episode until later ordinary input replays all files', async () => {
   const h = createTaskSearchHarness();
   h.source.ready([
     nodeDocuments(2),
@@ -350,7 +354,8 @@ it('accepted edits remain dirty in a failed episode until explicit retry replays
     code: 'unavailable',
   });
   expect(h.backends).toHaveLength(3);
-  await h.service.retry();
+  vi.spyOn(h.scheduler, 'now').mockReturnValue(100_000);
+  await h.service.open({ kind: 'roots', query: 'needle' }, signal());
   expect((await h.service.open({ kind: 'roots', query: 'needle' }, signal())).total).toBe(5);
   h.service.dispose();
 });
@@ -503,47 +508,6 @@ it('reserves concurrent canonical browse construction and cancels evicted partia
   expect(retainedVectors(h)).toBe(0);
 });
 
-it('settles failed-source Retry in a new episode until canonical readiness and another Retry', async () => {
-  const h = createTaskSearchHarness();
-  const options = (h.service as unknown as { options: { diagnose: (value: unknown) => void } })
-    .options;
-  const diagnose = vi.spyOn(options, 'diagnose');
-  const states: unknown[] = [];
-  h.service.subscribe((state) => {
-    states.push(state);
-  });
-  h.source.fail(new Error('private source and query text'));
-  expect(states[states.length - 1]).toEqual({ phase: 'failed', generation: 0, episode: 1 });
-  for (const episode of [2, 3]) {
-    await expect(h.service.retry()).rejects.toMatchObject({ code: 'unavailable', episode });
-    expect(states[states.length - 1]).toEqual({ phase: 'failed', generation: 0, episode });
-  }
-  expect(h.source.state.type).toBe('failed');
-  expect(h.source.iterations).toEqual([]);
-  expect(h.backends).toHaveLength(0);
-  expect(diagnose.mock.calls).toHaveLength(3);
-  for (const [diagnostic] of diagnose.mock.calls)
-    expect(diagnostic).toMatchObject({
-      phase: 'source',
-      backend: 'worker',
-      generation: 0,
-      pathCount: 0,
-      error: { code: 'unavailable' },
-    });
-  expect(JSON.stringify(diagnose.mock.calls)).not.toContain('private');
-  h.source.ready([nodeDocuments(3)]);
-  expect(states[states.length - 1]).toEqual({ phase: 'failed', generation: 1, episode: 3 });
-  expect(h.backends).toHaveLength(0);
-  await h.service.retry();
-  expect(states[states.length - 1]).toMatchObject({ phase: 'ready', generation: 1 });
-  expect((await h.service.open({ kind: 'nodes', query: 'needle' }, signal())).total).toBe(3);
-  expect(h.source.iterations).toEqual(['a.md']);
-  h.service.dispose();
-  await expect(h.service.retry()).rejects.toMatchObject({ code: 'disposed' });
-  expect(states[states.length - 1]).toEqual({ phase: 'disposed', generation: 1 });
-  expect(diagnose.mock.calls).toHaveLength(3);
-});
-
 it('rejects a backend admission whose owner recovered while release acknowledgment was pending', async () => {
   const h = createTaskSearchHarness();
   h.source.ready([nodeDocuments(10)]);
@@ -568,4 +532,152 @@ it('rejects a backend admission whose owner recovered while release acknowledgme
   expect((await h.service.read(fresh, 0, 1, signal())).hits).toHaveLength(1);
   expect(retainedVectors(h)).toBeLessThanOrEqual(4);
   h.service.dispose();
+});
+
+it('bounds persistent failure bursts and passive preparation without a deadline wake', async () => {
+  const h = createTaskSearchHarness();
+  const now = vi.spyOn(h.scheduler, 'now').mockReturnValue(0);
+  const ensure = vi.spyOn(h.source, 'ensureReady');
+  h.source.fail(new Error('source unavailable'));
+  const request = { kind: 'roots' as const, query: 'needle' };
+  for (let i = 0; i < 100; i++)
+    await expect(h.service.open(request, signal())).rejects.toMatchObject({ code: 'unavailable' });
+  expect(ensure).not.toHaveBeenCalled();
+  now.mockReturnValue(4999);
+  await expect(h.service.open(request, signal())).rejects.toMatchObject({ code: 'unavailable' });
+  now.mockReturnValue(5000);
+  await expect(h.service.prepare(signal())).rejects.toMatchObject({ code: 'unavailable' });
+  expect(ensure).not.toHaveBeenCalled();
+  const outcomes = await Promise.allSettled([
+    h.service.open(request, signal()),
+    h.service.open(request, signal()),
+  ]);
+  for (const outcome of outcomes) {
+    expect(outcome.status).toBe('rejected');
+    if (outcome.status === 'rejected')
+      expect(outcome.reason as unknown).toMatchObject({ code: 'unavailable' });
+  }
+  expect(ensure).toHaveBeenCalledTimes(1);
+  now.mockReturnValue(10000);
+  h.source.emit({ type: 'semantics', generation: 1 });
+  await Promise.resolve();
+  expect(ensure).toHaveBeenCalledTimes(1);
+  expect(h.backends).toHaveLength(0);
+  h.service.dispose();
+});
+
+it('shares one later backend recovery and one aborted caller cannot stop it', async () => {
+  const h = createTaskSearchHarness();
+  const now = vi.spyOn(h.scheduler, 'now').mockReturnValue(0);
+  h.source.ready([nodeDocuments(2)]);
+  const request = { kind: 'roots' as const, query: 'needle' };
+  for (let i = 0; i < 3; i++) {
+    await h.service.open(request, signal());
+    expectDefined(h.backends[i]).crash();
+  }
+  for (let i = 0; i < 100; i++)
+    await expect(h.service.open(request, signal())).rejects.toMatchObject({ code: 'unavailable' });
+  expect(h.backends).toHaveLength(3);
+  now.mockReturnValue(5000);
+  await Promise.resolve();
+  expect(h.backends).toHaveLength(3);
+  h.scheduler.hold();
+  const cancelled = new AbortController();
+  const first = h.service.open(request, cancelled.signal);
+  const aborted = expect(first).rejects.toMatchObject({ code: 'aborted' });
+  const second = h.service.open(request, signal()).catch((error: unknown) => error);
+  cancelled.abort();
+  await aborted;
+  await h.scheduler.flush();
+  expect(await second).toMatchObject({ total: 2 });
+  expect(h.backends).toHaveLength(4);
+  h.service.dispose();
+});
+
+it('shares preparation with early input and captures the generation after dirty replay', async () => {
+  const h = createTaskSearchHarness();
+  h.source.ready([nodeDocuments(260)]);
+  h.scheduler.hold();
+  const owner = new AbortController();
+  const first = h.service.prepare(owner.signal);
+  const aborted = expect(first).rejects.toMatchObject({ code: 'aborted' });
+  const second = h.service.prepare(signal());
+  const query = h.service.open({ kind: 'roots', query: 'needle' }, signal());
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  h.source.replace('a.md', nodeDocuments(3));
+  owner.abort();
+  await aborted;
+  await h.scheduler.flush();
+  await second;
+  expect(await query).toMatchObject({ total: 3, generation: h.source.state.generation });
+  expect(h.backends).toHaveLength(1);
+  expect(h.backends[0]?.searchCalls).toBe(1);
+  h.service.dispose();
+});
+
+it('same-generation ready notifications preserve cursors and do not replay files', async () => {
+  const h = createTaskSearchHarness();
+  h.source.ready([nodeDocuments(3)]);
+  const cursor = await h.service.open({ kind: 'nodes', query: 'needle' }, signal());
+  const operations = h.backends[0]?.operations.length;
+  h.source.iterations.length = 0;
+  h.source.emit({ type: 'state', state: h.source.state });
+  await h.service.prepare(signal());
+  expect((await h.service.read(cursor, 0, 3, signal())).hits).toHaveLength(3);
+  expect(h.source.iterations).toEqual([]);
+  expect(h.backends[0]?.operations).toHaveLength(operations ?? -1);
+  h.service.dispose();
+});
+
+it('wanted preparation resumes once on genuine failed-source readiness', async () => {
+  const h = createTaskSearchHarness();
+  h.source.fail(new Error('private source text'));
+  await expect(h.service.prepare(signal())).rejects.toMatchObject({ code: 'unavailable' });
+  h.source.ready([nodeDocuments(3)]);
+  await h.service.prepare(signal());
+  expect((await h.service.open({ kind: 'roots', query: 'needle' }, signal())).total).toBe(3);
+  expect(h.backends).toHaveLength(1);
+  h.service.dispose();
+});
+
+it('disposal before a queued source recovery prevents initialization from restarting', async () => {
+  const h = createTaskSearchHarness();
+  const now = vi.spyOn(h.scheduler, 'now').mockReturnValue(0);
+  const ensure = vi.spyOn(h.source, 'ensureReady');
+  h.source.fail(new Error('source unavailable'));
+  now.mockReturnValue(5000);
+  const pending = h.service.open({ kind: 'roots', query: 'needle' }, signal());
+  h.service.dispose();
+  await expect(pending).rejects.toMatchObject({ code: 'disposed' });
+  expect(ensure).not.toHaveBeenCalled();
+  expect(h.backends).toHaveLength(0);
+});
+
+it('invalid then valid input retains the healthy index', async () => {
+  const h = createTaskSearchHarness();
+  h.source.ready([nodeDocuments(3)]);
+  await h.service.prepare(signal());
+  h.source.iterations.length = 0;
+  await expect(
+    h.service.open({ kind: 'roots', query: 'x'.repeat(2049) }, signal()),
+  ).rejects.toMatchObject({ code: 'invalid-query' });
+  expect((await h.service.open({ kind: 'roots', query: 'needle' }, signal())).total).toBe(3);
+  expect(h.backends).toHaveLength(1);
+  expect(h.source.iterations).toEqual([]);
+  h.service.dispose();
+});
+
+it('synchronous disposal from recovery publication cannot restart the failed source', async () => {
+  const h = createTaskSearchHarness();
+  const now = vi.spyOn(h.scheduler, 'now').mockReturnValue(0);
+  const ensure = vi.spyOn(h.source, 'ensureReady');
+  h.source.fail(new Error('source unavailable'));
+  h.service.subscribe((state) => {
+    if (state.phase === 'recovering') h.service.dispose();
+  });
+  now.mockReturnValue(5000);
+  await expect(h.service.open({ kind: 'roots', query: 'needle' }, signal())).rejects.toMatchObject({
+    code: 'disposed',
+  });
+  expect(ensure).not.toHaveBeenCalled();
 });

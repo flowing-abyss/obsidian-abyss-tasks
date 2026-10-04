@@ -75,5 +75,4 @@ export interface TaskSearchApi {
     signal: AbortSignal,
   ): Promise<readonly TaskSearchHydratedHit[]>;
   subscribe(listener: (state: TaskSearchState) => void): () => void;
-  retry(): Promise<void>;
 }

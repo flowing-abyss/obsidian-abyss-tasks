@@ -169,13 +169,15 @@ it('renders inline failure and retries after actual Markdown rejection', async (
     await expect(h.completed()).rejects.toThrow();
     expect(h.root.dataset['searchPhase']).toBe('error');
     expect(h.root.getAttribute('aria-busy')).toBe('false');
+    const documents = vi.spyOn(h.source, 'documents');
     render.mockImplementation(async (_app, text, el) => {
       el.setText(text);
     });
-    expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-search-retry')).click();
+    h.query('budget ');
     await h.completed();
     expect(h.root.dataset['searchPhase']).toBe('complete');
     expect(log).toHaveBeenCalled();
+    expect(documents).not.toHaveBeenCalled();
   } finally {
     h.dispose();
   }

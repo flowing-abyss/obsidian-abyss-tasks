@@ -70,6 +70,9 @@ export class FakeSearchSource implements TaskSearchSource {
     this.state = { type: 'disposed', generation: this.state.generation };
     this.emit({ type: 'state', state: this.state });
   }
+  async ensureReady(): Promise<void> {
+    if (this.state.type === 'failed') throw new Error('Source unavailable');
+  }
   files() {
     return [...this.store].map(([path, { version }]) => ({ path, version }));
   }

@@ -207,6 +207,10 @@ describe('task architecture ESLint boundaries', () => {
 // The project lexical policy rows lint through the same instance, so the project service's cold
 // start is paid once for both suites. Their rule reads scopes, not types.
 const pureFiles = [
+  'src/collectionSteps.ts',
+  'src/task-lists/TaskListSelector.ts',
+  'src/tags/effectiveTagGroups.ts',
+  'src/task-lists/taskSearchOrganization.ts',
   'src/task-lists/todayTaskCategory.ts',
   'src/tasks/domain/taskSearchTypes.ts',
   'src/tasks/domain/searchMatchPolicy.ts',
