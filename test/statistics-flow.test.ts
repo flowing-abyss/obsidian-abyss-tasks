@@ -204,3 +204,39 @@ it('uses the cohort classifier in cell evidence, including unknown timing', asyn
     'Unknown timing',
   ]);
 });
+it('discloses scoped due and cohort date eligibility separately from period outcomes', async () => {
+  const ds = required(
+    await prepareStatisticsDataset(
+      source([
+        task('missing', { tags: ['chosen'] }),
+        task('future', {
+          tags: ['chosen'],
+          planning: { created: date('2027-01-01'), due: date('2027-01-01') },
+        }),
+        task('known', { tags: ['chosen'], planning: { created: date('2026-10-01') } }),
+        task('hidden'),
+      ]),
+      [],
+      work,
+    ),
+  );
+  const session = new StatisticsSession(ds);
+  for (const [view, field, known, unavailable] of [
+    ['deadlines', 'due', 1, 2],
+    ['cohorts', 'created', 1, 2],
+  ] as const) {
+    const v = required(
+      await session.view(request({ view, scope: { type: 'tag', tag: 'chosen' } }), work),
+    );
+    const metrics = v.sections.flatMap((s) => s.metrics);
+    expect(metrics.find((m) => m.id === `${field}-known`)).toMatchObject({
+      value: known,
+      role: 'coverage',
+    });
+    const missing = required(metrics.find((m) => m.id === `${field}-unavailable`));
+    expect(missing).toMatchObject({ value: unavailable, role: 'coverage' });
+    expect(v.evidence(required(missing.selectionId), 0, 50).total).toBe(unavailable);
+    if (view === 'deadlines')
+      expect(metrics.filter((m) => m.role !== 'coverage').every((m) => m.value === 0)).toBe(true);
+  }
+});

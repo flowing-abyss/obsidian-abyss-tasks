@@ -255,3 +255,194 @@ it('separates untagged from the real none tag', async () => {
   ).get('allocation');
   expect(value(t, 'group-count')).toBe(2);
 });
+it('includes a zero-length closed session exactly at as-of without a Timeline interval', async () => {
+  const v = await views([
+    task('zero-now', { timeEntries: [closed('2026-10-04T12:00Z', '2026-10-04T12:00Z')] }),
+  ]);
+  const s = await v.get('sessions');
+  expect(value(s, 'session-count')).toBe(1);
+  expect(value(s, 'median')).toBe(0);
+  expect(s.evidence('sessions', 0, 50).total).toBe(1);
+  expect(value(s, 'recorded-minutes')).toBe(0);
+  expect(required(required((await v.get('timeline')).sections[0]).charts[0]).marks).toEqual([]);
+});
+it.each([
+  {
+    day: '2026-03-29',
+    before: 0,
+    after: 60,
+    previous: '2026-03-28',
+    previousStart: '09:00',
+    currentStart: '08:00',
+    expected: [
+      [0, 60],
+      [120, 240],
+    ],
+  },
+  {
+    day: '2026-10-25',
+    before: 60,
+    after: 0,
+    previous: '2026-10-24',
+    previousStart: '08:00',
+    currentStart: '09:00',
+    expected: [
+      [60, 120],
+      [60, 180],
+    ],
+  },
+])(
+  'aligns local clocks and preserves transition geometry on $day',
+  async ({ day, before, after, previous, previousStart, currentStart, expected }) => {
+    const transition = Date.parse(`${day}T01:00Z`);
+    const v = await views(
+      [
+        task('previous-nine', {
+          timeEntries: [
+            closed(`${previous}T${previousStart}Z`, `${previous}T${previousStart}:01Z`),
+          ],
+        }),
+        task('current-nine', {
+          timeEntries: [closed(`${day}T${currentStart}Z`, `${day}T${currentStart}:01Z`)],
+        }),
+        task('crossing', { timeEntries: [closed(`${day}T00:00Z`, `${day}T03:00Z`)] }),
+      ],
+      {
+        period: 'week',
+        nowMs: Date.parse(`${day}T12:00Z`),
+        offsetAt: (ms) => (ms < transition ? before : after),
+      },
+    );
+    const model = await v.get('timeline');
+    const chart = required(required(model.sections[0]).charts[0]);
+    expect(chart.x).toMatchObject({ label: 'Time of day', domain: [0, 1440] });
+    expect(chart.marks.filter((m) => m.label?.endsWith('nine') === true).map((m) => m.x)).toEqual([
+      540, 540,
+    ]);
+    const crossing = chart.marks.filter((m) => m.label === 'crossing');
+    expect(crossing.map((m) => [m.x, m.x2])).toEqual(expected);
+    expect(crossing.map((m) => m.clock?.offsetMinutes)).toEqual([before, after]);
+    expect(crossing.map((m) => m.clock?.startMs)).toEqual([
+      Date.parse(`${day}T00:00Z`),
+      transition,
+    ]);
+    expect(crossing.every((m) => m.clock?.startLabel.includes(day) === true)).toBe(true);
+    expect(crossing.reduce((n, m) => n + (m.weight ?? 0), 0)).toBe(180);
+    for (const mark of crossing)
+      expect(model.evidence(required(mark.selectionId), 0, 50).rows[0]?.contributionMinutes).toBe(
+        mark.weight,
+      );
+    const overview = required(required(model.sections[0]).charts[1]);
+    expect(overview.marks).toHaveLength(1);
+    expect(overview.marks[0]?.selected).toBe(true);
+    expect(
+      model.chartActions.find(([id]) => id === overview.marks[0]?.selectionId)?.[1],
+    ).toMatchObject({ type: 'week' });
+  },
+);
+it('pages actual overview weeks and keeps clipped totals separate from week activation', async () => {
+  const dataset = required(
+    await prepareStatisticsDataset(
+      source([task('long', { timeEntries: [closed('2020-01-01', '2026-10-04T12:00Z')] })]),
+      [],
+      work,
+    ),
+  );
+  const session = new StatisticsSession(dataset);
+  const latest = required(await session.view(request({ view: 'timeline', period: 'all' }), work));
+  expect(required(required(latest.sections[0]).charts[1]).marks.length).toBeLessThanOrEqual(104);
+  expect(latest.actions.some((a) => a.type === 'page' && a.label === 'Earlier weeks')).toBe(true);
+  const first = required(
+    await session.view(request({ view: 'timeline', period: 'all', page: 0 }), work),
+  );
+  const chart = required(required(first.sections[0]).charts[1]);
+  expect(chart.marks).toHaveLength(104);
+  expect(chart.marks[0]).toMatchObject({ x: '2019-12-30', y: 7200 });
+  expect(first.chartActions[0]?.[1]).toMatchObject({ type: 'week', weekStart: '2019-12-30' });
+  expect(first.evidence(required(chart.marks[0]?.selectionId), 0, 50).total).toBe(0);
+  expect(first.actions.some((a) => a.type === 'page' && a.label === 'Later weeks')).toBe(true);
+});
+it.each([
+  { day: '2026-03-29', before: 0, after: 60, expected: 0 },
+  { day: '2026-10-25', before: 60, after: 0, expected: 120 },
+])(
+  'retains exact local-hour density across the $day offset transition',
+  async ({ day, before, after, expected }) => {
+    const transition = Date.parse(`${day}T01:00Z`);
+    const v = await views(
+      Array.from({ length: 701 }, (_, i) =>
+        task(`dense-${i}`, { timeEntries: [closed(`${day}T00:00Z`, `${day}T03:00Z`)] }),
+      ),
+      {
+        period: 'today',
+        nowMs: Date.parse(`${day}T12:00Z`),
+        offsetAt: (ms) => (ms < transition ? before : after),
+      },
+    );
+    const model = await v.get('timeline');
+    const chart = required(required(model.sections[0]).charts[0]);
+    expect(chart.layout).toBe('density');
+    expect(chart.marks.reduce((n, m) => n + (m.weight ?? 0), 0)).toBe(701 * 180);
+    const repeated = chart.marks.find((m) => m.x === 60);
+    if (expected === 0) expect(repeated).toBeUndefined();
+    else {
+      expect(repeated?.weight).toBe(701 * expected);
+      expect(repeated?.clockRanges?.map((c) => c.offsetMinutes)).toEqual([60, 0]);
+      const evidence = model.evidence(required(repeated?.selectionId), 700, 50);
+      expect(evidence.total).toBe(701);
+      expect(evidence.rows).toHaveLength(1);
+      expect(evidence.rows[0]?.contributionMinutes).toBe(expected);
+    }
+    const week = required(required(model.sections[0]).metrics.find((m) => m.id === 'week-minutes'));
+    expect(model.evidence(required(week.selectionId), 0, 1).rows[0]?.contributionMinutes).toBe(180);
+  },
+);
+it('uses configured first-day weeks and refreshes immutable chart actions when pages change', async () => {
+  const dataset = required(
+    await prepareStatisticsDataset(
+      source([task('long', { timeEntries: [closed('2020-01-01', '2026-10-04T12:00Z')] })]),
+      [],
+      work,
+    ),
+  );
+  const session = new StatisticsSession(dataset);
+  const options = request({ view: 'timeline', period: 'all', firstDayOfWeek: 0, page: 0 });
+  const first = required(await session.view(options, work));
+  expect(first.chartActions[0]?.[1]).toMatchObject({ type: 'week', weekStart: '2019-12-29' });
+  expect(Object.isFrozen(first.chartActions)).toBe(true);
+  expect(Object.isFrozen(first.chartActions[0])).toBe(true);
+  expect(Object.isFrozen(first.chartActions[0]?.[1])).toBe(true);
+  expect(await session.view(options, work)).toBe(first);
+  const next = required(await session.view({ ...options, page: 1 }, work));
+  expect(next.chartActions[0]?.[0]).not.toBe(first.chartActions[0]?.[0]);
+  const action = required(next.chartActions[0]?.[1]);
+  expect(action.type).toBe('week');
+  if (action.type === 'week') {
+    const selected = required(
+      await session.view({ ...options, page: 1, weekStart: action.weekStart }, work),
+    );
+    expect(selected.sections[0]?.charts[1]?.marks[0]?.selected).toBe(true);
+  }
+});
+it('exposes sub-hour gap geometry inside dense local-clock cells', async () => {
+  const transition = Date.parse('2026-03-29T01:00Z');
+  const v = await views(
+    Array.from({ length: 701 }, (_, i) =>
+      task(`half-gap-${i}`, { timeEntries: [closed('2026-03-29T00:00Z', '2026-03-29T02:00Z')] }),
+    ),
+    {
+      period: 'today',
+      nowMs: Date.parse('2026-03-29T12:00Z'),
+      offsetAt: (ms) => (ms < transition ? 0 : 30),
+    },
+  );
+  const model = await v.get('timeline');
+  const mark = required(
+    required(required(model.sections[0]).charts[0]).marks.find((m) => m.x === 60),
+  );
+  expect(mark.weight).toBe(701 * 30);
+  expect(mark.clockRanges?.map((c) => [c.localStartMinutes, c.localEndMinutes])).toEqual([
+    [90, 120],
+  ]);
+  expect(model.evidence(required(mark.selectionId), 700, 50).rows[0]?.contributionMinutes).toBe(30);
+});

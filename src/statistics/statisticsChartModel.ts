@@ -27,6 +27,20 @@ export interface StatisticsMark {
   readonly denominator?: number | undefined;
   readonly state?: 'measured' | 'unknown' | 'immature' | 'unavailable' | undefined;
   readonly overdue?: number | undefined;
+  readonly selected?: boolean | undefined;
+  readonly clockRanges?: ReadonlyArray<NonNullable<StatisticsMark['clock']>> | undefined;
+  /** Local-clock geometry uses this constant offset; weight remains actual elapsed minutes. */
+  readonly clock?:
+    | {
+        readonly startMs: number;
+        readonly endMs: number;
+        readonly offsetMinutes: number;
+        readonly localStartMinutes: number;
+        readonly localEndMinutes: number;
+        readonly startLabel: string;
+        readonly endLabel: string;
+      }
+    | undefined;
 }
 export interface StatisticsChartModel {
   readonly id: string;

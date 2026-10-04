@@ -193,6 +193,12 @@ active degrees; iterative graph diagnostics and one selected downstream traversa
 transitive closures. Normalization, calendar discovery, sorting and cold aggregation share a
 cancellable yielding work port.
 
+Timeline geometry uses local clock minutes, split at day/offset boundaries, with actual instants,
+offsets and endpoint labels separate from elapsed contributions. Its bounded weekly overview uses
+a frozen `chartActions` registry for week activation; source evidence remains separately selectable.
+Relevant date-eligibility metrics use the coverage role and scoped evidence, independently of
+selected-period event numerators.
+
 The session retains one calendar, one scoped coverage record, and at most one current result per
 view. Evidence registries retain indices or predicates over immutable normalized records; cumulative
 points do not copy prior rows. Dense selections page directly, sparse selections scan without

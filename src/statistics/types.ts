@@ -128,6 +128,7 @@ export interface StatisticsDataset {
   readonly coverage: StatisticsCoverage;
 }
 export interface StatisticsMetric {
+  readonly role?: 'coverage' | undefined;
   readonly id: string;
   readonly label: string;
   readonly value: number | null;
@@ -206,6 +207,7 @@ export interface StatisticsViewModel {
   };
   readonly sections: readonly StatisticsSection[];
   readonly actions: readonly StatisticsAction[];
+  readonly chartActions: ReadonlyArray<readonly [string, StatisticsAction]>;
   readonly evidence: (selectionId: string, offset: number, limit: number) => StatisticsEvidencePage;
 }
 export interface StatisticsContext {

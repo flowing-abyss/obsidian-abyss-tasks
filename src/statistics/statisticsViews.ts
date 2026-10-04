@@ -29,7 +29,13 @@ export function metric(
   id: string,
   label: string,
   value: number | null,
-  options: string | { selectionId?: string | undefined; unit?: StatisticsMetric['unit'] } = {},
+  options:
+    | string
+    | {
+        selectionId?: string | undefined;
+        unit?: StatisticsMetric['unit'];
+        role?: StatisticsMetric['role'];
+      } = {},
 ): StatisticsMetric {
   const details = typeof options === 'string' ? { selectionId: options } : options;
   return { id, label, value, unit: 'tasks', ...details };
@@ -38,6 +44,7 @@ export function finish(
   ctx: Pick<StatisticsContext, 'dataset' | 'request' | 'calendar' | 'evidence'>,
   sections: readonly StatisticsSection[],
   actions: readonly StatisticsAction[] = [],
+  chartActions: ReadonlyArray<readonly [string, StatisticsAction]> = [],
 ): StatisticsViewModel {
   const { request, calendar, evidence } = ctx;
   return Object.freeze({
@@ -49,6 +56,9 @@ export function finish(
     coverage: evidence.coverage,
     sections,
     actions,
+    chartActions: Object.freeze(
+      chartActions.map(([id, action]) => Object.freeze([id, Object.freeze(action)] as const)),
+    ),
     evidence: evidence.page,
   });
 }

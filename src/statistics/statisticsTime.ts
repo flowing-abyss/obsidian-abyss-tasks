@@ -44,7 +44,7 @@ function classifySession(
   }
   if (
     required(entry.startMs) >= ctx.calendar.startMs &&
-    required(entry.startMs) < ctx.calendar.endMs
+    required(entry.startMs) < ctx.calendar.civilEndMs
   )
     population.entries.push({
       entry: entry.index,
@@ -168,7 +168,8 @@ export async function timeView({
     return amount > 0 ? amount : undefined;
   });
   let sections: StatisticsSection[],
-    actions: StatisticsAction[] = [];
+    actions: StatisticsAction[] = [],
+    chartActions: ReadonlyArray<readonly [string, StatisticsAction]> = [];
   if (r.view === 'patterns')
     sections = [
       await patternsSection({ dataset, request: r, calendar: c, evidence: e, budget: b }, spans),
@@ -181,11 +182,19 @@ export async function timeView({
       evidence: e,
       budget: b,
     });
-  else {
-    const result =
-      r.view === 'timeline'
-        ? await timeline({ dataset, request: r, calendar: c, evidence: e, budget: b }, spans)
-        : await allocation({ dataset, request: r, calendar: c, evidence: e, budget: b }, spans);
+  else if (r.view === 'timeline') {
+    const result = await timeline(
+      { dataset, request: r, calendar: c, evidence: e, budget: b },
+      spans,
+    );
+    sections = result.sections;
+    actions = result.actions;
+    chartActions = result.chartActions;
+  } else {
+    const result = await allocation(
+      { dataset, request: r, calendar: c, evidence: e, budget: b },
+      spans,
+    );
     sections = result.sections;
     actions = result.actions;
   }
@@ -199,5 +208,5 @@ export async function timeView({
       ...required(sections[0]).metrics,
     ],
   };
-  return finish({ dataset, request: r, calendar: c, evidence: e }, sections, actions);
+  return finish({ dataset, request: r, calendar: c, evidence: e }, sections, actions, chartActions);
 }

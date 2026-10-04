@@ -7,7 +7,7 @@ import {
 } from './statisticsChartModel';
 import { active, inScope } from './statisticsDataset';
 import { dependencySections } from './statisticsDependencies';
-import { age, ageBand, datedEvent, inPeriod, overdue } from './statisticsFlow';
+import { age, ageBand, dateEligibility, datedEvent, inPeriod, overdue } from './statisticsFlow';
 import { contribution } from './statisticsIntervals';
 import { finish, metric, pageActions } from './statisticsViews';
 import { rankedNumber, required, sorted } from './statisticsWork';
@@ -169,7 +169,7 @@ async function movement(ctx: StatisticsContext): Promise<StatisticsViewModel> {
         title: 'Project movement',
         context:
           'Cumulative retained events classified by current project. Zero origin precedes the period. Missing date series are unavailable; this does not reconstruct historical backlog.',
-        metrics,
+        metrics: [...metrics, ...(await dateEligibility(ctx, EVENTS))],
         charts,
         legend: [],
       },

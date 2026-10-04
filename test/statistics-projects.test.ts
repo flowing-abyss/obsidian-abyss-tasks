@@ -213,3 +213,39 @@ it('bins dense distinct Aging coordinates without discarding physical owners', a
   expect(chart.marks.length).toBeLessThanOrEqual(600);
   expect(chart.marks.reduce((sum, mark) => sum + (mark.weight ?? 0), 0)).toBe(601);
 });
+it('exposes per-event date coverage for matching scoped terminal populations', async () => {
+  const ds = required(
+    await prepareStatisticsDataset(
+      source([
+        task('known', { tags: ['chosen'], planning: { created: date('2026-10-01') } }),
+        task('missing', { tags: ['chosen'] }),
+        task('done-missing', { tags: ['chosen'], status: 'done' }),
+        task('cancel-missing', { tags: ['chosen'], status: 'cancelled' }),
+        task('hidden-done', { status: 'done' }),
+      ]),
+      [],
+      work,
+    ),
+  );
+  const view = required(
+    await new StatisticsSession(ds).view(
+      request({ view: 'movement', scope: { type: 'tag', tag: 'chosen' } }),
+      work,
+    ),
+  );
+  for (const [id, count] of [
+    ['created-known', 1],
+    ['created-unavailable', 3],
+    ['completed-known', 0],
+    ['completed-unavailable', 1],
+    ['cancelled-known', 0],
+    ['cancelled-unavailable', 1],
+  ] as const) {
+    const m = required(metrics(view).find((item) => item.id === id));
+    expect(m).toMatchObject({ value: count, role: 'coverage' });
+    expect(view.evidence(required(m.selectionId), 0, 50).total).toBe(count);
+  }
+  expect(view.sections[0]?.charts[0]?.marks.some((m) => m.series === 'created' && m.y === 1)).toBe(
+    true,
+  );
+});

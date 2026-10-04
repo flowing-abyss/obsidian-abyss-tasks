@@ -10,6 +10,7 @@ import { finish, metric, pageActions } from './statisticsViews';
 import { required, sorted } from './statisticsWork';
 import type {
   StatisticsContext,
+  StatisticsMetric,
   StatisticsSection,
   StatisticsTask,
   StatisticsViewModel,
@@ -25,6 +26,57 @@ export function datedEvent(
   if (value === undefined) return undefined;
   const day = dayOf(value);
   return day <= calendar.todayDay ? day : undefined;
+}
+type EligibilityField = 'created' | 'completed' | 'cancelled' | 'due';
+function dateApplies(task: StatisticsTask, field: EligibilityField): boolean {
+  if (field === 'completed') return task.status === 'done';
+  if (field === 'cancelled') return task.status === 'cancelled';
+  return true;
+}
+async function datePopulation(
+  ctx: StatisticsContext,
+  field: EligibilityField,
+): Promise<readonly [number[], number[]]> {
+  const known: number[] = [],
+    unavailable: number[] = [];
+  for (const task of ctx.dataset.tasks) {
+    if (dateApplies(task, field) && inScope(task, ctx.request.scope)) {
+      const valid =
+        field === 'due'
+          ? task.due !== undefined
+          : datedEvent(task, field, ctx.calendar) !== undefined;
+      (valid ? known : unavailable).push(task.index);
+    }
+    await ctx.budget.step();
+  }
+  return [known, unavailable];
+}
+/** Scope-wide applicability, independent of the selected-period event numerator. */
+export async function dateEligibility(
+  ctx: StatisticsContext,
+  fields: readonly EligibilityField[],
+): Promise<StatisticsMetric[]> {
+  const metrics: StatisticsMetric[] = [];
+  for (const field of fields) {
+    const [known, unavailable] = await datePopulation(ctx, field);
+    for (const [state, indices] of [
+      ['known', known],
+      ['unavailable', unavailable],
+    ] as const) {
+      const id = `${field}-${state}`;
+      metrics.push({
+        ...metric(id, `${field} date · ${state} in scope`, indices.length, {
+          role: 'coverage',
+          selectionId: ctx.evidence.tasks(id, indices),
+        }),
+        context:
+          field === 'due'
+            ? 'Saved due-date availability across this scope, including future planning; independent of period outcomes.'
+            : 'Date availability by as-of across this scope, independent of period events; terminal dates apply only to the matching current terminal status.',
+      });
+    }
+  }
+  return metrics;
 }
 export function inPeriod(day: number | undefined, calendar: StatisticsCalendar): day is number {
   return day !== undefined && day >= calendar.fromDay && day < calendar.toDay;
@@ -276,12 +328,10 @@ async function rhythm(ctx: StatisticsContext): Promise<StatisticsSection[]> {
     'completed-unknown',
     'cancelled-unknown',
   ].map((id) =>
-    metric(
-      id,
-      required(RHYTHM_LABELS[id]),
-      (ids.get(id) ?? []).length,
-      ctx.evidence.tasks(id, ids.get(id) ?? []),
-    ),
+    metric(id, required(RHYTHM_LABELS[id]), (ids.get(id) ?? []).length, {
+      selectionId: ctx.evidence.tasks(id, ids.get(id) ?? []),
+      role: id.endsWith('-unknown') ? 'coverage' : undefined,
+    }),
   );
   return [
     {
@@ -369,13 +419,8 @@ function deadlineOutcome(t: StatisticsTask, c: StatisticsCalendar): string {
   if (end === undefined) return 'unknown';
   return end <= dayOf(required(t.due)) ? 'on-time' : 'late';
 }
-async function deadlines({
-  dataset,
-  request: r,
-  calendar: c,
-  evidence: e,
-  budget: b,
-}: StatisticsContext): Promise<StatisticsSection[]> {
+async function deadlines(ctx: StatisticsContext): Promise<StatisticsSection[]> {
+  const { dataset, request: r, calendar: c, evidence: e, budget: b } = ctx;
   const groups = new Map<string, number[]>(),
     deltas: Array<{
       value: number;
@@ -413,9 +458,10 @@ async function deadlines({
       id: 'deadlines',
       title: 'Against currently saved due dates',
       context: 'Current outcomes; edits to due dates change this comparison.',
-      metrics: keys.map((key) =>
-        metric(key, key, (groups.get(key) ?? []).length, `deadline:${key}`),
-      ),
+      metrics: [
+        ...keys.map((key) => metric(key, key, (groups.get(key) ?? []).length, `deadline:${key}`)),
+        ...(await dateEligibility(ctx, ['due'])),
+      ],
       charts: [
         {
           id: 'deadline-outcomes',
@@ -559,7 +605,10 @@ async function cohorts(ctx: StatisticsContext): Promise<StatisticsViewModel> {
         title: 'Weekly creation cohorts',
         context:
           'N includes cancellations. A horizon matures after the youngest creation completes its final horizon day.',
-        metrics: [metric('cohorts', 'Cohorts', weeks.length)],
+        metrics: [
+          metric('cohorts', 'Cohorts', weeks.length),
+          ...(await dateEligibility(ctx, ['created'])),
+        ],
         charts: [
           {
             id: 'cohorts',
