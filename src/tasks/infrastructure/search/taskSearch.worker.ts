@@ -109,7 +109,11 @@ function operation(value: Record<string, unknown>): boolean {
     case 'read':
       return page(value);
     case 'open':
-      return integer(value['generation']) && request(value['request']);
+      return (
+        integer(value['generation']) &&
+        request(value['request']) &&
+        (value['allocationId'] === undefined || typeof value['allocationId'] === 'string')
+      );
     case 'mutate':
       return mutation(value['operation']);
     default:
@@ -160,7 +164,7 @@ if (!('document' in self) && typeof scope.postMessage === 'function') {
             await runtime.mutate(message.operation);
             break;
           case 'open':
-            value = await runtime.open(message.request, message.generation);
+            value = await runtime.open(message.request, message.generation, message.allocationId);
             break;
           case 'read':
             value = await runtime.read(message.cursor, message.offset, message.limit);

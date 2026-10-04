@@ -294,6 +294,7 @@ describe('production JavaScript artifact', () => {
       type: 'open',
       epoch: 1,
       id: 5,
+      allocationId: 'reserved-artifact',
       generation: 1,
       request: {
         kind: 'roots',
@@ -305,6 +306,24 @@ describe('production JavaScript artifact', () => {
       },
     });
     expect(replies[replies.length - 1]?.value?.total).toBe(1);
+    expect(replies[replies.length - 1]?.value).toMatchObject({ id: 'reserved-artifact' });
+    const reserved = {
+      id: 'reserved-artifact',
+      generation: 1,
+      total: 0,
+      kind: 'roots',
+      access: 'forward',
+    };
+    await send({ type: 'release', epoch: 1, id: 6, cursor: reserved });
+    await send({
+      type: 'read',
+      epoch: 1,
+      id: 7,
+      cursor: { ...reserved, total: 1 },
+      offset: 0,
+      limit: 1,
+    });
+    expect(replies[replies.length - 1]).toMatchObject({ type: 'failure', code: 'cursor-expired' });
   });
 
   it('ships no lookbehind, which iOS before 16.4 cannot compile', () => {

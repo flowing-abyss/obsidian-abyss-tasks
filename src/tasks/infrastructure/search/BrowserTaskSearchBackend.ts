@@ -55,10 +55,27 @@ export class BrowserTaskSearchBackend implements TaskSearchBackend {
       this.failure();
     }
   }
-  static async create(source: string): Promise<BrowserTaskSearchBackend> {
+  static async create(source: string, signal?: AbortSignal): Promise<BrowserTaskSearchBackend> {
+    const check = (): void => {
+      if (signal?.aborted === true)
+        throw new TaskSearchError('aborted', 'Search startup cancelled');
+    };
+    check();
     const backend = new BrowserTaskSearchBackend(source);
-    await backend.ready;
-    return backend;
+    const abort = (): void => {
+      backend.dispose();
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    try {
+      await backend.ready;
+      check();
+      return backend;
+    } catch (error) {
+      check();
+      throw error;
+    } finally {
+      signal?.removeEventListener('abort', abort);
+    }
   }
   private receive(reply: TaskSearchReply): void {
     if (this.disposed || reply.epoch !== this.epoch) return;
@@ -103,8 +120,17 @@ export class BrowserTaskSearchBackend implements TaskSearchBackend {
   async mutate(operation: TaskSearchMutation): Promise<void> {
     await this.request({ type: 'mutate', operation });
   }
-  async open(request: TaskSearchEngineRequest, generation: number): Promise<TaskSearchCursor> {
-    return (await this.request({ type: 'open', request, generation })) as TaskSearchCursor;
+  async open(
+    request: TaskSearchEngineRequest,
+    generation: number,
+    allocationId?: string,
+  ): Promise<TaskSearchCursor> {
+    return (await this.request({
+      type: 'open',
+      request,
+      generation,
+      ...(allocationId === undefined ? {} : { allocationId }),
+    })) as TaskSearchCursor;
   }
   async read(
     cursor: TaskSearchCursor,
@@ -113,11 +139,8 @@ export class BrowserTaskSearchBackend implements TaskSearchBackend {
   ): Promise<TaskSearchBackendPage> {
     return (await this.request({ type: 'read', cursor, offset, limit })) as TaskSearchBackendPage;
   }
-  release(cursor: TaskSearchCursor): void {
-    if (!this.disposed)
-      void this.request({ type: 'release', cursor }).catch(() => {
-        /* Failure is delivered once by failure(). */
-      });
+  async release(cursor: TaskSearchCursor): Promise<void> {
+    if (!this.disposed) await this.request({ type: 'release', cursor });
   }
   private failure(): void {
     if (this.disposed) return;

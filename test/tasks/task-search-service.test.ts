@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
-import { expectDefined } from '../helpers';
+import type { TaskSearchBackend } from '../../src/tasks/application/TaskSearchBackend';
+import { deferred, expectDefined } from '../helpers';
 import {
   assertNoRevision,
   createCanonicalSearchHarness,
@@ -413,5 +414,158 @@ it('allocates concurrent backend opens within the global four-vector budget', as
   for (const c of cursors.slice(3))
     expect((await h.service.read(c, 0, 1, signal())).hits).toHaveLength(1);
   expect(h.backends[0]?.searchCalls).toBe(7);
+  h.service.dispose();
+});
+
+function retainedVectors(h: ReturnType<typeof createTaskSearchHarness>): number {
+  const browse = (h.service as unknown as { browse: Map<string, unknown> }).browse.size;
+  return (
+    browse +
+    h.backends.reduce(
+      (sum, backend) =>
+        sum + (backend as unknown as { vectors: Map<string, unknown> }).vectors.size,
+      0,
+    )
+  );
+}
+
+it.each(['evict', 'abort', 'recover', 'stale', 'dispose'] as const)(
+  'reserves mixed allocation capacity and releases a held runtime allocation on %s',
+  async (action) => {
+    const h = createTaskSearchHarness();
+    h.source.ready([nodeDocuments(10)]);
+    for (let i = 0; i < 4; i++) await h.service.open({ kind: 'nodes', query: 'needle' }, signal());
+    const backend = expectDefined(h.backends[0]);
+    const allocated = deferred<void>();
+    const delivery = deferred<void>();
+    const open = backend.open.bind(backend);
+    vi.spyOn(backend, 'open').mockImplementationOnce(async (...args) => {
+      const cursor = await open(...args);
+      allocated.resolve();
+      await delivery.promise;
+      return cursor;
+    });
+    const owner = new AbortController();
+    const pending = h.service.open({ kind: 'nodes', query: 'needle' }, owner.signal);
+    const outcome = pending.catch((error: unknown) => error);
+    await allocated.promise;
+    expect(retainedVectors(h)).toBe(4);
+    if (action === 'evict') {
+      for (let i = 0; i < 4; i++) {
+        await h.service.open({ kind: 'nodes', query: '' }, signal());
+        expect(retainedVectors(h)).toBeLessThanOrEqual(4);
+      }
+    } else if (action === 'abort') owner.abort();
+    else if (action === 'recover') backend.crash();
+    else if (action === 'stale') h.source.replace('a.md', nodeDocuments(5));
+    else h.service.dispose();
+    // Release must address the real vector even before its transport reply arrives.
+    const vectors = (backend as unknown as { vectors: Map<string, unknown> }).vectors;
+    expect(vectors.size).toBe(action === 'abort' ? 3 : 0);
+    delivery.resolve();
+    expect(await outcome).toMatchObject({
+      code: {
+        evict: 'cursor-expired',
+        abort: 'aborted',
+        recover: 'unavailable',
+        stale: 'stale',
+        dispose: 'disposed',
+      }[action],
+    });
+    if (action !== 'dispose') {
+      const fresh = await h.service.open({ kind: 'nodes', query: 'needle' }, signal());
+      expect((await h.service.read(fresh, 0, 1, signal())).hits).toHaveLength(1);
+      expect(retainedVectors(h)).toBeLessThanOrEqual(4);
+    }
+    h.service.dispose();
+    expect(retainedVectors(h)).toBe(0);
+  },
+);
+
+it('reserves concurrent canonical browse construction and cancels evicted partial vectors', async () => {
+  const h = createTaskSearchHarness();
+  h.source.ready([nodeDocuments(256)]);
+  h.scheduler.hold();
+  const outcomes = Array.from({ length: 7 }, () =>
+    h.service.open({ kind: 'nodes', query: '' }, signal()).catch((error: unknown) => error),
+  );
+  // Drain admission microtasks until every constructor reaches its held yield.
+  for (let i = 0; i < 200 && h.source.iterations.length < 7; i++) await Promise.resolve();
+  expect(h.source.iterations).toHaveLength(7);
+  await h.scheduler.flush();
+  const results = await Promise.all(outcomes);
+  for (const result of results.slice(0, 3))
+    expect(result).toMatchObject({ code: 'cursor-expired' });
+  for (const result of results.slice(3)) expect(result).toMatchObject({ total: 256 });
+  expect(retainedVectors(h)).toBe(4);
+  expect(h.backends).toHaveLength(0);
+  h.service.dispose();
+  expect(retainedVectors(h)).toBe(0);
+});
+
+it('settles failed-source Retry in a new episode until canonical readiness and another Retry', async () => {
+  const h = createTaskSearchHarness();
+  const options = (h.service as unknown as { options: { diagnose: (value: unknown) => void } })
+    .options;
+  const diagnose = vi.spyOn(options, 'diagnose');
+  const states: unknown[] = [];
+  h.service.subscribe((state) => {
+    states.push(state);
+  });
+  h.source.fail(new Error('private source and query text'));
+  expect(states[states.length - 1]).toEqual({ phase: 'failed', generation: 0, episode: 1 });
+  for (const episode of [2, 3]) {
+    await expect(h.service.retry()).rejects.toMatchObject({ code: 'unavailable', episode });
+    expect(states[states.length - 1]).toEqual({ phase: 'failed', generation: 0, episode });
+  }
+  expect(h.source.state.type).toBe('failed');
+  expect(h.source.iterations).toEqual([]);
+  expect(h.backends).toHaveLength(0);
+  expect(diagnose.mock.calls).toHaveLength(3);
+  for (const [diagnostic] of diagnose.mock.calls)
+    expect(diagnostic).toMatchObject({
+      phase: 'source',
+      backend: 'worker',
+      generation: 0,
+      pathCount: 0,
+      error: { code: 'unavailable' },
+    });
+  expect(JSON.stringify(diagnose.mock.calls)).not.toContain('private');
+  h.source.ready([nodeDocuments(3)]);
+  expect(states[states.length - 1]).toEqual({ phase: 'failed', generation: 1, episode: 3 });
+  expect(h.backends).toHaveLength(0);
+  await h.service.retry();
+  expect(states[states.length - 1]).toMatchObject({ phase: 'ready', generation: 1 });
+  expect((await h.service.open({ kind: 'nodes', query: 'needle' }, signal())).total).toBe(3);
+  expect(h.source.iterations).toEqual(['a.md']);
+  h.service.dispose();
+  await expect(h.service.retry()).rejects.toMatchObject({ code: 'disposed' });
+  expect(states[states.length - 1]).toEqual({ phase: 'disposed', generation: 1 });
+  expect(diagnose.mock.calls).toHaveLength(3);
+});
+
+it('rejects a backend admission whose owner recovered while release acknowledgment was pending', async () => {
+  const h = createTaskSearchHarness();
+  h.source.ready([nodeDocuments(10)]);
+  for (let i = 0; i < 4; i++) await h.service.open({ kind: 'nodes', query: 'needle' }, signal());
+  const backend = expectDefined(h.backends[0]);
+  const releasing = deferred<void>();
+  const ack = deferred<void>();
+  const release = backend.release.bind(backend);
+  vi.spyOn(backend as TaskSearchBackend, 'release').mockImplementationOnce((cursor) => {
+    release(cursor);
+    releasing.resolve();
+    return ack.promise;
+  });
+  const pending = h.service
+    .open({ kind: 'nodes', query: 'needle' }, signal())
+    .catch((error: unknown) => error);
+  await releasing.promise;
+  backend.crash();
+  ack.resolve();
+  expect(await pending).toMatchObject({ code: 'unavailable' });
+  const fresh = await h.service.open({ kind: 'nodes', query: 'needle' }, signal());
+  expect((await h.service.read(fresh, 0, 1, signal())).hits).toHaveLength(1);
+  expect(retainedVectors(h)).toBeLessThanOrEqual(4);
   h.service.dispose();
 });

@@ -101,13 +101,17 @@ export class TaskSearchRuntime implements TaskSearchBackend {
         if (this.published) this.maintain();
       });
   }
-  async open(request: TaskSearchEngineRequest, generation: number): Promise<TaskSearchCursor> {
+  async open(
+    request: TaskSearchEngineRequest,
+    generation: number,
+    allocationId?: string,
+  ): Promise<TaskSearchCursor> {
     this.check();
     if (!this.published) throw new TaskSearchError('unavailable', 'Search publication pending');
     if (generation !== this.generation)
       throw new TaskSearchError('stale', 'Search generation changed');
     const hits = this.engine.search(request);
-    const common = { id: String(++this.sequence), generation, total: hits.length };
+    const common = { id: allocationId ?? String(++this.sequence), generation, total: hits.length };
     const cursor: TaskSearchCursor =
       request.kind === 'roots'
         ? { ...common, kind: 'roots', access: 'forward' }

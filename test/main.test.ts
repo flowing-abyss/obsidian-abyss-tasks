@@ -19,6 +19,7 @@ import type { PanelNavigator } from '../src/views/panelNavigation';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
 import {
   createAppWithFiles,
+  deferred,
   expectDefined,
   flushMicrotasks,
   objectMatching,
@@ -63,6 +64,7 @@ interface WorkspaceLike {
 }
 
 interface PluginLike {
+  readonly search: TaskCalendarPlugin['search'];
   app: {
     workspace: WorkspaceLike;
     metadataCache: { trigger: (event: string, ...args: unknown[]) => void };
@@ -1281,5 +1283,51 @@ it('composes the browser task scheduler into bounded canonical organization read
   } finally {
     plugin.onunload();
     scheduler.mockRestore();
+  }
+});
+
+it('unload cancels startup through the real composed browser backend', async () => {
+  const constructed = deferred<void>();
+  let terminated = false;
+  const revoked: string[] = [];
+  vi.stubGlobal(
+    'Worker',
+    class {
+      constructor() {
+        constructed.resolve();
+      }
+      postMessage(): void {}
+      terminate(): void {
+        terminated = true;
+      }
+    },
+  );
+  vi.stubGlobal(
+    'URL',
+    class extends URL {
+      static override createObjectURL(): string {
+        return 'blob:composed-startup';
+      }
+      static override revokeObjectURL(url: string): void {
+        revoked.push(url);
+      }
+    },
+  );
+  const plugin = makePlugin();
+  try {
+    await plugin.onload();
+    const index = plugin.taskIndex as TaskIndex;
+    await index.initialize();
+    const outcome = plugin.search
+      .open({ kind: 'nodes', query: 'needle' }, new AbortController().signal)
+      .catch((error: unknown) => error);
+    await constructed.promise;
+    plugin.onunload();
+    expect(terminated).toBe(true);
+    expect(revoked).toEqual(['blob:composed-startup']);
+    expect(await outcome).toMatchObject({ code: 'disposed' });
+  } finally {
+    plugin.onunload();
+    vi.unstubAllGlobals();
   }
 });

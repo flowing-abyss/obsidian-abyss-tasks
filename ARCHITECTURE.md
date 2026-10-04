@@ -226,7 +226,9 @@ publication does not wait for incremental vacuum: maintenance runs after discard
 failures through the same backend subscription. The embedded, browser-only Worker uses request IDs
 and epochs; no task refs, source-bearing revisions, addresses or rich snapshots cross that boundary.
 The production build embeds its child IIFE and watches every child input. The browser adapter owns
-startup timeout, requests, Worker and Blob URL. Failed startup selects inline compatibility mode;
+startup timeout, requests, Worker and Blob URL. Backend factories receive the service run signal;
+stopping that run cancels startup and immediately terminates/revokes its resources. Individual
+query cancellation does not stop shared startup or bootstrap. Failed startup selects inline compatibility mode;
 a runtime Worker failure rebuilds once, repeated failure selects inline, and failed inline execution
 requires explicit Retry. Diagnostics contain phase/backend/generation/path count and sanitized
 errors. User notices remain a surface responsibility.
@@ -236,11 +238,18 @@ to TaskIndex. Root cursors advance forward and release on their final delivered 
 support random pages and remain live after their last page. The open signal owns cursor lifetime;
 per-read cancellation leaves ownership intact, retaining at most one pending forward transport page
 of 200 hits until delivery/release. A service-wide four-cursor LRU covers backend vectors and main-only
-empty browse vectors. Backend vector allocation is serialized and global capacity is released before
-allocation, so backend LRU order cannot evict a second owner after a cancelled read. Its registry contains ownership metadata, not duplicated result vectors.
+empty browse vectors, including allocations still under construction or awaiting transport delivery.
+The service reserves an ID before building either vector and passes it through the inward backend
+open protocol, so abort, eviction, invalidation and recovery can release the actual pending vector
+without waiting for its reply. Backend opens retain FIFO allocation; service LRU remains the global
+capacity authority. Admission waits for actual backend release acknowledgment before reusing a slot
+for either kind of allocation. Cancelled browse construction clears partial candidates across pending yields.
+The registry contains ownership metadata, not duplicated result vectors.
 Session-random cursor IDs and generation checks reject reload aliases, stale replies and obsolete
 reads. Empty root queries return empty; empty node browse uses compact canonical source order without
 creating an engine. Source failure and recovery are observable through immediate state subscriptions.
+Retry against a still-failed source settles as failed in a new episode; it cannot reinitialize the
+canonical source. Later source readiness retains that failure until another explicit Retry.
 Inline query execution and initial dependency-graph construction remain synchronous limitations.
 
 ### Creation, transfer, and tags

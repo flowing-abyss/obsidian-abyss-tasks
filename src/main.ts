@@ -127,9 +127,9 @@ export default class TaskCalendarPlugin extends Plugin {
       reads: this.taskIndex,
       segment,
       scheduler,
-      createBackend: async (mode) =>
+      createBackend: async (mode, signal) =>
         mode === 'worker'
-          ? BrowserTaskSearchBackend.create(taskSearchWorkerSource)
+          ? BrowserTaskSearchBackend.create(taskSearchWorkerSource, signal)
           : new TaskSearchRuntime(createMiniSearchTaskEngine(segment)),
       diagnose: (value: TaskSearchDiagnostic) => {
         console.error('[abyss-tasks] search operation failed', value);

@@ -27,10 +27,12 @@ import {
 import { validateSearchPage } from './TaskSearchRuntime';
 
 interface Ownership {
-  readonly cursor: TaskSearchCursor;
+  cursor: TaskSearchCursor;
   readonly backend: TaskSearchBackend | undefined;
-  readonly backendCursor: TaskSearchCursor | undefined;
+  backendCursor: TaskSearchCursor | undefined;
   readonly cleanup: () => void;
+  readonly allocation: AbortController;
+  retired?: TaskSearchErrorCode;
   lastUsed: number;
   nextOffset: number;
 }
@@ -79,6 +81,8 @@ export class TaskSearchService implements TaskSearchApi {
   private run = new AbortController();
   private pumping = false;
   private opening: Promise<void> = Promise.resolve();
+  private reserving: Promise<void> = Promise.resolve();
+  private releasing: Promise<void> = Promise.resolve();
   private wanted = false;
   private published = -1;
   private generation = 0;
@@ -188,14 +192,14 @@ export class TaskSearchService implements TaskSearchApi {
       this.progress(this.failures > 0 ? 'recovering' : 'building');
       let backend: TaskSearchBackend;
       try {
-        backend = await this.options.createBackend(this.mode);
+        backend = await this.options.createBackend(this.mode, signal);
       } catch {
         checkAbort(signal);
         if (this.mode === 'inline')
           throw new TaskSearchError('unavailable', 'Search startup failed');
         this.diagnose('startup');
         this.mode = 'inline';
-        backend = await this.options.createBackend('inline');
+        backend = await this.options.createBackend('inline', signal);
       }
       if (signal.aborted) {
         backend.dispose();
@@ -352,8 +356,11 @@ export class TaskSearchService implements TaskSearchApi {
     this.mode = 'worker';
     this.wanted = true;
     for (const [path, version] of this.versions) this.dirty.set(path, version);
-    this.progress('recovering');
-    this.start();
+    if (this.sourceState.type === 'failed') this.fail('source');
+    else {
+      this.progress('recovering');
+      this.start();
+    }
     await this.waitReady(new AbortController().signal, true);
   }
   private check(signal?: AbortSignal): void {
@@ -394,8 +401,14 @@ export class TaskSearchService implements TaskSearchApi {
     generation: number,
     signal: AbortSignal,
   ): Promise<readonly TaskSearchEngineHit[]> {
+    if (request.kind === 'roots') return [];
     const candidates: TaskSearchEngineHit[] = [];
-    if (request.kind === 'nodes') {
+    const abort = (): void => {
+      candidates.length = 0;
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    try {
+      checkAbort(signal);
       const files = this.options.source
         .files()
         .filter((file) => request.filePath === undefined || file.path === request.filePath);
@@ -414,105 +427,126 @@ export class TaskSearchService implements TaskSearchApi {
             slice = this.options.scheduler.now();
           }
         }
+      return candidates;
+    } finally {
+      signal.removeEventListener('abort', abort);
     }
-    return candidates;
   }
   async open(request: TaskSearchRequest, signal: AbortSignal): Promise<TaskSearchCursor> {
     this.check(signal);
     const query = prepareSearchQuery(request.query, this.options.segment);
     await this.waitReady(signal, false);
     const generation = this.generation;
-    if (request.query.trim() === '') {
-      const hits = await this.emptyBrowse(request, generation, signal);
-      this.checkGeneration(generation, signal);
-      return this.own(request.kind, generation, signal, {
-        backend: undefined,
-        backendCursor: undefined,
-        hits,
-      });
+    const empty = request.query.trim() === '';
+    if (!empty) {
+      this.wanted = true;
+      this.start();
+      await this.waitReady(signal, true);
     }
-    this.wanted = true;
-    this.start();
-    await this.waitReady(signal, true);
-    const pending = this.opening.then(() =>
-      this.openBackend(
-        { ...request, query, includeSourcePath: request.includeSourcePath ?? false },
-        generation,
-        signal,
-      ),
-    );
-    // Reserve/release global capacity before the backend allocates its next vector. Serializing
-    // allocation also prevents concurrent opens from making the backend evict a different owner.
+    const allocate = (): Promise<TaskSearchCursor> =>
+      this.allocate(request, query, generation, signal);
+    if (empty) return allocate();
+    const pending = this.opening.then(allocate);
     this.opening = pending.then(
       () => {},
       () => {},
     );
     return abortable(pending, signal);
   }
-  private async openBackend(
-    request: TaskSearchEngineRequest,
+  private async allocate(
+    request: TaskSearchRequest,
+    query: TaskSearchEngineRequest['query'],
     generation: number,
     signal: AbortSignal,
   ): Promise<TaskSearchCursor> {
+    const empty = request.query.trim() === '';
     this.checkGeneration(generation, signal);
-    const backend = this.backend;
-    if (backend === undefined) throw new TaskSearchError('unavailable', 'Search unavailable');
-    this.makeRoom();
-    const pending = backend.open(request, generation);
-    // An aborted caller owns even a late-opened backend vector.
-    void pending.then(
-      (cursor) => {
-        if (signal.aborted || generation !== this.generation || backend !== this.backend)
-          backend.release(cursor);
-      },
-      () => {},
-    );
-    const backendCursor = await pending;
-    this.checkGeneration(generation, signal);
-    return this.own(request.kind, generation, signal, { backend, backendCursor, hits: undefined });
+    const backend = empty ? undefined : this.backend;
+    if (!empty && backend === undefined)
+      throw new TaskSearchError('unavailable', 'Search unavailable');
+    // Register the allocation before building either kind of vector. Its ID can release a
+    // backend vector while the transport still holds the open reply.
+    const owner = await this.reserve(request.kind, generation, signal, backend);
+    try {
+      checkAbort(owner.allocation.signal);
+      if (backend !== undefined && backend !== this.backend)
+        throw new TaskSearchError('unavailable', 'Search backend changed');
+      if (backend === undefined) {
+        const hits = await abortable(
+          this.emptyBrowse(request, generation, owner.allocation.signal),
+          owner.allocation.signal,
+        );
+        this.checkGeneration(generation, signal);
+        checkAbort(owner.allocation.signal);
+        owner.cursor = { ...owner.cursor, total: hits.length };
+        this.browse.set(owner.cursor.id, hits);
+      } else {
+        const cursor = await abortable(
+          backend.open(
+            { ...request, query, includeSourcePath: request.includeSourcePath ?? false },
+            generation,
+            owner.cursor.id,
+          ),
+          owner.allocation.signal,
+        );
+        this.checkGeneration(generation, signal);
+        checkAbort(owner.allocation.signal);
+        owner.cursor = cursor;
+        owner.backendCursor = cursor;
+      }
+      return owner.cursor;
+    } catch (error) {
+      const code = owner.retired;
+      this.retire(owner.cursor.id, 'unavailable');
+      if (code !== undefined) throw new TaskSearchError(code, 'Search allocation unavailable');
+      throw error;
+    }
   }
   private makeRoom(): void {
     if (this.cursors.size < 4) return;
     const oldest = [...this.cursors.values()].sort((a, b) => a.lastUsed - b.lastUsed)[0];
     if (oldest !== undefined) this.retire(oldest.cursor.id, 'cursor-expired');
   }
-  private own(
+  private reserve(
     kind: TaskSearchRequest['kind'],
     generation: number,
     signal: AbortSignal,
-    result: {
-      backend: TaskSearchBackend | undefined;
-      backendCursor: TaskSearchCursor | undefined;
-      hits: readonly TaskSearchEngineHit[] | undefined;
-    },
-  ): TaskSearchCursor {
-    const { backend, backendCursor, hits } = result;
-    const common = {
-      id: `${this.cursorEpoch}-${++this.sequence}`,
-      generation,
-      total: hits?.length ?? backendCursor?.total ?? 0,
-    };
-    const cursor: TaskSearchCursor =
-      kind === 'roots'
-        ? { ...common, kind: 'roots', access: 'forward' }
-        : { ...common, kind: 'nodes', access: 'random' };
-    this.makeRoom();
-    const abort = (): void => {
-      this.retire(cursor.id, 'aborted');
-    };
-    signal.addEventListener('abort', abort, { once: true });
-    this.cursors.set(cursor.id, {
-      cursor,
-      backend,
-      backendCursor,
-      cleanup: () => {
-        signal.removeEventListener('abort', abort);
-      },
-      lastUsed: ++this.clock,
-      nextOffset: 0,
+    backend: TaskSearchBackend | undefined,
+  ): Promise<Ownership> {
+    const pending = this.reserving.then(async () => {
+      await this.releasing;
+      this.checkGeneration(generation, signal);
+      this.makeRoom();
+      await this.releasing;
+      this.checkGeneration(generation, signal);
+      const common = { id: `${this.cursorEpoch}-${++this.sequence}`, generation, total: 0 };
+      const cursor: TaskSearchCursor =
+        kind === 'roots'
+          ? { ...common, kind: 'roots', access: 'forward' }
+          : { ...common, kind: 'nodes', access: 'random' };
+      const abort = (): void => {
+        this.retire(cursor.id, 'aborted');
+      };
+      signal.addEventListener('abort', abort, { once: true });
+      const owner: Ownership = {
+        cursor,
+        backend,
+        backendCursor: backend === undefined ? undefined : cursor,
+        allocation: new AbortController(),
+        cleanup: () => {
+          signal.removeEventListener('abort', abort);
+        },
+        lastUsed: ++this.clock,
+        nextOffset: 0,
+      };
+      this.cursors.set(cursor.id, owner);
+      return owner;
     });
-    if (hits !== undefined) this.browse.set(cursor.id, hits);
-    return cursor;
+    this.reserving = pending.then(
+      () => {},
+      () => {},
+    );
+    return abortable(pending, signal);
   }
   private checkGeneration(generation: number, signal: AbortSignal): void {
     this.check(signal);
@@ -612,8 +646,16 @@ export class TaskSearchService implements TaskSearchApi {
   private retire(id: string, code: TaskSearchErrorCode): void {
     const owner = this.cursors.get(id);
     if (owner === undefined) return;
+    owner.retired = code;
+    owner.allocation.abort();
     owner.cleanup();
-    if (owner.backendCursor !== undefined) owner.backend?.release(owner.backendCursor);
+    if (owner.backendCursor !== undefined && owner.backend !== undefined) {
+      const released = Promise.resolve(owner.backend.release(owner.backendCursor)).catch(() => {
+        if (this.backend === owner.backend) this.recover('release');
+      });
+      // A posted Worker release still owns its vector until acknowledged (or disposed).
+      this.releasing = Promise.all([this.releasing, released]).then(() => {});
+    }
     this.cursors.delete(id);
     this.browse.delete(id);
     this.pendingPages.delete(id);

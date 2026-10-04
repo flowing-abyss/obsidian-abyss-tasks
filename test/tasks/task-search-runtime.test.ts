@@ -127,3 +127,13 @@ it('actual compact runtime vectors exclude canonical source-bearing revisions', 
   runtime.dispose();
   h.close();
 });
+
+it('releases a service allocation by its reserved ID before open delivery', async () => {
+  const runtime = await ready();
+  const pending = runtime.open(request('nodes'), 1, 'reserved');
+  runtime.release({ id: 'reserved', generation: 1, total: 0, kind: 'nodes', access: 'random' });
+  const cursor = await pending;
+  await expect(runtime.read(cursor, 0, 1)).rejects.toMatchObject({ code: 'cursor-expired' });
+  expect((runtime as unknown as { vectors: Map<string, unknown> }).vectors.size).toBe(0);
+  runtime.dispose();
+});

@@ -14,11 +14,12 @@ import { createMiniSearchTaskEngine } from '../../src/tasks/infrastructure/searc
 import { TaskSearchRuntime } from '../../src/tasks/infrastructure/search/TaskSearchRuntime';
 import { TaskSearchService } from '../../src/tasks/infrastructure/search/TaskSearchService';
 import { decodeTaskSearchRequest } from '../../src/tasks/infrastructure/search/taskSearch.worker';
-import { expectDefined } from '../helpers';
+import { deferred, expectDefined } from '../helpers';
 import {
   assertNoRevision,
   ControlledSearchScheduler,
   createCanonicalSearchHarness,
+  FakeSearchSource,
   nodeDocuments,
 } from '../support/taskSearchHarness';
 
@@ -32,6 +33,15 @@ class ControlledWorker {
   onerror: ((event: { preventDefault(): void }) => void) | undefined;
   onmessageerror: (() => void) | undefined;
   terminated = false;
+  holdOpens = false;
+  holdReleases = false;
+  readonly releasing = deferred<void>();
+  readonly releaseGate = deferred<void>();
+  readonly held: TaskSearchReply[] = [];
+  readonly allocated = deferred<void>();
+  async flush(): Promise<void> {
+    await this.queue;
+  }
   private queue = Promise.resolve();
   constructor(readonly url: string) {
     ControlledWorker.instances.push(this);
@@ -56,16 +66,24 @@ class ControlledWorker {
             await this.runtime.mutate(message.operation);
             break;
           case 'open':
-            result = await this.runtime.open(message.request, message.generation);
+            result = await this.runtime.open(
+              message.request,
+              message.generation,
+              message.allocationId,
+            );
             break;
           case 'read':
             result = await this.runtime.read(message.cursor, message.offset, message.limit);
             break;
           case 'release':
+            if (this.holdReleases) {
+              this.releasing.resolve();
+              await this.releaseGate.promise;
+            }
             this.runtime.release(message.cursor);
             break;
         }
-        this.reply({ type: 'success', epoch: message.epoch, id: message.id, value: result });
+        this.deliver(message, result);
       } catch (error) {
         this.reply({
           type: 'failure',
@@ -76,6 +94,21 @@ class ControlledWorker {
         });
       }
     });
+  }
+  private deliver(
+    message: TaskSearchMessage,
+    result: Extract<TaskSearchReply, { type: 'success' }>['value'],
+  ): void {
+    const reply: TaskSearchReply = {
+      type: 'success',
+      epoch: message.epoch,
+      id: message.id,
+      value: result,
+    };
+    if (message.type === 'open' && this.holdOpens) {
+      this.held.push(reply);
+      this.allocated.resolve();
+    } else this.reply(reply);
   }
   terminate(): void {
     this.terminated = true;
@@ -260,4 +293,195 @@ it('cooperative browser yield closes both owned message ports on cancellation', 
   controller.abort();
   await expect(yielding).rejects.toMatchObject({ code: 'aborted' });
   expect(closed).toBe(2);
+});
+
+it('bounds actual browser runtime plus canonical browse vectors while open delivery is held', async () => {
+  const source = new FakeSearchSource();
+  source.ready([nodeDocuments(10)]);
+  const service = new TaskSearchService({
+    source,
+    reads: { observedTags: () => [], async *organization() {}, resolveSearchPage: async () => [] },
+    segment: fallbackSearchWords,
+    scheduler: new ControlledSearchScheduler(),
+    createBackend: () => BrowserTaskSearchBackend.create('source'),
+    diagnose: () => {},
+  });
+  const signal = new AbortController().signal;
+  for (let i = 0; i < 4; i++) await service.open({ kind: 'nodes', query: 'needle' }, signal);
+  const worker = expectDefined(ControlledWorker.instances[0]);
+  worker.holdOpens = true;
+  const pending = service
+    .open({ kind: 'nodes', query: 'needle' }, signal)
+    .catch((error: unknown) => error);
+  await worker.allocated.promise;
+  for (let i = 0; i < 4; i++) {
+    await service.open({ kind: 'nodes', query: '' }, signal);
+    await worker.flush();
+    const runtimeCount = (worker.runtime as unknown as { vectors: Map<string, unknown> }).vectors
+      .size;
+    const browseCount = (service as unknown as { browse: Map<string, unknown> }).browse.size;
+    expect(runtimeCount + browseCount).toBeLessThanOrEqual(4);
+  }
+  expect(await pending).toMatchObject({ code: 'cursor-expired' });
+  expect((worker.runtime as unknown as { vectors: Map<string, unknown> }).vectors.size).toBe(0);
+  for (const reply of worker.held) worker.reply(reply);
+  await worker.flush();
+  service.dispose();
+});
+
+it.each(['service', 'source', 'source-failure'] as const)(
+  'cancels actual browser startup resources immediately on %s lifecycle stop',
+  async (stop) => {
+    vi.useFakeTimers();
+    ControlledWorker.settings.autoReady = false;
+    const source = new FakeSearchSource();
+    source.ready([nodeDocuments(2)]);
+    const started = deferred<void>();
+    const modes: string[] = [];
+    const service = new TaskSearchService({
+      source,
+      reads: {
+        observedTags: () => [],
+        async *organization() {},
+        resolveSearchPage: async () => [],
+      },
+      segment: fallbackSearchWords,
+      scheduler: new ControlledSearchScheduler(),
+      createBackend: (mode, signal) => {
+        modes.push(mode);
+        const result = BrowserTaskSearchBackend.create('source', signal);
+        started.resolve();
+        return result;
+      },
+      diagnose: () => {},
+    });
+    const pending = service.open({ kind: 'nodes', query: 'needle' }, new AbortController().signal);
+    const outcome = pending.catch((error: unknown) => error);
+    await started.promise;
+    const worker = expectDefined(ControlledWorker.instances[0]);
+    const init = worker.outgoing[0] as TaskSearchMessage;
+    expect(vi.getTimerCount()).toBe(1);
+    if (stop === 'service') service.dispose();
+    else if (stop === 'source') source.dispose();
+    else source.fail(new Error('private source text'));
+    expect(worker.terminated).toBe(true);
+    expect(revoked).toEqual([worker.url]);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(await outcome).toMatchObject({
+      code: stop === 'source-failure' ? 'unavailable' : 'disposed',
+    });
+    worker.reply({ type: 'ready', epoch: init.epoch });
+    await worker.flush();
+    expect(modes).toEqual(['worker']);
+    expect(revoked).toHaveLength(1);
+    service.dispose();
+  },
+);
+
+it('panel query cancellation leaves shared browser startup and bootstrap alive', async () => {
+  ControlledWorker.settings.autoReady = false;
+  const source = new FakeSearchSource();
+  source.ready([nodeDocuments(2)]);
+  const started = deferred<void>();
+  const service = new TaskSearchService({
+    source,
+    reads: { observedTags: () => [], async *organization() {}, resolveSearchPage: async () => [] },
+    segment: fallbackSearchWords,
+    scheduler: new ControlledSearchScheduler(),
+    createBackend: (_mode, signal) => {
+      const result = BrowserTaskSearchBackend.create('source', signal);
+      started.resolve();
+      return result;
+    },
+    diagnose: () => {},
+  });
+  const panel = new AbortController();
+  const pending = service.open({ kind: 'nodes', query: 'needle' }, panel.signal);
+  const outcome = pending.catch((error: unknown) => error);
+  await started.promise;
+  const worker = expectDefined(ControlledWorker.instances[0]);
+  panel.abort();
+  expect(await outcome).toMatchObject({ code: 'aborted' });
+  expect(worker.terminated).toBe(false);
+  expect(revoked).toHaveLength(0);
+  const init = worker.outgoing[0] as TaskSearchMessage;
+  worker.reply({ type: 'ready', epoch: init.epoch });
+  const cursor = await service.open(
+    { kind: 'nodes', query: 'needle' },
+    new AbortController().signal,
+  );
+  expect(cursor.total).toBe(2);
+  expect(ControlledWorker.instances).toHaveLength(1);
+  expect(source.iterations).toEqual(['a.md']);
+  service.dispose();
+  expect(worker.terminated).toBe(true);
+  expect(revoked).toEqual([worker.url]);
+});
+
+it('does not reuse worker capacity for browse until actual release is acknowledged', async () => {
+  const source = new FakeSearchSource();
+  source.ready([nodeDocuments(10)]);
+  const service = new TaskSearchService({
+    source,
+    reads: { observedTags: () => [], async *organization() {}, resolveSearchPage: async () => [] },
+    segment: fallbackSearchWords,
+    scheduler: new ControlledSearchScheduler(),
+    createBackend: () => BrowserTaskSearchBackend.create('source'),
+    diagnose: () => {},
+  });
+  const signal = new AbortController().signal;
+  for (let i = 0; i < 4; i++) await service.open({ kind: 'nodes', query: 'needle' }, signal);
+  const worker = expectDefined(ControlledWorker.instances[0]);
+  worker.holdReleases = true;
+  const browse = service.open({ kind: 'nodes', query: '' }, signal);
+  await worker.releasing.promise;
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  const runtimeCount = (worker.runtime as unknown as { vectors: Map<string, unknown> }).vectors
+    .size;
+  const browseCount = (service as unknown as { browse: Map<string, unknown> }).browse.size;
+  expect(runtimeCount).toBe(4);
+  expect(runtimeCount + browseCount).toBe(4);
+  worker.releaseGate.resolve();
+  expect((await browse).total).toBe(10);
+  service.dispose();
+});
+
+it('cancellable startup cleans constructor failure and allocates nothing for an already stopped run', async () => {
+  vi.useFakeTimers();
+  const stopped = new AbortController();
+  stopped.abort();
+  await expect(BrowserTaskSearchBackend.create('source', stopped.signal)).rejects.toMatchObject({
+    code: 'aborted',
+  });
+  expect(ControlledWorker.instances).toHaveLength(0);
+  expect(revoked).toHaveLength(0);
+  vi.stubGlobal(
+    'Worker',
+    class {
+      constructor() {
+        throw new Error('private startup detail');
+      }
+    },
+  );
+  const active = new AbortController();
+  await expect(BrowserTaskSearchBackend.create('source', active.signal)).rejects.toMatchObject({
+    code: 'unavailable',
+  });
+  expect(revoked).toHaveLength(1);
+  expect(vi.getTimerCount()).toBe(0);
+  active.abort();
+  expect(revoked).toHaveLength(1);
+});
+
+it('ready followed by lifecycle cancellation cannot return a disposed startup as success', async () => {
+  ControlledWorker.settings.autoReady = false;
+  const run = new AbortController();
+  const starting = BrowserTaskSearchBackend.create('source', run.signal);
+  const worker = expectDefined(ControlledWorker.instances[0]);
+  const init = worker.outgoing[0] as TaskSearchMessage;
+  worker.reply({ type: 'ready', epoch: init.epoch });
+  run.abort();
+  await expect(starting).rejects.toMatchObject({ code: 'aborted' });
+  expect(worker.terminated).toBe(true);
+  expect(revoked).toEqual([worker.url]);
 });

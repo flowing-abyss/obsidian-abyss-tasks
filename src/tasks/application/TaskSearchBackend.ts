@@ -18,9 +18,15 @@ export interface TaskSearchBackendPage {
 export interface TaskSearchBackend {
   subscribeFailure(listener: (cause: unknown) => void): () => void;
   mutate(operation: TaskSearchMutation): Promise<void>;
-  open(request: TaskSearchEngineRequest, generation: number): Promise<TaskSearchCursor>;
+  /** A supplied allocation ID belongs to the service and may be released before open resolves. */
+  open(
+    request: TaskSearchEngineRequest,
+    generation: number,
+    allocationId?: string,
+  ): Promise<TaskSearchCursor>;
   read(cursor: TaskSearchCursor, offset: number, limit: number): Promise<TaskSearchBackendPage>;
-  release(cursor: TaskSearchCursor): void;
+  /** Completion proves the vector is freed; Worker transports acknowledge the release. */
+  release(cursor: TaskSearchCursor): void | Promise<void>;
   dispose(): void;
 }
 export interface TaskSearchScheduler {
@@ -40,7 +46,10 @@ export interface TaskSearchServiceOptions {
   readonly reads: TaskReadProjectionApi;
   readonly segment: SearchWordSegmenter;
   readonly scheduler: TaskSearchScheduler;
-  readonly createBackend: (mode: 'worker' | 'inline') => Promise<TaskSearchBackend>;
+  readonly createBackend: (
+    mode: 'worker' | 'inline',
+    signal: AbortSignal,
+  ) => Promise<TaskSearchBackend>;
   readonly diagnose: (value: TaskSearchDiagnostic) => void;
 }
 // new TaskSearchService(options): TaskSearchApi plus dispose():void
@@ -50,6 +59,7 @@ export type TaskSearchOperation =
   | { readonly type: 'mutate'; readonly operation: TaskSearchMutation }
   | {
       readonly type: 'open';
+      readonly allocationId?: string;
       readonly request: TaskSearchEngineRequest;
       readonly generation: number;
     }
