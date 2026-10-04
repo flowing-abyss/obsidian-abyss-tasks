@@ -60,7 +60,7 @@ capabilities instead of constructing alternate task repositories or indexes.
 | [Presentation](src/panels/)                      | Composes views and interactions over public task capabilities; owns no task Markdown writer                                                                               |
 
 The public capabilities are `TaskQueryApi`, `TaskDependencyQueryApi`, `TimeTrackingQueryApi`,
-`TaskApplicationApi`, and `TaskCaptureApplicationApi`. The application exposes all three query
+`TaskStatisticsSource`, `TaskApplicationApi`, and `TaskCaptureApplicationApi`. The application exposes all three query
 capabilities through `queries`. Add public exports only for a real consumer. Domain and application
 code cannot import Obsidian or presentation; infrastructure cannot import UI.
 
@@ -128,6 +128,40 @@ Root timing retries require faithful source projections; opaque or ambiguous tim
 rather than treating an invalid authored time as absent.
 Subtask projections do not expose duration, so a subtask time-edit retry requires an unchanged
 original block; concurrent edits within that block require a fresh user action.
+
+### Lazy retained statistics evidence
+
+[`TaskStatisticsSource`](src/tasks/application/TaskStatisticsSource.ts) is a separate read capability
+implemented by `TaskIndex`; it is not part of ordinary application queries. The index retains accepted
+per-file source bytes and canonical live roots from existing reads. The first Statistics subscription
+activates [`TaskStatisticsProjection`](src/tasks/infrastructure/TaskStatisticsProjection.ts), which
+materializes detached, frozen file evidence and publishes cached, monotonically versioned snapshots.
+Repeated reads are constant-time and return the same object until publication. The last subscription
+release cancels pending projection work and releases the extra file evidence. Explicit Statistics
+refresh retries failed approved acquisitions only while subscribed.
+
+The composition root admits the committed current archive pattern only when the explicit ignore
+query allows its path, current source tags and frontmatter. Prior archive destinations retained in
+that ignore query stay excluded. Archive roots use the canonical codec and projector in an explicit
+no-authority mode: they never enter ordinary task, calendar, dependency, tracking or reference-authority
+indexes. Archive context preparation consumes the block editor's shared canonical line/root iterator
+in yielding batches; ordinary parsing keeps its synchronous contract. Detached copying schedules by
+physical nodes, comments and entries, with generation checks between batches. Every retained physical node and its own tracking entries remains available in the tree.
+Statistics alone reclassifies every node using the current catalog plus canonical raw cancellation
+precedence. Per-line date issues preserve invalid and ambiguous authored date carriers that validated
+planning values cannot represent; ordinary snapshots and stored Markdown stay unchanged.
+
+Read and projection failures preserve the last valid approved file evidence and expose typed issues
+with diagnostics. Readiness means initial acquisition has settled, including failures; it does not
+assert complete coverage. Policy tightening removes forbidden cached evidence before awaited reads.
+Lifecycle generations reject stale results after rename, deletion or subscription disposal. Ordinary
+accepted/reconciled signals precede Statistics notification so project consumers can queue their work.
+
+An optional internal `TaskSnapshotState.holdStatisticsPublication` defers only Statistics publication.
+The repository holds it across the complete move/archive operation, source removal and recovery,
+releasing in `finally`. Nested releases are idempotent, and publication waits for final accepted file
+projections. Successful transfers publish one retained copy; partial transfers expose the actual
+retained copies without content deduplication. This hold grants no storage or mutation authority.
 
 ### Creation, transfer, and tags
 

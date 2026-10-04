@@ -60,6 +60,8 @@ export type TaskRefStageResult =
   { readonly type: 'staged'; readonly token: object } | { readonly type: 'conflict' };
 
 export interface TaskSnapshotState {
+  /** Defers only evidence publication across a transfer and its recovery awaits. */
+  holdStatisticsPublication?(): () => void;
   currentRoots?(filePath: string): readonly RootRevisionOverride[];
   /** For duplicate sources, supplied transaction occurrence lines must match the indexed population. */
   currentRoot(

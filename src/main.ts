@@ -1,5 +1,6 @@
 import { getAllTags, normalizePath, Notice, Plugin, TFile, type TAbstractFile } from 'obsidian';
 import { extractMarkdownBodyTags } from './markdown/markdownTagRename';
+import { compileNotePathPattern, type NotePathPattern } from './markdown/notePathPattern';
 import { NoteTemplateService } from './notes/NoteTemplateService';
 import { initializeProjectPropertyDefinitions } from './projects/initializeProjectPropertyDefinitions';
 import {
@@ -36,6 +37,7 @@ import {
   type TaskDependencyQueryApi,
   type TaskInsertionPolicy,
   type TaskQueryApi,
+  type TaskStatisticsSource,
   type TimeTrackingQueryApi,
 } from './tasks';
 import { TaskApplicationService } from './tasks/application/TaskApplicationService';
@@ -79,6 +81,8 @@ export default class TaskCalendarPlugin extends Plugin {
   queries!: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
   tasks!: TaskApplicationApi & TaskCaptureApplicationApi;
   private taskIndex!: TaskIndex;
+  taskStatistics!: TaskStatisticsSource;
+  private statisticsArchivePattern!: NotePathPattern;
   private statusCatalog!: StatusCatalog;
   private statusRegistry!: StatusRegistry;
   private projectManager!: ProjectManager;
@@ -106,15 +110,15 @@ export default class TaskCalendarPlugin extends Plugin {
     this.statusCatalog = new StatusCatalog(toStatusRules(this.settings.taskStatuses));
     this.statusRegistry = new StatusRegistry(this.settings.taskStatuses);
     const refAuthority = new TaskRefAuthority();
-    this.effectiveTaskStorage = {
-      taskArchivePath: this.settings.taskArchivePath,
-      taskIgnoreQuery: this.settings.taskIgnoreQuery,
-    };
+    this.initializeTaskStatisticsPolicy();
     this.taskIndex = new TaskIndex(this.app, {
       statusCatalog: this.statusCatalog,
       refAuthority,
       excludeSource: (source) => this.isTaskSourceExcluded(source),
+      statisticsFileKind: (path, tags, frontmatter) =>
+        this.taskStatisticsFileKind(path, tags, frontmatter),
     });
+    this.taskStatistics = this.taskIndex;
     const codec = new TaskMarkdownCodec(this.statusCatalog);
     const repository = new ObsidianTaskRepository(this.app, {
       codec,
@@ -354,7 +358,20 @@ export default class TaskCalendarPlugin extends Plugin {
       throw error;
     }
     this.effectiveTaskStorage = { ...validated.settings };
+    this.statisticsArchivePattern = compileNotePathPattern(
+      this.effectiveTaskStorage.taskArchivePath,
+    );
     await this.taskIndex.refreshSourceExclusion((source) => this.isTaskSourceExcluded(source));
+  }
+
+  private initializeTaskStatisticsPolicy(): void {
+    this.effectiveTaskStorage = {
+      taskArchivePath: this.settings.taskArchivePath,
+      taskIgnoreQuery: this.settings.taskIgnoreQuery,
+    };
+    this.statisticsArchivePattern = compileNotePathPattern(
+      this.effectiveTaskStorage.taskArchivePath,
+    );
   }
 
   private isTaskSourceExcluded(source: TaskSourceMetadata): boolean {
@@ -364,6 +381,18 @@ export default class TaskCalendarPlugin extends Plugin {
       [...source.tags],
       { ...source.frontmatter },
     );
+  }
+
+  private taskStatisticsFileKind(
+    path: string,
+    tags: readonly string[],
+    frontmatter: Readonly<Record<string, unknown>>,
+  ): 'live' | 'archive' | undefined {
+    if (
+      evaluateQuery(this.effectiveTaskStorage.taskIgnoreQuery, path, [...tags], { ...frontmatter })
+    )
+      return undefined;
+    return this.statisticsArchivePattern.matches(path) ? 'archive' : 'live';
   }
 
   private async isExcludedDestination(filePath: string): Promise<boolean> {

@@ -917,6 +917,26 @@ export class ObsidianTaskRepository implements TaskRepository {
     request: TaskMoveRequest | TaskRef,
     legacyDestination?: TaskDestination,
   ): Promise<TaskRepositoryResult> {
+    return await this.withStatisticsHold_abyssPrivate(() =>
+      this.moveOnce_abyssPrivate(request, legacyDestination),
+    );
+  }
+
+  private async withStatisticsHold_abyssPrivate(
+    operation: () => Promise<TaskRepositoryResult>,
+  ): Promise<TaskRepositoryResult> {
+    const release = this.state_abyssPrivate?.holdStatisticsPublication?.();
+    try {
+      return await operation();
+    } finally {
+      release?.();
+    }
+  }
+
+  private async moveOnce_abyssPrivate(
+    request: TaskMoveRequest | TaskRef,
+    legacyDestination?: TaskDestination,
+  ): Promise<TaskRepositoryResult> {
     const prepared = 'baseRoot' in request ? request : undefined;
     const ref = 'baseRoot' in request ? request.baseRoot.ref : request;
     const destination = 'destination' in request ? request.destination : legacyDestination;
@@ -942,7 +962,11 @@ export class ObsidianTaskRepository implements TaskRepository {
       indexedRevision: source.indexedRevision,
       archive: false,
     });
-    return this.finishMoveSource_abyssPrivate(source.task, destination.filePath, targetResult);
+    return await this.finishMoveSource_abyssPrivate(
+      source.task,
+      destination.filePath,
+      targetResult,
+    );
   }
 
   async archive(
@@ -950,7 +974,9 @@ export class ObsidianTaskRepository implements TaskRepository {
     legacyDestination?: TaskDestination,
   ): Promise<TaskRepositoryResult> {
     const operation = this.archiveQueue_abyssPrivate.then(() =>
-      this.archiveOnce_abyssPrivate(request, legacyDestination),
+      this.withStatisticsHold_abyssPrivate(() =>
+        this.archiveOnce_abyssPrivate(request, legacyDestination),
+      ),
     );
     this.archiveQueue_abyssPrivate = operation.then(
       () => undefined,

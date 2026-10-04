@@ -139,6 +139,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/right/InspectorPlanningSurfaces.ts',
   ],
   TaskQueryApi: ['src/main.ts'],
+  TaskStatisticsSource: ['src/main.ts'],
   TaskDependencyQueryApi: [
     'src/main.ts',
     'src/panels/right/InspectorPlanningSurfaces.ts',

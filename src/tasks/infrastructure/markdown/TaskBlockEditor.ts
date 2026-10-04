@@ -200,14 +200,16 @@ function isTimeEntryEdit(edit: TaskBlockEdit): edit is TimeEntryEdit {
 }
 
 function sourceLines(content: string): SourceLine[] {
-  const result: SourceLine[] = [];
+  return [...sourceLineSteps(content)];
+}
+
+function* sourceLineSteps(content: string): Generator<SourceLine> {
   let from = 0;
   while (from < content.length) {
     const read = readSourceLine(content, from);
-    result.push(read.line);
+    yield read.line;
     from = read.next;
   }
-  return result;
 }
 
 function indentation(line: string): number {
@@ -441,11 +443,11 @@ function restoreSeparator(
   return endings.size === 1 ? [...endings][0] : undefined;
 }
 
-function rootBlockAt(
+function* rootBlockAtSteps(
   lines: readonly SourceLine[],
   content: string,
   index: number,
-): { readonly block: TaskRootBlock; readonly next: number } | undefined {
+): Generator<undefined, { readonly block: TaskRootBlock; readonly next: number } | undefined> {
   const rootLine = lines[index];
   if (rootLine == null || readTaskLinePrefix(rootLine.text) === null) return undefined;
   const rootIndent = indentation(rootLine.text);
@@ -453,6 +455,7 @@ function rootBlockAt(
   let toLine = index;
   let cursor = index + 1;
   while (cursor < lines.length) {
+    yield undefined;
     const line = lines[cursor];
     if (line == null) break;
     if (isTaskBlockBlankLine(line.text)) {
@@ -643,19 +646,31 @@ function isOwnedSectionBlock(
 }
 
 function readTaskRootBlocks(content: string): readonly TaskRootBlock[] {
-  const lines = sourceLines(content);
   const roots: TaskRootBlock[] = [];
-  let index = 0;
-  while (index < lines.length) {
-    const found = rootBlockAt(lines, content, index);
-    if (found === undefined) {
-      index++;
-      continue;
-    }
-    roots.push(found.block);
-    index = found.next;
+  for (const step of taskRootBlockSteps(content)) {
+    if (step !== undefined) roots.push(step);
   }
   return roots;
+}
+
+/** The synchronous editor and cooperative evidence reader consume the same ownership algorithm. */
+function* taskRootBlockSteps(content: string): Generator<TaskRootBlock | undefined> {
+  const lines: SourceLine[] = [];
+  for (const line of sourceLineSteps(content)) {
+    lines.push(line);
+    yield undefined;
+  }
+  let index = 0;
+  while (index < lines.length) {
+    const found = yield* rootBlockAtSteps(lines, content, index);
+    if (found === undefined) {
+      index++;
+      yield undefined;
+      continue;
+    }
+    yield found.block;
+    index = found.next;
+  }
 }
 
 interface DescriptionSourceLine extends TaskDescriptionLine {
@@ -1243,6 +1258,11 @@ export class TaskBlockEditor {
 
   rootBlocks(content: string): readonly TaskRootBlock[] {
     return readTaskRootBlocks(content);
+  }
+
+  /** Internal read-only ownership steps; undefined steps let callers yield within a large block. */
+  rootBlockSteps(content: string): Generator<TaskRootBlock | undefined> {
+    return taskRootBlockSteps(content);
   }
 
   insertRoot(

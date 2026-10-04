@@ -17,6 +17,11 @@ import type {
   TaskQueryApi,
   TimeTrackingQueryApi,
 } from '../application/TaskApplicationApi';
+import type {
+  TaskStatisticsSnapshot,
+  TaskStatisticsSource,
+  TaskStatisticsSourceIssue,
+} from '../application/TaskStatisticsSource';
 import { cloneTaskSnapshot, taskSnapshotWithStatuses } from '../domain/cloneTaskSnapshot';
 import type { TaskResolutionCandidate } from '../domain/commands';
 import type { StatusCatalog } from '../domain/StatusCatalog';
@@ -48,7 +53,7 @@ import {
   type TaskRef,
   type TaskSnapshot,
 } from '../domain/types';
-import { TaskBlockEditor } from './markdown/TaskBlockEditor';
+import { TaskBlockEditor, type TaskRootBlock } from './markdown/TaskBlockEditor';
 import {
   consumeMarkdownFenceLine,
   parseMarkdownFrontmatter,
@@ -63,12 +68,21 @@ import {
   type TaskRefAuthority,
   type TaskSnapshotState,
 } from './TaskRefAuthority';
+import {
+  TaskStatisticsProjection,
+  type StatisticsProjectionInput,
+} from './TaskStatisticsProjection';
 import { TimeEntryIndex } from './TimeEntryIndex';
 
 export interface TaskIndexOptions {
   readonly statusCatalog: StatusCatalog;
   readonly refAuthority?: TaskRefAuthority;
   readonly excludeSource?: (source: TaskSourceMetadata) => boolean;
+  readonly statisticsFileKind?: (
+    path: string,
+    tags: readonly string[],
+    frontmatter: Readonly<Record<string, unknown>>,
+  ) => 'live' | 'archive' | undefined;
   /**
    * Resolves a written time entry stamp that carries no offset of its own. Runtime uses the
    * device, so this is here for the tests that project a fixed zone across a daylight saving jump.
@@ -477,6 +491,7 @@ interface ParseFileInput {
     restored?: true,
   ) => void;
   readonly observedFile?: boolean;
+  readonly noAuthority?: boolean;
 }
 
 interface ReconciledRevisionContext {
@@ -505,6 +520,16 @@ interface FileParseContext {
   readonly itemByLine: ReadonlyMap<number, MetadataListItem>;
   readonly revision: ReconciledRevisionContext;
   readonly offsetAt: OffsetAt;
+  readonly noAuthority: boolean;
+}
+
+interface AcceptedStatisticsSource {
+  readonly content: string;
+  readonly cache: CachedMetadata;
+  readonly tasks: readonly TaskSnapshot[];
+  readonly signature: string;
+  readonly revision: number;
+  readonly metadata: TaskSourceMetadata;
 }
 
 function reusablePriorRevision(input: ReconciledRevisionInput): string | undefined {
@@ -885,8 +910,34 @@ function activeRecurringSources(
 }
 
 export class TaskIndex
-  implements TaskQueryApi, TaskDependencyQueryApi, TimeTrackingQueryApi, TaskSnapshotState
+  implements
+    TaskQueryApi,
+    TaskDependencyQueryApi,
+    TimeTrackingQueryApi,
+    TaskSnapshotState,
+    TaskStatisticsSource
 {
+  private readonly acceptedStatisticsSources_abyssPrivate = new Map<
+    string,
+    AcceptedStatisticsSource
+  >();
+  private readonly statisticsReadFailures_abyssPrivate = new Map<
+    string,
+    { readonly reason: TaskStatisticsSourceIssue['reason']; readonly error: unknown }
+  >();
+  private statisticsSourceRevision_abyssPrivate = 0;
+  private statisticsCatalogRevision_abyssPrivate = 0;
+  private statisticsPolicyRevision_abyssPrivate = 0;
+  private readonly statistics_abyssPrivate = new TaskStatisticsProjection({
+    paths: () =>
+      new Set([
+        ...this.acceptedStatisticsSources_abyssPrivate.keys(),
+        ...this.statisticsReadFailures_abyssPrivate.keys(),
+      ]),
+    source: (path) => this.statisticsSource_abyssPrivate(path),
+    ready: () => this.initialized_abyssPrivate,
+    current: (input) => input.generationKey === this.statisticsKey_abyssPrivate(input.path),
+  });
   private readonly taskMap_abyssPrivate = new Map<string, readonly TaskSnapshot[]>();
   private readonly timeEntryIndex_abyssPrivate = new TimeEntryIndex();
   private readonly calendarDateIndex_abyssPrivate = new TaskDateIndex<CalendarTaskSource>(
@@ -933,10 +984,45 @@ export class TaskIndex
   setStatusCatalog(statusCatalog: StatusCatalog): void {
     this.statusCatalog_abyssPrivate = statusCatalog;
     this.dependencyGraph_abyssPrivate = undefined;
+    this.statisticsCatalogRevision_abyssPrivate += 1;
+    this.statistics_abyssPrivate.invalidateAll();
+  }
+
+  readStatistics(): TaskStatisticsSnapshot {
+    return this.statistics_abyssPrivate.read();
+  }
+
+  subscribeStatistics(listener: () => void): () => void {
+    return this.destroyed_abyssPrivate
+      ? () => undefined
+      : this.statistics_abyssPrivate.subscribe(listener);
+  }
+
+  async refreshStatistics(): Promise<void> {
+    if (!this.statistics_abyssPrivate.active || this.destroyed_abyssPrivate) return;
+    await this.initialize();
+    for (const path of this.statisticsReadFailures_abyssPrivate.keys()) {
+      if (!this.statisticsIsActive_abyssPrivate()) return;
+      if (this.statisticsSource_abyssPrivate(path) === undefined) continue;
+      const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
+      if (file instanceof TFile) await this.loadFile_abyssPrivate(file, path, true);
+    }
+    this.statistics_abyssPrivate.invalidateAll();
+    await this.statistics_abyssPrivate.settled();
+  }
+
+  private statisticsIsActive_abyssPrivate(): boolean {
+    return this.statistics_abyssPrivate.active;
+  }
+
+  holdStatisticsPublication(): () => void {
+    return this.statistics_abyssPrivate.hold();
   }
 
   async refreshSourceExclusion(excludeSource: TaskIndexOptions['excludeSource']): Promise<void> {
     this.excludeSource_abyssPrivate = excludeSource;
+    this.statisticsPolicyRevision_abyssPrivate += 1;
+    this.statistics_abyssPrivate.prune();
     const files = [...this.app_abyssPrivate.vault.getMarkdownFiles()];
     await Promise.all(
       files.map(async (file) => {
@@ -945,6 +1031,8 @@ export class TaskIndex
       }),
     );
     await this.drainPendingReads_abyssPrivate();
+    this.statistics_abyssPrivate.invalidateAll();
+    await this.statistics_abyssPrivate.settled();
   }
 
   async initialize(): Promise<void> {
@@ -972,6 +1060,7 @@ export class TaskIndex
     await this.drainPendingReads_abyssPrivate();
     if (this.destroyed_abyssPrivate) return;
     this.initialized_abyssPrivate = true;
+    this.statistics_abyssPrivate.invalidateAll();
     this.publish_abyssPrivate({ type: 'initialized' });
   }
 
@@ -1111,6 +1200,9 @@ export class TaskIndex
   destroy(): void {
     if (this.destroyed_abyssPrivate) return;
     this.destroyed_abyssPrivate = true;
+    this.statistics_abyssPrivate.dispose();
+    this.acceptedStatisticsSources_abyssPrivate.clear();
+    this.statisticsReadFailures_abyssPrivate.clear();
     for (const ref of this.metadataCacheRefs_abyssPrivate)
       this.app_abyssPrivate.metadataCache.offref(ref);
     for (const ref of this.vaultRefs_abyssPrivate) this.app_abyssPrivate.vault.offref(ref);
@@ -1155,6 +1247,7 @@ export class TaskIndex
     cache: CachedMetadata | null,
     observedFile: boolean,
   ): Promise<boolean> {
+    let reason: TaskStatisticsSourceIssue['reason'] = 'read-failed';
     try {
       const content = await this.app_abyssPrivate.vault.cachedRead(observation.file);
       if (!this.isCurrent_abyssPrivate(observation)) return false;
@@ -1164,27 +1257,63 @@ export class TaskIndex
       )
         return false;
       if (!this.isCurrent_abyssPrivate(observation)) return false;
-      if (
-        this.options_abyssPrivate.refAuthority?.deferObservation(observation.path, content) === true
-      )
-        return false;
-      const selectedCache = this.cacheWithFrontmatter_abyssPrivate(content, cache);
-      if (this.sourceIsExcluded_abyssPrivate(observation.path, content)) {
-        this.options_abyssPrivate.refAuthority?.discard(observation.path);
-        return this.commitEmptyObservation_abyssPrivate(observation);
-      }
-      const tasks = this.parseFile_abyssPrivate({
-        filePath: observation.path,
-        content,
-        cache: selectedCache,
-        allocateSuccessor: true,
-        observedFile,
-      });
-      this.replaceFile_abyssPrivate(observation.path, tasks, [], true);
-      return true;
-    } catch {
+      reason = 'projection-failed';
+      return this.installLoadedObservation_abyssPrivate(observation, content, cache, observedFile);
+    } catch (error) {
+      return this.failedStatisticsObservation_abyssPrivate(observation, reason, error);
+    }
+  }
+
+  private installLoadedObservation_abyssPrivate(
+    observation: FileObservation,
+    content: string,
+    cache: CachedMetadata | null,
+    observedFile: boolean,
+  ): boolean {
+    if (
+      this.options_abyssPrivate.refAuthority?.deferObservation(observation.path, content) === true
+    )
+      return false;
+    const selectedCache = this.cacheWithFrontmatter_abyssPrivate(content, cache);
+    if (this.sourceIsExcluded_abyssPrivate(observation.path, content)) {
+      this.options_abyssPrivate.refAuthority?.discard(observation.path);
+      this.acceptStatisticsSource_abyssPrivate(observation.path, content, selectedCache, []);
       return this.commitEmptyObservation_abyssPrivate(observation);
     }
+    const tasks = this.parseFile_abyssPrivate({
+      filePath: observation.path,
+      content,
+      cache: selectedCache,
+      allocateSuccessor: true,
+      observedFile,
+    });
+    this.replaceFile_abyssPrivate(observation.path, tasks, [], true);
+    this.acceptStatisticsSource_abyssPrivate(observation.path, content, selectedCache, tasks);
+    return true;
+  }
+
+  private failedStatisticsObservation_abyssPrivate(
+    observation: FileObservation,
+    reason: TaskStatisticsSourceIssue['reason'],
+    error: unknown,
+  ): boolean {
+    if (!this.isCurrent_abyssPrivate(observation)) return false;
+    this.recordStatisticsFailure_abyssPrivate(observation.path, reason, error);
+    return this.commitEmptyObservation_abyssPrivate(observation);
+  }
+
+  private recordStatisticsFailure_abyssPrivate(
+    path: string,
+    reason: TaskStatisticsSourceIssue['reason'],
+    error: unknown,
+  ): void {
+    this.statisticsReadFailures_abyssPrivate.set(path, { reason, error });
+    this.statistics_abyssPrivate.update(path);
+    if (
+      this.statistics_abyssPrivate.active &&
+      this.statisticsSource_abyssPrivate(path) !== undefined
+    )
+      console.error('[abyss-tasks] statistics source acquisition failed', { path, reason, error });
   }
 
   private cacheWithFrontmatter_abyssPrivate(
@@ -1199,18 +1328,109 @@ export class TaskIndex
   private sourceIsExcluded_abyssPrivate(filePath: string, content: string): boolean {
     const exclude = this.excludeSource_abyssPrivate;
     if (exclude === undefined) return false;
+    return exclude(this.sourceMetadata_abyssPrivate(filePath, content));
+  }
+
+  private sourceMetadata_abyssPrivate(filePath: string, content: string): TaskSourceMetadata {
     const frontmatter = frontmatterFromContent(content) ?? {};
     const frontmatterTags = getAllTags({ frontmatter }) ?? [];
-    return exclude({
+    return {
       filePath,
       tags: [...new Set([...frontmatterTags, ...extractMarkdownBodyTags(content)])],
       frontmatter: { ...frontmatter },
-    });
+    };
+  }
+
+  private statisticsKey_abyssPrivate(path: string): string {
+    return `${this.acceptedStatisticsSources_abyssPrivate.get(path)?.revision ?? 0}:${this.statisticsCatalogRevision_abyssPrivate}:${this.statisticsPolicyRevision_abyssPrivate}`;
+  }
+
+  private statisticsKind_abyssPrivate(
+    metadata: TaskSourceMetadata,
+  ): 'live' | 'archive' | undefined {
+    const policy = this.options_abyssPrivate.statisticsFileKind;
+    if (policy !== undefined) return policy(metadata.filePath, metadata.tags, metadata.frontmatter);
+    return this.excludeSource_abyssPrivate?.(metadata) === true ? undefined : 'live';
+  }
+
+  private statisticsSource_abyssPrivate(path: string): StatisticsProjectionInput | undefined {
+    const accepted = this.acceptedStatisticsSources_abyssPrivate.get(path);
+    const metadata = accepted?.metadata ?? this.sourceMetadata_abyssPrivate(path, '');
+    const kind = this.statisticsKind_abyssPrivate(metadata);
+    if (kind === undefined) return undefined;
+    return {
+      path,
+      kind,
+      key: `${accepted?.revision ?? 0}:${this.statisticsCatalogRevision_abyssPrivate}:${kind}`,
+      generationKey: this.statisticsKey_abyssPrivate(path),
+      content: accepted?.content,
+      roots:
+        accepted === undefined
+          ? undefined
+          : (current) => this.statisticsRoots_abyssPrivate(path, kind, accepted, current),
+      sourceIssue: this.statisticsReadFailures_abyssPrivate.get(path)?.reason,
+      statusCatalog: this.statusCatalog_abyssPrivate,
+    };
+  }
+
+  private statisticsRoots_abyssPrivate(
+    path: string,
+    kind: 'live' | 'archive',
+    accepted: AcceptedStatisticsSource,
+    current: () => boolean,
+  ): readonly TaskSnapshot[] | Promise<readonly TaskSnapshot[]> {
+    if (kind === 'live') return accepted.tasks;
+    return this.parseStatisticsArchive_abyssPrivate(path, accepted, current);
+  }
+
+  private async parseStatisticsArchive_abyssPrivate(
+    path: string,
+    accepted: AcceptedStatisticsSource,
+    current: () => boolean,
+  ): Promise<readonly TaskSnapshot[]> {
+    const context = await this.createStatisticsParseContext_abyssPrivate(path, accepted, current);
+    if (context === undefined) return [];
+    const snapshots: TaskSnapshot[] = [];
+    let work = 0;
+    for (const item of accepted.cache.listItems ?? []) {
+      if (!current()) return [];
+      const snapshot = this.parseRootItem_abyssPrivate(item, context);
+      if (snapshot !== undefined) snapshots.push(snapshot);
+      work += 1;
+      if (work >= 1000) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+        work = 0;
+      }
+    }
+    return snapshots.sort(stableTaskOrder);
+  }
+
+  private acceptStatisticsSource_abyssPrivate(
+    path: string,
+    content: string,
+    cache: CachedMetadata,
+    tasks: readonly TaskSnapshot[],
+  ): void {
+    const signature = JSON.stringify([cache.frontmatter, tasks]);
+    const prior = this.acceptedStatisticsSources_abyssPrivate.get(path);
+    if (prior?.content !== content || prior.signature !== signature) {
+      this.acceptedStatisticsSources_abyssPrivate.set(path, {
+        content,
+        cache,
+        tasks,
+        signature,
+        revision: ++this.statisticsSourceRevision_abyssPrivate,
+        metadata: this.sourceMetadata_abyssPrivate(path, content),
+      });
+    }
+    this.statisticsReadFailures_abyssPrivate.delete(path);
+    this.statistics_abyssPrivate.update(path);
   }
 
   private parseFile_abyssPrivate(input: ParseFileInput): readonly TaskSnapshot[] {
     const { cache } = input;
-    const overrides = this.observeAuthorityTransition_abyssPrivate(input);
+    const overrides =
+      input.noAuthority === true ? [] : this.observeAuthorityTransition_abyssPrivate(input);
     if (cache.listItems == null) return [];
     const context = this.createParseContext_abyssPrivate(input, overrides);
     const snapshots: TaskSnapshot[] = [];
@@ -1242,17 +1462,34 @@ export class TaskIndex
     input: ParseFileInput,
     overrides: readonly RootRevisionOverride[],
   ): FileParseContext {
-    const { filePath, content, cache } = input;
-    // Preserve the legacy raw-line shape (`\r` stays attached under CRLF) for compatibility
-    // consumers while TaskBlockEditor independently owns exact block revision bytes.
-    const lines = content.split('\n');
-    const blockByLine = new Map(
+    const blocks = new Map(
       this.blockEditor_abyssPrivate
-        .rootBlocks(content)
+        .rootBlocks(input.content)
         .map((block) => [block.line, block] as const),
     );
-    const sourceCounts = countBlockSources(blockByLine.values());
-    const priorTasks = this.taskMap_abyssPrivate.get(filePath) ?? [];
+    return this.assembleParseContext_abyssPrivate(
+      input,
+      overrides,
+      blocks,
+      metadataItemsByLine(input.cache.listItems ?? []),
+    );
+  }
+
+  private assembleParseContext_abyssPrivate(
+    input: ParseFileInput,
+    overrides: readonly RootRevisionOverride[],
+    blockByLine: ReadonlyMap<number, TaskRootBlock>,
+    itemByLine: ReadonlyMap<number, MetadataListItem>,
+  ): FileParseContext {
+    const { filePath, content, cache } = input;
+    // Preserve raw CRLF lines for legacy consumers; the block editor owns exact revision bytes.
+    const lines = content.split('\n');
+    const sourceCounts =
+      input.noAuthority === true
+        ? new Map<string, number>()
+        : countBlockSources(blockByLine.values());
+    const priorTasks =
+      input.noAuthority === true ? [] : (this.taskMap_abyssPrivate.get(filePath) ?? []);
     return {
       filePath,
       lines,
@@ -1260,8 +1497,9 @@ export class TaskIndex
       sourceCounts,
       codec: new TaskMarkdownCodec(this.statusCatalog_abyssPrivate),
       presentation: taskPresentation(cache.frontmatter),
-      itemByLine: metadataItemsByLine(cache.listItems ?? []),
+      itemByLine,
       offsetAt: this.options_abyssPrivate.timeZoneOffsetAt ?? deviceOffsetAt,
+      noAuthority: input.noAuthority === true,
       revision: {
         overrides: new Map(overrides.map((override) => [override.line, override] as const)),
         priorByLine: new Map(priorTasks.map((task) => [task.source.line, task] as const)),
@@ -1272,6 +1510,48 @@ export class TaskIndex
         observedFile: input.observedFile ?? false,
       },
     };
+  }
+
+  private async createStatisticsParseContext_abyssPrivate(
+    path: string,
+    accepted: AcceptedStatisticsSource,
+    current: () => boolean,
+  ): Promise<FileParseContext | undefined> {
+    const blockByLine = new Map<number, TaskRootBlock>();
+    const itemByLine = new Map<number, MetadataListItem>();
+    const steps = this.statisticsContextSteps_abyssPrivate(accepted, blockByLine, itemByLine);
+    let work = 0;
+    const iterator = steps[Symbol.iterator]();
+    while (iterator.next().done !== true) {
+      if (!current()) return undefined;
+      work += 1;
+      if (work >= 1000) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+        work = 0;
+      }
+    }
+    if (!current()) return undefined;
+    return this.assembleParseContext_abyssPrivate(
+      { filePath: path, content: accepted.content, cache: accepted.cache, noAuthority: true },
+      [],
+      blockByLine,
+      itemByLine,
+    );
+  }
+
+  private *statisticsContextSteps_abyssPrivate(
+    accepted: AcceptedStatisticsSource,
+    blocks: Map<number, TaskRootBlock>,
+    items: Map<number, MetadataListItem>,
+  ): Generator<void> {
+    for (const block of this.blockEditor_abyssPrivate.rootBlockSteps(accepted.content)) {
+      if (block !== undefined) blocks.set(block.line, block);
+      yield;
+    }
+    for (const item of accepted.cache.listItems ?? []) {
+      items.set(item.position.start.line, item);
+      yield;
+    }
   }
 
   private parseRootItem_abyssPrivate(
@@ -1288,12 +1568,14 @@ export class TaskIndex
     const ref: TaskRef = {
       filePath: context.filePath,
       line,
-      revision: this.reconciledRevision_abyssPrivate({
-        ...context.revision,
-        line,
-        source: exactBlock,
-        sourceCount: context.sourceCounts.get(exactBlock) ?? 1,
-      }),
+      revision: context.noAuthority
+        ? `statistics:${line}`
+        : this.reconciledRevision_abyssPrivate({
+            ...context.revision,
+            line,
+            source: exactBlock,
+            sourceCount: context.sourceCounts.get(exactBlock) ?? 1,
+          }),
     };
     return projectTaskSnapshot({
       codec: context.codec,
@@ -1400,6 +1682,7 @@ export class TaskIndex
         if (this.replaceFile_abyssPrivate(filePath, tasks, authorityTransitions))
           this.queueChanged_abyssPrivate(filePath);
         if (restored) this.reconciliationTransitions_abyssPrivate.delete(filePath);
+        this.acceptStatisticsSource_abyssPrivate(filePath, content, cache, tasks);
       };
     });
     prove(roots);
@@ -1547,11 +1830,27 @@ export class TaskIndex
     data: string,
     cache: CachedMetadata,
   ): void {
+    try {
+      this.installMetadataObservation_abyssPrivate(path, data, cache);
+    } catch (error) {
+      const file = this.app_abyssPrivate.vault.getAbstractFileByPath(path);
+      const observation = file instanceof TFile ? this.observe_abyssPrivate(file, path) : undefined;
+      if (observation !== undefined)
+        this.recordStatisticsFailure_abyssPrivate(path, 'projection-failed', error);
+    }
+  }
+
+  private installMetadataObservation_abyssPrivate(
+    path: string,
+    data: string,
+    cache: CachedMetadata,
+  ): void {
     if (this.options_abyssPrivate.refAuthority?.deferObservation(path, data) === true) return;
     const selectedCache = this.cacheWithFrontmatter_abyssPrivate(data, cache);
     if (this.sourceIsExcluded_abyssPrivate(path, data)) {
       this.options_abyssPrivate.refAuthority?.discard(path);
       const changed = this.replaceFile_abyssPrivate(path, [], [], true);
+      this.acceptStatisticsSource_abyssPrivate(path, data, selectedCache, []);
       if (changed) this.queueChanged_abyssPrivate(path);
       else this.queueReconciled_abyssPrivate(path);
       return;
@@ -1568,6 +1867,7 @@ export class TaskIndex
       observedFile: this.fileGenerations_abyssPrivate.has(path),
     });
     const changed = this.replaceFile_abyssPrivate(path, tasks, authorityTransitions, true);
+    this.acceptStatisticsSource_abyssPrivate(path, data, selectedCache, tasks);
     if (changed) this.queueChanged_abyssPrivate(path);
     else this.queueReconciled_abyssPrivate(path);
   }
@@ -1591,10 +1891,26 @@ export class TaskIndex
     if (!wasMarkdown && !isMarkdown) return;
     if (this.app_abyssPrivate.vault.getAbstractFileByPath(newPath) !== file) return;
     const tasks = this.taskMap_abyssPrivate.get(oldPath) ?? [];
+    const accepted = this.acceptedStatisticsSources_abyssPrivate.get(oldPath);
     this.advance_abyssPrivate(file, isMarkdown ? newPath : undefined);
     this.removeFile_abyssPrivate(oldPath);
     if (newPath !== oldPath) this.removeFile_abyssPrivate(newPath);
+    if (isMarkdown) this.relocateStatisticsSource_abyssPrivate(newPath, accepted, tasks);
     this.finishVaultRename_abyssPrivate({ file, oldPath, newPath, tasks, wasMarkdown, isMarkdown });
+  }
+
+  private relocateStatisticsSource_abyssPrivate(
+    path: string,
+    accepted: AcceptedStatisticsSource | undefined,
+    tasks: readonly TaskSnapshot[],
+  ): void {
+    if (accepted === undefined) return;
+    this.acceptStatisticsSource_abyssPrivate(
+      path,
+      accepted.content,
+      accepted.cache,
+      tasks.map((task) => relocateSnapshot(task, path)),
+    );
   }
 
   private finishVaultRename_abyssPrivate(input: {
@@ -1626,7 +1942,12 @@ export class TaskIndex
     newPath: string,
     tasks: readonly TaskSnapshot[],
   ): void {
-    if (tasks.length === 0 || this.excludeSource_abyssPrivate !== undefined) {
+    if (
+      tasks.length === 0 ||
+      this.excludeSource_abyssPrivate !== undefined ||
+      this.statistics_abyssPrivate.active ||
+      this.options_abyssPrivate.statisticsFileKind !== undefined
+    ) {
       this.scheduleRenameLoad_abyssPrivate(file, oldPath, newPath);
       return;
     }
@@ -1634,6 +1955,15 @@ export class TaskIndex
       newPath,
       tasks.map((task) => this.relocateRenamedTask_abyssPrivate(task, newPath)),
     );
+    const accepted = this.acceptedStatisticsSources_abyssPrivate.get(newPath);
+    if (accepted !== undefined) {
+      this.acceptStatisticsSource_abyssPrivate(
+        newPath,
+        accepted.content,
+        accepted.cache,
+        this.taskMap_abyssPrivate.get(newPath) ?? [],
+      );
+    }
     this.publish_abyssPrivate({ type: 'renamed', oldPath, newPath });
   }
 
@@ -1648,11 +1978,14 @@ export class TaskIndex
   }
 
   private scheduleRenameLoad_abyssPrivate(file: TFile, oldPath: string, newPath: string): void {
-    const read = this.loadFile_abyssPrivate(file, newPath, true).then((committed) => {
-      if (committed || this.isFileAt_abyssPrivate(file, newPath)) {
-        this.publish_abyssPrivate({ type: 'renamed', oldPath, newPath });
-      }
-    });
+    const release = this.statistics_abyssPrivate.hold();
+    const read = this.loadFile_abyssPrivate(file, newPath, true)
+      .then((committed) => {
+        if (committed || this.isFileAt_abyssPrivate(file, newPath)) {
+          this.publish_abyssPrivate({ type: 'renamed', oldPath, newPath });
+        }
+      })
+      .finally(release);
     this.trackRead_abyssPrivate(read);
   }
 
@@ -1666,6 +1999,9 @@ export class TaskIndex
   }
 
   private removeFile_abyssPrivate(filePath: string): void {
+    this.acceptedStatisticsSources_abyssPrivate.delete(filePath);
+    this.statisticsReadFailures_abyssPrivate.delete(filePath);
+    this.statistics_abyssPrivate.remove(filePath);
     this.dependencyGraph_abyssPrivate = undefined;
     this.taskMap_abyssPrivate.delete(filePath);
     this.calendarDateIndex_abyssPrivate.updateFile(filePath, []);

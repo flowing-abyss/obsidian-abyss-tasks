@@ -1,0 +1,532 @@
+import { TFile, type CachedMetadata } from 'obsidian';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
+import { TaskIndex, type TaskIndexOptions } from '../../src/tasks/infrastructure/TaskIndex';
+import { TaskRefAuthority } from '../../src/tasks/infrastructure/TaskRefAuthority';
+import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
+import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
+import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
+import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
+import {
+  canonicalStatusCatalog,
+  createAppWithFiles,
+  expectDefined,
+  flushMicrotasks,
+  metadataChangedEmitter,
+} from '../helpers';
+
+const indexes: TaskIndex[] = [];
+afterEach(() => {
+  for (const index of indexes.splice(0)) index.destroy();
+  vi.restoreAllMocks();
+});
+
+async function harness(
+  files: Record<string, string>,
+  options: Partial<TaskIndexOptions> = {},
+  defaultPolicy = false,
+) {
+  const app = await createAppWithFiles(files);
+  const statusCatalog = canonicalStatusCatalog();
+  const refAuthority = new TaskRefAuthority();
+  const index = new TaskIndex(app, {
+    statusCatalog,
+    refAuthority,
+    ...(defaultPolicy
+      ? {}
+      : {
+          excludeSource: ({ filePath }: { filePath: string }) =>
+            filePath.startsWith('archive/') || filePath === 'ignored.md',
+          statisticsFileKind: (path: string) => {
+            if (path === 'ignored.md') return undefined;
+            return path.startsWith('archive/') ? 'archive' : 'live';
+          },
+        }),
+    ...options,
+  });
+  indexes.push(index);
+  const file = (path: string): TFile => {
+    const found = app.vault.getAbstractFileByPath(path);
+    if (!(found instanceof TFile)) throw new Error(`Missing fixture ${path}`);
+    return found;
+  };
+  const changed = (path: string, content: string, cache: CachedMetadata = {}) => {
+    metadataChangedEmitter(app)(file(path), content, cache);
+  };
+  return { app, index, refAuthority, statusCatalog, file, changed };
+}
+
+describe('lazy complete task statistics evidence', () => {
+  it('cancels canonical context preparation before parsing roots after the last lease ends', async () => {
+    const content = Array.from({ length: 1100 }, (_, number) => `- [x] Retained ${number}`).join(
+      '\n',
+    );
+    const { index } = await harness({ 'archive/2026.md': content });
+    await index.initialize();
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(TaskMarkdownCodec.prototype, 'parseLine').mockImplementation(() => {
+      throw new Error('disabled projection must not reach codec');
+    });
+    const release = index.subscribeStatistics(() => undefined);
+    await new Promise<void>((resolve) =>
+      window.setTimeout(() => {
+        release();
+        resolve();
+      }, 0),
+    );
+    await index.refreshStatistics();
+    expect(index.readStatistics().files).toEqual([]);
+    expect(diagnostic.mock.calls).toEqual([]);
+  });
+  it('cancels a large archive projection between batches and rebuilds exact evidence on reentry', async () => {
+    const content = Array.from({ length: 1100 }, (_, number) => `- [x] Retained ${number}`).join(
+      '\n',
+    );
+    const { index } = await harness({ 'archive/2026.md': content });
+    await index.initialize();
+    const release = index.subscribeStatistics(() => undefined);
+    await new Promise<void>((resolve) =>
+      window.setTimeout(() => {
+        release();
+        resolve();
+      }, 0),
+    );
+    await index.refreshStatistics();
+    expect(index.readStatistics()).toMatchObject({ ready: false, files: [] });
+    index.subscribeStatistics(() => undefined);
+    await index.refreshStatistics();
+    const roots = expectDefined(index.readStatistics().files[0]).roots;
+    expect(roots).toHaveLength(1100);
+    expect(roots[0]?.title).toBe('Retained 0');
+    expect(roots[1099]?.title).toBe('Retained 1099');
+  });
+
+  it.each(['move', 'archive'] as const)(
+    'publishes the single retained physical copy after successful %s',
+    async (operation) => {
+      const { app, index, statusCatalog, refAuthority } = await harness({
+        'source.md': '- [x] Transfer\n  - [x] Child\n',
+        'archive/2026.md': '',
+      });
+      await index.initialize();
+      const counts: number[] = [];
+      index.subscribeStatistics(() => {
+        counts.push(index.readStatistics().files.flatMap(({ roots }) => roots).length);
+      });
+      await index.refreshStatistics();
+      const repository = new ObsidianTaskRepository(app, {
+        codec: new TaskMarkdownCodec(statusCatalog),
+        editor: new TaskBlockEditor(),
+        locator: new TaskLocator(refAuthority),
+        refAuthority,
+        snapshotState: index,
+        snapshotsFromContent: (path, content) => index.snapshotsFromContent(path, content),
+      });
+      expect(
+        (
+          await repository[operation](expectDefined(index.list()[0]).ref, {
+            filePath: 'archive/2026.md',
+            insertion: { type: 'append' },
+          })
+        ).type,
+      ).toBe('committed');
+      await index.refreshStatistics();
+      expect(counts.every((count) => count === 1)).toBe(true);
+      expect(index.readStatistics().files[0]?.roots[0]?.subtasks[0]?.title).toBe('Child');
+      expect(index.list()).toEqual([]);
+    },
+  );
+  it('keeps accepted evidence after an inactive fast rename in a default-policy harness', async () => {
+    const { app, index, file } = await harness({ 'live.md': '- [ ] Relocated\n' }, {}, true);
+    await index.initialize();
+    await app.vault.rename(file('live.md'), 'renamed.md');
+    expect(index.list()[0]?.source.filePath).toBe('renamed.md');
+    index.subscribeStatistics(() => undefined);
+    await index.refreshStatistics();
+    expect(index.readStatistics().files[0]?.roots[0]?.source.filePath).toBe('renamed.md');
+    expect(index.readStatistics().files[0]?.roots[0]?.ref).toEqual(index.list()[0]?.ref);
+  });
+  it.each(['rename', 'delete'] as const)(
+    'notifies ordinary %s reconciliation before statistics observers',
+    async (operation) => {
+      const { app, index, file } = await harness({ 'live.md': '- [ ] Record\n' });
+      await index.initialize();
+      const events: string[] = [];
+      index.subscribe((event) => events.push(event.type));
+      index.subscribeStatistics(() => events.push('statistics'));
+      await index.refreshStatistics();
+      events.length = 0;
+      if (operation === 'rename') await app.vault.rename(file('live.md'), 'renamed.md');
+      else await app.fileManager.trashFile(file('live.md'));
+      await flushMicrotasks();
+      expect(events[0]).toBe(operation === 'rename' ? 'renamed' : 'deleted');
+      expect(events[events.length - 1]).toBe('statistics');
+      expect(index.readStatistics().files.map(({ path }) => path)).toEqual(
+        operation === 'rename' ? ['renamed.md'] : [],
+      );
+    },
+  );
+
+  it('reuses accepted bytes on activation and never rereads a hidden refresh', async () => {
+    const { app, index, file } = await harness({ 'archive/2026.md': '- [x] Accepted\n' });
+    await index.initialize();
+    await app.vault.adapter.write('archive/2026.md', '- [x] Unobserved\n');
+    await index.refreshStatistics();
+    expect(index.readStatistics().files).toEqual([]);
+    index.subscribeStatistics(() => undefined);
+    await index.refreshStatistics();
+    expect(index.readStatistics().files[0]?.roots[0]?.title).toBe('Accepted');
+    await app.vault.modify(file('archive/2026.md'), '- [x] Observed\n');
+    await index.refreshStatistics();
+    expect(index.readStatistics().files[0]?.roots[0]?.title).toBe('Observed');
+  });
+
+  it('reports a live canonical projection failure from metadata without losing its prior evidence', async () => {
+    const { index, changed } = await harness({ 'live.md': '- [ ] Old\n' });
+    await index.initialize();
+    index.subscribeStatistics(() => undefined);
+    await index.refreshStatistics();
+    const before = index.readStatistics();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const parser = vi.spyOn(TaskMarkdownCodec.prototype, 'parseLine').mockImplementation(() => {
+      throw new Error('codec failure');
+    });
+    expect(() => {
+      changed('live.md', '- [ ] New\n');
+    }).not.toThrow();
+    await index.refreshStatistics();
+    expect(index.readStatistics().files[0]).toBe(before.files[0]);
+    expect(index.readStatistics().issues).toEqual([
+      { path: 'live.md', reason: 'projection-failed' },
+    ]);
+    parser.mockRestore();
+  });
+  it('settles a failed initial acquisition as partial evidence without manufacturing an empty file', async () => {
+    const { app, index } = await harness({ 'archive/2026.md': '- [x] Unavailable\n' });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const read = vi.spyOn(app.vault, 'cachedRead').mockRejectedValue(new Error('offline'));
+    await index.initialize();
+    index.subscribeStatistics(() => undefined);
+    await index.refreshStatistics();
+    expect(index.readStatistics()).toMatchObject({
+      ready: true,
+      files: [],
+      issues: [{ path: 'archive/2026.md', reason: 'read-failed' }],
+    });
+    read.mockRestore();
+    await index.refreshStatistics();
+    expect(index.readStatistics().files[0]?.roots[0]?.title).toBe('Unavailable');
+    expect(index.readStatistics().issues).toEqual([]);
+  });
+
+  it('retains the last archive projection after a codec failure and recovers on explicit retry', async () => {
+    const { index, changed } = await harness({ 'archive/2026.md': '- [x] Old\n' });
+    await index.initialize();
+    index.subscribeStatistics(() => undefined);
+    await index.refreshStatistics();
+    const before = index.readStatistics();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const parser = vi.spyOn(TaskMarkdownCodec.prototype, 'parseLine').mockImplementation(() => {
+      throw new Error('projection unavailable');
+    });
+    changed('archive/2026.md', '- [x] Updated\n');
+    await index.refreshStatistics();
+    expect(index.readStatistics().files[0]).toBe(before.files[0]);
+    expect(index.readStatistics().issues).toEqual([
+      { path: 'archive/2026.md', reason: 'projection-failed' },
+    ]);
+    parser.mockRestore();
+    await index.refreshStatistics();
+    expect(index.readStatistics().files[0]?.roots[0]?.title).toBe('Updated');
+    expect(index.readStatistics().issues).toEqual([]);
+  });
+
+  it('queues ordinary reconciliation before notifying statistics observers', async () => {
+    const { index, changed } = await harness({ 'live.md': '- [ ] Same\n' });
+    await index.initialize();
+    const events: string[] = [];
+    index.subscribe(() => events.push('changed'));
+    index.subscribeReconciled(() => events.push('reconciled'));
+    index.subscribeStatistics(() => events.push('statistics'));
+    await index.refreshStatistics();
+    events.length = 0;
+    changed('live.md', '---\nproject: Second\n---\n- [ ] Same\n');
+    await index.refreshStatistics();
+    expect(events).toEqual(['changed', 'statistics']);
+    events.length = 0;
+    changed('live.md', '---\nproject: Third\n---\n- [ ] Same\n');
+    await index.refreshStatistics();
+    expect(events).toEqual(['reconciled', 'statistics']);
+  });
+
+  it('keeps nested publication holds idempotent until final accepted files are materialized', async () => {
+    const { index } = await harness({ 'live.md': '- [ ] Old\n', 'archive/2026.md': '' });
+    await index.initialize();
+    index.subscribeStatistics(() => undefined);
+    await index.refreshStatistics();
+    const before = index.readStatistics();
+    const releaseOuter = index.holdStatisticsPublication();
+    const releaseInner = index.holdStatisticsPublication();
+    index.installCommittedContent('archive/2026.md', '- [ ] New\n');
+    await index.refreshStatistics();
+    index.installCommittedContent('live.md', '');
+    releaseInner();
+    releaseInner();
+    expect(index.readStatistics()).toBe(before);
+    releaseOuter();
+    // A released hold must not expose an intermediate projection from another path.
+    expect(index.readStatistics()).toBe(before);
+    await index.refreshStatistics();
+    expect(index.readStatistics().files[0]?.roots[0]?.title).toBe('New');
+    expect(index.readStatistics().files.flatMap(({ roots }) => roots)).toHaveLength(1);
+  });
+  it('counts retained physical nodes, excludes ignored sources and grants no archive query authority', async () => {
+    const { index, refAuthority } = await harness({
+      'live.md': '- [ ] Parent ➕ 2026-09-28\n  - [x] Child ➕ 2026-09-29 ✅ 2026-10-01\n',
+      'archive/2026.md': '- [x] Retained ➕ 2026-09-20 ✅ 2026-09-21\n',
+      'ignored.md': '- [x] Private ✅ 2026-09-30\n',
+    });
+    await index.initialize();
+    expect(index.readStatistics()).toMatchObject({ ready: false, files: [], issues: [] });
+    const release = index.subscribeStatistics(() => undefined);
+    await index.refreshStatistics();
+    const snapshot = index.readStatistics();
+    expect(snapshot.ready).toBe(true);
+    expect(snapshot.files.map(({ path, kind }) => ({ path, kind }))).toEqual([
+      { path: 'archive/2026.md', kind: 'archive' },
+      { path: 'live.md', kind: 'live' },
+    ]);
+    expect(
+      snapshot.files
+        .flatMap(({ roots }) =>
+          roots.map((root) => [root.title, ...root.subtasks.map((node) => node.title)]),
+        )
+        .flat(),
+    ).toEqual(['Retained', 'Parent', 'Child']);
+    expect(index.list().map(({ title }) => title)).toEqual(['Parent']);
+    const archived = expectDefined(snapshot.files[0]?.roots[0]);
+    expect(index.resolve(archived.ref).type).toBe('not-found');
+    expect(refAuthority.evidence(archived.ref.revision)).toBeUndefined();
+    expect(index.readStatistics()).toBe(snapshot);
+    await index.refreshStatistics();
+    expect(index.readStatistics()).toBe(snapshot);
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(archived.planning)).toBe(true);
+    expect(Object.isFrozen(snapshot.files[1]?.roots[0]?.subtasks)).toBe(true);
+    release();
+    expect(index.readStatistics().files).toEqual([]);
+  });
+
+  it('publishes archive-only edits and reuses unchanged file evidence', async () => {
+    const { index, changed } = await harness({
+      'live.md': '- [ ] Same\n',
+      'archive/2026.md': '- [x] Old\n',
+    });
+    await index.initialize();
+    index.subscribeStatistics(() => undefined);
+    await index.refreshStatistics();
+    const before = index.readStatistics();
+    changed('archive/2026.md', '- [x] Old\n- [x] New\n');
+    await index.refreshStatistics();
+    const after = index.readStatistics();
+    expect(after.revision).toBeGreaterThan(before.revision);
+    expect(after.files[0]?.roots.map(({ title }) => title)).toEqual(['Old', 'New']);
+    expect(after.files[1]).toBe(before.files[1]);
+    expect(index.list().map(({ title }) => title)).toEqual(['Same']);
+  });
+
+  it('uses the current catalog plus raw cancellation precedence without changing ordinary list status', async () => {
+    const { index } = await harness({
+      'live.md': '- [?] Custom\n- [ ] Cancelled ❌ 2026-99-99\n  - [?] Nested\n',
+    });
+    await index.initialize();
+    index.subscribeStatistics(() => undefined);
+    await index.refreshStatistics();
+    const before = index.readStatistics();
+    index.setStatusCatalog(
+      new StatusCatalog([{ id: 'custom', symbol: '?', type: 'done', defaultForType: true }]),
+    );
+    await index.refreshStatistics();
+    const roots = expectDefined(index.readStatistics().files[0]).roots;
+    expect(roots.map(({ status }) => status)).toEqual(['done', 'cancelled']);
+    expect(roots[1]?.planning.cancelled).toBeUndefined();
+    expect(roots[1]?.subtasks[0]?.status).toBe('done');
+    expect(index.list()[0]?.status).toBe('open');
+    expect(index.readStatistics().revision).toBeGreaterThan(before.revision);
+  });
+
+  it('drops newly forbidden evidence synchronously even when the policy refresh read fails', async () => {
+    let excluded = false;
+    const { app, index } = await harness(
+      { 'live.md': '- [ ] Secret\n' },
+      {
+        excludeSource: () => excluded,
+        statisticsFileKind: () => (excluded ? undefined : 'live'),
+      },
+    );
+    await index.initialize();
+    index.subscribeStatistics(() => undefined);
+    await index.refreshStatistics();
+    excluded = true;
+    vi.spyOn(app.vault, 'cachedRead').mockRejectedValue(new Error('unavailable'));
+    const pending = index.refreshSourceExclusion(() => excluded);
+    expect(index.readStatistics().files).toEqual([]);
+    await pending;
+    expect(index.readStatistics().issues).toEqual([]);
+  });
+
+  it('retains last valid evidence with a typed issue and retries failed approved sources', async () => {
+    const { app, index } = await harness({ 'live.md': '- [ ] Retained\n' });
+    await index.initialize();
+    index.subscribeStatistics(() => undefined);
+    await index.refreshStatistics();
+    const before = index.readStatistics();
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const read = vi.spyOn(app.vault, 'cachedRead').mockRejectedValue(new Error('read unavailable'));
+    await index.refreshSourceExclusion(({ filePath }) => filePath.startsWith('archive/'));
+    await index.refreshStatistics();
+    expect(index.readStatistics().files[0]).toBe(before.files[0]);
+    expect(index.readStatistics().issues).toEqual([{ path: 'live.md', reason: 'read-failed' }]);
+    expect(index.readStatistics().ready).toBe(true);
+    expect(
+      diagnostic.mock.calls.some(([message]) => String(message).startsWith('[abyss-tasks]')),
+    ).toBe(true);
+    read.mockRestore();
+    await index.refreshStatistics();
+    expect(index.readStatistics().issues).toEqual([]);
+    expect(index.readStatistics().ready).toBe(true);
+  });
+
+  it('isolates observers and cancels the last lease without activating a hidden refresh', async () => {
+    const { index, changed } = await harness({ 'live.md': '- [ ] Initial\n' });
+    await index.initialize();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const releaseThrowing = index.subscribeStatistics(() => {
+      throw new Error('observer');
+    });
+    let observed = 0;
+    const releaseSecond = index.subscribeStatistics(() => {
+      observed += 1;
+    });
+    await index.refreshStatistics();
+    expect(observed).toBeGreaterThan(0);
+    releaseThrowing();
+    releaseThrowing();
+    releaseSecond();
+    await index.refreshStatistics();
+    expect(index.readStatistics()).toMatchObject({ ready: false, files: [] });
+    changed('live.md', '- [ ] Reenabled\n');
+    await flushMicrotasks();
+    expect(index.readStatistics().files).toEqual([]);
+    index.subscribeStatistics(() => undefined);
+    await index.refreshStatistics();
+    expect(index.readStatistics().files[0]?.roots[0]?.title).toBe('Reenabled');
+  });
+
+  it('retains canonical invalid and ambiguous date evidence only on physical task lines', async () => {
+    const { index } = await harness({
+      'live.md': [
+        '- [x] Root ➕ 2026-09-01 ➕ 2026-09-02 ✅ 2026-99-99',
+        '  - [ ] Child 📅 nonsense',
+        '- [ ] Literal `✅ 2026-99-99` [📅 2026-99-99](note.md)',
+        '',
+      ].join('\n'),
+    });
+    await index.initialize();
+    index.subscribeStatistics(() => undefined);
+    await index.refreshStatistics();
+    expect(index.readStatistics().files[0]?.dateIssues).toEqual([
+      { line: 0, field: 'created', reason: 'ambiguous-date' },
+      { line: 0, field: 'completion', reason: 'invalid-date' },
+      { line: 1, field: 'due', reason: 'invalid-date' },
+    ]);
+  });
+
+  it.each(['rename', 'delete', 'disable'] as const)(
+    'rejects stale acquisition after %s during initialization',
+    async (event) => {
+      const { app, index, file } = await harness({ 'archive/2026.md': '- [x] Stale\n' });
+      const originalRead = app.vault.cachedRead.bind(app.vault);
+      let finish!: () => void;
+      let started!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const entered = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      let held = false;
+      app.vault.cachedRead = async (candidate) => {
+        if (!held) {
+          held = true;
+          started();
+          await gate;
+          return '- [x] Stale\n';
+        }
+        return originalRead(candidate);
+      };
+      const release = index.subscribeStatistics(() => undefined);
+      const initializing = index.initialize();
+      await entered;
+      if (event === 'rename') await app.vault.rename(file('archive/2026.md'), 'archive/renamed.md');
+      else if (event === 'delete') await app.fileManager.trashFile(file('archive/2026.md'));
+      else release();
+      finish();
+      await initializing;
+      await index.refreshStatistics();
+      expect(index.readStatistics().files.map(({ path }) => path)).toEqual(
+        event === 'rename' ? ['archive/renamed.md'] : [],
+      );
+    },
+  );
+
+  it.each(['move', 'archive'] as const)(
+    'holds %s evidence across destination append and source removal, including partial failure',
+    async (operation) => {
+      const { app, index, statusCatalog, refAuthority } = await harness({
+        'source.md': '- [x] Transferred ✅ 2026-10-01\n',
+        'archive/2026.md': '',
+      });
+      await index.initialize();
+      index.subscribeStatistics(() => undefined);
+      await index.refreshStatistics();
+      const repository = new ObsidianTaskRepository(app, {
+        codec: new TaskMarkdownCodec(statusCatalog),
+        editor: new TaskBlockEditor(),
+        locator: new TaskLocator(refAuthority),
+        refAuthority,
+        snapshotState: index,
+        snapshotsFromContent: (path, content) => index.snapshotsFromContent(path, content),
+      });
+      const before = index.readStatistics();
+      let finish!: () => void;
+      let entered!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const process = app.vault.process.bind(app.vault);
+      app.vault.process = async (candidate, transform, options) => {
+        if (candidate.path === 'source.md') {
+          entered();
+          await gate;
+          throw new Error('source removal failed');
+        }
+        return process(candidate, transform, options);
+      };
+      const pending = repository[operation](expectDefined(index.list()[0]).ref, {
+        filePath: 'archive/2026.md',
+        insertion: { type: 'append' },
+      });
+      await started;
+      await index.refreshStatistics();
+      expect(index.readStatistics()).toBe(before);
+      finish();
+      expect((await pending).type).toBe('partial');
+      await index.refreshStatistics();
+      expect(index.readStatistics().files.flatMap(({ roots }) => roots)).toHaveLength(2);
+    },
+  );
+});
