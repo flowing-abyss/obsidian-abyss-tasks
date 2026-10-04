@@ -13,7 +13,9 @@ export type TaskLinkValues = ReadonlyMap<string, readonly TaskLinkValue[]>;
 
 /** Authored outgoing wiki notes only; the host supplies resolution, without a vault scan. */
 export function outgoingTaskLinkValues(
-  task: Pick<TaskSnapshot, 'markdownTitle' | 'source'>,
+  task: Pick<TaskSnapshot, 'markdownTitle'> & {
+    readonly source: Pick<TaskSnapshot['source'], 'filePath' | 'line'>;
+  },
   resolve: TaskLinkResolver,
 ): readonly TaskLinkValue[] {
   const values = new Map<string, TaskLinkValue>();

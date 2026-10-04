@@ -37,6 +37,7 @@ async function opened() {
     list: h.index.list.bind(h.index),
     listNodes: h.index.listNodes.bind(h.index),
     dependencySummary: h.index.dependencySummary.bind(h.index),
+    prepareDependencies: h.index.prepareDependencies.bind(h.index),
     observedTags: h.index.observedTags.bind(h.index),
     organization: h.index.organization.bind(h.index),
     resolveSearchPage: h.index.resolveSearchPage.bind(h.index),

@@ -85,6 +85,7 @@ export type TaskArchiveSession =
     };
 
 export interface TaskDependencyQueryApi {
+  prepareDependencies(expectedGeneration: number, signal: AbortSignal): Promise<void>;
   listNodes(query?: TaskQuery): readonly TaskNodeSnapshot[];
   dependencies(target: TaskNodeRef): TaskDependencyProjection;
   dependencySummary(target: TaskNodeRef): TaskDependencySummary;

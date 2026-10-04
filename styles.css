@@ -9731,3 +9731,32 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 .abyss-tracked-row.is-finished .abyss-tracked-row-title {
   color: var(--text-muted);
 }
+
+/* Bounded task Search and nonempty list filters share one page/status footer. */
+.abyss-panel-view .abyss-search-footer {
+  flex-shrink: 0;
+  padding: var(--size-4-2) var(--size-4-3);
+  border-top: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.abyss-panel-view .abyss-search-paging {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+}
+
+.abyss-panel-view .abyss-search-paging > span {
+  flex: 1 1 10em;
+}
+
+.abyss-panel-view .abyss-search-status {
+  margin-bottom: var(--size-4-1);
+}
+
+.abyss-panel-view .abyss-search-retry[hidden] {
+  display: none;
+}

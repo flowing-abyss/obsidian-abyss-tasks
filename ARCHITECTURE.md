@@ -60,10 +60,10 @@ capabilities instead of constructing alternate task repositories or indexes.
 | [Presentation](src/panels/)                      | Composes views and interactions over public task capabilities; owns no task Markdown writer                                                                               |
 
 The public capabilities are `TaskQueryApi`, `TaskDependencyQueryApi`, `TimeTrackingQueryApi`,
-`TaskApplicationApi`, and `TaskCaptureApplicationApi`. Observed tag discovery belongs to
-`TaskQueryApi`. The application also composes the inward `TaskReadProjectionApi` through `queries`;
-its organization/hydration port has no direct public barrel export. It inherits the observed-tag
-signature from `TaskQueryApi`. Add public exports only for a real consumer. Domain and application
+`TaskApplicationApi`, `TaskCaptureApplicationApi`, `TaskSearchApi`, and `TaskReadProjectionApi`.
+Observed tag discovery belongs to `TaskQueryApi`; the read projection inherits that signature.
+The application composes organization/hydration through `queries`, while the plugin injects its
+one Search service into PanelView and CenterPanel through the public barrel. Domain and application
 code cannot import Obsidian or presentation; infrastructure cannot import UI.
 
 [`src/parser/`](src/parser/) adapts canonical task data to legacy presentation. It may import codec
@@ -178,7 +178,8 @@ matching restricts coverage to that node's title, tags and optionally source pat
 combines the strongest node with a capped contribution from the rest, discounts children and
 orders exact title coverage before typo alternatives. File preference breaks nonempty relevance
 ties; blank browse uses it before stable source order. Replacements discard prior file handles;
-explicit vacuum releases stale postings. These contracts have no public barrel or UI consumer yet.
+explicit vacuum releases stale postings. The engine remains inward; UI consumes the public service
+contract and preserves its drained relevance order, including exact-title precedence over scores.
 
 The pure `searchMatchPolicy` owns NFC/lowercase normalization, code-point edit limits, exact short
 swaps, final-token prefixes and UTF-16 match ranges. Word segmentation is injected, with a
@@ -207,8 +208,8 @@ no write authority.
 ### Owned browser search
 
 The composition root owns one lazy `TaskSearchService` for the plugin lifetime and exposes its
-read-only `search: TaskSearchApi` capability. It imports this inward contract directly; the public
-barrel and presentation consumers remain staged until real UI integration. Panel lifetimes do not
+read-only public `search: TaskSearchApi` capability. PanelView passes that same service into
+CenterPanel; panel lifetimes own only query controllers and subscriptions. Panel lifetimes do not
 own or rebuild the service. Unload disposes search before TaskIndex.
 
 The service subscribes before its source snapshot, publishes accepted generations synchronously,
@@ -358,7 +359,7 @@ and reverse-edge rules. Rich queries detach each requested neighbor root once an
 Graph exact-reference maps key first by the existing revision string, then by the small structural
 address, preserving multiple revisions without serializing source-bearing revisions into new keys.
 
-One resumable domain assembly serves the synchronous driver and TaskIndex's inward
+One resumable domain assembly serves the synchronous driver and TaskIndex's public
 `prepareDependencies(expectedGeneration, signal)`. Root collection, node registration, declared
 prerequisite IDs and ambiguous candidate expansion have work checkpoints. TaskIndex advances at most
 128 units between existing read-scheduler yields, including a yield before collection. Global native
@@ -374,8 +375,10 @@ complete, current, live graph publishes, with pending ownership cleared before w
 A synchronous reader can drain the same suspended cursor; success precedes scheduler cancellation,
 and late continuations cannot replace or clear newer work. Finished caches survive caller closure.
 Failures use typed read outcomes and sanitized diagnostics; there is no automatic synchronous retry.
-This operation remains inward, without public API publication or presentation gating. Ordinary
-synchronous queries, dense graph queries, and rich relation detachment retain their existing costs.
+CenterPanel awaits this readiness for nonempty bounded Search/filter pages before the first
+synchronous card dependency badge. The same request and generation must remain current after
+hydration, preparation, mounting, and Markdown completion. Inspector and other ordinary synchronous
+queries can still take over preparation; dense queries and rich relation detachment retain their costs.
 
 [`TaskDependencyService`](src/tasks/application/TaskDependencyService.ts) owns dependency commands,
 linked subtask creation, and completion checks against the live status catalog. Query eligibility
@@ -440,20 +443,53 @@ today/overdue totals.
 CenterPanel shares these services across its task surfaces. They depend on task contracts and host
 capabilities, never on CenterPanel itself.
 
-| Service                                                   | Responsibility                                                                                                           |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| [TaskCommands](src/panels/center/TaskCommands.ts)         | Task submissions and result presentation, archive batch rebasing, link edits, project moves, and completion confirmation |
-| [TaskMenus](src/panels/center/TaskMenus.ts)               | Single/bulk menus and tag pickers, using TaskCommands and live shell callbacks                                           |
-| [CaptureSessions](src/panels/center/CaptureSessions.ts)   | Capture target/session lifetime, placement, remounting, feedback, and focus                                              |
-| [ListViewControls](src/panels/center/ListViewControls.ts) | Saved list options, property chips, and popovers through the existing view-state save callback                           |
-| [TaskSearch](src/panels/center/TaskSearch.ts)             | Search input/results and refresh scheduling, reusing shell rendering and navigation                                      |
-| [TaskCardRenderer](src/panels/center/TaskCardRenderer.ts) | Shared card DOM, Markdown, metadata, and tracked badges; shell retains selection and whole-card interactions             |
+| Service                                                   | Responsibility                                                                                                                           |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| [TaskCommands](src/panels/center/TaskCommands.ts)         | Task submissions and result presentation, archive batch rebasing, link edits, project moves, and completion confirmation                 |
+| [TaskMenus](src/panels/center/TaskMenus.ts)               | Single/bulk menus and tag pickers, using TaskCommands and live shell callbacks                                                           |
+| [CaptureSessions](src/panels/center/CaptureSessions.ts)   | Capture target/session lifetime, placement, remounting, feedback, and focus                                                              |
+| [ListViewControls](src/panels/center/ListViewControls.ts) | Saved list options, property chips, and popovers through the existing view-state save callback                                           |
+| [TaskSearch](src/panels/center/TaskSearch.ts)             | Search/filter request and generation join, compact organization, bounded pages and render completion, reusing shell cards and navigation |
+| [TaskCardRenderer](src/panels/center/TaskCardRenderer.ts) | Shared card DOM, Markdown, metadata, and tracked badges; shell retains selection and whole-card interactions                             |
 
 [`src/panels/task-list/`](src/panels/task-list/) separates the pure ordered row model and
 multi-selection from DOM mounting. `TaskRowSelection` works against an explicit display order;
 `MountedTaskListRows` maps row keys to mounted elements. Logical multi-selection belongs to Lists
 and Tags; other surfaces reuse card rendering without acquiring that selection model. CenterPanel
 owns selection across renders and mode changes.
+
+Global Search and nonempty Tasks filters use `taskSearchOrganization` over compact canonical
+records, with the same structural membership, property/status filters, comparator and grouping
+routines as ordinary snapshots. All logical matches are organized before slicing. Relevance
+preserves the engine cursor's complete ordering; explicit sort ties use created date then canonical
+source order. Host outgoing-link resolution remains presentation-owned and link lifecycle/settings/
+project events re-organize even when task text is unchanged. Projection and organization stages
+yield through the owning window; native sorting itself remains synchronous and measured.
+
+`TaskSearchPages` holds compact logical occurrences and hydrates at most 50 occurrences with each
+distinct root requested once. Headers retain full group counts on continued pages; unique roots
+and duplicated outgoing occurrences have separate totals. Page/query/sort/group changes clear
+Tasks row multiselection and announce it. Inspector selection/history stay independent, and global
+Search retains activation without acquiring range selection. Unfiltered ordinary lists retain their
+existing rendering and saved-state owner. Search options are a transient CenterPanel session via
+ListViewControls' explicit optional state port; Relevance is never a persisted sort value.
+
+TaskSearch subscribes before opening, drains one forward root cursor, joins each compact organization
+batch to that cursor's generation (including zero hits), then hydrates and prepares dependencies.
+Accepted service generations are observed synchronously, so an unrelated accepted update cancels
+the entire old match-set publication even when individual unchanged handles remain hydratable.
+Only the live current request in a ready matching service generation can publish complete.
+`SearchStatus` owns inline busy/error/Retry and one Notice per failed episode within its mounted
+instance; abort/stale supersession is silent, expired cursors restart once, and query text never
+enters diagnostics. Tasks-filter query changes currently remount the status owner, so Notice episode
+suppression does not survive a filter change. This is an unfinished Task4 failure-handling defect.
+
+`renderTaskText` returns an optional receipt: plain text is synchronous; Markdown becomes ready only
+after the host render Promise, paragraph unwrapping, exact source-token link wiring and onRendered
+callback. Replacement, abort, detach and Component unload cancel stale work. `TaskRenderScope`
+collects the card title/description receipts in the existing row mount; failure cancels its remaining
+work. The Search DOM complete phase follows that sealed mount receipt, without a readiness timer.
+The onRendered hook and the same page/request lifecycle are the shared seam for later excerpt marks.
 
 List organization can use the exact containing source-note path or outgoing wiki-note links in the
 root title. `taskLinkValues` derives links once per organization pass with the shared Markdown

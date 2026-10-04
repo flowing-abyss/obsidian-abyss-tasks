@@ -44,11 +44,7 @@ function compareByTag(a: TaskSnapshot, b: TaskSnapshot): number {
   return ta.localeCompare(tb);
 }
 
-function appendToBucket(
-  buckets: Map<string, TaskSnapshot[]>,
-  key: string,
-  task: TaskSnapshot,
-): void {
+function appendToBucket<T>(buckets: Map<string, T[]>, key: string, task: T): void {
   const existing = buckets.get(key);
   if (existing === undefined) buckets.set(key, [task]);
   else existing.push(task);
@@ -90,15 +86,21 @@ export function sortTasksByField(
  * One bucket of a grouped list: a key that names the bucket whatever its label says, the label its
  * header shows, and its tasks in input order.
  */
-export interface TaskGroup {
+export type TaskGroupValue = Pick<
+  TaskSnapshot,
+  'priority' | 'statusSymbol' | 'tags' | 'planning'
+> & { readonly source: Pick<TaskSnapshot['source'], 'filePath' | 'line'> };
+export interface TaskGroup<T extends TaskGroupValue = TaskSnapshot> {
   readonly key: string;
   readonly label: string;
-  readonly tasks: TaskSnapshot[];
+  readonly tasks: T[];
 }
 
-export function groupTasksByPriority(tasks: readonly TaskSnapshot[]): TaskGroup[] {
+export function groupTasksByPriority<T extends TaskGroupValue>(
+  tasks: readonly T[],
+): Array<TaskGroup<T>> {
   const PRIORITY_ORDER = ['A', 'B', 'C', 'D', 'E', 'F'] as const;
-  const map = new Map<string, TaskSnapshot[]>();
+  const map = new Map<string, T[]>();
   for (const t of tasks) {
     appendToBucket(map, t.priority, t);
   }
@@ -110,14 +112,11 @@ export function groupTasksByPriority(tasks: readonly TaskSnapshot[]): TaskGroup[
   });
 }
 
-export function groupTasksByStatus(
-  tasks: readonly TaskSnapshot[],
+export function groupTasksByStatus<T extends TaskGroupValue>(
+  tasks: readonly T[],
   registry: StatusRegistry,
-): TaskGroup[] {
-  const buckets = new Map<
-    string,
-    { key: string; order: number; label: string; tasks: TaskSnapshot[] }
-  >();
+): Array<TaskGroup<T>> {
+  const buckets = new Map<string, { key: string; order: number; label: string; tasks: T[] }>();
   for (const t of tasks) {
     const def = registry.bySymbol(t.statusSymbol);
     const key = def?.id ?? '__other__';
@@ -132,14 +131,16 @@ export function groupTasksByStatus(
     .map(({ key, label, tasks }) => ({ key, label, tasks }));
 }
 
-export function groupTasksByTag(tasks: readonly TaskSnapshot[]): TaskGroup[] {
-  const map = new Map<string, TaskSnapshot[]>();
+export function groupTasksByTag<T extends TaskGroupValue>(
+  tasks: readonly T[],
+): Array<TaskGroup<T>> {
+  const map = new Map<string, T[]>();
   for (const t of tasks) {
     const tag = t.tags[0] ?? '';
     const key = tag.length > 0 ? tag : 'No tag';
     appendToBucket(map, key, t);
   }
-  const groups: TaskGroup[] = [];
+  const groups: Array<TaskGroup<T>> = [];
   for (const [label, gtasks] of map) {
     if (label !== 'No tag') groups.push({ key: label, label, tasks: gtasks });
   }
@@ -151,7 +152,7 @@ export function groupTasksByTag(tasks: readonly TaskSnapshot[]): TaskGroup[] {
 
 type DateGroupLabel = 'Overdue' | 'Today' | 'Tomorrow' | 'Upcoming' | 'No date';
 
-function dateGroupLabel(task: TaskSnapshot, today: string, tomorrow: string): DateGroupLabel {
+function dateGroupLabel(task: TaskGroupValue, today: string, tomorrow: string): DateGroupLabel {
   const date = task.planning.due ?? task.planning.scheduled ?? task.planning.start;
   if (date === undefined) return 'No date';
   if (date < today) return 'Overdue';
@@ -159,12 +160,12 @@ function dateGroupLabel(task: TaskSnapshot, today: string, tomorrow: string): Da
   return date === tomorrow ? 'Tomorrow' : 'Upcoming';
 }
 
-export function groupTasksByDate(
-  tasks: readonly TaskSnapshot[],
+export function groupTasksByDate<T extends TaskGroupValue>(
+  tasks: readonly T[],
   today: string,
   tomorrow: string,
-): TaskGroup[] {
-  const buckets = new Map<DateGroupLabel, TaskSnapshot[]>();
+): Array<TaskGroup<T>> {
+  const buckets = new Map<DateGroupLabel, T[]>();
   for (const task of tasks) appendToBucket(buckets, dateGroupLabel(task, today, tomorrow), task);
   const order: readonly DateGroupLabel[] = ['Overdue', 'Today', 'Tomorrow', 'Upcoming', 'No date'];
   return order.flatMap((label) => {
@@ -189,10 +190,10 @@ export function filterTasksByStatusGroups(
 }
 
 /** Canonical note names; same-name notes show their paths instead of ambiguous basenames. */
-function orderedNoteGroups(
-  groups: TaskGroup[],
+function orderedNoteGroups<T extends TaskGroupValue>(
+  groups: Array<TaskGroup<T>>,
   paths: ReadonlyMap<string, string> = new Map(),
-): TaskGroup[] {
+): Array<TaskGroup<T>> {
   const labels = new Map<string, number>();
   for (const group of groups) labels.set(group.label, (labels.get(group.label) ?? 0) + 1);
   return groups
@@ -209,18 +210,20 @@ function orderedNoteGroups(
     });
 }
 
-export function groupTasksBySourceNote(tasks: readonly TaskSnapshot[]): TaskGroup[] {
-  const buckets = new Map<string, TaskSnapshot[]>();
+export function groupTasksBySourceNote<T extends TaskGroupValue>(
+  tasks: readonly T[],
+): Array<TaskGroup<T>> {
+  const buckets = new Map<string, T[]>();
   for (const task of tasks) appendToBucket(buckets, task.source.filePath, task);
   return orderedNoteGroups(
     [...buckets].map(([key, tasks]) => ({ key, label: noteNameOfPath(key), tasks })),
   );
 }
 
-function appendLinkedTask(
-  groups: Map<string, TaskGroup>,
+function appendLinkedTask<T extends TaskGroupValue>(
+  groups: Map<string, TaskGroup<T>>,
   link: TaskLinkValue,
-  task: TaskSnapshot,
+  task: T,
 ): void {
   const group = groups.get(link.key);
   if (group === undefined)
@@ -234,13 +237,13 @@ function disambiguatedLinkLabel(link: TaskLinkValue, sourcePath: string): string
     : `${link.target} (${sourcePath})`;
 }
 
-export function groupTasksByOutgoingLink(
-  tasks: readonly TaskSnapshot[],
+export function groupTasksByOutgoingLink<T extends TaskGroupValue>(
+  tasks: readonly T[],
   values: TaskLinkValues,
-): TaskGroup[] {
-  const groups = new Map<string, TaskGroup>();
+): Array<TaskGroup<T>> {
+  const groups = new Map<string, TaskGroup<T>>();
   const paths = new Map<string, string>();
-  const missing: TaskSnapshot[] = [];
+  const missing: T[] = [];
   const roots = new Map(tasks.map((task) => [`${task.source.filePath}:${task.source.line}`, task]));
   for (const task of roots.values()) {
     const links = values.get(`${task.source.filePath}:${task.source.line}`) ?? [];

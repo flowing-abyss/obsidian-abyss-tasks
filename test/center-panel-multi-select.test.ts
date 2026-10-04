@@ -16,6 +16,7 @@ import {
   useRealMoment,
 } from './helpers';
 import { makeCenterPanelForTest, taskCommandsOf } from './support/panelHarness';
+import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 
 useRealMoment();
 
@@ -822,65 +823,77 @@ describe('CenterPanel multi-selection', () => {
     expect(el.querySelectorAll('.abyss-selected-state')).toHaveLength(2);
   });
 
-  it('keeps the selection across a Lists, Search, Lists round trip', () => {
-    const { el, state } = makeCenter([t1, t2, t3]);
-    click(expectDefined(cards(el)[0]), { ctrlKey: true });
-    click(expectDefined(cards(el)[1]), { ctrlKey: true });
-
-    state.set('searchQuery', 'Task 1');
-    state.set('mode', 'search');
-    expect(cards(el)).toHaveLength(1);
-    state.set('mode', 'tasks');
-
-    expect(selectedLines(el)).toEqual(['0', '1']);
-  });
-
-  it('reads no rows after a filter empties the list', () => {
-    const { el, state } = makeCenter([t1, t2, t3]);
-    attach(el);
-    click(expectDefined(cards(el)[0]));
-
-    state.set('centerFilter', 'nothing matches');
-    expect(cards(el)).toHaveLength(0);
-    const event = key(el, 'ArrowDown');
-
-    expect(event.defaultPrevented).toBe(false);
-    expect(state.get('taskStack')).toEqual([t1]);
-    el.remove();
-  });
-
-  it('leaves ArrowDown in Search to the page', () => {
-    const { el, state } = makeCenter([t1, t2, t3]);
-    attach(el);
-    state.set('searchQuery', 'Task');
-    state.set('mode', 'search');
-    const result = expectDefined(cards(el)[0]);
-    result.focus();
-
-    const event = key(result, 'ArrowDown');
-
-    expect(event.defaultPrevented).toBe(false);
-    expect(state.get('taskStack')).toEqual([]);
-    expect(activeDocument.activeElement).toBe(result);
-    expect(selectedLines(el)).toEqual([]);
-    el.remove();
-  });
-
-  it('shows the empty states of Lists, Search, and a dashboard', () => {
-    const { el, state, panel } = makeCenter([]);
-    expect(el.querySelector('.abyss-center-scroll .abyss-center-empty')?.textContent).toBe(
-      'No tasks',
+  it('clears page-local selection across a Lists, Search, Lists round trip', async () => {
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': '- [ ] Task 1\n- [ ] Task 2' },
+      structuredClone(DEFAULT_SETTINGS),
+      'tasks',
     );
-
-    state.set('searchQuery', 'nothing matches');
-    state.set('mode', 'search');
-    expect(el.querySelector('.abyss-center-scroll .abyss-center-empty')?.textContent).toBe(
-      'No results',
+    try {
+      click(expectDefined(cards(h.root)[0]), { ctrlKey: true });
+      click(expectDefined(cards(h.root)[1]), { ctrlKey: true });
+      h.state.set('searchQuery', 'Task 1');
+      h.state.set('mode', 'search');
+      await h.completed();
+      expect(cards(h.root)).toHaveLength(1);
+      h.state.set('mode', 'tasks');
+      expect(selectedLines(h.root)).toEqual([]);
+    } finally {
+      h.dispose();
+    }
+  });
+  it('reads no rows after a canonical filter empties the list while preserving inspector selection', async () => {
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': '- [ ] Task 1' },
+      structuredClone(DEFAULT_SETTINGS),
+      'tasks',
     );
-
-    state.set('mode', 'projects');
-    const dashboard = renderDashboardList(panel, el, 'a.md');
-    expect(dashboard.querySelector('.abyss-center-empty')?.textContent).toBe('No tasks yet');
+    try {
+      click(expectDefined(cards(h.root)[0]));
+      const selected = h.state.get('taskStack');
+      h.query('nothing matches');
+      await h.completed();
+      expect(cards(h.root)).toHaveLength(0);
+      expect(key(h.root, 'ArrowDown').defaultPrevented).toBe(false);
+      expect(h.state.get('taskStack')).toEqual(selected);
+    } finally {
+      h.dispose();
+    }
+  });
+  it('leaves ArrowDown in canonical Search to the page', async () => {
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': '- [ ] Task 1' },
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    try {
+      h.query('Task');
+      await h.completed();
+      const result = expectDefined(cards(h.root)[0]);
+      result.focus();
+      expect(key(result, 'ArrowDown').defaultPrevented).toBe(false);
+      expect(h.state.get('taskStack')).toEqual([]);
+      expect(document.activeElement).toBe(result);
+      expect(selectedLines(h.root)).toEqual([]);
+    } finally {
+      h.dispose();
+    }
+  });
+  it('shows the empty states of Lists, canonical Search, and a dashboard', async () => {
+    const h = await mountCanonicalSearchUi({}, structuredClone(DEFAULT_SETTINGS), 'tasks');
+    try {
+      expect(h.root.querySelector('.abyss-center-empty')?.textContent).toBe('No tasks');
+      h.state.set('searchQuery', 'nothing matches');
+      h.state.set('mode', 'search');
+      await h.completed();
+      expect(h.root.querySelector('.abyss-center-scroll .abyss-center-empty')?.textContent).toBe(
+        'No results',
+      );
+      h.state.set('mode', 'projects');
+      const dashboard = renderDashboardList(h.panel, h.root, 'a.md');
+      expect(dashboard.querySelector('.abyss-center-empty')?.textContent).toBe('No tasks yet');
+    } finally {
+      h.dispose();
+    }
   });
 });
 

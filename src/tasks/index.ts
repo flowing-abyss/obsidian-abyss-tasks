@@ -102,3 +102,16 @@ export type { TaskHierarchyRecovery } from './domain/taskHierarchy';
 export { hierarchyWouldCycle } from './domain/taskHierarchy';
 
 export type { TaskDependencySummary } from './domain/taskSearchTypes';
+
+export type {
+  TaskReadProjectionApi,
+  TaskSearchApi,
+  TaskSearchState,
+} from './application/TaskSearchApi';
+export { TaskSearchError } from './domain/taskSearchTypes';
+export type {
+  TaskOrganizationRecord,
+  TaskSearchAddress,
+  TaskSearchHit,
+  TaskSearchHydratedHit,
+} from './domain/taskSearchTypes';

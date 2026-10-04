@@ -19,6 +19,8 @@ import {
 } from './helpers';
 import { makeCenterPanelForTest } from './support/panelHarness';
 
+import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
+
 useRealMoment();
 
 afterEach(() => {
@@ -109,33 +111,6 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
 function ownerEvent(ownerWindow: Window, type: string, init?: EventInit): Event {
   const OwnerEvent = (ownerWindow as unknown as { Event: typeof Event }).Event;
   return new OwnerEvent(type, init);
-}
-
-async function withQueuedAnimationFrames(
-  run: (flush: () => void, callbacks: Map<number, FrameRequestCallback>) => Promise<void>,
-): Promise<void> {
-  const callbacks = new Map<number, FrameRequestCallback>();
-  let nextFrame = 1;
-  const requestAnimationFrame = methodOf(window, 'requestAnimationFrame');
-  const cancelAnimationFrame = methodOf(window, 'cancelAnimationFrame');
-  window.requestAnimationFrame = (callback: FrameRequestCallback): number => {
-    const frame = nextFrame++;
-    callbacks.set(frame, callback);
-    return frame;
-  };
-  window.cancelAnimationFrame = (frame: number): void => {
-    callbacks.delete(frame);
-  };
-
-  try {
-    await run(() => {
-      const queued = [...callbacks.values()];
-      callbacks.clear();
-      for (const callback of queued) callback(0);
-    }, callbacks);
-  } finally {
-    Object.assign(window, { requestAnimationFrame, cancelAnimationFrame });
-  }
 }
 
 function installObsidianDomHelpers(ownerWindow: Window): void {
@@ -1136,69 +1111,44 @@ describe('CenterPanel task date context menus', () => {
     }
   });
 
-  it('preserves changed focus across coalesced and later search result frames until departure', async () => {
+  it('preserves changed focus across coalesced and later Search requests until departure', async () => {
     const items = captureMenu();
-    const searchable = task({
-      title: 'focus needle',
-      tags: ['#task/inbox'],
-      source: {
-        filePath: 'search.md',
-        line: 2,
-        originalMarkdown: '- [ ] focus needle #task/inbox',
-        originalBlock: '- [ ] focus needle #task/inbox',
-      },
-    });
-    const { el, execute, panel, state } = makeCenter([searchable]);
-    activeDocument.body.append(el);
+    const h = await mountCanonicalSearchUi({ 'search.md': '- [ ] focus needle' }, DEFAULT_SETTINGS);
     const outside = activeDocument.body.createEl('button', { text: 'Outside' });
-
     try {
-      execute.mockResolvedValue(changedTaskResult(searchable));
-      await withQueuedAnimationFrames(async (flush, callbacks) => {
-        state.set('mode', 'search');
-        await flushMicrotasks();
-        state.set('searchQuery', 'focus needle');
-        flush();
-        const originalCard = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
-        originalCard.focus();
-        openMenu(originalCard);
-        expectDefined(expectDefined(items.find((item) => item.title__ === 'Set date…')).onClick__)(
-          new MouseEvent('click'),
-        );
-        const input = expectDefined(
-          el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
-        );
-        input.value = '2026-08-02';
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        await flushMicrotasks();
-
-        panel.refresh();
-        panel.refresh();
-        panel.refresh();
-        expect(callbacks).toHaveLength(1);
-        flush();
-        const coalescedReplacement = expectDefined(
-          el.querySelector<HTMLElement>('.abyss-task-card'),
-        );
-        expect(originalCard.isConnected).toBe(false);
-        expect(activeDocument.activeElement).toBe(coalescedReplacement);
-
-        panel.refresh();
-        expect(callbacks).toHaveLength(1);
-        flush();
-        const laterReplacement = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
-        expect(coalescedReplacement.isConnected).toBe(false);
-        expect(activeDocument.activeElement).toBe(laterReplacement);
-
-        outside.focus();
-        panel.refresh();
-        flush();
-        expect(activeDocument.activeElement).toBe(outside);
-      });
+      h.query('focus needle');
+      await h.completed();
+      const originalCard = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+      originalCard.focus();
+      openMenu(originalCard);
+      expectDefined(expectDefined(items.find((item) => item.title__ === 'Set date…')).onClick__)(
+        new MouseEvent('click'),
+      );
+      const input = expectDefined(
+        h.root.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
+      );
+      input.value = '2026-08-02';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await flushMicrotasks();
+      h.panel.refresh();
+      h.panel.refresh();
+      h.panel.refresh();
+      await h.completed();
+      const replacement = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+      expect(originalCard.isConnected).toBe(false);
+      expect(activeDocument.activeElement).toBe(replacement);
+      h.panel.refresh();
+      await h.completed();
+      const later = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+      expect(replacement.isConnected).toBe(false);
+      expect(activeDocument.activeElement).toBe(later);
+      outside.focus();
+      h.panel.refresh();
+      await h.completed();
+      expect(activeDocument.activeElement).toBe(outside);
     } finally {
-      panel.destroy();
+      h.dispose();
       outside.remove();
-      el.remove();
     }
   });
 
@@ -1280,23 +1230,18 @@ describe('CenterPanel task date context menus', () => {
     }
   });
 
-  it('returns focus to a Search result card when its date picker closes', () => {
-    vi.useFakeTimers();
+  it('returns focus to a Search result card when its date picker closes', async () => {
     const items = captureMenu();
-    const { el, state, panel } = makeCenter([first]);
-    activeDocument.body.append(el);
-
+    const h = await mountCanonicalSearchUi({ 'search.md': '- [ ] first' }, DEFAULT_SETTINGS);
     try {
-      state.set('searchQuery', 'first');
-      state.set('mode', 'search');
-      const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
-
-      escapeCardDatePicker(el, card, items);
-
+      h.query('first');
+      await h.completed();
+      const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+      vi.useFakeTimers();
+      escapeCardDatePicker(h.root, card, items);
       expect(activeDocument.activeElement).toBe(card);
     } finally {
-      panel.destroy();
-      el.remove();
+      h.dispose();
     }
   });
 

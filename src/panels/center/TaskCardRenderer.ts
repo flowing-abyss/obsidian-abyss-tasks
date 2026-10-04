@@ -28,6 +28,7 @@ import {
   type TaskDependencyLookup,
 } from '../../ui/taskDependencyPresentation';
 import { applyTaskPresentationIdentity } from '../../ui/taskPresentationIdentity';
+import type { TaskRenderScope } from '../../ui/taskRenderScope';
 import type { TrackingTickerState } from '../../ui/timeTracking/TrackingTicker';
 import { formatTrackedDuration } from '../../ui/timeTracking/formatTracked';
 import { isForecastCalendarTask } from '../../views/calendarOccurrences';
@@ -105,7 +106,12 @@ export class TaskCardRenderer {
     container: HTMLElement,
     task: TaskSnapshot,
     tagGroups: readonly EffectiveTagGroup[],
-    flags: { readonly selected: boolean; readonly showDelete: boolean; readonly rowKey?: string },
+    flags: {
+      readonly selected: boolean;
+      readonly showDelete: boolean;
+      readonly rowKey?: string;
+      readonly renderScope?: TaskRenderScope;
+    },
   ): HTMLElement {
     const isSelected = flags.selected;
     const card = container.createDiv({
@@ -119,7 +125,7 @@ export class TaskCardRenderer {
 
     const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
     this.#renderStatus(mainRow, task);
-    this.#renderBody(mainRow, task);
+    this.#renderBody(mainRow, task, flags.renderScope);
     this.#renderMetadata(mainRow, task, tagGroups);
     this.#host.mountInteractions(card, task, flags.rowKey);
     this.syncDeleteButton(card, flags.showDelete ? task : undefined);
@@ -146,7 +152,7 @@ export class TaskCardRenderer {
     );
   }
 
-  #renderBody(mainRow: HTMLElement, task: TaskSnapshot): void {
+  #renderBody(mainRow: HTMLElement, task: TaskSnapshot, scope?: TaskRenderScope): void {
     const body = mainRow.createDiv({ cls: 'abyss-task-body' });
     const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
     const recurrence = task.recurrence;
@@ -155,7 +161,7 @@ export class TaskCardRenderer {
     }
     this.#renderCountBadges(titleRow, task);
     const titleEl = titleRow.createSpan({ cls: 'abyss-task-title' });
-    renderTaskText(titleEl, task.markdownTitle, {
+    const titleRender = renderTaskText(titleEl, task.markdownTitle, {
       presentation: 'title',
       app: this.#app,
       sourcePath: task.source.filePath,
@@ -164,7 +170,8 @@ export class TaskCardRenderer {
         this.#commands.editTaskLink(task, occurrence, token);
       },
     });
-    this.#renderDescription(body, task);
+    scope?.track(titleRender);
+    this.#renderDescription(body, task, scope);
   }
 
   #renderCountBadges(titleRow: HTMLElement, task: TaskSnapshot): void {
@@ -233,15 +240,16 @@ export class TaskCardRenderer {
     }
   }
 
-  #renderDescription(host: HTMLElement, task: TaskSnapshot): void {
+  #renderDescription(host: HTMLElement, task: TaskSnapshot, scope?: TaskRenderScope): void {
     const description = task.description;
     if (description === undefined || description === '') return;
     const descriptionElement = host.createDiv({ cls: 'abyss-task-desc' });
-    renderTaskText(descriptionElement, description.split('\n')[0] ?? '', {
+    const descriptionRender = renderTaskText(descriptionElement, description.split('\n')[0] ?? '', {
       app: this.#app,
       sourcePath: task.source.filePath,
       component: this.#host.component(),
     });
+    scope?.track(descriptionRender);
   }
 
   #renderMetadata(

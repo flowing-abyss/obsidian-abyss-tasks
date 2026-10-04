@@ -8,6 +8,7 @@ import {
   mountTaskListRows,
   NO_MOUNTED_TASK_LIST_ROWS,
 } from '../src/panels/task-list/taskListRowView';
+import { TaskRenderScope, type TaskRenderOutcome } from '../src/ui/taskRenderScope';
 import { freshContainer, task } from './helpers';
 
 const TODAY = '2026-06-26';
@@ -135,4 +136,55 @@ it('gives source-note headers their full physical path through the host tooltip'
   expect(mounted.element('group:source-note:Work/Projects/Unique.md')?.textContent).toBe(
     'Unique  1',
   );
+});
+
+it('waits for every owned text receipt and cancels the mount scope', async () => {
+  const scope = new TaskRenderScope(new AbortController().signal);
+  let resolve!: (outcome: TaskRenderOutcome) => void;
+  const render = {
+    settled: new Promise<TaskRenderOutcome>((r) => {
+      resolve = r;
+    }),
+    cancel: () => {
+      resolve({ type: 'cancelled' });
+    },
+  };
+  const mounted = mountTaskListRows(
+    freshContainer(),
+    rows,
+    (host, row) => {
+      scope.track(render);
+      return renderCard(host, row);
+    },
+    scope,
+  );
+  let done = false;
+  void mounted.settled.then(
+    () => {
+      done = true;
+    },
+    () => {
+      done = true;
+    },
+  );
+  await Promise.resolve();
+  expect(done).toBe(false);
+  mounted.cancel();
+  expect(await mounted.settled).toEqual({ type: 'cancelled' });
+});
+it('settles a failed mount without leaving another render pending', async () => {
+  const scope = new TaskRenderScope(new AbortController().signal);
+  let resolve!: (outcome: TaskRenderOutcome) => void;
+  const pending = {
+    settled: new Promise<TaskRenderOutcome>((r) => {
+      resolve = r;
+    }),
+    cancel: () => {
+      resolve({ type: 'cancelled' });
+    },
+  };
+  const error = new Error('render failed');
+  scope.track(pending);
+  scope.track({ settled: Promise.resolve({ type: 'failed', error }), cancel: () => {} });
+  expect(await scope.finish()).toEqual({ type: 'failed', error });
 });

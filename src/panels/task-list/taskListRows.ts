@@ -1,6 +1,6 @@
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import type { TaskLinkValues } from '../../task-lists/taskLinkValues';
-import type { TaskSnapshot } from '../../tasks';
+import { TaskSearchError, type TaskSnapshot } from '../../tasks';
 import { taskNodeLine, type TaskSelectionNode } from '../../ui/taskSelection';
 import {
   groupTasksByDate,
@@ -11,6 +11,7 @@ import {
   groupTasksByTag,
   type TaskGroup,
 } from '../../views/taskGrouping';
+import type { TaskSearchPageModel } from './TaskSearchPages';
 
 /** How the centre list groups its rows. */
 export type TaskListGrouping =
@@ -195,3 +196,28 @@ export function taskStackRowKey(stack: readonly TaskSelectionNode[]): string | u
 
 /** The order of a surface that has no list: no rows, so no ranges, arrows, or bulk menu. */
 export const NO_TASK_LIST_ROWS: TaskListRows = indexedRows([]);
+
+/** Builds only hydrated page occurrences, retaining full logical group counts on continuations. */
+export function buildTaskSearchPageRows(page: TaskSearchPageModel, groupBy: string): TaskListRows {
+  const roots = new Map(page.roots.map((root) => [root.hit.address.rootId, root.task.root]));
+  const rows: TaskListRow[] = [];
+  let previousGroup: string | undefined;
+  for (const occurrence of page.occurrences) {
+    const group = occurrence.group;
+    if (group !== null && group.key !== previousGroup) {
+      rows.push({
+        kind: 'group',
+        key: `group:${groupBy}:${group.key}`,
+        label: group.label,
+        count: page.groupCounts.get(group.key) ?? 0,
+        first: rows.length === 0,
+        ...(groupBy === 'source-note' ? { sourcePath: group.key } : {}),
+      });
+      previousGroup = group.key;
+    }
+    const task = roots.get(occurrence.address.rootId);
+    if (task === undefined) throw new TaskSearchError('stale', 'Page root missing');
+    rows.push(taskRow(task, occurrence.key));
+  }
+  return indexedRows(rows);
+}

@@ -46,6 +46,8 @@ import {
   useRealMoment,
 } from './helpers';
 import { taskCommandsOf } from './support/panelHarness';
+import { canonicalSearchForIndex } from './support/taskSearchHarness';
+import { searchUiCompleted } from './support/taskSearchUiHarness';
 
 function workspaceState(app: App): { activeLeaf: WorkspaceLeaf | null } {
   return app.workspace;
@@ -4277,4 +4279,46 @@ describe('PanelView', () => {
       expect(stack).toHaveLength(1);
     });
   });
+});
+
+it('injects the actual canonical service into a mounted PanelView Search owner', async () => {
+  const app = await createAppWithFiles({ 'tasks.md': '- [ ] needle' });
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const application = configuredTaskApplication(app, settings);
+  await application.index.initialize();
+  const search = canonicalSearchForIndex(application.index);
+  const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+  const view = new PanelView(
+    leaf,
+    settings,
+    makeTagManager(app),
+    application.index,
+    application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+    application.statusRegistry,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    search,
+  );
+  activeDocument.body.append(view.containerEl);
+  try {
+    await view.onOpen();
+    const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+    state.set('mode', 'search');
+    const input = expectDefined(
+      view.contentEl.querySelector<HTMLInputElement>('.abyss-search-global'),
+    );
+    input.value = 'needle';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await searchUiCompleted(
+      view.contentEl.querySelector<HTMLElement>('.abyss-center') ?? view.contentEl,
+    );
+    expect(view.contentEl.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+  } finally {
+    await view.onClose();
+    search.dispose();
+    application.index.destroy();
+    view.containerEl.remove();
+  }
 });

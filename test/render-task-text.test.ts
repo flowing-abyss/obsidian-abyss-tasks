@@ -1,7 +1,7 @@
 import { Component, MarkdownRenderer, Menu, type App, type MenuItem } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderTaskText } from '../src/ui/renderTaskText';
-import { expectDefined } from './helpers';
+import { deferred, expectDefined } from './helpers';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -106,19 +106,18 @@ describe('renderTaskText link occurrence pairing', () => {
     expect(onEditLink).not.toHaveBeenCalled();
   });
 
-  it('cancels pending link wiring when its row component is unloaded', () => {
+  it('cancels pending link wiring when its row component is unloaded', async () => {
     vi.useFakeTimers();
     vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
     const component = new Component();
     component.load();
-    renderTaskText(document.body.createDiv(), '[[Project]]', {
+    const receipt = renderTaskText(document.body.createDiv(), '[[Project]]', {
       app: {} as App,
       sourcePath: 'tasks.md',
       component,
     });
-    expect(vi.getTimerCount()).toBe(1);
     component.unload();
-    expect(vi.getTimerCount()).toBe(0);
+    expect(await receipt.settled).toEqual({ type: 'cancelled' });
   });
 
   it('identifies hover-link events with the abyss-tasks plugin ID', async () => {
@@ -238,4 +237,136 @@ describe('renderTaskText link occurrence pairing', () => {
       expect.objectContaining({ raw, index: source.lastIndexOf(raw) }),
     );
   });
+});
+
+describe('task text render receipts', () => {
+  it('settles only after actual Markdown completion, unwrapping, link wiring and callback', async () => {
+    let finish!: () => void;
+    const openLinkText = vi.fn().mockResolvedValue(undefined);
+    const app = {
+      workspace: { openLinkText },
+    } as unknown as App;
+    const component = new Component();
+    component.load();
+    const el = document.body.createDiv();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _text, holder) => {
+      await new Promise<void>((r) => {
+        finish = r;
+      });
+      holder
+        .createEl('p')
+        .createEl('a', { cls: 'internal-link', text: 'Alias', attr: { 'data-href': 'Note' } });
+    });
+    const callback = vi.fn();
+    const receipt = renderTaskText(el, '[[Note|Alias]]', {
+      app,
+      sourcePath: 'a.md',
+      component,
+      onRendered: callback,
+    });
+    let settled = false;
+    void receipt.settled.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finish();
+    expect(await receipt.settled).toEqual({ type: 'ready' });
+    expect(el.querySelector('p')).toBeNull();
+    expect(callback).toHaveBeenCalledWith(el.querySelector('.abyss-md'));
+    expectDefined(el.querySelector('a')).dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true }),
+    );
+    await Promise.resolve();
+    expect(openLinkText).toHaveBeenCalledWith('Note', 'a.md', false);
+    component.unload();
+    el.remove();
+  });
+  it('cancels promptly on replacement and suppresses late callbacks', async () => {
+    let finish!: () => void;
+    const component = new Component();
+    component.load();
+    const el = document.body.createDiv();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async () => {
+      await new Promise<void>((r) => {
+        finish = r;
+      });
+    });
+    const callback = vi.fn();
+    const receipt = renderTaskText(el, '[[Note]]', {
+      app: {} as App,
+      sourcePath: 'a.md',
+      component,
+      onRendered: callback,
+    });
+    const next = renderTaskText(el, 'plain', {
+      presentation: 'title',
+      app: {} as App,
+      sourcePath: 'a.md',
+      component,
+    });
+    expect(el.textContent).toBe('plain');
+    expect(await receipt.settled).toEqual({ type: 'cancelled' });
+    expect(await next.settled).toEqual({ type: 'ready' });
+    finish();
+    await Promise.resolve();
+    expect(callback).not.toHaveBeenCalled();
+    component.unload();
+    el.remove();
+  });
+});
+
+it.each(['signal', 'detach', 'unload'] as const)(
+  'settles pending Markdown as cancelled on %s',
+  async (kind) => {
+    const component = new Component();
+    component.load();
+    const el = document.body.createDiv();
+    const signal = new AbortController();
+    const finish = deferred<void>();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async () => {
+      await finish.promise;
+    });
+    const callback = vi.fn();
+    const receipt = renderTaskText(el, '[[Note]]', {
+      app: {} as App,
+      component,
+      sourcePath: 'a.md',
+      signal: signal.signal,
+      onRendered: callback,
+    });
+    if (kind === 'signal') signal.abort();
+    else if (kind === 'detach') el.remove();
+    else component.unload();
+    expect(await receipt.settled).toEqual({ type: 'cancelled' });
+    finish.resolve();
+    await Promise.resolve();
+    expect(callback).not.toHaveBeenCalled();
+    component.unload();
+    el.remove();
+  },
+);
+it('reports onRendered callback failure in the render receipt', async () => {
+  const component = new Component();
+  component.load();
+  const el = document.body.createDiv();
+  const error = new Error('callback failed');
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
+  const receipt = renderTaskText(el, '[[Note]]', {
+    app: {} as App,
+    component,
+    sourcePath: 'a.md',
+    onRendered: () => {
+      throw error;
+    },
+  });
+  expect(await receipt.settled).toEqual({ type: 'failed', error });
+  component.unload();
+  el.remove();
 });

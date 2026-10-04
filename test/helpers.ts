@@ -262,6 +262,10 @@ function timeTrackingQueryApi(getTasks: () => readonly TaskSnapshot[]): TimeTrac
 
 export function taskQueryApi(overrides: Partial<TestTaskQueries> = {}): TestTaskQueries {
   const api: TestTaskQueries = {
+    prepareDependencies: async () => {
+      if (api.listNodes().length > 0)
+        throw new Error('Dependency readiness requires configuredTaskApplication');
+    },
     listNodes: (query) => enumerateTaskNodes(api.list(query)),
     observedTags: () => collectTaskNodeTags(api.listNodes()),
     dependencySummary: (target) => {

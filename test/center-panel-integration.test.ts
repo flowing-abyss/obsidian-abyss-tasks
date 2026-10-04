@@ -59,6 +59,8 @@ import {
   setCalendarViewType,
   taskCommandsOf,
 } from './support/panelHarness';
+import { canonicalSearchForIndex } from './support/taskSearchHarness';
+import { mountCanonicalSearchUi, searchUiCompleted } from './support/taskSearchUiHarness';
 
 const TODAY = moment().format('YYYY-MM-DD');
 
@@ -91,7 +93,9 @@ function expectRootTaskPatch(
 
 useRealMoment();
 
+const searchCleanups: Array<() => void> = [];
 afterEach(() => {
+  for (const cleanup of searchCleanups.splice(0)) cleanup();
   vi.useRealTimers();
 });
 
@@ -267,11 +271,16 @@ async function makePanel(
   const state = new AppState();
   const taskApplication = configuredTaskApplication(app, settings, options);
   await taskApplication.index.initialize();
+  const search = canonicalSearchForIndex(taskApplication.index);
+  searchCleanups.push(() => {
+    search.dispose();
+  });
   const panel = new CenterPanel({
     state,
     app,
     settings,
     queries: taskApplication.index,
+    search,
     statusRegistry: taskApplication.statusRegistry,
     projectStore: null,
     projectManager: null,
@@ -300,7 +309,7 @@ describe('CenterPanel task-card primary row', () => {
       source: { filePath: 'regular-tasks.md', line: 4 },
     });
     const state = new AppState();
-    state.set('mode', 'search');
+    state.set('selectedList', { type: 'project', path: snapshot.source.filePath });
     state.set('searchQuery', 'Migaku');
     const panel = makeStaticPanel(state, [snapshot]);
     addIcon('x', '<svg data-lucide="x"><path d="M18 6 6 18M6 6l12 12" /></svg>');
@@ -359,7 +368,7 @@ describe('CenterPanel task-card primary row', () => {
       source: { filePath: 'inbox.md', line: 2 },
     });
     const state = new AppState();
-    state.set('mode', 'search');
+    state.set('selectedList', { type: 'project', path: snapshot.source.filePath });
     state.set('searchQuery', 'Ordinary');
     const panel = makeStaticPanel(state, [snapshot]);
     try {
@@ -385,7 +394,7 @@ describe('CenterPanel task-card primary row', () => {
       source: { filePath: 'inbox.md', line: 3 },
     });
     const state = new AppState();
-    state.set('mode', 'search');
+    state.set('selectedList', { type: 'project', path: snapshot.source.filePath });
     state.set('searchQuery', 'deliberately');
     const panel = makeStaticPanel(state, [snapshot]);
     try {
@@ -1289,7 +1298,7 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
     }
   });
 
-  it('installs a complete interactive grouped list with bounded attached-list mutations', () => {
+  it('installs a complete interactive grouped list with bounded attached-list mutations', async () => {
     vi.useFakeTimers();
     vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
       holder.createEl('p', undefined, (paragraph) => {
@@ -1326,7 +1335,7 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       const observer = new MutationObserver(() => {});
       observer.observe(scroll, { childList: true });
 
-      state.set('centerFilter', 'task');
+      panel.refresh();
 
       const attachedListRecords = observer.takeRecords();
       expect(attachedListRecords.length).toBeLessThanOrEqual(2);
@@ -1341,7 +1350,7 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       expect(cards.every((card) => card.getAttribute('draggable') === 'true')).toBe(true);
       const markdownHolder = expectDefined(scroll.querySelector<HTMLElement>('.abyss-md'));
       expect(markdownHolder.isConnected).toBe(true);
-      vi.runAllTimers();
+      await vi.advanceTimersByTimeAsync(0);
       expect(markdownHolder.querySelector(':scope > p')).toBeNull();
 
       expectDefined(cards[1]).click();
@@ -1722,7 +1731,7 @@ describe('CenterPanel shared list capture', () => {
   );
 
   it('remounts the active draft and focus across a full CenterPanel rerender', async () => {
-    const { panel, state, sessionExecute } = captureHarness(async () => successfulCapture());
+    const { panel, sessionExecute } = captureHarness(async () => successfulCapture());
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
@@ -1731,7 +1740,7 @@ describe('CenterPanel shared list capture', () => {
       setCaptureDraft(before, 'survive the render');
       before.focus();
 
-      state.set('centerFilter', 'force full render');
+      panel.refresh();
 
       const after = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input');
       expect(after).not.toBe(before);
@@ -1842,7 +1851,7 @@ describe('CenterPanel shared list capture', () => {
 
   it('keeps an escaped pending failure editable on only the remounted surface', async () => {
     const result = deferred<TaskCommandResult>();
-    const { panel, state, sessionExecute } = captureHarness(() => result.promise);
+    const { panel, sessionExecute } = captureHarness(() => result.promise);
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
@@ -1852,7 +1861,7 @@ describe('CenterPanel shared list capture', () => {
       before.focus();
       pressCaptureKey(before, 'Enter');
       pressCaptureKey(before, 'Escape');
-      state.set('centerFilter', 'rerender while pending');
+      panel.refresh();
 
       const after = expectDefined(
         container.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
@@ -2243,45 +2252,16 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
 describe('CenterPanel.renderSearch', () => {
   fixedToday('2026-06-25');
 
-  function withQueuedAnimationFrames(
-    run: (flush: () => void, callbacks: Map<number, FrameRequestCallback>) => void,
-  ): void {
-    const callbacks = new Map<number, FrameRequestCallback>();
-    let nextFrame = 1;
-    const requestAnimationFrame = methodOf(window, 'requestAnimationFrame');
-    const cancelAnimationFrame = methodOf(window, 'cancelAnimationFrame');
-    window.requestAnimationFrame = (callback: FrameRequestCallback): number => {
-      const frame = nextFrame++;
-      callbacks.set(frame, callback);
-      return frame;
-    };
-    window.cancelAnimationFrame = (frame: number): void => {
-      callbacks.delete(frame);
-    };
-
-    try {
-      run(() => {
-        const queued = [...callbacks.entries()];
-        callbacks.clear();
-        for (const [, callback] of queued) callback(0);
-      }, callbacks);
-    } finally {
-      window.requestAnimationFrame = requestAnimationFrame;
-      window.cancelAnimationFrame = cancelAnimationFrame;
-    }
-  }
-
-  it('releases non-composing Escape from Search without changing the query or results', () => {
+  it('releases non-composing Escape from Search without changing the query or results', async () => {
     vi.useFakeTimers();
-    const state = new AppState();
-    const panel = makeStaticPanel(state, [
-      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
-      task({ title: 'walk dog', source: { filePath: 'b.md', line: 0 } }),
-    ]);
-    const container = freshContainer();
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': '- [ ] buy milk', 'b.md': '- [ ] walk dog' },
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    const { state, panel } = h;
+    const container = h.root;
     const ownerDocument = container.ownerDocument;
     ownerDocument.body.append(container);
-    panel.mount(container);
     panel['navigation_abyssPrivate'].openSearch();
     vi.runOnlyPendingTimers();
     const input = expectDefined(
@@ -2300,11 +2280,9 @@ describe('CenterPanel.renderSearch', () => {
 
     try {
       expect(ownerDocument.activeElement).toBe(input);
-      withQueuedAnimationFrames((flush) => {
-        input.value = 'milk';
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        flush();
-      });
+      h.query('milk');
+      await vi.advanceTimersByTimeAsync(100);
+      await h.completed();
       const resultText = expectDefined(
         panel['el'].querySelector<HTMLElement>('.abyss-center-scroll'),
       ).textContent;
@@ -2337,8 +2315,7 @@ describe('CenterPanel.renderSearch', () => {
       expect(state.get('mode')).toBe('projects');
     } finally {
       router.destroy();
-      panel.destroy();
-      container.remove();
+      h.dispose();
     }
   });
 
@@ -2381,272 +2358,110 @@ describe('CenterPanel.renderSearch', () => {
     }
   });
 
-  it('renders matching task cards for a query', () => {
-    const tasks = [
-      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
-      task({ title: 'walk dog', source: { filePath: 'b.md', line: 0 } }),
-    ];
-    const state = new AppState();
-    state.set('mode', 'search');
-    state.set('searchQuery', 'milk');
-    const panel = makeStaticPanel(state, tasks);
-    panel.mount(freshContainer());
-    const cards = panel['el'].querySelectorAll('.abyss-task-card');
-    expect(cards).toHaveLength(1);
-    // Title renders via MarkdownRenderer (mocked as a noop in tests), so identity
-    // is asserted via the card's stable file-path/line dataset instead of title text.
-    expect(cards[0]?.querySelector('.abyss-task-title')).toBeTruthy();
-    expect((cards[0] as HTMLElement).dataset['filePath']).toBe('a.md');
-    expect((cards[0] as HTMLElement).dataset['line']).toBe('0');
-    panel.destroy();
-  });
-
-  it('searches the persisted query list without requesting calendar projections', () => {
-    const persisted = task({
-      title: 'forecast boundary needle',
-      recurrence: 'every day',
-      planning: { due: '2026-06-01' },
-      source: { filePath: 'persisted.md', line: 4 },
-    });
-    const source = {
-      root: persisted,
-      target: { type: 'task' as const, ref: persisted.ref },
-      node: persisted,
-    };
-    const list = vi.fn(() => [persisted]);
-    const forCalendarProjection = vi.fn(() => ({
-      materialized: [source],
-      recurringSources: [source],
-    }));
-    const queries = taskQueryApi({ list, forCalendarProjection });
-    const state = new AppState();
-    state.set('mode', 'search');
-    state.set('searchQuery', 'needle');
-    const panel = new CenterPanel({
-      state,
-      app: {} as App,
-      settings: DEFAULT_SETTINGS,
-      queries,
-      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-    });
-
-    panel.mount(freshContainer());
-
-    expect(panel['el'].querySelectorAll('.abyss-task-card')).toHaveLength(1);
-    expect(panel['el'].querySelector<HTMLElement>('.abyss-task-card')?.dataset['filePath']).toBe(
-      'persisted.md',
-    );
-    expect(list).toHaveBeenCalled();
-    expect(forCalendarProjection).not.toHaveBeenCalled();
-    panel.destroy();
-  });
-
-  it('keeps the live search input mounted and coalesces result refreshes into one frame', () => {
-    const tasks = [
-      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
-      task({ title: 'walk dog', source: { filePath: 'b.md', line: 0 } }),
-    ];
-    const state = new AppState();
-    state.set('mode', 'search');
-    const panel = makeStaticPanel(state, tasks);
-    const container = freshContainer();
-    document.body.append(container);
-    panel.mount(container);
-    const originalInput = expectDefined(
-      panel['el'].querySelector<HTMLInputElement>('.abyss-search-global'),
-    );
-    originalInput.focus();
-    const renderSpy = vi.spyOn(
-      panel as unknown as { render_abyssPrivate: () => void },
-      'render_abyssPrivate',
-    );
-    const renderFlatSpy = vi.spyOn(
-      panel as unknown as {
-        renderFlat_abyssPrivate: (host: HTMLElement, tasks: TaskSnapshot[]) => void;
+  it('renders canonical matches without calendar projection or full-list clones', async () => {
+    const h = await mountCanonicalSearchUi(
+      {
+        'persisted.md': '- [ ] forecast boundary needle 🔁 every day 📅 2026-06-01',
+        'other.md': '- [ ] walk dog',
       },
-      'renderFlat_abyssPrivate',
+      structuredClone(DEFAULT_SETTINGS),
     );
-
-    withQueuedAnimationFrames((flush) => {
-      originalInput.value = 'mil';
-      originalInput.dispatchEvent(new Event('input', { bubbles: true }));
-      originalInput.value = 'milk';
-      originalInput.dispatchEvent(new Event('input', { bubbles: true }));
-      flush();
-    });
-
-    expect(panel['el'].querySelector('.abyss-search-global')).toBe(originalInput);
-    expect(document.activeElement).toBe(originalInput);
-    expect(originalInput.value).toBe('milk');
-    expect(panel['el'].querySelectorAll('.abyss-task-card')).toHaveLength(1);
-    expect(renderSpy).not.toHaveBeenCalled();
-    expect(renderFlatSpy).toHaveBeenCalledTimes(1);
-    panel.destroy();
-    container.remove();
-  });
-
-  it('preserves the live search shell and coalesces task-index refreshes into one frame', () => {
-    const tasks = [
-      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
-      task({ title: 'walk dog', source: { filePath: 'b.md', line: 0 } }),
-    ];
-    const state = new AppState();
-    state.set('mode', 'search');
-    state.set('searchQuery', 'milk');
-    const panel = makeStaticPanel(state, tasks);
-    const container = freshContainer();
-    document.body.append(container);
-    panel.mount(container);
-    const originalInput = expectDefined(
-      panel['el'].querySelector<HTMLInputElement>('.abyss-search-global'),
-    );
-    originalInput.focus();
-    originalInput.setSelectionRange(1, 3);
-    const renderFlatSpy = vi.spyOn(
-      panel as unknown as {
-        renderFlat_abyssPrivate: (host: HTMLElement, tasks: TaskSnapshot[]) => void;
-      },
-      'renderFlat_abyssPrivate',
-    );
-
-    tasks.splice(
-      0,
-      tasks.length,
-      task({ title: 'walk dog', source: { filePath: 'b.md', line: 0 } }),
-      task({ title: 'milk delivery', source: { filePath: 'c.md', line: 0 } }),
-    );
-
-    withQueuedAnimationFrames((flush, callbacks) => {
-      panel.refresh();
-      panel.refresh();
-
-      expect(callbacks).toHaveLength(1);
-      expect(panel['el'].querySelector('.abyss-search-global')).toBe(originalInput);
-      expect(panel['el'].querySelector<HTMLElement>('.abyss-task-card')?.dataset['filePath']).toBe(
-        'a.md',
+    try {
+      const calendar = vi.spyOn(h.index, 'forCalendarProjection').mockImplementation(() => {
+        throw new Error('Calendar read');
+      });
+      vi.spyOn(h.index, 'list').mockImplementation(() => {
+        throw new Error('Full task read');
+      });
+      h.query('needle');
+      await vi.advanceTimersByTimeAsync(100);
+      await h.completed();
+      expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+      expect(h.root.querySelector<HTMLElement>('.abyss-task-card')?.dataset['filePath']).toBe(
+        'persisted.md',
       );
-      flush();
-    });
-
-    expect(panel['el'].querySelector('.abyss-search-global')).toBe(originalInput);
-    expect(document.activeElement).toBe(originalInput);
-    expect(originalInput.value).toBe('milk');
-    expect(originalInput.selectionStart).toBe(1);
-    expect(originalInput.selectionEnd).toBe(3);
-    expect(panel['el'].querySelectorAll('.abyss-task-card')).toHaveLength(1);
-    expect(panel['el'].querySelector<HTMLElement>('.abyss-task-card')?.dataset['filePath']).toBe(
-      'c.md',
+      expect(calendar).not.toHaveBeenCalled();
+    } finally {
+      h.dispose();
+    }
+  });
+  it('retains live input and coalesces query and organization refreshes with the owner debounce', async () => {
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': '- [ ] milk\n- [ ] dog' },
+      structuredClone(DEFAULT_SETTINGS),
     );
-    expect(renderFlatSpy).toHaveBeenCalledTimes(1);
-    panel.destroy();
-    container.remove();
+    try {
+      const input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-search-global'));
+      const open = vi.spyOn(h.search, 'open');
+      h.query('m');
+      h.query('mil');
+      h.query('milk');
+      h.panel.refresh();
+      h.panel.refresh();
+      expect(h.root.dataset['searchPhase']).toBe('pending');
+      expect(open).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(100);
+      await h.completed();
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(h.root.querySelector('.abyss-search-global')).toBe(input);
+      h.index.installCommittedContent('a.md', '- [ ] milk changed');
+      await vi.advanceTimersByTimeAsync(100);
+      await h.completed();
+      expect(h.root.querySelector('.abyss-search-global')).toBe(input);
+      expect(h.root.textContent).toContain('milk changed');
+    } finally {
+      h.dispose();
+    }
   });
-
-  it('leaves a queued search refresh inert after changing modes', () => {
-    const state = new AppState();
-    state.set('mode', 'search');
-    const panel = makeStaticPanel(state, [
-      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
-    ]);
-    const container = freshContainer();
-    document.body.append(container);
-    panel.mount(container);
-    const input = expectDefined(
-      panel['el'].querySelector<HTMLInputElement>('.abyss-search-global'),
+  it.each(['mode', 'dispose'] as const)(
+    'cancels a queued query on %s replacement',
+    async (kind) => {
+      const h = await mountCanonicalSearchUi(
+        { 'a.md': '- [ ] milk' },
+        structuredClone(DEFAULT_SETTINGS),
+      );
+      const open = vi.spyOn(h.search, 'open');
+      h.query('milk');
+      if (kind === 'mode') h.state.set('mode', 'tasks');
+      else h.panel.destroy();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(open).not.toHaveBeenCalled();
+      expect(h.root.querySelector('.abyss-search-global')).toBeNull();
+      h.dispose();
+    },
+  );
+  it.each([
+    ['📅 2026-06-25', 'today'],
+    ['📅 2026-07-01', 'upcoming'],
+    ['', 'inbox'],
+  ] as const)('routes canonical activation with %s planning to %s', async (planning, want) => {
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': `- [ ] buy milk ${planning}` },
+      structuredClone(DEFAULT_SETTINGS),
     );
-
-    withQueuedAnimationFrames((_flush, callbacks) => {
-      input.value = 'milk';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      expect(callbacks).toHaveLength(1);
-      const callback = expectDefined([...callbacks.values()][0]);
-      state.set('mode', 'projects');
-      expect(() => {
-        callback(0);
-      }).not.toThrow();
-    });
-
-    expect(panel['el'].querySelector('.abyss-search-global')).toBeNull();
-    expect(panel['el'].querySelectorAll('.abyss-task-card')).toHaveLength(0);
-    panel.destroy();
-    container.remove();
-  });
-
-  it('leaves a queued search refresh inert after destruction', () => {
-    const state = new AppState();
-    state.set('mode', 'search');
-    const panel = makeStaticPanel(state, [
-      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
-    ]);
-    const container = freshContainer();
-    document.body.append(container);
-    panel.mount(container);
-    const input = expectDefined(
-      panel['el'].querySelector<HTMLInputElement>('.abyss-search-global'),
-    );
-
-    withQueuedAnimationFrames((_flush, callbacks) => {
-      input.value = 'milk';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      expect(callbacks).toHaveLength(1);
-      const callback = expectDefined([...callbacks.values()][0]);
-      panel.destroy();
-      expect(() => {
-        callback(0);
-      }).not.toThrow();
-    });
-
-    expect(panel['el'].childElementCount).toBe(0);
-    container.remove();
-  });
-
-  it('clicking a result sets selectedList + mode + taskStack on state', () => {
-    const t = task({
-      title: 'buy milk',
-      planning: { due: '2026-06-25' },
-      source: { filePath: 'a.md', line: 0 },
-    });
-    const state = new AppState();
-    state.set('mode', 'search');
-    state.set('searchQuery', 'milk');
-    const panel = makeStaticPanel(state, [t]);
-    panel.mount(freshContainer());
-    const card = expectDefined(panel['el'].querySelector<HTMLElement>('.abyss-task-card'));
-    card.click();
-    expect(state.get('mode')).toBe('tasks');
-    expect(state.get('selectedList')).toBe('today');
-    const taskStack = state.get('taskStack');
-    expect(taskStack).toHaveLength(1);
-    const selected = expectDefined(taskStack[0]);
-    if (!('filePath' in selected.ref)) throw new Error('expected a root task selection');
-    expect(selected.ref.filePath).toBe(t.ref.filePath);
-    expect(selected.ref.line).toBe(t.ref.line);
-    expect(selected.title).toBe(t.title);
-    panel.destroy();
-  });
-
-  it('routes a daily-note-only search result to inbox', () => {
-    const t = task({ title: 'daily-only', presentation: {} });
-    const state = new AppState();
-    state.set('mode', 'search');
-    state.set('searchQuery', 'daily');
-    const panel = makeStaticPanel(state, [t]);
-    panel.mount(freshContainer());
-    expectDefined(panel['el'].querySelector<HTMLElement>('.abyss-task-card')).click();
-    expect(state.get('selectedList')).toBe('inbox');
-    panel.destroy();
+    try {
+      h.query('milk');
+      await vi.advanceTimersByTimeAsync(100);
+      await h.completed();
+      expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card')).click();
+      expect(h.state.get('mode')).toBe('tasks');
+      expect(h.state.get('selectedList')).toBe(want);
+      expect(h.state.get('taskStack')[0]?.title).toBe('buy milk');
+    } finally {
+      h.dispose();
+    }
   });
 });
 
 describe('CenterPanel source note chip', () => {
   fixedToday('2026-06-25');
 
-  function makeSearchPanel(
+  function makeSourcePanel(
     tasks: TaskSnapshot[],
     settingsOverrides: Partial<typeof DEFAULT_SETTINGS> = {},
   ): CenterPanel {
     const state = new AppState();
-    state.set('mode', 'search');
+    state.set('selectedList', { type: 'project', path: tasks[0]?.source.filePath ?? 'a.md' });
     state.set('searchQuery', tasks[0]?.title ?? '');
     const panel = makeStaticPanel(state, tasks, {
       ...DEFAULT_SETTINGS,
@@ -2663,7 +2478,7 @@ describe('CenterPanel source note chip', () => {
       source: { filePath: 'periodic/daily/2026-06-25.md' },
       presentation: {},
     });
-    const panel = makeSearchPanel([t], { sourceNoteDisplay: 'always' });
+    const panel = makeSourcePanel([t], { sourceNoteDisplay: 'always' });
     expect(panel['el'].querySelector('.abyss-task-source-note')).not.toBeNull();
     panel.destroy();
   });
@@ -2675,7 +2490,7 @@ describe('CenterPanel source note chip', () => {
       planning: { due: '2026-06-25' },
       source: { filePath: 'Projects/alpha.md' },
     });
-    const panel = makeSearchPanel([t], { sourceNoteDisplay: 'never' });
+    const panel = makeSourcePanel([t], { sourceNoteDisplay: 'never' });
     expect(panel['el'].querySelector('.abyss-task-source-note')).toBeNull();
     panel.destroy();
   });
@@ -2686,7 +2501,7 @@ describe('CenterPanel source note chip', () => {
       planning: { due: '2026-06-25' },
       source: { filePath: 'Projects/alpha.md' },
     });
-    const panel = makeSearchPanel([t], { sourceNoteDisplay: 'non-default' });
+    const panel = makeSourcePanel([t], { sourceNoteDisplay: 'non-default' });
     const chip = panel['el'].querySelector('.abyss-task-source-note');
     expect(chip).not.toBeNull();
     expect(chip?.textContent).toContain('alpha');
@@ -2700,7 +2515,7 @@ describe('CenterPanel source note chip', () => {
       source: { filePath: 'periodic/daily/2026-06-25.md' },
       presentation: {},
     });
-    const panel = makeSearchPanel([t], { sourceNoteDisplay: 'non-default' });
+    const panel = makeSourcePanel([t], { sourceNoteDisplay: 'non-default' });
     expect(panel['el'].querySelector('.abyss-task-source-note')?.textContent).toContain(
       '2026-06-25',
     );
@@ -2718,7 +2533,7 @@ describe('CenterPanel source note chip', () => {
         originalBlock: '- [ ] project task #work',
       },
     });
-    const panel = makeSearchPanel([t], { sourceNoteDisplay: 'always' });
+    const panel = makeSourcePanel([t], { sourceNoteDisplay: 'always' });
     const meta = panel['el'].querySelector('.abyss-task-meta-right');
     expect(meta).not.toBeNull();
     const children = Array.from(expectDefined(meta).children);
@@ -7152,7 +6967,8 @@ describe('CenterPanel actual centre focus continuity', () => {
     try {
       h.state.set('searchQuery', 'first');
       h.state.set('mode', 'search');
-      await vi.advanceTimersByTimeAsync(25);
+      await vi.advanceTimersByTimeAsync(100);
+      await searchUiCompleted(h.el);
       expectDefined(h.el.querySelector<HTMLElement>('.abyss-task-title')).click();
       expect(h.state.get('mode')).toBe('tasks');
       expect(h.state.get('selectedList')).toBe('today');

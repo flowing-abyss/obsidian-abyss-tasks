@@ -31,6 +31,9 @@ import {
 } from './helpers';
 import { setCalendarDate, setCalendarViewType } from './support/panelHarness';
 
+import { canonicalSearchForIndex } from './support/taskSearchHarness';
+import { searchUiCompleted } from './support/taskSearchUiHarness';
+
 useRealMoment();
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -130,11 +133,16 @@ async function harness(markdown: string) {
 
 type Harness = Awaited<ReturnType<typeof harness>>;
 function mountCenter(h: Harness, queries: TaskApplicationApi['queries'] = h.index): CenterPanel {
+  const search = canonicalSearchForIndex(h.index);
+  cleanups.push(() => {
+    search.dispose();
+  });
   const panel = new CenterPanel({
     state: h.state,
     app: h.app,
     settings: { ...DEFAULT_SETTINGS, inbox: { ...DEFAULT_SETTINGS.inbox, mode: 'untagged' } },
     queries,
+    search,
     statusRegistry: h.statusRegistry,
     projectStore: null,
     projectManager: null,
@@ -313,7 +321,7 @@ const surfaceNames = [
   'inspector-subtask',
 ] as const;
 type Surface = (typeof surfaceNames)[number];
-function mountSurface(h: Harness, surface: Surface): HTMLElement {
+async function mountSurface(h: Harness, surface: Surface): Promise<HTMLElement> {
   const task = h.node('Current').root;
   if (surface === 'center' || surface === 'search') {
     if (surface === 'search') {
@@ -321,6 +329,7 @@ function mountSurface(h: Harness, surface: Surface): HTMLElement {
       h.state.set('searchQuery', 'Current');
     }
     mountCenter(h);
+    if (surface === 'search') await searchUiCompleted(h.el);
     return expectDefined(
       [...h.el.querySelectorAll<HTMLElement>('.abyss-task-card')].find(
         (row) => row.querySelector('.abyss-task-title')?.textContent === 'Current',
@@ -371,7 +380,7 @@ function markdownFor(surface: Surface, duplicate = false): string {
 describe('strict dependency checkbox surfaces', () => {
   it('keeps search mounted when a blocked marker SVG receives the pointer click', async () => {
     const h = await harness(markdownFor('search'));
-    const row = mountSurface(h, 'search');
+    const row = await mountSurface(h, 'search');
     const marker = element(row, '.abyss-status-marker');
     const icon = marker.createSvg('svg');
     icon.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -389,7 +398,7 @@ describe('strict dependency checkbox surfaces', () => {
         '- [ ] Current ⛔ schema 🔁 tomorrow 🏁 delete 📅 2026-09-05\n- [ ] Write schema 🆔 schema\n',
       );
       expect(h.node('Current').node.onCompletion).toBe('delete');
-      mountSurface(h, surface);
+      await mountSurface(h, surface);
       const control = element(h.el, '[role="checkbox"]');
       control.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
@@ -411,7 +420,7 @@ describe('strict dependency checkbox surfaces', () => {
         .replace('⛔ schema', '⛔ schema, missing')
         .replace('- [ ] Write schema', '- [x] Write schema');
       const h = await harness(markdown);
-      const row = mountSurface(h, surface);
+      const row = await mountSurface(h, surface);
       expect(row.querySelector('[aria-disabled="true"]')).toBeNull();
       expect(row.querySelector('.abyss-dep-indicator')).toBeNull();
       element(row, '[role="checkbox"]').click();
@@ -522,7 +531,7 @@ describe('strict dependency checkbox surfaces', () => {
     '$surface suppresses $activation and synthesized clicks before dispatch',
     async ({ surface, activation }) => {
       const h = await harness(markdownFor(surface, true));
-      const row = mountSurface(h, surface);
+      const row = await mountSurface(h, surface);
       const marker = element(row, '.abyss-status-marker');
       const before = await h.app.vault.read(h.file);
       physicalActivation(marker, activation);
@@ -550,7 +559,7 @@ describe('strict dependency checkbox surfaces', () => {
 
   it('keyboard completion and each menu completion status report one deterministic blocked Notice', async () => {
     const h = await harness(markdownFor('center'));
-    const row = mountSurface(h, 'center');
+    const row = await mountSurface(h, 'center');
     const control = element(row, '[role="checkbox"]');
     control.dispatchEvent(
       new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }),

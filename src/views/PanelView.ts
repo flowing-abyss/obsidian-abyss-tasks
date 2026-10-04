@@ -29,6 +29,7 @@ import type {
   TaskQueryApi,
   TaskRef,
   TaskResolution,
+  TaskSearchApi,
   TaskSnapshot,
   TimeTrackingQueryApi,
 } from '../tasks';
@@ -106,6 +107,7 @@ type PanelViewDependencies = [
   commentTimeContext?: CommentTimeContextProvider,
   onSaveViewState?: () => Promise<void>,
   projectManager?: ProjectManager,
+  search?: TaskSearchApi,
 ];
 
 function hasFinitePositiveBounds(bounds: DOMRect): boolean {
@@ -179,6 +181,7 @@ export class PanelView extends ItemView {
   private readonly compactPaneAccess_abyssPrivate: CompactPaneAccess;
   private readonly settings_abyssPrivate: CalendarSettings;
   private readonly tagManager_abyssPrivate: TagManager;
+  private readonly search_abyssPrivate: TaskSearchApi | undefined;
   private readonly queries_abyssPrivate: TaskQueryApi & TimeTrackingQueryApi;
   private readonly tasks_abyssPrivate: TaskApplicationApi & TaskCaptureApplicationApi;
   private readonly statusRegistry_abyssPrivate: StatusRegistry;
@@ -201,8 +204,10 @@ export class PanelView extends ItemView {
       commentTimeContext,
       onSaveViewState = async () => {},
       projectManager,
+      search,
     ] = dependencies;
     this.settings_abyssPrivate = settings;
+    this.search_abyssPrivate = search;
     this.tagManager_abyssPrivate = tagManager;
     this.queries_abyssPrivate = queries;
     this.tasks_abyssPrivate = tasks;
@@ -533,6 +538,7 @@ export class PanelView extends ItemView {
       onSaveViewState: this.onSaveViewState_abyssPrivate,
     });
     this.center_abyssPrivate = new CenterPanel({
+      ...(this.search_abyssPrivate === undefined ? {} : { search: this.search_abyssPrivate }),
       state: this.state_abyssPrivate,
       app: this.app,
       settings: this.settings_abyssPrivate,
@@ -589,7 +595,7 @@ export class PanelView extends ItemView {
   private registerProjectUpdates_abyssPrivate(projectStore: ProjectStore): void {
     this.projectStoreUnsub_abyssPrivate = projectStore.onUpdate(() => {
       this.left_abyssPrivate.refresh();
-      if (this.state_abyssPrivate.get('mode') === 'projects') this.center_abyssPrivate.refresh();
+      this.center_abyssPrivate.refresh();
     });
   }
 

@@ -450,6 +450,8 @@ export default defineConfig(
       'src/panels/calendar/calendarContent.ts',
       'src/views/panelTitle.ts',
       'src/views/taskGrouping.ts',
+      'src/task-lists/taskSearchOrganization.ts',
+      'src/panels/center/SearchViewState.ts',
       'src/panels/task-list/taskListRows.ts',
       'src/task-lists/taskLinkValues.ts',
       'src/markdown/linkTarget.ts',

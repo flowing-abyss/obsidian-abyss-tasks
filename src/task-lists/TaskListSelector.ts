@@ -21,7 +21,7 @@ import { todayTaskCategory } from './todayTaskCategory';
 
 export interface TaskListSelectionInput {
   readonly tasks: readonly TaskSnapshot[];
-  readonly selection: ListSelection;
+  readonly selection: ListSelection | null;
   readonly viewState: ListViewState;
   readonly settings: CalendarSettings;
   readonly today: LocalDate;
@@ -32,34 +32,56 @@ export interface TaskListSelectionInput {
 }
 
 /** What an ordering needs beyond the tasks themselves, read once rather than per comparison. */
-interface TaskOrder {
-  readonly input: TaskListSelectionInput;
-  /** Distinct outgoing labels/identities in canonical order, derived before comparisons. */
-  readonly linkOrder: ReadonlyMap<TaskSnapshot, readonly TaskLinkValue[]>;
-  /** Tracked totals by task, so a sort walks each subtree once instead of on every comparison. */
-  readonly trackedMs: ReadonlyMap<TaskSnapshot, number>;
+export type TaskListValue = Pick<
+  TaskSnapshot,
+  'title' | 'planning' | 'tags' | 'status' | 'statusSymbol' | 'priority'
+> & { readonly source: Pick<TaskSnapshot['source'], 'filePath' | 'line'> };
+
+export interface TaskValueSelectionInput<T extends TaskListValue> {
+  readonly tasks: readonly T[];
+  readonly selection: ListSelection | null;
+  readonly viewState: ListViewState;
+  readonly settings: CalendarSettings;
+  readonly today: LocalDate;
+  readonly nowMs: number;
+  readonly outgoingLinks?: TaskLinkValues;
+  readonly treeTags: (task: T) => readonly string[];
+  readonly trackedMs: (task: T) => number;
 }
 
-function dateOf(task: TaskSnapshot): string | undefined {
+interface TaskOrder<T extends TaskListValue> {
+  readonly input: TaskValueSelectionInput<T>;
+  /** Distinct outgoing labels/identities in canonical order, derived before comparisons. */
+  readonly linkOrder: ReadonlyMap<T, readonly TaskLinkValue[]>;
+  /** Tracked totals by task, so a sort walks each subtree once instead of on every comparison. */
+  readonly trackedMs: ReadonlyMap<T, number>;
+}
+
+function dateOf(task: TaskListValue): string | undefined {
   return task.planning.due ?? task.planning.scheduled ?? task.planning.start;
 }
 
 interface SelectionContext {
-  readonly selection: ListSelection;
+  readonly selection: ListSelection | null;
   readonly settings: CalendarSettings;
   readonly today: LocalDate;
   readonly groups: readonly EffectiveTagGroup[];
 }
 
-function selected(task: TaskSnapshot, context: SelectionContext): boolean {
+function selected(
+  task: TaskListValue,
+  treeTags: readonly string[],
+  context: SelectionContext,
+): boolean {
   const { selection, settings, today, groups } = context;
+  if (selection === null) return true;
   if (selection === 'inbox' || selection === 'today' || selection === 'upcoming') {
     return selectedNamedList(task, selection, settings, today);
   }
   if (typeof selection === 'string') return true;
-  if (selection.type === 'tag') return taskTreeHasTag(task, selection.tag);
+  if (selection.type === 'tag') return treeTags.some((tag) => sameTag(tag, selection.tag));
   if (selection.type === 'project') return task.source.filePath === selection.path;
-  return selectedTagGroup(task, selection.groupId, groups);
+  return selectedTagGroup(treeTags, selection.groupId, groups);
 }
 
 function visitTaskTags(
@@ -68,10 +90,6 @@ function visitTaskTags(
 ): boolean {
   if (node.tags.some(visit)) return true;
   return node.subtasks.some((child) => visitTaskTags(child, visit));
-}
-
-function taskTreeHasTag(task: TaskSnapshot, tag: string): boolean {
-  return visitTaskTags(task, (candidate) => sameTag(candidate, tag));
 }
 
 function taskTreeTags(task: TaskSnapshot): readonly string[] {
@@ -84,7 +102,7 @@ function taskTreeTags(task: TaskSnapshot): readonly string[] {
 }
 
 function selectedNamedList(
-  task: TaskSnapshot,
+  task: TaskListValue,
   selection: 'inbox' | 'today' | 'upcoming',
   settings: CalendarSettings,
   today: LocalDate,
@@ -95,7 +113,7 @@ function selectedNamedList(
   return date !== undefined && date > today;
 }
 
-function selectedInbox(task: TaskSnapshot, settings: CalendarSettings): boolean {
+function selectedInbox(task: TaskListValue, settings: CalendarSettings): boolean {
   const normalized = normalizeTaskTagInput(settings.inbox.tag);
   const inboxTag = normalized?.length === 1 ? normalized[0] : undefined;
   const tagged =
@@ -107,7 +125,7 @@ function selectedInbox(task: TaskSnapshot, settings: CalendarSettings): boolean 
 }
 
 function selectedTagGroup(
-  task: TaskSnapshot,
+  treeTags: readonly string[],
   groupId: string,
   groups: readonly EffectiveTagGroup[],
 ): boolean {
@@ -129,15 +147,15 @@ function selectedTagGroup(
         ) === key,
     );
   if (group == null) return false;
-  return visitTaskTags(task, (tag) => tagMatchesGroup(tag, group));
+  return treeTags.some((tag) => tagMatchesGroup(tag, group));
 }
 
-function statusTypeOf(task: TaskSnapshot): TaskStatusType {
+function statusTypeOf(task: TaskListValue): TaskStatusType {
   if (task.status === 'open') return 'todo';
   return task.status;
 }
 
-function matchesProperty(task: TaskSnapshot, filter: PropertyFilter): boolean {
+function matchesProperty(task: TaskListValue, filter: PropertyFilter): boolean {
   if (filter.type === 'tag') {
     return task.tags.some((candidate) => sameTag(candidate, filter.value));
   }
@@ -179,7 +197,7 @@ function compareLinkSequence(
   return left.length - right.length;
 }
 
-function compareCreated(left: TaskSnapshot, right: TaskSnapshot): number {
+function compareCreated(left: TaskListValue, right: TaskListValue): number {
   const a = left.planning.created;
   const b = right.planning.created;
   if (a === b) return 0;
@@ -188,12 +206,12 @@ function compareCreated(left: TaskSnapshot, right: TaskSnapshot): number {
   return a.localeCompare(b);
 }
 
-function compareDate(left: TaskSnapshot, right: TaskSnapshot): number {
+function compareDate(left: TaskListValue, right: TaskListValue): number {
   const dateOrder = compareOptional(dateOf(left), dateOf(right));
   return dateOrder !== 0 ? dateOrder : compareOptional(left.planning.time, right.planning.time);
 }
 
-function compare(left: TaskSnapshot, right: TaskSnapshot, order: TaskOrder): number {
+function compare<T extends TaskListValue>(left: T, right: T, order: TaskOrder<T>): number {
   const { input } = order;
   const field = input.viewState.sortBy.field;
   if (field === 'date') return compareDate(left, right);
@@ -214,28 +232,11 @@ function compare(left: TaskSnapshot, right: TaskSnapshot, order: TaskOrder): num
   return statusOrder(left.statusSymbol) - statusOrder(right.statusSymbol);
 }
 
-const NO_TRACKED_TOTALS: ReadonlyMap<TaskSnapshot, number> = new Map();
-
-/**
- * Time on a task and everything under it, read once per task. A comparison is asked for it
- * O(n log n) times, so reading it here keeps a long list to one subtree walk per task and keeps
- * every row of the same pass on the one instant the caller supplied.
- */
-function trackedTotals(
-  tasks: readonly TaskSnapshot[],
-  nowMs: number,
-): ReadonlyMap<TaskSnapshot, number> {
-  const totals = new Map<TaskSnapshot, number>();
-  for (const task of tasks) totals.set(task, totalMs(subtreeTotal(task), nowMs));
-  return totals;
-}
-
-export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnapshot[] {
+export function filterTaskValues<T extends TaskListValue>(input: TaskValueSelectionInput<T>): T[] {
   const allowed = input.viewState.statusGroups;
-  const query = input.textQuery?.toLowerCase() ?? '';
-  const groups = resolveEffectiveTagGroups(input.settings, input.tasks.flatMap(taskTreeTags));
-  const matching = input.tasks
-    .filter((task) => selected(task, { ...input, groups }))
+  const groups = resolveEffectiveTagGroups(input.settings, input.tasks.flatMap(input.treeTags));
+  return input.tasks
+    .filter((task) => selected(task, input.treeTags(task), { ...input, groups }))
     .filter(
       (task) =>
         allowed == null ||
@@ -243,14 +244,12 @@ export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnap
         allowed.length >= 4 ||
         allowed.includes(statusTypeOf(task)),
     )
-    .filter((task) => input.viewState.filters.every((filter) => matchesProperty(task, filter)))
-    .filter(
-      (task) =>
-        query.length === 0 ||
-        task.title.toLowerCase().includes(query) ||
-        task.source.originalMarkdown.toLowerCase().includes(query),
-    );
-  const order: TaskOrder = {
+    .filter((task) => input.viewState.filters.every((filter) => matchesProperty(task, filter)));
+}
+
+export function selectTaskValues<T extends TaskListValue>(input: TaskValueSelectionInput<T>): T[] {
+  const matching = filterTaskValues(input);
+  const order: TaskOrder<T> = {
     input,
     linkOrder: new Map(
       matching.flatMap((task) => {
@@ -263,13 +262,29 @@ export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnap
     ),
     trackedMs:
       input.viewState.sortBy.field === 'tracked'
-        ? trackedTotals(matching, input.nowMs)
-        : NO_TRACKED_TOTALS,
+        ? new Map(matching.map((task) => [task, input.trackedMs(task)]))
+        : new Map(),
   };
   return matching.sort((left, right) => {
     const explicit = compare(left, right, order);
     if (explicit !== 0) return input.viewState.sortBy.dir === 'asc' ? explicit : -explicit;
     return compareCreated(left, right);
+  });
+}
+
+export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnapshot[] {
+  const query = input.textQuery?.toLowerCase() ?? '';
+  const tasks = input.tasks.filter(
+    (task) =>
+      query.length === 0 ||
+      task.title.toLowerCase().includes(query) ||
+      task.source.originalMarkdown.toLowerCase().includes(query),
+  );
+  return selectTaskValues({
+    ...input,
+    tasks,
+    treeTags: taskTreeTags,
+    trackedMs: (task) => totalMs(subtreeTotal(task), input.nowMs),
   });
 }
 

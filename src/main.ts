@@ -28,6 +28,7 @@ import type { CalendarSettings } from './settings/types';
 import { ViewStatePathOwner } from './settings/ViewStatePathOwner';
 import { StatusRegistry } from './status/StatusRegistry';
 import { TagManager } from './tags/TagManager';
+import type { TaskSearchApi } from './tasks';
 import {
   localDate,
   recentTrackingWindow,
@@ -44,7 +45,6 @@ import {
   TaskDependencyService,
   type TaskDiagnosticSink,
 } from './tasks/application/TaskDependencyService';
-import type { TaskSearchApi } from './tasks/application/TaskSearchApi';
 import type {
   TaskSearchDiagnostic,
   TaskSearchScheduler,
@@ -246,6 +246,7 @@ export default class TaskCalendarPlugin extends Plugin {
           commentTimeContext,
           () => this.saveViewStateWithNotice(),
           this.projectManager,
+          this.search,
         ),
     );
   }

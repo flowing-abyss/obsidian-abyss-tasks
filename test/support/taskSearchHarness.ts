@@ -16,6 +16,7 @@ import { TaskSearchError } from '../../src/tasks/domain/taskSearchTypes';
 import { createMiniSearchTaskEngine } from '../../src/tasks/infrastructure/search/MiniSearchTaskEngine';
 import { TaskSearchRuntime } from '../../src/tasks/infrastructure/search/TaskSearchRuntime';
 import { TaskSearchService } from '../../src/tasks/infrastructure/search/TaskSearchService';
+import type { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import { configuredTaskApplication, createAppWithFiles } from '../helpers';
 
 export function nodeDocuments(count: number): TaskSearchDocument[] {
@@ -170,8 +171,9 @@ export async function createCanonicalSearchHarness(
   const parts = configuredTaskApplication(app, settings, { authority: true });
   await parts.index.initialize();
   for (const [path, text] of Object.entries(files)) parts.index.installCommittedContent(path, text);
+  const source = parts.index.searchSource();
   const search = new TaskSearchService({
-    source: parts.index.searchSource(),
+    source,
     reads: parts.index,
     segment: fallbackSearchWords,
     scheduler: new ControlledSearchScheduler(),
@@ -182,6 +184,7 @@ export async function createCanonicalSearchHarness(
   return {
     app,
     ...parts,
+    source,
     search,
     close() {
       search.dispose();
@@ -198,4 +201,17 @@ export function assertNoRevision(value: unknown, revision: string): void {
         throw new Error(`Rich property escaped: ${key}`);
       assertNoRevision(child, revision);
     }
+}
+
+/** Real service for fixtures that already own a canonical index/application. */
+export function canonicalSearchForIndex(index: TaskIndex) {
+  return new TaskSearchService({
+    source: index.searchSource(),
+    reads: index,
+    segment: fallbackSearchWords,
+    scheduler: new ControlledSearchScheduler(),
+    createBackend: async () =>
+      new TaskSearchRuntime(createMiniSearchTaskEngine(fallbackSearchWords)),
+    diagnose: () => {},
+  });
 }

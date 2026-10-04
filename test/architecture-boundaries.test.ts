@@ -75,6 +75,14 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
 };
 
 const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
+  TaskSearchApi: ['src/panels/center/TaskSearch.ts', 'src/panels/task-list/TaskSearchPages.ts'],
+  TaskReadProjectionApi: ['src/panels/center/TaskSearch.ts'],
+  TaskSearchState: ['src/panels/center/TaskSearch.ts'],
+  TaskSearchError: ['src/ui/searchStatus.ts'],
+  TaskSearchAddress: ['src/task-lists/taskSearchOrganization.ts'],
+  TaskSearchHit: ['src/task-lists/taskSearchOrganization.ts'],
+  TaskSearchHydratedHit: ['src/panels/task-list/TaskSearchPages.ts'],
+  TaskOrganizationRecord: ['src/task-lists/taskSearchOrganization.ts'],
   ArchiveRecovery: ['src/ui/TaskArchiveRecoveryModal.ts'],
   CalendarProjectionSources: ['src/views/calendarOccurrences.ts'],
   CalendarTaskSource: ['src/views/calendarOccurrences.ts'],
@@ -241,11 +249,7 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
   'TaskApplicationApi.planArchive': 'src/panels/center/TaskCommands.ts',
   'TaskApplicationApi.queries': 'src/ui/TaskMoveRecoveryModal.ts',
   'TaskQueryApi.forCalendarProjection': 'src/panels/calendar/calendarContent.ts',
-  'TaskQueryApi.list': [
-    'src/panels/CenterPanel.ts',
-    'src/panels/calendar/calendarCommands.ts',
-    'src/panels/center/TaskSearch.ts',
-  ],
+  'TaskQueryApi.list': ['src/panels/CenterPanel.ts', 'src/panels/calendar/calendarCommands.ts'],
   'TaskQueryApi.observedTags': [
     'src/panels/CenterPanel.ts',
     'src/panels/right/InspectorPlanningSurfaces.ts',
@@ -253,6 +257,15 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
   'TaskQueryApi.resolve': 'src/views/PanelView.ts',
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',
   'TaskQueryApi.subscribeReconciled': 'src/projects/ProjectStore.ts',
+  'TaskSearchApi.open': 'src/panels/center/TaskSearch.ts',
+  'TaskSearchApi.read': 'src/panels/center/TaskSearch.ts',
+  'TaskSearchApi.release': 'src/panels/center/TaskSearch.ts',
+  'TaskSearchApi.resolvePage': 'src/panels/task-list/TaskSearchPages.ts',
+  'TaskSearchApi.subscribe': 'src/panels/center/TaskSearch.ts',
+  'TaskSearchApi.retry': 'src/panels/center/TaskSearch.ts',
+  'TaskReadProjectionApi.organization': 'src/panels/center/TaskSearch.ts',
+  'TaskReadProjectionApi.resolveSearchPage': 'src/tasks/infrastructure/search/TaskSearchService.ts',
+  'TaskDependencyQueryApi.prepareDependencies': 'src/panels/CenterPanel.ts',
   'TaskDependencyQueryApi.listNodes': [
     'src/panels/right/InspectorDependencies.ts',
     'src/panels/left/TagNavigation.ts',
@@ -849,19 +862,24 @@ function publicTaskImports(path: string): ReadonlySet<string> {
 
 function publicInterfaceMembers(): string[] {
   const result: string[] = [];
-  for (const statement of syntax('src/tasks/application/TaskApplicationApi.ts').statements) {
-    if (!ts.isInterfaceDeclaration(statement)) continue;
-    if (
-      statement.name.text !== 'TaskApplicationApi' &&
-      statement.name.text !== 'TaskQueryApi' &&
-      statement.name.text !== 'TaskDependencyQueryApi'
-    )
-      continue;
-    for (const member of statement.members) {
-      if (member.name != null && ts.isIdentifier(member.name))
-        result.push(`${statement.name.text}.${member.name.text}`);
+  const files = [
+    'src/tasks/application/TaskApplicationApi.ts',
+    'src/tasks/application/TaskSearchApi.ts',
+  ];
+  const names = new Set([
+    'TaskApplicationApi',
+    'TaskQueryApi',
+    'TaskDependencyQueryApi',
+    'TaskSearchApi',
+    'TaskReadProjectionApi',
+  ]);
+  for (const file of files)
+    for (const statement of syntax(file).statements) {
+      if (!ts.isInterfaceDeclaration(statement) || !names.has(statement.name.text)) continue;
+      for (const member of statement.members)
+        if (member.name != null && ts.isIdentifier(member.name))
+          result.push(`${statement.name.text}.${member.name.text}`);
     }
-  }
   return result.sort((left, right) => left.localeCompare(right));
 }
 
