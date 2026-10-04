@@ -1,3 +1,4 @@
+import { Component, MarkdownRenderer } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import type {
@@ -140,12 +141,21 @@ function catalog(): ProjectPropertyCatalog {
 }
 
 /** Mounts the overview on three projects and `extra` fillers, and switches to the case's view. */
-function mountSurface(testCase: SurfaceCase, extra = 0) {
+function mountSurface(
+  testCase: SurfaceCase,
+  extra = 0,
+  configure?: (settings: ProjectsSettings) => void,
+) {
   const originalHeight = Object.getOwnPropertyDescriptor(Element.prototype, 'clientHeight');
   vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function (
     this: HTMLElement,
   ) {
-    return this.classList.contains('abyss-project-timeline-scroll')
+    return [
+      'abyss-project-timeline-scroll',
+      ...(configure === undefined
+        ? []
+        : ['abyss-project-table-scroll', 'abyss-project-kanban-column-body']),
+    ].some((name) => this.classList.contains(name))
       ? 400
       : Number(originalHeight?.get?.call(this) ?? 0);
   });
@@ -154,12 +164,14 @@ function mountSurface(testCase: SurfaceCase, extra = 0) {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.projects.propertyDefinitions['property:Budget'] = { type: 'number' };
   testCase.group(settings.projects);
+  configure?.(settings.projects);
   const listed = [...projects(), ...fillers(extra)];
   const applyEdits = vi.fn(async (): Promise<ProjectEditResult> =>
     Promise.resolve({ applied: [], failed: [] }),
   );
+  const contextApp = appWithFiles(Object.fromEntries(listed.map(({ path }) => [path, ''])));
   const view = new ProjectsTableView(host, {
-    app: appWithFiles(Object.fromEntries(listed.map(({ path }) => [path, '']))),
+    app: contextApp,
     state: new AppState(),
     settings,
     catalog: catalog(),
@@ -175,7 +187,15 @@ function mountSurface(testCase: SurfaceCase, extra = 0) {
   expectDefined(
     host.querySelector<HTMLButtonElement>(`[aria-label="${testCase.mode} view"]`),
   ).click();
-  return { host, view, projects: listed, surface: expectDefined(testCase.surface(view)) };
+  return {
+    host,
+    view,
+    settings: settings.projects,
+    app: contextApp,
+    applyEdits,
+    projects: listed,
+    surface: expectDefined(testCase.surface(view)),
+  };
 }
 
 function rectangle(left: number, top: number, right: number, bottom: number): DOMRect {
@@ -749,5 +769,237 @@ describe.each(cases)('shared cell lifetime in $mode', (testCase) => {
     dispatchRetiredCellEvents(first.element);
     expect(select.mock.calls).toHaveLength(calls);
     expect(host.querySelector('.abyss-project-cell-editor')).toBeNull();
+  });
+});
+
+function lifetimeFields(settings: ProjectsSettings): void {
+  settings.propertyDefinitions['property:Link'] = { type: 'text' };
+  settings.propertyDefinitions['property:Flag'] = { type: 'checkbox' };
+  settings.propertyDefinitions['property:Items'] = { type: 'list' };
+  settings.propertyDefinitions['property:tags'] = { type: 'tags' };
+  const fields = ['property:Link', 'property:Flag', 'property:Items', 'property:tags'].map(
+    (id) => ({ id, visible: true }),
+  );
+  settings.table.columns.push(...fields);
+  expectDefined(settings.kanban).fields.push(...fields);
+  expectDefined(settings.timeline).fields = [...(settings.timeline?.fields ?? []), ...fields];
+}
+function configureLifetimeFields(settings: ProjectsSettings): void {
+  settings.kanban ??= buildDefaultProjectKanbanSettings(settings.table);
+  settings.timeline ??= buildDefaultProjectTimelineSettings(settings.table);
+  lifetimeFields(settings);
+}
+function lifetimeProjects(listed: readonly Project[], revision = 0): Project[] {
+  return listed.map((item) => ({
+    ...item,
+    frontmatter: {
+      ...item.frontmatter,
+      Link: `[[Target${revision}]]`,
+      Flag: revision % 2 === 0,
+      Items: [`Item${revision}`],
+      tags: [`tag${revision}`],
+    },
+  }));
+}
+function setLifetimeVisibility(settings: ProjectsSettings, visible: boolean): void {
+  for (const field of [
+    ...settings.table.columns,
+    ...expectDefined(settings.kanban).fields,
+    ...(settings.timeline?.fields ?? []),
+  ])
+    if (['property:Link', 'property:Flag', 'property:Items', 'property:tags'].includes(field.id))
+      field.visible = visible;
+}
+function recordOwnerFrames() {
+  const pending = new Map<number, FrameRequestCallback>();
+  let next = 0;
+  let executed = 0;
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    pending.set(++next, callback);
+    return next;
+  });
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => pending.delete(id));
+  return {
+    flush() {
+      const frames = [...pending.values()];
+      pending.clear();
+      for (const callback of frames) {
+        callback(0);
+        executed++;
+      }
+    },
+    executed: () => executed,
+  };
+}
+function ownedMarkdownResources(groupResources?: Set<Component>): Set<Component> {
+  const live = new Set<Component>();
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (...args) => {
+    const [, , holder, , owner] = args;
+    const resource = owner.addChild(new Component());
+    live.add(resource);
+    if (holder.closest('.abyss-projects-group-label') !== null) groupResources?.add(resource);
+    resource.register(() => {
+      live.delete(resource);
+      groupResources?.delete(resource);
+    });
+    holder.createEl('a', {
+      cls: 'internal-link',
+      text: 'Target',
+      attr: { 'data-href': 'Target' },
+    });
+  });
+  return live;
+}
+async function finishMarkdown(): Promise<void> {
+  await flushMicrotasks();
+  await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+}
+function heldLifetimeCells(surface: Surface): RenderedCellContext[] {
+  return surface
+    .renderedCells()
+    .filter(
+      (cell) =>
+        cell.project.path === 'Projects/A.md' &&
+        ['property:Link', 'property:Flag', 'property:Items', 'property:tags'].includes(
+          cell.field.id,
+        ),
+    );
+}
+
+describe.each(cases)('retained row field/content resources in $mode', (testCase) => {
+  it('retires held field hosts and descendants without unloading their surviving row', async () => {
+    const frames = recordOwnerFrames();
+    ownedMarkdownResources();
+    const h = mountSurface(testCase, 0, configureLifetimeFields);
+    h.view.update(lifetimeProjects(h.projects));
+    frames.flush();
+    await finishMarkdown();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const cells = heldLifetimeCells(h.surface);
+    expect(cells).toHaveLength(4);
+    const row = expectDefined(cells[0]?.markdown);
+    const unload = vi.spyOn(row, 'unload');
+    const name = expectDefined(nameCell(h.surface.renderedCells(), 'Projects/A.md'));
+    const held = cells.flatMap((cell) =>
+      Array.from(cell.element.querySelectorAll<HTMLElement>('a, button, input')),
+    );
+    expect(held.length).toBeGreaterThanOrEqual(4);
+    const open = vi.spyOn(h.app.workspace, 'openLinkText');
+    const hover = vi.spyOn(h.app.workspace, 'trigger');
+    const selection = vi.spyOn(
+      h.view as unknown as {
+        selectCell_abyssPrivate(cell: RenderedCellContext, extend: boolean): void;
+      },
+      'selectCell_abyssPrivate',
+    );
+    setLifetimeVisibility(h.settings, false);
+    h.view.update(lifetimeProjects(h.projects));
+    expect(nameCell(h.surface.renderedCells(), 'Projects/A.md')).toBe(name);
+    expect(name.markdown).toBe(row);
+    expect(unload).not.toHaveBeenCalled();
+    const calls = selection.mock.calls.length;
+    for (const cell of cells) {
+      expect(cell.element.isConnected).toBe(false);
+      for (const type of ['mousedown', 'click', 'focus', 'dblclick', 'contextmenu']) {
+        const event = new MouseEvent(type, { cancelable: true, shiftKey: true });
+        cell.element.dispatchEvent(event);
+        expect.soft(event.defaultPrevented, `${cell.field.id}:${type}`).toBe(false);
+      }
+    }
+    for (const node of held) {
+      for (const type of ['click', 'mouseover', 'change']) {
+        const event = new MouseEvent(type, { cancelable: true });
+        node.dispatchEvent(event);
+        expect.soft(event.defaultPrevented, `${node.tagName}:${type}`).toBe(false);
+      }
+    }
+    await flushMicrotasks();
+    expect.soft(selection.mock.calls).toHaveLength(calls);
+    expect.soft(open).not.toHaveBeenCalled();
+    expect.soft(hover.mock.calls.filter(([type]) => type === 'hover-link')).toEqual([]);
+    expect.soft(h.applyEdits).not.toHaveBeenCalled();
+    expect.soft(errors).not.toHaveBeenCalled();
+    expect.soft(h.host.querySelector('.abyss-project-cell-editor')).toBeNull();
+  });
+
+  it('bounds settled Markdown child membership over twenty content and field replacements', async () => {
+    const frames = recordOwnerFrames();
+    const live = ownedMarkdownResources();
+    const h = mountSurface(testCase, 0, configureLifetimeFields);
+    h.view.update(lifetimeProjects(h.projects));
+    frames.flush();
+    await finishMarkdown();
+    const name = expectDefined(nameCell(h.surface.renderedCells(), 'Projects/A.md'));
+    const retained = live.size;
+    expect(retained).toBeGreaterThan(0);
+    for (let cycle = 1; cycle <= 20; cycle++) {
+      h.view.update(lifetimeProjects(h.projects, cycle));
+      setLifetimeVisibility(h.settings, false);
+      h.view.update(lifetimeProjects(h.projects, cycle));
+      setLifetimeVisibility(h.settings, true);
+      h.view.update(lifetimeProjects(h.projects, cycle));
+      frames.flush();
+      await finishMarkdown();
+      expect(nameCell(h.surface.renderedCells(), 'Projects/A.md')).toBe(name);
+    }
+    if (testCase.mode !== 'Table') expect(frames.executed()).toBeGreaterThan(0);
+    expect.soft(live.size).toBeLessThanOrEqual(retained);
+    h.view.destroy();
+    mounted.delete(h.view);
+    expect(live.size).toBe(0);
+  });
+});
+
+describe.each(cases)('retained group label resources in $mode', (testCase) => {
+  it('retires replaced label anchors and children while retaining the header', async () => {
+    const frames = recordOwnerFrames();
+    const groups = new Set<Component>();
+    const live = ownedMarkdownResources(groups);
+    const h = mountSurface(testCase, 0, (settings) => {
+      configureLifetimeFields(settings);
+      settings.table.groupBy = 'property:Link';
+      expectDefined(settings.kanban).groupBy = 'property:Link';
+      expectDefined(settings.timeline).groupBy = 'property:Link';
+    });
+    const listed = lifetimeProjects(h.projects);
+    h.view.update(listed);
+    frames.flush();
+    await finishMarkdown();
+    const labelHeader = () =>
+      testCase.mode === 'Kanban'
+        ? expectDefined(
+            h.host.querySelector<HTMLElement>('.abyss-project-kanban-group-header:not([hidden])'),
+          )
+        : testCase.groupHeader(h.host, 'Projects/A.md');
+    const header = labelHeader();
+    const anchor = expectDefined(header.querySelector<HTMLElement>('a.internal-link'));
+    const retained = live.size;
+    const retainedGroups = groups.size;
+    expect(retainedGroups).toBeGreaterThan(0);
+    const open = vi.spyOn(h.app.workspace, 'openLinkText');
+    const hover = vi.spyOn(h.app.workspace, 'trigger');
+    for (let revision = 1; revision <= 20; revision++) {
+      h.settings.propertyDefinitions['property:Link'] = {
+        type: 'text',
+        presets: [{ value: '[[Target0]]', displayName: `Label ${revision}` }],
+      };
+      h.view.update(listed);
+      frames.flush();
+      await finishMarkdown();
+      expect(labelHeader()).toBe(header);
+    }
+    expect(anchor.isConnected).toBe(false);
+    anchor.dispatchEvent(new MouseEvent('click', { cancelable: true }));
+    anchor.dispatchEvent(new MouseEvent('mouseover'));
+    await flushMicrotasks();
+    expect.soft(open).not.toHaveBeenCalled();
+    expect.soft(hover.mock.calls.filter(([type]) => type === 'hover-link')).toEqual([]);
+    if (testCase.mode !== 'Table') expect(frames.executed()).toBeGreaterThan(0);
+    expect.soft(live.size).toBeLessThanOrEqual(retained);
+    expect.soft(groups.size).toBeLessThanOrEqual(retainedGroups);
+    h.view.destroy();
+    mounted.delete(h.view);
+    expect(live.size).toBe(0);
+    expect(groups.size).toBe(0);
   });
 });
