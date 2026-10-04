@@ -12,7 +12,7 @@ import type { TaskRenderOutcome, TaskTextRender } from './taskRenderScope';
 const activeRenders = new WeakMap<HTMLElement, TaskTextRender>();
 
 export interface RenderTaskTextOptions {
-  readonly presentation?: 'title';
+  readonly presentation?: 'title' | 'markdown';
   readonly signal?: AbortSignal;
   readonly onRendered?: (element: HTMLElement) => void;
   app: App;
@@ -35,9 +35,13 @@ export function renderTaskText(
   const tokens = parseLinks(markdownText);
   const titleMode = opts.presentation === 'title';
   const presented = titleMode ? inlineTaskTitleMarkdown(markdownText) : markdownText;
-  // Plain titles retain the synchronous path; formatting and escapes need host Markdown even
-  // without links. Non-title callers keep their existing link-driven dispatch contract.
-  if (titleMode ? !/[\\*_~`[\]<>&!]/u.test(markdownText) : tokens.length === 0) {
+  // Explicit text presentations keep plain text synchronous; formatting, escapes and paragraph
+  // structure use the host even without links. Unspecified callers retain link-driven dispatch.
+  if (
+    opts.presentation !== undefined
+      ? !needsMarkdown(markdownText, opts.presentation)
+      : tokens.length === 0
+  ) {
     el.setText(presented);
     if (opts.signal?.aborted === true)
       return { settled: Promise.resolve({ type: 'cancelled' }), cancel: () => {} };
@@ -49,6 +53,12 @@ export function renderTaskText(
     }
   }
   return renderMarkdownText(el, presented, tokens, opts);
+}
+function needsMarkdown(text: string, presentation: 'title' | 'markdown'): boolean {
+  return (
+    /[\\*_~`[\]<>&!\r\n]/u.test(text) ||
+    (presentation === 'markdown' && /^\s*(?:#{1,6}\s|[-+]\s|\d+[.)]\s)/u.test(text))
+  );
 }
 function renderMarkdownText(
   el: HTMLElement,

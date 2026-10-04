@@ -60,10 +60,10 @@ import type { CalViewType } from './calendar/calendarViewType';
 import { CaptureSessions } from './center/CaptureSessions';
 import { ListViewControls, type ListViewControlsStatePort } from './center/ListViewControls';
 import type { SearchViewState } from './center/SearchViewState';
-import { TaskCardRenderer } from './center/TaskCardRenderer';
+import { TaskCardRenderer, type TaskCardSearchPresentation } from './center/TaskCardRenderer';
 import { TaskCommands } from './center/TaskCommands';
 import { TaskMenus } from './center/TaskMenus';
-import { TaskSearch, type TaskSearchOptions } from './center/TaskSearch';
+import { TaskSearch, type TaskSearchOptions, type TaskSearchRowOptions } from './center/TaskSearch';
 import { TaskSearchReveal } from './center/TaskSearchReveal';
 import { taskSearchDestination } from './center/taskSearchDestination';
 import { ProjectsPanel } from './projects/ProjectsPanel';
@@ -392,8 +392,8 @@ export class CenterPanel {
           this.md_abyssPrivate = new Component();
           this.md_abyssPrivate.load();
         },
-        renderRows: (host, page, scope, onActivate) =>
-          this.mountSearchPage_abyssPrivate(host, page, scope, onActivate),
+        renderRows: (host, page, scope, options) =>
+          this.mountSearchPage_abyssPrivate(host, page, scope, options),
         completeResults: () => {
           this.completeTaskCardRender_abyssPrivate();
         },
@@ -475,7 +475,7 @@ export class CenterPanel {
     host: HTMLElement,
     page: TaskSearchPageModel,
     scope: TaskRenderScope,
-    onActivate?: (task: TaskSnapshot) => void,
+    options: TaskSearchRowOptions,
   ): Promise<TaskRenderOutcome> {
     const groupBy =
       this.state_abyssPrivate.get('mode') === 'search'
@@ -485,7 +485,7 @@ export class CenterPanel {
       host,
       buildTaskSearchPageRows(page, groupBy),
       this.effectiveTagGroups_abyssPrivate(),
-      { onActivate, scope },
+      { ...options, scope },
     );
     this.rowSelection_abyssPrivate.reconcile(this.listOrder_abyssPrivate());
     this.updateSelectionVisuals_abyssPrivate();
@@ -1311,10 +1311,11 @@ export class CenterPanel {
     options: {
       readonly onCard?: ((card: HTMLElement, task: TaskSnapshot) => void) | undefined;
       readonly scope?: TaskRenderScope;
+      readonly presentations?: ReadonlyMap<TaskSnapshot, TaskCardSearchPresentation> | undefined;
       readonly onActivate?: ((task: TaskSnapshot) => void) | undefined;
     } = {},
   ): void {
-    const { onCard, scope, onActivate } = options;
+    const { onCard, scope, onActivate, presentations } = options;
     this.mountedRows_abyssPrivate = mountTaskListRows(
       container,
       rows,
@@ -1322,6 +1323,7 @@ export class CenterPanel {
         const selected = this.isTaskCardSelected_abyssPrivate(row.task);
         const card = this.taskCardRenderer_abyssPrivate.render(host, row.task, tagGroups, {
           selected,
+          search: presentations?.get(row.task),
           onActivate:
             onActivate === undefined
               ? undefined

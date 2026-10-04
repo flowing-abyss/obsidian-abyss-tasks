@@ -4,6 +4,7 @@ import { BrowserTaskCancelled, type BrowserTaskScheduler } from '../../src/brows
 import type { TaskSearchOptions } from '../../src/panels/center/TaskSearch';
 import { CenterPanel } from '../../src/panels/CenterPanel';
 import type { CalendarSettings } from '../../src/settings/types';
+import { createSearchWordSegmenter } from '../../src/tasks/infrastructure/search/searchWordSegmenter';
 import { createCanonicalSearchHarness } from './taskSearchHarness';
 
 /** Wait for the current surface's owned terminal render receipt, not backend readiness. */
@@ -45,7 +46,7 @@ export async function mountCanonicalSearchUi(
   mode: 'search' | 'tasks' = 'search',
   organizationScheduler?: TaskSearchOptions['organizationScheduler'],
 ) {
-  const h = await createCanonicalSearchHarness(files, settings);
+  const h = await createCanonicalSearchHarness(files, settings, true, createSearchWordSegmenter());
   const state = new AppState();
   state.set('selectedList', 'inbox');
   state.set('mode', mode);

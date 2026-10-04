@@ -12,7 +12,10 @@ import type {
   TaskSearchSourceEvent,
   TaskSearchSourceState,
 } from '../../src/tasks/application/TaskSearchSource';
-import { fallbackSearchWords } from '../../src/tasks/domain/searchMatchPolicy';
+import {
+  fallbackSearchWords,
+  type SearchWordSegmenter,
+} from '../../src/tasks/domain/searchMatchPolicy';
 import { TaskSearchError } from '../../src/tasks/domain/taskSearchTypes';
 import { createMiniSearchTaskEngine } from '../../src/tasks/infrastructure/search/MiniSearchTaskEngine';
 import { TaskSearchRuntime } from '../../src/tasks/infrastructure/search/TaskSearchRuntime';
@@ -123,8 +126,8 @@ export class FakeSearchBackend extends TaskSearchRuntime {
   searchCalls = 0;
   readonly operations: TaskSearchMutation[] = [];
   readonly crashListeners = new Set<(cause: unknown) => void>();
-  constructor() {
-    super(createMiniSearchTaskEngine(fallbackSearchWords));
+  constructor(segment: SearchWordSegmenter = fallbackSearchWords) {
+    super(createMiniSearchTaskEngine(segment));
   }
   override subscribeFailure(listener: (cause: unknown) => void) {
     this.crashListeners.add(listener);
@@ -171,6 +174,7 @@ export async function createCanonicalSearchHarness(
   files: Record<string, string>,
   settings: CalendarSettings,
   initialize = true,
+  segment: SearchWordSegmenter = fallbackSearchWords,
 ) {
   const app = await createAppWithFiles(files);
   const parts = configuredTaskApplication(app, settings, { authority: true });
@@ -186,10 +190,10 @@ export async function createCanonicalSearchHarness(
   const search = new TaskSearchService({
     source,
     reads: parts.index,
-    segment: fallbackSearchWords,
+    segment,
     scheduler,
     createBackend: async () => {
-      const backend = new FakeSearchBackend();
+      const backend = new FakeSearchBackend(segment);
       backends.push(backend);
       return backend;
     },

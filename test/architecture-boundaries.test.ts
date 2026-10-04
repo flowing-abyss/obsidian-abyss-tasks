@@ -75,6 +75,14 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
 };
 
 const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
+  createSearchWordSegmenter: ['src/panels/center/TaskSearch.ts'],
+  matchSearchText: ['src/ui/markSearchText.ts'],
+  prepareSearchQuery: ['src/panels/center/TaskSearch.ts'],
+  PreparedSearchQuery: ['src/ui/markSearchText.ts'],
+  SearchWordSegmenter: ['src/ui/markSearchText.ts'],
+  taskSearchContext: ['src/panels/center/TaskSearch.ts'],
+  TaskSearchContext: ['src/panels/center/TaskCardRenderer.ts'],
+  TaskSearchExcerpt: ['src/panels/center/TaskCardRenderer.ts'],
   TaskSearchApi: [
     'src/panels/center/TaskSearch.ts',
     'src/panels/task-list/TaskSearchPages.ts',

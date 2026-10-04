@@ -13,7 +13,10 @@ import {
   type TaskSearchOrganizationInput,
 } from '../../task-lists/taskSearchOrganization';
 import {
+  createSearchWordSegmenter,
   localDate,
+  prepareSearchQuery,
+  taskSearchContext,
   TaskSearchError,
   type TaskOrganizationRecord,
   type TaskReadProjectionApi,
@@ -35,7 +38,13 @@ import {
 } from '../task-list/runTaskOrganization';
 import { TaskSearchPages, type TaskSearchPageModel } from '../task-list/TaskSearchPages';
 import type { SearchViewState } from './SearchViewState';
+import type { TaskCardSearchPresentation } from './TaskCardRenderer';
 import type { TaskRevealReceipt } from './TaskSearchReveal';
+
+export interface TaskSearchRowOptions {
+  readonly onActivate?: ((task: TaskSnapshot) => void) | undefined;
+  readonly presentations?: ReadonlyMap<TaskSnapshot, TaskCardSearchPresentation> | undefined;
+}
 
 interface TaskSearchHost {
   destination(task: TaskSnapshot): ListSelection;
@@ -48,7 +57,7 @@ interface TaskSearchHost {
     host: HTMLElement,
     page: TaskSearchPageModel,
     scope: TaskRenderScope,
-    onActivate?: (task: TaskSnapshot) => void,
+    options: TaskSearchRowOptions,
   ): Promise<TaskRenderOutcome>;
   completeResults(): void;
   prepareDependencies(generation: number, signal: AbortSignal): Promise<void>;
@@ -109,6 +118,7 @@ class TaskRevealChanged extends Error {}
 
 /** One mounted query owns collection, compact organization, a bounded page and render receipts. */
 export class TaskSearch {
+  readonly #segment = createSearchWordSegmenter();
   readonly #options: TaskSearchOptions;
   #root: HTMLElement | null = null;
   #owner: Window | null = null;
@@ -778,21 +788,36 @@ export class TaskSearch {
     const scope = new TaskRenderScope(signal);
     const request = this.#request;
     const generation = this.#generation;
-    return this.#options.host.renderRows(
-      host,
-      page,
-      scope,
-      this.#filter
+    const activate = (address: TaskSearchAddress): void => {
+      if (generation === null || !this.canPublish(request, generation, signal)) return;
+      void this.activate(address).catch((error: unknown) => {
+        this.#handleFailure(request, error);
+      });
+    };
+    const presentations = new Map<TaskSnapshot, TaskCardSearchPresentation>();
+    if (!this.#filter && this.#query.trim() !== '') {
+      const query = prepareSearchQuery(this.#query, this.#segment);
+      for (const root of page.roots) {
+        const task = root.task.root;
+        if (!presentations.has(task))
+          presentations.set(task, {
+            context: taskSearchContext(task, root.hit.address, query, this.#segment),
+            query,
+            segment: this.#segment,
+            onActivate: activate,
+          });
+      }
+    }
+    return this.#options.host.renderRows(host, page, scope, {
+      onActivate: this.#filter
         ? undefined
         : (task) => {
             if (generation === null || !this.canPublish(request, generation, signal)) return;
             const hit = page.roots.find((root) => root.task.root === task)?.hit;
-            if (hit !== undefined)
-              void this.activate(hit.address).catch((error: unknown) => {
-                this.#handleFailure(request, error);
-              });
+            if (hit !== undefined) activate(hit.address);
           },
-    );
+      presentations,
+    });
   }
   private canPublish(request: number, generation: number, signal: AbortSignal): boolean {
     return (

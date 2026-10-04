@@ -1,5 +1,6 @@
 import { setIcon, type App, type Component } from 'obsidian';
 import type { AppState } from '../../app/AppState';
+import { projectSearchText } from '../../markdown/searchText';
 import { moment } from '../../obsidianMoment';
 import type { CalendarSettings } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
@@ -10,11 +11,19 @@ import {
   taskNodeAddress,
   totalMs,
   type LocalDate,
+  type PreparedSearchQuery,
+  type SearchWordSegmenter,
+  type SubtaskSnapshot,
   type TaskRef,
+  type TaskSearchAddress,
+  type TaskSearchContext,
+  type TaskSearchExcerpt,
   type TaskSnapshot,
+  type TaskTextTarget,
   type TrackedTotal,
 } from '../../tasks';
 import { renderStatusMarker } from '../../ui/StatusMarker';
+import { markSearchText } from '../../ui/markSearchText';
 import {
   recurrenceBadgeInput,
   renderRecurrenceBadge,
@@ -28,12 +37,20 @@ import {
   type TaskDependencyLookup,
 } from '../../ui/taskDependencyPresentation';
 import { applyTaskPresentationIdentity } from '../../ui/taskPresentationIdentity';
-import type { TaskRenderScope } from '../../ui/taskRenderScope';
+import type { TaskRenderScope, TaskTextRender } from '../../ui/taskRenderScope';
+import { taskNodeRef } from '../../ui/taskSelection';
 import type { TrackingTickerState } from '../../ui/timeTracking/TrackingTicker';
 import { formatTrackedDuration } from '../../ui/timeTracking/formatTracked';
 import { isForecastCalendarTask } from '../../views/calendarOccurrences';
 import type { ListViewControls } from './ListViewControls';
 import type { TaskCommands } from './TaskCommands';
+
+export interface TaskCardSearchPresentation {
+  readonly context: TaskSearchContext;
+  readonly query: PreparedSearchQuery;
+  readonly segment: SearchWordSegmenter;
+  readonly onActivate: (address: TaskSearchAddress) => void;
+}
 
 interface TaskCardRendererHost {
   component(): Component;
@@ -116,6 +133,7 @@ export class TaskCardRenderer {
       readonly showDelete: boolean;
       readonly rowKey?: string;
       readonly renderScope?: TaskRenderScope;
+      readonly search?: TaskCardSearchPresentation | undefined;
       readonly onActivate?: (() => void) | undefined;
     },
   ): HTMLElement {
@@ -131,7 +149,7 @@ export class TaskCardRenderer {
 
     const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
     this.#renderStatus(mainRow, task);
-    this.#renderBody(mainRow, task, flags.renderScope);
+    this.#renderBody(mainRow, task, flags.renderScope, flags.search);
     this.#renderMetadata(mainRow, task, tagGroups);
     this.#host.mountInteractions(card, task, flags.rowKey, flags.onActivate);
     this.syncDeleteButton(card, flags.showDelete ? task : undefined);
@@ -158,7 +176,12 @@ export class TaskCardRenderer {
     );
   }
 
-  #renderBody(mainRow: HTMLElement, task: TaskSnapshot, scope?: TaskRenderScope): void {
+  #renderBody(
+    mainRow: HTMLElement,
+    task: TaskSnapshot,
+    scope?: TaskRenderScope,
+    search?: TaskCardSearchPresentation,
+  ): void {
     const body = mainRow.createDiv({ cls: 'abyss-task-body' });
     const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
     const recurrence = task.recurrence;
@@ -169,6 +192,18 @@ export class TaskCardRenderer {
     const titleEl = titleRow.createSpan({ cls: 'abyss-task-title' });
     const titleRender = renderTaskText(titleEl, task.markdownTitle, {
       presentation: 'title',
+      ...(search === undefined
+        ? {}
+        : {
+            onRendered: (element: HTMLElement) => {
+              markSearchText(
+                element,
+                projectSearchText(task.markdownTitle, 'title'),
+                search.query,
+                search.segment,
+              );
+            },
+          }),
       app: this.#app,
       sourcePath: task.source.filePath,
       component: this.#host.component(),
@@ -177,7 +212,8 @@ export class TaskCardRenderer {
       },
     });
     scope?.track(titleRender);
-    this.#renderDescription(body, task, scope);
+    if (search === undefined) this.#renderDescription(body, task, scope);
+    else this.#renderSearchContext(body, task, search, scope);
   }
 
   #renderCountBadges(titleRow: HTMLElement, task: TaskSnapshot): void {
@@ -251,11 +287,94 @@ export class TaskCardRenderer {
     if (description === undefined || description === '') return;
     const descriptionElement = host.createDiv({ cls: 'abyss-task-desc' });
     const descriptionRender = renderTaskText(descriptionElement, description.split('\n')[0] ?? '', {
+      presentation: 'markdown',
       app: this.#app,
       sourcePath: task.source.filePath,
       component: this.#host.component(),
     });
     scope?.track(descriptionRender);
+  }
+
+  #renderSearchContext(
+    host: HTMLElement,
+    root: TaskSnapshot,
+    search: TaskCardSearchPresentation,
+    scope?: TaskRenderScope,
+  ): void {
+    for (const excerpt of search.context.excerpts) {
+      // The root title is already rendered by the ordinary card title, with only its real marks.
+      if (excerpt.field === 'title' && excerpt.address.childLines.length === 0) continue;
+      const render = this.#renderSearchExcerpt(host, root, { search, excerpt });
+      scope?.track(render);
+    }
+  }
+
+  #renderSearchExcerpt(
+    host: HTMLElement,
+    root: TaskSnapshot,
+    { search, excerpt }: { search: TaskCardSearchPresentation; excerpt: TaskSearchExcerpt },
+  ): TaskTextRender {
+    const context = host.createDiv({ cls: 'abyss-search-context' });
+    const label = excerpt.label.charAt(0).toUpperCase() + excerpt.label.slice(1);
+    const location = excerpt.breadcrumb.join(' › ');
+    const comment = excerpt.commentLine === undefined ? '' : ` · ${excerpt.commentLine}`;
+    const activate = context.createEl('button', {
+      cls: 'abyss-search-context-label',
+      text: `${location} · ${label}${comment}`,
+      attr: { 'aria-label': `Open ${location} · ${label}${comment}` },
+    });
+    activate.addEventListener('click', (event) => {
+      event.stopPropagation();
+      search.onActivate(excerpt.address);
+    });
+    const text = context.createDiv({ cls: 'abyss-search-context-text' });
+    const markdown = excerpt.markdown;
+    if (markdown === undefined) {
+      text.setText(excerpt.text);
+      return { settled: Promise.resolve({ type: 'ready' }), cancel: () => {} };
+    }
+    const target = this.#contextTextTarget(root, excerpt);
+    const render = renderTaskText(text, markdown, {
+      presentation: excerpt.field === 'title' ? 'title' : 'markdown',
+      app: this.#app,
+      sourcePath: root.source.filePath,
+      component: this.#host.component(),
+      onEditLink:
+        target === undefined
+          ? undefined
+          : (occurrence, token) => {
+              this.#commands.editTaskLink(root, occurrence, token, target);
+            },
+      onRendered: (element) => {
+        markSearchText(
+          element,
+          projectSearchText(markdown, excerpt.field === 'title' ? 'title' : 'prose'),
+          search.query,
+          search.segment,
+        );
+      },
+    });
+    return render;
+  }
+
+  #contextTextTarget(root: TaskSnapshot, excerpt: TaskSearchExcerpt): TaskTextTarget | undefined {
+    let node: TaskSnapshot | SubtaskSnapshot = root;
+    for (const line of excerpt.address.childLines) {
+      const child: SubtaskSnapshot | undefined = node.subtasks.find(
+        (subtask) => subtask.ref.relativeLine === line,
+      );
+      if (child === undefined) return undefined;
+      node = child;
+    }
+    if (excerpt.field === 'comment') {
+      const comment = node.comments.find(
+        (comment) => comment.ref.relativeLine === excerpt.commentLine,
+      );
+      return comment === undefined ? undefined : { type: 'comment', ref: comment.ref };
+    }
+    if (excerpt.field === 'title' || excerpt.field === 'description')
+      return { type: excerpt.field, target: taskNodeRef(node) };
+    return undefined;
   }
 
   #renderMetadata(

@@ -11,6 +11,7 @@ import type {
   TaskQueryApi,
   TaskRef,
   TaskSnapshot,
+  TaskTextTarget,
 } from '../../tasks';
 import { LinkEditModal } from '../../ui/LinkEditModal';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
@@ -172,7 +173,12 @@ export class TaskCommands {
     );
   }
 
-  editTaskLink(task: TaskSnapshot, occ: number, token: LinkToken): void {
+  editTaskLink(
+    task: TaskSnapshot,
+    occ: number,
+    token: LinkToken,
+    textTarget?: TaskTextTarget,
+  ): void {
     const target = calendarMutationTarget(task);
     const tasks = this.#tasks;
     if (target == null || tasks == null) return;
@@ -184,7 +190,7 @@ export class TaskCommands {
           tasks
             .execute({
               type: 'edit-link',
-              target: { type: 'title', target },
+              target: textTarget ?? { type: 'title', target },
               occurrence: occ,
               replacement: newRaw,
             })

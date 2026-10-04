@@ -115,3 +115,17 @@ export type {
   TaskSearchHit,
   TaskSearchHydratedHit,
 } from './domain/taskSearchTypes';
+
+export {
+  matchSearchText,
+  prepareSearchQuery,
+  type PreparedSearchQuery,
+  type SearchWordSegmenter,
+} from './domain/searchMatchPolicy';
+export {
+  taskSearchContext,
+  type TaskSearchContext,
+  type TaskSearchExcerpt,
+} from './infrastructure/search/taskSearchContext';
+
+export { createSearchWordSegmenter } from './infrastructure/search/searchWordSegmenter';

@@ -370,3 +370,43 @@ it('reports onRendered callback failure in the render receipt', async () => {
   component.unload();
   el.remove();
 });
+
+it.each(['**formatting**', '# Heading', '- list item', '> quoted text'])(
+  'uses the host for explicit Markdown field %s without links',
+  async (source) => {
+    const render = vi
+      .spyOn(MarkdownRenderer, 'render')
+      .mockImplementation(async (_app, _source, holder) => {
+        holder.setText(source);
+      });
+    const el = document.body.createDiv();
+    const component = new Component();
+    component.load();
+    try {
+      const receipt = renderTaskText(el, source, {
+        presentation: 'markdown',
+        app: {} as App,
+        sourcePath: 'a.md',
+        component,
+      });
+      expect(render).toHaveBeenCalledOnce();
+      expect(await receipt.settled).toEqual({ type: 'ready' });
+    } finally {
+      component.unload();
+    }
+  },
+);
+
+it('keeps an explicit plain Markdown field synchronous', async () => {
+  const render = vi.spyOn(MarkdownRenderer, 'render').mockResolvedValue(undefined);
+  const el = document.body.createDiv();
+  const receipt = renderTaskText(el, 'ordinary field', {
+    presentation: 'markdown',
+    app: {} as App,
+    sourcePath: 'a.md',
+    component: new Component(),
+  });
+  expect(el.textContent).toBe('ordinary field');
+  expect(render).not.toHaveBeenCalled();
+  expect(await receipt.settled).toEqual({ type: 'ready' });
+});

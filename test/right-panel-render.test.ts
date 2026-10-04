@@ -3677,3 +3677,19 @@ describe('case-compatible selected child input', () => {
     el.remove();
   });
 });
+
+it('renders formatting-only description and comment through the shared Markdown path', async () => {
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
+    if (source === '**description**') holder.createEl('strong').appendText('description');
+    else if (source === '`comment`') holder.createEl('code').appendText('comment');
+    else holder.setText(source);
+  });
+  const { state, el, index } = await makePanel({
+    'tasks.md': '- [ ] Current\n  - > **description**\n  - 2026-10-04: `comment`',
+  });
+  document.body.append(el);
+  state.set('taskStack', [expectDefined(index.list()[0])]);
+  await flushMicrotasks();
+  expect(el.querySelector('.abyss-right-desc-view strong')?.textContent).toBe('description');
+  expect(el.querySelector('.abyss-comment-text code')?.textContent).toBe('comment');
+});

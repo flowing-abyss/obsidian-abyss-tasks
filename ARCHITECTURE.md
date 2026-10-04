@@ -579,8 +579,27 @@ matched fields from one detached hydrated root, with full authored fields, separ
 lines, exact child-relative-line paths and UTF-16 source provenance from `markdown/searchText` and
 `searchMatchPolicy`. A bounded collector prefers distinct query-token coverage, then canonical order.
 Link destinations are separately labeled evidence; scalar metadata has no fabricated source range.
-Documents and this helper share `taskSearchMetadata`. Context evidence is currently internal and has
-no public task export or mounted renderer consumer; it grants no text-edit authority.
+Documents and this helper share `taskSearchMetadata`. The public task barrel exposes that evidence
+and the shared matcher directly to TaskSearch and TaskCardRenderer. The barrel is the single facade;
+there is no redundant panel forwarding module. TaskSearch extracts context only for the
+hydrated page, deduplicating repeated root occurrences within that mount. Replacement releases those
+values and cancels their existing TaskRenderScope; no corpus context cache is retained. TaskSearch
+captures one segmenter from the same production factory used by the service and Worker, prepares
+one query per mount, and explicitly supplies that policy to pure context extraction and marks.
+Intl word segmentation is used when available, with the existing shared fallback otherwise.
+
+TaskCardRenderer keeps the root title and replaces the ordinary description preview with complete
+selected contributing fields. Labels carry the evidence breadcrumb and comment line, and explicit
+context activation uses the same mounted-page and exact-address navigation guards as the shared
+card. Hidden destinations remain separately labeled text. Full authored fields use renderTaskText,
+with snapshot-derived root/child/comment TaskTextTargets and their original link occurrence indices
+passed through the existing TaskCommands edit-link operation. Evidence offsets grant no edit authority.
+
+`markSearchText` aligns the shared projected visible text with actual owner-document text nodes,
+allowing only corresponding whitespace runs and rendered block boundaries. A whole-field mismatch
+omits marks. Proven matched ranges wrap text fragments without replacing anchors or their listeners.
+Marks run in the existing onRendered callback after link wiring and before the same receipt is ready;
+there is no timer completion barrier.
 
 List organization can use the exact containing source-note path or outgoing wiki-note links in the
 root title. `taskLinkValues` derives links once per organization pass with the shared Markdown
@@ -667,7 +686,9 @@ interaction leases, and scheduled work on teardown.
 [`renderTaskText`](src/ui/renderTaskText.ts) shares title-only inline presentation across cards,
 inspector titles, and real calendar titles. It uses Obsidian MarkdownRenderer with the source path
 and Component lifetime. Compact title embeds/images become inert labels instead of loading previews.
-Descriptions, comments, and project values retain their ordinary Markdown contract.
+Cards and Inspector description/comment fields explicitly select Markdown presentation so formatting
+without links also reaches the host renderer; genuine plain single-line fields stay synchronous.
+Project values retain their ordinary Markdown contract.
 
 Editable links keep original source offsets and occurrence order even when display labels change
 length; inert labels gain no edit authority. Forecast/continuation titles share

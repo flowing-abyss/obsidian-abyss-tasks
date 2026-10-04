@@ -1278,6 +1278,9 @@ describe('complete known settings ownership', () => {
   const typesPath = `${root}/src/settings/types.ts`;
   const options: ts.CompilerOptions = {
     target: ts.ScriptTarget.ES2021,
+    // The public search policy feature-detects Intl segmentation; include its declaration while
+    // retaining the minimum target and the exact accepting/rejecting settings check below.
+    lib: ['lib.es2021.d.ts', 'lib.dom.d.ts', 'lib.es2022.intl.d.ts'],
     module: ts.ModuleKind.ESNext,
     moduleResolution: ts.ModuleResolutionKind.Bundler,
     strict: true,

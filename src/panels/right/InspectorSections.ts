@@ -234,6 +234,7 @@ export class InspectorSections {
     }
     view.removeClass('abyss-right-desc-empty');
     renderTaskText(view, description, {
+      presentation: 'markdown',
       app: this.#app,
       sourcePath: rootTaskRef(task).filePath,
       component: this.#host.component(),
@@ -657,6 +658,7 @@ export class InspectorSections {
   ): void {
     const textEl = row.createEl('p', { cls: 'abyss-comment-text' });
     renderTaskText(textEl, comment.text, {
+      presentation: 'markdown',
       app: this.#app,
       sourcePath: rootTaskRef(task).filePath,
       component: this.#host.component(),
