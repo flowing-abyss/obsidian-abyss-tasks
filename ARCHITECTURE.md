@@ -484,7 +484,7 @@ key vector per replacement; final scroll clamping happens when a window's height
 [`projectTableViewport`](src/panels/projects/projectTableViewport.ts) adapts the existing Table
 estimates and signatures to that neutral module. Logical projection, sorting, and grouping still
 process the full collection.
-Table, centre Tasks/dashboard lists, and Kanban cards have windowed rows; Timeline rows remain eager.
+Table, centre Tasks/dashboard lists, Kanban cards, and Timeline rows use bounded native windows.
 [`ProjectKanbanColumnViewport`](src/panels/projects/projectKanbanViewport.ts) owns each column's
 RowViewport, sparse spacers, measurements, pins, native bindings, and one loaded Markdown Component
 per mounted card/header. The view supplies full logical rows and keyed card rendering; mounted cells
@@ -573,6 +573,24 @@ edit from overwriting an independently changed companion field.
 Preview authority remains tied to captured source until receipts arrive. Source replacement,
 supersession, hiding, or teardown invalidates it, and older settlements cannot alter newer previews.
 Axis windowing changes physical rendering without changing logical date mapping.
+[`timelineViewportRows`](src/panels/projects/projectTimelineRowModel.ts) builds the pure ordered
+header/project sequence. [`ProjectTimelineRows`](src/panels/projects/projectTimelineRows.ts) owns
+its shared RowViewport geometry, sparse pins/spacers, measurements, vertical anchors, owner-window
+bindings, and one loaded Markdown Component per mounted row/header. The retained Timeline view owns
+horizontal calendar rendering and supplies its current axis before the native owner's coalesced
+vertical pass; new mounts use that axis. Vertical corrections never change horizontal position.
+Complete logical cells continue to drive selection, clipboard, keyboard movement, and reveal.
+The interaction's read-only pinned-occurrence seam includes provisional/active captures and pending
+successful previews until existing projected-source reconciliation retires them. The view mirrors
+that authority into native pins and invalidates gestures before collapse, hide, detach, or disposal
+can evict their nodes. Actual row focus and explicit editor ownership also pin rows, including
+pickers relocated outside the row. Mount cleanup removes view-owned cell references, DOM, and
+explicit row listeners before the native owner unloads Markdown once. Shared cell-host handlers for all three surfaces register with the
+actual row Component and become inert during that single unload; transferred Kanban rows retain
+that same owner and current-context callbacks. Individual field removal within a surviving row
+still has the row lifetime; it does not introduce a separate cell resource owner. Native render
+failures reach the controller's render feedback,
+diagnostic, and Notice boundary; date mutation failures retain their separate committer boundary.
 
 Overview creation retains a session with a configured status. ProjectManager prepares the note
 through NoteTemplateService and applies status through serialized metadata mutation. ProjectStore

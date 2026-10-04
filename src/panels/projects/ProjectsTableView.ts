@@ -1192,8 +1192,9 @@ export class ProjectsTableView {
   }
 
   private persistAndRender_abyssPrivate(): void {
+    this.feedback_abyssPrivate.empty();
     this.renderTable_abyssPrivate();
-    this.persistSettings_abyssPrivate();
+    this.persistSettings_abyssPrivate(false);
   }
 
   private requestViewChange_abyssPrivate(mutation: () => void): Promise<boolean> {
@@ -1219,8 +1220,8 @@ export class ProjectsTableView {
     });
   }
 
-  private persistSettings_abyssPrivate(): void {
-    this.feedback_abyssPrivate.empty();
+  private persistSettings_abyssPrivate(clearFeedback = true): void {
+    if (clearFeedback) this.feedback_abyssPrivate.empty();
     runAsyncAction(
       this.context_abyssPrivate.saveViewState(),
       'Could not save project view settings',
@@ -1591,6 +1592,21 @@ export class ProjectsTableView {
 
   private createTimelineView_abyssPrivate(): ProjectsTimelineView<RenderedCellContext> {
     const timeline = new ProjectsTimelineView<RenderedCellContext>(this.root_abyssPrivate, {
+      reportRenderFailure: (error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.feedback_abyssPrivate.setText(message);
+        console.error('[abyss-tasks] Could not render project Timeline', { cause: error });
+        new Notice(`Could not render project Timeline: ${message}`);
+      },
+      copy: (event) => {
+        this.handleCopy_abyssPrivate(event);
+      },
+      paste: (event) => {
+        this.handlePaste_abyssPrivate(event);
+      },
+      windowRendered: () => {
+        this.patchSelection_abyssPrivate();
+      },
       settings: () => this.effectiveTimelineSettings_abyssPrivate(),
       savedSettings: () => this.ensureTimelineSettings_abyssPrivate(),
       modelInput: () => ({
@@ -1613,9 +1629,9 @@ export class ProjectsTableView {
         this.finishEditorBeforeAction(action);
       },
       requestScaleChange: (scale) => this.requestTimelineScaleChange_abyssPrivate(scale),
-      renderGroupContent: (marker, label, group) => {
+      renderGroupContent: (marker, label, group, markdown) => {
         this.renderGroupContent_abyssPrivate(
-          { marker, host: label, component: this.markdown_abyssPrivate },
+          { marker, host: label, component: markdown },
           group,
           group.presentation?.color,
         );
@@ -1982,6 +1998,7 @@ export class ProjectsTableView {
 
   private renderTimelineCell_abyssPrivate(options: {
     readonly host: HTMLElement;
+    readonly markdown: Component;
     readonly project: Project;
     readonly field: ProjectFieldCatalogItem;
     readonly column?: ProjectColumn;
@@ -1995,7 +2012,7 @@ export class ProjectsTableView {
   private renderOverviewCell_abyssPrivate(
     options: {
       readonly host: HTMLElement;
-      readonly markdown?: Component;
+      readonly markdown: Component;
       readonly project: Project;
       readonly field: ProjectFieldCatalogItem;
       readonly column?: ProjectColumn | undefined;
@@ -2018,7 +2035,7 @@ export class ProjectsTableView {
       ownedClear,
       element: options.host,
       contentSignature: '',
-      ...(options.markdown === undefined ? {} : { markdown: options.markdown }),
+      markdown: options.markdown,
     };
     rendered.identity = {
       occurrenceId: options.occurrenceId,
@@ -2050,7 +2067,8 @@ export class ProjectsTableView {
       display: this.projectCellPresentation_abyssPrivate(options.column, presentation),
       descriptionLines,
     });
-    if (options.existing === undefined) this.decorateProjectCell_abyssPrivate(rendered);
+    if (options.existing === undefined)
+      this.decorateProjectCell_abyssPrivate(rendered, options.markdown);
     if (signature !== rendered.contentSignature) {
       rendered.contentSignature = signature;
       options.host.empty();
@@ -2234,7 +2252,7 @@ export class ProjectsTableView {
         contentSignature: '',
       };
       row.cells.set(columnId, rendered);
-      this.decorateProjectCell_abyssPrivate(rendered);
+      this.decorateProjectCell_abyssPrivate(rendered, row.markdown);
     }
     rendered.identity = { occurrenceId, projectPath: project.path, groupKey, columnId };
     rendered.project = project;
@@ -2617,9 +2635,12 @@ export class ProjectsTableView {
     });
   }
 
-  private decorateProjectCell_abyssPrivate(rendered: RenderedCellContext): void {
+  private decorateProjectCell_abyssPrivate(
+    rendered: RenderedCellContext,
+    markdown: Component,
+  ): void {
     const cell = rendered.element;
-    cell.addEventListener('mousedown', (event) => {
+    markdown.registerDomEvent(cell, 'mousedown', (event) => {
       if (
         event.button === 0 &&
         event.shiftKey &&
@@ -2627,17 +2648,17 @@ export class ProjectsTableView {
       )
         event.preventDefault();
     });
-    cell.addEventListener('click', (event) => {
+    markdown.registerDomEvent(cell, 'click', (event) => {
       if (!this.isCellActionTarget_abyssPrivate(event.target, cell)) {
         this.selectCell_abyssPrivate(rendered, event.shiftKey);
       }
     });
-    cell.addEventListener('focus', () => {
+    markdown.registerDomEvent(cell, 'focus', () => {
       if (!this.sameCell_abyssPrivate(this.selection_abyssPrivate.focus, rendered.identity))
         this.selectCell_abyssPrivate(rendered, false);
       else this.syncSelection_abyssPrivate();
     });
-    cell.addEventListener('dblclick', (event) => {
+    markdown.registerDomEvent(cell, 'dblclick', (event) => {
       if (
         !editableField(rendered.field) ||
         this.isCellActionTarget_abyssPrivate(event.target, cell)
@@ -2649,7 +2670,7 @@ export class ProjectsTableView {
         ownedClear: rendered.ownedClear,
       });
     });
-    cell.addEventListener('contextmenu', (event) => {
+    markdown.registerDomEvent(cell, 'contextmenu', (event) => {
       const field = rendered.field;
       if (
         event.target instanceof Element &&

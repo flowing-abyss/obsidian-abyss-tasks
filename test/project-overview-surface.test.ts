@@ -141,6 +141,14 @@ function catalog(): ProjectPropertyCatalog {
 
 /** Mounts the overview on three projects and `extra` fillers, and switches to the case's view. */
 function mountSurface(testCase: SurfaceCase, extra = 0) {
+  const originalHeight = Object.getOwnPropertyDescriptor(Element.prototype, 'clientHeight');
+  vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.classList.contains('abyss-project-timeline-scroll')
+      ? 400
+      : Number(originalHeight?.get?.call(this) ?? 0);
+  });
   const host = freshContainer();
   activeDocument.body.append(host);
   const settings = structuredClone(DEFAULT_SETTINGS);
@@ -311,13 +319,8 @@ const cases: readonly SurfaceCase[] = [
       settings.timeline.groupBy = 'status';
     },
     surface: (view) => (view as unknown as SurfaceInternals).timelineView_abyssPrivate,
-    groupHeader: (host, path) =>
-      expectDefined(
-        host
-          .querySelector(`.abyss-project-timeline-row[data-project-path="${path}"]`)
-          ?.closest('.abyss-project-timeline-group')
-          ?.querySelector<HTMLElement>('.abyss-project-timeline-group-header'),
-      ),
+    groupHeader: (host) =>
+      expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-group-header')),
     viewport: (surface) => ({
       horizontal: surface.scroll,
       vertical: surface.scroll,
@@ -327,7 +330,7 @@ const cases: readonly SurfaceCase[] = [
     restoresScrollAfterHide: true,
     listener: (surface) => [surface.scroll, 'scroll'],
     observesScroll: true,
-    windowed: false,
+    windowed: true,
   },
 ];
 
@@ -422,8 +425,8 @@ describe.each(cases)('project overview surface contract: $mode', (testCase) => {
     surface.scroll.scrollLeft = 0;
     surface.scroll.scrollTop = 0;
 
-    // Table/Kanban keep their pending snapshot while detached; Timeline's existing contract stays unchanged.
-    if (testCase.mode !== 'Timeline') {
+    // A detached render cannot consume the native scroll restoration snapshot.
+    {
       const parent = expectDefined(surface.scroll.parentElement);
       surface.scroll.remove();
       view.update(listed);
@@ -657,4 +660,94 @@ it('releases an offscreen picker without revealing over later outside focus', as
   expect(unloaded).toHaveBeenCalledExactlyOnceWith(false);
   expect(document.activeElement).toBe(outside);
   expect(surface.scroll.scrollLeft).toBe(600);
+});
+
+function dispatchRetiredCellEvents(cell: HTMLElement): void {
+  for (const type of ['mousedown', 'click', 'focus', 'dblclick', 'contextmenu']) {
+    const event =
+      type === 'focus'
+        ? new FocusEvent(type, { cancelable: true })
+        : new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, shiftKey: true });
+    cell.dispatchEvent(event);
+    expect(event.defaultPrevented, type).toBe(false);
+  }
+}
+
+describe.each(cases)('shared cell lifetime in $mode', (testCase) => {
+  it('makes held cells inert after repeated eviction and unloads each owner once', () => {
+    const { surface, view, host } = mountSurface(testCase, 80);
+    const first = expectDefined(
+      surface
+        .cells()
+        .identities.find(
+          (cell) => cell.projectPath === 'Projects/A.md' && cell.columnId === 'start',
+        ),
+    );
+    const last = expectDefined(
+      surface
+        .cells()
+        .identities.find(
+          (cell) => cell.projectPath === 'Projects/Filler 79.md' && cell.columnId === 'name',
+        ),
+    );
+    const held: HTMLElement[] = [];
+    for (let cycle = 0; cycle < 3; cycle++) {
+      surface.revealCell(first);
+      const rendered = expectDefined(
+        surface
+          .renderedCells()
+          .find(
+            (cell) =>
+              cell.identity.projectPath === 'Projects/A.md' && cell.identity.columnId === 'start',
+          ),
+      );
+      const unload = vi.spyOn(expectDefined(rendered.markdown), 'unload');
+      held.push(rendered.element);
+      surface.revealCell(last);
+      expect(rendered.element.isConnected).toBe(false);
+      expect(unload).toHaveBeenCalledOnce();
+      const selection = view.selectedProjectPath();
+      for (const cell of held) dispatchRetiredCellEvents(cell);
+      expect(view.selectedProjectPath()).toBe(selection);
+      expect(host.querySelector('.abyss-project-cell-editor')).toBeNull();
+      expect(surface.renderedCells().length).toBeLessThan(150);
+    }
+  });
+
+  it('keeps patched hosts live once with current source and makes destruction final', () => {
+    const { surface, view, projects: listed, host } = mountSurface(testCase);
+    const first = expectDefined(
+      surface
+        .renderedCells()
+        .find(
+          (cell) =>
+            cell.identity.projectPath === 'Projects/A.md' && cell.identity.columnId === 'start',
+        ),
+    );
+    const unload = vi.spyOn(expectDefined(first.markdown), 'unload');
+    for (let revision = 2; revision < 5; revision++)
+      view.update(
+        listed.map((item) =>
+          item.path === 'Projects/A.md'
+            ? { ...item, frontmatter: { ...item.frontmatter, start: `2026-09-0${revision}` } }
+            : item,
+        ),
+      );
+    const select = vi.spyOn(
+      view as unknown as {
+        selectCell_abyssPrivate(cell: RenderedCellContext, extend: boolean): void;
+      },
+      'selectCell_abyssPrivate',
+    );
+    first.element.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(select).toHaveBeenCalledOnce();
+    expect(select.mock.calls[0]?.[0].project.frontmatter['start']).toBe('2026-09-04');
+    expect(unload).not.toHaveBeenCalled();
+    view.destroy();
+    expect(unload).toHaveBeenCalledOnce();
+    const calls = select.mock.calls.length;
+    dispatchRetiredCellEvents(first.element);
+    expect(select.mock.calls).toHaveLength(calls);
+    expect(host.querySelector('.abyss-project-cell-editor')).toBeNull();
+  });
 });

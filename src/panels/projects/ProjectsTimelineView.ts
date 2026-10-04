@@ -1,4 +1,4 @@
-import { setIcon } from 'obsidian';
+import { setIcon, type Component } from 'obsidian';
 import {
   projectCalendarDayFromOrdinal,
   projectCalendarDayOrdinal,
@@ -51,12 +51,15 @@ import {
   type ProjectOverviewRenderHooks,
   type ProjectsOverviewSurface,
 } from './ProjectsOverviewSurface';
+import type { ProjectTableSelectableCell } from './projectTableSelection';
 import {
   applyProjectTimelineBarGeometry,
   freezeProjectTimelineRangeBinding,
   ProjectTimelinePointerInteraction,
   type ProjectTimelineRangeCommitter,
 } from './projectTimelineInteraction';
+import { timelineViewportRows, type TimelineViewportRow } from './projectTimelineRowModel';
+import { ProjectTimelineRows, type TimelineRowMount } from './projectTimelineRows';
 
 let timelineSurfaceAccessibilitySequence = 0;
 
@@ -80,6 +83,7 @@ export interface ProjectsTimelineViewContext<
   readonly effectiveField: ProjectOverviewFieldResolver;
   readonly renderCell: (options: {
     readonly host: HTMLElement;
+    readonly markdown: Component;
     readonly project: Project;
     readonly field: ProjectFieldCatalogItem;
     readonly column?: ProjectColumn;
@@ -95,14 +99,22 @@ export interface ProjectsTimelineViewContext<
     marker: HTMLElement,
     label: HTMLElement,
     group: ProjectTableGroup,
+    markdown: Component,
   ) => void;
   readonly statusColor: (project: Project) => string | undefined;
   readonly openRangeMenu: (occurrenceId: string, event: MouseEvent | KeyboardEvent) => void;
   readonly finishEditor: () => Promise<boolean>;
   readonly now?: () => Date;
+  readonly reportRenderFailure: (error: unknown) => void;
+  readonly windowRendered?: () => void;
+  readonly copy?: (event: ClipboardEvent) => void;
+  readonly paste?: (event: ClipboardEvent) => void;
 }
 
 interface RenderedRow<TCell extends ProjectTimelineCellContext> {
+  readonly markdown: Component;
+  readonly cleanup: Array<() => void>;
+  visibleCells: TCell[];
   readonly element: HTMLElement;
   readonly summary: HTMLElement;
   readonly name: HTMLElement;
@@ -120,17 +132,6 @@ interface RenderedRow<TCell extends ProjectTimelineCellContext> {
   project: Project;
   range: ProjectTimelineRange;
   groupKey: string;
-}
-
-interface RenderedGroup<TCell extends ProjectTimelineCellContext> {
-  readonly element: HTMLElement;
-  readonly header: HTMLButtonElement;
-  readonly chevron: HTMLElement;
-  readonly marker: HTMLElement;
-  readonly label: HTMLElement;
-  readonly count: HTMLElement;
-  readonly body: HTMLElement;
-  readonly rows: Map<string, RenderedRow<TCell>>;
 }
 
 interface TimelineScrollPosition {
@@ -296,7 +297,15 @@ export class ProjectsTimelineView<
   private readonly axisHierarchy_abyssPrivate: HTMLElement;
   private readonly axisCells_abyssPrivate: HTMLElement;
   private readonly groupsHost_abyssPrivate: HTMLElement;
-  private readonly groups_abyssPrivate = new Map<string, RenderedGroup<TCell>>();
+  private readonly rows_abyssPrivate = new Map<string, RenderedRow<TCell>>();
+  private readonly rowMounts_abyssPrivate: ProjectTimelineRows;
+  private readonly gestureReleases_abyssPrivate = new Map<string, () => void>();
+  private editorRelease_abyssPrivate: (() => void) | undefined;
+  private rendering_abyssPrivate = false;
+  private layoutSignature_abyssPrivate = '';
+  private readonly rowOrder_abyssPrivate = new Map<string, number>();
+  private readonly modelRows_abyssPrivate = new Map<string, ProjectTimelineRow>();
+  private readonly modelGroups_abyssPrivate = new Map<string, ProjectTimelineGroup>();
   private visibleCells_abyssPrivate: TCell[] = [];
   private cells_abyssPrivate: ProjectOverviewCells = NO_PROJECT_OVERVIEW_CELLS;
   private projects_abyssPrivate: readonly Project[] = [];
@@ -315,8 +324,6 @@ export class ProjectsTimelineView<
     HTMLButtonElement
   >();
   private readonly interaction_abyssPrivate: ProjectTimelinePointerInteraction;
-  private readonly resizeObserver_abyssPrivate: ResizeObserver | undefined;
-  private axisFrame_abyssPrivate: number | undefined;
   private axisLayout_abyssPrivate: ProjectTimelineAxisLayout = {
     cells: [],
     hierarchyCells: [],
@@ -361,10 +368,15 @@ export class ProjectsTimelineView<
       attr: { 'aria-hidden': 'true' },
     });
     this.groupsHost_abyssPrivate = this.scroll.createDiv({ cls: 'abyss-project-timeline-groups' });
-    this.scroll.addEventListener('scroll', this.handleScroll_abyssPrivate);
     this.syncRangeStateOffset_abyssPrivate();
-    this.resizeObserver_abyssPrivate = this.createResizeObserver_abyssPrivate();
-    this.resizeObserver_abyssPrivate?.observe(this.scroll);
+    this.scroll.addEventListener('scroll', this.syncRangeStateOffset_abyssPrivate, {
+      passive: true,
+    });
+    if (context_abyssPrivate.copy !== undefined)
+      this.root.addEventListener('copy', context_abyssPrivate.copy);
+    if (context_abyssPrivate.paste !== undefined)
+      this.root.addEventListener('paste', context_abyssPrivate.paste);
+    this.rowMounts_abyssPrivate = this.createRowMounts_abyssPrivate();
     this.interaction_abyssPrivate = new ProjectTimelinePointerInteraction({
       root: this.root,
       scroll: this.scroll,
@@ -373,10 +385,43 @@ export class ProjectsTimelineView<
       commitRangeEdit: context_abyssPrivate.commitRangeEdit,
       reportRangeFailure: context_abyssPrivate.reportRangeFailure,
       finishEditor: context_abyssPrivate.finishEditor,
+      pinsChanged: () => {
+        this.syncGesturePins_abyssPrivate();
+      },
       selectRange: (occurrenceId, focus) => {
         const row = this.findRowByOccurrence_abyssPrivate(occurrenceId);
         if (row !== undefined) this.selectRange_abyssPrivate(row, focus);
       },
+    });
+  }
+
+  private createRowMounts_abyssPrivate(): ProjectTimelineRows {
+    return new ProjectTimelineRows({
+      host: this.groupsHost_abyssPrivate,
+      scroll: this.scroll,
+      mount: (host, row, markdown) => this.mountRow_abyssPrivate(host, row, markdown),
+      beforeWindow: () => {
+        if (!this.root.isConnected || this.root.hidden === true || this.scroll.clientHeight <= 0) {
+          this.interaction_abyssPrivate.cancelActive();
+          return;
+        }
+        this.syncRangeStateOffset_abyssPrivate();
+        this.syncTrackWidth_abyssPrivate(this.currentWindow_abyssPrivate());
+        this.patchVisibleCalendar_abyssPrivate(this.currentWindow_abyssPrivate());
+        this.refreshLayout_abyssPrivate();
+      },
+      mountedChanged: () => {
+        this.visibleCells_abyssPrivate = [...this.rows_abyssPrivate.values()]
+          .sort(
+            (a, b) =>
+              (this.rowOrder_abyssPrivate.get(a.element.dataset['occurrenceId'] ?? '') ?? 0) -
+              (this.rowOrder_abyssPrivate.get(b.element.dataset['occurrenceId'] ?? '') ?? 0),
+          )
+          .flatMap((row) => row.visibleCells);
+        this.syncSelectedRows_abyssPrivate();
+        if (!this.rendering_abyssPrivate) this.context_abyssPrivate.windowRendered?.();
+      },
+      reportFailure: this.context_abyssPrivate.reportRenderFailure,
     });
   }
 
@@ -432,10 +477,12 @@ export class ProjectsTimelineView<
 
   show(): void {
     this.root.hidden = false;
+    this.rowMounts_abyssPrivate.setActive(true);
   }
 
   hide(): void {
     this.interaction_abyssPrivate.cancelActive();
+    this.rowMounts_abyssPrivate.setActive(false);
     this.root.hidden = true;
   }
 
@@ -445,15 +492,16 @@ export class ProjectsTimelineView<
   }
 
   destroy(): void {
+    this.rendering_abyssPrivate = true;
     this.interaction_abyssPrivate.destroy();
-    this.scroll.removeEventListener('scroll', this.handleScroll_abyssPrivate);
-    this.resizeObserver_abyssPrivate?.disconnect();
-    const ownerWindow = this.root.ownerDocument.defaultView;
-    if (this.axisFrame_abyssPrivate !== undefined && ownerWindow !== null) {
-      ownerWindow.cancelAnimationFrame(this.axisFrame_abyssPrivate);
-    }
-    this.axisFrame_abyssPrivate = undefined;
-    this.groups_abyssPrivate.clear();
+    this.scroll.removeEventListener('scroll', this.syncRangeStateOffset_abyssPrivate);
+    if (this.context_abyssPrivate.copy !== undefined)
+      this.root.removeEventListener('copy', this.context_abyssPrivate.copy);
+    if (this.context_abyssPrivate.paste !== undefined)
+      this.root.removeEventListener('paste', this.context_abyssPrivate.paste);
+    this.editorRelease_abyssPrivate?.();
+    this.rowMounts_abyssPrivate.destroy();
+    this.rows_abyssPrivate.clear();
     this.visibleCells_abyssPrivate = [];
     this.cells_abyssPrivate = NO_PROJECT_OVERVIEW_CELLS;
     this.editingMarks_abyssPrivate = [];
@@ -468,8 +516,8 @@ export class ProjectsTimelineView<
     return this.visibleCells_abyssPrivate;
   }
 
-  revealCell(): void {
-    // Every row of an expanded group is mounted, so each listed cell is rendered.
+  revealCell(identity: ProjectTableSelectableCell): void {
+    this.rowMounts_abyssPrivate.reveal(identity.occurrenceId);
   }
 
   scrollCellIntoView(cell: TCell): void {
@@ -510,6 +558,11 @@ export class ProjectsTimelineView<
   setEditingCell(cell: HTMLElement | undefined): void {
     for (const element of this.editingMarks_abyssPrivate) element.removeClass('is-cell-editing');
     this.editingMarks_abyssPrivate = [];
+    const previous = this.editorRelease_abyssPrivate;
+    this.editorRelease_abyssPrivate = undefined;
+    const key = cell?.closest<HTMLElement>('.abyss-project-timeline-row')?.dataset['occurrenceId'];
+    if (key !== undefined) this.editorRelease_abyssPrivate = this.rowMounts_abyssPrivate.pin(key);
+    previous?.();
     if (cell === undefined || !this.root.contains(cell)) return;
     for (const holder of ['.abyss-project-timeline-row', '.abyss-project-timeline-summary']) {
       const element = cell.closest<HTMLElement>(holder);
@@ -521,6 +574,7 @@ export class ProjectsTimelineView<
 
   captureViewportBeforeHide(): void {
     this.interaction_abyssPrivate.cancelActive();
+    this.rowMounts_abyssPrivate.setActive(false);
     this.hiddenScrollPosition_abyssPrivate = {
       left: this.scroll.scrollLeft,
       top: this.scroll.scrollTop,
@@ -536,7 +590,7 @@ export class ProjectsTimelineView<
     if (located !== undefined && this.isGroupCollapsed_abyssPrivate(located.groupKey)) {
       this.changeGroupCollapsed_abyssPrivate(located.groupKey, false);
     }
-    const row = this.findRow_abyssPrivate(path);
+    const row = located?.row;
     if (row === undefined) return;
     const window = this.currentWindow_abyssPrivate();
     let revealedOrdinal: number | undefined;
@@ -550,10 +604,7 @@ export class ProjectsTimelineView<
         this.render_abyssPrivate(true);
       }
     }
-    const element = this.findRow_abyssPrivate(path)?.element;
-    if (element !== undefined && typeof element.scrollIntoView === 'function') {
-      element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    }
+    this.rowMounts_abyssPrivate.reveal(row.occurrenceId);
     if (revealedOrdinal !== undefined) {
       this.scroll.scrollLeft = this.scaleScrollLeft_abyssPrivate(
         this.currentWindow_abyssPrivate(),
@@ -719,10 +770,12 @@ export class ProjectsTimelineView<
     this.syncScaleButtons_abyssPrivate();
     const focused = this.focusedDescendant_abyssPrivate();
     const focusedRange = this.focusedRangeIdentity_abyssPrivate(focused);
-    const hiddenPosition = this.hiddenScrollPosition_abyssPrivate;
+    const hiddenPosition = this.scroll.isConnected
+      ? this.hiddenScrollPosition_abyssPrivate
+      : undefined;
     const left = hiddenPosition?.left ?? this.scroll.scrollLeft;
-    const top = hiddenPosition?.top ?? this.scroll.scrollTop;
-    this.hiddenScrollPosition_abyssPrivate = undefined;
+    if (hiddenPosition !== undefined) this.scroll.scrollTop = hiddenPosition.top;
+    if (hiddenPosition !== undefined) this.hiddenScrollPosition_abyssPrivate = undefined;
     const input = this.context_abyssPrivate.modelInput();
     const model = buildProjectTimelineModel({
       ...input,
@@ -731,6 +784,8 @@ export class ProjectsTimelineView<
       search: this.search_abyssPrivate,
     });
     this.model_abyssPrivate = model;
+    this.rendering_abyssPrivate = true;
+    this.indexModel_abyssPrivate(model);
     this.cells_abyssPrivate = projectTimelineCells({
       model,
       settings: this.context_abyssPrivate.settings(),
@@ -742,6 +797,21 @@ export class ProjectsTimelineView<
       ),
       effectiveField: this.context_abyssPrivate.effectiveField,
     });
+    this.fitScale_abyssPrivate(model);
+    const window = this.currentWindow_abyssPrivate();
+    this.syncTrackWidth_abyssPrivate(window);
+    this.patchAxis_abyssPrivate(window);
+    this.reconcileGroups_abyssPrivate(model.groups, window);
+    this.interaction_abyssPrivate.reconcileAfterRender();
+    this.syncSelectedRows_abyssPrivate();
+    this.restoreScroll_abyssPrivate(navigation, window, left);
+    this.patchVisibleCalendar_abyssPrivate(window);
+    this.restoreFocus_abyssPrivate(focused, focusedRange);
+    this.rendering_abyssPrivate = false;
+    return model;
+  }
+
+  private fitScale_abyssPrivate(model: ProjectTimelineModel): void {
     if (this.preparedScaleChange_abyssPrivate) {
       this.preparedScaleChange_abyssPrivate = false;
       this.renderedScale_abyssPrivate = this.context_abyssPrivate.settings().scale;
@@ -755,23 +825,50 @@ export class ProjectsTimelineView<
         this.scaleContextOrdinal_abyssPrivate = dayOrdinal(this.fittedWindow_abyssPrivate.startDay);
       }
     }
-    const window = this.currentWindow_abyssPrivate();
-    this.syncTrackWidth_abyssPrivate(window);
-    this.patchAxis_abyssPrivate(window);
-    this.reconcileGroups_abyssPrivate(model.groups, window);
+  }
+
+  private indexModel_abyssPrivate(model: ProjectTimelineModel): void {
+    const protectedKeys = [...this.gestureReleases_abyssPrivate.keys()];
+    const focusKey = this.root.ownerDocument.activeElement?.closest<HTMLElement>(
+      '.abyss-project-timeline-row',
+    )?.dataset['occurrenceId'];
+    if (focusKey !== undefined && !protectedKeys.includes(focusKey)) protectedKeys.push(focusKey);
+    protectedKeys.sort(
+      (left, right) =>
+        (this.rowOrder_abyssPrivate.get(left) ?? 0) - (this.rowOrder_abyssPrivate.get(right) ?? 0),
+    );
+    this.modelRows_abyssPrivate.clear();
+    this.modelGroups_abyssPrivate.clear();
+    this.rowOrder_abyssPrivate.clear();
+    for (const group of model.groups) {
+      this.modelGroups_abyssPrivate.set(group.key, group);
+      for (const row of group.rows) {
+        this.modelRows_abyssPrivate.set(row.occurrenceId, row);
+        this.rowOrder_abyssPrivate.set(row.occurrenceId, this.rowOrder_abyssPrivate.size);
+      }
+    }
+    if (
+      protectedKeys.some(
+        (key, index) =>
+          index > 0 &&
+          (this.rowOrder_abyssPrivate.get(key) ?? Infinity) <
+            (this.rowOrder_abyssPrivate.get(protectedKeys[index - 1] ?? '') ?? 0),
+      )
+    )
+      this.interaction_abyssPrivate.cancelActive();
+    if (
+      this.interaction_abyssPrivate
+        .pinnedOccurrences()
+        .some((key) => this.visibleRow(key) === undefined)
+    )
+      this.interaction_abyssPrivate.cancelActive();
     this.interaction_abyssPrivate.reconcileAfterRender();
-    this.syncSelectedRows_abyssPrivate();
-    this.restoreScroll_abyssPrivate(navigation, window, left, top);
-    this.patchVisibleCalendar_abyssPrivate(window);
-    this.restoreFocus_abyssPrivate(focused, focusedRange);
-    return model;
   }
 
   private restoreScroll_abyssPrivate(
     navigation: boolean,
     window: ProjectTimelineWindow,
     left: number,
-    top: number,
   ): void {
     if (this.scaleContextOrdinal_abyssPrivate !== undefined) {
       this.scroll.scrollLeft = this.scaleScrollLeft_abyssPrivate(
@@ -779,40 +876,12 @@ export class ProjectsTimelineView<
         this.scaleContextOrdinal_abyssPrivate,
         left,
       );
-      this.scroll.scrollTop = top;
+
       this.scaleContextOrdinal_abyssPrivate = undefined;
-    } else if (!navigation) {
+    } else if (!navigation && this.scroll.scrollLeft !== left) {
       this.scroll.scrollLeft = left;
-      this.scroll.scrollTop = top;
     }
     this.syncRangeStateOffset_abyssPrivate();
-  }
-
-  private readonly handleScroll_abyssPrivate = (): void => {
-    this.syncRangeStateOffset_abyssPrivate();
-    this.scheduleAxisPatch_abyssPrivate();
-  };
-
-  private readonly scheduleAxisPatch_abyssPrivate = (): void => {
-    if (this.axisFrame_abyssPrivate !== undefined) return;
-    const ownerWindow = this.root.ownerDocument.defaultView;
-    if (ownerWindow === null || typeof ownerWindow.requestAnimationFrame !== 'function') {
-      this.patchVisibleCalendar_abyssPrivate(this.currentWindow_abyssPrivate());
-      return;
-    }
-    this.axisFrame_abyssPrivate = ownerWindow.requestAnimationFrame(() => {
-      this.axisFrame_abyssPrivate = undefined;
-      const window = this.currentWindow_abyssPrivate();
-      this.syncTrackWidth_abyssPrivate(window);
-      this.patchVisibleCalendar_abyssPrivate(window);
-    });
-  };
-
-  private createResizeObserver_abyssPrivate(): ResizeObserver | undefined {
-    const ResizeObserverClass = this.root.ownerDocument.defaultView?.ResizeObserver;
-    return ResizeObserverClass === undefined
-      ? undefined
-      : new ResizeObserverClass(this.scheduleAxisPatch_abyssPrivate);
   }
 
   private readonly syncRangeStateOffset_abyssPrivate = (): void => {
@@ -956,11 +1025,7 @@ export class ProjectsTimelineView<
 
   private patchVisibleCalendar_abyssPrivate(window: ProjectTimelineWindow): void {
     this.patchAxis_abyssPrivate(window);
-    for (const group of this.groups_abyssPrivate.values()) {
-      for (const row of group.rows.values()) {
-        this.patchGrid_abyssPrivate(row.grid);
-      }
-    }
+    for (const row of this.rows_abyssPrivate.values()) this.patchGrid_abyssPrivate(row.grid);
   }
 
   private addTodayMarker_abyssPrivate(host: HTMLElement, window: ProjectTimelineWindow): void {
@@ -974,95 +1039,158 @@ export class ProjectsTimelineView<
     marker.style.left = `${((offset + 0.5) / window.dayCount) * 100}%`;
   }
 
-  private reconcileGroups_abyssPrivate(
-    groups: readonly ProjectTimelineGroup[],
-    window: ProjectTimelineWindow,
-  ): void {
-    const desired: HTMLElement[] = [];
-    const retained = new Set<string>();
-    const cells: TCell[] = [];
-    const grouped = this.context_abyssPrivate.settings().groupBy !== 'none';
-    for (const model of groups) {
-      retained.add(model.key);
-      const group =
-        this.groups_abyssPrivate.get(model.key) ?? this.createGroup_abyssPrivate(model.key);
-      this.groups_abyssPrivate.set(model.key, group);
-      const collapsed = this.isGroupCollapsed_abyssPrivate(model.key);
-      group.header.hidden = !grouped;
-      group.header.setAttribute('aria-expanded', String(!collapsed));
-      group.chevron.empty();
-      const chevron = collapsed ? 'chevron-right' : 'chevron-down';
-      group.chevron.dataset['icon'] = chevron;
-      setIcon(group.chevron, chevron);
-      this.context_abyssPrivate.renderGroupContent(group.marker, group.label, {
-        ...model,
-        projects: model.rows.map(({ project }) => project),
-      });
-      group.count.setText(String(model.rows.length));
-      group.body.hidden = collapsed;
-      // A collapsed group keeps its rows mounted, but none of their cells is selectable.
-      this.reconcileRows_abyssPrivate(group, model, window, collapsed ? [] : cells);
-      desired.push(group.element);
-    }
-    for (const [key, group] of this.groups_abyssPrivate) {
-      if (retained.has(key)) continue;
-      group.element.remove();
-      this.groups_abyssPrivate.delete(key);
-    }
-    reconcileOrder(this.groupsHost_abyssPrivate, desired);
-    this.visibleCells_abyssPrivate = cells;
+  private layoutSignatureForRows_abyssPrivate(): string {
+    const style = this.root.ownerDocument.defaultView?.getComputedStyle(this.root);
+    return JSON.stringify([
+      this.scroll.clientWidth,
+      style?.fontFamily,
+      style?.fontSize,
+      style?.lineHeight,
+    ]);
   }
 
-  private createGroup_abyssPrivate(key: string): RenderedGroup<TCell> {
-    const element = this.groupsHost_abyssPrivate.createDiv({ cls: 'abyss-project-timeline-group' });
-    const header = element.createEl('button', {
+  private refreshLayout_abyssPrivate(): void {
+    if (
+      this.layoutSignatureForRows_abyssPrivate() === this.layoutSignature_abyssPrivate ||
+      this.model_abyssPrivate === undefined
+    )
+      return;
+    this.reconcileGroups_abyssPrivate(
+      this.model_abyssPrivate.groups,
+      this.currentWindow_abyssPrivate(),
+    );
+  }
+
+  private reconcileGroups_abyssPrivate(
+    groups: readonly ProjectTimelineGroup[],
+    _window: ProjectTimelineWindow,
+  ): void {
+    const settings = this.context_abyssPrivate.settings();
+    this.layoutSignature_abyssPrivate = this.layoutSignatureForRows_abyssPrivate();
+    const revision = JSON.stringify([
+      settings,
+      this.layoutSignature_abyssPrivate,
+      this.context_abyssPrivate.modelInput().fields,
+    ]);
+    const rows = timelineViewportRows(
+      groups.map((group) => ({
+        key: group.key,
+        collapsed: this.isGroupCollapsed_abyssPrivate(group.key),
+        rows: group.rows.map((row) => ({
+          occurrenceId: row.occurrenceId,
+          revision: JSON.stringify(row.project),
+          estimatedHeight: 100,
+        })),
+      })),
+      revision,
+      settings.groupBy === 'none' ? 0 : 36,
+    );
+    this.rowMounts_abyssPrivate.update(rows, true);
+  }
+
+  private mountRow_abyssPrivate(
+    host: HTMLElement,
+    viewportRow: TimelineViewportRow,
+    markdown: Component,
+  ): TimelineRowMount {
+    if (viewportRow.kind === 'group')
+      return this.mountGroup_abyssPrivate(host, viewportRow, markdown);
+    const item = this.modelRows_abyssPrivate.get(viewportRow.key);
+    if (item === undefined) throw new Error('Timeline row is no longer available');
+    const row = this.createRow_abyssPrivate(host, item, viewportRow.groupKey, markdown);
+    this.rows_abyssPrivate.set(viewportRow.key, row);
+    const update = (): void => {
+      const current = this.modelRows_abyssPrivate.get(viewportRow.key);
+      if (current === undefined) return;
+      row.project = current.project;
+      row.range = current.range;
+      row.element.dataset['projectPath'] = current.project.path;
+      row.element.dataset['occurrenceId'] = current.occurrenceId;
+      row.track.dataset['occurrenceId'] = current.occurrenceId;
+      row.visibleCells = [];
+      this.patchRow_abyssPrivate(row, current, row.visibleCells, this.currentWindow_abyssPrivate());
+    };
+    try {
+      update();
+    } catch (error) {
+      this.destroyRow_abyssPrivate(viewportRow.key, row);
+      throw error;
+    }
+    return {
+      element: row.element,
+      update,
+      destroy: () => {
+        this.destroyRow_abyssPrivate(viewportRow.key, row);
+      },
+    };
+  }
+
+  private destroyRow_abyssPrivate(key: string, row: RenderedRow<TCell>): void {
+    this.rows_abyssPrivate.delete(key);
+    for (const cleanup of row.cleanup) cleanup();
+    this.visibleCells_abyssPrivate = this.visibleCells_abyssPrivate.filter(
+      (cell) => !row.element.contains(cell.element),
+    );
+    row.cells.clear();
+    row.visibleCells = [];
+    row.element.remove();
+  }
+
+  private mountGroup_abyssPrivate(
+    host: HTMLElement,
+    row: TimelineViewportRow,
+    markdown: Component,
+  ): TimelineRowMount {
+    const header = host.createEl('button', {
       cls: 'abyss-project-timeline-group-header',
       attr: { type: 'button' },
     });
-    const group: RenderedGroup<TCell> = {
-      element,
-      header,
-      chevron: header.createSpan({ cls: 'abyss-project-table-group-chevron' }),
-      marker: header.createSpan({ cls: 'abyss-status-dot' }),
-      label: header.createSpan({ cls: 'abyss-projects-group-label' }),
-      count: header.createSpan({ cls: 'abyss-projects-group-count' }),
-      body: element.createDiv({ cls: 'abyss-project-timeline-group-body' }),
-      rows: new Map(),
+    const chevron = header.createSpan({ cls: 'abyss-project-table-group-chevron' });
+    const marker = header.createSpan({ cls: 'abyss-status-dot' });
+    const label = header.createSpan({ cls: 'abyss-projects-group-label' });
+    const count = header.createSpan({ cls: 'abyss-projects-group-count' });
+    const click = (): void => {
+      this.toggleGroup_abyssPrivate(row.groupKey);
     };
-    header.addEventListener('click', () => {
-      this.toggleGroup_abyssPrivate(key);
-    });
-    return group;
+    header.addEventListener('click', click);
+    const update = (): void => {
+      const group = this.modelGroups_abyssPrivate.get(row.groupKey);
+      if (group === undefined) return;
+      const collapsed = this.isGroupCollapsed_abyssPrivate(row.groupKey);
+      header.setAttribute('aria-expanded', String(!collapsed));
+      chevron.empty();
+      const icon = collapsed ? 'chevron-right' : 'chevron-down';
+      chevron.dataset['icon'] = icon;
+      setIcon(chevron, icon);
+      this.context_abyssPrivate.renderGroupContent(
+        marker,
+        label,
+        { ...group, projects: group.rows.map(({ project }) => project) },
+        markdown,
+      );
+      count.setText(String(group.rows.length));
+    };
+    update();
+    return {
+      element: header,
+      update,
+      destroy: () => {
+        header.removeEventListener('click', click);
+        header.remove();
+      },
+    };
   }
 
-  private reconcileRows_abyssPrivate(
-    group: RenderedGroup<TCell>,
-    model: ProjectTimelineGroup,
-    window: ProjectTimelineWindow,
-    visibleCells: TCell[],
-  ): void {
-    const desired: HTMLElement[] = [];
-    const retained = new Set<string>();
-    for (const item of model.rows) {
-      retained.add(item.occurrenceId);
-      const row =
-        group.rows.get(item.occurrenceId) ?? this.createRow_abyssPrivate(group, item, model.key);
-      group.rows.set(item.occurrenceId, row);
-      row.project = item.project;
-      row.range = item.range;
-      row.groupKey = model.key;
-      row.element.dataset['projectPath'] = item.project.path;
-      row.element.dataset['occurrenceId'] = item.occurrenceId;
-      row.track.dataset['occurrenceId'] = item.occurrenceId;
-      this.patchRow_abyssPrivate(row, item, visibleCells, window);
-      desired.push(row.element);
+  private syncGesturePins_abyssPrivate(): void {
+    const next = new Set(this.interaction_abyssPrivate.pinnedOccurrences());
+    for (const [key, release] of this.gestureReleases_abyssPrivate) {
+      if (next.has(key)) continue;
+      this.gestureReleases_abyssPrivate.delete(key);
+      release();
     }
-    for (const [key, row] of group.rows) {
-      if (retained.has(key)) continue;
-      row.element.remove();
-      group.rows.delete(key);
-    }
-    reconcileOrder(group.body, desired);
+    for (const key of next)
+      if (!this.gestureReleases_abyssPrivate.has(key))
+        this.gestureReleases_abyssPrivate.set(key, this.rowMounts_abyssPrivate.pin(key));
   }
 
   private createRangeAccessibility_abyssPrivate(track: HTMLElement): {
@@ -1095,11 +1223,12 @@ export class ProjectsTimelineView<
   }
 
   private createRow_abyssPrivate(
-    group: RenderedGroup<TCell>,
+    host: HTMLElement,
     item: ProjectTimelineRow,
     groupKey: string,
+    markdown: Component,
   ): RenderedRow<TCell> {
-    const element = group.body.createDiv({ cls: 'abyss-project-timeline-row' });
+    const element = host.createDiv({ cls: 'abyss-project-timeline-row' });
     const summary = element.createDiv({ cls: 'abyss-project-timeline-summary' });
     const track = element.createDiv({
       cls: 'abyss-project-timeline-track',
@@ -1117,6 +1246,9 @@ export class ProjectsTimelineView<
     const startHandle = this.createRangeHandle_abyssPrivate(bar, 'start');
     const endHandle = this.createRangeHandle_abyssPrivate(bar, 'end');
     const row: RenderedRow<TCell> = {
+      markdown,
+      cleanup: [],
+      visibleCells: [],
       element,
       summary,
       name: summary.createDiv({ cls: 'abyss-project-timeline-name' }),
@@ -1135,19 +1267,19 @@ export class ProjectsTimelineView<
       range: item.range,
       groupKey,
     };
-    track.addEventListener('keydown', (event) => {
+    const keydown = (event: KeyboardEvent): void => {
       const focus = exactRangeEventTarget(event, track, bar);
       if (focus === undefined) return;
       this.handleRangeKeydown_abyssPrivate(row, event, focus);
-    });
-    track.addEventListener('contextmenu', (event) => {
+    };
+    const contextmenu = (event: MouseEvent): void => {
       const focus = exactRangeEventTarget(event, track, bar);
       if (focus === undefined) return;
       event.preventDefault();
       this.selectRange_abyssPrivate(row, focus);
       this.context_abyssPrivate.openRangeMenu(row.element.dataset['occurrenceId'] ?? '', event);
-    });
-    element.addEventListener('click', (event) => {
+    };
+    const click = (event: MouseEvent): void => {
       if (
         event.target instanceof Element &&
         (event.target.closest('.abyss-project-table-cell') !== null ||
@@ -1158,6 +1290,14 @@ export class ProjectsTimelineView<
       const cell = row.cells.get('name') ?? row.cells.values().next().value;
       if (cell !== undefined) this.context_abyssPrivate.selectCell(cell);
       this.syncSelectedRows_abyssPrivate();
+    };
+    track.addEventListener('keydown', keydown);
+    track.addEventListener('contextmenu', contextmenu);
+    element.addEventListener('click', click);
+    row.cleanup.push(() => {
+      track.removeEventListener('keydown', keydown);
+      track.removeEventListener('contextmenu', contextmenu);
+      element.removeEventListener('click', click);
     });
     return row;
   }
@@ -1208,6 +1348,7 @@ export class ProjectsTimelineView<
     const host = existing?.element ?? options.parent.createDiv({ cls: options.className });
     const cell = this.context_abyssPrivate.renderCell({
       host,
+      markdown: row.markdown,
       project: item.project,
       field,
       ...(options.column === undefined ? {} : { column: options.column }),
@@ -1482,23 +1623,17 @@ export class ProjectsTimelineView<
   }
 
   private findRow_abyssPrivate(path: string): RenderedRow<TCell> | undefined {
-    return this.findLocatedRow_abyssPrivate(path)?.row;
+    return [...this.rows_abyssPrivate.values()].find((row) => row.project.path === path);
   }
-
   private findRowByOccurrence_abyssPrivate(occurrenceId: string): RenderedRow<TCell> | undefined {
-    for (const group of this.groups_abyssPrivate.values()) {
-      const row = group.rows.get(occurrenceId);
-      if (row !== undefined) return row;
-    }
-    return undefined;
+    return this.rows_abyssPrivate.get(occurrenceId);
   }
-
   private findLocatedRow_abyssPrivate(
     path: string,
-  ): { readonly groupKey: string; readonly row: RenderedRow<TCell> } | undefined {
-    for (const group of this.groups_abyssPrivate.values()) {
-      const row = Array.from(group.rows.values()).find(({ project }) => project.path === path);
-      if (row !== undefined) return { groupKey: row.groupKey, row };
+  ): { readonly groupKey: string; readonly row: ProjectTimelineRow } | undefined {
+    for (const group of this.model_abyssPrivate?.groups ?? []) {
+      const row = group.rows.find((candidate) => candidate.project.path === path);
+      if (row !== undefined) return { groupKey: group.key, row };
     }
     return undefined;
   }
@@ -1540,10 +1675,7 @@ export class ProjectsTimelineView<
   }
 
   private syncSelectedRows_abyssPrivate(): void {
-    for (const group of this.groups_abyssPrivate.values()) {
-      for (const row of group.rows.values()) {
-        row.element.toggleClass('is-selected', row.project.path === this.selectedPath_abyssPrivate);
-      }
-    }
+    for (const row of this.rows_abyssPrivate.values())
+      row.element.toggleClass('is-selected', row.project.path === this.selectedPath_abyssPrivate);
   }
 }

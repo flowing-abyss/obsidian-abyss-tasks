@@ -1,7 +1,8 @@
 import { MarkdownRenderer, Menu, Notice, type Component } from 'obsidian';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { isProjectKanbanCustomized } from '../src/panels/projects/ProjectKanbanOptions';
+import type { RenderedCellContext } from '../src/panels/projects/ProjectsOverviewSurface';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
 import type { ProjectTableSelectableCell } from '../src/panels/projects/projectTableSelection';
 import { projectTimelineOptionsRows } from '../src/panels/projects/ProjectTimelineOptions';
@@ -35,6 +36,17 @@ import {
   freshContainer,
   objectMatching,
 } from './helpers';
+
+beforeEach(() => {
+  const original = Object.getOwnPropertyDescriptor(Element.prototype, 'clientHeight');
+  vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.classList.contains('abyss-project-timeline-scroll')
+      ? 500
+      : Number(original?.get?.call(this) ?? 0);
+  });
+});
 
 interface TestTransfer {
   readonly types: string[];
@@ -3593,6 +3605,8 @@ describe('project Kanban overview', () => {
         board.renderedCells().find((cell) => cell.element === focusedCell)?.markdown,
       );
       const destination = expectDefined(settings.projects.statuses[1 - sourceIndex]);
+      const unload = vi.spyOn(markdown, 'unload');
+      const start = expectDefined(card.querySelector<HTMLElement>('[data-column-id="start"]'));
 
       view.update([{ ...initial, statusId: destination.id }]);
 
@@ -3606,6 +3620,34 @@ describe('project Kanban overview', () => {
       expect(board.renderedCells().find((cell) => cell.element === focusedCell)?.markdown).toBe(
         markdown,
       );
+      for (let revision = 2; revision < 5; revision++)
+        view.update([
+          { ...initial, statusId: destination.id, frontmatter: { start: `2026-09-0${revision}` } },
+        ]);
+      const select = vi.spyOn(
+        view as unknown as {
+          selectCell_abyssPrivate(cell: RenderedCellContext, extend: boolean): void;
+        },
+        'selectCell_abyssPrivate',
+      );
+      start.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(select).toHaveBeenCalledOnce();
+      expect(select.mock.calls[0]?.[0].project.frontmatter['start']).toBe('2026-09-04');
+      expect(unload).not.toHaveBeenCalled();
+      expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban')).focus();
+      view.update([]);
+      expect(unload).toHaveBeenCalledOnce();
+      expect(start.isConnected).toBe(false);
+      const calls = select.mock.calls.length;
+      for (const type of ['mousedown', 'click', 'focus', 'dblclick', 'contextmenu']) {
+        const event =
+          type === 'focus'
+            ? new FocusEvent(type, { cancelable: true })
+            : new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, shiftKey: true });
+        start.dispatchEvent(event);
+        expect(event.defaultPrevented, type).toBe(false);
+      }
+      expect(select.mock.calls).toHaveLength(calls);
     },
   );
 
@@ -4039,7 +4081,12 @@ describe('project Kanban overview', () => {
 
     header.click();
     await flushMicrotasks();
+    expect(start.isConnected).toBe(false);
     start.click();
+    expect(view.selectedProjectPath()).toBeUndefined();
+    expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline [data-column-id="start"]'),
+    ).click();
     expect(header.getAttribute('aria-expanded')).toBe('true');
     expect(view.selectedProjectPath()).toBe('Projects/A.md');
   });

@@ -617,3 +617,34 @@ it('backs Kanban column and hover spacing with a finite native spacer variable',
     }),
   ).toEqual([]);
 });
+
+it('backs Timeline sparse spacing with the native owner variable', async () => {
+  const { default: ts } = await import('typescript');
+  const source = ts.sys.readFile(ts.sys.resolvePath('src/panels/projects/projectTimelineRows.ts'));
+  if (source === undefined) throw new Error('Missing Timeline native owner');
+  const runtime = discoverRuntimeVariables(source);
+  expect(runtime.produced).toContain('--abyss-project-timeline-spacer-height');
+  expect(contracts.runtime.produced).toContain('--abyss-project-timeline-spacer-height');
+  const { loadPluginStyles, cssDeclarationsFor } = await import('./helpers');
+  const spacer = cssDeclarationsFor(
+    await loadPluginStyles(),
+    '.abyss-project-timeline-viewport-spacer',
+  );
+  expect(spacer).toContain('height: var(--abyss-project-timeline-spacer-height)');
+  expect(
+    analyzeCss(`.abyss-project-timeline-viewport-spacer { ${spacer} }`, {
+      file: 'fixture.css',
+      contracts: {
+        ...fixtureContracts,
+        runtime: {
+          ...runtime,
+          produced: [
+            ...runtime.produced,
+            '--abyss-project-timeline-summary-width',
+            '--abyss-project-timeline-track-width',
+          ],
+        },
+      },
+    }),
+  ).toEqual([]);
+});

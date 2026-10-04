@@ -439,6 +439,7 @@ export default defineConfig(
       'src/panels/projects/projectTableSelection.ts',
       'src/panels/projects/projectTableViewport.ts',
       'src/panels/projects/projectKanbanRows.ts',
+      'src/panels/projects/projectTimelineRowModel.ts',
       'src/panels/virtualization/rowViewport.ts',
       'src/panels/calendar/calendarPolicy.ts',
       'src/panels/calendar/calendarDateNavigation.ts',

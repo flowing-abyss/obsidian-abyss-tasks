@@ -9757,3 +9757,16 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 .abyss-tracked-row.is-finished .abyss-tracked-row-title {
   color: var(--text-muted);
 }
+
+.abyss-project-timeline-groups {
+  overflow-anchor: none;
+}
+
+.abyss-project-timeline-viewport-spacer {
+  height: var(--abyss-project-timeline-spacer-height);
+  width: calc(
+    var(--abyss-project-timeline-summary-width) + var(--abyss-project-timeline-track-width)
+  );
+  overflow-anchor: none;
+  pointer-events: none;
+}

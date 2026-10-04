@@ -129,6 +129,7 @@ interface ProjectTimelinePointerInteractionContext extends ProjectTimelineRangeC
   readonly scroll: HTMLElement;
   readonly window: () => ProjectTimelineWindow;
   readonly finishEditor: () => Promise<boolean>;
+  readonly pinsChanged?: () => void;
   readonly selectRange: (occurrenceId: string, focus: HTMLElement) => void;
 }
 
@@ -381,6 +382,17 @@ export class ProjectTimelinePointerInteraction {
     this.tooltip_abyssPrivate.remove();
   }
 
+  private notifyPins_abyssPrivate(): void {
+    this.context_abyssPrivate.pinsChanged?.();
+  }
+
+  pinnedOccurrences(): readonly string[] {
+    const pins = new Set(this.pending_abyssPrivate.keys());
+    if (this.active_abyssPrivate !== undefined)
+      pins.add(this.active_abyssPrivate.target.occurrenceId);
+    return [...pins];
+  }
+
   cancelActive(): void {
     this.cancelGesture_abyssPrivate(true);
     this.clearPendingPreviews_abyssPrivate(true);
@@ -408,6 +420,7 @@ export class ProjectTimelinePointerInteraction {
         !sameProjectTimelineRangeSource(pending.source, current.source)
       ) {
         this.pending_abyssPrivate.delete(occurrenceId);
+        this.notifyPins_abyssPrivate();
         continue;
       }
       pending.barSnapshot = barSnapshot(pending.target.bar);
@@ -423,14 +436,19 @@ export class ProjectTimelinePointerInteraction {
     if (restorePreview && active?.barSnapshot !== undefined && active.target.bar !== null) {
       this.restorePendingPreview_abyssPrivate(active);
     }
-    if (active !== undefined) this.releasePointerCapture_abyssPrivate(active);
+    if (active !== undefined) {
+      this.releasePointerCapture_abyssPrivate(active);
+      this.notifyPins_abyssPrivate();
+    }
   }
 
   private clearPendingPreviews_abyssPrivate(restorePreview: boolean): void {
     for (const pending of this.pending_abyssPrivate.values()) {
       if (restorePreview) this.restorePendingPreview_abyssPrivate(pending);
     }
+    const changed = this.pending_abyssPrivate.size > 0;
     this.pending_abyssPrivate.clear();
+    if (changed) this.notifyPins_abyssPrivate();
   }
 
   private cancelPendingOccurrence_abyssPrivate(occurrenceId: string): void {
@@ -438,6 +456,7 @@ export class ProjectTimelinePointerInteraction {
     if (pending === undefined) return;
     this.pending_abyssPrivate.delete(occurrenceId);
     this.restorePendingPreview_abyssPrivate(pending);
+    this.notifyPins_abyssPrivate();
   }
 
   private restorePendingPreview_abyssPrivate(
@@ -538,6 +557,7 @@ export class ProjectTimelinePointerInteraction {
       ...(snapshot === undefined ? {} : { barSnapshot: snapshot }),
     };
     this.active_abyssPrivate = active;
+    this.notifyPins_abyssPrivate();
     if (!this.capturePointer_abyssPrivate(active)) return;
     void this.context_abyssPrivate.finishEditor().then(
       (finished) => {
@@ -654,6 +674,7 @@ export class ProjectTimelinePointerInteraction {
     if (this.pending_abyssPrivate.get(pending.target.occurrenceId)?.id !== pending.id) return;
     this.pending_abyssPrivate.delete(pending.target.occurrenceId);
     if (restorePreview) this.restorePendingPreview_abyssPrivate(pending);
+    this.notifyPins_abyssPrivate();
   }
 
   /** Every written date is the day under the pointer, wherever a compact control is displayed. */

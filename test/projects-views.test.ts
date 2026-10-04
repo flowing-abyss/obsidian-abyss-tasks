@@ -452,6 +452,7 @@ describe('ProjectsPanel dispatch', () => {
   });
 
   it('keeps the Timeline scroll position when returning from a dashboard', () => {
+    const size = vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(500);
     const state = new AppState();
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
@@ -460,6 +461,7 @@ describe('ProjectsPanel dispatch', () => {
       projectProperties,
     });
     const el = freshContainer();
+    document.body.append(el);
     panel.mount(el);
     const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-project-timeline-scroll'));
     scroll.scrollLeft = 47;
@@ -471,6 +473,9 @@ describe('ProjectsPanel dispatch', () => {
 
     expect(el.querySelector<HTMLElement>('.abyss-project-timeline-scroll')).toBe(scroll);
     expect(scroll.scrollLeft).toBe(47);
+    panel.destroy();
+    el.remove();
+    size.mockRestore();
   });
 
   describe('dashboard scroll position', () => {

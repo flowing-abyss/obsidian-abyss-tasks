@@ -7,9 +7,11 @@ import {
   TFile,
   type WorkspaceLeaf,
 } from 'obsidian';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import type { RenderedCellContext } from '../src/panels/projects/ProjectsOverviewSurface';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
+import type { ProjectsTimelineView } from '../src/panels/projects/ProjectsTimelineView';
 import { mountProjectCellEditorPosition } from '../src/panels/projects/projectCellEditorPosition';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import { ProjectManager } from '../src/projects/ProjectManager';
@@ -39,6 +41,17 @@ import {
   freshContainer,
   loadPluginStyles,
 } from './helpers';
+
+beforeEach(() => {
+  const original = Object.getOwnPropertyDescriptor(Element.prototype, 'clientHeight');
+  vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.classList.contains('abyss-project-timeline-scroll')
+      ? 500
+      : Number(original?.get?.call(this) ?? 0);
+  });
+});
 
 interface TestTransfer {
   readonly types: string[];
@@ -1433,7 +1446,10 @@ describe('ProjectsTableView', () => {
     expect(
       labelledText(expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'))),
     ).toContain('2026-09-02 through 2026-10-01');
-    pressTimelineArrow(track);
+    expect(track.isConnected).toBe(false);
+    pressTimelineArrow(
+      expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-track')),
+    );
     await flushMicrotasks();
     expect(applyEdits).toHaveBeenCalledTimes(2);
     expect(applyEdits.mock.calls[1]?.[0]).toMatchObject([
@@ -1524,9 +1540,10 @@ describe('ProjectsTableView', () => {
     await flushMicrotasks();
     await flushMicrotasks();
 
+    expect(host.querySelector('.abyss-project-timeline-row')).toBeNull();
     expect(
-      expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-group-body')).hidden,
-    ).toBe(true);
+      host.querySelector('.abyss-project-timeline-group-header')?.getAttribute('aria-expanded'),
+    ).toBe('false');
     expect(applyEdits).toHaveBeenCalledOnce();
     expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
     expect(noticeSpy.mock.calls[noticeSpy.mock.calls.length - 1]?.[0]).toEqual(
@@ -7307,5 +7324,123 @@ describe('ProjectsTableView', () => {
     expect(empty()?.textContent).toBe('No matching projects');
     view.update([]);
     expect(empty()?.textContent).toBe('No projects yet');
+  });
+});
+
+it('copies all logical Timeline rows and styles newly mounted selection', () => {
+  const config = settings();
+  config.projects.overviewView = 'timeline';
+  const items = Array.from({ length: 1100 }, (_, i) =>
+    project({
+      path: `Projects/P${String(i).padStart(4, '0')}.md`,
+      name: `Project ${String(i).padStart(4, '0')}`,
+    }),
+  );
+  const { host, view } = mount(items, { settings: config });
+  const first = expectDefined(
+    host.querySelector<HTMLElement>('.abyss-project-timeline [data-column-id="name"]'),
+  );
+  first.focus();
+  first.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+  const data = transfer();
+  first.dispatchEvent(clipboardEvent('copy', data));
+  expect(data.getData('text/plain').split('\n')).toHaveLength(1100);
+  expect(data.getData('text/plain')).toContain('Project 1099');
+  const timeline = (
+    view as unknown as {
+      timelineView_abyssPrivate: ProjectsTimelineView<RenderedCellContext>;
+    }
+  ).timelineView_abyssPrivate;
+  const last = expectDefined(
+    timeline
+      .cells()
+      .identities.find(
+        (cell) => cell.projectPath === 'Projects/P1099.md' && cell.columnId === 'name',
+      ),
+  );
+  timeline.revealCell(last);
+  const cell = expectDefined(
+    host.querySelector<HTMLElement>(
+      '.abyss-project-timeline [data-project-path="Projects/P1099.md"] [data-column-id="name"]',
+    ),
+  );
+  expect(cell.classList.contains('is-selected')).toBe(true);
+  cell.click();
+  cell.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+  expect(
+    document.activeElement?.closest<HTMLElement>('.abyss-project-timeline-row')?.dataset[
+      'projectPath'
+    ],
+  ).toBe('Projects/P1098.md');
+  expect(host.querySelectorAll('.abyss-project-timeline-row').length).toBeLessThan(20);
+});
+
+it('dispatches one Timeline paste after switches and preserves editing clipboard', async () => {
+  const { host, saveProperty } = mount([project({ frontmatter: { start: '2026-09-01' } })]);
+  const switchTo = (mode: string) => {
+    expectDefined(host.querySelector<HTMLButtonElement>(`[aria-label="${mode} view"]`)).click();
+  };
+  for (let index = 0; index < 3; index++) {
+    switchTo('Timeline');
+    switchTo('Table');
+  }
+  switchTo('Timeline');
+  const start = expectDefined(
+    host.querySelector<HTMLElement>('.abyss-project-timeline [data-column-id="start"]'),
+  );
+  start.focus();
+  const data = transfer({ 'text/plain': '2026-10-07' });
+  start.dispatchEvent(clipboardEvent('paste', data));
+  await flushMicrotasks();
+  expect(saveProperty).toHaveBeenCalledOnce();
+  const root = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline'));
+  for (const target of [
+    root.createEl('input'),
+    root.createDiv({ attr: { contenteditable: 'true' } }),
+  ]) {
+    for (const type of ['copy', 'paste'] as const) {
+      const event = clipboardEvent(type, data);
+      target.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    }
+  }
+  await flushMicrotasks();
+  expect(saveProperty).toHaveBeenCalledOnce();
+});
+
+it('shows and diagnoses native Timeline rendering failures at the owning surface', () => {
+  const notices = spyOnNotices();
+  const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const { host, view } = mount([project({})]);
+  const renderer = view as unknown as { renderTimelineCell_abyssPrivate(): never };
+  vi.spyOn(renderer, 'renderTimelineCell_abyssPrivate').mockImplementation(() => {
+    throw new Error('Broken renderer');
+  });
+  expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Timeline view"]')).click();
+  expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('Broken renderer');
+  expect(notices.mock.calls[0]?.[0]).toBe('Could not render project Timeline: Broken renderer');
+  expect(log).toHaveBeenCalledOnce();
+  view.update([project({})]);
+  expect(log).toHaveBeenCalledOnce();
+});
+
+it('persists lazy Timeline settings and normalized Table columns after their render', () => {
+  const config = settings();
+  delete config.projects.timeline;
+  const snapshots: CalendarSettings[] = [];
+  const { host } = mount([project({})], {
+    settings: config,
+    saveViewState: async () => {
+      snapshots.push(structuredClone(config));
+    },
+  });
+  expect(config.projects.timeline).toBeUndefined();
+  expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Timeline view"]')).click();
+  expect(expectDefined(snapshots[snapshots.length - 1]).projects.timeline).toBeDefined();
+  config.projects.table.columns = [{ id: 'start', visible: true }];
+  expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Table view"]')).click();
+  expect(expectDefined(snapshots[snapshots.length - 1]).projects.table.columns[0]).toMatchObject({
+    id: 'name',
+    visible: true,
   });
 });

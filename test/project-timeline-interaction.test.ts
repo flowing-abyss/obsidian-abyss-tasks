@@ -125,6 +125,7 @@ function mount(
   let captured = source(range);
   const commitRangeEdit = vi.fn().mockResolvedValue({ applied: [], failed: [] });
   const reportRangeFailure = vi.fn();
+  const pinsChanged = vi.fn();
   const selected: HTMLElement[] = [];
   const interaction = new ProjectTimelinePointerInteraction({
     root,
@@ -138,6 +139,7 @@ function mount(
       focus.focus();
     },
     reportRangeFailure,
+    pinsChanged,
   });
   return {
     root,
@@ -145,6 +147,7 @@ function mount(
     track,
     bar,
     interaction,
+    pinsChanged,
     commitRangeEdit,
     reportRangeFailure,
     selected,
@@ -562,11 +565,13 @@ describe('ProjectTimelinePointerInteraction', () => {
     first.resolve({ applied: [], failed: [] });
     await flushMicrotasks();
 
+    expect(mounted.interaction.pinnedOccurrences()).toEqual(['group\0Projects/A.md']);
     expect(rangeLeft(mounted.bar)).toBe(newestLeft);
     expect(mounted.bar.style.width).toBe(newestWidth);
     expect(mounted.bar.classList).toContain('is-previewing');
     second.resolve({ applied: [], failed: [] });
     await flushMicrotasks();
+    expect(mounted.interaction.pinnedOccurrences()).toEqual([]);
   });
 
   it.each([
@@ -1046,4 +1051,24 @@ describe('ProjectTimelinePointerInteraction', () => {
     expect(mounted.commitRangeEdit).not.toHaveBeenCalled();
     mounted.interaction.destroy();
   });
+});
+
+it('pins provisional and successful pending previews until projected source changes', async () => {
+  const f = mount();
+  f.bar.dispatchEvent(pointerEvent('pointerdown', 25));
+  expect(f.interaction.pinnedOccurrences()).toEqual(['group\0Projects/A.md']);
+  await flushMicrotasks();
+  f.bar.dispatchEvent(pointerEvent('pointermove', 55));
+  const pending = deferredResult();
+  f.commitRangeEdit.mockReturnValue(pending.promise);
+  f.bar.dispatchEvent(pointerEvent('pointerup', 55));
+  expect(f.interaction.pinnedOccurrences()).toHaveLength(1);
+  pending.resolve({ applied: [{}] as ProjectEditResult['applied'], failed: [] });
+  await flushMicrotasks();
+  expect(f.interaction.pinnedOccurrences()).toHaveLength(1);
+  f.setCapturedRange({ kind: 'closed', startDay: '2026-09-05', endDay: '2026-09-07' });
+  f.interaction.reconcileAfterRender();
+  expect(f.interaction.pinnedOccurrences()).toEqual([]);
+  expect(f.pinsChanged).toHaveBeenCalled();
+  f.interaction.destroy();
 });

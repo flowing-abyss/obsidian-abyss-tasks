@@ -163,7 +163,11 @@ export const contracts = {
   },
   runtime: {
     // Exact native spacer producer/consumer is exercised by css-policy.test.ts.
-    produced: ['--abyss-virtual-row-height', '--abyss-project-kanban-spacer-height'],
+    produced: [
+      '--abyss-virtual-row-height',
+      '--abyss-project-kanban-spacer-height',
+      '--abyss-project-timeline-spacer-height',
+    ],
     consumed: ['--abyss-tag-text-light', '--abyss-tag-text-dark'],
   },
   exceptions: [
