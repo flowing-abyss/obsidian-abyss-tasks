@@ -148,18 +148,23 @@ function mountSurface(
   extra = 0,
   configure?: (settings: ProjectsSettings) => void,
 ) {
-  const originalHeight = Object.getOwnPropertyDescriptor(Element.prototype, 'clientHeight');
+  vi.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.classList.contains('abyss-project-table-scroll') && this.isConnected ? 900 : 0;
+  });
   vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function (
     this: HTMLElement,
   ) {
+    const tableHeight = configure === undefined ? 340 : 400;
+    if (this.classList.contains('abyss-project-table-scroll'))
+      return this.isConnected ? tableHeight : 0;
     return [
       'abyss-project-timeline-scroll',
-      ...(configure === undefined
-        ? []
-        : ['abyss-project-table-scroll', 'abyss-project-kanban-column-body']),
+      ...(configure === undefined ? [] : ['abyss-project-kanban-column-body']),
     ].some((name) => this.classList.contains(name))
       ? 400
-      : Number(originalHeight?.get?.call(this) ?? 0);
+      : 0;
   });
   const host = freshContainer();
   activeDocument.body.append(host);

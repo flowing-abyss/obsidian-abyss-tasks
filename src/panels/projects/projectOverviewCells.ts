@@ -200,7 +200,7 @@ export function projectTableCells(input: ProjectTableCellsInput): {
 }
 
 /** A collapsed column and a compact empty column show no cards. */
-export function kanbanColumnExpanded(
+function kanbanColumnExpanded(
   column: ProjectKanbanColumn,
   settings: ProjectKanbanSettings,
 ): boolean {

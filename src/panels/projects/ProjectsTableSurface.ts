@@ -307,13 +307,11 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     this.#bind();
     this.#projects = projects;
     this.#search = search;
-    const pending =
-      this.scroll.isConnected && this.scroll.hidden === false && this.#context.isActive()
-        ? this.#pendingViewport
-        : undefined;
+    const availableWidth = this.scroll.clientWidth;
+    const canRender = this.#canRender(availableWidth);
+    const pending = canRender ? this.#pendingViewport : undefined;
     const scrollLeft = pending?.scrollLeft ?? this.scroll.scrollLeft;
     const focusedIdentity = this.#focusedCellIdentity();
-    const availableWidth = this.scroll.clientWidth;
 
     const columns = this.#context.columns();
     const model = buildProjectTableModel({ ...this.#context.modelInput(), projects, search });
@@ -322,13 +320,11 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     const table = this.#table ?? this.#createTable();
     this.#reconcileHeader(table, columns);
     this.#applyWidth(availableWidth);
-    if (pending !== undefined) {
-      this.scroll.scrollTop = pending.scrollTop;
-      this.#pendingViewport = undefined;
-    }
     this.#renderBody(table, model, columns, availableWidth);
     this.#updateResponsiveNamePinning(availableWidth);
-    this.#finishReconciliation(hooks, this.scroll.scrollTop, scrollLeft, focusedIdentity);
+    if (canRender)
+      this.#finishReconciliation(hooks, this.scroll.scrollTop, scrollLeft, focusedIdentity);
+    else hooks.settleSelection();
   }
 
   cells(): ProjectOverviewCells {
@@ -416,6 +412,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
         scrollTop: this.scroll.scrollTop,
         scrollLeft: this.scroll.scrollLeft,
       };
+      this.#unbind();
     }
   }
 
@@ -489,7 +486,13 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
   }
 
   #bind(): void {
-    if (this.#destroyed || this.scroll.hidden === true || !this.#context.isActive()) return;
+    if (
+      this.#destroyed ||
+      !this.scroll.isConnected ||
+      this.scroll.hidden === true ||
+      !this.#context.isActive()
+    )
+      return;
     const owner = this.scroll.ownerDocument.defaultView;
     if (owner === this.#owner) return;
     this.#unbind();
@@ -685,7 +688,9 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     this.#rows = rows;
     this.#cells = cells;
     this.#replaceGeometry();
-    const top = this.#viewport.window(this.scroll.scrollTop, this.#viewportHeight(), []).scrollTop;
+    const top = this.#canRender(availableWidth)
+      ? this.#viewport.window(this.scroll.scrollTop, this.#viewportHeight(), []).scrollTop
+      : this.scroll.scrollTop;
     this.#renderVisible(top, availableWidth);
   }
 
@@ -702,19 +707,34 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     });
   };
 
+  #canRender(availableWidth: number): boolean {
+    return (
+      this.scroll.isConnected &&
+      this.scroll.hidden === false &&
+      this.#context.isActive() &&
+      availableWidth > 0 &&
+      this.scroll.clientHeight > 0
+    );
+  }
+
+  #resumeViewport(requestedTop: number): number {
+    const pending = this.#pendingViewport;
+    if (pending === undefined) return requestedTop;
+    this.scroll.scrollLeft = pending.scrollLeft;
+    this.#pendingViewport = undefined;
+    return pending.scrollTop;
+  }
+
   #renderVisible(requestedTop: number, availableWidth = this.scroll.clientWidth): void {
     const body = this.#body;
     const model = this.#model;
-    if (
-      !this.#context.isActive() ||
-      this.scroll.hidden === true ||
-      body === undefined ||
-      model === undefined
-    )
+    if (!this.#canRender(availableWidth) || body === undefined || model === undefined) {
+      if (!this.scroll.isConnected) this.#unbind();
       return;
+    }
     this.#bind();
     const pinned = this.#pinnedRows();
-    let top = this.#checkLayout(requestedTop, availableWidth);
+    let top = this.#checkLayout(this.#resumeViewport(requestedTop), availableWidth);
     let extentChanged = false;
     // Extent is reconciled before a real correction; ordinary native scroll is never normalized.
     for (let pass = 0; pass < 2; pass++) {

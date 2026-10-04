@@ -477,13 +477,19 @@ rebuilt on a view switch. A dashboard temporarily detaches the overview without 
 logical cell list from mounted cells. Selection, keyboard movement, clipboard operations, creation,
 and reveal all use the active surface contract. Reveal mounts a logical cell before focus.
 Grouped selection distinguishes occurrences, while mutations deduplicate physical cells. Clipboard
-payloads carry raw types and source context, rebase links, and confer no write/history authority.
-Editors retain failed drafts, and navigation uses their shared completion boundary.
+payloads serialize the selected logical row/column union in projection order, padding sparse holes
+with blank data. They carry raw types and source context, rebase links, and confer no write/history
+authority; paste still requires real editable destination cells. Editors retain failed drafts, and
+navigation uses their shared completion boundary. The editor lifecycle alone owns failure refocus:
+explicit completion may retain correction focus, while passive dismissal or later outside/window
+departure revokes it without closing the draft or releasing its pin.
 
 [`ProjectsTableSurface`](src/panels/projects/ProjectsTableSurface.ts) owns Table DOM, scrolling,
 row windowing, and physical drag. The controller retains drop planning, validation, writes, and
 history. Editors and native drag sources pin their occurrence rows; evicted rows release listeners
-and Markdown Components. [`RowViewport`](src/panels/virtualization/rowViewport.ts) owns shared pure
+and Markdown Components. Detached or zero-size Table refreshes retain mounted rows and pending
+viewport state; connected layout resumes reconciliation from that saved viewport before consuming
+new native geometry. [`RowViewport`](src/panels/virtualization/rowViewport.ts) owns shared pure
 row geometry: prefix offsets, consumed overscan, sparse pins, revision-aware measurements, reveal,
 and anchor recovery against prior row order. Callers supply explicit rows and content-relative
 offsets; native owners account for sticky occlusion and viewport height. Anchors share an immutable

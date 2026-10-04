@@ -4,6 +4,10 @@ import { AppState } from '../src/app/AppState';
 import { isProjectKanbanCustomized } from '../src/panels/projects/ProjectKanbanOptions';
 import type { RenderedCellContext } from '../src/panels/projects/ProjectsOverviewSurface';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
+import {
+  decodeProjectTableClipboard,
+  parseProjectTableTsv,
+} from '../src/panels/projects/projectTableClipboard';
 import type { ProjectTableSelectableCell } from '../src/panels/projects/projectTableSelection';
 import { projectTimelineOptionsRows } from '../src/panels/projects/ProjectTimelineOptions';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
@@ -36,15 +40,18 @@ import {
   freshContainer,
   objectMatching,
 } from './helpers';
+import { useProjectTableViewport } from './support/projectTableViewport';
+
+useProjectTableViewport();
 
 beforeEach(() => {
-  const original = Object.getOwnPropertyDescriptor(Element.prototype, 'clientHeight');
+  const original = vi.spyOn(Element.prototype, 'clientHeight', 'get').getMockImplementation();
   vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function (
     this: HTMLElement,
   ) {
     return this.classList.contains('abyss-project-timeline-scroll')
       ? 500
-      : Number(original?.get?.call(this) ?? 0);
+      : Number(original?.call(this) ?? 0);
   });
 });
 
@@ -5714,5 +5721,239 @@ it('reveals the exact focused drop destination when its status column was collap
   expect(destination.classList.contains('is-collapsed')).toBe(false);
   expect(activeDocument.activeElement?.closest<HTMLElement>('.abyss-project-kanban-column')).toBe(
     destination,
+  );
+});
+
+it.each(['Kanban', 'Timeline'] as const)(
+  'copies heterogeneous logical %s cells with rectangular blank padding',
+  (mode) => {
+    const items = Array.from({ length: 1000 }, (_, index) =>
+      project({
+        path: `Projects/Sparse${String(index).padStart(4, '0')}.md`,
+        name: `Sparse ${String(index).padStart(4, '0')}`,
+        frontmatter:
+          index === 20
+            ? {}
+            : {
+                start: '2026-09-01',
+                end: '2026-09-30',
+                ...(index === 700 ? { description: 'Late selected description', Budget: 77 } : {}),
+              },
+        ...(index === 20
+          ? {
+              stats: {
+                total: 0,
+                done: 0,
+                cancelled: 0,
+                inProgress: 0,
+                tracked: { closedMs: 0, openStartsMs: [] },
+              },
+            }
+          : {}),
+      }),
+    );
+    const { host, settings, applyEdits } = mountView(items);
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.groupBy = 'none';
+    settings.projects.kanban.sortBy = { field: 'name', dir: 'asc' };
+    settings.projects.kanban.showEmptyFields = false;
+    settings.projects.kanban.showEmptyProgress = false;
+    settings.projects.kanban.fields = [
+      { id: 'start', visible: true },
+      { id: 'end', visible: true },
+    ];
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    settings.projects.timeline.groupBy = 'none';
+    settings.projects.timeline.sortBy = { field: 'name', dir: 'asc' };
+    settings.projects.timeline.showEmptyFields = false;
+    settings.projects.timeline.fields = [
+      { id: 'start', visible: true },
+      { id: 'end', visible: true },
+      { id: 'property:Budget', visible: true },
+    ];
+    clickView(host, mode);
+    const surface = expectDefined(
+      host.querySelector<HTMLElement>(
+        mode === 'Kanban' ? '.abyss-project-kanban' : '.abyss-project-timeline',
+      ),
+    );
+    const first = expectDefined(surface.querySelector<HTMLElement>('[data-column-id="name"]'));
+    first.click();
+    first.focus();
+    const copy = () => {
+      const data = transfer();
+      const event = new Event('copy', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'clipboardData', { value: data });
+      first.dispatchEvent(event);
+      return { data, event };
+    };
+    expect(copy().data.getData('text/plain')).toBe('Sparse 0000');
+    const mounted = surface.querySelectorAll('[data-column-id="name"]').length;
+    first.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+    const { data, event } = copy();
+    expect(event.defaultPrevented).toBe(true);
+    const rows = expectDefined(
+      decodeProjectTableClipboard(data.getData('application/x-abyss-project-table')),
+    );
+    const text = parseProjectTableTsv(data.getData('text/plain'));
+    expect(rows).toHaveLength(1000);
+    expect(rows[0]).toHaveLength(5);
+    expect(rows.every((row) => row.length === 5)).toBe(true);
+    expect(text.every((row) => row.length === 5)).toBe(true);
+    expect(rows[0]?.[0]).toEqual({
+      value: 'Sparse 0000',
+      sourcePath: items[0]?.path,
+      fieldType: 'name',
+    });
+    expect(rows[20]?.[1]).toEqual({ value: undefined, sourcePath: '', fieldType: null });
+    expect(text[20]?.[1]).toBe('');
+    expect(rows[700]?.[4]?.value).toBe(mode === 'Kanban' ? 'Late selected description' : 77);
+    expect(text[999]?.[4]).toBe('');
+    expect(activeDocument.activeElement).toBe(first);
+    expect(surface.querySelectorAll('[data-column-id="name"]')).toHaveLength(mounted);
+    expect(mounted).toBeLessThan(100);
+    expect(applyEdits).not.toHaveBeenCalled();
+  },
+);
+
+it('copies only the selected repeated subgroup in projection order across status columns', () => {
+  const statuses = DEFAULT_SETTINGS.projects.statuses;
+  const statusOne = expectDefined(statuses[0]).name;
+  const statusTwo = expectDefined(statuses[1]).name;
+  const items = [
+    project({
+      path: 'Projects/A.md',
+      name: 'A',
+      frontmatter: { status: statusOne, Owners: ['Shared', 'Other'] },
+    }),
+    project({
+      path: 'Projects/B.md',
+      name: 'B',
+      frontmatter: { status: statusOne, Owners: ['Other'] },
+    }),
+    project({
+      path: 'Projects/C.md',
+      name: 'C',
+      frontmatter: { status: statusTwo, Owners: ['Shared'], description: 'Later column' },
+    }),
+    project({
+      path: 'Projects/D.md',
+      name: 'D',
+      frontmatter: { status: statusTwo, Owners: ['Other'] },
+    }),
+  ];
+  const { host, settings } = mountView(items, {
+    catalog: catalog([{ name: 'Owners', type: 'list' }]),
+  });
+  settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+  settings.projects.kanban.groupBy = 'property:Owners';
+  settings.projects.kanban.sortBy = { field: 'name', dir: 'asc' };
+  clickView(host, 'Kanban');
+  const name = expectDefined(
+    host.querySelector<HTMLElement>(
+      '[data-group-key="value:shared"] [data-project-path="Projects/A.md"] [data-column-id="name"]',
+    ),
+  );
+  name.click();
+  name.focus();
+  name.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+  const data = transfer();
+  const event = new Event('copy', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', { value: data });
+  name.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
+  const rows = expectDefined(
+    decodeProjectTableClipboard(data.getData('application/x-abyss-project-table')),
+  );
+  expect(rows.map((row) => row[0]?.value)).toEqual(['A', 'C']);
+  expect(rows.map((row) => row[0]?.sourcePath)).toEqual(['Projects/A.md', 'Projects/C.md']);
+  expect(rows[0]?.[expectDefined(rows[0]).length - 1]).toEqual({
+    value: undefined,
+    sourcePath: '',
+    fieldType: null,
+  });
+  expect(rows[1]?.[expectDefined(rows[1]).length - 1]?.value).toBe('Later column');
+});
+
+it('copies a sparse Shift rectangle and clears real destinations while rejecting missing or read-only targets', async () => {
+  const items = ['A', 'B', 'C'].map((name) =>
+    project({
+      path: `Projects/${name}.md`,
+      name,
+      frontmatter: { start: '2026-09-01', ...(name === 'B' ? {} : { end: '2026-09-30' }) },
+    }),
+  );
+  const { host, view, settings, applyEdits } = mountView(items);
+  settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+  settings.projects.kanban.groupBy = 'none';
+  settings.projects.kanban.sortBy = { field: 'name', dir: 'asc' };
+  settings.projects.kanban.showEmptyFields = false;
+  clickView(host, 'Kanban');
+  const cell = (path: string, column: string) =>
+    expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban [data-project-path="Projects/${path}.md"] [data-column-id="${column}"]`,
+      ),
+    );
+  const first = cell('A', 'start');
+  first.click();
+  const last = cell('C', 'end');
+  last.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+  const data = transfer();
+  const dispatch = (target: HTMLElement, type: 'copy' | 'paste') => {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', { value: data });
+    target.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  };
+  dispatch(last, 'copy');
+  const rows = expectDefined(
+    decodeProjectTableClipboard(data.getData('application/x-abyss-project-table')),
+  );
+  expect(rows.map((row) => row.map(({ value }) => value))).toEqual([
+    ['2026-09-01', '2026-09-30'],
+    ['2026-09-01', undefined],
+    ['2026-09-01', '2026-09-30'],
+  ]);
+  expect(parseProjectTableTsv(data.getData('text/plain'))[1]).toEqual(['2026-09-01', '']);
+  first.click();
+  dispatch(first, 'paste');
+  await flushMicrotasks();
+  expect(applyEdits).not.toHaveBeenCalled();
+  expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain(
+    'no longer visible',
+  );
+  const name = cell('A', 'name');
+  name.click();
+  dispatch(name, 'paste');
+  await flushMicrotasks();
+  expect(applyEdits).not.toHaveBeenCalled();
+  expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain('read-only');
+  clickView(host, 'Table');
+  view.update(
+    items.map((item) =>
+      item.name === 'B'
+        ? { ...item, frontmatter: { ...item.frontmatter, end: '2026-10-10' } }
+        : item,
+    ),
+  );
+  const destination = expectDefined(
+    host.querySelector<HTMLElement>(
+      '.abyss-project-table [data-project-path="Projects/A.md"] [data-column-id="start"]',
+    ),
+  );
+  destination.click();
+  dispatch(destination, 'paste');
+  await flushMicrotasks();
+  expect(applyEdits).toHaveBeenCalledOnce();
+  expect(applyEdits.mock.calls[0]?.[0]).toHaveLength(6);
+  expect(applyEdits.mock.calls[0]?.[0]).toContainEqual(
+    expect.objectContaining({
+      path: 'Projects/B.md',
+      field: objectMatching({ id: 'end' }),
+      value: undefined,
+      expectedValue: '2026-10-10',
+      expectedExists: true,
+    }),
   );
 });

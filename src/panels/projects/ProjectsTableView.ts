@@ -3191,29 +3191,47 @@ export class ProjectsTableView {
     return clipboardScalarText(value);
   }
 
+  private clipboardCell_abyssPrivate(cell: ProjectOverviewCell | undefined): ProjectClipboardCell {
+    return {
+      value:
+        cell === undefined ? undefined : copyProjectedValue(this.clipboardValue_abyssPrivate(cell)),
+      sourcePath: cell?.project.path ?? '',
+      fieldType: cell?.field.type ?? null,
+    };
+  }
+
   private selectedClipboardRows_abyssPrivate():
     | {
         readonly internal: ProjectClipboardCell[][];
         readonly external: string[][];
       }
     | undefined {
-    const bounds = this.selectionBounds_abyssPrivate();
-    if (bounds === undefined) return undefined;
+    const selected = this.selectedCells_abyssPrivate();
+    if (selected.length === 0) return undefined;
+    const byRow = new Map<string, Map<string, ProjectOverviewCell>>();
+    const selectedColumns = new Set<string>();
+    for (const cell of selected) {
+      const { occurrenceId, columnId } = cell.identity;
+      let row = byRow.get(occurrenceId);
+      if (row === undefined) {
+        row = new Map<string, ProjectOverviewCell>();
+        byRow.set(occurrenceId, row);
+      }
+      row.set(columnId, cell);
+      selectedColumns.add(columnId);
+    }
+    const columns = this.columnIds_abyssPrivate().filter((id) => selectedColumns.has(id));
     const internal: ProjectClipboardCell[][] = [];
     const external: string[][] = [];
-    for (let row = bounds.top; row <= bounds.bottom; row += 1) {
+    for (const occurrenceId of this.rowIds_abyssPrivate()) {
+      const selectedRow = byRow.get(occurrenceId);
+      if (selectedRow === undefined) continue;
       const internalRow: ProjectClipboardCell[] = [];
       const externalRow: string[] = [];
-      for (let column = bounds.left; column <= bounds.right; column += 1) {
-        const cell = this.cellAt_abyssPrivate(row, column);
-        if (cell === undefined) return undefined;
-        const value = this.clipboardValue_abyssPrivate(cell);
-        internalRow.push({
-          value: copyProjectedValue(value),
-          sourcePath: cell.project.path,
-          fieldType: cell.field.type,
-        });
-        externalRow.push(this.clipboardText_abyssPrivate(value));
+      for (const column of columns) {
+        const payload = this.clipboardCell_abyssPrivate(selectedRow.get(column));
+        internalRow.push(payload);
+        externalRow.push(this.clipboardText_abyssPrivate(payload.value));
       }
       internal.push(internalRow);
       external.push(externalRow);

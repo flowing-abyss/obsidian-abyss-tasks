@@ -41,15 +41,18 @@ import {
   freshContainer,
   loadPluginStyles,
 } from './helpers';
+import { useProjectTableViewport } from './support/projectTableViewport';
+
+useProjectTableViewport();
 
 beforeEach(() => {
-  const original = Object.getOwnPropertyDescriptor(Element.prototype, 'clientHeight');
+  const original = vi.spyOn(Element.prototype, 'clientHeight', 'get').getMockImplementation();
   vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function (
     this: HTMLElement,
   ) {
     return this.classList.contains('abyss-project-timeline-scroll')
       ? 500
-      : Number(original?.get?.call(this) ?? 0);
+      : Number(original?.call(this) ?? 0);
   });
 });
 
@@ -417,6 +420,94 @@ describe('ProjectsTableView', () => {
     resize();
     expect(table.outerHTML).toBe(html);
     expect(table.querySelectorAll('.abyss-project-table-row')).toHaveLength(0);
+  });
+
+  it('suspends detached and zero-size refreshes until a native resize consumes the saved viewport', () => {
+    const resize = stubResizeObserver();
+    const { host, view, projects, scroll } = largeTable();
+    scroll.scrollTop = 4250.25;
+    scroll.scrollLeft = 27.5;
+    scroll.dispatchEvent(new Event('scroll'));
+    const row = expectDefined(host.querySelector('[data-project-path="Projects/P0125.md"]'));
+    const body = expectDefined(row.parentElement);
+    const children = Array.from(body.children);
+    const headerMeasure = vi.spyOn(
+      expectDefined(host.querySelector('thead')),
+      'getBoundingClientRect',
+    );
+    view.captureViewportBeforeHide();
+    host.remove();
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 0 });
+    scroll.scrollTop = 0;
+    scroll.scrollLeft = 0;
+    view.refreshFields();
+    scroll.dispatchEvent(new Event('scroll'));
+    resize();
+    expect(Array.from(body.children)).toEqual(children);
+    activeDocument.body.append(host);
+    view.update(projects);
+    resize();
+    expect(Array.from(body.children)).toEqual(children);
+    expect(headerMeasure).not.toHaveBeenCalled();
+    expect(scroll.scrollTop).toBe(0);
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 340 });
+    resize();
+    expect(host.querySelector('[data-project-path="Projects/P0125.md"]')).toBe(row);
+    expect([scroll.scrollTop, scroll.scrollLeft]).toEqual([4250.25, 27.5]);
+    scroll.scrollTop = 4251.75;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(scroll.scrollTop).toBe(4251.75);
+  });
+
+  it('keeps a distant failed editor pinned while outside focus survives settled refreshes', async () => {
+    const saveProperty = vi.fn().mockRejectedValue(new ProjectEditValidationError('Invalid end'));
+    const { host, view, projects, scroll } = largeTable(false, { saveProperty });
+    scroll.scrollTop = 4250;
+    scroll.dispatchEvent(new Event('scroll'));
+    const row = expectDefined(host.querySelector('[data-project-path="Projects/P0125.md"]'));
+    const cell = expectDefined(row.querySelector<HTMLElement>('[data-column-id="end"]'));
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(cell.querySelector<HTMLInputElement>('input'));
+    input.value = '2020-01-01';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    expect(activeDocument.activeElement).toBe(input);
+    scroll.scrollTop = 10200.25;
+    scroll.dispatchEvent(new Event('scroll'));
+    const outside = activeDocument.body.createEl('input');
+    outside.focus();
+    await flushMicrotasks();
+    await flushMicrotasks();
+    expect(activeDocument.activeElement).toBe(outside);
+    const calls = saveProperty.mock.calls.length;
+    const mounted = Array.from(host.querySelectorAll('.abyss-project-table-row'));
+    for (const refresh of [
+      () => {
+        view.update(projects);
+      },
+      () => {
+        view.refreshFields();
+      },
+    ]) {
+      refresh();
+      await flushMicrotasks();
+      expect(activeDocument.activeElement).toBe(outside);
+      expect(cell.querySelector('input')).toBe(input);
+      expect(input.value).toBe('2020-01-01');
+      expect(cell.querySelector('[role="alert"]')?.textContent).toBe('Invalid end');
+      expect(saveProperty).toHaveBeenCalledTimes(calls);
+      expect(scroll.scrollTop).toBe(10200.25);
+      expect(Array.from(host.querySelectorAll('.abyss-project-table-row'))).toEqual(mounted);
+    }
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flushMicrotasks();
+    scroll.scrollTop = 13000;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(input.isConnected).toBe(false);
+    expect(row.isConnected).toBe(false);
+    expect(saveProperty).toHaveBeenCalledTimes(calls);
+    outside.remove();
   });
 
   it('remeasures the viewport when theme changes resize the table content', () => {

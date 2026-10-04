@@ -1,9 +1,10 @@
-import { Menu, Notice } from 'obsidian';
+import { Component, Menu, Notice } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboardView';
 import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
 import { renderProgressBar } from '../src/panels/projects/progressBar';
+import { ObsidianProjectProperties } from '../src/projects/ObsidianProjectProperties';
 import { ProjectCreationError } from '../src/projects/projectCreation';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
@@ -11,6 +12,9 @@ import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTime
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { createAppWithFiles, expectDefined, flushMicrotasks, freshContainer } from './helpers';
+import { useProjectTableViewport } from './support/projectTableViewport';
+
+useProjectTableViewport();
 
 const ACTIVE_ID = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]).id;
 
@@ -152,6 +156,118 @@ describe('ProjectsPanel dispatch', () => {
     onChange: () => () => {},
   };
 
+  it.each(['changed', 'unchanged', 'outside', 'removed'] as const)(
+    'retains the distant overview row across a hidden metadata refresh (%s)',
+    async (scenario) => {
+      vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        return this.isConnected && this.classList.contains('abyss-project-table-scroll') ? 340 : 0;
+      });
+      vi.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        return this.isConnected && this.classList.contains('abyss-project-table-scroll') ? 1000 : 0;
+      });
+      const config = structuredClone(DEFAULT_SETTINGS);
+      config.projects.table.groupBy = 'none';
+      config.projects.table.showDescription = true;
+      config.projects.table.sortBy = { field: 'name', dir: 'asc' };
+      let listed = Array.from({ length: 100 }, (_, index) =>
+        proj({
+          path: `Projects/P${index}.md`,
+          name: `P${String(index).padStart(3, '0')}`,
+          frontmatter: { description: 'Before' },
+        }),
+      );
+      const target = expectDefined(listed[80]);
+      const app = await createAppWithFiles({ [target.path]: '' });
+      const state = new AppState();
+      const store = {
+        onUpdate: () => () => {},
+        onSourceObservation: () => () => {},
+        refresh: () => {},
+        list: () => listed,
+        get: (path: string) => listed.find((p) => p.path === path),
+      };
+      const panel = new ProjectsPanel(state, store as never, stubMgr, config, app, {
+        projectProperties: new ObsidianProjectProperties(app),
+      });
+      const el = activeDocument.body.createDiv();
+      panel.mount(el);
+      try {
+        const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-project-table-scroll'));
+        scroll.scrollTop = 2500.25;
+        scroll.scrollLeft = 31.5;
+        scroll.dispatchEvent(new Event('scroll'));
+        const name = expectDefined(
+          el.querySelector<HTMLElement>(
+            `[data-project-path="${target.path}"] .abyss-project-table-name-cell`,
+          ),
+        );
+        const row = expectDefined(name.parentElement);
+        const body = expectDefined(row.parentElement);
+        name.focus();
+        expectDefined(name.querySelector<HTMLButtonElement>('button')).click();
+        await flushMicrotasks();
+        expect(el.querySelector('.abyss-project-back')).not.toBeNull();
+        expect(name.isConnected).toBe(false);
+        const mountedBefore = Array.from(body.children);
+        const unload = vi.spyOn(Component.prototype, 'unload');
+        scroll.scrollTop = 0;
+        scroll.scrollLeft = 0;
+        if (scenario !== 'unchanged') {
+          listed =
+            scenario === 'removed'
+              ? listed.filter((p) => p !== target)
+              : listed.map((p) =>
+                  p === target
+                    ? { ...p, frontmatter: { description: 'Current changed description' } }
+                    : p,
+                );
+          const file = expectDefined(app.vault.getFileByPath(target.path));
+          app.metadataCache.trigger('changed', file, '', {});
+          panel.refresh();
+          scroll.dispatchEvent(new Event('scroll'));
+          expect.soft(body.contains(name)).toBe(true);
+          expect.soft(Array.from(body.children)).toEqual(mountedBefore);
+          expect.soft(unload).not.toHaveBeenCalled();
+        }
+        const outside = activeDocument.body.createEl('input');
+        const back = expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-back'));
+        if (scenario === 'outside') outside.focus();
+        else back.focus();
+        state.set('projectsPanel', { view: 'table' });
+        if (scenario === 'removed') {
+          expect(name.isConnected).toBe(false);
+          expect(el.querySelector(`[data-project-path="${target.path}"]`)).toBeNull();
+        } else {
+          expect(
+            el.querySelector(`[data-project-path="${target.path}"] .abyss-project-table-name-cell`),
+          ).toBe(name);
+          expect(activeDocument.activeElement).toBe(scenario === 'outside' ? outside : name);
+          expect(name.textContent).toContain(
+            scenario === 'unchanged' ? 'Before' : 'Current changed description',
+          );
+          expect([scroll.scrollTop, scroll.scrollLeft]).toEqual([2500.25, 31.5]);
+          if (scenario === 'changed') {
+            name.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+            expect(
+              activeDocument.activeElement?.closest<HTMLElement>('[data-project-path]')?.dataset[
+                'projectPath'
+              ],
+            ).toBe('Projects/P81.md');
+          }
+        }
+        outside.remove();
+      } finally {
+        panel.destroy();
+        el.remove();
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
   it('refreshes dashboard data while keeping the task host and live input connected', () => {
     let project = proj({ frontmatter: { description: 'Before' } });
     const state = new AppState();
@@ -268,6 +384,7 @@ describe('ProjectsPanel dispatch', () => {
       projectProperties,
     });
     const el = freshContainer();
+    el.ownerDocument.body.append(el);
     panel.mount(el);
     expect(el.querySelector('.abyss-projects-table')).toBeTruthy();
   });
@@ -281,6 +398,7 @@ describe('ProjectsPanel dispatch', () => {
     });
     const el = freshContainer();
 
+    el.ownerDocument.body.append(el);
     panel.mount(el);
 
     expect(list).toHaveBeenCalledOnce();
@@ -301,6 +419,7 @@ describe('ProjectsPanel dispatch', () => {
       projectProperties,
     });
     const el = freshContainer();
+    el.ownerDocument.body.append(el);
     panel.mount(el);
     expect(el.querySelector('.abyss-projects-dashboard')).toBeTruthy();
   });
@@ -313,6 +432,7 @@ describe('ProjectsPanel dispatch', () => {
       projectProperties,
     });
     const el = freshContainer();
+    el.ownerDocument.body.append(el);
     panel.mount(el);
     try {
       const dashboard = expectDefined(
@@ -490,6 +610,7 @@ describe('ProjectsPanel dispatch', () => {
         projectProperties,
       });
       const el = freshContainer();
+      el.ownerDocument.body.append(el);
       panel.mount(el);
       return { panel, el, state };
     }
@@ -672,6 +793,7 @@ describe('ProjectsPanel dispatch', () => {
       projectProperties,
     });
     const el = freshContainer();
+    el.ownerDocument.body.append(el);
     panel.mount(el);
     try {
       const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
@@ -740,6 +862,7 @@ describe('ProjectsPanel dispatch', () => {
       projectProperties,
     });
     const el = freshContainer();
+    el.ownerDocument.body.append(el);
     panel.mount(el);
     try {
       expectDefined(el.querySelector<HTMLButtonElement>('.abyss-project-open-btn')).click();
