@@ -499,6 +499,13 @@ row geometry: prefix offsets, consumed overscan, sparse pins, revision-aware mea
 and anchor recovery against prior row order. Callers supply explicit rows and content-relative
 offsets; native owners account for sticky occlusion and viewport height. Anchors share an immutable
 key vector per replacement; final scroll clamping happens when a window's height is known.
+Measurement accepts an optional pre-replacement anchor: TaskListSurface, Kanban, and Timeline
+retain that key through synchronous replacement and measurement, so a tall row's old within-row
+offset cannot become an estimated neighbor's anchor. Native owners temporarily include that row
+when reconciling its replacement window. Ordinary scroll measurement omits the anchor, and explicit
+reveal starts from its own current target; no retained anchor outlives the reconciliation. Task lists
+supply offsets from the host's actual content origin, including padding and nested-host borders,
+while retaining negative displacement when the scroller still shows preceding dashboard content.
 [`projectTableViewport`](src/panels/projects/projectTableViewport.ts) adapts the existing Table
 estimates and signatures to that neutral module. Logical projection, sorting, and grouping still
 process the full collection.

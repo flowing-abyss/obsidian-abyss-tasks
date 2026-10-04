@@ -94,7 +94,19 @@ function nativeColumn(count = 1000, doc = document) {
   owners.push(owner);
   const rows = Array.from({ length: count }, (_, index) => card(String(index)));
   owner.update(rows, false);
-  return { owner, host, scroll, rows, cleaned, unloaded, errors, reconciled };
+  return {
+    owner,
+    host,
+    scroll,
+    rows,
+    cleaned,
+    unloaded,
+    errors,
+    reconciled,
+    typography(property: 'fontWeight', value: string) {
+      host.style[property] = value;
+    },
+  };
 }
 describe('native Kanban columns', () => {
   it.each([1000, 10000])(
@@ -630,3 +642,59 @@ it('keeps zero-size Kanban hidden without row mounts and preserves its offset ac
   expect(h.owner.element('g:900')).toBeDefined();
   expect(h.scroll.scrollTop).toBe(before);
 });
+
+it.each([
+  ['font', 120, 80],
+  ['update', 120, 80],
+  ['font', 1000, 800],
+  ['update', 1000, 800],
+] as const)(
+  'retains a variable-height card across %s invalidation at height%s/offset%s',
+  (route, oldHeight, offset) => {
+    const callbacks = new Map<number, FrameRequestCallback>();
+    let id = 0;
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      callbacks.set(++id, callback);
+      return id;
+    });
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((key) => {
+      callbacks.delete(key);
+    });
+    const frame = () => {
+      const work = [...callbacks.values()];
+      callbacks.clear();
+      expect(work.length).toBeGreaterThan(0);
+      work.forEach((callback) => {
+        callback(0);
+      });
+    };
+    const h = nativeColumn();
+    Object.defineProperty(h.host, 'clientWidth', { value: 300 });
+    const anchor = expectDefined(h.owner.element('g:0'));
+    let height: number = oldHeight;
+    anchor.getBoundingClientRect = () => ({ height }) as DOMRect;
+    frame();
+    h.scroll.scrollTop = offset;
+    h.scroll.dispatchEvent(new Event('scroll'));
+    frame();
+    height += 40;
+    if (route === 'font') {
+      h.typography('fontWeight', '800');
+      h.scroll.dispatchEvent(new Event('scroll'));
+      frame();
+    } else
+      h.owner.update(
+        h.rows.map((row) => ({ ...row, measurementRevision: 'next' })),
+        true,
+      );
+    expect(h.errors).toEqual([]);
+    expect(h.owner.element('g:0')).toBe(anchor);
+    expect(h.scroll.scrollTop).toBe(offset);
+    h.owner.reveal('g:999');
+    const revealedTop = h.scroll.scrollTop;
+    expect(revealedTop).toBeGreaterThan(39000);
+    frame();
+    expect(h.scroll.scrollTop).toBe(revealedTop);
+    expect(h.owner.element('g:0')).toBeUndefined();
+  },
+);

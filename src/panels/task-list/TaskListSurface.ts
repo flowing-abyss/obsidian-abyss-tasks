@@ -21,6 +21,11 @@ export interface TaskListSurfaceOptions {
   reportFailure(error: unknown): void;
 }
 
+interface TaskListScroll {
+  readonly top: number;
+  readonly anchor: RowAnchor | undefined;
+}
+
 /** Native lifetime and keyed mounts over the shared, pure row geometry. */
 export class TaskListSurface implements MountedTaskListRows {
   readonly #options: TaskListSurfaceOptions;
@@ -45,7 +50,7 @@ export class TaskListSurface implements MountedTaskListRows {
   #font = '';
   #focusedKey: string | undefined;
   #ordered: string[] = [];
-  #pendingScroll: { anchor: RowAnchor | undefined; top: number } | undefined;
+  #pendingScroll: TaskListScroll | undefined;
 
   constructor(options: TaskListSurfaceOptions) {
     this.#options = options;
@@ -96,10 +101,10 @@ export class TaskListSurface implements MountedTaskListRows {
       this.#pendingScroll = undefined;
       if (!this.#bind()) return;
       this.#checkLayout();
-      const restored = this.#viewport.restoreAnchor(anchor, top);
+      const restored = this.#restoreTop(anchor, top);
       const clamped = this.#viewport.window(restored, this.#height(), []).scrollTop;
       // Projection changes may shrink the scroll range. Ordinary scroll frames never clamp it.
-      this.#reconcile(true, restored < 0 ? restored : clamped);
+      this.#reconcile(true, { top: restored < 0 ? restored : clamped, anchor });
     }, failure);
   }
 
@@ -107,8 +112,11 @@ export class TaskListSurface implements MountedTaskListRows {
     if (!this.#active() || this.#viewport.rowBounds(key) === undefined) return undefined;
     this.#guard(() => {
       if (!this.#bind()) return;
-      const top = this.#checkLayout() ?? this.#top();
-      this.#reconcile(false, this.#viewport.reveal(key, top, this.#height()));
+      const top = this.#checkLayout()?.top ?? this.#top();
+      this.#reconcile(false, {
+        top: this.#viewport.reveal(key, top, this.#height()),
+        anchor: undefined,
+      });
     });
     return this.element(key);
   }
@@ -146,7 +154,7 @@ export class TaskListSurface implements MountedTaskListRows {
       if (this.#pendingScroll !== undefined) {
         const { anchor, top } = this.#pendingScroll;
         this.#pendingScroll = undefined;
-        target = this.#viewport.restoreAnchor(anchor, top);
+        target = { top: this.#restoreTop(anchor, top), anchor };
       }
       this.#reconcile(false, target);
     });
@@ -179,10 +187,13 @@ export class TaskListSurface implements MountedTaskListRows {
     return this.#options.scroll.clientHeight;
   }
   #origin(): number {
-    if (this.#options.host === this.#options.scroll) return 0;
     const { host, scroll } = this.#options;
+    const padding = this.#margin(host.ownerDocument.defaultView?.getComputedStyle(host).paddingTop);
+    if (host === scroll) return padding;
     return (
-      host.getBoundingClientRect().top -
+      host.getBoundingClientRect().top +
+      host.clientTop +
+      padding -
       scroll.getBoundingClientRect().top -
       scroll.clientTop +
       scroll.scrollTop
@@ -207,7 +218,10 @@ export class TaskListSurface implements MountedTaskListRows {
       })),
     );
   }
-  #checkLayout(): number | undefined {
+  #restoreTop(anchor: RowAnchor | undefined, top: number): number {
+    return top + this.#viewport.restoreAnchor(anchor, Math.max(0, top)) - Math.max(0, top);
+  }
+  #checkLayout(): TaskListScroll | undefined {
     const host = this.#options.host;
     const style = this.#owner?.getComputedStyle(host);
     const font = `${style?.fontFamily}:${style?.fontSize}:${style?.lineHeight}:${style?.fontWeight}:${style?.fontStyle}:${style?.letterSpacing}`;
@@ -218,7 +232,7 @@ export class TaskListSurface implements MountedTaskListRows {
     this.#font = font;
     this.#layoutRevision++;
     this.#replace();
-    return top + this.#viewport.restoreAnchor(anchor, Math.max(0, top)) - Math.max(0, top);
+    return { top: this.#restoreTop(anchor, top), anchor };
   }
   readonly #schedule = (): void => {
     if (this.#destroyed || this.#suspended || this.#failed || this.#binding) return;
@@ -327,14 +341,30 @@ export class TaskListSurface implements MountedTaskListRows {
         break;
       }
   }
-  #reconcile(update: boolean, target?: number): void {
+  #reconcile(update: boolean, target?: TaskListScroll): void {
     this.#readFocus();
     const revision = this.#revision;
     this.#resolvePinOrder();
     if (revision !== this.#revision || this.#destroyed) return;
     this.#readFocus();
-    const nativeTop = target ?? this.#top();
-    this.#renderWindow(update, nativeTop);
+    const nativeTop = target?.top ?? this.#top();
+    const anchor = target?.anchor;
+    this.#renderWindow(update, nativeTop, this.#anchorKey(anchor));
+    const measuredTop = this.#measure(nativeTop, anchor);
+    const corrected = measuredTop ?? target?.top;
+    if (measuredTop !== undefined) {
+      // Establish the new extent before a native setter can clamp the anchor correction.
+      this.#renderWindow(false, measuredTop);
+    }
+    if (corrected !== undefined) this.#writeTop(corrected);
+  }
+  #anchorKey(anchor: RowAnchor | undefined): string | undefined {
+    // A tall row's old offset can place its replacement estimate outside overscan.
+    return anchor === undefined
+      ? undefined
+      : this.#viewport.rowAt(this.#viewport.restoreAnchor({ ...anchor, offset: 0 }, 0))?.key;
+  }
+  #measure(top: number, anchor: RowAnchor | undefined): number | undefined {
     const measured = this.#viewport.measure(
       [...this.#mounts].map(([key, mount]) => {
         const style = this.#owner?.getComputedStyle(mount.element);
@@ -346,15 +376,11 @@ export class TaskListSurface implements MountedTaskListRows {
             this.#margin(style?.marginBottom),
         };
       }),
-      Math.max(0, nativeTop),
+      Math.max(0, top),
+      anchor,
     );
-    let corrected = target;
-    if (measured.changed) {
-      corrected = nativeTop + measured.scrollTop - Math.max(0, nativeTop);
-      // Establish the new extent before a native setter can clamp the anchor correction.
-      this.#renderWindow(false, corrected);
-    }
-    if (corrected !== undefined) this.#writeTop(corrected);
+    if (!measured.changed) return;
+    return top + measured.scrollTop - Math.max(0, top);
   }
   #margin(value: string | undefined): number {
     const size = Number.parseFloat(value ?? '');
@@ -379,8 +405,9 @@ export class TaskListSurface implements MountedTaskListRows {
     } else if (update) mount.update(row);
     return mount.element;
   }
-  #renderWindow(update: boolean, top: number): void {
+  #renderWindow(update: boolean, top: number, anchorKey?: string): void {
     const pinned = [...this.#pins.keys()];
+    if (anchorKey !== undefined) pinned.push(anchorKey);
     if (this.#focusedKey !== undefined) pinned.push(this.#focusedKey);
     const window = this.#viewport.window(top, this.#height(), pinned);
     const established = new Set(this.#mounts.keys());

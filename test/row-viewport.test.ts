@@ -200,3 +200,29 @@ describe('shared row viewport geometry', () => {
     expect(v.window(999, 0, [])).toEqual({ start: 0, end: 0, scrollTop: 0, segments: [] });
   });
 });
+
+it('uses an explicit pre-replacement key instead of an estimated numeric neighbor', () => {
+  const v = new RowViewport();
+  v.replace(rows(['above', 'anchor', 'after'], 64));
+  v.measure(
+    [
+      { key: 'above', height: 80 },
+      { key: 'anchor', height: 160 },
+    ],
+    0,
+  );
+  const anchor = v.captureAnchor(200.5);
+  v.replace(rows(['above', 'anchor', 'after'], 64, 'next'));
+  const top = v.restoreAnchor(anchor, 0);
+  expect(top).toBe(184.5);
+  expect(
+    v.measure(
+      [
+        { key: 'above', height: 100 },
+        { key: 'anchor', height: 180 },
+      ],
+      top,
+      anchor,
+    ),
+  ).toEqual({ changed: true, scrollTop: 220.5 });
+});

@@ -1,5 +1,5 @@
 import { Component } from 'obsidian';
-import { RowViewport, type RowSegment } from '../virtualization/rowViewport';
+import { RowViewport, type RowAnchor, type RowSegment } from '../virtualization/rowViewport';
 import { kanbanInsertion, type KanbanInsertion, type KanbanViewportRow } from './projectKanbanRows';
 
 export interface KanbanRowMount {
@@ -50,9 +50,15 @@ export class ProjectKanbanColumnViewport {
     const anchor = preserveAnchor ? this.#viewport.captureAnchor(top) : undefined;
     this.#rows = rows;
     this.#replace();
-    const restored = this.#checkLayout(this.#viewport.restoreAnchor(anchor, top));
-    const target = this.#viewport.window(restored, this.#options.scroll.clientHeight, []).scrollTop;
-    this.#render(target, true);
+    this.#checkLayout(top);
+    const restored = this.#viewport.restoreAnchor(anchor, top);
+    let target = this.#viewport.window(restored, this.#options.scroll.clientHeight, []).scrollTop;
+    this.#render(target, true, anchor);
+    if (this.#active) {
+      const measured = this.#measure(target, anchor);
+      target = measured.scrollTop;
+      if (measured.changed) this.#render(target);
+    }
     this.#retireIncoming = !this.#active && this.#incoming.size > 0;
     this.#incoming.clear();
     if (target !== top) this.#options.scroll.scrollTop = target;
@@ -66,12 +72,12 @@ export class ProjectKanbanColumnViewport {
       })),
     );
   }
-  #checkLayout(top: number): number {
-    if (!this.#active || this.#window === null) return top;
+  #checkLayout(top: number): { top: number; anchor: RowAnchor | undefined } {
+    if (!this.#active || this.#window === null) return { top, anchor: undefined };
     const { host, scroll } = this.#options;
     if (scroll.clientHeight <= 0 || host.clientWidth <= 0) {
       this.#layoutDirty = true;
-      return top;
+      return { top, anchor: undefined };
     }
     const style = this.#window.getComputedStyle(host);
     const signature = JSON.stringify([
@@ -83,13 +89,16 @@ export class ProjectKanbanColumnViewport {
       style.fontStyle,
       style.letterSpacing,
     ]);
-    if (!this.#layoutDirty && this.#layout === signature) return top;
+    if (!this.#layoutDirty && this.#layout === signature) return { top, anchor: undefined };
     const anchor = this.#viewport.captureAnchor(Math.max(0, top));
     this.#layout = signature;
     this.#layoutDirty = false;
     this.#layoutRevision++;
     this.#replace();
-    return top + this.#viewport.restoreAnchor(anchor, Math.max(0, top)) - Math.max(0, top);
+    return {
+      top: top + this.#viewport.restoreAnchor(anchor, Math.max(0, top)) - Math.max(0, top),
+      anchor,
+    };
   }
 
   reveal(key: string): HTMLElement | undefined {
@@ -215,17 +224,17 @@ export class ProjectKanbanColumnViewport {
     this.#failed = true;
     this.#options.reportFailure(error);
   }
-  #render(top: number, update = false): void {
+  #render(top: number, update = false, anchor?: RowAnchor): void {
     if (this.#failed) return;
     try {
-      this.#reconcile(top, update);
+      this.#reconcile(top, update, anchor);
     } catch (error) {
       this.#report(error);
     }
   }
-  #reconcile(top: number, update: boolean): void {
+  #reconcile(top: number, update: boolean, anchor?: RowAnchor): void {
     if (this.#destroyed) return;
-    const segments = this.#segments(top, this.#pinnedKeys());
+    const segments = this.#segments(top, this.#pinnedKeys(anchor));
     const desired: HTMLElement[] = [];
     const retained = new Set<string>();
     let spacerCount = 0;
@@ -256,9 +265,15 @@ export class ProjectKanbanColumnViewport {
     if (existing !== undefined && update) entry.mount.update(row);
     return entry.mount.element;
   }
-  #pinnedKeys(): string[] {
+  #pinnedKeys(anchor?: RowAnchor): string[] {
     const pins = new Set([...this.#incoming, ...[...this.#pins].map((token) => token.key)]);
     if (!this.#active) return [...pins];
+    if (anchor !== undefined) {
+      const key = this.#viewport.rowAt(
+        this.#viewport.restoreAnchor({ ...anchor, offset: 0 }, 0),
+      )?.key;
+      if (key !== undefined) pins.add(key);
+    }
     const active = this.#options.host.ownerDocument.activeElement;
     for (const [key, { mount }] of this.#mounts) {
       if (ownsInteraction(mount.element, active)) pins.add(key);
@@ -362,6 +377,17 @@ export class ProjectKanbanColumnViewport {
     this.#observer = undefined;
     this.#window = null;
   }
+  #measure(top: number, anchor?: RowAnchor): { scrollTop: number; changed: boolean } {
+    const measured = this.#viewport.measure(
+      [...this.#mounts].map(([key, { mount }]) => ({
+        key,
+        height: mount.element.getBoundingClientRect().height,
+      })),
+      Math.max(0, top),
+      anchor,
+    );
+    return { ...measured, scrollTop: top + measured.scrollTop - Math.max(0, top) };
+  }
   readonly #schedule = (): void => {
     if (this.#frame !== undefined || !this.#active || this.#destroyed || this.#failed) return;
     const generation = this.#generation;
@@ -376,15 +402,8 @@ export class ProjectKanbanColumnViewport {
       try {
         this.#bind();
         const nativeTop = this.#options.scroll.scrollTop;
-        const top = this.#checkLayout(nativeTop);
-        const measured = this.#viewport.measure(
-          [...this.#mounts].map(([key, { mount }]) => ({
-            key,
-            height: mount.element.getBoundingClientRect().height,
-          })),
-          Math.max(0, top),
-        );
-        const corrected = top + measured.scrollTop - Math.max(0, top);
+        const { top, anchor } = this.#checkLayout(nativeTop);
+        const { scrollTop: corrected } = this.#measure(top, anchor);
         this.#render(corrected);
         if (corrected !== nativeTop) this.#options.scroll.scrollTop = corrected;
       } catch (error) {

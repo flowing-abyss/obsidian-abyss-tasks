@@ -93,10 +93,14 @@ export class RowViewport {
   measure(
     measurements: readonly RowMeasurement[],
     scrollTop: number,
+    retainedAnchor?: RowAnchor,
   ): { scrollTop: number; changed: boolean } {
     const boundary = rowBoundary(this.#offsets, scrollTop);
     const anchor = this.#offsets[boundary] === scrollTop ? boundary : Math.max(0, boundary - 1);
-    const oldOffset = this.#offsets[anchor] ?? 0;
+    const oldOffset =
+      retainedAnchor === undefined
+        ? (this.#offsets[anchor] ?? 0)
+        : this.restoreAnchor(retainedAnchor, scrollTop);
     let changed = false;
     for (const measurement of measurements) {
       if (this.#measureRow(measurement)) changed = true;
@@ -104,7 +108,11 @@ export class RowViewport {
     if (!changed) return { scrollTop, changed };
     this.#range = undefined;
     this.#rebuildOffsets();
-    return { scrollTop: scrollTop + (this.#offsets[anchor] ?? 0) - oldOffset, changed };
+    const nextOffset =
+      retainedAnchor === undefined
+        ? (this.#offsets[anchor] ?? 0)
+        : this.restoreAnchor(retainedAnchor, scrollTop);
+    return { scrollTop: scrollTop + nextOffset - oldOffset, changed };
   }
 
   #measureRow({ key, height }: RowMeasurement): boolean {

@@ -21,11 +21,11 @@ function rows(count: number) {
     { by: 'none' },
   );
 }
-function harness(clampWrites = false) {
+function harness(clampWrites = false, sameHost = false) {
   const scroll = freshContainer();
   document.body.append(scroll);
   Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
-  const host = scroll.createDiv();
+  const host = sameHost ? scroll : scroll.createDiv();
   const frames = new Map<number, FrameRequestCallback>();
   let next = 0;
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
@@ -82,17 +82,29 @@ function harness(clampWrites = false) {
     const label = element.createSpan({ text: row.kind === 'task' ? row.task.title : row.label });
     element.dataset['key'] = row.key;
     element.tabIndex = -1;
-    element.getBoundingClientRect = () => ({
-      height: heights.get(row.key) ?? 48,
-      width,
-      top: 0,
-      bottom: 48,
-      left: 0,
-      right: width,
-      x: 0,
-      y: 0,
-      toJSON: () => ({}),
-    });
+    element.getBoundingClientRect = () => {
+      const padding = Number.parseFloat(window.getComputedStyle(host).paddingTop);
+      let y = origin + host.clientTop + (Number.isFinite(padding) ? padding : 0) - top;
+      for (const child of host.children) {
+        if (child === element) break;
+        const sibling = child as HTMLElement;
+        y += sibling.hasClass('abyss-virtual-row-spacer')
+          ? Number.parseFloat(sibling.style.getPropertyValue('--abyss-virtual-row-height'))
+          : (heights.get(sibling.dataset['key'] ?? '') ?? 48);
+      }
+      const rowHeight = heights.get(row.key) ?? 48;
+      return {
+        height: rowHeight,
+        width,
+        top: y,
+        bottom: y + rowHeight,
+        left: 0,
+        right: width,
+        x: 0,
+        y,
+        toJSON: () => ({}),
+      };
+    };
     return {
       element,
       update: (nextRow: TaskListRow) => {
@@ -114,6 +126,9 @@ function harness(clampWrites = false) {
   });
   return {
     host,
+    style(property: 'paddingTop' | 'fontWeight' | 'fontStyle' | 'letterSpacing', value: string) {
+      host.style[property] = value;
+    },
     scroll,
     surface,
     mount,
@@ -777,3 +792,114 @@ it.each(['fontWeight', 'fontStyle', 'letterSpacing', 'fontSize'] as const)(
     h.surface.destroy();
   },
 );
+
+describe('task anchor through replacement estimates', () => {
+  const estimated = { ...presentation, estimate: () => 64 };
+  it.each(['frame', 'update', 'resume'] as const)(
+    'retains a tall keyed anchor and corrects only preceding growth on %s',
+    (route) => {
+      const h = harness();
+      const list = rows(100);
+      h.heights.set('n.md:2', 120);
+      h.surface.update(list, estimated);
+      h.scrollTo(176);
+      h.frame();
+      const anchor = expectDefined(h.surface.element('n.md:2'));
+      expect(anchor.getBoundingClientRect().top).toBe(-80);
+      expect(anchor.getBoundingClientRect().bottom).toBe(40);
+      h.heights.set('n.md:0', 68);
+      h.heights.set('n.md:2', 160);
+      h.style('fontWeight', '800');
+      h.scrollTo(176.5);
+      if (route === 'frame') h.frame();
+      else if (route === 'update') h.surface.update(list, estimated);
+      else {
+        h.surface.suspend();
+        h.surface.update(list, estimated);
+        h.surface.resume();
+      }
+      expect(h.reportFailure).not.toHaveBeenCalled();
+      const retained = expectDefined(h.surface.element('n.md:2'));
+      if (route !== 'resume') expect(retained).toBe(anchor);
+      expect(retained.getBoundingClientRect().top).toBe(-80.5);
+      expect(h.scroll.scrollTop).toBe(196.5);
+    },
+  );
+  it('keeps an anchor whose offset exceeds replacement overscan mounted for measurement', () => {
+    const h = harness();
+    h.heights.set('n.md:0', 1000);
+    h.surface.update(rows(100), estimated);
+    h.scrollTo(800);
+    h.frame();
+    const anchor = expectDefined(h.surface.element('n.md:0'));
+    h.style('fontStyle', 'italic');
+    h.heights.set('n.md:0', 1100);
+    h.scrollTo(800.5);
+    h.frame();
+    expect(h.surface.element('n.md:0')).toBe(anchor);
+    expect(anchor.getBoundingClientRect().top).toBe(-800.5);
+    expect(anchor.getBoundingClientRect().bottom).toBe(299.5);
+  });
+  it.each([true, false])(
+    'anchors the last four visible pixels with padding (same host %s)',
+    (sameHost) => {
+      const h = harness(false, sameHost);
+      h.style('paddingTop', '8px');
+      if (!sameHost) h.origin(100);
+      h.heights.set('n.md:0', 120);
+      h.surface.update(rows(100), estimated);
+      h.scrollTo(sameHost ? 124 : 224);
+      h.frame();
+      const anchor = expectDefined(h.surface.element('n.md:0'));
+      expect(anchor.getBoundingClientRect().bottom).toBe(4);
+      h.heights.set('n.md:0', 160);
+      h.style('letterSpacing', '1px');
+      h.scrollTo(sameHost ? 124.5 : 224.5);
+      h.frame();
+      expect(h.surface.element('n.md:0')).toBe(anchor);
+      expect(anchor.getBoundingClientRect().top).toBe(-116.5);
+    },
+  );
+  it.each([true, false])(
+    'preserves zero scroll through anchored update and resume (same host %s)',
+    (sameHost) => {
+      const h = harness(false, sameHost);
+      h.style('paddingTop', '8px');
+      if (!sameHost) {
+        h.origin(100);
+        Object.defineProperty(h.host, 'clientTop', { value: 2 });
+      }
+      const list = rows(100);
+      h.surface.update(list, estimated);
+      h.writes.mockClear();
+      h.surface.update(list, estimated);
+      h.surface.suspend();
+      h.surface.update(list, estimated);
+      h.surface.resume();
+      h.surface.resume();
+      expect(h.scroll.scrollTop).toBe(0);
+      expect(h.writes).not.toHaveBeenCalled();
+      expect(h.surface.element('n.md:0')?.getBoundingClientRect().top).toBe(sameHost ? 8 : 110);
+    },
+  );
+  it('gives explicit reveal priority over a layout anchor and preserves ordinary elastic scroll', () => {
+    const h = harness(false, true);
+    h.style('paddingTop', '8px');
+    h.heights.set('n.md:0', 120);
+    h.surface.update(rows(100), estimated);
+    h.scrollTo(88);
+    h.frame();
+    h.style('fontWeight', '800');
+    h.surface.reveal('n.md:99');
+    const target = expectDefined(h.surface.element('n.md:99'));
+    expect(target.getBoundingClientRect().bottom).toBeLessThanOrEqual(480);
+    expect(target.getBoundingClientRect().top).toBeGreaterThanOrEqual(0);
+    h.surface.reveal('n.md:0');
+    h.writes.mockClear();
+    for (const top of [88.5, -12, -12, 88.5]) {
+      h.scrollTo(top);
+      h.frame();
+    }
+    expect(h.writes).not.toHaveBeenCalled();
+  });
+});

@@ -349,3 +349,50 @@ it('reports a mounting failure once and unloads failed Components without publis
   owner.update(rows, false);
   expect(report).toHaveBeenCalledTimes(2);
 });
+
+it.each([
+  ['font', 160, 120],
+  ['update', 160, 120],
+  ['font', 1000, 800],
+  ['update', 1000, 800],
+] as const)(
+  'retains the tall row anchor across %s invalidation at height%s/offset%s',
+  (route, oldHeight, offset) => {
+    const fonts = new EventTarget();
+    Object.defineProperty(document, 'fonts', { configurable: true, value: fonts });
+    const h = fixture();
+    h.owner.update(
+      h.rows.map((row) => ({ ...row, estimatedHeight: row.kind === 'group' ? 32 : 100 })),
+      false,
+    );
+    const anchor = expectDefined(h.owner.element('r0'));
+    let height: number = oldHeight;
+    anchor.getBoundingClientRect = () => ({ height }) as DOMRect;
+    h.owner.flush();
+    h.scroll.scrollTop = 32 + offset; // Within-row offset exceeds replacement estimate100.
+    h.scroll.dispatchEvent(new Event('scroll'));
+    h.frame();
+    height += 20;
+    if (route === 'font') {
+      fonts.dispatchEvent(new Event('loadingdone'));
+      h.frame();
+    } else
+      h.owner.update(
+        h.rows.map((row) => ({
+          ...row,
+          estimatedHeight: row.kind === 'group' ? 32 : 100,
+          measurementRevision: 'next',
+        })),
+        true,
+      );
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    expect(h.owner.element('r0')).toBe(anchor);
+    expect(h.scroll.scrollTop).toBe(32 + offset);
+    h.owner.reveal('r1099');
+    const revealedTop = h.scroll.scrollTop;
+    expect(revealedTop).toBeGreaterThan(100000);
+    h.owner.flush();
+    expect(h.scroll.scrollTop).toBe(revealedTop);
+    expect(h.owner.element('r0')).toBeUndefined();
+  },
+);

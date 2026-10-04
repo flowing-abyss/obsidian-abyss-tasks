@@ -1,5 +1,5 @@
 import { Component } from 'obsidian';
-import { RowViewport, type RowSegment } from '../virtualization/rowViewport';
+import { RowViewport, type RowAnchor, type RowSegment } from '../virtualization/rowViewport';
 import type { TimelineViewportRow } from './projectTimelineRowModel';
 
 export interface TimelineRowMount {
@@ -58,11 +58,16 @@ export class ProjectTimelineRows {
     this.#replace();
     const restored = this.#viewport.restoreAnchor(anchor, top);
     const totalHeight = this.#totalHeight();
-    const target =
+    let target =
       totalHeight < previousHeight
         ? this.#viewport.window(restored, this.#height(), []).scrollTop
         : restored;
-    this.#render(target, true);
+    this.#render(target, true, anchor);
+    if (this.#active) {
+      const measured = this.#measure(target, anchor);
+      target = measured.scrollTop;
+      if (measured.changed) this.#render(target);
+    }
     if (target !== top) this.#options.scroll.scrollTop = target;
   }
 
@@ -79,11 +84,14 @@ export class ProjectTimelineRows {
     );
   }
 
-  #refreshMetrics(top: number): number {
-    if (!this.#metricsDirty) return top;
+  #refreshMetrics(top: number): { top: number; anchor: RowAnchor | undefined } {
+    if (!this.#metricsDirty) return { top, anchor: undefined };
     const anchor = this.#viewport.captureAnchor(Math.max(0, top));
     this.#replace();
-    return top + this.#viewport.restoreAnchor(anchor, Math.max(0, top)) - Math.max(0, top);
+    return {
+      top: top + this.#viewport.restoreAnchor(anchor, Math.max(0, top)) - Math.max(0, top),
+      anchor,
+    };
   }
 
   reveal(key: string): HTMLElement | undefined {
@@ -189,17 +197,17 @@ export class ProjectTimelineRows {
     this.#failed = true;
     this.#options.reportFailure(error);
   }
-  #render(top: number, update = false): void {
+  #render(top: number, update = false, anchor?: RowAnchor): void {
     if (this.#failed) return;
     try {
-      this.#reconcile(top, update);
+      this.#reconcile(top, update, anchor);
     } catch (error) {
       this.#report(error);
     }
   }
-  #reconcile(top: number, update: boolean): void {
+  #reconcile(top: number, update: boolean, anchor?: RowAnchor): void {
     if (this.#destroyed) return;
-    const segments = this.#segments(top, this.#pinnedKeys());
+    const segments = this.#segments(top, this.#pinnedKeys(anchor));
     const desired: HTMLElement[] = [];
     const retained = new Set<string>();
     let spacerCount = 0;
@@ -230,9 +238,15 @@ export class ProjectTimelineRows {
     if (existing !== undefined && update) entry.mount.update(row);
     return entry.mount.element;
   }
-  #pinnedKeys(): string[] {
+  #pinnedKeys(anchor?: RowAnchor): string[] {
     const pins = new Set([...this.#pins].map((token) => token.key));
     if (!this.#active) return [...pins];
+    if (anchor !== undefined) {
+      const key = this.#viewport.rowAt(
+        this.#viewport.restoreAnchor({ ...anchor, offset: 0 }, 0),
+      )?.key;
+      if (key !== undefined) pins.add(key);
+    }
     const active = this.#options.host.ownerDocument.activeElement;
     for (const [key, { mount }] of this.#mounts) {
       if (active !== null && mount.element.contains(active)) pins.add(key);
@@ -362,20 +376,24 @@ export class ProjectTimelineRows {
         return;
       }
       const nativeTop = this.#options.scroll.scrollTop;
-      const top = this.#refreshMetrics(nativeTop);
-      const measured = this.#viewport.measure(
-        [...this.#mounts].map(([key, { mount }]) => ({
-          key,
-          height: mount.element.getBoundingClientRect().height,
-        })),
-        Math.max(0, top),
-      );
-      const corrected = top + measured.scrollTop - Math.max(0, top);
+      const { top, anchor } = this.#refreshMetrics(nativeTop);
+      const { scrollTop: corrected } = this.#measure(top, anchor);
       this.#render(corrected);
       if (corrected !== nativeTop) this.#options.scroll.scrollTop = corrected;
     } catch (error) {
       this.#report(error);
     }
+  }
+  #measure(top: number, anchor?: RowAnchor): { scrollTop: number; changed: boolean } {
+    const measured = this.#viewport.measure(
+      [...this.#mounts].map(([key, { mount }]) => ({
+        key,
+        height: mount.element.getBoundingClientRect().height,
+      })),
+      Math.max(0, top),
+      anchor,
+    );
+    return { ...measured, scrollTop: top + measured.scrollTop - Math.max(0, top) };
   }
   readonly #schedule = (): void => {
     if (!this.#active || this.#destroyed || this.#failed) return;
