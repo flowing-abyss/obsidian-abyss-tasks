@@ -7,9 +7,14 @@ import { renameTagSelection } from '../settings/tagViewState';
 import type { CalendarSettings, ListViewState } from '../settings/types';
 import { renameFileFilters } from '../settings/viewStatePaths';
 
+export interface PanelNavigationTransition {
+  canCommit(): boolean;
+  commit(): void;
+}
+
 export interface PanelNavigationActions {
   openTasks(): void;
-  openList(selection: ListSelection): void;
+  openList(selection: ListSelection, transition?: PanelNavigationTransition): void;
   openCalendar(): void;
   openCalendarView(view: CalViewType): void;
   openProjects(): void;
@@ -23,6 +28,7 @@ export interface PanelNavigationCenterPort {
   setCalendarView(view: CalViewType): void;
   openQuickCapture(): void;
   finishProjectTableEditorBefore?(action: () => void): void;
+  clearTaskSearchReveal?(): void;
 }
 
 export class PanelNavigator implements PanelNavigationActions {
@@ -41,18 +47,24 @@ export class PanelNavigator implements PanelNavigationActions {
     this.openList(this.lastTasksList);
   }
 
-  openList(selection: ListSelection): void {
-    this.beforeModeChange(() => {
+  openList(selection: ListSelection, transition?: PanelNavigationTransition): void {
+    const change = (): void => {
+      if (transition?.canCommit() === false) return;
       this.state.batch(() => {
+        if (transition === undefined) this.center.clearTaskSearchReveal?.();
         this.persistListState(this.lastTasksList);
         this.lastTasksList = selection;
         const next = this.listState(selection);
+        transition?.commit();
         this.state.set('selectedList', selection);
         this.state.set('centerListViewState', next);
         this.state.set('centerFilter', '');
         this.state.set('mode', 'tasks');
       });
-    });
+    };
+    if (transition !== undefined && this.center.finishProjectTableEditorBefore !== undefined)
+      this.center.finishProjectTableEditorBefore(change);
+    else this.beforeModeChange(change);
   }
 
   openCalendar(): void {

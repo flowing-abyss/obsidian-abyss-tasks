@@ -1,0 +1,540 @@
+import { MarkdownRenderer, Menu } from 'obsidian';
+import { afterEach, expect, it, vi } from 'vitest';
+import type { TaskSearch, TaskSearchOptions } from '../src/panels/center/TaskSearch';
+import type { TaskSearchReveal } from '../src/panels/center/TaskSearchReveal';
+import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { expectDefined, methodOf, useRealMoment } from './helpers';
+import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
+
+useRealMoment();
+afterEach(() => vi.restoreAllMocks());
+
+async function navigationSearchHarness(
+  count = 101,
+  organizationScheduler?: TaskSearchOptions['organizationScheduler'],
+) {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.listViewStates = {
+    inbox: {
+      groupBy: 'none',
+      sortBy: { field: 'title', dir: 'asc' },
+      filters: [],
+      statusGroups: ['todo'],
+    },
+  };
+  const markdown = [
+    ...Array.from({ length: count - 1 }, (_, i) => `- [ ] aaa ${String(i).padStart(5, '0')}`),
+    '- [ ] zzz needle',
+    '  - > unrelated',
+    '  - [ ] repeated',
+    '    - > padding',
+    '    - [ ] repeated',
+    '      - 2026-10-04: grandchild needle',
+  ].join('\n');
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': markdown },
+    settings,
+    'search',
+    organizationScheduler,
+  );
+  h.query('needle');
+  await h.completed();
+  const owners = h.panel as unknown as {
+    taskSearch_abyssPrivate: TaskSearch;
+    taskSearchReveal_abyssPrivate: TaskSearchReveal;
+  };
+  const list = vi.spyOn(h.index, 'list');
+  const nodes = vi.spyOn(h.index, 'listNodes');
+  const cursor = await h.search.open(
+    { kind: 'roots', query: 'needle' },
+    new AbortController().signal,
+  );
+  const page = await h.search.read(cursor, 0, 50, new AbortController().signal);
+  const hit = expectDefined(page.hits[0]);
+  const child = { ...hit.address, childLines: [2, 2] };
+  return {
+    ...h,
+    settings,
+    list,
+    nodes,
+    receipt: () => owners.taskSearchReveal_abyssPrivate.current(),
+    activateChild: () => owners.taskSearch_abyssPrivate.activate(child),
+    captureNavigation: () =>
+      structuredClone({
+        mode: h.state.get('mode'),
+        selectedList: h.state.get('selectedList'),
+        taskStack: h.state.get('taskStack'),
+        inspectorBackStack: h.state.get('inspectorBackStack'),
+        query: h.state.get('searchQuery'),
+        receipt: owners.taskSearchReveal_abyssPrivate.current(),
+        lists: settings.listViewStates,
+      }),
+  };
+}
+
+it('installs exact child and receipt before mode delivery, then locates its bounded ordinary page', async () => {
+  const h = await navigationSearchHarness();
+  try {
+    const deliveries: unknown[] = [];
+    h.state.on('mode', () =>
+      deliveries.push({
+        receipt: h.receipt()?.address.childLines,
+        path: h.state.get('taskStack').map((n) => n.title),
+      }),
+    );
+    await h.activateChild();
+    await h.completed();
+    expect(deliveries).toEqual([{ receipt: [2, 2], path: ['zzz needle', 'repeated', 'repeated'] }]);
+    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+    expect(h.root.textContent).toContain('Page 3 of 3');
+    expect(h.list).not.toHaveBeenCalled();
+    expect(h.nodes).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each([
+  'source-replaced',
+  'status-semantics',
+  'project-context',
+  'deleted-recreated',
+  'owner-disposed',
+  'new-selection',
+] as const)('vetoes delayed %s without persistence or selection changes', async (reason) => {
+  const h = await navigationSearchHarness();
+  let accept: (() => void) | undefined;
+  h.panel.finishProjectTableEditorBefore = (action) => {
+    accept = action;
+  };
+  try {
+    const before = h.captureNavigation();
+    await h.activateChild();
+    expect(h.captureNavigation()).toEqual(before);
+    if (reason === 'source-replaced') h.index.installCommittedContent('a.md', '- [ ] replacement');
+    if (reason === 'deleted-recreated') {
+      h.index.installCommittedContent('a.md', '');
+      h.index.installCommittedContent('a.md', '- [ ] zzz needle\n  - [ ] repeated');
+    }
+    if (reason === 'status-semantics') h.index.setStatusCatalog(h.statusCatalog);
+    if (reason === 'project-context') h.panel.refresh('projects');
+    if (reason === 'owner-disposed') h.panel.destroy();
+    if (reason === 'new-selection') h.state.set('taskStack', []);
+    const expected = h.captureNavigation();
+    expectDefined(accept)();
+    expect(h.captureNavigation()).toEqual(expected);
+    expect(h.list).not.toHaveBeenCalled();
+    expect(h.nodes).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
+it('accepts a delayed live guard with the child installed at the first delivery', async () => {
+  const h = await navigationSearchHarness();
+  let accept: (() => void) | undefined;
+  h.panel.finishProjectTableEditorBefore = (action) => {
+    accept = action;
+  };
+  try {
+    await h.activateChild();
+    expect(h.state.get('mode')).toBe('search');
+    expectDefined(accept)();
+    expect(h.receipt()?.address.childLines).toEqual([2, 2]);
+    expect(h.state.get('taskStack')).toHaveLength(3);
+    await h.completed();
+    expect(h.list).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
+it('uses shared card Enter activation and never selects a range for Search', async () => {
+  const h = await navigationSearchHarness();
+  try {
+    const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    card.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.waitFor(() => {
+      expect(h.state.get('mode')).toBe('tasks');
+    });
+    await h.completed();
+    expect(h.receipt()?.address.childLines).toEqual([]);
+    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('temporarily includes an excluded completed target without changing saved filters', async () => {
+  const h = await navigationSearchHarness();
+  try {
+    h.index.installCommittedContent('a.md', '- [x] needle #outside');
+    await h.completed();
+    const before = structuredClone(h.settings.listViewStates?.['inbox']);
+    expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card')).click();
+    await vi.waitFor(() => {
+      expect(h.state.get('mode')).toBe('tasks');
+    });
+    await h.completed();
+    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+    expect(h.root.textContent).toContain('Revealed from search');
+    expect(h.settings.listViewStates?.['inbox']).toEqual(before);
+    expect(h.list).not.toHaveBeenCalled();
+    expect(h.nodes).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
+it('expires a deleted receipt into ordinary Tasks without selecting a successor', async () => {
+  const h = await navigationSearchHarness();
+  try {
+    await h.activateChild();
+    await h.completed();
+    h.index.installCommittedContent('a.md', '- [ ] replacement at old location');
+    await vi.waitFor(() => {
+      expect(h.receipt()).toBeUndefined();
+    });
+    expect(h.root.textContent).toContain('replacement at old location');
+    expect(h.root.textContent).not.toContain('Type to search');
+    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+    expect(h.state.get('taskStack')[h.state.get('taskStack').length - 1]?.title).not.toBe(
+      'replacement at old location',
+    );
+    expect(h.list).toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
+it('keeps activation source proof live while exact hydration is delayed', async () => {
+  const h = await navigationSearchHarness();
+  let release: (() => void) | undefined;
+  const hydrate = h.search.resolvePage.bind(h.search);
+  let hold = true;
+  vi.spyOn(h.search, 'resolvePage').mockImplementation(async (hits, signal) => {
+    const result = await hydrate(hits, signal);
+    if (hold) {
+      hold = false;
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    }
+    return result;
+  });
+  try {
+    const before = h.captureNavigation();
+    const activating = h.activateChild();
+    await vi.waitFor(() => {
+      expect(release).toBeDefined();
+    });
+    h.index.installCommittedContent('a.md', '- [ ] changed needle');
+    expectDefined(release)();
+    await activating;
+    expect(h.captureNavigation()).toEqual(before);
+    await h.completed();
+    expect(h.root.textContent).toContain('Task changed. Search again.');
+    h.query('changed');
+    await h.completed();
+    expect(h.root.textContent).not.toContain('Task changed. Search again.');
+  } finally {
+    h.dispose();
+  }
+});
+
+it('chooses configured prefix children in actual sidebar order after archived pins', async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.pinnedTags = ['#hidden'];
+  settings.archivedTags = ['#hidden'];
+  settings.tagGroups = [{ id: 'work', name: 'Work', mode: 'prefix', prefix: 'work' }];
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': '- [ ] needle #hidden\n  - [ ] child #Work/Two #Work/One' },
+    settings,
+  );
+  try {
+    h.query('needle');
+    await h.completed();
+    const all = vi.spyOn(h.index, 'list');
+    const nodes = vi.spyOn(h.index, 'listNodes');
+    expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card')).click();
+    await vi.waitFor(() => {
+      expect(h.state.get('mode')).toBe('tasks');
+    });
+    expect(h.state.get('selectedList')).toEqual({ type: 'tag', tag: '#Work/One' });
+    await h.completed();
+    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+    expect(all).not.toHaveBeenCalled();
+    expect(nodes).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each(['timer', 'selection', 'page', 'dispose'] as const)(
+  'ends the owned two-second pulse on %s',
+  async (reason) => {
+    const h = await navigationSearchHarness();
+    const owner: Window = expectDefined(h.root.ownerDocument.defaultView);
+    const timers = new Map<number, () => void>();
+    const set = owner.setTimeout.bind(owner);
+    const clear = vi.spyOn(owner, 'clearTimeout');
+    vi.spyOn(owner, 'setTimeout').mockImplementation((callback, delay) => {
+      const id = set(callback, delay);
+      if (delay === 2000 && typeof callback === 'function') timers.set(id, callback as () => void);
+      return id;
+    });
+    try {
+      await h.activateChild();
+      await h.completed();
+      const card = expectDefined(h.root.querySelector<HTMLElement>('.is-search-revealed'));
+      expect(owner.document.activeElement).not.toBe(card);
+      const timer = expectDefined([...timers][0]);
+      if (reason === 'selection') h.state.set('taskStack', []);
+      if (reason === 'timer') timer[1]();
+      if (reason === 'dispose') h.panel.destroy();
+      if (reason === 'page') {
+        expectDefined(
+          h.root.querySelector<HTMLButtonElement>('[aria-label="Previous page"]'),
+        ).click();
+        await h.completed();
+      }
+      expect(clear).toHaveBeenCalledWith(timer[0]);
+      expect(card.classList.contains('is-search-revealed')).toBe(false);
+      if (reason !== 'dispose') expect(h.receipt()).toBeDefined();
+      timer[1]();
+      expect(card.classList.contains('is-search-revealed')).toBe(false);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('explicit same-list navigation ends the transient inclusion receipt', async () => {
+  const h = await navigationSearchHarness();
+  try {
+    await h.activateChild();
+    await h.completed();
+    const owner = h.panel as unknown as {
+      navigation_abyssPrivate: { openList(selection: 'inbox'): void };
+    };
+    owner.navigation_abyssPrivate.openList('inbox');
+    expect(h.receipt()).toBeUndefined();
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each(['command-toggle', 'other-root-update'] as const)(
+  'keeps ordinary Tasks usable after %s expires the receipt',
+  async (reason) => {
+    const h = await navigationSearchHarness(2);
+    try {
+      await h.activateChild();
+      await h.completed();
+      if (reason === 'command-toggle') {
+        expectDefined(
+          h.root.querySelector<HTMLElement>('.is-search-revealed .abyss-status-marker'),
+        ).click();
+      } else
+        h.index.installCommittedContent(
+          'a.md',
+          '- [ ] changed other root\n- [ ] zzz needle\n  - > unrelated\n  - [ ] repeated\n    - > padding\n    - [ ] repeated\n      - 2026-10-04: grandchild needle',
+        );
+      await vi.waitFor(() => {
+        expect(h.receipt()).toBeUndefined();
+      });
+      expect(h.state.get('mode')).toBe('tasks');
+      expect(h.state.get('selectedList')).toBe('inbox');
+      expect(h.root.textContent).not.toContain('Type to search');
+      expect(h.root.dataset['searchPhase']).not.toBe('pending');
+      expect(h.root.dataset['searchLogicalResults']).toBeUndefined();
+      expect(h.root.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);
+      if (reason === 'command-toggle')
+        expect(h.index.list().find((task) => task.title === 'zzz needle')?.status).toBe('done');
+      else expect(h.root.textContent).toContain('changed other root');
+      const input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-center-search'));
+      input.value = 'aaa';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await h.completed();
+      expect(h.root.dataset['searchPhase']).toBe('complete');
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('an old detached page card cannot activate through a newer live request', async () => {
+  const h = await navigationSearchHarness();
+  try {
+    const old = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    h.query('aaa');
+    await h.completed();
+    const hydration = vi.spyOn(h.search, 'resolvePage');
+    old.click();
+    expect(hydration).not.toHaveBeenCalled();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.state.get('mode')).toBe('search');
+    expect(h.receipt()).toBeUndefined();
+    expect(h.state.get('taskStack')).toEqual([]);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('navigates the last of 50k compact records through cooperative organization and mounts only its 50 proven roots', async () => {
+  let yields = 0;
+  const h = await navigationSearchHarness(50, () => ({
+    now: () => 0,
+    yield: async () => {
+      yields++;
+    },
+  }));
+  const original = h.index.organization.bind(h.index);
+  let batches = 0;
+  vi.spyOn(h.index, 'organization').mockImplementation(async function* (request, signal) {
+    for await (const batch of original(request, signal)) {
+      if (request.roots === undefined) {
+        const seed = expectDefined(batch.items[0]);
+        for (let start = 0; start < 49950; start += 200) {
+          batches++;
+          yield {
+            generation: batch.generation,
+            items: Array.from({ length: Math.min(200, 49950 - start) }, (_, at) => ({
+              ...seed,
+              title: `000 filler ${start + at}`,
+              markdownTitle: '000 filler',
+              source: { ...seed.source, line: 100000 + start + at },
+              address: { ...seed.address, rootId: 100000 + start + at },
+            })),
+          };
+        }
+      }
+      yield batch;
+    }
+  });
+  try {
+    await h.activateChild();
+    await h.completed();
+    expect(batches).toBe(250);
+    expect(yields).toBeGreaterThan(300);
+    expect(h.root.dataset['searchLogicalResults']).toBe('50000');
+    expect(h.root.textContent).toContain('Page 1000 of 1000');
+    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(50);
+    expect(h.state.get('taskStack').map((node) => node.title)).toEqual([
+      'zzz needle',
+      'repeated',
+      'repeated',
+    ]);
+    expect(h.receipt()?.address.childLines).toEqual([2, 2]);
+    expect(h.list).not.toHaveBeenCalled();
+    expect(h.nodes).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
+it('a later inspector selection cancels reveal presentation while the destination page hydrates', async () => {
+  const h = await navigationSearchHarness();
+  const hydrate = h.search.resolvePage.bind(h.search);
+  let release: (() => void) | undefined;
+  vi.spyOn(h.search, 'resolvePage').mockImplementation(async (hits, signal) => {
+    const result = await hydrate(hits, signal);
+    if (h.state.get('mode') === 'tasks' && hits[0]?.address.childLines.length === 0)
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    return result;
+  });
+  try {
+    await h.activateChild();
+    await vi.waitFor(() => {
+      expect(release).toBeDefined();
+    });
+    h.state.set('taskStack', []);
+    expectDefined(release)();
+    await h.completed();
+    expect(h.root.querySelector('.is-search-revealed')).toBeNull();
+    expect(h.state.get('taskStack')).toEqual([]);
+    expect(h.receipt()).toBeDefined();
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each(['link', 'status', 'tag', 'menu', 'drag'] as const)(
+  'keeps %s on its shared-card owner instead of Search activation',
+  async (action) => {
+    const originalAddItem = methodOf(Menu.prototype, 'addItem');
+    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, callback) {
+      return originalAddItem.call(this, (item) => {
+        (item as unknown as { dom: HTMLElement }).dom = createDiv();
+        callback(item);
+      });
+    });
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _source, host) => {
+      host.createSpan({ text: 'needle ' });
+      host.createEl('a', {
+        cls: 'internal-link',
+        text: 'Alias',
+        attr: { 'data-href': 'Somewhere' },
+      });
+    });
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': '- [ ] needle [[Somewhere|Alias]] #work' },
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    try {
+      h.query('needle');
+      await h.completed();
+      const owner = h.panel as unknown as { taskSearch_abyssPrivate: TaskSearch };
+      const activate = vi.spyOn(owner.taskSearch_abyssPrivate, 'activate');
+      const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+      if (action === 'link') expectDefined(card.querySelector<HTMLElement>('a')).click();
+      if (action === 'status')
+        expectDefined(card.querySelector<HTMLElement>('.abyss-status-marker')).click();
+      if (action === 'tag')
+        expectDefined(card.querySelector<HTMLElement>('.abyss-task-tag')).click();
+      if (action === 'menu') card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+      if (action === 'drag') card.dispatchEvent(new Event('dragstart', { bubbles: true }));
+      expect(activate).not.toHaveBeenCalled();
+      expect(h.state.get('mode')).toBe('search');
+      if (action === 'status')
+        await vi.waitFor(() => {
+          expect(h.index.list()[0]?.status).toBe('done');
+        });
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('aborts exact activation hydration immediately on a newer inspector intent', async () => {
+  const h = await navigationSearchHarness();
+  const hydrate = h.search.resolvePage.bind(h.search);
+  let release: (() => void) | undefined;
+  let activationSignal: AbortSignal | undefined;
+  vi.spyOn(h.search, 'resolvePage').mockImplementation(async (hits, signal) => {
+    const result = await hydrate(hits, signal);
+    activationSignal = signal;
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return result;
+  });
+  try {
+    const activating = h.activateChild();
+    await vi.waitFor(() => {
+      expect(release).toBeDefined();
+    });
+    h.state.set('taskStack', []);
+    expect(activationSignal?.aborted).toBe(true);
+    expectDefined(release)();
+    await activating;
+    expect(h.state.get('mode')).toBe('search');
+    expect(h.receipt()).toBeUndefined();
+  } finally {
+    release?.();
+    h.dispose();
+  }
+});

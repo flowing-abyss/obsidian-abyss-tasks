@@ -506,7 +506,12 @@ distinct root requested once. Headers retain full group counts on continued page
 and duplicated outgoing occurrences have separate totals. Page/query/sort/group changes clear
 Tasks row multiselection and announce it. Inspector selection/history stay independent, and global
 Search retains activation without acquiring range selection. Unfiltered ordinary lists retain their
-existing rendering and saved-state owner. Search options are a transient CenterPanel session via
+existing rendering and saved-state owner. An accepted Search navigation receipt also activates this
+compact, cooperative organization path with no query restriction (`hits: null`). Organization checks
+the exact target against the current compact records, reuses its existing occurrence or appends one
+transient “Revealed from search” occurrence when membership or saved filters exclude it, and computes
+the destination page before hydration. It never drains the full destination synchronously. Shared
+task group headers are already expanded; this path writes no saved filter or collapse preference. Search options are a transient CenterPanel session via
 ListViewControls' explicit optional state port; Relevance is never a persisted sort value.
 
 TaskSearch subscribes before opening, drains one forward root cursor, joins each compact organization
@@ -545,6 +550,37 @@ callback. Replacement, abort, detach and Component unload cancel stale work. `Ta
 collects the card title/description receipts in the existing row mount; failure cancels its remaining
 work. The Search DOM complete phase follows that sealed mount receipt, without a readiness timer.
 The onRendered hook and the same page/request lifecycle are the shared seam for later excerpt marks.
+
+Search activation uses an explicit shared-card callback for main clicks and Enter/Space. Existing
+link, status, property, menu and drag handlers retain their own commands; there is no capture-phase
+card interceptor. The callback retains its mounted request and generation, and rehydrates the exact
+address before navigation. The mounted source subscription and AppState selection-intent generation
+remain live across a delayed project-editor guard. Source/semantic changes, project-context changes,
+new intent, query/page replacement, migration and disposal veto the old continuation before any
+list-state persistence or navigation mutation.
+
+`PanelNavigator.openList` accepts an optional synchronous transition. Inside its accepted batch it
+installs CenterPanel's `TaskSearchReveal` receipt and the exact `taskSelectionRefPath` through AppState
+before publishing list/mode. Ordinary callers retain their established navigation flow. Destination
+policy uses current ProjectStore source membership, then configured visible tag leaves in sidebar
+order (pins first), then the shared Today/date fallback. Sidebar prefix children and Search reuse
+`tagNavigationGroupTags`; tag membership traverses the hydrated task tree with exact case-insensitive
+identity. No fallback membership is assumed.
+
+CenterPanel owns receipt lifetime and the captured-window two-second reveal marker, using its existing
+scroll primitive without stealing focus. Later selection cancels pending presentation. Explicit
+navigation (including the same list), filters and teardown clear the receipt. Stale activation stays
+in Search with “Task changed. Search again.” and refreshes. After navigation, an unprovable receipt
+expires through CenterPanel's ordinary Tasks renderer; normal command/index inspector reconciliation
+keeps its authority. The expired surface drops Search counts and remains usable without a mode switch.
+
+The internal pure `tasks/infrastructure/search/taskSearchContext` helper computes at most three
+matched fields from one detached hydrated root, with full authored fields, separate comment-relative
+lines, exact child-relative-line paths and UTF-16 source provenance from `markdown/searchText` and
+`searchMatchPolicy`. A bounded collector prefers distinct query-token coverage, then canonical order.
+Link destinations are separately labeled evidence; scalar metadata has no fabricated source range.
+Documents and this helper share `taskSearchMetadata`. Context evidence is currently internal and has
+no public task export or mounted renderer consumer; it grants no text-edit authority.
 
 List organization can use the exact containing source-note path or outgoing wiki-note links in the
 root title. `taskLinkValues` derives links once per organization pass with the shared Markdown

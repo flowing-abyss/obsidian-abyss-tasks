@@ -7,9 +7,9 @@ import { RenameTagModal } from '../../tags/RenameTagModal';
 import type { TagManager } from '../../tags/TagManager';
 import {
   isTagNavigationArchived,
-  prefixForDiscoveredGroupId,
   resolveEffectiveTagGroups,
   tagMatchesGroup,
+  tagNavigationGroupTags,
   type EffectiveTagGroup,
 } from '../../tags/effectiveTagGroups';
 import { tagSettingsFailureNotice } from '../../tags/tagSettingsFailure';
@@ -631,32 +631,10 @@ export class TagNavigation {
   }
 
   #resolveGroupTags(group: EffectiveTagGroup, allNodes: readonly TaskNodeSnapshot[]): string[] {
-    if (group.mode === 'prefix' && group.prefix !== undefined && group.prefix.length > 0) {
-      return this.#collectPrefixTags(group, allNodes);
-    }
-    return group.tags ?? [];
-  }
-
-  #collectPrefixTags(group: EffectiveTagGroup, allNodes: readonly TaskNodeSnapshot[]): string[] {
-    const found = new Set<string>();
-    for (const { node } of allNodes) {
-      for (const tag of node.tags) {
-        if (
-          tag.includes('/') &&
-          tagMatchesGroup(tag, group) &&
-          !this.#isClaimedAutomaticChild(group, tag) &&
-          ![...found].some((candidate) => sameTag(candidate, tag))
-        )
-          found.add(tag);
-      }
-    }
-    return Array.from(found).sort((left, right) => left.localeCompare(right));
-  }
-
-  #isClaimedAutomaticChild(group: EffectiveTagGroup, tag: string): boolean {
-    if (prefixForDiscoveredGroupId(group.id) === undefined) return false;
-    return this.#settings.tagGroups.some(
-      (candidate) => candidate.id !== group.id && tagMatchesGroup(tag, candidate),
+    return tagNavigationGroupTags(
+      group,
+      allNodes.flatMap(({ node }) => node.tags),
+      this.#settings.tagGroups,
     );
   }
 

@@ -430,6 +430,9 @@ export class PanelView extends ItemView {
           this.compactPaneAccess_abyssPrivate.close(false);
           this.quickCapture_abyssPrivate?.openOrFocus();
         },
+        clearTaskSearchReveal: () => {
+          this.center_abyssPrivate.clearTaskSearchReveal();
+        },
         finishProjectTableEditorBefore: (action) => {
           this.center_abyssPrivate.finishProjectTableEditorBefore(action);
         },

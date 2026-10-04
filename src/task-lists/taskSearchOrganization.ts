@@ -3,7 +3,7 @@ import { stableSortSteps, type CollectionSteps } from '../collectionSteps';
 import type { SearchViewState } from '../panels/center/SearchViewState';
 import { StatusRegistry } from '../status/StatusRegistry';
 import type { LocalDate, TaskOrganizationRecord, TaskSearchAddress, TaskSearchHit } from '../tasks';
-import { shiftLocalDate, totalMs } from '../tasks';
+import { TaskSearchError, shiftLocalDate, totalMs } from '../tasks';
 import {
   groupTasksByDateSteps,
   groupTasksByOutgoingLinkSteps,
@@ -28,6 +28,7 @@ export interface TaskSearchOccurrence {
 export interface TaskSearchOrganization {
   readonly generation: number;
   readonly rootTotal: number;
+  readonly revealIndex?: number;
   readonly occurrences: readonly TaskSearchOccurrence[];
   readonly groupCounts: ReadonlyMap<string, number>;
 }
@@ -35,6 +36,7 @@ export interface TaskSearchOrganizationInput {
   /** Full canonical tags, independent of query hits, for selected group identity. */
   readonly observedTags?: readonly string[];
   readonly generation: number;
+  readonly reveal?: TaskSearchAddress | undefined;
   readonly records: readonly TaskOrganizationRecord[];
   readonly hits: readonly TaskSearchHit[] | null;
   readonly selection: ListSelection | null;
@@ -179,7 +181,14 @@ export function* organizeTaskSearch(
         ? yield* appendOccurrences(matching, null, { outgoing: false, scores, output: occurrences })
         : yield* groupedOccurrences(input, matching, scores, { counts: groupCounts, occurrences });
     if (appended === undefined) throw new Error('Organization ended without a result');
-    return { generation: input.generation, rootTotal, groupCounts, occurrences };
+    const revealIndex = yield* revealOccurrence(input, occurrences, groupCounts);
+    return {
+      generation: input.generation,
+      rootTotal: rootTotal + Number(revealIndex?.added === true),
+      groupCounts,
+      occurrences,
+      ...(revealIndex === undefined ? {} : { revealIndex: revealIndex.index }),
+    };
   } finally {
     scores.clear();
     matching = [];
@@ -219,4 +228,39 @@ function* organizationGroups(
 function compareSource(a: TaskOrganizationRecord, b: TaskOrganizationRecord): number {
   const path = a.source.filePath.localeCompare(b.source.filePath);
   return path !== 0 ? path : a.source.line - b.source.line;
+}
+
+function* revealOccurrence(
+  input: TaskSearchOrganizationInput,
+  occurrences: TaskSearchOccurrence[],
+  counts: Map<string, number>,
+): CollectionSteps<{ index: number; added: boolean } | undefined> {
+  const target = input.reveal;
+  if (target === undefined) return undefined;
+  let record: TaskOrganizationRecord | undefined;
+  for (const candidate of input.records) {
+    if (
+      candidate.address.rootId === target.rootId &&
+      candidate.address.epoch === target.epoch &&
+      candidate.address.version === target.version
+    )
+      record = candidate;
+    yield 'cheap';
+  }
+  if (record === undefined) throw new TaskSearchError('stale', 'Reveal target changed');
+  for (let index = 0; index < occurrences.length; index++) {
+    if (occurrences[index]?.address.rootId === target.rootId) return { index, added: false };
+    yield 'cheap';
+  }
+  const index = occurrences.length;
+  const group = { key: 'search-reveal', label: 'Revealed from search' };
+  counts.set(group.key, 1);
+  occurrences.push({
+    key: `search-reveal:${target.rootId}`,
+    address: record.address,
+    score: 0,
+    group,
+  });
+  yield 'atom';
+  return { index, added: true };
 }

@@ -4382,9 +4382,9 @@ function panelFrames(owner: Window) {
   };
 }
 
-async function prewarmPanel(initialize = true) {
+async function prewarmPanel(initialize = true, markdown = '- [ ] needle') {
   const h = await createCanonicalSearchHarness(
-    { 'tasks.md': '- [ ] needle' },
+    { 'tasks.md': markdown },
     structuredClone(DEFAULT_SETTINGS),
     initialize,
   );
@@ -5001,3 +5001,54 @@ describe('mounted Search window migration', () => {
     },
   );
 });
+
+it.each(['toggle', 'other-root', 'deleted'] as const)(
+  'Search receipt expiry preserves the real PanelView inspector after %s',
+  async (reason) => {
+    const h = await prewarmPanel(true, '- [ ] needle\n  - [ ] child\n- [ ] other');
+    try {
+      const { view } = await h.mount();
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      state.set('mode', 'search');
+      state.set('searchQuery', 'needle');
+      const center = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+      await searchUiCompleted(center);
+      expectDefined(center.querySelector<HTMLElement>('.abyss-task-card')).click();
+      await vi.waitFor(() => {
+        expect(state.get('mode')).toBe('tasks');
+      });
+      await searchUiCompleted(center);
+      if (reason === 'toggle')
+        expectDefined(
+          center.querySelector<HTMLElement>('.is-search-revealed .abyss-status-marker'),
+        ).click();
+      else if (reason === 'deleted')
+        await h.app.fileManager.trashFile(expectDefined(h.app.vault.getFileByPath('tasks.md')));
+      else
+        h.index.installCommittedContent(
+          'tasks.md',
+          '- [ ] needle\n  - [ ] child\n- [ ] other changed',
+        );
+      await vi.waitFor(() => {
+        expect(center.dataset['searchPhase']).toBe('idle');
+      });
+      expect(center.dataset['searchLogicalResults']).toBeUndefined();
+      expect(center.textContent).not.toContain('Type to search');
+      if (reason !== 'deleted') expect(center.querySelector('.abyss-task-card')).not.toBeNull();
+      if (reason === 'deleted') expect(state.get('taskStack')).toEqual([]);
+      else {
+        const selected = expectDefined(state.get('taskStack')[0]);
+        expect(selected.title).toBe('needle');
+        expect(selected.status).toBe(reason === 'toggle' ? 'done' : 'open');
+        expect(state.get('inspectorBackStack')).toEqual([]);
+      }
+      const input = expectDefined(center.querySelector<HTMLInputElement>('.abyss-center-search'));
+      input.value = 'other';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await searchUiCompleted(center);
+      expect(center.dataset['searchPhase']).toBe('complete');
+    } finally {
+      await h.dispose();
+    }
+  },
+);

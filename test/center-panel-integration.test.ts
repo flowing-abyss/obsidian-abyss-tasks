@@ -2444,6 +2444,11 @@ describe('CenterPanel.renderSearch', () => {
       await vi.advanceTimersByTimeAsync(100);
       await h.completed();
       expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card')).click();
+      await vi.waitFor(() => {
+        expect(h.state.get('mode')).toBe('tasks');
+      });
+      await vi.advanceTimersByTimeAsync(100);
+      await h.completed();
       expect(h.state.get('mode')).toBe('tasks');
       expect(h.state.get('selectedList')).toBe(want);
       expect(h.state.get('taskStack')[0]?.title).toBe('buy milk');
@@ -6970,6 +6975,8 @@ describe('CenterPanel actual centre focus continuity', () => {
       await vi.advanceTimersByTimeAsync(100);
       await searchUiCompleted(h.el);
       expectDefined(h.el.querySelector<HTMLElement>('.abyss-task-title')).click();
+      await vi.advanceTimersByTimeAsync(100);
+      await searchUiCompleted(h.el);
       expect(h.state.get('mode')).toBe('tasks');
       expect(h.state.get('selectedList')).toBe('today');
       expect(h.state.get('taskStack')[0]).toEqual(h.index.list()[0]);

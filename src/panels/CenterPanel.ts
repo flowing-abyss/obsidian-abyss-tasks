@@ -1,13 +1,16 @@
 import { Component, type App, type Menu } from 'obsidian';
 import type { AppState } from '../app/AppState';
 import { isListViewOptionsCustomized, listSelectionToKey } from '../app/listViewState';
+import { moment } from '../obsidianMoment';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
 import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import {
+  isTagNavigationArchived,
   resolveEffectiveTagGroups,
   tagMatchesGroup,
+  tagNavigationGroupTags,
   type EffectiveTagGroup,
 } from '../tags/effectiveTagGroups';
 import { selectTaskList } from '../task-lists/TaskListSelector';
@@ -61,6 +64,8 @@ import { TaskCardRenderer } from './center/TaskCardRenderer';
 import { TaskCommands } from './center/TaskCommands';
 import { TaskMenus } from './center/TaskMenus';
 import { TaskSearch, type TaskSearchOptions } from './center/TaskSearch';
+import { TaskSearchReveal } from './center/TaskSearchReveal';
+import { taskSearchDestination } from './center/taskSearchDestination';
 import { ProjectsPanel } from './projects/ProjectsPanel';
 import type { TaskSearchPageModel } from './task-list/TaskSearchPages';
 import {
@@ -163,6 +168,7 @@ export class CenterPanel {
   private readonly onSaveSettings_abyssPrivate: (() => Promise<void>) | undefined;
   private md_abyssPrivate = new Component();
   private readonly taskSearch_abyssPrivate: TaskSearch;
+  private readonly taskSearchReveal_abyssPrivate: TaskSearchReveal;
   private readonly searchApi_abyssPrivate: TaskSearchApi | undefined;
   private readonly searchControls_abyssPrivate: ListViewControls;
   private searchHeader_abyssPrivate: {
@@ -233,6 +239,13 @@ export class CenterPanel {
     this.settings_abyssPrivate = settings;
     this.queries_abyssPrivate = queries;
     this.searchApi_abyssPrivate = options.search;
+    this.taskSearchReveal_abyssPrivate = new TaskSearchReveal(
+      () => this.el.ownerDocument.defaultView ?? null,
+      () => this.state_abyssPrivate.taskSelectionIntentGeneration,
+      (card) => {
+        this.scrollTaskCardIntoView_abyssPrivate(card);
+      },
+    );
     this.statusRegistry_abyssPrivate = statusRegistry;
     this.onSaveViewState_abyssPrivate = onSaveViewState;
     this.onSaveSettings_abyssPrivate = onSaveSettings;
@@ -300,8 +313,8 @@ export class CenterPanel {
       host: {
         component: () => this.md_abyssPrivate,
         dependenciesFor: (task) => this.dependenciesFor_abyssPrivate(task),
-        mountInteractions: (card, task, rowKey) => {
-          this.mountTaskCardInteractions_abyssPrivate(card, task, rowKey);
+        mountInteractions: (card, task, rowKey, onActivate) => {
+          this.mountTaskCardInteractions_abyssPrivate(card, task, rowKey, onActivate);
         },
         openStatusMenu: (event, task) => {
           this.openStatusMenu_abyssPrivate(event, task);
@@ -343,6 +356,24 @@ export class CenterPanel {
             throw new Error('Task dependency capability missing');
           await this.tasks_abyssPrivate.queries.prepareDependencies(generation, signal);
         },
+        destination: (root) =>
+          taskSearchDestination({
+            root,
+            today: localDate(moment().format('YYYY-MM-DD')),
+            settings: this.settings_abyssPrivate,
+            projectPaths: new Set(
+              this.projectStore_abyssPrivate?.list().map((project) => project.path) ?? [],
+            ),
+            configuredTags: this.searchDestinationTags_abyssPrivate(),
+          }),
+        installReveal: (receipt) => {
+          this.taskSearchReveal_abyssPrivate.install(receipt);
+        },
+        currentReveal: () => this.taskSearchReveal_abyssPrivate.current(),
+        expireReveal: () => {
+          this.taskSearchReveal_abyssPrivate.clear();
+          this.render_abyssPrivate();
+        },
         revealTask: (task) => {
           const key = this.mountedRows_abyssPrivate.rows.occurrencesOf(taskRowKey(task))[0];
           if (key === undefined) return;
@@ -353,7 +384,7 @@ export class CenterPanel {
             card?.isConnected === true &&
             this.sameCardRef_abyssPrivate(current.ref, task.ref)
           )
-            this.scrollTaskCardIntoView_abyssPrivate(card);
+            this.taskSearchReveal_abyssPrivate.show(card);
         },
         beginResults: () => {
           this.beginTaskCardRender_abyssPrivate();
@@ -361,13 +392,30 @@ export class CenterPanel {
           this.md_abyssPrivate = new Component();
           this.md_abyssPrivate.load();
         },
-        renderRows: (host, page, scope, onCard) =>
-          this.mountSearchPage_abyssPrivate(host, page, scope, onCard),
+        renderRows: (host, page, scope, onActivate) =>
+          this.mountSearchPage_abyssPrivate(host, page, scope, onActivate),
         completeResults: () => {
           this.completeTaskCardRender_abyssPrivate();
         },
       },
     });
+  }
+
+  private searchDestinationTags_abyssPrivate(): string[] {
+    const settings = this.settings_abyssPrivate;
+    const observed = this.queries_abyssPrivate.observedTags();
+    return [
+      ...settings.pinnedTags,
+      ...settings.tagGroups
+        .filter((group) => group.archived !== true)
+        .flatMap((group) =>
+          tagNavigationGroupTags(
+            { ...group, origin: 'configured', archived: false },
+            observed,
+            settings.tagGroups,
+          ),
+        ),
+    ].filter((tag) => !isTagNavigationArchived(settings, tag));
   }
 
   private createSearchControls_abyssPrivate(): ListViewControls {
@@ -427,7 +475,7 @@ export class CenterPanel {
     host: HTMLElement,
     page: TaskSearchPageModel,
     scope: TaskRenderScope,
-    onCard?: (card: HTMLElement, task: TaskSnapshot) => void,
+    onActivate?: (task: TaskSnapshot) => void,
   ): Promise<TaskRenderOutcome> {
     const groupBy =
       this.state_abyssPrivate.get('mode') === 'search'
@@ -437,7 +485,7 @@ export class CenterPanel {
       host,
       buildTaskSearchPageRows(page, groupBy),
       this.effectiveTagGroups_abyssPrivate(),
-      { onCard, scope },
+      { onActivate, scope },
     );
     this.rowSelection_abyssPrivate.reconcile(this.listOrder_abyssPrivate());
     this.updateSelectionVisuals_abyssPrivate();
@@ -567,6 +615,12 @@ export class CenterPanel {
             this.setCalendarView(view);
           },
           openQuickCapture: () => undefined,
+          clearTaskSearchReveal: () => {
+            this.clearTaskSearchReveal();
+          },
+          finishProjectTableEditorBefore: (action) => {
+            this.finishProjectTableEditorBefore(action);
+          },
         },
         this.onSaveViewState_abyssPrivate,
       )
@@ -694,6 +748,7 @@ export class CenterPanel {
   }
 
   private handleStateCommit_abyssPrivate(changed: ReadonlySet<string>): void {
+    this.taskSearchReveal_abyssPrivate.committed(changed);
     if (changed.size === 0 && this.state_abyssPrivate.get('mode') === 'calendar') {
       this.calendar_abyssPrivate.cancelKeyboardInteraction();
     }
@@ -853,6 +908,7 @@ export class CenterPanel {
   }
 
   onWindowMigrated(): void {
+    this.taskSearchReveal_abyssPrivate.cancelPulse();
     this.taskSearch_abyssPrivate.onWindowMigrated();
   }
 
@@ -867,6 +923,10 @@ export class CenterPanel {
   }
 
   /** Keeps project-table draft ownership at the table before a mode transition. */
+  clearTaskSearchReveal(): void {
+    this.taskSearchReveal_abyssPrivate.clear();
+  }
+
   finishProjectTableEditorBefore(action: () => void): void {
     const panel = this.projectsPanel_abyssPrivate;
     if (panel === null) action();
@@ -905,6 +965,7 @@ export class CenterPanel {
     this.captureSessions_abyssPrivate.cancelActiveCapture();
     this.calendar_abyssPrivate.cancelKeyboardInteraction();
     this.abandonTaskDateFocus_abyssPrivate();
+    this.taskSearchReveal_abyssPrivate.dispose();
     this.taskSearch_abyssPrivate.clear();
     this.clearTaskDatePicker_abyssPrivate();
     this.dismissRecurrenceEditor_abyssPrivate();
@@ -950,7 +1011,7 @@ export class CenterPanel {
     if (
       retainTaskShell &&
       shell !== null &&
-      this.state_abyssPrivate.get('centerFilter').length > 0 &&
+      this.hasPagedTasks_abyssPrivate() &&
       this.taskSearch_abyssPrivate.refreshFilter(this.el, shell.scroll)
     ) {
       this.syncTaskHeader_abyssPrivate(shell);
@@ -1054,6 +1115,13 @@ export class CenterPanel {
     this.onRenderComplete_abyssPrivate(this.el);
   }
 
+  private hasPagedTasks_abyssPrivate(): boolean {
+    return (
+      this.state_abyssPrivate.get('centerFilter').length > 0 ||
+      this.taskSearchReveal_abyssPrivate.current() !== undefined
+    );
+  }
+
   private renderTasksMode_abyssPrivate(): void {
     this.el.removeClass('abyss-center--projects');
     const shell = this.ensureTaskShell_abyssPrivate();
@@ -1061,7 +1129,7 @@ export class CenterPanel {
     const { scroll, addBar } = shell;
     const scrollTop = scroll.scrollTop;
     const scrollLeft = scroll.scrollLeft;
-    if (this.state_abyssPrivate.get('centerFilter').length > 0) {
+    if (this.hasPagedTasks_abyssPrivate()) {
       addBar.empty();
       this.captureSessions_abyssPrivate.renderCaptureHost(addBar, {
         type: 'list',
@@ -1243,9 +1311,10 @@ export class CenterPanel {
     options: {
       readonly onCard?: ((card: HTMLElement, task: TaskSnapshot) => void) | undefined;
       readonly scope?: TaskRenderScope;
+      readonly onActivate?: ((task: TaskSnapshot) => void) | undefined;
     } = {},
   ): void {
-    const { onCard, scope } = options;
+    const { onCard, scope, onActivate } = options;
     this.mountedRows_abyssPrivate = mountTaskListRows(
       container,
       rows,
@@ -1253,6 +1322,12 @@ export class CenterPanel {
         const selected = this.isTaskCardSelected_abyssPrivate(row.task);
         const card = this.taskCardRenderer_abyssPrivate.render(host, row.task, tagGroups, {
           selected,
+          onActivate:
+            onActivate === undefined
+              ? undefined
+              : () => {
+                  onActivate(row.task);
+                },
           rowKey: row.key,
           ...(scope === undefined ? {} : { renderScope: scope }),
           showDelete: selected && this.rowSelection_abyssPrivate.size === 0,
@@ -1280,6 +1355,7 @@ export class CenterPanel {
    * render's badges go with it and every card in this one shows the same clock.
    */
   private beginTaskCardRender_abyssPrivate(): void {
+    this.taskSearchReveal_abyssPrivate.cancelPulse();
     this.renderCardFocus_abyssPrivate = null;
     const active = this.el.ownerDocument.activeElement;
     for (const [key, card] of this.mountedRows_abyssPrivate.cards()) {
@@ -1321,10 +1397,29 @@ export class CenterPanel {
     card: HTMLElement,
     task: TaskSnapshot,
     rowKey = taskRowKey(task),
+    onActivate?: () => void,
   ): void {
     card.addEventListener('click', (event) => {
+      if (onActivate !== undefined) {
+        onActivate();
+        return;
+      }
       this.handleTaskCardClick_abyssPrivate(event, task, rowKey);
     });
+    if (onActivate !== undefined) {
+      card.tabIndex = 0;
+      card.addEventListener('keydown', (event) => {
+        if (
+          event.target !== card ||
+          isImeOwnedEvent(event) ||
+          (event.key !== 'Enter' && event.key !== ' ')
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        onActivate();
+      });
+    }
     this.mountTaskCardDrag_abyssPrivate(card, task);
     card.addEventListener('contextmenu', (event) => {
       this.handleTaskContextMenu_abyssPrivate(event, card, task, rowKey);

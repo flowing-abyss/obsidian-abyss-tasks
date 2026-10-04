@@ -451,3 +451,36 @@ function* reserveId(
   if (cooperative) yield 'cheap';
   return id;
 }
+
+/** The tag leaf order shared by sidebar groups and search destinations. */
+export function tagNavigationGroupTags(
+  group: EffectiveTagGroup,
+  observed: readonly string[],
+  configured: readonly TagGroup[],
+): string[] {
+  if (group.mode !== 'prefix' || group.prefix === undefined || group.prefix.length === 0)
+    return group.tags ?? [];
+  const found: string[] = [];
+  for (const tag of observed) {
+    const claimed = claimedAutomaticChild(group, tag, configured);
+    if (
+      tag.includes('/') &&
+      tagMatchesGroup(tag, group) &&
+      !claimed &&
+      !found.some((candidate) => sameTag(candidate, tag))
+    )
+      found.push(tag);
+  }
+  return found.sort((left, right) => left.localeCompare(right));
+}
+
+function claimedAutomaticChild(
+  group: EffectiveTagGroup,
+  tag: string,
+  configured: readonly TagGroup[],
+): boolean {
+  return (
+    prefixForDiscoveredGroupId(group.id) !== undefined &&
+    configured.some((candidate) => candidate.id !== group.id && tagMatchesGroup(tag, candidate))
+  );
+}

@@ -1,7 +1,7 @@
 import { projectSearchText } from '../../../markdown/searchText';
 import type { TaskSearchDocument, TaskSearchSourceNode } from '../../application/TaskSearchSource';
 import type { TaskNodeSnapshot } from '../../domain/taskDependencies';
-import { formatDurationMinutes } from '../../domain/valueObjects';
+import { taskSearchMetadata } from '../../domain/taskSearchMetadata';
 
 /** Adapt the borrowed canonical node during the owner's linear walk; never resolve its refs. */
 export function taskSearchDocument(
@@ -17,30 +17,12 @@ export function taskSearchDocument(
     description: description.visible.text,
     comments: comments.map((comment) => comment.visible.text).join('\n'),
     tags: node.tags.join(' '),
-    metadata: [
-      node.priority,
-      node.planning.created,
-      node.planning.start,
-      node.planning.scheduled,
-      node.planning.due,
-      node.planning.completion,
-      node.planning.cancelled,
-      node.planning.time,
-      ...durationValues(node),
-      node.recurrence,
-      node.dependencyId,
-      ...node.dependsOn,
-    ]
-      .filter((value) => value !== undefined)
+    metadata: taskSearchMetadata(node)
+      .map(([, value]) => value)
       .join(' '),
     links: [title, description, ...comments]
       .flatMap((field) => field.destinations.map((value) => value.text))
       .join('\n'),
     sourcePath: coordinate.order.filePath,
   };
-}
-
-function durationValues(node: TaskNodeSnapshot['node']): ReadonlyArray<string | number> {
-  if (!('source' in node) || node.planning.duration === undefined) return [];
-  return [node.planning.duration, formatDurationMinutes(node.planning.duration)];
 }

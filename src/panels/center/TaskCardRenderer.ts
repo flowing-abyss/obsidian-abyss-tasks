@@ -38,7 +38,12 @@ import type { TaskCommands } from './TaskCommands';
 interface TaskCardRendererHost {
   component(): Component;
   dependenciesFor: TaskDependencyLookup;
-  mountInteractions(card: HTMLElement, task: TaskSnapshot, rowKey?: string): void;
+  mountInteractions(
+    card: HTMLElement,
+    task: TaskSnapshot,
+    rowKey?: string,
+    onActivate?: () => void,
+  ): void;
   openStatusMenu(event: MouseEvent, task: TaskSnapshot): void;
   formatDate(date: LocalDate): string;
   getDateClass(date: LocalDate): string;
@@ -111,6 +116,7 @@ export class TaskCardRenderer {
       readonly showDelete: boolean;
       readonly rowKey?: string;
       readonly renderScope?: TaskRenderScope;
+      readonly onActivate?: (() => void) | undefined;
     },
   ): HTMLElement {
     const isSelected = flags.selected;
@@ -127,7 +133,7 @@ export class TaskCardRenderer {
     this.#renderStatus(mainRow, task);
     this.#renderBody(mainRow, task, flags.renderScope);
     this.#renderMetadata(mainRow, task, tagGroups);
-    this.#host.mountInteractions(card, task, flags.rowKey);
+    this.#host.mountInteractions(card, task, flags.rowKey, flags.onActivate);
     this.syncDeleteButton(card, flags.showDelete ? task : undefined);
     return card;
   }

@@ -1,4 +1,4 @@
-import type { AppState } from '../../app/AppState';
+import type { AppState, ListSelection } from '../../app/AppState';
 import {
   BrowserTaskScheduleError,
   createBrowserTaskScheduler,
@@ -26,6 +26,7 @@ import {
 import { isImeOwnedEvent } from '../../ui/ime';
 import { SearchStatus } from '../../ui/searchStatus';
 import { TaskRenderScope, type TaskRenderOutcome } from '../../ui/taskRenderScope';
+import { taskSelectionRefPath } from '../../ui/taskSelection';
 import type { PanelNavigationActions } from '../../views/panelNavigation';
 import {
   runTaskOrganization,
@@ -34,15 +35,20 @@ import {
 } from '../task-list/runTaskOrganization';
 import { TaskSearchPages, type TaskSearchPageModel } from '../task-list/TaskSearchPages';
 import type { SearchViewState } from './SearchViewState';
+import type { TaskRevealReceipt } from './TaskSearchReveal';
 
 interface TaskSearchHost {
+  destination(task: TaskSnapshot): ListSelection;
+  installReveal(receipt: TaskRevealReceipt): void;
+  currentReveal(): TaskRevealReceipt | undefined;
+  expireReveal(): void;
   revealTask(task: TaskSnapshot): void;
   beginResults(): void;
   renderRows(
     host: HTMLElement,
     page: TaskSearchPageModel,
     scope: TaskRenderScope,
-    onCard?: (card: HTMLElement, task: TaskSnapshot) => void,
+    onActivate?: (task: TaskSnapshot) => void,
   ): Promise<TaskRenderOutcome>;
   completeResults(): void;
   prepareDependencies(generation: number, signal: AbortSignal): Promise<void>;
@@ -99,6 +105,8 @@ function observedBackend(state: TaskSearchState | null): 'unknown' | 'inline' | 
   if (state?.phase !== 'ready') return 'unknown';
   return state.compatibility ? 'inline' : 'worker';
 }
+class TaskRevealChanged extends Error {}
+
 /** One mounted query owns collection, compact organization, a bounded page and render receipts. */
 export class TaskSearch {
   readonly #options: TaskSearchOptions;
@@ -111,6 +119,11 @@ export class TaskSearch {
   #timer: { owner: Window; id: number } | null = null;
   #cancelFocus: (() => void) | null = null;
   #pending: AbortController | null = null;
+  #activation: AbortController | null = null;
+  #activationId = 0;
+  #activationIntent = 0;
+  #unsubscribeIntent: (() => void) | null = null;
+  #taskChanged = false;
   #unsubscribe: (() => void) | null = null;
   #observed: TaskSearchState | null = null;
   #generation: number | null = null;
@@ -126,6 +139,7 @@ export class TaskSearch {
   }
   refresh(reason: 'view' | 'source' | 'projects' | 'links' = 'view'): boolean {
     if (!this.#live()) return false;
+    if (reason === 'projects') this.#cancelActivation();
     if (reason === 'source' || reason === 'projects') return true;
     if (reason === 'links') {
       const view = this.#options.view();
@@ -204,6 +218,13 @@ export class TaskSearch {
     const search = this.#options.search;
     if (search !== undefined) {
       this.#pages = new TaskSearchPages(search);
+      this.#unsubscribeIntent = this.#options.state.onCommit(() => {
+        if (
+          this.#activation !== null &&
+          this.#activationIntent !== this.#options.state.taskSelectionIntentGeneration
+        )
+          this.#cancelActivation();
+      });
       this.#unsubscribe = search.subscribe((state) => {
         this.#changed(state);
       });
@@ -212,6 +233,7 @@ export class TaskSearch {
   #changed(state: TaskSearchState): void {
     this.#observed = state;
     if (this.#invalidates(state)) {
+      if (this.#activation !== null) this.#taskChanged = true;
       this.#cancelPending();
       this.#generation = null;
       this.#organization = null;
@@ -243,6 +265,7 @@ export class TaskSearch {
   }
   queryChanged(query: string): void {
     if (!this.#live() || this.#filter || this.#composing) return;
+    this.#taskChanged = false;
     if (this.#input !== null) this.#input.value = query;
     this.#schedule(query);
   }
@@ -265,9 +288,14 @@ export class TaskSearch {
       this.#root.ownerDocument.defaultView === this.#owner
     );
   }
+  #cancelActivation(): void {
+    this.#activation?.abort();
+    this.#activation = null;
+  }
   #cancelPending(): void {
     if (this.#timer !== null) this.#timer.owner.clearTimeout(this.#timer.id);
     this.#timer = null;
+    this.#cancelActivation();
     this.#pending?.abort();
     this.#pending = null;
   }
@@ -282,7 +310,7 @@ export class TaskSearch {
     this.#options.host.clearSelection();
     this.#status?.pending(request, query);
     this.#paging?.empty();
-    if (query.trim().length === 0) {
+    if (query.trim().length === 0 && this.#options.host.currentReveal() === undefined) {
       this.#empty(request);
       return;
     }
@@ -316,7 +344,7 @@ export class TaskSearch {
       if (!this.canPublish(request, organization.generation, controller.signal)) return;
       this.#organization = organization;
       this.#pages?.set(organization);
-      await this.#showPage(0, request, controller);
+      await this.#showPage(Math.floor((organization.revealIndex ?? 0) / 50), request, controller);
     } catch (error) {
       this.#handleFailure(request, error);
     } finally {
@@ -325,6 +353,10 @@ export class TaskSearch {
   }
   #handleFailure(request: number, error: unknown): void {
     if (request !== this.#request || !this.#live()) return;
+    if (error instanceof TaskRevealChanged) {
+      this.#endChangedReveal();
+      return;
+    }
     if (error instanceof TaskSearchError && (error.code === 'aborted' || error.code === 'stale')) {
       this.#restart = true;
       if (this.#observed?.phase === 'ready') {
@@ -334,6 +366,9 @@ export class TaskSearch {
       return;
     }
     this.#status?.fail(request, error);
+  }
+  #endChangedReveal(): void {
+    this.#options.host.expireReveal();
   }
   #joinPreparation(current: SearchPreparation, generation: number): void {
     current.generation = generation;
@@ -505,7 +540,10 @@ export class TaskSearch {
     const reads = this.#options.reads;
     if (reads === undefined) throw new TaskSearchError('unavailable', 'Search capability missing');
     const batches = reads.organization(
-      { expectedGeneration: generation, roots: collection.roots },
+      {
+        expectedGeneration: generation,
+        ...(this.#options.host.currentReveal() === undefined ? { roots: collection.roots } : {}),
+      },
       current.signal,
     );
     const iterator = batches[Symbol.asyncIterator]();
@@ -554,9 +592,13 @@ export class TaskSearch {
       await handoff();
     }
   }
-  #normalizePreparationFailure(current: SearchPreparation, error: unknown): TaskSearchError {
+  #normalizePreparationFailure(
+    current: SearchPreparation,
+    error: unknown,
+  ): TaskSearchError | TaskRevealChanged {
     const invalid = this.#preparationInvalidation(current);
     if (invalid !== undefined) return invalid;
+    if (error instanceof TaskRevealChanged) return error;
     if (
       error instanceof TaskSearchError &&
       (error.code === 'invalid-query' ||
@@ -577,6 +619,10 @@ export class TaskSearch {
       cleanupFailed: current.secondaryCleanup || failure.cleanupFailed,
     });
     return new TaskSearchError('unavailable', 'Task organization failed');
+  }
+  #revealInput(collection: SearchCollection): Pick<TaskSearchOrganizationInput, 'hits' | 'reveal'> {
+    const receipt = this.#options.host.currentReveal();
+    return { hits: receipt === undefined ? collection.hits : null, reveal: receipt?.address };
   }
   async #organizeCollected(
     current: SearchPreparation,
@@ -618,7 +664,7 @@ export class TaskSearch {
         ...(observedTags === undefined ? {} : { observedTags }),
         generation,
         records: collection.records,
-        hits: collection.hits,
+        ...this.#revealInput(collection),
         outgoingLinks,
       }),
       { ...execution, phase: 'organization' },
@@ -652,7 +698,19 @@ export class TaskSearch {
       const captured = this.#captureOrganization();
       const scheduler = this.#organizationScheduler(current);
       const handoff = (): Promise<void> => this.#handoff(current, scheduler, continuation.signal);
-      const generation = await this.#collectCursor(query, current, collection, handoff);
+      let generation: number;
+      if (this.#options.host.currentReveal() === undefined) {
+        generation = await this.#collectCursor(query, current, collection, handoff);
+      } else {
+        await this.#options.search?.prepare(signal);
+        if (this.#observed?.phase !== 'ready')
+          throw new TaskSearchError('stale', 'Task generation changed');
+        generation = this.#observed.generation;
+        this.#joinPreparation(current, generation);
+        this.#generation = generation;
+        this.#assertPreparation(current);
+        await this.#proveReveal(current);
+      }
       await this.#collectProjection(generation, current, collection, handoff);
       return await this.#organizeCollected(current, collection, captured, scheduler);
     } catch (error) {
@@ -663,6 +721,22 @@ export class TaskSearch {
       collection.hits = [];
       collection.roots = [];
       collection.records = [];
+    }
+  }
+  async #proveReveal(current: SearchPreparation): Promise<void> {
+    const reveal = this.#options.host.currentReveal();
+    if (reveal === undefined) throw new TaskSearchError('aborted', 'Reveal cancelled');
+    try {
+      const result = await this.#options.search?.resolvePage(
+        [{ address: reveal.address, score: 0 }],
+        current.signal,
+      );
+      this.#assertPreparation(current);
+      if (result?.length !== 1) throw new TaskRevealChanged();
+    } catch (error) {
+      this.#assertPreparation(current);
+      if (error instanceof TaskSearchError && error.code === 'stale') throw new TaskRevealChanged();
+      throw error;
     }
   }
   async #showPage(index: number, request: number, controller: AbortController): Promise<void> {
@@ -680,6 +754,12 @@ export class TaskSearch {
     this.#root?.setAttribute('data-search-logical-results', String(page.rootTotal));
     this.#status?.complete(request, organization.generation);
     this.#options.host.completeResults();
+    this.#revealMounted(page);
+  }
+  #revealMounted(page: TaskSearchPageModel): void {
+    const reveal = this.#options.host.currentReveal();
+    const target = page.roots.find((root) => root.hit.address.rootId === reveal?.address.rootId);
+    if (target !== undefined) this.#options.host.revealTask(target.task.root);
   }
   #renderReady(outcome: TaskRenderOutcome): boolean {
     if (outcome.type === 'failed') throw outcome.error;
@@ -696,14 +776,21 @@ export class TaskSearch {
     host.toggleClass('abyss-search-empty', false);
     if (page.total === 0) host.createDiv({ cls: 'abyss-center-empty', text: 'No results' });
     const scope = new TaskRenderScope(signal);
+    const request = this.#request;
+    const generation = this.#generation;
     return this.#options.host.renderRows(
       host,
       page,
       scope,
       this.#filter
         ? undefined
-        : (card, task) => {
-            this.#mountNavigation(card, task);
+        : (task) => {
+            if (generation === null || !this.canPublish(request, generation, signal)) return;
+            const hit = page.roots.find((root) => root.task.root === task)?.hit;
+            if (hit !== undefined)
+              void this.activate(hit.address).catch((error: unknown) => {
+                this.#handleFailure(request, error);
+              });
           },
     );
   }
@@ -720,6 +807,7 @@ export class TaskSearch {
     const paging = this.#paging;
     if (paging === null) return;
     paging.empty();
+    if (this.#taskChanged) paging.createSpan({ text: 'Task changed. Search again.' });
     paging.createSpan({
       text:
         page.total === page.rootTotal
@@ -756,12 +844,15 @@ export class TaskSearch {
     this.#request++;
     this.#unsubscribe?.();
     this.#unsubscribe = null;
+    this.#unsubscribeIntent?.();
+    this.#unsubscribeIntent = null;
     this.#pages?.dispose();
     this.#pages = null;
     this.#status?.dispose();
     this.#status = null;
     this.#paging?.parentElement?.remove();
     this.#paging = null;
+    this.#root?.removeAttribute('data-search-logical-results');
     this.#input = null;
     this.#results = null;
     this.#root = null;
@@ -770,30 +861,51 @@ export class TaskSearch {
     this.#generation = null;
     this.#organization = null;
     this.#restart = false;
+    this.#taskChanged = false;
   }
-  #mountNavigation(card: HTMLElement, task: TaskSnapshot): void {
-    card.addEventListener(
-      'click',
-      (e) => {
-        const target = e.target as Element;
-        if (
-          target.closest(
-            'button,a,.abyss-status-control,.abyss-status-marker,.abyss-task-tag,.abyss-task-date-part,.abyss-task-time-part,.abyss-task-source-note',
-          ) !== null
-        )
-          return;
-        e.stopPropagation();
-        const todayStr = localDate(moment().format('YYYY-MM-DD'));
-        const date = task.planning.due ?? task.planning.scheduled;
-        let list: 'inbox' | 'today' | 'upcoming' = 'inbox';
-        if ((task.planning.due != null && task.planning.due < todayStr) || date === todayStr)
-          list = 'today';
-        else if (date != null && date > todayStr) list = 'upcoming';
-        this.#options.navigation.openList(list);
-        this.#options.state.set('taskStack', [task]);
-        this.#options.host.revealTask(task);
-      },
-      { capture: true },
-    );
+  /** Shared card/context activation; exact hydration remains valid through delayed guard acceptance. */
+  async activate(address: TaskSearchAddress): Promise<void> {
+    const search = this.#options.search;
+    const generation = this.#activationGeneration();
+    if (search === undefined || generation === undefined) return;
+    this.#activation?.abort();
+    const controller = new AbortController();
+    this.#activation = controller;
+    const id = ++this.#activationId;
+    const request = this.#request;
+    const intent = this.#options.state.taskSelectionIntentGeneration;
+    this.#activationIntent = intent;
+    const current = (): boolean =>
+      this.#activation === controller &&
+      this.#options.state.taskSelectionIntentGeneration === intent &&
+      this.canPublish(request, generation, controller.signal);
+    try {
+      const hydrated = (await search.resolvePage([{ address, score: 0 }], controller.signal))[0];
+      if (!current()) return;
+      if (hydrated === undefined) throw new TaskSearchError('stale', 'Task changed');
+      const path = taskSelectionRefPath(hydrated.task.root, hydrated.task.target);
+      if (path === undefined) throw new TaskSearchError('stale', 'Task changed');
+      const selection = this.#options.host.destination(hydrated.task.root);
+      this.#options.navigation.openList(selection, {
+        canCommit: current,
+        commit: () => {
+          this.#options.host.installReveal({ id, address, selection });
+          this.#options.state.set('taskStack', path);
+        },
+      });
+    } catch (error) {
+      if (current()) this.#activationFailed(request, error);
+    }
+  }
+  #activationGeneration(): number | undefined {
+    return this.#live() && this.#observed?.phase === 'ready'
+      ? this.#observed.generation
+      : undefined;
+  }
+  #activationFailed(request: number, error: unknown): void {
+    if (error instanceof TaskSearchError && error.code === 'stale') {
+      this.#taskChanged = true;
+      this.#schedule(this.#currentQuery(), 0);
+    } else this.#handleFailure(request, error);
   }
 }
