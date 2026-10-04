@@ -436,7 +436,11 @@ export class TaskCardRenderer {
       component: context?.component ?? this.#host.component(),
       ...(context === undefined
         ? {}
-        : { isCurrent: context.isCurrent, onRenderFailure: context.onRenderFailure }),
+        : {
+            isCurrent: context.isCurrent,
+            onRenderFailure: context.onRenderFailure,
+            linkEventOwner: context.component,
+          }),
       onEditLink: (occurrence, token) => {
         this.#commands.editTaskLink(task, occurrence, token);
       },
@@ -548,7 +552,11 @@ export class TaskCardRenderer {
       component: context?.component ?? this.#host.component(),
       ...(context === undefined
         ? {}
-        : { isCurrent: context.isCurrent, onRenderFailure: context.onRenderFailure }),
+        : {
+            isCurrent: context.isCurrent,
+            onRenderFailure: context.onRenderFailure,
+            linkEventOwner: context.component,
+          }),
     });
   }
 

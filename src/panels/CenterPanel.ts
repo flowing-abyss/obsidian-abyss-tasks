@@ -653,6 +653,7 @@ export class CenterPanel {
       this.clearTaskSelection_abyssPrivate();
       return;
     }
+    if (this.selectAllTaskRows_abyssPrivate(event)) return;
     if (!this.isTaskNavigationEvent_abyssPrivate(event)) return;
     const order = this.listOrder_abyssPrivate();
     if (order.taskKeys.length === 0) return;
@@ -667,8 +668,33 @@ export class CenterPanel {
 
   private isTaskNavigationEvent_abyssPrivate(event: KeyboardEvent): boolean {
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return false;
+    return this.isTaskListKeyboardTarget_abyssPrivate(event.target);
+  }
+
+  private selectAllTaskRows_abyssPrivate(event: KeyboardEvent): boolean {
+    if (
+      event.defaultPrevented ||
+      event.key.toLowerCase() !== 'a' ||
+      event.ctrlKey === event.metaKey ||
+      event.altKey ||
+      event.shiftKey ||
+      !this.isTaskListKeyboardTarget_abyssPrivate(event.target)
+    )
+      return false;
+    const order = this.listOrder_abyssPrivate();
+    if (order.taskKeys.length === 0) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    this.rowSelection_abyssPrivate.selectAll(order, {
+      target: this.eventTaskCardKey_abyssPrivate(event.target),
+      detail: this.detailOccurrenceKey_abyssPrivate(),
+    });
+    this.updateSelectionVisuals_abyssPrivate();
+    return true;
+  }
+
+  private isTaskListKeyboardTarget_abyssPrivate(target: EventTarget | null): boolean {
     if (this.state_abyssPrivate.get('mode') !== 'tasks') return false;
-    const target = event.target;
     if (!isRealmHTMLElement(target)) return true;
     return (
       target.closest(

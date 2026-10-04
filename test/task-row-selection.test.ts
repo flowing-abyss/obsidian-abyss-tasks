@@ -273,3 +273,58 @@ describe('TaskRowSelection with an empty order', () => {
     expect(snapshot(selection)).toEqual({ selected: [], anchor: 'a', focus: 'a' });
   });
 });
+
+describe('TaskRowSelection select-all', () => {
+  it('selects the complete ordered projection while preserving a valid range lead', () => {
+    const selection = new TaskRowSelection();
+    selection.collapseTo('b');
+    selection.extendTo('d', order);
+    selection.selectAll(order, { target: 'a', detail: 'e' });
+    selection.selectAll(order, {});
+    expect(snapshot(selection)).toEqual({
+      selected: ['a', 'b', 'c', 'd', 'e'],
+      anchor: 'b',
+      focus: 'd',
+    });
+    expect(selection.move('down', order, {}, true)).toBe('e');
+    expect(snapshot(selection)).toEqual({
+      selected: ['b', 'c', 'd', 'e'],
+      anchor: 'b',
+      focus: 'e',
+    });
+    selection.selectAll(order, {});
+    expect(selection.move('up', order, {}, false)).toBe('d');
+    expect(snapshot(selection)).toEqual({ selected: [], anchor: 'd', focus: 'd' });
+  });
+
+  it.each([
+    { origin: { target: 'c', detail: 'd' }, want: 'c' },
+    { origin: { target: 'gone', detail: 'd' }, want: 'd' },
+    { origin: { target: 'gone', detail: 'gone' }, want: 'a' },
+  ])('replaces stale leads using the first listed origin: $want', ({ origin, want }) => {
+    const selection = new TaskRowSelection();
+    selection.toggle('gone');
+    selection.selectAll(order, origin);
+    expect(snapshot(selection)).toEqual({
+      selected: ['a', 'b', 'c', 'd', 'e'],
+      anchor: want,
+      focus: want,
+    });
+    expect(selection.size).toBe(5);
+  });
+
+  it('replaces old membership with reordered occurrences and clears an empty projection', () => {
+    const selection = new TaskRowSelection();
+    selection.selectAll(order, {});
+    const filtered = orderOf('occurrence-b2', 'occurrence-a', 'occurrence-b1');
+    selection.selectAll(filtered, { target: 'occurrence-b1' });
+    expect(snapshot(selection, filtered)).toEqual({
+      selected: ['occurrence-b2', 'occurrence-a', 'occurrence-b1'],
+      anchor: 'occurrence-b1',
+      focus: 'occurrence-b1',
+    });
+    expect(selection.has('a')).toBe(false);
+    selection.selectAll(NO_TASK_LIST_ROWS, {});
+    expect(snapshot(selection)).toEqual({ selected: [], anchor: null, focus: null });
+  });
+});

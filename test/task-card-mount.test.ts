@@ -21,10 +21,14 @@ function renderer() {
   const unbound = vi.fn();
   const editTaskLink = vi.fn();
   const dependenciesFor = vi.fn<() => TaskDependencyProjection | undefined>(() => undefined);
+  const openLinkText = vi.fn().mockResolvedValue(undefined);
+  const trigger = vi.fn();
+  const hostComponent = new Component();
+  hostComponent.load();
   const registry = testStatusRegistry();
   const settings = structuredClone(DEFAULT_SETTINGS);
   const subject = new TaskCardRenderer({
-    app: {} as App,
+    app: { workspace: { openLinkText, trigger } } as unknown as App,
     state: new AppState(),
     settings,
     statusRegistry: registry,
@@ -32,7 +36,7 @@ function renderer() {
     listControls: { addPropertyFilter: vi.fn() },
     trackingEnabled: true,
     host: {
-      component: () => new Component(),
+      component: () => hostComponent,
       dependenciesFor,
       mountInteractions: (_card, _task, _key, next) => {
         context = next;
@@ -46,6 +50,9 @@ function renderer() {
   });
   return {
     subject,
+    hostComponent,
+    openLinkText,
+    trigger,
     toggleTask,
     deleteTask,
     unbound,
@@ -251,7 +258,26 @@ it('keeps focused rendered link occurrences bound to their rendered source when 
     0,
     expect.objectContaining({ raw: '[[A]]' }),
   );
+  const outside = document.body.createEl('button');
+  outside.focus();
+  await vi.runAllTimersAsync();
+  expect(link.isConnected).toBe(false);
+  h.editTaskLink.mockClear();
+  const oldMenu = new MouseEvent('contextmenu', { cancelable: true });
+  link.dispatchEvent(oldMenu);
+  expect.soft(oldMenu.defaultPrevented).toBe(false);
+  const currentLink = expectDefined(mount.element.querySelector('a'));
+  currentLink.dispatchEvent(new MouseEvent('contextmenu', { cancelable: true }));
+  expectDefined(click)(new MouseEvent('click'));
+  expect(h.editTaskLink).toHaveBeenCalledExactlyOnceWith(
+    next,
+    1,
+    expect.objectContaining({ raw: '[[A]]' }),
+  );
   mount.destroy();
+  const deadMenu = new MouseEvent('contextmenu', { cancelable: true });
+  currentLink.dispatchEvent(deadMenu);
+  expect.soft(deadMenu.defaultPrevented).toBe(false);
 });
 
 it('does not rebuild a pending focused generation when Markdown cleanup emits focusout during destroy', () => {
@@ -352,4 +378,101 @@ it('reconciles all timer transitions while the original Markdown link keeps focu
   expect(document.activeElement).toBe(link);
   expect(link.isConnected).toBe(true);
   mount.destroy();
+});
+
+it.each([
+  { region: 'title', focused: false },
+  { region: 'desc', focused: false },
+  { region: 'title', focused: true },
+  { region: 'desc', focused: true },
+])(
+  'retires held $region link handlers on content replacement and destroy (focused=$focused)',
+  async ({ region, focused }) => {
+    vi.useFakeTimers();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
+      const destination = markdown.includes('New') ? 'New' : 'Old';
+      holder.createEl('a', {
+        cls: 'internal-link',
+        text: destination,
+        attr: { 'data-href': destination, href: destination },
+      });
+    });
+    const h = renderer();
+    const flags = { selected: false, showDelete: false };
+    const mount = h.subject.mount(
+      document.body,
+      task({ markdownTitle: '[[Old]]', description: '[[Old]]' }),
+      [],
+      flags,
+    );
+    await vi.runAllTimersAsync();
+    const link = () =>
+      expectDefined(mount.element.querySelector<HTMLAnchorElement>(`.abyss-task-${region} a`));
+    const old = link();
+    if (focused) old.focus();
+    mount.update(task({ markdownTitle: '[[New]]', description: '[[New]]' }), [], flags);
+    await vi.runAllTimersAsync();
+    if (focused) {
+      expect(document.activeElement).toBe(old);
+      expect(link()).toBe(old);
+      old.dispatchEvent(new MouseEvent('click', { cancelable: true }));
+      old.dispatchEvent(new MouseEvent('mouseover'));
+      await Promise.resolve();
+      expect(h.openLinkText).toHaveBeenCalledExactlyOnceWith('Old', 'f.md', false);
+      expect(h.trigger).toHaveBeenCalledOnce();
+      document.body.createEl('button').focus();
+      await vi.runAllTimersAsync();
+      h.openLinkText.mockClear();
+      h.trigger.mockClear();
+    }
+    expect(old.isConnected).toBe(false);
+    for (const type of ['click', 'mouseover', 'contextmenu']) {
+      const event = new MouseEvent(type, { cancelable: true });
+      old.dispatchEvent(event);
+      expect.soft(event.defaultPrevented).toBe(false);
+    }
+    await Promise.resolve();
+    expect.soft(h.openLinkText).not.toHaveBeenCalled();
+    expect.soft(h.trigger).not.toHaveBeenCalled();
+    h.openLinkText.mockClear();
+    h.trigger.mockClear();
+    const current = link();
+    current.dispatchEvent(new MouseEvent('click', { cancelable: true }));
+    current.dispatchEvent(new MouseEvent('mouseover'));
+    await Promise.resolve();
+    expect(h.openLinkText).toHaveBeenCalledExactlyOnceWith('New', 'f.md', false);
+    expect(h.trigger).toHaveBeenCalledOnce();
+    mount.destroy();
+    h.openLinkText.mockClear();
+    h.trigger.mockClear();
+    for (const type of ['click', 'mouseover', 'contextmenu']) {
+      const event = new MouseEvent(type, { cancelable: true });
+      current.dispatchEvent(event);
+      expect.soft(event.defaultPrevented).toBe(false);
+    }
+    await Promise.resolve();
+    expect.soft(h.openLinkText).not.toHaveBeenCalled();
+    expect.soft(h.trigger).not.toHaveBeenCalled();
+  },
+);
+
+it('does not acquire long-lived host link callbacks for eager card renders', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
+    holder.createEl('a', { cls: 'internal-link', text: 'Old', attr: { 'data-href': 'Old' } });
+  });
+  const h = renderer();
+  const callbacks = vi.spyOn(h.hostComponent, 'registerDomEvent');
+  for (let cycle = 0; cycle < 20; cycle++) {
+    document.body.empty();
+    h.subject.render(
+      document.body,
+      task({ markdownTitle: '[[Old]]', description: '[[Old]]' }),
+      [],
+      { selected: false, showDelete: false },
+    );
+    await vi.runAllTimersAsync();
+  }
+  expect(callbacks).not.toHaveBeenCalled();
+  h.hostComponent.unload();
 });

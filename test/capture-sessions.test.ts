@@ -241,3 +241,61 @@ describe('capture publication through a bounded task surface', () => {
     },
   );
 });
+
+it('keeps Mod+A and IME keys inside the actual centre capture input without blur or submit', async () => {
+  const state = new AppState();
+  state.set('selectedList', 'inbox');
+  const execute = vi.fn<TaskCreateSession['execute']>();
+  const queries = taskQueryApi({ list: () => [task({ tags: ['#task/inbox'] })] });
+  const application: TaskApplicationApi & TaskCaptureApplicationApi = {
+    queries,
+    execute: vi.fn(),
+    planCreate: async () => ({
+      type: 'ready',
+      destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+      execute,
+    }),
+  };
+  const root = activeDocument.body.createDiv();
+  const panel = new CenterPanel({
+    state,
+    app: appWithFiles({}),
+    settings: DEFAULT_SETTINGS,
+    queries,
+    statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    tasks: application,
+    captureApplication: application,
+  });
+  panel.mount(root);
+  expectDefined(root.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')).click();
+  await flushMicrotasks();
+  const input = expectDefined(root.querySelector<HTMLInputElement>('.abyss-capture-input'));
+  input.value = 'Capture draft';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.setSelectionRange(2, 7);
+  const blur = vi.fn();
+  input.addEventListener('blur', blur);
+  for (const init of [
+    { ctrlKey: true },
+    { metaKey: true },
+    { ctrlKey: true, isComposing: true },
+    { ctrlKey: true, keyCode: 229 },
+  ]) {
+    const event = new KeyboardEvent('keydown', {
+      key: 'a',
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    input.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  }
+  expect(root.querySelector('.abyss-capture-input')).toBe(input);
+  expect(activeDocument.activeElement).toBe(input);
+  expect(input.value).toBe('Capture draft');
+  expect([input.selectionStart, input.selectionEnd]).toEqual([2, 7]);
+  expect(blur).not.toHaveBeenCalled();
+  expect(execute).not.toHaveBeenCalled();
+  expect(panel['rowSelection_abyssPrivate'].size).toBe(0);
+  panel.destroy();
+});

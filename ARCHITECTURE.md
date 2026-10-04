@@ -349,7 +349,8 @@ invalidate obsolete callbacks before they can render, complete, or report. Later
 belong to live card/text generations and never complete or fail a newer Search pass.
 
 `TaskCardRenderer.mount` owns one loaded Component per row, disposable Markdown generations,
-and its own badge registrations. Its optional `TaskCardInteractionContext` gives whole-card hosts
+and its own badge registrations. Mounted title and description generations also own their link
+listeners, so replacing or evicting a generation retires its held links. Its optional `TaskCardInteractionContext` gives whole-card hosts
 the row Component and a current snapshot getter: ordinary events read current authority, while
 started commands retain their captured reference. Explicit row updates refresh status, dependency blocking, and metadata even when the task reference
 is unchanged. The shared `StatusMarker` primitive refreshes checkbox/wrapper semantics in place; a
@@ -513,7 +514,9 @@ reporter; destroyed callbacks publish nothing.
 `CenterPanel` owns one [`TaskListSurface`](src/panels/task-list/TaskListSurface.ts)
 for the active task host. Tasks use their list scroller; dashboard tasks use the dashboard scroller
 and a content-relative origin. Full logical occurrence order drives selection and physical writes
-remain deduplicated. Keyed `TaskCardRenderer.mount` instances own Markdown Components and current
+remain deduplicated. Direct Ctrl/Cmd+A in Tasks selects that complete current logical order while
+preserving the range and keyboard lead, native focus, and viewport. Interactive inputs and other
+modes retain their keyboard ownership. Keyed `TaskCardRenderer.mount` instances own Markdown Components and current
 snapshot interactions; eviction unloads each row. Native scrolling only reconciles mounts and
 selection visuals, without completing an application render or advancing its focus generation.
 Explicit reveal checks captured source and focus ownership before scrolling and again before focus.

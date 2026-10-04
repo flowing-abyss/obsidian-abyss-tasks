@@ -1341,6 +1341,7 @@ it.each(['tasks', 'dashboard', 'search'] as const)(
         task({
           title: `Task ${line}`,
           markdownTitle: `Task ${line} [[Target]]`,
+          description: '[[Target]]',
           tags: ['#task/inbox'],
           source: { filePath: 'large.md', line },
         }),
@@ -1410,34 +1411,216 @@ it.each(['tasks', 'dashboard', 'search'] as const)(
   },
 );
 
-it('retires held task title links when their actual content generation is evicted', async () => {
-  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (...args) => {
-    const holder = args[2];
-    holder.createEl('a', { cls: 'internal-link', text: 'Target', attr: { 'data-href': 'Target' } });
+it.each(['title', 'desc'])(
+  'retires held task %s links when their actual content generation is evicted',
+  async (region) => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (...args) => {
+      const holder = args[2];
+      holder.createEl('a', {
+        cls: 'internal-link',
+        text: 'Target',
+        attr: { 'data-href': 'Target' },
+      });
+    });
+    const tasks = Array.from({ length: 1200 }, (_, line) =>
+      task({
+        markdownTitle: `Task ${line} [[Target]]`,
+        description: '[[Target]]',
+        tags: ['#task/inbox'],
+        source: { filePath: 'large.md', line },
+      }),
+    );
+    const { el, panel } = makeCenter(tasks);
+    flushViewport();
+    await flushMicrotasks();
+    const anchor = expectDefined(
+      cards(el)[0]?.querySelector<HTMLElement>(`.abyss-task-${region} a.internal-link`),
+    );
+    const open = vi.spyOn(panel['app_abyssPrivate'].workspace, 'openLinkText');
+    const hover = vi.spyOn(panel['app_abyssPrivate'].workspace, 'trigger');
+    const surface = expectDefined(panel['taskSurface_abyssPrivate']).surface;
+    surface.reveal(expectDefined(surface.rows.taskKeys[surface.rows.taskKeys.length - 1]));
+    flushViewport();
+    expect(anchor.isConnected).toBe(false);
+    const click = new MouseEvent('click', { cancelable: true });
+    anchor.dispatchEvent(click);
+    anchor.dispatchEvent(new MouseEvent('mouseover'));
+    const menu = new MouseEvent('contextmenu', { cancelable: true });
+    anchor.dispatchEvent(menu);
+    await flushMicrotasks();
+    expect.soft(click.defaultPrevented).toBe(false);
+    expect.soft(menu.defaultPrevented).toBe(false);
+    expect.soft(open).not.toHaveBeenCalled();
+    expect.soft(hover.mock.calls.filter(([type]) => type === 'hover-link')).toEqual([]);
+    panel.destroy();
+  },
+);
+
+it.each([false, true])(
+  'Mod+A keeps later-window focus and scroll with an existing lead=%s',
+  (hasLead) => {
+    const tasks = Array.from({ length: 1200 }, (_, line) =>
+      task({
+        title: `Task ${String(line).padStart(4, '0')}`,
+        tags: ['#task/inbox'],
+        source: { filePath: 'large.md', line },
+      }),
+    );
+    const { el, panel, state } = makeCenter(tasks);
+    const surface = expectDefined(panel['taskSurface_abyssPrivate']).surface;
+    const card = expectDefined(surface.reveal('large.md:700'));
+    card.focus();
+    if (hasLead) {
+      click(card);
+      key(card, 'ArrowDown', { shiftKey: true });
+    }
+    const active = expectDefined(el.ownerDocument.activeElement) as HTMLElement;
+    const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.scrollTop += 0.25;
+    const offset = scroll.scrollTop;
+    const stack = state.get('taskStack');
+    const complete = vi.spyOn(
+      panel as unknown as { completeTaskCardRender_abyssPrivate(): void },
+      'completeTaskCardRender_abyssPrivate',
+    );
+    const reveal = vi.spyOn(surface, 'reveal');
+    for (let repeat = 0; repeat < 2; repeat++)
+      expect(key(active, 'A', { metaKey: true }).defaultPrevented).toBe(true);
+    expect(panel['rowSelection_abyssPrivate'].size).toBe(1200);
+    expect(panel['rowSelection_abyssPrivate'].anchor).toBe('large.md:700');
+    expect(panel['rowSelection_abyssPrivate'].focus).toBe(
+      hasLead ? 'large.md:701' : 'large.md:700',
+    );
+    expect(el.ownerDocument.activeElement).toBe(active);
+    expect(scroll.scrollTop).toBe(offset);
+    expect(state.get('taskStack')).toBe(stack);
+    expect(complete).not.toHaveBeenCalled();
+    expect(reveal).not.toHaveBeenCalled();
+    expect(cards(el).length).toBeLessThanOrEqual(100);
+    key(active, 'ArrowDown', { shiftKey: true });
+    expect(panel['rowSelection_abyssPrivate'].inOrder(surface.rows)).toEqual(
+      hasLead ? ['large.md:700', 'large.md:701', 'large.md:702'] : ['large.md:700', 'large.md:701'],
+    );
+    key(expectDefined(el.ownerDocument.activeElement) as HTMLElement, 'ArrowDown');
+    expect(panel['rowSelection_abyssPrivate'].size).toBe(0);
+    expect(state.get('taskStack')).toEqual([tasks[hasLead ? 703 : 702]]);
+    panel.destroy();
+  },
+);
+
+it('Mod+A follows the current filtered and reordered logical projection', () => {
+  const tasks = [
+    task({ title: 'Keep Z', tags: ['#task/inbox'], source: { filePath: 'a.md', line: 0 } }),
+    task({ title: 'Other', tags: ['#task/inbox'], source: { filePath: 'a.md', line: 1 } }),
+    task({ title: 'Keep A', tags: ['#task/inbox'], source: { filePath: 'a.md', line: 2 } }),
+  ];
+  const { el, panel, state } = makeCenter(tasks);
+  state.set('centerFilter', 'Keep');
+  state.set('centerListViewState', {
+    ...state.get('centerListViewState'),
+    groupBy: 'none',
+    sortBy: { field: 'title', dir: 'asc' },
   });
-  const tasks = Array.from({ length: 1200 }, (_, line) =>
-    task({
-      markdownTitle: `Task ${line} [[Target]]`,
-      tags: ['#task/inbox'],
-      source: { filePath: 'large.md', line },
-    }),
-  );
-  const { el, panel } = makeCenter(tasks);
-  flushViewport();
-  await flushMicrotasks();
-  const anchor = expectDefined(cards(el)[0]?.querySelector<HTMLElement>('a.internal-link'));
-  const open = vi.spyOn(panel['app_abyssPrivate'].workspace, 'openLinkText');
-  const hover = vi.spyOn(panel['app_abyssPrivate'].workspace, 'trigger');
-  const surface = expectDefined(panel['taskSurface_abyssPrivate']).surface;
-  surface.reveal(expectDefined(surface.rows.taskKeys[surface.rows.taskKeys.length - 1]));
-  flushViewport();
-  expect(anchor.isConnected).toBe(false);
-  const click = new MouseEvent('click', { cancelable: true });
-  anchor.dispatchEvent(click);
-  anchor.dispatchEvent(new MouseEvent('mouseover'));
-  await flushMicrotasks();
-  expect.soft(click.defaultPrevented).toBe(false);
-  expect.soft(open).not.toHaveBeenCalled();
-  expect.soft(hover.mock.calls.filter(([type]) => type === 'hover-link')).toEqual([]);
+  expect(key(el, 'a', { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(panel['selectedTasksInVisualOrder_abyssPrivate']()).toEqual([tasks[2], tasks[0]]);
+  state.set('centerFilter', 'No matching rows');
+  expect(key(el, 'a', { ctrlKey: true }).defaultPrevented).toBe(false);
   panel.destroy();
 });
+
+it('Mod+A ignores other chords, consumed events, IME, and interactive targets', () => {
+  const { el, panel, state } = makeCenter([task({ tags: ['#task/inbox'] })]);
+  const first = expectDefined(cards(el)[0]);
+  const select = vi.spyOn(panel['rowSelection_abyssPrivate'], 'selectAll');
+  for (const init of [
+    {},
+    { ctrlKey: true, altKey: true },
+    { ctrlKey: true, shiftKey: true },
+    { ctrlKey: true, metaKey: true },
+    { ctrlKey: true, isComposing: true },
+  ]) {
+    expect(key(first, 'a', init).defaultPrevented).toBe(false);
+  }
+  const legacy = new KeyboardEvent('keydown', {
+    key: 'a',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  Object.defineProperty(legacy, 'keyCode', { value: 229 });
+  first.dispatchEvent(legacy);
+  expect(legacy.defaultPrevented).toBe(false);
+  const consumed = new KeyboardEvent('keydown', {
+    key: 'a',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  consumed.preventDefault();
+  first.dispatchEvent(consumed);
+  const targets = [
+    first.createEl('input'),
+    first.createEl('textarea'),
+    first.createEl('select'),
+    first.createEl('button'),
+    first.createEl('a'),
+    first.createDiv({ attr: { contenteditable: 'true' } }),
+    first.createDiv({ cls: 'abyss-status-marker' }),
+    first.createDiv({ cls: 'abyss-status-control' }),
+    el.createDiv({ cls: 'abyss-popover' }),
+  ];
+  for (const target of targets)
+    expect(key(target, 'a', { ctrlKey: true }).defaultPrevented).toBe(false);
+  expect(select).not.toHaveBeenCalled();
+  expect(state.get('taskStack')).toEqual([]);
+  panel.destroy();
+});
+
+it('Mod+A leaves the real filter and foreign-realm input text selection alone', () => {
+  const { el, panel } = makeCenter([task({ tags: ['#task/inbox'] })]);
+  const input = expectDefined(el.querySelector<HTMLInputElement>('.abyss-center-search'));
+  input.value = 'draft filter';
+  input.focus();
+  input.setSelectionRange(2, 5);
+  const blur = vi.fn();
+  input.addEventListener('blur', blur);
+  expect(key(input, 'a', { metaKey: true }).defaultPrevented).toBe(false);
+  expect(el.ownerDocument.activeElement).toBe(input);
+  expect([input.selectionStart, input.selectionEnd]).toEqual([2, 5]);
+  expect(input.value).toBe('draft filter');
+  expect(blur).not.toHaveBeenCalled();
+  const frame = el.ownerDocument.body.createEl('iframe');
+  const doc = expectDefined(frame.contentDocument);
+  doc.body.append(el);
+  expect(key(input, 'a', { metaKey: true }).defaultPrevented).toBe(false);
+  // Native creation matches the existing realm fixture; Obsidian createEl uses the main realm.
+  const foreign = doc.createElementNS('http://www.w3.org/1999/xhtml', 'input');
+  expect(foreign).not.toBeInstanceOf(HTMLElement);
+  el.append(foreign);
+  expect(key(foreign, 'a', { ctrlKey: true }).defaultPrevented).toBe(false);
+  expect(panel['rowSelection_abyssPrivate'].size).toBe(0);
+  panel.destroy();
+  frame.remove();
+});
+
+it.each(['search', 'projects', 'calendar'] as const)(
+  'Mod+A does not acquire %s or a destroyed panel',
+  (mode) => {
+    const { el, panel, state } = makeCenter([task({ title: 'Task', tags: ['#task/inbox'] })]);
+    click(expectDefined(cards(el)[0]), { ctrlKey: true });
+    const selected = panel['rowSelection_abyssPrivate'];
+    const anchor = selected.anchor;
+    state.set('searchQuery', 'Task');
+    state.set('mode', mode);
+    if (mode === 'projects') renderDashboardList(panel, el, 'tasks.md');
+    const stack = state.get('taskStack');
+    expect(key(el, 'a', { ctrlKey: true }).defaultPrevented).toBe(false);
+    expect(selected.anchor).toBe(anchor);
+    expect(selected.size).toBe(1);
+    expect(state.get('taskStack')).toBe(stack);
+    state.set('mode', 'tasks');
+    expect(selected.size).toBe(1);
+    panel.destroy();
+    expect(key(el, 'a', { metaKey: true }).defaultPrevented).toBe(false);
+  },
+);
