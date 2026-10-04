@@ -14,6 +14,7 @@ import {
   expectDefined,
   flushMicrotasks,
   metadataChangedEmitter,
+  seedTaskCache,
 } from '../helpers';
 
 const indexes: TaskIndex[] = [];
@@ -312,6 +313,27 @@ describe('lazy complete task statistics evidence', () => {
       expect(index.list()).toEqual([]);
     },
   );
+  it('publishes active rename evidence before settlement when metadata supersedes the rename read', async () => {
+    const { app, index, file } = await harness({ 'live.md': '- [ ] Original\n' }, {}, true);
+    await index.initialize();
+    const notified = vi.fn();
+    const release = index.subscribeStatistics(notified);
+    await index.whenStatisticsSettled();
+    const before = index.readStatistics();
+    notified.mockClear();
+    await app.vault.rename(file('live.md'), 'renamed.md');
+    seedTaskCache(app, 'renamed.md', [{ task: ' ', parent: -1, line: 0 }]);
+    await index.whenStatisticsSettled();
+    const after = index.readStatistics();
+    expect(after.revision).toBeGreaterThan(before.revision);
+    expect(after.files.map((entry) => entry.path)).toEqual(['renamed.md']);
+    expect(after.files[0]?.roots[0]?.source.filePath).toBe('renamed.md');
+    expect(after.files[0]?.roots[0]?.title).toBe('Original');
+    expect(index.isStatisticsCurrent(after)).toBe(true);
+    expect(notified).toHaveBeenCalledTimes(1);
+    release();
+  });
+
   it('keeps accepted evidence after an inactive fast rename in a default-policy harness', async () => {
     const { app, index, file } = await harness({ 'live.md': '- [ ] Relocated\n' }, {}, true);
     await index.initialize();
@@ -573,6 +595,27 @@ describe('lazy complete task statistics evidence', () => {
     await index.refreshStatistics();
     expect(index.readStatistics().issues).toEqual([]);
     expect(index.readStatistics().ready).toBe(true);
+  });
+
+  it('settles reentrant accepted changes and lease disposal during publication', async () => {
+    const { index } = await harness({ 'live.md': '- [ ] Initial\n' });
+    await index.initialize();
+    const observed: string[] = [];
+    const release = index.subscribeStatistics(() => {
+      const title = expectDefined(index.readStatistics().files[0]?.roots[0]?.title);
+      observed.push(title);
+      if (title === 'Initial') index.installCommittedContent('live.md', '- [ ] Reentrant\n');
+    });
+    await index.whenStatisticsSettled();
+    expect(observed).toEqual(['Initial', 'Reentrant']);
+    expect(index.readStatistics().files[0]?.roots[0]?.title).toBe('Reentrant');
+    expect(index.isStatisticsCurrent(index.readStatistics())).toBe(true);
+    release();
+    const dispose = index.subscribeStatistics(() => {
+      dispose();
+    });
+    await index.whenStatisticsSettled();
+    expect(index.readStatistics()).toMatchObject({ ready: false, files: [] });
   });
 
   it('isolates observers and cancels the last lease without activating a hidden refresh', async () => {

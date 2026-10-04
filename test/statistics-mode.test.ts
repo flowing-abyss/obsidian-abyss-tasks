@@ -1,10 +1,11 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { SuggestModal } from 'obsidian';
+import { afterEach, expect, it, vi, type MockResult } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import type { StatisticsChartRenderer } from '../src/panels/statistics/StatisticsChart';
 import type { StatisticsChoices } from '../src/panels/statistics/StatisticsControls';
 import { StatisticsMode } from '../src/panels/statistics/StatisticsMode';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import type { StatisticsScope } from '../src/statistics';
+import type { StatisticsScope, StatisticsViewModel } from '../src/statistics';
 import { StatisticsSession } from '../src/statistics/statisticsSession';
 import type { TaskStatisticsSnapshot, TaskStatisticsSource } from '../src/tasks';
 import { createAppWithFiles, deferred, expectDefined } from './helpers';
@@ -534,4 +535,239 @@ it('moves keyboard focus into evidence and returns it to the retained analytical
   expect(owner.activeElement).toBe(svgBack);
   svgBack.click();
   expect(owner.activeElement).toBe(svg);
+});
+
+function returned<T>(result: MockResult<T> | undefined): T {
+  const value = expectDefined(result);
+  if (value.type !== 'return') throw new Error('Expected a returned test result');
+  return value.value;
+}
+type ScopeOption = readonly [StatisticsScope, string, string];
+function captureScopePicker() {
+  const opened: Array<InstanceType<typeof SuggestModal<ScopeOption>>> = [];
+  vi.spyOn(SuggestModal.prototype, 'open').mockImplementation(function (
+    this: InstanceType<typeof SuggestModal<ScopeOption>>,
+  ) {
+    opened.push(this);
+  });
+  return async (host: HTMLElement, query: string) => {
+    expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Scope"]')).click();
+    const picker = expectDefined(opened[opened.length - 1]);
+    const choice = expectDefined((await picker.getSuggestions(query))[0]);
+    picker.onChooseSuggestion(choice, new KeyboardEvent('keydown', { key: 'Enter' }));
+    picker.onClose();
+  };
+}
+async function selectedProjectHarness() {
+  const { TaskIndex } = await import('../src/tasks/infrastructure/TaskIndex');
+  const { TaskRefAuthority } = await import('../src/tasks/infrastructure/TaskRefAuthority');
+  const { ProjectStore } = await import('../src/projects/ProjectStore');
+  const { canonicalStatusCatalog, seedTaskCache } = await import('./helpers');
+  const app = await createAppWithFiles({
+    'Before.md': '---\ntags: [project]\n---\n- [ ] Original ➕ 2026-10-01\n',
+  });
+  seedTaskCache(app, 'Before.md', [{ task: ' ', parent: -1, line: 3 }], { tags: ['project'] });
+  const index = new TaskIndex(app, {
+    statusCatalog: canonicalStatusCatalog(),
+    refAuthority: new TaskRefAuthority(),
+  });
+  await index.initialize();
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.projects.membershipQuery = '#project';
+  const projects = new ProjectStore(app, index, settings);
+  projects.initialize();
+  vi.useFakeTimers();
+  let completion = deferred<void>();
+  const host = document.body.createDiv();
+  const mode = new StatisticsMode({
+    state: new AppState(),
+    app,
+    settings,
+    source: index,
+    projects,
+    context: () => ({ nowMs: Date.parse('2026-10-04T12:00Z'), offsetAt: utc }),
+    renderer: { mount: () => ({ update: () => {}, destroy: () => {} }) },
+    host: {
+      renderRoot: () => {},
+      select: () => {},
+      openSource: async () => {},
+      renderComplete: () => {
+        completion.resolve();
+      },
+    },
+  });
+  // The real panel forwards note lifecycle identity to its retained mode.
+  const rename = app.vault.on('rename', (file, oldPath) => {
+    mode.followNote(oldPath, file.path);
+  });
+  const remove = app.vault.on('delete', (file) => {
+    mode.followNote(file.path);
+  });
+  cleanups.push(() => {
+    app.vault.offref(rename);
+    app.vault.offref(remove);
+    mode.destroy();
+    projects.destroy();
+    index.destroy();
+    host.remove();
+  });
+  mode.render(host);
+  await completion.promise;
+  return {
+    app,
+    index,
+    projects,
+    host,
+    seedTaskCache,
+    reset: () => {
+      completion = deferred<void>();
+    },
+    wait: () => completion.promise,
+  };
+}
+it.each(['membership loss', 'deletion'] as const)(
+  'follows actual selected-project rename and preserves visibly unavailable scope after %s',
+  async (loss) => {
+    const selectScope = captureScopePicker();
+    const views = vi.spyOn(StatisticsSession.prototype, 'view');
+    const h = await selectedProjectHarness();
+    h.reset();
+    await selectScope(h.host, 'Before.md');
+    await h.wait();
+    expect(h.host.querySelector('[aria-label="Scope"]')?.textContent).toBe('Scope · Before');
+    expect(expectDefined(views.mock.lastCall)[0].scope).toEqual({
+      type: 'project',
+      path: 'Before.md',
+    });
+    const file = expectDefined(h.app.vault.getFileByPath('Before.md'));
+
+    const refresh = vi.spyOn(h.index, 'refreshStatistics');
+    h.reset();
+    await h.app.vault.rename(file, 'After.md');
+    h.seedTaskCache(h.app, 'After.md', [{ task: ' ', parent: -1, line: 3 }], { tags: ['project'] });
+    await h.index.whenStatisticsSettled();
+    await vi.advanceTimersByTimeAsync(150);
+    await h.projects.whenSettled();
+    await h.wait();
+    expect(h.projects.list().map((project) => project.path)).toEqual(['After.md']);
+    expect(h.host.querySelector('[aria-label="Scope"]')?.textContent).toBe('Scope · After');
+    expect(expectDefined(views.mock.lastCall)[0].scope).toEqual({
+      type: 'project',
+      path: 'After.md',
+    });
+    const renamed: StatisticsViewModel | undefined = await returned(
+      views.mock.results[views.mock.results.length - 1],
+    );
+    expect(expectDefined(renamed).coverage.scope.nodes).toBe(1);
+    h.reset();
+    if (loss === 'deletion') await h.app.fileManager.trashFile(file);
+    else {
+      await h.app.vault.adapter.write(
+        'After.md',
+        '---\ntags: []\n---\n- [ ] Original ➕ 2026-10-01\n',
+      );
+      h.seedTaskCache(h.app, 'After.md', [{ task: ' ', parent: -1, line: 3 }], { tags: [] });
+    }
+    await h.index.whenStatisticsSettled();
+    await vi.advanceTimersByTimeAsync(150);
+    await h.projects.whenSettled();
+    await h.wait();
+    expect(h.projects.list()).toEqual([]);
+    expect(expectDefined(views.mock.lastCall)[0].scope).toEqual({
+      type: 'project',
+      path: 'After.md',
+    });
+    expect(h.host.querySelector('[aria-label="Scope"]')?.textContent).toBe(
+      'Scope · After.md · unavailable',
+    );
+    const unavailable: StatisticsViewModel | undefined = await returned(
+      views.mock.results[views.mock.results.length - 1],
+    );
+    expect(expectDefined(unavailable).coverage.scope.nodes).toBe(0);
+    expect(refresh).not.toHaveBeenCalled();
+  },
+);
+it('discards a superseded cold scope, period and view request and installs only matching current labels', async () => {
+  const selectScope = captureScopePicker();
+  const h = await harness();
+  h.replace(
+    source(
+      Array.from({ length: 1001 }, (_, i) =>
+        task(`Task ${i}`, {
+          tags: [i === 0 ? 'latest' : 'old'],
+          planning: { created: date('2026-10-01') },
+        }),
+      ),
+    ),
+  );
+  h.mode.render(h.host);
+  await h.wait();
+  const previous = expectDefined(h.host.querySelector<HTMLElement>('.abyss-statistics-section'));
+  const content = expectDefined(previous.parentElement);
+  const original = expectDefined(
+    Object.getOwnPropertyDescriptor(StatisticsSession.prototype, 'view'),
+  ).value as StatisticsSession['view'];
+  const views = vi.spyOn(StatisticsSession.prototype, 'view');
+  const entered = deferred<void>(),
+    release = deferred<void>();
+  views.mockImplementation(function (this: StatisticsSession, request, work) {
+    if (request.scope.type !== 'tag' || request.scope.tag !== 'old')
+      return original.call(this, request, work);
+    return original.call(this, request, {
+      ...work,
+      yieldControl: async () => {
+        entered.resolve();
+        await release.promise;
+      },
+    });
+  });
+  h.reset();
+  await selectScope(h.host, 'old');
+  await entered.promise;
+  expect(content.hidden).toBe(true);
+  expect(h.host.querySelector('.abyss-statistics-context')?.textContent).toBe(
+    'Preparing analysis…',
+  );
+  const pending = returned(views.mock.results[0]);
+  expect(expectDefined(views.mock.calls[0])[1].isCancelled()).toBe(false);
+  await selectScope(h.host, 'latest');
+  const period = expectDefined(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]'));
+  period.value = 'month';
+  period.dispatchEvent(new Event('change'));
+  expectDefined(
+    h.host.querySelector<HTMLButtonElement>('[data-statistics-view="cohorts"]'),
+  ).click();
+  expect(content.hidden).toBe(true);
+  expect(h.host.querySelector('.abyss-statistics-context')?.textContent).toBe(
+    'Preparing analysis…',
+  );
+  expect(expectDefined(views.mock.calls[0])[1].isCancelled()).toBe(true);
+  const mounts = h.renderer.mount.mock.calls.length;
+  release.resolve();
+  expect(await pending).toBeUndefined();
+  await h.wait();
+  expect(views.mock.calls).toHaveLength(2);
+  expect(expectDefined(views.mock.lastCall)[0]).toMatchObject({
+    view: 'cohorts',
+    period: 'month',
+    scope: { type: 'tag', tag: 'latest' },
+  });
+  const current: StatisticsViewModel | undefined = await returned(
+    views.mock.results[views.mock.results.length - 1],
+  );
+  expect(expectDefined(current).coverage.scope.nodes).toBe(1);
+  expect(expectDefined(current).dateLabel).toBe('2026-10-01 – 2026-10-04');
+  expect(content.hidden).toBe(false);
+  expect(previous.isConnected).toBe(false);
+  expect(h.host.querySelector('.abyss-statistics-context')?.textContent).toBe(
+    expectDefined(current).dateLabel,
+  );
+  expect(h.host.querySelector('[aria-label="Scope"]')?.textContent).toBe('Scope · #latest');
+  expect(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]')?.value).toBe('month');
+  expect(
+    h.host.querySelector('[data-statistics-view="cohorts"]')?.getAttribute('aria-pressed'),
+  ).toBe('true');
+  expect(h.renderer.mount.mock.calls.length - mounts).toBe(
+    expectDefined(current).sections.reduce((count, section) => count + section.charts.length, 0),
+  );
 });

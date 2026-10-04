@@ -372,7 +372,6 @@ export class TaskStatisticsProjection {
             work = 0;
           }
         }
-        if (this.generation === generation) this.publish();
       })
       .catch((error: unknown) => {
         console.error('[abyss-tasks] statistics publication failed', { error });
@@ -380,6 +379,9 @@ export class TaskStatisticsProjection {
       .finally(() => {
         this.running = undefined;
         if (this.active && this.pending.size > 0) this.schedule();
+        // A source-read hold can release after work drains but before this finalizer.
+        // Publish after clearing running so that neither side can miss the final handoff.
+        else if (this.generation === generation) this.publish();
         this.releaseSettled();
       });
   }

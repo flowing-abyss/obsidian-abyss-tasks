@@ -4,6 +4,7 @@ import { computeStats, ProjectStore } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { TaskIndexEvent, TaskSnapshot } from '../src/tasks';
 import {
+  createAppWithFiles,
   expectDefined,
   queryApiForTasks,
   task,
@@ -337,4 +338,62 @@ describe('ProjectStore incremental update', () => {
     ps.destroy();
     vi.useRealTimers();
   });
+});
+
+it('publishes renamed project statistics only after accepted index work settles', async () => {
+  const app = await createAppWithFiles({ 'Projects/Before.md': '- [ ] Existing\n' });
+  let snapshots = [t({ source: { filePath: 'Projects/Before.md' } })];
+  let accept: ((event: TaskIndexEvent) => void) | undefined;
+  const queries = taskQueryApi({
+    list: (query) =>
+      snapshots.filter(
+        (snapshot) => query?.filePath === undefined || snapshot.ref.filePath === query.filePath,
+      ),
+    subscribe: (listener) => {
+      accept = listener;
+      return () => {};
+    },
+  });
+  const store = new ProjectStore(app, queries, structuredClone(DEFAULT_SETTINGS));
+  store.initialize();
+  const published = vi.fn(() => store.list());
+  store.onUpdate(published);
+  vi.useFakeTimers();
+  try {
+    const file = expectDefined(app.vault.getFileByPath('Projects/Before.md'));
+    await app.vault.rename(file, 'Projects/After.md');
+    expect(store.get('Projects/Before.md')).toBeUndefined();
+    expect(store.get('Projects/After.md')).toMatchObject({
+      path: 'Projects/After.md',
+      name: 'After',
+      stats: { total: 1, done: 0 },
+    });
+    expect(published).not.toHaveBeenCalled();
+    snapshots = [
+      t({ source: { filePath: 'Projects/After.md' }, status: 'done' }),
+      t({ source: { filePath: 'Projects/After.md', line: 1 } }),
+    ];
+    expectDefined(accept)({
+      type: 'renamed',
+      oldPath: 'Projects/Before.md',
+      newPath: 'Projects/After.md',
+    });
+    const settled = vi.fn();
+    const barrier = store.whenSettled().then(settled);
+    await vi.advanceTimersByTimeAsync(149);
+    expect(settled).not.toHaveBeenCalled();
+    expect(published).not.toHaveBeenCalled();
+    expect(store.get('Projects/After.md')?.stats.total).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await barrier;
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(published).toHaveBeenCalledTimes(1);
+    expect(published.mock.results[0]?.value).toMatchObject([
+      { path: 'Projects/After.md', name: 'After', stats: { total: 2, done: 1 } },
+    ]);
+    expect(store.get('Projects/Before.md')).toBeUndefined();
+  } finally {
+    store.destroy();
+    vi.useRealTimers();
+  }
 });
