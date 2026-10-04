@@ -100,7 +100,7 @@ export interface StatisticsEntry {
   readonly startMs?: number | undefined;
   readonly endMs?: number | undefined;
 }
-export interface StatisticsCoverage {
+interface StatisticsCoverage {
   readonly countingUnit: 'Tasks & subtasks';
   readonly recurrence: 'Node or ancestor; retained instances only';
   readonly nodes: number;
@@ -136,7 +136,7 @@ export interface StatisticsMetric {
   readonly selectionId?: string | undefined;
   readonly context?: string | undefined;
 }
-export interface StatisticsLegend {
+interface StatisticsLegend {
   readonly muted?: boolean | undefined;
   readonly key: string;
   readonly label: string;

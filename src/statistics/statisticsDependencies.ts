@@ -214,11 +214,14 @@ function rankChart(
     id: 'dependency-rank',
     accessibleLabel: 'Prerequisites ranked by direct waiting dependents',
     kind: 'bars',
-    x: bands(
-      'Prerequisite',
-      marks.map((m) => m.key),
-    ),
-    y: numeric('Direct waiting dependents', Math.max(0, ...marks.map((m) => m.y))),
+    x: {
+      ...bands(
+        'Prerequisite',
+        marks.map((m) => m.key),
+      ),
+      tickLabels: marks.map((m) => [m.key, m.label] as const),
+    },
+    y: numeric('Direct waiting dependents', Math.max(0, ...marks.map((m) => m.y)), 0, 'count'),
     series: [],
     marks,
   };
@@ -328,20 +331,59 @@ function networkChart(
   nodes: readonly number[],
   edges: NonNullable<StatisticsChartModel['edges']>,
 ): StatisticsChartModel {
-  const marks: StatisticsMark[] = nodes.slice(0, 80).map((node, i) => ({
-    key: required(ctx.dataset.tasks[node]).key,
-    x: i === 0 ? 0 : 1 + ((i - 1) % 8),
-    y: i === 0 ? 0 : Math.floor((i - 1) / 8),
-    label: required(ctx.dataset.tasks[node]).title,
-    series: nodeSeries(ctx, node, focus),
-    selectionId: ctx.evidence.tasks(`node:${node}`, [node]),
-  }));
+  const shown = nodes.slice(0, 80);
+  const keys = shown.map((node) => required(ctx.dataset.tasks[node]).key);
+  const levels = new Map<string, number>(),
+    pending = new Set(keys);
+  while (pending.size > 0) {
+    const ready = [...pending].filter((key) =>
+      edges.every((edge) => edge.to !== key || !pending.has(edge.from)),
+    );
+    // Cycles have no topological order; retain their identities in distinct sibling rows.
+    if (ready.length === 0) ready.push(...pending);
+    for (const key of ready) {
+      levels.set(
+        key,
+        Math.max(
+          0,
+          ...edges
+            .filter((edge) => edge.to === key)
+            .map((edge) => (levels.get(edge.from) ?? -1) + 1),
+        ),
+      );
+    }
+    for (const key of ready) pending.delete(key);
+  }
+  const columns = new Map<number, string[]>();
+  for (const key of keys) {
+    const level = required(levels.get(key)),
+      list = columns.get(level) ?? [];
+    list.push(key);
+    columns.set(level, list);
+  }
+  const depth = Math.max(0, ...levels.values()),
+    rows = Math.max(1, ...[...columns.values()].map((list) => list.length));
+  const vertical = depth > 5;
+  const marks: StatisticsMark[] = shown.map((node) => {
+    const key = required(ctx.dataset.tasks[node]).key,
+      level = required(levels.get(key)),
+      siblings = required(columns.get(level));
+    const position = siblings.indexOf(key) + (rows - siblings.length) / 2;
+    return {
+      key,
+      x: vertical ? position : level,
+      y: vertical ? level : position,
+      label: required(ctx.dataset.tasks[node]).title,
+      series: nodeSeries(ctx, node, focus),
+      selectionId: ctx.evidence.tasks(`node:${node}`, [node]),
+    };
+  });
   return {
     id: 'dependency-chain',
     accessibleLabel: 'Directed local prerequisite chain; arrows point toward waiting dependents',
     kind: 'network',
-    x: numeric('Local layout', 9),
-    y: numeric('Local layout', 10),
+    x: numeric('Local layout', vertical ? rows - 1 : depth),
+    y: numeric('Local layout', vertical ? depth : rows - 1),
     series: [
       { key: 'focus', label: 'Selected prerequisite', tone: 'accent' },
       { key: 'scope', label: 'In scope', tone: 'neutral' },
@@ -442,7 +484,12 @@ export async function dependencySections(ctx: StatisticsContext): Promise<{
         title: 'Current dependencies',
         context:
           'Live canonical status; external prerequisites remain visible. Missing, ambiguous and cyclic relations cannot establish a sole blocker. Choose a prerequisite to inspect its downstream chain.',
-        metrics,
+        metrics: metrics.map((value) =>
+          value.value === 0 &&
+          (value.id.startsWith('dependency:') || value.id.startsWith('chain-omitted'))
+            ? { ...value, role: 'coverage' }
+            : value,
+        ),
         charts,
         legend: [],
       },

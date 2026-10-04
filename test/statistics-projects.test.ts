@@ -312,3 +312,31 @@ it('binds movement facets and dependency ranks through opaque chart actions, wit
     focusKey: ds.tasks[1]?.key,
   });
 });
+it('lays out a dependency fork as siblings and exposes titles without decoding source keys', async () => {
+  const ds = required(
+    await prepareStatisticsDataset(
+      source([
+        task('Prerequisite', { dependencyId: 'A' }),
+        task('First branch', { dependsOn: ['A'] }),
+        task('Second branch', { dependsOn: ['A'] }),
+      ]),
+      [],
+      work,
+    ),
+  );
+  const view = required(
+    await new StatisticsSession(ds).view(
+      request({ view: 'dependencies', focusKey: required(ds.tasks[0]).key }),
+      work,
+    ),
+  );
+  const charts = view.sections.flatMap((s) => s.charts),
+    rank = required(charts.find((c) => c.id === 'dependency-rank')),
+    graph = required(charts.find((c) => c.kind === 'network'));
+  expect(rank.x.tickLabels).toEqual([[required(ds.tasks[0]).key, 'Prerequisite']]);
+  const [a, b, c] = graph.marks.map((mark) => ({ x: Number(mark.x), y: Number(mark.y) }));
+  expect(required(b).x).toBe(required(c).x);
+  expect(required(a).x).toBeLessThan(required(b).x);
+  expect(required(b).y).not.toBe(required(c).y);
+  expect(required(a).y).toBe((required(b).y + required(c).y) / 2);
+});

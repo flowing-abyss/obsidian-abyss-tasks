@@ -9753,6 +9753,7 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 }
 
 .abyss-statistics-chart {
+  overflow-x: auto;
   grid-column: 1 / -1;
   margin: 0;
   min-width: 0;
@@ -9770,9 +9771,10 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   overflow-wrap: anywhere;
 }
 
+/* The native figure scrollbar preserves readable axes in very narrow host sidebars. */
 .abyss-statistics-chart-surface {
   position: relative;
-  min-width: 0;
+  min-width: 240px;
   color: var(--text-normal);
   font-family: var(--font-interface, var(--font-interface-theme));
 }
@@ -9813,6 +9815,7 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 
 .abyss-statistics {
   overflow: auto;
+  overflow-wrap: anywhere;
   min-inline-size: 0;
   padding: var(--size-4-3);
 }
@@ -9832,6 +9835,9 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 
 .abyss-statistics-controls label {
   display: flex;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--size-4-2);
 }
@@ -9875,4 +9881,62 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 
 .abyss-statistics [hidden] {
   display: none;
+}
+
+.abyss-statistics > .abyss-center-header {
+  min-block-size: 0;
+  padding: var(--size-4-1) 0;
+  margin-block-end: var(--size-4-2);
+}
+
+.abyss-statistics > .abyss-center-header h2 {
+  margin-block: var(--size-4-1);
+  font-size: var(--font-ui-medium);
+}
+
+.abyss-statistics-section-heading,
+.abyss-statistics-context-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--size-4-2);
+}
+
+.abyss-statistics-section-heading h3 {
+  margin-block: 0;
+  font-size: var(--font-ui-medium);
+}
+
+.abyss-statistics-section-heading {
+  margin-block-end: var(--size-4-2);
+}
+
+.abyss-statistics-section-heading details[open] {
+  flex-basis: 100%;
+}
+
+.abyss-statistics-tabs {
+  gap: var(--size-4-1);
+  margin-block-end: var(--size-4-1);
+}
+
+.abyss-statistics-tabs button {
+  padding: var(--size-2-1) var(--size-4-2);
+}
+
+.abyss-statistics button,
+.abyss-statistics select {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.abyss-statistics button {
+  block-size: auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.abyss-statistics-context-row > * {
+  min-inline-size: 0;
+  max-inline-size: 100%;
 }

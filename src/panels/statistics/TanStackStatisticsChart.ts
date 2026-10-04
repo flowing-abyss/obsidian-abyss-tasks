@@ -1,5 +1,5 @@
 import { arrow } from '@tanstack/charts/arrow';
-import { barX, barY } from '@tanstack/charts/bar';
+import { barY } from '@tanstack/charts/bar';
 import { mountChart } from '@tanstack/charts/dom';
 import { dot } from '@tanstack/charts/dot';
 import { lineY } from '@tanstack/charts/line';
@@ -29,13 +29,20 @@ const FOREGROUND = 'var(--text-normal)';
 const MUTED = 'var(--text-muted)';
 const BACKGROUND = 'var(--background-primary)';
 const ACCENT = 'var(--interactive-accent)';
+const SCATTER_MARGIN = { top: 16, right: 16, bottom: 42, left: 76 };
 const NETWORK_MARGIN = { top: 35, left: 55, right: 55, bottom: 20 };
 
 function height(model: StatisticsChartModel): number {
-  if (model.kind === 'bars' && model.x.type === 'number' && model.y.type === 'band')
+  if (model.y.type === 'number') return numericHeight(model, model.y.domain[1]);
+  if (model.kind === 'bars' && model.x.type === 'number')
     return model.y.categories.length * 28 + 48;
-  if (model.y.type === 'band' && (model.kind === 'heatmap' || model.kind === 'timeline'))
+  if (model.kind === 'heatmap' || model.kind === 'timeline')
     return Math.max(150, model.y.categories.length * (model.kind === 'timeline' ? 36 : 26) + 48);
+  return model.facet === undefined ? 250 : 205;
+}
+function numericHeight(model: StatisticsChartModel, max: number): number {
+  if (model.kind === 'network') return Math.min(640, Math.max(180, max * 40 + 60));
+  if (model.kind === 'timeline') return max * 14 + 48;
   return model.facet === undefined ? 250 : 205;
 }
 function measuredWidth(host: HTMLElement): number {
@@ -65,10 +72,27 @@ function positionScale(
 }
 function tickCandidates(value: StatisticsAxis, width: number): number[] | undefined {
   if (value.type !== 'number') return undefined;
-  const candidates = value.ticks ?? value.tickLabels?.map(([position]) => position);
+  const step = Math.max(1, Math.ceil((value.domain[1] - value.domain[0]) / 4));
+  const counts =
+    value.unit === 'count'
+      ? Array.from(
+          { length: Math.floor((value.domain[1] - Math.ceil(value.domain[0])) / step) + 1 },
+          (_, i) => Math.ceil(value.domain[0]) + i * step,
+        )
+      : undefined;
+  const candidates = value.ticks ?? value.tickLabels?.map(([position]) => position) ?? counts;
   if (candidates === undefined) return undefined;
   const stride = Math.max(1, Math.ceil(candidates.length / Math.max(2, Math.floor(width / 105))));
   return candidates.filter((_, index) => index % stride === 0 || index === candidates.length - 1);
+}
+function shortLabel(label: string, length: number): string {
+  return label.length > length
+    ? `${label.slice(0, Math.ceil((length - 1) / 2))}…${label.slice(-Math.floor((length - 1) / 2))}`
+    : label;
+}
+function tickLabelLength(value: StatisticsAxis, side: 'x' | 'y', width: number): number {
+  const slots = value.type === 'band' && side === 'x' ? value.categories.length : 2;
+  return Math.max(4, Math.min(24, Math.floor(width / slots / 9)));
 }
 function axisPolicy(
   value: StatisticsAxis,
@@ -78,15 +102,23 @@ function axisPolicy(
   const labels = new Map<string | number, string>(value.tickLabels ?? []);
   const candidates = tickCandidates(value, width);
   const count = side === 'x' ? Math.max(2, Math.floor(width / 105)) : 4;
-  const unit = value.type === 'number' ? value.unit : '';
+  const unit =
+    value.type === 'number'
+      ? ({ count: '', days: ' d', minutes: ' min' }[value.unit ?? ''] ?? value.unit)
+      : '';
   return {
     line: false,
     ...(value.label === '' ? {} : { label: { text: value.label, fontSize: 11, fill: MUTED } }),
     ticks: {
       size: 0,
       ...(candidates === undefined ? { count } : { values: candidates }),
-      format: (tick) =>
-        labels.get(tick) ?? (typeof tick === 'number' ? statisticsNumber(tick, unit) : tick),
+      format: (tick) => {
+        const label =
+          labels.get(tick) ?? (typeof tick === 'number' ? statisticsNumber(tick, unit) : tick);
+        return value.type === 'band' && label.length > 24
+          ? shortLabel(label, tickLabelLength(value, side, width))
+          : label;
+      },
     },
     tickLabels: { fontSize: 11, opacity: 1, thin: { minGap: 9, priority: 'ends' } },
   };
@@ -100,7 +132,7 @@ function axis(
   const grid = !hidden && model[side].type === 'number' && model.kind !== 'heatmap' && side === 'y';
   return {
     scale: positionScale(model, side),
-    reverse: hidden && side === 'y',
+    reverse: (hidden || model.kind === 'timeline') && side === 'y',
     grid: grid ? { stroke: 'var(--background-modifier-border)', strokeOpacity: 0.55 } : false,
     axis: hidden ? false : axisPolicy(model[side], width, side),
   };
@@ -125,7 +157,7 @@ function seriesMark(
   const paint = statisticsSeriesPaint(item, model.series),
     opacity = statisticsSeriesOpacity(item);
   if (model.kind === 'bars' && model.x.type === 'number' && model.y.type === 'band')
-    return barX(rows, {
+    return rect(rows, {
       id: `bars:${item.key}`,
       x1: (mark) => number(mark, 'x'),
       x2: (mark) => mark.x2 ?? number(mark, 'x'),
@@ -133,7 +165,7 @@ function seriesMark(
       key: 'key',
       fill: paint,
       fillOpacity: opacity,
-      maxThickness: 28,
+      inset: 0,
     });
   if (model.kind === 'bars')
     return barY(rows, {
@@ -162,7 +194,7 @@ function seriesMark(
     });
   const radius =
     model.kind === 'network'
-      ? 7
+      ? (mark: StatisticsMark) => (model.marks.length > 16 && mark.series !== 'focus' ? 3 : 7)
       : (mark: StatisticsMark) => Math.min(10, 4 + Math.log2(Math.max(1, mark.weight ?? 1)));
   return dot(rows, {
     id: `points:${item.key}`,
@@ -239,6 +271,36 @@ function timelineRows(model: StatisticsChartModel): StatisticsMark[] {
         })),
   );
 }
+/** Pack bounded clock intervals so simultaneous records remain separate selectable marks. */
+function timelineLayout(model: StatisticsChartModel): StatisticsChartModel {
+  if (model.kind !== 'timeline' || model.layout === 'density' || model.y.type !== 'band')
+    return model;
+  const rows = timelineRows(model),
+    marks: StatisticsMark[] = [],
+    ticks: Array<readonly [number, string]> = [];
+  const labels = new Map(model.y.tickLabels);
+  let base = 0;
+  for (const day of model.y.categories) {
+    const ends: number[] = [];
+    const values = rows
+      .filter((mark) => mark.y === day)
+      .sort((a, b) => number(a, 'x') - number(b, 'x'));
+    for (const mark of values) {
+      let slot = ends.findIndex((end) => end <= number(mark, 'x'));
+      if (slot < 0) slot = ends.length;
+      ends[slot] = mark.x2 ?? number(mark, 'x');
+      marks.push({ ...mark, y: base + slot + 0.1, y2: base + slot + 0.9 });
+    }
+    const lanes = Math.max(2, ends.length);
+    ticks.push([base + lanes / 2, labels.get(day) ?? day]);
+    base += lanes + 0.5;
+  }
+  return {
+    ...model,
+    marks,
+    y: { type: 'number', label: model.y.label, domain: [0, base], tickLabels: ticks },
+  };
+}
 function timelineMarks(model: StatisticsChartModel): RenderMark[] {
   if (model.layout === 'density') return densityMarks(model);
   const rows = timelineRows(model);
@@ -255,7 +317,9 @@ function timelineMarks(model: StatisticsChartModel): RenderMark[] {
             x1: 'x',
             x2: 'x2',
             x: (mark) => (number(mark, 'x') + (mark.x2 ?? number(mark, 'x'))) / 2,
-            y: 'y',
+            y1: 'y',
+            y2: 'y2',
+            y: (mark) => (number(mark, 'y') + (mark.y2 ?? number(mark, 'y'))) / 2,
             key: 'key',
             fill: statisticsSeriesPaint(item, model.series),
             fillOpacity: 0.8,
@@ -343,24 +407,24 @@ function networkMarks(model: StatisticsChartModel, width: number, height: number
     }),
     ...seriesMarks(model),
     decorative(
-      text(model.marks, {
-        id: 'node-labels',
-        x: 'x',
-        y: 'y',
-        key: 'key',
-        text: (mark) =>
-          (mark.label ?? '').length > labelLength
-            ? `${(mark.label ?? '').slice(0, labelLength - 1)}…`
-            : (mark.label ?? ''),
-        anchor: (mark) =>
-          model.x.type === 'number' &&
-          number(mark, 'x') > (model.x.domain[0] + model.x.domain[1]) / 2
-            ? 'end'
-            : 'start',
-        dy: -16,
-        fontSize: 11,
-        fill: FOREGROUND,
-      }),
+      text(
+        model.marks.filter((mark) => model.marks.length <= 16 || mark.series === 'focus'),
+        {
+          id: 'node-labels',
+          x: 'x',
+          y: 'y',
+          key: 'key',
+          text: (mark) => shortLabel(mark.label ?? '', labelLength),
+          anchor: (mark) =>
+            model.x.type === 'number' &&
+            number(mark, 'x') > (model.x.domain[0] + model.x.domain[1]) / 2
+              ? 'end'
+              : 'start',
+          dy: -16,
+          fontSize: 11,
+          fill: FOREGROUND,
+        },
+      ),
     ),
   ];
 }
@@ -480,10 +544,14 @@ export class TanStackStatisticsChart implements StatisticsChartRenderer {
     host.dataset['statisticsChartId'] = initial.id;
     if (document.defaultView === null)
       throw new Error('Statistics charts require an owning window');
+    const idPrefix = `abyss-statistics-${document.defaultView.crypto.randomUUID()}`;
     let generation = 0,
       destroyed = false;
-    const options = (model: StatisticsChartModel): HostOptions => {
-      const epoch = ++generation;
+    const options = (input: StatisticsChartModel): HostOptions => {
+      const model = timelineLayout(input),
+        epoch = ++generation;
+      host.setAttribute('role', 'group');
+      host.setAttribute('aria-label', model.accessibleLabel);
       const selections = new Set(
         [...model.marks, ...(model.edges ?? [])].flatMap((mark) =>
           mark.selectionId === undefined ? [] : [mark.selectionId],
@@ -501,9 +569,8 @@ export class TanStackStatisticsChart implements StatisticsChartRenderer {
               background: BACKGROUND,
               palette: [ACCENT],
             },
-            // Network boundary nodes/labels use the explicit viewport margins; a plot
-            // clip would cut their circles and hide every first-row label at y=0.
-            clip: model.kind !== 'network',
+            clip: model.kind !== 'network' && model.kind !== 'scatter',
+            ...(model.kind === 'scatter' ? { margin: SCATTER_MARGIN } : {}),
             ...(model.kind === 'network' ? { margin: NETWORK_MARGIN } : {}),
           }),
           focus: 'nearest',
@@ -517,9 +584,10 @@ export class TanStackStatisticsChart implements StatisticsChartRenderer {
               statisticsMarkDescription(point.datum, model),
           },
         }),
+        idPrefix,
         height: height(model),
         initialWidth: measuredWidth(host),
-        ariaLabel: model.accessibleLabel,
+        ariaLabel: '',
         ariaDescription:
           'Use arrow keys to inspect marks; Enter or Space opens the underlying records.',
         className: 'abyss-statistics-chart-svg',
@@ -532,7 +600,6 @@ export class TanStackStatisticsChart implements StatisticsChartRenderer {
     };
     const chart = acquireChart(host, options(initial), () => {
       destroyed = true;
-      generation++;
     });
     return {
       update: (model) => {
@@ -544,7 +611,6 @@ export class TanStackStatisticsChart implements StatisticsChartRenderer {
       destroy: () => {
         if (destroyed) return;
         destroyed = true;
-        generation++;
         chart.destroy();
       },
     };

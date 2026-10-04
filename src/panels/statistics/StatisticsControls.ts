@@ -34,6 +34,17 @@ export function statisticsButton(
   button.addEventListener('click', action);
   return button;
 }
+function restoreControlFocus(host: HTMLElement, focused: Element | null): void {
+  if (focused === null) return;
+  for (const attribute of ['data-statistics-family', 'data-statistics-view', 'aria-label']) {
+    const value = focused.getAttribute(attribute);
+    if (value === null) continue;
+    [...host.querySelectorAll<HTMLElement>('button, select')]
+      .find((element) => element.getAttribute(attribute) === value)
+      ?.focus();
+    return;
+  }
+}
 export class StatisticsControls {
   private readonly families_abyssPrivate = new Map<string, StatisticsViewId>();
   private dataset_abyssPrivate: StatisticsDataset | undefined;
@@ -46,7 +57,7 @@ export class StatisticsControls {
     private readonly change_abyssPrivate: (next: Partial<StatisticsChoices>) => void,
   ) {}
   render(host: HTMLElement, choices: StatisticsChoices, dataset?: StatisticsDataset): void {
-    const focused = this.scope_abyssPrivate?.matches(':focus') === true;
+    const focused = host.querySelector(':focus');
     host.empty();
     const bar = host.createDiv({ cls: 'abyss-statistics-controls' });
     this.scopes_abyssPrivate(bar, choices.scope, dataset);
@@ -109,7 +120,7 @@ export class StatisticsControls {
           },
         },
       );
-    if (focused) this.focus_abyssPrivate();
+    restoreControlFocus(host, focused);
   }
   private select_abyssPrivate(
     host: HTMLElement,
@@ -127,7 +138,7 @@ export class StatisticsControls {
     if (this.dataset_abyssPrivate === dataset) return;
     const budget = new WorkBudget(work);
     const scopes: Array<readonly [StatisticsScope, string, string]> = [
-      [{ type: 'all' }, 'Entire vault', 'Entire vault'],
+      [{ type: 'all' }, 'Entire vault', 'entire vault'],
     ];
     await this.projects_abyssPrivate(scopes, dataset, budget);
     const tags = new Set<string>();
@@ -161,6 +172,7 @@ export class StatisticsControls {
     this.labels_abyssPrivate = labels;
     this.dataset_abyssPrivate = dataset;
     this.inventory_abyssPrivate = scopes;
+    this.picker_abyssPrivate?.updateInventory(scopes);
   }
   private async projects_abyssPrivate(
     scopes: ScopeOption[],
@@ -225,13 +237,17 @@ type ScopeOption = readonly [StatisticsScope, string, string];
 class ScopePicker extends SuggestModal<ScopeOption> {
   constructor(
     app: App,
-    private readonly inventory_abyssPrivate: readonly ScopeOption[],
+    private inventory_abyssPrivate: readonly ScopeOption[],
     private readonly choose_abyssPrivate: (scope: StatisticsScope) => void,
     private readonly closed_abyssPrivate: () => void,
   ) {
     super(app);
     this.limit = 50;
     this.setPlaceholder('Search scope by project name, path, tag or priority');
+  }
+  updateInventory(inventory: readonly ScopeOption[]): void {
+    this.inventory_abyssPrivate = inventory;
+    this.inputEl.trigger('input');
   }
   override getSuggestions(query: string): ScopeOption[] {
     const normalized = query.trim().toLowerCase(),

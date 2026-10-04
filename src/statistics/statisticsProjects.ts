@@ -158,7 +158,7 @@ class Movement {
           (bucket, index) => [index + 1, bucket.key] as const,
         ),
       },
-      y: numeric('Cumulative tasks', this.maximum),
+      y: numeric('Cumulative tasks', this.maximum, 0, 'count'),
       series,
       marks,
     };
@@ -207,10 +207,10 @@ async function movement(ctx: StatisticsContext): Promise<StatisticsViewModel> {
     { key: 'new', label: 'Created in period', tone: 'created' as const },
     { key: 'unknown', label: 'Creation date unknown / invalid', tone: 'muted' as const },
   ];
-  const metrics = ['before', 'new', 'unknown'].map((origin) =>
+  const metrics = ['before', 'new', 'unknown'].map((origin, index) =>
     metric(
       `completion-origin:${origin}`,
-      `Completed · ${origin} creation`,
+      required(['Created before period', 'Created in period', 'Creation date unknown'][index]),
       (model.origins.get(origin) ?? []).length,
       ctx.evidence.tasks(`completion-origin:${origin}`, model.origins.get(origin) ?? []),
     ),
@@ -223,7 +223,7 @@ async function movement(ctx: StatisticsContext): Promise<StatisticsViewModel> {
         title: 'Project movement',
         context:
           'Cumulative retained events classified by current project. Zero origin precedes the period. Missing date series are unavailable; this does not reconstruct historical backlog.',
-        metrics: [...metrics, ...(await dateEligibility(ctx, EVENTS))],
+        metrics: await dateEligibility(ctx, EVENTS),
         charts,
         legend: EVENTS.map((key) => ({
           key,
@@ -231,7 +231,7 @@ async function movement(ctx: StatisticsContext): Promise<StatisticsViewModel> {
           tone: key,
         })),
       },
-      originSection({ model, visible, originMax, originSeries, originMarks }),
+      { ...originSection({ model, visible, originMax, originSeries, originMarks }), metrics },
     ],
     pageActions(page, keys.length, 12),
     chartActions,
@@ -262,7 +262,7 @@ function originSection({
         accessibleLabel: 'Completed tasks by project and creation origin',
         kind: 'bars',
         layout: 'stacked',
-        x: numeric('Completed tasks', originMax),
+        x: numeric('Completed tasks', originMax, 0, 'count'),
         y: {
           type: 'band',
           label: 'Project',
@@ -415,7 +415,7 @@ class Aging {
       layout: 'facets',
       facet: { key, label: group.label },
       x: bands('Age days', AGE_LABELS),
-      y: numeric('Tasks', maximum),
+      y: numeric('Tasks', maximum, 0, 'count'),
       series: [],
       marks: group.bands.map((indices, i) => ({
         key: `${key}:${i}`,

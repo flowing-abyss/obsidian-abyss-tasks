@@ -68,7 +68,7 @@ export class StatisticsSections {
     const heading = element.createDiv({ cls: 'abyss-statistics-section-heading' });
     heading.createEl('h3', { text: model.title });
     const help = heading.createEl('details');
-    help.createEl('summary', { text: 'About this analysis' });
+    help.createEl('summary', { text: 'About', attr: { 'aria-label': `About ${model.title}` } });
     help.createEl('p', { text: model.context });
     this.metrics_abyssPrivate(element, model);
     this.legend_abyssPrivate(element, model);
@@ -93,7 +93,7 @@ export class StatisticsSections {
   private metrics_abyssPrivate(element: HTMLElement, model: StatisticsSection): void {
     const metrics = element.createDiv({ cls: 'abyss-statistics-metrics' });
     for (const metric of model.metrics.filter((value) => value.role !== 'coverage')) {
-      const text = `${metric.label} · ${metric.value === null ? 'Unavailable' : statisticsNumber(metric.value)}${metricUnit(metric.unit)}`;
+      const text = `${metric.label} · ${metric.value === null ? 'Unavailable' : statisticsNumber(metric.value)}${metricUnit(metric.unit, metric.value)}`;
       if (metric.selectionId === undefined) metrics.createSpan({ text });
       else {
         const id = metric.selectionId;
@@ -109,7 +109,9 @@ export class StatisticsSections {
         ? model.legend
         : [
             ...new Map(
-              model.charts.flatMap((chart) => chart.series).map((series) => [series.key, series]),
+              model.charts
+                .flatMap((chart) => (chart.series.length > 1 ? chart.series : []))
+                .map((series) => [series.key, series]),
             ).values(),
           ];
     if (peers.length <= 1) return;
@@ -154,7 +156,10 @@ export class StatisticsSections {
       `${statisticsNumber(max * 0.67)}–${statisticsNumber(max)}`,
     ];
     for (const [index, level] of (['zero', 'low', 'medium', 'high'] as const).entries()) {
-      const item = key.createSpan({ text: labels[index] ?? '' }),
+      const item = key.createSpan({
+          text: ['0', '', '', statisticsNumber(max)][index] ?? '',
+          attr: { 'aria-label': labels[index] ?? '', title: labels[index] ?? '' },
+        }),
         swatch = item.createSpan({ cls: 'abyss-statistics-swatch' });
       item.prepend(swatch);
       setStatisticsKey(swatch, 'paint', statisticsIntensityPaint(level));
@@ -175,7 +180,7 @@ export class StatisticsSections {
     const coverage = model.metrics.filter((value) => value.role === 'coverage');
     if (coverage.length > 0) {
       const details = element.createEl('details');
-      details.createEl('summary', { text: 'Date eligibility · entire selected scope' });
+      details.createEl('summary', { text: 'Coverage and details · entire selected scope' });
       for (const metric of coverage) {
         const id = metric.selectionId;
         if (id !== undefined)
@@ -197,7 +202,8 @@ function setStatisticsKey(element: HTMLElement, key: 'paint' | 'opacity', value:
   element.style.setProperty(`--abyss-statistics-key-${key}`, value);
 }
 
-function metricUnit(unit: string | undefined): string {
+function metricUnit(unit: string | undefined, value: number | null): string {
   if (unit === 'minutes') return ' min';
-  return unit === 'days' ? ' days' : '';
+  if (unit !== 'days') return '';
+  return value === 1 ? ' day' : ' days';
 }

@@ -126,16 +126,25 @@ async function histogram(
     required(bins[index]).push(item.index);
     await ctx.budget.step();
   }
-  const labels = edges.map((end, i) => {
-    if (i === 0) return `≤ ${end}`;
-    return `${required(edges[i - 1]) + 1}–${end === Infinity ? '∞' : end}`;
-  });
+  const labels =
+    id === 'due-delta'
+      ? [
+          '7+ days early',
+          '1–6 days early',
+          'On due date',
+          '1 day late',
+          '2–3 days late',
+          '4–7 days late',
+          '8–30 days late',
+          '31+ days late',
+        ]
+      : ['Same day', '1', '2–3', '4–7', '8–14', '15–30', '31–60', '61+'];
   return {
     id,
     accessibleLabel: id,
     kind: 'bars',
     x: bands(unit, labels),
-    y: numeric('Tasks', Math.max(0, ...bins.map((bin) => bin.length))),
+    y: numeric('Tasks', Math.max(0, ...bins.map((bin) => bin.length)), 0, 'count'),
     series: [{ key: 'count', label: 'Tasks', tone: 'accent' }],
     marks: bins.map((bin, i) => ({
       key: `${id}:${i}`,
@@ -256,7 +265,7 @@ async function rhythmChart(
       'Date',
       ctx.calendar.buckets.map((b) => b.key),
     ),
-    y: numeric('Tasks', magnitude, -magnitude),
+    y: numeric('Tasks', magnitude, -magnitude, 'count'),
     series: EVENTS.flatMap((event) =>
       ['one-off', 'recurring'].map((r) => ({
         key: `${event}:${r}`,
@@ -297,7 +306,7 @@ function ageChart(ctx: StatisticsContext, ids: Map<string, number[]>): Statistic
     kind: 'bars',
     layout: 'stacked',
     x: bands('Age in days', AGE_LABELS),
-    y: numeric('Tasks', Math.max(0, ...marks.map((m) => Number(m.y)))),
+    y: numeric('Tasks', Math.max(0, ...marks.map((m) => Number(m.y))), 0, 'count'),
     series: [
       { key: 'current', label: 'Not overdue', tone: 'neutral' },
       { key: 'overdue', label: 'Overdue', tone: 'overdue' },
@@ -340,7 +349,7 @@ function newOutcomes(metrics: readonly StatisticsMetric[]): StatisticsSection {
   });
   return {
     id: 'new-outcomes',
-    title: 'Current outcomes of new tasks',
+    title: `Of ${total} new tasks`,
     context: 'Tasks created in the selected period, classified by their current state.',
     metrics: values,
     legend: series,
@@ -350,7 +359,7 @@ function newOutcomes(metrics: readonly StatisticsMetric[]): StatisticsSection {
         accessibleLabel: 'Current outcomes of new tasks',
         kind: 'bars',
         layout: 'stacked',
-        x: numeric('Tasks', total),
+        x: numeric('Tasks', total, 0, 'count'),
         y: bands('', ['New tasks']),
         series,
         marks,
@@ -383,19 +392,19 @@ async function rhythm(ctx: StatisticsContext): Promise<StatisticsSection[]> {
       id: 'events',
       title: 'Recorded task events',
       context: 'Current outcomes of new tasks are separate from recorded completions.',
-      metrics: metrics.filter((value) => !value.id.startsWith('new-')),
+      metrics: metrics.filter((value) => !value.id.startsWith('new-') && value.id !== 'open-now'),
       charts: [chart],
       legend: chart.series,
     },
+    newOutcomes(metrics),
     {
       id: 'current',
-      title: 'Open now',
+      title: `Open now · ${dateOf(ctx.calendar.todayDay)}`,
       context: 'Live tasks; overdue means the saved due date is before today.',
-      metrics: [],
+      metrics: metrics.filter((value) => value.id === 'open-now'),
       charts: [ageChart(ctx, ids)],
       legend: [],
     },
-    newOutcomes(metrics),
   ];
 }
 async function completion({
@@ -504,11 +513,15 @@ async function deadlines(ctx: StatisticsContext): Promise<StatisticsSection[]> {
             'Due cohort',
             c.buckets.map((bucket) => bucket.key),
           ),
-          y: numeric('Tasks', maximum),
-          series: keys.map((key) => ({
+          y: numeric('Tasks', maximum, 0, 'count'),
+          series: keys.map((key, index) => ({
             key,
             label: key,
-            tone: key === 'overdue' ? 'overdue' : 'accent',
+            tone: required(
+              (['completed', 'cancelled', 'overdue', 'created', 'neutral', 'muted'] as const)[
+                index
+              ],
+            ),
           })),
           marks,
         },

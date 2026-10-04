@@ -782,7 +782,7 @@ export class CenterPanel {
 
   refresh(): void {
     if (this.state_abyssPrivate.get('mode') === 'statistics') {
-      this.statistics_abyssPrivate?.refresh();
+      this.statistics_abyssPrivate?.render(this.el);
       return;
     }
     if (this.refreshMountedProjects_abyssPrivate(this.state_abyssPrivate.get('mode'))) return;

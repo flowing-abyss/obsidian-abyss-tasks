@@ -9,7 +9,7 @@ import type { StatisticsScope, StatisticsViewModel } from '../src/statistics';
 import { StatisticsSession } from '../src/statistics/statisticsSession';
 import type { TaskStatisticsSnapshot, TaskStatisticsSource } from '../src/tasks';
 import { createAppWithFiles, deferred, expectDefined } from './helpers';
-import { date, source, task, utc } from './helpers/statisticsFixtures';
+import { date, request, source, task, utc, work } from './helpers/statisticsFixtures';
 const cleanups: Array<() => void> = [];
 afterEach(() => {
   cleanups.splice(0).forEach((fn) => {
@@ -361,6 +361,9 @@ it('prepares a yielding cached scope inventory, bounds native suggestions and di
   element.querySelector<HTMLButtonElement>('[aria-label="Scope"]')?.click();
   const picker = required(opened[0]);
   expect(await picker.getSuggestions('')).toHaveLength(50);
+  expect((await picker.getSuggestions('Entire vault')).map(([scope]) => scope)).toEqual([
+    { type: 'all' },
+  ]);
   const duplicate = await picker.getSuggestions('Same name');
   expect(duplicate.map((item) => item[1])).toEqual(['Same name · P0.md', 'Same name · P1.md']);
   const last = required((await picker.getSuggestions('P1199.md'))[0]);
@@ -770,4 +773,79 @@ it('discards a superseded cold scope, period and view request and installs only 
   expect(h.renderer.mount.mock.calls.length - mounts).toBe(
     expectDefined(current).sections.reduce((count, section) => count + section.charts.length, 0),
   );
+});
+it('refreshes an open scope picker when a new inventory is accepted, preserving its query', async () => {
+  const { StatisticsControls } = await import('../src/panels/statistics/StatisticsControls');
+  const { prepareStatisticsDataset } = await import('../src/statistics');
+  const opened: Array<InstanceType<typeof SuggestModal<ScopeOption>>> = [];
+  vi.spyOn(SuggestModal.prototype, 'open').mockImplementation(function (
+    this: InstanceType<typeof SuggestModal<ScopeOption>>,
+  ) {
+    opened.push(this);
+  });
+  const app = await createAppWithFiles({});
+  const controls = new StatisticsControls(app, vi.fn());
+  const host = document.body.createDiv();
+  const choices = request();
+  await controls.prepare(
+    expectDefined(await prepareStatisticsDataset(source([task('Old')]), [], work)),
+    work,
+  );
+  controls.render(host, choices);
+  expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Scope"]')).click();
+  const picker = expectDefined(opened[0]);
+  picker.inputEl.value = 'newly-created';
+  let shown: readonly ScopeOption[] = [];
+  picker.inputEl.addEventListener('input', () => {
+    shown = picker.getSuggestions(picker.inputEl.value) as ScopeOption[];
+  });
+  await controls.prepare(
+    expectDefined(
+      await prepareStatisticsDataset(source([task('New', { tags: ['newly-created'] })]), [], work),
+    ),
+    work,
+  );
+  expect(picker.inputEl.value).toBe('newly-created');
+  expect(shown.map(([scope]) => scope)).toEqual([{ type: 'tag', tag: 'newly-created' }]);
+  expect(opened).toHaveLength(1);
+  controls.destroy();
+});
+it('retains the focused family, view, period and grouping controls across accepted navigation', async () => {
+  const { StatisticsControls } = await import('../src/panels/statistics/StatisticsControls');
+  const app = await createAppWithFiles({});
+  const host = document.body.createDiv();
+  let choices: StatisticsChoices = {
+    view: 'rhythm',
+    period: 'week',
+    scope: { type: 'all' },
+    group: 'project',
+  };
+  const controls = new StatisticsControls(app, (next) => {
+    choices = { ...choices, ...next };
+    controls.render(host, choices);
+  });
+  controls.render(host, choices);
+  for (const selector of [
+    '[data-statistics-view="completion"]',
+    '[data-statistics-family="Time"]',
+    'select[aria-label="Period"]',
+    'select[aria-label="Group by"]',
+  ]) {
+    const control = host.querySelector<HTMLElement>(selector);
+    if (control === null) throw new Error(`Missing control ${selector}`);
+    control.focus();
+    if (control.tagName === 'SELECT') {
+      (control as HTMLSelectElement).value = selector.includes('Period') ? 'month' : 'tag';
+      control.dispatchEvent(new Event('change'));
+    } else control.click();
+    expect(document.activeElement).toBe(host.querySelector(selector));
+    expect(control.isConnected).toBe(false);
+  }
+  const outside = document.body.createEl('button');
+  outside.focus();
+  controls.render(host, choices);
+  expect(document.activeElement).toBe(outside);
+  controls.destroy();
+  host.remove();
+  outside.remove();
 });

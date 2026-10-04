@@ -66,7 +66,16 @@ async function sessionChart(
 ): Promise<StatisticsChartModel> {
   const edges = [0, 5, 15, 30, 60, 120, 240, Infinity],
     bins = edges.map(() => [] as number[]),
-    labels = ['0', '(0, 5]', '(5, 15]', '(15, 30]', '(30, 60]', '(60, 120]', '(120, 240]', '>240'];
+    labels = [
+      '0',
+      'Up to 5',
+      'Over 5–15',
+      'Over 15–30',
+      'Over 30–60',
+      'Over 60–120',
+      'Over 120–240',
+      'Over 240',
+    ];
   for (const item of entries) {
     required(bins[edges.findIndex((edge) => item.minutes <= edge)]).push(item.entry);
     await ctx.budget.step();
@@ -76,18 +85,24 @@ async function sessionChart(
     accessibleLabel: 'Full closed-session length distribution',
     kind: 'bars',
     x: bands('Minutes', labels),
-    y: numeric('Entries', Math.max(0, ...bins.map((bin) => bin.length))),
+    y: numeric('Entries', Math.max(0, ...bins.map((bin) => bin.length)), 0, 'count'),
     series: [],
     marks: bins.map((bin, i) => ({
       key: `session-bin:${i}`,
       x: required(labels[i]),
       label: `${required(labels[i])} minutes`,
+      detail: sessionRange(edges, i),
       y: bin.length,
       selectionId: ctx.evidence.rows(`session-bin:${i}`, bin.length, (index) =>
         ctx.evidence.entryRow(required(ctx.dataset.entries[required(bin[index])])),
       ),
     })),
   };
+}
+function sessionRange(edges: readonly number[], index: number): string {
+  if (index === 0) return 'Exactly zero minutes';
+  const upper = edges[index] === Infinity ? '' : `; at most ${required(edges[index])} minutes`;
+  return `More than ${required(edges[index - 1])} minutes${upper}`;
 }
 async function changesSection(ctx: StatisticsContext): Promise<StatisticsSection> {
   const transitions = await ownerTransitions(ctx.dataset, ctx.request, ctx.calendar, ctx.budget);

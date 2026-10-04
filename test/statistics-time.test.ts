@@ -506,13 +506,13 @@ it('gives repeated owner transitions distinct occurrence identities and event in
   expect(view.sections[0]?.charts[0]?.x).toMatchObject({
     categories: [
       '0',
-      '(0, 5]',
-      '(5, 15]',
-      '(15, 30]',
-      '(30, 60]',
-      '(60, 120]',
-      '(120, 240]',
-      '>240',
+      'Up to 5',
+      'Over 5–15',
+      'Over 15–30',
+      'Over 30–60',
+      'Over 60–120',
+      'Over 120–240',
+      'Over 240',
     ],
   });
 });

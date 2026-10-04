@@ -397,6 +397,7 @@ export async function timeline(
           ),
           ...model.days.map((lane, i) =>
             metric(`day:${i}`, dateOf(lane.day), required(model.dayTotals[i]), {
+              role: 'coverage',
               unit: 'minutes',
               selectionId: model.selection(`day-time:${i}`, [[lane.start, lane.end]]),
             }),

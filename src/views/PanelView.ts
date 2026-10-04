@@ -739,6 +739,7 @@ export class PanelView extends ItemView {
     this.bindPanelShortcuts_abyssPrivate();
     this.shortcutMigrationCleanup_abyssPrivate = this.contentEl.onWindowMigrated(() => {
       this.bindPanelShortcuts_abyssPrivate();
+      if (this.state_abyssPrivate.get('mode') === 'statistics') this.center_abyssPrivate.refresh();
     });
   }
 

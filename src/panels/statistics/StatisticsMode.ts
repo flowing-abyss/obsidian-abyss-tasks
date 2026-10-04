@@ -106,15 +106,16 @@ export class StatisticsMode {
     this.root_abyssPrivate = host.createDiv({ cls: 'abyss-statistics' });
     this.root_abyssPrivate.scrollTop = this.scrollTop_abyssPrivate;
     const header = this.root_abyssPrivate.createDiv({ cls: 'abyss-center-header' });
-    const title = header.createEl('h2', { text: 'Statistics' });
-    const headerControls = header.createDiv({ cls: 'abyss-center-controls' });
+    const title = header.createEl('h2', { text: 'Statistics' }),
+      headerControls = header.createDiv({ cls: 'abyss-center-controls' });
     this.options_abyssPrivate.host.header?.(header, title, headerControls);
     this.controlsHost_abyssPrivate = this.root_abyssPrivate.createDiv();
-    this.label_abyssPrivate = this.root_abyssPrivate.createDiv({ cls: 'abyss-statistics-context' });
+    const context = this.root_abyssPrivate.createDiv({ cls: 'abyss-statistics-context-row' });
+    this.label_abyssPrivate = context.createDiv({ cls: 'abyss-statistics-context' });
     this.status_abyssPrivate = this.root_abyssPrivate.createDiv({
       attr: { role: 'status', 'aria-live': 'polite' },
     });
-    this.actions_abyssPrivate = this.root_abyssPrivate.createDiv({
+    this.actions_abyssPrivate = context.createDiv({
       cls: 'abyss-statistics-actions',
     });
     this.content_abyssPrivate = this.root_abyssPrivate.createDiv();

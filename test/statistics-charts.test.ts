@@ -178,7 +178,9 @@ describe('Statistics chart adapter', () => {
     key(chart.svg(), 'ArrowRight');
     key(chart.svg(), ' ');
     expect(chart.select).toHaveBeenLastCalledWith('created');
-    expect(chart.svg().getAttribute('aria-label')).toBe('Recorded events');
+    expect(el.getAttribute('aria-label')).toBe('Recorded events');
+    expect(el.getAttribute('role')).toBe('group');
+    expect(chart.svg().getAttribute('aria-label')).toBe('');
   });
   it('shares cumulative domains without stacking and preserves nonselectable zero origins', () => {
     const el = host();
@@ -747,4 +749,355 @@ it('renders typed horizontal stacks, supplied cell text and fixed percent intens
   expect(heat.textContent).toContain('…');
   const measured = marks(heat).find((mark) => mark.getAttribute('fill')?.includes('20%') === true);
   expect(measured).toBeDefined();
+});
+
+it.each([640, 240])(
+  'paints horizontal stack endpoints against the actual scale at %ipx',
+  (width) => {
+    const el = host(document, width);
+    mount(
+      el,
+      model({
+        layout: 'stacked',
+        x: { type: 'number', label: 'Tasks', unit: 'count', domain: [0, 3] },
+        y: { type: 'band', label: '', categories: ['A', 'B'] },
+        marks: [
+          { key: 'before', x: 0, x2: 1, y: 'A', series: 'created', selectionId: 'before' },
+          { key: 'new', x: 1, x2: 3, y: 'A', series: 'completed', selectionId: 'new' },
+          { key: 'b', x: 0, x2: 2, y: 'B', series: 'completed', selectionId: 'b' },
+        ],
+      }),
+    );
+    const clip = required(el.querySelector('clipPath rect'));
+    const [before, fresh, b] = marks(el).map((element) => ({
+      x: n(element, 'x'),
+      width: n(element, 'width'),
+    }));
+    expect(required(before).x).toBeCloseTo(n(clip, 'x'));
+    expect(required(before).width).toBeCloseTo(n(clip, 'width') / 3);
+    expect(required(fresh).x).toBeCloseTo(n(clip, 'x') + n(clip, 'width') / 3);
+    expect(required(fresh).width).toBeCloseTo((n(clip, 'width') * 2) / 3);
+    expect(required(b).width).toBeCloseTo((n(clip, 'width') * 2) / 3);
+    const ticks = [...el.querySelectorAll('.ts-chart__axis text')].map((text) => text.textContent);
+    expect(ticks.some((tick) => /^\d+\.\d/.test(tick))).toBe(false);
+  },
+);
+it.each([640, 240])(
+  'keeps full scatter extents visible at zero and maximum coordinates at %ipx',
+  (width) => {
+    const el = host(document, width);
+    const chart = mount(
+      el,
+      model({
+        kind: 'scatter',
+        layout: undefined,
+        x: { type: 'number', label: 'Age', domain: [0, 45] },
+        y: { type: 'number', label: 'Recorded time', domain: [0, 450], unit: 'minutes' },
+        series: [],
+        marks: [
+          { key: 'zero', x: 0, y: 0, weight: 100000, selectionId: 'zero' },
+          { key: 'max', x: 45, y: 450, weight: 2, selectionId: 'max' },
+          { key: 'edge', x: 45, y: 0, selectionId: 'edge' },
+        ],
+      }),
+    );
+    for (const circle of marks(el, 'circle')) {
+      const r = n(circle, 'r') + n(circle, 'stroke-width') / 2;
+      expectVisible(
+        circle,
+        {
+          left: n(circle, 'cx') - r,
+          top: n(circle, 'cy') - r,
+          right: n(circle, 'cx') + r,
+          bottom: n(circle, 'cy') + r,
+        },
+        chart.svg(),
+      );
+    }
+    const axisTitle = required(
+      [...el.querySelectorAll('text')].find((node) => node.textContent === 'Recorded time'),
+    );
+    // The rotated label's transverse ink is bounded conservatively by one font em.
+    expect(n(axisTitle, 'x') - n(axisTitle, 'font-size')).toBeGreaterThanOrEqual(0);
+    key(chart.svg(), 'End');
+    key(chart.svg(), 'Enter');
+    expect(chart.select).toHaveBeenCalledWith('edge');
+  },
+);
+it('shows overlapping timeline intervals in separate subrows without changing clock positions', () => {
+  const el = host();
+  mount(
+    el,
+    model({
+      kind: 'timeline',
+      layout: undefined,
+      x: { type: 'number', label: 'Clock', domain: [0, 1440] },
+      y: { type: 'band', label: 'Day', categories: ['Mon', 'Tue'] },
+      series: [],
+      marks: [
+        { key: 'a', x: 480, x2: 600, y: 'Mon', selectionId: 'a' },
+        { key: 'b', x: 480, x2: 540, y: 'Mon', selectionId: 'b' },
+        { key: 'c', x: 540, x2: 600, y: 'Mon', selectionId: 'c' },
+        { key: 'd', x: 480, x2: 600, y: 'Tue', selectionId: 'd' },
+      ],
+    }),
+  );
+  const [a, b, c, d] = marks(el).map((element) => ({
+    x: n(element, 'x'),
+    y: n(element, 'y'),
+    h: n(element, 'height'),
+    w: n(element, 'width'),
+  }));
+  expect(required(a).x).toBe(required(b).x);
+  expect(required(a).x).toBe(required(d).x);
+  expect(required(b).w).toBeCloseTo(required(a).w / 2);
+  expect(required(a).y + required(a).h).toBeLessThanOrEqual(required(b).y);
+  expect(required(c).y).toBe(required(b).y);
+});
+it('relayouts horizontal stacks with their axes when the host grows after initial mounting', () => {
+  let resized: ResizeObserverCallback | undefined;
+  class Observer {
+    constructor(callback: ResizeObserverCallback) {
+      resized = callback;
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  vi.stubGlobal('ResizeObserver', Observer);
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    callback(0);
+    return 1;
+  });
+  const el = host(document, 320);
+  mount(
+    el,
+    model({
+      layout: 'stacked',
+      x: { type: 'number', label: 'Tasks', domain: [0, 3] },
+      y: { type: 'band', label: '', categories: ['A'] },
+      marks: [
+        { key: 'a', x: 0, x2: 1, y: 'A', series: 'created' },
+        { key: 'b', x: 1, x2: 3, y: 'A', series: 'completed' },
+      ],
+    }),
+  );
+  resized?.(
+    [
+      {
+        target: el,
+        contentRect: { ...el.getBoundingClientRect(), width: 1640 },
+        contentBoxSize: [{ inlineSize: 1640, blockSize: 76 }],
+        borderBoxSize: [],
+        devicePixelContentBoxSize: [],
+      },
+    ],
+    {} as ResizeObserver,
+  );
+  const clip = required(el.querySelector('clipPath rect'));
+  expect(n(required(marks(el)[1]), 'width')).toBeCloseTo((n(clip, 'width') * 2) / 3);
+});
+it('namespaces plot clipping across concurrently mounted facets and plugin leaves', () => {
+  const hosts = [host(document, 240), host(document, 640), host(document, 320)];
+  for (const el of hosts) mount(el);
+  const ids = hosts.map((el) => required(el.querySelector('clipPath')).id);
+  expect(new Set(ids).size).toBe(3);
+  for (const [i, el] of hosts.entries()) {
+    const group = required(el.querySelector('[clip-path]'));
+    expect(group.getAttribute('clip-path')).toBe(`url(#${ids[i]})`);
+    expect(document.getElementById(required(ids[i]))?.closest('svg')).toBe(el.querySelector('svg'));
+  }
+});
+it('uses actual integer count ticks without rounding fractional positions into duplicate labels', () => {
+  const el = host();
+  mount(
+    el,
+    model({
+      x: { type: 'band', label: '', categories: ['A'] },
+      y: { type: 'number', label: 'Tasks', domain: [0, 2], unit: 'count' },
+      marks: [{ key: 'a', x: 'A', y: 2 }],
+      series: [],
+      layout: undefined,
+    }),
+  );
+  const labels = [...el.querySelectorAll('text')].map((text) => text.textContent);
+  expect(labels.some((label) => label.includes('0.5') || label.includes('1.5'))).toBe(false);
+  expect(labels).toContain('1');
+});
+it('bounds mounted charts and releases observers and listeners after thirty view switches', () => {
+  const active = new Set<object>();
+  class Observer {
+    observe() {
+      active.add(this);
+    }
+    unobserve() {
+      active.delete(this);
+    }
+    disconnect() {
+      active.delete(this);
+    }
+  }
+  vi.stubGlobal('ResizeObserver', Observer);
+  const added = vi.spyOn(HTMLElement.prototype, 'addEventListener'),
+    removed = vi.spyOn(HTMLElement.prototype, 'removeEventListener');
+  const el = host(),
+    owner = new StatisticsCharts(el, new TanStackStatisticsChart(), vi.fn());
+  mounts.push(owner);
+  for (let i = 0; i < 30; i++) {
+    owner.update([model({ id: `view:${i % 11}` })]);
+    expect(el.querySelectorAll('svg')).toHaveLength(1);
+    expect(active.size).toBe(1);
+  }
+  owner.destroy();
+  expect(el.querySelector('svg')).toBeNull();
+  expect(active.size).toBe(0);
+  for (const [index, [type, listener]] of added.mock.calls.entries()) {
+    const target = added.mock.contexts[index];
+    expect(
+      removed.mock.calls.some(
+        ([removedType, removedListener], i) =>
+          removedType === type &&
+          removedListener === listener &&
+          removed.mock.contexts[i] === target,
+      ),
+    ).toBe(true);
+  }
+});
+it('keeps positive rank geometry with long human labels at constrained width', () => {
+  const el = host(document, 300);
+  const titles = [0, 1, 2].map((i) => `${i} ${'long dependency boundary title '.repeat(3)}`);
+  mount(
+    el,
+    model({
+      x: {
+        type: 'band',
+        label: 'Prerequisite',
+        categories: ['a', 'b', 'c'],
+        tickLabels: titles.map((label, i) => [String.fromCharCode(97 + i), label]),
+      },
+      y: { type: 'number', label: 'Direct waiting dependents', domain: [0, 100], unit: 'count' },
+      series: [],
+      layout: undefined,
+      marks: titles.map((label, i) => ({
+        key: `node:${i}`,
+        x: String.fromCharCode(97 + i),
+        y: 100 - i,
+        label,
+        selectionId: `select:${i}`,
+      })),
+    }),
+  );
+  expect(n(required(el.querySelector('clipPath rect')), 'width')).toBeGreaterThan(160);
+  for (const mark of marks(el)) expect(n(mark, 'width')).toBeGreaterThan(20);
+  const ticks = [...el.querySelectorAll('text')].filter((node) => /^\d /.test(node.textContent));
+  expect(ticks.length).toBeGreaterThan(0);
+  expect(ticks.every((node) => node.textContent.length <= 12)).toBe(true);
+});
+it('bounds dense graph height while preserving every selectable node and the focus label', () => {
+  const el = host(document, 300);
+  mount(
+    el,
+    model({
+      kind: 'network',
+      x: { type: 'number', label: '', domain: [0, 1] },
+      y: { type: 'number', label: '', domain: [0, 79] },
+      series: [
+        { key: 'focus', label: 'Selected', tone: 'accent' },
+        { key: 'scope', label: 'Other', tone: 'neutral' },
+      ],
+      marks: Array.from({ length: 80 }, (_, i) => ({
+        key: `n${i}`,
+        x: i === 0 ? 0 : 1,
+        y: i === 0 ? 39 : i,
+        label: `Readable task ${i}`,
+        series: i === 0 ? 'focus' : 'scope',
+        selectionId: `select:${i}`,
+      })),
+      edges: Array.from({ length: 79 }, (_, i) => ({ from: 'n0', to: `n${i + 1}` })),
+    }),
+  );
+  expect(
+    Number(required(el.querySelector('svg')?.getAttribute('viewBox')).split(' ')[3]),
+  ).toBeLessThanOrEqual(640);
+  expect(marks(el, 'circle')).toHaveLength(80);
+  expect(marks(el, 'text')).toHaveLength(1);
+  expect(required(marks(el, 'text')[0]).textContent).toContain('0');
+});
+it('keeps exact date and clock labels with positive Timeline geometry at the narrow viewport minimum', () => {
+  const el = host(document, 240);
+  mount(
+    el,
+    model({
+      kind: 'timeline',
+      layout: undefined,
+      series: [],
+      x: {
+        type: 'number',
+        label: 'Time of day',
+        domain: [0, 1440],
+        tickLabels: [
+          [0, '00:00'],
+          [720, '12:00'],
+          [1440, '24:00'],
+        ],
+      },
+      y: {
+        type: 'band',
+        label: 'Local day',
+        categories: ['2026-09-28', '2026-09-29'],
+        tickLabels: [
+          ['2026-09-28', '2026-09-28 · 495 min'],
+          ['2026-09-29', '2026-09-29 · 0 min'],
+        ],
+      },
+      marks: [{ key: 'interval', x: 480, x2: 975, y: '2026-09-28', selectionId: 'record' }],
+    }),
+  );
+  const clip = required(el.querySelector('clipPath rect'));
+  expect(n(clip, 'width')).toBeGreaterThan(40);
+  expect(n(clip, 'x') + n(clip, 'width')).toBeLessThanOrEqual(240);
+  expect([...el.querySelectorAll('text')].map((node) => node.textContent)).toContain(
+    '2026-09-28 · 495 min',
+  );
+  const interval = required(marks(el)[0]);
+  expect(n(interval, 'width')).toBeCloseTo((n(clip, 'width') * 495) / 1440);
+});
+it.each([
+  [
+    '2026-09-28',
+    '2026-09-29',
+    '2026-09-30',
+    '2026-10-01',
+    '2026-10-02',
+    '2026-10-03',
+    '2026-10-04',
+  ],
+  [
+    '7+ days early',
+    '1–6 days early',
+    'On due date',
+    '1 day late',
+    '2–3 days late',
+    '4–7 days late',
+    '8–30 days late',
+    '31+ days late',
+  ],
+])('preserves meaningful compact axis labels beginning with %s at240px', (...categories) => {
+  const el = host(document, 240);
+  mount(
+    el,
+    model({
+      x: { type: 'band', label: '', categories },
+      y: { type: 'number', label: 'Tasks', domain: [0, 2], unit: 'count' },
+      series: [],
+      layout: undefined,
+      marks: categories.map((label, i) => ({ key: String(i), x: label, y: 1 })),
+    }),
+  );
+  const labels = [...el.querySelectorAll('text')]
+    .map((node) => node.textContent)
+    .filter((label) => categories.includes(label));
+  expect(labels).toContain(categories[0]);
+  expect(labels.length).toBeLessThan(categories.length);
+  expect(labels.length).toBeGreaterThan(1);
 });

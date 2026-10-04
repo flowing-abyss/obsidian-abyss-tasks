@@ -85,6 +85,9 @@ export function numeric(
 ): Extract<StatisticsAxis, { type: 'number' }> {
   return { type: 'number', label, domain: [min, Math.max(min + 1, max)], unit };
 }
-export function bands(label: string, categories: readonly string[]): StatisticsAxis {
+export function bands(
+  label: string,
+  categories: readonly string[],
+): Extract<StatisticsAxis, { type: 'band' }> {
   return { type: 'band', label, categories };
 }

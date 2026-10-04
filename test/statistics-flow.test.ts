@@ -303,3 +303,23 @@ it('separates current outcomes of new tasks from event totals in a three-part co
     ),
   ).toEqual(['Open', 'Done', 'Cancelled']);
 });
+it('keeps event/new-cohort/current populations together and deadline outcome paints distinct', async () => {
+  const { statisticsSeriesPaint } = await import('../src/panels/statistics/statisticsFormat');
+  const ds = required(
+    await prepareStatisticsDataset(
+      source([task('New', { planning: { created: date('2026-10-01'), due: date('2026-10-03') } })]),
+      [],
+      work,
+    ),
+  );
+  const session = new StatisticsSession(ds);
+  const rhythm = required(await session.view(request(), work));
+  expect(rhythm.sections.map((s) => s.id)).toEqual(['events', 'new-outcomes', 'current']);
+  expect(rhythm.sections[0]?.metrics.some((m) => m.id === 'open-now')).toBe(false);
+  expect(rhythm.sections[2]?.metrics.find((m) => m.id === 'open-now')?.value).toBe(1);
+  const deadlines = required(await session.view(request({ view: 'deadlines' }), work));
+  const outcomes = required(deadlines.sections[0]?.charts[0]);
+  expect(
+    new Set(outcomes.series.map((series) => statisticsSeriesPaint(series, outcomes.series))).size,
+  ).toBe(6);
+});

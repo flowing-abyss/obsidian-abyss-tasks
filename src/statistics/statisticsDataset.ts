@@ -16,8 +16,8 @@ import type {
   StatisticsWork,
 } from './types';
 export const NO_PROJECT = 'unassigned';
-export const ARCHIVE_PROJECT = 'archive:unknown';
-export function projectKey(path: string): string {
+const ARCHIVE_PROJECT = 'archive:unknown';
+function projectKey(path: string): string {
   return `project:${path}`;
 }
 function verified(
@@ -31,7 +31,7 @@ function verified(
     return undefined;
   }
 }
-export function validInstant(ms: number | undefined): ms is number {
+function validInstant(ms: number | undefined): ms is number {
   return ms !== undefined && Number.isFinite(ms) && ms >= -62167219200000 && ms < 253402300800000;
 }
 type SourceFile = TaskStatisticsSnapshot['files'][number];

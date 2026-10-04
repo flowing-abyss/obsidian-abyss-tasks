@@ -175,7 +175,9 @@ already accepted flush tickets, including signature-unchanged work and teardown.
 ### Native Statistics workflow
 
 [`StatisticsMode`](src/panels/statistics/StatisticsMode.ts) is retained by CenterPanel and acquires
-source/project subscriptions only while visible. The main composition supplies the optional source
+source/project subscriptions only while visible. PanelView’s existing `onWindowMigrated`
+subscription routes through CenterPanel’s retained Statistics render boundary, which detects owner
+document changes and releases/remounts charts, subscriptions and scheduled work. The main composition supplies the optional source
 capability; the rail exposes Statistics only with that capability. Navigation uses the existing
 project-editor completion boundary. Scope, period, view, week, group and focus remain session state.
 Statistics uses the native right inspector overlay at every width, initially closed; Tasks retains
@@ -197,7 +199,12 @@ at most50 suggestions while retaining every project path and tag; duplicate name
 commits only after all mounts succeed, preserving coherent last-good graphs and labels on background
 failure. Requested contexts show loading/error state. The mode owns diagnostic logging and retry.
 Shared legends/intensity keys use the same semantic paint as the adapter; explanatory context and
-scope eligibility stay in accessible disclosure controls.
+scope eligibility stay in accessible disclosure controls. Each chart mount supplies a stable unique
+engine resource prefix so SVG clip paths cannot collide across facets or leaves. Accessible chart
+names live on HTML wrappers: nonempty SVG `aria-label` triggers Obsidian’s HTML-only tooltip path.
+Bounded Timeline intervals are packed into clock-aligned subrows; dependency layout follows actual
+adjacency with distinct sibling rows and vertical long chains. These display coordinates never alter
+source identities, durations, graph counts or evidence authority.
 
 [`StatisticsEvidence`](src/panels/statistics/StatisticsEvidence.ts) pages50 physical records, renders
 the existing live root card once, and offers exact matched-child selection with shown-record counts.
@@ -259,7 +266,8 @@ propagate to the owning mode.
 section, updates surviving charts, destroys removed charts, and omits charts with no marks. Suspend
 releases hosts while retaining the models; resume remounts when visibility or owner document changes.
 Each host belongs to its own document/window and delegates responsive layout and disposal to the
-engine. Facet headings are chart-owned; section headings and legends belong to the mode.
+engine. Below 240px available chart width, the figure provides a native horizontal scroll viewport
+over a 240px chart; controls continue wrapping within the host width. Facet headings are chart-owned; section headings and legends belong to the mode.
 
 [`statisticsFormat`](src/panels/statistics/statisticsFormat.ts) is an engine-free presentation helper
 shared by charts and mode legends. Fixed event tones use semantic host colors, recurring series

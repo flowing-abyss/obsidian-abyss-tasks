@@ -40,10 +40,10 @@ export function dayOf(date: LocalDate): number {
 export function dateOf(day: number): LocalDate {
   return localDate(new Date(day * DAY).toISOString().slice(0, 10));
 }
-export function localDay(ms: number, offsetAt: OffsetAt): number {
+function localDay(ms: number, offsetAt: OffsetAt): number {
   return Math.floor((ms + offsetAt(ms) * 60000) / DAY);
 }
-export function weekDay(day: number): number {
+function weekDay(day: number): number {
   return (((day + 4) % 7) + 7) % 7;
 }
 export function weekFloor(day: number, first: number): number {
