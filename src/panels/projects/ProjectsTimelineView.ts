@@ -305,6 +305,7 @@ export class ProjectsTimelineView<
   private layoutSignature_abyssPrivate = '';
   private readonly rowOrder_abyssPrivate = new Map<string, number>();
   private readonly modelRows_abyssPrivate = new Map<string, ProjectTimelineRow>();
+  private readonly rowGroups_abyssPrivate = new Map<string, string>();
   private readonly modelGroups_abyssPrivate = new Map<string, ProjectTimelineGroup>();
   private visibleCells_abyssPrivate: TCell[] = [];
   private cells_abyssPrivate: ProjectOverviewCells = NO_PROJECT_OVERVIEW_CELLS;
@@ -537,12 +538,9 @@ export class ProjectsTimelineView<
   }
 
   visibleRow(occurrenceId: string): ProjectTimelineRow | undefined {
-    for (const group of this.model_abyssPrivate?.groups ?? []) {
-      if (this.isGroupCollapsed_abyssPrivate(group.key)) continue;
-      const row = group.rows.find((candidate) => candidate.occurrenceId === occurrenceId);
-      if (row !== undefined) return row;
-    }
-    return undefined;
+    const groupKey = this.rowGroups_abyssPrivate.get(occurrenceId);
+    if (groupKey === undefined || this.isGroupCollapsed_abyssPrivate(groupKey)) return undefined;
+    return this.modelRows_abyssPrivate.get(occurrenceId);
   }
 
   syncSelectedProjectPath(path: string | undefined): void {
@@ -838,12 +836,14 @@ export class ProjectsTimelineView<
         (this.rowOrder_abyssPrivate.get(left) ?? 0) - (this.rowOrder_abyssPrivate.get(right) ?? 0),
     );
     this.modelRows_abyssPrivate.clear();
+    this.rowGroups_abyssPrivate.clear();
     this.modelGroups_abyssPrivate.clear();
     this.rowOrder_abyssPrivate.clear();
     for (const group of model.groups) {
       this.modelGroups_abyssPrivate.set(group.key, group);
       for (const row of group.rows) {
         this.modelRows_abyssPrivate.set(row.occurrenceId, row);
+        this.rowGroups_abyssPrivate.set(row.occurrenceId, group.key);
         this.rowOrder_abyssPrivate.set(row.occurrenceId, this.rowOrder_abyssPrivate.size);
       }
     }

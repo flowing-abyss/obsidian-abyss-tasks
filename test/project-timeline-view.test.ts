@@ -8,6 +8,7 @@ import {
 import type { ProjectEditResult } from '../src/projects/projectEdits';
 import type { ProjectColumn, ProjectFieldCatalogItem } from '../src/projects/projectFields';
 import { buildDefaultProjectTableSettings } from '../src/projects/projectTableSettings';
+import type { ProjectTimelineModel } from '../src/projects/projectTimelineModel';
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -1369,6 +1370,54 @@ it('windows 1100 logical rows and mounts an offscreen requested cell with its ro
     view.renderedCells().some((cell) => cell.identity.projectPath === 'Projects/P1099.md'),
   ).toBe(true);
   expect(view.scroll.scrollTop).toBeGreaterThan(50_000);
+});
+
+it('bounds occurrence lookup work when native scrolling mounts fresh Timeline rows', () => {
+  const frames = controlledFrames();
+  const currentView: { current?: ProjectsTimelineView<Cell> } = {};
+  let captures = 0;
+  const f = mount(
+    Array.from({ length: 1100 }, (_, index) =>
+      project(`Projects/P${String(index).padStart(4, '0')}.md`, '2026-09-01'),
+    ),
+    undefined,
+    undefined,
+    {
+      captureRangeSource: (occurrenceId) => {
+        if (currentView.current !== undefined) {
+          expect(currentView.current.visibleRow(occurrenceId)).toBeDefined();
+          captures++;
+        }
+        return { kind: 'rejected', reason: 'Test capture unavailable' };
+      },
+    },
+  );
+  currentView.current = f.view;
+  const model = expectDefined(
+    (f.view as unknown as { model_abyssPrivate?: ProjectTimelineModel }).model_abyssPrivate,
+  );
+  let occurrenceReads = 0;
+  for (const group of model.groups) {
+    for (const row of group.rows) {
+      const occurrenceId = row.occurrenceId;
+      Object.defineProperty(row, 'occurrenceId', {
+        configurable: true,
+        get: () => {
+          occurrenceReads++;
+          return occurrenceId;
+        },
+      });
+    }
+  }
+  f.view.scroll.scrollTop = 109_000;
+  f.view.scroll.dispatchEvent(new Event('scroll'));
+  frames.run();
+  expect(captures).toBeGreaterThan(0);
+  expect(captures).toBeLessThan(30);
+  expect(f.view.renderedCells().some((cell) => cell.project.path === 'Projects/P1090.md')).toBe(
+    true,
+  );
+  expect(occurrenceReads).toBeLessThan(200);
 });
 
 function controlledFrames() {
