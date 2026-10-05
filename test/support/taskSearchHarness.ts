@@ -12,6 +12,7 @@ import type {
   TaskSearchSourceEvent,
   TaskSearchSourceState,
 } from '../../src/tasks/application/TaskSearchSource';
+import type { Clock } from '../../src/tasks/domain/clock';
 import {
   fallbackSearchWords,
   type SearchWordSegmenter,
@@ -202,10 +203,14 @@ export async function createCanonicalSearchHarness(
   files: Record<string, string>,
   settings: CalendarSettings,
   initialize = true,
-  segment: SearchWordSegmenter = fallbackSearchWords,
+  ...options: [segment?: SearchWordSegmenter, clock?: Clock]
 ) {
+  const [segment = fallbackSearchWords, clock] = options;
   const app = await createAppWithFiles(files);
-  const parts = configuredTaskApplication(app, settings, { authority: true });
+  const parts = configuredTaskApplication(app, settings, {
+    authority: true,
+    ...(clock === undefined ? {} : { clock }),
+  });
   if (initialize) {
     await parts.index.initialize();
     for (const [path, text] of Object.entries(files))

@@ -143,7 +143,25 @@ export function localSearchEventIsOwned(
   if (path.includes(owner)) return true;
   if (origin === 'dom') return false;
   if (event.target === null && owner.contains(active)) return true;
+  if (scopeOwnsFocusedTarget(event, owner, path)) return true;
   return neutral && neutralDocumentFocus(active, doc) && neutralDocumentFocus(event.target, doc);
+}
+
+function scopeOwnsFocusedTarget(
+  event: KeyboardEvent,
+  owner: HTMLElement,
+  path: readonly EventTarget[],
+): boolean {
+  const doc = owner.ownerDocument;
+  const active = doc.activeElement;
+  // Native popout Scope forwarding can retain only the focused target in its path.
+  return (
+    event.target === active &&
+    active?.ownerDocument === doc &&
+    owner.contains(active) &&
+    path.length === 1 &&
+    path[0] === active
+  );
 }
 
 function localSearchDocumentOwnsFocus(event: KeyboardEvent, owner: HTMLElement): boolean {

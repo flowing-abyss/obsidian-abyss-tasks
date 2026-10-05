@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { SubtaskSnapshot, TaskSnapshot } from '../src/tasks';
 import * as contextModule from '../src/tasks';
+import { clockFrom } from '../src/tasks/domain/clock';
 import { LinkEditModal } from '../src/ui/LinkEditModal';
 import { deferred, expectDefined, loadPluginStyles, useRealMoment } from './helpers';
 import { taskCardMountBound } from './support/taskPanelViewport';
@@ -982,8 +983,19 @@ it('renders duplicate semantic text per exact descendant and preserves it across
 it.each(['toggle', 'status', 'priority'] as const)(
   'executes deepest repeated child %s through the shared commands and preserves all other bytes',
   async (action) => {
+    // Negative control: advance the host date without freezing real scheduling.
+    const hostNow = Date.now.bind(Date);
+    const hostOffset = Date.UTC(2035, 0, 2, 12) - hostNow();
+    vi.spyOn(Date, 'now').mockImplementation(() => hostNow() + hostOffset);
     const source = '- [ ] root\n  - [ ] repeated\n    - [ ] needle\n  - [ ] needle';
-    const h = await mountCanonicalSearchUi({ 'a.md': source }, structuredClone(DEFAULT_SETTINGS));
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': source },
+      structuredClone(DEFAULT_SETTINGS),
+      'search',
+      undefined,
+      false,
+      clockFrom(Date.UTC(2026, 9, 5, 12), 0),
+    );
     try {
       h.query('needle');
       await h.completed();

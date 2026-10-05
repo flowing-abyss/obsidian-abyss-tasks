@@ -6,6 +6,7 @@ import { nativeInteractionBlocksPanelShortcuts } from '../src/ui/nativeInteracti
 import { PanelShortcutRouter } from '../src/ui/panelShortcutRouter';
 import type { PanelNavigationActions } from '../src/views/panelNavigation';
 import { expectDefined, methodOf } from './helpers';
+import { scopeKeyboardEvent } from './support/scopeKeyboardEvent';
 
 function navigationActions(): PanelNavigationActions {
   return {
@@ -623,6 +624,106 @@ describe('owned local Find and Escape', () => {
     },
   );
 });
+
+it.each(['ctrl', 'meta'] as const)(
+  'routes focused-target-only Scope transport with %s through the current adopted owner',
+  (primary) => {
+    const h = harness();
+    h.router.destroy();
+    h.panel.tabIndex = -1;
+    const input = h.panel.createEl('input');
+    input.value = 'preserved';
+    const router = new PanelShortcutRouter({
+      ownerDocument: document,
+      ownerElement: h.panel,
+      isActive: () => h.panel.hidden !== true,
+      settings: () => h.settings,
+      platform: { mod: primary },
+      actions: h.actions,
+      registry: h.registry,
+      nativeHostBlocks: h.nativeHostBlocks,
+      localSearchTarget: () => ({ input, owner: h.panel }),
+    });
+    liveRouters.push(router);
+    const frame = document.body.createEl('iframe');
+    mounted.push(frame);
+    const doc = expectDefined(frame.contentDocument);
+    doc.body.append(h.panel);
+    input.focus();
+    const find = {
+      key: 'f',
+      code: 'KeyF',
+      ctrlKey: primary === 'ctrl',
+      metaKey: primary === 'meta',
+    };
+    const event = () => scopeKeyboardEvent(input, find);
+    const accepted = event();
+    expect(accepted.target).toBe(doc.activeElement);
+    expect(accepted.composedPath()).toEqual([input]);
+    expect(accepted.isTrusted).toBe(false);
+    expect(router.routeLocalSearch(accepted, 'scope')).toBe(true);
+    expect(accepted.defaultPrevented).toBe(true);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 9]);
+    expect(router.routeLocalSearch(event(), 'dom')).toBe(false);
+    for (const extra of [
+      { altKey: true },
+      { shiftKey: true },
+      { ctrlKey: true, metaKey: true },
+      { ctrlKey: false, metaKey: false },
+      { ctrlKey: primary !== 'ctrl', metaKey: primary !== 'meta' },
+      { repeat: true },
+      { isComposing: true },
+      { keyCode: 229 },
+    ]) {
+      const rejected = scopeKeyboardEvent(input, { ...find, ...extra });
+      expect(router.routeLocalSearch(rejected, 'scope')).toBe(false);
+      expect(rejected.defaultPrevented).toBe(false);
+    }
+    const prevented = event();
+    prevented.preventDefault();
+    expect(router.routeLocalSearch(prevented, 'scope')).toBe(false);
+    const escape = scopeKeyboardEvent(input, { key: 'Escape' });
+    expect(router.routeLocalSearch(escape, 'scope')).toBe(true);
+    expect(doc.activeElement).toBe(h.panel);
+    expect(input.value).toBe('preserved');
+
+    input.focus();
+    const other = h.panel.createEl('button');
+    const oldInput = document.body.createEl('input');
+    mounted.push(oldInput);
+    for (const rejected of [
+      scopeKeyboardEvent(other, find),
+      scopeKeyboardEvent(input, find, [other]),
+      scopeKeyboardEvent(input, find, []),
+      scopeKeyboardEvent(oldInput, { ...find, view: doc.defaultView }),
+      scopeKeyboardEvent(input, { ...find, view: window }),
+    ]) {
+      expect(router.routeLocalSearch(rejected, 'scope')).toBe(false);
+      expect(rejected.defaultPrevented).toBe(false);
+    }
+    const foreign = document.body.createEl('input');
+    doc.body.append(foreign);
+    foreign.focus();
+    expect(router.routeLocalSearch(scopeKeyboardEvent(foreign, find), 'scope')).toBe(false);
+    expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+    input.focus();
+    h.nativeHostBlocks.mockReturnValue(true);
+    expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+    h.nativeHostBlocks.mockReturnValue(false);
+    const lease = h.registry.acquire({ blocksShortcuts: true });
+    expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+    lease.release();
+    h.panel.hidden = true;
+    expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+    h.panel.hidden = false;
+    h.panel.remove();
+    expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+    doc.body.append(h.panel);
+    input.focus();
+    router.destroy();
+    expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+  },
+);
 
 it('guards public scope routing live, permits neutral focus only for scope, and ignores broken navigation settings', () => {
   const h = harness();

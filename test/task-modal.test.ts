@@ -6,6 +6,7 @@ import { localDate, type CommentTimeContextProvider, type TaskApplicationApi } f
 import type { TaskRef } from '../src/tasks/domain/types';
 import type { InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import { expectDefined, task, taskQueryApi, testStatusRegistry } from './helpers';
+import { scopeKeyboardEvent } from './support/scopeKeyboardEvent';
 
 // vi.hoisted runs BEFORE vi.mock factory execution, avoiding TDZ.
 // The factory captures these refs by closure.
@@ -432,6 +433,37 @@ it('acquires the custom modal parent only after mount and retires children befor
   expect(push).toHaveBeenCalledTimes(2);
   expect(pop).toHaveBeenCalledTimes(2);
   vi.restoreAllMocks();
+});
+
+it('closes from focused-target Scope transport while deferring nested editors and foreign focus', () => {
+  const app = fakeApp();
+  const register = vi.spyOn(Scope.prototype, 'register');
+  const modal = new TaskModal({ app, statusRegistry: testStatusRegistry() });
+  modal.open(task());
+  const owner = expectDefined(document.querySelector<HTMLElement>('.abyss-modal'));
+  const callback = expectDefined(register.mock.calls[0])[2];
+  const context = { key: 'Escape', vkey: 'Escape', modifiers: '' };
+  const foreign = document.body.createEl('button');
+  try {
+    const editor = owner.createEl('input');
+    editor.focus();
+    const editorEscape = scopeKeyboardEvent(editor, { key: 'Escape' });
+    expect(callback(editorEscape, context)).toBeUndefined();
+    expect(editorEscape.defaultPrevented).toBe(false);
+    foreign.focus();
+    expect(callback(scopeKeyboardEvent(foreign, { key: 'Escape' }), context)).toBeUndefined();
+    const button = expectDefined(owner.querySelector('button'));
+    button.focus();
+    const event = scopeKeyboardEvent(button, { key: 'Escape' });
+    expect(callback(event, context)).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
+    expect(owner.isConnected).toBe(false);
+    expect(callback(scopeKeyboardEvent(button, { key: 'Escape' }), context)).toBeUndefined();
+  } finally {
+    modal.close();
+    foreign.remove();
+    vi.restoreAllMocks();
+  }
 });
 
 it('leaves no modal lease or mounted DOM after failed mount', () => {

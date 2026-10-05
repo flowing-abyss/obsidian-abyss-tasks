@@ -4,6 +4,7 @@ import { BrowserTaskCancelled, type BrowserTaskScheduler } from '../../src/brows
 import type { TaskSearchOptions } from '../../src/panels/center/TaskSearch';
 import { CenterPanel } from '../../src/panels/CenterPanel';
 import type { CalendarSettings } from '../../src/settings/types';
+import type { Clock } from '../../src/tasks/domain/clock';
 import { createSearchWordSegmenter } from '../../src/tasks/infrastructure/search/searchWordSegmenter';
 import { CreationPresentationController } from '../../src/ui/creation/CreationPresentationController';
 import { prepareTaskPanelViewport } from './taskPanelViewport';
@@ -64,10 +65,17 @@ export async function mountCanonicalSearchUi(
   ...presentation: [
     organizationScheduler?: TaskSearchOptions['organizationScheduler'],
     creationPresentation?: boolean,
+    clock?: Clock,
   ]
 ) {
-  const [organizationScheduler, creationPresentation = false] = presentation;
-  const h = await createCanonicalSearchHarness(files, settings, true, createSearchWordSegmenter());
+  const [organizationScheduler, creationPresentation = false, clock] = presentation;
+  const h = await createCanonicalSearchHarness(
+    files,
+    settings,
+    true,
+    createSearchWordSegmenter(),
+    clock,
+  );
   const state = new AppState();
   state.set('selectedList', 'inbox');
   state.set('mode', mode);

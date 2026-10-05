@@ -9,6 +9,7 @@ import {
 } from '../src/ui/dependencySearch';
 import { createTaskDependencySearchProvider } from '../src/ui/TaskDependencySearchProvider';
 import { deferred, dispatchImeKey, expectDefined, flushMicrotasks } from './helpers';
+import { scopeKeyboardEvent } from './support/scopeKeyboardEvent';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 import { searchUiCompleted } from './support/taskSearchUiHarness';
 
@@ -1124,7 +1125,10 @@ it('gives an attached picker finite scope ownership, two Escape steps, and no st
   });
   const input = expectDefined(handle.element.querySelector('input'));
   const escape = expectDefined(register.mock.calls.find((call) => call[1] === 'Escape'))[2];
-  const event = () => new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+  const event = () =>
+    scopeKeyboardEvent(expectDefined(handle.element.ownerDocument.activeElement), {
+      key: 'Escape',
+    });
   input.value = 'preserved';
   expect(escape(event(), { key: 'Escape', vkey: 'Escape', modifiers: '' })).toBe(false);
   expect(document.activeElement).toBe(handle.element);
@@ -1142,8 +1146,12 @@ it('gives an attached picker finite scope ownership, two Escape steps, and no st
   handle.attach();
   expect(host.keymap.pushScope).toHaveBeenCalledTimes(2);
   expect(escape(event(), { key: 'Escape', vkey: 'Escape', modifiers: '' })).toBeUndefined();
-  handle.element.focus();
+  input.focus();
   const nextEscape = expectDefined(register.mock.calls[register.mock.calls.length - 1])[2];
+  expect(nextEscape(event(), { key: 'Escape', vkey: 'Escape', modifiers: '' })).toBe(false);
+  expect(doc.activeElement).toBe(handle.element);
+  expect(input.value).toBe('preserved');
+  expect(h.callbacks.onClose).not.toHaveBeenCalled();
   expect(nextEscape(event(), { key: 'Escape', vkey: 'Escape', modifiers: '' })).toBe(false);
   expect(h.callbacks.onClose).toHaveBeenCalledExactlyOnceWith(true);
   expect(host.keymap.popScope).toHaveBeenCalledTimes(2);
@@ -1185,7 +1193,11 @@ it('lets only the nearest attached picker own scope keys and excludes another ed
   const innerFind = expectDefined(register.mock.calls[2])[2];
   const context = { key: 'f', vkey: 'F', modifiers: 'Ctrl' };
   const event = () =>
-    new KeyboardEvent('keydown', { code: 'KeyF', key: 'а', ctrlKey: true, cancelable: true });
+    scopeKeyboardEvent(expectDefined(inner.element.ownerDocument.activeElement), {
+      code: 'KeyF',
+      key: 'а',
+      ctrlKey: true,
+    });
   expect(outerFind(event(), context)).toBeUndefined();
   expect(innerFind(event(), context)).toBe(false);
   const editor = inner.element.createEl('textarea');

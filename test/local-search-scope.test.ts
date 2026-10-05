@@ -2,7 +2,11 @@ import { Scope, WorkspaceLeaf, type App } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TagManager } from '../src/tags/TagManager';
-import { bindLocalSearchScope, handleLocalSearchKey } from '../src/ui/localSearchKeys';
+import {
+  bindLocalSearchScope,
+  handleLocalSearchKey,
+  localSearchEventIsOwned,
+} from '../src/ui/localSearchKeys';
 import { PanelView } from '../src/views/PanelView';
 import {
   configuredTaskApplication,
@@ -38,6 +42,17 @@ it('registers only finite Find/Escape handles and releases each exactly once', (
   expect(unregister.mock.calls.map(([handle]) => handle)).toEqual(
     register.mock.results.map((result): unknown => result.value),
   );
+});
+
+it('retains the targetless host Scope case without authorizing a pathless DOM event', () => {
+  const owner = document.body.createDiv();
+  const input = owner.createEl('input');
+  input.focus();
+  const event = new KeyboardEvent('keydown', { key: 'Escape' });
+  expect(event.target).toBeNull();
+  expect(event.composedPath()).toEqual([]);
+  expect(localSearchEventIsOwned(event, owner, 'scope')).toBe(true);
+  expect(localSearchEventIsOwned(event, owner, 'dom')).toBe(false);
 });
 
 it.each([
