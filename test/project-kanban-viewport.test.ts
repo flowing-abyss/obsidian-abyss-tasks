@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { kanbanInsertion, type KanbanViewportRow } from '../src/panels/projects/projectKanbanRows';
+import {
+  kanbanInsertion,
+  kanbanPlanInsertionTop,
+  type KanbanViewportRow,
+} from '../src/panels/projects/projectKanbanRows';
 import { RowViewport } from '../src/panels/virtualization/rowViewport';
 import { expectDefined } from './helpers';
 import { recordVirtualSurfaceResources } from './support/virtualSurfaceResources';
@@ -47,6 +51,72 @@ describe('logical Kanban insertion', () => {
     expect(insertion([header('g'), header('h')], 1)).toEqual({ groupKey: 'g', top: 20 });
     expect(insertion([], 1)).toBeUndefined();
     expect(insertion([card('b')], Number.NaN)).toBeUndefined();
+  });
+});
+
+describe('planned Kanban insertion coordinates', () => {
+  it('uses the exact group occurrence and measured full-row edges', () => {
+    const rows = [header('g'), card('a'), header('h'), card('a', 'h'), card('b', 'h')];
+    const viewport = new RowViewport();
+    viewport.replace(rows);
+    viewport.measure([{ key: 'h:a', height: 60 }], 0);
+    expect(
+      kanbanPlanInsertionTop(
+        rows,
+        viewport,
+        { kind: 'before', groupKey: 'h', beforePath: 'a' },
+        'moving',
+      ),
+    ).toBe(80);
+    expect(
+      kanbanPlanInsertionTop(
+        rows,
+        viewport,
+        { kind: 'after', groupKey: 'h', afterPath: 'a' },
+        'moving',
+      ),
+    ).toBe(140);
+  });
+  it('resolves an empty group, a new group before its neighbor, and the logical tail', () => {
+    const rows = [header('g'), card('a'), header('h')];
+    const viewport = new RowViewport();
+    viewport.replace(rows);
+    expect(kanbanPlanInsertionTop(rows, viewport, { kind: 'empty', groupKey: 'h' }, 'moving')).toBe(
+      80,
+    );
+    expect(
+      kanbanPlanInsertionTop(
+        rows,
+        viewport,
+        { kind: 'empty', groupKey: 'new', beforeGroupKey: 'h' },
+        'moving',
+      ),
+    ).toBe(60);
+    expect(
+      kanbanPlanInsertionTop(rows, viewport, { kind: 'empty', groupKey: 'new' }, 'moving'),
+    ).toBe(80);
+    expect(
+      kanbanPlanInsertionTop([], new RowViewport(), { kind: 'empty', groupKey: 'new' }, 'moving'),
+    ).toBe(0);
+  });
+  it('uses the proposed singleton top and collapsed header boundary without inventing a forecast', () => {
+    const rows = [header('g'), card('moving'), header('h')];
+    const viewport = new RowViewport();
+    viewport.replace(rows);
+    expect(kanbanPlanInsertionTop(rows, viewport, { kind: 'empty', groupKey: 'g' }, 'moving')).toBe(
+      20,
+    );
+    expect(
+      kanbanPlanInsertionTop(
+        rows,
+        viewport,
+        { kind: 'after', groupKey: 'h', afterPath: 'unmounted-collapsed' },
+        'moving',
+      ),
+    ).toBe(80);
+    expect(
+      kanbanPlanInsertionTop(rows, viewport, { kind: 'none', groupKey: 'g' }, 'moving'),
+    ).toBeUndefined();
   });
 });
 
@@ -121,6 +191,17 @@ describe('native Kanban columns', () => {
       expect(errors).toEqual([]);
     },
   );
+  it('previews a sorted landing at an unmounted neighbor without mounting it', () => {
+    const { owner } = nativeColumn();
+    expect(owner.element('g:900')).toBeUndefined();
+    expect(owner.insertionTop({ kind: 'before', groupKey: 'g', beforePath: '900' }, 'moving')).toBe(
+      36000,
+    );
+    expect(owner.insertionTop({ kind: 'after', groupKey: 'g', afterPath: '900' }, 'moving')).toBe(
+      36040,
+    );
+    expect(owner.element('g:900')).toBeUndefined();
+  });
   it('keeps pinned offscreen nodes connected and focused without moving them', () => {
     const { owner, host, scroll } = nativeColumn();
     const element = owner.reveal('g:0');
@@ -380,6 +461,7 @@ it('retargets the logical drag neighbor after edge scrolling without another poi
   const controller = new ProjectKanbanDragController(root, board, {
     begin: () => () => {},
     capture: () => source,
+    insertionLocation: () => undefined,
     pin() {
       pins++;
       return () => {
@@ -393,7 +475,6 @@ it('retargets the logical drag neighbor after edge scrolling without another poi
           beforePath: scroll.scrollTop > 0 ? 'unmounted-next' : 'initial',
         },
         lineHost: scroll,
-        lineTop: scroll.scrollTop,
       };
     },
     preview(_source, target) {

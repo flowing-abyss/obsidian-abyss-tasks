@@ -1,4 +1,5 @@
 import type { RowViewport, RowViewportRow } from '../virtualization/rowViewport';
+import type { ProjectKanbanDropPlan } from './projectKanbanDrop';
 
 export interface KanbanViewportRow extends RowViewportRow {
   readonly kind: 'group' | 'card';
@@ -49,4 +50,45 @@ function neighborInsertion(
     top = bounds?.bottom ?? top;
   }
   return { groupKey, top };
+}
+
+type PlannedInsertion = Extract<ProjectKanbanDropPlan, { allowed: true }>['insertion'];
+
+function insertionPath(insertion: PlannedInsertion, proposedPath: string): string {
+  if (insertion.kind === 'before') return insertion.beforePath;
+  if (insertion.kind === 'after') return insertion.afterPath;
+  return proposedPath;
+}
+function newGroupInsertionTop(
+  rows: readonly KanbanViewportRow[],
+  viewport: RowViewport,
+  beforeGroupKey: string | undefined,
+): number | undefined {
+  const before = rows.find((row) => row.kind === 'group' && row.groupKey === beforeGroupKey);
+  if (before !== undefined) return viewport.rowBounds(before.key)?.top;
+  const last = rows[rows.length - 1];
+  return last === undefined ? 0 : viewport.rowBounds(last.key)?.bottom;
+}
+
+/** Resolve the planner's landing over all rows, including neighbors outside the native window. */
+export function kanbanPlanInsertionTop(
+  rows: readonly KanbanViewportRow[],
+  viewport: RowViewport,
+  insertion: PlannedInsertion,
+  proposedPath: string,
+): number | undefined {
+  if (insertion.kind === 'none') return undefined;
+  const groupRows = rows.filter((row) => row.groupKey === insertion.groupKey);
+  const path = insertionPath(insertion, proposedPath);
+  const card = groupRows.find((row) => row.kind === 'card' && row.projectPath === path);
+  if (card !== undefined) {
+    const bounds = viewport.rowBounds(card.key);
+    return insertion.kind === 'after' ? bounds?.bottom : bounds?.top;
+  }
+  const header = groupRows.find((row) => row.kind === 'group');
+  if (header !== undefined && !groupRows.some((row) => row.kind === 'card'))
+    return viewport.rowBounds(header.key)?.bottom;
+  return insertion.kind === 'empty'
+    ? newGroupInsertionTop(rows, viewport, insertion.beforeGroupKey)
+    : undefined;
 }

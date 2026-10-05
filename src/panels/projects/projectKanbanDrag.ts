@@ -14,7 +14,11 @@ export interface ProjectKanbanDragAdapter {
     clientX: number,
     clientY: number,
     source: ProjectKanbanDropSource,
-  ) => { target: ProjectKanbanDropTarget; lineHost: HTMLElement; lineTop: number } | undefined;
+  ) => { target: ProjectKanbanDropTarget; lineHost: HTMLElement } | undefined;
+  readonly insertionLocation: (
+    target: Element,
+    plan: AllowedDropPlan,
+  ) => { lineHost: HTMLElement; lineTop: number } | undefined;
   readonly pin: (card: HTMLElement) => () => void;
   readonly begin: () => () => void;
   readonly capture: (card: HTMLElement) => ProjectKanbanDropSource;
@@ -173,28 +177,6 @@ function targetGroup(
       ? {}
       : { sourcePath: group.dataset['sourcePath'] }),
   };
-}
-
-function insertionBeforeGroup(host: HTMLElement, plan: AllowedDropPlan): HTMLElement | null {
-  const key = plan.insertion.kind === 'none' ? undefined : plan.insertion.beforeGroupKey;
-  return key === undefined
-    ? null
-    : host.querySelector<HTMLElement>(`[data-group-key="${CSS.escape(key)}"]`);
-}
-
-function insertionLineTop(
-  host: HTMLElement,
-  card: HTMLElement | null,
-  beforeGroup: HTMLElement | null,
-  afterCard: boolean,
-): number {
-  const hostTop = host.getBoundingClientRect().top;
-  const cardRect = card?.getBoundingClientRect();
-  if (cardRect !== undefined) {
-    return (afterCard ? cardRect.bottom : cardRect.top) - hostTop + host.scrollTop;
-  }
-  const groupRect = beforeGroup?.getBoundingClientRect();
-  return groupRect === undefined ? host.scrollHeight : groupRect.top - hostTop + host.scrollTop;
 }
 
 /** Owns the native board drag lifecycle, visual forecast, hover overlay, and scrolling cleanup. */
@@ -420,7 +402,7 @@ export class ProjectKanbanDragController {
     if (transfer !== undefined) transfer.dropEffect = plan.allowed ? 'move' : 'none';
     const column = event.target.closest<HTMLElement>('.abyss-project-kanban-column');
     const visualTarget = this.visualTarget_abyssPrivate(event.target, column);
-    this.showPlan_abyssPrivate(visualTarget, plan, hit);
+    this.showPlan_abyssPrivate(visualTarget, plan);
     this.point_abyssPrivate = { x: mouse.clientX, y: mouse.clientY };
     this.startAutoScroll_abyssPrivate(event.target);
     this.updateOverlay_abyssPrivate(column, event.target, plan);
@@ -449,70 +431,7 @@ export class ProjectKanbanDragController {
     return target;
   }
 
-  private insertionCard_abyssPrivate(zone: HTMLElement, plan: AllowedDropPlan): HTMLElement | null {
-    let path: string | undefined;
-    if (plan.insertion.kind === 'before') path = plan.insertion.beforePath;
-    else if (plan.insertion.kind === 'after') path = plan.insertion.afterPath;
-    else if (plan.insertion.kind === 'empty') path = plan.proposedProject.path;
-    return path === undefined
-      ? null
-      : zone.querySelector<HTMLElement>(`[data-project-path="${CSS.escape(path)}"]`);
-  }
-
-  private insertionLine_abyssPrivate(
-    zone: HTMLElement,
-    group: HTMLElement | null,
-    plan: AllowedDropPlan,
-  ): HTMLElement {
-    const projectedGroup = zone.querySelector<HTMLElement>(
-      `[data-group-key="${CSS.escape(plan.insertion.groupKey)}"]`,
-    );
-    const card = this.insertionCard_abyssPrivate(
-      zone.closest('.abyss-project-kanban-column, .abyss-project-kanban-hover-preview') ?? zone,
-      plan,
-    );
-    const actualGroup =
-      card?.closest<HTMLElement>(
-        '.abyss-project-kanban-group, .abyss-project-kanban-hover-group',
-      ) ??
-      group ??
-      projectedGroup;
-    const host =
-      actualGroup?.querySelector<HTMLElement>('.abyss-project-kanban-group-body') ??
-      actualGroup ??
-      zone.querySelector<HTMLElement>('.abyss-project-kanban-column-body') ??
-      zone;
-    const line = host.createDiv({ cls: 'abyss-project-kanban-insertion-line' });
-    this.placeInsertionLine_abyssPrivate(host, line, card, plan);
-    return line;
-  }
-
-  private placeInsertionLine_abyssPrivate(
-    host: HTMLElement,
-    line: HTMLElement,
-    card: HTMLElement | null,
-    plan: AllowedDropPlan,
-  ): void {
-    const beforeGroup = insertionBeforeGroup(host, plan);
-    const top = insertionLineTop(host, card, beforeGroup, plan.insertion.kind === 'after');
-    line.setCssProps({ '--abyss-project-kanban-insertion-top': `${Math.max(0, top)}px` });
-    if ((plan.insertion.kind === 'before' || plan.insertion.kind === 'empty') && card !== null) {
-      card.before(line);
-      return;
-    }
-    if (card !== null) {
-      card.after(line);
-      return;
-    }
-    if (plan.insertion.kind === 'none') return;
-    beforeGroup?.before(line);
-  }
-
-  private showPlan_abyssPrivate(
-    target: Element,
-    plan: ProjectKanbanDropPlan,
-    hit?: { lineHost: HTMLElement; lineTop: number },
-  ): void {
+  private showPlan_abyssPrivate(target: Element, plan: ProjectKanbanDropPlan): void {
     this.clearPreview_abyssPrivate();
     const group = target.closest<HTMLElement>(
       '.abyss-project-kanban-group, .abyss-project-kanban-hover-group',
@@ -526,15 +445,17 @@ export class ProjectKanbanDragController {
     zone.setAttribute('title', plan.message);
     let line: HTMLElement | undefined;
     if (plan.allowed && plan.insertion.kind !== 'none') {
-      line =
-        hit === undefined
-          ? this.insertionLine_abyssPrivate(zone, group, plan)
-          : hit.lineHost.createDiv({ cls: 'abyss-project-kanban-insertion-line' });
+      const location =
+        column?.classList.contains('abyss-project-kanban-hover-preview') === true
+          ? this.hoverInsertionLocation_abyssPrivate(plan)
+          : this.adapter_abyssPrivate.insertionLocation(target, plan);
+      if (location !== undefined) {
+        line = location.lineHost.createDiv({ cls: 'abyss-project-kanban-insertion-line' });
+        line.setCssProps({
+          '--abyss-project-kanban-insertion-top': `${Math.max(0, location.lineTop)}px`,
+        });
+      }
     }
-    if (hit !== undefined)
-      line?.setCssProps({
-        '--abyss-project-kanban-insertion-top': `${Math.max(0, hit.lineTop)}px`,
-      });
     this.preview_abyssPrivate = { elements: [zone], ...(line === undefined ? {} : { line }) };
   }
 
@@ -747,7 +668,7 @@ export class ProjectKanbanDragController {
     x: number,
     y: number,
     source: ProjectKanbanDropSource,
-  ): { target: ProjectKanbanDropTarget; lineHost: HTMLElement; lineTop: number } | undefined {
+  ): { target: ProjectKanbanDropTarget; lineHost: HTMLElement } | undefined {
     return (
       this.hoverHit_abyssPrivate(x, y, source) ?? this.adapter_abyssPrivate.hitTest(x, y, source)
     );
@@ -757,7 +678,7 @@ export class ProjectKanbanDragController {
     x: number,
     y: number,
     source: ProjectKanbanDropSource,
-  ): { target: ProjectKanbanDropTarget; lineHost: HTMLElement; lineTop: number } | undefined {
+  ): { target: ProjectKanbanDropTarget; lineHost: HTMLElement } | undefined {
     const host = this.hoverContent_abyssPrivate;
     const overlay = this.overlay_abyssPrivate;
     if (host === undefined || overlay === undefined || !containsPoint(host, x, y)) return undefined;
@@ -777,8 +698,17 @@ export class ProjectKanbanDragController {
         ...(insertion.beforePath === undefined ? {} : { beforePath: insertion.beforePath }),
       },
       lineHost: host,
-      lineTop: insertion.top,
     };
+  }
+  private hoverInsertionLocation_abyssPrivate(
+    plan: AllowedDropPlan,
+  ): { lineHost: HTMLElement; lineTop: number } | undefined {
+    const host = this.hoverContent_abyssPrivate;
+    const top = this.hoverViewport_abyssPrivate?.insertionTop(
+      plan.insertion,
+      plan.proposedProject.path,
+    );
+    return host === undefined || top === undefined ? undefined : { lineHost: host, lineTop: top };
   }
   private hoverGroupTarget_abyssPrivate(
     group: ProjectTableGroup,
@@ -841,11 +771,7 @@ export class ProjectKanbanDragController {
       hit.lineHost.closest<HTMLElement>(
         '.abyss-project-kanban-hover-body, .abyss-project-kanban-column-body',
       ) ?? undefined;
-    this.showPlan_abyssPrivate(
-      hit.lineHost,
-      this.adapter_abyssPrivate.preview(source, hit.target),
-      hit,
-    );
+    this.showPlan_abyssPrivate(hit.lineHost, this.adapter_abyssPrivate.preview(source, hit.target));
   }
 
   private scrollAtEdge_abyssPrivate(

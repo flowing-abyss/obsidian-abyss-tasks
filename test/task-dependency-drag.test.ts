@@ -143,6 +143,9 @@ function drag(element: HTMLElement, type: string, init: MouseEventInit = {}) {
   const data = new Map<string, string>();
   Object.defineProperty(event, 'dataTransfer', {
     value: {
+      get types() {
+        return [...data.keys()];
+      },
       setData: (format: string, value: string) => data.set(format, value),
       dropEffect: 'none',
     },

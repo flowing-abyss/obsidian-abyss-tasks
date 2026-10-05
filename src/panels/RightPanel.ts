@@ -423,6 +423,9 @@ export class RightPanel {
         renderTaskStatusMarker: (parent, task) => {
           this.renderTaskStatusMarker_abyssPrivate(parent, task);
         },
+        bindHierarchyDrop: (surface, task) => {
+          this.bindHierarchyDrop_abyssPrivate(surface, task);
+        },
         finishTaskDrag: () => {
           this.finishTaskDrag_abyssPrivate();
         },
@@ -1554,10 +1557,14 @@ export class RightPanel {
       this.planningSurfaces_abyssPrivate.renderContextMenu(task, menuBtn);
     });
     this.onRenderHeaderActions_abyssPrivate?.(headerActions);
+    this.bindHierarchyDrop_abyssPrivate(header, task);
+  }
+
+  private bindHierarchyDrop_abyssPrivate(surface: HTMLElement, task: TaskLike): void {
     if (this.tasks_abyssPrivate !== undefined) {
       const tasks = this.tasks_abyssPrivate;
       this.md_abyssPrivate.register(
-        bindTaskHierarchyDrop(header, {
+        bindTaskHierarchyDrop(surface, {
           state: this.state_abyssPrivate,
           tasks,
           parent: () => {

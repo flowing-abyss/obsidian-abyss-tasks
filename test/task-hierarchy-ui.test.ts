@@ -115,13 +115,27 @@ function navigateWhilePending(h: Awaited<ReturnType<typeof mounted>>, kind: stri
 }
 
 describe('task hierarchy surfaces', () => {
-  it.each(['center', 'inspector'] as const)(
+  it.each(['center', 'inspector', 'subtask section', 'add row', 'add label'] as const)(
     'routes one native %s drop and moves the complete subtree',
     async (surface) => {
       const h = await mounted();
-      if (surface === 'inspector') h.state.set('taskStack', [h.parent]);
-      const target = surface === 'center' ? h.card('Parent') : h.header();
-      nest(h, target);
+      if (surface !== 'center') h.state.set('taskStack', [h.parent]);
+      const selectors = {
+        'subtask section': '.abyss-subtask-section',
+        'add row': '.abyss-subtask-add-row',
+        'add label': '.abyss-subtask-add-label',
+      };
+      let target: HTMLElement;
+      if (surface === 'center') target = h.card('Parent');
+      else if (surface === 'inspector') target = h.header();
+      else target = expectDefined(h.rightEl.querySelector<HTMLElement>(selectors[surface]));
+      drag(h.card('Move'), 'dragstart');
+      expect(h.state.get('draggingTaskNode')?.task.target).toEqual(h.command.source);
+      expect(drag(target, 'dragover').defaultPrevented).toBe(true);
+      expect(target.closest('.abyss-drop-target')).not.toBeNull();
+      drag(target, 'drop');
+      expect(h.state.get('draggingTaskNode')).toBeNull();
+      drag(target, 'drop');
       await flushMicrotasks(30);
       expect(h.execute).toHaveBeenCalledExactlyOnceWith(h.command);
       expect(await h.read('source.md')).toBe('- [ ] Duplicate\n');
@@ -130,6 +144,53 @@ describe('task hierarchy surfaces', () => {
       );
     },
   );
+  it('uses the selected nested parent when dropping on a populated Subtasks section', async () => {
+    const h = await mounted({
+      ...files,
+      'target.md': '- [ ] Parent ^parent\n  - [ ] Nested ^nested\n    - [ ] Existing\n',
+    });
+    const nested = expectDefined(h.parent.subtasks[0]);
+    h.state.set('taskStack', [h.parent, nested]);
+    const section = expectDefined(h.rightEl.querySelector<HTMLElement>('.abyss-subtask-section'));
+    nest(h, expectDefined(section.querySelector<HTMLElement>('.abyss-subtask-label')));
+    await flushMicrotasks(30);
+    expect(h.execute).toHaveBeenCalledExactlyOnceWith({
+      ...h.command,
+      parent: taskNodeRef(nested),
+    });
+    expect(await h.read('target.md')).toContain('    - [ ] Existing\n    - [ ] Move');
+  });
+  it.each(['selection changed', 'source unavailable'] as const)(
+    'rejects a Subtasks section drop after %s',
+    async (kind) => {
+      const h = await mounted();
+      h.state.set('taskStack', [h.parent]);
+      const section = expectDefined(h.rightEl.querySelector<HTMLElement>('.abyss-subtask-section'));
+      drag(h.card('Move'), 'dragstart');
+      expect(drag(section, 'dragover').defaultPrevented).toBe(true);
+      if (kind === 'selection changed') h.state.set('taskStack', [h.source]);
+      else vi.spyOn(h.index, 'resolve').mockReturnValue({ type: 'not-found', ref: h.source.ref });
+      drag(section, 'drop');
+      await flushMicrotasks();
+      expect(h.execute).not.toHaveBeenCalled();
+      expect(section.classList.contains('abyss-drop-target')).toBe(false);
+    },
+  );
+  it('keeps sibling reorder ahead of the Subtasks hierarchy receiver', async () => {
+    const h = await mounted({
+      ...files,
+      'source.md': '- [ ] Move\n  - [ ] First\n  - [ ] Second\n',
+    });
+    const rows = h.rightEl.querySelectorAll<HTMLElement>('.abyss-subtask-row');
+    const section = expectDefined(h.rightEl.querySelector<HTMLElement>('.abyss-subtask-section'));
+    drag(expectDefined(rows[0]), 'dragstart');
+    expect(drag(expectDefined(rows[1]), 'dragover').defaultPrevented).toBe(true);
+    expect(section.classList.contains('abyss-drop-target')).toBe(false);
+    drag(expectDefined(rows[1]), 'drop');
+    await flushMicrotasks(30);
+    expect(h.execute.mock.calls.map(([command]) => command.type)).toEqual(['reorder-subtask']);
+    expect(await h.read('source.md')).toBe('- [ ] Move\n  - [ ] Second\n  - [ ] First\n');
+  });
   it('carries the exact selected descendant and prevents inherited-line selection during publication', async () => {
     const h = await mounted();
     const child = expectDefined(h.source.subtasks[0]);

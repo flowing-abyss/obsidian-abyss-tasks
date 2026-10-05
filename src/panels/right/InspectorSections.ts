@@ -35,6 +35,7 @@ interface InspectorSectionsOptions {
     readonly root: () => HTMLElement;
     readonly component: () => Component;
     readonly renderTaskStatusMarker: (parent: HTMLElement, task: TaskLike) => void;
+    readonly bindHierarchyDrop: (surface: HTMLElement, task: TaskLike) => void;
     readonly finishTaskDrag: () => void;
     readonly setTaskDragCleanup: (cleanup: () => void) => void;
     readonly dismissEntrySubmission: (
@@ -273,6 +274,7 @@ export class InspectorSections {
     const subList = subSection.createDiv({ cls: 'abyss-subtask-list' });
     for (const sub of task.subtasks) this.#renderSubTask(subList, sub, task);
     this.#renderAddSubtaskControl(subSection, task);
+    this.#host.bindHierarchyDrop(subSection, task);
   }
 
   #renderAddSubtaskControl(subSection: HTMLElement, task: TaskLike): void {

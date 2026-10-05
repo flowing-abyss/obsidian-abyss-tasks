@@ -1,6 +1,11 @@
 import { Component } from 'obsidian';
 import { RowViewport, type RowAnchor, type RowSegment } from '../virtualization/rowViewport';
-import { kanbanInsertion, type KanbanInsertion, type KanbanViewportRow } from './projectKanbanRows';
+import {
+  kanbanInsertion,
+  kanbanPlanInsertionTop,
+  type KanbanInsertion,
+  type KanbanViewportRow,
+} from './projectKanbanRows';
 
 export interface KanbanRowMount {
   readonly element: HTMLElement;
@@ -118,6 +123,12 @@ export class ProjectKanbanColumnViewport {
   }
   insertion(contentY: number, sourcePath: string): KanbanInsertion | undefined {
     return kanbanInsertion(this.#rows, this.#viewport, contentY, sourcePath);
+  }
+  insertionTop(
+    insertion: Parameters<typeof kanbanPlanInsertionTop>[2],
+    proposedPath: string,
+  ): number | undefined {
+    return kanbanPlanInsertionTop(this.#rows, this.#viewport, insertion, proposedPath);
   }
   pin(key: string): () => void {
     const token = { owner: this, key };

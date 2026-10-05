@@ -2128,6 +2128,96 @@ describe('project Kanban overview', () => {
     expect(target.classList.contains('is-drop-target')).toBe(false);
   });
 
+  it.each([
+    ['asc', 256, ['Projects/A.md', 'Projects/M.md', 'Projects/Z.md']],
+    ['desc', 0, ['Projects/Z.md', 'Projects/M.md', 'Projects/A.md']],
+  ] as const)(
+    'previews the actual %s sorted landing independently of the hovered gap',
+    async (dir, top, order) => {
+      const planned = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+      const active = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+      const projects = ['Z', 'A', 'M'].map((name) => {
+        const status = name === 'Z' ? planned : active;
+        return project({
+          path: `Projects/${name}.md`,
+          name,
+          statusId: status.id,
+          frontmatter: { status: status.name },
+        });
+      });
+      const frames: FrameRequestCallback[] = [];
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        frames.push(callback);
+        return frames.length;
+      });
+      const secondPath = `Projects/${dir === 'asc' ? 'M' : 'A'}.md`;
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        const status = this.closest<HTMLElement>('.abyss-project-kanban-column')?.dataset[
+          'statusKey'
+        ];
+        const left = status === `id:${active.id}` ? 320 : 20;
+        if (this.matches('.abyss-project-kanban-column'))
+          return rectangle(left, 150, left + 240, 650);
+        if (this.matches('.abyss-project-kanban-window'))
+          return rectangle(left, 200, left + 240, 600);
+        if (this.matches('.abyss-project-kanban-column-body'))
+          return rectangle(left, 200, left + 240, 600);
+        if (this.matches('.abyss-project-kanban-scroll')) return rectangle(20, 150, 600, 650);
+        if (this.matches('.abyss-project-kanban-window-row')) return rectangle(0, 0, 240, 128);
+        if (this.matches('.abyss-project-kanban-card')) {
+          const second = this.dataset['projectPath'] === secondPath;
+          const y = 200 + (second ? 128 : 0);
+          return rectangle(left, y, left + 240, y + 120);
+        }
+        return rectangle(0, 0, 0, 0);
+      });
+      const { host, settings } = mountView(projects);
+      settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+      settings.projects.kanban.fields = [];
+      settings.projects.kanban.sortBy = { field: 'name', dir };
+      clickView(host, 'Kanban');
+      frames.splice(0).forEach((callback) => {
+        callback(0);
+      });
+      const card = (name: string) =>
+        expectDefined(
+          host.querySelector<HTMLElement>(
+            `.abyss-project-kanban-card[data-project-path="Projects/${name}.md"]`,
+          ),
+        );
+      const source = card('Z');
+      const data = transfer();
+      source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      source.dispatchEvent(dragEvent('dragstart', data));
+      const point = { clientX: 400, clientY: dir === 'asc' ? 220 : 350 };
+      card('A').dispatchEvent(dragEvent('dragover', data, point));
+      const markerTop = () =>
+        expectDefined(
+          host.querySelector<HTMLElement>('.abyss-project-kanban-insertion-line'),
+        ).style.getPropertyValue('--abyss-project-kanban-insertion-top');
+      expect(markerTop()).toBe(`${top}px`);
+      card('M').dispatchEvent(
+        dragEvent('dragover', data, { clientX: 400, clientY: dir === 'asc' ? 430 : 300 }),
+      );
+      expect(markerTop()).toBe(`${top}px`);
+      card('A').dispatchEvent(dragEvent('drop', data, point));
+      await flushMicrotasks();
+      const column = expectDefined(
+        host.querySelector<HTMLElement>(
+          `.abyss-project-kanban-column[data-status-key="id:${active.id}"]`,
+        ),
+      );
+      expect(
+        Array.from(
+          column.querySelectorAll<HTMLElement>('.abyss-project-kanban-card'),
+          (element) => element.dataset['projectPath'],
+        ),
+      ).toEqual(order);
+    },
+  );
+
   it('places a lower-half card drop immediately after that card', () => {
     const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
     const projects = ['A', 'B', 'C'].map((name) =>
@@ -2170,7 +2260,8 @@ describe('project Kanban overview', () => {
     );
     expect(line.style.getPropertyValue('--abyss-project-kanban-insertion-top')).not.toBe('');
     expect(middle.getBoundingClientRect()).toEqual(initialRect);
-    expect(line.nextElementSibling).toBe(last);
+    expect(line.parentElement?.classList.contains('abyss-project-kanban-window')).toBe(true);
+    expect(line.style.getPropertyValue('--abyss-project-kanban-insertion-top')).toBe('192px');
     expect(last.closest('.abyss-project-kanban-window-row')?.previousElementSibling).toBe(
       middle.closest('.abyss-project-kanban-window-row'),
     );
@@ -2962,6 +3053,13 @@ describe('project Kanban overview', () => {
     settings.projects.kanban.collapsedColumns = [`id:${targetStatus.id}`];
     view.refreshFields();
     clickView(host, 'Kanban');
+    const forecastRows: Readonly<Record<string, readonly [number, number]>> = {
+      'Projects/B.md': [172, 50],
+      'Projects/C.md': [254, 90],
+      'Projects/A.md': [344, 42],
+      'value:boris': [140, 32],
+      'value:maria': [222, 32],
+    };
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
       this: HTMLElement,
     ) {
@@ -2969,12 +3067,13 @@ describe('project Kanban overview', () => {
         host.querySelector<HTMLElement>('.abyss-project-kanban-hover-body')?.scrollTop ?? 0;
       if (this.matches('.abyss-project-kanban-hover-preview')) return rectangle(0, 100, 272, 500);
       if (this.matches('.abyss-project-kanban-hover-body')) return rectangle(0, 140, 272, 500);
-      if (this.matches('[data-group-key="value:boris"].abyss-project-kanban-hover-group'))
-        return rectangle(0, 140 - scrollTop, 272, 230 - scrollTop);
-      if (this.matches('[data-group-key="value:maria"].abyss-project-kanban-hover-group'))
-        return rectangle(0, 260 - scrollTop, 272, 420 - scrollTop);
+      if (this.matches('.abyss-project-kanban-hover-group')) {
+        const path = this.querySelector<HTMLElement>('[data-project-path]')?.dataset['projectPath'];
+        const [top, height] = expectDefined(forecastRows[path ?? this.dataset['groupKey'] ?? '']);
+        return rectangle(0, top - scrollTop, 272, top + height - scrollTop);
+      }
       if (this.matches('[data-project-path="Projects/C.md"].abyss-project-kanban-hover-card'))
-        return rectangle(4, 300 - scrollTop, 268, 330 - scrollTop);
+        return rectangle(4, 258 - scrollTop, 268, 336 - scrollTop);
       return rectangle(0, 0, 1000, 700);
     });
     const card = expectDefined(
@@ -3004,26 +3103,20 @@ describe('project Kanban overview', () => {
         ),
       ).size,
     ).toBe(2);
-    const group = expectDefined(
-      overlay
-        .querySelector<HTMLElement>('.abyss-project-kanban-insertion-line')
-        ?.closest<HTMLElement>('[data-group-key="value:maria"]'),
+    const body = expectDefined(
+      overlay.querySelector<HTMLElement>('.abyss-project-kanban-hover-body'),
     );
     let marker = expectDefined(
-      group.querySelector<HTMLElement>('.abyss-project-kanban-insertion-line'),
+      body.querySelector<HTMLElement>('.abyss-project-kanban-insertion-line'),
     );
-    expect(marker.parentElement).toBe(group);
-    expect(marker.style.getPropertyValue('--abyss-project-kanban-insertion-top')).toBe('70px');
+    expect(marker.parentElement).toBe(body);
+    expect(marker.style.getPropertyValue('--abyss-project-kanban-insertion-top')).toBe('204px');
 
-    expectDefined(
-      overlay.querySelector<HTMLElement>('.abyss-project-kanban-hover-body'),
-    ).scrollTop = 30;
+    body.scrollTop = 30;
     column.dispatchEvent(dragEvent('dragover', data));
-    marker = expectDefined(
-      group.querySelector<HTMLElement>('.abyss-project-kanban-insertion-line'),
-    );
-    expect(marker.parentElement).toBe(group);
-    expect(marker.style.getPropertyValue('--abyss-project-kanban-insertion-top')).toBe('70px');
+    marker = expectDefined(body.querySelector<HTMLElement>('.abyss-project-kanban-insertion-line'));
+    expect(marker.parentElement).toBe(body);
+    expect(marker.style.getPropertyValue('--abyss-project-kanban-insertion-top')).toBe('204px');
   });
 
   it('restores focus to the exact destination occurrence after a list-group move', async () => {
@@ -3551,7 +3644,9 @@ describe('project Kanban overview', () => {
     const line = expectDefined(
       target.querySelector<HTMLElement>('.abyss-project-kanban-insertion-line'),
     );
-    expect(line.nextElementSibling).toBe(existingGroup);
+    expect(existingGroup.dataset['groupKey']).toBe('value:p2');
+    expect(line.parentElement?.classList.contains('abyss-project-kanban-window')).toBe(true);
+    expect(line.style.getPropertyValue('--abyss-project-kanban-insertion-top')).toBe('0px');
   });
 
   it('mounts the New project input outside the hidden table surface while on the board', () => {

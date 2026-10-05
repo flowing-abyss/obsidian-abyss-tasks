@@ -1,4 +1,8 @@
-import type { KanbanInsertion, KanbanViewportRow } from './projectKanbanRows';
+import type {
+  KanbanInsertion,
+  kanbanPlanInsertionTop,
+  KanbanViewportRow,
+} from './projectKanbanRows';
 import { ProjectKanbanColumnViewport } from './projectKanbanViewport';
 
 /** Title-only forecast, sharing the column's native window and disposal semantics. */
@@ -41,6 +45,12 @@ export class ProjectKanbanHoverViewport {
   }
   hitTest(contentY: number, sourcePath: string): KanbanInsertion | undefined {
     return this.#viewport.insertion(contentY, sourcePath);
+  }
+  insertionTop(
+    insertion: Parameters<typeof kanbanPlanInsertionTop>[2],
+    proposedPath: string,
+  ): number | undefined {
+    return this.#viewport.insertionTop(insertion, proposedPath);
   }
   destroy(): void {
     this.#viewport.destroy();

@@ -253,6 +253,7 @@ describe('project owner scheduler lifetimes', () => {
     const release = vi.fn();
     const controller = new ProjectKanbanDragController(h.host, h.host, {
       hitTest: () => undefined,
+      insertionLocation: () => undefined,
       pin: () => () => {},
       begin: () => release,
       capture: () => ({
@@ -314,6 +315,7 @@ describe('project owner scheduler lifetimes', () => {
       const release = vi.fn();
       const controller = new ProjectKanbanDragController(h.host, h.host, {
         hitTest: () => undefined,
+        insertionLocation: () => undefined,
         pin: () => () => {},
         begin: () => release,
         capture: () => ({
@@ -405,6 +407,7 @@ describe('project owner scheduler lifetimes', () => {
     const add = vi.spyOn(window, 'addEventListener');
     const controller = new ProjectKanbanDragController(h.host, h.host, {
       hitTest: () => undefined,
+      insertionLocation: () => undefined,
       pin: () => () => {},
       begin: () => () => {},
       capture: () => {

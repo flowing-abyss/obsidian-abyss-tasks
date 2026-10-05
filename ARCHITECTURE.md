@@ -193,7 +193,7 @@ note or in third notes; explicit links to the old source's moved block IDs can t
 stale. Markdown block and dependency IDs within the moved subtree remain intact.
 
 Hierarchy presentation is shared by [`taskHierarchyActions`](src/ui/taskHierarchyActions.ts).
-Existing centre cards and the inspector header preview exact live endpoints through the public
+Existing centre cards, the inspector header, and the Subtasks section preview exact live endpoints through the public
 `hierarchyWouldCycle` boundary, after tag/project/attachment handlers; inspector relation drags
 retain dependency meaning. The ordinary selected-subtask menu sends `promote-subtask`. AppState's
 single drag payload is claimed once per drop, independent of outgoing-link row occurrences.
@@ -525,7 +525,9 @@ deactivation and failed saves; the existing editor cleanup releases it only afte
 is invalidated on close or destruction. Eviction removes cell references before unloading Markdown
 once.
 [`projectKanbanRows`](src/panels/projects/projectKanbanRows.ts) computes insertion over full logical
-geometry, excluding the physical source even across duplicate occurrences. Drag owns capture,
+geometry, excluding the physical source even across duplicate occurrences. Landing previews resolve
+the planner's insertion against full measured row geometry independently of the pointer hit target,
+including unmounted neighbors and exact group occurrences. Drag owns capture,
 preview, hover delay, auto-scroll, and commit; it retargets the last pointer after edge scrolling.
 [`ProjectKanbanHoverViewport`](src/panels/projects/projectKanbanHoverViewport.ts) composes the same
 native owner for bounded title-only forecast rows. Completion validates source existence and focus

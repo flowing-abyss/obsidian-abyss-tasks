@@ -232,6 +232,7 @@ export class ProjectsKanbanView<
     });
     this.drag_abyssPrivate = new ProjectKanbanDragController(this.root, this.scroll, {
       hitTest: (x, y, source) => this.hitTest_abyssPrivate(x, y, source),
+      insertionLocation: (target, plan) => this.insertionLocation_abyssPrivate(target, plan),
       pin: (element) => {
         const key = element.dataset['occurrenceId'];
         const status = element.closest<HTMLElement>('.abyss-project-kanban-column')?.dataset[
@@ -1079,11 +1080,26 @@ export class ProjectsKanbanView<
     });
   };
 
+  private insertionLocation_abyssPrivate(
+    target: Element,
+    plan: Extract<ProjectKanbanDropPlan, { allowed: true }>,
+  ): { lineHost: HTMLElement; lineTop: number } | undefined {
+    const statusKey = target.closest<HTMLElement>('.abyss-project-kanban-column')?.dataset[
+      'statusKey'
+    ];
+    const column = statusKey === undefined ? undefined : this.columns_abyssPrivate.get(statusKey);
+    if (column === undefined) return undefined;
+    const top = column.element.matches('.is-collapsed, .is-compact-empty')
+      ? 0
+      : column.viewport.insertionTop(plan.insertion, plan.proposedProject.path);
+    return top === undefined ? undefined : { lineHost: column.content, lineTop: top };
+  }
+
   private hitTest_abyssPrivate(
     x: number,
     y: number,
     source: ProjectKanbanDropSource,
-  ): { target: ProjectKanbanDropTarget; lineHost: HTMLElement; lineTop: number } | undefined {
+  ): { target: ProjectKanbanDropTarget; lineHost: HTMLElement } | undefined {
     const matches = [...this.columns_abyssPrivate.values()].filter((column) => {
       const rect = column.element.getBoundingClientRect();
       return (
@@ -1096,7 +1112,7 @@ export class ProjectsKanbanView<
       status: { key: column.statusKey, value: column.value },
     };
     if (column.element.matches('.is-collapsed, .is-compact-empty'))
-      return { target, lineHost: column.content, lineTop: 0 };
+      return { target, lineHost: column.content };
     const contentTop = column.content.getBoundingClientRect().top;
     const insertion = column.viewport.insertion(y - contentTop, source.projectPath);
     const group = this.model_abyssPrivate?.columns
@@ -1109,7 +1125,6 @@ export class ProjectsKanbanView<
         ...(insertion?.beforePath === undefined ? {} : { beforePath: insertion.beforePath }),
       },
       lineHost: column.content,
-      lineTop: insertion?.top ?? 0,
     };
   }
 
