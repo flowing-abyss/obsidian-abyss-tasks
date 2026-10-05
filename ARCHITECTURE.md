@@ -527,7 +527,14 @@ once.
 [`projectKanbanRows`](src/panels/projects/projectKanbanRows.ts) computes insertion over full logical
 geometry, excluding the physical source even across duplicate occurrences. Landing previews resolve
 the planner's insertion against full measured row geometry independently of the pointer hit target,
-including unmounted neighbors and exact group occurrences. Drag owns capture,
+including unmounted neighbors and exact group occurrences. Each column indexes logical groups and
+supplied group/path row keys on projection replacement, resolving live measured bounds without
+rebuilding the indexes.
+The drag owner retains one semantic preview plan for unchanged RAF targets; real dragover and queued
+commit still plan freshly. The overview invalidates that plan before deferred renders and accepted
+source observations; direct board projection changes also invalidate it. Invalidation retains the
+native gesture and pointer while retiring stale delayed/open hover forecasts. Hover titles and group
+contexts are indexed once per forecast and retired with its viewport. Drag owns capture,
 preview, hover delay, auto-scroll, and commit; it retargets the last pointer after edge scrolling.
 [`ProjectKanbanHoverViewport`](src/panels/projects/projectKanbanHoverViewport.ts) composes the same
 native owner for bounded title-only forecast rows. Completion validates source existence and focus

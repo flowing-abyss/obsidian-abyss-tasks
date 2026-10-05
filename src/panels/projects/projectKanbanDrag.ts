@@ -54,6 +54,41 @@ interface ActivePreview {
 
 type AllowedDropPlan = Extract<ProjectKanbanDropPlan, { allowed: true }>;
 
+interface CachedPreviewPlan {
+  readonly source: ProjectKanbanDropSource;
+  readonly target: ProjectKanbanDropTarget;
+  readonly revision: number;
+  readonly plan: ProjectKanbanDropPlan;
+}
+
+function equalTargetValue(left: unknown, right: unknown): boolean {
+  if (Array.isArray(left) && Array.isArray(right))
+    return (
+      left.length === right.length &&
+      left.every((value, index) => equalTargetValue(value, right[index]))
+    );
+  return Object.is(left, right);
+}
+function sameTargetGroup(
+  left: ProjectKanbanDropTarget['group'],
+  right: ProjectKanbanDropTarget['group'],
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return (
+    left.key === right.key &&
+    left.sourcePath === right.sourcePath &&
+    left.projected === right.projected &&
+    equalTargetValue(left.value, right.value)
+  );
+}
+function sameDropTarget(left: ProjectKanbanDropTarget, right: ProjectKanbanDropTarget): boolean {
+  return (
+    sameTargetGroup(left.status, right.status) &&
+    sameTargetGroup(left.group, right.group) &&
+    left.beforePath === right.beforePath
+  );
+}
+
 function protectedTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   const control = target.closest(
@@ -187,6 +222,8 @@ export class ProjectKanbanDragController {
   private readonly migrationCleanup_abyssPrivate: () => void;
   private destroyed_abyssPrivate = false;
   private presentationRevision_abyssPrivate = 0;
+  private previewPlanRevision_abyssPrivate = 0;
+  private cachedPreviewPlan_abyssPrivate: CachedPreviewPlan | undefined;
   private provisionalCleanup_abyssPrivate: (() => void) | undefined;
   private provisional_abyssPrivate: ProvisionalGesture | undefined;
   private provisionalTabIndex_abyssPrivate: string | null | undefined;
@@ -201,7 +238,9 @@ export class ProjectKanbanDragController {
   private verticalScroller_abyssPrivate: HTMLElement | undefined;
   private suppressClickPath_abyssPrivate: string | undefined;
   private hoverViewport_abyssPrivate: ProjectKanbanHoverViewport | undefined;
-  private hoverGroups_abyssPrivate: readonly ProjectTableGroup[] = [];
+  private readonly hoverGroups_abyssPrivate = new Map<string, ProjectTableGroup>();
+  private readonly hoverCurrentGroups_abyssPrivate = new Map<string, ProjectTableGroup>();
+  private readonly hoverTitles_abyssPrivate = new Map<string, { path: string; name: string }>();
   private hoverContent_abyssPrivate: HTMLElement | undefined;
 
   constructor(
@@ -277,6 +316,38 @@ export class ProjectKanbanDragController {
 
   clearPreview(): void {
     this.clearVisuals_abyssPrivate();
+  }
+
+  /** Source/model publication invalidates semantics while retaining the active native gesture. */
+  invalidatePreviewPlan(): void {
+    this.previewPlanRevision_abyssPrivate++;
+    this.cachedPreviewPlan_abyssPrivate = undefined;
+    this.clearPreview_abyssPrivate();
+    this.cancelOverlay_abyssPrivate();
+  }
+
+  private previewPlan_abyssPrivate(
+    source: ProjectKanbanDropSource,
+    target: ProjectKanbanDropTarget,
+    fresh: boolean,
+  ): ProjectKanbanDropPlan {
+    const cached = this.cachedPreviewPlan_abyssPrivate;
+    if (
+      fresh ||
+      cached?.source !== source ||
+      cached.revision !== this.previewPlanRevision_abyssPrivate ||
+      !sameDropTarget(cached.target, target)
+    ) {
+      const plan = this.adapter_abyssPrivate.preview(source, target);
+      this.cachedPreviewPlan_abyssPrivate = {
+        source,
+        target,
+        revision: this.previewPlanRevision_abyssPrivate,
+        plan,
+      };
+      return plan;
+    }
+    return cached.plan;
   }
 
   private readonly pointerDown_abyssPrivate = (event: Event): void => {
@@ -396,7 +467,7 @@ export class ProjectKanbanDragController {
       hit?.target ??
       targetFromElement(event.target, mouse.clientY, active.source.projectPath, active.card);
     if (target === undefined) return;
-    const plan = this.adapter_abyssPrivate.preview(active.source, target);
+    const plan = this.previewPlan_abyssPrivate(active.source, target, true);
     event.preventDefault();
     const transfer = asDataTransfer(event);
     if (transfer !== undefined) transfer.dropEffect = plan.allowed ? 'move' : 'none';
@@ -511,34 +582,41 @@ export class ProjectKanbanDragController {
     overlay.style.top = `${column.offsetTop}px`;
     overlay.createDiv({ cls: 'abyss-project-kanban-hover-title', text: projected.status.label });
     const body = overlay.createDiv({ cls: 'abyss-project-kanban-hover-body' });
-    this.hoverGroups_abyssPrivate = projected.groups;
+    for (const group of columnGroups(column))
+      this.hoverCurrentGroups_abyssPrivate.set(group.key, group);
     this.hoverContent_abyssPrivate = body;
-    const rows: KanbanViewportRow[] = projected.groups.flatMap((group) => [
-      {
-        kind: 'group' as const,
-        key: `header:${group.key}`,
-        groupKey: group.key,
-        estimatedHeight: group.label.length > 0 ? 32 : 8,
-        measurementRevision: group.label,
-      },
-      ...group.projects.map((project) => ({
-        kind: 'card' as const,
-        key: `${group.key}\u0000${project.path}`,
-        groupKey: group.key,
-        projectPath: project.path,
-        estimatedHeight: 42,
-        measurementRevision: project.name,
-      })),
-    ]);
+    const rows: KanbanViewportRow[] = projected.groups.flatMap((group) => {
+      this.hoverGroups_abyssPrivate.set(group.key, group);
+      return [
+        {
+          kind: 'group' as const,
+          key: `header:${group.key}`,
+          groupKey: group.key,
+          estimatedHeight: group.label.length > 0 ? 32 : 8,
+          measurementRevision: group.label,
+        },
+        ...group.projects.map((project) => {
+          const path = project.path;
+          const key = `${group.key}\u0000${path}`;
+          this.hoverTitles_abyssPrivate.set(key, { path, name: project.name });
+          return {
+            kind: 'card' as const,
+            key,
+            groupKey: group.key,
+            projectPath: path,
+            estimatedHeight: 42,
+            measurementRevision: project.name,
+          };
+        }),
+      ];
+    });
     this.hoverViewport_abyssPrivate = new ProjectKanbanHoverViewport(
       body,
       rows,
       (host, row) => {
-        const group = this.hoverGroups_abyssPrivate.find(
-          (candidate) => candidate.key === row.groupKey,
-        );
+        const group = this.hoverGroups_abyssPrivate.get(row.groupKey);
         if (group === undefined) throw new Error('Project forecast group is no longer available');
-        return this.renderOverlayGroup_abyssPrivate(column, host, group, row);
+        return this.renderOverlayGroup_abyssPrivate(host, group, row);
       },
       (error) => {
         this.adapter_abyssPrivate.reportFailure(error);
@@ -550,14 +628,13 @@ export class ProjectKanbanDragController {
   }
 
   private renderOverlayGroup_abyssPrivate(
-    column: HTMLElement,
     body: HTMLElement,
     group: ProjectTableGroup,
     row: KanbanViewportRow,
   ): HTMLElement {
     const groupElement = body.createDiv({ cls: 'abyss-project-kanban-hover-group' });
     groupElement.dataset['groupKey'] = group.key;
-    const currentGroup = columnGroups(column).find((candidate) => candidate.key === group.key);
+    const currentGroup = this.hoverCurrentGroups_abyssPrivate.get(group.key);
     if (currentGroup === undefined) groupElement.dataset['projected'] = 'true';
     const sourcePath = currentGroup?.sourcePath ?? group.sourcePath;
     if (sourcePath !== undefined) groupElement.dataset['sourcePath'] = sourcePath;
@@ -572,7 +649,7 @@ export class ProjectKanbanDragController {
         text: group.label,
       });
     }
-    const project = group.projects.find((candidate) => candidate.path === row.projectPath);
+    const project = this.hoverTitles_abyssPrivate.get(row.key);
     if (row.kind === 'card' && project !== undefined) {
       groupElement.createDiv({
         cls: 'abyss-project-kanban-hover-card',
@@ -686,11 +763,10 @@ export class ProjectKanbanDragController {
       y - host.getBoundingClientRect().top + Math.max(0, host.scrollTop),
       source.projectPath,
     );
-    const group = this.hoverGroups_abyssPrivate.find(
-      (candidate) => candidate.key === insertion?.groupKey,
-    );
+    if (insertion === undefined) return undefined;
+    const group = this.hoverGroups_abyssPrivate.get(insertion.groupKey);
     const statusKey = overlay.dataset['statusKey'];
-    if (insertion === undefined || group === undefined || statusKey === undefined) return undefined;
+    if (group === undefined || statusKey === undefined) return undefined;
     return {
       target: {
         status: { key: statusKey, value: overlay.dataset['statusValue'] ?? null },
@@ -716,9 +792,7 @@ export class ProjectKanbanDragController {
     return {
       key: group.key,
       value: group.value,
-      projected: !columnGroups(this.hoverColumn_abyssPrivate).some(
-        (candidate) => candidate.key === group.key,
-      ),
+      projected: !this.hoverCurrentGroups_abyssPrivate.has(group.key),
       ...(group.sourcePath === undefined ? {} : { sourcePath: group.sourcePath }),
     };
   }
@@ -772,10 +846,9 @@ export class ProjectKanbanDragController {
         '.abyss-project-kanban-hover-body, .abyss-project-kanban-column-body',
       ) ?? undefined;
     const column = hit.lineHost.closest<HTMLElement>('.abyss-project-kanban-column');
-    this.showPlan_abyssPrivate(
-      this.visualTarget_abyssPrivate(hit.lineHost, column),
-      this.adapter_abyssPrivate.preview(source, hit.target),
-    );
+    const plan = this.previewPlan_abyssPrivate(source, hit.target, false);
+    this.showPlan_abyssPrivate(this.visualTarget_abyssPrivate(hit.lineHost, column), plan);
+    this.updateOverlay_abyssPrivate(column, hit.lineHost, plan);
   }
 
   private scrollAtEdge_abyssPrivate(
@@ -804,13 +877,16 @@ export class ProjectKanbanDragController {
     this.hoverViewport_abyssPrivate?.destroy();
     this.hoverViewport_abyssPrivate = undefined;
     this.hoverContent_abyssPrivate = undefined;
-    this.hoverGroups_abyssPrivate = [];
+    this.hoverGroups_abyssPrivate.clear();
+    this.hoverCurrentGroups_abyssPrivate.clear();
+    this.hoverTitles_abyssPrivate.clear();
     this.overlay_abyssPrivate?.remove();
     this.overlay_abyssPrivate = undefined;
   }
 
   private clearVisuals_abyssPrivate(): void {
     this.presentationRevision_abyssPrivate += 1;
+    this.cachedPreviewPlan_abyssPrivate = undefined;
     this.clearPreview_abyssPrivate();
     this.cancelOverlay_abyssPrivate();
     if (this.frame_abyssPrivate !== undefined) {

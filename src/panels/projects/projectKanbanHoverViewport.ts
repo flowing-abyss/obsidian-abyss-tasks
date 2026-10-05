@@ -1,7 +1,7 @@
 import type {
   KanbanInsertion,
-  kanbanPlanInsertionTop,
   KanbanViewportRow,
+  PlannedKanbanInsertion,
 } from './projectKanbanRows';
 import { ProjectKanbanColumnViewport } from './projectKanbanViewport';
 
@@ -46,10 +46,7 @@ export class ProjectKanbanHoverViewport {
   hitTest(contentY: number, sourcePath: string): KanbanInsertion | undefined {
     return this.#viewport.insertion(contentY, sourcePath);
   }
-  insertionTop(
-    insertion: Parameters<typeof kanbanPlanInsertionTop>[2],
-    proposedPath: string,
-  ): number | undefined {
+  insertionTop(insertion: PlannedKanbanInsertion, proposedPath: string): number | undefined {
     return this.#viewport.insertionTop(insertion, proposedPath);
   }
   destroy(): void {

@@ -165,6 +165,7 @@ interface RenderedColumn<
   readonly count: HTMLElement;
   readonly create: HTMLButtonElement;
   readonly collapse: HTMLButtonElement;
+  readonly groupModels: Map<string, ProjectTableGroup>;
 }
 
 interface PatchCardContext<TCell extends ProjectKanbanCellContext> {
@@ -666,7 +667,12 @@ export class ProjectsKanbanView<
     return this.context_abyssPrivate.projectSnapshot(path);
   }
 
+  invalidatePreviewPlan(): void {
+    this.drag_abyssPrivate.invalidatePreviewPlan();
+  }
+
   private render_abyssPrivate(): ProjectKanbanModel {
+    this.invalidatePreviewPlan();
     const focused = this.focusedDescendant_abyssPrivate();
     const settings = this.context_abyssPrivate.settings();
     const model = buildProjectKanbanModel({
@@ -818,6 +824,10 @@ export class ProjectsKanbanView<
       this.columns_abyssPrivate.set(key, column);
     }
     Reflect.set(column.element, '__abyssKanbanGroups', model.groups);
+    column.groupModels.clear();
+    for (const group of model.groups) {
+      if (!column.groupModels.has(group.key)) column.groupModels.set(group.key, group);
+    }
     column.statusKey = key;
     column.value = model.status.statusId;
     column.element.dataset['statusKey'] = key;
@@ -887,6 +897,7 @@ export class ProjectsKanbanView<
       content,
       viewport,
       groups: new Map(),
+      groupModels: new Map(),
       statusKey: key,
       value: model.status.statusId,
     };
@@ -1115,9 +1126,7 @@ export class ProjectsKanbanView<
       return { target, lineHost: column.content };
     const contentTop = column.content.getBoundingClientRect().top;
     const insertion = column.viewport.insertion(y - contentTop, source.projectPath);
-    const group = this.model_abyssPrivate?.columns
-      .find((candidate) => candidate.status.key === column.key)
-      ?.groups.find((candidate) => candidate.key === insertion?.groupKey);
+    const group = insertion === undefined ? undefined : column.groupModels.get(insertion.groupKey);
     return {
       target: {
         ...target,

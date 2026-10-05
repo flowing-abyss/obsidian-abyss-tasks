@@ -2,9 +2,10 @@ import { Component } from 'obsidian';
 import { RowViewport, type RowAnchor, type RowSegment } from '../virtualization/rowViewport';
 import {
   kanbanInsertion,
-  kanbanPlanInsertionTop,
+  KanbanRowIndex,
   type KanbanInsertion,
   type KanbanViewportRow,
+  type PlannedKanbanInsertion,
 } from './projectKanbanRows';
 
 export interface KanbanRowMount {
@@ -25,6 +26,7 @@ export class ProjectKanbanColumnViewport {
   readonly #options: ProjectKanbanColumnViewportOptions;
   readonly #viewport = new RowViewport();
   #rows: readonly KanbanViewportRow[] = [];
+  #rowIndex = new KanbanRowIndex([]);
   readonly #mounts = new Map<string, { mount: KanbanRowMount; markdown: Component }>();
   readonly #pins = new Set<{ owner: ProjectKanbanColumnViewport; key: string }>();
   #spacers: HTMLElement[] = [];
@@ -54,6 +56,7 @@ export class ProjectKanbanColumnViewport {
     const top = Math.max(0, this.#options.scroll.scrollTop);
     const anchor = preserveAnchor ? this.#viewport.captureAnchor(top) : undefined;
     this.#rows = rows;
+    this.#rowIndex = new KanbanRowIndex(rows);
     this.#replace();
     this.#checkLayout(top);
     const restored = this.#viewport.restoreAnchor(anchor, top);
@@ -124,11 +127,8 @@ export class ProjectKanbanColumnViewport {
   insertion(contentY: number, sourcePath: string): KanbanInsertion | undefined {
     return kanbanInsertion(this.#rows, this.#viewport, contentY, sourcePath);
   }
-  insertionTop(
-    insertion: Parameters<typeof kanbanPlanInsertionTop>[2],
-    proposedPath: string,
-  ): number | undefined {
-    return kanbanPlanInsertionTop(this.#rows, this.#viewport, insertion, proposedPath);
+  insertionTop(insertion: PlannedKanbanInsertion, proposedPath: string): number | undefined {
+    return this.#rowIndex.insertionTop(this.#viewport, insertion, proposedPath);
   }
   pin(key: string): () => void {
     const token = { owner: this, key };

@@ -52,43 +52,68 @@ function neighborInsertion(
   return { groupKey, top };
 }
 
-type PlannedInsertion = Extract<ProjectKanbanDropPlan, { allowed: true }>['insertion'];
+export type PlannedKanbanInsertion = Extract<ProjectKanbanDropPlan, { allowed: true }>['insertion'];
 
-function insertionPath(insertion: PlannedInsertion, proposedPath: string): string {
+interface IndexedKanbanGroup {
+  readonly firstKey: string;
+  headerKey?: string;
+  readonly cards: Map<string, string>;
+}
+
+/** Projection-time keys keep repeated landing lookups independent of column population. */
+export class KanbanRowIndex {
+  readonly #groups = new Map<string, IndexedKanbanGroup>();
+  readonly #lastKey: string | undefined;
+
+  constructor(rows: readonly KanbanViewportRow[]) {
+    this.#lastKey = rows[rows.length - 1]?.key;
+    for (const row of rows) {
+      let group = this.#groups.get(row.groupKey);
+      if (group === undefined) {
+        group = { firstKey: row.key, cards: new Map() };
+        this.#groups.set(row.groupKey, group);
+      }
+      if (row.kind === 'group' && group.headerKey === undefined) group.headerKey = row.key;
+      if (row.kind === 'card' && row.projectPath !== undefined && !group.cards.has(row.projectPath))
+        group.cards.set(row.projectPath, row.key);
+    }
+  }
+
+  insertionTop(
+    viewport: RowViewport,
+    insertion: PlannedKanbanInsertion,
+    proposedPath: string,
+  ): number | undefined {
+    if (insertion.kind === 'none') return undefined;
+    const group = this.#groups.get(insertion.groupKey);
+    const key = group?.cards.get(insertionPath(insertion, proposedPath));
+    if (key !== undefined) {
+      const bounds = viewport.rowBounds(key);
+      return insertion.kind === 'after' ? bounds?.bottom : bounds?.top;
+    }
+    return this.#groupBoundary(viewport, group, insertion);
+  }
+
+  #groupBoundary(
+    viewport: RowViewport,
+    group: IndexedKanbanGroup | undefined,
+    insertion: PlannedKanbanInsertion,
+  ): number | undefined {
+    if (group?.headerKey !== undefined && group.cards.size === 0)
+      return viewport.rowBounds(group.headerKey)?.bottom;
+    return insertion.kind === 'empty'
+      ? this.#newGroupTop(viewport, insertion.beforeGroupKey)
+      : undefined;
+  }
+
+  #newGroupTop(viewport: RowViewport, beforeGroupKey: string | undefined): number | undefined {
+    const before = beforeGroupKey === undefined ? undefined : this.#groups.get(beforeGroupKey);
+    if (before !== undefined) return viewport.rowBounds(before.headerKey ?? before.firstKey)?.top;
+    return this.#lastKey === undefined ? 0 : viewport.rowBounds(this.#lastKey)?.bottom;
+  }
+}
+function insertionPath(insertion: PlannedKanbanInsertion, proposedPath: string): string {
   if (insertion.kind === 'before') return insertion.beforePath;
   if (insertion.kind === 'after') return insertion.afterPath;
   return proposedPath;
-}
-function newGroupInsertionTop(
-  rows: readonly KanbanViewportRow[],
-  viewport: RowViewport,
-  beforeGroupKey: string | undefined,
-): number | undefined {
-  const before = rows.find((row) => row.kind === 'group' && row.groupKey === beforeGroupKey);
-  if (before !== undefined) return viewport.rowBounds(before.key)?.top;
-  const last = rows[rows.length - 1];
-  return last === undefined ? 0 : viewport.rowBounds(last.key)?.bottom;
-}
-
-/** Resolve the planner's landing over all rows, including neighbors outside the native window. */
-export function kanbanPlanInsertionTop(
-  rows: readonly KanbanViewportRow[],
-  viewport: RowViewport,
-  insertion: PlannedInsertion,
-  proposedPath: string,
-): number | undefined {
-  if (insertion.kind === 'none') return undefined;
-  const groupRows = rows.filter((row) => row.groupKey === insertion.groupKey);
-  const path = insertionPath(insertion, proposedPath);
-  const card = groupRows.find((row) => row.kind === 'card' && row.projectPath === path);
-  if (card !== undefined) {
-    const bounds = viewport.rowBounds(card.key);
-    return insertion.kind === 'after' ? bounds?.bottom : bounds?.top;
-  }
-  const header = groupRows.find((row) => row.kind === 'group');
-  if (header !== undefined && !groupRows.some((row) => row.kind === 'card'))
-    return viewport.rowBounds(header.key)?.bottom;
-  return insertion.kind === 'empty'
-    ? newGroupInsertionTop(rows, viewport, insertion.beforeGroupKey)
-    : undefined;
 }

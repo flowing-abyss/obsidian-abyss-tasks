@@ -1110,6 +1110,7 @@ export class ProjectsTableView {
     const current = this.sourceObservations_abyssPrivate.get(observation.path);
     if (current !== undefined && current.revision >= observation.revision) return;
     this.sourceObservations_abyssPrivate.set(observation.path, observation);
+    this.kanbanView_abyssPrivate?.invalidatePreviewPlan();
     let changed = false;
     for (const [key, projection] of this.receiptProjections_abyssPrivate) {
       if (
@@ -1434,6 +1435,7 @@ export class ProjectsTableView {
 
   private renderTable_abyssPrivate(): void {
     this.tableSurface_abyssPrivate.invalidateDragPreview();
+    this.kanbanView_abyssPrivate?.invalidatePreviewPlan();
     if (!this.mounted_abyssPrivate) return;
     if (
       this.mutationActive_abyssPrivate ||

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   kanbanInsertion,
-  kanbanPlanInsertionTop,
+  KanbanRowIndex,
   type KanbanViewportRow,
+  type PlannedKanbanInsertion,
 } from '../src/panels/projects/projectKanbanRows';
 import { RowViewport } from '../src/panels/virtualization/rowViewport';
 import { expectDefined } from './helpers';
@@ -54,6 +55,14 @@ describe('logical Kanban insertion', () => {
   });
 });
 
+function plannedInsertion(
+  rows: readonly KanbanViewportRow[],
+  viewport: RowViewport,
+  insertion: PlannedKanbanInsertion,
+  path: string,
+) {
+  return new KanbanRowIndex(rows).insertionTop(viewport, insertion, path);
+}
 describe('planned Kanban insertion coordinates', () => {
   it('uses the exact group occurrence and measured full-row edges', () => {
     const rows = [header('g'), card('a'), header('h'), card('a', 'h'), card('b', 'h')];
@@ -61,7 +70,7 @@ describe('planned Kanban insertion coordinates', () => {
     viewport.replace(rows);
     viewport.measure([{ key: 'h:a', height: 60 }], 0);
     expect(
-      kanbanPlanInsertionTop(
+      plannedInsertion(
         rows,
         viewport,
         { kind: 'before', groupKey: 'h', beforePath: 'a' },
@@ -69,45 +78,66 @@ describe('planned Kanban insertion coordinates', () => {
       ),
     ).toBe(80);
     expect(
-      kanbanPlanInsertionTop(
-        rows,
+      plannedInsertion(rows, viewport, { kind: 'after', groupKey: 'h', afterPath: 'a' }, 'moving'),
+    ).toBe(140);
+  });
+  it('retains arbitrary first-occurrence keys while live measurements change', () => {
+    const rows = [
+      { ...header('g'), key: 'section alpha' },
+      { ...card('a'), key: 'unrelated first key' },
+      { ...card('a'), key: 'same-path second key' },
+      { ...header('h'), key: 'section beta' },
+      { ...card('a', 'h'), key: 'another group key' },
+    ];
+    const viewport = new RowViewport();
+    viewport.replace(rows);
+    const index = new KanbanRowIndex(rows);
+    expect(
+      index.insertionTop(viewport, { kind: 'before', groupKey: 'g', beforePath: 'a' }, 'moving'),
+    ).toBe(20);
+    expect(
+      index.insertionTop(viewport, { kind: 'before', groupKey: 'h', beforePath: 'a' }, 'moving'),
+    ).toBe(120);
+    viewport.measure([{ key: 'unrelated first key', height: 60 }], 0);
+    expect(
+      index.insertionTop(viewport, { kind: 'after', groupKey: 'g', afterPath: 'a' }, 'moving'),
+    ).toBe(80);
+    expect(
+      index.insertionTop(viewport, { kind: 'before', groupKey: 'h', beforePath: 'a' }, 'moving'),
+    ).toBe(140);
+    expect(
+      index.insertionTop(
         viewport,
-        { kind: 'after', groupKey: 'h', afterPath: 'a' },
+        { kind: 'before', groupKey: 'g', beforePath: 'absent' },
         'moving',
       ),
-    ).toBe(140);
+    ).toBeUndefined();
   });
   it('resolves an empty group, a new group before its neighbor, and the logical tail', () => {
     const rows = [header('g'), card('a'), header('h')];
     const viewport = new RowViewport();
     viewport.replace(rows);
-    expect(kanbanPlanInsertionTop(rows, viewport, { kind: 'empty', groupKey: 'h' }, 'moving')).toBe(
-      80,
-    );
+    expect(plannedInsertion(rows, viewport, { kind: 'empty', groupKey: 'h' }, 'moving')).toBe(80);
     expect(
-      kanbanPlanInsertionTop(
+      plannedInsertion(
         rows,
         viewport,
         { kind: 'empty', groupKey: 'new', beforeGroupKey: 'h' },
         'moving',
       ),
     ).toBe(60);
+    expect(plannedInsertion(rows, viewport, { kind: 'empty', groupKey: 'new' }, 'moving')).toBe(80);
     expect(
-      kanbanPlanInsertionTop(rows, viewport, { kind: 'empty', groupKey: 'new' }, 'moving'),
-    ).toBe(80);
-    expect(
-      kanbanPlanInsertionTop([], new RowViewport(), { kind: 'empty', groupKey: 'new' }, 'moving'),
+      plannedInsertion([], new RowViewport(), { kind: 'empty', groupKey: 'new' }, 'moving'),
     ).toBe(0);
   });
   it('uses the proposed singleton top and collapsed header boundary without inventing a forecast', () => {
     const rows = [header('g'), card('moving'), header('h')];
     const viewport = new RowViewport();
     viewport.replace(rows);
-    expect(kanbanPlanInsertionTop(rows, viewport, { kind: 'empty', groupKey: 'g' }, 'moving')).toBe(
-      20,
-    );
+    expect(plannedInsertion(rows, viewport, { kind: 'empty', groupKey: 'g' }, 'moving')).toBe(20);
     expect(
-      kanbanPlanInsertionTop(
+      plannedInsertion(
         rows,
         viewport,
         { kind: 'after', groupKey: 'h', afterPath: 'unmounted-collapsed' },
@@ -115,7 +145,7 @@ describe('planned Kanban insertion coordinates', () => {
       ),
     ).toBe(80);
     expect(
-      kanbanPlanInsertionTop(rows, viewport, { kind: 'none', groupKey: 'g' }, 'moving'),
+      plannedInsertion(rows, viewport, { kind: 'none', groupKey: 'g' }, 'moving'),
     ).toBeUndefined();
   });
 });
@@ -266,6 +296,37 @@ describe('native Kanban columns', () => {
   });
 });
 
+it.each([1000, 10000])('bounds insertion lookup work over %s full rows', (count) => {
+  const h = nativeColumn(count);
+  let reads = 0;
+  const rows = h.rows.map((row) => ({
+    ...row,
+    get groupKey() {
+      reads++;
+      return 'g';
+    },
+  }));
+  h.owner.update(rows, false);
+  reads = 0;
+  expect(
+    h.owner.insertionTop({ kind: 'after', groupKey: 'g', afterPath: String(count - 1) }, 'moving'),
+  ).toBe(count * 40);
+  expect(reads).toBeLessThan(10);
+});
+
+it('replaces the column insertion index without retaining removed rows', () => {
+  const h = nativeColumn(2);
+  expect(h.owner.insertionTop({ kind: 'before', groupKey: 'g', beforePath: '0' }, 'moving')).toBe(
+    0,
+  );
+  h.owner.update([{ ...card('new'), key: 'supplied replacement key' }], false);
+  expect(
+    h.owner.insertionTop({ kind: 'before', groupKey: 'g', beforePath: '0' }, 'moving'),
+  ).toBeUndefined();
+  expect(h.owner.insertionTop({ kind: 'after', groupKey: 'g', afterPath: 'new' }, 'moving')).toBe(
+    40,
+  );
+});
 it('transfers a card Component and its existing release token to another column owner', () => {
   const source = nativeColumn(1);
   const destination = nativeColumn(0);
