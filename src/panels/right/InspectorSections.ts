@@ -22,6 +22,11 @@ import { LinkEditModal } from '../../ui/LinkEditModal';
 import { renderTaskText } from '../../ui/renderTaskText';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { startTaskNodeDrag } from '../../ui/taskNodeDrag';
+import {
+  renderSubtaskTitleText,
+  renderTaskCommentText,
+  renderTaskDescriptionText,
+} from '../../ui/taskNodeText';
 import { rootTaskRef, taskNodeRef } from '../../ui/taskSelection';
 import { renderRowRemove } from './inspectorRowRemove';
 import type { TaskLike } from './inspectorTypes';
@@ -234,8 +239,7 @@ export class InspectorSections {
       return;
     }
     view.removeClass('abyss-right-desc-empty');
-    renderTaskText(view, description, {
-      presentation: 'markdown',
+    renderTaskDescriptionText(view, description, {
       app: this.#app,
       sourcePath: rootTaskRef(task).filePath,
       component: this.#host.component(),
@@ -583,11 +587,7 @@ export class InspectorSections {
   #renderSubtaskContent(row: HTMLElement, sub: SubtaskSnapshot): void {
     const content = row.createDiv({ cls: 'abyss-subtask-content' });
     const titleRow = content.createDiv({ cls: 'abyss-subtask-title-row' });
-    const label = titleRow.createSpan({
-      cls: `abyss-subtask-label${sub.status === 'done' ? ' is-done' : ''}`,
-    });
-    renderTaskText(label, sub.markdownTitle, {
-      presentation: 'title',
+    const { element: label } = renderSubtaskTitleText(titleRow, sub, {
       app: this.#app,
       sourcePath: rootTaskRef(sub).filePath,
       component: this.#host.component(),
@@ -658,9 +658,7 @@ export class InspectorSections {
     task: TaskLike,
     showText: () => void,
   ): void {
-    const textEl = row.createEl('p', { cls: 'abyss-comment-text' });
-    renderTaskText(textEl, comment.text, {
-      presentation: 'markdown',
+    const { element: textEl } = renderTaskCommentText(row, comment.text, {
       app: this.#app,
       sourcePath: rootTaskRef(task).filePath,
       component: this.#host.component(),

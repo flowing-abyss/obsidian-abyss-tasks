@@ -37,18 +37,18 @@ it('renders and marks the complete second paragraph and split child term with no
     h.query('budget zebra');
     await h.completed();
     const card = expectDefined(h.root.querySelector('.abyss-task-card'));
-    expect(card.querySelector('.abyss-task-desc')).toBeNull();
+    expect(card.querySelector('.abyss-task-desc')).not.toBeNull();
     expect(card.querySelector('.abyss-task-title mark')).toBeNull();
     expect(card.textContent).not.toContain('unrelated comment');
-    const fields = card.querySelectorAll('.abyss-search-context');
+    const fields = card.querySelectorAll('.abyss-task-desc, .abyss-subtask-label');
     expect(fields).toHaveLength(2);
     expect(fields[0]?.textContent).toContain('unrelated paragraphsecond budget paragraph');
     expect(
       [...expectDefined(fields[0]).querySelectorAll('mark')].map((m) => m.textContent),
     ).toEqual(['bud', 'get']);
-    expect(fields[1]?.textContent).toContain('root › zebra');
+    expect(fields[1]?.textContent).toBe('zebra');
     expect(fields[1]?.querySelector('mark')?.textContent).toBe('zebra');
-    expect(card.querySelectorAll('.abyss-search-context button')).toHaveLength(2);
+    expect(card.querySelectorAll('.abyss-search-context-label')).toHaveLength(0);
     expect(
       [...card.querySelectorAll('button')].some((b) => /More|Previous|Next/.test(b.textContent)),
     ).toBe(false);
@@ -57,7 +57,7 @@ it('renders and marks the complete second paragraph and split child term with no
   }
 });
 
-it('keeps repeated comments separately labeled and activates an exact repeated grandchild via the shared card', async () => {
+it('keeps repeated comments separately rendered and activates an exact repeated grandchild via the shared card', async () => {
   const h = await mountCanonicalSearchUi(
     {
       'a.md': [
@@ -76,16 +76,13 @@ it('keeps repeated comments separately labeled and activates an exact repeated g
   try {
     h.query('second needle zebra');
     await h.completed();
-    const fields = [...h.root.querySelectorAll<HTMLElement>('.abyss-search-context')];
+    const fields = [...h.root.querySelectorAll<HTMLElement>('.abyss-comment-text')];
     expect(fields).toHaveLength(3);
     expect(fields[0]?.textContent).toContain('first needle comment');
     expect(fields[1]?.textContent).toContain('second needle comment');
-    expect(fields[0]?.querySelector('button')?.textContent).not.toBe(
-      fields[1]?.querySelector('button')?.textContent,
-    );
-    expect(fields[2]?.textContent).toContain('root › repeated › repeated');
+    expect(fields[2]?.textContent).toBe('zebra needle');
     expect(h.root.textContent).not.toContain('unrelated preview');
-    expectDefined(fields[2]?.querySelector('button')).click();
+    expectDefined(fields[2]).click();
     await vi.waitFor(() => {
       expect(h.state.get('mode')).toBe('tasks');
     });
@@ -101,7 +98,7 @@ it('keeps repeated comments separately labeled and activates an exact repeated g
   }
 });
 
-it('labels hidden targets separately without marking an unmatched visible alias', async () => {
+it('renders hidden-target owning anchors without diagnostic text or unmatched alias marks', async () => {
   vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _source, holder) => {
     const a = holder.createEl('a', { text: 'Visible alias', cls: 'internal-link' });
     a.setAttribute('data-href', 'HiddenLedger');
@@ -115,10 +112,7 @@ it('labels hidden targets separately without marking an unmatched visible alias'
     await h.completed();
     expect(h.root.querySelector('.abyss-task-title')?.textContent).toBe('Visible alias');
     expect(h.root.querySelector('.abyss-task-title mark')).toBeNull();
-    expect(h.root.querySelector('.abyss-search-context')?.textContent).toContain(
-      'Title link target',
-    );
-    expect(h.root.querySelector('.abyss-search-context')?.textContent).toContain('HiddenLedger');
+    expect(h.root.querySelector('.abyss-search-context')?.textContent).toBe('');
     expect(h.root.querySelector('.abyss-task-desc')).toBeNull();
   } finally {
     h.dispose();
@@ -364,7 +358,9 @@ it('extracts contexts only for the demanded roots and rejects detached context a
       taskCardMountBound(h.root, 1),
     );
     const old = expectDefined(
-      h.root.querySelector<HTMLButtonElement>('.abyss-search-context button'),
+      h.root.querySelector<HTMLElement>(
+        '.abyss-search-context .abyss-comment-text, .abyss-search-context .abyss-subtask-label, .abyss-search-context .abyss-task-desc',
+      ),
     );
     const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
     scroll.scrollTop = 101 * 64;
@@ -521,10 +517,11 @@ it('renders the full long authored field past the former clipping point', async 
   try {
     h.query('needle');
     await h.completed();
-    expect(h.root.querySelector('.abyss-search-context-text')?.textContent).toBe(
-      `${prefix}needle tail same`,
-    );
-    expect(h.root.querySelector('.abyss-search-context-text mark')?.textContent).toBe('needle');
+    expect(
+      h.root.querySelector('.abyss-task-desc, .abyss-comment-text, .abyss-subtask-label')
+        ?.textContent,
+    ).toBe(`${prefix}needle tail same`);
+    expect(h.root.querySelector('.abyss-search-context mark')?.textContent).toBe('needle');
   } finally {
     h.dispose();
   }
@@ -548,7 +545,7 @@ it('uses the production Intl CJK word boundary for retrieved field evidence and 
         ReturnType<typeof contextModule.taskSearchContext> | undefined,
     );
     expect(
-      result.excerpts[0]?.matches.map((m) => ({
+      result.tree.evidence[0]?.matches.map((m) => ({
         start: m.start,
         end: m.end,
         queryToken: m.queryToken,
@@ -651,9 +648,9 @@ it.each(['root-description', 'root-comment', 'child-description', 'child-comment
       const execute = vi.spyOn(h.tasks, 'execute');
       h.query('https');
       await h.completed();
-      const fields = [...h.root.querySelectorAll('.abyss-search-context-text')].filter(
-        (field) => field.querySelector('a') !== null,
-      );
+      const fields = [
+        ...h.root.querySelectorAll('.abyss-task-desc, .abyss-comment-text, .abyss-subtask-label'),
+      ].filter((field) => field.querySelector('a') !== null);
       const field = expectDefined(fields[fields.length - 1]);
       // Observe link wiring without opening the unrelated enclosing card menu.
       field.addEventListener('contextmenu', (event) => {
@@ -734,9 +731,9 @@ it.each(['authored', 'https://one.example'])(
       h.query('https');
       await h.completed();
       const field = expectDefined(
-        [...h.root.querySelectorAll('.abyss-search-context-text')].find(
-          (field) => field.querySelector('a') !== null,
-        ),
+        [
+          ...h.root.querySelectorAll('.abyss-task-desc, .abyss-comment-text, .abyss-subtask-label'),
+        ].find((field) => field.querySelector('a') !== null),
       );
       field.addEventListener('contextmenu', (event) => {
         event.stopPropagation();
@@ -753,3 +750,452 @@ it.each(['authored', 'https://one.example'])(
     }
   },
 );
+
+it('renders the pruned actual task tree without footer or duplicate labels', async () => {
+  const h = await mountCanonicalSearchUi(
+    {
+      'a.md': [
+        '- [ ] root',
+        '  - > unrelated description',
+        '  - 2026-10-04: first needle',
+        '  - [ ] repeated',
+        '    - [ ] repeated',
+        '      - 2026-10-04: deep needle',
+        '  - 2026-10-04: last needle',
+        '  - [ ] repeated',
+        '    - > fourth needle field',
+        '  - [ ] unrelated branch',
+      ].join('\n'),
+    },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  try {
+    h.query('needle');
+    await h.completed();
+    expect(h.root.querySelector('.abyss-search-footer')).toBeNull();
+    expect(h.root.querySelector('.abyss-search-count')).toBeNull();
+    expect(h.root.querySelector('.abyss-search-context-label')).toBeNull();
+    expect(h.root.querySelectorAll('.abyss-task-title')).toHaveLength(1);
+    expect(h.root.querySelectorAll('.abyss-subtask-label')).toHaveLength(3);
+    expect(h.root.querySelectorAll('.abyss-comment-text')).toHaveLength(3);
+    expect(h.root.textContent).not.toContain('unrelated description');
+    expect(
+      [
+        ...h.root.querySelectorAll('.abyss-subtask-label, .abyss-comment-text, .abyss-task-desc'),
+      ].map((e) => e.textContent),
+    ).toEqual([
+      'first needle',
+      'repeated',
+      'repeated',
+      'deep needle',
+      'last needle',
+      'repeated',
+      'fourth needle field',
+    ]);
+  } finally {
+    h.dispose();
+  }
+});
+
+const tagTree = [
+  '- [ ] root #needle-root #unmatched-root',
+  '  - [ ] repeated #needle-child',
+  '    - [ ] repeated #needle-deep',
+  '  - [ ] repeated #unmatched-sibling',
+].join('\n');
+
+it('uses shared tag colors and prevents child tag drops from writing the bubbling root', async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.tagGroups = [
+    {
+      id: 'needle',
+      name: 'Needle',
+      color: '#ff0000',
+      mode: 'manual',
+      tags: ['#needle-root', '#needle-child', '#needle-deep'],
+    },
+  ];
+  const h = await mountCanonicalSearchUi({ 'a.md': tagTree }, settings);
+  try {
+    h.query('needle');
+    await h.completed();
+    const execute = vi.spyOn(h.tasks, 'execute');
+    const chips = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-tag')];
+    expect(chips.map((e) => e.textContent)).toEqual([
+      '#needle-child',
+      '#needle-deep',
+      '#needle-root',
+    ]);
+    expect(chips.every((e) => e.hasClass('abyss-task-tag--colored'))).toBe(true);
+    expect(chips.every((e) => e.style.getPropertyValue('--abyss-tag-color') === '#ff0000')).toBe(
+      true,
+    );
+    expect(h.root.textContent).not.toContain('unmatched');
+    h.state.set('draggingTag', '#replacement');
+    for (const chip of chips.filter((e) => e.textContent !== '#needle-root')) {
+      const over = new Event('dragover', { bubbles: true, cancelable: true });
+      chip.dispatchEvent(over);
+      chip.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+      expect(over.defaultPrevented).toBe(false);
+      expect(chip.hasClass('abyss-drop-target')).toBe(false);
+      expect(chip.closest('.abyss-task-card')?.classList.contains('abyss-drop-target')).toBe(false);
+    }
+    expect(execute).not.toHaveBeenCalled();
+    expect(await h.app.vault.adapter.read('a.md')).toBe(tagTree);
+    const rootChip = expectDefined(chips.find((e) => e.textContent === '#needle-root'));
+    rootChip.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+    await vi.waitFor(async () => {
+      expect(await h.app.vault.adapter.read('a.md')).toBe(
+        tagTree.replace('#needle-root #unmatched-root', '#unmatched-root #replacement'),
+      );
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(h.state.get('mode')).toBe('search');
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each(['#needle-root', '#needle-child', '#needle-deep'])(
+  'uses the existing exact filter for %s without navigation or writes',
+  async (tag) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const h = await mountCanonicalSearchUi({ 'a.md': tagTree }, settings);
+    try {
+      h.query('needle');
+      await h.completed();
+      const execute = vi.spyOn(h.tasks, 'execute');
+      expectDefined(
+        [...h.root.querySelectorAll<HTMLElement>('.abyss-task-tag')].find(
+          (e) => e.textContent === tag,
+        ),
+      ).click();
+      expect(h.panel['searchView_abyssPrivate'].list.filters).toEqual([
+        { type: 'tag', value: tag },
+      ]);
+      expect(h.state.get('mode')).toBe('search');
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each([
+  ['needle-id', '- [ ] root 🆔 needle-id #unmatched', 'dependencyId: needle-id', 'needle-id'],
+  [
+    'needle-dep',
+    '- [ ] root\n  - [ ] child ⛔ needle-dep #unmatched',
+    'dependsOn: needle-dep',
+    'needle-dep',
+  ],
+  ['90', '- [ ] root ⏱️ 1h30m #unmatched', 'Duration minutes: 90', '90'],
+  ['1h30m', '- [ ] root ⏱️ 1h30m #unmatched', 'duration: 1h30m', '1h30m'],
+  ['every day', '- [ ] root 🔁 every day #unmatched', 'recurrence: every day', 'every day'],
+  ['tomorrow', '- [ ] root 🔁 tomorrow #unmatched', 'recurrence: tomorrow', 'tomorrow'],
+] as const)(
+  'renders only contributing scalar %s in its exact header',
+  async (query, source, meaning, value) => {
+    const h = await mountCanonicalSearchUi({ 'a.md': source }, structuredClone(DEFAULT_SETTINGS));
+    try {
+      h.query(query);
+      await h.completed();
+      const group = expectDefined(
+        [...h.root.querySelectorAll<HTMLElement>('.abyss-task-meta-right [role="group"]')].find(
+          (e) => e.getAttribute('aria-label') === meaning,
+        ),
+      );
+      expect(group.textContent).toBe(value);
+      expect(group.querySelectorAll('a, button')).toHaveLength(0);
+      expect(
+        h.root.querySelectorAll(
+          '.abyss-task-tag, .abyss-task-desc, .abyss-comment-text, .abyss-task-source-note',
+        ),
+      ).toHaveLength(0);
+      expect(group.querySelectorAll('mark').length).toBeGreaterThan(0);
+      expect(h.root.textContent).not.toContain('unmatched');
+      expect(h.root.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(
+        query === 'every day' || query === 'tomorrow' ? 1 : 0,
+      );
+      if (query === 'tomorrow')
+        expect(
+          group.querySelector('.abyss-recurrence-badge')?.getAttribute('data-recurrence-validity'),
+        ).toBe('invalid');
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('deduplicates equal due/scheduled values with both accessible meanings and no time sidecar', async () => {
+  const source = '- [ ] root 📅 2026-11-30 ⏳ 2026-11-30 ⏰ 09:30 🔁 every day #unmatched';
+  const h = await mountCanonicalSearchUi({ 'a.md': source }, structuredClone(DEFAULT_SETTINGS));
+  try {
+    h.query('2026-11-30');
+    await h.completed();
+    const date = expectDefined(
+      h.root.querySelector<HTMLElement>('.abyss-task-meta-right [role="group"]'),
+    );
+    expect(date.getAttribute('aria-label')).toBe('scheduled: 2026-11-30; due: 2026-11-30');
+    expect(h.root.querySelectorAll('.abyss-task-date-part')).toHaveLength(1);
+    expect(
+      h.root.querySelectorAll('.abyss-task-tag, .abyss-recurrence-badge, .abyss-task-time-part'),
+    ).toHaveLength(0);
+    expect(date.querySelector('mark')).toBeNull();
+    const execute = vi.spyOn(h.tasks, 'execute');
+    expectDefined(date.querySelector<HTMLElement>('.abyss-task-date-part')).click();
+    expect(h.state.get('mode')).toBe('search');
+    expect(h.panel['searchView_abyssPrivate'].list.filters).toEqual([
+      { type: 'date', value: '2026-11-30' },
+    ]);
+    expect(execute).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});
+
+it('renders duplicate semantic text per exact descendant and preserves it across accepted publication', async () => {
+  const source =
+    '- [ ] root 🆔 needle-root\n  - [ ] repeated ⛔ needle-dep\n  - [ ] repeated ⛔ needle-dep';
+  const h = await mountCanonicalSearchUi({ 'a.md': source }, structuredClone(DEFAULT_SETTINGS));
+  try {
+    h.query('needle');
+    await h.completed();
+    const check = () => {
+      expect(
+        [...h.root.querySelectorAll('.abyss-task-meta-right [role="group"]')].map(
+          (e) => e.textContent,
+        ),
+      ).toEqual(['needle-dep', 'needle-dep', 'needle-root']);
+      expect(h.root.querySelectorAll('.abyss-subtask-label')).toHaveLength(2);
+    };
+    check();
+    h.index.installCommittedContent('a.md', `${source}\n  - > unrelated`);
+    await h.completed();
+    check();
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each(['toggle', 'status', 'priority'] as const)(
+  'executes deepest repeated child %s through the shared commands and preserves all other bytes',
+  async (action) => {
+    const source = '- [ ] root\n  - [ ] repeated\n    - [ ] needle\n  - [ ] needle';
+    const h = await mountCanonicalSearchUi({ 'a.md': source }, structuredClone(DEFAULT_SETTINGS));
+    try {
+      h.query('needle');
+      await h.completed();
+      const root = expectDefined(h.index.list()[0]);
+      const child = expectDefined(root.subtasks[0]?.subtasks[0]);
+      const label = expectDefined(
+        [...h.root.querySelectorAll<HTMLElement>('.abyss-subtask-label')].find(
+          (e) => e.textContent === 'needle',
+        ),
+      );
+      const row = expectDefined(label.closest('.abyss-subtask-row'));
+      const marker = expectDefined(row.querySelector<HTMLElement>('[role="checkbox"]'));
+      const execute = vi.spyOn(h.tasks, 'execute');
+      if (action === 'toggle') marker.click();
+      else {
+        marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        const popover = expectDefined(document.querySelector('.abyss-status-popover'));
+        const choice =
+          action === 'priority'
+            ? popover.querySelector<HTMLButtonElement>('[data-abyss-priority="A"]')
+            : [...popover.querySelectorAll<HTMLElement>('.abyss-status-popover-row')].find((e) =>
+                e.textContent.includes('In progress'),
+              );
+        expectDefined(choice).click();
+      }
+      await vi.waitFor(() => {
+        expect(execute).toHaveBeenCalledTimes(1);
+      });
+      const target = { type: 'subtask' as const, ref: child.ref };
+      const expectedCommands = {
+        toggle: { type: 'toggle-completion', target },
+        status: { type: 'set-status', target, symbol: '/' },
+        priority: { type: 'patch', target, patch: { priority: { type: 'set', value: 'A' } } },
+      };
+      expect(execute.mock.calls[0]?.[0]).toEqual(expectedCommands[action]);
+      const expectedLines = {
+        toggle: '    - [x] needle ✅ 2026-10-05',
+        status: '    - [/] needle',
+        priority: '    - [ ] needle 🔺',
+      };
+      await vi.waitFor(async () => {
+        expect(await h.app.vault.adapter.read('a.md')).toBe(
+          source.replace('    - [ ] needle', expectedLines[action]),
+        );
+      });
+      expect(h.state.get('mode')).toBe('search');
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each([
+  ['created', '➕', '2026-11-30'],
+  ['start', '🛫', '2026-11-30'],
+  ['completion', '✅', '2026-11-30'],
+  ['cancelled', '❌', '2026-11-30'],
+  ['scheduled', '⏳', '2026-11-30'],
+  ['due', '📅', '2026-11-30'],
+  ['time', '⏰', '09:30'],
+  ['priority', '⏫', 'B'],
+] as const)(
+  'renders contributing %s with the existing primitive or literal fallback',
+  async (key, marker, value) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const literal = key === 'priority' ? '' : ` ${value}`;
+    const source = `- [ ] root ${marker}${literal} #unmatched`;
+    const h = await mountCanonicalSearchUi({ 'a.md': source }, settings);
+    try {
+      h.query(value);
+      await h.completed();
+      const group = expectDefined(
+        h.root.querySelector<HTMLElement>(`.abyss-task-meta-right [aria-label="${key}: ${value}"]`),
+      );
+      expect(
+        h.root.querySelectorAll('.abyss-task-tag, .abyss-comment-text, .abyss-task-desc'),
+      ).toHaveLength(0);
+      if (key === 'due' || key === 'scheduled') {
+        expect(group.querySelector('.abyss-task-date-part')).not.toBeNull();
+        expectDefined(group.querySelector<HTMLElement>('.abyss-task-date-part')).click();
+        expect(h.panel['searchView_abyssPrivate'].list.filters).toEqual([{ type: 'date', value }]);
+      } else if (key === 'time') {
+        expect(group.textContent).toBe(value);
+        expectDefined(group.querySelector<HTMLElement>('.abyss-task-date')).click();
+        expect(h.panel['searchView_abyssPrivate'].list.filters).toEqual([{ type: 'time', value }]);
+      } else {
+        expect(group.textContent).toBe(value);
+        expect(group.querySelector('.abyss-task-date')).toBeNull();
+        if (key === 'priority')
+          expect(h.root.querySelector('.abyss-status-marker')?.getAttribute('data-priority')).toBe(
+            'B',
+          );
+      }
+      expect(h.state.get('mode')).toBe('search');
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('retains both distinct contributing duration values and whole authored text without semantic replay', async () => {
+  const source = '- [ ] root ⏱️ 1h30m\n  - > 90 and 1h30m are the authored estimate';
+  const h = await mountCanonicalSearchUi({ 'a.md': source }, structuredClone(DEFAULT_SETTINGS));
+  try {
+    h.query('90 1h30m');
+    await h.completed();
+    expect(
+      [...h.root.querySelectorAll('.abyss-task-meta-right [role="group"]')].map(
+        (e) => e.textContent,
+      ),
+    ).toEqual(['90', '1h30m']);
+    expect(h.root.querySelector('.abyss-task-desc')?.textContent).toBe(
+      '90 and 1h30m are the authored estimate',
+    );
+  } finally {
+    h.dispose();
+  }
+});
+
+it('blocks exact child pointer completion and presents the application refusal for a done menu choice', async () => {
+  const source = '- [ ] prerequisite 🆔 prereq\n- [ ] root\n  - [ ] needle ⛔ prereq';
+  const h = await mountCanonicalSearchUi({ 'a.md': source }, structuredClone(DEFAULT_SETTINGS));
+  try {
+    h.query('needle');
+    await h.completed();
+    const execute = vi.spyOn(h.tasks, 'execute');
+    const label = expectDefined(h.root.querySelector('.abyss-subtask-label'));
+    const marker = expectDefined(
+      label.closest('.abyss-subtask-row')?.querySelector<HTMLElement>('[role="checkbox"]'),
+    );
+    expect(marker.getAttribute('aria-disabled')).toBe('true');
+    marker.click();
+    expect(execute).not.toHaveBeenCalled();
+    expect(await h.app.vault.adapter.read('a.md')).toBe(source);
+    marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const done = expectDefined(
+      [...document.querySelectorAll<HTMLElement>('.abyss-status-popover-row')].find((e) =>
+        e.textContent.includes('Done'),
+      ),
+    );
+    done.click();
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(1);
+    });
+    const result = await (expectDefined(execute.mock.results[0]?.value) as ReturnType<
+      typeof h.tasks.execute
+    >);
+    expect(result.type).toBe('blocked');
+    expect(await h.app.vault.adapter.read('a.md')).toBe(source);
+    expect(h.state.get('mode')).toBe('search');
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each(['cancel', 'confirm', 'teardown'] as const)(
+  'keeps child invalid-recurrence completion confirmation under its owner (%s)',
+  async (decision) => {
+    const source = '- [ ] root\n  - [ ] needle 🔁 tomorrow 🏁 delete\n  - [ ] sibling';
+    const h = await mountCanonicalSearchUi({ 'a.md': source }, structuredClone(DEFAULT_SETTINGS));
+    try {
+      h.query('needle');
+      await h.completed();
+      const execute = vi.spyOn(h.tasks, 'execute');
+      expectDefined(
+        h.root.querySelector<HTMLElement>('.abyss-subtask-row [role="checkbox"]'),
+      ).click();
+      const confirm = expectDefined(document.querySelector('.abyss-recurrence-delete-confirm'));
+      expect(execute).not.toHaveBeenCalled();
+      if (decision === 'teardown') h.panel.destroy();
+      else
+        expectDefined(
+          confirm.querySelector<HTMLButtonElement>(
+            decision === 'confirm' ? '.abyss-recurrence-delete-confirm-button' : 'button',
+          ),
+        ).click();
+      await vi.waitFor(() => {
+        expect(confirm.isConnected).toBe(false);
+      });
+      if (decision === 'confirm') {
+        await vi.waitFor(async () => {
+          expect(await h.app.vault.adapter.read('a.md')).toBe('- [ ] root\n  - [ ] sibling');
+        });
+        expect(execute).toHaveBeenCalledTimes(1);
+      } else {
+        expect(execute).not.toHaveBeenCalled();
+        expect(await h.app.vault.adapter.read('a.md')).toBe(source);
+      }
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('renders all four contributing tags once and keeps a same-tag drop a no-op', async () => {
+  const source = '- [ ] root #needle-one #needle-two #needle-three #needle-four';
+  const h = await mountCanonicalSearchUi({ 'a.md': source }, structuredClone(DEFAULT_SETTINGS));
+  try {
+    h.query('needle');
+    await h.completed();
+    const chips = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-tag')];
+    expect(chips.map((e) => e.textContent)).toEqual([
+      '#needle-one',
+      '#needle-two',
+      '#needle-three',
+      '#needle-four',
+    ]);
+    const execute = vi.spyOn(h.tasks, 'execute');
+    h.state.set('draggingTag', '#needle-one');
+    expectDefined(chips[0]).dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+    expect(execute).not.toHaveBeenCalled();
+    expect(await h.app.vault.adapter.read('a.md')).toBe(source);
+  } finally {
+    h.dispose();
+  }
+});

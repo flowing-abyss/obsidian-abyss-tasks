@@ -130,7 +130,6 @@ export class TaskSearch {
   #input: HTMLInputElement | null = null;
   #results: HTMLElement | null = null;
   #status: SearchStatus | null = null;
-  #footer: HTMLElement | null = null;
   #timer: { owner: Window; id: number } | null = null;
   #cancelFocus: (() => void) | null = null;
   #pending: AbortController | null = null;
@@ -148,7 +147,6 @@ export class TaskSearch {
   #restart = false;
   #failedRenderRequest = -1;
   #organization: TaskSearchOrganization | undefined;
-  #taskChanged = false;
   constructor(options: TaskSearchOptions) {
     this.#options = options;
   }
@@ -230,9 +228,14 @@ export class TaskSearch {
   }
   #attach(root: HTMLElement): void {
     this.#owner = root.ownerDocument.defaultView;
-    const footer = root.createDiv({ cls: 'abyss-search-footer' });
-    this.#status = new SearchStatus(root, footer);
-    this.#footer = footer;
+    this.#status = new SearchStatus(root, root, (message) => {
+      this.#options.host.beginResults();
+      this.#options.host.discardResults?.();
+      this.#organization = undefined;
+      this.#results?.empty();
+      this.#results?.toggleClass('abyss-search-empty', true);
+      this.#results?.createDiv({ cls: 'abyss-center-empty', text: message });
+    });
     const search = this.#options.search;
     if (search !== undefined) {
       this.#unsubscribeIntent = this.#options.state.onCommit(() => {
@@ -271,7 +274,8 @@ export class TaskSearch {
     }
   }
   #markChangedActivation(state: TaskSearchState): void {
-    if (this.#activation !== null && this.#invalidates(state)) this.#taskChanged = true;
+    if (this.#activation !== null && this.#invalidates(state))
+      this.#status?.announceChanged(this.#request);
   }
   #invalidates(state: TaskSearchState): boolean {
     return (
@@ -341,7 +345,6 @@ export class TaskSearch {
     this.#generation = null;
     const request = ++this.#request;
     if (changedQuery) {
-      this.#taskChanged = false;
       this.#organization = undefined;
       this.#options.host.clearSelection();
     }
@@ -800,7 +803,6 @@ export class TaskSearch {
     host.toggleClass('abyss-search-empty', false);
     const rendered = await this.#renderRows(host, organization, options);
     if (!options.isCurrent() || rendered.type !== 'ready') return;
-    this.#renderCounts(organization);
     if (organization.occurrences.length === 0)
       host.createDiv({ cls: 'abyss-center-empty', text: 'No results' });
     await this.#revealOccurrence(organization, identity);
@@ -869,21 +871,6 @@ export class TaskSearch {
       return { type: 'cancelled' };
     }
   }
-  #renderCounts(organization: TaskSearchOrganization): void {
-    const footer = this.#footer;
-    if (footer === null) return;
-    footer.querySelector('.abyss-search-count')?.remove();
-    footer.createSpan({
-      cls: 'abyss-search-count',
-      text:
-        organization.rootTotal === organization.occurrences.length
-          ? `${organization.rootTotal} tasks`
-          : `${organization.rootTotal} tasks · ${organization.occurrences.length} occurrences`,
-    });
-    footer.querySelector('.abyss-search-changed')?.remove();
-    if (this.#taskChanged)
-      footer.createSpan({ cls: 'abyss-search-changed', text: 'Task changed. Search again.' });
-  }
   #presentation(
     activate: (address: TaskSearchAddress) => void,
   ): TaskSearchRowOptions['presentation'] {
@@ -935,8 +922,6 @@ export class TaskSearch {
     this.#unsubscribeIntent = null;
     this.#status?.dispose();
     this.#status = null;
-    this.#footer?.remove();
-    this.#footer = null;
     this.#root?.removeAttribute('data-search-logical-results');
     this.#input = null;
     this.#results = null;
@@ -946,7 +931,6 @@ export class TaskSearch {
     this.#generation = null;
     this.#restart = false;
     this.#organization = undefined;
-    this.#taskChanged = false;
   }
   /** Shared card/context activation; exact hydration remains valid through delayed guard acceptance. */
   async activate(address: TaskSearchAddress): Promise<void> {
@@ -989,7 +973,7 @@ export class TaskSearch {
   }
   #activationFailed(request: number, error: unknown): void {
     if (error instanceof TaskSearchError && error.code === 'stale') {
-      this.#taskChanged = true;
+      this.#status?.announceChanged(this.#request);
       this.#schedule(this.#currentQuery(), 0);
     } else this.#handleFailure(request, error);
   }

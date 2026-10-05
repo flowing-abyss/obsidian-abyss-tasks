@@ -16,11 +16,10 @@ import type { SubtaskSnapshot, TaskSnapshot } from '../../domain/types';
 
 type TaskSearchContextField =
   'title' | 'description' | 'comment' | 'tag' | 'metadata' | 'link-target';
-export interface TaskSearchExcerpt {
+export interface TaskSearchEvidence {
   readonly address: TaskSearchAddress;
   readonly field: TaskSearchContextField;
   readonly commentLine?: number;
-  readonly label: string;
   readonly text: string;
   readonly markdown?: string;
   readonly provenance:
@@ -35,32 +34,23 @@ export interface TaskSearchExcerpt {
   readonly matches: ReadonlyArray<
     SearchTextMatch & { readonly sourceRanges: readonly SourceRange[] }
   >;
-  readonly breadcrumb: readonly string[];
+}
+export interface TaskSearchTreeNode {
+  readonly address: TaskSearchAddress;
+  readonly evidence: readonly TaskSearchEvidence[];
+  readonly children: readonly TaskSearchTreeNode[];
 }
 export interface TaskSearchContext {
-  readonly excerpts: readonly TaskSearchExcerpt[];
+  readonly tree: TaskSearchTreeNode;
 }
 interface ContextNode {
   readonly node: TaskSnapshot | SubtaskSnapshot;
   readonly address: TaskSearchAddress;
-  readonly breadcrumb: readonly string[];
 }
 interface ContextField {
   readonly field: 'title' | 'description' | 'comment';
   readonly markdown: string;
   readonly commentLine?: number;
-}
-function* nodes(current: ContextNode): Generator<ContextNode> {
-  yield current;
-  for (const child of current.node.subtasks)
-    yield* nodes({
-      node: child,
-      address: {
-        ...current.address,
-        childLines: [...current.address.childLines, child.ref.relativeLine],
-      },
-      breadcrumb: [...current.breadcrumb, child.title],
-    });
 }
 function* fields(node: ContextNode['node']): Generator<ContextField> {
   yield { field: 'title', markdown: node.markdownTitle };
@@ -77,7 +67,7 @@ function fieldEvidence(
   field: ContextField,
   value: SearchTextValue,
   options: Matching & { target: boolean },
-): TaskSearchExcerpt | undefined {
+): TaskSearchEvidence | undefined {
   const { query, segment, target } = options;
   const matches = matchSearchText(value.text, query, segment).map((match) => ({
     ...match,
@@ -87,12 +77,10 @@ function fieldEvidence(
   const visibleRange = { from: 0, to: value.text.length };
   return {
     address: current.address,
-    breadcrumb: current.breadcrumb,
     field: target ? 'link-target' : field.field,
     ...(field.commentLine === undefined ? {} : { commentLine: field.commentLine }),
-    label: target ? `${field.field} link target` : field.field,
     text: value.text,
-    ...(target ? {} : { markdown: field.markdown }),
+    markdown: field.markdown,
     provenance: {
       type: 'field',
       field: field.field,
@@ -107,7 +95,7 @@ function semanticEvidence(
   current: ContextNode,
   value: { field: 'tag' | 'metadata'; key: string; text: string },
   { query, segment }: Matching,
-): TaskSearchExcerpt | undefined {
+): TaskSearchEvidence | undefined {
   const { field, key, text } = value;
   const matches = matchSearchText(text, query, segment).map((match) => ({
     ...match,
@@ -116,52 +104,16 @@ function semanticEvidence(
   if (matches.length === 0) return undefined;
   return {
     address: current.address,
-    breadcrumb: current.breadcrumb,
     field,
-    label: `${field}: ${key}`,
     text,
     provenance: { type: 'semantic', key },
     matches,
   };
 }
-interface SelectedEvidence {
-  readonly excerpt: TaskSearchExcerpt;
-  readonly tokens: ReadonlySet<number>;
-}
-function coverage(excerpts: readonly SelectedEvidence[]): number {
-  const tokens = new Set<number>();
-  for (const excerpt of excerpts) for (const token of excerpt.tokens) tokens.add(token);
-  return tokens.size;
-}
-/** Only the selected three fields and one candidate are retained, never a root/corpus context cache. */
-function collect(selected: SelectedEvidence[], excerpt: TaskSearchExcerpt | undefined): void {
-  if (excerpt === undefined) return;
-  const tokens = new Set<number>();
-  for (const match of excerpt.matches) tokens.add(match.queryToken);
-  const candidate = { excerpt, tokens };
-  if (selected.length < 3) {
-    selected.push(candidate);
-    return;
-  }
-  let best = coverage(selected),
-    remove = -1;
-  // Equal coverage keeps the earliest canonical fields. Among improvements remove the latest.
-  for (let index = selected.length - 1; index >= 0; index--) {
-    const score = coverage([...selected.filter((_, at) => at !== index), candidate]);
-    if (score > best) {
-      best = score;
-      remove = index;
-    }
-  }
-  if (remove >= 0) {
-    selected.splice(remove, 1);
-    selected.push(candidate);
-  }
-}
 function* nodeEvidence(
   current: ContextNode,
   matching: Matching,
-): Generator<TaskSearchExcerpt | undefined> {
+): Generator<TaskSearchEvidence | undefined> {
   for (const field of fields(current.node)) {
     const projection = projectSearchText(
       field.markdown,
@@ -176,6 +128,46 @@ function* nodeEvidence(
   for (const [key, text] of taskSearchMetadata(current.node))
     yield semanticEvidence(current, { field: 'metadata', key, text }, matching);
 }
+interface Frame extends ContextNode {
+  readonly parent?: Frame;
+  readonly children: TaskSearchTreeNode[];
+  readonly evidence: TaskSearchEvidence[];
+}
+interface PendingFrame {
+  readonly frame: Frame;
+  readonly finish: boolean;
+}
+function enqueueChildren(pending: PendingFrame[], frame: Frame): void {
+  for (let i = frame.node.subtasks.length - 1; i >= 0; i--) {
+    const child = frame.node.subtasks[i];
+    if (child === undefined) continue;
+    pending.push({
+      finish: false,
+      frame: {
+        node: child,
+        parent: frame,
+        address: {
+          ...frame.address,
+          childLines: [...frame.address.childLines, child.ref.relativeLine],
+        },
+        children: [],
+        evidence: [],
+      },
+    });
+  }
+}
+function collectNodeEvidence(frame: Frame, matching: Matching): void {
+  for (const evidence of nodeEvidence(frame, matching))
+    if (evidence !== undefined) frame.evidence.push(evidence);
+}
+function retainFrame(frame: Frame): void {
+  if (frame.parent !== undefined && (frame.evidence.length > 0 || frame.children.length > 0))
+    frame.parent.children.push({
+      address: frame.address,
+      evidence: frame.evidence,
+      children: frame.children,
+    });
+}
 /** Detached exact roots only. Display/source evidence confers no TaskTextTarget/edit authority. */
 export function taskSearchContext(
   root: TaskSnapshot,
@@ -183,13 +175,23 @@ export function taskSearchContext(
   query: PreparedSearchQuery,
   segment: SearchWordSegmenter,
 ): TaskSearchContext {
-  const excerpts: SelectedEvidence[] = [];
-  for (const current of nodes({
+  const first: Frame = {
     node: root,
     address: { ...address, childLines: [] },
-    breadcrumb: [root.title],
-  })) {
-    for (const evidence of nodeEvidence(current, { query, segment })) collect(excerpts, evidence);
+    children: [],
+    evidence: [],
+  };
+  const pending: PendingFrame[] = [{ frame: first, finish: false }];
+  while (pending.length > 0) {
+    const entry = pending.pop();
+    if (entry === undefined) break;
+    const { frame, finish } = entry;
+    if (finish) retainFrame(frame);
+    else {
+      collectNodeEvidence(frame, { query, segment });
+      pending.push({ frame, finish: true });
+      enqueueChildren(pending, frame);
+    }
   }
-  return { excerpts: excerpts.map((selected) => selected.excerpt) };
+  return { tree: { address: first.address, evidence: first.evidence, children: first.children } };
 }

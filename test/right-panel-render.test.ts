@@ -3691,5 +3691,8 @@ it('renders formatting-only description and comment through the shared Markdown 
   state.set('taskStack', [expectDefined(index.list()[0])]);
   await flushMicrotasks();
   expect(el.querySelector('.abyss-right-desc-view strong')?.textContent).toBe('description');
+  const description = expectDefined(el.querySelector('.abyss-right-desc.abyss-right-desc-view'));
+  expect(description.querySelector('.abyss-task-desc')).toBeNull();
+  expect(description.querySelector(':scope > .abyss-md')).not.toBeNull();
   expect(el.querySelector('.abyss-comment-text code')?.textContent).toBe('comment');
 });

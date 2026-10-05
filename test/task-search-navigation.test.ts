@@ -260,7 +260,10 @@ it('keeps activation source proof live while exact hydration is delayed', async 
     await activating;
     expect(h.captureNavigation()).toEqual(before);
     await h.completed();
-    expect(h.root.textContent).toContain('Task changed. Search again.');
+    expect(h.root.querySelector('.abyss-search-changed')).toBeNull();
+    expect(h.root.querySelector('.abyss-search-status')?.classList.contains('abyss-sr-only')).toBe(
+      true,
+    );
     h.query('changed');
     await h.completed();
     expect(h.root.textContent).not.toContain('Task changed. Search again.');
@@ -498,7 +501,7 @@ it.each(['link', 'status', 'tag', 'menu', 'drag'] as const)(
       structuredClone(DEFAULT_SETTINGS),
     );
     try {
-      h.query('needle');
+      h.query(action === 'tag' ? 'work' : 'needle');
       await h.completed();
       const owner = h.panel as unknown as { taskSearch_abyssPrivate: TaskSearch };
       const activate = vi.spyOn(owner.taskSearch_abyssPrivate, 'activate');

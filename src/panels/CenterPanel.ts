@@ -55,7 +55,7 @@ import { bindTaskHierarchyDrop, executeTaskHierarchy } from '../ui/taskHierarchy
 import { startTaskNodeDrag } from '../ui/taskNodeDrag';
 import { renderedTaskElements, renderedTaskNodeElements } from '../ui/taskPresentationIdentity';
 import type { TaskRenderOutcome, TaskRenderScope } from '../ui/taskRenderScope';
-import { taskNodeRef } from '../ui/taskSelection';
+import { rootTaskRef, taskNodeRef, type TaskSelectionNode } from '../ui/taskSelection';
 import type { TrackingSurface } from '../ui/timeTracking/TimeBadge';
 import {
   calendarMutationTarget,
@@ -377,6 +377,7 @@ export class CenterPanel {
       host: {
         component: () => this.md_abyssPrivate,
         dependenciesFor: (task) => this.dependenciesFor_abyssPrivate(task),
+        dependenciesForNode: (target) => this.tasks_abyssPrivate?.queries.dependencySummary(target),
         mountInteractions: (card, task, rowKey, context) => {
           this.mountTaskCardInteractions_abyssPrivate(card, task, rowKey, context);
         },
@@ -3201,7 +3202,7 @@ export class CenterPanel {
     }
   }
 
-  private openStatusMenu_abyssPrivate(event: MouseEvent, task: TaskSnapshot): void {
+  private openStatusMenu_abyssPrivate(event: MouseEvent, task: TaskSelectionNode): void {
     this.clearTaskDatePicker_abyssPrivate();
     this.dismissRecurrenceEditor_abyssPrivate();
     this.listViewControls_abyssPrivate.closeViewStatePopover();
@@ -3209,7 +3210,7 @@ export class CenterPanel {
     const releasePin =
       key === undefined
         ? undefined
-        : this.pinTaskInteraction_abyssPrivate(key, task.ref, () => {
+        : this.pinTaskInteraction_abyssPrivate(key, rootTaskRef(task), () => {
             handle.close();
           });
     const handle = showStatusMenuAt(event, {

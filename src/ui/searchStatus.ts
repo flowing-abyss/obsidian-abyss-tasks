@@ -9,9 +9,10 @@ export class SearchStatus {
   constructor(
     private readonly root: HTMLElement,
     host: HTMLElement,
+    private readonly onError?: (message: string) => void,
   ) {
     this.#text = host.createDiv({
-      cls: 'abyss-search-status',
+      cls: 'abyss-search-status abyss-sr-only',
       attr: { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
     });
     root.dataset['searchPhase'] = 'idle';
@@ -51,11 +52,19 @@ export class SearchStatus {
       : 'Could not load task results. Try again.';
     this.root.dataset['searchPhase'] = 'error';
     this.root.setAttribute('aria-busy', 'false');
-    this.#text.setText(message);
+    this.#showError(message);
     if (!invalid && !this.#failed) {
       this.#failed = true;
       new Notice(message);
     }
+  }
+  #showError(message: string): void {
+    this.#text.setText(message);
+    this.onError?.(message);
+  }
+  announceChanged(request: number): void {
+    if (request !== this.#request) return;
+    this.#text.setText('Task changed. Search again.');
   }
   dispose(): void {
     this.#request++;

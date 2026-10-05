@@ -120,7 +120,8 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   ],
   taskSearchContext: ['src/panels/center/TaskSearch.ts'],
   TaskSearchContext: ['src/panels/center/TaskCardRenderer.ts'],
-  TaskSearchExcerpt: ['src/panels/center/TaskCardRenderer.ts'],
+  TaskSearchEvidence: ['src/panels/center/TaskSearchTree.ts'],
+  TaskSearchTreeNode: ['src/panels/center/TaskSearchTree.ts'],
   TaskSearchApi: [
     'src/ui/dependencySearch.ts',
     'src/ui/TaskModal.ts',

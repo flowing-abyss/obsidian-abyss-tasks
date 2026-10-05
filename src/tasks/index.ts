@@ -128,7 +128,8 @@ export {
 export {
   taskSearchContext,
   type TaskSearchContext,
-  type TaskSearchExcerpt,
+  type TaskSearchEvidence,
+  type TaskSearchTreeNode,
 } from './infrastructure/search/taskSearchContext';
 
 export { createSearchWordSegmenter } from './infrastructure/search/searchWordSegmenter';

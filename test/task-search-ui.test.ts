@@ -181,7 +181,7 @@ it('property chips filter canonical Search without saved-list writes or full clo
   const settings = structuredClone(DEFAULT_SETTINGS);
   const before = structuredClone(settings.listViewStates);
   const h = await mountCanonicalSearchUi(
-    { 'a.md': '- [ ] needle #work\n- [ ] needle #home' },
+    { 'a.md': '- [ ] needle #needle-work\n- [ ] needle #needle-home' },
     settings,
   );
   try {
@@ -197,7 +197,7 @@ it('property chips filter canonical Search without saved-list writes or full clo
     await h.completed();
     expect(h.state.get('mode')).toBe('search');
     expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
-    expect(h.root.querySelector('.abyss-filter-chip')?.textContent).toContain('#work');
+    expect(h.root.querySelector('.abyss-filter-chip')?.textContent).toContain('#needle-work');
     expect(settings.listViewStates).toEqual(before);
   } finally {
     h.dispose();
@@ -320,7 +320,8 @@ it('duplicates outgoing occurrences with full counts and deduplicates the existi
     const cards = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')];
     expect(cards).toHaveLength(2);
     expect(h.root.dataset['searchLogicalResults']).toBe('1');
-    expect(h.root.textContent).toContain('2 occurrences');
+    expect(h.root.querySelector('.abyss-search-count')).toBeNull();
+    expect(h.root.querySelector('.abyss-search-footer')).toBeNull();
     for (const card of cards)
       card.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
     const selected = h.panel['selectedTasksInVisualOrder_abyssPrivate']();

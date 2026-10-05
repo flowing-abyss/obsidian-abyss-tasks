@@ -45,6 +45,7 @@ function renderer() {
     host: {
       component: () => hostComponent,
       dependenciesFor,
+      dependenciesForNode: () => undefined,
       mountInteractions: (_card, _task, _key, next) => {
         context = next;
         next?.component.register(unbound);
@@ -555,4 +556,43 @@ it('detaches a cancelled pending Markdown holder before the host can mutate it l
   expect(await mount.settled).toEqual({ type: 'ready' });
   expect(mount.element.textContent).not.toContain('late host output');
   mount.destroy();
+});
+
+it('refreshes only root Search metadata and leaves descendant headers and recurrence filtering intact', async () => {
+  const { createCanonicalSearchHarness } = await import('./support/taskSearchHarness');
+  const { taskSearchContext, prepareSearchQuery } = await import('../src/tasks');
+  const { fallbackSearchWords } = await import('../src/tasks/domain/searchMatchPolicy');
+  const h = renderer();
+  const canonical = await createCanonicalSearchHarness(
+    { 'a.md': '- [ ] root 🆔 needle-root 🔁 every day\n  - [ ] child 🆔 needle-child' },
+    h.settings,
+  );
+  try {
+    const root = expectDefined(canonical.index.list()[0]);
+    const query = prepareSearchQuery('needle', fallbackSearchWords);
+    const search = {
+      context: taskSearchContext(
+        root,
+        { epoch: 'test', rootId: 1, version: 1, childLines: [] },
+        query,
+        fallbackSearchWords,
+      ),
+      query,
+      segment: fallbackSearchWords,
+      onActivate: () => {},
+    };
+    const flags = { selected: false, showDelete: false };
+    const mount = h.subject.mount(document.body, root, [], flags, search);
+    await mount.settled;
+    mount.update(root, [], flags, search);
+    await mount.settled;
+    const metadata = [...mount.element.querySelectorAll('.abyss-task-meta-right')];
+    expect(metadata).toHaveLength(2);
+    expect(metadata.map((e) => e.textContent)).toEqual(['needle-child', 'needle-root']);
+    expect(mount.element.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(0);
+    mount.destroy();
+  } finally {
+    canonical.close();
+    h.hostComponent.unload();
+  }
 });

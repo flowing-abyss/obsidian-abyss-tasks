@@ -527,7 +527,7 @@ it('retires a held context action with its native row generation', async () => {
   h.query('needle');
   await h.completed();
   const held = expectDefined(
-    h.root.querySelector<HTMLButtonElement>('.abyss-search-context-label'),
+    h.root.querySelector<HTMLElement>('.abyss-search-context .abyss-task-desc'),
   );
   const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
   surface.reveal(expectDefined(surface.rows.taskKeys[surface.rows.taskKeys.length - 1]));

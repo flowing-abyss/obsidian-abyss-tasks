@@ -56,6 +56,14 @@ it('keeps input and offers no Retry control after an operational failure', async
       .mockRejectedValue(new TaskSearchError('unavailable', 'failed'));
     h.query('needle');
     await expect(h.completed()).rejects.toThrow();
+    expect(h.root.querySelector('.abyss-search-footer')).toBeNull();
+    expect(h.root.querySelector('.abyss-center-empty')?.textContent).toBe(
+      'Could not load task results. Try again.',
+    );
+    expect(h.root.querySelector('.abyss-search-status')?.classList.contains('abyss-sr-only')).toBe(
+      true,
+    );
+    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(0);
     expect(h.state.get('searchQuery')).toBe('needle');
     expect(h.root.querySelector<HTMLInputElement>('.abyss-search-global')?.value).toBe('needle');
     expect(
@@ -159,4 +167,23 @@ it('whitespace input settles as empty Search without preparation or a Notice', a
   } finally {
     h.dispose();
   }
+});
+
+it('announces a changed activation only for the current request without a layout strip', async () => {
+  const { SearchStatus } = await import('../src/ui/searchStatus');
+  const root = createDiv();
+  const status = new SearchStatus(root, root);
+  status.pending(1, 'needle');
+  status.announceChanged(1);
+  expect(root.querySelector('.abyss-search-status')?.textContent).toBe(
+    'Task changed. Search again.',
+  );
+  expect(root.querySelector('.abyss-search-status')?.classList.contains('abyss-sr-only')).toBe(
+    true,
+  );
+  status.pending(2, 'zebra');
+  status.announceChanged(1);
+  expect(root.querySelector('.abyss-search-status')?.textContent).toBe('Searching…');
+  expect(root.querySelector('.abyss-search-footer, .abyss-search-changed')).toBeNull();
+  status.dispose();
 });

@@ -52,7 +52,7 @@ import {
   PENDING_TASK_EDIT_RESULT,
   presentTaskArchiveResult,
   presentTaskCommandResult,
-  requestTaskCompletion,
+  requestTaskStatusChange,
 } from '../ui/taskCommandResult';
 import { dependencyCompletionBlocked } from '../ui/taskDependencyPresentation';
 import {
@@ -1873,8 +1873,10 @@ export class RightPanel {
   }
 
   private toggleTaskLike_abyssPrivate(task: TaskLike): Promise<void> {
-    return requestTaskCompletion(
+    return requestTaskStatusChange(
       task,
+      undefined,
+      this.statusRegistry_abyssPrivate,
       () => this.commitTaskToggle_abyssPrivate(task),
       this.interactionOwnership_abyssPrivate,
       this.completionConfirmationAbortController_abyssPrivate.signal,
@@ -2203,15 +2205,14 @@ export class RightPanel {
   }
 
   private setStatus_abyssPrivate(task: TaskLike, symbol: string): Promise<void> {
-    if (this.statusRegistry_abyssPrivate.bySymbol(symbol)?.type === 'done') {
-      return requestTaskCompletion(
-        task,
-        () => this.commitStatus_abyssPrivate(task, symbol),
-        this.interactionOwnership_abyssPrivate,
-        this.completionConfirmationAbortController_abyssPrivate.signal,
-      );
-    }
-    return this.commitStatus_abyssPrivate(task, symbol);
+    return requestTaskStatusChange(
+      task,
+      symbol,
+      this.statusRegistry_abyssPrivate,
+      () => this.commitStatus_abyssPrivate(task, symbol),
+      this.interactionOwnership_abyssPrivate,
+      this.completionConfirmationAbortController_abyssPrivate.signal,
+    );
   }
 
   private commitStatus_abyssPrivate(task: TaskLike, symbol: string): Promise<void> {

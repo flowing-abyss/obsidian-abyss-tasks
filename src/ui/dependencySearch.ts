@@ -288,7 +288,9 @@ class DependencySearchController {
     private readonly isClosed: () => boolean,
   ) {
     this.#direction = callbacks.direction;
-    this.#status = new SearchStatus(view.element, view.element);
+    this.#status = new SearchStatus(view.element, view.element, (message) => {
+      showError(view.error, message);
+    });
     this.#commit = createSearchCommitter(
       view,
       () => {

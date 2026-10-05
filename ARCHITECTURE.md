@@ -599,8 +599,10 @@ batch to that cursor's generation (including zero hits), then supplies the compa
 Accepted service generations are observed synchronously, so an unrelated accepted update cancels
 the entire old match-set publication even when individual unchanged handles remain hydratable.
 Only the live current request in a ready matching service generation can publish complete.
-`SearchStatus` owns inline busy/error and one Notice per failed episode within its mounted
-instance; a retained Tasks shell keeps that status and its mounted subscription across nonempty
+`SearchStatus` owns a screen-reader-only busy/error live region and one Notice per failed episode
+within its mounted instance. Current genuine failures render through the results empty-state owner
+(or the dependency picker's existing error element); Search has no visible footer/count/status strip.
+A retained Tasks shell keeps that status and its mounted subscription across nonempty
 query/view refreshes. Each refresh cancels the old controller while a validated same-query replacement can reuse exact
 rich roots across unrelated generations. The completed request signal remains live for later mounts. A successful nonempty search
 resets the failure episode; empty or invalid input preserves it. Close/reopen creates a new surface
@@ -656,31 +658,43 @@ native reveal primitive without stealing focus. The receipt consumes scroll auth
 retains an absolute owner-clock two-second pulse deadline. Eviction/remount can restore only the
 remaining pulse through the guarded row-settled callback, never another reveal or deadline. Later selection cancels pending presentation. Explicit
 navigation (including the same list), filters and teardown clear the receipt. Stale activation stays
-in Search with “Task changed. Search again.” and refreshes. After navigation, an unprovable receipt
+in Search, announces “Task changed. Search again.” accessibly and refreshes. After navigation, an unprovable receipt
 expires through CenterPanel's ordinary Tasks renderer; normal command/index inspector reconciliation
 keeps its authority. The expired surface drops Search counts and remains usable without a mode switch.
 
-The internal pure `tasks/infrastructure/search/taskSearchContext` helper computes at most three
-matched fields from one detached hydrated root, with full authored fields, separate comment-relative
-lines, exact child-relative-line paths and UTF-16 source provenance from `markdown/searchText` and
-`searchMatchPolicy`. A bounded collector prefers distinct query-token coverage, then canonical order,
-retaining only the at-most-32-token coverage set per candidate instead of repeatedly flattening matches.
-Link destinations are separately labeled evidence; scalar metadata has no fabricated source range.
-Documents and this helper share `taskSearchMetadata`. The public task barrel exposes that evidence
-and the shared matcher directly to TaskSearch and TaskCardRenderer. The barrel is the single facade;
-there is no redundant panel forwarding module. TaskSearch extracts context only for the
-demanded rich roots, sharing the current snapshot context across occurrences. A per-publication
-WeakMap releases contexts with those finite snapshots; no corpus context cache is retained. TaskSearch
-captures one segmenter from the same production factory used by the service and Worker, prepares
-one query per publication, and explicitly supplies that policy to pure context extraction and marks.
-Intl word segmentation is used when available, with the existing shared fallback otherwise.
+The internal pure `tasks/infrastructure/search/taskSearchContext` helper projects a pruned actual
+task tree from one detached hydrated root. It retains every contributing field and its exact ancestor
+chain, sharing addresses across fields, with separate comment-relative lines and UTF-16 source
+provenance from `markdown/searchText` and `searchMatchPolicy`. An iterative postorder traversal
+avoids an additional depth limit; unmatched branches are absent. Allocation grows with evidence,
+retained ancestors and their paths, full authored Markdown and match ranges. Documents and this
+helper share `taskSearchMetadata`; scalar evidence has no fabricated source range. The public task
+barrel exposes the tree/evidence and shared matcher directly to presentation. TaskSearch extracts
+context only for demanded rich roots and shares it across occurrences in its per-publication
+WeakMap; there is no corpus context cache. The service, Worker, context and marks receive the same
+explicit production segmenter, with the existing shared fallback.
 
-TaskCardRenderer keeps the root title and replaces the ordinary description preview with complete
-selected contributing fields. Labels carry the evidence breadcrumb and comment line, and explicit
-context activation uses the same mounted-request and exact-address navigation guards as the shared
-card. Hidden destinations remain separately labeled text. Full authored fields use renderTaskText,
-with snapshot-derived root/child/comment TaskTextTargets and their original link occurrence indices
-passed through the existing TaskCommands edit-link operation. Evidence offsets grant no edit authority.
+TaskCardRenderer keeps the ordinary root header/status/actions once. Its thin `TaskSearchTree`
+composer resolves exact snapshots and interleaves contributing comments and retained child headers
+in owner-relative source order. Matched descriptions use full Markdown in caller-owned
+`.abyss-task-desc` elements. Shared `taskNodeText` primitives also serve InspectorSections while
+preserving Inspector's description DOM, editors, attachment drop and link callbacks. Every text
+receipt remains in the existing finite card/text generation. Authored links use snapshot-derived
+root/child/comment TaskTextTargets and full-field occurrence indices through TaskCommands;
+destination-only evidence renders the owning anchor, without diagnostic target text or alias marks.
+Evidence grants no edit authority.
+
+TaskCardRenderer owns the contributing semantic header renderer for both roots and exact children,
+reusing existing date/time/tag filter and recurrence badge primitives. It deduplicates equal metadata
+text per node, preserves all contributing accessible key meanings and excludes unmatched metadata
+and recurrence on refresh. Root tags retain their existing drop command context; child tags retain
+color/filter clicks and stop bubbling drops without accepting them or acquiring write authority.
+TaskCommands uses the shared `TaskSelectionNode` union for status/toggle/priority; children execute
+their exact subtask targets while roots retain calendar/forecast handling. `requestTaskStatusChange`
+shares only the completion confirmation decision with RightPanel, whose owned command/draft
+reconciliation remains local. Child markers read the public exact-node dependency summary, and
+CenterPanel's existing combined status/priority menu pins the owning root and releases its finite
+interaction lease through the existing close/eviction lifecycle.
 
 `markSearchText` aligns the shared projected visible text with actual owner-document text nodes,
 allowing only corresponding whitespace runs and rendered block boundaries. A whole-field mismatch

@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import type { TaskSearchEvidence, TaskSearchTreeNode } from '../src/tasks';
 import { fallbackSearchWords, prepareSearchQuery } from '../src/tasks/domain/searchMatchPolicy';
 import { taskSearchContext } from '../src/tasks/infrastructure/search/taskSearchContext';
 import { expectDefined } from './helpers';
@@ -13,6 +14,10 @@ const markdown = [
 ]
   .join('\n')
   .replaceAll('\\`', '`');
+
+function allEvidence(tree: TaskSearchTreeNode): TaskSearchEvidence[] {
+  return [...tree.evidence, ...tree.children.flatMap(allEvidence)];
+}
 
 async function pipeline(query: string, text = markdown) {
   const h = await createCanonicalSearchHarness({ 'a.md': text }, structuredClone(DEFAULT_SETTINGS));
@@ -36,13 +41,13 @@ async function pipeline(query: string, text = markdown) {
 it('proves split title source and complete escaped description through real retrieval and hydration', async () => {
   const h = await pipeline('budget');
   try {
-    const title = expectDefined(h.context.excerpts.find((e) => e.field === 'title'));
+    const title = expectDefined(allEvidence(h.context.tree).find((e) => e.field === 'title'));
     expect(title.markdown).toBe('**bud**get [[HiddenLedger|Visible alias]]');
     expect(title.matches[0]?.sourceRanges).toEqual([
       { from: 2, to: 5 },
       { from: 7, to: 10 },
     ]);
-    const desc = expectDefined(h.context.excerpts.find((e) => e.field === 'description'));
+    const desc = expectDefined(allEvidence(h.context.tree).find((e) => e.field === 'description'));
     expect(desc.markdown).toBe(
       String.raw`escaped \*budget\* and \`budget\``.replaceAll('\\`', '`'),
     );
@@ -51,10 +56,12 @@ it('proves split title source and complete escaped description through real retr
         m.sourceRanges.map((r) => desc.markdown?.slice(r.from, r.to)).join(''),
       ),
     ).toEqual(['budget', 'budget']);
-    expect(h.context.excerpts).toHaveLength(3);
+    expect(allEvidence(h.context.tree)).toHaveLength(4);
     expect(
-      h.context.excerpts.filter((e) => e.field === 'comment').map((e) => e.commentLine),
-    ).toEqual([2]);
+      allEvidence(h.context.tree)
+        .filter((e) => e.field === 'comment')
+        .map((e) => e.commentLine),
+    ).toEqual([2, 3]);
   } finally {
     h.close();
   }
@@ -63,7 +70,7 @@ it('proves split title source and complete escaped description through real retr
 it('keeps the second repeated comment separate with its exact authored line', async () => {
   const h = await pipeline('second budget');
   try {
-    const comment = expectDefined(h.context.excerpts.find((e) => e.commentLine === 3));
+    const comment = expectDefined(allEvidence(h.context.tree).find((e) => e.commentLine === 3));
     expect(comment.markdown).toBe('second budget comment');
     expect(comment.provenance).toMatchObject({ type: 'field', field: 'comment', commentLine: 3 });
     expect(comment.matches.map((m) => m.sourceRanges)).toContainEqual([{ from: 7, to: 13 }]);
@@ -85,14 +92,14 @@ it.each([
   async ({ query, field, text, ranges }) => {
     const h = await pipeline(query);
     try {
-      expect(h.context.excerpts).toHaveLength(1);
-      const excerpt = expectDefined(h.context.excerpts[0]);
+      expect(allEvidence(h.context.tree)).toHaveLength(1);
+      const excerpt = expectDefined(allEvidence(h.context.tree)[0]);
       expect(excerpt.field).toBe(field);
       expect(excerpt.text).toBe(text);
       expect(excerpt.matches[0]?.sourceRanges).toEqual(ranges);
       if (field === 'link-target') {
-        expect(excerpt.markdown).toBeUndefined();
-        expect(excerpt.label).toContain('target');
+        expect(excerpt.markdown).toBe('**bud**get [[HiddenLedger|Visible alias]]');
+        expect(excerpt.provenance).toMatchObject({ type: 'field', field: 'title' });
       }
     } finally {
       h.close();
@@ -116,19 +123,17 @@ it('uses actual nested relative lines despite repeated sibling names', async () 
   );
   try {
     expect(
-      h.context.excerpts.map((e) => ({
+      allEvidence(h.context.tree).map((e) => ({
         path: e.address.childLines,
         field: e.field,
         line: e.commentLine,
-        breadcrumb: e.breadcrumb,
       })),
     ).toEqual([
-      { path: [2, 2], field: 'comment', line: 1, breadcrumb: ['root', 'repeated', 'repeated'] },
+      { path: [2, 2], field: 'comment', line: 1 },
       {
         path: [6, 1],
         field: 'title',
         line: undefined,
-        breadcrumb: ['root', 'repeated', 'needle title'],
       },
     ]);
   } finally {
@@ -136,7 +141,7 @@ it('uses actual nested relative lines despite repeated sibling names', async () 
   }
 });
 
-it('prefers distinct term coverage within three fields and retains the whole authored field', async () => {
+it('retains all contributing fields without a coverage cap and retains the whole authored field', async () => {
   const h = await pipeline(
     'needle zebra',
     [
@@ -148,10 +153,17 @@ it('prefers distinct term coverage within three fields and retains the whole aut
     ].join('\n'),
   );
   try {
-    expect(h.context.excerpts).toHaveLength(3);
-    expect(h.context.excerpts.map((e) => e.field)).toEqual(['title', 'description', 'comment']);
+    expect(allEvidence(h.context.tree)).toHaveLength(5);
+    expect(allEvidence(h.context.tree).map((e) => e.field)).toEqual([
+      'title',
+      'description',
+      'comment',
+      'comment',
+      'comment',
+    ]);
     expect(
-      expectDefined(h.context.excerpts.find((e) => e.field === 'description')).markdown?.length,
+      expectDefined(allEvidence(h.context.tree).find((e) => e.field === 'description')).markdown
+        ?.length,
     ).toBeGreaterThan(160);
   } finally {
     h.close();
@@ -166,7 +178,7 @@ it.each([
   async (query, text, ranges) => {
     const h = await pipeline(query, text);
     try {
-      expect(h.context.excerpts[0]?.matches[0]?.sourceRanges).toEqual(ranges);
+      expect(allEvidence(h.context.tree)[0]?.matches[0]?.sourceRanges).toEqual(ranges);
     } finally {
       h.close();
     }
@@ -202,32 +214,34 @@ it('keeps second-paragraph and later-child evidence while excluding unrelated fi
     ].join('\n'),
   );
   try {
-    expect(h.context.excerpts.map((e) => e.field)).toEqual(['description', 'title']);
-    expect(h.context.excerpts[0]?.markdown).toBe(
+    expect(allEvidence(h.context.tree).map((e) => e.field)).toEqual(['description', 'title']);
+    expect(allEvidence(h.context.tree)[0]?.markdown).toBe(
       'unrelated paragraph\n\nsecond **budget** paragraph',
     );
-    expect(h.context.excerpts[0]?.matches[0]?.sourceRanges).toEqual([{ from: 30, to: 36 }]);
-    expect(h.context.excerpts[1]?.address.childLines).toEqual([5]);
+    expect(allEvidence(h.context.tree)[0]?.matches[0]?.sourceRanges).toEqual([
+      { from: 30, to: 36 },
+    ]);
+    expect(allEvidence(h.context.tree)[1]?.address.childLines).toEqual([5]);
   } finally {
     h.close();
   }
 });
 
-it('labels scalar metadata without fabricating authored source ranges', async () => {
+it('retains scalar metadata without fabricating authored source ranges', async () => {
   const h = await pipeline('2026-11-30', '- [ ] unrelated 📅 2026-11-30');
   try {
-    expect(h.context.excerpts).toHaveLength(1);
-    expect(h.context.excerpts[0]?.provenance).toEqual({ type: 'semantic', key: 'due' });
-    expect(h.context.excerpts[0]?.matches.every((match) => match.sourceRanges.length === 0)).toBe(
-      true,
-    );
-    expect(h.context.excerpts[0]?.markdown).toBeUndefined();
+    expect(allEvidence(h.context.tree)).toHaveLength(1);
+    expect(allEvidence(h.context.tree)[0]?.provenance).toEqual({ type: 'semantic', key: 'due' });
+    expect(
+      allEvidence(h.context.tree)[0]?.matches.every((match) => match.sourceRanges.length === 0),
+    ).toBe(true);
+    expect(allEvidence(h.context.tree)[0]?.markdown).toBeUndefined();
   } finally {
     h.close();
   }
 });
 
-it('replaces redundant early evidence with a later child that covers a missing term', async () => {
+it('retains early evidence and every later matching child', async () => {
   const h = await pipeline(
     'budget zebra',
     ['- [ ] budget', '  - 2026-10-04: budget comment', '  - [ ] budget', '  - [ ] zebra'].join(
@@ -236,13 +250,14 @@ it('replaces redundant early evidence with a later child that covers a missing t
   );
   try {
     expect(
-      h.context.excerpts.map((excerpt) => ({
+      allEvidence(h.context.tree).map((excerpt) => ({
         field: excerpt.field,
         lines: excerpt.address.childLines,
       })),
     ).toEqual([
       { field: 'title', lines: [] },
       { field: 'comment', lines: [] },
+      { field: 'title', lines: [2] },
       { field: 'title', lines: [3] },
     ]);
   } finally {
@@ -253,11 +268,11 @@ it('replaces redundant early evidence with a later child that covers a missing t
 it('maps repeated link labels to their own full-field occurrences', async () => {
   const h = await pipeline('budget', '- [ ] [[One|budget]] [[Two|budget]]');
   try {
-    expect(h.context.excerpts[0]?.matches.map((match) => match.sourceRanges)).toEqual([
+    expect(allEvidence(h.context.tree)[0]?.matches.map((match) => match.sourceRanges)).toEqual([
       [{ from: 6, to: 12 }],
       [{ from: 21, to: 27 }],
     ]);
-    expect(h.context.excerpts[0]?.markdown).toBe('[[One|budget]] [[Two|budget]]');
+    expect(allEvidence(h.context.tree)[0]?.markdown).toBe('[[One|budget]] [[Two|budget]]');
   } finally {
     h.close();
   }
@@ -273,12 +288,15 @@ it('retains full fragmented field provenance while choosing later distinct-token
     ),
   );
   try {
-    expect(h.context.excerpts.map((excerpt) => [excerpt.field, excerpt.commentLine])).toEqual([
+    expect(
+      allEvidence(h.context.tree).map((excerpt) => [excerpt.field, excerpt.commentLine]),
+    ).toEqual([
       ['title', undefined],
       ['description', undefined],
+      ['comment', 2],
       ['comment', 3],
     ]);
-    const description = expectDefined(h.context.excerpts[1]);
+    const description = expectDefined(allEvidence(h.context.tree)[1]);
     expect(description.markdown).toBe(field);
     expect(description.text).toBe('needle '.repeat(count).trimEnd());
     expect(description.matches).toHaveLength(count);
@@ -293,3 +311,74 @@ it('retains full fragmented field provenance while choosing later distinct-token
     h.close();
   }
 });
+
+it('retains every matched field and exact ancestor chain in source order', async () => {
+  const h = await pipeline(
+    'needle',
+    [
+      '- [ ] root',
+      '  - > unrelated description',
+      '  - 2026-10-04: first needle',
+      '  - [ ] repeated',
+      '    - [ ] repeated',
+      '      - 2026-10-04: deep needle',
+      '  - 2026-10-04: last needle',
+      '  - [ ] repeated',
+      '    - > fourth needle field',
+      '  - [ ] unrelated branch',
+    ].join('\n'),
+  );
+  try {
+    const tree = h.context.tree;
+    expect(tree.address.childLines).toEqual([]);
+    expect(tree.children.map((n) => n.address.childLines)).toEqual([[3], [7]]);
+    expect(tree.children[0]?.children[0]?.address.childLines).toEqual([3, 1]);
+    expect(tree.evidence.filter((e) => e.field === 'comment').map((e) => e.commentLine)).toEqual([
+      2, 6,
+    ]);
+    expect(tree.evidence.some((e) => e.field === 'description')).toBe(false);
+  } finally {
+    h.close();
+  }
+});
+
+it('returns an empty root tree for a match-all query without inventing field evidence', async () => {
+  const h = await pipeline('root', '- [ ] root\n  - [ ] child\n  - > description');
+  try {
+    const context = taskSearchContext(
+      h.hydrated.task.root,
+      h.hydrated.hit.address,
+      prepareSearchQuery('', fallbackSearchWords),
+      fallbackSearchWords,
+    );
+    expect(context.tree.address.childLines).toEqual([]);
+    expect(context.tree.evidence).toEqual([]);
+    expect(context.tree.children).toEqual([]);
+  } finally {
+    h.close();
+  }
+});
+
+it.each([
+  ['needle-id', '- [ ] root 🆔 needle-id', 'dependencyId', 'needle-id'],
+  ['needle-dep', '- [ ] root\n  - [ ] child ⛔ needle-dep', 'dependsOn', 'needle-dep'],
+  ['90', '- [ ] root ⏱️ 1h30m', 'duration', '90'],
+  ['1h30m', '- [ ] root ⏱️ 1h30m', 'duration', '1h30m'],
+] as const)(
+  'retrieves contributing scalar %s with semantic evidence and no edit ranges',
+  async (query, source, key, text) => {
+    const h = await pipeline(query, source);
+    try {
+      const evidence = allEvidence(h.context.tree);
+      expect(evidence).toHaveLength(1);
+      expect(evidence[0]).toMatchObject({
+        field: 'metadata',
+        text,
+        provenance: { type: 'semantic', key },
+      });
+      expect(evidence[0]?.matches.every((m) => m.sourceRanges.length === 0)).toBe(true);
+    } finally {
+      h.close();
+    }
+  },
+);

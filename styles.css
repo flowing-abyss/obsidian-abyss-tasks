@@ -2552,37 +2552,17 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   margin-top: var(--size-2-1);
 }
 
-.abyss-task-card .abyss-search-context {
-  margin-top: var(--size-4-2);
-  padding-inline-start: var(--size-4-2);
-  border-inline-start: 2px solid var(--background-modifier-border);
-  min-width: 0;
-}
-
-.abyss-task-card .abyss-search-context-label {
-  display: block;
-  height: auto;
-  padding: 0;
-  border: 0;
-  box-shadow: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: var(--font-smallest, 11px);
-  text-align: start;
+.abyss-task-card .abyss-search-context .abyss-task-desc {
   white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
   overflow-wrap: anywhere;
 }
 
-.abyss-task-card .abyss-search-context-label:hover {
-  color: var(--text-accent);
-}
-
-.abyss-task-card .abyss-search-context-text {
-  margin-top: var(--size-2-1);
-  color: var(--text-normal);
-  font-size: var(--font-ui-small);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.abyss-task-card .abyss-search-context .abyss-subtask-content,
+.abyss-task-card .abyss-search-context .abyss-comment-row {
+  margin-inline-start: var(--size-4-3);
+  margin-top: var(--size-4-1);
 }
 
 .abyss-task-card .abyss-search-match {
@@ -9803,16 +9783,6 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   color: var(--text-muted);
 }
 
-/* Bounded task Search and nonempty list filters share one page/status footer. */
-.abyss-panel-view .abyss-search-footer {
-  flex-shrink: 0;
-  padding: var(--size-4-2) var(--size-4-3);
-  border-top: 1px solid var(--background-modifier-border);
-  background: var(--background-primary);
-  color: var(--text-muted);
-  font-size: var(--font-ui-small);
-}
-
 .abyss-dep-search .abyss-search-paging {
   display: flex;
   align-items: center;
@@ -9822,11 +9792,6 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 
 .abyss-dep-search .abyss-search-paging > span {
   flex: 1 1 10em;
-}
-
-.abyss-panel-view .abyss-search-status,
-.abyss-dep-search .abyss-search-status {
-  margin-bottom: var(--size-4-1);
 }
 
 .abyss-project-timeline-groups {

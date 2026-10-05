@@ -7,7 +7,9 @@ import type {
   LocalDate,
   TaskApplicationApi,
   TaskArchiveSession,
+  TaskCommand,
   TaskCommandResult,
+  TaskPriority,
   TaskQueryApi,
   TaskRef,
   TaskSnapshot,
@@ -20,9 +22,9 @@ import { runAsyncAction } from '../../ui/runAsyncAction';
 import {
   presentTaskArchiveResult,
   presentTaskCommandResult,
-  requestTaskCompletion,
+  requestTaskStatusChange,
 } from '../../ui/taskCommandResult';
-import { rootTaskRef } from '../../ui/taskSelection';
+import { rootTaskRef, taskNodeRef, type TaskSelectionNode } from '../../ui/taskSelection';
 import {
   calendarMutationTarget,
   calendarPatchCommand,
@@ -247,10 +249,17 @@ export class TaskCommands {
     for (const task of tasks) await this.setTaskDue(task, null, onResult);
   }
 
-  async setPriority(
-    task: TaskSnapshot,
-    priority: 'A' | 'B' | 'C' | 'D' | 'E' | 'F',
-  ): Promise<void> {
+  async setPriority(task: TaskSelectionNode, priority: TaskPriority): Promise<void> {
+    if (!('source' in task)) {
+      if (this.#tasks == null) return;
+      const command: TaskCommand = {
+        type: 'patch',
+        target: { type: 'subtask', ref: task.ref },
+        patch: { priority: { type: 'set', value: priority } },
+      };
+      presentTaskCommandResult(await this.#tasks.execute(command));
+      return;
+    }
     if (isForecastCalendarTask(task)) return;
     const command = calendarPatchCommand(task, {
       priority: { type: 'set', value: priority },
@@ -259,18 +268,20 @@ export class TaskCommands {
     presentTaskCommandResult(await this.#tasks.execute(command));
   }
 
-  toggleTask(task: TaskSnapshot): Promise<void> {
-    if (isForecastCalendarTask(task)) return Promise.resolve();
-    return requestTaskCompletion(
+  toggleTask(task: TaskSelectionNode): Promise<void> {
+    if ('source' in task && isForecastCalendarTask(task)) return Promise.resolve();
+    return requestTaskStatusChange(
       task,
+      undefined,
+      this.#statusRegistry,
       () => this.#commitTaskToggle(task),
       this.#interactionOwnership,
       this.#completionConfirmationAbortController.signal,
     );
   }
 
-  async #commitTaskToggle(task: TaskSnapshot): Promise<void> {
-    const target = calendarMutationTarget(task);
+  async #commitTaskToggle(task: TaskSelectionNode): Promise<void> {
+    const target = 'source' in task ? calendarMutationTarget(task) : taskNodeRef(task);
     if (target == null || this.#tasks == null) return;
     presentTaskCommandResult(
       await this.#tasks.execute({
@@ -280,21 +291,20 @@ export class TaskCommands {
     );
   }
 
-  setTaskStatus(task: TaskSnapshot, symbol: string): Promise<void> {
-    if (isForecastCalendarTask(task)) return Promise.resolve();
-    if (this.#statusRegistry.bySymbol(symbol)?.type === 'done') {
-      return requestTaskCompletion(
-        task,
-        () => this.#commitTaskStatus(task, symbol),
-        this.#interactionOwnership,
-        this.#completionConfirmationAbortController.signal,
-      );
-    }
-    return this.#commitTaskStatus(task, symbol);
+  setTaskStatus(task: TaskSelectionNode, symbol: string): Promise<void> {
+    if ('source' in task && isForecastCalendarTask(task)) return Promise.resolve();
+    return requestTaskStatusChange(
+      task,
+      symbol,
+      this.#statusRegistry,
+      () => this.#commitTaskStatus(task, symbol),
+      this.#interactionOwnership,
+      this.#completionConfirmationAbortController.signal,
+    );
   }
 
-  async #commitTaskStatus(task: TaskSnapshot, symbol: string): Promise<void> {
-    const target = calendarMutationTarget(task);
+  async #commitTaskStatus(task: TaskSelectionNode, symbol: string): Promise<void> {
+    const target = 'source' in task ? calendarMutationTarget(task) : taskNodeRef(task);
     if (target == null || this.#tasks == null) return;
     presentTaskCommandResult(
       await this.#tasks.execute({
