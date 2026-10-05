@@ -3023,6 +3023,79 @@ describe('project Kanban overview', () => {
     expect(overlay.querySelector('.abyss-project-kanban-insertion-line')).not.toBeNull();
   });
 
+  it('retains the sorted rail forecast after an animation frame without another pointer event', () => {
+    vi.useFakeTimers();
+    const planned = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const active = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const projects = ['Z', 'A', 'M'].map((name) => {
+      const status = name === 'Z' ? planned : active;
+      return project({
+        path: `Projects/${name}.md`,
+        name,
+        statusId: status.id,
+        frontmatter: { status: status.name },
+      });
+    });
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.matches('.abyss-project-kanban-hover-preview')) return rectangle(371, 150, 643, 650);
+      if (this.matches('.abyss-project-kanban-hover-body')) return rectangle(371, 200, 643, 600);
+      if (this.matches('.abyss-project-kanban-hover-group')) {
+        const height = this.querySelector('.abyss-project-kanban-hover-card') === null ? 8 : 50;
+        return rectangle(371, 200, 643, 200 + height);
+      }
+      if (this.matches('.abyss-project-kanban-column')) {
+        return this.dataset['statusKey'] === `id:${active.id}`
+          ? rectangle(320, 150, 365, 650)
+          : rectangle(20, 150, 260, 650);
+      }
+      if (this.matches('.abyss-project-kanban-scroll')) return rectangle(20, 150, 680, 650);
+      return rectangle(0, 0, 0, 0);
+    });
+    const { host, settings } = mountView(projects);
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.fields = [];
+    settings.projects.kanban.sortBy = { field: 'name', dir: 'asc' };
+    settings.projects.kanban.collapsedColumns = [`id:${active.id}`];
+    clickView(host, 'Kanban');
+    const source = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/Z.md"]',
+      ),
+    );
+    const column = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${active.id}"]`,
+      ),
+    );
+    const data = transfer();
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    source.dispatchEvent(dragEvent('dragstart', data));
+    column.dispatchEvent(dragEvent('dragover', data, { clientX: 340, clientY: 350 }));
+    vi.advanceTimersByTime(450);
+    const overlay = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-kanban-hover-preview'),
+    );
+    const markerTop = () =>
+      overlay
+        .querySelector<HTMLElement>('.abyss-project-kanban-insertion-line')
+        ?.style.getPropertyValue('--abyss-project-kanban-insertion-top');
+    expect(markerTop()).toBe('108px');
+
+    frames.splice(0).forEach((callback) => {
+      callback(0);
+    });
+
+    expect(markerTop()).toBe('108px');
+    expect(column.querySelector('.abyss-project-kanban-insertion-line')).toBeNull();
+  });
+
   it('positions initial and sustained rail forecasts in the scrolled destination group', () => {
     vi.useFakeTimers();
     const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);

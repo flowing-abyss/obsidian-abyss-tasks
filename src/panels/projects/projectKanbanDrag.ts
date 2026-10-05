@@ -771,7 +771,11 @@ export class ProjectKanbanDragController {
       hit.lineHost.closest<HTMLElement>(
         '.abyss-project-kanban-hover-body, .abyss-project-kanban-column-body',
       ) ?? undefined;
-    this.showPlan_abyssPrivate(hit.lineHost, this.adapter_abyssPrivate.preview(source, hit.target));
+    const column = hit.lineHost.closest<HTMLElement>('.abyss-project-kanban-column');
+    this.showPlan_abyssPrivate(
+      this.visualTarget_abyssPrivate(hit.lineHost, column),
+      this.adapter_abyssPrivate.preview(source, hit.target),
+    );
   }
 
   private scrollAtEdge_abyssPrivate(
