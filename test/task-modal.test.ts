@@ -435,7 +435,7 @@ it('acquires the custom modal parent only after mount and retires children befor
   vi.restoreAllMocks();
 });
 
-it('closes from focused-target Scope transport while deferring nested editors and foreign focus', () => {
+it('closes from host-Window Scope transport while deferring nested editors and foreign focus', () => {
   const app = fakeApp();
   const register = vi.spyOn(Scope.prototype, 'register');
   const modal = new TaskModal({ app, statusRegistry: testStatusRegistry() });
@@ -444,24 +444,34 @@ it('closes from focused-target Scope transport while deferring nested editors an
   const callback = expectDefined(register.mock.calls[0])[2];
   const context = { key: 'Escape', vkey: 'Escape', modifiers: '' };
   const foreign = document.body.createEl('button');
+  const frame = document.body.createEl('iframe');
+  const hostWindow = expectDefined(frame.contentWindow);
   try {
     const editor = owner.createEl('input');
     editor.focus();
-    const editorEscape = scopeKeyboardEvent(editor, { key: 'Escape' });
+    const editorEscape = scopeKeyboardEvent(editor, { key: 'Escape' }, [hostWindow]);
     expect(callback(editorEscape, context)).toBeUndefined();
     expect(editorEscape.defaultPrevented).toBe(false);
     foreign.focus();
-    expect(callback(scopeKeyboardEvent(foreign, { key: 'Escape' }), context)).toBeUndefined();
+    expect(
+      callback(scopeKeyboardEvent(foreign, { key: 'Escape' }, [hostWindow]), context),
+    ).toBeUndefined();
     const button = expectDefined(owner.querySelector('button'));
     button.focus();
-    const event = scopeKeyboardEvent(button, { key: 'Escape' });
+    const event = scopeKeyboardEvent(button, { key: 'Escape' }, [hostWindow]);
+    expect(event.composedPath()[0]).not.toBe(owner.ownerDocument.defaultView);
+    expect(event.composedPath()[0]).not.toBe(event.target);
+    expect(event.view?.document).toBe(owner.ownerDocument);
     expect(callback(event, context)).toBe(false);
     expect(event.defaultPrevented).toBe(true);
     expect(owner.isConnected).toBe(false);
-    expect(callback(scopeKeyboardEvent(button, { key: 'Escape' }), context)).toBeUndefined();
+    expect(
+      callback(scopeKeyboardEvent(button, { key: 'Escape' }, [hostWindow]), context),
+    ).toBeUndefined();
   } finally {
     modal.close();
     foreign.remove();
+    frame.remove();
     vi.restoreAllMocks();
   }
 });

@@ -154,13 +154,14 @@ function scopeOwnsFocusedTarget(
 ): boolean {
   const doc = owner.ownerDocument;
   const active = doc.activeElement;
-  // Native popout Scope forwarding can retain only the focused target in its path.
+  // The popout bridge can dispatch on a different Window while retaining target/view.
+  // That Window is transport only; the current document's actual focus grants ownership.
   return (
     event.target === active &&
     active?.ownerDocument === doc &&
     owner.contains(active) &&
     path.length === 1 &&
-    path[0] === active
+    (path[0] === active || (path[0] as Window).window === path[0])
   );
 }
 

@@ -834,8 +834,11 @@ listeners as guarded fallbacks. PanelView owns one inherited `View.scope`, resto
 scope on teardown, and lets the host activate it. Its router checks current document, active visible
 leaf, native surfaces, blocking leases and editor paths on every invocation, before navigation
 shortcut validation. Scope-origin neutral document focus may use the active panel's target.
-The native popout bridge's single-target path also qualifies only when that target is the current
-document's actual focused element contained by the owner; DOM routes still require the owner path.
+The native popout bridge can have a single host Window in its path, distinct from the target and
+owner Window. Scope routing accepts that transport (or a single-target path) only when the event
+target is the current document's actual focused element contained by the owner, after the event-view
+document guard. Window identity is realm-independent; the path Window does not grant ownership.
+DOM routes still require the owner path.
 Tasks and Search supply their mounted input; Projects supplies only its connected visible overview
 toolbar, outside an active editor or dashboard. Successful DOM handling stops later listeners;
 explicit Search focus cancels pending initial autofocus.

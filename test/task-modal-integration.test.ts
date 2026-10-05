@@ -25,6 +25,7 @@ import {
   useRealMoment,
   type TestTaskQueries,
 } from './helpers';
+import { scopeKeyboardEvent } from './support/scopeKeyboardEvent';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 
 useRealMoment();
@@ -1995,6 +1996,8 @@ it('routes the real modal picker before its parent and releases child scopes fir
     search: h.search,
   });
   const current = expectDefined(h.index.list()[0]);
+  const hostFrame = document.body.createEl('iframe');
+  const hostWindow = expectDefined(hostFrame.contentWindow);
   try {
     modal.open(current);
     const parent = expectDefined(push.mock.calls[0])[0];
@@ -2012,9 +2015,13 @@ it('routes the real modal picker before its parent and releases child scopes fir
     const child = expectDefined(push.mock.calls[1])[0];
     const childEscape = expectDefined(register.mock.calls[register.mock.calls.length - 1])[2];
     const event = () =>
-      new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, bubbles: true });
+      scopeKeyboardEvent(expectDefined(document.activeElement), { key: 'Escape' }, [hostWindow]);
     const context = { key: 'Escape', vkey: 'Escape', modifiers: '' };
     const first = event();
+    expect(first.target).toBe(input);
+    expect(first.composedPath()[0]).not.toBe(first.target);
+    expect(first.composedPath()[0]).not.toBe(input.ownerDocument.defaultView);
+    expect(first.view?.document).toBe(input.ownerDocument);
     expect(childEscape(first, context)).toBe(false);
     expect(parentEscape(first, context)).toBeUndefined();
     expect(input.value).toBe('retained');
@@ -2042,6 +2049,7 @@ it('routes the real modal picker before its parent and releases child scopes fir
   } finally {
     modal.close();
     h.close();
+    hostFrame.remove();
     vi.restoreAllMocks();
   }
 });
