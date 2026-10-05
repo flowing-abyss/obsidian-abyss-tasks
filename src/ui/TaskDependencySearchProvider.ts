@@ -16,16 +16,24 @@ import {
 import { rejectionLabel, type DependencySearchOption } from './dependencySearch';
 import { taskNodeLine } from './taskSelection';
 
-export interface DependencyCandidatePage {
-  readonly startOffset: number;
-  readonly nextOffset: number;
-  readonly totalCandidates: number;
-  readonly options: readonly DependencySearchOption[];
-  readonly hasMore: boolean;
-  readonly budgetExhausted: boolean;
+export interface DependencyCandidate {
+  readonly offset: number;
+  readonly hit: TaskSearchHit;
+  readonly eligibility: TaskDependencyEligibility;
+}
+export interface DependencyCandidateRange {
+  readonly generation: number;
+  readonly offset: number;
+  readonly candidates: readonly DependencyCandidate[];
 }
 export interface TaskDependencySearchSession {
-  page(offset: number, signal: AbortSignal): Promise<DependencyCandidatePage>;
+  readonly generation: number;
+  readonly totalCandidates: number;
+  readRange(offset: number, limit: number, signal: AbortSignal): Promise<DependencyCandidateRange>;
+  options(
+    candidates: readonly DependencyCandidate[],
+    signal: AbortSignal,
+  ): Promise<readonly DependencySearchOption[]>;
   resolve(address: TaskSearchAddress, signal: AbortSignal): Promise<TaskNodeSnapshot>;
   close(): void;
 }
@@ -38,12 +46,7 @@ export interface TaskDependencySearchProvider {
   ): Promise<TaskDependencySearchSession>;
 }
 type SearchCursor = Awaited<ReturnType<TaskSearchApi['open']>>;
-interface IncludedCandidate {
-  readonly hit: TaskSearchHit;
-  readonly eligibility: TaskDependencyEligibility;
-  readonly offset: number;
-}
-
+type SearchBatch = Awaited<ReturnType<TaskSearchApi['read']>>;
 export function createTaskDependencySearchProvider(
   search: TaskSearchApi,
   queries: TaskDependencyQueryApi,
@@ -74,6 +77,7 @@ class DependencySession implements TaskDependencySearchSession {
   #failure: TaskSearchError | undefined;
   #unsubscribe: (() => void) | undefined;
   #pending: AbortController | undefined;
+  #completion: Promise<void> | undefined;
   readonly #abort = (): void => {
     this.close();
   };
@@ -154,6 +158,12 @@ class DependencySession implements TaskDependencySearchSession {
   async #operate<T>(signal: AbortSignal, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
     this.#check(signal);
     this.#pending?.abort();
+    const previous = this.#completion;
+    let finish!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    this.#completion = completion;
     const controller = new AbortController();
     this.#pending = controller;
     const abort = (): void => {
@@ -162,7 +172,8 @@ class DependencySession implements TaskDependencySearchSession {
     signal.addEventListener('abort', abort, { once: true });
     this.#controller.signal.addEventListener('abort', abort, { once: true });
     try {
-      this.#check(signal);
+      await previous;
+      this.#check(controller.signal);
       const result = await run(controller.signal);
       this.#check(controller.signal);
       return result;
@@ -173,6 +184,8 @@ class DependencySession implements TaskDependencySearchSession {
       signal.removeEventListener('abort', abort);
       this.#controller.signal.removeEventListener('abort', abort);
       if (this.#pending === controller) this.#pending = undefined;
+      if (this.#completion === completion) this.#completion = undefined;
+      finish();
     }
   }
 
@@ -192,115 +205,106 @@ class DependencySession implements TaskDependencySearchSession {
     return this.ports.queries.searchEligibility(request, signal);
   }
 
-  page(offset: number, signal: AbortSignal): Promise<DependencyCandidatePage> {
-    return this.#operate(signal, (requestSignal) => this.#page(offset, requestSignal));
+  get generation(): number {
+    this.#check();
+    if (this.#cursor === undefined) throw new TaskSearchError('stale', 'Task changed');
+    return this.#cursor.generation;
   }
-
-  async #page(offset: number, signal: AbortSignal): Promise<DependencyCandidatePage> {
-    const cursor = this.#cursor;
-    if (cursor === undefined) throw new TaskSearchError('stale', 'Task changed');
-    if (!Number.isSafeInteger(offset) || offset < 0 || offset > cursor.total)
-      throw new TaskSearchError('invalid-request', 'Invalid candidate offset');
-    if (offset === cursor.total) {
-      const eligibility = await this.#eligibility([], signal);
-      this.#check(signal);
-      if (eligibility.generation !== cursor.generation)
-        throw new TaskSearchError('stale', 'Task generation changed');
-    }
-    const { included, nextOffset, evaluated } = await this.#scan(cursor, offset, signal);
-    const options = await this.#hydrate(included, signal);
-    this.#check(signal);
-    const hasMore = nextOffset < cursor.total;
-    return {
-      startOffset: offset,
-      nextOffset,
-      totalCandidates: cursor.total,
-      options,
-      hasMore,
-      budgetExhausted: hasMore && included.length < 30 && evaluated >= 90,
-    };
+  get totalCandidates(): number {
+    this.#check();
+    if (this.#cursor === undefined) throw new TaskSearchError('stale', 'Task changed');
+    return this.#cursor.total;
   }
-
-  async #scan(
-    cursor: SearchCursor,
-    offset: number,
-    signal: AbortSignal,
-  ): Promise<{
-    readonly included: IncludedCandidate[];
-    readonly nextOffset: number;
-    readonly evaluated: number;
-  }> {
-    const included: IncludedCandidate[] = [];
-    let nextOffset = offset;
-    let evaluated = 0;
-    while (nextOffset < cursor.total && included.length < 30 && evaluated < 90) {
-      const batch = await this.ports.search.read(cursor, nextOffset, 30, signal);
-      this.#check(signal);
-      if (batch.hits.length === 0)
-        throw new TaskSearchError('unavailable', 'Missing dependency candidates');
-      const eligibility = await this.#eligibility(
-        batch.hits.map((hit) => hit.address),
-        signal,
+  readRange(offset: number, limit: number, signal: AbortSignal): Promise<DependencyCandidateRange> {
+    return this.#operate(signal, async (requestSignal) => {
+      const cursor = this.#cursor;
+      if (cursor === undefined) throw new TaskSearchError('stale', 'Task changed');
+      validateInterval(offset, limit, cursor.total);
+      const batch =
+        offset === cursor.total
+          ? undefined
+          : await this.ports.search.read(cursor, offset, limit, requestSignal);
+      this.#check(requestSignal);
+      const hits = batch?.hits ?? [];
+      if (batch !== undefined) validateRange(batch, cursor, offset, limit);
+      const checked = await this.#eligibility(
+        hits.map((hit) => hit.address),
+        requestSignal,
       );
-      this.#check(signal);
-      if (eligibility.generation !== cursor.generation)
+      this.#check(requestSignal);
+      if (checked.generation !== cursor.generation)
         throw new TaskSearchError('stale', 'Task generation changed');
-      evaluated += batch.hits.length;
-      nextOffset += this.#include(batch.hits, eligibility, included, nextOffset);
-      await this.ports.scheduler.yield(signal);
-      this.#check(signal);
-    }
-    return { included, nextOffset, evaluated };
-  }
-
-  #include(
-    hits: readonly TaskSearchHit[],
-    batch: TaskSearchEligibilityBatch,
-    included: IncludedCandidate[],
-    offset: number,
-  ): number {
-    let consumed = 0;
-    for (const [index, hit] of hits.entries()) {
-      const item = batch.items[index];
-      if (item === undefined)
+      if (checked.items.length !== hits.length)
         throw new TaskSearchError('unavailable', 'Missing dependency eligibility');
-      consumed++;
-      if (
-        item.eligibility.type === 'allowed' ||
-        !['self', 'duplicate', 'inverse'].includes(item.eligibility.reason)
-      )
-        included.push({ hit, eligibility: item.eligibility, offset: offset + index });
-      if (included.length === 30) break;
-    }
-    return consumed;
+      const candidates = hits.map((hit, index) => {
+        const item = checked.items[index];
+        if (item === undefined || !sameAddress(item.address, hit.address))
+          throw new TaskSearchError('unavailable', 'Invalid dependency eligibility');
+        return { offset: offset + index, hit, eligibility: item.eligibility };
+      });
+      return { generation: cursor.generation, offset, candidates };
+    });
   }
 
-  async #hydrate(
-    included: readonly IncludedCandidate[],
+  options(
+    candidates: readonly DependencyCandidate[],
     signal: AbortSignal,
   ): Promise<readonly DependencySearchOption[]> {
-    if (included.length === 0) return [];
-    const hydrated = await this.ports.search.resolveHits(
-      included.map(({ hit }) => hit),
-      signal,
-    );
-    this.#check(signal);
-    return hydrated.map(({ hit, task }, index) => {
-      const candidate = included[index];
-      if (candidate === undefined)
-        throw new TaskSearchError('unavailable', 'Missing dependency eligibility');
-      const eligibility = candidate.eligibility;
-      return {
-        address: hit.address,
-        offset: candidate.offset,
-        task,
-        title: task.node.title,
-        context: `${task.root.source.filePath}:${taskNodeLine(task.root, task.node) + 1}`,
-        directions: eligibility.type === 'allowed' ? [this.selection.direction] : [],
-        ...(eligibility.type === 'rejected' && {
-          disabledReason: rejectionLabel(eligibility.reason),
-        }),
+    return this.#operate(signal, async (requestSignal) => {
+      const roots = demandedRoots(candidates);
+      const options = new Map<number, DependencySearchOption>();
+      let batch: DependencyCandidate[] = [];
+      let rootCount = 0;
+      const project = async (): Promise<void> => {
+        if (batch.length === 0) return;
+        const hydrated = await this.ports.search.resolveHits(
+          batch.map((c) => c.hit),
+          requestSignal,
+        );
+        this.#check(requestSignal);
+        if (hydrated.length !== batch.length)
+          throw new TaskSearchError('unavailable', 'Missing dependency labels');
+        for (const [index, { hit, task }] of hydrated.entries()) {
+          const candidate = batch[index];
+          if (candidate === undefined || !sameAddress(candidate.hit.address, hit.address))
+            throw new TaskSearchError('unavailable', 'Invalid dependency labels');
+          const eligibility = candidate.eligibility;
+          options.set(candidate.offset, {
+            address: hit.address,
+            offset: candidate.offset,
+            title: task.node.title,
+            context: `${task.root.source.filePath}:${taskNodeLine(task.root, task.node) + 1}`,
+            directions: eligibility.type === 'allowed' ? [this.selection.direction] : [],
+            ...(eligibility.type === 'rejected' && {
+              disabledReason: rejectionLabel(eligibility.reason),
+            }),
+          });
+        }
+        batch = [];
+        rootCount = 0;
       };
+      for (const group of roots.values()) {
+        if (batch.length + group.length > 200 || rootCount === 50) {
+          await project();
+          await this.ports.scheduler.yield(requestSignal);
+          this.#check(requestSignal);
+        }
+        for (let start = 0; start < group.length; start += 200) {
+          if (start > 0) {
+            await project();
+            await this.ports.scheduler.yield(requestSignal);
+            this.#check(requestSignal);
+          }
+          batch.push(...group.slice(start, start + 200));
+          rootCount++;
+        }
+      }
+      await project();
+      this.#check(requestSignal);
+      return candidates.flatMap((candidate) => {
+        const option = options.get(candidate.offset);
+        return option === undefined ? [] : [option];
+      });
     });
   }
 
@@ -311,9 +315,75 @@ class DependencySession implements TaskDependencySearchSession {
       const checked = await this.#eligibility([address], requestSignal);
       this.#check(requestSignal);
       const task = hydrated[0]?.task;
-      if (task === undefined || checked.items[0]?.eligibility.type !== 'allowed')
+      if (
+        task === undefined ||
+        checked.generation !== this.generation ||
+        checked.items[0]?.eligibility.type !== 'allowed' ||
+        !sameAddress(checked.items[0].address, address)
+      )
         throw new TaskSearchError('stale', 'Task changed');
       return task;
     });
   }
+}
+
+function sameAddress(left: TaskSearchAddress, right: TaskSearchAddress): boolean {
+  return (
+    left.epoch === right.epoch &&
+    left.version === right.version &&
+    left.rootId === right.rootId &&
+    left.childLines.length === right.childLines.length &&
+    left.childLines.every((line, index) => line === right.childLines[index])
+  );
+}
+
+function validateInterval(offset: number, limit: number, total: number): void {
+  if (
+    !Number.isSafeInteger(offset) ||
+    offset < 0 ||
+    offset > total ||
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > 200
+  )
+    throw new TaskSearchError('invalid-request', 'Invalid candidate interval');
+}
+function validateRange(
+  batch: SearchBatch,
+  cursor: SearchCursor,
+  offset: number,
+  limit: number,
+): void {
+  if (
+    batch.cursor.id !== cursor.id ||
+    batch.cursor.generation !== cursor.generation ||
+    batch.cursor.total !== cursor.total ||
+    batch.cursor.kind !== 'nodes' ||
+    batch.cursor.access !== cursor.access
+  )
+    throw new TaskSearchError('unavailable', 'Invalid dependency cursor');
+  if (
+    batch.offset !== offset ||
+    batch.hits.length !== Math.min(limit, cursor.total - offset) ||
+    batch.done !== (offset + batch.hits.length === cursor.total)
+  )
+    throw new TaskSearchError('unavailable', 'Invalid dependency range');
+}
+function demandedRoots(
+  candidates: readonly DependencyCandidate[],
+): Map<string, DependencyCandidate[]> {
+  const roots = new Map<string, DependencyCandidate[]>();
+  for (const candidate of candidates) {
+    if (
+      candidate.eligibility.type === 'rejected' &&
+      ['self', 'duplicate', 'inverse'].includes(candidate.eligibility.reason)
+    )
+      continue;
+    const address = candidate.hit.address;
+    const key = JSON.stringify([address.epoch, address.version, address.rootId]);
+    const group = roots.get(key) ?? [];
+    group.push(candidate);
+    roots.set(key, group);
+  }
+  return roots;
 }

@@ -1,17 +1,29 @@
 import { Notice, Scope } from 'obsidian';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as browserScheduler from '../src/browserTaskScheduler';
+import * as taskRows from '../src/panels/task-list/taskListRows';
+import { TaskListSurface } from '../src/panels/task-list/TaskListSurface';
+import { RowViewport } from '../src/panels/virtualization/rowViewport';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { TaskSearchError, type DependencyDirection, type TaskNodeRef } from '../src/tasks';
+import {
+  TaskSearchError,
+  type DependencyDirection,
+  type TaskNodeRef,
+  type TaskSearchApi,
+} from '../src/tasks';
 import {
   mountDependencySearch,
   rejectionLabel,
   type DependencyPickerCommitResult,
 } from '../src/ui/dependencySearch';
+import type { DependencyCandidate } from '../src/ui/TaskDependencySearchProvider';
 import { createTaskDependencySearchProvider } from '../src/ui/TaskDependencySearchProvider';
-import { deferred, dispatchImeKey, expectDefined, flushMicrotasks } from './helpers';
+import { deferred, dispatchImeKey, expectDefined, flushMicrotasks, methodOf } from './helpers';
 import { scopeKeyboardEvent } from './support/scopeKeyboardEvent';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 import { searchUiCompleted } from './support/taskSearchUiHarness';
+import { taskViewportOwner } from './support/taskViewportOwner';
+import { recordVirtualSurfaceResources } from './support/virtualSurfaceResources';
 
 const cleanup: Array<() => void> = [];
 afterEach(() => {
@@ -48,6 +60,9 @@ async function fixture(
   const release = vi.fn();
   const callbacks = {
     direction,
+    position: (element: HTMLElement) => {
+      positionDemandSurface(element, { doc: element.ownerDocument }, 256);
+    },
     canChangeDirection: true,
     provider,
     search: h.search,
@@ -69,8 +84,18 @@ async function fixture(
     onClose: vi.fn(),
     ownership: { acquire: () => ({ release }) },
   };
-  const mount = () => {
-    const handle = mountDependencySearch(activeDocument.body, callbacks);
+  const mount = (owner?: ReturnType<typeof taskViewportOwner>) => {
+    const handle = mountDependencySearch(
+      activeDocument.body,
+      owner === undefined
+        ? callbacks
+        : {
+            ...callbacks,
+            position: (element: HTMLElement) => {
+              positionDemandSurface(element, owner);
+            },
+          },
+    );
     cleanup.push(() => {
       handle.destroy();
     });
@@ -84,7 +109,7 @@ async function fixture(
     const completed = () => searchUiCompleted(handle.element);
     const active = () => {
       const id = input.getAttribute('aria-activedescendant');
-      return id === null ? null : activeDocument.getElementById(id);
+      return id === null ? null : handle.element.ownerDocument.getElementById(id);
     };
     return { handle, input, key, query, completed, active };
   };
@@ -100,16 +125,16 @@ async function fixture(
     },
   };
 }
-it('paints and focuses the shell before a held real page and never creates while pending', async () => {
+it('paints and focuses the shell before a held real range and never creates while pending', async () => {
   const h = await fixture();
   const held = deferred<void>();
   const original = h.callbacks.provider.open.bind(h.callbacks.provider);
   h.callbacks.provider.open = async (...args) => {
     const session = await original(...args);
-    const page = session.page.bind(session);
-    session.page = async (...read) => {
+    const readRange = session.readRange.bind(session);
+    session.readRange = async (...read) => {
       await held.promise;
-      return page(...read);
+      return readRange(...read);
     };
     return session;
   };
@@ -122,142 +147,124 @@ it('paints and focuses the shell before a held real page and never creates while
   expect(h.creates).toEqual([]);
   held.resolve();
   await ui.completed();
-  expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(30);
+  expect(ui.handle.element.querySelectorAll('[role="option"]').length).toBeGreaterThan(0);
+  expect(ui.handle.element.querySelectorAll('[role="option"]').length).toBeLessThan(30);
 });
-it('bounds mounted options, crosses Arrow boundaries and returns from the final page on one cursor', async () => {
+it('bounds mounted options and reaches both logical edges and the former Arrow boundary on one cursor', async () => {
   const h = await fixture();
   const open = vi.spyOn(h.search, 'open');
   const ui = h.mount();
   ui.query('Candidate');
   await ui.completed();
-  ui.key('End');
-  expect(ui.active()?.textContent).toContain('Candidate 29');
-  expect(ui.active()?.getAttribute('aria-posinset')).toBe('30');
-  expect(ui.active()?.getAttribute('aria-setsize')).toBe('65');
-  ui.key('ArrowDown');
-  expect(ui.active()).toBeNull();
-  await ui.completed();
-  expect(ui.active()?.textContent).toContain('Candidate 30');
-  ui.key('ArrowUp');
-  await ui.completed();
-  expect(ui.active()?.textContent).toContain('Candidate 29');
-  ui.key('ArrowDown');
-  await ui.completed();
-  ui.key('End');
-  ui.key('ArrowDown');
-  await ui.completed();
-  expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(5);
-  ui.key('End');
-  expect(ui.active()?.textContent).toContain('Candidate 64');
-  expectDefined(
-    ui.handle.element.querySelector<HTMLButtonElement>('[aria-label="Previous page"]'),
-  ).click();
-  await ui.completed();
-  expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(30);
+  expect(ui.handle.element.querySelectorAll('[role="option"]').length).toBeLessThan(30);
   ui.key('Home');
-  expect(ui.active()?.textContent).toContain('Candidate 30');
+  expect(ui.active()?.textContent).toContain('Candidate 0');
+  for (let offset = 1; offset <= 31; offset++) {
+    ui.key('ArrowDown');
+    if (ui.active() !== null)
+      expect(ui.active()?.getAttribute('aria-posinset')).toBe(String(offset + 1));
+    await vi.waitFor(() => {
+      expect(ui.active()?.querySelector('.abyss-dep-search-title')?.textContent).toBe(
+        `Candidate ${offset}`,
+      );
+    });
+  }
+  ui.key('ArrowUp');
+  await vi.waitFor(() => {
+    expect(ui.active()?.textContent).toContain('Candidate 30');
+  });
+  ui.key('End');
+  await vi.waitFor(() => {
+    expect(ui.active()?.textContent).toContain('Candidate 64');
+  });
+  expect(ui.active()?.getAttribute('aria-posinset')).toBe('65');
+  expect(ui.active()?.getAttribute('aria-setsize')).toBe('65');
+  ui.key('Home');
+  await vi.waitFor(() => {
+    expect(ui.active()?.querySelector('.abyss-dep-search-title')?.textContent).toBe('Candidate 0');
+  });
   expect(open).toHaveBeenCalledTimes(1);
 });
-it.each([
-  ['Next', 'pager'],
-  ['Previous', 'pager'],
-  ['Next', 'direction'],
-  ['Previous', 'direction'],
-] as const)('preserves focus while replacing a %s page (focus=%s)', async (label, focus) => {
-  const h = await fixture();
-  const held = deferred<void>();
-  let hold = false;
-  const original = h.callbacks.provider.open.bind(h.callbacks.provider);
-  h.callbacks.provider.open = async (...args) => {
-    const session = await original(...args);
-    const page = session.page.bind(session);
-    session.page = async (...args) => {
-      if (hold) await held.promise;
-      return page(...args);
+it.each(['input', 'direction'] as const)(
+  'preserves actual %s focus across a held native scroll demand',
+  async (focus) => {
+    const h = await fixture();
+    const held = deferred<void>();
+    let hold = false;
+    const original = h.callbacks.provider.open.bind(h.callbacks.provider);
+    h.callbacks.provider.open = async (...args) => {
+      const session = await original(...args);
+      const read = session.readRange.bind(session);
+      session.readRange = async (...args) => {
+        if (hold) await held.promise;
+        return read(...args);
+      };
+      return session;
     };
-    return session;
-  };
-  const ui = h.mount();
-  try {
+    const ui = h.mount();
     ui.query('  Candidate  ');
     await ui.completed();
-    const pager = (name: string) =>
-      expectDefined(
-        ui.handle.element.querySelector<HTMLButtonElement>(`[aria-label="${name} page"]`),
-      );
-    if (label === 'Previous') {
-      pager('Next').click();
-      await ui.completed();
-    }
     ui.key('Home');
     const selected = ui.active()?.textContent;
-    const control = pager(label);
-    const focused =
-      focus === 'pager'
-        ? control
-        : expectDefined(
-            ui.handle.element.querySelector<HTMLButtonElement>('[data-direction="blocks"]'),
-          );
+    let focused: HTMLElement = ui.input;
+    if (focus === 'direction')
+      focused = expectDefined(
+        ui.handle.element.querySelector<HTMLButtonElement>('[data-direction="blocks"]'),
+      );
     focused.focus();
-    expect(activeDocument.activeElement).toBe(focused);
     hold = true;
-    control.click();
-    const retained = focus === 'pager' ? ui.input : focused;
-    expect(control.isConnected).toBe(false);
-    expect(retained.isConnected).toBe(true);
-    expect(activeDocument.activeElement).toBe(retained);
+    const list = expectDefined(
+      ui.handle.element.querySelector<HTMLElement>('.abyss-dep-search-results'),
+    );
+    list.scrollTop = 2500;
+    list.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => {
+      expect(ui.active()).toBeNull();
+    });
+    expect(activeDocument.activeElement).toBe(focused);
     expect(ui.input.value).toBe('  Candidate  ');
-    expect(ui.active()).toBeNull();
-    expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(0);
-    held.resolve();
-    await ui.completed();
-    expect(activeDocument.activeElement).toBe(retained);
-    expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(30);
-    expect(pager('Previous').disabled).toBe(label === 'Previous');
-    expect(pager('Next').disabled).toBe(false);
-    expect(ui.active()).toBeNull();
-    pager(label === 'Next' ? 'Previous' : 'Next').click();
-    await ui.completed();
-    expect(ui.active()?.textContent).toBe(selected);
+    ui.key('Enter');
     expect(h.writes).toEqual([]);
     expect(h.creates).toEqual([]);
-  } finally {
     held.resolve();
-  }
-});
-
-it.each(['pager', 'direction', 'outside'] as const)(
+    await vi.waitFor(() => {
+      expect(ui.handle.element.dataset['searchPhase']).toBe('complete');
+    });
+    expect(activeDocument.activeElement).toBe(focused);
+    list.scrollTop = 0;
+    list.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => {
+      expect(ui.active()?.textContent).toBe(selected);
+    });
+    expect(h.writes).toEqual([]);
+    expect(h.creates).toEqual([]);
+  },
+);
+it.each(['input', 'direction', 'outside'] as const)(
   'preserves focus across source publication (focus=%s)',
   async (focus) => {
     const h = await fixture();
     const ui = h.mount();
     ui.query('  Candidate  ');
     await ui.completed();
-    const pager = expectDefined(
-      ui.handle.element.querySelector<HTMLButtonElement>('[aria-label="Next page"]'),
-    );
-    let focused: HTMLElement = pager;
+    let focused: HTMLElement = ui.input;
     if (focus === 'direction')
       focused = expectDefined(
         ui.handle.element.querySelector<HTMLButtonElement>('[data-direction="blocks"]'),
       );
-    else if (focus === 'outside') focused = activeDocument.body.createEl('input');
+    if (focus === 'outside') focused = activeDocument.body.createEl('input');
     focused.focus();
-    expect(activeDocument.activeElement).toBe(focused);
     h.index.installCommittedContent('other.md', '- [ ] Other');
-    const retained = focus === 'pager' ? ui.input : focused;
-    expect(retained.isConnected).toBe(true);
-    expect(activeDocument.activeElement).toBe(retained);
-    expect(pager.isConnected).toBe(false);
+    expect(activeDocument.activeElement).toBe(focused);
     if (focus === 'outside') {
       await flushMicrotasks(30);
       expect(ui.handle.element.isConnected).toBe(false);
     } else {
       await ui.completed();
       expect(ui.input.value).toBe('  Candidate  ');
-      expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(30);
+      expect(ui.handle.element.querySelectorAll('[role="option"]').length).toBeGreaterThan(0);
     }
-    expect(activeDocument.activeElement).toBe(retained);
+    expect(activeDocument.activeElement).toBe(focused);
     expect(h.writes).toEqual([]);
     expect(h.creates).toEqual([]);
   },
@@ -281,12 +288,201 @@ it.each(['blocks', 'blocked-by'] as const)(
       expect(h.writes).toHaveLength(1);
     });
     expect(h.writes[0]).toEqual({ title: 'Candidate 1', direction, target: mounted.target });
-    // The first hydration after Enter is the exact fresh selection; success also opens a new browse page.
+    // The first hydration after Enter is the exact fresh selection; success also opens a new browse window.
     expect(resolve.mock.calls[0]?.[0]).toHaveLength(1);
     expect(resolve.mock.calls[0]?.[0]).toHaveLength(1);
     expect(h.creates).toEqual([]);
   },
 );
+it.each([
+  { outcome: 'committed', returnToStart: false },
+  { outcome: 'failed', returnToStart: false },
+  { outcome: 'validation-error', returnToStart: false },
+  { outcome: 'validation-error', returnToStart: true },
+] as const)(
+  'selection owner defers scrolled viewport reads until fresh resolve finishes ($outcome, return=$returnToStart)',
+  async ({ outcome, returnToStart }) => {
+    const h = await fixture(100);
+    const owner = taskViewportOwner();
+    cleanup.push(() => {
+      owner.destroy();
+    });
+    const ui = h.mount(owner);
+    ui.query('Candidate');
+    owner.flush();
+    await ui.completed();
+    ui.key('Home');
+    expect(ui.active()?.textContent).toContain('Candidate 0');
+    await ui.completed();
+    const target = expectDefined(
+      h.index.listNodes().find(({ node }) => node.title === 'Candidate 0'),
+    ).target;
+    const held = deferred<void>();
+    cleanup.push(() => {
+      held.resolve();
+    });
+    const original = h.search.resolveHits.bind(h.search);
+    let signal: AbortSignal | undefined;
+    vi.spyOn(h.search, 'resolveHits').mockImplementationOnce(async (...args) => {
+      signal = args[1];
+      await held.promise;
+      if (outcome !== 'committed')
+        throw new TaskSearchError(
+          outcome === 'failed' ? 'unavailable' : 'stale',
+          'Held selection failed',
+        );
+      return original(...args);
+    });
+    ui.key('Enter');
+    await vi.waitFor(() => {
+      expect(signal).toBeDefined();
+    });
+    const list = expectDefined(
+      ui.handle.element.querySelector<HTMLElement>('.abyss-dep-search-results'),
+    );
+    const selected = expectDefined(ui.active());
+    list.scrollTop = 70 * 48;
+    list.dispatchEvent(new owner.win.Event('scroll'));
+    owner.flush();
+    await flushMicrotasks(40);
+    expect(selected.isConnected).toBe(false);
+    expect(list.querySelector('[aria-hidden="true"]')).not.toBeNull();
+    if (returnToStart) {
+      list.scrollTop = 0;
+      list.dispatchEvent(new owner.win.Event('scroll'));
+      owner.flush();
+      await flushMicrotasks(40);
+    }
+    // These keys cannot overwrite the accepted address or queue a later submit.
+    for (const key of ['End', 'ArrowDown', 'Home', 'ArrowUp', 'Enter']) ui.key(key);
+    expectDefined(
+      ui.handle.element.querySelector<HTMLButtonElement>('[data-direction="blocked-by"]'),
+    ).click();
+    expect(h.writes).toEqual([]);
+    expect(h.creates).toEqual([]);
+    expect(signal?.aborted).toBe(false);
+    held.resolve();
+    if (outcome === 'committed') {
+      await vi.waitFor(() => {
+        expect(h.writes).toHaveLength(1);
+      });
+      expect(h.writes).toEqual([{ title: 'Candidate 0', direction: 'blocks', target }]);
+      owner.flush();
+      await ui.completed();
+    } else {
+      const position = returnToStart ? '1' : '71';
+      const title = returnToStart ? 'Candidate 0' : 'Candidate 70';
+      await vi.waitFor(() => {
+        owner.flush();
+        expect(list.querySelector(`[aria-posinset="${position}"]`)?.textContent).toContain(title);
+        expect(ui.handle.element.dataset['searchPhase']).toBe('complete');
+        expect(ui.handle.element.getAttribute('aria-busy')).toBe('false');
+      });
+      expect(h.writes).toEqual([]);
+      if (!returnToStart) {
+        expect(ui.active()).toBeNull();
+        ui.key('Enter');
+        expect(h.writes).toEqual([]);
+        expect(h.creates).toEqual([]);
+      }
+      // The current window is usable after the failed selection, with exact selection anew.
+      expectDefined(list.querySelector<HTMLButtonElement>(`[aria-posinset="${position}"]`)).click();
+      await vi.waitFor(() => {
+        expect(h.writes).toHaveLength(1);
+      });
+      expect(h.writes[0]).toEqual({
+        title,
+        direction: 'blocks',
+        target: expectDefined(h.index.listNodes().find(({ node }) => node.title === title)).target,
+      });
+    }
+    await flushMicrotasks(40);
+    expect(h.writes).toHaveLength(1);
+    expect(h.creates).toEqual([]);
+  },
+);
+
+it.each(['query', 'source', 'current', 'close', 'detach', 'adoption'] as const)(
+  'selection owner retires deferred viewport work after %s cancellation',
+  async (change) => {
+    const h = await fixture(100);
+    const owner = taskViewportOwner();
+    cleanup.push(() => {
+      owner.destroy();
+    });
+    const ui = h.mount(owner);
+    ui.query('Candidate');
+    owner.flush();
+    await ui.completed();
+    ui.key('Home');
+    await ui.completed();
+    const held = deferred<void>();
+    cleanup.push(() => {
+      held.resolve();
+    });
+    const original = h.search.resolveHits.bind(h.search);
+    let signal: AbortSignal | undefined;
+    vi.spyOn(h.search, 'resolveHits').mockImplementationOnce(async (...args) => {
+      signal = args[1];
+      await held.promise;
+      return original(...args);
+    });
+    ui.key('Enter');
+    await vi.waitFor(() => {
+      expect(signal).toBeDefined();
+    });
+    const list = expectDefined(
+      ui.handle.element.querySelector<HTMLElement>('.abyss-dep-search-results'),
+    );
+    list.scrollTop = 70 * 48;
+    list.dispatchEvent(new owner.win.Event('scroll'));
+    owner.flush();
+    await flushMicrotasks(40);
+    expect(signal?.aborted).toBe(false);
+    const retire: Record<typeof change, () => void> = {
+      query: () => {
+        ui.query('Candidate 9');
+      },
+      source: () => {
+        h.index.installCommittedContent('other.md', '- [ ] Other');
+      },
+      current: () => {
+        h.setCurrent(undefined);
+        ui.handle.refresh();
+      },
+      close: () => {
+        ui.handle.close(false);
+      },
+      detach: () => {
+        ui.handle.detach();
+        ui.handle.element.remove();
+      },
+      adoption: () => {
+        activeDocument.body.append(ui.handle.element);
+        ui.handle.attach();
+      },
+    };
+    retire[change]();
+    const outside = activeDocument.body.createEl('input');
+    outside.focus();
+    held.resolve();
+    owner.flush();
+    await vi.waitFor(() => {
+      expect(signal?.aborted).toBe(true);
+    });
+    await flushMicrotasks(40);
+    expect(h.writes).toEqual([]);
+    expect(h.creates).toEqual([]);
+    expect(activeDocument.activeElement).toBe(outside);
+    if (change === 'query' || change === 'source') {
+      owner.flush();
+      await ui.completed();
+      expect(ui.input.value).toBe(change === 'query' ? 'Candidate 9' : 'Candidate');
+      expect(ui.handle.element.dataset['searchPhase']).toBe('complete');
+    }
+  },
+);
+
 it('preserves original creation text only after a settled query and no implicit selection', async () => {
   const h = await fixture(1);
   const ui = h.mount();
@@ -484,7 +680,7 @@ it('automatically restarts an expired owned cursor without turning selected inte
   ui.key('ArrowDown');
   await ui.completed();
   expect(open).toHaveBeenCalledTimes(2);
-  expect(ui.active()?.textContent).toContain('Candidate 29');
+  expect(ui.active()?.textContent).toContain('Candidate 0');
   expect(h.creates).toEqual([]);
 });
 it('browses compact source readiness without a backend and uses raw positions after omitted self', async () => {
@@ -492,7 +688,8 @@ it('browses compact source readiness without a backend and uses raw positions af
   const ui = h.mount();
   await ui.completed();
   expect(h.backends).toHaveLength(0);
-  expect(ui.handle.element.querySelectorAll('[role="option"]')).toHaveLength(30);
+  expect(ui.handle.element.querySelectorAll('[role="option"]').length).toBeGreaterThan(0);
+  expect(ui.handle.element.querySelectorAll('[role="option"]').length).toBeLessThan(30);
   ui.key('Home');
   expect(ui.active()?.getAttribute('aria-posinset')).toBe('2');
   expect(ui.active()?.getAttribute('aria-setsize')).toBe('36');
@@ -543,6 +740,11 @@ it('keeps an actual creation busy through refresh after an unsuccessful fresh se
     );
   });
   const held = deferred<{ type: 'committed' }>();
+  expect(ui.input.readOnly, ui.handle.element.outerHTML).toBe(false);
+  expect(
+    ui.handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create')?.disabled,
+    ui.handle.element.outerHTML,
+  ).toBe(false);
   let calls = 0;
   h.callbacks.createNew = () => {
     calls++;
@@ -753,7 +955,7 @@ it.each(['unchanged', 'reordered', 'disabled', 'disappeared'] as const)(
       expect(ui.handle.element.querySelector('.abyss-dep-search-title')?.textContent).toBe(
         'Candidate',
       );
-    const lost = ['disabled', 'disappeared'].includes(change);
+    const lost = ['reordered', 'disabled', 'disappeared'].includes(change);
     if (lost) expect(ui.active()).toBeNull();
     else expect(ui.active()?.textContent).toContain('Candidate 0');
     ui.key('Enter');
@@ -969,6 +1171,36 @@ function gapFiles(kind: 'disabled' | 'omitted', direction: DependencyDirection) 
   };
 }
 
+async function reachGapEdge(
+  ui: ReturnType<Awaited<ReturnType<typeof fixture>>['mount']>,
+  key: 'ArrowDown' | 'ArrowUp',
+  gapEnd: number,
+): Promise<void> {
+  ui.key(key === 'ArrowDown' ? 'Home' : 'End');
+  await vi.waitFor(() => {
+    expect(ui.active()?.querySelector('.abyss-dep-search-title')?.textContent).toBe(
+      key === 'ArrowDown' ? 'Candidate 000' : `Candidate ${String(gapEnd + 29).padStart(3, '0')}`,
+    );
+  });
+  await ui.completed();
+  const target =
+    key === 'ArrowDown' ? 'Candidate 029' : `Candidate ${String(gapEnd).padStart(3, '0')}`;
+  for (
+    let steps = 0;
+    steps < 35 && ui.active()?.querySelector('.abyss-dep-search-title')?.textContent !== target;
+    steps++
+  ) {
+    const previous = ui.active()?.textContent;
+    ui.key(key);
+    await vi.waitFor(() => {
+      expect(ui.active()).not.toBeNull();
+      expect(ui.active()?.textContent).not.toBe(previous);
+    });
+    await ui.completed();
+  }
+  expect(ui.active()?.querySelector('.abyss-dep-search-title')?.textContent).toBe(target);
+}
+
 it.each([
   ['disabled', 'ArrowDown', 'blocks'],
   ['disabled', 'ArrowUp', 'blocks'],
@@ -978,71 +1210,81 @@ it.each([
   ['disabled', 'ArrowUp', 'blocked-by'],
   ['omitted', 'ArrowDown', 'blocked-by'],
   ['omitted', 'ArrowUp', 'blocked-by'],
-] as const)('preserves selected intent on a %s page via %s (%s)', async (kind, key, direction) => {
-  const h = await fixture(0, direction, gapFiles(kind, direction));
-  const ui = h.mount();
-  const enterGap = async () => {
-    const writeCount = h.writes.length;
+] as const)(
+  'crosses a %s interval with %s without changing commit intent (%s)',
+  async (kind, key, direction) => {
+    const h = await fixture(0, direction, gapFiles(kind, direction));
+    const ui = h.mount();
     ui.query('  Candidate  ');
     await ui.completed();
-    if (key === 'ArrowUp') {
-      for (let page = 0; page < 2; page++) {
-        expectDefined(
-          ui.handle.element.querySelector<HTMLButtonElement>('[aria-label="Next page"]'),
-        ).click();
-        await ui.completed();
-      }
-    }
-    ui.key(key === 'ArrowDown' ? 'End' : 'Home');
-    expect(ui.active()).not.toBeNull();
+    const list = expectDefined(
+      ui.handle.element.querySelector<HTMLElement>('.abyss-dep-search-results'),
+    );
+    const gapEnd = kind === 'disabled' ? 60 : 120;
+    await reachGapEdge(ui, key, gapEnd);
     ui.key(key);
-    expect(ui.active()).toBeNull();
+    await vi.waitFor(() => {
+      expect(ui.active()?.querySelector('.abyss-dep-search-title')?.textContent).toBe(
+        key === 'ArrowDown' ? `Candidate ${String(gapEnd).padStart(3, '0')}` : 'Candidate 029',
+      );
+    });
     await ui.completed();
-    const options = ui.handle.element.querySelectorAll<HTMLButtonElement>('[role="option"]');
-    expect(options).toHaveLength(kind === 'disabled' ? 30 : 0);
-    for (const option of options) {
-      expect(option.disabled).toBe(true);
-      expect(option.getAttribute('aria-disabled')).toBe('true');
-      expect(option.textContent).toContain('Would create a cycle');
-    }
-    if (kind === 'omitted')
-      expect(ui.handle.element.textContent).toContain('More matches available');
-    expect(ui.active()).toBeNull();
-    ui.key('Enter');
-    await flushMicrotasks(30);
+    expect(h.writes).toEqual([]);
     expect(h.creates).toEqual([]);
-    expect(h.writes).toHaveLength(writeCount);
-    expect(ui.handle.element.textContent).toContain('Task changed');
-  };
-  await enterGap();
-  ui.key(key);
-  await ui.completed();
-  const afterGap = kind === 'disabled' ? 'Candidate 060' : 'Candidate 120';
-  const title = key === 'ArrowUp' ? 'Candidate 029' : afterGap;
-  expect(ui.active()?.querySelector('.abyss-dep-search-title')?.textContent).toBe(title);
-  ui.key('Enter');
-  await vi.waitFor(() => {
-    expect(h.writes).toHaveLength(1);
-  });
-  expect(h.writes[0]).toEqual({
-    title,
-    direction,
-    target: expectDefined(h.index.listNodes().find(({ node }) => node.title === title)).target,
-  });
-  expect(h.creates).toEqual([]);
-  await ui.completed();
-  await enterGap();
-  expectDefined(
-    ui.handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
-  ).click();
-  await vi.waitFor(() => {
-    expect(h.creates).toEqual([['  Candidate  ', direction]]);
-  });
-  expect(h.writes).toHaveLength(1);
-});
-
+    if (kind === 'disabled') {
+      list.scrollTop = 35 * 48;
+      list.dispatchEvent(new Event('scroll'));
+      await vi.waitFor(() => {
+        // Crossing already mounted disabled rows; observe the requested scroll window.
+        expect(
+          list.querySelector('[aria-posinset="41"] .abyss-dep-search-title')?.textContent,
+        ).toBe('Candidate 040');
+        expect(list.querySelector('[aria-disabled="true"]')).not.toBeNull();
+      });
+      await ui.completed();
+      expect(ui.active()).toBeNull();
+      for (const option of list.querySelectorAll('[aria-disabled="true"]'))
+        expect(option.textContent).toContain('Would create a cycle');
+      ui.key('Enter');
+      expect(h.writes).toEqual([]);
+      expect(h.creates).toEqual([]);
+    }
+    const title =
+      key === 'ArrowDown' ? `Candidate ${String(gapEnd + 29).padStart(3, '0')}` : 'Candidate 000';
+    ui.key(key === 'ArrowDown' ? 'End' : 'Home');
+    await vi.waitFor(() => {
+      expect(ui.active()?.querySelector('.abyss-dep-search-title')?.textContent).toBe(title);
+    });
+    await ui.completed();
+    expect(h.writes).toEqual([]);
+    expect(h.creates).toEqual([]);
+    ui.key('Enter');
+    await vi.waitFor(() => {
+      expect(h.writes).toHaveLength(1);
+    });
+    expect(h.writes[0]?.title).toBe(title);
+    expect(h.writes[0]?.direction).toBe(direction);
+    expect(h.writes[0]?.target).toEqual(
+      expectDefined(h.index.listNodes().find((task) => task.node.title === title)).target,
+    );
+    expect(h.creates).toEqual([]);
+    await ui.completed();
+    ui.query('  Candidate  ');
+    await ui.completed();
+    expect(
+      ui.handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create')?.disabled,
+      ui.handle.element.outerHTML,
+    ).toBe(false);
+    expectDefined(
+      ui.handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
+    ).click();
+    await vi.waitFor(() => {
+      expect(h.creates).toEqual([['  Candidate  ', direction]]);
+    });
+  },
+);
 it.each([false, true])(
-  'keeps pager bounds through command busy and replacement (replace=%s)',
+  'keeps direction and creation controls busy through source replacement (replace=%s)',
   async (replace) => {
     const h = await fixture(31);
     const command = deferred<DependencyPickerCommitResult>();
@@ -1050,39 +1292,33 @@ it.each([false, true])(
     const ui = h.mount();
     ui.query('Candidate');
     await ui.completed();
-    const pager = (label: string) =>
-      expectDefined(
-        ui.handle.element.querySelector<HTMLButtonElement>(`[aria-label="${label} page"]`),
-      );
-    const bounds = (previous: boolean, next: boolean) => {
-      expect(pager('Previous').disabled).toBe(previous);
-      expect(pager('Next').disabled).toBe(next);
-      expect(pager('Previous').getAttribute('aria-disabled')).toBe(String(previous));
-      expect(pager('Next').getAttribute('aria-disabled')).toBe(String(next));
-    };
-    bounds(true, false);
-    pager('Next').click();
-    await ui.completed();
-    bounds(false, true);
-    expectDefined(
+    const create = expectDefined(
       ui.handle.element.querySelector<HTMLButtonElement>('.abyss-dep-search-create'),
-    ).click();
-    expect(pager('Previous').disabled).toBe(true);
-    expect(pager('Next').disabled).toBe(true);
+    );
+    create.click();
+    const controls = () => [
+      ...ui.handle.element.querySelectorAll<HTMLButtonElement>(
+        '.abyss-dep-search-direction, .abyss-dep-search-create',
+      ),
+    ];
+    expect(controls().every((button) => button.disabled)).toBe(true);
     if (replace) {
       h.index.installCommittedContent('other.md', '- [ ] Other');
       await ui.completed();
-      expect(pager('Previous').disabled).toBe(true);
-      expect(pager('Next').disabled).toBe(true);
+      expect(controls().every((button) => button.disabled)).toBe(true);
     }
+    ui.key('End');
+    ui.key('Enter');
+    expect(h.writes).toEqual([]);
     command.resolve({ type: 'validation-error', message: 'Keep draft' });
     await vi.waitFor(() => {
       expect(ui.input.readOnly).toBe(false);
     });
-    bounds(replace, !replace);
-    pager(replace ? 'Next' : 'Previous').click();
-    await ui.completed();
-    bounds(!replace, replace);
+    expect(controls().every((button) => !button.disabled)).toBe(true);
+    ui.key('End');
+    await vi.waitFor(() => {
+      expect(ui.active()?.textContent).toContain('Candidate 30');
+    });
   },
 );
 
@@ -1226,4 +1462,1231 @@ it('lets only the nearest attached picker own scope keys and excludes another ed
   input.focus();
   inner.element.hidden = true;
   expect(innerFind(event(), context)).toBeUndefined();
+});
+
+const geometryLists = new WeakSet<HTMLElement>();
+function positionDemandSurface(
+  element: HTMLElement,
+  owner: Pick<ReturnType<typeof taskViewportOwner>, 'doc'>,
+  height = 766,
+): void {
+  if (element.ownerDocument !== owner.doc) owner.doc.body.append(element);
+  const win = expectDefined(owner.doc.defaultView);
+  if (!Reflect.has(owner.doc, 'fonts'))
+    Object.defineProperty(owner.doc, 'fonts', { configurable: true, value: new win.EventTarget() });
+  if (!Reflect.has(win, 'ResizeObserver'))
+    Object.defineProperty(win, 'ResizeObserver', {
+      configurable: true,
+      value: class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    });
+  const list = expectDefined(element.querySelector<HTMLElement>('.abyss-dep-search-results'));
+  Object.defineProperties(list, {
+    clientHeight: { configurable: true, value: height },
+    clientWidth: { configurable: true, value: 400 },
+  });
+  list.getBoundingClientRect = () => ({
+    top: 0,
+    bottom: list.clientHeight,
+    left: 0,
+    right: 400,
+    width: 400,
+    height: list.clientHeight,
+    x: 0,
+    y: 0,
+    toJSON() {},
+  });
+  if (geometryLists.has(list)) return;
+  geometryLists.add(list);
+  const create = list.createEl.bind(list);
+  vi.spyOn(list, 'createEl').mockImplementation((...args: Parameters<typeof list.createEl>) => {
+    const element = create(...args);
+    element.getBoundingClientRect = () => {
+      let top = -list.scrollTop;
+      let previous = element.previousElementSibling;
+      while (previous !== null) {
+        top += previous.classList.contains('abyss-virtual-row-spacer')
+          ? Number.parseFloat(
+              (previous as HTMLElement).style.getPropertyValue('--abyss-virtual-row-height'),
+            )
+          : 48;
+        previous = previous.previousElementSibling;
+      }
+      return {
+        top,
+        bottom: top + 48,
+        left: 0,
+        right: 400,
+        width: 400,
+        height: 48,
+        x: 0,
+        y: top,
+        toJSON() {},
+      };
+    };
+    return element;
+  });
+}
+
+// Phase A isolates traversal cost with fixed element-local geometry and the real surface.
+async function demandFixture(omitted: number, omittedStart = 0) {
+  const h = await fixture(1);
+  const owner = taskViewportOwner();
+  cleanup.push(() => {
+    owner.destroy();
+  });
+  const visits: number[] = [];
+  const labels: number[] = [];
+  let beforeRead: ((offset: number) => Promise<void>) | undefined;
+  const generation = 1;
+  const readRange = vi.fn(async (offset: number, limit: number, _signal: AbortSignal) => {
+    await beforeRead?.(offset);
+    const candidates = Array.from({ length: Math.min(limit, 50_000 - offset) }, (_, i) => {
+      const raw = offset + i;
+      visits.push(raw);
+      return {
+        offset: raw,
+        hit: { address: { epoch: 'count', version: 1, rootId: raw + 1, childLines: [] }, score: 0 },
+        eligibility:
+          raw >= omittedStart && raw < omittedStart + omitted
+            ? { type: 'rejected' as const, reason: 'duplicate' as const }
+            : { type: 'allowed' as const },
+      };
+    });
+    return { generation, offset, candidates };
+  });
+  const session = {
+    generation,
+    totalCandidates: 50_000,
+    readRange,
+    options: vi.fn(async (candidates: readonly DependencyCandidate[]) =>
+      candidates.map((c) => {
+        labels.push(c.offset);
+        return {
+          offset: c.offset,
+          address: c.hit.address,
+          title: `Candidate ${c.offset}`,
+          context: 'count.md:1',
+          directions: ['blocks' as const],
+        };
+      }),
+    ),
+    resolve: vi.fn(async () => {
+      throw new Error('No submit in traversal test');
+    }),
+    close: vi.fn(),
+  };
+  h.callbacks.provider.open = async () => session;
+  vi.spyOn(browserScheduler, 'createBrowserTaskScheduler').mockReturnValue({
+    now: () => 0,
+    delay: async () => {},
+    yield: async () => {},
+  });
+  const orders = vi.spyOn(taskRows, 'indexedRows');
+  const replacements = vi.spyOn(RowViewport.prototype, 'replace');
+  const updates = vi.spyOn(TaskListSurface.prototype, 'update');
+  const handle = mountDependencySearch(activeDocument.body, {
+    ...h.callbacks,
+    position: (element) => {
+      positionDemandSurface(element, owner);
+    },
+  });
+  cleanup.push(() => {
+    handle.destroy();
+  });
+  owner.flush();
+  const list = expectDefined(
+    handle.element.querySelector<HTMLElement>('.abyss-dep-search-results'),
+  );
+  return {
+    ...h,
+    owner,
+    handle,
+    list,
+    session,
+    visits,
+    labels,
+    orders,
+    replacements,
+    updates,
+    hold(callback: (offset: number) => Promise<void>) {
+      beforeRead = callback;
+    },
+    completed: () => searchUiCompleted(handle.element),
+  };
+}
+
+it.each([49_950, 50_000])(
+  'Phase A fills 50k with %i omissions in one linear pruning publication',
+  async (omitted) => {
+    const h = await demandFixture(omitted);
+    const held = deferred<void>();
+    h.hold(async (offset) => {
+      if (offset >= 1820 && offset < 2020) await held.promise;
+    });
+    await vi.waitFor(() => {
+      expect(h.session.readRange.mock.calls.length).toBeGreaterThanOrEqual(11);
+    });
+    expect(h.session.readRange.mock.calls[0]?.slice(0, 2)).toEqual([0, 20]);
+    expect(h.orders.mock.calls.filter(([rows]) => rows.length > 0)).toHaveLength(1);
+    expect(h.replacements).toHaveBeenCalledTimes(2);
+    expect(h.labels).toEqual([]);
+    expect(h.list.querySelectorAll('button')).toHaveLength(20);
+    expect(h.list.querySelector('[role="option"]')).toBeNull();
+    expect(h.list.textContent).not.toContain('No matching tasks');
+    held.resolve();
+    await h.completed();
+    expect(h.visits.length).toBeLessThanOrEqual(50_000);
+    expect(new Set(h.visits).size).toBe(h.visits.length);
+    // Exclude only the surface constructor's empty initialization, not final empty pruning.
+    expect(h.orders.mock.calls.slice(1)).toHaveLength(2);
+    expect(h.replacements.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(h.replacements.mock.calls.reduce((n, [rows]) => n + rows.length, 0)).toBeLessThanOrEqual(
+      150_000,
+    );
+    if (omitted === 50_000) {
+      expect(h.list.querySelectorAll('[role="option"]')).toHaveLength(0);
+      expect(h.list.textContent).toContain('No matching tasks');
+    } else {
+      expect(h.list.querySelector('[role="option"]')?.textContent).toContain('Candidate 49950');
+      expect(h.labels.length).toBeLessThanOrEqual(20);
+    }
+    const counts = [h.orders.mock.calls.length, h.replacements.mock.calls.length];
+    const readCount = h.session.readRange.mock.calls.length;
+    const projectionCount = h.session.options.mock.calls.length;
+    for (let i = 0; i < 4; i++) {
+      h.list.dispatchEvent(new h.owner.win.Event('scroll'));
+      h.owner.flush();
+      await flushMicrotasks(20);
+    }
+    expect([h.orders.mock.calls.length, h.replacements.mock.calls.length]).toEqual(counts);
+    expect(h.session.readRange).toHaveBeenCalledTimes(readCount);
+    expect(h.session.options).toHaveBeenCalledTimes(projectionCount);
+  },
+);
+
+it('Phase A cancels after ten intervals, drops a late read and jumps directly to the allowed tail', async () => {
+  const h = await demandFixture(49_950);
+  const held = deferred<void>();
+  let late = false;
+  h.hold(async (offset) => {
+    if (!late && offset >= 1820) {
+      late = true;
+      await held.promise;
+    }
+  });
+  await vi.waitFor(() => {
+    expect(h.session.readRange).toHaveBeenCalledTimes(11);
+  });
+  const baseline = h.replacements.mock.calls.length;
+  const tailHeld = deferred<void>();
+  h.hold(async (offset) => {
+    if (offset > 49_950) await tailHeld.promise;
+  });
+  h.list.scrollTop = 49_980 * 48;
+  h.list.dispatchEvent(new h.owner.win.Event('scroll'));
+  h.owner.flush();
+  await vi.waitFor(() => {
+    expect(h.session.readRange).toHaveBeenCalledTimes(12);
+  });
+  expect(h.session.readRange.mock.calls[11]?.[0]).toBeGreaterThan(49_950);
+  expect(h.replacements.mock.calls).toHaveLength(baseline);
+  const before = h.list.textContent;
+  held.resolve();
+  await flushMicrotasks(40);
+  expect(h.list.textContent).toBe(before);
+  expect(h.replacements.mock.calls).toHaveLength(baseline);
+  tailHeld.resolve();
+  await h.completed();
+  expect(h.replacements.mock.calls).toHaveLength(baseline + 1);
+  h.list.scrollTop = 0;
+  h.list.dispatchEvent(new h.owner.win.Event('scroll'));
+  h.owner.flush();
+  await h.completed();
+  expect(h.visits.filter((offset) => offset < 1820)).toHaveLength(1820);
+  // The cancelled interval was not admitted as proof: returning must evaluate it again.
+  expect(h.visits.filter((offset) => offset === 1820)).toHaveLength(2);
+  h.handle.detach();
+  expect(h.session.close).toHaveBeenCalledTimes(1);
+  expect(h.owner.frames.size).toBe(0);
+  expect(h.owner.observers.every((observer) => observer.elements.size === 0)).toBe(true);
+});
+
+it('Phase A resumes a cancelled label projection for the unchanged mounted window without rebuilding order', async () => {
+  const h = await demandFixture(0);
+  const held = deferred<void>();
+  const project = h.session.options.getMockImplementation();
+  h.session.options.mockImplementationOnce(async (candidates) => {
+    await held.promise;
+    return expectDefined(project)(candidates);
+  });
+  await vi.waitFor(() => {
+    expect(h.session.options).toHaveBeenCalledTimes(1);
+  });
+  const counts = [h.orders.mock.calls.length, h.replacements.mock.calls.length];
+  h.list.dispatchEvent(new h.owner.win.Event('scroll'));
+  h.owner.flush();
+  await h.completed();
+  expect(h.list.querySelectorAll('[role="option"]')).toHaveLength(20);
+  held.resolve();
+  await flushMicrotasks(30);
+  expect([h.orders.mock.calls.length, h.replacements.mock.calls.length]).toEqual(counts);
+});
+
+it('Phase A releases partial native and session owners on a real range failure', async () => {
+  const h = await demandFixture(0);
+  h.session.readRange.mockRejectedValueOnce(new TaskSearchError('unavailable', 'read failed'));
+  await vi.waitFor(() => {
+    expect(h.handle.element.dataset['searchPhase']).toBe('error');
+  });
+  expect(h.session.close).toHaveBeenCalledTimes(1);
+  expect(h.owner.observers.every((observer) => observer.elements.size === 0)).toBe(true);
+  expect(h.owner.frames.size).toBe(0);
+  expect(h.list.querySelector('[role="option"]')).toBeNull();
+});
+
+it.each(['direction', 'source'] as const)(
+  'Phase A discards old omission knowledge on %s replacement',
+  async (cause) => {
+    const h = await demandFixture(49_950);
+    const held = deferred<void>();
+    let blocked = false;
+    h.hold(async (offset) => {
+      if (!blocked && offset >= 1820) {
+        blocked = true;
+        await held.promise;
+      }
+    });
+    await vi.waitFor(() => {
+      expect(h.session.readRange).toHaveBeenCalledTimes(11);
+    });
+    if (cause === 'direction') {
+      const direction = expectDefined(
+        h.handle.element.querySelector<HTMLButtonElement>('[data-direction="blocked-by"]'),
+      );
+      direction.click();
+    } else h.index.installCommittedContent('other.md', '- [ ] Other');
+    await flushMicrotasks(20);
+    h.owner.flush();
+    await vi.waitFor(() => {
+      expect(h.visits.filter((offset) => offset === 0)).toHaveLength(2);
+    });
+    held.resolve();
+    await h.completed();
+    expect(h.session.close).toHaveBeenCalledTimes(1);
+  },
+);
+
+it('Phase A preserves a surviving measured tall anchor through one omission publication', async () => {
+  const h = await demandFixture(10);
+  const list = h.list;
+  const held = deferred<void>();
+  h.hold(async () => {
+    await held.promise;
+  });
+  await vi.waitFor(() => {
+    expect(h.session.readRange).toHaveBeenCalledTimes(1);
+  });
+  const surface = expectDefined(h.updates.mock.instances[0]);
+  if (!(surface instanceof TaskListSurface)) throw new Error('Missing real surface');
+  const anchor = expectDefined(surface.element('10'));
+  for (const key of surface.mountedKeys()) {
+    const element = expectDefined(surface.element(key));
+    const height = key === '10' ? 144 : 48;
+    element.getBoundingClientRect = () => {
+      let top = -list.scrollTop;
+      let previous = element.previousElementSibling;
+      while (previous !== null) {
+        if (previous.classList.contains('abyss-virtual-row-spacer'))
+          top += Number.parseFloat(
+            (previous as HTMLElement).style.getPropertyValue('--abyss-virtual-row-height'),
+          );
+        else top += previous === anchor ? 144 : 48;
+        previous = previous.previousElementSibling;
+      }
+      return {
+        top,
+        bottom: top + height,
+        left: 0,
+        right: 400,
+        width: 400,
+        height,
+        x: 0,
+        y: top,
+        toJSON() {},
+      };
+    };
+  }
+  surface.refreshMeasurements();
+  h.owner.flush();
+  await flushMicrotasks(20);
+  list.scrollTop = 10 * 48 + 36;
+  h.list.dispatchEvent(new h.owner.win.Event('scroll'));
+  h.owner.flush();
+  await flushMicrotasks(20);
+  expect(anchor.getBoundingClientRect().top).toBe(-36);
+  const replacements = h.replacements.mock.calls.length;
+  held.resolve();
+  await h.completed();
+  expect(surface.element('10')).toBe(anchor);
+  expect(anchor.getBoundingClientRect().top).toBe(-36);
+  expect(h.replacements.mock.calls).toHaveLength(replacements + 1);
+});
+
+it('Phase A fills both sides of a middle anchor in one publication while preserving a sparse pin', async () => {
+  const h = await demandFixture(10, 1000);
+  const held = deferred<void>();
+  h.hold(async (offset) => {
+    if (offset === 0) await held.promise;
+  });
+  await vi.waitFor(() => {
+    expect(h.session.readRange).toHaveBeenCalledTimes(1);
+  });
+  const surface = expectDefined(h.updates.mock.instances[0]);
+  if (!(surface instanceof TaskListSurface)) throw new Error('Missing real surface');
+  const unpin = surface.pin('49999');
+  cleanup.push(unpin);
+  h.list.scrollTop = 1010 * 48 + 12;
+  h.list.dispatchEvent(new h.owner.win.Event('scroll'));
+  h.owner.flush();
+  const anchor = expectDefined(surface.element('1010'));
+  expect(anchor.getBoundingClientRect().top).toBe(-12);
+  const replacements = h.replacements.mock.calls.length;
+  await h.completed();
+  expect(h.replacements.mock.calls).toHaveLength(replacements + 1);
+  expect(surface.element('1010')).toBe(anchor);
+  expect(anchor.getBoundingClientRect().top).toBe(-12);
+  expect(h.labels).toContain(49999);
+  expect(h.labels).toContain(999);
+  expect(new Set(h.visits).size).toBe(h.visits.length);
+  expect(h.visits.every((offset) => offset >= 800)).toBe(true);
+  expect([...h.labels].sort((a, b) => a - b)).toEqual(surface.mountedKeys().map(Number));
+  const current = h.list.textContent;
+  held.resolve();
+  await flushMicrotasks(40);
+  expect(h.list.textContent).toBe(current);
+  expect(h.replacements.mock.calls).toHaveLength(replacements + 1);
+});
+
+it.each(['current', 'owner'] as const)(
+  'Phase A releases a demand whose %s changed during a held read',
+  async (cause) => {
+    const h = await demandFixture(0);
+    const held = deferred<void>();
+    h.hold(async () => {
+      await held.promise;
+    });
+    await vi.waitFor(() => {
+      expect(h.session.readRange).toHaveBeenCalledTimes(1);
+    });
+    if (cause === 'current') h.setCurrent(undefined);
+    else activeDocument.body.append(h.handle.element);
+    held.resolve();
+    await flushMicrotasks(40);
+    expect(h.session.close).toHaveBeenCalledTimes(1);
+    expect(h.owner.observers.every((observer) => observer.elements.size === 0)).toBe(true);
+    expect(h.session.options).not.toHaveBeenCalled();
+    expect(h.list.querySelector('[role="option"]')).toBeNull();
+  },
+);
+
+it('Phase A validates an empty initial result before settling creation for a captured stale current task', async () => {
+  const h = await fixture(0);
+  h.index.installCommittedContent('tasks.md', '- [ ] Changed current');
+  const check = vi.spyOn(h.index, 'searchEligibility');
+  const ui = h.mount();
+  ui.query('no matching candidate');
+  await vi.waitFor(() => {
+    expect(check).toHaveBeenCalledTimes(2);
+  });
+  // The captured reference stays unchanged; both the initial and one-shot stale attempt validate it.
+  expect(check.mock.calls.map(([request]) => request.addresses)).toEqual([[], []]);
+  expect(ui.handle.element.dataset['searchPhase']).toBe('idle');
+  ui.key('Enter');
+  expect(h.creates).toEqual([]);
+});
+
+it('Phase A evaluates a sparse pinned tail before forward replacements and hydrates only the final mounted intersection', async () => {
+  const h = await demandFixture(49_950);
+  const held = deferred<void>();
+  let first = true;
+  h.hold(async () => {
+    if (first) {
+      first = false;
+      await held.promise;
+    }
+  });
+  await vi.waitFor(() => {
+    expect(h.session.readRange).toHaveBeenCalledTimes(1);
+  });
+  const surface = expectDefined(h.updates.mock.instances[0]);
+  if (!(surface instanceof TaskListSurface)) throw new Error('Missing real surface');
+  const unpin = surface.pin('49999');
+  cleanup.push(unpin);
+  h.owner.flush();
+  await h.completed();
+  expect(h.session.readRange.mock.calls.slice(1, 4).map((call) => call.slice(0, 2))).toEqual([
+    [0, 20],
+    [49999, 1],
+    [20, 200],
+  ]);
+  expect(new Set(h.visits).size).toBe(h.visits.length);
+  expect(h.visits).toHaveLength(50_000);
+  expect(h.labels).toContain(49999);
+  expect(h.labels).toHaveLength(21);
+  expect(h.replacements).toHaveBeenCalledTimes(3);
+  const current = h.list.textContent;
+  held.resolve();
+  await flushMicrotasks(40);
+  expect(h.list.textContent).toBe(current);
+  expect(h.replacements).toHaveBeenCalledTimes(3);
+});
+
+async function evictDependencyCursor(search: TaskSearchApi): Promise<void> {
+  for (let i = 0; i < 4; i++) {
+    const cursor = await search.open(
+      { kind: 'nodes', query: 'Candidate' },
+      new AbortController().signal,
+    );
+    cleanup.push(() => {
+      search.release(cursor);
+    });
+  }
+}
+
+it.each([false, true])(
+  'Phase A silently renews a real evicted cursor without editing input or changing generation (selected=%s)',
+  async (selected) => {
+    const h = await fixture(100);
+    const owner = taskViewportOwner();
+    cleanup.push(() => {
+      owner.destroy();
+    });
+    const open = vi.spyOn(h.callbacks.provider, 'open');
+    const read = vi.spyOn(h.search, 'read');
+    const ui = h.mount(owner);
+    ui.query('Candidate');
+    owner.flush();
+    await ui.completed();
+    if (selected) {
+      ui.key('ArrowDown');
+      expect(ui.active()?.textContent).toContain('Candidate 0');
+    }
+    const generation = ui.handle.element.dataset['searchGeneration'];
+    const cursor = expectDefined(read.mock.calls[0]?.[0]);
+    await evictDependencyCursor(h.search);
+    await expect(h.search.read(cursor, 70, 1, new AbortController().signal)).rejects.toMatchObject({
+      code: 'cursor-expired',
+    });
+    const list = expectDefined(
+      ui.handle.element.querySelector<HTMLElement>('.abyss-dep-search-results'),
+    );
+    const beforeDemand = read.mock.calls.length;
+    list.scrollTop = 48 * 70;
+    list.dispatchEvent(new owner.win.Event('scroll'));
+    await vi.waitFor(() => {
+      owner.flush();
+      expect(open).toHaveBeenCalledTimes(2);
+      expect(ui.handle.element.dataset['searchPhase']).toBe('complete');
+    });
+    expect(
+      read.mock.calls
+        .slice(beforeDemand)
+        .some(([readCursor, offset]) => readCursor.id === cursor.id && offset > 20),
+    ).toBe(true);
+    expect(ui.input.value).toBe('Candidate');
+    expect(ui.handle.element.dataset['searchGeneration']).toBe(generation);
+    expect(list.querySelectorAll('[role="option"]').length).toBeGreaterThan(0);
+    expect(list.textContent).toContain('Candidate');
+    expect(ui.active()).toBeNull();
+    expect(h.writes).toEqual([]);
+    expect(h.creates).toEqual([]);
+    // Enter must retain the offscreen selected address, never a new neighbor or creation.
+    if (selected) ui.key('Enter');
+    else expect(ui.handle.element.querySelector('.abyss-dep-search-error')?.textContent).toBe('');
+    await flushMicrotasks(30);
+    expect(h.writes).toEqual([]);
+    expect(h.creates).toEqual([]);
+    ui.handle.refresh();
+    owner.flush();
+    await flushMicrotasks(30);
+    expect(open).toHaveBeenCalledTimes(2);
+    if (!selected) {
+      // A successful renewal does not replenish the allowance for this same intent.
+      await evictDependencyCursor(h.search);
+      list.scrollTop = 48 * 10;
+      list.dispatchEvent(new owner.win.Event('scroll'));
+      await vi.waitFor(() => {
+        owner.flush();
+        expect(ui.handle.element.dataset['searchPhase']).toBe('idle');
+      });
+      expect(open).toHaveBeenCalledTimes(2);
+      expect(ui.handle.element.querySelector('.abyss-dep-search-error')?.textContent).toBe('');
+      expect(list.querySelector('[role="option"]')).toBeNull();
+    }
+  },
+);
+
+it.each([
+  ['cursor-expired', 'input'],
+  ['cursor-expired', 'direction'],
+  ['cursor-expired', 'source'],
+  ['cursor-expired', 'current'],
+  ['stale', 'input'],
+] as const)(
+  'Phase A bounds silent %s recovery to two opens until new %s intent',
+  async (code, context) => {
+    const h = await fixture(100);
+    const owner = taskViewportOwner();
+    cleanup.push(() => {
+      owner.destroy();
+    });
+    const notices: string[] = [];
+    vi.spyOn(
+      Notice.prototype as unknown as { constructor__(message: string): void },
+      'constructor__',
+    ).mockImplementation((message) => {
+      notices.push(message);
+    });
+    const open = vi.spyOn(h.callbacks.provider, 'open');
+    const original = h.search.read.bind(h.search);
+    vi.spyOn(h.search, 'read').mockImplementation(async (...args) => {
+      if (code === 'stale') throw new TaskSearchError('stale', 'Task changed');
+      await evictDependencyCursor(h.search);
+      return original(...args);
+    });
+    const ui = h.mount(owner);
+    ui.query('Candidate');
+    await vi.waitFor(() => {
+      owner.flush();
+      expect(open).toHaveBeenCalledTimes(2);
+      expect(ui.handle.element.dataset['searchPhase']).toBe('idle');
+    });
+    for (let i = 0; i < 3; i++) {
+      ui.handle.refresh();
+      ui.query('Candidate');
+      owner.flush();
+      await flushMicrotasks(30);
+    }
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(ui.handle.element.querySelector('.abyss-dep-search-error')?.textContent).toBe('');
+    expect(ui.handle.element.querySelector('.abyss-search-status')?.textContent).toBe('');
+    expect(notices).toEqual([]);
+    ui.key('Enter');
+    expect(h.writes).toEqual([]);
+    expect(h.creates).toEqual([]);
+    expect(owner.observers.every((observer) => observer.elements.size === 0)).toBe(true);
+    expect(owner.frames.size).toBe(0);
+    if (context === 'input') ui.query('Candidate 1');
+    else if (context === 'direction') {
+      expectDefined(
+        ui.handle.element.querySelector<HTMLButtonElement>('[data-direction="blocked-by"]'),
+      ).click();
+    } else if (context === 'source') h.index.installCommittedContent('other.md', '- [ ] Other');
+    else {
+      h.setCurrent(expectDefined(h.index.listNodes()[1]).target);
+      ui.handle.refresh();
+    }
+    await vi.waitFor(() => {
+      owner.flush();
+      expect(open).toHaveBeenCalledTimes(4);
+      expect(ui.handle.element.dataset['searchPhase']).toBe('idle');
+    });
+  },
+);
+
+it.each(['close', 'detach', 'current', 'owner', 'query', 'demand'] as const)(
+  'Phase A does not resurrect an expired held read after %s supersession',
+  async (cause) => {
+    const h = await fixture(100);
+    const owner = taskViewportOwner();
+    cleanup.push(() => {
+      owner.destroy();
+    });
+    const open = vi.spyOn(h.callbacks.provider, 'open');
+    const read = h.search.read.bind(h.search);
+    const held = deferred<void>();
+    const waiting = deferred<void>();
+    vi.spyOn(h.search, 'read').mockImplementationOnce(async (...args) => {
+      waiting.resolve();
+      await held.promise;
+      return read(...args);
+    });
+    const ui = h.mount(owner);
+    ui.query('Candidate');
+    owner.flush();
+    await waiting.promise;
+    await evictDependencyCursor(h.search);
+    const list = expectDefined(
+      ui.handle.element.querySelector<HTMLElement>('.abyss-dep-search-results'),
+    );
+    if (cause === 'close') ui.handle.close();
+    else if (cause === 'detach') ui.handle.detach();
+    else if (cause === 'current') h.setCurrent(undefined);
+    else if (cause === 'owner') activeDocument.body.append(ui.handle.element);
+    else if (cause === 'query') ui.query('Candidate 9');
+    else {
+      list.scrollTop = 48 * 70;
+      list.dispatchEvent(new owner.win.Event('scroll'));
+    }
+    owner.flush();
+    held.resolve();
+    if (cause === 'query' || cause === 'demand') {
+      await vi.waitFor(() => {
+        owner.flush();
+        expect(ui.handle.element.dataset['searchPhase']).toBe('complete');
+      });
+      expect(open).toHaveBeenCalledTimes(2);
+      expect(list.textContent).toContain(cause === 'query' ? 'Candidate 9' : 'Candidate 70');
+    } else {
+      await flushMicrotasks(60);
+      owner.flush();
+      await flushMicrotasks(30);
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(list.querySelector('[role="option"]')).toBeNull();
+      expect(owner.observers.every((observer) => observer.elements.size === 0)).toBe(true);
+    }
+    expect(h.writes).toEqual([]);
+    expect(h.creates).toEqual([]);
+  },
+);
+
+describe('R1 unsized dependency list bootstrap', () => {
+  async function bootstrap(count = 65, omitted = false, beforeRead?: Promise<void>) {
+    const h = await fixture(
+      count,
+      'blocks',
+      omitted
+        ? {
+            'tasks.md': '- [ ] Current 🆔 current ⛔ c0\n- [ ] Candidate 0 🆔 c0',
+          }
+        : undefined,
+    );
+    if (beforeRead !== undefined) {
+      const open = h.callbacks.provider.open.bind(h.callbacks.provider);
+      h.callbacks.provider.open = async (...args) => {
+        const session = await open(...args);
+        const read = session.readRange.bind(session);
+        session.readRange = async (...args) => {
+          await beforeRead;
+          return read(...args);
+        };
+        return session;
+      };
+    }
+    const owner = taskViewportOwner();
+    cleanup.push(() => {
+      owner.destroy();
+    });
+    let available = 256;
+    const firstClasses: boolean[] = [];
+    const update = methodOf(TaskListSurface.prototype, 'update');
+    vi.spyOn(TaskListSurface.prototype, 'update').mockImplementation(function (
+      this: TaskListSurface<number>,
+      ...args
+    ) {
+      firstClasses.push(
+        owner.doc
+          .querySelector('.abyss-dep-search-results')
+          ?.classList.contains('has-candidates') === true,
+      );
+      update.apply(this, args);
+    });
+    const handle = mountDependencySearch(activeDocument.body, {
+      ...h.callbacks,
+      position: (element) => {
+        positionDemandSurface(element, owner, 0);
+        const list = expectDefined(element.querySelector<HTMLElement>('.abyss-dep-search-results'));
+        Object.defineProperty(list, 'clientHeight', {
+          configurable: true,
+          get: () => {
+            if (list.classList.contains('has-candidates')) return Math.min(256, available);
+            return list.querySelector('.abyss-dep-search-empty') === null ? 0 : 24;
+          },
+        });
+      },
+    });
+    cleanup.push(() => {
+      handle.destroy();
+    });
+    const list = expectDefined(
+      handle.element.querySelector<HTMLElement>('.abyss-dep-search-results'),
+    );
+    const input = expectDefined(handle.element.querySelector<HTMLInputElement>('input'));
+    const resize = () => {
+      for (const observer of owner.observers)
+        if (observer.elements.has(list)) observer.callback([], {} as ResizeObserver);
+      owner.win.dispatchEvent(new owner.win.Event('resize'));
+      owner.flush();
+    };
+    return {
+      ...h,
+      owner,
+      handle,
+      list,
+      input,
+      firstClasses,
+      resize,
+      available: (height: number) => {
+        available = height;
+      },
+      completed: () => searchUiCompleted(handle.element),
+    };
+  }
+  it('reserves intrinsic space before the first update and publishes only ready options', async () => {
+    const held = deferred<void>();
+    const h = await bootstrap(65, false, held.promise);
+    h.owner.flush();
+    await vi.waitFor(() => {
+      expect(h.firstClasses[0]).toBe(true);
+    });
+    expect(h.list.querySelector('[role="option"]')).toBeNull();
+    for (const holder of h.list.querySelectorAll<HTMLElement>('button')) {
+      expect(holder.inert).toBe(true);
+      expect(holder.getAttribute('aria-hidden')).toBe('true');
+      expect(holder.id).toBe('');
+    }
+    expect(h.input.hasAttribute('aria-activedescendant')).toBe(false);
+    expect(h.owner.doc.activeElement).toBe(h.input);
+    held.resolve();
+    await h.completed();
+    expect(h.list.querySelectorAll('[role="option"]').length).toBeGreaterThan(0);
+    for (const option of h.list.querySelectorAll<HTMLElement>('[role="option"]')) {
+      expect(option.inert).toBe(false);
+      expect(option.hasAttribute('aria-hidden')).toBe(false);
+      expect(option.id).not.toBe('');
+    }
+    for (const spacer of h.list.querySelectorAll<HTMLElement>('.abyss-virtual-row-spacer')) {
+      expect(spacer.inert).toBe(true);
+      expect(spacer.getAttribute('aria-hidden')).toBe('true');
+      expect(spacer.hasAttribute('tabindex')).toBe(false);
+      expect(spacer.hasAttribute('role')).toBe(false);
+      expect(spacer.id).toBe('');
+    }
+    expect(h.input.hasAttribute('aria-activedescendant')).toBe(false);
+  });
+  it('restores auto height after empty and all-omitted results, then bootstraps a new query', async () => {
+    const h = await bootstrap(1, true);
+    h.owner.flush();
+    await h.completed();
+    expect(h.list.classList.contains('has-candidates')).toBe(false);
+    expect(h.list.querySelector('[role="option"]')).toBeNull();
+    h.input.value = 'missing';
+    h.input.dispatchEvent(new Event('input', { bubbles: true }));
+    h.owner.flush();
+    await h.completed();
+    expect(h.list.classList.contains('has-candidates')).toBe(false);
+    h.input.value = 'Current';
+    h.input.dispatchEvent(new Event('input', { bubbles: true }));
+    h.owner.flush();
+    await h.completed();
+    expect(h.list.classList.contains('has-candidates')).toBe(false);
+    h.index.installCommittedContent('other.md', '- [ ] Allowed 🆔 allowed');
+    h.owner.flush();
+    await h.completed();
+    h.input.value = 'Allowed';
+    h.input.dispatchEvent(new Event('input', { bubbles: true }));
+    h.owner.flush();
+    await h.completed();
+    expect(h.list.classList.contains('has-candidates')).toBe(true);
+    expect(h.list.querySelector('[role="option"]')?.textContent).toContain('Allowed');
+  });
+  it('starts no zero-size demand and wakes after reattach on a real resize delivery', async () => {
+    const h = await bootstrap();
+    h.handle.detach();
+    h.available(0);
+    h.handle.attach();
+    h.owner.flush();
+    const reads = vi.spyOn(h.index, 'searchEligibility');
+    await vi.waitFor(() => {
+      expect(h.firstClasses.length).toBeGreaterThan(0);
+    });
+    expect(reads).not.toHaveBeenCalled();
+    h.available(72);
+    h.resize();
+    await h.completed();
+    expect(reads).toHaveBeenCalled();
+    expect(h.list.querySelector('[role="option"]')).not.toBeNull();
+    h.handle.destroy();
+    expect(h.owner.observers.every((observer) => observer.elements.size === 0)).toBe(true);
+    h.resize();
+    expect(h.owner.frames.size).toBe(0);
+  });
+});
+
+it('Phase B full keyboard reaches the last allowed candidate through a disabled tail and consumes pending Enter', async () => {
+  const tail = Array.from({ length: 80 }, (_, i) => `c${i + 100}`).join(', ');
+  const candidates = Array.from({ length: 180 }, (_, i) => `- [ ] Candidate ${i} 🆔 c${i}`).join(
+    '\n',
+  );
+  const h = await fixture(0, 'blocks', {
+    'tasks.md': `- [ ] Current 🆔 current ⛔ bridge\n- [ ] Bridge 🆔 bridge ⛔ ${tail}\n${candidates}`,
+  });
+  const held = deferred<void>();
+  let hold = false;
+  const original = h.callbacks.provider.open.bind(h.callbacks.provider);
+  h.callbacks.provider.open = async (...args) => {
+    const session = await original(...args);
+    const read = session.readRange.bind(session);
+    session.readRange = async (...args) => {
+      if (hold) await held.promise;
+      return read(...args);
+    };
+    return session;
+  };
+  const ui = h.mount();
+  ui.query('Candidate');
+  await ui.completed();
+  hold = true;
+  ui.key('End');
+  ui.key('Enter');
+  expect(h.writes).toEqual([]);
+  expect(h.creates).toEqual([]);
+  held.resolve();
+  await ui.completed();
+  await vi.waitFor(() => {
+    expect(ui.active()?.textContent).toContain('Candidate 99');
+  });
+  ui.key('Enter');
+  await vi.waitFor(() => {
+    expect(h.writes).toHaveLength(1);
+  });
+  expect(h.writes[0]?.title).toBe('Candidate 99');
+  expect(h.creates).toEqual([]);
+});
+
+it.each(['query', 'direction', 'source', 'current', 'detach', 'close', 'adoption'] as const)(
+  'Phase B cancels a held logical movement on %s without a late commit or refocus',
+  async (change) => {
+    const h = await fixture(260);
+    h.callbacks.position = (element) => {
+      positionDemandSurface(element, { doc: element.ownerDocument }, 256);
+    };
+    const held = deferred<void>();
+    let hold = false;
+    let heldSignal: AbortSignal | undefined;
+    const open = h.callbacks.provider.open.bind(h.callbacks.provider);
+    h.callbacks.provider.open = async (...args) => {
+      const session = await open(...args);
+      const read = session.readRange.bind(session);
+      session.readRange = async (...args) => {
+        if (hold && heldSignal === undefined) {
+          heldSignal = args[2];
+          await held.promise;
+        }
+        return read(...args);
+      };
+      return session;
+    };
+    const ui = h.mount();
+    ui.query('Candidate');
+    await ui.completed();
+    hold = true;
+    ui.key('End');
+    ui.key('Enter');
+    await vi.waitFor(() => {
+      expect(heldSignal).toBeDefined();
+    });
+    const retire: Record<typeof change, () => void> = {
+      query: () => {
+        ui.query('Candidate 1');
+      },
+      direction: () => {
+        expectDefined(
+          ui.handle.element.querySelector<HTMLButtonElement>('[data-direction="blocked-by"]'),
+        ).click();
+      },
+      source: () => {
+        h.index.installCommittedContent('other.md', '- [ ] Other');
+      },
+      current: () => {
+        h.setCurrent(undefined);
+      },
+      detach: () => {
+        ui.handle.detach();
+        ui.handle.element.remove();
+      },
+      close: () => {
+        ui.handle.close(false);
+      },
+      adoption: () => {
+        const owner = taskViewportOwner();
+        cleanup.push(() => {
+          owner.destroy();
+        });
+        owner.doc.body.append(ui.handle.element);
+        ui.handle.attach();
+        owner.flush();
+      },
+    };
+    retire[change]();
+    const focused = ui.handle.element.isConnected
+      ? expectDefined(
+          ui.handle.element.querySelector<HTMLButtonElement>('[data-direction="blocks"]'),
+        )
+      : activeDocument.body.createEl('input');
+    focused.focus();
+    held.resolve();
+    await vi.waitFor(() => {
+      expect(heldSignal?.aborted).toBe(true);
+    });
+    await flushMicrotasks(30);
+    expect(h.writes).toEqual([]);
+    expect(h.creates).toEqual([]);
+    expect(focused.ownerDocument.activeElement).toBe(focused);
+    ui.handle.destroy();
+  },
+);
+
+it('Phase B returns native picker resources to baseline after scrolling, direction changes and late callbacks', async () => {
+  const h = await fixture(260);
+  const owner = taskViewportOwner();
+  cleanup.push(() => {
+    owner.destroy();
+    vi.unstubAllGlobals();
+  });
+  const resources = recordVirtualSurfaceResources(owner.win);
+  Object.defineProperty(owner.win, 'ResizeObserver', { configurable: true, value: ResizeObserver });
+  const baseline = resources.counts();
+  const open = vi.spyOn(h.search, 'open');
+  const release = vi.spyOn(h.search, 'release');
+  const ui = h.mount(owner);
+  ui.query('Candidate');
+  owner.flush();
+  await ui.completed();
+  const list = expectDefined(
+    ui.handle.element.querySelector<HTMLElement>('.abyss-dep-search-results'),
+  );
+  for (const offset of [220, 5, 140]) {
+    list.scrollTop = offset * 48;
+    list.dispatchEvent(new owner.win.Event('scroll'));
+    owner.flush();
+    await vi.waitFor(() => {
+      expect(ui.handle.element.dataset['searchPhase']).toBe('complete');
+    });
+  }
+  for (const direction of ['blocked-by', 'blocks']) {
+    expectDefined(
+      ui.handle.element.querySelector<HTMLButtonElement>(`[data-direction="${direction}"]`),
+    ).click();
+    owner.flush();
+    await ui.completed();
+  }
+  ui.key('End');
+  await vi.waitFor(() => {
+    expect(ui.active()?.textContent).toContain('Candidate 259');
+  });
+  ui.handle.destroy();
+  expect(resources.counts()).toEqual(baseline);
+  expect(owner.frames.size).toBe(0);
+  expect(release).toHaveBeenCalledTimes(open.mock.calls.length);
+  for (const callback of resources.callbacks) callback([], {} as ResizeObserver);
+  owner.flush();
+  expect(resources.counts()).toEqual(baseline);
+  expect(owner.frames.size).toBe(0);
+  expect(h.release).toHaveBeenCalledOnce();
+  expect(h.writes).toEqual([]);
+  expect(h.creates).toEqual([]);
+});
+
+it.each(['geometry', 'unchanged scroll'] as const)(
+  'review I1 resumes the settled window after %s cancels a held movement',
+  async (cancel) => {
+    const h = await fixture(260);
+    const owner = taskViewportOwner();
+    cleanup.push(() => {
+      owner.destroy();
+    });
+    const held = deferred<void>();
+    let hold = false;
+    let heldSignal: AbortSignal | undefined;
+    const opened = vi.spyOn(h.search, 'open');
+    const replacements = vi.spyOn(RowViewport.prototype, 'replace');
+    const open = h.callbacks.provider.open.bind(h.callbacks.provider);
+    h.callbacks.provider.open = async (...args) => {
+      const session = await open(...args);
+      const read = session.readRange.bind(session);
+      session.readRange = async (...args) => {
+        if (hold && heldSignal === undefined) {
+          heldSignal = args[2];
+          await held.promise;
+        }
+        return read(...args);
+      };
+      return session;
+    };
+
+    const ui = h.mount(owner);
+    ui.query('Candidate');
+    owner.flush();
+    await ui.completed();
+    const list = expectDefined(
+      ui.handle.element.querySelector<HTMLElement>('.abyss-dep-search-results'),
+    );
+    const replacementCount = replacements.mock.calls.length;
+    const updates = vi.spyOn(TaskListSurface.prototype, 'update');
+    hold = true;
+    ui.key('End');
+    ui.key('Enter');
+    await vi.waitFor(() => {
+      expect(heldSignal).toBeDefined();
+    });
+    if (cancel === 'geometry') {
+      Object.defineProperty(list, 'clientHeight', { configurable: true, value: 0 });
+      owner.win.dispatchEvent(new owner.win.Event('resize'));
+      expect(heldSignal?.aborted).toBe(true);
+      Object.defineProperty(list, 'clientHeight', { configurable: true, value: 766 });
+      owner.win.dispatchEvent(new owner.win.Event('resize'));
+    } else {
+      list.dispatchEvent(new owner.win.Event('scroll'));
+      expect(heldSignal?.aborted).toBe(true);
+    }
+    owner.flush();
+    held.resolve();
+    await flushMicrotasks(50);
+    owner.flush();
+    await vi.waitFor(() => {
+      expect(ui.handle.element.dataset['searchPhase']).toBe('complete');
+    });
+    ui.key('Home');
+    expect(ui.active()?.textContent).toContain('Candidate 0');
+    expect(ui.active()?.getAttribute('role')).toBe('option');
+    expect(opened).toHaveBeenCalledOnce();
+    // Native owner rebinding resets measurements; the controller must not publish an order.
+    expect(replacements).toHaveBeenCalledTimes(replacementCount + (cancel === 'geometry' ? 1 : 0));
+    expect(updates).not.toHaveBeenCalled();
+    expect(h.writes).toEqual([]);
+    expect(h.creates).toEqual([]);
+    ui.key('Enter');
+    await vi.waitFor(() => {
+      expect(h.writes).toHaveLength(1);
+    });
+    expect(h.writes[0]?.title).toBe('Candidate 0');
+  },
+);
+
+it('review I1 reprojects ready labels after same-window geometry resume', async () => {
+  const h = await fixture(260);
+  const owner = taskViewportOwner();
+  cleanup.push(() => {
+    owner.destroy();
+  });
+  const reads = vi.spyOn(h.index, 'searchEligibility');
+  const ui = h.mount(owner);
+  ui.query('Candidate');
+  owner.flush();
+  await ui.completed();
+  const list = expectDefined(
+    ui.handle.element.querySelector<HTMLElement>('.abyss-dep-search-results'),
+  );
+  const readyCount = list.querySelectorAll('[role="option"]').length;
+  const readCount = reads.mock.calls.length;
+  const updates = vi.spyOn(TaskListSurface.prototype, 'update');
+  expect(readyCount).toBeGreaterThan(0);
+  Object.defineProperty(list, 'clientHeight', { configurable: true, value: 0 });
+  owner.win.dispatchEvent(new owner.win.Event('resize'));
+  Object.defineProperty(list, 'clientHeight', { configurable: true, value: 766 });
+  owner.win.dispatchEvent(new owner.win.Event('resize'));
+  owner.flush();
+  await flushMicrotasks(50);
+  owner.flush();
+  await vi.waitFor(() => {
+    expect(list.querySelectorAll('[role="option"]')).toHaveLength(readyCount);
+  });
+  for (const option of list.querySelectorAll<HTMLElement>('[role="option"]')) {
+    expect(option.inert).toBe(false);
+    expect(option.hasAttribute('aria-hidden')).toBe(false);
+    expect(option.id).not.toBe('');
+  }
+  expect(reads).toHaveBeenCalledTimes(readCount);
+  expect(updates).not.toHaveBeenCalled();
+  ui.key('Home');
+  expect(ui.active()?.textContent).toContain('Candidate 0');
+});
+
+it('review I2 reuses an omitted suffix proven by keyboard movement in the revealed fill', async () => {
+  const h = await demandFixture(49_000, 1_000);
+  await h.completed();
+  const input = expectDefined(h.handle.element.querySelector<HTMLInputElement>('input'));
+  input.dispatchEvent(new h.owner.win.KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+  await h.completed();
+  const active = h.owner.doc.getElementById(input.getAttribute('aria-activedescendant') ?? '');
+  expect(active?.textContent).toContain('Candidate 999');
+  const omittedVisits = h.visits.filter((offset) => offset >= 1_000);
+  expect(omittedVisits).toHaveLength(49_000);
+  expect(new Set(omittedVisits).size).toBe(49_000);
+  expect(h.session.readRange.mock.calls.every(([, limit]) => limit <= 200)).toBe(true);
+  expect(h.replacements).toHaveBeenCalledTimes(3);
+  expect(h.orders.mock.calls.slice(1)).toHaveLength(2);
+  expect(h.list.querySelectorAll('[role="option"]').length).toBeGreaterThan(0);
+  expect(h.writes).toEqual([]);
+  expect(h.creates).toEqual([]);
+});
+
+it('review I2 rejects late omission proofs from a cancelled movement read', async () => {
+  const h = await demandFixture(49_000, 1_000);
+  await h.completed();
+  const input = expectDefined(h.handle.element.querySelector<HTMLInputElement>('input'));
+  const key = (key: string) =>
+    input.dispatchEvent(new h.owner.win.KeyboardEvent('keydown', { key, bubbles: true }));
+  const held = deferred<void>();
+  let holding = true;
+  h.hold(async (offset) => {
+    if (holding && offset === 49_800) {
+      holding = false;
+      await held.promise;
+    }
+  });
+  key('End');
+  key('Enter');
+  await vi.waitFor(() => {
+    expect(h.session.readRange).toHaveBeenCalledTimes(2);
+  });
+  const signal = expectDefined(h.session.readRange.mock.calls[1]?.[2]);
+  h.list.dispatchEvent(new h.owner.win.Event('scroll'));
+  h.owner.flush();
+  expect(signal.aborted).toBe(true);
+  await h.completed();
+  const replacementCount = h.replacements.mock.calls.length;
+  held.resolve();
+  await flushMicrotasks(50);
+  h.owner.flush();
+  expect(h.replacements).toHaveBeenCalledTimes(replacementCount);
+  expect(h.handle.element.dataset['searchPhase']).toBe('complete');
+  expect(h.visits.filter((offset) => offset === 49_800)).toHaveLength(1);
+  key('End');
+  await h.completed();
+  const active = h.owner.doc.getElementById(input.getAttribute('aria-activedescendant') ?? '');
+  expect(active?.textContent).toContain('Candidate 999');
+  // The cancelled response is not proof; the next current movement must read it again.
+  expect(h.visits.filter((offset) => offset === 49_800)).toHaveLength(2);
+  expect(h.session.readRange.mock.calls.every(([, limit]) => limit <= 200)).toBe(true);
+  expect(h.writes).toEqual([]);
+  expect(h.creates).toEqual([]);
+});
+
+it('review I2 skips existing interior omission proofs in later keyboard intervals', async () => {
+  const h = await demandFixture(100, 49_850);
+  const list = h.list;
+  await h.completed();
+  list.scrollTop = 49_860 * 48;
+  h.list.dispatchEvent(new h.owner.win.Event('scroll'));
+  h.owner.flush();
+  await flushMicrotasks(2);
+  await h.completed();
+  const omittedVisits = () => h.visits.filter((offset) => offset >= 49_850 && offset < 49_950);
+  expect(omittedVisits()).toHaveLength(100);
+  const input = expectDefined(h.handle.element.querySelector<HTMLInputElement>('input'));
+  const key = (key: string) =>
+    input.dispatchEvent(new h.owner.win.KeyboardEvent('keydown', { key, bubbles: true }));
+  key('Home');
+  await h.completed();
+  key('End');
+  await h.completed();
+  const active = h.owner.doc.getElementById(input.getAttribute('aria-activedescendant') ?? '');
+  expect(active?.textContent).toContain('Candidate 49999');
+  expect(omittedVisits()).toHaveLength(100);
 });

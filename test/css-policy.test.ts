@@ -648,3 +648,15 @@ it('backs Timeline sparse spacing with the native owner variable', async () => {
     }),
   ).toEqual([]);
 });
+
+it('reserves dependency picker geometry while preserving constrained flex shrink', async () => {
+  const { loadPluginStyles, cssDeclarationsFor } = await import('./helpers');
+  const css = await loadPluginStyles();
+  expect(
+    cssDeclarationsFor(css, '.abyss-dep-search .abyss-dep-search-results.has-candidates'),
+  ).toContain('height: min(40vh, 16rem)');
+  const list = cssDeclarationsFor(css, '.abyss-dep-search-results');
+  expect(list).toContain('flex-shrink: 1');
+  expect(list).toContain('min-height: 0');
+  expect(list).toContain('max-height: min(40vh, 16rem)');
+});

@@ -414,7 +414,7 @@ hydration, preparation, mounting, and Markdown completion. Inspector and other o
 queries can still take over preparation; dense queries and rich relation detachment retain their costs.
 
 `TaskDependencyQueryApi.searchEligibility` is a bounded compact read consumed by
-[`TaskDependencySearchProvider`](src/ui/TaskDependencySearchProvider.ts). It accepts at most 30
+[`TaskDependencySearchProvider`](src/ui/TaskDependencySearchProvider.ts). It accepts at most 200
 opaque addresses, a global generation and an exact current root/subtask reference. TaskIndex joins
 its existing cooperative graph preparation, validates current identity without reconciliation,
 reconstructs borrowed candidates through the existing handle lookup, and uses the same graph rules
@@ -423,14 +423,21 @@ recheck the global generation before returning; no borrowed snapshot escapes or 
 hydrated.
 
 The provider subscribes before opening one node/random cursor and captures current target and
-direction for that session. Each page evaluates at most 90 compact candidates, retains at most 30
-included addresses/reasons, then hydrates that final set once. Siblings across scan batches share
-one detached root in the returned page. Context always includes path and line; self/duplicate/inverse
-candidates are omitted and other rejections reuse the picker's shared labels. Sessions retain no
-rich page/root cache. Blank browse creates no fulltext index, and the last page retains its cursor
-for backward reads. Source invalidation, closure and owner abort cancel only the owned session;
-new page requests supersede pending work. Fresh selection hydrates the exact address again and
-reruns generation-bound eligibility. Commands remain the final write authority.
+direction for that session. `readRange` validates exact random intervals of at most 200 compact
+candidates, including omitted eligibility results, without hydration. Empty terminal intervals still
+validate generation and exact current identity. `options` projects only requested displayable
+candidates into compact addresses, titles, contexts and reasons; it discards rich snapshots after
+projection. Grouping demanded siblings by root keeps ordinary sibling windows to one detached root,
+within the existing 50-root/200-address hydration limits. A demand above 200 siblings of one root
+requires multiple bounded hydrations with a yield between them. Only self, duplicate and inverse
+relations are omitted; other rejections remain disabled with the shared reason labels.
+
+Sessions retain no rich root cache. Blank browse creates no fulltext index, and reading the final
+range does not release the random cursor. Session operations supersede obsolete receipts and wait
+for them to unwind before using the cursor again. Source invalidation, closure and owner abort cancel
+only that session. Fresh selection hydrates the exact address again and reruns generation-bound
+eligibility; only the commit callback receives a rich `DependencySearchCommitOption`. Commands
+remain the final write authority.
 
 PanelView and TaskModal compose the provider from the plugin's shared Search capability,
 application queries and the invoking window's browser scheduler. CenterPanel passes the same
@@ -438,15 +445,42 @@ Search capability to its TaskModal. The modal uses its existing RightPanel and
 InspectorDependencies owner; both directions keep the anchored picker, command callbacks and Undo.
 The old whole-node options callback and InspectorDependencies' eager listNodes read are removed.
 
-The existing picker paints and focuses its input before opening asynchronous candidates, through
-an owned frame followed by a task. It retains only the displayed rich page and numeric Previous
-offset history, mounts at most 30 options, and reuses the temporary Previous/Next controls.
-Keyboard navigation crosses page bounds; Home/End address the mounted slice. Logical selection
-survives refresh without selecting a neighbor, and active-descendant always names a mounted option.
-Raw candidate offsets provide accurate ARIA positions after omitted candidates.
+The picker paints and focuses its input before opening asynchronous candidates through an owned
+frame followed by a task. Its `TaskListSurface<number>` uses raw offsets as keyed payloads and owns
+native row geometry. The controller captures mounted/pinned offsets and the first intersecting DOM
+holder as a demand. One generation-local omission set survives cancelled windows. Current demand
+and keyboard reads share bounded unknown runs and admit omission proofs only after range and
+post-await ownership validation. Demanded sparse
+runs are evaluated first, then disjoint forward gaps and finally backward gaps fill omitted slots.
+Backward fill also replaces missing slots above the captured anchor, even when forward survivors
+already satisfy the total demand. It displaces surplus forward candidates within K+200 while
+preserving demanded candidates and sparse pins. Reads and yields never rebuild the logical order.
+A completed current fill filters the existing
+numeric rows once only when new omission proofs exist, preserving the shared surface anchor.
+Identical settled windows cause no publication; labels update mounted holders and measurements only.
+The controller retains only mounted compact candidates and at most K+200 candidates during a fill,
+where K includes mounted pins. It projects labels after reconciliation, then drops unused candidates.
+
+Holders stay inert and have no option role or ID until labels settle. Raw offsets supply ARIA
+positions; selected intent is one compact address plus its current-session offset rather than a
+rich snapshot. Keyboard movement uses bounded raw intervals to reach logical Home/End/arrow targets,
+including disabled tails, then pins and reveals the exact candidate through the shared surface.
+The movement pin is released after mounted hydration; ordinary eviction retains selected identity.
+Enter is consumed during query, demand, movement and exact resolve work, without queued submission.
+An accepted selection owns its fresh exact resolve ahead of incidental viewport demand; deferral
+invalidates the settled receipt for remounted holders, and only that resolve's current owner
+schedules mounted demand again on completion or failure.
+The list reserves intrinsic height before initial native publication. A picker-owned attached list
+ResizeObserver and window resize listener suspend on lost geometry and resume only on zero-to-positive
+availability; suspension invalidates the settled presentation receipt so remounted holders receive
+labels even for identical offsets. Cancelling active movement also invalidates that receipt, while
+benign unchanged callbacks retain it. Compact candidates and omission proofs survive both transitions.
+Positive-to-positive measurement belongs to TaskListSurface. Reattachment positions
+before native publication and adoption releases old owners. Positive element geometry is required
+before any demand starts; zero geometry does no reads. The picker no longer has page/history state or Previous/Next controls.
 
 The picker subscribes through the existing public Search state boundary to discard displayed
-pages and restart its owned query on source changes. SearchStatus remains its single read-failure
+options and restart its owned query on source changes. SearchStatus remains its single read-failure
 Notice/inline owner; ordinary input joins the shared service's recovery policy. Loading or failed
 queries cannot create tasks. Settled creation preserves the original input text and existing
 validation callback. Selection uses the session's fresh exact resolve and checks the current
@@ -455,9 +489,9 @@ retains its advisory eligibility check, and the command remains final authority.
 
 Synchronous same-owner inspector redraws transport the retained picker DOM without reopening its
 cursor or releasing its lease/listeners. Actual close/detach releases the owned session, mounted
-page, source/document listeners, interaction lease and pending paint work. Reattachment after real
+surface, source/document listeners, interaction lease and pending paint work. Reattachment after real
 detachment starts new owned reads for the retained input/direction,
-without retaining older rich pages or disposing Search. A cancelled selection continuation cannot
+without retaining older rich snapshots or disposing Search. A cancelled selection continuation cannot
 refocus or commit after reattachment. PanelView's window-migration hook closes the old inspector
 picker; subsequent opening captures the new window's scheduler. Concurrent modal/inspector
 pickers have independent owned sessions over the one shared service.
@@ -591,8 +625,7 @@ Keyboard movement pins the logical target and awaits exact hydration/current Mar
 and inspector/focus handoff, yielding to later selection, source, outside focus or window changes.
 
 `TaskSearchPages`, its model/test, the hydrated page row builder, page-local selection and Search pager
-DOM/state are removed. Dependency picker's paging and its scoped CSS remain until its own consumer
-is replaced; allocation-batch bounds are read contracts, not UI page limits.
+DOM/state are removed. Dependency picker paging DOM/state and CSS are also removed. Allocation-batch bounds are read contracts, not UI page limits.
 
 TaskSearch subscribes before opening, drains one forward root cursor, joins each compact organization
 batch to that cursor's generation (including zero hits), then supplies the compact order and prepares dependencies before demanded card hydration.
@@ -754,7 +787,7 @@ result-pass owner can clean partial mounts and report once without completing th
 Deferred native failures remain surface-owned and stop until an explicit refresh. CenterPanel uses
 this adapter for Tasks, project-dashboard lists, and the complete compact occurrence order supplied by
 Search. Search retains its input while native scrolling demands only newly mounted rich roots. The
-dependency picker retains its existing 30-option page contract pending its own integration. Same-query refreshes
+dependency picker also uses this surface with numeric raw offsets and compact mounted labels. Same-query refreshes
 retain the surface anchor; changed queries replace row lifetimes. Each retained-card update releases
 and rebinds Search navigation to the current snapshot. Search generations and captured input/results
 invalidate obsolete callbacks before they can render, complete, or report. Later Markdown failures

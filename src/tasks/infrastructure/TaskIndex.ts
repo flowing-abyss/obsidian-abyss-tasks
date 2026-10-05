@@ -1664,7 +1664,7 @@ export class TaskIndex
     request: TaskSearchEligibilityRequest,
     signal: AbortSignal,
   ): Promise<TaskSearchEligibilityBatch> {
-    if (request.addresses.length > 30)
+    if (request.addresses.length > 200)
       throw new TaskSearchError('invalid-request', 'Dependency candidate batch too large');
     if (request.addresses.length === 0) {
       this.checkSearchGeneration_abyssPrivate(request.expectedGeneration, signal);

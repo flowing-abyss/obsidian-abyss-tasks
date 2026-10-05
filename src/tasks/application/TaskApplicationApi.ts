@@ -101,6 +101,7 @@ export interface TaskSearchEligibilityBatch {
 }
 
 export interface TaskDependencyQueryApi {
+  /** Exact compact candidate checks, at most 200 addresses; no hydration. */
   searchEligibility(
     request: TaskSearchEligibilityRequest,
     signal: AbortSignal,

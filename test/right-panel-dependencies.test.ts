@@ -32,9 +32,11 @@ import {
   notices,
   subscribeInspectorReconciliation,
 } from './support/inspectorHarness';
+import { prepareTaskPanelViewport, useTaskPanelViewport } from './support/taskPanelViewport';
 import { searchUiCompleted } from './support/taskSearchUiHarness';
 
 useRealMoment();
+useTaskPanelViewport();
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) {
     cleanup();
@@ -54,6 +56,7 @@ function button(el: HTMLElement, selector: string): HTMLButtonElement {
 }
 let flushPaint: (() => void) | undefined;
 async function search(el: HTMLElement, query: string): Promise<HTMLInputElement> {
+  if (!Reflect.has(el.ownerDocument, 'fonts')) prepareTaskPanelViewport(el);
   const input = expectDefined(el.querySelector<HTMLInputElement>('.abyss-dep-search input'));
   input.value = query;
   input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -3103,8 +3106,8 @@ it('retains one lease and cursor through an unchanged synchronous inspector rend
   expect(subscribe).not.toHaveBeenCalled();
 });
 
-it.each(['Next', 'Previous'])(
-  'TaskModal dependency picker owns Find and Escape after focused %s paging',
+it.each(['End', 'Home'])(
+  'TaskModal dependency picker owns Find and Escape after logical %s movement',
   async (label) => {
     const candidates = Array.from({ length: 31 }, (_, i) => `- [ ] Candidate ${i} 🆔 c${i}`).join(
       '\n',
@@ -3140,14 +3143,23 @@ it.each(['Next', 'Previous'])(
     expect(document.activeElement).toBe(input);
     expect(input.selectionEnd).toBe(9);
     const picker = expectDefined(input.closest<HTMLElement>('.abyss-dep-search'));
-    if (label === 'Previous') {
-      button(picker, '[aria-label="Next page"]').click();
-      await searchUiCompleted(picker);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+    await vi.waitFor(() => {
+      const id = input.getAttribute('aria-activedescendant');
+      expect(id === null ? null : input.ownerDocument.getElementById(id)?.textContent).toContain(
+        'Candidate 30',
+      );
+    });
+    if (label === 'Home') {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+      await vi.waitFor(() => {
+        const id = input.getAttribute('aria-activedescendant');
+        expect(id === null ? null : input.ownerDocument.getElementById(id)?.textContent).toContain(
+          'Candidate 0',
+        );
+      });
     }
-    const pager = button(picker, `[aria-label="${label} page"]`);
-    pager.focus();
-    pager.click();
-    await searchUiCompleted(picker);
+    expect(picker.querySelector('[aria-label="Next page"]')).toBeNull();
     const focused = expectDefined(document.activeElement);
     closePickerWithEscape(input);
     expect(el.querySelector('.abyss-dep-search')).toBeNull();

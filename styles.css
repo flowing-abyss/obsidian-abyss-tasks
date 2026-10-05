@@ -4761,6 +4761,10 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   font: inherit;
 }
 
+.abyss-dep-search .abyss-dep-search-results.has-candidates {
+  height: min(40vh, 16rem);
+}
+
 .abyss-dep-search-results {
   flex-shrink: 1;
   margin-top: var(--size-2-3);
@@ -9792,17 +9796,6 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 
 .abyss-tracked-row.is-finished .abyss-tracked-row-title {
   color: var(--text-muted);
-}
-
-.abyss-dep-search .abyss-search-paging {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--size-4-2);
-}
-
-.abyss-dep-search .abyss-search-paging > span {
-  flex: 1 1 10em;
 }
 
 .abyss-project-timeline-groups {
