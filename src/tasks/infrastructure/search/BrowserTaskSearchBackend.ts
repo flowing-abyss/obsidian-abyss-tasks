@@ -2,7 +2,7 @@ import { BrowserTaskCancelled, createBrowserTaskScheduler } from '../../../brows
 import type { TaskSearchCursor } from '../../application/TaskSearchApi';
 import type {
   TaskSearchBackend,
-  TaskSearchBackendPage,
+  TaskSearchBackendBatch,
   TaskSearchMutation,
   TaskSearchOperation,
   TaskSearchReply,
@@ -137,8 +137,8 @@ export class BrowserTaskSearchBackend implements TaskSearchBackend {
     cursor: TaskSearchCursor,
     offset: number,
     limit: number,
-  ): Promise<TaskSearchBackendPage> {
-    return (await this.request({ type: 'read', cursor, offset, limit })) as TaskSearchBackendPage;
+  ): Promise<TaskSearchBackendBatch> {
+    return (await this.request({ type: 'read', cursor, offset, limit })) as TaskSearchBackendBatch;
   }
   async release(cursor: TaskSearchCursor): Promise<void> {
     if (!this.disposed) await this.request({ type: 'release', cursor });

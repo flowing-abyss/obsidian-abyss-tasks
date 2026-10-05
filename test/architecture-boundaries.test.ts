@@ -128,7 +128,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/right/InspectorDependencies.ts',
     'src/ui/TaskDependencySearchProvider.ts',
     'src/panels/center/TaskSearch.ts',
-    'src/panels/task-list/TaskSearchPages.ts',
+    'src/panels/task-list/TaskSearchRows.ts',
     'src/views/PanelView.ts',
   ],
   TaskReadProjectionApi: ['src/panels/center/TaskSearch.ts'],
@@ -143,6 +143,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/ui/dependencySearch.ts',
   ],
   TaskSearchAddress: [
+    'src/panels/task-list/TaskSearchRows.ts',
     'src/task-lists/taskSearchOrganization.ts',
     'src/ui/TaskDependencySearchProvider.ts',
   ],
@@ -150,7 +151,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/task-lists/taskSearchOrganization.ts',
     'src/ui/TaskDependencySearchProvider.ts',
   ],
-  TaskSearchHydratedHit: ['src/panels/task-list/TaskSearchPages.ts'],
+  TaskSearchHydratedHit: ['src/panels/task-list/TaskSearchRows.ts'],
   TaskOrganizationRecord: ['src/task-lists/taskSearchOrganization.ts'],
   ArchiveRecovery: ['src/ui/TaskArchiveRecoveryModal.ts'],
   CalendarProjectionSources: ['src/views/calendarOccurrences.ts'],
@@ -344,9 +345,9 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
     'src/panels/center/TaskSearch.ts',
     'src/ui/TaskDependencySearchProvider.ts',
   ],
-  'TaskSearchApi.resolvePage': [
+  'TaskSearchApi.resolveHits': [
     'src/ui/TaskDependencySearchProvider.ts',
-    'src/panels/task-list/TaskSearchPages.ts',
+    'src/panels/task-list/TaskSearchRows.ts',
     'src/panels/center/TaskSearch.ts',
   ],
   'TaskSearchApi.subscribe': [
@@ -355,7 +356,7 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
     'src/ui/dependencySearch.ts',
   ],
   'TaskReadProjectionApi.organization': 'src/panels/center/TaskSearch.ts',
-  'TaskReadProjectionApi.resolveSearchPage': 'src/tasks/infrastructure/search/TaskSearchService.ts',
+  'TaskReadProjectionApi.resolveSearchHits': 'src/tasks/infrastructure/search/TaskSearchService.ts',
   'TaskDependencyQueryApi.searchEligibility': 'src/ui/TaskDependencySearchProvider.ts',
   'TaskDependencyQueryApi.prepareDependencies': 'src/panels/CenterPanel.ts',
   'TaskDependencyQueryApi.listNodes': ['src/panels/left/TagNavigation.ts'],

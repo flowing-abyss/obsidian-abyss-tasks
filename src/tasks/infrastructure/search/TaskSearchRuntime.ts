@@ -1,7 +1,7 @@
 import type { TaskSearchCursor } from '../../application/TaskSearchApi';
 import type {
   TaskSearchBackend,
-  TaskSearchBackendPage,
+  TaskSearchBackendBatch,
   TaskSearchMutation,
 } from '../../application/TaskSearchBackend';
 import type { TaskSearchEngine, TaskSearchEngineRequest } from '../../application/TaskSearchEngine';
@@ -14,7 +14,7 @@ interface RetainedSearchVector {
   nextOffset: number;
   lastUsed: number;
 }
-export function validateSearchPage(
+export function validateSearchBatch(
   cursor: TaskSearchCursor,
   expected: TaskSearchCursor,
   offset: number,
@@ -34,7 +34,7 @@ export function validateSearchPage(
     limit < 1 ||
     limit > 200
   )
-    throw new TaskSearchError('invalid-request', 'Invalid search page');
+    throw new TaskSearchError('invalid-request', 'Invalid search batch');
 }
 /** One engine and at most four compact vectors, shared by both execution backends. */
 export class TaskSearchRuntime implements TaskSearchBackend {
@@ -127,13 +127,13 @@ export class TaskSearchRuntime implements TaskSearchBackend {
     cursor: TaskSearchCursor,
     offset: number,
     limit: number,
-  ): Promise<TaskSearchBackendPage> {
+  ): Promise<TaskSearchBackendBatch> {
     this.check();
     if (cursor.generation !== this.generation || !this.published)
       throw new TaskSearchError('stale', 'Search generation changed');
     const vector = this.vectors.get(cursor.id);
     if (vector === undefined) throw new TaskSearchError('cursor-expired', 'Search cursor expired');
-    validateSearchPage(cursor, vector.cursor, offset, limit);
+    validateSearchBatch(cursor, vector.cursor, offset, limit);
     if (cursor.access === 'forward' && offset !== vector.nextOffset)
       throw new TaskSearchError('invalid-request', 'Read in order');
     const hits = vector.hits.slice(offset, offset + limit);

@@ -266,7 +266,7 @@ it.each(['blocks', 'blocked-by'] as const)(
   'freshly resolves the exact selected target in %s',
   async (direction) => {
     const h = await fixture(2, direction);
-    const resolve = vi.spyOn(h.search, 'resolvePage');
+    const resolve = vi.spyOn(h.search, 'resolveHits');
     const ui = h.mount();
     ui.query('Candidate 1');
     await ui.completed();
@@ -333,9 +333,9 @@ it('discards held direction and current-task replies before mounting or committi
   ui.query('Candidate');
   await ui.completed();
   ui.key('ArrowDown');
-  const resolve = h.search.resolvePage.bind(h.search);
+  const resolve = h.search.resolveHits.bind(h.search);
   const wait = deferred<void>();
-  vi.spyOn(h.search, 'resolvePage').mockImplementation(async (...args) => {
+  vi.spyOn(h.search, 'resolveHits').mockImplementation(async (...args) => {
     await wait.promise;
     return resolve(...args);
   });
@@ -445,9 +445,9 @@ it('detaches a held selection, releases owned reads and cannot revive focus afte
   ui.query('Candidate');
   await ui.completed();
   ui.key('ArrowDown');
-  const original = h.search.resolvePage.bind(h.search),
+  const original = h.search.resolveHits.bind(h.search),
     held = deferred<void>();
-  vi.spyOn(h.search, 'resolvePage').mockImplementationOnce(async (...args) => {
+  vi.spyOn(h.search, 'resolveHits').mockImplementationOnce(async (...args) => {
     await held.promise;
     return original(...args);
   });
@@ -532,7 +532,7 @@ it('keeps an actual creation busy through refresh after an unsuccessful fresh se
   ui.query('Candidate');
   await ui.completed();
   ui.key('ArrowDown');
-  vi.spyOn(h.search, 'resolvePage').mockRejectedValueOnce(
+  vi.spyOn(h.search, 'resolveHits').mockRejectedValueOnce(
     new TaskSearchError('stale', 'Task changed'),
   );
   ui.key('Enter');

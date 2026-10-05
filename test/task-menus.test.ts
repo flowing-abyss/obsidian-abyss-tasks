@@ -117,7 +117,7 @@ function bulkMenu(panel: CenterPanel, card: HTMLElement): Menu {
   panel['taskMenus_abyssPrivate'].showBulkContextMenu(
     new MouseEvent('contextmenu'),
     card,
-    panel['selectedTasksInVisualOrder_abyssPrivate'](),
+    panel['taskMenuTargets_abyssPrivate'](),
   );
   return expectDefined(shown.mock.instances[0]) as Menu;
 }

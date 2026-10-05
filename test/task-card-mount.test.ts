@@ -7,7 +7,14 @@ import {
 } from '../src/panels/center/TaskCardRenderer';
 import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { taskNodeAddress, type TaskDependencyProjection, type TaskSnapshot } from '../src/tasks';
-import { expectDefined, task, taskComment, testStatusRegistry, useRealMoment } from './helpers';
+import {
+  deferred,
+  expectDefined,
+  task,
+  taskComment,
+  testStatusRegistry,
+  useRealMoment,
+} from './helpers';
 useRealMoment();
 afterEach(() => {
   vi.useRealTimers();
@@ -480,4 +487,72 @@ it('does not acquire long-lived host link callbacks for eager card renders', asy
   }
   expect(callbacks).not.toHaveBeenCalled();
   h.hostComponent.unload();
+});
+
+it('mounts into the attached holder and receipts track only the current Markdown generation', async () => {
+  const old = deferred<void>();
+  const next = deferred<void>();
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation((_app, markdown, holder) => {
+    holder.createSpan({ text: markdown });
+    return markdown === '**old**'
+      ? old.promise.then(() => {
+          throw new Error('obsolete Markdown');
+        })
+      : next.promise;
+  });
+  const h = renderer();
+  const holder = document.body.createDiv();
+  const flags = { selected: false, showDelete: false };
+  const mount = h.subject.mountInto(holder, task({ markdownTitle: '**old**' }), [], flags);
+  expect(mount.element).toBe(holder);
+  expect(holder.querySelector('.abyss-task-card')).toBeNull();
+  const previous = mount.settled;
+  mount.update(task({ markdownTitle: '**new**' }), [], flags);
+  expect(await previous).toEqual({ type: 'cancelled' });
+  const current = mount.settled;
+  old.resolve();
+  next.resolve();
+  expect(await current).toEqual({ type: 'ready' });
+  expect(holder.textContent).toContain('**new**');
+  mount.destroy();
+});
+
+it('settles the displayed focused text without waiting for the deferred desired generation', async () => {
+  const h = renderer();
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
+    holder.createEl('a', { text: markdown, attr: { href: 'A', tabindex: '0' } });
+  });
+  const flags = { selected: false, showDelete: false };
+  const mount = h.subject.mount(document.body, task({ markdownTitle: '[[A]]' }), [], flags);
+  expect(await mount.settled).toEqual({ type: 'ready' });
+  const link = expectDefined(mount.element.querySelector('a'));
+  link.focus();
+  mount.update(task({ markdownTitle: '[[B]]' }), [], flags);
+  expect(await mount.settled).toEqual({ type: 'ready' });
+  expect(link.isConnected).toBe(true);
+  expect(link.textContent).toBe('[[A]]');
+  mount.destroy();
+});
+
+it('detaches a cancelled pending Markdown holder before the host can mutate it late', async () => {
+  const held = deferred<void>();
+  let textHolder: HTMLElement | undefined;
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation((_app, _markdown, holder) => {
+    textHolder = holder;
+    return held.promise;
+  });
+  const h = renderer();
+  const mount = h.subject.mount(document.body, task({ markdownTitle: '**pending**' }), [], {
+    selected: false,
+    showDelete: false,
+  });
+  const receipt = mount.settled;
+  mount.update(task({ markdownTitle: 'Replacement' }), [], { selected: false, showDelete: false });
+  expect(await receipt).toEqual({ type: 'cancelled' });
+  expect(textHolder?.isConnected).toBe(false);
+  textHolder?.createSpan({ text: 'late host output' });
+  held.resolve();
+  expect(await mount.settled).toEqual({ type: 'ready' });
+  expect(mount.element.textContent).not.toContain('late host output');
+  mount.destroy();
 });

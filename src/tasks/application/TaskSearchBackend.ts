@@ -9,7 +9,7 @@ export type TaskSearchMutation =
   | { readonly type: 'commit'; readonly path: string }
   | { readonly type: 'remove'; readonly path: string }
   | { readonly type: 'publish'; readonly generation: number };
-export interface TaskSearchBackendPage {
+export interface TaskSearchBackendBatch {
   readonly cursor: TaskSearchCursor;
   readonly offset: number;
   readonly hits: readonly TaskSearchEngineHit[];
@@ -24,7 +24,7 @@ export interface TaskSearchBackend {
     generation: number,
     allocationId?: string,
   ): Promise<TaskSearchCursor>;
-  read(cursor: TaskSearchCursor, offset: number, limit: number): Promise<TaskSearchBackendPage>;
+  read(cursor: TaskSearchCursor, offset: number, limit: number): Promise<TaskSearchBackendBatch>;
   /** Completion proves the vector is freed; Worker transports acknowledge the release. */
   release(cursor: TaskSearchCursor): void | Promise<void>;
   dispose(): void;
@@ -80,7 +80,7 @@ export type TaskSearchReply =
       readonly epoch: number;
       readonly id: number;
       readonly type: 'success';
-      readonly value: TaskSearchCursor | TaskSearchBackendPage | undefined;
+      readonly value: TaskSearchCursor | TaskSearchBackendBatch | undefined;
     }
   | {
       readonly epoch: number;

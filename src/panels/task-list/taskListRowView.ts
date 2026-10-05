@@ -1,3 +1,4 @@
+import type { TaskSnapshot } from '../../tasks';
 import type { TaskRenderOutcome, TaskRenderScope } from '../../ui/taskRenderScope';
 import {
   NO_TASK_LIST_ROWS,
@@ -11,8 +12,8 @@ import {
  * The rows one render mounted. It is the only map from row keys to elements, so a later windowed
  * renderer can replace the mount by implementing this contract for the rows it mounts.
  */
-export interface MountedTaskListRows {
-  readonly rows: TaskListRows;
+export interface MountedTaskListRows<T = TaskSnapshot> {
+  readonly rows: TaskListRows<T>;
   /** The mounted header or card of `key`; undefined for a key this render did not mount. */
   element(key: string): HTMLElement | undefined;
   /** The mounted cards with their keys, in row order. */
@@ -28,10 +29,10 @@ function mountGroupHeader(container: HTMLElement, row: TaskListGroupRow): HTMLEl
   return header;
 }
 
-export function mountTaskListRow(
+export function mountTaskListRow<T = TaskSnapshot>(
   container: HTMLElement,
-  row: TaskListRow,
-  renderTask: (container: HTMLElement, row: TaskListTaskRow) => HTMLElement,
+  row: TaskListRow<T>,
+  renderTask: (container: HTMLElement, row: TaskListTaskRow<T>) => HTMLElement,
 ): HTMLElement {
   return row.kind === 'group' ? mountGroupHeader(container, row) : renderTask(container, row);
 }
@@ -40,12 +41,12 @@ export function mountTaskListRow(
  * Appends one element per row, in row order, as direct children of `container`: a header for a
  * group row, and for a task row the card `renderTask` appends and returns.
  */
-export function mountTaskListRows(
+export function mountTaskListRows<T = TaskSnapshot>(
   container: HTMLElement,
-  rows: TaskListRows,
-  renderTask: (container: HTMLElement, row: TaskListTaskRow) => HTMLElement,
+  rows: TaskListRows<T>,
+  renderTask: (container: HTMLElement, row: TaskListTaskRow<T>) => HTMLElement,
   scope?: TaskRenderScope,
-): MountedTaskListRows & { readonly settled: Promise<TaskRenderOutcome>; cancel(): void } {
+): MountedTaskListRows<T> & { readonly settled: Promise<TaskRenderOutcome>; cancel(): void } {
   const elements = new Map<string, HTMLElement>();
   const cards: Array<readonly [string, HTMLElement]> = [];
   for (const row of rows.rows) {

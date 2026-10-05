@@ -59,10 +59,10 @@ describe('canonical search source', () => {
       address: expectDefined(source.address(document.id)),
       score: 1,
     }));
-    const result = await index.resolveSearchPage(hits, signal());
+    const result = await index.resolveSearchHits(hits, signal());
     expect(result[0]?.task.root).toBe(result[1]?.task.root);
     index.installCommittedContent('a.md', '- [ ] Replaced\n');
-    await expect(index.resolveSearchPage(hits, signal())).rejects.toMatchObject({ code: 'stale' });
+    await expect(index.resolveSearchHits(hits, signal())).rejects.toMatchObject({ code: 'stale' });
     expect(events.some((event) => event.type === 'files')).toBe(true);
     subscription.unsubscribe();
   });
@@ -73,12 +73,12 @@ describe('canonical search source', () => {
     const id = expectDefined([...source.nodes(expectDefined(source.files()[0]))][0]).id;
     const hit = { address: expectDefined(source.address(id)), score: 2 };
     index.installCommittedContent('b.md', '- [ ] Other\n');
-    expect((await index.resolveSearchPage([hit], signal()))[0]?.task.node.title).toBe('Alpha');
+    expect((await index.resolveSearchHits([hit], signal()))[0]?.task.node.title).toBe('Alpha');
     await expect(
-      index.resolveSearchPage([{ ...hit, address: { ...hit.address, epoch: 'other' } }], signal()),
+      index.resolveSearchHits([{ ...hit, address: { ...hit.address, epoch: 'other' } }], signal()),
     ).rejects.toMatchObject({ code: 'stale' });
     const other = await openedIndex('- [ ] Alpha\n');
-    await expect(other.resolveSearchPage([hit], signal())).rejects.toMatchObject({ code: 'stale' });
+    await expect(other.resolveSearchHits([hit], signal())).rejects.toMatchObject({ code: 'stale' });
     index.installCommittedContent('a.md', '- [ ] New\n');
     expect(source.address(id)).toBeUndefined();
   });
@@ -229,7 +229,7 @@ describe('canonical search source', () => {
       new StatusCatalog([{ id: 'closed-space', symbol: ' ', type: 'done', defaultForType: true }]),
     );
     expect(source.files()).toEqual([file]);
-    expect(events).toEqual([{ type: 'semantics', generation: before + 1 }]);
+    expect(events).toEqual([{ type: 'semantics', generation: before + 1, semanticsRevision: 1 }]);
     expect([...source.documents(file)]).toEqual(documentsBefore);
     expect([...source.documents(file)][0]?.metadata).not.toContain('closed-space');
     const batches = [];
@@ -288,13 +288,13 @@ describe('canonical search source', () => {
     await app.vault.create('a.md', '- [ ] Same');
     await flushMicrotasks(20);
     await expect(
-      index.resolveSearchPage([{ address: old, score: 1 }], signal()),
+      index.resolveSearchHits([{ address: old, score: 1 }], signal()),
     ).rejects.toMatchObject({ code: 'stale' });
     const next = expectDefined([...source.nodes(expectDefined(source.files()[0]))][0]);
     expect(next.id).toBeGreaterThan(first.id);
     expect(
       (
-        await index.resolveSearchPage(
+        await index.resolveSearchHits(
           [{ address: expectDefined(source.address(next.id)), score: 1 }],
           signal(),
         )
@@ -670,3 +670,35 @@ it.each([false, true])(
     ).toEqual([['renamed.md', 'needle']]);
   },
 );
+
+it('retains semantics revision across pre-readiness acceptance, failed initialization, recovery and late subscriptions', async () => {
+  const app = await createAppWithFiles({ 'a.md': '- [ ] Root' });
+  const catalog = canonicalStatusCatalog();
+  const index = new TaskIndex(app, { statusCatalog: catalog });
+  indexes.push(index);
+  const source = index.searchSource();
+  const events: TaskSearchSourceEvent[] = [];
+  const initial = source.subscribe((event) => events.push(event));
+  expect(initial.state).toMatchObject({ type: 'initializing', semanticsRevision: 0 });
+  index.setStatusCatalog(catalog);
+  const listing = vi.spyOn(app.vault, 'getMarkdownFiles').mockImplementationOnce(() => {
+    throw new Error('failed listing');
+  });
+  await expect(index.initialize()).rejects.toThrow('failed listing');
+  expect(source.subscribe(() => {}).state).toMatchObject({ type: 'failed', semanticsRevision: 1 });
+  listing.mockRestore();
+  await index.initialize();
+  expect(source.subscribe(() => {}).state).toMatchObject({ type: 'ready', semanticsRevision: 1 });
+  index.installCommittedContent('a.md', '- [ ] Changed');
+  index.destroy();
+  expect(source.subscribe(() => {}).state).toMatchObject({
+    type: 'disposed',
+    semanticsRevision: 1,
+  });
+  expect(
+    events.map((event) =>
+      event.type === 'state' ? event.state.semanticsRevision : event.semanticsRevision,
+    ),
+  ).toEqual(events.map(() => 1));
+  initial.unsubscribe();
+});

@@ -1315,6 +1315,10 @@ it('reveals an exact offscreen Search destination in the bounded list without mo
   await vi.waitFor(() => {
     expect(state.get('mode')).toBe('tasks');
   });
+  await vi.waitFor(() => {
+    flushViewport();
+    expect(el.dataset['searchPhase']).toBe('complete');
+  });
   await h.completed();
   expect(state.get('selectedList')).toBe('inbox');
   expect(state.get('taskStack')).toEqual([target]);
@@ -1322,7 +1326,7 @@ it('reveals an exact offscreen Search destination in the bounded list without mo
   expect(
     expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll')).scrollTop,
   ).toBeGreaterThan(1000);
-  // Exact navigation computes the last temporary allocation page before native reveal.
+  // Exact navigation waits for the pinned logical destination before its measured reveal.
   expect(el.querySelector('.is-search-revealed')?.getAttribute('data-line')).toBe('1199');
   expect(cards(el).length).toBeLessThanOrEqual(100);
   expect(el.ownerDocument.activeElement).toBe(outside);

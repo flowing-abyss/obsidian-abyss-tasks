@@ -38,7 +38,7 @@ export function nodeDocuments(count: number): TaskSearchDocument[] {
   }));
 }
 export class FakeSearchSource implements TaskSearchSource {
-  state: TaskSearchSourceState = { type: 'initializing', generation: 0 };
+  state: TaskSearchSourceState = { type: 'initializing', generation: 0, semanticsRevision: 0 };
   readonly listeners = new Set<(event: TaskSearchSourceEvent) => void>();
   readonly store = new Map<string, { version: number; docs: readonly TaskSearchDocument[] }>();
   readonly iterations: string[] = [];
@@ -52,26 +52,54 @@ export class FakeSearchSource implements TaskSearchSource {
     };
   }
   emit(event: TaskSearchSourceEvent) {
+    if (event.type !== 'state')
+      this.state = {
+        ...this.state,
+        generation: event.generation,
+        semanticsRevision: event.semanticsRevision,
+      };
     for (const listener of this.listeners) listener(event);
   }
   ready(files: readonly TaskSearchDocument[][]): void {
     for (const docs of files)
       if (docs[0] !== undefined) this.store.set(docs[0].order.filePath, { version: 1, docs });
-    this.state = { type: 'ready', generation: this.state.generation + 1 };
+    this.state = {
+      type: 'ready',
+      generation: this.state.generation + 1,
+      semanticsRevision: this.state.semanticsRevision,
+    };
     this.emit({ type: 'state', state: this.state });
   }
   replace(path: string, docs: readonly TaskSearchDocument[]): void {
     const version = (this.store.get(path)?.version ?? 0) + 1;
     this.store.set(path, { version, docs });
-    this.state = { type: 'ready', generation: this.state.generation + 1 };
-    this.emit({ type: 'files', generation: this.state.generation, files: [{ path, version }] });
+    this.state = {
+      type: 'ready',
+      generation: this.state.generation + 1,
+      semanticsRevision: this.state.semanticsRevision,
+    };
+    this.emit({
+      type: 'files',
+      generation: this.state.generation,
+      semanticsRevision: this.state.semanticsRevision,
+      files: [{ path, version }],
+    });
   }
   fail(cause: unknown): void {
-    this.state = { type: 'failed', generation: this.state.generation, cause };
+    this.state = {
+      type: 'failed',
+      generation: this.state.generation,
+      semanticsRevision: this.state.semanticsRevision,
+      cause,
+    };
     this.emit({ type: 'state', state: this.state });
   }
   dispose(): void {
-    this.state = { type: 'disposed', generation: this.state.generation };
+    this.state = {
+      type: 'disposed',
+      generation: this.state.generation,
+      semanticsRevision: this.state.semanticsRevision,
+    };
     this.emit({ type: 'state', state: this.state });
   }
   async ensureReady(): Promise<void> {
@@ -158,7 +186,7 @@ export function createTaskSearchHarness() {
   const scheduler = new ControlledSearchScheduler();
   const service = new TaskSearchService({
     source,
-    reads: { observedTags: () => [], async *organization() {}, resolveSearchPage: async () => [] },
+    reads: { observedTags: () => [], async *organization() {}, resolveSearchHits: async () => [] },
     segment: fallbackSearchWords,
     scheduler,
     createBackend: async () => {

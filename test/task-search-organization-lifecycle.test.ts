@@ -2,7 +2,7 @@ import { Notice } from 'obsidian';
 import { expect, it, vi } from 'vitest';
 import { BrowserTaskCancelled, createBrowserTaskScheduler } from '../src/browserTaskScheduler';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { useRealMoment } from './helpers';
+import { expectDefined, useRealMoment } from './helpers';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 useRealMoment();
 it('reports a live raw AbortError once as unavailable with sanitized diagnostics and ordinary-input recovery', async () => {
@@ -85,7 +85,7 @@ it('cancels an admitted old request before the next immediate cursor read and re
   try {
     const read = vi.spyOn(h.search, 'read'),
       release = vi.spyOn(h.search, 'release'),
-      hydrate = vi.spyOn(h.search, 'resolvePage');
+      hydrate = vi.spyOn(h.search, 'resolveHits');
     h.query('needle');
     await entered;
     expect(read).toHaveBeenCalledTimes(1);
@@ -150,7 +150,7 @@ it('captures minimal settings before admission and refreshes same-generation mem
 });
 
 it.each(['search', 'tasks'] as const)(
-  'preserves completed %s page, request and selection across unrelated host/project/source routing',
+  'preserves completed %s viewport, request and selection across unrelated host/project/source routing',
   async (mode) => {
     const h = await mountCanonicalSearchUi(
       { 'a.md': Array.from({ length: 101 }, (_, i) => `- [ ] needle ${i}`).join('\n') },
@@ -160,11 +160,13 @@ it.each(['search', 'tasks'] as const)(
     try {
       h.query('needle');
       await h.completed();
-      const next = h.root.querySelector<HTMLButtonElement>('[aria-label="Next page"]');
-      expect(next).not.toBeNull();
-      next?.click();
-      await h.completed();
-      const card = h.root.querySelector<HTMLElement>('.abyss-task-card');
+      const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
+      scroll.scrollTop = 50 * 64;
+      scroll.dispatchEvent(new Event('scroll'));
+      await vi.waitFor(() => {
+        expect(h.root.textContent).toContain('needle 50');
+      });
+      const card = h.root.querySelector<HTMLElement>('.abyss-task-card[data-line]');
       expect(card).not.toBeNull();
       if (mode === 'tasks') {
         card?.click();

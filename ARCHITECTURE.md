@@ -140,7 +140,12 @@ accepted file version, numeric root ID and child-relative-line path. The compact
 only coordinates, accepted root ordinals and versions, never a second source block or serialized
 task reference. Exact root lookup indexes the accepted file array by ordinal after version validation.
 IDs are never reused within the index lifetime and accepted replacement removes the file's old handles.
-Unrelated file updates preserve exact handles for unchanged files. Inward `ensureReady()` joins
+Unrelated file updates preserve exact handles for unchanged files. TaskIndex also owns the ephemeral
+`semanticsRevision` counter, initialized to zero for its source lifetime and advanced only by the
+accepted `setStatusCatalog` semantics event. Source states and file/semantics events carry its current
+value through initialization, failure, recovery and disposal. Exact addresses alone cannot prove
+classification freshness: a child-only status change can leave both the root address and menu status
+unchanged while fresh canonical hydration classifies its descendants differently. Inward `ensureReady()` joins
 TaskIndex initialization. Rejected initialization releases its shared attempt; a new attempt clears
 the failure latch, reconciles canonical files, and only then publishes ready. Event refs are acquired
 once, including partial registration failures, and remain owned through unload. Bootstrap batches
@@ -161,9 +166,9 @@ does not resolve outgoing links. Organization emits detached root scalars, tree 
 hook cooperates between slices. Presentation still resolves outgoing grouping links through
 `taskLinkValues` and evaluates open timer totals at its explicit instant.
 
-Exact hydration accepts at most 200 occurrences and 50 distinct roots, validates every address,
+The public `resolveHits` read delegates to `TaskIndex.resolveSearchHits`. Exact hydration accepts at most 200 occurrences and 50 distinct roots per allocation batch, validates every address,
 detaches each requested canonical root once and reconstructs ordinary root/subtask refs against that
-page's detached trees. It never invokes proof-rebasing `resolve` or guesses child positions. Invalid
+batch's detached trees. It never invokes proof-rebasing `resolve` or guesses child positions. Invalid
 bounds, stale authority, cancellation and unavailable lifecycle states have typed outcomes; no
 Notice belongs to this read boundary. Existing list, resolve and command contracts remain intact.
 
@@ -226,7 +231,10 @@ wait; early input and other panels join the same plugin-owned preparation. Passi
 the opportunity without a Notice or timer retry. Unload disposes search before TaskIndex.
 
 The service subscribes before its source snapshot, publishes accepted generations synchronously,
-and coalesces dirty paths to their latest accepted versions. It projects only changed files through
+and coalesces dirty paths to their latest accepted versions. Every public `TaskSearchState` also carries
+the source-owned `semanticsRevision`, copied before publication, including the initial subscription
+and failure/recovery states. It does not enter documents, cursors or the backend/Worker protocol;
+semantic acceptance publishes a new generation without reindexing unchanged text. It projects only changed files through
 `begin/add/commit`, checks versions across cooperative yields, and publishes readiness after every
 dirty path has replayed. The service's `prepare(signal)` joins this same pump without
 allocating a cursor; `open` captures its query generation after preparation. Repeated readiness with
@@ -254,13 +262,13 @@ schedule a retry. Caller cancellation ends only that caller's wait. Diagnostics 
 errors. Live backend open/read failures enter this same recovery owner independently of crash
 notifications, after proving the captured run, backend, allocation, generation and caller are current.
 Expected control/validation outcomes remain quiet and sanitized; obsolete backend errors cannot
-restart a replacement. Failed forward transport pages release their pending-page ownership, while
+restart a replacement. Failed forward transport batches release their pending-batch ownership, while
 cancelling one waiter cannot suppress recovery for another live waiter. User notices remain a surface responsibility.
 
 The service maps numeric hits through current source addresses and delegates exact bounded hydration
-to TaskIndex. Root cursors advance forward and release on their final delivered page. Node cursors
+to TaskIndex. Root cursors advance forward and release on their final delivered batch. Node cursors
 support random pages and remain live after their last page. The open signal owns cursor lifetime;
-per-read cancellation leaves ownership intact, retaining at most one pending forward transport page
+per-read cancellation leaves ownership intact, retaining at most one pending forward transport batch
 of 200 hits until delivery/release. A service-wide four-cursor LRU covers backend vectors and main-only
 empty browse vectors, including allocations still under construction or awaiting transport delivery.
 The service reserves an ID before building either vector and passes it through the inward backend
@@ -400,7 +408,7 @@ complete, current, live graph publishes, with pending ownership cleared before w
 A synchronous reader can drain the same suspended cursor; success precedes scheduler cancellation,
 and late continuations cannot replace or clear newer work. Finished caches survive caller closure.
 Failures use typed read outcomes and sanitized diagnostics; there is no automatic synchronous retry.
-CenterPanel awaits this readiness for nonempty bounded Search/filter pages before the first
+CenterPanel awaits this readiness for demanded Search/filter roots before the first
 synchronous card dependency badge. The same request and generation must remain current after
 hydration, preparation, mounting, and Markdown completion. Inspector and other ordinary synchronous
 queries can still take over preparation; dense queries and rich relation detachment retain their costs.
@@ -517,14 +525,14 @@ today/overdue totals.
 CenterPanel shares these services across its task surfaces. They depend on task contracts and host
 capabilities, never on CenterPanel itself.
 
-| Service                                                   | Responsibility                                                                                                                           |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| [TaskCommands](src/panels/center/TaskCommands.ts)         | Task submissions and result presentation, archive batch rebasing, link edits, project moves, and completion confirmation                 |
-| [TaskMenus](src/panels/center/TaskMenus.ts)               | Single/bulk menus and tag pickers, using TaskCommands and live shell callbacks                                                           |
-| [CaptureSessions](src/panels/center/CaptureSessions.ts)   | Capture target/session lifetime, placement, remounting, feedback, and focus                                                              |
-| [ListViewControls](src/panels/center/ListViewControls.ts) | Saved list options, property chips, and popovers through the existing view-state save callback                                           |
-| [TaskSearch](src/panels/center/TaskSearch.ts)             | Search/filter request and generation join, compact organization, bounded pages and render completion, reusing shell cards and navigation |
-| [TaskCardRenderer](src/panels/center/TaskCardRenderer.ts) | Shared card DOM, Markdown, metadata, and tracked badges; shell retains selection and whole-card interactions                             |
+| Service                                                   | Responsibility                                                                                                                                    |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [TaskCommands](src/panels/center/TaskCommands.ts)         | Task submissions and result presentation, archive batch rebasing, link edits, project moves, and completion confirmation                          |
+| [TaskMenus](src/panels/center/TaskMenus.ts)               | Single/bulk menus and tag pickers, using TaskCommands and live shell callbacks                                                                    |
+| [CaptureSessions](src/panels/center/CaptureSessions.ts)   | Capture target/session lifetime, placement, remounting, feedback, and focus                                                                       |
+| [ListViewControls](src/panels/center/ListViewControls.ts) | Saved list options, property chips, and popovers through the existing view-state save callback                                                    |
+| [TaskSearch](src/panels/center/TaskSearch.ts)             | Search/filter request and generation join, compact organization, full row order and mounted render completion, reusing shell cards and navigation |
+| [TaskCardRenderer](src/panels/center/TaskCardRenderer.ts) | Shared card DOM, Markdown, metadata, and tracked badges; shell retains selection and whole-card interactions                                      |
 
 [`src/panels/task-list/`](src/panels/task-list/) separates the pure ordered row model and
 multi-selection from DOM mounting. `TaskRowSelection` works against an explicit display order;
@@ -538,7 +546,7 @@ routines as ordinary snapshots. Selected groups resolve through the shared effec
 using canonical observed tags, independently of the query's matching roots. TaskSearch reads the
 existing compact observed-tag port within its generation guards; ordinary selection derives those
 tags from its unfiltered input. Configured IDs and discovered aliases retain the shared identity policy.
-All logical matches are organized before slicing. Relevance
+All logical matches are organized before native viewport mounting. Relevance
 preserves the engine cursor's complete ordering; explicit sort ties use created date then canonical
 source order. Host outgoing-link resolution remains presentation-owned and link lifecycle/settings/
 project events re-organize even when task text is unchanged. `collectionSteps` defines pure cheap/atom
@@ -548,40 +556,59 @@ ordinary synchronous entry points retain native sorting at every sort site. Sear
 the cooperative entry points and gates unused catalog, outgoing and comparator-key preparation.
 
 TaskSearch captures only its selected list/view, five organization settings branches and one explicit
-date/time before asynchronous preparation. Every cursor page (including final/empty pages) and every
+date/time before asynchronous preparation. Every cursor batch (including final/empty batches) and every
 projection batch hands off through the captured window. `runTaskOrganization` makes an initial task
 yield, then shares one 4 ms/8,192-step budget across nested organization helpers, checking time after
 every atom and at most 32 cheap steps. Cancellation checks surround every advancement. These tuning
 values do not bound indivisible parser, locale, resolver, configuration, registry, whole-root projection
 or GC work; native measurements remain required. Completed publication retains compact occurrences
-and a bounded hydrated page, with preparation vectors and sort workspaces request-local.
+and finite demanded root leases, with preparation vectors and sort workspaces request-local.
 
-`TaskSearchPages` holds compact logical occurrences and hydrates at most 50 occurrences with each
-distinct root requested once. Headers retain full group counts on continued pages; unique roots
-and duplicated outgoing occurrences have separate totals. Page/query/sort/group changes clear
-Tasks row multiselection and announce it. Inspector selection/history stay independent, and global
-Search retains activation without acquiring range selection. Unfiltered ordinary lists retain their
-existing rendering and saved-state owner. An accepted Search navigation receipt also activates this
-compact, cooperative organization path with no query restriction (`hits: null`). Organization checks
-the exact target against the current compact records, reuses its existing occurrence or appends one
-transient “Revealed from search” occurrence when membership or saved filters exclude it, and computes
-the destination page before hydration. It never drains the full destination synchronously. Shared
-task group headers are already expanded; this path writes no saved filter or collapse preference. Search options are a transient CenterPanel session via
-ListViewControls' explicit optional state port; Relevance is never a persisted sort value.
+`TaskSearch` publishes one complete compact order to CenterPanel's existing native `TaskListSurface`.
+`TaskSearchRows` acquires at most 50 distinct exact roots per allocation batch, sharing one detached
+snapshot and presentation context across duplicate occurrences. Hydrated snapshots and card Components
+exist only for mounted rows, sparse interaction pins or an explicit acquisition; the last lease drops
+the rich root. Headers/counts describe the complete logical order, independent of viewport demand.
+Tasks selection, ranges and Ctrl/Cmd+A operate on that order, retaining occurrence identity while counts
+and actions deduplicate physical roots. Same-query sort/group updates reconcile selection and retain
+connected holders, capture/input/focus and key/fractional anchors. Changed query replaces the surface,
+resets its viewport and clears only row selection; inspector history remains independently owned.
+Global Search remains activation-only. Unfiltered ordinary lists retain their existing snapshot owner.
+An accepted Search navigation receipt activates compact cooperative organization with no query
+restriction (`hits: null`). Organization checks the exact target, reuses its occurrence or appends one
+transient “Revealed from search” occurrence when membership or saved filters exclude it. CenterPanel
+pins without scrolling, waits for exact hydration and the current card receipt, then uses the existing
+native reveal once. This writes no saved filter or collapse preference. Search options remain a
+transient CenterPanel session through ListViewControls; Relevance is never persisted.
+
+TaskMenus receives distinct compact summaries without reading rich tasks. Selection/count/indicator
+and menu-open paths acquire no selected roots. Choosing an action resolves operation-owned exact
+snapshots through TaskSearchRows; originating source/selection/mode/window intent guards pre-submit
+work. Date/tag dialogs repeat this proof at final commit. Ordinary lists validate their held snapshots
+through the existing public exact resolve. TaskCommands retains submissions, archive rebasing, history,
+Undo and command failure ownership; cancellation after submission ends only transient UI permission.
+Keyboard movement pins the logical target and awaits exact hydration/current Markdown before reveal
+and inspector/focus handoff, yielding to later selection, source, outside focus or window changes.
+
+`TaskSearchPages`, its model/test, the hydrated page row builder, page-local selection and Search pager
+DOM/state are removed. Dependency picker's paging and its scoped CSS remain until its own consumer
+is replaced; allocation-batch bounds are read contracts, not UI page limits.
 
 TaskSearch subscribes before opening, drains one forward root cursor, joins each compact organization
-batch to that cursor's generation (including zero hits), then hydrates and prepares dependencies.
+batch to that cursor's generation (including zero hits), then supplies the compact order and prepares dependencies before demanded card hydration.
 Accepted service generations are observed synchronously, so an unrelated accepted update cancels
 the entire old match-set publication even when individual unchanged handles remain hydratable.
 Only the live current request in a ready matching service generation can publish complete.
 `SearchStatus` owns inline busy/error and one Notice per failed episode within its mounted
 instance; a retained Tasks shell keeps that status and its mounted subscription across nonempty
-query/view refreshes. Each refresh cancels the old controller and releases its request data. A successful nonempty search
+query/view refreshes. Each refresh cancels the old controller while a validated same-query replacement can reuse exact
+rich roots across unrelated generations. The completed request signal remains live for later mounts. A successful nonempty search
 resets the failure episode; empty or invalid input preserves it. Close/reopen creates a new surface
 lifetime. PanelView's existing window-migration hook delegates through CenterPanel to the mounted
 TaskSearch owner. Migration cancels old query/render work and captured-window debounce/focus timers,
-then resumes the retained query through the new window, preserving the input, status owner and shared
-backend. Passive preparation failures remain quiet outside active nonempty Search. No global Notice
+then rebinds the retained compact organization through the new window when its source generation
+is still current, without retrieval or another application completion. Otherwise it resumes current
+preparation. The input, IME/selection, status owner and shared backend remain owned. Passive preparation failures remain quiet outside active nonempty Search. No global Notice
 registry is involved.
 
 CenterPanel's narrow `refresh(view | source | projects | links)` routing preserves ordinary
@@ -602,17 +629,18 @@ Query text, settings, titles, paths and arbitrary exception causes never enter t
 `renderTaskText` returns an optional receipt: plain text is synchronous; Markdown becomes ready only
 after the host render Promise, paragraph unwrapping, exact source-token link wiring and onRendered
 callback. Replacement, abort, detach and Component unload cancel stale work. `TaskRenderScope`
-collects title, description and context receipts acquired during the synchronous native page publication;
-failure cancels its remaining work. Later native mounts use their disposable row/text generation and
-the captured live request guard, without appending to the sealed publication scope. The Search DOM complete phase follows that sealed mount receipt, without a readiness timer.
-The onRendered hook and the same page/request lifecycle are the shared seam for later excerpt marks.
+collects title, description and context work within each card's current generation. The row's current
+`settled` receipt joins real Markdown, exact links and marks; replacement cancels obsolete receipt
+ownership. TaskSearch completes only after TaskSearchRows settles the current sparse mounted set.
+Later scrolling reconciles row leases/receipts and measurements, without retrieval, organization,
+query reset, application completion or a new shell focus generation.
 
 Search activation uses an explicit shared-card callback for main clicks and Enter/Space. Existing
 link, status, property, menu and drag handlers retain their own commands; there is no capture-phase
 card interceptor. The callback retains its mounted request and generation, and rehydrates the exact
 address before navigation. The mounted source subscription and AppState selection-intent generation
 remain live across a delayed project-editor guard. Source/semantic changes, project-context changes,
-new intent, query/page replacement, migration and disposal veto the old continuation before any
+new intent, query replacement, migration and disposal veto the old continuation before any
 list-state persistence or navigation mutation.
 
 `PanelNavigator.openList` accepts an optional synchronous transition. Inside its accepted batch it
@@ -624,7 +652,9 @@ order (pins first), then the shared Today/date fallback. Sidebar prefix children
 identity. No fallback membership is assumed.
 
 CenterPanel owns receipt lifetime and the captured-window two-second reveal marker, using its existing
-scroll primitive without stealing focus. Later selection cancels pending presentation. Explicit
+native reveal primitive without stealing focus. The receipt consumes scroll authority once and
+retains an absolute owner-clock two-second pulse deadline. Eviction/remount can restore only the
+remaining pulse through the guarded row-settled callback, never another reveal or deadline. Later selection cancels pending presentation. Explicit
 navigation (including the same list), filters and teardown clear the receipt. Stale activation stays
 in Search with “Task changed. Search again.” and refreshes. After navigation, an unprovable receipt
 expires through CenterPanel's ordinary Tasks renderer; normal command/index inspector reconciliation
@@ -639,15 +669,15 @@ Link destinations are separately labeled evidence; scalar metadata has no fabric
 Documents and this helper share `taskSearchMetadata`. The public task barrel exposes that evidence
 and the shared matcher directly to TaskSearch and TaskCardRenderer. The barrel is the single facade;
 there is no redundant panel forwarding module. TaskSearch extracts context only for the
-hydrated page, deduplicating repeated root occurrences within that mount. Replacement releases those
-values and cancels their existing TaskRenderScope; no corpus context cache is retained. TaskSearch
+demanded rich roots, sharing the current snapshot context across occurrences. A per-publication
+WeakMap releases contexts with those finite snapshots; no corpus context cache is retained. TaskSearch
 captures one segmenter from the same production factory used by the service and Worker, prepares
-one query per mount, and explicitly supplies that policy to pure context extraction and marks.
+one query per publication, and explicitly supplies that policy to pure context extraction and marks.
 Intl word segmentation is used when available, with the existing shared fallback otherwise.
 
 TaskCardRenderer keeps the root title and replaces the ordinary description preview with complete
 selected contributing fields. Labels carry the evidence breadcrumb and comment line, and explicit
-context activation uses the same mounted-page and exact-address navigation guards as the shared
+context activation uses the same mounted-request and exact-address navigation guards as the shared
 card. Hidden destinations remain separately labeled text. Full authored fields use renderTaskText,
 with snapshot-derived root/child/comment TaskTextTargets and their original link occurrence indices
 passed through the existing TaskCommands edit-link operation. Evidence offsets grant no edit authority.
@@ -680,10 +710,19 @@ Existing defaults and schema version remain unchanged, and list sort merges pres
 extensions. Older binaries may use their existing fallback for these choices; task Markdown needs
 no migration.
 
-`TaskListSurface` implements bounded keyed row mounts over `RowViewport`, with sparse interaction
+`TaskListSurface<T = TaskSnapshot>` implements bounded keyed row mounts over `RowViewport`, with sparse interaction
 and focus pins, synchronous reveal, revision-aware measurements, and content-relative anchoring.
 It owns its document's observer, animation frame, font/resize/scroll listeners, inert spacers, and
-row eviction. `pin(key, onInvalidated?)` registers one cancellable interaction acquisition. Conflicting
+row eviction. Generic rows retain structural physical/occurrence lookups without requiring snapshots.
+The production `TaskSearchRows` owner retains one compact order and finite demanded exact-root leases.
+Its identity carries request, generation, query, signal and the public `semanticsRevision`. A semantic
+revision change drops classified snapshots and obsolete row receipts, reacquiring only demanded roots
+after dependency readiness while retaining same-source cards/holders. An unrelated generation with
+the same semantic revision reuses exact roots; request/abort guards reject old hydration and Markdown
+settlement. TaskSearch captures the public revision from the same observed generation as the compact
+organization; presentation never reconstructs semantic revision from menus or local counters.
+`mountedKeys()` reports the current sparse set; `refreshMeasurements()` wakes the same native
+measurement pass without advancing application render/focus ownership. `pin(key, onInvalidated?)` registers one cancellable interaction acquisition. Conflicting
 non-focus owners are invalidated before reordering; removal, disposal, and document rebind also
 invalidate before eviction. Normal release does not invalidate. Callbacks cancel transient owners,
 not submitted commands; real interaction owners must provide them. Acquisition during cancellation
@@ -699,11 +738,9 @@ resume revalidates layout and document ownership. Synchronous updates default to
 the supplied owner; Search requests per-call propagation so its
 result-pass owner can clean partial mounts and report once without completing the failed pass.
 Deferred native failures remain surface-owned and stop until an explicit refresh. CenterPanel uses
-this adapter for Tasks, project-dashboard lists, and the bounded hydrated occurrence page supplied by Search.
-Search retains its input and complete compact logical order outside the mounted window; the native
-surface currently receives only the existing 50-occurrence allocation page. Native scrolling within
-that page does not retrieve another page. The dependency picker likewise retains its existing
-30-option page contract at this intermediate merge checkpoint. Same-query refreshes
+this adapter for Tasks, project-dashboard lists, and the complete compact occurrence order supplied by
+Search. Search retains its input while native scrolling demands only newly mounted rich roots. The
+dependency picker retains its existing 30-option page contract pending its own integration. Same-query refreshes
 retain the surface anchor; changed queries replace row lifetimes. Each retained-card update releases
 and rebinds Search navigation to the current snapshot. Search generations and captured input/results
 invalidate obsolete callbacks before they can render, complete, or report. Later Markdown failures
@@ -941,11 +978,13 @@ revive a revoked pending drop. Each native owner releases its migration notifica
 `CenterPanel` owns one [`TaskListSurface`](src/panels/task-list/TaskListSurface.ts)
 for the active task host. Tasks use their list scroller; dashboard tasks use the dashboard scroller
 and a content-relative origin. The surface’s supplied logical occurrence order drives selection and
-physical writes remain deduplicated. Ordinary unfiltered lists supply their full order; Search/filter
-pages supply only their current allocation page at this checkpoint. Direct Ctrl/Cmd+A in Tasks selects that complete current logical order while
+physical writes remain deduplicated. Ordinary unfiltered lists and compact Search/filters supply their full logical order. Direct Ctrl/Cmd+A in Tasks selects that complete current logical order while
 preserving the range and keyboard lead, native focus, and viewport. Interactive inputs and other
 modes retain their keyboard ownership. Keyed `TaskCardRenderer.mount` instances own Markdown Components and current
-snapshot interactions; eviction unloads each row. Native scrolling only reconciles mounts and
+snapshot interactions; eviction unloads each row. `mountInto` uses the existing attached card holder.
+The card's `settled` getter joins its actual current text-generation receipts, including Markdown,
+link wiring and search marks. Each replaceable text region owns its finite scope/Component; focused
+deferred text reports the displayed generation until blur, independently of current metadata. Native scrolling only reconciles mounts and
 selection visuals, without completing an application render or advancing its focus generation.
 Selection announcements recount distinct physical tasks only on selection/projection changes; mounted
 row reconciliation never collects the full logical selection. Host metric revisions include font
@@ -962,7 +1001,21 @@ or replacing a dashboard, after capturing overview focus-return eligibility and 
 host. `CenterPanel` releases its surface and active capture/editor ownership there. Ordinary Tasks
 and dashboard refreshes keep the same capture input connected, preserving selection and IME state.
 List/project capture results carry an optional per-result `CreationRevealAuthority` through the
-existing CenterPanel/PanelView callback. CaptureSessions owns request/input-focus validity;
+existing CenterPanel/PanelView callback. Its reveal request carries an AbortSignal and currentness
+proof, and authorities may return either an immediate element or a Promise. The controller retains
+one attempt across reentrant renders, validates the full canonical ref and originating root/window,
+and resumes presentation directly on accepted settlement. Source publication, expiry, replacement
+and destruction cancel an in-flight attempt. Immediate authorities retain same-turn feedback.
+`refreshMounted` repaints only already-started exact highlights with their remaining deadline.
+CenterPanel coalesces guarded row-settled callbacks after native reconcile and ready receipts;
+PanelView forwards them directly to `refreshMounted`, without shell/render completion. Compact
+creation pins the first exact physical occurrence and waits separately for hydration and Markdown
+before the single native reveal. Captured ref/query/source/window/visibility/capture intent and
+controller expiry are rechecked after each await; cancellation releases pins and never falls back
+to legacy scrolling or focus. Finite active attempts are drained by state, source and window owners.
+CaptureSessions forwards the request through its captured reveal epoch, links input/blur/unmount
+cancellation to a finite per-session wait, and leaves submitted commands and drafts intact.
+CaptureSessions owns request/input-focus validity;
 CenterPanel binds it to the originating surface and list/query revision and reveals the exact
 canonical TaskRef without moving focus. `CreationPresentationController` remains the only pending
 reference, publication retry, expiry, and highlight owner. Its in-flight guard prevents reentrant

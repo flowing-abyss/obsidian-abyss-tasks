@@ -46,6 +46,7 @@ interface PanelCaptureSession {
   restoreFocusOnClose: boolean;
   focusOnMount: boolean;
   revealEpoch: number;
+  readonly cancelReveals: Set<() => void>;
   revealAuthority?: CreationRevealAuthority | undefined;
   releaseRevealFocus?: (() => void) | undefined;
 }
@@ -157,6 +158,7 @@ export class CaptureSessions {
           restoreFocusOnClose: false,
           focusOnMount: true,
           revealEpoch: 0,
+          cancelReveals: new Set(),
         };
         this.#activeCapture = session;
         this.remountActiveCapture();
@@ -179,7 +181,62 @@ export class CaptureSessions {
     const epoch = session.revealEpoch;
     return {
       isCurrent: () => session.revealEpoch === epoch && authority.isCurrent(),
-      reveal: (ref) => authority.reveal(ref),
+      reveal: (ref, request) => {
+        const input = session.surface?.input;
+        const controller = new AbortController();
+        const cleanup = (): void => {
+          request.signal.removeEventListener('abort', cancel);
+          input?.removeEventListener('blur', revoke);
+          input?.removeEventListener('input', revoke);
+          session.cancelReveals.delete(cancel);
+        };
+        const cancel = (): void => {
+          controller.abort();
+          cleanup();
+        };
+        const revoke = (): void => {
+          session.revealEpoch++;
+          cancel();
+        };
+        session.cancelReveals.add(cancel);
+        request.signal.addEventListener('abort', cancel, { once: true });
+        input?.addEventListener('blur', revoke);
+        input?.addEventListener('input', revoke);
+        const isCurrent = (): boolean =>
+          !controller.signal.aborted &&
+          request.isCurrent() &&
+          session.revealEpoch === epoch &&
+          authority.isCurrent();
+        if (request.signal.aborted || !isCurrent()) {
+          cancel();
+          return undefined;
+        }
+        try {
+          const result = authority.reveal(ref, { signal: controller.signal, isCurrent });
+          if (result !== undefined && 'then' in result) {
+            let release: (() => void) | undefined;
+            const cancelled = new Promise<undefined>((resolve) => {
+              const done = (): void => {
+                resolve(undefined);
+              };
+              controller.signal.addEventListener('abort', done, { once: true });
+              release = () => {
+                controller.signal.removeEventListener('abort', done);
+              };
+              if (controller.signal.aborted) done();
+            });
+            return Promise.race([result, cancelled]).finally(() => {
+              release?.();
+              cleanup();
+            });
+          }
+          cleanup();
+          return result;
+        } catch (error) {
+          cleanup();
+          throw error;
+        }
+      },
     };
   }
 
@@ -236,8 +293,10 @@ export class CaptureSessions {
       active.revealEpoch++;
     };
     surface.input.addEventListener('blur', revokeReveal);
+    surface.input.addEventListener('input', revokeReveal);
     active.releaseRevealFocus = () => {
       surface.input.removeEventListener('blur', revokeReveal);
+      surface.input.removeEventListener('input', revokeReveal);
     };
     active.surface = surface;
     active.host = host;
@@ -277,6 +336,7 @@ export class CaptureSessions {
   unmountActiveCapture(): void {
     const active = this.#activeCapture;
     const surface = active?.surface;
+    for (const cancel of active?.cancelReveals ?? []) cancel();
     if (active == null || surface == null) return;
     active.focusOnMount =
       active.focusOnMount || surface.input.ownerDocument.activeElement === surface.input;

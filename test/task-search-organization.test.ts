@@ -11,7 +11,7 @@ import {
   type TaskSearchOrganizationInput,
 } from '../src/task-lists/taskSearchOrganization';
 import { localDate } from '../src/tasks';
-import { createCanonicalSearchHarness } from './support/taskSearchHarness';
+import { assertNoRevision, createCanonicalSearchHarness } from './support/taskSearchHarness';
 const organizeTaskSearch = (input: TaskSearchOrganizationInput) =>
   drainCollectionSteps(organizationSteps(input));
 
@@ -42,8 +42,15 @@ const files = {
   'b.md': '- [ ] Same ➕ 2026-10-02\n- [ ] Loose [[Alice#Heading]] #work\n- [/] Busy',
 };
 
+function checkCompact(compact: ReturnType<typeof organizeTaskSearch>, revision: string): void {
+  assertNoRevision(compact, revision);
+  const repeated = compact.occurrences.filter((o) => o.taskKey === 'a.md:0');
+  if (repeated.length > 1) expect(repeated[0]?.menu).toBe(repeated[1]?.menu);
+  expect(compact.occurrences.every((o) => !('title' in o.menu))).toBe(true);
+}
+
 describe('compact organization shares ordinary list semantics', () => {
-  it('organizes every sort/group and direction before paging without relevance ties', async () => {
+  it('organizes every sort/group and direction before viewport mounting without relevance ties', async () => {
     const h = await createCanonicalSearchHarness(files, settings);
     try {
       const signal = new AbortController().signal;
@@ -89,6 +96,7 @@ describe('compact organization shares ordinary list semantics', () => {
               `${field}/${groupBy}/${dir}`,
             ).toEqual(rows.taskKeys);
             expect(compact.rootTotal).toBe(selected.length);
+            checkCompact(compact, tasks[0]?.ref.revision ?? '');
             expect([...compact.groupCounts.values()].reduce((a, b) => a + b, 0)).toBe(
               groupBy === 'none' ? 0 : compact.occurrences.length,
             );

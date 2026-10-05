@@ -8,6 +8,7 @@ import { localDate, type TaskApplicationApi, type TaskSnapshot } from '../src/ta
 import { TagPickerModal } from '../src/ui/TagPickerModal';
 import {
   appWithFiles,
+  deferred,
   expectDefined,
   flushMicrotasks,
   loseFocusOnRemoval,
@@ -21,6 +22,7 @@ import { makeCenterPanelForTest } from './support/panelHarness';
 import { prepareTaskPanelViewport } from './support/taskPanelViewport';
 
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
+import { taskViewportOwner } from './support/taskViewportOwner';
 
 useRealMoment();
 
@@ -1021,6 +1023,7 @@ describe('CenterPanel task date context menus', () => {
       originalTrigger.focus();
       openMenu(originalTrigger);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+      await flushMicrotasks();
       const input = expectDefined(
         el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
       );
@@ -1188,6 +1191,7 @@ describe('CenterPanel task date context menus', () => {
       originalTrigger.focus();
       openMenu(originalTrigger);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+      await flushMicrotasks();
       const input = expectDefined(
         el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
       );
@@ -1221,6 +1225,7 @@ describe('CenterPanel task date context menus', () => {
       const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
       openMenu(card);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+      await flushMicrotasks();
       const input = expectDefined(
         el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
       );
@@ -1441,6 +1446,7 @@ describe('CenterPanel task date context menus', () => {
     openMenu(firstCard);
 
     items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+    await flushMicrotasks();
     const input = el.querySelector<HTMLInputElement>(
       '.abyss-date-picker-popover input[type="date"]',
     );
@@ -1448,7 +1454,9 @@ describe('CenterPanel task date context menus', () => {
     expectDefined(input).value = '2026-08-02';
     expectDefined(input).dispatchEvent(new Event('change', { bubbles: true }));
 
-    expect(execute).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(1);
+    });
     expect(execute).toHaveBeenNthCalledWith(1, {
       type: 'patch',
       target: { type: 'task', ref: datedSecond.ref },
@@ -1701,13 +1709,16 @@ describe('CenterPanel task date context menus', () => {
         })),
       );
     } finally {
-      opened[0]?.contentEl.empty();
-      opened[0]?.containerEl.remove();
+      const dialog = opened[0];
+      if (dialog !== undefined) {
+        dialog.contentEl.empty();
+        dialog.containerEl.remove();
+      }
       panel.destroy();
       el.remove();
     }
   });
-  it('closes the bulk picker on Escape without clearing selection or detail state', () => {
+  it('closes the bulk picker on Escape without clearing selection or detail state', async () => {
     vi.useFakeTimers();
     const items = captureMenu();
     const { el, panel, state } = makeCenter([first, second]);
@@ -1723,6 +1734,8 @@ describe('CenterPanel task date context menus', () => {
     );
     openMenu(expectDefined(cards[0]));
     items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+    await Promise.resolve();
+    await Promise.resolve();
     vi.runOnlyPendingTimers();
     const input = expectDefined(
       el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
@@ -1987,4 +2000,193 @@ describe('repeated outgoing rows command boundary', () => {
       h.el.remove();
     },
   );
+});
+
+it('opens the full compact selection menu without hydration and resolves one command per physical root on choice', async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.pinnedTags = ['#work'];
+  const h = await mountCanonicalSearchUi(
+    {
+      'a.md': Array.from(
+        { length: 101 },
+        (_, n) => `- [ ] needle ${n} #work${n === 0 ? ' [[Alice]] [[Bob]]' : ''}`,
+      ).join('\n'),
+    },
+    settings,
+    'tasks',
+  );
+  try {
+    h.state.set('selectedList', { type: 'project', path: 'a.md' });
+    h.state.set('centerListViewState', {
+      ...h.state.get('centerListViewState'),
+      groupBy: 'outgoing-link',
+    });
+    h.query('needle');
+    await h.completed();
+    const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    const hydrate = vi.spyOn(h.index, 'resolveSearchHits');
+    card.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', metaKey: true, bubbles: true }));
+    expect(h.panel['rowSelection_abyssPrivate'].size).toBe(102);
+    const items = captureMenu();
+    openMenu(card);
+    expect(items.some((item) => item.title__ === '101 tasks selected')).toBe(true);
+    expect(items.some((item) => item.title__ === '✓ #work  (101/101)')).toBe(true);
+    expect(hydrate).not.toHaveBeenCalled();
+    const execute = vi.spyOn(h.tasks, 'execute').mockResolvedValue({
+      type: 'ok',
+      changed: false,
+      outcome: { type: 'task', task: h.index.list()[0] as TaskSnapshot },
+    });
+    expectDefined(items.find((item) => item.title__ === '✓ #work  (101/101)')?.onClick__)(
+      new MouseEvent('click'),
+    );
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(101);
+    });
+    expect(
+      new Set(
+        execute.mock.calls.map(([command]) =>
+          'target' in command && 'type' in command.target && command.target.type === 'task'
+            ? command.target.ref.line
+            : undefined,
+        ),
+      ).size,
+    ).toBe(101);
+    expect(hydrate.mock.calls.every(([hits]) => hits.length <= 50)).toBe(true);
+  } finally {
+    h.dispose();
+  }
+});
+
+it.each([
+  { kind: 'date', reason: 'source', compact: true },
+  { kind: 'tag', reason: 'source', compact: true },
+  { kind: 'tag', reason: 'migration', compact: false },
+] as const)(
+  'revalidates $compact menu targets at final $kind commit after $reason',
+  async ({ kind, reason, compact }) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.pinnedTags = ['#work'];
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': '- [ ] needle one #work\n- [ ] needle two #work' },
+      settings,
+      'tasks',
+    );
+    const opened: TagPickerModal[] = [];
+    let owner: ReturnType<typeof taskViewportOwner> | undefined;
+    try {
+      h.state.set('selectedList', { type: 'project', path: 'a.md' });
+      if (compact) {
+        h.query('needle');
+        await h.completed();
+      }
+      const items = captureMenu();
+      const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+      card.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', metaKey: true, bubbles: true }));
+      const hydration = vi.spyOn(h.index, 'resolveSearchHits');
+      const execute = vi.spyOn(h.tasks, 'execute');
+      vi.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
+        if (this instanceof TagPickerModal) {
+          opened.push(this);
+          this.onOpen();
+        }
+      });
+      openMenu(card);
+      expect(hydration).not.toHaveBeenCalled();
+      expectDefined(
+        items.find((item) => item.title__ === (kind === 'date' ? 'Set date…' : 'Set tag…'))
+          ?.onClick__,
+      )(new MouseEvent('click'));
+      let pick: HTMLInputElement | HTMLButtonElement;
+      if (kind === 'date') {
+        await vi.waitFor(() => {
+          expect(
+            h.root.querySelector('.abyss-date-picker-popover input[type="date"]'),
+          ).not.toBeNull();
+        });
+        pick = expectDefined(
+          h.root.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]'),
+        );
+      } else {
+        pick = expectDefined(
+          expectDefined(opened[0]).contentEl.querySelector<HTMLButtonElement>('[data-tag="#work"]'),
+        );
+        expect(hydration).not.toHaveBeenCalled();
+        pick.click();
+      }
+      if (reason === 'source')
+        h.index.installCommittedContent(
+          'a.md',
+          '- [ ] replacement needle #work\n- [ ] different needle #work',
+        );
+      else {
+        owner = taskViewportOwner();
+        owner.doc.body.append(h.root);
+        h.panel.onWindowMigrated();
+      }
+      if (kind === 'date') {
+        (pick as HTMLInputElement).value = '2026-12-12';
+        pick.dispatchEvent(new Event('change', { bubbles: true }));
+      } else opened[0]?.onClose();
+      if (compact) await h.completed();
+      await flushMicrotasks();
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      const dialog = opened[0];
+      if (dialog !== undefined) {
+        dialog.contentEl.empty();
+        dialog.containerEl.remove();
+      }
+      h.dispose();
+      owner?.destroy();
+    }
+  },
+);
+
+it('lets already submitted compact bulk commands settle after source invalidates the menu pin', async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.pinnedTags = ['#work'];
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': '- [ ] needle one #work\n- [ ] needle two #work' },
+    settings,
+    'tasks',
+  );
+  const pending = deferred<void>();
+  try {
+    h.state.set('selectedList', { type: 'project', path: 'a.md' });
+    h.query('needle');
+    await h.completed();
+    const held = h.index.list();
+    let settled = 0;
+    const execute = vi.spyOn(h.tasks, 'execute').mockImplementation(async () => {
+      await pending.promise;
+      settled++;
+      return {
+        type: 'ok',
+        changed: false,
+        outcome: { type: 'task', task: expectDefined(held[0]) },
+      };
+    });
+    const items = captureMenu();
+    const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    card.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', metaKey: true, bubbles: true }));
+    openMenu(card);
+    expectDefined(items.find((item) => item.title__ === '✓ #work  (2/2)')?.onClick__)(
+      new MouseEvent('click'),
+    );
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(2);
+    });
+    h.index.installCommittedContent('a.md', '- [ ] replacement needle');
+    await h.completed();
+    expect(h.panel['taskInteractionPins_abyssPrivate'].size).toBe(0);
+    pending.resolve();
+    await vi.waitFor(() => {
+      expect(settled).toBe(2);
+    });
+    expect(h.state.get('taskStack')).toHaveLength(0);
+  } finally {
+    pending.resolve();
+    h.dispose();
+  }
 });

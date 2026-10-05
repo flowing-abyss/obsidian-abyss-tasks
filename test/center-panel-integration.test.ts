@@ -4,6 +4,7 @@ import { AppState } from '../src/app/AppState';
 import { moment } from '../src/obsidianMoment';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
+import { TaskListSurface } from '../src/panels/task-list/TaskListSurface';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
@@ -287,7 +288,7 @@ async function makePanel(
     projectStore: null,
     projectManager: null,
     tasks: taskApplication.tasks,
-    captureApplication: taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+    captureApplication: taskApplication.tasks,
   });
   return {
     panel,
@@ -3491,11 +3492,11 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
       ) {
         return this;
       });
-      panel['taskMenus_abyssPrivate'].showBulkContextMenu(
-        new MouseEvent('contextmenu'),
-        card,
-        tasks.slice(0, 2),
-      );
+      panel['taskMenus_abyssPrivate'].showBulkContextMenu(new MouseEvent('contextmenu'), card, {
+        signal: new AbortController().signal,
+        summaries: tasks.slice(0, 2),
+        resolve: async () => tasks.slice(0, 2),
+      });
       clickSetTag(expectDefined(shown.mock.instances[0]) as Menu);
       shown.mockRestore();
       expect(listNodes).toHaveBeenCalledTimes(1);
@@ -7039,11 +7040,15 @@ describe('CenterPanel actual centre focus continuity', () => {
 
   it('reveals the exact Search destination after list and stack navigation without acquiring focus', async () => {
     const h = await mounted();
-    const reveal = vi.fn();
-    const render = vi.spyOn(h.panel, 'refresh');
-    // Mounted card hook observes the real destination scroll primitive, not a private reveal call.
-    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
-    HTMLElement.prototype.scrollIntoView = reveal;
+    const reveal = vi.spyOn(TaskListSurface.prototype, 'reveal');
+    const rect = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        let height = 900;
+        if (this.classList.contains('abyss-task-card')) height = 64;
+        if (this.classList.contains('abyss-group-header')) height = 32;
+        return new DOMRect(0, 0, 700, height);
+      });
     try {
       h.state.set('searchQuery', 'first');
       h.state.set('mode', 'search');
@@ -7055,13 +7060,14 @@ describe('CenterPanel actual centre focus continuity', () => {
       expect(h.state.get('mode')).toBe('tasks');
       expect(h.state.get('selectedList')).toBe('today');
       expect(h.state.get('taskStack')[0]).toEqual(h.index.list()[0]);
-      expect(reveal).toHaveBeenCalledWith({ block: 'nearest' });
+      const surface = expectDefined(h.panel['taskSurface_abyssPrivate']);
+      const key = expectDefined(surface.search?.order.occurrencesOf('focus.md:0')[0]);
+      expect(reveal).toHaveBeenCalledWith(key);
+      expect(surface.surface.element(key)?.classList.contains('is-search-revealed')).toBe(true);
       expect(document.activeElement).not.toBe(h.cards()[0]);
     } finally {
-      if (original != null)
-        Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', original);
-      else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
-      render.mockRestore();
+      rect.mockRestore();
+      reveal.mockRestore();
       h.cleanup();
     }
   });

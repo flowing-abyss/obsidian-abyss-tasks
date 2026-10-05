@@ -187,7 +187,7 @@ describe('dependency search provider', () => {
         .map((task) => task.target);
       const session = await h.provider.open('candidate', h.current.target, direction, h.signal);
       const detach = vi.spyOn(snapshots, 'taskSnapshotWithStatuses');
-      const hydrate = vi.spyOn(h.search, 'resolvePage');
+      const hydrate = vi.spyOn(h.search, 'resolveHits');
       const eligibility = vi.spyOn(h.index, 'searchEligibility');
       const page = await session.page(0, h.signal);
       expect(page.options.map((option) => option.task.target)).toEqual(expected);
@@ -220,7 +220,7 @@ describe('dependency search provider', () => {
     });
     const session = await h.provider.open('', h.current.target, 'blocks', h.signal);
     const detach = vi.spyOn(snapshots, 'taskSnapshotWithStatuses');
-    const hydrate = vi.spyOn(h.search, 'resolvePage');
+    const hydrate = vi.spyOn(h.search, 'resolveHits');
     const eligibility = vi.spyOn(h.index, 'dependencyEligibility');
     const page = await session.page(0, h.signal);
     expect(page).toMatchObject({
@@ -261,7 +261,7 @@ describe('dependency search provider', () => {
         }
         return real(request, signal);
       });
-      const hydrate = vi.spyOn(h.search, 'resolvePage');
+      const hydrate = vi.spyOn(h.search, 'resolveHits');
       const pending = session.page(0, h.signal);
       const rejected = expect(pending).rejects.toMatchObject({ code: 'stale' });
       await waiting;
@@ -279,8 +279,8 @@ describe('dependency search provider', () => {
       'other.md': '- [ ] Other',
     });
     const session = await h.provider.open('candidate', h.current.target, 'blocks', h.signal);
-    const real = h.search.resolvePage.bind(h.search);
-    vi.spyOn(h.search, 'resolvePage').mockImplementation(async (...args) => {
+    const real = h.search.resolveHits.bind(h.search);
+    vi.spyOn(h.search, 'resolveHits').mockImplementation(async (...args) => {
       const result = await real(...args);
       h.index.installCommittedContent('other.md', '- [ ] Changed');
       return result;
@@ -363,7 +363,7 @@ describe('dependency search provider', () => {
       const session = await h.provider.open('candidate', h.current.target, direction, h.signal);
       const option = expectDefined((await session.page(0, h.signal)).options[0]);
       expect(option).toMatchObject({ directions: [], disabledReason: 'Would create a cycle' });
-      const hydrate = vi.spyOn(h.search, 'resolvePage');
+      const hydrate = vi.spyOn(h.search, 'resolveHits');
       const eligibility = vi.spyOn(h.index, 'searchEligibility');
       await expect(session.resolve(option.address, h.signal)).rejects.toMatchObject({
         code: 'stale',
@@ -447,7 +447,7 @@ describe('dependency search provider', () => {
       return real(request, signal);
     });
     const released = vi.spyOn(h.search, 'release');
-    const hydrate = vi.spyOn(h.search, 'resolvePage');
+    const hydrate = vi.spyOn(h.search, 'resolveHits');
     const pending = session.page(0, h.signal);
     const rejected = expect(pending).rejects.toMatchObject({ code: 'aborted' });
     await waiting;
@@ -496,7 +496,7 @@ describe('dependency search provider', () => {
     expect(option.directions).toEqual(['blocks']);
     h.index.installCommittedContent('middle.md', '- [ ] Middle 🆔 middle ⛔ candidate');
     expect(
-      (await h.search.resolvePage([{ address: option.address, score: 0 }], h.signal))[0]?.task
+      (await h.search.resolveHits([{ address: option.address, score: 0 }], h.signal))[0]?.task
         .target,
     ).toEqual(option.task.target);
     await expect(session.resolve(option.address, h.signal)).rejects.toMatchObject({
@@ -610,7 +610,7 @@ describe('empty dependency pages', () => {
     );
     const evaluate = vi.spyOn(h.index, 'dependencyEligibility');
     const prepare = vi.spyOn(h.index, 'prepareDependencies');
-    const hydrate = vi.spyOn(h.search, 'resolvePage');
+    const hydrate = vi.spyOn(h.search, 'resolveHits');
     const detach = vi.spyOn(snapshots, 'taskSnapshotWithStatuses');
     await expect(session.page(pageKind === 'no-match' ? 0 : 1, h.signal)).rejects.toMatchObject({
       code: 'stale',
@@ -629,7 +629,7 @@ describe('empty dependency pages', () => {
       const eligibility = vi.spyOn(h.index, 'searchEligibility');
       const prepare = vi.spyOn(h.index, 'prepareDependencies');
       const evaluate = vi.spyOn(h.index, 'dependencyEligibility');
-      const hydrate = vi.spyOn(h.search, 'resolvePage');
+      const hydrate = vi.spyOn(h.search, 'resolveHits');
       const detach = vi.spyOn(snapshots, 'taskSnapshotWithStatuses');
       const offset = query === '' ? 1 : 0;
       expect(await session.page(offset, h.signal)).toEqual({

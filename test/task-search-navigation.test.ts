@@ -1,9 +1,10 @@
 import { MarkdownRenderer, Menu, Notice } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { TaskSearch, TaskSearchOptions } from '../src/panels/center/TaskSearch';
-import type { TaskSearchReveal } from '../src/panels/center/TaskSearchReveal';
+import { TaskSearchReveal } from '../src/panels/center/TaskSearchReveal';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { expectDefined, methodOf, useRealMoment } from './helpers';
+import { deferred, expectDefined, flushMicrotasks, methodOf, useRealMoment } from './helpers';
+import { taskCardMountBound } from './support/taskPanelViewport';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 
 useRealMoment();
@@ -12,6 +13,7 @@ afterEach(() => vi.restoreAllMocks());
 async function navigationSearchHarness(
   count = 101,
   organizationScheduler?: TaskSearchOptions['organizationScheduler'],
+  rootTitle = 'zzz needle',
 ) {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.listViewStates = {
@@ -24,19 +26,36 @@ async function navigationSearchHarness(
   };
   const markdown = [
     ...Array.from({ length: count - 1 }, (_, i) => `- [ ] aaa ${String(i).padStart(5, '0')}`),
-    '- [ ] zzz needle',
+    `- [ ] ${rootTitle}`,
     '  - > unrelated',
     '  - [ ] repeated',
     '    - > padding',
     '    - [ ] repeated',
     '      - 2026-10-04: grandchild needle',
   ].join('\n');
-  const h = await mountCanonicalSearchUi(
-    { 'a.md': markdown },
-    settings,
-    'search',
-    organizationScheduler,
-  );
+  // Real 50k roots across bounded files isolate complete-order organization from giant-file parsing
+  // and vocabulary scaling; the native/resource corpus belongs to Task4. Every address is canonical.
+  const files =
+    count === 50000
+      ? {
+          ...Object.fromEntries(
+            Array.from({ length: 100 }, (_, file) => [
+              `bulk/${String(file).padStart(3, '0')}.md`,
+              Array.from(
+                { length: file === 99 ? 499 : 500 },
+                (_, line) => `- [ ] aaa ${line}`,
+              ).join('\n'),
+            ]),
+          ),
+          'a.md': markdown
+            .split('\n')
+            .slice(count - 1)
+            .join('\n'),
+        }
+      : { 'a.md': markdown };
+  const h = await mountCanonicalSearchUi(files, settings, 'search', organizationScheduler);
+  // This fixture exercises organization/reveal; cold preparation has separate coverage.
+  await h.search.prepare(new AbortController().signal);
   h.query('needle');
   await h.completed();
   const owners = h.panel as unknown as {
@@ -72,7 +91,7 @@ async function navigationSearchHarness(
   };
 }
 
-it('installs exact child and receipt before mode delivery, then locates its bounded ordinary page', async () => {
+it('installs exact child and receipt before mode delivery, then reaches its exact root in the complete compact order', async () => {
   const h = await navigationSearchHarness();
   try {
     const deliveries: unknown[] = [];
@@ -85,8 +104,13 @@ it('installs exact child and receipt before mode delivery, then locates its boun
     await h.activateChild();
     await h.completed();
     expect(deliveries).toEqual([{ receipt: [2, 2], path: ['zzz needle', 'repeated', 'repeated'] }]);
-    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
-    expect(h.root.textContent).toContain('Page 3 of 3');
+    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);
+    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
+      taskCardMountBound(h.root, 1),
+    );
+    expect(h.root.querySelector('.is-search-revealed')?.textContent).toContain('zzz needle');
+    expect(h.root.dataset['searchLogicalResults']).toBe('101');
+    expect(h.root.querySelector('.abyss-search-paging')).toBeNull();
     expect(h.list).not.toHaveBeenCalled();
     expect(h.nodes).not.toHaveBeenCalled();
   } finally {
@@ -159,7 +183,10 @@ it('uses shared card Enter activation and never selects a range for Search', asy
     });
     await h.completed();
     expect(h.receipt()?.address.childLines).toEqual([]);
-    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
+      taskCardMountBound(h.root, 1),
+    );
+    expect(h.root.querySelector('.is-search-revealed')?.textContent).toContain('zzz needle');
   } finally {
     h.dispose();
   }
@@ -210,9 +237,9 @@ it('expires a deleted receipt into ordinary Tasks without selecting a successor'
 it('keeps activation source proof live while exact hydration is delayed', async () => {
   const h = await navigationSearchHarness();
   let release: (() => void) | undefined;
-  const hydrate = h.search.resolvePage.bind(h.search);
+  const hydrate = h.search.resolveHits.bind(h.search);
   let hold = true;
-  vi.spyOn(h.search, 'resolvePage').mockImplementation(async (hits, signal) => {
+  vi.spyOn(h.search, 'resolveHits').mockImplementation(async (hits, signal) => {
     const result = await hydrate(hits, signal);
     if (hold) {
       hold = false;
@@ -270,7 +297,7 @@ it('chooses configured prefix children in actual sidebar order after archived pi
   }
 });
 
-it.each(['timer', 'selection', 'page', 'dispose'] as const)(
+it.each(['timer', 'selection', 'navigation', 'dispose'] as const)(
   'ends the owned two-second pulse on %s',
   async (reason) => {
     const h = await navigationSearchHarness();
@@ -292,15 +319,10 @@ it.each(['timer', 'selection', 'page', 'dispose'] as const)(
       if (reason === 'selection') h.state.set('taskStack', []);
       if (reason === 'timer') timer[1]();
       if (reason === 'dispose') h.panel.destroy();
-      if (reason === 'page') {
-        expectDefined(
-          h.root.querySelector<HTMLButtonElement>('[aria-label="Previous page"]'),
-        ).click();
-        await h.completed();
-      }
+      if (reason === 'navigation') h.panel['navigation_abyssPrivate'].openList('inbox');
       expect(clear).toHaveBeenCalledWith(timer[0]);
       expect(card.classList.contains('is-search-revealed')).toBe(false);
-      if (reason !== 'dispose') expect(h.receipt()).toBeDefined();
+      if (reason === 'selection' || reason === 'timer') expect(h.receipt()).toBeDefined();
       timer[1]();
       expect(card.classList.contains('is-search-revealed')).toBe(false);
     } finally {
@@ -363,13 +385,13 @@ it.each(['command-toggle', 'other-root-update'] as const)(
   },
 );
 
-it('an old detached page card cannot activate through a newer live request', async () => {
+it('an old detached card cannot activate through a newer live request', async () => {
   const h = await navigationSearchHarness();
   try {
     const old = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
     h.query('aaa');
     await h.completed();
-    const hydration = vi.spyOn(h.search, 'resolvePage');
+    const hydration = vi.spyOn(h.search, 'resolveHits');
     old.click();
     expect(hydration).not.toHaveBeenCalled();
     await Promise.resolve();
@@ -382,49 +404,29 @@ it('an old detached page card cannot activate through a newer live request', asy
   }
 });
 
-it('navigates the last of 50k compact records through cooperative organization hydrates only its 50 proven roots with bounded native mounts', async () => {
+it('navigates the last of 50k real compact records cooperatively with bounded exact hydration', async () => {
   let yields = 0;
-  const h = await navigationSearchHarness(50, () => ({
+  const h = await navigationSearchHarness(50000, () => ({
     now: () => 0,
     yield: async () => {
       yields++;
     },
   }));
-  const original = h.index.organization.bind(h.index);
-  let batches = 0;
-  vi.spyOn(h.index, 'organization').mockImplementation(async function* (request, signal) {
-    for await (const batch of original(request, signal)) {
-      if (request.roots === undefined) {
-        const seed = expectDefined(batch.items[0]);
-        for (let start = 0; start < 49950; start += 200) {
-          batches++;
-          yield {
-            generation: batch.generation,
-            items: Array.from({ length: Math.min(200, 49950 - start) }, (_, at) => ({
-              ...seed,
-              title: `000 filler ${start + at}`,
-              markdownTitle: '000 filler',
-              source: { ...seed.source, line: 100000 + start + at },
-              address: { ...seed.address, rootId: 100000 + start + at },
-            })),
-          };
-        }
-      }
-      yield batch;
-    }
-  });
-  const hydrate = vi.spyOn(h.search, 'resolvePage');
+  const hydrate = vi.spyOn(h.search, 'resolveHits');
   try {
     await h.activateChild();
     await h.completed();
-    expect(hydrate.mock.calls.some(([hits]) => hits.length === 50)).toBe(true);
     expect(hydrate.mock.calls.every(([hits]) => hits.length <= 50)).toBe(true);
-    expect(batches).toBe(250);
+    expect(
+      new Set(hydrate.mock.calls.flatMap(([hits]) => hits.map((hit) => hit.address.rootId))).size,
+    ).toBeLessThan(100);
     expect(yields).toBeGreaterThan(300);
     expect(h.root.dataset['searchLogicalResults']).toBe('50000');
-    expect(h.root.textContent).toContain('Page 1000 of 1000');
+    expect(h.root.querySelector('.abyss-search-paging')).toBeNull();
     expect(h.root.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);
-    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThan(50);
+    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
+      taskCardMountBound(h.root, 1),
+    );
     expect(h.state.get('taskStack').map((node) => node.title)).toEqual([
       'zzz needle',
       'repeated',
@@ -438,16 +440,23 @@ it('navigates the last of 50k compact records through cooperative organization h
   }
 });
 
-it('a later inspector selection cancels reveal presentation while the destination page hydrates', async () => {
+it('a later inspector selection cancels reveal presentation while the destination hydrates', async () => {
   const h = await navigationSearchHarness();
-  const hydrate = h.search.resolvePage.bind(h.search);
+  const hydrate = h.search.resolveHits.bind(h.search);
   let release: (() => void) | undefined;
-  vi.spyOn(h.search, 'resolvePage').mockImplementation(async (hits, signal) => {
+  let held = false;
+  vi.spyOn(h.search, 'resolveHits').mockImplementation(async (hits, signal) => {
     const result = await hydrate(hits, signal);
-    if (h.state.get('mode') === 'tasks' && hits[0]?.address.childLines.length === 0)
+    if (
+      !held &&
+      h.state.get('mode') === 'tasks' &&
+      hits.some((hit) => hit.address.rootId === h.receipt()?.address.rootId)
+    ) {
+      held = true;
       await new Promise<void>((resolve) => {
         release = resolve;
       });
+    }
     return result;
   });
   try {
@@ -515,10 +524,10 @@ it.each(['link', 'status', 'tag', 'menu', 'drag'] as const)(
 
 it('aborts exact activation hydration immediately on a newer inspector intent', async () => {
   const h = await navigationSearchHarness();
-  const hydrate = h.search.resolvePage.bind(h.search);
+  const hydrate = h.search.resolveHits.bind(h.search);
   let release: (() => void) | undefined;
   let activationSignal: AbortSignal | undefined;
-  vi.spyOn(h.search, 'resolvePage').mockImplementation(async (hits, signal) => {
+  vi.spyOn(h.search, 'resolveHits').mockImplementation(async (hits, signal) => {
     const result = await hydrate(hits, signal);
     activationSignal = signal;
     await new Promise<void>((resolve) => {
@@ -553,7 +562,7 @@ it.each(['reveal', 'filter'] as const)(
       )
       .mockImplementation(() => {});
     const h = await navigationSearchHarness(2);
-    const hydration = vi.spyOn(h.search, 'resolvePage');
+    const hydration = vi.spyOn(h.search, 'resolveHits');
     const preparation = vi.spyOn(h.search, 'prepare');
     const phases: string[] = [];
     const unsubscribe = h.search.subscribe((state) => phases.push(state.phase));
@@ -594,7 +603,7 @@ it.each(['reveal', 'filter'] as const)(
       expect(h.root.dataset['searchPhase']).toBe('error');
       expect(h.root.getAttribute('aria-busy')).toBe('false');
       expect(h.root.dataset['searchLogicalResults']).toBeUndefined();
-      expect(h.root.querySelector('.abyss-search-paging')?.textContent).toBe('');
+      expect(h.root.querySelector('.abyss-search-paging')).toBeNull();
       expect(status?.textContent).toContain('Could not load task results');
       expect(notice).toHaveBeenCalledTimes(1);
       expect(h.captureNavigation()).toEqual(before);
@@ -677,3 +686,114 @@ it.each(['live', 'failed-live', 'closed', 'detached'] as const)(
     }
   },
 );
+
+it('consumes one reveal scroll and preserves the absolute pulse deadline across remount', () => {
+  let now = 10000;
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const scroll = vi.fn();
+  const owner = new TaskSearchReveal(
+    () => window,
+    () => 1,
+    scroll,
+  );
+  owner.install({
+    id: 1,
+    selection: 'inbox',
+    address: { epoch: 'source', version: 1, rootId: 1, childLines: [] },
+  });
+  owner.committed(new Set(['mode']));
+  const first = document.body.createDiv();
+  owner.show(first);
+  now += 700;
+  first.remove();
+  const second = document.body.createDiv();
+  owner.show(second);
+  expect(scroll).toHaveBeenCalledTimes(1);
+  expect(second.hasClass('is-search-revealed')).toBe(true);
+  now += 1301;
+  const third = document.body.createDiv();
+  owner.show(third);
+  expect(third.hasClass('is-search-revealed')).toBe(false);
+  expect(scroll).toHaveBeenCalledTimes(1);
+  owner.dispose();
+});
+
+it.each(['accepted', 'later-intent'] as const)(
+  'waits for tall destination Markdown with %s reveal authority',
+  async (reason) => {
+    const h = await navigationSearchHarness(1200, undefined, 'zzz **needle**');
+    let release: (() => void) | undefined;
+    const rendered = deferred<void>();
+    const surfaceReveal = vi.spyOn(h.panel['taskSearchReveal_abyssPrivate'], 'show');
+    const render = vi
+      .spyOn(MarkdownRenderer, 'render')
+      .mockImplementation(async (_app, text, host) => {
+        host.createEl('strong', { text });
+        if (h.state.get('mode') === 'tasks' && text.includes('zzz')) {
+          rendered.resolve();
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+      });
+    const bounds = expectDefined(
+      vi.mocked(methodOf(HTMLElement.prototype, 'getBoundingClientRect')).getMockImplementation(),
+    );
+    vi.mocked(methodOf(HTMLElement.prototype, 'getBoundingClientRect')).mockImplementation(
+      function (this: HTMLElement) {
+        const rect = bounds.call(this);
+        if (this.hasClass('abyss-task-card') && this.textContent.includes('zzz'))
+          return { ...rect, height: 4096, bottom: 4096 };
+        return rect;
+      },
+    );
+    try {
+      await h.activateChild();
+      await rendered.promise;
+      expect(h.root.querySelector('.is-search-revealed')).toBeNull();
+      expect(surfaceReveal).not.toHaveBeenCalled();
+      if (reason === 'later-intent') h.state.set('taskStack', []);
+      expectDefined(release)();
+      await h.completed();
+      if (reason === 'accepted') {
+        expect(h.root.querySelector('.is-search-revealed')?.textContent).toContain('zzz');
+        expect(surfaceReveal).toHaveBeenCalledTimes(1);
+        expect(h.state.get('taskStack').map((node) => node.title)).toEqual([
+          'zzz **needle**',
+          'repeated',
+          'repeated',
+        ]);
+      } else {
+        expect(h.root.querySelector('.is-search-revealed')).toBeNull();
+        expect(surfaceReveal).not.toHaveBeenCalled();
+        expect(h.state.get('taskStack')).toEqual([]);
+      }
+      expect(render).toHaveBeenCalled();
+    } finally {
+      release?.();
+      h.dispose();
+    }
+  },
+);
+
+it('keeps the reveal pulse on the first physical occurrence when duplicate groups reconcile', async () => {
+  const h = await navigationSearchHarness(2, undefined, 'zzz needle [[Alice]] [[Bob]]');
+  try {
+    expectDefined(expectDefined(h.settings.listViewStates)['inbox']).groupBy = 'outgoing-link';
+    await h.activateChild();
+    await h.completed();
+    const compact = expectDefined(h.panel['taskSurface_abyssPrivate']?.search);
+    const target = expectDefined(h.state.get('taskStack')[0]);
+    if (!('filePath' in target.ref)) throw new Error('Expected exact root destination');
+    const first = expectDefined(
+      compact.order.occurrencesOf(`${target.ref.filePath}:${target.ref.line}`)[0],
+    );
+    const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.dispatchEvent(new Event('scroll'));
+    await flushMicrotasks();
+    await flushMicrotasks();
+    expect(h.root.querySelector<HTMLElement>('.is-search-revealed')?.dataset['rowKey']).toBe(first);
+  } finally {
+    h.dispose();
+  }
+});

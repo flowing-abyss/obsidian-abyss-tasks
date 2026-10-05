@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
+import type { TaskSearchState } from '../../src/tasks';
 import type { TaskSearchBackend } from '../../src/tasks/application/TaskSearchBackend';
 import { fallbackSearchWords } from '../../src/tasks/domain/searchMatchPolicy';
 import { TaskSearchError } from '../../src/tasks/domain/taskSearchTypes';
@@ -9,6 +10,7 @@ import { TaskSearchService } from '../../src/tasks/infrastructure/search/TaskSea
 import { deferred, expectDefined } from '../helpers';
 import {
   assertNoRevision,
+  canonicalSearchForIndex,
   ControlledSearchScheduler,
   createCanonicalSearchHarness,
   createTaskSearchHarness,
@@ -115,7 +117,7 @@ describe('owned incremental search service', () => {
     assertNoRevision(structuredClone(page.hits), root.ref.revision);
     for await (const batch of h.index.organization({ expectedGeneration: c.generation }, signal()))
       assertNoRevision(JSON.parse(JSON.stringify(batch)), root.ref.revision);
-    expect((await h.search.resolvePage(page.hits, signal()))[0]?.task.root.ref.revision).toBe(
+    expect((await h.search.resolveHits(page.hits, signal()))[0]?.task.root.ref.revision).toBe(
       root.ref.revision,
     );
     expect(list).not.toHaveBeenCalled();
@@ -142,7 +144,7 @@ it('semantic publish without text rebuild', async () => {
   h.source.ready([nodeDocuments(2)]);
   const old = await h.service.open({ kind: 'nodes', query: 'needle' }, signal());
   h.source.iterations.length = 0;
-  h.source.emit({ type: 'semantics', generation: old.generation + 1 });
+  h.source.emit({ type: 'semantics', generation: old.generation + 1, semanticsRevision: 1 });
   await expect(h.service.read(old, 0, 30, signal())).rejects.toMatchObject({ code: 'stale' });
   expect((await h.service.open({ kind: 'nodes', query: 'needle' }, signal())).total).toBe(2);
   expect(h.source.iterations).toEqual([]);
@@ -204,17 +206,17 @@ it('canonical unrelated update preserves hydration while result cursors reject s
   const cursor = await h.search.open({ kind: 'nodes', query: 'needle' }, signal());
   const hits = (await h.search.read(cursor, 0, 30, signal())).hits;
   h.index.installCommittedContent('b.md', '- [ ] replacement');
-  expect((await h.search.resolvePage(hits, signal()))[0]?.task.node.title).toBe('needle');
+  expect((await h.search.resolveHits(hits, signal()))[0]?.task.node.title).toBe('needle');
   await expect(h.search.read(cursor, 0, 30, signal())).rejects.toMatchObject({ code: 'stale' });
   h.index.installCommittedContent('a.md', '');
   h.index.installCommittedContent('a.md', '- [ ] needle');
-  await expect(h.search.resolvePage(hits, signal())).rejects.toMatchObject({ code: 'stale' });
+  await expect(h.search.resolveHits(hits, signal())).rejects.toMatchObject({ code: 'stale' });
   const fresh = await h.search.open({ kind: 'nodes', query: 'needle' }, signal());
   const freshHits = (await h.search.read(fresh, 0, 30, signal())).hits;
-  expect((await h.search.resolvePage(freshHits, signal()))[0]?.task.node.title).toBe('needle');
+  expect((await h.search.resolveHits(freshHits, signal()))[0]?.task.node.title).toBe('needle');
   h.close();
   const reload = await createCanonicalSearchHarness({ 'a.md': '- [ ] needle' }, DEFAULT_SETTINGS);
-  await expect(reload.search.resolvePage(freshHits, signal())).rejects.toMatchObject({
+  await expect(reload.search.resolveHits(freshHits, signal())).rejects.toMatchObject({
     code: 'stale',
   });
   reload.close();
@@ -244,6 +246,7 @@ it('bootstrap file edit rename delete exclusion dirty replay', async () => {
   h.source.store.delete('renamed.md');
   h.source.emit({
     type: 'files',
+    semanticsRevision: h.source.state.semanticsRevision,
     generation: h.source.state.generation + 1,
     files: [{ path: 'renamed.md', version: null }],
   });
@@ -566,7 +569,7 @@ it('bounds persistent failure bursts and passive preparation without a deadline 
   }
   expect(ensure).toHaveBeenCalledTimes(1);
   now.mockReturnValue(10000);
-  h.source.emit({ type: 'semantics', generation: 1 });
+  h.source.emit({ type: 'semantics', generation: 1, semanticsRevision: 1 });
   await Promise.resolve();
   expect(ensure).toHaveBeenCalledTimes(1);
   expect(h.backends).toHaveLength(0);
@@ -708,7 +711,7 @@ it.each(['open', 'read'] as const)(
             : h.service.read(cursor, 0, 1, signal());
         await expect(pending).rejects.toMatchObject({ code: 'unavailable' });
         expect(
-          (h.service as unknown as { pendingPages: Map<string, unknown> }).pendingPages.size,
+          (h.service as unknown as { pendingBatches: Map<string, unknown> }).pendingBatches.size,
         ).toBe(0);
         expect((backend as unknown as { vectors: Map<string, unknown> }).vectors.size).toBe(0);
       }
@@ -832,7 +835,7 @@ it('treats a raw cancellation-shaped inline engine exception as a live operation
   const diagnostics: unknown[] = [];
   const service = new TaskSearchService({
     source,
-    reads: { observedTags: () => [], async *organization() {}, resolveSearchPage: async () => [] },
+    reads: { observedTags: () => [], async *organization() {}, resolveSearchHits: async () => [] },
     segment: fallbackSearchWords,
     scheduler: new ControlledSearchScheduler(),
     createBackend: async (mode) => {
@@ -848,7 +851,12 @@ it('treats a raw cancellation-shaped inline engine exception as a live operation
   });
   try {
     await service.prepare(signal());
-    expect(states).toContainEqual({ phase: 'ready', generation: 1, compatibility: true });
+    expect(states).toContainEqual({
+      phase: 'ready',
+      generation: 1,
+      semanticsRevision: 0,
+      compatibility: true,
+    });
     vi.spyOn(engine, 'search').mockImplementation(() => {
       throw new DOMException('private engine content', 'AbortError');
     });
@@ -856,10 +864,64 @@ it('treats a raw cancellation-shaped inline engine exception as a live operation
       .open({ kind: 'roots', query: 'needle' }, signal())
       .catch((error: unknown) => error);
     expect(error).toMatchObject({ code: 'unavailable' });
-    expect(states[states.length - 1]).toEqual({ phase: 'failed', generation: 1, episode: 1 });
+    expect(states[states.length - 1]).toEqual({
+      phase: 'failed',
+      generation: 1,
+      semanticsRevision: 0,
+      episode: 1,
+    });
     expect(String(error)).not.toContain('private');
     expect(JSON.stringify(diagnostics)).not.toContain('private');
   } finally {
     service.dispose();
+  }
+});
+
+it('carries the source semantics revision through subscription, recovery, failure and disposal without rebuilding on semantics', async () => {
+  const h = await createCanonicalSearchHarness({ 'a.md': '- [ ] needle' }, DEFAULT_SETTINGS);
+  const states: TaskSearchState[] = [];
+  h.index.setStatusCatalog(h.statusCatalog);
+  const unsubscribe = h.search.subscribe((state) => states.push(state));
+  try {
+    expect(states[states.length - 1]).toMatchObject({ phase: 'idle', semanticsRevision: 1 });
+    const late = canonicalSearchForIndex(h.index);
+    let lateState: TaskSearchState | undefined;
+    const stopLate = late.subscribe((state) => {
+      lateState = state;
+    });
+    expect(lateState).toMatchObject({ phase: 'idle', semanticsRevision: 1 });
+    stopLate();
+    late.dispose();
+    await h.search.prepare(signal());
+    const backend = expectDefined(h.backends[0]);
+    const previousOperations = backend.operations.length;
+    h.index.setStatusCatalog(h.statusCatalog);
+    expect(states[states.length - 1]).toMatchObject({ phase: 'updating', semanticsRevision: 2 });
+    await h.search.prepare(signal());
+    expect(backend.operations.slice(previousOperations).map((op) => op.type)).toEqual(['publish']);
+    h.index.installCommittedContent('other.md', '- [ ] Other');
+    await h.search.prepare(signal());
+    expect(states[states.length - 1]).toMatchObject({ phase: 'ready', semanticsRevision: 2 });
+    for (let i = 0; i < 2; i++) {
+      expectDefined(h.backends[h.backends.length - 1]).crash();
+      expect(states[states.length - 1]).toMatchObject({
+        phase: 'recovering',
+        semanticsRevision: 2,
+      });
+      await h.search.prepare(signal());
+    }
+    expectDefined(h.backends[h.backends.length - 1]).crash();
+    expect(states[states.length - 1]).toMatchObject({ phase: 'failed', semanticsRevision: 2 });
+    h.index.setStatusCatalog(h.statusCatalog);
+    expect(states[states.length - 1]).toMatchObject({ phase: 'failed', semanticsRevision: 3 });
+    vi.spyOn(h.scheduler, 'now').mockReturnValue(performance.now() + 6000);
+    await h.search.open({ kind: 'roots', query: 'needle' }, signal());
+    expect(states[states.length - 1]).toMatchObject({ phase: 'ready', semanticsRevision: 3 });
+    h.close();
+    expect(states[states.length - 1]).toMatchObject({ phase: 'disposed', semanticsRevision: 3 });
+    expect(states.every((state) => Number.isInteger(state.semanticsRevision))).toBe(true);
+  } finally {
+    unsubscribe();
+    h.close();
   }
 });

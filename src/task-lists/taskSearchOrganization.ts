@@ -19,7 +19,13 @@ import {
   selectTaskValuesSteps,
   type TaskOrganizationSettings,
 } from './TaskListSelector';
+export type TaskSearchMenuSummary = Pick<
+  TaskOrganizationRecord,
+  'status' | 'statusSymbol' | 'priority' | 'planning' | 'tags'
+>;
 export interface TaskSearchOccurrence {
+  readonly taskKey: string;
+  readonly menu: TaskSearchMenuSummary;
   readonly key: string;
   readonly address: TaskSearchAddress;
   readonly score: number;
@@ -112,10 +118,24 @@ function occurrence(
   record: TaskOrganizationRecord,
   group: TaskSearchOccurrence['group'],
   outgoing: boolean,
-  scores: ReadonlyMap<number, number>,
+  context: { scores: ReadonlyMap<number, number>; menus: Map<number, TaskSearchMenuSummary> },
 ): TaskSearchOccurrence {
   const physical = `${record.source.filePath}:${record.source.line}`;
+  const { scores, menus } = context;
+  let menu = menus.get(record.address.rootId);
+  if (menu === undefined) {
+    menu = {
+      status: record.status,
+      statusSymbol: record.statusSymbol,
+      priority: record.priority,
+      planning: record.planning,
+      tags: record.tags,
+    };
+    menus.set(record.address.rootId, menu);
+  }
   return {
+    taskKey: physical,
+    menu,
     key:
       outgoing && group !== null
         ? JSON.stringify(['task-occurrence', 'outgoing-link', group.key, physical])
@@ -129,6 +149,7 @@ function* appendOccurrences(
   records: readonly TaskOrganizationRecord[],
   group: TaskSearchOccurrence['group'],
   context: {
+    menus: Map<number, TaskSearchMenuSummary>;
     outgoing: boolean;
     scores: ReadonlyMap<number, number>;
     output: TaskSearchOccurrence[];
@@ -136,7 +157,7 @@ function* appendOccurrences(
 ): CollectionSteps<boolean> {
   const { output, outgoing, scores } = context;
   for (const record of records) {
-    output.push(occurrence(record, group, outgoing, scores));
+    output.push(occurrence(record, group, outgoing, { scores, menus: context.menus }));
     yield 'atom';
   }
   return true;
@@ -145,7 +166,11 @@ function* groupedOccurrences(
   input: TaskSearchOrganizationInput,
   records: readonly TaskOrganizationRecord[],
   scores: ReadonlyMap<number, number>,
-  output: { counts: Map<string, number>; occurrences: TaskSearchOccurrence[] },
+  output: {
+    counts: Map<string, number>;
+    occurrences: TaskSearchOccurrence[];
+    menus: Map<number, TaskSearchMenuSummary>;
+  },
 ): CollectionSteps<boolean> {
   const groups = yield* organizationGroups(records, input);
   if (groups === undefined) throw new Error('Grouping ended without a result');
@@ -155,7 +180,12 @@ function* groupedOccurrences(
     const appended = yield* appendOccurrences(
       group.tasks,
       { key: group.key, label: group.label },
-      { outgoing: input.view.list.groupBy === 'outgoing-link', scores, output: output.occurrences },
+      {
+        menus: output.menus,
+        outgoing: input.view.list.groupBy === 'outgoing-link',
+        scores,
+        output: output.occurrences,
+      },
     );
     if (appended === undefined) throw new Error('Occurrences ended without a result');
     group.tasks.length = 0;
@@ -166,6 +196,7 @@ function* groupedOccurrences(
 export function* organizeTaskSearch(
   input: TaskSearchOrganizationInput,
 ): CollectionSteps<TaskSearchOrganization> {
+  const menus = new Map<number, TaskSearchMenuSummary>();
   const scores = yield* scoreMap(input);
   if (scores === undefined) throw new Error('Scores ended without a result');
   let matching: TaskOrganizationRecord[] = [],
@@ -178,8 +209,17 @@ export function* organizeTaskSearch(
     const rootTotal = matching.length;
     const appended =
       input.view.list.groupBy === 'none'
-        ? yield* appendOccurrences(matching, null, { outgoing: false, scores, output: occurrences })
-        : yield* groupedOccurrences(input, matching, scores, { counts: groupCounts, occurrences });
+        ? yield* appendOccurrences(matching, null, {
+            menus,
+            outgoing: false,
+            scores,
+            output: occurrences,
+          })
+        : yield* groupedOccurrences(input, matching, scores, {
+            counts: groupCounts,
+            occurrences,
+            menus,
+          });
     if (appended === undefined) throw new Error('Organization ended without a result');
     const revealIndex = yield* revealOccurrence(input, occurrences, groupCounts);
     return {
@@ -191,6 +231,7 @@ export function* organizeTaskSearch(
     };
   } finally {
     scores.clear();
+    menus.clear();
     matching = [];
     occurrences = [];
     groupCounts = new Map();
@@ -256,6 +297,14 @@ function* revealOccurrence(
   const group = { key: 'search-reveal', label: 'Revealed from search' };
   counts.set(group.key, 1);
   occurrences.push({
+    taskKey: `${record.source.filePath}:${record.source.line}`,
+    menu: {
+      status: record.status,
+      statusSymbol: record.statusSymbol,
+      priority: record.priority,
+      planning: record.planning,
+      tags: record.tags,
+    },
     key: `search-reveal:${target.rootId}`,
     address: record.address,
     score: 0,

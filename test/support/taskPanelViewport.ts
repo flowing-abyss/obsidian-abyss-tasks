@@ -57,3 +57,15 @@ export function prepareTaskPanelViewport(el: HTMLElement): void {
     },
   });
 }
+
+/** Capacity from the fixture's measured cards, native viewport and existing 170px overscan. */
+export function taskCardMountBound(root: HTMLElement, pins = 0): number {
+  const scroll = root.querySelector<HTMLElement>('.abyss-center-scroll');
+  const heights = [...root.querySelectorAll<HTMLElement>('.abyss-task-card')].map(
+    (card) => card.getBoundingClientRect().height,
+  );
+  const minimum = Math.min(...heights);
+  if (scroll === null || !Number.isFinite(minimum) || minimum <= 0)
+    throw new Error('Expected positive native card/viewport geometry');
+  return Math.ceil((scroll.clientHeight + 2 * 170) / minimum) + 2 + pins;
+}

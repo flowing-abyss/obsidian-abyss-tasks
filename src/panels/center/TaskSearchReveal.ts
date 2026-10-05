@@ -12,6 +12,8 @@ export class TaskSearchReveal {
   #cancelPulse: (() => void) | undefined;
   #intent: number | undefined;
   #installing = false;
+  #consumedScroll = false;
+  #pulseUntil: number | undefined;
   constructor(
     private readonly owner: () => Window | null,
     private readonly intent: () => number,
@@ -39,6 +41,12 @@ export class TaskSearchReveal {
       this.clear();
     if (this.#intent !== this.intent()) this.cancelPulse();
   }
+  get consumedScroll(): boolean {
+    return this.#consumedScroll;
+  }
+  refresh(card: HTMLElement): void {
+    if (this.#consumedScroll) this.show(card);
+  }
   show(card: HTMLElement): void {
     const owner = this.owner();
     if (
@@ -48,12 +56,19 @@ export class TaskSearchReveal {
       !card.isConnected
     )
       return;
+    const now = (owner as Window & typeof window).Date.now();
+    if (!this.#consumedScroll) {
+      this.#consumedScroll = true;
+      this.#pulseUntil = now + 2000;
+      this.reveal(card);
+    }
     this.cancelPulse();
-    this.reveal(card);
+    if (this.#pulseUntil === undefined || now >= this.#pulseUntil) return;
     card.classList.add('is-search-revealed');
     const timer = owner.setTimeout(() => {
       this.cancelPulse();
-    }, 2000);
+      this.#pulseUntil = undefined;
+    }, this.#pulseUntil - now);
     this.#cancelPulse = () => {
       owner.clearTimeout(timer);
       card.classList.remove('is-search-revealed');
@@ -66,6 +81,8 @@ export class TaskSearchReveal {
   clear(): void {
     this.cancelPulse();
     this.#receipt = undefined;
+    this.#consumedScroll = false;
+    this.#pulseUntil = undefined;
     this.#intent = undefined;
     this.#installing = false;
   }

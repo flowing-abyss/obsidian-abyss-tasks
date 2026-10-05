@@ -2,6 +2,7 @@ import { MarkdownRenderer } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { expectDefined, flushMicrotasks, task, useRealMoment } from './helpers';
+import { taskCardMountBound } from './support/taskPanelViewport';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 import { taskViewportOwner } from './support/taskViewportOwner';
 
@@ -48,7 +49,7 @@ async function harness(
     h.dispose();
   });
   const complete = vi.spyOn(h.panel, 'completeTaskCardRender_abyssPrivate');
-  const mount = vi.spyOn(h.panel, 'mountSearchPage_abyssPrivate');
+  const mount = vi.spyOn(h.panel, 'mountSearchRows_abyssPrivate');
   const list = vi.spyOn(h.index, 'list');
   const openList = vi.spyOn(h.panel['navigation_abyssPrivate'], 'openList');
   before?.(h);
@@ -72,16 +73,15 @@ async function harness(
 }
 
 describe('Search supplied result viewport', () => {
-  it('keeps compact complete order and bounds supplied page mounts without querying or completing on scroll', async () => {
+  it('keeps compact complete order and bounds demanded mounts without querying or completing on scroll', async () => {
     const h = await harness();
     await h.completed();
-    // Task1 retains the preexisting 50-root allocation page; Task2 removes this UI limit.
     expect(h.root.dataset['searchLogicalResults']).toBe('1200');
-    const page = expectDefined(h.mount.mock.calls[0]?.[1]);
-    expect(page.roots.map((root) => root.task.root.source.line)).toEqual(
-      Array.from({ length: 50 }, (_, line) => line),
+    const organization = expectDefined(h.mount.mock.calls[0]?.[1]);
+    expect(organization.occurrences).toHaveLength(1200);
+    expect(h.results.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
+      taskCardMountBound(h.root, 1),
     );
-    expect(h.results.querySelectorAll('.abyss-task-card').length).toBeLessThan(50);
     const reads = h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0);
     const completions = h.complete.mock.calls.length;
     h.input.focus();
@@ -95,11 +95,18 @@ describe('Search supplied result viewport', () => {
     expect(h.input.isConnected).toBe(true);
     expect([h.input.value, h.input.selectionStart, h.input.selectionEnd]).toEqual(['needle', 1, 4]);
     expect(document.activeElement).toBe(h.input);
-    const card = expectDefined(h.results.querySelector<HTMLElement>('.abyss-task-card'));
+    await vi.waitFor(() => {
+      expect(h.results.querySelector('.abyss-task-card[data-line]')).not.toBeNull();
+    });
+    const card = expectDefined(h.results.querySelector<HTMLElement>('.abyss-task-card[data-line]'));
     const line = Number(card.dataset['line']);
     card.click();
     await vi.waitFor(() => {
       expect(h.state.get('mode')).toBe('tasks');
+    });
+    await vi.waitFor(() => {
+      h.clock.flush();
+      expect(h.root.dataset['searchPhase']).toBe('complete');
     });
     await h.completed();
     expect(h.openList).toHaveBeenCalledTimes(1);
@@ -130,8 +137,8 @@ describe('Search supplied result viewport', () => {
     const h = await harness(1);
     await h.completed();
     const card = expectDefined(h.results.querySelector<HTMLElement>('.abyss-task-card'));
-    const stale = expectDefined(h.mount.mock.calls[0]?.[3].onActivate);
-    const original = expectDefined(h.mount.mock.calls[0]?.[1].roots[0]?.task.root);
+    const stale = expectDefined(h.mount.mock.calls[0]?.[2].onActivate);
+    const original = expectDefined(h.mount.mock.calls[0]?.[1].occurrences[0]?.address);
     const add = vi.spyOn(card, 'addEventListener');
     for (let revision = 1; revision <= 4; revision++) {
       await h.replace(`- [ ] needle revision ${revision} 📅 2099-07-01`);
@@ -179,9 +186,13 @@ describe('Search supplied result viewport', () => {
     h.panel['renderFlat_abyssPrivate'](h.results, supplied, [], { onCard: () => undefined });
     const logical = h.panel['mountedRows_abyssPrivate'].rows;
     expect(logical.taskKeys).toHaveLength(50);
-    expect(logical.taskKeys.map((key) => logical.task(key)?.source.line)).toEqual(
-      Array.from({ length: 50 }, (_, i) => 249 - i),
-    );
+    expect(
+      logical.taskKeys.map((key) =>
+        'source' in (logical.task(key) ?? {})
+          ? (logical.task(key) as ReturnType<typeof task>).source.line
+          : undefined,
+      ),
+    ).toEqual(Array.from({ length: 50 }, (_, i) => 249 - i));
     expect(h.list).toHaveBeenCalledTimes(calls);
   });
 
@@ -203,7 +214,7 @@ describe('Search supplied result viewport', () => {
   it('contains an initial direct Search host failure without completing', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     const h = await harness(1, (ui) => {
-      vi.spyOn(ui.panel, 'mountSearchPage_abyssPrivate').mockImplementation(() => {
+      vi.spyOn(ui.panel, 'mountSearchRows_abyssPrivate').mockImplementation(() => {
         throw new Error('initial host');
       });
     });
@@ -217,10 +228,10 @@ describe('Search supplied result viewport', () => {
     const h = await harness(1);
     await h.completed();
     const old = expectDefined(h.mount.mock.calls[0]);
-    const activate = expectDefined(old[3].onActivate);
+    const activate = expectDefined(old[2].onActivate);
     h.query('needle 0');
     await h.completed();
-    activate(expectDefined(old[1].roots[0]?.task.root));
+    activate(expectDefined(old[1].occurrences[0]?.address));
     await flushMicrotasks();
     expect(h.openList).not.toHaveBeenCalled();
   });
@@ -228,7 +239,7 @@ describe('Search supplied result viewport', () => {
   it('does not complete a synchronous row mount failure', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const h = await harness(1, (ui) => {
-      vi.spyOn(ui.panel['taskCardRenderer_abyssPrivate'], 'mount').mockImplementation(() => {
+      vi.spyOn(ui.panel['taskCardRenderer_abyssPrivate'], 'mountInto').mockImplementation(() => {
         throw new Error('row mount');
       });
     });
@@ -276,8 +287,8 @@ describe('Search supplied result viewport', () => {
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
     const h = await harness(1, (ui) => {
       const renderer = ui.panel['taskCardRenderer_abyssPrivate'];
-      const mount = renderer.mount.bind(renderer);
-      vi.spyOn(renderer, 'mount').mockImplementation((...args) => {
+      const mount = renderer.mountInto.bind(renderer);
+      vi.spyOn(renderer, 'mountInto').mockImplementation((...args) => {
         const card = mount(...args);
         const update = card.update.bind(card);
         return {
@@ -341,6 +352,9 @@ describe('Search supplied result viewport', () => {
     h.results.scrollTop = 1800;
     h.results.dispatchEvent(new Event('scroll'));
     h.clock.flush();
+    await vi.waitFor(() => {
+      expect(rejectLive).toBeDefined();
+    });
     rejectLive(new Error('live text'));
     await flushMicrotasks();
     expect(diagnostic).toHaveBeenCalledTimes(1);
@@ -357,6 +371,9 @@ describe('Search supplied result viewport', () => {
     h.results.scrollTop = 0;
     h.results.dispatchEvent(new Event('scroll'));
     h.clock.flush();
+    await vi.waitFor(() => {
+      expect(rejectOld).toBeDefined();
+    });
     h.query('needle ');
     await h.completed();
     rejectOld(new Error('obsolete text'));
@@ -388,8 +405,8 @@ describe('Search supplied result viewport', () => {
     const h = await harness(1);
     await h.completed();
     h.mount.mockRestore();
-    const mount = h.panel['mountSearchPage_abyssPrivate'].bind(h.panel);
-    vi.spyOn(h.panel, 'mountSearchPage_abyssPrivate')
+    const mount = h.panel['mountSearchRows_abyssPrivate'].bind(h.panel);
+    vi.spyOn(h.panel, 'mountSearchRows_abyssPrivate')
       .mockImplementationOnce(() => {
         h.query('needle 0');
         throw new Error('obsolete pass');
@@ -422,12 +439,20 @@ it('scrolls active Search after transient popout adoption without requery or com
     owner.destroy();
   });
   owner.doc.body.append(h.root);
+  h.panel.onWindowMigrated();
   h.results.scrollTop = 2800.5;
   h.results.dispatchEvent(new owner.win.Event('scroll'));
   owner.flush();
+  await vi.waitFor(() => {
+    owner.flush();
+    expect(
+      [...h.results.querySelectorAll<HTMLElement>('.abyss-task-card')].some(
+        (card) => Number(card.dataset['line']) > 40,
+      ),
+    ).toBe(true);
+  });
   const cards = [...h.results.querySelectorAll<HTMLElement>('.abyss-task-card')];
-  expect(cards.some((card) => Number(card.dataset['line']) > 40)).toBe(true);
-  expect(cards.length).toBeLessThan(50);
+  expect(cards.length).toBeLessThanOrEqual(taskCardMountBound(h.root, 1));
   expect(h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0)).toBe(reads);
   expect(h.complete).toHaveBeenCalledTimes(completions);
   expect(h.input.value).toBe('needle');
@@ -439,16 +464,20 @@ it('scrolls active Search after transient popout adoption without requery or com
   expect(h.input.isConnected).toBe(true);
 });
 
-it('preserves the full supplied native order and far-window adoption independently of temporary Search allocation pages', async () => {
+it('preserves the full supplied native order and far-window adoption independently of compact Search allocation batches', async () => {
   const h = await harness();
   await h.completed();
   const supplied = h.index.list();
   h.panel['renderFlat_abyssPrivate'](h.results, [...supplied]);
   const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
   expect(surface.rows.taskKeys).toHaveLength(1200);
-  expect(surface.rows.taskKeys.map((key) => surface.rows.task(key)?.source.line)).toEqual(
-    Array.from({ length: 1200 }, (_, line) => line),
-  );
+  expect(
+    surface.rows.taskKeys.map((key) =>
+      'source' in (surface.rows.task(key) ?? {})
+        ? (surface.rows.task(key) as ReturnType<typeof task>).source.line
+        : undefined,
+    ),
+  ).toEqual(Array.from({ length: 1200 }, (_, line) => line));
   const queries = h.list.mock.calls.length;
   const reads = h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0);
   const completions = h.complete.mock.calls.length;
@@ -472,7 +501,7 @@ it('preserves the full supplied native order and far-window adoption independent
   owner.flush();
   const cards = [...h.results.querySelectorAll<HTMLElement>('.abyss-task-card')];
   expect(cards.some((card) => Number(card.dataset['line']) > 1100)).toBe(true);
-  expect(cards.length).toBeLessThan(100);
+  expect(cards.length).toBeLessThanOrEqual(taskCardMountBound(h.root, 1));
   expect(h.list).toHaveBeenCalledTimes(queries);
   expect(h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0)).toBe(reads);
   expect(h.complete).toHaveBeenCalledTimes(completions);
@@ -536,4 +565,54 @@ it('finishes deferred focused text after publication without reopening a sealed 
   expect(h.root.dataset['searchPhase']).toBe('complete');
   expect(old.isConnected).toBe(false);
   expect(h.results.textContent).toContain('needle');
+});
+
+it('does not resurrect a completed compact order when blank Search migrates', async () => {
+  const h = await harness(101);
+  await h.completed();
+  h.query('');
+  await h.completed();
+  const reads = h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0);
+  const owner = taskViewportOwner();
+  cleanup.push(() => {
+    owner.destroy();
+  });
+  owner.doc.body.append(h.root);
+  h.panel.onWindowMigrated();
+  await vi.waitFor(() => {
+    owner.flush();
+    expect(h.root.dataset['searchLogicalResults']).toBe('0');
+  });
+  expect(h.root.querySelector('.abyss-task-card')).toBeNull();
+  expect(h.root.textContent).toContain('Type to search');
+  expect(h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0)).toBe(reads);
+});
+
+it('retains the ordinary Tasks surface through the actual panel migration hook', async () => {
+  const h = await mountCanonicalSearchUi(
+    { 'ordinary.md': source(1200) },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  const owner = taskViewportOwner();
+  try {
+    const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
+    const reads = vi.spyOn(h.index, 'list');
+    const complete = vi.spyOn(h.panel, 'completeTaskCardRender_abyssPrivate');
+    owner.doc.body.append(h.root);
+    h.panel.onWindowMigrated();
+    expect(h.panel['taskSurface_abyssPrivate']?.surface).toBe(surface);
+    const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.scrollTop = 1200 * 64;
+    scroll.dispatchEvent(new owner.win.Event('scroll'));
+    await vi.waitFor(() => {
+      owner.flush();
+      expect(h.root.textContent).toContain('needle 1199');
+    });
+    expect(reads).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+    owner.destroy();
+  }
 });

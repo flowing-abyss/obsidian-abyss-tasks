@@ -237,7 +237,7 @@ it('actual browser backend messages keep canonical source-bearing revisions out'
   assertNoRevision(worker.outgoing, root.ref.revision);
   assertNoRevision(worker.incoming, root.ref.revision);
   assertNoRevision(page.hits, root.ref.revision);
-  expect((await service.resolvePage(page.hits, signal))[0]?.task.root.ref.revision).toBe(
+  expect((await service.resolveHits(page.hits, signal))[0]?.task.root.ref.revision).toBe(
     root.ref.revision,
   );
   service.dispose();
@@ -300,7 +300,7 @@ it('bounds actual browser runtime plus canonical browse vectors while open deliv
   source.ready([nodeDocuments(10)]);
   const service = new TaskSearchService({
     source,
-    reads: { observedTags: () => [], async *organization() {}, resolveSearchPage: async () => [] },
+    reads: { observedTags: () => [], async *organization() {}, resolveSearchHits: async () => [] },
     segment: fallbackSearchWords,
     scheduler: new ControlledSearchScheduler(),
     createBackend: () => BrowserTaskSearchBackend.create('source'),
@@ -343,7 +343,7 @@ it.each(['service', 'source', 'source-failure'] as const)(
       reads: {
         observedTags: () => [],
         async *organization() {},
-        resolveSearchPage: async () => [],
+        resolveSearchHits: async () => [],
       },
       segment: fallbackSearchWords,
       scheduler: new ControlledSearchScheduler(),
@@ -385,7 +385,7 @@ it('panel query cancellation leaves shared browser startup and bootstrap alive',
   const started = deferred<void>();
   const service = new TaskSearchService({
     source,
-    reads: { observedTags: () => [], async *organization() {}, resolveSearchPage: async () => [] },
+    reads: { observedTags: () => [], async *organization() {}, resolveSearchHits: async () => [] },
     segment: fallbackSearchWords,
     scheduler: new ControlledSearchScheduler(),
     createBackend: (_mode, signal) => {
@@ -423,7 +423,7 @@ it('does not reuse worker capacity for browse until actual release is acknowledg
   source.ready([nodeDocuments(10)]);
   const service = new TaskSearchService({
     source,
-    reads: { observedTags: () => [], async *organization() {}, resolveSearchPage: async () => [] },
+    reads: { observedTags: () => [], async *organization() {}, resolveSearchHits: async () => [] },
     segment: fallbackSearchWords,
     scheduler: new ControlledSearchScheduler(),
     createBackend: () => BrowserTaskSearchBackend.create('source'),
@@ -498,7 +498,7 @@ it.each(['open', 'read'] as const)(
       reads: {
         observedTags: () => [],
         async *organization() {},
-        resolveSearchPage: async () => [],
+        resolveSearchHits: async () => [],
       },
       segment: fallbackSearchWords,
       scheduler: new ControlledSearchScheduler(),

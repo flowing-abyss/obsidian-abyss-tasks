@@ -43,12 +43,12 @@ describe('bounded exact search projections', () => {
       throw new Error('must not rebase');
     });
     const detach = vi.spyOn(cloning, 'taskSnapshotWithStatuses');
-    const results = await index.resolveSearchPage([...page, ...page], signal());
+    const results = await index.resolveSearchHits([...page, ...page], signal());
     expect(detach).toHaveBeenCalledTimes(1);
     expect(new Set(results.map((result) => result.task.root)).size).toBe(1);
     const first = expectDefined(page[0]);
     await expect(
-      index.resolveSearchPage(
+      index.resolveSearchHits(
         [{ ...first, address: { ...first.address, childLines: [999] } }],
         signal(),
       ),
@@ -57,16 +57,16 @@ describe('bounded exact search projections', () => {
   it('200 node and 50 root cap', async () => {
     const index = await setup(Array.from({ length: 51 }, (_, i) => `- [ ] Root ${i}`).join('\n'));
     const page = hits(index);
-    await expect(index.resolveSearchPage(page, signal())).rejects.toMatchObject({
+    await expect(index.resolveSearchHits(page, signal())).rejects.toMatchObject({
       code: 'invalid-request',
     });
     await expect(
-      index.resolveSearchPage(
+      index.resolveSearchHits(
         Array.from({ length: 201 }, () => expectDefined(page[0])),
         signal(),
       ),
     ).rejects.toMatchObject({ code: 'invalid-request' });
-    expect(await index.resolveSearchPage(page.slice(0, 50), signal())).toHaveLength(50);
+    expect(await index.resolveSearchHits(page.slice(0, 50), signal())).toHaveLength(50);
   });
   it('organization yields no blocks or rich arrays and detaches nested values', async () => {
     const index = await setup('- [ ] Root #root\n  - [ ] Child #child\n');
@@ -111,7 +111,7 @@ describe('bounded exact search projections', () => {
     await expect(iterator.next()).rejects.toMatchObject({ code: 'stale' });
     const abort = new AbortController();
     abort.abort();
-    await expect(index.resolveSearchPage([], abort.signal)).rejects.toMatchObject({
+    await expect(index.resolveSearchHits([], abort.signal)).rejects.toMatchObject({
       code: 'aborted',
     });
   });
@@ -157,7 +157,7 @@ describe('bounded exact search projections', () => {
     const page = hits(index);
     expect(new Set(page.map((hit) => hit.address.rootId)).size).toBe(2);
     const detach = vi.spyOn(cloning, 'taskSnapshotWithStatuses');
-    const result = await index.resolveSearchPage([...page, ...page], signal());
+    const result = await index.resolveSearchHits([...page, ...page], signal());
     expect(detach).toHaveBeenCalledTimes(2);
     expect(result[0]?.task.root).toBe(result[2]?.task.root);
     expect(result[0]?.task.root).not.toBe(result[1]?.task.root);

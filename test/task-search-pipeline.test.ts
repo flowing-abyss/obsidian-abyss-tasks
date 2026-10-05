@@ -20,7 +20,7 @@ async function pipeline(query: string, text = markdown) {
   const cursor = await h.search.open({ kind: 'roots', query }, signal);
   const page = await h.search.read(cursor, 0, 50, signal);
   expect(page.hits).toHaveLength(1);
-  const hydrated = expectDefined((await h.search.resolvePage(page.hits, signal))[0]);
+  const hydrated = expectDefined((await h.search.resolveHits(page.hits, signal))[0]);
   return {
     ...h,
     hydrated,
@@ -183,7 +183,7 @@ it('rejects a replaced hit before context can project an unproven field', async 
     const cursor = await h.search.open({ kind: 'roots', query: 'budget' }, signal);
     const page = await h.search.read(cursor, 0, 50, signal);
     h.index.installCommittedContent('a.md', '- [ ] replacement budget');
-    await expect(h.search.resolvePage(page.hits, signal)).rejects.toMatchObject({ code: 'stale' });
+    await expect(h.search.resolveHits(page.hits, signal)).rejects.toMatchObject({ code: 'stale' });
   } finally {
     h.close();
   }

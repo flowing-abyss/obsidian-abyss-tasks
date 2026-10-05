@@ -6,7 +6,9 @@ import type { CalendarSettings, PropertyFilter } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import type { EffectiveTagGroup } from '../../tags/effectiveTagGroups';
 import { collectTaskTags } from '../../tags/taskTagCatalog';
+import type { TaskSearchMenuSummary } from '../../task-lists/taskSearchOrganization';
 import {
+  TaskSearchError,
   localDate,
   shiftLocalDate,
   subtreeRunning,
@@ -23,7 +25,14 @@ import type { TrackingSurface } from '../../ui/timeTracking/TimeBadge';
 import { calendarMutationTarget } from '../../views/calendarOccurrences';
 import type { TaskCommands } from './TaskCommands';
 
+export interface TaskMenuTargets {
+  readonly signal: AbortSignal;
+  readonly summaries: readonly TaskSearchMenuSummary[];
+  resolve(signal: AbortSignal): Promise<readonly TaskSnapshot[]>;
+}
 interface TaskMenusHost {
+  beginBulkResolution(card: HTMLElement): () => void;
+  reportTargetFailure(error: unknown): void;
   showTaskMenu(menu: Menu, event: MouseEvent, card: HTMLElement): void;
   applyBulkDuePreset(card: HTMLElement, tasks: readonly TaskSnapshot[], value: LocalDate): void;
   applyBulkTaskTags(
@@ -32,7 +41,11 @@ interface TaskMenusHost {
     add: readonly string[],
     remove: readonly string[],
   ): void;
-  openDatePicker(anchor: HTMLElement, tasks: readonly TaskSnapshot[]): void;
+  openDatePicker(
+    anchor: HTMLElement,
+    tasks: readonly TaskSnapshot[],
+    targets?: TaskMenuTargets,
+  ): void;
   openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void;
   addFilter(filter: PropertyFilter): void;
   tagCatalog(): {
@@ -281,45 +294,70 @@ export class TaskMenus {
     return '';
   }
 
-  #makeBulkTagRemoveHandler(
-    card: HTMLElement,
-    selectedTasks: TaskSnapshot[],
-    pinnedTag: string,
-  ): () => void {
-    return () => {
-      this.#options.host.applyBulkTaskTags(card, selectedTasks, [], [pinnedTag]);
-    };
-  }
-
-  #makeBulkTagAddHandler(
-    card: HTMLElement,
-    selectedTasks: TaskSnapshot[],
-    pinnedTag: string,
-  ): () => void {
-    return () => {
-      this.#options.host.applyBulkTaskTags(card, selectedTasks, [pinnedTag], []);
-    };
-  }
-
   #addBulkTagItem(
     menu: Menu,
     pinnedTag: string,
-    selectedTasks: TaskSnapshot[],
+    targets: TaskMenuTargets,
     card: HTMLElement,
   ): void {
-    const count = selectedTasks.filter((task) => task.tags.includes(pinnedTag)).length;
-    const allHave = count === selectedTasks.length;
-    const indicator = this.#bulkTagIndicator(count, selectedTasks.length);
-    const clickHandler = allHave
-      ? this.#makeBulkTagRemoveHandler(card, selectedTasks, pinnedTag)
-      : this.#makeBulkTagAddHandler(card, selectedTasks, pinnedTag);
+    const count = targets.summaries.filter((task) =>
+      task.tags.some((tag) => sameTag(tag, pinnedTag)),
+    ).length;
+    const allHave = count === targets.summaries.length;
     menu.addItem((item) =>
       item
-        .setTitle(`${indicator}${pinnedTag}  (${count}/${selectedTasks.length})`)
+        .setTitle(
+          `${this.#bulkTagIndicator(count, targets.summaries.length)}${pinnedTag}  (${count}/${targets.summaries.length})`,
+        )
         .setIcon('tag')
         .setSection('tags')
-        .onClick(clickHandler),
+        .onClick(() => {
+          this.#runTargets(
+            targets,
+            (tasks) => {
+              this.#options.host.applyBulkTaskTags(
+                card,
+                tasks,
+                allHave ? [] : [pinnedTag],
+                allHave ? [pinnedTag] : [],
+              );
+            },
+            card,
+          );
+        }),
     );
+  }
+  #runTargets(
+    targets: TaskMenuTargets,
+    action: (tasks: readonly TaskSnapshot[]) => void | Promise<unknown>,
+    card?: HTMLElement,
+  ): void {
+    const release = card === undefined ? undefined : this.#options.host.beginBulkResolution(card);
+    runAsyncAction(
+      (async () => {
+        let tasks: readonly TaskSnapshot[];
+        try {
+          if (!this.#targetsCurrent(targets)) return;
+          tasks = await targets.resolve(targets.signal);
+          if (!this.#targetsCurrent(targets)) return;
+        } catch (error) {
+          if (
+            !targets.signal.aborted &&
+            !(
+              error instanceof TaskSearchError &&
+              (error.code === 'aborted' || error.code === 'stale')
+            )
+          )
+            this.#options.host.reportTargetFailure(error);
+          return;
+        }
+        await action(tasks);
+      })().finally(() => release?.()),
+    );
+  }
+
+  #targetsCurrent(targets: TaskMenuTargets): boolean {
+    return !targets.signal.aborted;
   }
 
   #buildPrioritySubmenu(sub: Menu, task: TaskSnapshot): void {
@@ -336,16 +374,14 @@ export class TaskMenus {
     }
   }
 
-  #buildBulkPrioritySubmenu(sub: Menu, selectedTasks: TaskSnapshot[]): void {
+  #buildBulkPrioritySubmenu(sub: Menu, targets: TaskMenuTargets): void {
     for (const level of PRIORITY_LEVELS) {
       sub.addItem((si) => {
         si.setTitle(level.label)
           .setIcon('flag')
           .onClick(() => {
-            runAsyncAction(
-              Promise.all(
-                selectedTasks.map((t) => this.#options.commands.setPriority(t, level.value)),
-              ),
+            this.#runTargets(targets, (tasks) =>
+              Promise.all(tasks.map((t) => this.#options.commands.setPriority(t, level.value))),
             );
           });
         applyPriorityFlagColor(si, level.value);
@@ -374,8 +410,8 @@ export class TaskMenus {
     ).open();
   }
 
-  #openBulkTagPicker(selectedTasks: TaskSnapshot[]): void {
-    const tagSets = selectedTasks.map((t) => this.#getTaskTags(t));
+  #openBulkTagPicker(targets: TaskMenuTargets): void {
+    const tagSets = targets.summaries.map((t) => new Set(t.tags));
     const allTags = new Set(tagSets.flatMap((s) => [...s]));
     const hasAll = (tag: string): boolean =>
       tagSets.every((s) => [...s].some((candidate) => sameTag(candidate, tag)));
@@ -383,9 +419,9 @@ export class TaskMenus {
     const partialTags = new Set([...allTags].filter((tag) => !hasAll(tag)));
     const catalog = this.#options.host.tagCatalog();
     const handleBulkCommit = (toAdd: string[], toRemove: string[]): void => {
-      runAsyncAction(
+      this.#runTargets(targets, (tasks) =>
         Promise.all(
-          selectedTasks.map((task) => this.#options.commands.patchTaskTags(task, toAdd, toRemove)),
+          tasks.map((task) => this.#options.commands.patchTaskTags(task, toAdd, toRemove)),
         ),
       );
     };
@@ -400,29 +436,29 @@ export class TaskMenus {
     ).open();
   }
 
-  showBulkContextMenu(event: MouseEvent, card: HTMLElement, selectedTasks: TaskSnapshot[]): void {
-    const firstSelectedTask = selectedTasks[0];
+  showBulkContextMenu(event: MouseEvent, card: HTMLElement, targets: TaskMenuTargets): void {
+    const firstSelectedTask = targets.summaries[0];
     if (firstSelectedTask === undefined) return;
     const menu = new Menu();
     menu.addItem((item) =>
       item
-        .setTitle(`${selectedTasks.length} tasks selected`)
+        .setTitle(`${targets.summaries.length} tasks selected`)
         .setSection('header')
         .setDisabled(true),
     );
-    this.#addBulkDateMenuItems(menu, selectedTasks, card);
+    this.#addBulkDateMenuItems(menu, targets, card);
     for (const pinnedTag of this.#options.settings.pinnedTags) {
-      this.#addBulkTagItem(menu, pinnedTag, selectedTasks, card);
+      this.#addBulkTagItem(menu, pinnedTag, targets, card);
     }
-    this.#addBulkPropertyMenuItems(menu, selectedTasks, firstSelectedTask);
-    this.#addBulkActionMenuItems(menu, selectedTasks);
+    this.#addBulkPropertyMenuItems(menu, targets, firstSelectedTask);
+    this.#addBulkActionMenuItems(menu, targets);
     this.#options.host.showTaskMenu(menu, event, card);
   }
 
-  #addBulkDateMenuItems(menu: Menu, selectedTasks: TaskSnapshot[], card: HTMLElement): void {
+  #addBulkDateMenuItems(menu: Menu, targets: TaskMenuTargets, card: HTMLElement): void {
     const today = localDate(moment().format('YYYY-MM-DD'));
     const tomorrow = shiftLocalDate(today, 1);
-    const allHaveToday = selectedTasks.every((t) => t.planning.due === today);
+    const allHaveToday = targets.summaries.every((t) => t.planning.due === today);
     menu.addItem((item) =>
       item
         .setTitle('Today')
@@ -430,12 +466,18 @@ export class TaskMenus {
         .setSection('today')
         .setChecked(allHaveToday)
         .onClick(() => {
-          this.#options.host.applyBulkDuePreset(card, selectedTasks, today);
+          this.#runTargets(
+            targets,
+            (tasks) => {
+              this.#options.host.applyBulkDuePreset(card, tasks, today);
+            },
+            card,
+          );
         }),
     );
 
     if (tomorrow !== undefined) {
-      const allHaveTomorrow = selectedTasks.every((task) => task.planning.due === tomorrow);
+      const allHaveTomorrow = targets.summaries.every((task) => task.planning.due === tomorrow);
       menu.addItem((item) =>
         item
           .setTitle('Tomorrow')
@@ -443,7 +485,13 @@ export class TaskMenus {
           .setSection('today')
           .setChecked(allHaveTomorrow)
           .onClick(() => {
-            this.#options.host.applyBulkDuePreset(card, selectedTasks, tomorrow);
+            this.#runTargets(
+              targets,
+              (tasks) => {
+                this.#options.host.applyBulkDuePreset(card, tasks, tomorrow);
+              },
+              card,
+            );
           }),
       );
     }
@@ -453,41 +501,43 @@ export class TaskMenus {
         .setIcon('calendar-cog')
         .setSection('actions')
         .onClick(() => {
-          this.#options.host.openDatePicker(card, selectedTasks);
+          this.#runTargets(targets, (tasks) => {
+            this.#options.host.openDatePicker(card, tasks, targets);
+          });
         }),
     );
   }
 
   #addBulkPropertyMenuItems(
     menu: Menu,
-    selectedTasks: TaskSnapshot[],
-    firstSelectedTask: TaskSnapshot,
+    targets: TaskMenuTargets,
+    firstSelectedTask: TaskSearchMenuSummary,
   ): void {
     menu.addItem((item) => {
       item.setTitle('Priority').setIcon('arrow-up-narrow-wide').setSection('priority');
       const sub = getSubmenu(item);
-      this.#buildBulkPrioritySubmenu(sub, selectedTasks);
+      this.#buildBulkPrioritySubmenu(sub, targets);
     });
 
     menu.addItem((item) => {
       item.setTitle('Status').setIcon('check-square').setSection('priority');
       const sub = getSubmenu(item);
       buildStatusSubmenu(sub, firstSelectedTask, this.#options.statusRegistry, (c) => {
-        runAsyncAction(
-          Promise.all(selectedTasks.map((t) => this.#options.commands.setTaskStatus(t, c))),
+        this.#runTargets(targets, (tasks) =>
+          Promise.all(tasks.map((t) => this.#options.commands.setTaskStatus(t, c))),
         );
       });
     });
   }
 
-  #addBulkActionMenuItems(menu: Menu, selectedTasks: TaskSnapshot[]): void {
+  #addBulkActionMenuItems(menu: Menu, targets: TaskMenuTargets): void {
     menu.addItem((item) =>
       item
         .setTitle('Set tag…')
         .setIcon('hash')
         .setSection('actions')
         .onClick(() => {
-          this.#openBulkTagPicker(selectedTasks);
+          this.#openBulkTagPicker(targets);
         }),
     );
 
@@ -497,7 +547,7 @@ export class TaskMenus {
         .setIcon('archive')
         .setSection('danger')
         .onClick(() => {
-          runAsyncAction(this.#options.commands.archiveTasks(selectedTasks));
+          this.#runTargets(targets, (tasks) => this.#options.commands.archiveTasks(tasks));
         }),
     );
 
@@ -507,7 +557,7 @@ export class TaskMenus {
         .setIcon('trash-2')
         .setSection('danger')
         .onClick(() => {
-          runAsyncAction(this.#options.commands.deleteBulkTasks(selectedTasks));
+          this.#runTargets(targets, (tasks) => this.#options.commands.deleteBulkTasks([...tasks]));
         }),
     );
   }

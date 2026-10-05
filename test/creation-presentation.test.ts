@@ -1,4 +1,4 @@
-import { Notice, Platform, type App } from 'obsidian';
+import { MarkdownRenderer, Notice, Platform, type App } from 'obsidian';
 import postcss from 'postcss';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { AppState } from '../src/app/AppState';
@@ -14,7 +14,10 @@ import type {
   TaskSnapshot,
 } from '../src/tasks';
 import { localDate, taskReconciliationKey } from '../src/tasks';
-import { CreationPresentationController } from '../src/ui/creation/CreationPresentationController';
+import {
+  CreationPresentationController,
+  type CreationRevealRequest,
+} from '../src/ui/creation/CreationPresentationController';
 import { describeTaskCreationResult } from '../src/ui/taskCommandResult';
 import {
   applyTaskPresentationIdentity,
@@ -25,7 +28,9 @@ import type { CalendarOccurrence } from '../src/views/calendarOccurrences';
 import { applyOccurrenceDomState } from '../src/views/timegrid/renderTaskMeta';
 import { cssRuleContaining, cssValue } from './cssHelpers';
 import {
+  deferred,
   expectDefined,
+  flushMicrotasks,
   freshContainer,
   methodOf,
   task,
@@ -33,6 +38,8 @@ import {
   useRealMoment,
 } from './helpers';
 import { useTaskPanelViewport } from './support/taskPanelViewport';
+import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
+import { taskViewportOwner } from './support/taskViewportOwner';
 
 async function loadStylesFixture(): Promise<string> {
   if (!Platform.isDesktop) throw new Error('CSS fixture requires the desktop test runtime');
@@ -101,6 +108,7 @@ function controllerHarness(
 } {
   const host = freshContainer();
   const root = freshContainer();
+  activeDocument.body.append(root);
   measurePresentationRoot(root);
   const queries = queryHarness(resolution);
   const controller = new CreationPresentationController({
@@ -852,7 +860,7 @@ describe('scoped virtual creation reveal', () => {
     expect(reveal).not.toHaveBeenCalled();
     h.queries.setResolution(exact(snapshot));
     h.queries.emit();
-    expect(reveal).toHaveBeenCalledExactlyOnceWith(snapshot.ref);
+    expect(reveal).toHaveBeenCalledExactlyOnceWith(snapshot.ref, expect.anything());
     expect(target?.classList.contains('is-just-created')).toBe(true);
     target?.remove();
     h.controller.afterRender(h.root);
@@ -890,3 +898,325 @@ describe('scoped virtual creation reveal', () => {
     h.controller.destroy();
   });
 });
+
+describe('asynchronous creation receipts', () => {
+  it('holds one attempt across reentrant renders and presents directly on settlement', async () => {
+    const snapshot = task();
+    const h = controllerHarness(exact(snapshot));
+    const held = deferred<HTMLElement | undefined>();
+    let request: CreationRevealRequest | undefined;
+    const reveal = vi.fn((_ref: TaskRef, next: CreationRevealRequest) => {
+      request = next;
+      h.controller.afterRender(h.root);
+      return held.promise;
+    });
+    h.controller.afterRender(h.root);
+    const result = successfulCreation(snapshot);
+    h.controller.present(result, describeTaskCreationResult(result), {
+      isCurrent: () => true,
+      reveal,
+    });
+    h.controller.afterRender(h.root);
+    expect(reveal).toHaveBeenCalledTimes(1);
+    expect(request?.isCurrent()).toBe(true);
+    const target = renderIdentity(h.root, snapshot.ref);
+    held.resolve(target);
+    await held.promise;
+    await Promise.resolve();
+    expect(target.classList.contains('is-just-created')).toBe(true);
+    h.controller.destroy();
+  });
+  it.each(['source', 'ref', 'expiry', 'destroy', 'root'] as const)(
+    'aborts a held attempt on %s',
+    async (cause) => {
+      const snapshot = task();
+      const h = controllerHarness(exact(snapshot));
+      const held = deferred<HTMLElement | undefined>();
+      let request: CreationRevealRequest | undefined;
+      h.controller.afterRender(h.root);
+      const result = successfulCreation(snapshot);
+      h.controller.present(result, describeTaskCreationResult(result), {
+        isCurrent: () => true,
+        reveal: (_ref, next) => {
+          request = next;
+          return held.promise;
+        },
+      });
+      if (cause === 'source') h.queries.emit({ type: 'changed', files: ['unrelated.md'] });
+      if (cause === 'ref') {
+        h.queries.setResolution(
+          exact({ ...snapshot, ref: { ...snapshot.ref, revision: 'replaced' } }),
+        );
+        h.controller.afterRender(h.root);
+      }
+      if (cause === 'expiry') {
+        vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3001);
+        h.controller.afterRender(h.root);
+      }
+      if (cause === 'destroy') h.controller.destroy();
+      if (cause === 'root') h.controller.afterRender(freshContainer());
+      expect(request?.signal.aborted).toBe(true);
+      const target = renderIdentity(h.root, snapshot.ref);
+      held.resolve(target);
+      await held.promise;
+      await Promise.resolve();
+      expect(target.classList.contains('is-just-created')).toBe(false);
+      h.controller.destroy();
+      vi.restoreAllMocks();
+    },
+  );
+  it('repaints only remaining highlight duration without revealing again', () => {
+    const snapshot = task();
+    const h = controllerHarness(exact(snapshot));
+    const target = renderIdentity(h.root, snapshot.ref);
+    const reveal = vi.fn(() => target);
+    const result = successfulCreation(snapshot);
+    h.controller.afterRender(h.root);
+    h.controller.present(result, describeTaskCreationResult(result), {
+      isCurrent: () => true,
+      reveal,
+    });
+    expect(target.classList.contains('is-just-created')).toBe(true);
+    const start = Date.now();
+    target.remove();
+    vi.spyOn(Date, 'now').mockReturnValue(start + 700);
+    const next = renderIdentity(h.root, snapshot.ref);
+    h.controller.refreshMounted(h.root);
+    expect(next.classList.contains('is-just-created')).toBe(true);
+    expect(reveal).toHaveBeenCalledTimes(1);
+    vi.mocked(Date.now).mockReturnValue(start + 1101);
+    h.controller.refreshMounted(h.root);
+    expect(next.classList.contains('is-just-created')).toBe(false);
+    h.controller.destroy();
+    vi.restoreAllMocks();
+  });
+});
+
+it('waits for real compact creation hydration and Markdown, then repaints only remaining pulse on remount', async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.taskFilePath = 'created.md';
+  const h = await mountCanonicalSearchUi(
+    {
+      'many.md': Array.from({ length: 1200 }, (_, n) => `- [ ] needle ${n}`).join('\n'),
+      'created.md': '',
+    },
+    settings,
+    'tasks',
+    undefined,
+    true,
+  );
+  const hydration = deferred<void>(),
+    markdown = deferred<void>();
+  try {
+    h.query('needle');
+    await h.completed();
+    const complete = vi.spyOn(h.panel, 'completeTaskCardRender_abyssPrivate');
+    const actual = h.index.resolveSearchHits.bind(h.index);
+    const entered = deferred<void>();
+    vi.spyOn(h.index, 'resolveSearchHits').mockImplementation(async (hits, signal) => {
+      if (
+        hits.some((hit) => {
+          const file = h.source.files().find((file) => file.path === 'created.md');
+          return (
+            file !== undefined &&
+            [...h.source.nodes(file)].some((node) => node.rootId === hit.address.rootId)
+          );
+        })
+      ) {
+        entered.resolve();
+        await hydration.promise;
+      }
+      return actual(hits, signal);
+    });
+    const rendered = deferred<void>();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, holder) => {
+      holder.createEl('strong', { text });
+      if (text.includes('created needle')) {
+        rendered.resolve();
+        await markdown.promise;
+      }
+    });
+    expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')).click();
+    await flushMicrotasks();
+    const input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-capture-input'));
+    input.value = '**created needle**';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await entered.promise;
+    await h.completed();
+    const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
+    const reveal = vi.spyOn(surface, 'reveal');
+    expect(h.root.querySelector('.is-just-created')).toBeNull();
+    expect(reveal).not.toHaveBeenCalled();
+    const completions = complete.mock.calls.length;
+    hydration.resolve();
+    await rendered.promise;
+    expect(h.root.querySelector('.is-just-created')).toBeNull();
+    expect(reveal).not.toHaveBeenCalled();
+    markdown.resolve();
+    await vi.waitFor(() => {
+      expect(h.root.querySelector('.is-just-created')).not.toBeNull();
+    });
+    const created = expectDefined(h.index.list({ filePath: 'created.md' })[0]);
+    const card = expectDefined(h.root.querySelector<HTMLElement>('.is-just-created'));
+    expect(renderedTaskElements(h.root, created.ref)).toContain(card);
+    expect(document.activeElement).toBe(input);
+    expect(input.isConnected).toBe(true);
+    expect(reveal).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledTimes(completions);
+    const deadline = Date.now() + 1100;
+    const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.scrollTop = 0;
+    scroll.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => {
+      expect(card.isConnected).toBe(false);
+    });
+    scroll.scrollTop = 1200 * 64;
+    scroll.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => {
+      expect(h.root.querySelector('.is-just-created')).not.toBeNull();
+    });
+    expect(reveal).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledTimes(completions);
+    vi.spyOn(Date, 'now').mockReturnValue(deadline + 1);
+    h.creation?.refreshMounted(h.root);
+    expect(h.root.querySelector('.is-just-created')).toBeNull();
+  } finally {
+    hydration.resolve();
+    markdown.resolve();
+    h.dispose();
+  }
+});
+
+it.each(['hydration', 'markdown'] as const)(
+  'revokes the real compact creation %s wait on later capture, source and window intent',
+  async (stage) => {
+    for (const reason of [
+      'input',
+      'blur',
+      'filter',
+      'navigation',
+      'source',
+      'hidden',
+      'migration',
+    ] as const) {
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      settings.taskFilePath = 'created.md';
+      const h = await mountCanonicalSearchUi(
+        {
+          'many.md': Array.from({ length: 1200 }, (_, n) => `- [ ] needle ${n}`).join('\n'),
+          'created.md': '',
+        },
+        settings,
+        'tasks',
+        undefined,
+        true,
+      );
+      const hydration = deferred<void>(),
+        markdown = deferred<void>();
+      const entered = deferred<void>(),
+        rendered = deferred<void>();
+      let request: CreationRevealRequest | undefined;
+      let migrated: ReturnType<typeof taskViewportOwner> | undefined;
+      try {
+        h.query('needle');
+        await h.completed();
+        const presentation = expectDefined(h.creation);
+        const present = presentation.present.bind(presentation);
+        vi.spyOn(presentation, 'present').mockImplementation((result, description, authority) => {
+          if (authority !== undefined) {
+            const reveal = authority.reveal.bind(authority);
+            vi.spyOn(authority, 'reveal').mockImplementation((ref, current) => {
+              request = current;
+              return reveal(ref, current);
+            });
+          }
+          present(result, description, authority);
+        });
+        const actual = h.index.resolveSearchHits.bind(h.index);
+        vi.spyOn(h.index, 'resolveSearchHits').mockImplementation(async (hits, signal) => {
+          const created = h.source.files().find((file) => file.path === 'created.md');
+          if (
+            created !== undefined &&
+            hits.some((hit) =>
+              [...h.source.nodes(created)].some((node) => node.rootId === hit.address.rootId),
+            )
+          ) {
+            entered.resolve();
+            await hydration.promise;
+          }
+          return actual(hits, signal);
+        });
+        vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, holder) => {
+          holder.createEl('strong', { text });
+          if (text.includes('created needle')) {
+            rendered.resolve();
+            await markdown.promise;
+          }
+        });
+        expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')).click();
+        await flushMicrotasks();
+        const input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-capture-input'));
+        input.value = '**created needle**';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await entered.promise;
+        await h.completed();
+        const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
+        const reveal = vi.spyOn(surface, 'reveal');
+        await settleCreationStage(stage, hydration, rendered);
+        expect(request).toBeDefined();
+        if (reason === 'input') {
+          input.value = 'new draft';
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        if (reason === 'blur') {
+          const outside = document.body.createEl('input');
+          outside.focus();
+          outside.remove();
+        }
+        if (reason === 'filter') h.query('different');
+        if (reason === 'navigation') h.panel['navigation_abyssPrivate'].openList('upcoming');
+        if (reason === 'source')
+          h.index.installCommittedContent('created.md', '- [ ] replacement needle');
+        if (reason === 'hidden') {
+          h.root.hide();
+          h.root.ownerDocument.dispatchEvent(new Event('visibilitychange'));
+        }
+        if (reason === 'migration') {
+          migrated = taskViewportOwner();
+          migrated.doc.body.append(h.root);
+          h.panel.onWindowMigrated();
+        }
+        await vi.waitFor(() => {
+          expect(request?.signal.aborted).toBe(true);
+        });
+        hydration.resolve();
+        markdown.resolve();
+        await flushMicrotasks();
+        await flushMicrotasks();
+        expect(reveal).not.toHaveBeenCalled();
+        expect(h.root.querySelector('.is-just-created')).toBeNull();
+        expect(h.panel['creationAttempts_abyssPrivate'].size).toBe(0);
+        expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThan(1200);
+      } finally {
+        hydration.resolve();
+        markdown.resolve();
+        h.dispose();
+        migrated?.destroy();
+        vi.restoreAllMocks();
+      }
+    }
+  },
+);
+
+async function settleCreationStage(
+  stage: 'hydration' | 'markdown',
+  hydration: ReturnType<typeof deferred<void>>,
+  rendered: ReturnType<typeof deferred<void>>,
+): Promise<void> {
+  if (stage === 'markdown') {
+    hydration.resolve();
+    await rendered.promise;
+  }
+}

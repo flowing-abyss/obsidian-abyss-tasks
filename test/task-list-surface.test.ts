@@ -3,7 +3,11 @@ import {
   TaskListSurface,
   type TaskListPresentation,
 } from '../src/panels/task-list/TaskListSurface';
-import { buildTaskListRows, type TaskListRow } from '../src/panels/task-list/taskListRows';
+import {
+  buildTaskListRows,
+  indexedRows,
+  type TaskListRow,
+} from '../src/panels/task-list/taskListRows';
 import { expectDefined, freshContainer, task } from './helpers';
 import { taskViewportOwner } from './support/taskViewportOwner';
 
@@ -946,4 +950,22 @@ describe('explicit task reveal through destination measurement', () => {
       checkVisible();
     },
   );
+});
+
+it('exposes the actual sparse mounted keys and wakes existing measurements', () => {
+  const h = harness();
+  h.surface.update(rows(1200), presentation);
+  expect(h.surface.mountedKeys()).toEqual([...h.surface.cards()].map(([key]) => key));
+  const first = expectDefined(h.surface.mountedKeys()[0]);
+  h.heights.set(first, 300);
+  h.surface.refreshMeasurements();
+  expect(h.frames.size).toBeGreaterThan(0);
+  h.surface.destroy();
+});
+
+it('indexes compact numeric payloads without snapshot fields', () => {
+  const compact = indexedRows([{ kind: 'task', key: 'occurrence', taskKey: 'physical', task: 42 }]);
+  expect(compact.task('occurrence')).toBe(42);
+  expect(compact.physicalKey('occurrence')).toBe('physical');
+  expect(compact.occurrencesOf('physical')).toEqual(['occurrence']);
 });

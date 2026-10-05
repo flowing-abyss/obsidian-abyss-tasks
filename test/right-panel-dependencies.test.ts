@@ -3027,8 +3027,8 @@ it.each(['blocks', 'blocked-by'] as const)(
     if (direction === 'blocks') button(h.el, '[data-direction="blocks"]').click();
     const input = await search(h.el, 'Candidate');
     const held = deferred<void>(),
-      resolve = h.search.resolvePage.bind(h.search);
-    vi.spyOn(h.search, 'resolvePage').mockImplementationOnce(async (...args) => {
+      resolve = h.search.resolveHits.bind(h.search);
+    vi.spyOn(h.search, 'resolveHits').mockImplementationOnce(async (...args) => {
       await held.promise;
       return resolve(...args);
     });

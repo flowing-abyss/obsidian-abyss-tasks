@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CaptureSessions } from '../src/panels/center/CaptureSessions';
 import { CenterPanel } from '../src/panels/CenterPanel';
@@ -9,7 +9,10 @@ import type {
   TaskCaptureApplicationApi,
   TaskCreateSession,
 } from '../src/tasks';
-import { CreationPresentationController } from '../src/ui/creation/CreationPresentationController';
+import {
+  CreationPresentationController,
+  type CreationRevealRequest,
+} from '../src/ui/creation/CreationPresentationController';
 import {
   appWithFiles,
   deferred,
@@ -23,6 +26,23 @@ import { useTaskPanelViewport } from './support/taskPanelViewport';
 
 useRealMoment();
 useTaskPanelViewport();
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return {
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: this.clientWidth,
+      bottom: this.clientHeight,
+      width: this.clientWidth,
+      height: this.clientHeight,
+      toJSON: () => ({}),
+    };
+  });
+});
 afterEach(() => {
   vi.restoreAllMocks();
   activeDocument.body.empty();
@@ -299,3 +319,76 @@ it('keeps Mod+A and IME keys inside the actual centre capture input without blur
   expect(panel['rowSelection_abyssPrivate'].size).toBe(0);
   panel.destroy();
 });
+
+it.each(['blur', 'input', 'unmount', 'parent'] as const)(
+  'forwards the result request and cancels on %s',
+  async (cause) => {
+    const snapshot = task();
+    const held = deferred<HTMLElement | undefined>();
+    let forwarded: CreationRevealRequest | undefined;
+    let revealing: HTMLElement | undefined | Promise<HTMLElement | undefined>;
+    const parent = new AbortController();
+    let current = true;
+    const application: TaskApplicationApi & TaskCaptureApplicationApi = {
+      queries: taskQueryApi(),
+      execute: vi.fn(),
+      planCreate: async () => ({
+        type: 'ready',
+        destination: { filePath: 'tasks.md', insertion: { type: 'append' } },
+        execute: async () => ({
+          type: 'ok',
+          changed: true,
+          outcome: { type: 'task', task: snapshot },
+        }),
+      }),
+    };
+    const root = activeDocument.body.createDiv();
+    const captures = new CaptureSessions({
+      state: new AppState(),
+      settings: DEFAULT_SETTINGS,
+      application,
+      listNodes: () => [],
+      root: () => root,
+      captureReveal: () => ({
+        isCurrent: () => true,
+        reveal: (_ref, request) => {
+          forwarded = request;
+          return held.promise;
+        },
+      }),
+      onCreationResult: (_result, _description, authority) => {
+        revealing = authority?.reveal(snapshot.ref, {
+          signal: parent.signal,
+          isCurrent: () => current,
+        });
+      },
+    });
+    const host = root.createDiv();
+    const placement = { type: 'list', selectionKey: 'inbox' } as const;
+    captures.renderCaptureHost(host, placement);
+    captures.openCapture(placement, { type: 'default', source: 'search' });
+    await flushMicrotasks();
+    const input = expectDefined(host.querySelector<HTMLInputElement>('.abyss-capture-input'));
+    input.value = 'Created';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    expect(forwarded?.isCurrent()).toBe(true);
+    current = false;
+    expect(forwarded?.isCurrent()).toBe(false);
+    current = true;
+    if (cause === 'blur') input.blur();
+    if (cause === 'input') {
+      input.value = 'Next draft';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    if (cause === 'unmount') captures.unmountActiveCapture();
+    if (cause === 'parent') parent.abort();
+    expect(forwarded?.signal.aborted).toBe(true);
+    if (cause === 'input') expect(input.value).toBe('Next draft');
+    expect(await revealing).toBeUndefined();
+    held.resolve(undefined);
+    await flushMicrotasks();
+    captures.cancelActiveCapture();
+  },
+);

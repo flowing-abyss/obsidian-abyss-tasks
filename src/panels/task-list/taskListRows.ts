@@ -1,6 +1,6 @@
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import type { TaskLinkValues } from '../../task-lists/taskLinkValues';
-import { TaskSearchError, type TaskSnapshot } from '../../tasks';
+import { type TaskSnapshot } from '../../tasks';
 import { taskNodeLine, type TaskSelectionNode } from '../../ui/taskSelection';
 import {
   groupTasksByDate,
@@ -11,7 +11,6 @@ import {
   groupTasksByTag,
   type TaskGroup,
 } from '../../views/taskGrouping';
-import type { TaskSearchPageModel } from './TaskSearchPages';
 
 /** How the centre list groups its rows. */
 export type TaskListGrouping =
@@ -34,18 +33,18 @@ export interface TaskListGroupRow {
 }
 
 /** One visual occurrence of a root task, with its separate physical source identity. */
-export interface TaskListTaskRow {
+export interface TaskListTaskRow<T = TaskSnapshot> {
   readonly kind: 'task';
   readonly key: string;
   readonly taskKey: string;
-  readonly task: TaskSnapshot;
+  readonly task: T;
 }
 
-export type TaskListRow = TaskListGroupRow | TaskListTaskRow;
+export type TaskListRow<T = TaskSnapshot> = TaskListGroupRow | TaskListTaskRow<T>;
 
 /** The rows of one render in display order, with lookups for the task rows among them. */
-export interface TaskListRows {
-  readonly rows: readonly TaskListRow[];
+export interface TaskListRows<T = TaskSnapshot> {
+  readonly rows: ReadonlyArray<TaskListRow<T>>;
   /** The task occurrence keys in display order (the historic property name is retained). */
   readonly taskKeys: readonly string[];
   /** A task row's place in `taskKeys`; -1 for a header or an unknown key. */
@@ -53,7 +52,7 @@ export interface TaskListRows {
   occurrencesOf(taskKey: string): readonly string[];
   physicalKey(occurrenceKey: string): string | undefined;
   /** The snapshot a task row was built from; undefined for a header or an unknown key. */
-  task(key: string): TaskSnapshot | undefined;
+  task(key: string): T | undefined;
 }
 
 /** What a selection reads of the list: the task keys in display order and their places. */
@@ -145,12 +144,12 @@ function groupedRows(
   return rows;
 }
 
-function indexedRows(rows: readonly TaskListRow[]): TaskListRows {
+export function indexedRows<T>(rows: ReadonlyArray<TaskListRow<T>>): TaskListRows<T> {
   const taskKeys: string[] = [];
   const places = new Map<string, number>();
   const occurrences = new Map<string, string[]>();
   const physical = new Map<string, string>();
-  const snapshots = new Map<string, TaskSnapshot>();
+  const snapshots = new Map<string, T>();
   for (const row of rows) {
     if (row.kind !== 'task') continue;
     if (!places.has(row.key)) {
@@ -196,28 +195,3 @@ export function taskStackRowKey(stack: readonly TaskSelectionNode[]): string | u
 
 /** The order of a surface that has no list: no rows, so no ranges, arrows, or bulk menu. */
 export const NO_TASK_LIST_ROWS: TaskListRows = indexedRows([]);
-
-/** Builds only hydrated page occurrences, retaining full logical group counts on continuations. */
-export function buildTaskSearchPageRows(page: TaskSearchPageModel, groupBy: string): TaskListRows {
-  const roots = new Map(page.roots.map((root) => [root.hit.address.rootId, root.task.root]));
-  const rows: TaskListRow[] = [];
-  let previousGroup: string | undefined;
-  for (const occurrence of page.occurrences) {
-    const group = occurrence.group;
-    if (group !== null && group.key !== previousGroup) {
-      rows.push({
-        kind: 'group',
-        key: `group:${groupBy}:${group.key}`,
-        label: group.label,
-        count: page.groupCounts.get(group.key) ?? 0,
-        first: rows.length === 0,
-        ...(groupBy === 'source-note' ? { sourcePath: group.key } : {}),
-      });
-      previousGroup = group.key;
-    }
-    const task = roots.get(occurrence.address.rootId);
-    if (task === undefined) throw new TaskSearchError('stale', 'Page root missing');
-    rows.push(taskRow(task, occurrence.key));
-  }
-  return indexedRows(rows);
-}

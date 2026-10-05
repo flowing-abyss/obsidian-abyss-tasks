@@ -2,12 +2,14 @@ import { MarkdownRenderer } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { deferred, expectDefined, flushMicrotasks, useRealMoment } from './helpers';
+import { taskCardMountBound } from './support/taskPanelViewport';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
+import { taskViewportOwner } from './support/taskViewportOwner';
 useRealMoment();
 afterEach(() => vi.restoreAllMocks());
-it('bounds mounted pages and reaches every match without full list reads', async () => {
+it('reaches the logical end through bounded mounts without retrieving on scroll', async () => {
   const h = await mountCanonicalSearchUi(
-    { 'a.md': Array.from({ length: 101 }, (_, i) => `- [ ] needle ${i}`).join('\n') },
+    { 'a.md': Array.from({ length: 1200 }, (_, i) => `- [ ] needle ${i}`).join('\n') },
     structuredClone(DEFAULT_SETTINGS),
   );
   try {
@@ -20,16 +22,19 @@ it('bounds mounted pages and reaches every match without full list reads', async
     h.query('needle');
     await h.completed();
     expect(h.root.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);
-    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThan(50);
-    expect(h.root.dataset['searchLogicalResults']).toBe('101');
-    expectDefined(h.root.querySelector<HTMLButtonElement>('[aria-label="Next page"]')).click();
-    await h.completed();
-    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);
-    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThan(50);
-    expectDefined(h.root.querySelector<HTMLButtonElement>('[aria-label="Next page"]')).click();
-    await h.completed();
-    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
-    expect(h.root.textContent).toContain('needle 100');
+    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
+      taskCardMountBound(h.root, 1),
+    );
+    expect(h.root.dataset['searchLogicalResults']).toBe('1200');
+    expect(h.root.querySelector('[aria-label="Next page"]')).toBeNull();
+    const before = h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0);
+    const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.scrollTop = 1200 * 64;
+    scroll.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => {
+      expect(h.root.textContent).toContain('needle 1199');
+    });
+    expect(h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0)).toBe(before);
   } finally {
     h.dispose();
   }
@@ -115,7 +120,7 @@ it('keeps hydrated rows pending until the actual Markdown renderer settles', asy
   }
 });
 
-it('clears Tasks selection on page/query/sort changes without losing the inspector root', async () => {
+it('retains exact logical selection on same-query sort changes and clears it on query changes', async () => {
   const h = await mountCanonicalSearchUi(
     { 'a.md': Array.from({ length: 101 }, (_, i) => `- [ ] needle ${i}`).join('\n') },
     structuredClone(DEFAULT_SETTINGS),
@@ -124,38 +129,25 @@ it('clears Tasks selection on page/query/sort changes without losing the inspect
   try {
     h.query('needle');
     await h.completed();
-    const cards = () => [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')];
-    expectDefined(cards()[0]).click();
+    const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    card.click();
     const inspector = h.state.get('taskStack');
-    for (const card of cards().slice(0, 2))
-      card.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
-    expect(h.root.querySelectorAll('.abyss-multi-selected')).toHaveLength(2);
-    expectDefined(h.root.querySelector<HTMLButtonElement>('[aria-label="Next page"]')).click();
-    await h.completed();
-    expect(h.root.querySelectorAll('.abyss-multi-selected')).toHaveLength(0);
-    const execute = vi.spyOn(h.tasks, 'execute');
-    await h.panel['taskCommands_abyssPrivate'].deleteBulkTasks([]);
-    expect(execute).not.toHaveBeenCalled();
-    expect(h.root.textContent).toContain('Selection cleared');
-    expect(h.state.get('taskStack')).toEqual(inspector);
-    const last = expectDefined(cards()[cards().length - 1]);
-    last.click();
-    last.focus();
-    last.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true }),
-    );
-    expect(h.root.querySelectorAll('.abyss-multi-selected')).toHaveLength(2);
-    expectDefined(h.root.querySelector<HTMLButtonElement>('[aria-label="Previous page"]')).click();
-    await h.completed();
-    expect(h.root.querySelectorAll('.abyss-multi-selected')).toHaveLength(0);
+    card.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', metaKey: true, bubbles: true }));
+    expect(h.panel['rowSelection_abyssPrivate'].size).toBe(101);
+    const hydrate = vi.spyOn(h.index, 'resolveSearchHits');
+    h.panel['updateSelectionVisuals_abyssPrivate']();
+    expect(hydrate).not.toHaveBeenCalled();
     h.state.set('centerListViewState', {
       ...h.state.get('centerListViewState'),
       groupBy: 'priority',
     });
     await h.completed();
-    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);
-    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThan(50);
+    expect(h.panel['rowSelection_abyssPrivate'].size).toBe(101);
     expect(h.root.querySelector('.abyss-group-header')?.textContent).toContain('101');
+    h.query('needle 100');
+    await h.completed();
+    expect(h.panel['rowSelection_abyssPrivate'].size).toBe(0);
+    expect(h.state.get('taskStack')).toEqual(inspector);
   } finally {
     h.dispose();
   }
@@ -268,7 +260,8 @@ it('prepares the real canonical graph before first badge and retries a semantic 
     const summary = vi.spyOn(h.index, 'dependencySummary');
     h.query('needle');
     await entered.promise;
-    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(0);
+    expect(h.root.querySelector('.abyss-task-card[aria-busy="true"]')).not.toBeNull();
+    expect(h.root.querySelector('.abyss-status-marker')).toBeNull();
     expect(summary).not.toHaveBeenCalled();
     h.index.setStatusCatalog(h.statusCatalog);
     gate.resolve();
@@ -481,3 +474,149 @@ it.each([
     }
   },
 );
+
+it.each(['outside-focus', 'query', 'source', 'migration'] as const)(
+  'revokes delayed keyboard target authority after %s',
+  async (reason) => {
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': Array.from({ length: 1200 }, (_, n) => `- [ ] needle ${n}`).join('\n') },
+      structuredClone(DEFAULT_SETTINGS),
+      'tasks',
+    );
+    const held = deferred<void>();
+    let migrated: ReturnType<typeof taskViewportOwner> | undefined;
+    let outside: HTMLInputElement | undefined;
+    try {
+      h.query('needle');
+      await h.completed();
+      const acquire = h.index.resolveSearchHits.bind(h.index);
+      const entered = deferred<void>();
+      vi.spyOn(h.index, 'resolveSearchHits').mockImplementation(async (hits, signal) => {
+        entered.resolve();
+        await held.promise;
+        return acquire(hits, signal);
+      });
+      h.panel['rowSelection_abyssPrivate'].collapseTo('a.md:999');
+      h.root.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      await entered.promise;
+      expect(h.state.get('taskStack')).toHaveLength(0);
+      if (reason === 'outside-focus') {
+        outside = document.body.createEl('input');
+        outside.focus();
+      }
+      if (reason === 'query') h.query('different');
+      if (reason === 'source') h.index.installCommittedContent('a.md', '- [ ] replacement needle');
+      if (reason === 'migration') {
+        migrated = taskViewportOwner();
+        migrated.doc.body.append(h.root);
+        h.panel.onWindowMigrated();
+      }
+      held.resolve();
+      await flushMicrotasks();
+      if (outside !== undefined) expect(document.activeElement).toBe(outside);
+      expect(h.state.get('taskStack')).toHaveLength(0);
+    } finally {
+      held.resolve();
+      h.dispose();
+      migrated?.destroy();
+      outside?.remove();
+    }
+  },
+);
+
+it('opens and focuses the exact ready unmounted keyboard destination', async () => {
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': Array.from({ length: 1200 }, (_, n) => `- [ ] needle ${n}`).join('\n') },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  try {
+    h.query('needle');
+    await h.completed();
+    h.panel['rowSelection_abyssPrivate'].collapseTo('a.md:999');
+    h.root.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    await vi.waitFor(() => {
+      expect(h.state.get('taskStack')[0]?.title).toBe('needle 1000');
+    });
+    expect(document.activeElement).toBe(h.root.querySelector('[data-row-key="a.md:1000"]'));
+  } finally {
+    h.dispose();
+  }
+});
+
+it('refreshes retained real cards for child-only status semantics without changing exact source addresses or rebuilding search', async () => {
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': '- [ ] needle root\n  - [x] child' },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  try {
+    h.query('needle');
+    await h.completed();
+    const before = expectDefined(h.panel['taskSurface_abyssPrivate']?.search);
+    const key = expectDefined(before.order.taskKeys[0]);
+    const address = before.order.task(key)?.address;
+    const holder = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    const hydrate = vi.spyOn(h.index, 'resolveSearchHits');
+    const documents = vi.spyOn(h.source, 'documents');
+    const backend = h.backends.map((backend) => ({
+      backend,
+      operations: backend.operations.length,
+    }));
+    h.statusCatalog.replace(
+      h.statusCatalog
+        .all()
+        .map((rule) =>
+          rule.symbol === 'x' ? { ...rule, type: 'todo', defaultForType: false } : rule,
+        ),
+    );
+    h.index.setStatusCatalog(h.statusCatalog);
+    await h.completed();
+    const after = expectDefined(h.panel['taskSurface_abyssPrivate']?.search);
+    expect(after.order.task(key)?.address).toEqual(address);
+    expect(after.identity.semanticsRevision).toBe(before.identity.semanticsRevision + 1);
+    expect(after.order.task(key)?.menu.status).toBe(before.order.task(key)?.menu.status);
+    expect(h.root.querySelector('.abyss-task-card')).toBe(holder);
+    expect(await after.rows.snapshot(key, new AbortController().signal)).toMatchObject({
+      subtasks: [{ status: 'open' }],
+    });
+    expect(hydrate).toHaveBeenCalledTimes(1);
+    expect(documents).not.toHaveBeenCalled();
+    for (const item of backend)
+      expect(item.backend.operations.slice(item.operations).map((op) => op.type)).toEqual([
+        'publish',
+      ]);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('selects a Shift range across the complete compact order without selected-root hydration', async () => {
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': Array.from({ length: 101 }, (_, n) => `- [ ] needle ${n}`).join('\n') },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  try {
+    h.query('needle');
+    await h.completed();
+    const first = expectDefined(
+      h.root.querySelector<HTMLElement>('.abyss-task-card[data-line="0"]'),
+    );
+    first.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
+    const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.scrollTop = 101 * 64;
+    scroll.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => {
+      expect(h.root.querySelector('.abyss-task-card[data-line="100"]')).not.toBeNull();
+    });
+    const hydrate = vi.spyOn(h.index, 'resolveSearchHits');
+    expectDefined(
+      h.root.querySelector<HTMLElement>('.abyss-task-card[data-line="100"]'),
+    ).dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+    expect(h.panel['rowSelection_abyssPrivate'].size).toBe(101);
+    expect(h.root.querySelector('.abyss-selection-live')?.textContent).toContain('101');
+    expect(hydrate).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});

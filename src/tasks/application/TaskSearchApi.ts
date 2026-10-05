@@ -10,7 +10,7 @@ export interface TaskReadProjectionApi extends Pick<TaskQueryApi, 'observedTags'
     request: TaskOrganizationRequest,
     signal: AbortSignal,
   ): AsyncIterable<TaskOrganizationBatch>;
-  resolveSearchPage(
+  resolveSearchHits(
     hits: readonly TaskSearchHit[],
     signal: AbortSignal,
   ): Promise<readonly TaskSearchHydratedHit[]>;
@@ -45,7 +45,7 @@ export type TaskSearchCursor =
       readonly kind: 'nodes';
       readonly access: 'random';
     };
-export interface TaskSearchPage {
+export interface TaskSearchBatch {
   readonly cursor: TaskSearchCursor;
   readonly offset: number;
   readonly hits: readonly TaskSearchHit[];
@@ -55,12 +55,23 @@ export type TaskSearchState =
   | {
       readonly phase: 'idle' | 'waiting' | 'building' | 'updating' | 'recovering';
       readonly generation: number;
+      readonly semanticsRevision: number;
       readonly completedFiles: number;
       readonly totalFiles: number;
     }
-  | { readonly phase: 'ready'; readonly generation: number; readonly compatibility: boolean }
-  | { readonly phase: 'failed'; readonly generation: number; readonly episode: number }
-  | { readonly phase: 'disposed'; readonly generation: number };
+  | {
+      readonly phase: 'ready';
+      readonly generation: number;
+      readonly semanticsRevision: number;
+      readonly compatibility: boolean;
+    }
+  | {
+      readonly phase: 'failed';
+      readonly generation: number;
+      readonly semanticsRevision: number;
+      readonly episode: number;
+    }
+  | { readonly phase: 'disposed'; readonly generation: number; readonly semanticsRevision: number };
 export interface TaskSearchApi {
   prepare(signal: AbortSignal): Promise<void>;
   open(request: TaskSearchRequest, signal: AbortSignal): Promise<TaskSearchCursor>;
@@ -69,9 +80,9 @@ export interface TaskSearchApi {
     offset: number,
     limit: number,
     signal: AbortSignal,
-  ): Promise<TaskSearchPage>;
+  ): Promise<TaskSearchBatch>;
   release(cursor: TaskSearchCursor): void;
-  resolvePage(
+  resolveHits(
     hits: readonly TaskSearchHit[],
     signal: AbortSignal,
   ): Promise<readonly TaskSearchHydratedHit[]>;

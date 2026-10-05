@@ -16,10 +16,19 @@ export interface TaskSearchEngineHit {
   readonly score: number;
 }
 export type TaskSearchSourceState =
-  | { readonly type: 'initializing'; readonly generation: number }
-  | { readonly type: 'ready'; readonly generation: number }
-  | { readonly type: 'failed'; readonly generation: number; readonly cause: unknown }
-  | { readonly type: 'disposed'; readonly generation: number };
+  | {
+      readonly type: 'initializing';
+      readonly generation: number;
+      readonly semanticsRevision: number;
+    }
+  | { readonly type: 'ready'; readonly generation: number; readonly semanticsRevision: number }
+  | {
+      readonly type: 'failed';
+      readonly generation: number;
+      readonly semanticsRevision: number;
+      readonly cause: unknown;
+    }
+  | { readonly type: 'disposed'; readonly generation: number; readonly semanticsRevision: number };
 export interface TaskSearchFileVersion {
   readonly path: string;
   readonly version: number;
@@ -29,9 +38,10 @@ export type TaskSearchSourceEvent =
   | {
       readonly type: 'files';
       readonly generation: number;
+      readonly semanticsRevision: number;
       readonly files: ReadonlyArray<{ readonly path: string; readonly version: number | null }>;
     }
-  | { readonly type: 'semantics'; readonly generation: number };
+  | { readonly type: 'semantics'; readonly generation: number; readonly semanticsRevision: number };
 export interface TaskSearchSource {
   ensureReady(): Promise<void>;
   subscribe(listener: (event: TaskSearchSourceEvent) => void): {

@@ -44,7 +44,7 @@ const categories: ReadonlyArray<{
             throw new Error('Unused');
           },
           release: () => {},
-          resolvePage: async () => [],
+          resolveHits: async () => [],
           subscribe: () => () => {},
         },
         selectExisting: async () => ({ type: 'failed' }),

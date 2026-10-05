@@ -280,7 +280,7 @@ class DependencySession implements TaskDependencySearchSession {
     signal: AbortSignal,
   ): Promise<readonly DependencySearchOption[]> {
     if (included.length === 0) return [];
-    const hydrated = await this.ports.search.resolvePage(
+    const hydrated = await this.ports.search.resolveHits(
       included.map(({ hit }) => hit),
       signal,
     );
@@ -306,7 +306,7 @@ class DependencySession implements TaskDependencySearchSession {
 
   resolve(address: TaskSearchAddress, signal: AbortSignal): Promise<TaskNodeSnapshot> {
     return this.#operate(signal, async (requestSignal) => {
-      const hydrated = await this.ports.search.resolvePage([{ address, score: 0 }], requestSignal);
+      const hydrated = await this.ports.search.resolveHits([{ address, score: 0 }], requestSignal);
       this.#check(requestSignal);
       const checked = await this.#eligibility([address], requestSignal);
       this.#check(requestSignal);

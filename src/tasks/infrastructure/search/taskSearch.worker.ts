@@ -91,7 +91,7 @@ function mutation(value: unknown): boolean {
       return false;
   }
 }
-function page(value: Record<string, unknown>): boolean {
+function batch(value: Record<string, unknown>): boolean {
   return (
     cursor(value['cursor']) &&
     integer(value['offset']) &&
@@ -107,7 +107,7 @@ function operation(value: Record<string, unknown>): boolean {
     case 'release':
       return cursor(value['cursor']);
     case 'read':
-      return page(value);
+      return batch(value);
     case 'open':
       return (
         integer(value['generation']) &&

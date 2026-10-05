@@ -9813,7 +9813,6 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   font-size: var(--font-ui-small);
 }
 
-.abyss-panel-view .abyss-search-paging,
 .abyss-dep-search .abyss-search-paging {
   display: flex;
   align-items: center;
@@ -9821,7 +9820,6 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   gap: var(--size-4-2);
 }
 
-.abyss-panel-view .abyss-search-paging > span,
 .abyss-dep-search .abyss-search-paging > span {
   flex: 1 1 10em;
 }

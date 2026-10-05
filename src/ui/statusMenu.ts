@@ -55,7 +55,7 @@ export function closeStatusPopovers(ownerDocument: Document): void {
  */
 export function buildStatusSubmenu(
   sub: Menu,
-  task: TaskSnapshot | SubtaskSnapshot,
+  task: Pick<TaskSnapshot, 'statusSymbol'>,
   registry: StatusRegistry,
   onPickStatus: (char: string) => void,
 ): void {

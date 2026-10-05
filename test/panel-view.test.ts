@@ -177,7 +177,7 @@ describe('PanelView centre composition', () => {
       DEFAULT_SETTINGS,
       makeTagManager(app),
       application.index,
-      application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+      application.tasks,
       application.statusRegistry,
       onSaveSettings,
       undefined,
@@ -225,7 +225,7 @@ describe('PanelView dependency command convergence', () => {
       DEFAULT_SETTINGS,
       makeTagManager(app),
       application.index,
-      application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+      application.tasks,
       application.statusRegistry,
     );
     await view.onOpen();
@@ -279,7 +279,7 @@ describe('PanelView dependency command convergence', () => {
         DEFAULT_SETTINGS,
         makeTagManager(app),
         application.index,
-        application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        application.tasks,
         application.statusRegistry,
       );
       await view.onOpen();
@@ -363,7 +363,7 @@ describe('PanelView inspector focus continuity', () => {
       DEFAULT_SETTINGS,
       makeTagManager(app),
       application.index,
-      application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+      application.tasks,
       application.statusRegistry,
     );
     await view.onOpen();
@@ -477,7 +477,7 @@ async function openRemovalPanel(
     settings,
     makeTagManager(app, settings),
     application.index,
-    application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+    application.tasks,
     application.statusRegistry,
     async () => {},
     undefined,
@@ -1469,7 +1469,7 @@ describe('PanelView', () => {
         settings,
         tagManager,
         taskApplication.index,
-        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.tasks,
         taskApplication.statusRegistry,
       );
       vi.spyOn(app.workspace, 'getActiveViewOfType').mockImplementation((type) =>
@@ -2298,7 +2298,7 @@ describe('PanelView', () => {
             },
           }) satisfies TaskCommandResult,
       );
-      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const application = taskApplication.tasks;
       vi.spyOn(application, 'planCreate').mockResolvedValue({
         type: 'ready',
         destination: { filePath: 'capture.md', insertion: { type: 'append' } },
@@ -2666,7 +2666,7 @@ describe('PanelView', () => {
     it('opens and owns Quick Capture without changing mode, then refocuses only from panel chrome', async () => {
       document.body.appendChild(view.containerEl);
       workspaceState(app).activeLeaf = leaf;
-      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const application = taskApplication.tasks;
       const execute = vi.fn().mockResolvedValue({
         type: 'ok',
         changed: true,
@@ -2806,8 +2806,7 @@ describe('PanelView', () => {
             outcome: { type: 'task', task: created },
           } satisfies TaskCommandResult;
         });
-        const captureApplication = taskApplication.tasks as TaskApplicationApi &
-          TaskCaptureApplicationApi;
+        const captureApplication = taskApplication.tasks;
         const planCreate = vi.spyOn(captureApplication, 'planCreate').mockResolvedValue({
           type: 'ready',
           destination: { filePath: 'capture.md', insertion: { type: 'append' } },
@@ -2848,6 +2847,7 @@ describe('PanelView', () => {
     );
 
     it('reveals a created task without smooth scrolling and with the short highlight under reduced motion', async () => {
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rect(0, 0, 700, 64));
       const reveal = vi.spyOn(TaskListSurface.prototype, 'reveal');
       const consoleError = vi.spyOn(console, 'error');
       const matchMedia = vi.fn(() => ({ matches: true }));
@@ -2855,8 +2855,7 @@ describe('PanelView', () => {
       const setTimeout = vi.spyOn(window, 'setTimeout');
       const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       state.set('selectedList', 'inbox');
-      const captureApplication = taskApplication.tasks as TaskApplicationApi &
-        TaskCaptureApplicationApi;
+      const captureApplication = taskApplication.tasks;
       vi.spyOn(captureApplication, 'planCreate').mockResolvedValue({
         type: 'ready',
         destination: { filePath: 'capture.md', insertion: { type: 'append' } },
@@ -3004,7 +3003,7 @@ describe('PanelView', () => {
     });
 
     it('keeps planCreate on the PanelView application wrapper', async () => {
-      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const application = taskApplication.tasks;
       const planCreate = vi.spyOn(application, 'planCreate');
       const center = (
         view as unknown as {
@@ -3507,7 +3506,7 @@ describe('PanelView', () => {
         settings,
         tagManager,
         taskApplication.index,
-        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.tasks,
         taskApplication.statusRegistry,
       );
       const titleEl = createDiv();
@@ -3538,7 +3537,7 @@ describe('PanelView', () => {
         settings,
         tagManager,
         taskApplication.index,
-        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.tasks,
         taskApplication.statusRegistry,
       );
       Object.assign(fresh, { titleEl: createDiv() });
@@ -3577,7 +3576,7 @@ describe('PanelView', () => {
         settings,
         tagManager,
         taskApplication.index,
-        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.tasks,
         taskApplication.statusRegistry,
       );
       Object.assign(fresh, { titleEl: createDiv() });
@@ -3650,7 +3649,7 @@ describe('PanelView', () => {
         settings,
         makeTagManager(app, settings),
         taskApplication.index,
-        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.tasks,
         taskApplication.statusRegistry,
       );
       vi.spyOn(app.workspace, 'getActiveViewOfType').mockImplementation((type) =>
@@ -3744,7 +3743,7 @@ describe('PanelView', () => {
 
     it('opens Q for the focused range occurrence, freezes its project, and restores cell focus', async () => {
       const pending = deferred<TaskCreateSession>();
-      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const application = taskApplication.tasks;
       const planCreate = vi.spyOn(application, 'planCreate').mockReturnValue(pending.promise);
       const alphaStatus = cell('Projects/A.md', 'status');
       const betaStatus = cell('Projects/B.md', 'status');
@@ -3787,7 +3786,7 @@ describe('PanelView', () => {
     });
 
     it('uses the projects default destination when the table has no selection', async () => {
-      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const application = taskApplication.tasks;
       const planCreate = vi.spyOn(application, 'planCreate');
       const center = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
 
@@ -3865,7 +3864,7 @@ describe('PanelView', () => {
     });
 
     it('leaves Q in a project cell editor instead of opening Quick Capture', () => {
-      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const application = taskApplication.tasks;
       const planCreate = vi.spyOn(application, 'planCreate');
       const start = cell('Projects/B.md', 'start');
       start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
@@ -3910,7 +3909,7 @@ describe('PanelView', () => {
         DEFAULT_SETTINGS,
         makeTagManager(app),
         taskApplication.index,
-        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.tasks,
         taskApplication.statusRegistry,
       );
       await view.onOpen();
@@ -4324,7 +4323,7 @@ describe('PanelView', () => {
         DEFAULT_SETTINGS,
         makeTagManager(app),
         taskApplication.index,
-        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.tasks,
         taskApplication.statusRegistry,
       );
       await view.onOpen();
@@ -4404,7 +4403,7 @@ it('injects the actual canonical service into a mounted PanelView Search owner',
     settings,
     makeTagManager(app),
     application.index,
-    application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+    application.tasks,
     application.statusRegistry,
     undefined,
     undefined,
@@ -4472,7 +4471,7 @@ async function prewarmPanel(initialize = true, markdown = '- [ ] needle') {
       structuredClone(DEFAULT_SETTINGS),
       makeTagManager(h.app),
       h.index,
-      h.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+      h.tasks,
       h.statusRegistry,
       undefined,
       undefined,
@@ -4489,6 +4488,11 @@ async function prewarmPanel(initialize = true, markdown = '- [ ] needle') {
     vi.spyOn(view.contentEl, 'onWindowMigrated').mockImplementation((callback) => {
       migrate = callback;
       return () => {};
+    });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return rect(0, 0, 700, this.hasClass('abyss-task-card') ? 64 : 900);
     });
     await view.onOpen();
     return { view, migrate };
@@ -4707,7 +4711,7 @@ describe('PanelView useful shared prewarm', () => {
 });
 
 it.each(['search', 'tasks'] as const)(
-  'PanelView host CSS/project notifications retain a completed %s request and page',
+  'PanelView host CSS/project notifications retain a completed %s request and viewport',
   async (mode) => {
     const h = await prewarmPanel();
     try {
@@ -4732,8 +4736,13 @@ it.each(['search', 'tasks'] as const)(
       input.dispatchEvent(new Event('input', { bubbles: true }));
       const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
       await searchUiCompleted(root);
-      expectDefined(root.querySelector<HTMLButtonElement>('[aria-label="Next page"]')).click();
-      await searchUiCompleted(root);
+      const scroll = expectDefined(root.querySelector<HTMLElement>('.abyss-center-scroll'));
+      scroll.scrollTop = 50 * 64;
+      scroll.dispatchEvent(new Event('scroll'));
+      await vi.waitFor(() => {
+        h.frames.present();
+        expect(root.textContent).toContain('needle 50');
+      });
       const card = expectDefined(root.querySelector<HTMLElement>('.abyss-task-card'));
       if (mode === 'tasks') {
         card.click();
@@ -4869,7 +4878,7 @@ it.each(['edit', 'rename', 'delete'] as const)(
       );
       expect(cursor.total).toBe({ delete: 0, edit: 2, rename: 1 }[action]);
       const page = await h.search.read(cursor, 0, 50, new AbortController().signal);
-      const hydrated = await h.search.resolvePage(page.hits, new AbortController().signal);
+      const hydrated = await h.search.resolveHits(page.hits, new AbortController().signal);
       expect(hydrated.map((hit) => hit.task.root.source.filePath)).toEqual(
         { delete: [], edit: ['tasks.md', 'tasks.md'], rename: ['renamed.md'] }[action],
       );

@@ -966,6 +966,7 @@ export class TaskIndex
 {
   private readonly searchEpoch_abyssPrivate = searchEpoch();
   private searchGeneration_abyssPrivate = 0;
+  private searchSemanticsRevision_abyssPrivate = 0;
   private nextSearchId_abyssPrivate = 1;
   private searchFailure_abyssPrivate: { readonly cause: unknown } | undefined;
   private readonly searchListeners_abyssPrivate = new Set<(event: TaskSearchSourceEvent) => void>();
@@ -1026,6 +1027,7 @@ export class TaskIndex
     this.publishSearch_abyssPrivate({
       type: 'semantics',
       generation: ++this.searchGeneration_abyssPrivate,
+      semanticsRevision: ++this.searchSemanticsRevision_abyssPrivate,
     });
   }
 
@@ -1159,10 +1161,20 @@ export class TaskIndex
 
   private searchState_abyssPrivate(): TaskSearchSourceState {
     const generation = this.searchGeneration_abyssPrivate;
-    if (this.destroyed_abyssPrivate) return { type: 'disposed', generation };
+    const semanticsRevision = this.searchSemanticsRevision_abyssPrivate;
+    if (this.destroyed_abyssPrivate) return { type: 'disposed', generation, semanticsRevision };
     if (this.searchFailure_abyssPrivate !== undefined)
-      return { type: 'failed', generation, cause: this.searchFailure_abyssPrivate.cause };
-    return { type: this.initialized_abyssPrivate ? 'ready' : 'initializing', generation };
+      return {
+        type: 'failed',
+        generation,
+        semanticsRevision,
+        cause: this.searchFailure_abyssPrivate.cause,
+      };
+    return {
+      type: this.initialized_abyssPrivate ? 'ready' : 'initializing',
+      generation,
+      semanticsRevision,
+    };
   }
 
   private publishSearch_abyssPrivate(event: TaskSearchSourceEvent): void {
@@ -1301,13 +1313,13 @@ export class TaskIndex
     );
   }
 
-  async resolveSearchPage(
+  async resolveSearchHits(
     hits: readonly TaskSearchHit[],
     signal: AbortSignal,
   ): Promise<readonly TaskSearchHydratedHit[]> {
     await this.awaitSearchReady_abyssPrivate(signal);
     if (hits.length > 200 || new Set(hits.map((hit) => hit.address.rootId)).size > 50)
-      throw new TaskSearchError('invalid-request', 'Search page too large');
+      throw new TaskSearchError('invalid-request', 'Search batch too large');
     const roots = new Map<number, TaskSnapshot>();
     const output: TaskSearchHydratedHit[] = [];
     for (const hit of hits) {
@@ -1427,7 +1439,12 @@ export class TaskIndex
         ),
       );
     }
-    this.publishSearch_abyssPrivate({ type: 'files', generation, files: [{ path, version }] });
+    this.publishSearch_abyssPrivate({
+      type: 'files',
+      generation,
+      semanticsRevision: this.searchSemanticsRevision_abyssPrivate,
+      files: [{ path, version }],
+    });
   }
 
   private *dependencyAssembly_abyssPrivate(

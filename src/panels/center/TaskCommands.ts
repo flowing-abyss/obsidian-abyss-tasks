@@ -39,7 +39,7 @@ interface TaskCommandsOptions {
   readonly interactionOwnership: InteractionOwnershipPort;
   readonly projectManager: ProjectManager | null;
   readonly selection: TaskRowSelection;
-  readonly rows: () => TaskListRows;
+  readonly rows: () => Pick<TaskListRows, 'occurrencesOf'>;
   readonly onSelectionChanged: () => void;
 }
 
@@ -51,7 +51,7 @@ export class TaskCommands {
   readonly #interactionOwnership: InteractionOwnershipPort;
   readonly #projectManager: ProjectManager | null;
   readonly #selection: TaskRowSelection;
-  readonly #rows: () => TaskListRows;
+  readonly #rows: () => Pick<TaskListRows, 'occurrencesOf'>;
   readonly #onSelectionChanged: () => void;
   readonly #completionConfirmationAbortController = new AbortController();
 

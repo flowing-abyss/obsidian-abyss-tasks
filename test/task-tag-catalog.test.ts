@@ -103,12 +103,12 @@ describe('query fixture read defaults', () => {
   it('empty search fixtures report generation zero and reject invented nonempty reads', async () => {
     const empty = taskQueryApi();
     const signal = new AbortController().signal;
-    expect(await empty.resolveSearchPage([], signal)).toEqual([]);
+    expect(await empty.resolveSearchHits([], signal)).toEqual([]);
     expect(
       await empty.organization({ expectedGeneration: 0 }, signal)[Symbol.asyncIterator]().next(),
     ).toEqual({ done: false, value: { generation: 0, items: [] } });
     const nonempty = taskQueryApi({ list: () => [task()] });
-    await expect(nonempty.resolveSearchPage([], signal)).rejects.toThrow(
+    await expect(nonempty.resolveSearchHits([], signal)).rejects.toThrow(
       'Search reads require configuredTaskApplication',
     );
     await expect(

@@ -1,13 +1,13 @@
 import type {
   TaskSearchApi,
+  TaskSearchBatch,
   TaskSearchCursor,
-  TaskSearchPage,
   TaskSearchRequest,
   TaskSearchState,
 } from '../../application/TaskSearchApi';
 import type {
   TaskSearchBackend,
-  TaskSearchBackendPage,
+  TaskSearchBackendBatch,
   TaskSearchServiceOptions,
 } from '../../application/TaskSearchBackend';
 import type { TaskSearchEngineRequest } from '../../application/TaskSearchEngine';
@@ -24,7 +24,7 @@ import {
   type TaskSearchHit,
   type TaskSearchHydratedHit,
 } from '../../domain/taskSearchTypes';
-import { validateSearchPage } from './TaskSearchRuntime';
+import { validateSearchBatch } from './TaskSearchRuntime';
 
 interface Ownership {
   cursor: TaskSearchCursor;
@@ -59,18 +59,23 @@ export class TaskSearchService implements TaskSearchApi {
   private state: TaskSearchState = {
     phase: 'idle',
     generation: 0,
+    semanticsRevision: 0,
     completedFiles: 0,
     totalFiles: 0,
   };
-  private sourceState: TaskSearchSourceState = { type: 'initializing', generation: 0 };
+  private sourceState: TaskSearchSourceState = {
+    type: 'initializing',
+    generation: 0,
+    semanticsRevision: 0,
+  };
   private readonly listeners = new Set<(state: TaskSearchState) => void>();
   private readonly wake = new Set<() => void>();
   private readonly versions = new Map<string, number>();
   private readonly dirty = new Map<string, number | null>();
   private readonly cursors = new Map<string, Ownership>();
-  private readonly pendingPages = new Map<
+  private readonly pendingBatches = new Map<
     string,
-    { end: number | undefined; page: Promise<TaskSearchBackendPage> }
+    { end: number | undefined; batch: Promise<TaskSearchBackendBatch> }
   >();
   private readonly browse = new Map<string, readonly TaskSearchEngineHit[]>();
   private readonly retired = new Map<string, TaskSearchErrorCode>();
@@ -86,6 +91,7 @@ export class TaskSearchService implements TaskSearchApi {
   private wanted = false;
   private published = -1;
   private generation = 0;
+  private semanticsRevision = 0;
   private readonly cursorEpoch = [...crypto.getRandomValues(new Uint32Array(4))].join('-');
   private sequence = 0;
   private clock = 0;
@@ -123,6 +129,7 @@ export class TaskSearchService implements TaskSearchApi {
     this.emit({
       phase,
       generation: this.generation,
+      semanticsRevision: this.semanticsRevision,
       completedFiles: this.completed,
       totalFiles: this.versions.size,
     });
@@ -135,6 +142,8 @@ export class TaskSearchService implements TaskSearchApi {
     const previousSource = this.sourceState.type;
     const previousGeneration = this.generation;
     this.generation = generation;
+    this.semanticsRevision =
+      event.type === 'state' ? event.state.semanticsRevision : event.semanticsRevision;
     if (generation !== previousGeneration) this.invalidate('stale');
     if (event.type === 'state' && !this.acceptState(event.state)) return;
     if (event.type === 'files') this.acceptFiles(event.files);
@@ -161,7 +170,12 @@ export class TaskSearchService implements TaskSearchApi {
   ): void {
     if (failed !== undefined) {
       if (wasSourceFailed && this.sourceState.type === 'ready' && this.wanted) this.beginRecovery();
-      else this.emit({ ...failed, generation: this.generation });
+      else
+        this.emit({
+          ...failed,
+          generation: this.generation,
+          semanticsRevision: this.semanticsRevision,
+        });
       return;
     }
     let phase: 'idle' | 'waiting' | 'updating' = 'idle';
@@ -263,7 +277,12 @@ export class TaskSearchService implements TaskSearchApi {
         checkAbort(signal);
         if (generation !== this.generation || this.dirty.size > 0) continue;
         this.published = generation;
-        this.emit({ phase: 'ready', generation, compatibility: this.mode === 'inline' });
+        this.emit({
+          phase: 'ready',
+          generation,
+          semanticsRevision: this.semanticsRevision,
+          compatibility: this.mode === 'inline',
+        });
         return;
       }
       const [path, version] = entry.value;
@@ -388,7 +407,12 @@ export class TaskSearchService implements TaskSearchApi {
     this.stopBackend();
     this.invalidate('unavailable');
     this.nextRecoveryAt = this.options.scheduler.now() + 5000;
-    this.emit({ phase: 'failed', generation: this.generation, episode: ++this.episode });
+    this.emit({
+      phase: 'failed',
+      generation: this.generation,
+      semanticsRevision: this.semanticsRevision,
+      episode: ++this.episode,
+    });
   }
   private beginRecovery(): void {
     const signal = this.run.signal;
@@ -644,7 +668,7 @@ export class TaskSearchService implements TaskSearchApi {
     offset: number,
     limit: number,
     signal: AbortSignal,
-  ): Promise<TaskSearchPage> {
+  ): Promise<TaskSearchBatch> {
     this.checkGeneration(cursor.generation, signal);
     const owner = this.cursors.get(cursor.id);
     if (owner === undefined)
@@ -652,17 +676,17 @@ export class TaskSearchService implements TaskSearchApi {
         this.retired.get(cursor.id) ?? 'cursor-expired',
         'Search cursor unavailable',
       );
-    validateSearchPage(cursor, owner.cursor, offset, limit);
+    validateSearchBatch(cursor, owner.cursor, offset, limit);
     this.checkForwardOffset(owner, offset);
     const run = this.run;
-    const reading = this.numericPage(owner, offset, limit).catch((error: unknown) => {
+    const reading = this.numericBatch(owner, offset, limit).catch((error: unknown) => {
       const failure = this.operationError(error, owner, run, signal);
       if (!signal.aborted) this.retire(owner.cursor.id, failure.code);
       throw failure;
     });
-    const page = await abortable(reading, signal);
-    const ids = page.hits;
-    const done = page.done;
+    const batch = await abortable(reading, signal);
+    const ids = batch.hits;
+    const done = batch.done;
     this.checkGeneration(cursor.generation, signal);
     if (!this.cursors.has(cursor.id))
       throw new TaskSearchError(
@@ -676,62 +700,62 @@ export class TaskSearchService implements TaskSearchApi {
     });
     this.checkForwardOffset(owner, offset);
     owner.nextOffset = offset + ids.length;
-    if (this.pendingPages.get(cursor.id)?.end === owner.nextOffset)
-      this.pendingPages.delete(cursor.id);
+    if (this.pendingBatches.get(cursor.id)?.end === owner.nextOffset)
+      this.pendingBatches.delete(cursor.id);
     owner.lastUsed = ++this.clock;
     if (cursor.access === 'forward' && done) this.release(cursor);
     return { cursor: owner.cursor, offset, hits, done };
   }
-  private async numericPage(
+  private async numericBatch(
     owner: Ownership,
     offset: number,
     limit: number,
-  ): Promise<TaskSearchBackendPage> {
+  ): Promise<TaskSearchBackendBatch> {
     if (owner.backend !== undefined && owner.backendCursor !== undefined)
-      return this.backendPage(owner, offset, limit);
+      return this.backendBatch(owner, offset, limit);
     const hits = (this.browse.get(owner.cursor.id) ?? []).slice(offset, offset + limit);
     return { cursor: owner.cursor, offset, hits, done: offset + hits.length >= owner.cursor.total };
   }
-  private backendPage(
+  private backendBatch(
     owner: Ownership,
     offset: number,
     limit: number,
-  ): Promise<TaskSearchBackendPage> {
+  ): Promise<TaskSearchBackendBatch> {
     if (owner.backend === undefined || owner.backendCursor === undefined)
       throw new TaskSearchError('unavailable', 'Backend unavailable');
     if (owner.cursor.access === 'random')
       return owner.backend.read(owner.backendCursor, offset, limit);
-    const pending = this.pendingPages.get(owner.cursor.id);
+    const pending = this.pendingBatches.get(owner.cursor.id);
     if (pending !== undefined)
-      return pending.page.then((page) => this.pendingSlice(page, offset, limit));
-    const entry: { end: number | undefined; page: Promise<TaskSearchBackendPage> } = {
+      return pending.batch.then((batch) => this.pendingBatch(batch, offset, limit));
+    const entry: { end: number | undefined; batch: Promise<TaskSearchBackendBatch> } = {
       end: undefined,
-      page: owner.backend
+      batch: owner.backend
         .read(owner.backendCursor, offset, limit)
-        .then((page) => {
-          entry.end = page.offset + page.hits.length;
-          return page;
+        .then((batch) => {
+          entry.end = batch.offset + batch.hits.length;
+          return batch;
         })
         .catch((error: unknown) => {
-          if (this.pendingPages.get(owner.cursor.id) === entry)
-            this.pendingPages.delete(owner.cursor.id);
+          if (this.pendingBatches.get(owner.cursor.id) === entry)
+            this.pendingBatches.delete(owner.cursor.id);
           throw error;
         }),
     };
-    this.pendingPages.set(owner.cursor.id, entry);
-    return entry.page;
+    this.pendingBatches.set(owner.cursor.id, entry);
+    return entry.batch;
   }
-  private pendingSlice(
-    page: TaskSearchBackendPage,
+  private pendingBatch(
+    batch: TaskSearchBackendBatch,
     offset: number,
     limit: number,
-  ): TaskSearchBackendPage {
-    const hits = page.hits.slice(offset - page.offset, offset - page.offset + limit);
+  ): TaskSearchBackendBatch {
+    const hits = batch.hits.slice(offset - batch.offset, offset - batch.offset + limit);
     return {
-      cursor: page.cursor,
+      cursor: batch.cursor,
       offset,
       hits,
-      done: page.done && offset + hits.length === page.offset + page.hits.length,
+      done: batch.done && offset + hits.length === batch.offset + batch.hits.length,
     };
   }
   private checkForwardOffset(owner: Ownership, offset: number): void {
@@ -757,7 +781,7 @@ export class TaskSearchService implements TaskSearchApi {
     }
     this.cursors.delete(id);
     this.browse.delete(id);
-    this.pendingPages.delete(id);
+    this.pendingBatches.delete(id);
     this.retired.set(id, code);
     if (this.retired.size > 32) {
       const oldest = this.retired.keys().next();
@@ -767,12 +791,12 @@ export class TaskSearchService implements TaskSearchApi {
   private invalidate(code: TaskSearchErrorCode): void {
     for (const id of this.cursors.keys()) this.retire(id, code);
   }
-  async resolvePage(
+  async resolveHits(
     hits: readonly TaskSearchHit[],
     signal: AbortSignal,
   ): Promise<readonly TaskSearchHydratedHit[]> {
     this.check(signal);
-    return this.options.reads.resolveSearchPage(hits, signal);
+    return this.options.reads.resolveSearchHits(hits, signal);
   }
   dispose(): void {
     if (this.state.phase === 'disposed') return;
@@ -782,7 +806,11 @@ export class TaskSearchService implements TaskSearchApi {
     this.dirty.clear();
     this.versions.clear();
     this.retired.clear();
-    this.emit({ phase: 'disposed', generation: this.generation });
+    this.emit({
+      phase: 'disposed',
+      generation: this.generation,
+      semanticsRevision: this.semanticsRevision,
+    });
     this.listeners.clear();
   }
 }

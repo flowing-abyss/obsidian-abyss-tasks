@@ -10,6 +10,7 @@ import { collectTaskNodeTags } from '../src/tags/taskTagCatalog';
 import type {
   SubtaskSnapshot,
   TaskApplicationApi,
+  TaskCaptureApplicationApi,
   TaskCommentSnapshot,
   TaskDependencyQueryApi,
   TaskIndexEvent,
@@ -288,7 +289,7 @@ export function taskQueryApi(overrides: Partial<TestTaskQueries> = {}): TestTask
         throw new TaskSearchError('stale', 'Task generation changed');
       yield { generation: 0, items: [] };
     },
-    resolveSearchPage: async (hits, signal) => {
+    resolveSearchHits: async (hits, signal) => {
       if (signal.aborted) throw new TaskSearchError('aborted', 'Search cancelled');
       if (hits.length > 0 || api.listNodes().length > 0)
         throw new Error('Search reads require configuredTaskApplication');
@@ -843,7 +844,7 @@ export function configuredTaskApplication(
   } = {},
 ): {
   readonly index: TaskIndex;
-  readonly tasks: TaskApplicationApi;
+  readonly tasks: TaskApplicationApi & TaskCaptureApplicationApi;
   readonly statusCatalog: StatusCatalog;
   readonly statusRegistry: StatusRegistry;
 } {

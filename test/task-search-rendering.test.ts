@@ -5,6 +5,7 @@ import type { SubtaskSnapshot, TaskSnapshot } from '../src/tasks';
 import * as contextModule from '../src/tasks';
 import { LinkEditModal } from '../src/ui/LinkEditModal';
 import { deferred, expectDefined, useRealMoment } from './helpers';
+import { taskCardMountBound } from './support/taskPanelViewport';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 
 useRealMoment();
@@ -342,7 +343,7 @@ it.each([
   }
 });
 
-it('extracts contexts only for the mounted 50 roots and rejects detached context activation', async () => {
+it('extracts contexts only for the demanded roots and rejects detached context activation', async () => {
   const context = vi.spyOn(contextModule, 'taskSearchContext');
   const h = await mountCanonicalSearchUi(
     {
@@ -356,17 +357,27 @@ it('extracts contexts only for the mounted 50 roots and rejects detached context
     expect(context).not.toHaveBeenCalled();
     h.query('needle');
     await h.completed();
-    expect(context).toHaveBeenCalledTimes(50);
+    const mounted = h.root.querySelectorAll('.abyss-task-card').length;
+    expect(context).toHaveBeenCalledTimes(mounted);
     expect(h.root.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);
-    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThan(50);
+    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
+      taskCardMountBound(h.root, 1),
+    );
     const old = expectDefined(
       h.root.querySelector<HTMLButtonElement>('.abyss-search-context button'),
     );
-    expectDefined(h.root.querySelector<HTMLButtonElement>('[aria-label="Next page"]')).click();
-    await h.completed();
-    expect(context).toHaveBeenCalledTimes(100);
-    expect(new Set(context.mock.calls.map((args) => args[0].source.line)).size).toBe(100);
-    const hydration = vi.spyOn(h.search, 'resolvePage');
+    const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.scrollTop = 101 * 64;
+    scroll.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => {
+      expect(h.root.textContent).toContain('root 100');
+    });
+    expect(context.mock.calls.length).toBeGreaterThan(mounted);
+    expect(context.mock.calls.length).toBeLessThan(101);
+    expect(new Set(context.mock.calls.map((args) => args[0].source.line)).size).toBe(
+      context.mock.calls.length,
+    );
+    const hydration = vi.spyOn(h.search, 'resolveHits');
     old.click();
     expect(hydration).not.toHaveBeenCalled();
     expect(h.state.get('mode')).toBe('search');

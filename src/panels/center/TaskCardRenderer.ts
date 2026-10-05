@@ -37,7 +37,11 @@ import {
   type TaskDependencyLookup,
 } from '../../ui/taskDependencyPresentation';
 import { applyTaskPresentationIdentity } from '../../ui/taskPresentationIdentity';
-import type { TaskRenderScope, TaskTextRender } from '../../ui/taskRenderScope';
+import {
+  TaskRenderScope,
+  type TaskRenderOutcome,
+  type TaskTextRender,
+} from '../../ui/taskRenderScope';
 import { taskNodeRef } from '../../ui/taskSelection';
 import type { TrackingTickerState } from '../../ui/timeTracking/TrackingTicker';
 import { formatTrackedDuration } from '../../ui/timeTracking/formatTracked';
@@ -69,8 +73,14 @@ interface TaskCardFlags {
   readonly reportFailure?: ((error: unknown) => void) | undefined;
 }
 export interface TaskCardMount {
+  readonly settled: Promise<TaskRenderOutcome>;
   readonly element: HTMLElement;
-  update(task: TaskSnapshot, tagGroups: readonly EffectiveTagGroup[], flags: TaskCardFlags): void;
+  update(
+    task: TaskSnapshot,
+    tagGroups: readonly EffectiveTagGroup[],
+    flags: TaskCardFlags,
+    search?: TaskCardSearchPresentation,
+  ): void;
   destroy(): void;
 }
 interface CardState {
@@ -79,14 +89,17 @@ interface CardState {
   readonly flags: TaskCardFlags;
 }
 interface CardContents {
+  readonly settled: Promise<TaskRenderOutcome>;
   update(current: CardState): void;
   destroy(): void;
 }
 interface TaskTextMount {
+  readonly settled: Promise<TaskRenderOutcome>;
   update(task: TaskSnapshot, flags: TaskCardFlags): void;
   destroy(): void;
 }
 interface CardContentContext {
+  readonly track?: (render: TaskTextRender) => void;
   readonly flags?: TaskCardFlags;
   readonly component: Component;
   readonly currentTask: () => TaskSnapshot;
@@ -172,14 +185,24 @@ export class TaskCardRenderer {
     container: HTMLElement,
     task: TaskSnapshot,
     tagGroups: readonly EffectiveTagGroup[],
-    flags: TaskCardFlags,
+    ...[flags, search]: [TaskCardFlags, TaskCardSearchPresentation?]
+  ): TaskCardMount {
+    return this.mountInto(container.createDiv(), task, tagGroups, flags, search);
+  }
+
+  mountInto(
+    card: HTMLElement,
+    task: TaskSnapshot,
+    tagGroups: readonly EffectiveTagGroup[],
+    ...[flags, search]: [TaskCardFlags, TaskCardSearchPresentation?]
   ): TaskCardMount {
     const markdown = new Component();
     markdown.load();
-    let current = { task, tagGroups, flags };
+    let current = { task, tagGroups, flags: search === undefined ? flags : { ...flags, search } };
     let live = true;
     let failed = false;
-    const card = container.createDiv({ cls: 'abyss-task-card', attr: { tabindex: '-1' } });
+    card.addClass('abyss-task-card');
+    card.tabIndex = -1;
     const context: CardContentContext = {
       component: markdown,
       currentTask: () => current.task,
@@ -221,13 +244,25 @@ export class TaskCardRenderer {
     }
     return {
       element: card,
-      update: (nextTask, nextGroups, nextFlags) => {
+      get settled() {
+        return content.settled;
+      },
+      update: (nextTask, nextGroups, nextFlags, search) => {
         if (!live) return;
         if (!this.#sameOccurrence(current, { task: nextTask, flags: nextFlags }))
           throw new Error('Cannot rebind a task card to a different source occurrence');
-        current = { task: nextTask, tagGroups: nextGroups, flags: nextFlags };
+        current = {
+          task: nextTask,
+          tagGroups: nextGroups,
+          flags: search === undefined ? nextFlags : { ...nextFlags, search },
+        };
         failed = false;
-        content.update(current);
+        try {
+          content.update(current);
+        } catch (error) {
+          destroy();
+          throw error;
+        }
       },
       destroy,
     };
@@ -257,7 +292,25 @@ export class TaskCardRenderer {
         });
       }
     });
+    let settled: Promise<TaskRenderOutcome> = Promise.resolve({ type: 'ready' });
+    let titleReceipt: Promise<TaskRenderOutcome> | undefined;
+    let descriptionReceipt: Promise<TaskRenderOutcome> | undefined;
     return {
+      get settled() {
+        if (
+          titleReceipt !== titleMount.settled ||
+          descriptionReceipt !== descriptionMount.settled
+        ) {
+          titleReceipt = titleMount.settled;
+          descriptionReceipt = descriptionMount.settled;
+          settled = Promise.all([titleReceipt, descriptionReceipt]).then(
+            (outcomes) =>
+              outcomes.find((outcome) => outcome.type === 'failed') ??
+              outcomes.find((outcome) => outcome.type === 'cancelled') ?? { type: 'ready' },
+          );
+        }
+        return settled;
+      },
       update: (current) => {
         this.#identity(card, current);
         this.#refreshBadges(titleRow, title, current.task, context);
@@ -284,20 +337,23 @@ export class TaskCardRenderer {
   ): TaskTextMount {
     let live = true;
     let latest: TaskSnapshot | undefined;
-    let flags: TaskCardFlags | undefined;
+    let flags: TaskCardFlags = { selected: false, showDelete: false };
     let rendered: TaskSnapshot | undefined;
     let renderedFlags: TaskCardFlags | undefined;
     let owner: Component | undefined;
     let generation = 0;
+    let receipt: Promise<TaskRenderOutcome> = Promise.resolve({ type: 'ready' });
+    let controller: AbortController | undefined;
     const release = (): void => {
       generation++;
+      controller?.abort();
       if (owner !== undefined) context.component.removeChild(owner);
     };
     const refresh = (): void => {
       if (
         !live ||
         latest === undefined ||
-        (rendered === latest && renderedFlags?.search === flags?.search)
+        (rendered === latest && renderedFlags?.search === flags.search)
       )
         return;
       if (element.contains(element.ownerDocument.activeElement)) return;
@@ -306,13 +362,23 @@ export class TaskCardRenderer {
       const version = generation;
       rendered = latest;
       renderedFlags = flags;
-      const currentFlags = flags;
+      controller = new AbortController();
+      const scope = new TaskRenderScope(controller.signal);
+      const external = flags.renderScope;
       render(latest, {
         ...context,
         component: owner,
-        ...(flags === undefined ? {} : { flags }),
-        isCurrent: () => live && generation === version && currentFlags?.isCurrent?.() !== false,
+        flags: {
+          ...flags,
+          signal: controller.signal,
+        },
+        track: (render) => {
+          scope.track(render);
+          external?.track(render);
+        },
+        isCurrent: () => live && generation === version && flags.isCurrent?.() !== false,
       });
+      receipt = scope.finish();
     };
     context.component.registerDomEvent(element, 'focusout', (event) => {
       const win = element.ownerDocument.defaultView;
@@ -329,6 +395,9 @@ export class TaskCardRenderer {
       }
     });
     return {
+      get settled() {
+        return receipt;
+      },
       update: (task, nextFlags) => {
         latest = task;
         flags = nextFlags;
@@ -553,7 +622,8 @@ export class TaskCardRenderer {
         this.#commands.editTaskLink(task, occurrence, token);
       },
     });
-    flags?.renderScope?.track(titleRender);
+    if (context?.track !== undefined) context.track(titleRender);
+    else flags?.renderScope?.track(titleRender);
   }
 
   #renderCountBadges(
@@ -661,7 +731,8 @@ export class TaskCardRenderer {
       sourcePath: task.source.filePath,
       ...this.#textLifetime(context),
     });
-    context?.flags?.renderScope?.track(descriptionRender);
+    if (context?.track !== undefined) context.track(descriptionRender);
+    else context?.flags?.renderScope?.track(descriptionRender);
   }
 
   #renderSearchContext(
@@ -677,7 +748,8 @@ export class TaskCardRenderer {
       // The root title is already rendered by the ordinary card title, with only its real marks.
       if (excerpt.field === 'title' && excerpt.address.childLines.length === 0) continue;
       const render = this.#renderSearchExcerpt(host, root, { search, excerpt }, options.owner);
-      options.scope?.track(render);
+      if (options.owner?.track !== undefined) options.owner.track(render);
+      else options.scope?.track(render);
     }
   }
 

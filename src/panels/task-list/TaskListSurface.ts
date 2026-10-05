@@ -1,22 +1,23 @@
+import type { TaskSnapshot } from '../../tasks';
 import { RowViewport, type RowAnchor, type RowSegment } from '../virtualization/rowViewport';
-import { NO_TASK_LIST_ROWS, type TaskListRow, type TaskListRows } from './taskListRows';
+import { indexedRows, type TaskListRow, type TaskListRows } from './taskListRows';
 import type { MountedTaskListRows } from './taskListRowView';
 
-export interface TaskRowMount {
+export interface TaskRowMount<T = TaskSnapshot> {
   readonly element: HTMLElement;
-  update(row: TaskListRow): void;
+  update(row: TaskListRow<T>): void;
   destroy(): void;
 }
-export interface TaskListPresentation {
+export interface TaskListPresentation<T = TaskSnapshot> {
   readonly revision: string;
   readonly preserveAnchor: boolean;
-  estimate(row: TaskListRow): number;
-  measurementRevision(row: TaskListRow): string;
+  estimate(row: TaskListRow<T>): number;
+  measurementRevision(row: TaskListRow<T>): string;
 }
-export interface TaskListSurfaceOptions {
+export interface TaskListSurfaceOptions<T = TaskSnapshot> {
   readonly host: HTMLElement;
   readonly scroll: HTMLElement;
-  mount(host: HTMLElement, row: TaskListRow): TaskRowMount;
+  mount(host: HTMLElement, row: TaskListRow<T>): TaskRowMount<T>;
   mountedChanged(): void;
   reportFailure(error: unknown): void;
 }
@@ -28,13 +29,13 @@ interface TaskListScroll {
 }
 
 /** Native lifetime and keyed mounts over the shared, pure row geometry. */
-export class TaskListSurface implements MountedTaskListRows {
-  readonly #options: TaskListSurfaceOptions;
+export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T> {
+  readonly #options: TaskListSurfaceOptions<T>;
   readonly #viewport = new RowViewport();
-  readonly #mounts = new Map<string, TaskRowMount>();
+  readonly #mounts = new Map<string, TaskRowMount<T>>();
   readonly #pins = new Map<string, Set<{ onInvalidated?: () => void }>>();
-  #rows: TaskListRows = NO_TASK_LIST_ROWS;
-  #presentation: TaskListPresentation | undefined;
+  #rows: TaskListRows<T> = indexedRows<T>([]);
+  #presentation: TaskListPresentation<T> | undefined;
   #owner: Window | null = null;
   #observer: ResizeObserver | undefined;
   #nativeGeneration = 0;
@@ -53,13 +54,13 @@ export class TaskListSurface implements MountedTaskListRows {
   #ordered: string[] = [];
   #pendingScroll: TaskListScroll | undefined;
 
-  constructor(options: TaskListSurfaceOptions) {
+  constructor(options: TaskListSurfaceOptions<T>) {
     this.#options = options;
     options.host.addClass('abyss-task-list-surface');
     this.#listen(true);
   }
 
-  get rows(): TaskListRows {
+  get rows(): TaskListRows<T> {
     return this.#rows;
   }
   element(key: string): HTMLElement | undefined {
@@ -68,13 +69,20 @@ export class TaskListSurface implements MountedTaskListRows {
   *cards(): Iterable<readonly [key: string, card: HTMLElement]> {
     for (const key of this.#ordered) {
       const element = this.element(key);
-      if (element !== undefined && this.#rows.task(key) !== undefined) yield [key, element];
+      if (element !== undefined && this.#rows.indexOf(key) >= 0) yield [key, element];
     }
   }
 
+  mountedKeys(): readonly string[] {
+    return [...this.#ordered];
+  }
+  refreshMeasurements(): void {
+    this.#schedule();
+  }
+
   update(
-    rows: TaskListRows,
-    presentation: TaskListPresentation,
+    rows: TaskListRows<T>,
+    presentation: TaskListPresentation<T>,
     failure: 'report' | 'throw' = 'report',
   ): void {
     if (this.#destroyed) return;
@@ -171,7 +179,7 @@ export class TaskListSurface implements MountedTaskListRows {
     });
     for (const [key, mount] of this.#mounts) this.#evict(key, mount);
     this.#ordered = [];
-    this.#rows = NO_TASK_LIST_ROWS;
+    this.#rows = indexedRows<T>([]);
     this.#options.host.empty();
     this.#options.host.removeClass('abyss-task-list-surface');
   }
@@ -329,7 +337,7 @@ export class TaskListSurface implements MountedTaskListRows {
     this.#nativeCleanup = undefined;
     this.#owner = null;
   }
-  #evict(key: string, mount: TaskRowMount): void {
+  #evict(key: string, mount: TaskRowMount<T>): void {
     this.#observer?.unobserve(mount.element);
     this.#mounts.delete(key);
     mount.destroy();
@@ -520,7 +528,10 @@ export class TaskListSurface implements MountedTaskListRows {
     // Move ordinary neighbors around owners; never detach an interaction-owned subtree.
     let next: HTMLElement | null = null;
     for (const element of [...desired].reverse()) {
-      if (!protectedElements.has(element) && element.nextSibling !== next)
+      if (
+        !protectedElements.has(element) &&
+        (element.parentElement !== this.#options.host || element.nextSibling !== next)
+      )
         this.#options.host.insertBefore(element, next);
       next = element;
     }
