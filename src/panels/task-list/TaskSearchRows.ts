@@ -496,8 +496,8 @@ export class TaskSearchRows {
         cancelled,
       ]);
     } catch (error) {
-      if (controller.signal.aborted) return undefined;
-      throw error;
+      if (!controller.signal.aborted && this.#current()) this.#failDemand(roots, error);
+      return undefined;
     } finally {
       signal.removeEventListener('abort', abort);
       release?.();
@@ -527,14 +527,23 @@ export class TaskSearchRows {
     void this.#hydrate(identity, signal)
       .catch((error: unknown) => {
         if (!this.#current(identity) || signal.aborted) return;
-        for (const root of this.#roots.values()) root.failure = { type: 'failed', error };
-        this.#notify();
-        this.#options.reportFailure(error);
+        this.#dependencies = undefined;
+        this.#failDemand(this.#roots.values(), error);
       })
       .finally(() => {
         this.#pumping = false;
         this.#pump();
       });
+  }
+  #failDemand(roots: Iterable<RootLease>, error: unknown): void {
+    let failed = false;
+    for (const root of roots) {
+      if (this.#roots.get(root.key) !== root || !this.#demanded(root)) continue;
+      root.failure = { type: 'failed', error };
+      failed = true;
+    }
+    this.#notify();
+    if (failed) this.#options.reportFailure(error);
   }
   async #hydrate(identity: TaskSearchRowsIdentity | undefined, signal: AbortSignal): Promise<void> {
     await this.#options.scheduler.yield(signal);

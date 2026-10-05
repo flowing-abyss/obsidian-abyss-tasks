@@ -148,6 +148,14 @@ function trackingRootAddress(ref: TaskRef): string {
   return taskNodeAddress({ type: 'task', ref });
 }
 
+function canReuseTaskText(
+  outcome: TaskRenderOutcome | undefined,
+  flags: TaskCardFlags | undefined,
+): boolean {
+  // Ready text owns its wired DOM; pending text still needs its originating request.
+  return outcome === undefined ? flags?.isCurrent?.() !== false : outcome.type === 'ready';
+}
+
 export class TaskCardRenderer {
   readonly #app: App;
   readonly #state: AppState;
@@ -344,19 +352,17 @@ export class TaskCardRenderer {
     let generation = 0;
     let receipt: Promise<TaskRenderOutcome> = Promise.resolve({ type: 'ready' });
     let controller: AbortController | undefined;
+    let outcome: TaskRenderOutcome | undefined;
     const release = (): void => {
       generation++;
       controller?.abort();
       if (owner !== undefined) context.component.removeChild(owner);
     };
     const refresh = (): void => {
-      if (
-        !live ||
-        latest === undefined ||
-        (rendered === latest && renderedFlags?.search === flags.search)
-      )
-        return;
-      if (element.contains(element.ownerDocument.activeElement)) return;
+      if (!live || latest === undefined) return;
+      const reusable = canReuseTaskText(outcome, renderedFlags);
+      if (reusable && rendered === latest && renderedFlags?.search === flags.search) return;
+      if (reusable && element.contains(element.ownerDocument.activeElement)) return;
       release();
       owner = context.component.addChild(new Component());
       const version = generation;
@@ -364,7 +370,6 @@ export class TaskCardRenderer {
       renderedFlags = flags;
       controller = new AbortController();
       const scope = new TaskRenderScope(controller.signal);
-      const external = flags.renderScope;
       render(latest, {
         ...context,
         component: owner,
@@ -374,11 +379,15 @@ export class TaskCardRenderer {
         },
         track: (render) => {
           scope.track(render);
-          external?.track(render);
+          flags.renderScope?.track(render);
         },
         isCurrent: () => live && generation === version && flags.isCurrent?.() !== false,
       });
-      receipt = scope.finish();
+      outcome = undefined;
+      receipt = scope.finish().then((settled) => {
+        if (live && generation === version) outcome = settled;
+        return settled;
+      });
     };
     context.component.registerDomEvent(element, 'focusout', (event) => {
       const win = element.ownerDocument.defaultView;

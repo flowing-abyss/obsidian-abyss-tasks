@@ -13,7 +13,7 @@ import type {
 import type { TaskSearchHydratedHit, TaskSearchState, TaskSnapshot } from '../src/tasks';
 import * as cloning from '../src/tasks/domain/cloneTaskSnapshot';
 import type { TaskRenderOutcome } from '../src/ui/taskRenderScope';
-import { deferred, expectDefined, useRealMoment } from './helpers';
+import { deferred, expectDefined, flushMicrotasks, useRealMoment } from './helpers';
 import { prepareTaskPanelViewport } from './support/taskPanelViewport';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
@@ -595,4 +595,111 @@ it('discards a late pre-semantic hydration and cancels its snapshot waiter befor
   expect(h.failure).not.toHaveBeenCalled();
   mount.destroy();
   h.dispose();
+});
+
+it.each(['sibling', 'explicit'] as const)(
+  'retains failure reporting for a live %s sharing hidden root demand',
+  async (demand) => {
+    const h = await rowsHarness(1);
+    const first = expectDefined(h.organization.occurrences[0]);
+    const repeated = { ...first, key: 'repeat' };
+    const rows = h.owner.set(
+      { ...h.organization, occurrences: [first, repeated] },
+      'none',
+      h.identity,
+    );
+    const held = deferred<void>(),
+      entered = deferred<void>();
+    const error = new Error('live read failure');
+    vi.spyOn(h.index, 'resolveSearchHits').mockImplementationOnce(async () => {
+      entered.resolve();
+      await held.promise;
+      throw error;
+    });
+    const hidden = h.owner.mount(h.host, expectDefined(rows.rows[0]));
+    const sibling =
+      demand === 'sibling' ? h.owner.mount(h.host, expectDefined(rows.rows[1])) : undefined;
+    const explicit =
+      demand === 'explicit'
+        ? h.owner.snapshot(first.key, h.identity.signal).catch((reason: unknown) => reason)
+        : undefined;
+    try {
+      await entered.promise;
+      hidden.element.hide();
+      held.resolve();
+      if (explicit !== undefined) expect(await explicit).toBe(error);
+      else
+        expect(await h.owner.settleRow('repeat', h.identity.signal)).toEqual({
+          type: 'failed',
+          error,
+        });
+      expect(h.failure).toHaveBeenCalledExactlyOnceWith(error);
+    } finally {
+      held.resolve();
+      sibling?.destroy();
+      hidden.destroy();
+      h.dispose();
+    }
+  },
+);
+it('drops a hidden dependency failure and prepares again on renewed mounted demand', async () => {
+  const h = await rowsHarness(1);
+  const held = deferred<void>(),
+    entered = deferred<void>();
+  vi.spyOn(h.index, 'prepareDependencies').mockImplementationOnce(async () => {
+    entered.resolve();
+    await held.promise;
+    throw new Error('hidden dependency failure');
+  });
+  const row = expectDefined(h.rows.rows[0]);
+  const mount = h.owner.mount(h.host, row);
+  try {
+    await entered.promise;
+    h.host.hide();
+    held.resolve();
+    await flushMicrotasks();
+    expect(h.failure).not.toHaveBeenCalled();
+    h.host.show();
+    h.owner.mountedChanged([row.key]);
+    expect(await h.owner.settleRow(row.key, h.identity.signal)).toEqual({ type: 'ready' });
+  } finally {
+    held.resolve();
+    mount.destroy();
+    h.dispose();
+  }
+});
+
+it('fails only eligible roots in a shared allocation and leaves a hidden root resumable', async () => {
+  const h = await rowsHarness(2);
+  const held = deferred<void>(),
+    entered = deferred<void>();
+  const error = new Error('shared allocation failed');
+  vi.spyOn(h.index, 'resolveSearchHits').mockImplementationOnce(async () => {
+    entered.resolve();
+    await held.promise;
+    throw error;
+  });
+  const first = expectDefined(h.rows.rows[0]);
+  const second = expectDefined(h.rows.rows[1]);
+  const hidden = h.owner.mount(h.host, first);
+  const live = h.owner.mount(h.host, second);
+  try {
+    await entered.promise;
+    hidden.element.hide();
+    held.resolve();
+    expect(await h.owner.settleRow(second.key, h.identity.signal)).toEqual({
+      type: 'failed',
+      error,
+    });
+    expect(h.failure).toHaveBeenCalledExactlyOnceWith(error);
+    hidden.element.show();
+    h.owner.mountedChanged(h.rows.taskKeys);
+    expect(await h.owner.settleRow(first.key, h.identity.signal)).toEqual({ type: 'ready' });
+    expect(h.failure).toHaveBeenCalledTimes(1);
+  } finally {
+    held.resolve();
+    hidden.destroy();
+    live.destroy();
+    h.dispose();
+  }
 });

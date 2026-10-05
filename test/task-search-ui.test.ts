@@ -620,3 +620,152 @@ it('selects a Shift range across the complete compact order without selected-roo
     h.dispose();
   }
 });
+
+it('restarts cancelled Markdown on a same-query filter refresh with the identical root', async () => {
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': '- [ ] **needle**' },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  const held = deferred<void>(),
+    entered = deferred<void>();
+  const outcomes: string[] = [];
+  const publish = h.panel['mountSearchRows_abyssPrivate'].bind(h.panel);
+  vi.spyOn(h.panel, 'mountSearchRows_abyssPrivate').mockImplementation(async (...args) => {
+    const outcome = await publish(...args);
+    outcomes.push(outcome.type);
+    return outcome;
+  });
+  const render = vi
+    .spyOn(MarkdownRenderer, 'render')
+    .mockImplementation(async (_app, text, holder) => {
+      holder.createEl('strong', { text });
+      entered.resolve();
+      await held.promise;
+    });
+  const hydrate = vi.spyOn(h.index, 'resolveSearchHits');
+  try {
+    h.query('needle');
+    await entered.promise;
+    const card = expectDefined(h.root.querySelector('.abyss-task-card'));
+    h.panel.refresh();
+    held.resolve();
+    await vi.waitFor(() => {
+      expect(outcomes.length).toBeGreaterThanOrEqual(2);
+    });
+    expect({
+      outcomes,
+      phase: h.root.dataset['searchPhase'],
+      renders: render.mock.calls.length,
+    }).toEqual({ outcomes: ['cancelled', 'ready'], phase: 'complete', renders: 2 });
+    expect(h.root.querySelector('.abyss-task-card')).toBe(card);
+    const text = expectDefined(card.querySelector<HTMLElement>('strong'));
+    text.tabIndex = 0;
+    text.focus();
+    h.panel.refresh();
+    await vi.waitFor(() => {
+      expect(outcomes).toEqual(['cancelled', 'ready', 'ready']);
+    });
+    expect(card.querySelector('strong')).toBe(text);
+    expect(document.activeElement).toBe(text);
+    expect(render).toHaveBeenCalledTimes(2);
+    expect(hydrate).toHaveBeenCalledTimes(1);
+  } finally {
+    held.resolve();
+    h.dispose();
+  }
+});
+
+it('retires a hidden hydration failure quietly and resumes on native scroll', async () => {
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': '- [ ] needle' },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  const held = deferred<void>(),
+    entered = deferred<void>();
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const hydrate = vi.spyOn(h.index, 'resolveSearchHits').mockImplementationOnce(async () => {
+    entered.resolve();
+    await held.promise;
+    throw new Error('late hidden read failure');
+  });
+  try {
+    h.query('needle');
+    await entered.promise;
+    const holder = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    h.root.hide();
+    held.resolve();
+    await flushMicrotasks();
+    await flushMicrotasks();
+    expect({
+      diagnostics: diagnostic.mock.calls.length,
+      phase: h.root.dataset['searchPhase'],
+    }).toEqual({ diagnostics: 0, phase: 'pending' });
+    h.root.show();
+    expectDefined(h.root.querySelector('.abyss-center-scroll')).dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => {
+      expect(holder.textContent).toContain('needle');
+    });
+    expect(holder.isConnected).toBe(true);
+    expect(holder.inert).toBe(false);
+    expect(hydrate).toHaveBeenCalledTimes(2);
+    expect(diagnostic).not.toHaveBeenCalled();
+  } finally {
+    held.resolve();
+    h.dispose();
+  }
+});
+
+it.each(['tasks', 'search'] as const)(
+  'retains a focused compact %s recurrence editor across scroll and retires it on source replacement',
+  async (mode) => {
+    const h = await mountCanonicalSearchUi(
+      {
+        'a.md': '- [ ] needle first',
+        'b.md': Array.from({ length: 120 }, (_, n) => `- [ ] needle ${n}`).join('\n'),
+      },
+      structuredClone(DEFAULT_SETTINGS),
+      mode,
+    );
+    try {
+      h.query('needle');
+      await h.completed();
+      const original = expectDefined(h.index.list({ filePath: 'a.md' })[0]);
+      const card = expectDefined(h.root.querySelector<HTMLElement>('[data-file-path="a.md"]'));
+      h.panel['openRecurrenceEditor_abyssPrivate'](card, original);
+      const editor = expectDefined(
+        document.querySelector<HTMLElement>('.abyss-recurrence-popover'),
+      );
+      await vi.waitFor(() => {
+        expect(editor.contains(document.activeElement)).toBe(true);
+      });
+      const entry = expectDefined(
+        editor.querySelector<HTMLInputElement>('.abyss-recurrence-interval'),
+      );
+      entry.focus();
+      entry.value = '3';
+      entry.dispatchEvent(new Event('input', { bubbles: true }));
+      const input = expectDefined(
+        editor.querySelector<HTMLInputElement>('.abyss-recurrence-interval'),
+      );
+      const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
+      scroll.scrollTop = 120 * 64;
+      scroll.dispatchEvent(new Event('scroll'));
+      await vi.waitFor(() => {
+        expect(h.root.textContent).toContain('needle 119');
+      });
+      expect(card.isConnected).toBe(true);
+      expect(editor.isConnected).toBe(true);
+      expect(document.activeElement).toBe(input);
+      expect(input.value).toBe('3');
+      h.index.installCommittedContent('a.md', '- [ ] needle replacement');
+      await h.completed();
+      expect(editor.isConnected).toBe(false);
+      expect(card.isConnected).toBe(false);
+      expect(document.activeElement).not.toBe(input);
+      expect(scroll.scrollTop).toBeGreaterThan(0);
+    } finally {
+      h.dispose();
+    }
+  },
+);

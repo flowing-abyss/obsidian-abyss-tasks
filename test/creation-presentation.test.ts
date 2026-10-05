@@ -1,4 +1,4 @@
-import { MarkdownRenderer, Notice, Platform, type App } from 'obsidian';
+import { Component, MarkdownRenderer, Notice, Platform, type App } from 'obsidian';
 import postcss from 'postcss';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { AppState } from '../src/app/AppState';
@@ -40,6 +40,7 @@ import {
 import { useTaskPanelViewport } from './support/taskPanelViewport';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 import { taskViewportOwner } from './support/taskViewportOwner';
+import { recordVirtualSurfaceResources } from './support/virtualSurfaceResources';
 
 async function loadStylesFixture(): Promise<string> {
   if (!Platform.isDesktop) throw new Error('CSS fixture requires the desktop test runtime');
@@ -1220,3 +1221,103 @@ async function settleCreationStage(
     await rendered.promise;
   }
 }
+
+it.each(['hydration', 'markdown'] as const)(
+  'returns cancelled compact creation %s pins and resources to baseline before late settlement',
+  async (stage) => {
+    const resources = recordVirtualSurfaceResources();
+    const empty = resources.counts();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.taskFilePath = 'created.md';
+    const h = await mountCanonicalSearchUi(
+      {
+        'many.md': Array.from({ length: 120 }, (_, n) => `- [ ] needle ${n}`).join('\n'),
+        'created.md': '',
+      },
+      settings,
+      'tasks',
+      undefined,
+      true,
+    );
+    resources.installObserver();
+    const hydration = deferred<void>(),
+      markdown = deferred<void>();
+    const entered = deferred<void>(),
+      rendered = deferred<void>();
+    try {
+      h.query('needle');
+      await h.completed();
+      const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
+      const pins = new Set<symbol>();
+      const pin = surface.pin.bind(surface);
+      vi.spyOn(surface, 'pin').mockImplementation((key, invalidated) => {
+        const token = Symbol(key);
+        pins.add(token);
+        const release = pin(key, () => {
+          pins.delete(token);
+          invalidated?.();
+        });
+        return () => {
+          pins.delete(token);
+          release();
+        };
+      });
+      const actual = h.index.resolveSearchHits.bind(h.index);
+      vi.spyOn(h.index, 'resolveSearchHits').mockImplementation(async (hits, signal) => {
+        const created = h.source.files().find((file) => file.path === 'created.md');
+        if (
+          created !== undefined &&
+          hits.some((hit) =>
+            [...h.source.nodes(created)].some((node) => node.rootId === hit.address.rootId),
+          )
+        ) {
+          entered.resolve();
+          await hydration.promise;
+        }
+        return actual(hits, signal);
+      });
+      vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (...args) => {
+        const [, text, holder, , owner] = args;
+        owner.addChild(new Component());
+        holder.createEl('strong', { text });
+        if (text.includes('created needle')) {
+          rendered.resolve();
+          await markdown.promise;
+        }
+      });
+      expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')).click();
+      await flushMicrotasks();
+      const input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-capture-input'));
+      const { targets, ...baseline } = resources.counts();
+      const mounted = surface.mountedKeys().length;
+      input.value = '**created needle**';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await entered.promise;
+      await h.completed();
+      await settleCreationStage(stage, hydration, rendered);
+      expect(pins.size).toBe(1);
+      expect(resources.counts().observers).toBe(baseline.observers + 1);
+      input.value = 'next draft';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await vi.waitFor(() => {
+        expect(pins.size).toBe(0);
+        expect(surface.mountedKeys()).toHaveLength(mounted);
+        expect(resources.counts()).toMatchObject(baseline);
+        expect(resources.counts().targets).toBeLessThanOrEqual(targets);
+      });
+      expect(h.panel['creationAttempts_abyssPrivate'].size).toBe(0);
+      hydration.resolve();
+      markdown.resolve();
+      await flushMicrotasks();
+      expect(resources.counts()).toMatchObject(baseline);
+      expect(resources.counts().targets).toBeLessThanOrEqual(targets);
+      expect(h.root.querySelector('.is-just-created')).toBeNull();
+    } finally {
+      hydration.resolve();
+      markdown.resolve();
+      h.dispose();
+    }
+    expect(resources.counts()).toEqual(empty);
+  },
+);
