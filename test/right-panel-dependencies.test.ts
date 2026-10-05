@@ -1218,8 +1218,52 @@ describe('inspector dependency navigation', () => {
     expect(matches()).toHaveLength(0);
     const file = h.app.vault.getAbstractFileByPath('unrelated.md');
     if (!(file instanceof TFile)) throw new Error('Missing unrelated fixture');
+    const picker = expectDefined(input.closest<HTMLElement>('.abyss-dep-search'));
+    const previousRequest = picker.dataset['searchRequest'];
+    const previousGeneration = Number(picker.dataset['searchGeneration']);
+    const published = deferred<number>();
+    const subscription = h.index.searchSource().subscribe((event) => {
+      if (event.type === 'files' && event.files.some(({ path }) => path === file.path))
+        published.resolve(event.generation);
+    });
+    cleanups.push(subscription.unsubscribe);
+    let completed = false;
+    const receipt = published.promise.then(async (generation) => {
+      await searchUiCompleted(picker, () => generation);
+      completed = true;
+    });
+    // The previous completed page cannot satisfy a receipt owned by the source edit.
+    await searchUiCompleted(picker);
+    expect(completed).toBe(false);
+    const frames = new Map<number, FrameRequestCallback>();
+    const queued = deferred<void>();
+    let frameId = 0;
+    const win = expectDefined(picker.ownerDocument.defaultView);
+    vi.spyOn(win, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.set(++frameId, callback);
+      queued.resolve();
+      return frameId;
+    });
+    vi.spyOn(win, 'cancelAnimationFrame').mockImplementation((id) => {
+      frames.delete(id);
+    });
     await h.app.vault.modify(file, unrelated.replace('Unrelated\n', 'Candidate\n'));
-    await flushMicrotasks(30);
+    const generation = await published.promise;
+    await queued.promise;
+    expect(generation).toBeGreaterThan(previousGeneration);
+    expect(h.node('Candidate').node.title).toBe('Candidate');
+    expect(picker.dataset['searchRequest']).not.toBe(previousRequest);
+    expect(picker.dataset['searchPhase']).toBe('pending');
+    expect(picker.dataset['searchGeneration']).toBe(String(previousGeneration));
+    expect(matches()).toHaveLength(0);
+    expect(completed).toBe(false);
+    expect(frames.size).toBeGreaterThan(0);
+    const due = [...frames.values()];
+    frames.clear();
+    for (const callback of due) callback(0);
+    await receipt;
+    expect(picker.dataset['searchPhase']).toBe('complete');
+    expect(picker.dataset['searchGeneration']).toBe(String(generation));
     expect(matches()).toHaveLength(1);
     expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
     expect(input.value).toBe('Candidate');

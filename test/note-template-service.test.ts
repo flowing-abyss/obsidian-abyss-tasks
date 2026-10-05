@@ -1,7 +1,13 @@
 import { TFile, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { CreatedNoteTemplateError, NoteTemplateService } from '../src/notes/NoteTemplateService';
-import { createAppWithFiles, expectDefined, flushMicrotasks, useRealMoment } from './helpers';
+import {
+  createAppWithFiles,
+  deferred,
+  expectDefined,
+  flushMicrotasks,
+  useRealMoment,
+} from './helpers';
 
 useRealMoment();
 
@@ -56,10 +62,12 @@ async function runDelayedAutoCreate(
   pending: ReadonlySet<string>,
   path: string,
   content: string,
-): Promise<void> {
+): Promise<boolean> {
   await new Promise<void>((resolve) => window.setTimeout(resolve, 300));
   const file = app.vault.getAbstractFileByPath(path);
-  if (file instanceof TFile && !pending.has(path)) await app.vault.modify(file, content);
+  const guarded = pending.has(path);
+  if (file instanceof TFile && !guarded) await app.vault.modify(file, content);
+  return guarded;
 }
 
 describe('NoteTemplateService', () => {
@@ -166,19 +174,46 @@ describe('NoteTemplateService', () => {
     const app = await createAppWithFiles({ 'templates/task.md': '<% title %>\n' });
     const lifecycle = installTemplater(app, async () => '# selected\n');
     const service = new NoteTemplateService(app);
-    const creation = service.ensureNote('tasks/selected.md', 'templates/task.md', 'Selected');
-    await flushMicrotasks();
-    const autoCreate = runDelayedAutoCreate(
-      app,
-      lifecycle.pending,
-      'tasks/selected.md',
-      '# auto\n',
-    );
-
-    const file = await creation;
-    await autoCreate;
-
-    expect(await app.vault.cachedRead(file)).toBe('# selected\n');
+    const path = 'tasks/selected.md';
+    const created = deferred<TFile>();
+    let checked: boolean | undefined;
+    let autoCreate: Promise<void> | undefined;
+    const event = app.vault.on('create', (file) => {
+      if (!(file instanceof TFile) || file.path !== path) return;
+      autoCreate = runDelayedAutoCreate(app, lifecycle.pending, path, '# auto\n').then(
+        (guarded) => {
+          checked = guarded;
+        },
+      );
+      created.resolve(file);
+    });
+    vi.useFakeTimers();
+    try {
+      const creation = service.ensureNote(path, 'templates/task.md', 'Selected');
+      const file = await created.promise;
+      // Diagnosis crossed the guard by starting the simulation after this late continuation.
+      await vi.advanceTimersByTimeAsync(60);
+      expect(lifecycle.pending.has(path)).toBe(true);
+      await vi.advanceTimersByTimeAsync(239);
+      expect(checked).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(checked).toBe(true);
+      await expectDefined(autoCreate);
+      expect(lifecycle.pending.has(path)).toBe(true);
+      expect(lifecycle.finishes).toEqual([]);
+      expect(await app.vault.cachedRead(file)).toBe('# selected\n');
+      await vi.advanceTimersByTimeAsync(49);
+      expect(lifecycle.pending.has(path)).toBe(true);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await creation).toBe(file);
+      expect(await app.vault.cachedRead(file)).toBe('# selected\n');
+      expect(lifecycle.starts).toEqual([path]);
+      expect(lifecycle.finishes).toEqual([path]);
+      expect(lifecycle.pending.has(path)).toBe(false);
+    } finally {
+      app.vault.offref(event);
+      vi.useRealTimers();
+    }
   });
 
   it('keeps empty selected destinations out of Templater delayed auto-create handling after failure', async () => {
@@ -187,14 +222,46 @@ describe('NoteTemplateService', () => {
       throw new Error('parse failed');
     });
     const service = new NoteTemplateService(app);
-    const creation = service.ensureNote('tasks/failed.md', 'templates/task.md', 'Failed');
-    await flushMicrotasks();
-    const autoCreate = runDelayedAutoCreate(app, lifecycle.pending, 'tasks/failed.md', '# auto\n');
-
-    await expect(creation).rejects.toBeInstanceOf(CreatedNoteTemplateError);
-    await autoCreate;
-
-    expect(await app.vault.cachedRead(fileAt(app, 'tasks/failed.md'))).toBe('');
+    const path = 'tasks/failed.md';
+    const created = deferred<TFile>();
+    let checked: boolean | undefined;
+    let autoCreate: Promise<void> | undefined;
+    const event = app.vault.on('create', (file) => {
+      if (!(file instanceof TFile) || file.path !== path) return;
+      autoCreate = runDelayedAutoCreate(app, lifecycle.pending, path, '# auto\n').then(
+        (guarded) => {
+          checked = guarded;
+        },
+      );
+      created.resolve(file);
+    });
+    vi.useFakeTimers();
+    try {
+      const creation = service.ensureNote(path, 'templates/task.md', 'Failed');
+      const failure = creation.catch((cause: unknown) => cause);
+      const file = await created.promise;
+      await vi.advanceTimersByTimeAsync(60);
+      expect(lifecycle.pending.has(path)).toBe(true);
+      await vi.advanceTimersByTimeAsync(239);
+      expect(checked).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(checked).toBe(true);
+      await expectDefined(autoCreate);
+      expect(lifecycle.pending.has(path)).toBe(true);
+      expect(lifecycle.finishes).toEqual([]);
+      expect(await app.vault.cachedRead(file)).toBe('');
+      await vi.advanceTimersByTimeAsync(49);
+      expect(lifecycle.pending.has(path)).toBe(true);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await failure).toBeInstanceOf(CreatedNoteTemplateError);
+      expect(await app.vault.cachedRead(fileAt(app, path))).toBe('');
+      expect(lifecycle.starts).toEqual([path]);
+      expect(lifecycle.finishes).toEqual([path]);
+      expect(lifecycle.pending.has(path)).toBe(false);
+    } finally {
+      app.vault.offref(event);
+      vi.useRealTimers();
+    }
   });
 
   it('keeps empty no-template destinations out of Templater delayed auto-create handling', async () => {
