@@ -2559,6 +2559,16 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   overflow-wrap: anywhere;
 }
 
+/* Search children reuse the card marker's baseline strut at the child title's smaller cap
+   height. Align to that first title line even when descriptions or semantic chips add rows. */
+.abyss-task-card .abyss-search-context .abyss-subtask-row {
+  align-items: baseline;
+}
+
+.abyss-task-card .abyss-search-context .abyss-status-marker::before {
+  block-size: calc(2 * var(--font-ui-small) * var(--abyss-task-card-cap-ratio));
+}
+
 .abyss-task-card .abyss-search-context > .abyss-subtask-content,
 .abyss-task-card .abyss-search-context .abyss-subtask-content > .abyss-subtask-content,
 .abyss-task-card .abyss-search-context .abyss-comment-row {
