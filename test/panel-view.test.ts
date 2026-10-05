@@ -11,6 +11,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { type AppState, type ListSelection } from '../src/app/AppState';
 import type { CenterPanel } from '../src/panels/CenterPanel';
+import { TaskListSurface } from '../src/panels/task-list/TaskListSurface';
 import { ProjectManager } from '../src/projects/ProjectManager';
 import type { ProjectStore } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -56,6 +57,7 @@ import {
   useRealMoment,
 } from './helpers';
 import { taskCommandsOf } from './support/panelHarness';
+import { prepareTaskPanelViewport } from './support/taskPanelViewport';
 import { canonicalSearchForIndex, createCanonicalSearchHarness } from './support/taskSearchHarness';
 import { searchUiCompleted } from './support/taskSearchUiHarness';
 
@@ -1992,7 +1994,11 @@ describe('PanelView', () => {
           'The new task is invalid and was not created.',
         );
         expect(present).toHaveBeenCalledOnce();
-        expect(present).toHaveBeenCalledWith(failure, expect.objectContaining({ kind: 'error' }));
+        expect(present).toHaveBeenCalledWith(
+          failure,
+          expect.objectContaining({ kind: 'error' }),
+          undefined,
+        );
         expect(internals.interactionRegistry_abyssPrivate.allows('openCalendar')).toBe(false);
 
         input.dispatchEvent(
@@ -2055,7 +2061,11 @@ describe('PanelView', () => {
       expect(internals.quickCapture_abyssPrivate.phase).toBe('closed');
       expect(layout.querySelector('.abyss-quick-capture-input')).toBeNull();
       expect(present).toHaveBeenCalledOnce();
-      expect(present).toHaveBeenCalledWith(result, expect.objectContaining({ kind: 'success' }));
+      expect(present).toHaveBeenCalledWith(
+        result,
+        expect.objectContaining({ kind: 'success' }),
+        undefined,
+      );
       expect(internals.interactionRegistry_abyssPrivate.allows('openCalendar')).toBe(true);
       expect(right.classList.contains('is-compact-open')).toBe(true);
       const outside = activeDocument.body.createEl('button');
@@ -2126,6 +2136,7 @@ describe('PanelView', () => {
     });
 
     it('routes shortcuts only for its connected visible active leaf and detaches on close', async () => {
+      view.containerEl.remove();
       const internals = view as unknown as { panelNavigation_abyssPrivate: PanelNavigator };
       const openQuickCapture = vi
         .spyOn(internals.panelNavigation_abyssPrivate, 'openQuickCapture')
@@ -2198,6 +2209,7 @@ describe('PanelView', () => {
       workspaceState(app).activeLeaf = leaf;
       const frame = document.body.createEl('iframe');
       const destination = expectDefined(frame.contentWindow) as EventWindow;
+      prepareTaskPanelViewport(destination.document.body);
       const destroyRouter = vi.spyOn(PanelShortcutRouter.prototype, 'destroy');
       const destinationListeners = vi.spyOn(destination.document, 'addEventListener');
       const pressQ = (owner: EventWindow): KeyboardEvent => {
@@ -2294,6 +2306,7 @@ describe('PanelView', () => {
       });
       const frame = document.body.createEl('iframe');
       const destination = expectDefined(frame.contentWindow) as EventWindow;
+      prepareTaskPanelViewport(destination.document.body);
       const timers = new Map<number, { delay: number; run: () => void }>();
       // Native Obsidian installs its DOM helpers in every window; test-mocks only
       // installs them in the main realm. Adopt new descendants from that realm too.
@@ -2835,6 +2848,7 @@ describe('PanelView', () => {
     );
 
     it('reveals a created task without smooth scrolling and with the short highlight under reduced motion', async () => {
+      const reveal = vi.spyOn(TaskListSurface.prototype, 'reveal');
       const consoleError = vi.spyOn(console, 'error');
       const matchMedia = vi.fn(() => ({ matches: true }));
       vi.stubGlobal('matchMedia', matchMedia);
@@ -2871,11 +2885,9 @@ describe('PanelView', () => {
 
       expect(view.contentEl.querySelector('.abyss-task-card.is-just-created')).not.toBeNull();
       expect(matchMedia).toHaveBeenCalledWith('(prefers-reduced-motion: reduce)');
-      expect(scrollIntoView).toHaveBeenCalledWith({
-        behavior: 'auto',
-        block: 'nearest',
-        inline: 'nearest',
-      });
+      expect(reveal).toHaveBeenCalledWith('capture.md:0');
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      expect(input.ownerDocument.activeElement).toBe(input);
       const delays = setTimeout.mock.calls.map(([, delay]) => delay);
       expect(delays).toContain(800);
       expect(delays).not.toContain(1100);
@@ -4930,6 +4942,7 @@ describe('mounted Search window migration', () => {
           owner.document.adoptNode(document.importNode(scroll, deep)),
         );
         owner.document.body.append(view.containerEl);
+        prepareTaskPanelViewport(view.containerEl);
         migrate(owner);
         expect(root.querySelector('input.abyss-center-search')).toBe(input);
         expect(input.value).toBe(mode === 'empty-tasks' ? '' : 'needle');
@@ -4973,6 +4986,7 @@ describe('mounted Search window migration', () => {
       const timer = setTimer.mock.results[timerAt]?.value as number;
       const owner = expectDefined(iframe.contentWindow) as EventWindow;
       owner.document.body.append(view.containerEl);
+      prepareTaskPanelViewport(view.containerEl);
       migrate(owner);
       expect(clearTimer).toHaveBeenCalledWith(timer);
       await searchUiCompleted(root);
@@ -5037,6 +5051,7 @@ describe('mounted Search window migration', () => {
         const backend = h.backends[0];
         const owner = expectDefined(iframe.contentWindow) as EventWindow;
         owner.document.body.append(view.containerEl);
+        prepareTaskPanelViewport(view.containerEl);
         migrate(owner);
         if (phase === 'cursor') expect(oldSignal?.aborted).toBe(true);
         // Migration itself must resume the retained query while the old operation is still held.

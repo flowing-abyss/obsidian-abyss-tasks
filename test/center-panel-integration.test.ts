@@ -62,6 +62,8 @@ import {
 import { canonicalSearchForIndex } from './support/taskSearchHarness';
 import { mountCanonicalSearchUi, searchUiCompleted } from './support/taskSearchUiHarness';
 
+import { taskViewportOwner } from './support/taskViewportOwner';
+
 const TODAY = moment().format('YYYY-MM-DD');
 
 type CalendarViewLabel = 'Day' | 'Week' | 'Month';
@@ -380,7 +382,7 @@ describe('CenterPanel task-card primary row', () => {
       const titleRow = expectDefined(mainRow.querySelector<HTMLElement>('.abyss-task-title-row'));
       expect(titleRow.querySelector('.abyss-recurrence-badge')).toBeNull();
       expect(titleRow.firstElementChild?.classList.contains('abyss-task-title')).toBe(true);
-      expect(mainRow.querySelector('.abyss-task-desc')).toBeNull();
+      expect(mainRow.querySelector<HTMLElement>('.abyss-task-desc')?.hidden).toBe(true);
     } finally {
       panel.destroy();
     }
@@ -406,7 +408,7 @@ describe('CenterPanel task-card primary row', () => {
       const body = expectDefined(mainRow.querySelector<HTMLElement>('.abyss-task-body'));
       expect(body.querySelector('.abyss-task-title')).not.toBeNull();
       expect(mainRow.querySelector('.abyss-task-meta-right')).not.toBeNull();
-      expect(panel['el'].querySelector('.abyss-task-desc')).toBeNull();
+      expect(panel['el'].querySelector<HTMLElement>('.abyss-task-desc')?.hidden).toBe(true);
     } finally {
       panel.destroy();
     }
@@ -1186,7 +1188,13 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
     state.set('selectedList', 'today');
     const panel = makeStaticPanel(
       state,
-      [task({ title: 'Keep the task list viewport', planning: { due: TODAY } })],
+      Array.from({ length: 50 }, (_, line) =>
+        task({
+          title: `Task ${line}`,
+          planning: { due: TODAY },
+          source: { filePath: 'large.md', line },
+        }),
+      ),
       DEFAULT_SETTINGS,
     );
     const container = freshContainer();
@@ -1268,11 +1276,14 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
   it('clamps retained task-list offsets after refreshed content shrinks', () => {
     const state = new AppState();
     state.set('selectedList', 'today');
-    const panel = makeStaticPanel(
-      state,
-      [task({ title: 'Clamped task', planning: { due: TODAY } })],
-      DEFAULT_SETTINGS,
+    const tasks = Array.from({ length: 50 }, (_, line) =>
+      task({
+        title: `Task ${line}`,
+        planning: { due: TODAY },
+        source: { filePath: 'large.md', line },
+      }),
     );
+    const panel = makeStaticPanel(state, tasks, DEFAULT_SETTINGS);
     const container = freshContainer();
     activeDocument.body.append(container);
 
@@ -1288,10 +1299,11 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       scroll.scrollTop = 380;
       scroll.scrollLeft = 260;
 
+      tasks.splice(5);
+      state.set('centerListViewState', { ...state.get('centerListViewState'), groupBy: 'none' });
       panel.refresh();
 
-      expect(scroll.scrollTop).toBe(120);
-      expect(scroll.scrollLeft).toBe(110);
+      expect(scroll.scrollTop).toBe(20);
     } finally {
       panel.destroy();
       container.remove();
@@ -1414,6 +1426,57 @@ describe('CenterPanel shared list capture', () => {
     type: 'io-error',
     cause: 'repository-error',
     contentState: 'unknown',
+  });
+
+  it('keeps the active capture draft and composition while adopted Tasks resume native scrolling', async () => {
+    const snapshots = Array.from({ length: 1200 }, (_, line) =>
+      task({
+        title: `Task ${line}`,
+        planning: { due: TODAY },
+        source: { filePath: 'adopt.md', line },
+      }),
+    );
+    const { panel, state, planCreate, sessionExecute } = captureHarness(
+      async () => successfulCapture(),
+      snapshots,
+    );
+    state.set('selectedList', 'today');
+    const container = freshContainer();
+    panel.mount(container);
+    const owner = taskViewportOwner();
+    try {
+      const input = await openListCapture(container);
+      setCaptureDraft(input, 'unfinished draft');
+      input.setSelectionRange(2, 8);
+      input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      const scroll = expectDefined(container.querySelector<HTMLElement>('.abyss-center-scroll'));
+      container.remove();
+      scroll.dispatchEvent(new Event('scroll'));
+      owner.doc.body.append(container);
+      scroll.scrollTop = 76000;
+      scroll.dispatchEvent(new owner.win.Event('scroll'));
+      owner.flush();
+      expect(
+        [...scroll.querySelectorAll<HTMLElement>('.abyss-task-card')].some(
+          (card) => Number(card.dataset['line']) > 1100,
+        ),
+      ).toBe(true);
+      expect(container.querySelector('.abyss-quick-capture-input')).toBe(input);
+      expect(input.value).toBe('unfinished draft');
+      expect([input.selectionStart, input.selectionEnd]).toEqual([2, 8]);
+      input.dispatchEvent(
+        new owner.win.KeyboardEvent('keydown', {
+          key: 'Enter',
+          isComposing: true,
+          bubbles: true,
+        }),
+      );
+      expect(planCreate).toHaveBeenCalledOnce();
+      expect(sessionExecute).not.toHaveBeenCalled();
+    } finally {
+      panel.destroy();
+      owner.destroy();
+    }
   });
 
   it('keeps one focused session open across consecutive Enter successes', async () => {
@@ -1730,7 +1793,7 @@ describe('CenterPanel shared list capture', () => {
     },
   );
 
-  it('remounts the active draft and focus across a full CenterPanel rerender', async () => {
+  it('retains the composing draft input and selection across a full CenterPanel rerender', async () => {
     const { panel, sessionExecute } = captureHarness(async () => successfulCapture());
     const container = freshContainer();
     activeDocument.body.append(container);
@@ -1739,14 +1802,20 @@ describe('CenterPanel shared list capture', () => {
       const before = await openListCapture(container);
       setCaptureDraft(before, 'survive the render');
       before.focus();
+      before.setSelectionRange(2, 6);
+      before.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
 
       panel.refresh();
 
       const after = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input');
-      expect(after).not.toBe(before);
-      expect(before.isConnected).toBe(false);
+      expect(after).toBe(before);
+      expect(before.isConnected).toBe(true);
       expect(after?.value).toBe('survive the render');
       expect(activeDocument.activeElement).toBe(after);
+      expect([before.selectionStart, before.selectionEnd]).toEqual([2, 6]);
+      before.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, isComposing: true }),
+      );
       expect(sessionExecute).not.toHaveBeenCalled();
     } finally {
       panel.destroy();
@@ -1866,14 +1935,14 @@ describe('CenterPanel shared list capture', () => {
       const after = expectDefined(
         container.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
       );
-      expect(after).not.toBe(before);
+      expect(after).toBe(before);
       expect(after.readOnly).toBe(true);
       expect(after.value).toBe('pending repair');
       result.resolve(captureFailure());
       await flushMicrotasks();
 
       expect(sessionExecute).toHaveBeenCalledOnce();
-      expect(before.isConnected).toBe(false);
+      expect(before.isConnected).toBe(true);
       expect(container.querySelector('.abyss-quick-capture-input')).toBe(after);
       expect(after.readOnly).toBe(false);
       expect(after.value).toBe('pending repair');
@@ -2180,7 +2249,9 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     });
     const panel = makeStaticPanel(state, tasks);
     const container = freshContainer();
-    const renderResult = call<void>(panel, 'renderWithGrouping', container, tasks);
+    panel.mount(container);
+    const host = expectDefined(container.querySelector<HTMLElement>('.abyss-center-scroll'));
+    const renderResult = call<void>(panel, 'renderWithGrouping', host, tasks);
     if (renderResult instanceof Promise) throw new Error('Expected synchronous grouped rendering');
     return container;
   }
@@ -3050,7 +3121,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       const remounted = expectDefined(
         container.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
       );
-      expect(remounted).not.toBe(first);
+      expect(remounted).toBe(first);
       expect(activeDocument.activeElement).toBe(remounted);
       setCaptureDraft(remounted, 'second project task');
       pressCaptureKey(remounted, 'Enter');
@@ -3327,7 +3398,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
 
     panel.mount(el);
 
-    expect(el.querySelectorAll('.abyss-task-card')).toHaveLength(tasks.length);
+    expect(el.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(100);
     expect(listNodes).toHaveBeenCalledTimes(1);
     const firstTag = expectDefined(el.querySelector<HTMLElement>('.abyss-task-tag'));
     expect(firstTag.textContent).toBe('#work/client');
@@ -5454,7 +5525,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
 
       const remounted = timedBlock(h.el);
       expect(remounted).not.toBe(block);
-      expect(foreignDocument.activeElement).toBe(remounted);
+      await vi.waitFor(() => {
+        expect(foreignDocument.activeElement).toBe(remounted);
+      });
     } finally {
       h.panel.destroy();
       iframe.remove();
@@ -6712,7 +6785,7 @@ describe('CenterPanel actual centre focus continuity', () => {
       await h.app.vault.process(file, (text) => text.replace('other #', 'other changed #'));
       await vi.advanceTimersByTimeAsync(25);
       const nextBob = expectDefined(h.cards()[1]);
-      expect(bob.isConnected).toBe(false);
+      expect(bob.isConnected).toBe(true);
       expect(document.activeElement).toBe(nextBob);
       nextBob.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       outside.focus();
@@ -6738,7 +6811,7 @@ describe('CenterPanel actual centre focus continuity', () => {
       await h.app.vault.process(f, (text) => text.replace('other #', 'other changed #'));
       await vi.advanceTimersByTimeAsync(25);
       expect(expectDefined(h.index.list()[0]).ref).toEqual(ref);
-      expect(old.isConnected).toBe(false);
+      expect(old.isConnected).toBe(true);
       const live = expectDefined(h.cards()[0]);
       expect(document.activeElement).toBe(live);
       live.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
@@ -6857,7 +6930,7 @@ describe('CenterPanel actual centre focus continuity', () => {
               patch: { tags: remove ? { remove: ['#work'] } : { add: ['#work'] } },
             })),
           );
-          expect(opener.isConnected).toBe(false);
+          expect(opener.isConnected).toBe(true);
           expect(document.activeElement).toBe(h.cards()[openerIndex]);
           expect(h.state.get('taskStack')[0]?.ref).toEqual(inspectorRef);
           expect(h.el.querySelectorAll('.abyss-multi-selected')).toHaveLength(2);

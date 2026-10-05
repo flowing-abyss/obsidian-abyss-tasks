@@ -13,8 +13,6 @@ import {
  */
 export interface MountedTaskListRows {
   readonly rows: TaskListRows;
-  readonly settled: Promise<TaskRenderOutcome>;
-  cancel(): void;
   /** The mounted header or card of `key`; undefined for a key this render did not mount. */
   element(key: string): HTMLElement | undefined;
   /** The mounted cards with their keys, in row order. */
@@ -30,7 +28,7 @@ function mountGroupHeader(container: HTMLElement, row: TaskListGroupRow): HTMLEl
   return header;
 }
 
-function mountRow(
+export function mountTaskListRow(
   container: HTMLElement,
   row: TaskListRow,
   renderTask: (container: HTMLElement, row: TaskListTaskRow) => HTMLElement,
@@ -47,11 +45,11 @@ export function mountTaskListRows(
   rows: TaskListRows,
   renderTask: (container: HTMLElement, row: TaskListTaskRow) => HTMLElement,
   scope?: TaskRenderScope,
-): MountedTaskListRows {
+): MountedTaskListRows & { readonly settled: Promise<TaskRenderOutcome>; cancel(): void } {
   const elements = new Map<string, HTMLElement>();
   const cards: Array<readonly [string, HTMLElement]> = [];
   for (const row of rows.rows) {
-    const element = mountRow(container, row, renderTask);
+    const element = mountTaskListRow(container, row, renderTask);
     elements.set(row.key, element);
     if (row.kind === 'task') cards.push([row.key, element]);
   }
@@ -69,8 +67,6 @@ export function mountTaskListRows(
 /** Nothing mounted: the handle before the first card render and at the start of each one. */
 export const NO_MOUNTED_TASK_LIST_ROWS: MountedTaskListRows = {
   rows: NO_TASK_LIST_ROWS,
-  settled: Promise.resolve({ type: 'ready' }),
-  cancel: () => {},
   element: () => undefined,
   cards: () => [],
 };

@@ -6,10 +6,11 @@
  * row and hook to its kind.
  *
  * Every limit, the configs' included, is twice the slowest time its kind of work took, rounded up
- * to 5 s. The slowest time covers the heavy files at 30 busy loops on the gate's forks pool (with
- * coverage, lint:store without), the sizing rounds under the same load, CI's Node 22 and 24
- * runners, and the durations SP1o's gate recorded at load 38 for the rows it stopped, which are
- * lower bounds. When a sizing round puts a row or hook above half its limit, its kind re-sizes
+ * to 5 s. The original four kinds cover heavy files at 30 busy loops on the gate's forks pool
+ * (with coverage, lint:store without), sizing rounds under the same load, CI's Node 22 and 24
+ * runners, and SP1o's gate durations at load 38 for stopped rows (lower bounds). The lifecycle
+ * audit kind follows the same formula with its separate measurement documented below. When a
+ * sizing round puts a row or hook above half its limit, its kind re-sizes
  * once: to two and a half times the kind's slowest time with every sizing round so far included,
  * rounded up to 5 s, so that the next round does not depend on no row beating its own record. The
  * time limit check's own rows neither start a re-size nor count toward one. Every limit here stays
@@ -44,3 +45,12 @@ export const SOURCE_WALK_TIMEOUT_MS = 80_000;
  * load 38 (the CSS policy CLI row took 7.33 s at 30 busy loops).
  */
 export const CHILD_PROCESS_TIMEOUT_MS = 20_000;
+
+/**
+ * A paired 1000/10000-row lifecycle audit with twenty full-range outward/return cycles per
+ * scale, retaining real DOM, Components and native resource recording. Twice Table's 108.461 s
+ * in the 2026-10-04 diagnostic coverage run on Node 26 with 30 busy loops and concurrent shared
+ * machine test workers, rounded up to 5 s. The other five cases completed in 8.080–47.113 s;
+ * quiet covering coverage took 1.325–8.090 s. Only the exact full-cycle helper owns this kind.
+ */
+export const VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS = 220_000;

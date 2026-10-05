@@ -1,6 +1,6 @@
 import type { TaskListOrder } from './taskListRows';
 
-/** Where an arrow key starts when the selection's own focus is not listed. */
+/** Where keyboard selection starts when the selection's own focus is not listed. */
 interface TaskRowOrigin {
   /** The card the key event came from. */
   readonly target?: string | undefined;
@@ -90,6 +90,21 @@ export class TaskRowSelection {
     if (from === -1 || to === -1) return;
     const range = order.taskKeys.slice(Math.min(from, to), Math.max(from, to) + 1);
     for (const listedKey of range) this.#selected.add(listedKey);
+  }
+
+  /** Select the complete display order without moving a surviving range or keyboard lead. */
+  selectAll(order: TaskListOrder, origin: TaskRowOrigin): void {
+    const focus = [this.#focus, origin.target, origin.detail, order.taskKeys[0]].find(
+      (candidate): candidate is string => listed(candidate, order),
+    );
+    if (focus === undefined) {
+      this.clear();
+      return;
+    }
+    this.#selected.clear();
+    for (const key of order.taskKeys) this.#selected.add(key);
+    if (!listed(this.#anchor, order)) this.#anchor = focus;
+    this.#focus = focus;
   }
 
   /**

@@ -11,6 +11,7 @@ import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import type { ProjectPropertyType } from '../src/projects/projectFields';
 import { ProjectPropertySuggest } from '../src/ui/ProjectPropertySuggest';
 import { dispatchImeKey, expectDefined, freshContainer } from './helpers';
+import { projectNativeBindings, projectWindowMigration } from './support/projectWindowMigration';
 
 // An editor listens on its document until it is destroyed, and rows leave theirs open, so an
 // editor from an earlier row could still take focus or react to a later row's events. Each row's
@@ -1870,3 +1871,176 @@ describe('ProjectPropertySuggest', () => {
     expect(commit).not.toHaveBeenCalled();
   });
 });
+
+describe('failed editor focus ownership', () => {
+  it('retains a failed draft without reclaiming real outside blur focus', async () => {
+    const container = document.body.createDiv();
+    const outside = document.body.createEl('input');
+    const save = vi.fn().mockRejectedValue(new ProjectEditValidationError('Invalid draft'));
+    const onClose = vi.fn();
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'end', property: 'end', label: 'End', type: 'date' },
+      value: '2026-09-30',
+      catalog: catalog([], 'date'),
+      save,
+      onClose,
+    });
+    const input = expectDefined(container.querySelector<HTMLInputElement>('input'));
+    handle.focus();
+    input.value = '2020-01-01';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await expect(handle.commit()).resolves.toBe(false);
+    expect(activeDocument.activeElement).toBe(input);
+    outside.focus();
+    await settleRender();
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(activeDocument.activeElement).toBe(outside);
+    expect(input.value).toBe('2020-01-01');
+    expect(input.isConnected).toBe(true);
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('Invalid draft');
+    expect(onClose).not.toHaveBeenCalled();
+    handle.cancel();
+    expect(input.isConnected).toBe(false);
+  });
+
+  it.each(['Enter', 'Tab'])(
+    'does not reclaim outside focus after pending %s fails',
+    async (key) => {
+      const container = document.body.createDiv();
+      const outside = document.body.createEl('input');
+      let reject: ((reason: unknown) => void) | undefined;
+      const pending = new Promise<void>((_resolve, fail) => {
+        reject = fail;
+      });
+      const onClose = vi.fn();
+      const handle = mountProjectCellEditor({
+        app: new App(),
+        container,
+        field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+        value: 'old',
+        catalog: catalog(),
+        save: () => pending,
+        onClose,
+      });
+      const input = expectDefined(container.querySelector<HTMLInputElement>('input'));
+      handle.focus();
+      input.value = 'draft';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      keydown(input, key);
+      outside.focus();
+      await settle();
+      expectDefined(reject)(new ProjectEditValidationError('Conflict'));
+      await settleRender();
+      expect(activeDocument.activeElement).toBe(outside);
+      expect(input.value).toBe('draft');
+      expect(input.isConnected).toBe(true);
+      expect(onClose).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['Enter', 'Tab'])(
+    'revokes pending %s failure focus after owner-window departure and return',
+    async (key) => {
+      const container = document.body.createDiv();
+      let reject: ((reason: unknown) => void) | undefined;
+      const pending = new Promise<void>((_resolve, fail) => {
+        reject = fail;
+      });
+      const handle = mountProjectCellEditor({
+        app: new App(),
+        container,
+        field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+        value: 'old',
+        catalog: catalog(),
+        save: () => pending,
+        onClose: vi.fn(),
+      });
+      const input = expectDefined(container.querySelector<HTMLInputElement>('input'));
+      handle.focus();
+      input.value = 'draft';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      keydown(input, key);
+      const refocus = vi.spyOn(input, 'focus');
+      window.dispatchEvent(new Event('blur'));
+      window.dispatchEvent(new Event('focus'));
+      expectDefined(reject)(new ProjectEditValidationError('Conflict'));
+      await settleRender();
+      expect(refocus).not.toHaveBeenCalled();
+      expect(input.isConnected).toBe(true);
+      expect(input.value).toBe('draft');
+    },
+  );
+  it('releases its original window listener when a retained editor is adopted before disposal', () => {
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
+    const container = document.body.createDiv();
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'old',
+      catalog: catalog(),
+      save: vi.fn(),
+      onClose: vi.fn(),
+    });
+    const listener = expectDefined(add.mock.calls.find(([type]) => type === 'blur'))[1];
+    const foreign = document.implementation.createHTMLDocument();
+    foreign.body.append(container);
+    handle.destroy();
+    expect(remove).toHaveBeenCalledWith('blur', listener);
+  });
+});
+
+it.each(['current-blur', 'old-blur', 'outside-pointer'] as const)(
+  'retained editor adopts native failure focus and dismissal (%s)',
+  async (departure) => {
+    const migration = projectWindowMigration();
+    const oldBindings = projectNativeBindings(document);
+    const container = document.body.createDiv();
+    const frame = document.body.createEl('iframe');
+    const doc = expectDefined(frame.contentDocument);
+    const win = expectDefined(frame.contentWindow);
+    const newBindings = projectNativeBindings(doc);
+    vi.spyOn(doc, 'hasFocus').mockReturnValue(true);
+    let reject: ((error: unknown) => void) | undefined;
+    const pending = new Promise<void>((_resolve, fail) => {
+      reject = fail;
+    });
+    const handle = mountProjectCellEditor({
+      app: new App(),
+      container,
+      field: { id: 'property:Custom', property: 'Custom', label: 'Custom', type: 'text' },
+      value: 'old',
+      catalog: catalog(),
+      save: () => pending,
+      onClose: vi.fn(),
+    });
+    const input = expectDefined(container.querySelector<HTMLInputElement>('input'));
+    doc.body.append(container);
+    migration.notify(container);
+    handle.focus();
+    input.value = 'draft';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    keydown(input, 'Enter');
+    const refocus = vi.spyOn(input, 'focus');
+    if (departure === 'outside-pointer')
+      doc.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    else {
+      (departure === 'current-blur' ? win : window).dispatchEvent(new Event('blur'));
+      win.dispatchEvent(new Event('focus'));
+    }
+    expectDefined(reject)(new ProjectEditValidationError('Conflict'));
+    await settleRender();
+    expect(refocus.mock.calls).toHaveLength(departure === 'old-blur' ? 1 : 0);
+    expect(input.value).toBe('draft');
+    expect(input.isConnected).toBe(true);
+    handle.destroy();
+    expect(migration.bindings.size).toBe(0);
+    for (const { add, remove } of [...oldBindings.audits, ...newBindings.audits])
+      for (const args of add.mock.calls.filter(([type]) => ['blur', 'pointerdown'].includes(type)))
+        expect(remove).toHaveBeenCalledWith(...args);
+    for (const callback of migration.retired) callback();
+  },
+);

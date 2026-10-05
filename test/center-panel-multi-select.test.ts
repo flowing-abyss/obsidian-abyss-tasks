@@ -1,24 +1,67 @@
-import { Menu } from 'obsidian';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Component, MarkdownRenderer, Menu } from 'obsidian';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { type CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TagManager } from '../src/tags/TagManager';
-import type { TaskApplicationApi, TaskCommandResult, TaskRef, TaskSnapshot } from '../src/tasks';
+import {
+  taskNodeAddress,
+  type TaskApplicationApi,
+  type TaskCommandResult,
+  type TaskRef,
+  type TaskSnapshot,
+} from '../src/tasks';
+import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import {
   appWithFiles,
+  deferred,
   dispatchImeKey,
   expectDefined,
+  flushMicrotasks,
   freshContainer,
   makeStubStore,
   methodOf,
   task,
+  taskQueryApi,
   useRealMoment,
 } from './helpers';
 import { makeCenterPanelForTest, taskCommandsOf } from './support/panelHarness';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
+import { taskViewportOwner } from './support/taskViewportOwner';
+import { VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS } from './support/timeouts';
+import { runVirtualSurfaceAuditCycles } from './support/virtualSurfaceAudit';
+import { recordVirtualSurfaceResources } from './support/virtualSurfaceResources';
 
 useRealMoment();
+
+const viewportFrames = new Map<number, FrameRequestCallback>();
+beforeEach(() => {
+  viewportFrames.clear();
+  let frame = 0;
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    viewportFrames.set(++frame, callback);
+    return frame;
+  });
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+    viewportFrames.delete(id);
+  });
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(900);
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(700);
+  Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+});
+function flushViewport(): void {
+  const frames = [...viewportFrames.values()];
+  viewportFrames.clear();
+  for (const callback of frames) callback(0);
+}
 
 afterEach(() => {
   activeDocument.querySelectorAll('.abyss-test-center-attached').forEach((element) => {
@@ -29,10 +72,12 @@ afterEach(() => {
 function makeCenter(
   tasks: TaskSnapshot[],
   application?: TaskApplicationApi,
+  tracking = false,
 ): {
   el: HTMLElement;
   state: AppState;
   panel: CenterPanel;
+  ticker: TrackingTicker | undefined;
 } {
   const state = new AppState();
   state.set('selectedList', 'inbox');
@@ -48,6 +93,9 @@ function makeCenter(
     },
   });
   const store = makeStubStore(tasks);
+  const ticker = tracking
+    ? new TrackingTicker({ queries: store.queries, now: () => 60000, win: window })
+    : undefined;
   const panel = makeCenterPanelForTest(
     state,
     store,
@@ -58,10 +106,23 @@ function makeCenter(
     undefined,
     undefined,
     application,
+    ticker === undefined
+      ? undefined
+      : {
+          ticker,
+          context: () => ({ nowMs: 60000, offsetAt: () => 0 }),
+          actions: {
+            start: async () => {},
+            pause: async () => {},
+            remove: async () => undefined,
+            restore: async () => ({ type: 'ok', outcome: { type: 'stopped' }, changed: false }),
+          },
+        },
   );
   const el = freshContainer();
+  attach(el);
   panel.mount(el);
-  return { el, state, panel };
+  return { el, state, panel, ticker };
 }
 
 function cards(el: HTMLElement): HTMLElement[] {
@@ -203,7 +264,7 @@ describe('CenterPanel multi-selection', () => {
     expect(liveMutations()).toHaveLength(0);
     expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('');
     observer.disconnect();
-    expect(live.isConnected).toBe(false);
+    expect(live.isConnected).toBe(true);
   });
 
   it('mutates the live region once for each real 0 to 1 to 2 to 1 to 0 count transition', () => {
@@ -538,7 +599,6 @@ describe('CenterPanel multi-selection', () => {
       arrow === 'ArrowDown' ? expectDefined(visibleCards[0]) : expectDefined(visibleCards[2]);
     expect(state.get('taskStack')).toEqual([expected]);
     expect(activeDocument.activeElement).toBe(expectedCard);
-    expect(methodOf(expectedCard, 'scrollIntoView')).toHaveBeenCalledWith({ block: 'nearest' });
     expect(selectedLines(el)).toEqual([]);
     el.remove();
   });
@@ -970,3 +1030,791 @@ it('retains only the selected outgoing occurrence when an archive fails after a 
   expect(rows[3]?.classList.contains('abyss-multi-selected')).toBe(true);
   panel.destroy();
 });
+
+describe('windowed Tasks integration', () => {
+  function largeTasks(): TaskSnapshot[] {
+    return Array.from({ length: 1200 }, (_, line) =>
+      task({
+        title: `Task ${line}`,
+        tags: ['#task/inbox'],
+        source: { filePath: 'large.md', line },
+      }),
+    );
+  }
+  it('reveals logical arrow targets outside the mounted window and keeps DOM bounded', () => {
+    const tasks = largeTasks();
+    const { el, state, panel } = makeCenter(tasks);
+    state.set('taskStack', [expectDefined(tasks[998])]);
+    key(el, 'ArrowDown');
+    expect(state.get('taskStack')).toEqual([tasks[999]]);
+    expect(activeDocument.activeElement?.getAttribute('data-line')).toBe('999');
+    expect(cards(el).length).toBeLessThanOrEqual(100);
+    panel.destroy();
+  });
+  it('extends a logical range across windows without mounting the selection', () => {
+    const { el, state, panel } = makeCenter(largeTasks());
+    click(expectDefined(cards(el)[0]));
+    for (let i = 0; i < 120; i++) key(el, 'ArrowDown', { shiftKey: true });
+    expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('121 tasks selected');
+    expect(activeDocument.activeElement?.getAttribute('data-line')).toBe('120');
+    expect(state.get('taskStack')[0]).toMatchObject({ source: { line: 0 } });
+    expect(cards(el).length).toBeLessThanOrEqual(100);
+    panel.destroy();
+  });
+  it('preserves fractional and elastic native scrolling without completing an application render', () => {
+    const { el, panel } = makeCenter(largeTasks());
+    const complete = vi.spyOn(
+      panel as unknown as { completeTaskCardRender_abyssPrivate(): void },
+      'completeTaskCardRender_abyssPrivate',
+    );
+    const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.scrollTop = 12000.25;
+    scroll.dispatchEvent(new Event('scroll'));
+    flushViewport();
+    expect(scroll.scrollTop).toBe(12000.25);
+    expect(cards(el).length).toBeLessThanOrEqual(100);
+    expect(cards(el)[0]?.dataset['line']).not.toBe('0');
+    scroll.scrollTop = -1.5;
+    scroll.dispatchEvent(new Event('scroll'));
+    flushViewport();
+    expect(scroll.scrollTop).toBe(-1.5);
+    expect(complete).not.toHaveBeenCalled();
+    panel.destroy();
+  });
+});
+
+describe('offscreen date focus authorization', () => {
+  it.each([false, true])(
+    'reveals an exact offscreen source only while focus authority remains (%s outside)',
+    async (outsideFocus) => {
+      const tasks = Array.from({ length: 1200 }, (_, line) =>
+        task({
+          title: `Task ${line}`,
+          tags: ['#task/inbox'],
+          source: { filePath: 'large.md', line },
+        }),
+      );
+      const { el, panel } = makeCenter(tasks);
+      const original = expectDefined(tasks[0]);
+      const card = expectDefined(cards(el)[0]);
+      card.focus();
+      let resolve!: (value: boolean) => void;
+      vi.spyOn(taskCommandsOf(panel), 'setTaskDue').mockImplementation(
+        () =>
+          new Promise<boolean>((done) => {
+            resolve = done;
+          }),
+      );
+      panel['pickTaskDate_abyssPrivate']([original], '2026-10-08', card.dataset['rowKey']);
+      const outside = activeDocument.body.createEl('input');
+      if (outsideFocus) outside.focus();
+      else card.blur();
+      const complete = vi.spyOn(
+        panel as unknown as { completeTaskCardRender_abyssPrivate(): void },
+        'completeTaskCardRender_abyssPrivate',
+      );
+      const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+      scroll.scrollTop = 25000.25;
+      scroll.dispatchEvent(new Event('scroll'));
+      flushViewport();
+      expect(complete).not.toHaveBeenCalled();
+      resolve(true);
+      await Promise.resolve();
+      panel.refresh();
+      if (outsideFocus) {
+        expect(activeDocument.activeElement).toBe(outside);
+        expect(scroll.scrollTop).toBe(25000.25);
+      } else {
+        expect(activeDocument.activeElement?.getAttribute('data-line')).toBe('0');
+        expect(scroll.scrollTop).toBeLessThan(100);
+      }
+      outside.remove();
+      panel.destroy();
+    },
+  );
+});
+
+it('pins an open recurrence editor across scrolling and cancels it when its task is filtered out', async () => {
+  const h = await mountCanonicalSearchUi(
+    {
+      'large.md': Array.from({ length: 1200 }, (_, line) => `- [ ] Task ${line} #task/inbox`).join(
+        '\n',
+      ),
+    },
+    { ...DEFAULT_SETTINGS, inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: true } },
+    'tasks',
+  );
+  const { root: el, panel } = h;
+  const tasks = h.index.list();
+  const card = expectDefined(cards(el)[0]);
+  panel['openRecurrenceEditor_abyssPrivate'](card, expectDefined(tasks[0]));
+  const editor = expectDefined(activeDocument.querySelector('.abyss-recurrence-popover'));
+  const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+  scroll.scrollTop = 20000;
+  scroll.dispatchEvent(new Event('scroll'));
+  flushViewport();
+  expect(card.isConnected).toBe(true);
+  panel.refresh();
+  expect(editor.isConnected).toBe(true);
+  h.query('unmatched task title');
+  await h.completed();
+  expect(editor.isConnected).toBe(false);
+  expect(card.isConnected).toBe(false);
+  h.dispose();
+});
+
+it('does not reveal a stale date opener while cancelling a replaced source before reconciliation', () => {
+  const tasks = Array.from({ length: 1200 }, (_, line) =>
+    task({ title: `Task ${line}`, tags: ['#task/inbox'], source: { filePath: 'large.md', line } }),
+  );
+  const { el, panel } = makeCenter(tasks);
+  const original = expectDefined(tasks[0]);
+  const card = expectDefined(cards(el)[0]);
+  panel['openTaskDatePicker_abyssPrivate'](card, [original]);
+  const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+  scroll.scrollTop = 25000.25;
+  scroll.dispatchEvent(new Event('scroll'));
+  flushViewport();
+  tasks[0] = { ...original, ref: { ...original.ref, revision: 'external-replacement' } };
+  panel.refresh();
+  expect(scroll.scrollTop).toBe(25000.25);
+  expect(el.querySelector('.abyss-date-picker-popover')).toBeNull();
+  expect(activeDocument.activeElement).not.toBe(card);
+  panel.destroy();
+});
+
+it('selects all outgoing occurrences across windows while deduplicating physical task targets', () => {
+  const tasks = Array.from({ length: 1200 }, (_, line) =>
+    task({
+      title: `Task ${line}`,
+      markdownTitle: `Task ${line} [[Alice]] [[Bob]]`,
+      tags: ['#task/inbox'],
+      source: { filePath: 'large.md', line },
+    }),
+  );
+  const { el, state, panel } = makeCenter(tasks);
+  state.set('centerListViewState', {
+    ...state.get('centerListViewState'),
+    groupBy: 'outgoing-link',
+  });
+  const first = expectDefined(cards(el)[0]);
+  click(first);
+  const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+  scroll.scrollTop = 1e9;
+  scroll.dispatchEvent(new Event('scroll'));
+  flushViewport();
+  const mounted = cards(el);
+  const last = expectDefined(mounted[mounted.length - 1]);
+  expect(last.dataset['line']).toBe('1199');
+  click(last, { shiftKey: true });
+  expect(panel['rowSelection_abyssPrivate'].size).toBe(2400);
+  expect(panel['selectedTasksInVisualOrder_abyssPrivate']()).toEqual(tasks);
+  expect(cards(el).length).toBeLessThanOrEqual(100);
+  panel.destroy();
+});
+
+it('retains a native drag source while scrolling and releases it when Escape cancels', () => {
+  const tasks = Array.from({ length: 1200 }, (_, line) =>
+    task({ title: `Task ${line}`, tags: ['#task/inbox'], source: { filePath: 'large.md', line } }),
+  );
+  const { el, state, panel } = makeCenter(tasks);
+  const card = expectDefined(cards(el)[0]);
+  card.dispatchEvent(new Event('dragstart'));
+  const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+  scroll.scrollTop = 25000;
+  scroll.dispatchEvent(new Event('scroll'));
+  flushViewport();
+  expect(card.isConnected).toBe(true);
+  expect(state.get('draggingTaskNode')?.task.root).toEqual(tasks[0]);
+  key(el, 'Escape');
+  flushViewport();
+  expect(state.get('draggingTaskNode')).toBeNull();
+  expect(card.isConnected).toBe(false);
+  panel.destroy();
+});
+
+it.each([false, true])(
+  'returns a delayed recurrence successor only while its original return authority remains (%s outside)',
+  async (outsideFocus) => {
+    const original = task({
+      title: 'Original',
+      planning: { due: '2026-10-04' },
+      tags: ['#task/inbox'],
+      source: { filePath: 'large.md', line: 0 },
+    });
+    const successor = { ...original, ref: { ...original.ref, revision: 'owned-successor' } };
+    const tasks = [
+      original,
+      ...Array.from({ length: 1199 }, (_, index) =>
+        task({
+          title: `Task ${index + 1}`,
+          tags: ['#task/inbox'],
+          source: { filePath: 'large.md', line: index + 1 },
+        }),
+      ),
+    ];
+    const pending = deferred<TaskCommandResult>();
+    const application: TaskApplicationApi = {
+      queries: taskQueryApi(),
+      execute: vi.fn(() => pending.promise),
+    };
+    const { el, panel } = makeCenter(tasks, application);
+    const card = expectDefined(cards(el)[0]);
+    card.focus();
+    panel['openRecurrenceEditor_abyssPrivate'](card, original);
+    expectDefined(
+      activeDocument.querySelector<HTMLElement>('[data-recurrence-preset="weekly"]'),
+    ).click();
+    const save = expectDefined(
+      activeDocument.querySelector<HTMLButtonElement>('.abyss-recurrence-save'),
+    );
+    expect(save.disabled).toBe(false);
+    save.focus();
+    save.click();
+    const outside = activeDocument.body.createEl('input');
+    if (outsideFocus) outside.focus();
+    const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.scrollTop = 25000.25;
+    scroll.dispatchEvent(new Event('scroll'));
+    flushViewport();
+    tasks[0] = successor;
+    panel.refresh();
+    pending.resolve({ type: 'ok', changed: true, outcome: { type: 'task', task: successor } });
+    await Promise.resolve();
+    await Promise.resolve();
+    if (outsideFocus) {
+      expect(activeDocument.activeElement).toBe(outside);
+      expect(scroll.scrollTop).toBe(25000.25);
+    } else {
+      expect(activeDocument.activeElement?.getAttribute('data-line')).toBe('0');
+      expect(scroll.scrollTop).toBeLessThan(100);
+    }
+    panel.destroy();
+    outside.remove();
+  },
+);
+
+it('reveals an exact offscreen Search destination in the bounded list without moving focus', async () => {
+  const h = await mountCanonicalSearchUi(
+    {
+      'large.md': Array.from(
+        { length: 1200 },
+        (_, line) => `- [ ] Task ${String(line).padStart(4, '0')} #task/inbox`,
+      ).join('\n'),
+    },
+    { ...DEFAULT_SETTINGS, inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: true } },
+  );
+  const { root: el, state } = h;
+  const target = expectDefined(h.index.list()[1199]);
+  h.query(target.title);
+  await h.completed();
+  const result = expectDefined(el.querySelector<HTMLElement>('.abyss-task-title'));
+  const outside = el.ownerDocument.body.createEl('input');
+  outside.focus();
+  result.click();
+  await vi.waitFor(() => {
+    expect(state.get('mode')).toBe('tasks');
+  });
+  await h.completed();
+  expect(state.get('selectedList')).toBe('inbox');
+  expect(state.get('taskStack')).toEqual([target]);
+  expect(el.querySelector('.abyss-task-card[data-line="1199"]')).not.toBeNull();
+  expect(
+    expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll')).scrollTop,
+  ).toBeGreaterThan(1000);
+  // Exact navigation computes the last temporary allocation page before native reveal.
+  expect(el.querySelector('.is-search-revealed')?.getAttribute('data-line')).toBe('1199');
+  expect(cards(el).length).toBeLessThanOrEqual(100);
+  expect(el.ownerDocument.activeElement).toBe(outside);
+  outside.remove();
+  h.dispose();
+});
+
+it.each([{ ctrlKey: true }, { metaKey: true }])(
+  'selects all logical occurrences directly with Mod+A and archives each physical task once (%j)',
+  async (modifier) => {
+    const tasks = Array.from({ length: 1200 }, (_, line) =>
+      task({
+        title: `Task ${line}`,
+        markdownTitle: `Task ${line} [[Alice]] [[Bob]]`,
+        tags: ['#task/inbox'],
+        source: { filePath: 'large.md', line },
+      }),
+    );
+    const execute = vi.fn(async (ref: TaskRef): Promise<TaskCommandResult> => ({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'archived', ref, filePath: 'archive.md' },
+    }));
+    const planArchive = vi
+      .fn()
+      .mockResolvedValue({ type: 'ready', filePath: 'archive.md', execute });
+    // This command fixture never rewrites its snapshots. Keep exact lookups indexed so the
+    // 1200-command selection proof does not add a full fixture scan to every pending rebase.
+    const exactTasks = new Map(
+      tasks.map((item) => [`${item.ref.filePath}:${item.ref.line}`, item]),
+    );
+    const application: TaskApplicationApi = {
+      queries: {
+        ...makeStubStore(tasks).queries,
+        resolve: (ref) => {
+          const found = exactTasks.get(`${ref.filePath}:${ref.line}`);
+          return found === undefined
+            ? { type: 'not-found', ref }
+            : { type: 'exact', task: found, basis: { observed: found } };
+        },
+      },
+      execute: vi.fn(),
+      planArchive,
+    };
+    const { el, state, panel } = makeCenter(tasks, application);
+    state.set('centerListViewState', {
+      ...state.get('centerListViewState'),
+      groupBy: 'outgoing-link',
+    });
+    flushViewport();
+    const first = expectDefined(cards(el)[0]);
+    first.focus();
+    const event = key(first, 'a', modifier);
+    expect(event.defaultPrevented).toBe(true);
+    expect(panel['rowSelection_abyssPrivate'].size).toBe(2400);
+    expect(panel['selectedTasksInVisualOrder_abyssPrivate']()).toEqual(tasks);
+    expect(cards(el).length).toBeLessThanOrEqual(100);
+    await taskCommandsOf(panel).archiveTasks(panel['selectedTasksInVisualOrder_abyssPrivate']());
+    expect(planArchive).toHaveBeenCalledOnce();
+    expect(execute.mock.calls.map(([ref]) => ref)).toEqual(tasks.map(({ ref }) => ref));
+    expect(new Set(execute.mock.calls.map(([ref]) => ref))).toHaveLength(1200);
+    panel.destroy();
+  },
+);
+
+it.each(['tasks', 'dashboard', 'search'] as const)(
+  'bounds real %s Component/badge/native resources over twenty full-range cycles at both scales',
+  async (mode) => {
+    const mountedCounts: number[] = [];
+    for (const count of [1000, 10000]) {
+      const resources = recordVirtualSurfaceResources();
+      const markdown = new Set<Component>();
+      vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (...args) => {
+        const [, , holder, , owner] = args;
+        const child = owner.addChild(new Component());
+        markdown.add(child);
+        child.register(() => markdown.delete(child));
+        holder.createEl('a', {
+          cls: 'internal-link',
+          text: 'Target',
+          attr: { 'data-href': 'Target' },
+        });
+      });
+      const tasks = Array.from({ length: count }, (_, line) =>
+        task({
+          title: `Task ${line}`,
+          markdownTitle: `Task ${line} [[Target]]`,
+          description: '[[Target]]',
+          tags: ['#task/inbox'],
+          source: { filePath: 'large.md', line },
+          timeEntries: [
+            { relativeLine: 1, originalMarkdown: 'running', state: 'running', startMs: 0 },
+          ],
+        }),
+      );
+      const { el, state, panel, ticker } = makeCenter(tasks, undefined, true);
+      if (mode === 'dashboard') {
+        state.set('mode', 'projects');
+        renderDashboardList(panel, el, 'large.md');
+      } else if (mode === 'search') {
+        state.set('mode', 'search');
+        // Exercise the native supplied-row renderer at both full scales. Canonical Search
+        // retrieval/completion is covered separately; Task1 still allocates 50-root pages.
+        panel['renderFlat_abyssPrivate'](
+          expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll')),
+          tasks,
+        );
+      }
+      const surface = expectDefined(panel['taskSurface_abyssPrivate']).surface;
+      resources.installObserver();
+      surface.suspend();
+      surface.resume();
+      flushViewport();
+      await flushMicrotasks();
+      const keys = surface.rows.taskKeys;
+      expect(keys).toHaveLength(count);
+      const first = expectDefined(keys[0]);
+      const last = expectDefined(keys[keys.length - 1]);
+      const pin = surface.pin(first);
+      const retained = resources.counts();
+      const retainedMarkdown = markdown.size;
+      expect(retained.components).toBeGreaterThan(0);
+      expect(retainedMarkdown).toBeGreaterThan(0);
+      const initialMounted = [...surface.cards()].length;
+      expect(el.querySelectorAll('.abyss-task-time-badge.is-tracking')).toHaveLength(
+        initialMounted,
+      );
+      const renderer = panel['taskCardRenderer_abyssPrivate'];
+      const active = tasks.map((item) => ({
+        filePath: item.source.filePath,
+        root: item.ref,
+        target: { type: 'task' as const, ref: item.ref },
+        address: taskNodeAddress({ type: 'task', ref: item.ref }),
+        rootAddress: taskNodeAddress({ type: 'task', ref: item.ref }),
+        title: item.title,
+        status: item.status,
+        entry: expectDefined(item.timeEntries[0]),
+      }));
+      const heldBadges: HTMLElement[] = [];
+      mountedCounts.push(initialMounted);
+      await runVirtualSurfaceAuditCycles(async (cycle) => {
+        surface.reveal(last);
+        flushViewport();
+        const badges = Array.from(el.querySelectorAll<HTMLElement>('.abyss-task-time-badge span'));
+        const retired = expectDefined(badges[badges.length - 1]);
+        heldBadges.push(retired);
+        surface.reveal(first);
+        flushViewport();
+        await flushMicrotasks();
+        document.body.append(retired);
+        const oldText = retired.textContent;
+        renderer.paintTracking({ nowMs: (cycle + 2) * 60000, active });
+        expect(retired.textContent).toBe(oldText);
+        expect(el.querySelector('.abyss-task-time-badge span')?.textContent).toBe(`${cycle + 2}m`);
+        expect(resources.counts()).toEqual(retained);
+        expect(markdown.size).toBeLessThanOrEqual(retainedMarkdown);
+        expect([...surface.cards()].length).toBeLessThanOrEqual(initialMounted + 1);
+        expect(el.querySelectorAll('.abyss-task-time-badge').length).toBeLessThanOrEqual(
+          initialMounted + 1,
+        );
+      });
+      expect(heldBadges).toHaveLength(20);
+      pin();
+      panel.destroy();
+      ticker?.destroy();
+      const texts = heldBadges.map((badge) => badge.textContent);
+      renderer.paintTracking({ nowMs: 3600000, active });
+      expect(heldBadges.map((badge) => badge.textContent)).toEqual(texts);
+      heldBadges.forEach((badge) => {
+        badge.remove();
+      });
+      flushViewport();
+      expect(resources.liveComponents.size).toBe(0);
+      expect(resources.observers.size).toBe(0);
+      expect(resources.observed.size).toBe(0);
+      expect(markdown.size).toBe(0);
+      expect(viewportFrames.size).toBe(0);
+      // Mounted panel/global listeners must be released; document's lazy jsdom delegates are excluded.
+      expect(resources.nativeListeners.size).toBe(0);
+      vi.restoreAllMocks();
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(900);
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(700);
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        viewportFrames.set(viewportFrames.size + 1, callback);
+        return viewportFrames.size;
+      });
+      vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) =>
+        viewportFrames.delete(id),
+      );
+    }
+    expect(expectDefined(mountedCounts[1])).toBeLessThanOrEqual(
+      expectDefined(mountedCounts[0]) * 1.1,
+    );
+  },
+  VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS,
+);
+
+it.each(['title', 'desc'])(
+  'retires held task %s links when their actual content generation is evicted',
+  async (region) => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (...args) => {
+      const holder = args[2];
+      holder.createEl('a', {
+        cls: 'internal-link',
+        text: 'Target',
+        attr: { 'data-href': 'Target' },
+      });
+    });
+    const tasks = Array.from({ length: 1200 }, (_, line) =>
+      task({
+        markdownTitle: `Task ${line} [[Target]]`,
+        description: '[[Target]]',
+        tags: ['#task/inbox'],
+        source: { filePath: 'large.md', line },
+      }),
+    );
+    const { el, panel } = makeCenter(tasks);
+    flushViewport();
+    await flushMicrotasks();
+    const anchor = expectDefined(
+      cards(el)[0]?.querySelector<HTMLElement>(`.abyss-task-${region} a.internal-link`),
+    );
+    const open = vi.spyOn(panel['app_abyssPrivate'].workspace, 'openLinkText');
+    const hover = vi.spyOn(panel['app_abyssPrivate'].workspace, 'trigger');
+    const surface = expectDefined(panel['taskSurface_abyssPrivate']).surface;
+    surface.reveal(expectDefined(surface.rows.taskKeys[surface.rows.taskKeys.length - 1]));
+    flushViewport();
+    expect(anchor.isConnected).toBe(false);
+    const click = new MouseEvent('click', { cancelable: true });
+    anchor.dispatchEvent(click);
+    anchor.dispatchEvent(new MouseEvent('mouseover'));
+    const menu = new MouseEvent('contextmenu', { cancelable: true });
+    anchor.dispatchEvent(menu);
+    await flushMicrotasks();
+    expect.soft(click.defaultPrevented).toBe(false);
+    expect.soft(menu.defaultPrevented).toBe(false);
+    expect.soft(open).not.toHaveBeenCalled();
+    expect.soft(hover.mock.calls.filter(([type]) => type === 'hover-link')).toEqual([]);
+    panel.destroy();
+  },
+);
+
+it.each([false, true])(
+  'Mod+A keeps later-window focus and scroll with an existing lead=%s',
+  (hasLead) => {
+    const tasks = Array.from({ length: 1200 }, (_, line) =>
+      task({
+        title: `Task ${String(line).padStart(4, '0')}`,
+        tags: ['#task/inbox'],
+        source: { filePath: 'large.md', line },
+      }),
+    );
+    const { el, panel, state } = makeCenter(tasks);
+    const surface = expectDefined(panel['taskSurface_abyssPrivate']).surface;
+    const card = expectDefined(surface.reveal('large.md:700'));
+    card.focus();
+    if (hasLead) {
+      click(card);
+      key(card, 'ArrowDown', { shiftKey: true });
+    }
+    const active = expectDefined(el.ownerDocument.activeElement) as HTMLElement;
+    const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.scrollTop += 0.25;
+    const offset = scroll.scrollTop;
+    const stack = state.get('taskStack');
+    const complete = vi.spyOn(
+      panel as unknown as { completeTaskCardRender_abyssPrivate(): void },
+      'completeTaskCardRender_abyssPrivate',
+    );
+    const reveal = vi.spyOn(surface, 'reveal');
+    for (let repeat = 0; repeat < 2; repeat++)
+      expect(key(active, 'A', { metaKey: true }).defaultPrevented).toBe(true);
+    expect(panel['rowSelection_abyssPrivate'].size).toBe(1200);
+    expect(panel['rowSelection_abyssPrivate'].anchor).toBe('large.md:700');
+    expect(panel['rowSelection_abyssPrivate'].focus).toBe(
+      hasLead ? 'large.md:701' : 'large.md:700',
+    );
+    expect(el.ownerDocument.activeElement).toBe(active);
+    expect(scroll.scrollTop).toBe(offset);
+    expect(state.get('taskStack')).toBe(stack);
+    expect(complete).not.toHaveBeenCalled();
+    expect(reveal).not.toHaveBeenCalled();
+    expect(cards(el).length).toBeLessThanOrEqual(100);
+    key(active, 'ArrowDown', { shiftKey: true });
+    expect(panel['rowSelection_abyssPrivate'].inOrder(surface.rows)).toEqual(
+      hasLead ? ['large.md:700', 'large.md:701', 'large.md:702'] : ['large.md:700', 'large.md:701'],
+    );
+    key(expectDefined(el.ownerDocument.activeElement) as HTMLElement, 'ArrowDown');
+    expect(panel['rowSelection_abyssPrivate'].size).toBe(0);
+    expect(state.get('taskStack')).toEqual([tasks[hasLead ? 703 : 702]]);
+    panel.destroy();
+  },
+);
+
+it('Mod+A follows the current filtered and reordered logical projection', async () => {
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': '- [ ] Keep Z #task/inbox\n- [ ] Other #task/inbox\n- [ ] Keep A #task/inbox' },
+    { ...DEFAULT_SETTINGS, inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: true } },
+    'tasks',
+  );
+  const { root: el, panel, state } = h;
+  const tasks = h.index.list();
+  h.query('Keep');
+  state.set('centerListViewState', {
+    ...state.get('centerListViewState'),
+    groupBy: 'none',
+    sortBy: { field: 'title', dir: 'asc' },
+  });
+  await h.completed();
+  expect(key(el, 'a', { ctrlKey: true }).defaultPrevented).toBe(true);
+  expect(panel['selectedTasksInVisualOrder_abyssPrivate']()).toEqual([tasks[2], tasks[0]]);
+  h.query('No matching rows');
+  await h.completed();
+  expect(key(el, 'a', { ctrlKey: true }).defaultPrevented).toBe(false);
+  h.dispose();
+});
+
+it('Mod+A ignores other chords, consumed events, IME, and interactive targets', () => {
+  const { el, panel, state } = makeCenter([task({ tags: ['#task/inbox'] })]);
+  const first = expectDefined(cards(el)[0]);
+  const select = vi.spyOn(panel['rowSelection_abyssPrivate'], 'selectAll');
+  for (const init of [
+    {},
+    { ctrlKey: true, altKey: true },
+    { ctrlKey: true, shiftKey: true },
+    { ctrlKey: true, metaKey: true },
+    { ctrlKey: true, isComposing: true },
+  ]) {
+    expect(key(first, 'a', init).defaultPrevented).toBe(false);
+  }
+  const legacy = new KeyboardEvent('keydown', {
+    key: 'a',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  Object.defineProperty(legacy, 'keyCode', { value: 229 });
+  first.dispatchEvent(legacy);
+  expect(legacy.defaultPrevented).toBe(false);
+  const consumed = new KeyboardEvent('keydown', {
+    key: 'a',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  consumed.preventDefault();
+  first.dispatchEvent(consumed);
+  const targets = [
+    first.createEl('input'),
+    first.createEl('textarea'),
+    first.createEl('select'),
+    first.createEl('button'),
+    first.createEl('a'),
+    first.createDiv({ attr: { contenteditable: 'true' } }),
+    first.createDiv({ cls: 'abyss-status-marker' }),
+    first.createDiv({ cls: 'abyss-status-control' }),
+    el.createDiv({ cls: 'abyss-popover' }),
+  ];
+  for (const target of targets)
+    expect(key(target, 'a', { ctrlKey: true }).defaultPrevented).toBe(false);
+  expect(select).not.toHaveBeenCalled();
+  expect(state.get('taskStack')).toEqual([]);
+  panel.destroy();
+});
+
+it('Mod+A leaves the real filter and foreign-realm input text selection alone', () => {
+  const { el, panel } = makeCenter([task({ tags: ['#task/inbox'] })]);
+  const input = expectDefined(el.querySelector<HTMLInputElement>('.abyss-center-search'));
+  input.value = 'draft filter';
+  input.focus();
+  input.setSelectionRange(2, 5);
+  const blur = vi.fn();
+  input.addEventListener('blur', blur);
+  expect(key(input, 'a', { metaKey: true }).defaultPrevented).toBe(false);
+  expect(el.ownerDocument.activeElement).toBe(input);
+  expect([input.selectionStart, input.selectionEnd]).toEqual([2, 5]);
+  expect(input.value).toBe('draft filter');
+  expect(blur).not.toHaveBeenCalled();
+  const frame = el.ownerDocument.body.createEl('iframe');
+  const doc = expectDefined(frame.contentDocument);
+  doc.body.append(el);
+  expect(key(input, 'a', { metaKey: true }).defaultPrevented).toBe(false);
+  // Native creation matches the existing realm fixture; Obsidian createEl uses the main realm.
+  const foreign = doc.createElementNS('http://www.w3.org/1999/xhtml', 'input');
+  expect(foreign).not.toBeInstanceOf(HTMLElement);
+  el.append(foreign);
+  expect(key(foreign, 'a', { ctrlKey: true }).defaultPrevented).toBe(false);
+  expect(panel['rowSelection_abyssPrivate'].size).toBe(0);
+  panel.destroy();
+  frame.remove();
+});
+
+it.each(['search', 'projects', 'calendar'] as const)(
+  'Mod+A does not acquire %s or a destroyed panel',
+  (mode) => {
+    const { el, panel, state } = makeCenter([task({ title: 'Task', tags: ['#task/inbox'] })]);
+    click(expectDefined(cards(el)[0]), { ctrlKey: true });
+    const selected = panel['rowSelection_abyssPrivate'];
+    const anchor = selected.anchor;
+    state.set('searchQuery', 'Task');
+    state.set('mode', mode);
+    if (mode === 'projects') renderDashboardList(panel, el, 'tasks.md');
+    const stack = state.get('taskStack');
+    expect(key(el, 'a', { ctrlKey: true }).defaultPrevented).toBe(false);
+    // Search's preexisting page transition clears Tasks range selection at this checkpoint.
+    expect(selected.anchor).toBe(mode === 'search' ? null : anchor);
+    expect(selected.size).toBe(mode === 'search' ? 0 : 1);
+    expect(state.get('taskStack')).toBe(stack);
+    state.set('mode', 'tasks');
+    expect(selected.size).toBe(mode === 'search' ? 0 : 1);
+    panel.destroy();
+    expect(key(el, 'a', { metaKey: true }).defaultPrevented).toBe(false);
+  },
+);
+
+it('scrolls already-active Tasks after transient adoption without a full panel render', () => {
+  const tasks = Array.from({ length: 1200 }, (_, line) =>
+    task({
+      title: `Task ${line}`,
+      tags: ['#task/inbox'],
+      source: { filePath: 'adopt.md', line },
+    }),
+  );
+  const { el, panel } = makeCenter(tasks);
+  attach(el);
+  flushViewport();
+  const refresh = vi.spyOn(panel, 'refresh');
+  const completion = vi.spyOn(
+    panel as unknown as {
+      completeTaskCardRender_abyssPrivate(): void;
+    },
+    'completeTaskCardRender_abyssPrivate',
+  );
+  const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+  el.remove();
+  scroll.dispatchEvent(new Event('scroll'));
+  flushViewport();
+  const owner = taskViewportOwner();
+  owner.doc.body.append(el);
+  scroll.scrollTop = 76000.5;
+  scroll.dispatchEvent(new owner.win.Event('scroll'));
+  owner.flush();
+  expect(cards(el).some((card) => Number(card.dataset['line']) > 1100)).toBe(true);
+  expect(cards(el).length).toBeLessThan(100);
+  expect(scroll.scrollTop).toBe(76000.5);
+  expect(refresh).not.toHaveBeenCalled();
+  expect(completion).not.toHaveBeenCalled();
+  panel.destroy();
+  owner.destroy();
+});
+
+it.each([false, true])(
+  'settled task scroll decorates mounts without collecting logical selection (selected=%s)',
+  (selected) => {
+    const tasks = Array.from({ length: 1200 }, (_, line) =>
+      task({
+        title: `Task ${line}`,
+        markdownTitle: `Task ${line} [[Alice]] [[Bob]]`,
+        tags: ['#task/inbox'],
+        source: { filePath: 'large.md', line },
+      }),
+    );
+    const { el, panel, state } = makeCenter(tasks);
+    state.set('centerListViewState', {
+      ...state.get('centerListViewState'),
+      groupBy: 'outgoing-link',
+    });
+    if (selected) key(el, 'a', { ctrlKey: true });
+    expect(el.querySelector('.abyss-selection-live')?.textContent).toBe(
+      selected ? '1200 tasks selected' : '',
+    );
+    const collect = vi.spyOn(
+      panel as unknown as { selectedTasksInVisualOrder_abyssPrivate(): TaskSnapshot[] },
+      'selectedTasksInVisualOrder_abyssPrivate',
+    );
+    const visits = vi.spyOn(panel['rowSelection_abyssPrivate'], 'inOrder');
+    const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.scrollTop = 25000.25;
+    scroll.dispatchEvent(new Event('scroll'));
+    flushViewport();
+    expect(collect).not.toHaveBeenCalled();
+    expect(visits).not.toHaveBeenCalled();
+    expect(cards(el).length).toBeLessThan(100);
+    expect(
+      cards(el).every((card) => card.classList.contains('abyss-multi-selected') === selected),
+    ).toBe(true);
+    if (selected) {
+      tasks.splice(0, 600);
+      panel.refresh();
+      expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('600 tasks selected');
+      expect(panel['selectedTasksInVisualOrder_abyssPrivate']()).toEqual(tasks);
+    }
+    panel.destroy();
+  },
+);

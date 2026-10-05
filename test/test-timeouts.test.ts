@@ -89,6 +89,7 @@ const FIXTURE_LIMITS = [
   'export const TYPESCRIPT_PROGRAM_TIMEOUT_MS = 80_000;',
   'export const SOURCE_WALK_TIMEOUT_MS = 80_000;',
   'export const CHILD_PROCESS_TIMEOUT_MS = 20_000;',
+  'export const VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS = 220_000;',
 ];
 const PROGRAM_WORK = 'program work needs TYPESCRIPT_PROGRAM_TIMEOUT_MS';
 const CHILD_WORK = 'child process work needs CHILD_PROCESS_TIMEOUT_MS';
@@ -169,6 +170,56 @@ describe('test time limits', () => {
         on(4, `row 'builds': ${PROGRAM_WORK}`),
         on(13, `row 'builds %s': ${PROGRAM_WORK}`),
         on(19, `row 'builds $name from a table': ${PROGRAM_WORK}`),
+      ]);
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
+
+  it(
+    'classifies full-range lifecycle cycles only through their owning helper',
+    () => {
+      expect(
+        findings(
+          [
+            "import { it } from 'vitest';",
+            "import { runVirtualSurfaceAuditCycles as audit } from './support/virtualSurfaceAudit';",
+            "import { runVirtualSurfaceAuditCycles as other } from './support/otherAudit';",
+            "import { VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS } from './support/timeouts';",
+            "it('full audit without its limit', async () => { await audit(async () => {}); });",
+            "it('full audit with its limit', async () => { await audit(async () => {}); }, VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS);",
+            "it('unrelated helper with the same name', async () => { await other(async () => {}); });",
+            "it('local same-named function', async () => {",
+            '  async function runVirtualSurfaceAuditCycles() {}',
+            '  await runVirtualSurfaceAuditCycles();',
+            '});',
+            "it('light work borrowing the audit limit', () => {}, VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS);",
+            "it('unrelated helper borrowing the audit limit', async () => { await other(async () => {}); }, VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS);",
+            "it('full audit with a literal limit', async () => { await audit(async () => {}); }, 25_000);",
+          ],
+          {
+            'test/support/virtualSurfaceAudit.ts': [
+              'export async function runVirtualSurfaceAuditCycles(cycle: (index: number) => Promise<void>) {',
+              '  for (let index = 0; index < 20; index++) await cycle(index);',
+              '}',
+            ],
+            'test/support/otherAudit.ts': [
+              'export async function runVirtualSurfaceAuditCycles(cycle: (index: number) => Promise<void>) {',
+              '  await cycle(0);',
+              '}',
+            ],
+          },
+        ),
+      ).toEqual([
+        on(
+          5,
+          "row 'full audit without its limit': virtual surface audit work needs VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS",
+        ),
+        on(12, "row 'light work borrowing the audit limit': a limit on light work"),
+        on(13, "row 'unrelated helper borrowing the audit limit': a limit on light work"),
+        on(
+          14,
+          "row 'full audit with a literal limit': virtual surface audit work needs VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS from test/support/timeouts.ts, not a number",
+        ),
       ]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
@@ -724,12 +775,13 @@ describe('gate time limits', () => {
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
   );
 
-  it('pins the four limits, each above the light limit of both gate configs', () => {
+  it('pins the heavy-work limits, each above the light limit of both gate configs', () => {
     expect({ ...limits }).toEqual({
       LINTER_TIMEOUT_MS: 120_000,
       TYPESCRIPT_PROGRAM_TIMEOUT_MS: 80_000,
       SOURCE_WALK_TIMEOUT_MS: 80_000,
       CHILD_PROCESS_TIMEOUT_MS: 20_000,
+      VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS: 220_000,
     });
     const light = Math.max(...Object.keys(GATE_OPTIONS).map(lightLimit));
     expect(Object.entries(limits).filter(([, limit]) => limit <= light)).toEqual([]);

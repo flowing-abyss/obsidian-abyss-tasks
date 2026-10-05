@@ -3,7 +3,11 @@ import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import { renderStatusMarker, setStatusMarkerCompletionBlocked } from '../src/ui/StatusMarker';
+import {
+  renderStatusMarker,
+  setStatusMarkerCompletionBlocked,
+  updateStatusMarker,
+} from '../src/ui/StatusMarker';
 import { expectDefined } from './helpers';
 import { expandCompoundSelectorLists } from './support/expandedCss';
 
@@ -313,4 +317,41 @@ describe('renderStatusMarker', () => {
     expect(el.getAttribute('data-status')).toBe('other');
     expect(el.textContent).toBe('@');
   });
+});
+
+it('updates marker state, priority, and blocked semantics without replacing its focus identity', () => {
+  const parent = document.body.createDiv();
+  try {
+    const marker = renderStatusMarker(parent, {
+      task: { statusSymbol: ' ', priority: 'A' },
+      registry: reg,
+      onLeftClick: () => {},
+      onContextMenu: () => {},
+    });
+    marker.focus();
+    updateStatusMarker(marker, { task: { statusSymbol: 'x', priority: 'D' }, registry: reg });
+    expect(document.activeElement).toBe(marker);
+    expect(marker.getAttribute('aria-checked')).toBe('true');
+    expect(marker.getAttribute('data-status-type')).toBe('done');
+    expect(marker.hasAttribute('data-priority')).toBe(false);
+    updateStatusMarker(marker, {
+      task: { statusSymbol: ' ' },
+      registry: reg,
+      completionBlocked: true,
+    });
+    const wrapper = expectDefined(parent.querySelector<HTMLElement>('.abyss-status-control'));
+    expect(document.activeElement).toBe(wrapper);
+    expect(wrapper.getAttribute('aria-checked')).toBe('false');
+    expect(wrapper.getAttribute('aria-label')).toContain('Task status: To-do.');
+    updateStatusMarker(marker, {
+      task: { statusSymbol: 'x' },
+      registry: reg,
+      completionBlocked: true,
+    });
+    expect(document.activeElement).toBe(wrapper);
+    expect(wrapper.getAttribute('aria-checked')).toBe('true');
+    expect(wrapper.getAttribute('aria-label')).toContain('Task status: Done.');
+  } finally {
+    parent.remove();
+  }
 });

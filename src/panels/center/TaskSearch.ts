@@ -42,6 +42,9 @@ import type { TaskCardSearchPresentation } from './TaskCardRenderer';
 import type { TaskRevealReceipt } from './TaskSearchReveal';
 
 export interface TaskSearchRowOptions {
+  readonly signal?: AbortSignal;
+  readonly isCurrent?: () => boolean;
+  readonly reportFailure?: (error: unknown) => void;
   readonly onActivate?: ((task: TaskSnapshot) => void) | undefined;
   readonly presentations?: ReadonlyMap<TaskSnapshot, TaskCardSearchPresentation> | undefined;
 }
@@ -53,6 +56,7 @@ interface TaskSearchHost {
   expireReveal(): void;
   revealTask(task: TaskSnapshot): void;
   beginResults(): void;
+  discardResults?(): void;
   renderRows(
     host: HTMLElement,
     page: TaskSearchPageModel,
@@ -144,6 +148,7 @@ export class TaskSearch {
   #filter = false;
   #composing = false;
   #restart = false;
+  #failedRenderRequest = -1;
   constructor(options: TaskSearchOptions) {
     this.#options = options;
   }
@@ -342,6 +347,7 @@ export class TaskSearch {
     this.#options.host.beginResults();
     const results = this.#results;
     if (results === null) return;
+    this.#options.host.discardResults?.();
     results.empty();
     results.toggleClass('abyss-search-empty', true);
     results.createDiv({ cls: 'abyss-center-empty', text: 'Type to search tasks…' });
@@ -766,8 +772,8 @@ export class TaskSearch {
       await this.#options.host.prepareDependencies(organization.generation, controller.signal);
     if (!this.canPublish(request, organization.generation, controller.signal)) return;
     const rendered = await this.mountPage(page, controller.signal);
-    if (!this.#renderReady(rendered)) return;
     if (!this.canPublish(request, organization.generation, controller.signal)) return;
+    if (!this.#renderReady(request, rendered)) return;
     this.#renderPaging(page);
     this.#root?.setAttribute('data-search-logical-results', String(page.rootTotal));
     this.#status?.complete(request, organization.generation);
@@ -779,8 +785,8 @@ export class TaskSearch {
     const target = page.roots.find((root) => root.hit.address.rootId === reveal?.address.rootId);
     if (target !== undefined) this.#options.host.revealTask(target.task.root);
   }
-  #renderReady(outcome: TaskRenderOutcome): boolean {
-    if (outcome.type === 'failed') throw outcome.error;
+  #renderReady(request: number, outcome: TaskRenderOutcome): boolean {
+    if (outcome.type === 'failed') this.#renderFailed(request, outcome.error);
     return outcome.type === 'ready';
   }
   private async mountPage(
@@ -790,7 +796,7 @@ export class TaskSearch {
     const host = this.#results;
     if (host === null || signal.aborted) return { type: 'cancelled' };
     this.#options.host.beginResults();
-    host.empty();
+    host.querySelector(':scope > .abyss-center-empty')?.remove();
     host.toggleClass('abyss-search-empty', false);
     if (page.total === 0) host.createDiv({ cls: 'abyss-center-empty', text: 'No results' });
     const scope = new TaskRenderScope(signal);
@@ -802,30 +808,60 @@ export class TaskSearch {
         this.#handleFailure(request, error);
       });
     };
-    const presentations = new Map<TaskSnapshot, TaskCardSearchPresentation>();
-    if (!this.#filter && this.#query.trim() !== '') {
-      const query = prepareSearchQuery(this.#query, this.#segment);
-      for (const root of page.roots) {
-        const task = root.task.root;
-        if (!presentations.has(task))
-          presentations.set(task, {
-            context: taskSearchContext(task, root.hit.address, query, this.#segment),
-            query,
-            segment: this.#segment,
-            onActivate: activate,
-          });
-      }
+    const presentations = this.#pagePresentations(page, activate);
+    const isCurrent = (): boolean =>
+      generation !== null && this.canPublish(request, generation, signal);
+    try {
+      return await this.#options.host.renderRows(host, page, scope, {
+        signal,
+        isCurrent,
+        reportFailure: (error) => {
+          if (isCurrent()) this.#renderFailed(request, error);
+        },
+        onActivate: this.#filter
+          ? undefined
+          : (task) => {
+              if (generation === null || !this.canPublish(request, generation, signal)) return;
+              const hit = page.roots.find((root) => root.task.root === task)?.hit;
+              if (hit !== undefined) activate(hit.address);
+            },
+        presentations,
+      });
+    } catch (error) {
+      scope.cancel();
+      if (isCurrent()) this.#renderFailed(request, error);
+      return { type: 'failed', error };
     }
-    return this.#options.host.renderRows(host, page, scope, {
-      onActivate: this.#filter
-        ? undefined
-        : (task) => {
-            if (generation === null || !this.canPublish(request, generation, signal)) return;
-            const hit = page.roots.find((root) => root.task.root === task)?.hit;
-            if (hit !== undefined) activate(hit.address);
-          },
-      presentations,
+  }
+  #pagePresentations(
+    page: TaskSearchPageModel,
+    activate: (address: TaskSearchAddress) => void,
+  ): ReadonlyMap<TaskSnapshot, TaskCardSearchPresentation> {
+    const presentations = new Map<TaskSnapshot, TaskCardSearchPresentation>();
+    if (this.#filter || this.#query.trim() === '') return presentations;
+    const query = prepareSearchQuery(this.#query, this.#segment);
+    for (const root of page.roots) {
+      const task = root.task.root;
+      if (!presentations.has(task))
+        presentations.set(task, {
+          context: taskSearchContext(task, root.hit.address, query, this.#segment),
+          query,
+          segment: this.#segment,
+          onActivate: activate,
+        });
+    }
+    return presentations;
+  }
+  #renderFailed(request: number, error: unknown): void {
+    if (this.#failedRenderRequest === request) return;
+    this.#failedRenderRequest = request;
+    this.#options.host.discardResults?.();
+    console.error('[abyss-tasks] task search render failed', {
+      request,
+      generation: this.#generation,
+      kind: error instanceof Error ? error.name : typeof error,
     });
+    this.#failResults(request, error);
   }
   private canPublish(request: number, generation: number, signal: AbortSignal): boolean {
     return (

@@ -5,10 +5,14 @@ import type { TaskSearchOptions } from '../../src/panels/center/TaskSearch';
 import { CenterPanel } from '../../src/panels/CenterPanel';
 import type { CalendarSettings } from '../../src/settings/types';
 import { createSearchWordSegmenter } from '../../src/tasks/infrastructure/search/searchWordSegmenter';
+import { prepareTaskPanelViewport } from './taskPanelViewport';
 import { createCanonicalSearchHarness } from './taskSearchHarness';
 
 /** Wait for the current surface's owned terminal render receipt, not backend readiness. */
 export async function searchUiCompleted(root: HTMLElement): Promise<void> {
+  const request = root.dataset['searchRequest'];
+  const input = root.querySelector<HTMLInputElement>('.abyss-search-global, .abyss-center-search');
+  const query = input?.value;
   await new Promise<void>((resolve, reject) => {
     const win = root.ownerDocument.defaultView;
     if (win === null) {
@@ -18,6 +22,7 @@ export async function searchUiCompleted(root: HTMLElement): Promise<void> {
     let timer = 0;
     const observer = new win.MutationObserver(check);
     function check(): void {
+      if (Number(root.dataset['searchRequest']) < Number(request) || input?.value !== query) return;
       if (root.dataset['searchPhase'] === 'error') {
         cleanup();
         reject(
@@ -62,6 +67,7 @@ export async function mountCanonicalSearchUi(
     statusRegistry: h.statusRegistry,
     tasks: h.tasks,
   });
+  prepareTaskPanelViewport(root);
   panel.mount(root);
   return {
     ...h,
@@ -76,7 +82,14 @@ export async function mountCanonicalSearchUi(
       input.value = text;
       input.dispatchEvent(new Event('input', { bubbles: true }));
     },
-    completed: () => searchUiCompleted(root),
+    completed: async () => {
+      await searchUiCompleted(root);
+      const snapshot = h.source.subscribe(() => {});
+      const state = snapshot.state;
+      snapshot.unsubscribe();
+      if (root.dataset['searchGeneration'] !== String(state.generation))
+        throw new Error('Search completed for an obsolete source generation');
+    },
     dispose() {
       panel.destroy();
       root.remove();

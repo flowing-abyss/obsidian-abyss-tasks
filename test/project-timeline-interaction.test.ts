@@ -10,6 +10,8 @@ import {
   type ProjectTimelineWindow,
 } from '../src/projects/projectTimelineModel';
 import { expectDefined, flushMicrotasks, freshContainer } from './helpers';
+import { projectNativeBindings, projectWindowMigration } from './support/projectWindowMigration';
+import { taskViewportOwner } from './support/taskViewportOwner';
 
 function pointerEvent(type: string, clientX: number, pointerId = 1): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
@@ -125,6 +127,7 @@ function mount(
   let captured = source(range);
   const commitRangeEdit = vi.fn().mockResolvedValue({ applied: [], failed: [] });
   const reportRangeFailure = vi.fn();
+  const pinsChanged = vi.fn();
   const selected: HTMLElement[] = [];
   const interaction = new ProjectTimelinePointerInteraction({
     root,
@@ -138,6 +141,7 @@ function mount(
       focus.focus();
     },
     reportRangeFailure,
+    pinsChanged,
   });
   return {
     root,
@@ -145,6 +149,7 @@ function mount(
     track,
     bar,
     interaction,
+    pinsChanged,
     commitRangeEdit,
     reportRangeFailure,
     selected,
@@ -562,11 +567,13 @@ describe('ProjectTimelinePointerInteraction', () => {
     first.resolve({ applied: [], failed: [] });
     await flushMicrotasks();
 
+    expect(mounted.interaction.pinnedOccurrences()).toEqual(['group\0Projects/A.md']);
     expect(rangeLeft(mounted.bar)).toBe(newestLeft);
     expect(mounted.bar.style.width).toBe(newestWidth);
     expect(mounted.bar.classList).toContain('is-previewing');
     second.resolve({ applied: [], failed: [] });
     await flushMicrotasks();
+    expect(mounted.interaction.pinnedOccurrences()).toEqual([]);
   });
 
   it.each([
@@ -1047,3 +1054,80 @@ describe('ProjectTimelinePointerInteraction', () => {
     mounted.interaction.destroy();
   });
 });
+
+it('pins provisional and successful pending previews until projected source changes', async () => {
+  const f = mount();
+  f.bar.dispatchEvent(pointerEvent('pointerdown', 25));
+  expect(f.interaction.pinnedOccurrences()).toEqual(['group\0Projects/A.md']);
+  await flushMicrotasks();
+  f.bar.dispatchEvent(pointerEvent('pointermove', 55));
+  const pending = deferredResult();
+  f.commitRangeEdit.mockReturnValue(pending.promise);
+  f.bar.dispatchEvent(pointerEvent('pointerup', 55));
+  expect(f.interaction.pinnedOccurrences()).toHaveLength(1);
+  pending.resolve({ applied: [{}] as ProjectEditResult['applied'], failed: [] });
+  await flushMicrotasks();
+  expect(f.interaction.pinnedOccurrences()).toHaveLength(1);
+  f.setCapturedRange({ kind: 'closed', startDay: '2026-09-05', endDay: '2026-09-07' });
+  f.interaction.reconcileAfterRender();
+  expect(f.interaction.pinnedOccurrences()).toEqual([]);
+  expect(f.pinsChanged).toHaveBeenCalled();
+  f.interaction.destroy();
+});
+
+it.each([true, false])(
+  'retained Timeline migrates gestures, edge frames and blur before any render (notification=%s)',
+  async (notify) => {
+    const oldBindings = projectNativeBindings(document);
+    const migration = projectWindowMigration();
+    const oldFrames = new Map<number, FrameRequestCallback>();
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      oldFrames.set(1, cb);
+      return 1;
+    });
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+      oldFrames.delete(id);
+    });
+    const h = mount();
+    h.bar.dispatchEvent(pointerEvent('pointerdown', 30));
+    await flushMicrotasks();
+    h.track.dispatchEvent(pointerEvent('pointermove', 119));
+    const stale = expectDefined(oldFrames.get(1));
+    expect(h.interaction.pinnedOccurrences()).toHaveLength(1);
+    const owner = taskViewportOwner();
+    const newBindings = projectNativeBindings(owner.doc);
+    owner.doc.body.append(h.root);
+    if (notify) migration.notify(h.root);
+    else h.root.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    expect(h.interaction.pinnedOccurrences()).toHaveLength(0);
+    expect(oldFrames.size).toBe(0);
+    h.bar.dispatchEvent(pointerEvent('pointerdown', 30));
+    await flushMicrotasks();
+    h.track.dispatchEvent(pointerEvent('pointermove', 119));
+    expect(owner.frames.size).toBe(1);
+    const left = h.scroll.scrollLeft;
+    stale(0);
+    window.dispatchEvent(new Event('blur'));
+    expect(h.scroll.scrollLeft).toBe(left);
+    expect(h.interaction.pinnedOccurrences()).toHaveLength(1);
+    owner.flush();
+    expect(h.scroll.scrollLeft).toBeGreaterThan(left);
+    owner.win.dispatchEvent(new Event('blur'));
+    expect(h.interaction.pinnedOccurrences()).toHaveLength(0);
+    expect(owner.frames.size).toBe(0);
+    h.bar.dispatchEvent(pointerEvent('pointerdown', 30));
+    await flushMicrotasks();
+    h.track.dispatchEvent(pointerEvent('pointermove', 119));
+    h.track.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(h.interaction.pinnedOccurrences()).toHaveLength(0);
+    h.interaction.destroy();
+    expect(migration.bindings.size).toBe(0);
+    expect(owner.frames.size).toBe(0);
+    expect(h.commitRangeEdit).not.toHaveBeenCalled();
+    for (const { add, remove } of [...oldBindings.audits, ...newBindings.audits])
+      for (const args of add.mock.calls.filter(([type]) => type === 'blur'))
+        expect(remove).toHaveBeenCalledWith(...args);
+    for (const callback of migration.retired) callback();
+    owner.destroy();
+  },
+);

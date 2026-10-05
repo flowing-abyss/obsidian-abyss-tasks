@@ -90,6 +90,19 @@ describe('project table viewport geometry', () => {
     expect(viewport.measure([{ key: 'a', height: 60 }], 34).scrollTop).toBe(60);
   });
 
+  it('preserves the trailing offset when a detached host is scrolled to the content end', () => {
+    const viewport = new ProjectTableViewport();
+    viewport.replace([
+      { key: 'a', height: 34 },
+      { key: 'b', height: 34 },
+    ]);
+    expect(viewport.window(68, 0, []).scrollTop).toBe(68);
+    expect(viewport.measure([{ key: 'a', height: 60 }], 68)).toEqual({
+      scrollTop: 94,
+      changed: true,
+    });
+  });
+
   it('keeps pinned rows at their original offsets with intervening spacers', () => {
     const viewport = new ProjectTableViewport();
     viewport.replace(

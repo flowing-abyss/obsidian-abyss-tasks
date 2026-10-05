@@ -39,7 +39,10 @@ import {
   createTaskDependencySearchProvider,
   type TaskDependencySearchProvider,
 } from '../ui/TaskDependencySearchProvider';
-import { CreationPresentationController } from '../ui/creation/CreationPresentationController';
+import {
+  CreationPresentationController,
+  type CreationRevealAuthority,
+} from '../ui/creation/CreationPresentationController';
 import { InteractionRegistry } from '../ui/interactionOwnership';
 import { nativeInteractionBlocksPanelShortcuts } from '../ui/nativeInteractionBlocker';
 import { PanelShortcutRouter } from '../ui/panelShortcutRouter';
@@ -640,8 +643,8 @@ export class PanelView extends ItemView {
       tasks: selectionTasks,
       commentTimeContext: this.commentTimeContext_abyssPrivate,
       captureApplication: selectionTasks,
-      onCreationResult: (result, description) => {
-        this.presentCreationResult_abyssPrivate(result, description);
+      onCreationResult: (result, description, revealAuthority) => {
+        this.presentCreationResult_abyssPrivate(result, description, revealAuthority);
       },
       onRenderComplete: (root) => {
         this.creationPresentation_abyssPrivate?.afterRender(root);
@@ -878,6 +881,7 @@ export class PanelView extends ItemView {
   private presentCreationResult_abyssPrivate(
     result: TaskCommandResult,
     description: CreationResultDescription,
+    revealAuthority?: CreationRevealAuthority,
   ): void {
     if (result.type === 'ok' && result.outcome.type === 'task') {
       const resolution = this.queries_abyssPrivate.resolve(result.outcome.task.ref);
@@ -886,7 +890,7 @@ export class PanelView extends ItemView {
         this.state_abyssPrivate.set('taskStack', [current]);
       }
     }
-    this.creationPresentation_abyssPrivate?.present(result, description);
+    this.creationPresentation_abyssPrivate?.present(result, description, revealAuthority);
   }
 
   private subscribeToState_abyssPrivate(layout: HTMLElement): void {

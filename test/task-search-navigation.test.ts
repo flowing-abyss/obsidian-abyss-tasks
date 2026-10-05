@@ -382,7 +382,7 @@ it('an old detached page card cannot activate through a newer live request', asy
   }
 });
 
-it('navigates the last of 50k compact records through cooperative organization and mounts only its 50 proven roots', async () => {
+it('navigates the last of 50k compact records through cooperative organization hydrates only its 50 proven roots with bounded native mounts', async () => {
   let yields = 0;
   const h = await navigationSearchHarness(50, () => ({
     now: () => 0,
@@ -413,14 +413,18 @@ it('navigates the last of 50k compact records through cooperative organization a
       yield batch;
     }
   });
+  const hydrate = vi.spyOn(h.search, 'resolvePage');
   try {
     await h.activateChild();
     await h.completed();
+    expect(hydrate.mock.calls.some(([hits]) => hits.length === 50)).toBe(true);
+    expect(hydrate.mock.calls.every(([hits]) => hits.length <= 50)).toBe(true);
     expect(batches).toBe(250);
     expect(yields).toBeGreaterThan(300);
     expect(h.root.dataset['searchLogicalResults']).toBe('50000');
     expect(h.root.textContent).toContain('Page 1000 of 1000');
-    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(50);
+    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);
+    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThan(50);
     expect(h.state.get('taskStack').map((node) => node.title)).toEqual([
       'zzz needle',
       'repeated',

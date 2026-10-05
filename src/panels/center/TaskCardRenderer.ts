@@ -1,4 +1,4 @@
-import { setIcon, type App, type Component } from 'obsidian';
+import { Component, setIcon, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import { projectSearchText } from '../../markdown/searchText';
 import { moment } from '../../obsidianMoment';
@@ -22,13 +22,13 @@ import {
   type TaskTextTarget,
   type TrackedTotal,
 } from '../../tasks';
-import { renderStatusMarker } from '../../ui/StatusMarker';
+import { renderStatusMarker, updateStatusMarker } from '../../ui/StatusMarker';
 import { markSearchText } from '../../ui/markSearchText';
 import {
   recurrenceBadgeInput,
   renderRecurrenceBadge,
 } from '../../ui/recurrence/renderRecurrenceBadge';
-import { renderTaskText } from '../../ui/renderTaskText';
+import { renderTaskText, type RenderTaskTextOptions } from '../../ui/renderTaskText';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { renderSourceNoteChip, shouldShowSourceNote } from '../../ui/sourceNoteChip';
 import {
@@ -52,6 +52,48 @@ export interface TaskCardSearchPresentation {
   readonly onActivate: (address: TaskSearchAddress) => void;
 }
 
+export interface TaskCardInteractionContext {
+  readonly component: Component;
+  readonly currentTask: () => TaskSnapshot;
+  readonly onActivate?: ((task: TaskSnapshot) => void) | undefined;
+}
+interface TaskCardFlags {
+  readonly selected: boolean;
+  readonly showDelete: boolean;
+  readonly rowKey?: string;
+  readonly renderScope?: TaskRenderScope | undefined;
+  readonly search?: TaskCardSearchPresentation | undefined;
+  readonly onActivate?: ((task: TaskSnapshot) => void) | undefined;
+  readonly isCurrent?: (() => boolean) | undefined;
+  readonly signal?: AbortSignal | undefined;
+  readonly reportFailure?: ((error: unknown) => void) | undefined;
+}
+export interface TaskCardMount {
+  readonly element: HTMLElement;
+  update(task: TaskSnapshot, tagGroups: readonly EffectiveTagGroup[], flags: TaskCardFlags): void;
+  destroy(): void;
+}
+interface CardState {
+  readonly task: TaskSnapshot;
+  readonly tagGroups: readonly EffectiveTagGroup[];
+  readonly flags: TaskCardFlags;
+}
+interface CardContents {
+  update(current: CardState): void;
+  destroy(): void;
+}
+interface TaskTextMount {
+  update(task: TaskSnapshot, flags: TaskCardFlags): void;
+  destroy(): void;
+}
+interface CardContentContext {
+  readonly flags?: TaskCardFlags;
+  readonly component: Component;
+  readonly currentTask: () => TaskSnapshot;
+  readonly isCurrent: () => boolean;
+  readonly onRenderFailure: (error: unknown) => void;
+  readonly badges: Array<readonly [string, HTMLElement]>;
+}
 interface TaskCardRendererHost {
   component(): Component;
   dependenciesFor: TaskDependencyLookup;
@@ -59,8 +101,9 @@ interface TaskCardRendererHost {
     card: HTMLElement,
     task: TaskSnapshot,
     rowKey?: string,
-    onActivate?: () => void,
+    context?: TaskCardInteractionContext,
   ): void;
+  reportFailure?(error: unknown): void;
   openStatusMenu(event: MouseEvent, task: TaskSnapshot): void;
   formatDate(date: LocalDate): string;
   getDateClass(date: LocalDate): string;
@@ -102,6 +145,7 @@ export class TaskCardRenderer {
   readonly #trackingEnabled: boolean;
   readonly #host: TaskCardRendererHost;
   readonly #runningBadges = new Map<string, RunningCardBadge>();
+  readonly #ownedBadges = new Map<string, RunningCardBadge>();
   #renderNowMs = 0;
 
   constructor(options: TaskCardRendererOptions) {
@@ -122,6 +166,264 @@ export class TaskCardRenderer {
 
   clear(): void {
     this.#runningBadges.clear();
+  }
+
+  mount(
+    container: HTMLElement,
+    task: TaskSnapshot,
+    tagGroups: readonly EffectiveTagGroup[],
+    flags: TaskCardFlags,
+  ): TaskCardMount {
+    const markdown = new Component();
+    markdown.load();
+    let current = { task, tagGroups, flags };
+    let live = true;
+    let failed = false;
+    const card = container.createDiv({ cls: 'abyss-task-card', attr: { tabindex: '-1' } });
+    const context: CardContentContext = {
+      component: markdown,
+      currentTask: () => current.task,
+      isCurrent: () => live,
+      onRenderFailure: (error) => {
+        if (!live || failed) return;
+        failed = true;
+        if (current.flags.isCurrent?.() === false) return;
+        if (current.flags.reportFailure !== undefined) current.flags.reportFailure(error);
+        else this.#reportFailure(error);
+      },
+      badges: [],
+    };
+    let content: CardContents | undefined;
+    const destroy = (): void => {
+      if (!live) return;
+      live = false;
+      content?.destroy();
+      markdown.unload();
+      card.remove();
+    };
+    try {
+      content = this.#mountContents(card, context);
+      content.update(current);
+      this.#host.mountInteractions(card, task, flags.rowKey, {
+        component: markdown,
+        currentTask: context.currentTask,
+        ...(flags.onActivate === undefined
+          ? {}
+          : {
+              onActivate: (task: TaskSnapshot) => {
+                current.flags.onActivate?.(task);
+              },
+            }),
+      });
+    } catch (error) {
+      destroy();
+      throw error;
+    }
+    return {
+      element: card,
+      update: (nextTask, nextGroups, nextFlags) => {
+        if (!live) return;
+        if (!this.#sameOccurrence(current, { task: nextTask, flags: nextFlags }))
+          throw new Error('Cannot rebind a task card to a different source occurrence');
+        current = { task: nextTask, tagGroups: nextGroups, flags: nextFlags };
+        failed = false;
+        content.update(current);
+      },
+      destroy,
+    };
+  }
+
+  #mountContents(card: HTMLElement, context: CardContentContext): CardContents {
+    const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
+    this.#renderStatus(mainRow, context.currentTask(), context.currentTask);
+    const body = mainRow.createDiv({ cls: 'abyss-task-body' });
+    const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
+    const title = titleRow.createSpan({ cls: 'abyss-task-title' });
+    const description = body.createDiv({ cls: 'abyss-task-desc' });
+    const titleMount = this.#mountTextRegion(title, context, (task, owner) => {
+      this.#renderTitle(title, task, owner);
+    });
+    const descriptionMount = this.#mountTextRegion(description, context, (task, owner) => {
+      const search = owner.flags?.search;
+      description.className = search === undefined ? 'abyss-task-desc' : 'abyss-search-contexts';
+      description.hidden =
+        search === undefined && (task.description === undefined || task.description === '');
+      if (search === undefined) this.#renderDescriptionText(description, task, owner);
+      else {
+        description.empty();
+        this.#renderSearchContext(description, task, search, {
+          owner,
+          scope: owner.flags?.renderScope,
+        });
+      }
+    });
+    return {
+      update: (current) => {
+        this.#identity(card, current);
+        this.#refreshBadges(titleRow, title, current.task, context);
+        titleMount.update(current.task, current.flags);
+        descriptionMount.update(current.task, current.flags);
+        this.syncDeleteButton(
+          card,
+          current.flags.showDelete ? current.task : undefined,
+          context.currentTask,
+        );
+      },
+      destroy: () => {
+        titleMount.destroy();
+        descriptionMount.destroy();
+        this.#releaseBadges(context.badges);
+      },
+    };
+  }
+
+  #mountTextRegion(
+    element: HTMLElement,
+    context: CardContentContext,
+    render: (task: TaskSnapshot, owner: CardContentContext) => void,
+  ): TaskTextMount {
+    let live = true;
+    let latest: TaskSnapshot | undefined;
+    let flags: TaskCardFlags | undefined;
+    let rendered: TaskSnapshot | undefined;
+    let renderedFlags: TaskCardFlags | undefined;
+    let owner: Component | undefined;
+    let generation = 0;
+    const release = (): void => {
+      generation++;
+      if (owner !== undefined) context.component.removeChild(owner);
+    };
+    const refresh = (): void => {
+      if (
+        !live ||
+        latest === undefined ||
+        (rendered === latest && renderedFlags?.search === flags?.search)
+      )
+        return;
+      if (element.contains(element.ownerDocument.activeElement)) return;
+      release();
+      owner = context.component.addChild(new Component());
+      const version = generation;
+      rendered = latest;
+      renderedFlags = flags;
+      const currentFlags = flags;
+      render(latest, {
+        ...context,
+        component: owner,
+        ...(flags === undefined ? {} : { flags }),
+        isCurrent: () => live && generation === version && currentFlags?.isCurrent?.() !== false,
+      });
+    };
+    context.component.registerDomEvent(element, 'focusout', (event) => {
+      const win = element.ownerDocument.defaultView;
+      if (
+        win !== null &&
+        event.relatedTarget instanceof win.Node &&
+        element.contains(event.relatedTarget)
+      )
+        return;
+      try {
+        refresh();
+      } catch (error) {
+        context.onRenderFailure(error);
+      }
+    });
+    return {
+      update: (task, nextFlags) => {
+        latest = task;
+        flags = nextFlags;
+        refresh();
+      },
+      destroy: () => {
+        live = false;
+        release();
+      },
+    };
+  }
+
+  #refreshBadges(
+    titleRow: HTMLElement,
+    title: HTMLElement,
+    task: TaskSnapshot,
+    context: CardContentContext,
+  ): void {
+    this.#releaseBadges(context.badges);
+    context.badges.length = 0;
+    for (const child of Array.from(titleRow.children)) if (child !== title) child.remove();
+    if (task.recurrence !== undefined && task.recurrence !== '')
+      renderRecurrenceBadge(titleRow, recurrenceBadgeInput(task.recurrence));
+    this.#renderCountBadges(titleRow, task, context);
+    // Only new decoration nodes move; the focused Markdown subtree stays connected.
+    for (const child of Array.from(titleRow.children)) if (child !== title) title.before(child);
+  }
+
+  #releaseBadges(registrations: ReadonlyArray<readonly [string, HTMLElement]>): void {
+    for (const [address, element] of registrations) {
+      const badge = this.#ownedBadges.get(address);
+      if (badge === undefined) continue;
+      const index = badge.values.indexOf(element);
+      if (index >= 0) badge.values.splice(index, 1);
+      if (badge.values.length === 0) this.#ownedBadges.delete(address);
+    }
+  }
+
+  #sameOccurrence(
+    left: { task: TaskSnapshot; flags: TaskCardFlags },
+    right: { task: TaskSnapshot; flags: TaskCardFlags },
+  ): boolean {
+    return (
+      left.task.source.filePath === right.task.source.filePath &&
+      left.task.source.line === right.task.source.line &&
+      left.flags.rowKey === right.flags.rowKey
+    );
+  }
+
+  #identity(card: HTMLElement, current: CardState): void {
+    const { task, flags } = current;
+    applyTaskPresentationIdentity(card, task.ref);
+    card.dataset['filePath'] = task.source.filePath;
+    card.dataset['line'] = String(task.source.line);
+    if (flags.rowKey !== undefined) card.dataset['rowKey'] = flags.rowKey;
+    card.toggleClass('is-selected', flags.selected);
+    this.#refreshStatus(card, task);
+    this.#refreshMetadata(card, current);
+  }
+
+  #refreshMetadata(card: HTMLElement, current: CardState): void {
+    const mainRow = card.querySelector<HTMLElement>('.abyss-task-card-main-row');
+    if (mainRow === null) return;
+    mainRow.querySelector('.abyss-task-meta-right')?.remove();
+    this.#renderMetadata(mainRow, current.task, current.tagGroups, () => current.task);
+    const metadata = mainRow.querySelector('.abyss-task-meta-right');
+    if (metadata !== null) mainRow.querySelector('.abyss-task-delete-btn')?.before(metadata);
+  }
+
+  #refreshStatus(card: HTMLElement, task: TaskSnapshot): void {
+    const marker = card.querySelector<HTMLElement>('.abyss-status-marker');
+    const mainRow = card.querySelector<HTMLElement>('.abyss-task-card-main-row');
+    if (marker === null || mainRow === null) return;
+    const projection = this.#host.dependenciesFor(task);
+    updateStatusMarker(marker, {
+      task,
+      registry: this.#statusRegistry,
+      completionBlocked: dependencyCompletionBlocked(projection),
+    });
+    mainRow.querySelector('.abyss-dep-indicator')?.remove();
+    const indicator = renderDependencyIndicator(mainRow, projection);
+    mainRow.toggleClass('abyss-task-card-main-row--has-dep', indicator !== undefined);
+    if (indicator !== undefined)
+      (marker.closest('.abyss-status-control') ?? marker).after(indicator);
+  }
+
+  #reportFailure(error: unknown): void {
+    if (this.#host.reportFailure !== undefined) {
+      this.#host.reportFailure(error);
+      return;
+    }
+    runAsyncAction(
+      Promise.reject(error instanceof Error ? error : new Error(String(error))),
+      'Could not render task card',
+    );
   }
 
   render(
@@ -149,25 +451,29 @@ export class TaskCardRenderer {
 
     const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
     this.#renderStatus(mainRow, task);
-    this.#renderBody(mainRow, task, flags.renderScope, flags.search);
+    this.#renderBody(mainRow, task, undefined, flags);
     this.#renderMetadata(mainRow, task, tagGroups);
-    this.#host.mountInteractions(card, task, flags.rowKey, flags.onActivate);
+    this.#host.mountInteractions(card, task, flags.rowKey, {
+      component: this.#host.component(),
+      currentTask: () => task,
+      ...(flags.onActivate === undefined ? {} : { onActivate: flags.onActivate }),
+    });
     this.syncDeleteButton(card, flags.showDelete ? task : undefined);
     return card;
   }
 
-  #renderStatus(mainRow: HTMLElement, task: TaskSnapshot): void {
+  #renderStatus(mainRow: HTMLElement, task: TaskSnapshot, currentTask = () => task): void {
     const projection = this.#host.dependenciesFor(task);
     renderStatusMarker(mainRow, {
       task,
       registry: this.#statusRegistry,
       completionBlocked: dependencyCompletionBlocked(projection),
       onLeftClick: () => {
-        runAsyncAction(this.#commands.toggleTask(task));
+        runAsyncAction(this.#commands.toggleTask(currentTask()));
       },
       onContextMenu: (event) => {
         event.stopPropagation();
-        this.#host.openStatusMenu(event, task);
+        this.#host.openStatusMenu(event, currentTask());
       },
     });
     mainRow.toggleClass(
@@ -179,8 +485,8 @@ export class TaskCardRenderer {
   #renderBody(
     mainRow: HTMLElement,
     task: TaskSnapshot,
-    scope?: TaskRenderScope,
-    search?: TaskCardSearchPresentation,
+    context?: CardContentContext,
+    flags?: TaskCardFlags,
   ): void {
     const body = mainRow.createDiv({ cls: 'abyss-task-body' });
     const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
@@ -188,8 +494,44 @@ export class TaskCardRenderer {
     if (recurrence !== undefined && recurrence !== '') {
       renderRecurrenceBadge(titleRow, recurrenceBadgeInput(recurrence));
     }
-    this.#renderCountBadges(titleRow, task);
+    this.#renderCountBadges(titleRow, task, context);
     const titleEl = titleRow.createSpan({ cls: 'abyss-task-title' });
+    this.#renderTitle(titleEl, task, context, flags);
+    if (flags?.search === undefined) this.#renderDescription(body, task, context);
+    else
+      this.#renderSearchContext(body, task, flags.search, {
+        owner: context,
+        scope: flags.renderScope,
+      });
+  }
+
+  #textLifetime(
+    context?: CardContentContext,
+    flags = context?.flags,
+  ): Pick<
+    RenderTaskTextOptions,
+    'component' | 'signal' | 'isCurrent' | 'onRenderFailure' | 'linkEventOwner'
+  > {
+    return {
+      component: context?.component ?? this.#host.component(),
+      ...(flags?.signal === undefined ? {} : { signal: flags.signal }),
+      ...(context === undefined
+        ? {}
+        : {
+            isCurrent: context.isCurrent,
+            onRenderFailure: context.onRenderFailure,
+            linkEventOwner: context.component,
+          }),
+    };
+  }
+
+  #renderTitle(
+    titleEl: HTMLElement,
+    task: TaskSnapshot,
+    context?: CardContentContext,
+    flags = context?.flags,
+  ): void {
+    const search = flags?.search;
     const titleRender = renderTaskText(titleEl, task.markdownTitle, {
       presentation: 'title',
       ...(search === undefined
@@ -206,17 +548,19 @@ export class TaskCardRenderer {
           }),
       app: this.#app,
       sourcePath: task.source.filePath,
-      component: this.#host.component(),
+      ...this.#textLifetime(context, flags),
       onEditLink: (occurrence, token) => {
         this.#commands.editTaskLink(task, occurrence, token);
       },
     });
-    scope?.track(titleRender);
-    if (search === undefined) this.#renderDescription(body, task, scope);
-    else this.#renderSearchContext(body, task, search, scope);
+    flags?.renderScope?.track(titleRender);
   }
 
-  #renderCountBadges(titleRow: HTMLElement, task: TaskSnapshot): void {
+  #renderCountBadges(
+    titleRow: HTMLElement,
+    task: TaskSnapshot,
+    context?: CardContentContext,
+  ): void {
     const subtaskCount = task.subtasks.length;
     if (subtaskCount > 0) {
       const doneCount = task.subtasks.filter((subtask) => subtask.status === 'done').length;
@@ -228,7 +572,7 @@ export class TaskCardRenderer {
     if (task.presentation.linkCount > 0) {
       this.#renderCountBadge(titleRow, 'paperclip', String(task.presentation.linkCount));
     }
-    this.#renderTrackedBadge(titleRow, task);
+    this.#renderTrackedBadge(titleRow, task, context);
   }
 
   #renderCountBadge(
@@ -247,7 +591,11 @@ export class TaskCardRenderer {
    * subtree keeps its total here so the shared tick is one addition per running root and one DOM
    * write per displayed minute, never a walk of the list or a question to the index.
    */
-  #renderTrackedBadge(titleRow: HTMLElement, task: TaskSnapshot): void {
+  #renderTrackedBadge(
+    titleRow: HTMLElement,
+    task: TaskSnapshot,
+    context?: CardContentContext,
+  ): void {
     if (!this.#trackingEnabled || isForecastCalendarTask(task)) return;
     const total = subtreeTotal(task);
     const running = total.openStartsMs.length > 0;
@@ -262,50 +610,74 @@ export class TaskCardRenderer {
     if (!running) return;
     const address = trackingRootAddress(task.ref);
     badge.dataset['trackingRoot'] = address;
-    const existing = this.#runningBadges.get(address);
-    if (existing === undefined) this.#runningBadges.set(address, { total, values: [value] });
-    else existing.values.push(value);
+    this.#registerBadge({ address, total, value }, context);
+  }
+
+  #registerBadge(
+    badge: { address: string; total: TrackedTotal; value: HTMLElement },
+    context: CardContentContext | undefined,
+  ): void {
+    const { address, total, value } = badge;
+    const badges = context === undefined ? this.#runningBadges : this.#ownedBadges;
+    const existing = badges.get(address);
+    badges.set(address, { total, values: [...(existing?.values ?? []), value] });
+    context?.badges.push([address, value]);
   }
 
   paintTracking({ nowMs, active }: TrackingTickerState): void {
-    const badges = this.#runningBadges;
-    if (badges.size === 0) return;
+    this.#renderNowMs = nowMs;
     const roots = new Set(active.map((entry) => entry.rootAddress));
-    for (const address of roots) {
-      // Multiple running descendants still compute their root's total only once per tick.
-      const badge = badges.get(address);
-      if (badge === undefined) continue;
-      const tracked = formatTrackedDuration(totalMs(badge.total, nowMs));
-      for (const value of badge.values) {
-        if (value.isConnected && value.textContent !== tracked) value.setText(tracked);
+    for (const badges of [this.#runningBadges, this.#ownedBadges]) {
+      for (const address of roots) {
+        const badge = badges.get(address);
+        if (badge !== undefined) this.#paintBadge(badge, nowMs);
       }
     }
   }
 
-  #renderDescription(host: HTMLElement, task: TaskSnapshot, scope?: TaskRenderScope): void {
+  #paintBadge(badge: RunningCardBadge, nowMs: number): void {
+    const tracked = formatTrackedDuration(totalMs(badge.total, nowMs));
+    for (const value of badge.values) {
+      if (value.isConnected && value.textContent !== tracked) value.setText(tracked);
+    }
+  }
+
+  #renderDescription(host: HTMLElement, task: TaskSnapshot, context?: CardContentContext): void {
     const description = task.description;
     if (description === undefined || description === '') return;
     const descriptionElement = host.createDiv({ cls: 'abyss-task-desc' });
+    this.#renderDescriptionText(descriptionElement, task, context);
+  }
+
+  #renderDescriptionText(
+    descriptionElement: HTMLElement,
+    task: TaskSnapshot,
+    context?: CardContentContext,
+  ): void {
+    const description = task.description ?? '';
     const descriptionRender = renderTaskText(descriptionElement, description.split('\n')[0] ?? '', {
       presentation: 'markdown',
       app: this.#app,
       sourcePath: task.source.filePath,
-      component: this.#host.component(),
+      ...this.#textLifetime(context),
     });
-    scope?.track(descriptionRender);
+    context?.flags?.renderScope?.track(descriptionRender);
   }
 
   #renderSearchContext(
     host: HTMLElement,
     root: TaskSnapshot,
     search: TaskCardSearchPresentation,
-    scope?: TaskRenderScope,
+    options: {
+      readonly owner?: CardContentContext | undefined;
+      readonly scope?: TaskRenderScope | undefined;
+    },
   ): void {
     for (const excerpt of search.context.excerpts) {
       // The root title is already rendered by the ordinary card title, with only its real marks.
       if (excerpt.field === 'title' && excerpt.address.childLines.length === 0) continue;
-      const render = this.#renderSearchExcerpt(host, root, { search, excerpt });
-      scope?.track(render);
+      const render = this.#renderSearchExcerpt(host, root, { search, excerpt }, options.owner);
+      options.scope?.track(render);
     }
   }
 
@@ -313,6 +685,7 @@ export class TaskCardRenderer {
     host: HTMLElement,
     root: TaskSnapshot,
     { search, excerpt }: { search: TaskCardSearchPresentation; excerpt: TaskSearchExcerpt },
+    owner?: CardContentContext,
   ): TaskTextRender {
     const context = host.createDiv({ cls: 'abyss-search-context' });
     const label = excerpt.label.charAt(0).toUpperCase() + excerpt.label.slice(1);
@@ -323,7 +696,7 @@ export class TaskCardRenderer {
       text: `${location} · ${label}${comment}`,
       attr: { 'aria-label': `Open ${location} · ${label}${comment}` },
     });
-    activate.addEventListener('click', (event) => {
+    (owner?.component ?? this.#host.component()).registerDomEvent(activate, 'click', (event) => {
       event.stopPropagation();
       search.onActivate(excerpt.address);
     });
@@ -338,7 +711,7 @@ export class TaskCardRenderer {
       presentation: excerpt.field === 'title' ? 'title' : 'markdown',
       app: this.#app,
       sourcePath: root.source.filePath,
-      component: this.#host.component(),
+      ...this.#textLifetime(owner),
       onEditLink:
         target === undefined
           ? undefined
@@ -381,6 +754,7 @@ export class TaskCardRenderer {
     mainRow: HTMLElement,
     task: TaskSnapshot,
     tagGroups: readonly EffectiveTagGroup[],
+    currentTask?: () => TaskSnapshot,
   ): void {
     const today = localDate(moment().format('YYYY-MM-DD'));
     const sel = this.#state.get('selectedList');
@@ -405,7 +779,8 @@ export class TaskCardRenderer {
         this.#listControls.addPropertyFilter({ type: 'file', filePath });
       });
     }
-    for (const tag of tags.slice(0, 2)) this.#renderTagMetadata(metaRight, task, tag, tagGroups);
+    for (const tag of tags.slice(0, 2))
+      this.#renderTagMetadata(metaRight, { task, currentTask }, tag, tagGroups);
   }
 
   #renderDateMetadata(
@@ -450,7 +825,7 @@ export class TaskCardRenderer {
 
   #renderTagMetadata(
     host: HTMLElement,
-    task: TaskSnapshot,
+    context: { task: TaskSnapshot; currentTask: (() => TaskSnapshot) | undefined },
     tag: string,
     tagGroups: readonly EffectiveTagGroup[],
   ): void {
@@ -475,7 +850,7 @@ export class TaskCardRenderer {
       element.classList.remove('abyss-drop-target');
     });
     element.addEventListener('drop', (event) => {
-      this.#handleTagDrop(event, element, task, tag);
+      this.#handleTagDrop(event, element, context.currentTask?.() ?? context.task, tag);
     });
   }
 
@@ -493,7 +868,11 @@ export class TaskCardRenderer {
     runAsyncAction(this.#commands.patchTaskTags(task, [dragging], [replacedTag]));
   }
 
-  syncDeleteButton(card: HTMLElement, task: TaskSnapshot | undefined): void {
+  syncDeleteButton(
+    card: HTMLElement,
+    task: TaskSnapshot | undefined,
+    currentTask = () => task,
+  ): void {
     const mainRow = card.querySelector<HTMLElement>('.abyss-task-card-main-row');
     if (mainRow == null) return;
     const existing = mainRow.querySelector<HTMLButtonElement>('.abyss-task-delete-btn');
@@ -511,7 +890,8 @@ export class TaskCardRenderer {
     setIcon(deleteButton, 'x');
     deleteButton.addEventListener('click', (event) => {
       event.stopPropagation();
-      runAsyncAction(this.#commands.deleteTask(task));
+      const target = currentTask();
+      if (target !== undefined) runAsyncAction(this.#commands.deleteTask(target));
     });
   }
 }

@@ -1,7 +1,7 @@
 import { Component, MarkdownRenderer, Menu, type App, type MenuItem } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderTaskText } from '../src/ui/renderTaskText';
-import { deferred, expectDefined } from './helpers';
+import { deferred, expectDefined, flushMicrotasks } from './helpers';
 import { captureMenus, mockReadingView } from './support/linkEditHarness';
 
 afterEach(() => {
@@ -129,6 +129,82 @@ describe('renderTaskText link occurrence pairing', () => {
     expect(trigger).not.toHaveBeenCalled();
     expect(onEditLink).not.toHaveBeenCalled();
   });
+
+  it('removes opted-in link events with their finite content owner', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
+      holder.createEl('a', {
+        cls: 'internal-link',
+        text: 'Project',
+        attr: { 'data-href': 'Project' },
+      });
+    });
+    const parent = new Component();
+    parent.load();
+    const content = parent.addChild(new Component());
+    const openLinkText = vi.fn().mockResolvedValue(undefined);
+    const trigger = vi.fn();
+    const host = document.body.createDiv();
+    renderTaskText(host, '[[Project]]', {
+      app: { workspace: { openLinkText, trigger } } as unknown as App,
+      sourcePath: 'tasks.md',
+      component: content,
+      linkEventOwner: content,
+      onEditLink: vi.fn(),
+    });
+    await vi.runAllTimersAsync();
+    const anchor = expectDefined(host.querySelector('a'));
+    anchor.dispatchEvent(new MouseEvent('click', { cancelable: true }));
+    anchor.dispatchEvent(new MouseEvent('mouseover'));
+    await Promise.resolve();
+    expect(openLinkText).toHaveBeenCalledOnce();
+    expect(trigger).toHaveBeenCalledOnce();
+    parent.removeChild(content);
+    openLinkText.mockClear();
+    trigger.mockClear();
+    for (const type of ['click', 'mouseover', 'contextmenu']) {
+      const event = new MouseEvent(type, { cancelable: true });
+      anchor.dispatchEvent(event);
+      expect.soft(event.defaultPrevented, type).toBe(false);
+    }
+    await Promise.resolve();
+    expect.soft(openLinkText).not.toHaveBeenCalled();
+    expect.soft(trigger).not.toHaveBeenCalled();
+    parent.unload();
+  });
+
+  it.each([undefined, false])(
+    'adds no parent-retained link cleanups for default interactiveLinks=%s',
+    async (interactiveLinks) => {
+      vi.useFakeTimers();
+      vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
+        holder.createEl('a', {
+          cls: 'internal-link',
+          text: 'Project',
+          attr: { 'data-href': 'Project' },
+        });
+      });
+      const component = new Component();
+      component.load();
+      const events = vi.spyOn(component, 'registerDomEvent');
+      const cleanups = vi.spyOn(component, 'register');
+      const host = document.body.createDiv();
+      for (let cycle = 0; cycle < 20; cycle++) {
+        renderTaskText(host, '[[Project]]', {
+          app: {} as App,
+          sourcePath: 'tasks.md',
+          component,
+          ...(interactiveLinks === undefined ? {} : { interactiveLinks }),
+          ...(interactiveLinks === false ? { linkEventOwner: component } : {}),
+          onEditLink: vi.fn(),
+        });
+        await vi.runAllTimersAsync();
+      }
+      expect(events).not.toHaveBeenCalled();
+      expect(cleanups).not.toHaveBeenCalled();
+      component.unload();
+    },
+  );
 
   it('cancels pending link wiring when its row component is unloaded', async () => {
     vi.useFakeTimers();
@@ -559,4 +635,140 @@ it('retains exact edit occurrences throughout a fragmented field of repeated ide
       expect.objectContaining({ raw: '[same](target)', index: index * 15 }),
     );
   }
+});
+it('reports rejected live Markdown once through its owner and suppresses disposed renders', async () => {
+  const failure = new Error('Markdown failure');
+  vi.spyOn(MarkdownRenderer, 'render').mockRejectedValue(failure);
+  const report = vi.fn();
+  const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {});
+  let live = true;
+  const options = {
+    app: {} as App,
+    sourcePath: 'tasks.md',
+    component: new Component(),
+    presentation: 'title' as const,
+    isCurrent: () => live,
+    onRenderFailure: report,
+  };
+  await renderTaskText(document.body.createDiv(), '**title**', options).settled;
+  await flushMicrotasks();
+  expect(report.mock.calls).toEqual([[failure]]);
+  live = false;
+  await renderTaskText(document.body.createDiv(), '**title**', options).settled;
+  await flushMicrotasks();
+  expect(report).toHaveBeenCalledTimes(1);
+  expect(diagnostics).not.toHaveBeenCalled();
+});
+
+it('does not wire obsolete connected Markdown after its live guard expires', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
+    holder.createEl('a', { cls: 'internal-link', text: 'Note', attr: { 'data-href': 'Note' } });
+  });
+  const trigger = vi.fn();
+  const host = document.body.createDiv();
+  let live = true;
+  renderTaskText(host, '[[Note]]', {
+    app: { workspace: { trigger } } as unknown as App,
+    sourcePath: 'tasks.md',
+    component: new Component(),
+    isCurrent: () => live,
+  });
+  live = false;
+  await vi.runAllTimersAsync();
+  host.querySelector('a')?.dispatchEvent(new MouseEvent('mouseover'));
+  expect(trigger).not.toHaveBeenCalled();
+});
+
+it.each([undefined, true, false])(
+  'preserves default diagnostics only for live isCurrent=%s',
+  async (current) => {
+    const failure = new Error('Markdown default failure');
+    vi.spyOn(MarkdownRenderer, 'render').mockRejectedValue(failure);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const component = new Component();
+    component.load();
+    renderTaskText(document.body.createDiv(), '[[Project]]', {
+      app: {} as App,
+      component,
+      sourcePath: 'tasks.md',
+      ...(current === undefined ? {} : { isCurrent: () => current }),
+    });
+    await flushMicrotasks();
+    if (current === false) expect(log).not.toHaveBeenCalled();
+    else
+      expect(log).toHaveBeenCalledExactlyOnceWith(
+        '[abyss-tasks] Could not render task text',
+        failure,
+      );
+    component.unload();
+  },
+);
+
+it.each(['guard', 'component'] as const)(
+  'retires held Markdown receipts, marks and link authority after %s invalidation',
+  async (invalidation) => {
+    const pending = deferred<void>();
+    const component = new Component();
+    component.load();
+    const content = component.addChild(new Component());
+    const host = document.body.createDiv();
+    const onEditLink = vi.fn();
+    const onRenderFailure = vi.fn();
+    const onRendered = vi.fn((element: HTMLElement) => element.createEl('mark', { text: 'Old' }));
+    const menu = vi.spyOn(Menu.prototype, 'addItem');
+    let current = true;
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _source, holder) => {
+      await pending.promise;
+      holder.createEl('a', { cls: 'internal-link', text: 'Note', attr: { 'data-href': 'Note' } });
+    });
+    const receipt = renderTaskText(host, '[[Note]]', {
+      app: {} as App,
+      component: content,
+      linkEventOwner: content,
+      sourcePath: 'a.md',
+      isCurrent: () => current,
+      onRendered,
+      onEditLink,
+      onRenderFailure,
+    });
+    if (invalidation === 'guard') current = false;
+    else component.removeChild(content);
+    pending.resolve();
+    expect(await receipt.settled).toEqual({ type: 'cancelled' });
+    host.querySelector('a')?.dispatchEvent(new MouseEvent('contextmenu', { cancelable: true }));
+    expect(host.querySelector('mark')).toBeNull();
+    expect(onRendered).not.toHaveBeenCalled();
+    expect(onEditLink).not.toHaveBeenCalled();
+    expect(menu).not.toHaveBeenCalled();
+    expect(onRenderFailure).not.toHaveBeenCalled();
+    component.unload();
+  },
+);
+
+it('suppresses a held Markdown failure after its connected generation expires', async () => {
+  const pending = deferred<void>();
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const report = vi.fn();
+  const component = new Component();
+  component.load();
+  let current = true;
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async () => {
+    await pending.promise;
+    throw new Error('retired Markdown');
+  });
+  const receipt = renderTaskText(document.body.createDiv(), '[[Note]]', {
+    app: {} as App,
+    component,
+    sourcePath: 'a.md',
+    isCurrent: () => current,
+    onRenderFailure: report,
+  });
+  current = false;
+  pending.resolve();
+  expect(await receipt.settled).toEqual({ type: 'cancelled' });
+  await flushMicrotasks();
+  expect(report).not.toHaveBeenCalled();
+  expect(log).not.toHaveBeenCalled();
+  component.unload();
 });

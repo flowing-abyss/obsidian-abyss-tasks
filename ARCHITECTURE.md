@@ -343,7 +343,7 @@ note or in third notes; explicit links to the old source's moved block IDs can t
 stale. Markdown block and dependency IDs within the moved subtree remain intact.
 
 Hierarchy presentation is shared by [`taskHierarchyActions`](src/ui/taskHierarchyActions.ts).
-Existing centre cards and the inspector header preview exact live endpoints through the public
+Existing centre cards, the inspector header, and the Subtasks section preview exact live endpoints through the public
 `hierarchyWouldCycle` boundary, after tag/project/attachment handlers; inspector relation drags
 retain dependency meaning. The ordinary selected-subtask menu sends `promote-subtask`. AppState's
 single drag payload is claimed once per drop, independent of outgoing-link row occurrences.
@@ -602,8 +602,9 @@ Query text, settings, titles, paths and arbitrary exception causes never enter t
 `renderTaskText` returns an optional receipt: plain text is synchronous; Markdown becomes ready only
 after the host render Promise, paragraph unwrapping, exact source-token link wiring and onRendered
 callback. Replacement, abort, detach and Component unload cancel stale work. `TaskRenderScope`
-collects the card title/description receipts in the existing row mount; failure cancels its remaining
-work. The Search DOM complete phase follows that sealed mount receipt, without a readiness timer.
+collects title, description and context receipts acquired during the synchronous native page publication;
+failure cancels its remaining work. Later native mounts use their disposable row/text generation and
+the captured live request guard, without appending to the sealed publication scope. The Search DOM complete phase follows that sealed mount receipt, without a readiness timer.
 The onRendered hook and the same page/request lifecycle are the shared seam for later excerpt marks.
 
 Search activation uses an explicit shared-card callback for main clicks and Enter/Space. Existing
@@ -670,17 +671,55 @@ visual occurrences; each row also carries its physical file/line key. Selection,
 navigation, and focus receipts retain occurrence keys. Focus restoration also checks the full task
 reference and yields to outside focus. Menu counts and command lists deduplicate physical tasks in
 visual order. Archive rebasing preserves selected occurrence groups through proven source-line
-successors. Running timers retain all mounted badge elements per physical root and clear them at
-render/disposal boundaries.
+successors. Running timers retain mounted badge elements per physical root. Legacy render-wide badges clear
+at render boundaries; row-owned badges unregister on content replacement or eviction and survive
+legacy refresh. Both read the shared ticker time without new subscriptions.
 
 The `source-note` and `outgoing-link` group/sort choices are additive saved list enums in `state.json`.
 Existing defaults and schema version remain unchanged, and list sort merges preserve unknown nested
 extensions. Older binaries may use their existing fallback for these choices; task Markdown needs
 no migration.
 
-`mountTaskListRows` currently mounts every row. The logical/mounted distinction is a boundary for
-future windowing, not an implemented virtual task list. Actions use the snapshots and order that
-produced the cards; DOM access serves rendering, pointer targeting, focus, and reveal.
+`TaskListSurface` implements bounded keyed row mounts over `RowViewport`, with sparse interaction
+and focus pins, synchronous reveal, revision-aware measurements, and content-relative anchoring.
+It owns its document's observer, animation frame, font/resize/scroll listeners, inert spacers, and
+row eviction. `pin(key, onInvalidated?)` registers one cancellable interaction acquisition. Conflicting
+non-focus owners are invalidated before reordering; removal, disposal, and document rebind also
+invalidate before eviction. Normal release does not invalidate. Callbacks cancel transient owners,
+not submitted commands; real interaction owners must provide them. Acquisition during cancellation
+is ignored, and reentrant updates supersede the outer pass. The actual focused subtree stays in
+place while ordinary neighbors move, and intentional scroll corrections follow the new DOM extent.
+Ordinary native scrolling never writes normalized geometry back to the scroller.
+A transient hidden/detached native callback stops mounting and measurement while retaining
+element-local scroll/focus wakeups and current-owner size observation. An adopted host admits its new document
+before coalescing frames, cancels work through the captured old owner, and retires callbacks by
+native generation and frame identity. Ordinary reconnection/scroll therefore recovers without a
+query or application render. Explicit suspension and destruction remove element wakeups as well;
+resume revalidates layout and document ownership. Synchronous updates default to reporting through
+the supplied owner; Search requests per-call propagation so its
+result-pass owner can clean partial mounts and report once without completing the failed pass.
+Deferred native failures remain surface-owned and stop until an explicit refresh. CenterPanel uses
+this adapter for Tasks, project-dashboard lists, and the bounded hydrated occurrence page supplied by Search.
+Search retains its input and complete compact logical order outside the mounted window; the native
+surface currently receives only the existing 50-occurrence allocation page. Native scrolling within
+that page does not retrieve another page. The dependency picker likewise retains its existing
+30-option page contract at this intermediate merge checkpoint. Same-query refreshes
+retain the surface anchor; changed queries replace row lifetimes. Each retained-card update releases
+and rebinds Search navigation to the current snapshot. Search generations and captured input/results
+invalidate obsolete callbacks before they can render, complete, or report. Later Markdown failures
+belong to live card/text generations and never complete or fail a newer Search pass.
+
+`TaskCardRenderer.mount` owns one loaded Component per row, disposable Markdown generations,
+and its own badge registrations. Mounted title and description generations also own their link
+listeners, so replacing or evicting a generation retires its held links. Its optional `TaskCardInteractionContext` gives whole-card hosts
+the row Component and a current snapshot getter: ordinary events read current authority, while
+started commands retain their captured reference. Explicit row updates refresh status, dependency blocking, and metadata even when the task reference
+is unchanged. The shared `StatusMarker` primitive refreshes checkbox/wrapper semantics in place; a
+focused status marker and Delete control survive refreshes. Only the title or description region
+containing actual focus retains its rendered source generation until focus leaves; the other text
+region, recurrence/count badges, timer creation/removal/totals, status, and metadata stay current. The optional host failure reporter receives live asynchronous render failures;
+legacy callers retain shared asynchronous diagnostics. DOM access serves rendering, pointer
+targeting, focus, and reveal; logical rows remain the authority for ordering.
 
 [`CalendarMode`](src/panels/calendar/CalendarMode.ts) owns date/view state, calendar view lifetime,
 navigation, query-driven patches, and forecast presentation. Its host interface connects it to the
@@ -832,16 +871,104 @@ rebuilt on a view switch. A dashboard temporarily detaches the overview without 
 logical cell list from mounted cells. Selection, keyboard movement, clipboard operations, creation,
 and reveal all use the active surface contract. Reveal mounts a logical cell before focus.
 Grouped selection distinguishes occurrences, while mutations deduplicate physical cells. Clipboard
-payloads carry raw types and source context, rebase links, and confer no write/history authority.
-Editors retain failed drafts, and navigation uses their shared completion boundary.
+payloads serialize the selected logical row/column union in projection order, padding sparse holes
+with blank data. They carry raw types and source context, rebase links, and confer no write/history
+authority; paste still requires real editable destination cells. Editors retain failed drafts, and
+navigation uses their shared completion boundary. The editor lifecycle alone owns failure refocus:
+explicit completion may retain correction focus, while passive dismissal or later outside/window
+departure revokes it without closing the draft or releasing its pin.
 
 [`ProjectsTableSurface`](src/panels/projects/ProjectsTableSurface.ts) owns Table DOM, scrolling,
 row windowing, and physical drag. The controller retains drop planning, validation, writes, and
 history. Editors and native drag sources pin their occurrence rows; evicted rows release listeners
-and Markdown Components. [`projectTableViewport`](src/panels/projects/projectTableViewport.ts)
-owns geometry only. Logical projection, sorting, and grouping still process the full collection.
-Table has windowed rows; centre task lists, Kanban cards, and Timeline rows have no new virtual
-mounting layer.
+and Markdown Components. Detached or zero-size Table refreshes retain mounted rows and pending
+viewport state; connected layout resumes reconciliation from that saved viewport before consuming
+new native geometry. [`RowViewport`](src/panels/virtualization/rowViewport.ts) owns shared pure
+row geometry: prefix offsets, consumed overscan, sparse pins, revision-aware measurements, reveal,
+and anchor recovery against prior row order. Callers supply explicit rows and content-relative
+offsets; native owners account for sticky occlusion and viewport height. Anchors share an immutable
+key vector per replacement; final scroll clamping happens when a window's height is known.
+Measurement accepts an optional pre-replacement anchor: TaskListSurface, Kanban, and Timeline
+retain that key through synchronous replacement and measurement, so a tall row's old within-row
+offset cannot become an estimated neighbor's anchor. Native owners temporarily include that row
+when reconciling its replacement window. Ordinary scroll measurement omits the anchor, and explicit
+reveal starts from its own current target; no retained anchor outlives the reconciliation.
+TaskListSurface keeps the explicit reveal key through destination measurement and recomputes its
+reveal position before the final window and native write, so taller measured destination rows cannot
+evict the requested row. Task lists supply offsets from the host's actual content origin, including padding and nested-host borders,
+while retaining negative displacement when the scroller still shows preceding dashboard content.
+[`projectTableViewport`](src/panels/projects/projectTableViewport.ts) adapts the existing Table
+estimates and signatures to that neutral module. Logical projection, sorting, and grouping still
+process the full collection.
+Table, centre Tasks/dashboard lists, Kanban cards, and Timeline rows use bounded native windows.
+[`ProjectKanbanColumnViewport`](src/panels/projects/projectKanbanViewport.ts) owns each column's
+RowViewport, sparse spacers, measurements, pins, native bindings, and one loaded Markdown Component
+per mounted card/header. The view supplies full logical rows and keyed card rendering; mounted cells
+remain a logical-order subset. Column shells, horizontal layout, and independent vertical offsets
+survive eviction. Visible columns plus one neighboring column activate; offscreen interaction pins
+retain only their sparse rows. Same-project/group moves across status columns transfer the mount,
+loaded Component, and existing pin-release tokens before either column reconciles, preserving cell
+contexts and focus. The controller acquires `ProjectsKanbanView.pinEditorCell` for the current
+mounted card before relocating a picker to the overview root. That finite pin survives horizontal
+deactivation and failed saves; the existing editor cleanup releases it only after the editor handle
+is invalidated on close or destruction. Eviction removes cell references before unloading Markdown
+once.
+[`projectKanbanRows`](src/panels/projects/projectKanbanRows.ts) computes insertion over full logical
+geometry, excluding the physical source even across duplicate occurrences. Landing previews resolve
+the planner's insertion against full measured row geometry independently of the pointer hit target,
+including unmounted neighbors and exact group occurrences. Each column indexes logical groups and
+supplied group/path row keys on projection replacement, resolving live measured bounds without
+rebuilding the indexes.
+The drag owner retains one semantic preview plan for unchanged RAF targets; real dragover and queued
+commit still plan freshly. The overview invalidates that plan before deferred renders and accepted
+source observations; direct board projection changes also invalidate it. Invalidation retains the
+native gesture and pointer while retiring stale delayed/open hover forecasts. Hover titles and group
+contexts are indexed once per forecast and retired with its viewport. Drag owns capture,
+preview, hover delay, auto-scroll, and commit; it retargets the last pointer after edge scrolling.
+[`ProjectKanbanHoverViewport`](src/panels/projects/projectKanbanHoverViewport.ts) composes the same
+native owner for bounded title-only forecast rows. Completion validates source existence and focus
+ownership before reveal and again before focusing. Native failures reach the existing surface/drag
+reporter; destroyed callbacks publish nothing.
+Retained Kanban view/drag, Timeline pointer, and cell-editor lifetimes bind native document/window
+listeners through their actual acquisition owners. Obsidian window-migration notifications and local
+interaction wakeups rebind without a render; migration cancels gestures, pointer suppression and
+presentation permission before acquiring the new owner. Old owner callbacks are inert, including
+queued timers/frames with reused numeric IDs. Editor drafts and submitted command receipts survive.
+Kanban's existing drop-focus revision is revoked by outside focus, window departure, hide, and
+migration. The same departure also disables ordinary render fallback focus; window focus returning
+alone cannot restore that permission, while fresh board pointer/keyboard intent can. This does not
+revive a revoked pending drop. Each native owner releases its migration notification at disposal.
+`CenterPanel` owns one [`TaskListSurface`](src/panels/task-list/TaskListSurface.ts)
+for the active task host. Tasks use their list scroller; dashboard tasks use the dashboard scroller
+and a content-relative origin. The surface’s supplied logical occurrence order drives selection and
+physical writes remain deduplicated. Ordinary unfiltered lists supply their full order; Search/filter
+pages supply only their current allocation page at this checkpoint. Direct Ctrl/Cmd+A in Tasks selects that complete current logical order while
+preserving the range and keyboard lead, native focus, and viewport. Interactive inputs and other
+modes retain their keyboard ownership. Keyed `TaskCardRenderer.mount` instances own Markdown Components and current
+snapshot interactions; eviction unloads each row. Native scrolling only reconciles mounts and
+selection visuals, without completing an application render or advancing its focus generation.
+Selection announcements recount distinct physical tasks only on selection/projection changes; mounted
+row reconciliation never collects the full logical selection. Host metric revisions include font
+weight, style, and letter spacing alongside family, size, line height, and width, invalidating cached
+offscreen measurements when wrapping changes.
+Explicit reveal checks captured source and focus ownership before scrolling and again before focus.
+Native focus and bounded menu/editor/drag owners retain rows; invalidation cancels UI ownership
+before eviction without cancelling submitted commands. Search uses the same bounded surface while
+retaining its own query, ordering, input, and navigation semantics.
+
+A same-project dashboard refresh retains its dashboard/task/capture hosts while updating current
+project presentation. `ProjectsPanel` invokes its `unmountTasks(): void` owner callback when leaving
+or replacing a dashboard, after capturing overview focus-return eligibility and before removing the
+host. `CenterPanel` releases its surface and active capture/editor ownership there. Ordinary Tasks
+and dashboard refreshes keep the same capture input connected, preserving selection and IME state.
+List/project capture results carry an optional per-result `CreationRevealAuthority` through the
+existing CenterPanel/PanelView callback. CaptureSessions owns request/input-focus validity;
+CenterPanel binds it to the originating surface and list/query revision and reveals the exact
+canonical TaskRef without moving focus. `CreationPresentationController` remains the only pending
+reference, publication retry, expiry, and highlight owner. Its in-flight guard prevents reentrant
+reveal; initial successful presentation consumes scrolling authority, so eviction/remount can only
+reapply remaining highlight. Revoked scoped results cannot fall back to legacy scrolling. Calendar
+and other creation callers retain their existing unscoped presentation behavior.
 
 All three surfaces reconcile keyed DOM and update surviving listeners' contexts. Table and Kanban
 retain viewport offsets across dashboard detachment; explicit Back can restore the exact retained
@@ -888,6 +1015,44 @@ edit from overwriting an independently changed companion field.
 Preview authority remains tied to captured source until receipts arrive. Source replacement,
 supersession, hiding, or teardown invalidates it, and older settlements cannot alter newer previews.
 Axis windowing changes physical rendering without changing logical date mapping.
+[`timelineViewportRows`](src/panels/projects/projectTimelineRowModel.ts) builds the pure ordered
+header/project sequence. [`ProjectTimelineRows`](src/panels/projects/projectTimelineRows.ts) owns
+its shared RowViewport geometry, sparse pins/spacers, measurements, vertical anchors, owner-window
+bindings, and one loaded Markdown Component per mounted row/header. The retained Timeline view owns
+horizontal calendar rendering and supplies its current axis before the native owner's coalesced
+vertical pass; new mounts use that axis. Vertical corrections never change horizontal position.
+Complete logical cells continue to drive selection, clipboard, keyboard movement, and reveal.
+The interaction's read-only pinned-occurrence seam includes provisional/active captures and pending
+successful previews until existing projected-source reconciliation retires them. The view mirrors
+that authority into native pins and invalidates gestures before collapse, hide, detach, or disposal
+can evict their nodes. Actual row focus and explicit editor ownership also pin rows, including
+pickers relocated outside the row. Mount cleanup removes view-owned cell references, DOM, and
+explicit row listeners before the native owner unloads Markdown once. In all three project surfaces,
+each mounted row Component owns stable field-resource children. Those children own the cell-host
+handlers and one replaceable content Component for Markdown resources and descendant handlers.
+Content updates remove the previous content child; individual field retirement removes its field
+child through the controller's internal release callback. Both operations remove parent membership
+as well as unload resources. Native row owners still perform final row unload exactly once, and
+Kanban transfers preserve the row, field children, and current-context host callbacks.
+Group-label rendering similarly replaces one content child of its supplied group-row Component.
+Projects passes these finite content children as the shared Markdown helper's explicit link-event
+owners; callers that omit that option keep their existing event behavior. Content invalidation
+uses the helper's existing current-generation guard to suppress retired wiring and render failures;
+it does not cancel native Markdown work, whose holder remains unique to that retired generation.
+Native project owners compose measured heights with their wrapping-width/font revisions and
+owner-document metric generations. Font completion and reactivation invalidate offscreen measurements
+while preserving logical anchors and fractional offsets; ordinary scroll does not normalize native
+positions. Table rebinds its observer, font listeners and pending frame to the current owning window;
+retired callbacks cannot act on a replacement binding. Layout-only passes retain row/field ownership.
+Table guards initial, public reveal and native render passes, retires failed partial content/mounts,
+and allows explicit updates to retry without disturbing unrelated editors. Finite cell and group
+content generations report live asynchronous failures once through the controller render feedback,
+diagnostic and Notice boundary;
+retired generations stay quiet and failed signatures remain retryable. A failed overview field that has
+not reached its row cell map also releases its stable field owner; its creating surface removes
+the unpublished field wrapper. Kanban and Timeline native failures latch only the failed pass:
+ordinary callbacks stay quiet until an explicit update starts a fresh attempt. Render feedback is separate
+from drag/drop, date and other mutation feedback.
 
 Overview creation retains a session with a configured status. ProjectManager prepares the note
 through NoteTemplateService and applies status through serialized metadata mutation. ProjectStore

@@ -14,6 +14,9 @@ import {
 } from './helpers';
 import { hierarchyHarness } from './support/taskHierarchyHarness';
 
+import { useTaskPanelViewport } from './support/taskPanelViewport';
+
+useTaskPanelViewport();
 useRealMoment();
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {

@@ -170,9 +170,15 @@ it('cancels old matched Markdown when the page is replaced', async () => {
     await vi.waitFor(() => {
       expect(holder).toBeDefined();
     });
+    const oldHolder = holder;
     h.query('zebra');
-    await h.completed();
+    const request = h.root.dataset['searchRequest'];
     pending.resolve();
+    await h.completed();
+    expect(h.root.dataset['searchRequest']).toBe(request);
+    expect(h.root.querySelector<HTMLInputElement>('.abyss-search-global')?.value).toBe('zebra');
+    expect(h.root.dataset['searchPhase']).toBe('complete');
+    expect(oldHolder?.querySelector('mark')).toBeNull();
     await Promise.resolve();
     await Promise.resolve();
     expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
@@ -351,7 +357,8 @@ it('extracts contexts only for the mounted 50 roots and rejects detached context
     h.query('needle');
     await h.completed();
     expect(context).toHaveBeenCalledTimes(50);
-    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(50);
+    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);
+    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThan(50);
     const old = expectDefined(
       h.root.querySelector<HTMLButtonElement>('.abyss-search-context button'),
     );

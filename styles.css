@@ -2197,6 +2197,20 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   font-size: 14px;
 }
 
+/* This host owns its anchor corrections; other scrollers retain native anchoring. */
+.abyss-task-list-surface {
+  display: flow-root;
+  overflow-anchor: none;
+}
+
+.abyss-task-list-surface > .abyss-virtual-row-spacer {
+  height: var(--abyss-virtual-row-height);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  pointer-events: none;
+}
+
 .abyss-group-header {
   padding: var(--size-4-4) var(--size-4-4) var(--size-2-3);
   font-size: 10px;
@@ -7145,6 +7159,7 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-kanban-column-body {
+  overflow-anchor: none;
   position: relative;
   overflow-y: auto;
   min-width: 0;
@@ -7226,6 +7241,8 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-kanban-hover-body {
+  position: relative;
+  overflow-anchor: none;
   overflow-y: auto;
   padding: 0 var(--size-4-2) var(--size-4-2);
 }
@@ -7238,7 +7255,6 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-kanban-hover-card {
-  margin-top: var(--size-2-3);
   padding: var(--size-4-2);
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
@@ -7247,8 +7263,18 @@ button.abyss-project-table-status-pill {
   font-size: var(--font-ui-small);
 }
 
-.abyss-project-kanban-group + .abyss-project-kanban-group {
-  margin-top: var(--size-4-2);
+.abyss-project-kanban-window {
+  position: relative;
+}
+
+.abyss-project-kanban-window-row {
+  padding-bottom: var(--size-4-2);
+}
+
+.abyss-project-kanban-viewport-spacer {
+  height: var(--abyss-project-kanban-spacer-height);
+  overflow-anchor: none;
+  pointer-events: none;
 }
 
 .abyss-project-kanban-group {
@@ -9803,4 +9829,17 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 .abyss-panel-view .abyss-search-status,
 .abyss-dep-search .abyss-search-status {
   margin-bottom: var(--size-4-1);
+}
+
+.abyss-project-timeline-groups {
+  overflow-anchor: none;
+}
+
+.abyss-project-timeline-viewport-spacer {
+  height: var(--abyss-project-timeline-spacer-height);
+  width: calc(
+    var(--abyss-project-timeline-summary-width) + var(--abyss-project-timeline-track-width)
+  );
+  overflow-anchor: none;
+  pointer-events: none;
 }

@@ -12,6 +12,9 @@ import {
   methodOf,
   useRealMoment,
 } from './helpers';
+import { useTaskPanelViewport } from './support/taskPanelViewport';
+
+useTaskPanelViewport();
 
 useRealMoment();
 

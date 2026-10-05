@@ -31,6 +31,8 @@ function getLucideIcon(iconId: string): SVGElement | null {
   return svg.cloneNode(true) as SVGElement;
 }
 
+const semanticUpdates = new WeakMap<HTMLElement, (label: string, isDone: boolean) => void>();
+
 const completionBlockUpdates = new WeakMap<HTMLElement, (blocked: boolean) => void>();
 
 export function setStatusMarkerCompletionBlocked(marker: HTMLElement, blocked: boolean): void {
@@ -48,7 +50,9 @@ function bindContextMenu(control: HTMLElement, onContextMenu: (event: MouseEvent
 function makeMarkerInteractive(
   ...args: [HTMLElement, string, boolean, () => void, (event: MouseEvent) => void]
 ): void {
-  const [marker, label, isDone, onLeftClick, onContextMenu] = args;
+  const [marker, initialLabel, initialDone, onLeftClick, onContextMenu] = args;
+  let label = initialLabel;
+  let isDone = initialDone;
   let blocked = false;
   let wrapper: HTMLElement | undefined;
   const semantics = (control: HTMLElement): void => {
@@ -83,6 +87,13 @@ function makeMarkerInteractive(
     control.onpointerdown = onPointer;
     control.ontouchstart = onPointer;
   };
+  semanticUpdates.set(marker, (nextLabel, nextDone) => {
+    label = nextLabel;
+    isDone = nextDone;
+    semantics(wrapper ?? marker);
+    if (wrapper !== undefined)
+      wrapper.setAttribute('aria-label', `Task status: ${label}. ${wrapper.title}`);
+  });
   semantics(marker);
   bind(marker);
   completionBlockUpdates.set(marker, (next) => {
@@ -121,6 +132,7 @@ function setMarkerMetadata(
   presentation: { id: string; type: string },
   priority: TaskPriority | undefined,
 ): void {
+  marker.removeAttribute('data-priority');
   marker.setAttrs({
     'data-status': presentation.id,
     'data-status-type': presentation.type,
@@ -143,23 +155,57 @@ function renderMarkerIcon(
   }
 }
 
+function markerPresentation(
+  task: Opts['task'],
+  registry: StatusRegistry,
+): {
+  id: string;
+  type: string;
+  label: string;
+  icon: string | undefined;
+  isDone: boolean;
+  defined: boolean;
+} {
+  const def = registry.bySymbol(task.statusSymbol);
+  return def == null
+    ? {
+        id: 'other',
+        type: 'todo',
+        label: task.statusSymbol,
+        icon: undefined,
+        isDone: false,
+        defined: false,
+      }
+    : {
+        id: def.id,
+        type: def.type,
+        label: def.name,
+        icon: def.icon,
+        isDone: def.type === 'done',
+        defined: true,
+      };
+}
+
+/** Refresh the existing marker and its owned accessibility wrapper without replacing focus. */
+export function updateStatusMarker(
+  marker: HTMLElement,
+  opts: Pick<Opts, 'task' | 'registry' | 'completionBlocked'>,
+): void {
+  const presentation = markerPresentation(opts.task, opts.registry);
+  setMarkerMetadata(marker, presentation, opts.task.priority);
+  marker.empty();
+  renderMarkerIcon(marker, opts.task.statusSymbol, presentation.icon, presentation.defined);
+  semanticUpdates.get(marker)?.(presentation.label, presentation.isDone);
+  setStatusMarkerCompletionBlocked(marker, opts.completionBlocked === true);
+}
+
 export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement {
   const { task, registry, interactive = true, onLeftClick, onContextMenu } = opts;
-  const def = registry.bySymbol(task.statusSymbol);
-  const presentation =
-    def == null
-      ? { id: 'other', type: 'todo', label: task.statusSymbol, icon: undefined, isDone: false }
-      : {
-          id: def.id,
-          type: def.type,
-          label: def.name,
-          icon: def.icon,
-          isDone: def.type === 'done',
-        };
+  const presentation = markerPresentation(task, registry);
   const el = parent.createSpan({ cls: 'abyss-status-marker' });
   if (interactive !== true) el.addClass('abyss-status-marker--inert');
   setMarkerMetadata(el, presentation, task.priority);
-  renderMarkerIcon(el, task.statusSymbol, presentation.icon, def != null);
+  renderMarkerIcon(el, task.statusSymbol, presentation.icon, presentation.defined);
 
   if (interactive === true) {
     makeMarkerInteractive(el, presentation.label, presentation.isDone, onLeftClick, onContextMenu);

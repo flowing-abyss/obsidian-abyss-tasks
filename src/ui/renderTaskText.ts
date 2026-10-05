@@ -17,9 +17,13 @@ export interface RenderTaskTextOptions {
   readonly presentation?: 'title' | 'markdown';
   readonly signal?: AbortSignal;
   readonly onRendered?: (element: HTMLElement) => void;
+  readonly isCurrent?: () => boolean;
+  readonly onRenderFailure?: (error: unknown) => void;
   app: App;
   sourcePath: string;
   component: Component;
+  /** Finite content-generation owner, removed from its parent when this text retires. */
+  readonly linkEventOwner?: Component;
   interactiveLinks?: boolean;
   onEditLink?: ((occurrenceIndex: number, token: LinkToken) => void) | undefined;
   beforeOpenLink?: (() => Promise<boolean>) | undefined;
@@ -45,7 +49,7 @@ export function renderTaskText(
       : tokens.length === 0
   ) {
     el.setText(presented);
-    if (opts.signal?.aborted === true)
+    if (isCancelled(opts))
       return { settled: Promise.resolve({ type: 'cancelled' }), cancel: () => {} };
     try {
       opts.onRendered?.(el);
@@ -99,15 +103,24 @@ function renderMarkdownText(
   wiring.register(cancel);
   opts.signal?.addEventListener('abort', cancel, { once: true });
   observer?.observe(holder.ownerDocument, { subtree: true, childList: true });
-  if (opts.signal?.aborted === true) {
+  if (isCancelled(opts)) {
     cancel();
     return receipt;
   }
+  // A synchronous acquisition throw propagates to the native mount boundary, whose Component
+  // teardown releases this receipt. Promise rejection uses the owned asynchronous path below.
+  const rendering = MarkdownRenderer.render(
+    opts.app,
+    presented,
+    holder,
+    opts.sourcePath,
+    opts.component,
+  );
   // This Promise is the host renderer's actual completion, never a timer approximation.
   const work = (async () => {
-    await MarkdownRenderer.render(opts.app, presented, holder, opts.sourcePath, opts.component);
+    await rendering;
     if (activeRenders.get(el) !== receipt) return;
-    if (!holder.isConnected || !el.contains(holder)) {
+    if (!holder.isConnected || !el.contains(holder) || opts.isCurrent?.() === false) {
       cancel();
       return;
     }
@@ -122,8 +135,14 @@ function renderMarkdownText(
   })();
   runAsyncAction(
     work.catch((error: unknown) => {
-      if (!done) complete({ type: 'failed', error });
-      throw error;
+      if (done) return;
+      if (opts.isCurrent?.() === false || !holder.isConnected || !el.contains(holder)) {
+        cancel();
+        return;
+      }
+      complete({ type: 'failed', error });
+      if (opts.onRenderFailure !== undefined) opts.onRenderFailure(error);
+      else throw error;
     }),
     'Could not render task text',
   );
@@ -147,7 +166,7 @@ function wireLinks(
   // Link click navigates; never bubble to the card/row handler. Obsidian's global
   // internal-link handler is bypassed by stopPropagation, so open the note ourselves.
   anchors.forEach((a) => {
-    a.addEventListener('click', (e) => {
+    registerLinkEvent(opts, a, 'click', (e) => {
       e.stopPropagation();
       if (!a.hasClass('internal-link')) return; // external links keep their default nav
       e.preventDefault();
@@ -164,7 +183,7 @@ function wireLinks(
       }
     });
     // Arm Obsidian's page-preview (hover) popover for internal links.
-    a.addEventListener('mouseover', (e) => {
+    registerLinkEvent(opts, a, 'mouseover', (e) => {
       if (!a.hasClass('internal-link')) return;
       const href = a.getAttribute('data-href') ?? '';
       if (href.length > 0) {
@@ -185,7 +204,7 @@ function wireLinks(
     if (occurrenceIndex === undefined || occurrenceIndex < 0) return;
     const token = tokens[occurrenceIndex];
     if (token === undefined) return;
-    a.addEventListener('contextmenu', (e) => {
+    registerLinkEvent(opts, a, 'contextmenu', (e) => {
       e.preventDefault();
       e.stopPropagation();
       const menu = new Menu();
@@ -235,6 +254,16 @@ function editableOccurrences(
   });
 }
 
+function registerLinkEvent<K extends keyof HTMLElementEventMap>(
+  opts: RenderTaskTextOptions,
+  anchor: HTMLAnchorElement,
+  type: K,
+  handler: (event: HTMLElementEventMap[K]) => void,
+): void {
+  if (opts.linkEventOwner === undefined) anchor.addEventListener(type, handler);
+  else opts.linkEventOwner.registerDomEvent(anchor, type, handler);
+}
+
 function buildEditLinkItem(
   occurrenceIndex: number,
   token: LinkToken,
@@ -249,4 +278,8 @@ function buildEditLinkItem(
       .onClick(() => {
         onEditLink(occurrenceIndex, token);
       });
+}
+
+function isCancelled(opts: RenderTaskTextOptions): boolean {
+  return opts.signal?.aborted === true || opts.isCurrent?.() === false;
 }

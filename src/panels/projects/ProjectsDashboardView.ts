@@ -8,6 +8,56 @@ import { renderProgressBar } from './progressBar';
 import { applyProjectStatusPresentation } from './projectStatusPresentation';
 import type { ProjectsDashboardContext } from './viewContext';
 
+const dashboardProjects = new WeakMap<HTMLElement, { project: Project }>();
+
+/** Refresh the same project's presentation without detaching its task or capture owner. */
+export function refreshProjectDashboard(
+  container: HTMLElement,
+  project: Project | undefined,
+  renderTasks: ProjectsDashboardContext['renderTasks'],
+  statuses: readonly ProjectStatus[],
+): boolean {
+  const current = dashboardProjects.get(container);
+  const taskHost = container.querySelector<HTMLElement>('.abyss-project-tasks');
+  if (project === undefined || current?.project.path !== project.path || taskHost === null)
+    return false;
+  const taskTop = taskHost.getBoundingClientRect().top;
+  const hadTaskScroll = container.scrollTop > 0;
+  current.project = project;
+  const title = container.querySelector('.abyss-project-dashboard-title');
+  if (title !== null) title.textContent = project.name;
+  refreshProjectDashboardStatus(container, project, statuses);
+  const stats = container.querySelector<HTMLElement>('.abyss-project-dashboard-stats');
+  if (stats !== null) {
+    stats.empty();
+    renderProgressBar(stats, project.stats);
+    renderTrackedTime(stats, project);
+  }
+  refreshProjectDescription(container, project, taskHost);
+  if (hadTaskScroll) {
+    const correction = taskHost.getBoundingClientRect().top - taskTop;
+    if (Math.abs(correction) > 0.01) container.scrollTop += correction;
+  }
+  renderTasks(taskHost, project.path);
+  return true;
+}
+
+function refreshProjectDescription(
+  container: HTMLElement,
+  project: Project,
+  taskHost: HTMLElement,
+): void {
+  const raw = project.frontmatter['description'];
+  const description = typeof raw === 'string' ? raw.trim() : '';
+  const previous = container.querySelector<HTMLElement>('.abyss-project-description');
+  if (description === '') previous?.remove();
+  else {
+    const element = previous ?? container.createDiv({ cls: 'abyss-project-description' });
+    element.textContent = description;
+    if (previous === null) container.insertBefore(element, taskHost);
+  }
+}
+
 /** Detail view for a single project: header, stats, description, its tasks. */
 export function renderProjectDashboard(
   container: HTMLElement,
@@ -36,6 +86,8 @@ function renderProjectDetails(
   project: Project,
   ctx: ProjectsDashboardContext,
 ): void {
+  const current = { project };
+  dashboardProjects.set(container, current);
   const statuses = ctx.settings.projects.statuses;
   const status = projectStatus(project, statuses);
 
@@ -52,9 +104,9 @@ function renderProjectDetails(
       menu.addItem((item) =>
         item
           .setTitle(projectStatusDisplayName(s))
-          .setChecked(s.id === project.statusId)
+          .setChecked(s.id === current.project.statusId)
           .onClick(() => {
-            ctx.onSetStatus(project.path, s.id);
+            ctx.onSetStatus(current.project.path, s.id);
           }),
       );
     }
@@ -67,7 +119,7 @@ function renderProjectDetails(
   });
   setIcon(open, 'file-text');
   open.addEventListener('click', () => {
-    ctx.openNote(project.path);
+    ctx.openNote(current.project.path);
   });
 
   const stats = container.createDiv({ cls: 'abyss-project-dashboard-stats' });

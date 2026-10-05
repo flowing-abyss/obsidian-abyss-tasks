@@ -575,3 +575,76 @@ it('discovers the range coordinate from its real source owner', async () => {
     }),
   ).toEqual([]);
 });
+
+it('backs the finite virtual row height contract with its native producer and scoped CSS consumer', async () => {
+  const { default: ts } = await import('typescript');
+  const source = ts.sys.readFile(ts.sys.resolvePath('src/panels/task-list/TaskListSurface.ts'));
+  if (source === undefined) throw new Error('Missing task list surface owner');
+  const runtime = discoverRuntimeVariables(source);
+  expect(runtime.produced).toContain('--abyss-virtual-row-height');
+  expect(contracts.runtime.produced).toContain('--abyss-virtual-row-height');
+  const { loadPluginStyles, cssDeclarationsFor } = await import('./helpers');
+  const css = await loadPluginStyles();
+  const spacer = cssDeclarationsFor(css, '.abyss-task-list-surface > .abyss-virtual-row-spacer');
+  expect(spacer).toContain('height: var(--abyss-virtual-row-height)');
+  expect(cssDeclarationsFor(css, '.abyss-task-list-surface')).toContain('overflow-anchor: none');
+  expect(
+    analyzeCss(`.abyss-task-list-surface > .abyss-virtual-row-spacer { ${spacer} }`, {
+      file: 'fixture.css',
+      contracts: { ...fixtureContracts, runtime },
+    }),
+  ).toEqual([]);
+});
+
+it('backs Kanban column and hover spacing with a finite native spacer variable', async () => {
+  const { default: ts } = await import('typescript');
+  const source = ts.sys.readFile(
+    ts.sys.resolvePath('src/panels/projects/projectKanbanViewport.ts'),
+  );
+  if (source === undefined) throw new Error('Missing Kanban native owner');
+  const runtime = discoverRuntimeVariables(source);
+  expect(runtime.produced).toContain('--abyss-project-kanban-spacer-height');
+  expect(contracts.runtime.produced).toContain('--abyss-project-kanban-spacer-height');
+  const { loadPluginStyles, cssDeclarationsFor } = await import('./helpers');
+  const spacer = cssDeclarationsFor(
+    await loadPluginStyles(),
+    '.abyss-project-kanban-viewport-spacer',
+  );
+  expect(
+    analyzeCss(`.abyss-project-kanban-viewport-spacer { ${spacer} }`, {
+      file: 'fixture.css',
+      contracts: { ...fixtureContracts, runtime },
+    }),
+  ).toEqual([]);
+});
+
+it('backs Timeline sparse spacing with the native owner variable', async () => {
+  const { default: ts } = await import('typescript');
+  const source = ts.sys.readFile(ts.sys.resolvePath('src/panels/projects/projectTimelineRows.ts'));
+  if (source === undefined) throw new Error('Missing Timeline native owner');
+  const runtime = discoverRuntimeVariables(source);
+  expect(runtime.produced).toContain('--abyss-project-timeline-spacer-height');
+  expect(contracts.runtime.produced).toContain('--abyss-project-timeline-spacer-height');
+  const { loadPluginStyles, cssDeclarationsFor } = await import('./helpers');
+  const spacer = cssDeclarationsFor(
+    await loadPluginStyles(),
+    '.abyss-project-timeline-viewport-spacer',
+  );
+  expect(spacer).toContain('height: var(--abyss-project-timeline-spacer-height)');
+  expect(
+    analyzeCss(`.abyss-project-timeline-viewport-spacer { ${spacer} }`, {
+      file: 'fixture.css',
+      contracts: {
+        ...fixtureContracts,
+        runtime: {
+          ...runtime,
+          produced: [
+            ...runtime.produced,
+            '--abyss-project-timeline-summary-width',
+            '--abyss-project-timeline-track-width',
+          ],
+        },
+      },
+    }),
+  ).toEqual([]);
+});
