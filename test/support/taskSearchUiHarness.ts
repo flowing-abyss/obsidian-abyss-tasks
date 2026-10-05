@@ -66,99 +66,111 @@ export async function mountCanonicalSearchUi(
     organizationScheduler?: TaskSearchOptions['organizationScheduler'],
     creationPresentation?: boolean,
     clock?: Clock,
+    readYield?: (signal: AbortSignal) => Promise<void>,
   ]
 ) {
-  const [organizationScheduler, creationPresentation = false, clock] = presentation;
+  const [organizationScheduler, creationPresentation = false, clock, readYield] = presentation;
   const h = await createCanonicalSearchHarness(
     files,
     settings,
     true,
     createSearchWordSegmenter(),
     clock,
+    readYield,
   );
-  const state = new AppState();
-  state.set('selectedList', 'inbox');
-  state.set('mode', mode);
-  const root = document.body.createDiv({ cls: 'abyss-panel-view' });
-  const statusHost = document.body.createDiv();
-  const creation = creationPresentation
-    ? new CreationPresentationController({
-        host: statusHost,
-        queries: h.index,
-        reducedMotion: () => false,
-        now: () => Date.now(),
-      })
-    : undefined;
-  const panel = new CenterPanel({
-    captureApplication: creationPresentation ? h.tasks : undefined,
-    onCreationResult: (result, description, authority) =>
-      creation?.present(result, description, authority),
-    onRenderComplete: (root) => creation?.afterRender(root),
-    onTaskRowsSettled: (root) => creation?.refreshMounted(root),
-    organizationScheduler:
-      organizationScheduler ?? (vi.isFakeTimers() ? timerOrganizationScheduler : undefined),
-    state,
-    app: h.app,
-    settings,
-    queries: h.index,
-    search: h.search,
-    statusRegistry: h.statusRegistry,
-    tasks: h.tasks,
-  });
-  prepareTaskPanelViewport(root);
-  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
-    this: HTMLElement,
-  ) {
-    let height = 900;
-    if (this.hasClass('abyss-task-card')) height = 64;
-    if (this.hasClass('abyss-group-header')) height = 32;
+  let acquiredRoot: HTMLElement | undefined;
+  let acquiredStatusHost: HTMLElement | undefined;
+  let acquiredCreation: CreationPresentationController | undefined;
+  let acquiredPanel: CenterPanel | undefined;
+  function dispose(): void {
+    acquiredCreation?.destroy();
+    acquiredStatusHost?.remove();
+    acquiredPanel?.destroy();
+    acquiredRoot?.remove();
+    h.close();
+  }
+  try {
+    const state = new AppState();
+    state.set('selectedList', 'inbox');
+    state.set('mode', mode);
+    const root = (acquiredRoot = document.body.createDiv({ cls: 'abyss-panel-view' }));
+    const statusHost = (acquiredStatusHost = document.body.createDiv());
+    const creation = (acquiredCreation = creationPresentation
+      ? new CreationPresentationController({
+          host: statusHost,
+          queries: h.index,
+          reducedMotion: () => false,
+          now: () => Date.now(),
+        })
+      : undefined);
+    const panel = (acquiredPanel = new CenterPanel({
+      captureApplication: creationPresentation ? h.tasks : undefined,
+      onCreationResult: (result, description, authority) =>
+        creation?.present(result, description, authority),
+      onRenderComplete: (root) => creation?.afterRender(root),
+      onTaskRowsSettled: (root) => creation?.refreshMounted(root),
+      organizationScheduler:
+        organizationScheduler ?? (vi.isFakeTimers() ? timerOrganizationScheduler : undefined),
+      state,
+      app: h.app,
+      settings,
+      queries: h.index,
+      search: h.search,
+      statusRegistry: h.statusRegistry,
+      tasks: h.tasks,
+    }));
+    prepareTaskPanelViewport(root);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      let height = 900;
+      if (this.hasClass('abyss-task-card')) height = 64;
+      if (this.hasClass('abyss-group-header')) height = 32;
+      return {
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: 700,
+        bottom: height,
+        width: 700,
+        height,
+        toJSON: () => ({}),
+      };
+    });
+    panel.mount(root);
     return {
-      x: 0,
-      y: 0,
-      top: 0,
-      left: 0,
-      right: 700,
-      bottom: height,
-      width: 700,
-      height,
-      toJSON: () => ({}),
+      ...h,
+      state,
+      panel,
+      creation,
+      root,
+      query(text: string) {
+        const input = root.querySelector<HTMLInputElement>(
+          mode === 'search' ? '.abyss-search-global' : '.abyss-center-search',
+        );
+        if (input === null) throw new Error('Query input missing');
+        input.value = text;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      },
+      completed: async () => {
+        await searchUiCompleted(root, () => {
+          const current = h.source.subscribe(() => {});
+          current.unsubscribe();
+          return current.state.generation;
+        });
+        const snapshot = h.source.subscribe(() => {});
+        const state = snapshot.state;
+        snapshot.unsubscribe();
+        if (root.dataset['searchGeneration'] !== String(state.generation))
+          throw new Error('Search completed for an obsolete source generation');
+      },
+      dispose,
     };
-  });
-  panel.mount(root);
-  return {
-    ...h,
-    state,
-    panel,
-    creation,
-    root,
-    query(text: string) {
-      const input = root.querySelector<HTMLInputElement>(
-        mode === 'search' ? '.abyss-search-global' : '.abyss-center-search',
-      );
-      if (input === null) throw new Error('Query input missing');
-      input.value = text;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    },
-    completed: async () => {
-      await searchUiCompleted(root, () => {
-        const current = h.source.subscribe(() => {});
-        current.unsubscribe();
-        return current.state.generation;
-      });
-      const snapshot = h.source.subscribe(() => {});
-      const state = snapshot.state;
-      snapshot.unsubscribe();
-      if (root.dataset['searchGeneration'] !== String(state.generation))
-        throw new Error('Search completed for an obsolete source generation');
-    },
-    dispose() {
-      creation?.destroy();
-      statusHost.remove();
-      panel.destroy();
-      root.remove();
-      h.close();
-    },
-  };
+  } catch (error) {
+    dispose();
+    throw error;
+  }
 }
 
 /** Fake-clock tests need owner task turns governed by the same virtual timer queue. */

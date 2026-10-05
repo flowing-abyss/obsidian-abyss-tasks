@@ -2,11 +2,15 @@ import { MarkdownRenderer, Menu, Notice } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { TaskSearch, TaskSearchOptions } from '../src/panels/center/TaskSearch';
 import { TaskSearchReveal } from '../src/panels/center/TaskSearchReveal';
+import { CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TaskSearchError } from '../src/tasks';
+import { TaskSearchService } from '../src/tasks/infrastructure/search/TaskSearchService';
+import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { deferred, expectDefined, flushMicrotasks, methodOf, useRealMoment } from './helpers';
 import { taskCardMountBound } from './support/taskPanelViewport';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
+import { recordVirtualSurfaceResources } from './support/virtualSurfaceResources';
 
 useRealMoment();
 afterEach(() => vi.restoreAllMocks());
@@ -15,6 +19,7 @@ async function navigationSearchHarness(
   count = 101,
   organizationScheduler?: TaskSearchOptions['organizationScheduler'],
   rootTitle = 'zzz needle',
+  readYield?: (signal: AbortSignal) => Promise<void>,
 ) {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.listViewStates = {
@@ -25,8 +30,7 @@ async function navigationSearchHarness(
       statusGroups: ['todo'],
     },
   };
-  const markdown = [
-    ...Array.from({ length: count - 1 }, (_, i) => `- [ ] aaa ${String(i).padStart(5, '0')}`),
+  const targetMarkdown = [
     `- [ ] ${rootTitle}`,
     '  - > unrelated',
     '  - [ ] repeated',
@@ -48,49 +52,132 @@ async function navigationSearchHarness(
               ).join('\n'),
             ]),
           ),
-          'a.md': markdown
-            .split('\n')
-            .slice(count - 1)
-            .join('\n'),
+          'a.md': targetMarkdown,
         }
-      : { 'a.md': markdown };
-  const h = await mountCanonicalSearchUi(files, settings, 'search', organizationScheduler);
-  // This fixture exercises organization/reveal; cold preparation has separate coverage.
-  await h.search.prepare(new AbortController().signal);
-  h.query('needle');
-  await h.completed();
-  const owners = h.panel as unknown as {
-    taskSearch_abyssPrivate: TaskSearch;
-    taskSearchReveal_abyssPrivate: TaskSearchReveal;
-  };
-  const list = vi.spyOn(h.index, 'list');
-  const nodes = vi.spyOn(h.index, 'listNodes');
-  const cursor = await h.search.open(
-    { kind: 'roots', query: 'needle' },
-    new AbortController().signal,
-  );
-  const page = await h.search.read(cursor, 0, 50, new AbortController().signal);
-  const hit = expectDefined(page.hits[0]);
-  const child = { ...hit.address, childLines: [2, 2] };
-  return {
-    ...h,
+      : {
+          'a.md': [
+            ...Array.from(
+              { length: count - 1 },
+              (_, i) => `- [ ] aaa ${String(i).padStart(5, '0')}`,
+            ),
+            targetMarkdown,
+          ].join('\n'),
+        };
+  const h = await mountCanonicalSearchUi(
+    files,
     settings,
-    list,
-    nodes,
-    receipt: () => owners.taskSearchReveal_abyssPrivate.current(),
-    activateChild: () => owners.taskSearch_abyssPrivate.activate(child),
-    captureNavigation: () =>
-      structuredClone({
-        mode: h.state.get('mode'),
-        selectedList: h.state.get('selectedList'),
-        taskStack: h.state.get('taskStack'),
-        inspectorBackStack: h.state.get('inspectorBackStack'),
-        query: h.state.get('searchQuery'),
-        receipt: owners.taskSearchReveal_abyssPrivate.current(),
-        lists: settings.listViewStates,
-      }),
-  };
+    'search',
+    organizationScheduler,
+    false,
+    undefined,
+    readYield,
+  );
+  try {
+    // This fixture exercises organization/reveal; cold preparation has separate coverage.
+    await h.search.prepare(new AbortController().signal);
+    h.query('needle');
+    await h.completed();
+    const owners = h.panel as unknown as {
+      taskSearch_abyssPrivate: TaskSearch;
+      taskSearchReveal_abyssPrivate: TaskSearchReveal;
+    };
+    const list = vi.spyOn(h.index, 'list');
+    const nodes = vi.spyOn(h.index, 'listNodes');
+    const cursor = await h.search.open(
+      { kind: 'roots', query: 'needle' },
+      new AbortController().signal,
+    );
+    const page = await h.search.read(cursor, 0, 50, new AbortController().signal);
+    const hit = expectDefined(page.hits[0]);
+    const child = { ...hit.address, childLines: [2, 2] };
+    return {
+      ...h,
+      settings,
+      list,
+      nodes,
+      receipt: () => owners.taskSearchReveal_abyssPrivate.current(),
+      activateChild: () => owners.taskSearch_abyssPrivate.activate(child),
+      captureNavigation: () =>
+        structuredClone({
+          mode: h.state.get('mode'),
+          selectedList: h.state.get('selectedList'),
+          taskStack: h.state.get('taskStack'),
+          inspectorBackStack: h.state.get('inspectorBackStack'),
+          query: h.state.get('searchQuery'),
+          receipt: owners.taskSearchReveal_abyssPrivate.current(),
+          lists: settings.listViewStates,
+        }),
+    };
+  } catch (error) {
+    h.dispose();
+    throw error;
+  }
 }
+
+it.each(['initialization', 'mount', 'preparation', 'lookup'] as const)(
+  'releases acquired navigation owners when %s rejects before returning a harness',
+  async (stage) => {
+    const resources = recordVirtualSurfaceResources();
+    const empty = resources.counts();
+    const initialElements = new Set(document.body.children);
+    const acquired: {
+      panel?: CenterPanel;
+      index?: TaskIndex;
+      search?: TaskSearchService;
+    } = {};
+    const mount = methodOf(CenterPanel.prototype, 'mount');
+    vi.spyOn(CenterPanel.prototype, 'mount').mockImplementation(function (this: CenterPanel, root) {
+      acquired.panel = this;
+      mount.call(this, root);
+      if (stage === 'mount') throw failure;
+    });
+    const initialize = methodOf(TaskIndex.prototype, 'initialize');
+    vi.spyOn(TaskIndex.prototype, 'initialize').mockImplementation(function (this: TaskIndex) {
+      acquired.index = this;
+      return initialize.call(this).then(() => {
+        if (stage === 'initialization') throw failure;
+      });
+    });
+    const failure = new Error('Navigation setup rejected');
+    if (stage === 'preparation') {
+      vi.spyOn(TaskSearchService.prototype, 'prepare').mockImplementationOnce(async function (
+        this: TaskSearchService,
+      ) {
+        acquired.search = this;
+        throw failure;
+      });
+    } else if (stage === 'lookup') {
+      const read = methodOf(TaskSearchService.prototype, 'read');
+      vi.spyOn(TaskSearchService.prototype, 'read').mockImplementation(async function (
+        this: TaskSearchService,
+        ...args
+      ) {
+        acquired.search = this;
+        if (args[2] === 50) {
+          expect(resources.counts().components).toBeGreaterThan(empty.components);
+          throw failure;
+        }
+        return await read.call(this, ...args);
+      });
+    }
+    try {
+      await expect(navigationSearchHarness()).rejects.toBe(failure);
+      expect(resources.counts()).toEqual(empty);
+      expect([...document.body.children].filter((el) => !initialElements.has(el))).toHaveLength(0);
+      const subscription = expectDefined(acquired.index)
+        .searchSource()
+        .subscribe(() => {});
+      subscription.unsubscribe();
+      expect(subscription.state.type).toBe('disposed');
+    } finally {
+      // Also release the real owners when checking the pre-fix rejection path.
+      acquired.panel?.destroy();
+      acquired.search?.dispose();
+      acquired.index?.destroy();
+      for (const el of [...document.body.children]) if (!initialElements.has(el)) el.remove();
+    }
+  },
+);
 
 it('installs exact child and receipt before mode delivery, then reaches its exact root in the complete compact order', async () => {
   const h = await navigationSearchHarness();
@@ -455,12 +542,38 @@ it('an old detached card cannot activate through a newer live request', async ()
 
 it('navigates the last of 50k real compact records cooperatively with bounded exact hydration', async () => {
   let yields = 0;
-  const h = await navigationSearchHarness(50000, () => ({
-    now: () => 0,
-    yield: async () => {
-      yields++;
-    },
-  }));
+  let readYields = 0;
+  // Node's global setImmediate gives this correctness fixture a real cancellable task turn.
+  const readYield = (signal: AbortSignal): Promise<void> => {
+    readYields++;
+    return new Promise<void>((resolve, reject) => {
+      if (signal.aborted) {
+        reject(new TaskSearchError('aborted', 'Fixture read cancelled'));
+        return;
+      }
+      const abort = (): void => {
+        clearImmediate(turn);
+        signal.removeEventListener('abort', abort);
+        reject(new TaskSearchError('aborted', 'Fixture read cancelled'));
+      };
+      const turn = setImmediate(() => {
+        signal.removeEventListener('abort', abort);
+        resolve();
+      });
+      signal.addEventListener('abort', abort, { once: true });
+    });
+  };
+  const h = await navigationSearchHarness(
+    50000,
+    () => ({
+      now: () => 0,
+      yield: async () => {
+        yields++;
+      },
+    }),
+    'zzz needle',
+    readYield,
+  );
   const hydrate = vi.spyOn(h.search, 'resolveHits');
   try {
     await h.activateChild();
@@ -470,6 +583,7 @@ it('navigates the last of 50k real compact records cooperatively with bounded ex
       new Set(hydrate.mock.calls.flatMap(([hits]) => hits.map((hit) => hit.address.rootId))).size,
     ).toBeLessThan(100);
     expect(yields).toBeGreaterThan(300);
+    expect(readYields).toBeGreaterThan(1000);
     expect(h.root.dataset['searchLogicalResults']).toBe('50000');
     expect(h.root.querySelector('.abyss-search-paging')).toBeNull();
     expect(h.root.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);

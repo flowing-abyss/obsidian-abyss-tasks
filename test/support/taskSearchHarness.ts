@@ -203,50 +203,56 @@ export async function createCanonicalSearchHarness(
   files: Record<string, string>,
   settings: CalendarSettings,
   initialize = true,
-  ...options: [segment?: SearchWordSegmenter, clock?: Clock]
+  ...options: [
+    segment?: SearchWordSegmenter,
+    clock?: Clock,
+    readYield?: (signal: AbortSignal) => Promise<void>,
+  ]
 ) {
-  const [segment = fallbackSearchWords, clock] = options;
+  const [segment = fallbackSearchWords, clock, readYield] = options;
   const app = await createAppWithFiles(files);
   const parts = configuredTaskApplication(app, settings, {
     authority: true,
+    ...(readYield === undefined ? {} : { readYield }),
     ...(clock === undefined ? {} : { clock }),
   });
-  if (initialize) {
-    await parts.index.initialize();
-    for (const [path, text] of Object.entries(files))
-      parts.index.installCommittedContent(path, text);
+  try {
+    if (initialize) await parts.index.initialize();
+    const source = parts.index.searchSource();
+    const backends: FakeSearchBackend[] = [];
+    const diagnostics: TaskSearchDiagnostic[] = [];
+    const scheduler = new ControlledSearchScheduler();
+    const search = new TaskSearchService({
+      source,
+      reads: parts.index,
+      segment,
+      scheduler,
+      createBackend: async () => {
+        const backend = new FakeSearchBackend(segment);
+        backends.push(backend);
+        return backend;
+      },
+      diagnose: (value) => {
+        diagnostics.push(value);
+      },
+    });
+    return {
+      diagnostics,
+      backends,
+      scheduler,
+      app,
+      ...parts,
+      source,
+      search,
+      close() {
+        search.dispose();
+        parts.index.destroy();
+      },
+    };
+  } catch (error) {
+    parts.index.destroy();
+    throw error;
   }
-  const source = parts.index.searchSource();
-  const backends: FakeSearchBackend[] = [];
-  const diagnostics: TaskSearchDiagnostic[] = [];
-  const scheduler = new ControlledSearchScheduler();
-  const search = new TaskSearchService({
-    source,
-    reads: parts.index,
-    segment,
-    scheduler,
-    createBackend: async () => {
-      const backend = new FakeSearchBackend(segment);
-      backends.push(backend);
-      return backend;
-    },
-    diagnose: (value) => {
-      diagnostics.push(value);
-    },
-  });
-  return {
-    diagnostics,
-    backends,
-    scheduler,
-    app,
-    ...parts,
-    source,
-    search,
-    close() {
-      search.dispose();
-      parts.index.destroy();
-    },
-  };
 }
 export function assertNoRevision(value: unknown, revision: string): void {
   if (typeof value === 'string' && value === revision)

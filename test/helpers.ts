@@ -841,6 +841,7 @@ export function configuredTaskApplication(
     readonly authority?: boolean;
     readonly clock?: Clock;
     readonly diagnostics?: TaskDiagnosticSink;
+    readonly readYield?: (signal: AbortSignal) => Promise<void>;
   } = {},
 ): {
   readonly index: TaskIndex;
@@ -853,6 +854,7 @@ export function configuredTaskApplication(
     options.authority === true ? new TaskRefAuthority('configured-test-session') : undefined;
   const index = new TaskIndex(app, {
     statusCatalog,
+    ...(options.readYield === undefined ? {} : { readYield: options.readYield }),
 
     ...(refAuthority === undefined ? {} : { refAuthority }),
   });
