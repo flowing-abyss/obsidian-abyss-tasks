@@ -484,19 +484,10 @@ export class TaskCardRenderer {
     const mainRow = card.querySelector<HTMLElement>('.abyss-task-card-main-row');
     if (mainRow === null) return;
     mainRow.querySelector(':scope > .abyss-task-meta-right')?.remove();
-    if (current.flags.search === undefined)
-      this.#renderMetadata(mainRow, current.task, current.tagGroups, () => current.task);
-    else
-      this.#renderSearchSemantics(
-        mainRow.createDiv({ cls: 'abyss-task-meta-right' }),
-        current.task,
-        current.flags.search.context.tree.evidence.filter(isTaskSearchSemanticEvidence),
-        {
-          tagGroups: current.tagGroups,
-          search: current.flags.search,
-          currentRoot: () => current.task,
-        },
-      );
+    this.#renderCardMetadata(mainRow, current.task, current.tagGroups, {
+      search: current.flags.search,
+      currentRoot: () => current.task,
+    });
     const metadata = mainRow.querySelector(':scope > .abyss-task-meta-right');
     if (metadata !== null) mainRow.querySelector('.abyss-task-delete-btn')?.before(metadata);
   }
@@ -555,14 +546,7 @@ export class TaskCardRenderer {
     const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
     this.#renderStatus(mainRow, task);
     this.#renderBody(mainRow, task, tagGroups, flags);
-    if (flags.search === undefined) this.#renderMetadata(mainRow, task, tagGroups);
-    else
-      this.#renderSearchSemantics(
-        mainRow.createDiv({ cls: 'abyss-task-meta-right' }),
-        task,
-        flags.search.context.tree.evidence.filter(isTaskSearchSemanticEvidence),
-        { tagGroups, search: flags.search },
-      );
+    this.#renderCardMetadata(mainRow, task, tagGroups, { search: flags.search });
     this.#host.mountInteractions(card, task, flags.rowKey, {
       component: this.#host.component(),
       currentTask: () => task,
@@ -821,6 +805,26 @@ export class TaskCardRenderer {
         this.#renderSearchSemantics(host, node, evidence, { tagGroups: options.tagGroups, search });
       },
     });
+  }
+
+  #renderCardMetadata(
+    mainRow: HTMLElement,
+    task: TaskSnapshot,
+    tagGroups: readonly EffectiveTagGroup[],
+    options: {
+      readonly search?: TaskCardSearchPresentation | undefined;
+      readonly currentRoot?: () => TaskSnapshot;
+    },
+  ): void {
+    const { search, currentRoot } = options;
+    if (search === undefined) this.#renderMetadata(mainRow, task, tagGroups, currentRoot);
+    else
+      this.#renderSearchSemantics(
+        mainRow.createDiv({ cls: 'abyss-task-meta-right' }),
+        task,
+        search.context.tree.evidence.filter(isTaskSearchSemanticEvidence),
+        { tagGroups, search, ...(currentRoot === undefined ? {} : { currentRoot }) },
+      );
   }
 
   #renderSearchSemantics(

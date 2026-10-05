@@ -2559,7 +2559,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   overflow-wrap: anywhere;
 }
 
-.abyss-task-card .abyss-search-context .abyss-subtask-content,
+.abyss-task-card .abyss-search-context > .abyss-subtask-content,
+.abyss-task-card .abyss-search-context .abyss-subtask-content > .abyss-subtask-content,
 .abyss-task-card .abyss-search-context .abyss-comment-row {
   margin-inline-start: var(--size-4-3);
   margin-top: var(--size-4-1);
@@ -2831,7 +2832,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
   /* The row under the title starts at the text's left edge, so a list of cards keeps one rhythm
      instead of chips ending at the right and starting at random points. */
-  .abyss-task-meta-right {
+  .abyss-task-card-main-row > .abyss-task-meta-right {
     grid-column: 2 / -1;
     grid-row: 2;
     width: 100%;

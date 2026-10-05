@@ -129,44 +129,15 @@ function* nodeEvidence(
     yield semanticEvidence(current, { field: 'metadata', key, text }, matching);
 }
 interface Frame extends ContextNode {
-  readonly parent?: Frame;
   readonly children: TaskSearchTreeNode[];
   readonly evidence: TaskSearchEvidence[];
+  nextChild: number;
 }
-interface PendingFrame {
-  readonly frame: Frame;
-  readonly finish: boolean;
-}
-function enqueueChildren(pending: PendingFrame[], frame: Frame): void {
-  for (let i = frame.node.subtasks.length - 1; i >= 0; i--) {
-    const child = frame.node.subtasks[i];
-    if (child === undefined) continue;
-    pending.push({
-      finish: false,
-      frame: {
-        node: child,
-        parent: frame,
-        address: {
-          ...frame.address,
-          childLines: [...frame.address.childLines, child.ref.relativeLine],
-        },
-        children: [],
-        evidence: [],
-      },
-    });
-  }
-}
-function collectNodeEvidence(frame: Frame, matching: Matching): void {
-  for (const evidence of nodeEvidence(frame, matching))
-    if (evidence !== undefined) frame.evidence.push(evidence);
-}
-function retainFrame(frame: Frame): void {
-  if (frame.parent !== undefined && (frame.evidence.length > 0 || frame.children.length > 0))
-    frame.parent.children.push({
-      address: frame.address,
-      evidence: frame.evidence,
-      children: frame.children,
-    });
+function frame(current: ContextNode, matching: Matching): Frame {
+  const evidence: TaskSearchEvidence[] = [];
+  for (const record of nodeEvidence(current, matching))
+    if (record !== undefined) evidence.push(record);
+  return { ...current, evidence, children: [], nextChild: 0 };
 }
 /** Detached exact roots only. Display/source evidence confers no TaskTextTarget/edit authority. */
 export function taskSearchContext(
@@ -175,22 +146,35 @@ export function taskSearchContext(
   query: PreparedSearchQuery,
   segment: SearchWordSegmenter,
 ): TaskSearchContext {
-  const first: Frame = {
-    node: root,
-    address: { ...address, childLines: [] },
-    children: [],
-    evidence: [],
-  };
-  const pending: PendingFrame[] = [{ frame: first, finish: false }];
+  const matching = { query, segment };
+  const first = frame({ node: root, address: { ...address, childLines: [] } }, matching);
+  const pending = [first];
   while (pending.length > 0) {
-    const entry = pending.pop();
-    if (entry === undefined) break;
-    const { frame, finish } = entry;
-    if (finish) retainFrame(frame);
-    else {
-      collectNodeEvidence(frame, { query, segment });
-      pending.push({ frame, finish: true });
-      enqueueChildren(pending, frame);
+    const current = pending[pending.length - 1];
+    if (current === undefined) break;
+    const child = current.node.subtasks[current.nextChild++];
+    if (child !== undefined) {
+      pending.push(
+        frame(
+          {
+            node: child,
+            address: {
+              ...current.address,
+              childLines: [...current.address.childLines, child.ref.relativeLine],
+            },
+          },
+          matching,
+        ),
+      );
+    } else {
+      pending.pop();
+      const parent = pending[pending.length - 1];
+      if (parent !== undefined && (current.evidence.length > 0 || current.children.length > 0))
+        parent.children.push({
+          address: current.address,
+          evidence: current.evidence,
+          children: current.children,
+        });
     }
   }
   return { tree: { address: first.address, evidence: first.evidence, children: first.children } };

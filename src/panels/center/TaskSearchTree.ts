@@ -14,6 +14,7 @@ import {
   renderSubtaskTitleText,
   renderTaskCommentText,
   renderTaskDescriptionText,
+  type TaskNodeTextMount,
 } from '../../ui/taskNodeText';
 import type { TaskTextRender } from '../../ui/taskRenderScope';
 import { taskNodeRef, type TaskSelectionNode } from '../../ui/taskSelection';
@@ -95,13 +96,23 @@ function activate(
     options.search.onActivate(tree.address);
   });
 }
-function renderHeader(entry: TreeEntry, options: TaskSearchTreeRenderOptions): void {
+function trackField(
+  entry: TreeEntry,
+  options: TaskSearchTreeRenderOptions,
+  mount: TaskNodeTextMount,
+): void {
+  options.track(mount.render);
+  activate(mount.element, entry.tree, options);
+}
+function renderHeader(entry: TreeEntry, options: TaskSearchTreeRenderOptions): HTMLElement {
   const { node, host, tree } = entry;
-  if ('source' in node) return;
+  if ('source' in node) return host;
   const row = host.createDiv({ cls: 'abyss-subtask-row' });
   options.renderChildStatus(row, node);
+  const body = row.createDiv({ cls: 'abyss-subtask-content' });
+  const titleRow = body.createDiv({ cls: 'abyss-subtask-title-row' });
   const title = renderSubtaskTitleText(
-    row,
+    titleRow,
     node,
     fieldOptions(
       options,
@@ -110,19 +121,20 @@ function renderHeader(entry: TreeEntry, options: TaskSearchTreeRenderOptions): v
       'title',
     ),
   );
-  options.track(title.render);
-  activate(title.element, tree, options);
+  trackField(entry, options, title);
   options.renderSemantics(
-    row.createDiv({ cls: 'abyss-task-meta-right' }),
+    body.createDiv({ cls: 'abyss-task-meta-right' }),
     node,
     tree.evidence.filter(isTaskSearchSemanticEvidence),
   );
+  return body;
 }
 function contributingComments(
   entry: TreeEntry,
   options: TaskSearchTreeRenderOptions,
+  body: HTMLElement,
 ): TaskSelectionNode['comments'] {
-  const { node, host, tree } = entry;
+  const { node, tree } = entry;
   let hasDescription = false;
   const lines = new Set<number>();
   for (const evidence of tree.evidence) {
@@ -132,9 +144,10 @@ function contributingComments(
       lines.add(evidence.provenance.commentLine);
   }
   if (hasDescription && node.description !== undefined) {
-    const element = host.createDiv({ cls: 'abyss-task-desc' });
-    options.track(
-      renderTaskDescriptionText(
+    const element = body.createDiv({ cls: 'abyss-task-desc' });
+    trackField(entry, options, {
+      element,
+      render: renderTaskDescriptionText(
         element,
         node.description,
         fieldOptions(
@@ -144,15 +157,18 @@ function contributingComments(
           'markdown',
         ),
       ),
-    );
-    activate(element, tree, options);
+    });
   }
   return node.comments.filter((comment) => lines.has(comment.ref.relativeLine));
 }
-function renderBody(entry: TreeEntry, options: TaskSearchTreeRenderOptions): TreeEntry[] {
+function renderBody(
+  entry: TreeEntry,
+  options: TaskSearchTreeRenderOptions,
+  body: HTMLElement,
+): TreeEntry[] {
   const { tree, node, host } = entry;
   const entries = [
-    ...contributingComments(entry, options).map((comment) => ({
+    ...contributingComments(entry, options, body).map((comment) => ({
       line: comment.ref.relativeLine,
       comment,
     })),
@@ -176,8 +192,7 @@ function renderBody(entry: TreeEntry, options: TaskSearchTreeRenderOptions): Tre
           'markdown',
         ),
       );
-      options.track(mount.render);
-      activate(mount.element, tree, options);
+      trackField(entry, options, mount);
     } else {
       const child = childNodes.get(item.line);
       if (child !== undefined)
@@ -201,9 +216,9 @@ export function renderTaskSearchTree(
   while (pending.length > 0) {
     const entry = pending.pop();
     if (entry === undefined) break;
-    renderHeader(entry, options);
+    const body = renderHeader(entry, options);
     // Containers preserve source order while contents render iteratively without a depth limit.
-    const children = renderBody(entry, options);
+    const children = renderBody(entry, options, body);
     for (let i = children.length - 1; i >= 0; i--) {
       const child = children[i];
       if (child !== undefined) pending.push(child);

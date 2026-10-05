@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { TaskSearch, TaskSearchOptions } from '../src/panels/center/TaskSearch';
 import { TaskSearchReveal } from '../src/panels/center/TaskSearchReveal';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { TaskSearchError } from '../src/tasks';
 import { deferred, expectDefined, flushMicrotasks, methodOf, useRealMoment } from './helpers';
 import { taskCardMountBound } from './support/taskPanelViewport';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
@@ -255,10 +256,25 @@ it('keeps activation source proof live while exact hydration is delayed', async 
     await vi.waitFor(() => {
       expect(release).toBeDefined();
     });
+    const retry = deferred<Awaited<ReturnType<typeof h.search.open>>>();
+    const open = vi.spyOn(h.search, 'open').mockReturnValue(retry.promise);
     h.index.installCommittedContent('a.md', '- [ ] changed needle');
+    expect(h.root.querySelector('.abyss-search-status')?.textContent).toBe(
+      'Task changed. Search again.',
+    );
     expectDefined(release)();
     await activating;
     expect(h.captureNavigation()).toEqual(before);
+    await vi.waitFor(() => {
+      expect(open).toHaveBeenCalled();
+    });
+    expect(h.root.querySelector('.abyss-search-status')?.textContent).toBe(
+      'Task changed. Search again.',
+    );
+    open.mockRestore();
+    retry.resolve(
+      await h.search.open({ kind: 'roots', query: 'needle' }, new AbortController().signal),
+    );
     await h.completed();
     expect(h.root.querySelector('.abyss-search-changed')).toBeNull();
     expect(h.root.querySelector('.abyss-search-status')?.classList.contains('abyss-sr-only')).toBe(
@@ -267,6 +283,36 @@ it('keeps activation source proof live while exact hydration is delayed', async 
     h.query('changed');
     await h.completed();
     expect(h.root.textContent).not.toContain('Task changed. Search again.');
+  } finally {
+    h.dispose();
+  }
+});
+
+it('keeps the stale hydration announcement through synchronous retry scheduling', async () => {
+  const h = await navigationSearchHarness();
+  const retry = deferred<Awaited<ReturnType<typeof h.search.open>>>();
+  try {
+    const before = h.captureNavigation();
+    const resolve = vi
+      .spyOn(h.search, 'resolveHits')
+      .mockRejectedValueOnce(new TaskSearchError('stale', 'Task changed'));
+    const open = vi.spyOn(h.search, 'open').mockReturnValue(retry.promise);
+    await h.activateChild();
+    expect(h.captureNavigation()).toEqual(before);
+    expect(h.root.dataset['searchPhase']).toBe('pending');
+    expect(h.root.querySelector('.abyss-search-status')?.textContent).toBe(
+      'Task changed. Search again.',
+    );
+    await vi.waitFor(() => {
+      expect(open).toHaveBeenCalled();
+    });
+    resolve.mockRestore();
+    open.mockRestore();
+    retry.resolve(
+      await h.search.open({ kind: 'roots', query: 'needle' }, new AbortController().signal),
+    );
+    await h.completed();
+    expect(h.root.querySelector('.abyss-search-status')?.textContent).toBe('Search complete');
   } finally {
     h.dispose();
   }

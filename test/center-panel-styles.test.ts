@@ -390,7 +390,10 @@ describe('CenterPanel task metadata styles', () => {
       compact,
       '.abyss-task-card-main-row--has-delete',
     );
-    const metadata = declarationsForSource(compact, '.abyss-task-meta-right');
+    const metadata = declarationsForSource(
+      compact,
+      '.abyss-task-card-main-row > .abyss-task-meta-right',
+    );
     const sourceNote = declarationsForSource(compact, '.abyss-task-source-note');
 
     expect(center).toContain('container-type: inline-size');
@@ -410,7 +413,10 @@ describe('CenterPanel task metadata styles', () => {
 
   it('starts the narrow metadata row at the title text edge on every device', () => {
     const compact = atRuleBlock('@container abyss-task-list (max-width: 28rem)');
-    const metadata = declarationsForSource(compact, '.abyss-task-meta-right');
+    const metadata = declarationsForSource(
+      compact,
+      '.abyss-task-card-main-row > .abyss-task-meta-right',
+    );
 
     expect(metadata).toContain('grid-row: 2');
     expect(metadata).toContain('justify-content: flex-start');

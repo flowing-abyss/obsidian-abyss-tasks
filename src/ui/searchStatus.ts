@@ -1,10 +1,13 @@
 import { Notice } from 'obsidian';
 import { TaskSearchError } from '../tasks';
+const changedMessage = 'Task changed. Search again.';
 /** Surface-owned request identity and a single failure episode; no service ownership. */
 export class SearchStatus {
   #request = 0;
   #failed = false;
   #nonempty = false;
+  #query = '';
+  #changed = false;
   readonly #text: HTMLElement;
   constructor(
     private readonly root: HTMLElement,
@@ -19,21 +22,25 @@ export class SearchStatus {
     root.setAttribute('aria-busy', 'false');
   }
   pending(request: number, query: string): void {
+    this.#changed = this.#changed && this.#query === query;
+    this.#query = query;
     this.#request = request;
     this.#nonempty = query.trim() !== '';
     this.root.dataset['searchRequest'] = String(request);
     this.root.dataset['searchPhase'] = 'pending';
     this.root.setAttribute('aria-busy', 'true');
-    this.#text.setText('Searching…');
+    this.#text.setText(this.#changed ? changedMessage : 'Searching…');
   }
   cancel(request: number): void {
     if (request !== this.#request) return;
+    this.#changed = false;
     this.root.dataset['searchPhase'] = 'idle';
     this.root.setAttribute('aria-busy', 'false');
     this.#text.empty();
   }
   complete(request: number, generation: number): void {
     if (request !== this.#request) return;
+    this.#changed = false;
     this.root.dataset['searchGeneration'] = String(generation);
     this.root.dataset['searchPhase'] = 'complete';
     this.root.setAttribute('aria-busy', 'false');
@@ -50,6 +57,7 @@ export class SearchStatus {
     const message = invalid
       ? 'Search supports up to 2,048 characters and 32 distinct terms. Shorten the query and try again.'
       : 'Could not load task results. Try again.';
+    this.#changed = false;
     this.root.dataset['searchPhase'] = 'error';
     this.root.setAttribute('aria-busy', 'false');
     this.#showError(message);
@@ -64,7 +72,8 @@ export class SearchStatus {
   }
   announceChanged(request: number): void {
     if (request !== this.#request) return;
-    this.#text.setText('Task changed. Search again.');
+    this.#changed = true;
+    this.#text.setText(changedMessage);
   }
   dispose(): void {
     this.#request++;

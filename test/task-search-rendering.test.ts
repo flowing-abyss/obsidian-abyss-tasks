@@ -1,10 +1,11 @@
 import { MarkdownRenderer, Menu, type MenuItem } from 'obsidian';
+import postcss from 'postcss';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { SubtaskSnapshot, TaskSnapshot } from '../src/tasks';
 import * as contextModule from '../src/tasks';
 import { LinkEditModal } from '../src/ui/LinkEditModal';
-import { deferred, expectDefined, useRealMoment } from './helpers';
+import { deferred, expectDefined, loadPluginStyles, useRealMoment } from './helpers';
 import { taskCardMountBound } from './support/taskPanelViewport';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 
@@ -1195,6 +1196,70 @@ it('renders all four contributing tags once and keeps a same-tag drop a no-op', 
     expectDefined(chips[0]).dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
     expect(execute).not.toHaveBeenCalled();
     expect(await h.app.vault.adapter.read('a.md')).toBe(source);
+  } finally {
+    h.dispose();
+  }
+});
+
+// These assertions catch root-only responsive tracks leaking onto nested child metadata,
+// and descriptions mounted beside the row instead of in its shared title column.
+it.each(['', ' #needle-child'])(
+  'keeps child text and metadata in their own body with metadata %s',
+  async (tags) => {
+    const h = await mountCanonicalSearchUi(
+      {
+        'a.md': `- [ ] root #needle-root\n  - [ ] Parent needle layer${tags}\n    - > Full needle description`,
+      },
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    try {
+      h.query('needle');
+      await h.completed();
+      const title = expectDefined(h.root.querySelector('.abyss-subtask-label'));
+      const row = expectDefined(title.closest('.abyss-subtask-row'));
+      const body = expectDefined(row.querySelector(':scope > .abyss-subtask-content'));
+      expect(body.querySelector('.abyss-subtask-title-row > .abyss-subtask-label')).toBe(title);
+      expect(body.querySelector(':scope > .abyss-task-desc')?.textContent).toBe(
+        'Full needle description',
+      );
+      expect(body.querySelector(':scope > .abyss-task-meta-right')?.textContent).toBe(tags.trim());
+      expect(row.querySelector(':scope > .abyss-task-meta-right')).toBeNull();
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('limits the narrow metadata width track to the root card row', async () => {
+  const h = await mountCanonicalSearchUi(
+    {
+      'a.md': '- [ ] root #needle-root\n  - [ ] Parent needle layer #needle-child',
+    },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  try {
+    h.query('needle');
+    await h.completed();
+    const rootMeta = expectDefined(
+      h.root.querySelector('.abyss-task-card-main-row > .abyss-task-meta-right'),
+    );
+    const childMeta = expectDefined(
+      h.root.querySelector('.abyss-search-context .abyss-task-meta-right'),
+    );
+    const widthSelectors: string[] = [];
+    postcss.parse(await loadPluginStyles()).walkAtRules('container', (container) => {
+      if (container.params !== 'abyss-task-list (max-width: 28rem)') return;
+      container.walkRules((rule) => {
+        if (
+          rule.nodes.some(
+            (node) => node.type === 'decl' && node.prop === 'width' && node.value === '100%',
+          )
+        )
+          widthSelectors.push(rule.selector);
+      });
+    });
+    expect(widthSelectors.some((selector) => rootMeta.matches(selector))).toBe(true);
+    expect(widthSelectors.some((selector) => childMeta.matches(selector))).toBe(false);
   } finally {
     h.dispose();
   }
