@@ -1,4 +1,4 @@
-import { Notice } from 'obsidian';
+import { Notice, Scope } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TaskSearchError, type DependencyDirection, type TaskNodeRef } from '../src/tasks';
@@ -716,6 +716,11 @@ it.each(['Escape', 'success', 'validation', 'failed'] as const)(
       await flushMicrotasks(40);
     }
     ui.key('Escape');
+    expect(activeDocument.activeElement).toBe(ui.handle.element);
+    expect(h.callbacks.onClose).not.toHaveBeenCalled();
+    ui.handle.element.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
     expect(activeDocument.activeElement).toBe(anchor);
     expect(h.release).toHaveBeenCalledOnce();
     expect(h.callbacks.onClose).toHaveBeenCalledWith(true);
@@ -1080,7 +1085,7 @@ it.each([false, true])(
   },
 );
 
-it('owns local Find from dependency controls under its blocking lease, without altering Escape', async () => {
+it('owns local Find from dependency controls under its blocking lease, blurring before original Escape close', async () => {
   const h = await fixture();
   const p = h.mount();
   p.query('Candidate');
@@ -1098,6 +1103,96 @@ it('owns local Find from dependency controls under its blocking lease, without a
   expect(document.activeElement).toBe(p.input);
   expect(p.input.selectionEnd).toBe(9);
   p.key('Escape');
+  expect(p.handle.element.isConnected).toBe(true);
+  expect(document.activeElement).toBe(p.handle.element);
+  p.handle.element.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
   expect(p.handle.element.isConnected).toBe(false);
   expect(h.callbacks.onClose).toHaveBeenCalledWith(true);
+});
+
+it('gives an attached picker finite scope ownership, two Escape steps, and no stale callback after detach/adoption', async () => {
+  const h = await fixture(2);
+  const register = vi.spyOn(Scope.prototype, 'register');
+  const unregister = vi.spyOn(Scope.prototype, 'unregister');
+  const host = { parent: new Scope(), keymap: { pushScope: vi.fn(), popScope: vi.fn() } };
+  const container = document.body.createDiv();
+  const handle = mountDependencySearch(container, { ...h.callbacks, localSearchScope: host });
+  cleanup.push(() => {
+    handle.destroy();
+  });
+  const input = expectDefined(handle.element.querySelector('input'));
+  const escape = expectDefined(register.mock.calls.find((call) => call[1] === 'Escape'))[2];
+  const event = () => new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+  input.value = 'preserved';
+  expect(escape(event(), { key: 'Escape', vkey: 'Escape', modifiers: '' })).toBe(false);
+  expect(document.activeElement).toBe(handle.element);
+  expect(input.value).toBe('preserved');
+  expect(h.callbacks.onClose).not.toHaveBeenCalled();
+  handle.detach();
+  handle.detach();
+  expect(host.keymap.popScope).toHaveBeenCalledTimes(1);
+  expect(unregister).toHaveBeenCalledTimes(2);
+  expect(escape(event(), { key: 'Escape', vkey: 'Escape', modifiers: '' })).toBeUndefined();
+  const frame = document.body.createEl('iframe');
+  const doc = expectDefined(frame.contentDocument);
+  doc.body.append(handle.element);
+  handle.attach();
+  handle.attach();
+  expect(host.keymap.pushScope).toHaveBeenCalledTimes(2);
+  expect(escape(event(), { key: 'Escape', vkey: 'Escape', modifiers: '' })).toBeUndefined();
+  handle.element.focus();
+  const nextEscape = expectDefined(register.mock.calls[register.mock.calls.length - 1])[2];
+  expect(nextEscape(event(), { key: 'Escape', vkey: 'Escape', modifiers: '' })).toBe(false);
+  expect(h.callbacks.onClose).toHaveBeenCalledExactlyOnceWith(true);
+  expect(host.keymap.popScope).toHaveBeenCalledTimes(2);
+  frame.remove();
+});
+
+it('does not acquire picker leases from detached or hidden DOM', async () => {
+  const h = await fixture(2);
+  const host = { parent: new Scope(), keymap: { pushScope: vi.fn(), popScope: vi.fn() } };
+  const acquire = vi.spyOn(h.callbacks.ownership, 'acquire');
+  const container = createDiv();
+  const handle = mountDependencySearch(container, { ...h.callbacks, localSearchScope: host });
+  cleanup.push(() => {
+    handle.destroy();
+  });
+  expect(acquire).not.toHaveBeenCalled();
+  document.body.append(container);
+  container.hidden = true;
+  handle.attach();
+  expect(host.keymap.pushScope).not.toHaveBeenCalled();
+  container.hidden = false;
+  handle.attach();
+  expect(host.keymap.pushScope).toHaveBeenCalledOnce();
+});
+
+it('lets only the nearest attached picker own scope keys and excludes another editor', async () => {
+  const h = await fixture(2);
+  const host = { parent: new Scope(), keymap: { pushScope: vi.fn(), popScope: vi.fn() } };
+  const register = vi.spyOn(Scope.prototype, 'register');
+  const outer = mountDependencySearch(document.body, { ...h.callbacks, localSearchScope: host });
+  cleanup.push(() => {
+    outer.destroy();
+  });
+  const outerFind = expectDefined(register.mock.calls[0])[2];
+  const inner = mountDependencySearch(outer.element, { ...h.callbacks, localSearchScope: host });
+  cleanup.push(() => {
+    inner.destroy();
+  });
+  const innerFind = expectDefined(register.mock.calls[2])[2];
+  const context = { key: 'f', vkey: 'F', modifiers: 'Ctrl' };
+  const event = () =>
+    new KeyboardEvent('keydown', { code: 'KeyF', key: 'а', ctrlKey: true, cancelable: true });
+  expect(outerFind(event(), context)).toBeUndefined();
+  expect(innerFind(event(), context)).toBe(false);
+  const editor = inner.element.createEl('textarea');
+  editor.focus();
+  expect(innerFind(event(), context)).toBeUndefined();
+  const input = expectDefined(inner.element.querySelector('input'));
+  input.focus();
+  inner.element.hidden = true;
+  expect(innerFind(event(), context)).toBeUndefined();
 });

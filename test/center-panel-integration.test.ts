@@ -1,4 +1,13 @@
-import { addIcon, MarkdownRenderer, Menu, Modal, removeIcon, TFile, type App } from 'obsidian';
+import {
+  addIcon,
+  MarkdownRenderer,
+  Menu,
+  Modal,
+  removeIcon,
+  Scope,
+  TFile,
+  type App,
+} from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { moment } from '../src/obsidianMoment';
@@ -3542,7 +3551,10 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const state = new AppState();
     const panel = new CenterPanel({
       state,
-      app: {} as App,
+      app: {
+        scope: new Scope(),
+        keymap: { pushScope: vi.fn(), popScope: vi.fn() },
+      } as unknown as App,
       settings: DEFAULT_SETTINGS,
       queries,
       statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
@@ -4947,7 +4959,10 @@ function forecastPanelFixture(): {
   const state = new AppState();
   const panel = new CenterPanel({
     state,
-    app: {} as App,
+    app: {
+      scope: new Scope(),
+      keymap: { pushScope: vi.fn(), popScope: vi.fn() },
+    } as unknown as App,
     settings: DEFAULT_SETTINGS,
     queries,
     statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),

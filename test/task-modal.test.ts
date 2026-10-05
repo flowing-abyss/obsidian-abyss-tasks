@@ -1,4 +1,4 @@
-import type { App } from 'obsidian';
+import { Scope, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import type { RightPanel, RightPanelMutationLifecycle } from '../src/panels/RightPanel';
@@ -55,7 +55,10 @@ vi.mock('../src/panels/RightPanel', () => ({
 import { TaskModal } from '../src/ui/TaskModal';
 
 function fakeApp(): App {
-  return {} as App;
+  return {
+    scope: new Scope(),
+    keymap: { pushScope: vi.fn(), popScope: vi.fn() },
+  } as unknown as App;
 }
 
 describe('TaskModal', () => {
@@ -388,4 +391,77 @@ describe('TaskModal', () => {
       expect(activeDocument.body.querySelectorAll('.abyss-modal-backdrop')).toHaveLength(1);
     });
   });
+});
+
+it('acquires the custom modal parent only after mount and retires children before parent on reentrant close/reopen', () => {
+  const app = fakeApp();
+  const push = vi.spyOn(app.keymap, 'pushScope');
+  const pop = vi.spyOn(app.keymap, 'popScope');
+  const register = vi.spyOn(Scope.prototype, 'register');
+  const unregister = vi.spyOn(Scope.prototype, 'unregister');
+  const modal = new TaskModal({ app, statusRegistry: testStatusRegistry() });
+  const order: string[] = [];
+  pop.mockImplementation(() => {
+    order.push('parent');
+  });
+  mockState.mountImpl.mockImplementationOnce(() => {
+    expect(push).not.toHaveBeenCalled();
+  });
+  modal.open(task());
+  expect(push).toHaveBeenCalledOnce();
+  expect(register.mock.calls.map(([mods, key]) => [mods, key])).toEqual([[[], 'Escape']]);
+  const stale = expectDefined(register.mock.calls[0])[2];
+  mockState.destroyImpl.mockImplementationOnce(() => {
+    order.push('child');
+    modal.close();
+  });
+  modal.close();
+  modal.close();
+  expect(order).toEqual(['child', 'parent']);
+  expect(unregister).toHaveBeenCalledOnce();
+  modal.open(task());
+  expect(
+    stale(new KeyboardEvent('keydown', { key: 'Escape' }), {
+      key: 'Escape',
+      vkey: 'Escape',
+      modifiers: '',
+    }),
+  ).toBeUndefined();
+  expect(document.querySelector('.abyss-modal')).not.toBeNull();
+  modal.close();
+  expect(push).toHaveBeenCalledTimes(2);
+  expect(pop).toHaveBeenCalledTimes(2);
+  vi.restoreAllMocks();
+});
+
+it('leaves no modal lease or mounted DOM after failed mount', () => {
+  const app = fakeApp();
+  const push = vi.spyOn(app.keymap, 'pushScope');
+  const modal = new TaskModal({ app, statusRegistry: testStatusRegistry() });
+  mockState.mountImpl.mockImplementationOnce(() => {
+    throw new Error('mount failure');
+  });
+  expect(() => {
+    modal.open(task());
+  }).toThrow('mount failure');
+  expect(push).not.toHaveBeenCalled();
+  expect(document.querySelector('.abyss-modal')).toBeNull();
+  modal.close();
+});
+
+it('never pushes a modal scope when mount leaves its DOM inactive', () => {
+  const app = fakeApp();
+  const push = vi.spyOn(app.keymap, 'pushScope');
+  const modal = new TaskModal({ app, statusRegistry: testStatusRegistry() });
+  mockState.mountImpl.mockImplementationOnce((element: HTMLElement) => {
+    expectDefined(element.closest<HTMLElement>('.abyss-modal')).hidden = true;
+  });
+  try {
+    modal.open(task());
+    expect(push).not.toHaveBeenCalled();
+    expect(document.querySelector('.abyss-modal')).toBeNull();
+  } finally {
+    modal.close();
+    vi.restoreAllMocks();
+  }
 });

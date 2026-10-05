@@ -1,4 +1,4 @@
-import { ItemView, Notice, Platform, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
+import { ItemView, Notice, Platform, Scope, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
 import { AppState, type AppStateData } from '../app/AppState';
 import { createBrowserTaskScheduler } from '../browserTaskScheduler';
 import { CenterPanel } from '../panels/CenterPanel';
@@ -44,6 +44,7 @@ import {
   type CreationRevealAuthority,
 } from '../ui/creation/CreationPresentationController';
 import { InteractionRegistry } from '../ui/interactionOwnership';
+import { bindLocalSearchScope } from '../ui/localSearchKeys';
 import { nativeInteractionBlocksPanelShortcuts } from '../ui/nativeInteractionBlocker';
 import { PanelShortcutRouter } from '../ui/panelShortcutRouter';
 import { prefersReducedMotion } from '../ui/reducedMotion';
@@ -182,6 +183,9 @@ export class PanelView extends ItemView {
   private ownedWriteRef_abyssPrivate: TaskRef | undefined = undefined;
   private interactionRegistry_abyssPrivate: InteractionRegistry<ShortcutActionId> | undefined;
   private quickCapture_abyssPrivate: QuickCaptureCoordinator | undefined;
+  private localScope_abyssPrivate: Scope | undefined;
+  private priorScope_abyssPrivate: Scope | null = null;
+  private unbindLocalScope_abyssPrivate: (() => void) | undefined;
   private shortcutRouter_abyssPrivate: PanelShortcutRouter | undefined = undefined;
   private shortcutDocument_abyssPrivate: Document | undefined = undefined;
   private shortcutMigrationCleanup_abyssPrivate: (() => void) | undefined = undefined;
@@ -271,6 +275,7 @@ export class PanelView extends ItemView {
   }
 
   override onOpen(): Promise<void> {
+    this.createLocalScope_abyssPrivate();
     this.searchWait_abyssPrivate = new AbortController();
     this.panelsMounted_abyssPrivate = false;
     this.searchOpportunityConsumed_abyssPrivate = false;
@@ -660,6 +665,13 @@ export class PanelView extends ItemView {
       },
     });
     this.right_abyssPrivate = new RightPanel({
+      localSearchScope:
+        this.localScope_abyssPrivate === undefined
+          ? undefined
+          : {
+              parent: this.localScope_abyssPrivate,
+              keymap: this.app.keymap,
+            },
       state: this.state_abyssPrivate,
       app: this.app,
       statusRegistry: this.statusRegistry_abyssPrivate,
@@ -860,6 +872,17 @@ export class PanelView extends ItemView {
     });
   }
 
+  private createLocalScope_abyssPrivate(): void {
+    this.priorScope_abyssPrivate = this.scope;
+    const scope = new Scope(this.scope ?? this.app.scope);
+    this.localScope_abyssPrivate = scope;
+    this.scope = scope;
+    this.unbindLocalScope_abyssPrivate = bindLocalSearchScope(
+      scope,
+      (event) => this.shortcutRouter_abyssPrivate?.routeLocalSearch(event, 'scope') ?? false,
+    );
+  }
+
   private bindPanelShortcuts_abyssPrivate(): void {
     const interactionRegistry = this.interactionRegistry_abyssPrivate;
     const ownerDocument = this.contentEl.ownerDocument;
@@ -873,7 +896,7 @@ export class PanelView extends ItemView {
       platform: { mod: Platform.isMacOS ? 'meta' : 'ctrl' },
       actions: this.panelNavigation_abyssPrivate,
       registry: interactionRegistry,
-      nativeHostBlocks: () => nativeInteractionBlocksPanelShortcuts(ownerDocument),
+      nativeHostBlocks: () => nativeInteractionBlocksPanelShortcuts(this.contentEl.ownerDocument),
       localSearchTarget: () => this.center_abyssPrivate.localSearchTarget(),
     });
     this.shortcutDocument_abyssPrivate = ownerDocument;
@@ -990,6 +1013,11 @@ export class PanelView extends ItemView {
     this.destroyInteractionControllers_abyssPrivate();
     this.releaseSubscriptions_abyssPrivate();
     this.destroyOwnedViews_abyssPrivate();
+    this.unbindLocalScope_abyssPrivate?.();
+    this.unbindLocalScope_abyssPrivate = undefined;
+    if (this.localScope_abyssPrivate !== undefined && this.scope === this.localScope_abyssPrivate)
+      this.scope = this.priorScope_abyssPrivate;
+    this.localScope_abyssPrivate = undefined;
     this.keyboardCleanup_abyssPrivate?.();
     this.keyboardCleanup_abyssPrivate = undefined;
     this.contentEl.empty();

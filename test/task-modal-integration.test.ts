@@ -1,3 +1,4 @@
+import { Scope } from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -24,6 +25,7 @@ import {
   useRealMoment,
   type TestTaskQueries,
 } from './helpers';
+import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 
 useRealMoment();
 
@@ -1237,7 +1239,10 @@ describe('TaskModal with real RightPanel', () => {
         execute,
       },
     });
+    const push = vi.spyOn(app.keymap, 'pushScope');
+    const pop = vi.spyOn(app.keymap, 'popScope');
     modal.open(observed);
+    expect(push).toHaveBeenCalledOnce();
     const comment = expectDefined(
       activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
     );
@@ -1252,6 +1257,10 @@ describe('TaskModal with real RightPanel', () => {
       activeDocument.querySelector('.abyss-modal .abyss-detached-draft')?.textContent,
     ).toContain('local unsaved');
     expect(execute).not.toHaveBeenCalled();
+    expect(pop).not.toHaveBeenCalled();
+    expectDefined(document.querySelector<HTMLElement>('.abyss-modal-backdrop')).click();
+    expect(pop).toHaveBeenCalledExactlyOnceWith(push.mock.calls[0]?.[0]);
+    expect(document.querySelector('.abyss-modal')).toBeNull();
   });
 
   describe('its own removal of the task', () => {
@@ -1866,7 +1875,9 @@ describe('TaskModal with real RightPanel', () => {
         execute: vi.fn<TaskApplicationApi['execute']>(),
       },
     });
+    const register = vi.spyOn(Scope.prototype, 'register');
     modal.open(current);
+    const modalEscape = expectDefined(register.mock.calls.find((call) => call[1] === 'Escape'))[2];
 
     const opener = entry.openSelector.startsWith('.')
       ? activeDocument.querySelector<HTMLElement>(`.abyss-modal ${entry.openSelector}`)
@@ -1882,6 +1893,8 @@ describe('TaskModal with real RightPanel', () => {
       bubbles: true,
       cancelable: true,
     });
+    owned.focus();
+    expect(modalEscape(escape, { key: 'Escape', vkey: 'Escape', modifiers: '' })).toBeUndefined();
     owned.dispatchEvent(escape);
     await flushMicrotasks();
 
@@ -1963,4 +1976,72 @@ describe('TaskModal with real RightPanel', () => {
     expect(rebuilt.getAttribute('data-priority')).toBe('A');
     expect(activeDocument.activeElement).toBe(rebuilt);
   });
+});
+
+it('routes the real modal picker before its parent and releases child scopes first across close/reopen', async () => {
+  const h = await createCanonicalSearchHarness(
+    { 'scope.md': '- [ ] Current 🆔 current\n- [ ] Candidate 🆔 candidate' },
+    DEFAULT_SETTINGS,
+  );
+  const push = vi.spyOn(h.app.keymap, 'pushScope');
+  const pop = vi.spyOn(h.app.keymap, 'popScope');
+  const register = vi.spyOn(Scope.prototype, 'register');
+  const modal = new TaskModal({
+    app: h.app,
+    statusRegistry: testStatusRegistry(),
+    settings: DEFAULT_SETTINGS,
+    queries: h.index,
+    tasks: h.tasks,
+    search: h.search,
+  });
+  const current = expectDefined(h.index.list()[0]);
+  try {
+    modal.open(current);
+    const parent = expectDefined(push.mock.calls[0])[0];
+    const parentEscape = expectDefined(register.mock.calls.find((call) => call[1] === 'Escape'))[2];
+    const badge = expectDefined(
+      document.querySelector<HTMLButtonElement>('.abyss-modal .abyss-dep-badge-body'),
+    );
+    badge.click();
+    const picker = expectDefined(
+      document.querySelector<HTMLElement>('.abyss-modal .abyss-dep-search'),
+    );
+    const input = expectDefined(picker.querySelector('input'));
+    input.value = 'retained';
+    expect(push).toHaveBeenCalledTimes(2);
+    const child = expectDefined(push.mock.calls[1])[0];
+    const childEscape = expectDefined(register.mock.calls[register.mock.calls.length - 1])[2];
+    const event = () =>
+      new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, bubbles: true });
+    const context = { key: 'Escape', vkey: 'Escape', modifiers: '' };
+    const first = event();
+    expect(childEscape(first, context)).toBe(false);
+    expect(parentEscape(first, context)).toBeUndefined();
+    expect(input.value).toBe('retained');
+    expect(document.activeElement).toBe(picker);
+    const second = event();
+    expect(childEscape(second, context)).toBe(false);
+    expect(parentEscape(second, context)).toBeUndefined();
+    expect(document.activeElement).toBe(badge);
+    expect(document.querySelector('.abyss-modal')).not.toBeNull();
+    expect(pop.mock.calls.map(([scope]) => scope)).toEqual([child]);
+    badge.click();
+    const secondChild = expectDefined(push.mock.calls[2])[0];
+    modal.close();
+    modal.close();
+    expect(pop.mock.calls.map(([scope]) => scope)).toEqual([child, secondChild, parent]);
+    modal.open(current);
+    expect(parentEscape(event(), context)).toBeUndefined();
+    expect(document.querySelector('.abyss-modal')).not.toBeNull();
+    const newEscape = expectDefined(register.mock.calls[register.mock.calls.length - 1])[2];
+    expectDefined(document.querySelector<HTMLButtonElement>('.abyss-modal-close-btn')).focus();
+    const final = event();
+    expect(newEscape(final, context)).toBe(false);
+    document.dispatchEvent(final);
+    expect(pop).toHaveBeenCalledTimes(4);
+  } finally {
+    modal.close();
+    h.close();
+    vi.restoreAllMocks();
+  }
 });

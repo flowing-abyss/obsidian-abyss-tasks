@@ -829,18 +829,27 @@ restoration never writes data or changes task selection. PanelView rebinds short
 native interaction blocking when its document changes. Owners release listeners, observers,
 interaction leases, and scheduled work on teardown.
 
-Local Find and plain-search Escape run through PanelShortcutRouter's existing owning-document
-listener. PanelView proves the active visible leaf and panel event path; the router rejects native
-surfaces, blocking interaction leases and draft/editor paths before consulting CenterPanel's current
-`LocalSearchFocusTarget`. Tasks and Search supply their mounted input; Projects supplies only its
-connected visible overview toolbar, outside an active editor or dashboard. The small `localSearchKeys`
-helper focuses/selects that proven input, or returns plain Escape focus to its surface without changing
-query, results or inspector state. It owns no document registry or scheduled work. Actual picker
-wrappers handle Find within their own lifetime, including TaskModal's dependency picker under the
-modal lease; overlay Escape retains its original close/restore owner. Settings icon search handles
-only events within its own active wrapper. Existing migration/disposal removes document listeners;
-explicit Search focus cancels pending initial autofocus, and picker/settings disposal releases local
-listeners and pending focus.
+Local Find and plain-search Escape use finite Obsidian Scope bindings, with the existing DOM
+listeners as guarded fallbacks. PanelView owns one inherited `View.scope`, restores its previous
+scope on teardown, and lets the host activate it. Its router checks current document, active visible
+leaf, native surfaces, blocking leases and editor paths on every invocation, before navigation
+shortcut validation. Only scope-origin neutral document focus may use the active panel's target.
+Tasks and Search supply their mounted input; Projects supplies only its connected visible overview
+toolbar, outside an active editor or dashboard. Successful DOM handling stops later listeners;
+explicit Search focus cancels pending initial autofocus.
+
+RightPanel forwards the parent's scope/keymap through InspectorDependencies. Each attached dependency
+picker pushes one inherited child scope with only Find/Escape registrations, releasing exact handles
+and its stack lease on detach/close. Reattachment uses the current document and retires stale callbacks;
+PanelView's existing window migration closes inspector pickers. First plain Escape focuses the picker
+wrapper without changing query or selection; second Escape uses its original close/restore owner.
+The custom TaskModal creates one `Scope(app.scope)` per open, pushes after successful attached mount,
+and binds only plain Escape to its existing user-close behavior. Its DOM fallback preserves nested
+editor cancellation and dirty-draft behavior. Actual close destroys child pickers before releasing the
+modal scope; failed mount and repeated/reentrant close leave no lease. It remains the same custom
+inspector/modal and interaction-registry owner. Settings icon search retains its local wrapper behavior.
+There is no global search-target registry or all-key capture. Public Scope key-value registration does
+not prove physical-layout normalization; native non-Latin and popout dispatch need host acceptance.
 
 ### Task text
 

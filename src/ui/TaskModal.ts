@@ -1,4 +1,4 @@
-import { setIcon, type App } from 'obsidian';
+import { Scope, setIcon, type App } from 'obsidian';
 import { AppState } from '../app/AppState';
 import { createBrowserTaskScheduler } from '../browserTaskScheduler';
 import { RightPanel, type RightPanelMutationLifecycle } from '../panels/RightPanel';
@@ -20,8 +20,14 @@ import {
   type TaskDependencySearchProvider,
 } from './TaskDependencySearchProvider';
 import { isRealmHTMLElement } from './domRealm';
-import { isImeOwnedEvent } from './ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
+import {
+  isPlainSearchEscape,
+  localSearchEditorOwnsEvent,
+  localSearchEventIsOwned,
+  localSearchKeyIsBlocked,
+  localSearchSurfaceIsVisible,
+} from './localSearchKeys';
 import { presentTaskCommandResult } from './taskCommandResult';
 import { isDirtyDraftBundle, type RightPanelDraftBundle } from './taskDraftContinuity';
 import {
@@ -70,6 +76,8 @@ export class TaskModal {
   private modalEl_abyssPrivate: HTMLElement | null = null;
   private innerState_abyssPrivate: AppState | null = null;
   private innerPanel_abyssPrivate: RightPanel | null = null;
+  private releaseScope_abyssPrivate: (() => void) | undefined;
+  private closing_abyssPrivate = false;
   private keyHandler_abyssPrivate: ((e: KeyboardEvent) => void) | null = null;
   private opener_abyssPrivate: HTMLElement | null = null;
   private ownerDoc_abyssPrivate: Document | null = null;
@@ -102,6 +110,15 @@ export class TaskModal {
 
   open(task: TaskSnapshot, context?: string): void {
     this.close();
+    try {
+      this.mount_abyssPrivate(task, context);
+    } catch (error) {
+      this.close();
+      throw error;
+    }
+  }
+
+  private mount_abyssPrivate(task: TaskSnapshot, context?: string): void {
     this.ownershipToken_abyssPrivate = this.interactionOwnership_abyssPrivate.acquire({
       blocksShortcuts: true,
     });
@@ -132,7 +149,9 @@ export class TaskModal {
 
     const panelEl = modal.createDiv({ cls: 'abyss-right abyss-modal-body' });
     const openingState = this.innerState_abyssPrivate;
+    const scope = new Scope(this.app_abyssPrivate.scope);
     this.innerPanel_abyssPrivate = new RightPanel({
+      localSearchScope: { parent: scope, keymap: this.app_abyssPrivate.keymap },
       state: this.innerState_abyssPrivate,
       app: this.app_abyssPrivate,
       statusRegistry: this.statusRegistry_abyssPrivate,
@@ -169,13 +188,39 @@ export class TaskModal {
       if (e.target === backdrop) this.closeFromUser_abyssPrivate();
     });
 
-    this.keyHandler_abyssPrivate = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented || isImeOwnedEvent(e)) return;
-      e.preventDefault();
-      e.stopPropagation();
+    this.bindScope_abyssPrivate(modal, scope);
+  }
+
+  private bindScope_abyssPrivate(modal: HTMLElement, scope: Scope): void {
+    if (this.modalEl_abyssPrivate !== modal || !localSearchSurfaceIsVisible(modal)) {
+      this.close();
+      return;
+    }
+    const doc = modal.ownerDocument;
+    const route = (event: KeyboardEvent, origin: 'dom' | 'scope'): boolean => {
+      if (
+        this.modalEl_abyssPrivate !== modal ||
+        modal.ownerDocument !== doc ||
+        !modalEscapeIsEligible(event, modal, origin)
+      )
+        return false;
+      event.preventDefault();
+      event.stopImmediatePropagation();
       this.closeFromUser_abyssPrivate();
+      return true;
     };
-    this.ownerDoc_abyssPrivate.addEventListener('keydown', this.keyHandler_abyssPrivate);
+    const escape = scope.register([], 'Escape', (event) =>
+      route(event, 'scope') ? false : undefined,
+    );
+    this.app_abyssPrivate.keymap.pushScope(scope);
+    this.releaseScope_abyssPrivate = () => {
+      scope.unregister(escape);
+      this.app_abyssPrivate.keymap.popScope(scope);
+    };
+    this.keyHandler_abyssPrivate = (event) => {
+      route(event, 'dom');
+    };
+    doc.addEventListener('keydown', this.keyHandler_abyssPrivate);
   }
 
   private createDependencySearch_abyssPrivate(): TaskDependencySearchProvider | undefined {
@@ -244,6 +289,16 @@ export class TaskModal {
   }
 
   close(): void {
+    if (this.closing_abyssPrivate) return;
+    this.closing_abyssPrivate = true;
+    try {
+      this.closeContents_abyssPrivate();
+    } finally {
+      this.closing_abyssPrivate = false;
+    }
+  }
+
+  private closeContents_abyssPrivate(): void {
     this.hierarchyContinuations_abyssPrivate.clear();
     this.opener_abyssPrivate = null;
     const ownershipToken = this.ownershipToken_abyssPrivate;
@@ -261,6 +316,7 @@ export class TaskModal {
     this.ownerDoc_abyssPrivate = null;
     this.innerPanel_abyssPrivate?.destroy();
     this.innerPanel_abyssPrivate = null;
+    this.releaseParentScope_abyssPrivate();
     this.timeTracking_abyssPrivate?.ticker.destroy();
     this.timeTracking_abyssPrivate = undefined;
     this.innerState_abyssPrivate = null;
@@ -268,6 +324,12 @@ export class TaskModal {
     this.modalEl_abyssPrivate = null;
     this.backdropEl_abyssPrivate?.remove();
     this.backdropEl_abyssPrivate = null;
+  }
+
+  private releaseParentScope_abyssPrivate(): void {
+    const releaseScope = this.releaseScope_abyssPrivate;
+    this.releaseScope_abyssPrivate = undefined;
+    releaseScope?.();
   }
 
   private trackHierarchy_abyssPrivate(event: RightPanelMutationLifecycle, state: AppState): void {
@@ -515,4 +577,36 @@ export class TaskModal {
   private clearResolutionMessage_abyssPrivate(): void {
     this.modalEl_abyssPrivate?.querySelector('.abyss-task-selection-message')?.remove();
   }
+}
+
+function modalEscapeIsEligible(
+  event: KeyboardEvent,
+  modal: HTMLElement,
+  origin: 'dom' | 'scope',
+): boolean {
+  if (
+    !localSearchSurfaceIsVisible(modal) ||
+    !isPlainSearchEscape(event) ||
+    localSearchKeyIsBlocked(event)
+  )
+    return false;
+  const doc = modal.ownerDocument;
+  if (
+    !localSearchEventIsOwned(event, modal, 'scope', true) &&
+    !(origin === 'dom' && event.target === doc && modal.contains(doc.activeElement))
+  )
+    return false;
+  return origin === 'dom' || !modalNestedEscapeOwner(event, doc);
+}
+
+function modalNestedEscapeOwner(event: KeyboardEvent, doc: Document): boolean {
+  // Existing editor/popover DOM handlers get their cancellation before the modal fallback.
+  const popover = (value: EventTarget | null): boolean =>
+    typeof (value as Element | null)?.closest === 'function' &&
+    (value as Element).closest('.abyss-popover') !== null;
+  return (
+    localSearchEditorOwnsEvent(event, doc) ||
+    popover(doc.activeElement) ||
+    event.composedPath().some(popover)
+  );
 }

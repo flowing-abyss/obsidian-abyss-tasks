@@ -2,6 +2,7 @@ import type { App } from 'obsidian';
 import { Component, Notice, setIcon } from 'obsidian';
 import type { AppState, InspectorHistoryFrame } from '../app/AppState';
 import type { TaskSearchApi } from '../tasks';
+import type { LocalSearchScopeHost } from '../ui/localSearchKeys';
 import type { TaskDependencySearchProvider } from '../ui/TaskDependencySearchProvider';
 import { InspectorDependencies } from './right/InspectorDependencies';
 import { InspectorPlanningSurfaces } from './right/InspectorPlanningSurfaces';
@@ -84,6 +85,7 @@ interface RightPanelOptions {
   readonly onSuccessfulMutation?: ((ref?: TaskRef) => void) | undefined;
   readonly tasks?: TaskApplicationApi | undefined;
   readonly search?: TaskSearchApi | undefined;
+  readonly localSearchScope?: LocalSearchScopeHost | undefined;
   readonly dependencySearch?: TaskDependencySearchProvider | undefined;
   readonly onRenderHeaderActions?: ((actions: HTMLElement) => void) | undefined;
   readonly onMutationLifecycle?: ((event: RightPanelMutationLifecycle) => void) | undefined;
@@ -386,6 +388,7 @@ export class RightPanel {
       queries: this.tasks_abyssPrivate?.queries,
       search: options.search,
       provider: options.dependencySearch,
+      localSearchScope: options.localSearchScope,
       statusRegistry: this.statusRegistry_abyssPrivate,
       interactionOwnership: this.interactionOwnership_abyssPrivate,
       surfaces: this.planningSurfaces_abyssPrivate,

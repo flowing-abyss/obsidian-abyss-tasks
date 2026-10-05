@@ -18,6 +18,7 @@ import {
 } from '../../ui/dependencySearch';
 import type { InlineUndoPosition } from '../../ui/inlineTaskUndo';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
+import type { LocalSearchScopeHost } from '../../ui/localSearchKeys';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { renderStatusMarker } from '../../ui/StatusMarker';
 import {
@@ -33,6 +34,7 @@ import { renderRowRemove } from './inspectorRowRemove';
 import type { TaskLike } from './inspectorTypes';
 
 interface InspectorDependenciesOptions {
+  readonly localSearchScope?: LocalSearchScopeHost | undefined;
   readonly state: AppState;
   readonly queries: TaskDependencyQueryApi | undefined;
   readonly search: TaskSearchApi | undefined;
@@ -114,6 +116,7 @@ function updateDependencyBadgeCounts(
 }
 
 export class InspectorDependencies {
+  readonly #localSearchScope: LocalSearchScopeHost | undefined;
   readonly #state: AppState;
   readonly #searchApi: TaskSearchApi | undefined;
   readonly #provider: TaskDependencySearchProvider | undefined;
@@ -131,6 +134,7 @@ export class InspectorDependencies {
   #retainedSearch: DependencySearchHandle | undefined;
   #retainedFocus: HTMLElement | null = null;
   constructor(options: InspectorDependenciesOptions) {
+    this.#localSearchScope = options.localSearchScope;
     this.#state = options.state;
     this.#queries = options.queries;
     this.#searchApi = options.search;
@@ -165,6 +169,7 @@ export class InspectorDependencies {
     this.#retainedFocus = search?.element.contains(focused) === true ? focused : null;
     if (search !== undefined) {
       this.#surfaces.releasePlacement(search.element);
+      search.detach({ forRender: true });
       search.element.remove();
     }
   }
@@ -177,6 +182,7 @@ export class InspectorDependencies {
       this.#host.root().append(search.element);
       search.refresh();
       this.#positionDependencySearch(search.element, focused);
+      search.attach();
     }
   }
   updateDisclosureSelection(stack: readonly TaskLike[], preserveLatch: boolean): void {
@@ -679,6 +685,7 @@ export class InspectorDependencies {
         if (restoreFocus) focusWithoutScroll(this.#dependencyAnchor());
       },
       ownership: this.#interactionOwnership,
+      localSearchScope: this.#localSearchScope,
       position: (element) => {
         this.#positionDependencySearch(element);
       },

@@ -5,7 +5,7 @@ import { InteractionRegistry } from '../src/ui/interactionOwnership';
 import { nativeInteractionBlocksPanelShortcuts } from '../src/ui/nativeInteractionBlocker';
 import { PanelShortcutRouter } from '../src/ui/panelShortcutRouter';
 import type { PanelNavigationActions } from '../src/views/panelNavigation';
-import { methodOf } from './helpers';
+import { expectDefined, methodOf } from './helpers';
 
 function navigationActions(): PanelNavigationActions {
   return {
@@ -550,7 +550,14 @@ describe('owned local Find and Escape', () => {
       liveRouters.push(router);
       const modifiers = { ctrlKey: primary === 'ctrl', metaKey: primary === 'meta' };
       button.focus();
-      expect(keydown(button, 'KeyF', modifiers).defaultPrevented).toBe(true);
+      const host = vi.fn();
+      document.addEventListener('keydown', host, true);
+      try {
+        expect(keydown(button, 'KeyF', modifiers).defaultPrevented).toBe(true);
+        expect(host).not.toHaveBeenCalled();
+      } finally {
+        document.removeEventListener('keydown', host, true);
+      }
       expect(document.activeElement).toBe(input);
       expect(input.selectionEnd).toBe(4);
       input.setSelectionRange(2, 2);
@@ -615,4 +622,48 @@ describe('owned local Find and Escape', () => {
       expect(document.activeElement).toBe(otherButton);
     },
   );
+});
+
+it('guards public scope routing live, permits neutral focus only for scope, and ignores broken navigation settings', () => {
+  const h = harness();
+  h.router.destroy();
+  const input = h.panel.createEl('input');
+  const router = new PanelShortcutRouter({
+    ownerDocument: document,
+    ownerElement: h.panel,
+    isActive: () => h.panel.hidden !== true,
+    settings: () => {
+      throw new Error('bad settings');
+    },
+    platform: { mod: 'ctrl' },
+    actions: h.actions,
+    registry: h.registry,
+    nativeHostBlocks: h.nativeHostBlocks,
+    localSearchTarget: () => ({ input, owner: h.panel }),
+  });
+  liveRouters.push(router);
+  const event = () =>
+    new KeyboardEvent('keydown', { code: 'KeyF', ctrlKey: true, cancelable: true });
+  expect(router.routeLocalSearch(event())).toBe(false);
+  expect(router.routeLocalSearch(event(), 'scope')).toBe(true);
+  input.blur();
+  h.panel.hidden = true;
+  expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+  h.panel.hidden = false;
+  const other = document.body.createEl('button');
+  mounted.push(other);
+  other.focus();
+  expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+  other.remove();
+  const frame = document.body.createEl('iframe');
+  mounted.push(frame);
+  const foreign = expectDefined(frame.contentDocument);
+  foreign.body.append(h.panel);
+  expect(router.routeLocalSearch(event(), 'scope')).toBe(true);
+  input.blur();
+  h.panel.remove();
+  expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+  document.body.append(h.panel);
+  router.destroy();
+  expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
 });

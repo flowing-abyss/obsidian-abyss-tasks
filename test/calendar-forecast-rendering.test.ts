@@ -1,5 +1,5 @@
 import { selectorSpecificity as calculateSpecificity } from '@csstools/selector-specificity';
-import { Platform, type App } from 'obsidian';
+import { Platform, Scope, type App } from 'obsidian';
 import selectorParser from 'postcss-selector-parser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
@@ -49,7 +49,10 @@ import { setCalendarDate } from './support/panelHarness';
 
 useRealMoment();
 
-const fakeApp = {} as App;
+const fakeApp = {
+  scope: new Scope(),
+  keymap: { pushScope: vi.fn(), popScope: vi.fn() },
+} as unknown as App;
 const registry = new StatusRegistry(buildDefaultTaskStatuses());
 const css = await loadStyles();
 const forecastMenuOwners: ForecastContextMenuOwner[] = [];

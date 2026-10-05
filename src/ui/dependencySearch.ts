@@ -1,4 +1,4 @@
-import { Platform } from 'obsidian';
+import { Platform, Scope } from 'obsidian';
 import {
   sameTaskNodeRef,
   TaskSearchError,
@@ -12,7 +12,16 @@ import {
 } from '../tasks';
 import { isImeOwnedEvent } from './ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
-import { handleLocalSearchKey } from './localSearchKeys';
+import {
+  bindLocalSearchScope,
+  handleLocalSearchKey,
+  isPlainSearchEscape,
+  localSearchEditorOwnsEvent,
+  localSearchEventIsOwned,
+  localSearchKeyIsBlocked,
+  localSearchSurfaceIsVisible,
+  type LocalSearchScopeHost,
+} from './localSearchKeys';
 import { runAsyncAction } from './runAsyncAction';
 import { SearchStatus } from './searchStatus';
 import { dependencyDirectionLabel } from './taskDependencyPresentation';
@@ -69,6 +78,7 @@ export interface DependencySearchOptions {
   readonly onClose: (restoreFocus: boolean) => void;
   readonly position?: (element: HTMLElement) => void;
   readonly ownership?: InteractionOwnershipPort;
+  readonly localSearchScope?: LocalSearchScopeHost | undefined;
 }
 
 export interface DependencySearchHandle {
@@ -76,7 +86,7 @@ export interface DependencySearchHandle {
   refresh(): void;
   close(restoreFocus?: boolean): void;
   destroy(): void;
-  detach(): void;
+  detach(options?: { readonly forRender: boolean }): void;
   attach(): void;
 }
 
@@ -140,10 +150,11 @@ export function mountDependencySearch(
   callbacks: DependencySearchOptions,
 ): DependencySearchHandle {
   const view = createSearchElements(container, callbacks);
-  const { element, input, directionControls, createAffordance } = view;
+  const { element, input, createAffordance } = view;
   let ownerDocument = element.ownerDocument;
   let ownership: { release(): void } | undefined;
   let closed = false;
+  let releaseScope: (() => void) | undefined;
   const actions = new DependencySearchController(view, callbacks, () => closed);
   const outside = (event: Event): void => {
     if (!element.contains(event.target as Node)) close(false);
@@ -160,37 +171,23 @@ export function mountDependencySearch(
     actions.dispose();
     element.remove();
   }
-  for (const direction of ['blocked-by', 'blocks'] as const) {
-    const button = directionControls?.createEl('button', {
-      cls: 'abyss-dep-search-direction',
-      text: dependencyDirectionLabel(direction),
-      attr: {
-        type: 'button',
-        'data-direction': direction,
-        'aria-pressed': String(direction === callbacks.direction),
-      },
-    });
-    button?.addEventListener('click', () => {
-      actions.choose(direction);
-    });
-  }
+  bindDirectionControls(view, callbacks.direction, actions.choose);
   input.addEventListener('input', actions.reset);
   input.addEventListener('keydown', actions.key);
   createAffordance.addEventListener('click', actions.create);
+  const route = pickerKeyRouter(
+    view,
+    () => !closed && ownership !== undefined && element.ownerDocument === ownerDocument,
+    close,
+  );
   element.addEventListener('keydown', (event) => {
-    if (
-      !closed &&
-      ownership !== undefined &&
-      event.code === 'KeyF' &&
-      handleLocalSearchKey(event, { input, owner: element }, Platform.isMacOS ? 'meta' : 'ctrl')
-    )
-      return;
-    if (event.key !== 'Escape' || isImeOwnedEvent(event)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    close();
+    route(event, 'dom');
   });
-  function detach(): void {
+  function detach(options?: { readonly forRender: boolean }): void {
+    releaseScope?.();
+    releaseScope = undefined;
+    // Synchronous inspector rendering retains its search cursor and interaction owner.
+    if (options?.forRender === true) return;
     if (ownership === undefined) return;
     ownerDocument.removeEventListener('focusin', outside);
     ownerDocument.removeEventListener('pointerdown', outside);
@@ -199,17 +196,90 @@ export function mountDependencySearch(
     actions.detach();
   }
   function attach(): void {
-    if (closed || ownership !== undefined) return;
+    if (ownership !== undefined && ownerDocument !== element.ownerDocument) detach();
+    if (closed || !localSearchSurfaceIsVisible(element)) return;
     ownerDocument = element.ownerDocument;
-    ownership = (callbacks.ownership ?? noInteractionOwnership).acquire({ blocksShortcuts: true });
-    ownerDocument.addEventListener('focusin', outside);
-    ownerDocument.addEventListener('pointerdown', outside);
+    if (ownership === undefined) {
+      ownership = (callbacks.ownership ?? noInteractionOwnership).acquire({
+        blocksShortcuts: true,
+      });
+      ownerDocument.addEventListener('focusin', outside);
+      ownerDocument.addEventListener('pointerdown', outside);
+    }
+    releaseScope ??= acquirePickerScope(callbacks.localSearchScope, element, route);
     actions.attach();
   }
   callbacks.position?.(element);
   focusWithoutScroll(input);
   attach();
   return { element, refresh: actions.refresh, close, destroy, detach, attach };
+}
+
+function bindDirectionControls(
+  view: SearchElements,
+  chosen: DependencyDirection,
+  choose: (direction: DependencyDirection) => void,
+): void {
+  for (const direction of ['blocked-by', 'blocks'] as const) {
+    const button = view.directionControls?.createEl('button', {
+      cls: 'abyss-dep-search-direction',
+      text: dependencyDirectionLabel(direction),
+      attr: {
+        type: 'button',
+        'data-direction': direction,
+        'aria-pressed': String(direction === chosen),
+      },
+    });
+    button?.addEventListener('click', () => {
+      choose(direction);
+    });
+  }
+}
+
+function pickerKeyRouter(
+  { element, input }: SearchElements,
+  isAttached: () => boolean,
+  close: () => void,
+): (event: KeyboardEvent, origin: 'dom' | 'scope') => boolean {
+  const primary = Platform.isMacOS ? 'meta' : 'ctrl';
+  return (event: KeyboardEvent, origin: 'dom' | 'scope'): boolean => {
+    if (
+      !isAttached() ||
+      !localSearchSurfaceIsVisible(element) ||
+      !localSearchEventIsOwned(event, element, origin) ||
+      localSearchKeyIsBlocked(event)
+    )
+      return false;
+    const ownerDocument = element.ownerDocument;
+    const active = ownerDocument.activeElement;
+    if (active?.closest('.abyss-dep-search') !== element) return false;
+    if (localSearchEditorOwnsEvent(event, ownerDocument, input)) return false;
+    if (handleLocalSearchKey(event, { input, owner: element }, primary)) return true;
+    if (!isPlainSearchEscape(event)) return false;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    close();
+    return true;
+  };
+}
+
+function acquirePickerScope(
+  host: LocalSearchScopeHost | undefined,
+  element: HTMLElement,
+  route: (event: KeyboardEvent, origin: 'scope') => boolean,
+): (() => void) | undefined {
+  if (host === undefined) return undefined;
+  const scope = new Scope(host.parent);
+  const doc = element.ownerDocument;
+  const unbind = bindLocalSearchScope(
+    scope,
+    (event) => element.ownerDocument === doc && route(event, 'scope'),
+  );
+  host.keymap.pushScope(scope);
+  return () => {
+    unbind();
+    host.keymap.popScope(scope);
+  };
 }
 
 function createSearchElements(
@@ -221,7 +291,7 @@ function createSearchElements(
     : `Add dependency: ${dependencyDirectionLabel(callbacks.direction)}`;
   const element = container.createDiv({
     cls: 'abyss-popover abyss-popover-anchored abyss-dep-search',
-    attr: { role: 'dialog', 'aria-label': dialogLabel },
+    attr: { role: 'dialog', 'aria-label': dialogLabel, tabindex: '-1' },
   });
   const search = element.createDiv({ cls: 'abyss-dep-search-field' });
   const id = `abyss-dependency-options-${nextSearchId++}`;

@@ -62,6 +62,20 @@ async function search(el: HTMLElement, query: string): Promise<HTMLInputElement>
   return input;
 }
 
+function closePickerWithEscape(input: HTMLInputElement): void {
+  const picker = expectDefined(input.closest<HTMLElement>('.abyss-dep-search'));
+  const query = input.value;
+  input.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
+  expect(picker.isConnected).toBe(true);
+  expect(input.ownerDocument.activeElement).toBe(picker);
+  expect(input.value).toBe(query);
+  picker.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
+}
+
 function modalRootPosition(location: string): number {
   if (location.includes('middle')) return 1;
   return location.includes('last') ? 2 : 0;
@@ -214,7 +228,7 @@ describe('dependency picker visible containment', () => {
       expect(
         expectDefined(picker.querySelector<HTMLElement>('.abyss-dep-search-create')).hidden,
       ).toBe(false);
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      closePickerWithEscape(input);
       expect(picker.isConnected).toBe(false);
       expect(h.el.ownerDocument.activeElement).toBe(trigger);
     },
@@ -458,9 +472,7 @@ describe('dependency picker visible containment', () => {
     panelRect.mockReturnValue(new DOMRect(100, 140, 400, 500));
     doc.dispatchEvent(new Event('scroll'));
     expect(picker.style.getPropertyValue('--abyss-pop-top')).toBe(`${parseFloat(before) - 40}px`);
-    (await search(h.el, '')).dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
-    );
+    closePickerWithEscape(await search(h.el, ''));
     expect(doc.activeElement).toBe(trigger);
     expect(picker.isConnected).toBe(false);
   });
@@ -2074,12 +2086,12 @@ describe('RightPanel dependency inspector', () => {
         button(h.el, '[role="option"]').click();
         await flushMicrotasks(50);
         expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        closePickerWithEscape(input);
       }
       if (mode === 'refresh') {
         h.state.set('taskStack', [h.node('Current').root]);
         expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        closePickerWithEscape(input);
       }
       expect(owned.length).toBeGreaterThan(0);
       for (const [type, listener] of owned)
@@ -2098,9 +2110,7 @@ describe('RightPanel dependency inspector', () => {
     const remove = vi.spyOn(h.el.ownerDocument, 'removeEventListener');
     for (let count = 0; count < 2; count++) {
       button(h.el, '.abyss-dep-badge-body').click();
-      (await search(h.el, '')).dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
-      );
+      closePickerWithEscape(await search(h.el, ''));
     }
     const scrollCallbacks = add.mock.calls
       .filter(([type]) => type === 'scroll')
@@ -2184,9 +2194,7 @@ describe('RightPanel dependency inspector', () => {
     expect(blockedBy.className).toBe('abyss-dep-count');
     expect(divider.hidden).toBe(true);
     expect(blocks.hidden).toBe(true);
-    (await search(h.el, '')).dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
-    );
+    closePickerWithEscape(await search(h.el, ''));
 
     await h.api.execute({
       type: 'add-dependency',
@@ -2316,9 +2324,7 @@ describe('RightPanel dependency inspector', () => {
     button(h.el, '[data-direction="blocks"]').click();
     await searchUiCompleted(expectDefined(h.el.querySelector<HTMLElement>('.abyss-dep-search')));
     expect(button(h.el, '[data-direction="blocks"]').getAttribute('aria-pressed')).toBe('true');
-    (await search(h.el, '')).dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
-    );
+    closePickerWithEscape(await search(h.el, ''));
 
     button(h.el, '.abyss-dep-badge-add').click();
     button(h.el, '[aria-label="Add dependency: Blocks"]').click();
@@ -2688,18 +2694,14 @@ describe('RightPanel dependency inspector', () => {
     badge.click();
     expect(h.el.querySelector('.abyss-dep-search')).not.toBeNull();
     expect(labels(h.el)).toEqual(['Description', 'Sub-tasks', 'Comments']);
-    (await search(h.el, '')).dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
-    );
+    closePickerWithEscape(await search(h.el, ''));
     expect(activeDocument.activeElement).toBe(badge);
     plus.click();
     expect(labels(h.el)).toEqual(['Description', 'Blocked by', 'Blocks', 'Sub-tasks', 'Comments']);
     expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
     expect(h.el.querySelector('.abyss-dep-badge-add')).toBeNull();
     button(h.el, '[aria-label="Add dependency: Blocked by"]').click();
-    (await search(h.el, '')).dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
-    );
+    closePickerWithEscape(await search(h.el, ''));
     expect(labels(h.el)).toEqual(['Description', 'Blocked by', 'Blocks', 'Sub-tasks', 'Comments']);
     const outside = activeDocument.body.createEl('button');
     outside.focus();
@@ -2986,7 +2988,7 @@ describe('continuous dependency entry', () => {
       ]);
       expect(await h.read()).toContain('\t\t- [ ] First created');
       expect(await h.read()).toContain('\t\t- [ ] Second created');
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      closePickerWithEscape(input);
       expect(el.querySelector('.abyss-dep-search')).toBeNull();
       modal.close();
       h.panel.destroy();
@@ -3147,9 +3149,7 @@ it.each(['Next', 'Previous'])(
     pager.click();
     await searchUiCompleted(picker);
     const focused = expectDefined(document.activeElement);
-    focused.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
-    );
+    closePickerWithEscape(input);
     expect(el.querySelector('.abyss-dep-search')).toBeNull();
     expect(el.isConnected).toBe(true);
     expect(focused).toBe(input);

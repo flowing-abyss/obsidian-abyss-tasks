@@ -8,7 +8,13 @@ import { validateShortcuts } from '../settings/shortcuts';
 import type { PanelNavigationActions } from '../views/panelNavigation';
 import { isImeOwnedEvent } from './ime';
 import type { InteractionRegistry } from './interactionOwnership';
-import { handleLocalSearchKey, type LocalSearchFocusTarget } from './localSearchKeys';
+import {
+  handleLocalSearchKey,
+  localSearchEditorOwnsEvent,
+  localSearchEventIsOwned,
+  localSearchSurfaceIsVisible,
+  type LocalSearchFocusTarget,
+} from './localSearchKeys';
 
 const PANEL_SHORTCUT_BLOCKING_SELECTOR = [
   'input',
@@ -113,9 +119,9 @@ export class PanelShortcutRouter {
 
   private route(event: KeyboardEvent): void {
     if (this.destroyed || !this.options.isActive()) return;
+    if (this.routeLocalSearch(event)) return;
     const current = this.currentShortcuts();
     if (current === undefined) return;
-    if (this.routeLocalSearch(event)) return;
     if (this.eventIsBlocked(event)) return;
 
     const match = [...current.bindings.entries()].find(([, bindings]) =>
@@ -129,30 +135,26 @@ export class PanelShortcutRouter {
     dispatchAction(this.options.actions, match[0]);
   }
 
-  private routeLocalSearch(event: KeyboardEvent): boolean {
+  routeLocalSearch(event: KeyboardEvent, origin: 'dom' | 'scope' = 'dom'): boolean {
     if (this.localSearchIsBlocked(event)) return false;
     const owner = this.options.ownerElement;
-    if (owner?.isConnected === true && !event.composedPath().includes(owner)) return false;
-    const target = this.options.localSearchTarget?.();
-    if (target?.owner.ownerDocument !== this.options.ownerDocument) return false;
-    const editable =
-      'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], .cm-editor, .CodeMirror';
-    const blocked = (value: EventTarget | null): boolean => {
-      if (
-        value === target.input ||
-        value === null ||
-        typeof (value as Element).closest !== 'function'
-      )
-        return false;
-      return (value as Element).closest(editable) !== null;
-    };
-    if (blocked(this.options.ownerDocument.activeElement) || event.composedPath().some(blocked))
+    if (
+      owner === undefined ||
+      !localSearchSurfaceIsVisible(owner) ||
+      !localSearchEventIsOwned(event, owner, origin, true)
+    )
       return false;
+    const doc = owner.ownerDocument;
+    const target = this.options.localSearchTarget?.();
+    if (target?.owner.ownerDocument !== doc) return false;
+    if (localSearchEditorOwnsEvent(event, doc, target.input)) return false;
     return handleLocalSearchKey(event, target, this.options.platform.mod);
   }
 
   private localSearchIsBlocked(event: KeyboardEvent): boolean {
     return (
+      this.destroyed ||
+      !this.options.isActive() ||
       event.defaultPrevented ||
       event.repeat ||
       isImeOwnedEvent(event) ||

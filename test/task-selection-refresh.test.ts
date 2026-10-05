@@ -1,4 +1,4 @@
-import type { App } from 'obsidian';
+import { Scope, type App } from 'obsidian';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import type { RightPanel } from '../src/panels/RightPanel';
@@ -115,7 +115,10 @@ describe('revision-aware TaskModal refresh', () => {
     const fresh = { ...observed, presentation: { linkCount: 0, noteColor: '#fff' } };
     const h = queryHarness({ type: 'exact', task: fresh, basis: { observed } });
     const modal = new TaskModal({
-      app: {} as App,
+      app: {
+        scope: new Scope(),
+        keymap: { pushScope: vi.fn(), popScope: vi.fn() },
+      } as unknown as App,
       statusRegistry: testStatusRegistry(),
       queries: h.queries,
     });
@@ -141,7 +144,10 @@ describe('revision-aware TaskModal refresh', () => {
       basis: { observed },
     });
     const modal = new TaskModal({
-      app: {} as App,
+      app: {
+        scope: new Scope(),
+        keymap: { pushScope: vi.fn(), popScope: vi.fn() },
+      } as unknown as App,
       statusRegistry: testStatusRegistry(),
       queries: h.queries,
     });
@@ -167,7 +173,10 @@ describe('revision-aware TaskModal refresh', () => {
       evidence: 'same-line',
     });
     const modal = new TaskModal({
-      app: {} as App,
+      app: {
+        scope: new Scope(),
+        keymap: { pushScope: vi.fn(), popScope: vi.fn() },
+      } as unknown as App,
       statusRegistry: testStatusRegistry(),
       queries: h.queries,
     });
@@ -190,7 +199,10 @@ describe('revision-aware TaskModal refresh', () => {
     const external = snapshot('external', 'External');
     const h = queryHarness({ type: 'uncertain', ref: external.ref });
     const modal = new TaskModal({
-      app: {} as App,
+      app: {
+        scope: new Scope(),
+        keymap: { pushScope: vi.fn(), popScope: vi.fn() },
+      } as unknown as App,
       statusRegistry: testStatusRegistry(),
       queries: h.queries,
     });
@@ -208,7 +220,10 @@ describe('revision-aware TaskModal refresh', () => {
     const observed = snapshot('old', 'Observed');
     const h = queryHarness({ type: 'uncertain', ref: observed.ref });
     const modal = new TaskModal({
-      app: {} as App,
+      app: {
+        scope: new Scope(),
+        keymap: { pushScope: vi.fn(), popScope: vi.fn() },
+      } as unknown as App,
       statusRegistry: testStatusRegistry(),
       queries: h.queries,
     });
@@ -223,7 +238,10 @@ describe('revision-aware TaskModal refresh', () => {
     const observed = snapshot('old');
     const h = queryHarness({ type: 'not-found', ref: observed.ref });
     const modal = new TaskModal({
-      app: {} as App,
+      app: {
+        scope: new Scope(),
+        keymap: { pushScope: vi.fn(), popScope: vi.fn() },
+      } as unknown as App,
       statusRegistry: testStatusRegistry(),
       queries: h.queries,
     });
@@ -244,7 +262,10 @@ describe('revision-aware TaskModal refresh', () => {
       ],
     });
     const modal = new TaskModal({
-      app: {} as App,
+      app: {
+        scope: new Scope(),
+        keymap: { pushScope: vi.fn(), popScope: vi.fn() },
+      } as unknown as App,
       statusRegistry: testStatusRegistry(),
       queries: h.queries,
     });
