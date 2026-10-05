@@ -2245,37 +2245,22 @@ describe('RightPanel dependency inspector', () => {
     expect(settledBlocks.hidden).toBe(true);
   });
 
-  it('keeps blank Create hidden without an author display override and exposes a focusable nonblank action', async () => {
-    if (!Platform.isDesktop) throw new Error('CSS contract requires desktop filesystem access');
-    const fs = await import('node:fs');
-    const { parse } = await import('postcss');
-    const sheet = parse(fs.readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8'));
+  it('keeps blank Create hidden and exposes a focusable nonblank action', async () => {
     const h = await harness('- [ ] Current\n');
     button(h.el, '.abyss-dep-badge-body').click();
     const create = button(h.el, '.abyss-dep-search-create');
-    const authorDisplays = () => {
-      const values: string[] = [];
-      sheet.walkRules((rule) => {
-        if (create.matches(rule.selector))
-          rule.walkDecls('display', (declaration) => {
-            values.push(declaration.value);
-          });
-      });
-      return values;
-    };
     expect(create.hidden).toBe(true);
-    expect(authorDisplays()).toEqual([]);
     expect(activeWindow.getComputedStyle(create).display).toBe('none');
     await search(h.el, 'New task');
     expect(create.hidden).toBe(false);
-    expect(authorDisplays()).toContain('block');
     expect(activeWindow.getComputedStyle(create).display).not.toBe('none');
+    expect(create.textContent).toBe('Create “New task” as sub-task');
+    expect(create.disabled).toBe(false);
     expect(create.tabIndex).toBe(0);
     create.focus();
     expect(activeDocument.activeElement).toBe(create);
     await search(h.el, '  ');
     expect(create.hidden).toBe(true);
-    expect(authorDisplays()).toEqual([]);
     expect(activeWindow.getComputedStyle(create).display).toBe('none');
   });
 

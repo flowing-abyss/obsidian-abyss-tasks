@@ -4779,6 +4779,10 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   text-align: left;
 }
 
+.abyss-dep-search .abyss-dep-search-create[hidden] {
+  display: none;
+}
+
 .abyss-dep-search-option:is(.is-active, :hover) {
   background: var(--background-modifier-hover);
 }
