@@ -635,6 +635,8 @@ export class PanelView extends ItemView {
       onSaveViewState: this.onSaveViewState_abyssPrivate,
     });
     this.center_abyssPrivate = new CenterPanel({
+      onTaskListDraftHandoff: (drafts, root, selection) =>
+        this.right_abyssPrivate.receiveDraftHandoff(drafts, root, selection),
       ...(this.search_abyssPrivate === undefined ? {} : { search: this.search_abyssPrivate }),
       state: this.state_abyssPrivate,
       app: this.app,

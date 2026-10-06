@@ -94,6 +94,7 @@ it.each([false, true])(
       let current = true;
       let installed = false;
       let committed = false;
+      let handedOff = false;
       const navigation = new PanelNavigator(state, structuredClone(DEFAULT_SETTINGS), {
         calendarView: () => 'month',
         setCalendarView: () => {},
@@ -119,6 +120,12 @@ it.each([false, true])(
           },
           onCommitted: () => {
             committed = true;
+            current = false; // Acceptance retires source subscriptions before publication.
+          },
+          afterCommit: () => {
+            expect(state.get('mode')).toBe('tasks');
+            expect(publications).toEqual([true]);
+            handedOff = true;
           },
         },
       );
@@ -129,6 +136,7 @@ it.each([false, true])(
       expect(state.get('mode')).toBe(cancelled ? 'projects' : 'tasks');
       expect(state.get('taskStack')).toHaveLength(cancelled ? 0 : 3);
       expect(installed).toBe(!cancelled);
+      expect(handedOff).toBe(!cancelled);
       expect(publications).toEqual(cancelled ? [] : [true]);
     } finally {
       h.close();

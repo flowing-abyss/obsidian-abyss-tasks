@@ -72,11 +72,19 @@ import {
   isEntryDraft,
   rebaseRightPanelDraft,
   unfocusedDraft,
+  type InspectorDraftHandoff,
   type RightPanelDraftBundle,
   type RightPanelDraftState,
 } from '../ui/taskDraftContinuity';
 import { bindTaskHierarchyDrop, executeTaskHierarchy } from '../ui/taskHierarchyActions';
-import { rebuildTaskSelection, rootTaskRef, taskNodeLine, taskNodeRef } from '../ui/taskSelection';
+import {
+  isCurrentTaskSelectionSnapshot,
+  rebuildTaskSelection,
+  rootTaskRef,
+  taskNodeLine,
+  taskNodeRef,
+  type TaskSelectionNode,
+} from '../ui/taskSelection';
 import { taskRemovalInverse } from '../ui/taskUndoNotice';
 import {
   mountTimeBadge,
@@ -710,6 +718,79 @@ export class RightPanel {
     this.planningSurfaces_abyssPrivate.clearAnchoredSurfaces();
     this.el_abyssPrivate.empty();
     this.md_abyssPrivate.unload();
+  }
+
+  captureDraftHandoff(): InspectorDraftHandoff {
+    return {
+      live: this.captureDraftState(),
+      detached: this.detachedDrafts_abyssPrivate.map(({ draft, origin }) => ({
+        entries: [draft],
+        ...(origin === undefined ? {} : { origin }),
+      })),
+    };
+  }
+
+  receiveDraftHandoff(
+    drafts: InspectorDraftHandoff,
+    root: TaskSnapshot,
+    selection: readonly TaskSelectionNode[],
+  ): boolean {
+    const current = this.state_abyssPrivate.get('taskStack');
+    if (!this.acceptsDraftHandoff_abyssPrivate(root, selection, current)) return false;
+    const selected = current[current.length - 1];
+    if (selected === undefined) return false;
+    return this.restoreHandoffDrafts_abyssPrivate(drafts, root, taskNodeRef(selected));
+  }
+
+  private restoreHandoffDrafts_abyssPrivate(
+    drafts: InspectorDraftHandoff,
+    root: TaskSnapshot,
+    selected: TaskNodeRef,
+  ): boolean {
+    const candidates = this.captureDraftState()?.entries ?? [];
+    const restore: RightPanelDraftBundle[] = [];
+    const detach = [...drafts.detached];
+    for (const draft of (drafts.live ?? { entries: [] }).entries) {
+      const disposition = this.recoveryLiveDisposition_abyssPrivate(candidates, draft, selected);
+      const bundle = { ...drafts.live, entries: [unfocusedDraft(draft)] };
+      if (disposition === 'conflict') detach.push(bundle);
+      else if (disposition === 'unrepresented') restore.push(bundle);
+    }
+    if (!this.canDetachHandoff_abyssPrivate(detach)) return false;
+    for (const bundle of restore) this.restoreDraftState(bundle, root);
+    for (const bundle of detach) this.detachDraftState(bundle);
+    return true;
+  }
+
+  private canDetachHandoff_abyssPrivate(bundles: readonly RightPanelDraftBundle[]): boolean {
+    const existing = new Map(
+      this.detachedDrafts_abyssPrivate.map(({ key, draft }) => [key, draft]),
+    );
+    for (const draft of bundles.flatMap((bundle) => bundle.entries)) {
+      const key = draftIdentity(draft);
+      const previous = existing.get(key);
+      if (previous !== undefined && !this.sameDraftPayload_abyssPrivate(previous, draft))
+        return false;
+      existing.set(key, draft);
+    }
+    return true;
+  }
+
+  private acceptsDraftHandoff_abyssPrivate(
+    root: TaskSnapshot,
+    selection: readonly TaskSelectionNode[],
+    current: readonly TaskSelectionNode[],
+  ): boolean {
+    return (
+      this.mounted_abyssPrivate &&
+      this.el_abyssPrivate.isConnected &&
+      isCurrentTaskSelectionSnapshot(root, current) &&
+      current.length === selection.length &&
+      current.every((node, index) => {
+        const expected = selection[index];
+        return expected !== undefined && sameTaskNodeRef(taskNodeRef(node), taskNodeRef(expected));
+      })
+    );
   }
 
   captureDraftState(): RightPanelDraftBundle | undefined {

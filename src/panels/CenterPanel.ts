@@ -53,6 +53,7 @@ import { runAsyncAction } from '../ui/runAsyncAction';
 import { showStatusMenuAt } from '../ui/statusMenu';
 import { type CreationResultDescription } from '../ui/taskCommandResult';
 import type { TaskDependencyLookup } from '../ui/taskDependencyPresentation';
+import type { TaskListDraftHandoff } from '../ui/taskDraftContinuity';
 import { bindTaskHierarchyDrop, executeTaskHierarchy } from '../ui/taskHierarchyActions';
 import { startTaskNodeDrag } from '../ui/taskNodeDrag';
 import { renderedTaskElements, renderedTaskNodeElements } from '../ui/taskPresentationIdentity';
@@ -160,6 +161,7 @@ interface CreationInclusion {
 }
 
 interface CenterPanelOptions {
+  readonly onTaskListDraftHandoff?: TaskListDraftHandoff | undefined;
   readonly state: AppState;
   readonly app: App;
   readonly settings: CalendarSettings;
@@ -191,6 +193,7 @@ interface CenterPanelOptions {
 }
 
 export class CenterPanel {
+  private readonly onTaskListDraftHandoff_abyssPrivate: TaskListDraftHandoff | undefined;
   private el!: HTMLElement;
   private readonly offs_abyssPrivate: Array<() => void> = [];
   private taskDatePickerCleanup_abyssPrivate: ((restoreFocus?: boolean) => void) | null = null;
@@ -315,6 +318,7 @@ export class CenterPanel {
   private trackingUnsubscribe_abyssPrivate: (() => void) | undefined;
 
   constructor(options: CenterPanelOptions) {
+    this.onTaskListDraftHandoff_abyssPrivate = options.onTaskListDraftHandoff;
     const {
       state,
       app,
@@ -539,6 +543,7 @@ export class CenterPanel {
             });
           },
           onCommitted: cancel,
+          afterCommit: () => request.onCommitted?.(resolved.root, resolved.path),
         },
       );
     } catch (error) {
@@ -1684,6 +1689,7 @@ export class CenterPanel {
       queries: this.queries_abyssPrivate,
       search: this.searchApi_abyssPrivate,
       onShowInTaskList: (target, request) => this.showTaskInList(target, request),
+      onTaskListDraftHandoff: this.onTaskListDraftHandoff_abyssPrivate,
       tasks: this.tasks_abyssPrivate,
       commentTimeContext: this.commentTimeContext_abyssPrivate,
       interactionOwnership: this.interactionOwnership_abyssPrivate,

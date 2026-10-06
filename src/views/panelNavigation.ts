@@ -10,6 +10,7 @@ import { renameFileFilters } from '../settings/viewStatePaths';
 export interface PanelNavigationTransition {
   canCommit(): boolean;
   commit(): void;
+  afterCommit?(): void;
 }
 
 export interface PanelNavigationActions {
@@ -61,6 +62,7 @@ export class PanelNavigator implements PanelNavigationActions {
         this.state.set('centerFilter', '');
         this.state.set('mode', 'tasks');
       });
+      transition?.afterCommit?.();
     };
     if (transition !== undefined && this.center.finishProjectTableEditorBefore !== undefined)
       this.center.finishProjectTableEditorBefore(change);

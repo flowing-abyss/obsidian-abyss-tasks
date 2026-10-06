@@ -141,7 +141,25 @@ export class InspectorSections {
   }> = [];
   #commentRows: InspectorCommentRow[] = [];
 
+  readonly #editors = new Map<HTMLElement, { parent: Component; component: Component }>();
+
+  #editorOwner(element: HTMLElement, parent = this.#host.component()): Component {
+    const component = parent.addChild(new Component());
+    this.#editors.set(element, { parent, component });
+    component.register(() => {
+      this.#editors.delete(element);
+      element.remove();
+    });
+    return component;
+  }
+
+  #releaseEditor(element: HTMLElement): void {
+    const owner = this.#editors.get(element);
+    if (owner !== undefined) owner.parent.removeChild(owner.component);
+  }
+
   destroy(): void {
+    for (const element of this.#editors.keys()) this.#releaseEditor(element);
     for (const { component } of [...this.#subRows, ...this.#commentRows])
       this.#host.component().removeChild(component);
     if (this.#titleComponent !== undefined)
@@ -197,9 +215,9 @@ export class InspectorSections {
         candidate.comment.ref.originalMarkdown === ref.originalMarkdown &&
         JSON.stringify(candidate.comment.ref.parent) === JSON.stringify(ref.parent),
     );
-    const editor = entry?.row.querySelector('.abyss-comment-edit-input');
+    const editor = entry?.row.querySelector<HTMLElement>('.abyss-comment-edit-input');
     if (entry === undefined || editor === null || editor === undefined) return;
-    editor.remove();
+    this.#releaseEditor(editor);
     entry.update();
   }
 
@@ -306,8 +324,9 @@ export class InspectorSections {
     el: HTMLTextAreaElement,
     task: TaskLike,
     captureSession: () => () => boolean = () => () => true,
+    component = this.#host.component(),
   ): void {
-    this.#host.component().register(
+    component.register(
       enableAttachmentPaste(el, {
         app: this.#app,
         capture: () => {
@@ -395,14 +414,17 @@ export class InspectorSections {
     view.insertAdjacentElement('afterend', textarea);
     const lifecycle = new AsyncEditLifecycle();
     textarea.value = task.description ?? '';
-    this.#enablePaste(textarea, task, () => () => !lifecycle.isClosed());
+    const editorOwner = this.#editorOwner(textarea);
+    editorOwner.register(() => {
+      lifecycle.close();
+    });
+    this.#enablePaste(textarea, task, () => () => !lifecycle.isClosed(), editorOwner);
     textarea.setCssStyles({ height: `${Math.max(start, 60)}px` });
     textarea.ownerDocument.defaultView?.setTimeout(() => {
       textarea.focus();
     }, 0);
     const close = (): void => {
-      lifecycle.close();
-      textarea.remove();
+      this.#releaseEditor(textarea);
       view.show();
       showView();
     };
@@ -515,16 +537,18 @@ export class InspectorSections {
       attr: { type: 'text', placeholder: 'New sub-task…' },
     });
     const lifecycle = new AsyncEditLifecycle();
+    const editorOwner = this.#editorOwner(input);
+    let retired = false;
     const close = (): void => {
       if (lifecycle.isClosed()) return;
       lifecycle.close();
       removeDismissal();
-      input.remove();
+      this.#releaseEditor(input);
       trigger.removeClass('abyss-subtask-add-row--hidden');
     };
     const commit = async (): Promise<void> => {
       const text = input.value.trim();
-      if (text === '' || !lifecycle.begin()) return;
+      if (retired || text === '' || !lifecycle.begin()) return;
       const current = owner.current;
       if (current === undefined) return;
       const succeeded = await this.#commands.addSubTask(current, text);
@@ -532,8 +556,16 @@ export class InspectorSections {
       lifecycle.retry();
       if (!succeeded && input.ownerDocument.activeElement === input) input.focus();
     };
-    const removeDismissal = this.#registerEntryDismissal(input, task, 'new-subtask', close);
-    this.#host.component().register(close);
+    const removeDismissal = this.#registerEntryDismissal(input, task, 'new-subtask', {
+      close,
+      component: editorOwner,
+      retire: () => {
+        retired = true;
+      },
+    });
+    editorOwner.register(() => {
+      lifecycle.close();
+    });
     input.addEventListener('keydown', (event: KeyboardEvent) => {
       if (event.key === 'Enter' && !isImeOwnedEvent(event)) {
         event.preventDefault();
@@ -547,23 +579,42 @@ export class InspectorSections {
     input: HTMLInputElement | HTMLTextAreaElement,
     task: TaskLike,
     kind: 'new-subtask' | 'new-comment',
-    close: () => void,
+    options: { close: () => void; component?: Component; retire?: () => void },
   ): () => void {
+    const { close, component = this.#host.component(), retire } = options;
     const owner = this.#host.taskOwner(task);
     const document = input.ownerDocument;
-    const dismiss = (): void => {
+    let deferredClose = false;
+    let timer: number | undefined;
+    const retireSubmission = (): void => {
+      retire?.();
       const current = owner.current;
       if (current !== undefined) this.#host.dismissEntrySubmission(kind, taskNodeRef(current));
       this.#host.cancelRestoredDraftFocus(document);
+    };
+    const dismiss = (): void => {
+      retireSubmission();
       close();
     };
+    const finishGesture = (): void => {
+      if (deferredClose && timer === undefined) timer = document.defaultView?.setTimeout(close, 0);
+    };
     const outside = (event: Event): void => {
+      if (deferredClose) return;
       if (
         input.isConnected &&
         event.target !== input &&
         (event.type === 'focusin' || kind === 'new-subtask' || document.activeElement === input)
-      )
-        dismiss();
+      ) {
+        retireSubmission();
+        if (
+          kind === 'new-subtask' &&
+          event.type === 'pointerdown' &&
+          (event as PointerEvent).button === 2
+        ) {
+          deferredClose = true;
+        } else close();
+      }
     };
     const escape = (raw: Event): void => {
       const event = raw as KeyboardEvent;
@@ -572,6 +623,9 @@ export class InspectorSections {
       event.stopPropagation();
       dismiss();
     };
+    document.addEventListener('contextmenu', finishGesture);
+    document.addEventListener('pointerup', finishGesture);
+    document.addEventListener('pointercancel', finishGesture);
     document.addEventListener('pointerdown', outside);
     document.addEventListener('focusin', outside);
     input.addEventListener('keydown', escape);
@@ -579,11 +633,15 @@ export class InspectorSections {
     const cleanup = (): void => {
       if (!listening) return;
       listening = false;
+      if (timer !== undefined) document.defaultView?.clearTimeout(timer);
+      document.removeEventListener('contextmenu', finishGesture);
+      document.removeEventListener('pointerup', finishGesture);
+      document.removeEventListener('pointercancel', finishGesture);
       document.removeEventListener('pointerdown', outside);
       document.removeEventListener('focusin', outside);
       input.removeEventListener('keydown', escape);
     };
-    this.#host.component().register(cleanup);
+    component.register(cleanup);
     return cleanup;
   }
 
@@ -625,9 +683,11 @@ export class InspectorSections {
       const capturedSession = session;
       return () => capturedSession === session && owner.current !== undefined;
     });
-    this.#registerEntryDismissal(commentInput, task, 'new-comment', () => {
-      session++;
-      commentInput.blur();
+    this.#registerEntryDismissal(commentInput, task, 'new-comment', {
+      close: () => {
+        session++;
+        commentInput.blur();
+      },
     });
     commentInput.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey && !isImeOwnedEvent(e)) {
@@ -707,7 +767,8 @@ export class InspectorSections {
     // Keep the textarea in the title's slot so the ⋯/× action buttons stay on the right.
     view.insertAdjacentElement('afterend', ta);
     ta.value = task.markdownTitle;
-    this.#enablePaste(ta, task);
+    const editorOwner = this.#editorOwner(ta);
+    this.#enablePaste(ta, task, () => () => !lifecycle.isClosed(), editorOwner);
     // Auto-grow to content, but never below the initial title height.
     const grow = (): void => {
       ta.setCssStyles({ height: 'auto' });
@@ -720,10 +781,14 @@ export class InspectorSections {
     }, 0);
 
     const lifecycle = new AsyncEditLifecycle();
+    editorOwner.register(() => {
+      lifecycle.close();
+    });
     const finish = async (save: boolean): Promise<void> => {
       if (!lifecycle.begin()) return;
       // Let any in-flight paste insert its link into the value before we save/remove.
       await whenPasteSettled(ta);
+      if (lifecycle.isClosed() || !ta.isConnected) return;
       if (save && ta.value !== task.markdownTitle) {
         const saved = await this.#commands.saveTaskTitle(task, ta.value.trim());
         if (!saved) {
@@ -732,9 +797,8 @@ export class InspectorSections {
           return;
         }
       }
-      lifecycle.close();
       view.style.removeProperty('height');
-      ta.remove();
+      this.#releaseEditor(ta);
       view.show();
       renderView();
     };
@@ -939,11 +1003,7 @@ export class InspectorSections {
                 sourcePath: rootTaskRef(current).filePath,
                 onLinks: (links) => {
                   runAsyncAction(
-                    this.#commands.updateComment(
-                      current,
-                      captured,
-                      `${captured.text} ${links}`.trim(),
-                    ),
+                    this.#commands.updateComment(current, captured, `${captured.text} ${links}`),
                   );
                 },
               };
@@ -1032,7 +1092,14 @@ export class InspectorSections {
     const textarea = row.createEl('textarea', { cls: 'abyss-comment-edit-input' });
     const lifecycle = new AsyncEditLifecycle();
     textarea.value = comment.text;
-    this.#enablePaste(textarea, task, () => () => !lifecycle.isClosed());
+    const editorOwner = this.#editorOwner(
+      textarea,
+      this.#commentRows.find((entry) => entry.row === row)?.component,
+    );
+    editorOwner.register(() => {
+      lifecycle.close();
+    });
+    this.#enablePaste(textarea, task, () => () => !lifecycle.isClosed(), editorOwner);
     const isCurrent = (): boolean => !lifecycle.isClosed() && textarea.isConnected;
     const finish = async (): Promise<void> => {
       if (!lifecycle.begin()) return;
@@ -1040,8 +1107,7 @@ export class InspectorSections {
       if (!isCurrent()) return;
       const value = textarea.value;
       if (value === comment.text) {
-        lifecycle.close();
-        textarea.remove();
+        this.#releaseEditor(textarea);
         showText();
         return;
       }
@@ -1055,8 +1121,7 @@ export class InspectorSections {
         if (!committed) textarea.focus();
         return;
       }
-      lifecycle.close();
-      textarea.remove();
+      this.#releaseEditor(textarea);
       showText();
     };
     textarea.addEventListener('blur', () => {
@@ -1073,8 +1138,7 @@ export class InspectorSections {
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
-        lifecycle.close();
-        textarea.remove();
+        this.#releaseEditor(textarea);
         showText();
       }
     });

@@ -91,3 +91,15 @@ describe('comment text policy', () => {
     },
   );
 });
+
+it('protects a large code-rich comment while rejecting a structural marker inside its final raw span', () => {
+  const prefix = '`x` plain '.repeat(10000);
+  expect(normalizeCommentText(`${prefix}\n- literal`)).toEqual({
+    type: 'ready',
+    text: `${prefix}\n\\- literal`,
+  });
+  expect(normalizeCommentText(`${prefix}\n\`raw\n- literal\``)).toEqual({
+    type: 'invalid',
+    reason: 'unsafe-raw-continuation',
+  });
+});

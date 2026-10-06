@@ -701,7 +701,16 @@ refs scan only their source note's compact organization at the captured generati
 and compare the full hydrated node ref before constructing the ancestor path. RightPanel offers
 “Show in task list” only with an outer capability; the menu captures its original node owner and
 selection intent. PanelView forwards to CenterPanel, and TaskModal forwards only an actual outer
-callback. Menu dismissal does not end accepted navigation. CenterPanel keeps inspector source/state
+callback. The existing navigation transition retires activation subscriptions in its batch, then
+runs its accepted `afterCommit` notification synchronously after state publication. The originating
+modal validates its opening session and original request before handing off its latest live bundle
+and separately originated detached bundles. PanelView routes this transient handoff to the mounted
+RightPanel, which checks the exact root and ancestor path, preserves newer receiver drafts through
+its existing recovery conflict rules, and restores or detaches incoming drafts without submitting.
+The receiver preflights detached conflicts before any mutation; incompatible recovery payloads
+keep both owners intact. Only successful handoff (or a clean modal without a receiver) closes the overlay and releases its
+shortcut scope; this close does not restore the calendar opener's focus. Rejected, replaced, stale,
+or cancelled transitions do not run the handoff. Menu dismissal does not end accepted navigation. CenterPanel keeps inspector source/state
 subscriptions until the delayed transition commits or is cancelled; stale refs receive specific
 feedback, while later intent cancels silently. A rejected project-editor guard has no rejection
 callback: at most one outstanding inspector activation retains its subscriptions until replacement,
@@ -862,7 +871,12 @@ They read live shell state and invoke retained command callbacks. RightPanel kee
 submission records, late-result handling, draft ownership, and the decision to restore a draft.
 The owners share its lifecycle and drag cleanup rather than introducing separate subscriptions or
 persistence. InspectorSections owns disposable Markdown components for mounted title, description,
-subtask and comment regions. RightPanel owns a disposable Markdown component for each breadcrumb
+subtask and comment regions. Transient title, description, existing-comment and subtask-entry
+editors have removable child Components; closing, exact submitted-editor consumption, row removal,
+and teardown unload and unlink their paste/dismissal resources immediately. The persistent comment
+creation input retains its inspector lifetime owner. Secondary-pointer dismissal retires subtask
+submission immediately but keeps the entry layout through contextmenu delivery (or pointer end),
+then removes it on the owning window's next task. RightPanel owns a disposable Markdown component for each breadcrumb
 title and refreshes changed ancestor titles before their next action. A proven owned command updates
 affected regions and counters in place;
 unaffected headers, text, rows and continuous-entry inputs remain connected. Planning controls obtain

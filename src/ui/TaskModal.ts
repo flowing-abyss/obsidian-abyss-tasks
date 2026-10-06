@@ -30,7 +30,11 @@ import {
   localSearchSurfaceIsVisible,
 } from './localSearchKeys';
 import { presentTaskCommandResult } from './taskCommandResult';
-import { isDirtyDraftBundle, type RightPanelDraftBundle } from './taskDraftContinuity';
+import {
+  isDirtyDraftBundle,
+  type RightPanelDraftBundle,
+  type TaskListDraftHandoff,
+} from './taskDraftContinuity';
 import {
   isCurrentTaskSelectionSnapshot,
   rebuildTaskSelection,
@@ -46,6 +50,7 @@ import { TrackingTicker } from './timeTracking/TrackingTicker';
 import { createTrackingActions } from './timeTracking/trackingActions';
 
 interface TaskModalOptions {
+  readonly onTaskListDraftHandoff?: TaskListDraftHandoff | undefined;
   readonly onShowInTaskList?: ShowInTaskList | undefined;
   readonly app: App;
   readonly statusRegistry: StatusRegistry;
@@ -71,6 +76,7 @@ export class TaskModal {
   private readonly statusRegistry_abyssPrivate: StatusRegistry;
   private readonly settings_abyssPrivate: CalendarSettings | undefined;
   private readonly queries_abyssPrivate: TaskQueryApi | undefined;
+  private readonly onTaskListDraftHandoff_abyssPrivate: TaskListDraftHandoff | undefined;
   private readonly onShowInTaskList_abyssPrivate: ShowInTaskList | undefined;
   private readonly search_abyssPrivate: TaskSearchApi | undefined;
   private readonly tasks_abyssPrivate: TaskApplicationApi | undefined;
@@ -109,6 +115,7 @@ export class TaskModal {
     this.tasks_abyssPrivate = tasks;
     this.search_abyssPrivate = options.search;
     this.onShowInTaskList_abyssPrivate = options.onShowInTaskList;
+    this.onTaskListDraftHandoff_abyssPrivate = options.onTaskListDraftHandoff;
     this.commentTimeContext_abyssPrivate = commentTimeContext;
     this.interactionOwnership_abyssPrivate = ownership ?? noInteractionOwnership;
   }
@@ -163,7 +170,7 @@ export class TaskModal {
       settings: this.settings_abyssPrivate,
       tasks: this.tasks_abyssPrivate,
       search: this.search_abyssPrivate,
-      onShowInTaskList: this.onShowInTaskList_abyssPrivate,
+      onShowInTaskList: this.listHandoff_abyssPrivate(openingState),
       dependencySearch: this.createDependencySearch_abyssPrivate(),
       onRenderHeaderActions: (actions) => {
         this.renderCloseButton_abyssPrivate(actions);
@@ -195,6 +202,33 @@ export class TaskModal {
     });
 
     this.bindScope_abyssPrivate(modal, scope);
+  }
+
+  private listHandoff_abyssPrivate(openingState: AppState): ShowInTaskList | undefined {
+    const action = this.onShowInTaskList_abyssPrivate;
+    if (action === undefined) return undefined;
+    return (target, request) => {
+      const current = (): boolean =>
+        this.innerState_abyssPrivate === openingState &&
+        !request.signal.aborted &&
+        request.isCurrent();
+      return action(target, {
+        ...request,
+        isCurrent: current,
+        onCommitted: (root, path) => {
+          if (!current()) return;
+          const drafts = this.innerPanel_abyssPrivate?.captureDraftHandoff();
+          if (
+            drafts !== undefined &&
+            (this.onTaskListDraftHandoff_abyssPrivate === undefined
+              ? isDirtyDraftBundle(drafts.live) || drafts.detached.length > 0
+              : !this.onTaskListDraftHandoff_abyssPrivate(drafts, root, path))
+          )
+            return;
+          this.close();
+        },
+      });
+    };
   }
 
   private bindScope_abyssPrivate(modal: HTMLElement, scope: Scope): void {

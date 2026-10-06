@@ -145,15 +145,25 @@ function firstFenceRange(text: string): SourceRange | undefined {
   };
 }
 
+function nextOrderedRange(
+  ranges: readonly SourceRange[],
+  at: number,
+  cursor: { index: number },
+): SourceRange | undefined {
+  while ((ranges[cursor.index]?.to ?? Number.POSITIVE_INFINITY) <= at) cursor.index++;
+  return ranges[cursor.index];
+}
+
 /** Finite literal guard, consulted only when protecting a structural continuation. */
 function rawRanges(text: string): readonly SourceRange[] {
   const code = inlineCodeRanges(text);
   const fence = firstFenceRange(text);
   const ranges: SourceRange[] = fence === undefined ? [...code] : [...code, fence];
   let cursor = 0;
+  const codeCursor = { index: 0 };
   while (cursor < text.length) {
-    const span = code.find((range) => cursor >= range.from && cursor < range.to);
-    if (span !== undefined) {
+    const span = nextOrderedRange(code, cursor, codeCursor);
+    if (span !== undefined && cursor >= span.from) {
       cursor = span.to;
       continue;
     }
@@ -164,7 +174,7 @@ function rawRanges(text: string): readonly SourceRange[] {
       cursor = end;
     }
   }
-  return ranges;
+  return ranges.sort((left, right) => left.from - right.from);
 }
 
 export function normalizeCommentText(input: string): CommentTextResult {
@@ -176,12 +186,14 @@ export function normalizeCommentText(input: string): CommentTextResult {
   const text = lines.join('\n');
   let raw: readonly SourceRange[] | undefined;
   let offset = 0;
+  const rawCursor = { index: 0 };
   const protectedLines: string[] = [];
   for (const [index, line] of lines.entries()) {
     const marker = index === 0 ? undefined : commentStructuralMarker(line);
     if (marker !== undefined) {
       raw ??= rawRanges(text);
-      if (raw.some((range) => offset + marker.from < range.to && offset + marker.to > range.from))
+      const range = nextOrderedRange(raw, offset + marker.from, rawCursor);
+      if (offset + marker.to > (range?.from ?? Number.POSITIVE_INFINITY))
         return { type: 'invalid', reason: 'unsafe-raw-continuation' };
       protectedLines.push(
         line.slice(0, marker.from) +

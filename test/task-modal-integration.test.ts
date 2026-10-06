@@ -1,6 +1,8 @@
 import { Scope } from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
-import type { AppState } from '../src/app/AppState';
+import { AppState } from '../src/app/AppState';
+import { navigateTaskListTarget } from '../src/panels/center/TaskListNavigation';
+import type { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type {
   TaskApplicationApi,
@@ -12,6 +14,7 @@ import type {
   TaskSnapshot,
 } from '../src/tasks';
 import { TaskModal } from '../src/ui/TaskModal';
+import { PanelNavigator } from '../src/views/panelNavigation';
 import {
   createAppWithFiles,
   dropFocusFromDisabledButton,
@@ -2264,3 +2267,202 @@ it.each([false, true])(
     }
   },
 );
+
+async function modalHandoffHarness(mode: string) {
+  const h = await inspectorHarness('- [ ] Current\n  - [ ] Child');
+  const root = h.node('Current').root;
+  const child = h.node('Child').node;
+  const outer = new AppState();
+  let accept: (() => void) | undefined;
+  const navigation = new PanelNavigator(outer, structuredClone(DEFAULT_SETTINGS), {
+    calendarView: () => 'month',
+    setCalendarView: () => {},
+    openQuickCapture: () => {},
+    finishProjectTableEditorBefore: (action) => {
+      accept = action;
+      if (mode === 'accepted' || mode.startsWith('dirty') || mode.startsWith('detached')) action();
+    },
+  });
+  let held = 0;
+  const modal = new TaskModal({
+    app: h.app,
+    statusRegistry: testStatusRegistry(),
+    tasks: h.api,
+    queries: h.index,
+    interactionOwnership: {
+      acquire: () => {
+        held++;
+        return {
+          release: () => {
+            held--;
+          },
+        };
+      },
+    },
+    onTaskListDraftHandoff:
+      mode === 'dirty-unavailable'
+        ? undefined
+        : (bundle, current) => {
+            expect(outer.get('taskStack')).toEqual([root, child]);
+            if (mode !== 'dirty-stale') h.state.set('taskStack', [root, child]);
+            if (mode === 'dirty-conflict')
+              expectDefined(h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input')).value =
+                'newer receiver draft';
+            if (mode === 'detached-conflict')
+              h.panel.detachDraftState({
+                ...bundle.detached[0],
+                entries: expectDefined(bundle.detached[0]).entries.map((draft) =>
+                  draft.kind === 'new-comment'
+                    ? { ...draft, value: 'newer detached draft' }
+                    : draft,
+                ),
+              });
+            return h.panel.receiveDraftHandoff(bundle, current, [root, child]);
+          },
+    onShowInTaskList: (_target, request) =>
+      navigateTaskListTarget(
+        {
+          type: 'resolved',
+          target: {
+            root,
+            path: [root, child],
+            address: {
+              epoch: 'handoff-test',
+              version: 0,
+              rootId: 0,
+              childLines: [1],
+            },
+          },
+        },
+        {
+          search: h.search,
+          state: outer,
+          navigation,
+          request,
+          destination: () => 'today',
+          installReveal: () => {},
+          onCommitted: () => {},
+          afterCommit: () => request.onCommitted?.(root, [root, child]),
+        },
+      ),
+  });
+  return { h, root, child, outer, modal, held: () => held, accept: () => accept?.() };
+}
+
+function prepareHandoffDrafts(mode: string, modal: TaskModal, root: TaskSnapshot): void {
+  if (mode.startsWith('detached')) {
+    const panel = (
+      modal as unknown as {
+        innerPanel_abyssPrivate: RightPanel;
+      }
+    ).innerPanel_abyssPrivate;
+    panel.detachDraftState({
+      origin: { taskTitle: 'Previous', filePath: 'old.md', line: 3 },
+      entries: [
+        {
+          kind: 'new-comment',
+          parent: { type: 'task', ref: root.ref },
+          value: 'earlier detached draft',
+          selectionStart: 0,
+          selectionEnd: 0,
+          hadFocus: false,
+          dirty: true,
+        },
+      ],
+    });
+  }
+  if (mode.startsWith('dirty')) {
+    expectDefined(
+      document.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+    ).value = 'keep my draft';
+  }
+}
+
+function assertHandoffDrafts(mode: string, h: Awaited<ReturnType<typeof inspectorHarness>>): void {
+  if (mode === 'detached-conflict') {
+    expect(expectDefined(h.el.querySelector('.abyss-detached-draft')).textContent).toContain(
+      'newer detached draft',
+    );
+    expect(
+      expectDefined(document.querySelector('.abyss-modal .abyss-detached-draft')).textContent,
+    ).toContain('earlier detached draft');
+  }
+  if (mode === 'dirty')
+    expect(
+      expectDefined(h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input')).value,
+    ).toBe('keep my draft');
+  if (mode === 'dirty-conflict') {
+    expect(
+      expectDefined(h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input')).value,
+    ).toBe('newer receiver draft');
+    expect(expectDefined(h.el.querySelector('.abyss-detached-draft')).textContent).toContain(
+      'keep my draft',
+    );
+  }
+  if (mode === 'detached') {
+    expect(expectDefined(h.el.querySelector('.abyss-detached-draft')).textContent).toContain(
+      'earlier detached draft',
+    );
+    expect(expectDefined(h.el.querySelector('.abyss-detached-draft')).textContent).toContain(
+      'Previous',
+    );
+  }
+  if (mode === 'dirty-unavailable' || mode === 'dirty-stale')
+    expect(
+      expectDefined(
+        document.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+      ).value,
+    ).toBe('keep my draft');
+}
+
+it.each([
+  'accepted',
+  'delayed',
+  'rejected',
+  'cancelled',
+  'dirty',
+  'dirty-unavailable',
+  'dirty-conflict',
+  'dirty-stale',
+  'detached',
+  'detached-conflict',
+])('hands modal ownership to the committed list only: %s', async (mode) => {
+  const { h, root, child, outer, modal, held, accept } = await modalHandoffHarness(mode);
+  try {
+    modal.open(root);
+    click(
+      expectDefined(document.querySelector<HTMLElement>('.abyss-modal .abyss-subtask-content')),
+    );
+    prepareHandoffDrafts(mode, modal, root);
+    click(
+      expectDefined(
+        document.querySelector<HTMLElement>('.abyss-modal [aria-label="More actions"]'),
+      ),
+    );
+    click(
+      expectDefined(
+        [...document.querySelectorAll<HTMLElement>('.abyss-modal .abyss-context-item')].find(
+          (item) => item.textContent === 'Show in task list',
+        ),
+      ),
+    );
+    await flushMicrotasks();
+    if (mode === 'delayed' || mode === 'rejected' || mode === 'cancelled') {
+      expect(document.querySelector('.abyss-modal')).not.toBeNull();
+      expect(held()).toBe(1);
+    }
+    if (mode === 'delayed') accept();
+    if (mode === 'cancelled') {
+      modal.open(root);
+      accept();
+    }
+    const closed = ['accepted', 'delayed', 'dirty', 'dirty-conflict', 'detached'].includes(mode);
+    expect(document.querySelector('.abyss-modal') === null).toBe(closed);
+    expect(held()).toBe(closed ? 0 : 1);
+    if (closed) expect(outer.get('taskStack')).toEqual([root, child]);
+    assertHandoffDrafts(mode, h);
+  } finally {
+    modal.close();
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+  }
+});

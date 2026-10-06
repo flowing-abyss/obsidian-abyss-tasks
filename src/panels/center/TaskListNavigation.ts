@@ -14,6 +14,8 @@ import type { PanelNavigationActions } from '../../views/panelNavigation';
 export interface TaskListNavigationRequest {
   readonly signal: AbortSignal;
   readonly isCurrent: () => boolean;
+  readonly onCommitted?:
+    ((root: TaskSnapshot, path: readonly TaskSelectionNode[]) => void) | undefined;
 }
 export interface ResolvedTaskListTarget {
   readonly address: TaskSearchAddress;
@@ -85,6 +87,7 @@ export async function navigateTaskListTarget(
     readonly destination: (root: TaskSnapshot) => ListSelection;
     readonly installReveal: (address: TaskSearchAddress, selection: ListSelection) => void;
     readonly onCommitted: () => void;
+    readonly afterCommit?: (() => void) | undefined;
   },
 ): Promise<void> {
   const { request, search, navigation, state } = options;
@@ -105,6 +108,7 @@ export async function navigateTaskListTarget(
   if (!current()) return;
   const selection = options.destination(target.root);
   navigation.openList(selection, {
+    afterCommit: () => options.afterCommit?.(),
     canCommit: current,
     commit: () => {
       options.installReveal(target.address, selection);

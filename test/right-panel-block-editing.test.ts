@@ -1,4 +1,4 @@
-import { MarkdownRenderer, requireApiVersion } from 'obsidian';
+import { Component, MarkdownRenderer, requireApiVersion } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
@@ -3246,4 +3246,160 @@ it('aborts completion witness staging when its source callback rejects', async (
     vi.restoreAllMocks();
     for (const cleanup of inspectorCleanups.splice(0)) cleanup();
   }
+});
+
+describe('transient inspector editor ownership', () => {
+  afterEach(() => {
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['.abyss-right-title-view', '.abyss-right-title-edit'],
+    ['.abyss-right-desc-view', '.abyss-right-desc-edit'],
+    ['.abyss-comment-text', '.abyss-comment-edit-input'],
+  ])(
+    'releases every closed %s editor owner while retaining the inspector',
+    async (view, editor) => {
+      const registrations = new Set<() => unknown>();
+      const register = Reflect.get(Component.prototype, 'register') as (
+        this: Component,
+        callback: () => unknown,
+      ) => void;
+      vi.spyOn(Component.prototype, 'register').mockImplementation(function (
+        this: Component,
+        callback,
+      ) {
+        registrations.add(callback);
+        register.call(this, () => {
+          registrations.delete(callback);
+          callback();
+        });
+      });
+      const h = await inspectorHarness('- [ ] Current\n  - > description\n  - comment');
+      const header = h.el.querySelector('.abyss-right-header');
+      const baseline = registrations.size;
+      for (let i = 0; i < 20; i++) {
+        expectDefined(h.el.querySelector<HTMLElement>(view)).click();
+        const input = expectDefined(h.el.querySelector<HTMLTextAreaElement>(editor));
+        input.dispatchEvent(
+          new KeyboardEvent('keydown', { key: i % 2 === 0 ? 'Escape' : 'Enter', bubbles: true }),
+        );
+        await flushMicrotasks(20);
+        expect(input.isConnected).toBe(false);
+        expect(registrations.size).toBe(baseline);
+        expect(h.el.querySelector('.abyss-right-header')).toBe(header);
+      }
+      const off = subscribeInspectorReconciliation(h);
+      try {
+        for (let i = 0; i < 5; i++) {
+          expectDefined(h.el.querySelector<HTMLElement>(view)).click();
+          const input = expectDefined(h.el.querySelector<HTMLTextAreaElement>(editor));
+          input.value = `changed ${i}`;
+          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+          await vi.waitFor(() => {
+            expect(input.isConnected).toBe(false);
+          });
+          expect(registrations.size).toBe(baseline);
+          expect(h.el.querySelector('.abyss-right-header')).toBe(header);
+        }
+        if (editor === '.abyss-comment-edit-input') {
+          expectDefined(h.el.querySelector<HTMLElement>(view)).click();
+          const input = expectDefined(h.el.querySelector<HTMLTextAreaElement>(editor));
+          input.value = '';
+          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+          await vi.waitFor(() => {
+            expect(h.el.querySelector('.abyss-comment-row')).toBeNull();
+          });
+          expect(input.isConnected).toBe(false);
+          expect(registrations.size).toBeLessThan(baseline);
+        }
+      } finally {
+        off();
+      }
+      expectDefined(
+        h.el.querySelector<HTMLElement>(
+          editor === '.abyss-comment-edit-input' ? '.abyss-right-title-view' : view,
+        ),
+      ).click();
+      h.panel.destroy();
+      expect(registrations.size).toBe(0);
+    },
+  );
+
+  it.each(['Escape', 'pointerdown', 'focusin'])(
+    'unlinks closed subtask entries after %s',
+    async (gesture) => {
+      const h = await inspectorHarness('- [ ] Current');
+      const component = Reflect.get(h.panel, 'md_abyssPrivate') as {
+        cleanups__: unknown[];
+        _children: unknown[];
+      };
+      const cleanups = component.cleanups__.length;
+      const children = component._children.length;
+      for (let index = 0; index < 20; index++) {
+        expectDefined(h.el.querySelector<HTMLElement>('.abyss-subtask-add-row')).click();
+        const input = expectDefined(
+          h.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
+        );
+        if (gesture === 'Escape')
+          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        else h.el.dispatchEvent(new Event(gesture, { bubbles: true }));
+        expect(input.isConnected).toBe(false);
+        expect(component.cleanups__).toHaveLength(cleanups);
+        expect(component._children).toHaveLength(children);
+      }
+    },
+  );
+
+  it('preserves authored existing comment whitespace through an actual attachment drop', async () => {
+    const source = '- [ ] Current\r\n  -   first  \r\n    \tsecond  ';
+    const h = await inspectorHarness(source, 'Current', { 'asset.txt': 'asset' });
+    Object.assign(h.app, {
+      dragManager: { draggable: { file: h.app.vault.getAbstractFileByPath('asset.txt') } },
+    });
+    const off = subscribeInspectorReconciliation(h);
+    try {
+      const row = expectDefined(h.el.querySelector<HTMLElement>('.abyss-comment-row'));
+      const header = h.el.querySelector('.abyss-right-header');
+      const event = new Event('drop', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'dataTransfer', {
+        value: {
+          files: [],
+          types: ['text/plain'],
+          getData: (type: string) => (type === 'text/plain' ? '[[asset.txt]]' : ''),
+        },
+      });
+      row.dispatchEvent(event);
+      await vi.waitFor(async () => {
+        expect(await h.read()).toContain('[[asset|');
+      });
+      expect(await h.read()).toBe(`${source} [[asset|file]]`);
+      expect(h.index.list()[0]?.comments[0]?.text).toBe('  first  \n\tsecond   [[asset|file]]');
+      expect(h.el.querySelector('.abyss-right-header')).toBe(header);
+    } finally {
+      off();
+    }
+  });
+
+  it('keeps the context-click target layout until contextmenu dispatch, but retires submission immediately', async () => {
+    const h = await inspectorHarness('- [ ] Current\n  - [[asset.txt]]', 'Current', {
+      'asset.txt': '',
+    });
+    expectDefined(h.el.querySelector<HTMLElement>('.abyss-subtask-add-row')).click();
+    const input = expectDefined(h.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input'));
+    const target = expectDefined(h.el.querySelector<HTMLElement>('.abyss-comment-text'));
+    target.dispatchEvent(new MouseEvent('pointerdown', { button: 2, bubbles: true }));
+    expect(input.isConnected).toBe(true);
+    target.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    expect(input.isConnected).toBe(true);
+    input.value = 'stale submission';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    target.dispatchEvent(new MouseEvent('contextmenu', { button: 2, bubbles: true }));
+    expect(input.isConnected).toBe(true);
+    await vi.waitFor(() => {
+      expect(input.isConnected).toBe(false);
+    });
+    expect(await h.read()).not.toContain('stale submission');
+  });
 });

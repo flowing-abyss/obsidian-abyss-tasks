@@ -15,7 +15,7 @@ import {
   type Weekday,
   type YearlyChoice,
 } from './recurrence/recurrenceEditorModel';
-import { taskNodeRef } from './taskSelection';
+import { taskNodeRef, type TaskSelectionNode } from './taskSelection';
 
 interface TextDraftBase {
   readonly value: string;
@@ -347,3 +347,14 @@ export function draftIdentity(draft: RightPanelDraftState): string {
   }
   return JSON.stringify([draft.kind, nodeRefKey('target' in draft ? draft.target : draft.parent)]);
 }
+
+export interface InspectorDraftHandoff {
+  readonly live: RightPanelDraftBundle | undefined;
+  readonly detached: readonly RightPanelDraftBundle[];
+}
+
+export type TaskListDraftHandoff = (
+  drafts: InspectorDraftHandoff,
+  root: TaskSnapshot,
+  selection: readonly TaskSelectionNode[],
+) => boolean;
