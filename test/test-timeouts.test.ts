@@ -766,6 +766,30 @@ function runFlags(scripts: Readonly<Record<string, string>>): string[] {
   return flags;
 }
 
+it(
+  'reads runner signal forwarding and a directly invoked finish hook as light work',
+  () => {
+    expect(
+      findings([
+        "import { it } from 'vitest';",
+        'async function helper(signal: AbortSignal) { signal.throwIfAborted(); }',
+        "it('owns cancellation', async ({ signal, onTestFinished }) => {",
+        '  const lifetime = new AbortController();',
+        '  const abort = () => lifetime.abort(signal.reason);',
+        "  signal.addEventListener('abort', abort, { once: true });",
+        '  if (signal.aborted) abort();',
+        '  onTestFinished(() => {',
+        "    signal.removeEventListener('abort', abort);",
+        "    lifetime.abort(new Error('Search test finished'));",
+        '  });',
+        '  await helper(lifetime.signal);',
+        '});',
+      ]),
+    ).toEqual([]);
+  },
+  TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+);
+
 describe('gate time limits', () => {
   it(
     'holds every row and hook that either gate runs to the limit of its work',

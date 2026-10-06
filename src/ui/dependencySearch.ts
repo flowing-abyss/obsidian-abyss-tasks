@@ -383,6 +383,7 @@ class DependencySearchController {
   #movement: AbortController | undefined;
   #queuedMove: string | undefined;
   #releaseMovePin: (() => void) | undefined;
+  #moveScrollTop: number | undefined;
   #geometryCleanup: (() => void) | undefined;
   #geometryAvailable = false;
   #current: TaskNodeRef | undefined;
@@ -412,6 +413,8 @@ class DependencySearchController {
     view.list.addEventListener(
       'scroll',
       () => {
+        if (this.#releaseMovePin !== undefined && this.#moveScrollTop === view.list.scrollTop)
+          return;
         this.#cancelDemand();
         this.#cancelMove();
         this.#queuedMove = undefined;
@@ -752,7 +755,9 @@ class DependencySearchController {
     const request = this.#request;
     // Surface reconciliation owns this stack; projection starts after it has settled.
     queueMicrotask(() => {
-      if (request === this.#request) this.#startDemand();
+      if (request !== this.#request) return;
+      if (this.#releaseMovePin !== undefined) this.#moveScrollTop = this.view.list.scrollTop;
+      this.#startDemand();
     });
   };
   #startDemand(): void {
@@ -957,6 +962,7 @@ class DependencySearchController {
     this.#options = options ?? [];
     this.#refreshSelectedOffset();
     for (const option of this.#options) this.#renderOption(option);
+    this.#revealMovement();
     if (exhausted) this.#completeEmpty();
     this.#settled = this.#mountedReady();
     if (this.#settled) this.view.createAffordance.removeAttribute('aria-disabled');
@@ -965,6 +971,18 @@ class DependencySearchController {
     this.#surface?.refreshMeasurements();
     setBusy(this.view.element, this.view.input, this.#commit.busy());
     this.#finishMovement();
+  }
+  #revealMovement(): void {
+    // Hydrated labels replace placeholder heights before movement gives up its pin.
+    if (this.#releaseMovePin !== undefined && this.#selectedOffset !== undefined) {
+      this.#publishing = true;
+      try {
+        this.#surface?.reveal(String(this.#selectedOffset));
+        this.#moveScrollTop = this.view.list.scrollTop;
+      } finally {
+        this.#publishing = false;
+      }
+    }
   }
   #finishMovement(): void {
     if (!this.#settled) return;

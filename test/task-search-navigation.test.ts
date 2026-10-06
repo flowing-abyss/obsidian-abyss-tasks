@@ -9,7 +9,11 @@ import { TaskSearchService } from '../src/tasks/infrastructure/search/TaskSearch
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { deferred, expectDefined, flushMicrotasks, methodOf, useRealMoment } from './helpers';
 import { taskCardMountBound } from './support/taskPanelViewport';
-import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
+import { createCanonicalSearchHarness } from './support/taskSearchHarness';
+import {
+  mountCanonicalSearchUi,
+  searchUiCancellationDiagnostic,
+} from './support/taskSearchUiHarness';
 import { recordVirtualSurfaceResources } from './support/virtualSurfaceResources';
 
 useRealMoment();
@@ -19,8 +23,9 @@ async function navigationSearchHarness(
   count = 101,
   organizationScheduler?: TaskSearchOptions['organizationScheduler'],
   rootTitle = 'zzz needle',
-  readYield?: (signal: AbortSignal) => Promise<void>,
+  ...completion: [readYield?: (signal: AbortSignal) => Promise<void>, lifetimeSignal?: AbortSignal]
 ) {
+  const [readYield, lifetimeSignal] = completion;
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.listViewStates = {
     inbox: {
@@ -71,12 +76,13 @@ async function navigationSearchHarness(
     false,
     undefined,
     readYield,
+    lifetimeSignal,
   );
   try {
     // This fixture exercises organization/reveal; cold preparation has separate coverage.
-    await h.search.prepare(new AbortController().signal);
+    await h.search.prepare(lifetimeSignal ?? new AbortController().signal);
     h.query('needle');
-    await h.completed();
+    await h.completed('initial-search');
     const owners = h.panel as unknown as {
       taskSearch_abyssPrivate: TaskSearch;
       taskSearchReveal_abyssPrivate: TaskSearchReveal;
@@ -85,9 +91,9 @@ async function navigationSearchHarness(
     const nodes = vi.spyOn(h.index, 'listNodes');
     const cursor = await h.search.open(
       { kind: 'roots', query: 'needle' },
-      new AbortController().signal,
+      lifetimeSignal ?? new AbortController().signal,
     );
-    const page = await h.search.read(cursor, 0, 50, new AbortController().signal);
+    const page = await h.search.read(cursor, 0, 50, lifetimeSignal ?? new AbortController().signal);
     const hit = expectDefined(page.hits[0]);
     const child = { ...hit.address, childLines: [2, 2] };
     return {
@@ -178,6 +184,360 @@ it.each(['initialization', 'mount', 'preparation', 'lookup'] as const)(
     }
   },
 );
+
+it.each(['panel', 'search'] as const)(
+  'releases later owners and detaches cancellation after %s teardown throws',
+  async (owner) => {
+    const lifetime = new AbortController();
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': '- [ ] needle' },
+      structuredClone(DEFAULT_SETTINGS),
+      'search',
+      undefined,
+      false,
+      undefined,
+      undefined,
+      lifetime.signal,
+    );
+    const destroyPanel = h.panel.destroy.bind(h.panel);
+    const disposeSearch = h.search.dispose.bind(h.search);
+    const failure = new Error(`${owner} teardown failed`);
+    const release = (
+      owner === 'panel' ? vi.spyOn(h.panel, 'destroy') : vi.spyOn(h.search, 'dispose')
+    ).mockImplementation(() => {
+      if (owner === 'search') disposeSearch();
+      throw failure;
+    });
+    const remove = vi.spyOn(lifetime.signal, 'removeEventListener');
+    try {
+      expect(() => {
+        h.dispose();
+      }).toThrow(failure);
+      expect(h.root.isConnected).toBe(false);
+      const snapshot = h.source.subscribe(() => {});
+      snapshot.unsubscribe();
+      expect(snapshot.state.type).toBe('disposed');
+      expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+      expect(() => {
+        h.dispose();
+      }).not.toThrow();
+      expect(() => {
+        h.close();
+      }).not.toThrow();
+    } finally {
+      release.mockRestore();
+      destroyPanel();
+      disposeSearch();
+      h.index.destroy();
+      h.root.remove();
+      h.dispose();
+    }
+  },
+);
+
+it('releases the canonical index when Search disposal throws and repeated close is safe', async () => {
+  const h = await createCanonicalSearchHarness(
+    { 'a.md': '- [ ] needle' },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  const disposeSearch = h.search.dispose.bind(h.search);
+  const failure = new Error('Search teardown failed');
+  const release = vi.spyOn(h.search, 'dispose').mockImplementation(() => {
+    disposeSearch();
+    throw failure;
+  });
+  try {
+    expect(() => {
+      h.close();
+    }).toThrow(failure);
+    const snapshot = h.source.subscribe(() => {});
+    snapshot.unsubscribe();
+    expect(snapshot.state.type).toBe('disposed');
+    expect(() => {
+      h.close();
+    }).not.toThrow();
+  } finally {
+    release.mockRestore();
+    disposeSearch();
+    h.index.destroy();
+  }
+});
+
+it('reports the original cancellation cleanup failure after releasing later UI owners', async () => {
+  const lifetime = new AbortController();
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': '- [ ] needle' },
+    structuredClone(DEFAULT_SETTINGS),
+    'search',
+    undefined,
+    false,
+    undefined,
+    undefined,
+    lifetime.signal,
+  );
+  const destroyPanel = h.panel.destroy.bind(h.panel);
+  const disposeSearch = h.search.dispose.bind(h.search);
+  const failure = new Error('Panel teardown failed');
+  const secondary = new Error('Search teardown also failed');
+  const panelRelease = vi.spyOn(h.panel, 'destroy').mockImplementation(() => {
+    throw failure;
+  });
+  const searchRelease = vi.spyOn(h.search, 'dispose').mockImplementation(() => {
+    disposeSearch();
+    throw secondary;
+  });
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const remove = vi.spyOn(lifetime.signal, 'removeEventListener');
+  h.root.dataset['searchPhase'] = 'pending';
+  const waiting = h.completed('destination-reveal').catch((error: unknown) => error);
+  try {
+    lifetime.abort();
+    expect(await waiting).toBeInstanceOf(Error);
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Search UI cancellation cleanup failed',
+      failure,
+    );
+    expect(h.root.isConnected).toBe(false);
+    const snapshot = h.source.subscribe(() => {});
+    snapshot.unsubscribe();
+    expect(snapshot.state.type).toBe('disposed');
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+    expect(() => {
+      h.dispose();
+    }).not.toThrow();
+  } finally {
+    panelRelease.mockRestore();
+    searchRelease.mockRestore();
+    destroyPanel();
+    disposeSearch();
+    h.index.destroy();
+    h.dispose();
+  }
+});
+
+it('reports setup cancellation cleanup failure and detaches its listener', async () => {
+  const lifetime = new AbortController();
+  const held = deferred<void>();
+  const entered = deferred<TaskIndex>();
+  const initialize = methodOf(TaskIndex.prototype, 'initialize');
+  vi.spyOn(TaskIndex.prototype, 'initialize').mockImplementation(async function (this: TaskIndex) {
+    await initialize.call(this);
+    entered.resolve(this);
+    await held.promise;
+  });
+  const acquiring = createCanonicalSearchHarness(
+    { 'a.md': '- [ ] needle' },
+    structuredClone(DEFAULT_SETTINGS),
+    true,
+    undefined,
+    undefined,
+    undefined,
+    lifetime.signal,
+  ).catch((error: unknown) => error);
+  const index = await entered.promise;
+  const destroy = index.destroy.bind(index);
+  const failure = new Error('Index teardown failed');
+  const release = vi.spyOn(index, 'destroy').mockImplementation(() => {
+    destroy();
+    throw failure;
+  });
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const remove = vi.spyOn(lifetime.signal, 'removeEventListener');
+  try {
+    lifetime.abort();
+    expect(log).toHaveBeenCalledExactlyOnceWith(
+      '[abyss-tasks] Search setup cancellation cleanup failed',
+      failure,
+    );
+    const snapshot = index.searchSource().subscribe(() => {});
+    snapshot.unsubscribe();
+    expect(snapshot.state.type).toBe('disposed');
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+    held.resolve();
+    expect(await acquiring).toBeInstanceOf(Error);
+  } finally {
+    held.resolve();
+    await acquiring;
+    release.mockRestore();
+    destroy();
+  }
+});
+
+it('cancels acquired initialization before any panel is published', async () => {
+  const lifetime = new AbortController();
+  const held = deferred<void>();
+  const entered = deferred<TaskIndex>();
+  const initialize = methodOf(TaskIndex.prototype, 'initialize');
+  vi.spyOn(TaskIndex.prototype, 'initialize').mockImplementation(async function (this: TaskIndex) {
+    await initialize.call(this);
+    entered.resolve(this);
+    await held.promise;
+  });
+  const mount = vi.spyOn(CenterPanel.prototype, 'mount');
+  const acquiring = mountCanonicalSearchUi(
+    { 'a.md': '- [ ] needle' },
+    structuredClone(DEFAULT_SETTINGS),
+    'search',
+    undefined,
+    false,
+    undefined,
+    undefined,
+    lifetime.signal,
+  );
+  const result = acquiring.then(
+    (h) => {
+      h.dispose();
+      return 'published';
+    },
+    (error: unknown) => error,
+  );
+  const index = await entered.promise;
+  lifetime.abort(new Error('Setup cancelled'));
+  const snapshot = index.searchSource().subscribe(() => {});
+  try {
+    expect(snapshot.state.type).toBe('disposed');
+  } finally {
+    snapshot.unsubscribe();
+    held.resolve();
+    await result;
+    index.destroy();
+  }
+  expect(await result).toBeInstanceOf(Error);
+  expect(mount).not.toHaveBeenCalled();
+});
+
+it('cancels first preparation before the navigation factory returns', async () => {
+  const resources = recordVirtualSurfaceResources();
+  const empty = resources.counts();
+  const lifetime = new AbortController();
+  const entered = deferred<void>();
+  const prepare = methodOf(TaskSearchService.prototype, 'prepare');
+  let pendingTurn: ReturnType<typeof setImmediate> | undefined;
+  let turnRan = false;
+  vi.spyOn(TaskSearchService.prototype, 'prepare').mockImplementationOnce(async function (
+    this: TaskSearchService,
+    signal,
+  ) {
+    await prepare.call(this, signal);
+    await new Promise<void>((resolve, reject) => {
+      const abort = (): void => {
+        clearImmediate(expectDefined(pendingTurn));
+        signal.removeEventListener('abort', abort);
+        reject(new TaskSearchError('aborted', 'Held preparation cancelled'));
+      };
+      pendingTurn = setImmediate(() => {
+        turnRan = true;
+        signal.removeEventListener('abort', abort);
+        resolve();
+      });
+      signal.addEventListener('abort', abort, { once: true });
+      entered.resolve();
+    });
+  });
+  const acquiring = navigationSearchHarness(2, undefined, 'zzz needle', undefined, lifetime.signal);
+  const result = acquiring.then(
+    (h) => {
+      h.dispose();
+      return 'published';
+    },
+    (error: unknown) => error,
+  );
+  await entered.promise;
+  lifetime.abort();
+  expect(resources.counts()).toEqual(empty);
+  expect(await result).toBeInstanceOf(Error);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(turnRan).toBe(false);
+});
+
+it.each(['external', 'dispose'] as const)(
+  'cancels a pending destination receipt through %s ownership',
+  async (ending) => {
+    const resources = recordVirtualSurfaceResources();
+    const empty = resources.counts();
+    const lifetime = new AbortController();
+    const h = await navigationSearchHarness(2, undefined, 'zzz needle', undefined, lifetime.signal);
+    const entered = deferred<void>();
+    const hydrate = h.search.resolveHits.bind(h.search);
+    let pendingTurn: ReturnType<typeof setImmediate> | undefined;
+    let turnRan = false;
+    vi.spyOn(h.search, 'resolveHits').mockImplementation(async (hits, signal) => {
+      const result = await hydrate(hits, signal);
+      if (h.state.get('mode') === 'tasks')
+        await new Promise<void>((resolve, reject) => {
+          const abort = (): void => {
+            clearImmediate(expectDefined(pendingTurn));
+            signal.removeEventListener('abort', abort);
+            reject(new TaskSearchError('aborted', 'Held destination cancelled'));
+          };
+          pendingTurn = setImmediate(() => {
+            turnRan = true;
+            signal.removeEventListener('abort', abort);
+            resolve();
+          });
+          signal.addEventListener('abort', abort, { once: true });
+          entered.resolve();
+        });
+      return result;
+    });
+    try {
+      await h.activateChild();
+      await entered.promise;
+      const waiting = h.completed('destination-reveal').catch((error: unknown) => error);
+      if (ending === 'external') lifetime.abort();
+      else h.dispose();
+      expect(await waiting).toBeInstanceOf(Error);
+      expect(String(await waiting)).toContain('destination-reveal');
+      if (ending === 'external')
+        expect(searchUiCancellationDiagnostic(lifetime.signal)).toContain('destination-reveal');
+      expect(h.root.isConnected).toBe(false);
+      const snapshot = h.source.subscribe(() => {});
+      snapshot.unsubscribe();
+      expect(snapshot.state.type).toBe('disposed');
+      expect(resources.counts()).toEqual(empty);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(turnRan).toBe(false);
+      h.dispose();
+      expect(resources.counts()).toEqual(empty);
+      await flushMicrotasks();
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('normal finish aborts the local lifetime and releases acquired owners', async ({
+  signal,
+  onTestFinished,
+}) => {
+  const lifetime = new AbortController();
+  const abort = (): void => {
+    lifetime.abort(signal.reason);
+  };
+  signal.addEventListener('abort', abort, { once: true });
+  if (signal.aborted) abort();
+  onTestFinished(() => {
+    expect(lifetime.signal.aborted).toBe(true);
+    expect(h.root.isConnected).toBe(false);
+    const snapshot = h.source.subscribe(() => {});
+    snapshot.unsubscribe();
+    expect(snapshot.state.type).toBe('disposed');
+  });
+  onTestFinished(() => {
+    signal.removeEventListener('abort', abort);
+    lifetime.abort(new Error('Search test finished'));
+  });
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': '- [ ] needle' },
+    structuredClone(DEFAULT_SETTINGS),
+    'search',
+    undefined,
+    false,
+    undefined,
+    undefined,
+    lifetime.signal,
+  );
+});
 
 it('installs exact child and receipt before mode delivery, then reaches its exact root in the complete compact order', async () => {
   const h = await navigationSearchHarness();
@@ -540,7 +900,22 @@ it('an old detached card cannot activate through a newer live request', async ()
   }
 });
 
-it('navigates the last of 50k real compact records cooperatively with bounded exact hydration', async () => {
+it('navigates the last of 50k real compact records cooperatively with bounded exact hydration', async ({
+  signal,
+  onTestFinished,
+}) => {
+  const lifetime = new AbortController();
+  const abort = (): void => {
+    lifetime.abort(signal.reason);
+  };
+  signal.addEventListener('abort', abort, { once: true });
+  if (signal.aborted) abort();
+  onTestFinished(() => {
+    signal.removeEventListener('abort', abort);
+    lifetime.abort(new Error('Search test finished'));
+    const diagnostic = searchUiCancellationDiagnostic(lifetime.signal);
+    if (signal.aborted && diagnostic !== undefined) console.error(diagnostic);
+  });
   let yields = 0;
   let readYields = 0;
   // Node's global setImmediate gives this correctness fixture a real cancellable task turn.
@@ -573,11 +948,12 @@ it('navigates the last of 50k real compact records cooperatively with bounded ex
     }),
     'zzz needle',
     readYield,
+    lifetime.signal,
   );
   const hydrate = vi.spyOn(h.search, 'resolveHits');
   try {
     await h.activateChild();
-    await h.completed();
+    await h.completed('destination-reveal');
     expect(hydrate.mock.calls.every(([hits]) => hits.length <= 50)).toBe(true);
     expect(
       new Set(hydrate.mock.calls.flatMap(([hits]) => hits.map((hit) => hit.address.rootId))).size,

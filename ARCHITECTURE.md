@@ -465,7 +465,9 @@ Holders stay inert and have no option role or ID until labels settle. Raw offset
 positions; selected intent is one compact address plus its current-session offset rather than a
 rich snapshot. Keyboard movement uses bounded raw intervals to reach logical Home/End/arrow targets,
 including disabled tails, then pins and reveals the exact candidate through the shared surface.
-The movement pin is released after mounted hydration; ordinary eviction retains selected identity.
+Hydrated movement labels are remeasured and revealed through that surface before the pin is
+released. Scroll events matching the pinned surface reconciliation retain movement ownership;
+changed scroll positions still cancel it. Ordinary eviction retains selected identity.
 Enter is consumed during query, demand, movement and exact resolve work, without queued submission.
 An accepted selection owns its fresh exact resolve ahead of incidental viewport demand; deferral
 invalidates the settled receipt for remounted holders, and only that resolve's current owner

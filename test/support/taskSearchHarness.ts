@@ -207,22 +207,59 @@ export async function createCanonicalSearchHarness(
     segment?: SearchWordSegmenter,
     clock?: Clock,
     readYield?: (signal: AbortSignal) => Promise<void>,
+    setupSignal?: AbortSignal,
   ]
 ) {
-  const [segment = fallbackSearchWords, clock, readYield] = options;
+  const [segment = fallbackSearchWords, clock, readYield, setupSignal] = options;
+  checkSetup();
+  function checkSetup(): void {
+    setupSignal?.throwIfAborted();
+  }
   const app = await createAppWithFiles(files);
+  checkSetup();
   const parts = configuredTaskApplication(app, settings, {
     authority: true,
     ...(readYield === undefined ? {} : { readYield }),
     ...(clock === undefined ? {} : { clock }),
   });
+  let search: TaskSearchService | undefined;
+  let closed = false;
+  function close(): void {
+    if (closed) return;
+    closed = true;
+    const failures: unknown[] = [];
+    for (const release of [
+      () => search?.dispose(),
+      () => {
+        parts.index.destroy();
+      },
+      () => setupSignal?.removeEventListener('abort', abort),
+    ]) {
+      try {
+        release();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length > 0) throw failures[0];
+  }
+  function abort(): void {
+    try {
+      close();
+    } catch (error) {
+      console.error('[abyss-tasks] Search setup cancellation cleanup failed', error);
+    }
+  }
+  setupSignal?.addEventListener('abort', abort, { once: true });
   try {
+    checkSetup();
     if (initialize) await parts.index.initialize();
+    checkSetup();
     const source = parts.index.searchSource();
     const backends: FakeSearchBackend[] = [];
     const diagnostics: TaskSearchDiagnostic[] = [];
     const scheduler = new ControlledSearchScheduler();
-    const search = new TaskSearchService({
+    search = new TaskSearchService({
       source,
       reads: parts.index,
       segment,
@@ -236,6 +273,8 @@ export async function createCanonicalSearchHarness(
         diagnostics.push(value);
       },
     });
+    checkSetup();
+    setupSignal?.removeEventListener('abort', abort);
     return {
       diagnostics,
       backends,
@@ -244,13 +283,10 @@ export async function createCanonicalSearchHarness(
       ...parts,
       source,
       search,
-      close() {
-        search.dispose();
-        parts.index.destroy();
-      },
+      close,
     };
   } catch (error) {
-    parts.index.destroy();
+    close();
     throw error;
   }
 }

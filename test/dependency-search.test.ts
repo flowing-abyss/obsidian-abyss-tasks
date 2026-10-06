@@ -20,6 +20,7 @@ import type { DependencyCandidate } from '../src/ui/TaskDependencySearchProvider
 import { createTaskDependencySearchProvider } from '../src/ui/TaskDependencySearchProvider';
 import { deferred, dispatchImeKey, expectDefined, flushMicrotasks, methodOf } from './helpers';
 import { scopeKeyboardEvent } from './support/scopeKeyboardEvent';
+import * as harnessModule from './support/taskSearchHarness';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 import { searchUiCompleted } from './support/taskSearchUiHarness';
 import { taskViewportOwner } from './support/taskViewportOwner';
@@ -40,6 +41,7 @@ async function fixture(
   count = 65,
   direction: DependencyDirection = 'blocks',
   files?: Record<string, string>,
+  setupSignal?: AbortSignal,
 ) {
   const candidates = Array.from({ length: count }, (_, i) => `- [ ] Candidate ${i} 🆔 c${i}`).join(
     '\n',
@@ -49,7 +51,16 @@ async function fixture(
       'tasks.md': `- [ ] Current 🆔 current\n${candidates}`,
     },
     DEFAULT_SETTINGS,
+    true,
+    undefined,
+    undefined,
+    undefined,
+    setupSignal,
   );
+  if (setupSignal?.aborted === true) {
+    h.close();
+    setupSignal.throwIfAborted();
+  }
   cleanup.push(() => {
     h.close();
   });
@@ -1469,6 +1480,7 @@ function positionDemandSurface(
   element: HTMLElement,
   owner: Pick<ReturnType<typeof taskViewportOwner>, 'doc'>,
   height = 766,
+  rowHeight: (element: HTMLElement) => number = () => 48,
 ): void {
   if (element.ownerDocument !== owner.doc) owner.doc.body.append(element);
   const win = expectDefined(owner.doc.defaultView);
@@ -1512,16 +1524,16 @@ function positionDemandSurface(
           ? Number.parseFloat(
               (previous as HTMLElement).style.getPropertyValue('--abyss-virtual-row-height'),
             )
-          : 48;
+          : rowHeight(previous as HTMLElement);
         previous = previous.previousElementSibling;
       }
       return {
         top,
-        bottom: top + 48,
+        bottom: top + rowHeight(element),
         left: 0,
         right: 400,
         width: 400,
-        height: 48,
+        height: rowHeight(element),
         x: 0,
         y: top,
         toJSON() {},
@@ -2689,4 +2701,528 @@ it('review I2 skips existing interior omission proofs in later keyboard interval
   const active = h.owner.doc.getElementById(input.getAttribute('aria-activedescendant') ?? '');
   expect(active?.textContent).toContain('Candidate 49999');
   expect(omittedVisits()).toHaveLength(100);
+});
+
+// Empty native buttons and hydrated labels do not have the same height. The real
+// surface must reconcile their measurements; jsdom supplies only layout and scroll delivery.
+async function nativeEndFixture(
+  emptyHeight: number,
+  lifetime: AbortController,
+  runnerSignal: AbortSignal,
+) {
+  const abort = () => {
+    lifetime.abort(runnerSignal.reason);
+  };
+  runnerSignal.addEventListener('abort', abort, { once: true });
+  cleanup.push(() => {
+    runnerSignal.removeEventListener('abort', abort);
+  });
+  if (runnerSignal.aborted) abort();
+  lifetime.signal.throwIfAborted();
+  const candidates = Array.from(
+    { length: 75 },
+    (_, i) =>
+      `- [ ] NativeResumeCandidate${String(i).padStart(3, '0')} prose 🆔 c${i}${i === 74 ? ' ⛔ current' : ''}`,
+  ).join('\n');
+  const h = await fixture(
+    0,
+    'blocked-by',
+    {
+      'tasks.md': `- [ ] Root 🆔 root\n    - [ ] Current 🆔 current\n${candidates}`,
+    },
+    lifetime.signal,
+  );
+  lifetime.signal.throwIfAborted();
+  h.setCurrent(
+    expectDefined(h.index.listNodes().find((task) => task.node.title === 'Current')).target,
+  );
+  const owner = taskViewportOwner();
+  cleanup.push(() => {
+    owner.destroy();
+  });
+  h.callbacks.position = (element) => {
+    positionDemandSurface(element, owner, 288, (row) => {
+      if (row.childElementCount === 0) return emptyHeight;
+      return row.querySelector('.abyss-dep-search-reason') === null ? 42.515625 : 58.5;
+    });
+  };
+  let holdProjection: ((signal: AbortSignal) => Promise<void>) | undefined;
+  const open = h.callbacks.provider.open.bind(h.callbacks.provider);
+  h.callbacks.provider.open = async (...args) => {
+    const session = await open(...args);
+    const options = session.options.bind(session);
+    session.options = async (candidates, signal) => {
+      const result = await options(candidates, signal);
+      if (candidates.some((candidate) => candidate.offset === 73)) await holdProjection?.(signal);
+      return result;
+    };
+    return session;
+  };
+  const opens = vi.spyOn(h.search, 'open');
+  const reads = vi.spyOn(h.search, 'read');
+  const ui = h.mount();
+  const list = expectDefined(
+    ui.handle.element.querySelector<HTMLElement>('.abyss-dep-search-results'),
+  );
+  let top = 0;
+  let scrolled = false;
+  Object.defineProperty(list, 'scrollTop', {
+    configurable: true,
+    get: () => top,
+    set: (value: number) => {
+      const extent = Array.from(list.children).reduce(
+        (sum, child) =>
+          sum +
+          (child.classList.contains('abyss-virtual-row-spacer')
+            ? Number.parseFloat(
+                (child as HTMLElement).style.getPropertyValue('--abyss-virtual-row-height'),
+              )
+            : child.getBoundingClientRect().height),
+        0,
+      );
+      const next = Math.max(0, Math.min(value, extent - list.clientHeight));
+      scrolled ||= next !== top;
+      top = next;
+    },
+  });
+  const scheduler = browserScheduler.createBrowserTaskScheduler(owner.win);
+  let generation: number | undefined;
+  const unsubscribe = h.search.subscribe((state) => {
+    generation = state.generation;
+  });
+  cleanup.push(unsubscribe);
+  let stage = 'initial';
+  let driving = false;
+  let stopped = false;
+  const stopCallbacks: Array<() => void> = [];
+  const receipt = () => ({
+    stage,
+    request: ui.handle.element.dataset['searchRequest'],
+    expectedGeneration: generation,
+    actualGeneration: ui.handle.element.dataset['searchGeneration'],
+    phase: ui.handle.element.dataset['searchPhase'],
+    frames: owner.frames.size,
+    scrolled,
+    top,
+    active: ui.active()?.getAttribute('aria-posinset') ?? null,
+  });
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    if (driving) console.error('native End driver abort', receipt());
+    lifetime.abort();
+    for (const callback of stopCallbacks.splice(0)) callback();
+  };
+  lifetime.signal.addEventListener('abort', stop, { once: true });
+  // Last registration runs first, before the fixture's DOM/search teardown.
+  cleanup.push(stop);
+  const turn = async () => {
+    lifetime.signal.throwIfAborted();
+    // Native scroll events run before animation-frame callbacks, after the setter's task.
+    if (scrolled) {
+      scrolled = false;
+      list.dispatchEvent(new owner.win.Event('scroll'));
+    }
+    owner.flush();
+    await scheduler.delay(30, lifetime.signal);
+    lifetime.signal.throwIfAborted();
+  };
+  const finishDrive = () => {
+    driving = false;
+  };
+  const driveUntil = async (nextStage: string, ready: () => boolean) => {
+    if (driving) throw new Error('Concurrent native End driver');
+    stage = nextStage;
+    driving = true;
+    try {
+      for (;;) {
+        lifetime.signal.throwIfAborted();
+        if (ui.handle.element.dataset['searchPhase'] === 'error')
+          throw new Error('Native End picker error');
+        await turn();
+        lifetime.signal.throwIfAborted();
+        if (ui.handle.element.dataset['searchPhase'] === 'error')
+          throw new Error('Native End picker error');
+        if (ready()) return;
+      }
+    } catch (error) {
+      if (!stopped) console.error('native End driver error', receipt());
+      throw error;
+    } finally {
+      finishDrive();
+    }
+  };
+  const settle = (nextStage: string) =>
+    driveUntil(
+      nextStage,
+      () =>
+        ui.handle.element.dataset['searchPhase'] === 'complete' &&
+        ui.handle.element.dataset['searchGeneration'] === String(generation) &&
+        owner.frames.size === 0 &&
+        !scrolled,
+    );
+  ui.query('NativeResumeCandidate');
+  await settle('initial');
+  return {
+    ...h,
+    ui,
+    list,
+    owner,
+    opens,
+    reads,
+    turn,
+    settle,
+    driveUntil,
+    stop,
+    onStop: (callback: () => void) => {
+      if (stopped) callback();
+      else stopCallbacks.push(callback);
+    },
+    hold: (callback: (signal: AbortSignal) => Promise<void>) => {
+      holdProjection = callback;
+    },
+  };
+}
+
+it.for([10, 25.59375])(
+  'native End retains Candidate073 after %ipx holders become measured labels',
+  async (emptyHeight, { signal, onTestFinished }) => {
+    const lifetime = new AbortController();
+    onTestFinished(() => {
+      lifetime.abort();
+    });
+    const h = await nativeEndFixture(emptyHeight, lifetime, signal);
+    const { ui, owner, list } = h;
+    for (const width of [322, 282]) {
+      Object.defineProperty(list, 'clientWidth', { configurable: true, value: width });
+      owner.win.dispatchEvent(new owner.win.Event('resize'));
+      await h.settle(`resize-${width}`);
+    }
+    const request = ui.handle.element.dataset['searchRequest'];
+    const generation = ui.handle.element.dataset['searchGeneration'];
+    // The second End remounts rows whose hydrated heights were measured on the first visit.
+    for (let visit = 0; visit < 2; visit++) {
+      ui.key('Home');
+      await h.settle(`home-${visit + 1}`);
+      expect(ui.active()?.querySelector('.abyss-dep-search-title')?.textContent).toBe(
+        'NativeResumeCandidate000 prose',
+      );
+      ui.key('End');
+      ui.key('Enter');
+      ui.handle.refresh();
+      await h.settle(`end-${visit + 1}`);
+      expect(ui.handle.element.dataset['searchRequest']).toBe(request);
+      expect(ui.handle.element.dataset['searchGeneration']).toBe(generation);
+      expect(ui.active()?.querySelector('.abyss-dep-search-title')?.textContent).toBe(
+        'NativeResumeCandidate073 prose',
+      );
+      const active = expectDefined(ui.active());
+      expect(active.getAttribute('aria-posinset')).toBe('74');
+      expect(active.getAttribute('aria-disabled')).toBe('false');
+      expect(active.getBoundingClientRect().top).toBeGreaterThanOrEqual(0);
+      expect(active.getBoundingClientRect().bottom).toBeLessThanOrEqual(list.clientHeight);
+      expect(ui.handle.element.querySelector<HTMLElement>('.abyss-dep-search-error')?.hidden).toBe(
+        true,
+      );
+      expect(list.querySelectorAll('[role="option"]').length).toBeLessThan(25);
+    }
+    expect(h.opens).toHaveBeenCalledOnce();
+    expect(h.reads.mock.calls.every(([, , limit]) => limit <= 200)).toBe(true);
+    expect(h.writes).toEqual([]);
+    expect(h.creates).toEqual([]);
+    ui.key('Enter');
+    await h.driveUntil('commit', () => h.writes.length === 1);
+    expect(h.writes).toHaveLength(1);
+    expect(h.writes[0]?.title).toBe('NativeResumeCandidate073 prose');
+  },
+);
+
+it.for(['scroll', 'query', 'source', 'current'] as const)(
+  'native End cancels pinned label publication on %s',
+  async (change, { signal: runnerSignal, onTestFinished }) => {
+    const lifetime = new AbortController();
+    onTestFinished(() => {
+      lifetime.abort();
+    });
+    const h = await nativeEndFixture(10, lifetime, runnerSignal);
+    const held = deferred<void>();
+    let signal: AbortSignal | undefined;
+    h.hold(async (pending) => {
+      signal = pending;
+      await held.promise;
+    });
+    h.onStop(() => {
+      held.resolve();
+    });
+    try {
+      h.ui.key('End');
+      await h.driveUntil('held-labels', () => signal !== undefined);
+      expect(signal).toBeDefined();
+      expect(signal?.aborted).toBe(false);
+      h.ui.key('Enter');
+      switch (change) {
+        case 'scroll':
+          h.list.scrollTop = 0;
+          h.list.dispatchEvent(new h.owner.win.Event('scroll'));
+          break;
+        case 'query':
+          h.ui.query('NativeResumeCandidate000');
+          break;
+        case 'source':
+          h.index.installCommittedContent('other.md', '- [ ] Other');
+          break;
+        case 'current':
+          h.setCurrent(
+            expectDefined(h.index.listNodes().find((task) => task.node.title === 'Root')).target,
+          );
+          h.ui.handle.refresh();
+          break;
+      }
+      await h.driveUntil(`cancel-${change}`, () => signal?.aborted === true);
+      expect(signal?.aborted).toBe(true);
+      held.resolve();
+      await h.settle(`after-cancel-${change}`);
+      expect(h.writes).toEqual([]);
+      expect(h.creates).toEqual([]);
+      expect(h.ui.active()).toBeNull();
+      if (change === 'scroll') expect(h.list.scrollTop).toBe(0);
+      h.ui.key('Home');
+      await h.settle('recovery-home');
+      expect(h.ui.active()?.querySelector('.abyss-dep-search-title')?.textContent).toBe(
+        'NativeResumeCandidate000 prose',
+      );
+    } finally {
+      held.resolve();
+    }
+  },
+);
+
+it('native End driver crosses the former cutoff without resubmitting held movement', async ({
+  signal,
+  onTestFinished,
+}) => {
+  const lifetime = new AbortController();
+  onTestFinished(() => {
+    lifetime.abort();
+  });
+  const h = await nativeEndFixture(10, lifetime, signal);
+  const held = deferred<void>();
+  let entered = false;
+  h.hold(async () => {
+    entered = true;
+    await held.promise;
+  });
+  try {
+    h.ui.key('End');
+    await h.driveUntil('held-labels', () => entered);
+    const opens = h.opens.mock.calls.length;
+    const request = h.ui.handle.element.dataset['searchRequest'];
+    vi.useFakeTimers();
+    let completed = false;
+    const pending = h.settle('beyond-cutoff').then(() => {
+      completed = true;
+    });
+    const outcome = pending.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    await vi.advanceTimersByTimeAsync(1_050);
+    expect(completed).toBe(false);
+    held.resolve();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(await outcome).toBeUndefined();
+    expect(completed).toBe(true);
+    expect(h.opens).toHaveBeenCalledTimes(opens);
+    expect(h.ui.handle.element.dataset['searchRequest']).toBe(request);
+    expect(h.ui.handle.element.dataset['searchPhase']).toBe('complete');
+    expect(h.list.querySelectorAll('.abyss-dep-search-title').length).toBeGreaterThan(0);
+  } finally {
+    held.resolve();
+    h.stop();
+    vi.useRealTimers();
+  }
+});
+
+it('native End driver drains queued geometry and refuses a stale complete generation', async ({
+  signal,
+  onTestFinished,
+}) => {
+  const lifetime = new AbortController();
+  onTestFinished(() => {
+    lifetime.abort();
+  });
+  const h = await nativeEndFixture(10, lifetime, signal);
+  const generation = h.ui.handle.element.dataset['searchGeneration'];
+  vi.useFakeTimers();
+  try {
+    const delivered: string[] = [];
+    h.owner.win.requestAnimationFrame(() => {
+      delivered.push('frame');
+      h.owner.win.requestAnimationFrame(() => {
+        delivered.push('next-frame');
+      });
+    });
+    let completed = false;
+    const pending = h.settle('queued-stale').then(() => {
+      completed = true;
+    });
+    const outcome = pending.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    await vi.advanceTimersByTimeAsync(30);
+    expect(completed).toBe(false);
+    expect(h.ui.handle.element.dataset['searchPhase']).toBe('complete');
+    h.ui.handle.element.setAttribute('data-search-generation', '-1');
+    await vi.advanceTimersByTimeAsync(300);
+    expect(delivered).toEqual(['frame', 'next-frame']);
+    expect(delivered).toContain('next-frame');
+    expect(completed).toBe(false);
+    h.ui.handle.element.setAttribute('data-search-generation', expectDefined(generation));
+    await vi.advanceTimersByTimeAsync(60);
+    expect(await outcome).toBeUndefined();
+    expect(completed).toBe(true);
+  } finally {
+    h.stop();
+    vi.useRealTimers();
+  }
+});
+
+it('native End driver abort cancels its owner timer and prevents post-disposal delivery', async ({
+  signal,
+  onTestFinished,
+}) => {
+  const lifetime = new AbortController();
+  onTestFinished(() => {
+    lifetime.abort();
+  });
+  const h = await nativeEndFixture(10, lifetime, signal);
+  vi.useFakeTimers();
+  try {
+    const pending = h.driveUntil('cancel-timer', () => false);
+    const rejection = expect(pending).rejects.toThrow();
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    h.stop();
+    expect(vi.getTimerCount()).toBe(0);
+    const delivered: string[] = [];
+    h.list.addEventListener('scroll', () => {
+      delivered.push('scroll');
+    });
+    h.list.scrollTop = 20;
+    h.owner.win.requestAnimationFrame(() => {
+      delivered.push('frame');
+    });
+    h.ui.handle.destroy();
+    h.owner.destroy();
+    h.stop();
+    await vi.advanceTimersByTimeAsync(300);
+    await rejection;
+    expect(delivered).toEqual([]);
+  } finally {
+    h.stop();
+    vi.useRealTimers();
+  }
+});
+
+it('native End driver rejects explicit failure while held and releases the late gate', async ({
+  signal,
+  onTestFinished,
+}) => {
+  const lifetime = new AbortController();
+  onTestFinished(() => {
+    lifetime.abort();
+  });
+  const h = await nativeEndFixture(10, lifetime, signal);
+  const held = deferred<void>();
+  let entered = false;
+  let exited = false;
+  h.hold(async () => {
+    entered = true;
+    await held.promise;
+    exited = true;
+  });
+  h.onStop(() => {
+    held.resolve();
+  });
+  try {
+    h.ui.key('End');
+    await h.driveUntil('held-labels', () => entered);
+    h.ui.key('Enter');
+    h.ui.handle.element.dataset['searchPhase'] = 'error';
+    await expect(h.settle('held-failure')).rejects.toThrow();
+  } finally {
+    h.stop();
+    h.ui.handle.destroy();
+  }
+  await Promise.resolve();
+  expect(h.ui.active()).toBeNull();
+  expect(exited).toBe(true);
+  expect(h.writes).toEqual([]);
+  expect(h.creates).toEqual([]);
+});
+
+it('native End setup cancellation closes the late real owner without reacquiring after row cleanup', async () => {
+  const acquired = deferred<Awaited<ReturnType<typeof createCanonicalSearchHarness>>>();
+  const gate = deferred<void>();
+  const real = harnessModule.createCanonicalSearchHarness;
+  let setupSignal: AbortSignal | undefined;
+  const harness = vi
+    .spyOn(harnessModule, 'createCanonicalSearchHarness')
+    .mockImplementation(async (...args) => {
+      setupSignal = args[6];
+      const h = await real(...args);
+      acquired.resolve(h);
+      await gate.promise;
+      return h;
+    });
+  const runner = new AbortController();
+  const lifetime = new AbortController();
+  const firstCleanup = cleanup.length;
+  const drainRow = () => {
+    cleanup
+      .splice(firstCleanup)
+      .reverse()
+      .forEach((close) => {
+        close();
+      });
+  };
+  const cancelled = new Error('Controlled setup cancellation');
+  const result = nativeEndFixture(10, lifetime, runner.signal).then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  let owner: Awaited<ReturnType<typeof createCanonicalSearchHarness>> | undefined;
+  try {
+    owner = await acquired.promise;
+    runner.abort(cancelled);
+    drainRow();
+    gate.resolve();
+    expect(await result).toBe(cancelled);
+    expect(document.querySelectorAll('iframe')).toHaveLength(0);
+    expect(activeDocument.querySelectorAll('.abyss-dep-search')).toHaveLength(0);
+    expect(cleanup).toHaveLength(firstCleanup);
+    expect(setupSignal).toBe(lifetime.signal);
+    const snapshot = owner.source.subscribe(() => {});
+    try {
+      expect(snapshot.state.type).toBe('disposed');
+    } finally {
+      snapshot.unsubscribe();
+    }
+    let phase: string | undefined;
+    const unsubscribe = owner.search.subscribe((state) => {
+      phase = state.phase;
+    });
+    try {
+      expect(phase).toBe('disposed');
+    } finally {
+      unsubscribe();
+    }
+  } finally {
+    lifetime.abort();
+    gate.resolve();
+    await result;
+    drainRow();
+    owner?.close();
+    harness.mockRestore();
+  }
 });
