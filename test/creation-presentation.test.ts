@@ -1426,3 +1426,131 @@ it.each([false, true])(
     }
   },
 );
+
+it.each(['selection', 'creation', 'query', 'property', 'navigation', 'stale'] as const)(
+  'keeps accepted creation after pulse expiry and retires it on %s',
+  async (boundary) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.taskFilePath = 'created.md';
+    const h = await mountCanonicalSearchUi(
+      { 'many.md': '- [ ] Filler\n- [ ] Existing astronomy', 'created.md': '' },
+      settings,
+      'tasks',
+      undefined,
+      true,
+    );
+    try {
+      h.query('Filler');
+      await h.completed();
+      const list = h.state.get('selectedList');
+      const fullReads = vi.spyOn(h.index, 'list');
+      const fullNodes = vi.spyOn(h.index, 'listNodes');
+      expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')).click();
+      await flushMicrotasks();
+      const input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-capture-input'));
+      const submit = (value: string): void => {
+        input.value = value;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      };
+      submit('New astronomy');
+      await vi.waitFor(() => {
+        expect(h.root.querySelector('.is-just-created')).not.toBeNull();
+      });
+      const accepted = expectDefined(h.panel['creationInclusion_abyssPrivate']);
+      expect(accepted.accepted).toBe(true);
+      vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 2000);
+      expectDefined(h.creation).refreshMounted(h.root);
+      expect(h.root.querySelector('.is-just-created')).toBeNull();
+      expect(h.root.textContent).toContain('Created task');
+      expect(h.root.textContent).toContain('New astronomy');
+      expect(h.root.textContent).not.toContain('Existing astronomy');
+      expect(h.state.get('centerFilter')).toBe('Filler');
+      expect(h.state.get('selectedList')).toEqual(list);
+      expect(input.isConnected).toBe(true);
+      expect(input.ownerDocument.activeElement).toBe(input);
+      expect(fullReads).not.toHaveBeenCalled();
+      expect(fullNodes).not.toHaveBeenCalled();
+
+      if (boundary === 'selection') h.state.set('taskStack', []);
+      else if (boundary === 'creation') submit('Next astronomy');
+      else if (boundary === 'query') h.query('Filler 1');
+      else if (boundary === 'property')
+        h.state.set('centerListViewState', {
+          ...h.state.get('centerListViewState'),
+          filters: [{ type: 'tag', value: '#missing' }],
+        });
+      else if (boundary === 'navigation') h.panel['navigation_abyssPrivate'].openList(list);
+      else h.index.installCommittedContent('created.md', '- [ ] Changed astronomy');
+      await vi.waitFor(() => {
+        expect(h.panel['creationInclusion_abyssPrivate']).not.toBe(accepted);
+        if (boundary !== 'navigation') expect(h.root.textContent).not.toContain('New astronomy');
+        else expect(h.root.textContent).not.toContain('Created task');
+      });
+      if (boundary === 'creation') {
+        await vi.waitFor(() => {
+          expect(h.root.querySelector('.is-just-created')?.textContent).toContain('Next astronomy');
+        });
+        expect(h.root.textContent).not.toContain('Existing astronomy');
+      } else expect(h.panel['creationInclusion_abyssPrivate']).toBeUndefined();
+      if (boundary !== 'navigation') {
+        expect(input.isConnected).toBe(true);
+        expect(input.ownerDocument.activeElement).toBe(input);
+      }
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each([false, true])(
+  'retains one ordinary Created task row through refresh with an existing match=%s',
+  async (existing) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.taskFilePath = 'created.md';
+    const h = await mountCanonicalSearchUi(
+      {
+        'many.md': existing
+          ? '- [ ] Existing match 🔺\n- [ ] Excluded astronomy'
+          : '- [ ] Excluded astronomy',
+        'created.md': '',
+      },
+      settings,
+      'tasks',
+      undefined,
+      true,
+    );
+    try {
+      h.state.set('centerListViewState', {
+        ...h.state.get('centerListViewState'),
+        filters: [{ type: 'priority', value: 'A' }],
+      });
+      expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')).click();
+      await flushMicrotasks();
+      const input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-capture-input'));
+      input.value = 'Created astronomy';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await vi.waitFor(() => {
+        expect(h.root.querySelector('.is-just-created')).not.toBeNull();
+      });
+      const before = expectDefined(h.panel['taskSurface_abyssPrivate']).surface.rows.rows;
+      expect(before.filter((row) => row.kind === 'group' && row.label === 'Created task')).toEqual([
+        {
+          kind: 'group',
+          key: 'creation-reveal',
+          label: 'Created task',
+          count: 1,
+          first: !existing,
+        },
+      ]);
+      h.panel.refresh('view');
+      expect(expectDefined(h.panel['taskSurface_abyssPrivate']).surface.rows.rows).toEqual(before);
+      expect(h.root.textContent).not.toContain('Excluded astronomy');
+      expect(input.isConnected).toBe(true);
+      expect(input.ownerDocument.activeElement).toBe(input);
+    } finally {
+      h.dispose();
+    }
+  },
+);

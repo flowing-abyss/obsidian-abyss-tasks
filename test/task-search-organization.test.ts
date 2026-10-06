@@ -305,3 +305,64 @@ it('groups mixed Today dates together and orders compact records by time', async
     h.close();
   }
 });
+
+it.each(['creation', 'navigation'] as const)(
+  'retires the exact %s exception without expanding query hits or filters',
+  async (kind) => {
+    const h = await createCanonicalSearchHarness(
+      { 'a.md': '- [ ] Filler #keep\n- [ ] New astronomy\n- [ ] Unrelated astronomy' },
+      settings,
+    );
+    try {
+      const subscription = h.index.searchSource().subscribe(() => {});
+      const generation = subscription.state.generation;
+      subscription.unsubscribe();
+      const records = [];
+      for await (const batch of h.index.organization(
+        { expectedGeneration: generation },
+        new AbortController().signal,
+      ))
+        records.push(...batch.items);
+      const matching = records[0],
+        created = records[1];
+      if (matching === undefined || created === undefined) throw new Error('Fixture roots missing');
+      const input: TaskSearchOrganizationInput = {
+        generation,
+        records,
+        hits: [{ address: matching.address, score: 1 }],
+        selection: null,
+        view: {
+          list: {
+            groupBy: 'none',
+            sortBy: { field: 'date', dir: 'asc' },
+            filters: [{ type: 'tag', value: '#keep' }],
+          },
+          relevance: false,
+        },
+        settings,
+        today,
+        nowMs: 0,
+        outgoingLinks: new Map(),
+      };
+      const revealed = organizeTaskSearch({ ...input, reveal: created.address, revealKind: kind });
+      expect(revealed.occurrences.map((row) => row.taskKey)).toEqual(['a.md:0', 'a.md:1']);
+      expect(revealed.occurrences[1]?.group?.label).toBe(
+        kind === 'creation' ? 'Created task' : 'Revealed task',
+      );
+      expect(revealed.rootTotal).toBe(2);
+      const retired = organizeTaskSearch(input);
+      expect(retired.occurrences.map((row) => row.taskKey)).toEqual(['a.md:0']);
+      expect(retired.revealIndex).toBeUndefined();
+      expect(retired.rootTotal).toBe(1);
+      const alreadyMatching = organizeTaskSearch({
+        ...input,
+        reveal: matching.address,
+        revealKind: kind,
+      });
+      expect(alreadyMatching.occurrences).toHaveLength(1);
+      expect(alreadyMatching.occurrences[0]?.group).toBeNull();
+    } finally {
+      h.close();
+    }
+  },
+);

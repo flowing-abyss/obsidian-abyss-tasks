@@ -462,3 +462,25 @@ describe('PanelNavigator', () => {
     expect(commits).toHaveBeenCalledOnce();
   });
 });
+
+it('retires accepted inclusion on explicit same-list navigation while preserving a guarded transition until acceptance', () => {
+  const h = harness({ selection: 'inbox' });
+  const clear = vi.fn();
+  h.center.clearTaskSearchReveal = clear;
+  h.navigator.openList('inbox');
+  expect(clear).toHaveBeenCalledOnce();
+  h.state.set('mode', 'projects');
+  let accept: (() => void) | undefined;
+  h.finishProjectTableEditorBefore.mockImplementation((action) => {
+    accept = action;
+  });
+  const commit = vi.fn();
+  h.navigator.openList('today', { canCommit: () => true, commit });
+  expect(clear).toHaveBeenCalledOnce();
+  expect(commit).not.toHaveBeenCalled();
+  expect(h.state.get('mode')).toBe('projects');
+  expectDefined(accept)();
+  expect(clear).toHaveBeenCalledOnce();
+  expect(commit).toHaveBeenCalledOnce();
+  expect(h.state.get('selectedList')).toBe('today');
+});

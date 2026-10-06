@@ -1,7 +1,7 @@
 import { MarkdownRenderer } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { expectDefined, flushMicrotasks, task, useRealMoment } from './helpers';
+import { deferred, expectDefined, flushMicrotasks, task, useRealMoment } from './helpers';
 import { taskCardMountBound } from './support/taskPanelViewport';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 import { taskViewportOwner } from './support/taskViewportOwner';
@@ -616,3 +616,111 @@ it('retains the ordinary Tasks surface through the actual panel migration hook',
     owner.destroy();
   }
 });
+
+it.each(['accepted', 'cancelled'] as const)(
+  'waits for later destination neighbor hydration and Markdown after the exact target settles: %s',
+  async (outcome) => {
+    const h = await mountCanonicalSearchUi(
+      {
+        'search.md': Array.from({ length: 1200 }, (_, n) => {
+          const title = n === 1199 ? 'needle target' : `neighbor ${n}`;
+          return `- [ ] **${title}**`;
+        }).join('\n'),
+      },
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    const markdown = deferred<void>();
+    const hydration = deferred<void>();
+    let targetRendered = false;
+    let neighborHydrating = false;
+    let neighborRendering = false;
+    let holdHydration = false;
+    const originalRead = h.index.resolveSearchHits.bind(h.index);
+    const reads = vi
+      .spyOn(h.index, 'resolveSearchHits')
+      .mockImplementation(async (hits, signal) => {
+        if (holdHydration && h.state.get('mode') === 'tasks') {
+          neighborHydrating = true;
+          await hydration.promise;
+        }
+        return originalRead(hits, signal);
+      });
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, host) => {
+      host.createEl('strong', { text });
+      if (h.state.get('mode') !== 'tasks') return;
+      if (text.includes('needle target')) {
+        targetRendered = true;
+        holdHydration = true;
+      } else if (targetRendered) {
+        neighborRendering = true;
+        await markdown.promise;
+      }
+    });
+    const fullReads = vi.spyOn(h.index, 'list');
+    const fullNodes = vi.spyOn(h.index, 'listNodes');
+    try {
+      h.query('needle');
+      await h.completed();
+      expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-title')).click();
+      await vi.waitFor(() => {
+        expect({
+          targetRendered,
+          mode: h.state.get('mode'),
+          phase: h.root.dataset['searchPhase'],
+        }).toMatchObject({ targetRendered: true });
+      });
+      const compact = expectDefined(h.panel['taskSurface_abyssPrivate']?.search);
+      const key = expectDefined(compact.order.occurrencesOf('search.md:1199')[0]);
+      expect(await compact.rows.settleRow(key, compact.identity.signal)).toEqual({ type: 'ready' });
+      expect(h.root.querySelector('.is-search-revealed')).toBeNull();
+      await vi.waitFor(() => {
+        expect(neighborHydrating).toBe(true);
+      });
+      expect(h.root.querySelector('.abyss-task-card[aria-busy="true"]')).not.toBeNull();
+      expect(h.root.querySelector('.is-search-revealed')).toBeNull();
+      expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
+        taskCardMountBound(h.root, 1),
+      );
+      hydration.resolve();
+      await vi.waitFor(() => {
+        expect(neighborRendering).toBe(true);
+      });
+      expect(h.root.querySelector('.is-search-revealed')).toBeNull();
+      if (outcome === 'cancelled') h.state.set('taskStack', []);
+      markdown.resolve();
+      await h.completed();
+      const target = h.root.querySelector<HTMLElement>('.is-search-revealed');
+      if (outcome === 'cancelled') expect(target).toBeNull();
+      else {
+        const card = expectDefined(target);
+        const viewport = expectDefined(
+          card.closest<HTMLElement>('.abyss-center-scroll'),
+        ).getBoundingClientRect();
+        expect(card.textContent).toContain('needle target');
+        expect(card.getBoundingClientRect().top).toBeGreaterThanOrEqual(viewport.top);
+        expect(card.getBoundingClientRect().bottom).toBeLessThanOrEqual(viewport.bottom);
+        expect(card.ownerDocument.activeElement).not.toBe(card);
+      }
+      expect(
+        reads.mock.calls.every(
+          ([hits]) =>
+            hits.length <= 200 && new Set(hits.map((hit) => hit.address.rootId)).size <= 50,
+        ),
+      ).toBe(true);
+      expect(
+        new Set(reads.mock.calls.flatMap(([hits]) => hits.map((hit) => hit.address.rootId))).size,
+      ).toBeLessThan(1200);
+      expect(fullReads).not.toHaveBeenCalled();
+      expect(fullNodes).not.toHaveBeenCalled();
+      h.dispose();
+      expect(await compact.rows.settleMounted(new AbortController().signal)).toEqual({
+        type: 'cancelled',
+      });
+      expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(0);
+    } finally {
+      markdown.resolve();
+      hydration.resolve();
+      h.dispose();
+    }
+  },
+);

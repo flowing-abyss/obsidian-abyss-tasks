@@ -1379,23 +1379,29 @@ export class CenterPanel {
     retained: TaskSurfaceState,
     task: TaskSnapshot,
   ): void {
-    const rows = indexedRows<TaskSnapshot>([
-      ...(retained.surface.rows.rows as ReadonlyArray<TaskListRow<TaskSnapshot>>),
+    const rows = this.withCreationInclusion_abyssPrivate(
+      retained.surface.rows as TaskListRows<TaskSnapshot>,
+      task,
+    );
+    this.mountTaskRows_abyssPrivate(retained.host, rows, retained.tagGroups);
+  }
+
+  private withCreationInclusion_abyssPrivate(
+    rows: TaskListRows<TaskSnapshot>,
+    task: TaskSnapshot,
+  ): TaskListRows<TaskSnapshot> {
+    const key = taskRowKey(task);
+    return indexedRows([
+      ...rows.rows,
       {
         kind: 'group',
         key: 'creation-reveal',
         label: 'Created task',
         count: 1,
-        first: retained.surface.rows.taskKeys.length === 0,
+        first: rows.taskKeys.length === 0,
       },
-      {
-        kind: 'task',
-        key: taskRowKey(task),
-        taskKey: taskRowKey(task),
-        task,
-      },
+      { kind: 'task', key, taskKey: key, task },
     ]);
-    this.mountTaskRows_abyssPrivate(retained.host, rows, retained.tagGroups);
   }
 
   private async revealSnapshotCreation_abyssPrivate(
@@ -2420,22 +2426,7 @@ export class CenterPanel {
       if (exact.type === 'exact') {
         this.mountTaskRows_abyssPrivate(
           container,
-          indexedRows([
-            ...rows.rows,
-            {
-              kind: 'group',
-              key: 'creation-reveal',
-              label: 'Created task',
-              count: 1,
-              first: rows.taskKeys.length === 0,
-            },
-            {
-              kind: 'task',
-              key: taskRowKey(inclusion.task),
-              taskKey: taskRowKey(inclusion.task),
-              task: inclusion.task,
-            },
-          ]),
+          this.withCreationInclusion_abyssPrivate(rows, inclusion.task),
           tagGroups,
         );
         return;

@@ -11,7 +11,7 @@ import {
 } from '../src/ui/ownedTaskSelection';
 import { canonicalStatusCatalog, expectDefined } from './helpers';
 
-function snapshot(markdown: string, revision: string) {
+function snapshot(markdown: string, revision: string, offsetMinutes = 0) {
   const statuses = canonicalStatusCatalog();
   return expectDefined(
     projectTaskSnapshot({
@@ -23,7 +23,7 @@ function snapshot(markdown: string, revision: string) {
       exactBlock: markdown,
       ref: { filePath: 'tasks.md', line: 0, revision },
       presentation: { linkCount: 0 },
-      offsetAt: () => 0,
+      offsetAt: () => offsetMinutes,
     }),
   );
 }
@@ -869,3 +869,35 @@ it.each([false, true])(
     ).toBeUndefined();
   },
 );
+
+it('rejects an offsetless completion witness whose wall time cannot prove the acquired instant', () => {
+  const initialText = '- [ ] Root\n  - [ ] Owner\n    - 2026-09-05T11:58:00 →';
+  const initial = snapshot(initialText, 'initial', 420);
+  const owner = expectDefined(initial.subtasks[0]);
+  const completedText = initialText.replace('[ ] Owner', '[x] Owner ✅ 2026-09-05');
+  const completed = snapshot(completedText, 'completed', 420);
+  const completedOwner = expectDefined(completed.subtasks[0]);
+  const entry = expectDefined(completedOwner.timeEntries[0]);
+  const current = snapshot(`${completedText} 2026-09-05T12:00:00`, 'after', 420);
+  const witness: CompletionTrackingWitness = {
+    before: completed.ref,
+    after: current.ref,
+    entry: {
+      parent: { type: 'subtask', ref: completedOwner.ref },
+      relativeLine: entry.relativeLine,
+      originalMarkdown: entry.originalMarkdown,
+    },
+    stamp: atomDateTime('2026-09-05T12:00:00'),
+    endMs: Date.parse('2026-09-05T12:00:00+07:00'),
+    minimumMs: 60_000,
+    disposition: 'closed',
+  };
+  expect(entry.startMs).toBe(Date.parse('2026-09-05T11:58:00+07:00'));
+  expect(
+    proveOwnedCompletionFollowUp(current, [completed], {
+      original: [initial],
+      command: { type: 'toggle-completion', target: { type: 'subtask', ref: owner.ref } },
+      witness,
+    }),
+  ).toBeUndefined();
+});
