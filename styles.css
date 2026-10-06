@@ -2162,14 +2162,11 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   font-size: 13px;
   width: 160px;
   outline: none;
-  transition:
-    border-color 0.15s,
-    width 0.2s;
+  transition: border-color 0.15s;
 }
 
 .abyss-center-search:focus {
   border-color: var(--interactive-accent);
-  width: 200px;
 }
 
 .abyss-search-global {
