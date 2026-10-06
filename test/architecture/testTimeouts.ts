@@ -1,5 +1,6 @@
 import ts from 'typescript';
 import {
+  CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS,
   CHILD_PROCESS_TIMEOUT_MS,
   LINTER_TIMEOUT_MS,
   SOURCE_WALK_TIMEOUT_MS,
@@ -27,6 +28,7 @@ const CHILD = 4;
 const LISTING = 8;
 const PARSE = 16;
 const VIRTUAL_SURFACE_AUDIT = 32;
+const CANONICAL_SEARCH_SCALE_AUDIT = 64;
 
 interface Kind {
   readonly work: string;
@@ -42,6 +44,12 @@ const KINDS: readonly Kind[] = [
     limit: 'VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS',
     value: VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS,
     signals: VIRTUAL_SURFACE_AUDIT,
+  },
+  {
+    work: 'canonical search scale audit',
+    limit: 'CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS',
+    value: CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS,
+    signals: CANONICAL_SEARCH_SCALE_AUDIT,
   },
   { work: 'linter', limit: 'LINTER_TIMEOUT_MS', value: LINTER_TIMEOUT_MS, signals: LINTER },
   {
@@ -863,7 +871,15 @@ class TimeoutCheck {
       ts.isFunctionDeclaration(node) &&
       node.name?.text === 'runVirtualSurfaceAuditCycles' &&
       this.fileOf(node).relative === 'test/support/virtualSurfaceAudit.ts';
-    const facts: Facts = { mask: audit ? VIRTUAL_SURFACE_AUDIT : 0, units: new Set() };
+    const searchScaleAudit =
+      ts.isFunctionDeclaration(node) &&
+      node.name?.text === 'runCanonicalSearchNavigationScaleAudit' &&
+      this.fileOf(node).relative === 'test/task-search-navigation.test.ts';
+    const facts: Facts = {
+      mask:
+        (audit ? VIRTUAL_SURFACE_AUDIT : 0) | (searchScaleAudit ? CANONICAL_SEARCH_SCALE_AUDIT : 0),
+      units: new Set(),
+    };
     const add = (units: readonly Unit[]): void => {
       for (const unit of units) if (!contains(node, source, unit)) facts.units.add(unit);
     };

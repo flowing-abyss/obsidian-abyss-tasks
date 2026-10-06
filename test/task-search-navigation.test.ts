@@ -14,6 +14,7 @@ import {
   mountCanonicalSearchUi,
   searchUiCancellationDiagnostic,
 } from './support/taskSearchUiHarness';
+import { CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS } from './support/timeouts';
 import { recordVirtualSurfaceResources } from './support/virtualSurfaceResources';
 
 useRealMoment();
@@ -900,10 +901,13 @@ it('an old detached card cannot activate through a newer live request', async ()
   }
 });
 
-it('navigates the last of 50k real compact records cooperatively with bounded exact hydration', async ({
+async function runCanonicalSearchNavigationScaleAudit({
   signal,
   onTestFinished,
-}) => {
+}: {
+  signal: AbortSignal;
+  onTestFinished: (cleanup: () => void) => void;
+}): Promise<void> {
   const lifetime = new AbortController();
   const abort = (): void => {
     lifetime.abort(signal.reason);
@@ -977,7 +981,13 @@ it('navigates the last of 50k real compact records cooperatively with bounded ex
   } finally {
     h.dispose();
   }
-});
+}
+
+it(
+  'navigates the last of 50k real compact records cooperatively with bounded exact hydration',
+  runCanonicalSearchNavigationScaleAudit,
+  CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS,
+);
 
 it('a later inspector selection cancels reveal presentation while the destination hydrates', async () => {
   const h = await navigationSearchHarness();

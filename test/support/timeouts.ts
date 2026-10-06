@@ -9,9 +9,10 @@
  * to 5 s. The original four kinds cover heavy files at 30 busy loops on the gate's forks pool
  * (with coverage, lint:store without), sizing rounds under the same load, CI's Node 22 and 24
  * runners, and SP1o's gate durations at load 38 for stopped rows (lower bounds). The lifecycle
- * audit kind follows the same formula with its separate measurement documented below. When a
- * sizing round puts a row or hook above half its limit, its kind re-sizes
- * once: to two and a half times the kind's slowest time with every sizing round so far included,
+ * audit and canonical search scale-audit kinds follow the same formula with their separate
+ * measurements documented below. When a sizing round puts a row or hook above half its limit,
+ * its kind re-sizes once: to two and a half times the kind's slowest time with every sizing round
+ * so far included,
  * rounded up to 5 s, so that the next round does not depend on no row beating its own record. The
  * time limit check's own rows neither start a re-size nor count toward one. Every limit here stays
  * above the configs' limit: a kind that the light limit reaches merges into light work.
@@ -54,3 +55,13 @@ export const CHILD_PROCESS_TIMEOUT_MS = 20_000;
  * quiet covering coverage took 1.325–8.090 s. Only the exact full-cycle helper owns this kind.
  */
 export const VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS = 220_000;
+
+/**
+ * The fixed 50,000-root canonical Search-to-Tasks navigation audit, including real index/search
+ * preparation, complete destination organization, and bounded exact hydration. Twice its 22.284 s
+ * completed 2026-10-06 diagnostic on Node 24.19.0 with Vitest 5.0.3 V8 coverage and 30 bounded
+ * busy CPU workers, rounded up to 5 s. The original structural assertions passed; the run took
+ * 7.130 s process CPU. This sizes contended correctness work, not product/UI latency. Only the
+ * exact fixed-scale function in task-search-navigation.test.ts owns this kind.
+ */
+export const CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS = 45_000;
