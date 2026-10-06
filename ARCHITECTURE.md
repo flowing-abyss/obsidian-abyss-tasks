@@ -696,6 +696,18 @@ remain live across a delayed project-editor guard. Source/semantic changes, proj
 new intent, query replacement, migration and disposal veto the old continuation before any
 list-state persistence or navigation mutation.
 
+`TaskListNavigation` shares exact address hydration and the accepted navigation transition. Inspector
+refs scan only their source note's compact organization at the captured generation, close the iterator,
+and compare the full hydrated node ref before constructing the ancestor path. RightPanel offers
+“Show in task list” only with an outer capability; the menu captures its original node owner and
+selection intent. PanelView forwards to CenterPanel, and TaskModal forwards only an actual outer
+callback. Menu dismissal does not end accepted navigation. CenterPanel keeps inspector source/state
+subscriptions until the delayed transition commits or is cancelled; stale refs receive specific
+feedback, while later intent cancels silently. A rejected project-editor guard has no rejection
+callback: at most one outstanding inspector activation retains its subscriptions until replacement,
+source/context invalidation, later intent, window migration or disposal retires it. Superseded delayed
+callbacks cannot commit. Search retains its existing failure boundary.
+
 `PanelNavigator.openList` accepts an optional synchronous transition. Inside its accepted batch it
 installs CenterPanel's `TaskSearchReveal` receipt and the exact `taskSelectionRefPath` through AppState
 before publishing list/mode. Ordinary callers retain their established navigation flow. Destination
@@ -1143,12 +1155,32 @@ and destruction cancel an in-flight attempt. Immediate authorities retain same-t
 `refreshMounted` repaints only already-started exact highlights with their remaining deadline.
 CenterPanel coalesces guarded row-settled callbacks after native reconcile and ready receipts;
 PanelView forwards them directly to `refreshMounted`, without shell/render completion. Compact
-creation pins the first exact physical occurrence and waits separately for hydration and Markdown
-before the single native reveal. Captured ref/query/source/window/visibility/capture intent and
+creation and navigation share CenterPanel's exact reveal preparation. It pins the target and joins
+both its row receipt and the current sparse mounted-window receipts. The existing native reveal
+performs geometry; preparation repeats only after that mounted/receipt set changes, for at most eight
+destination-window rounds. Compact mounts expose optional `measurementReady()` tied to their current
+settled card receipt; remounts and replacement receipts invalidate that proof. TaskListSurface skips
+provisional holder heights and its optional `reveal(key, { waitForReady: true })` yields the explicit
+`'pending'` result when a destination window needs hydration. The caller awaits that current sparse
+receipt set before another round. Cancellation remains `undefined`, never a successful reveal.
+Existing synchronous `reveal(key)` callers retain actual containment and the 16-pass measurement
+bound; ordinary anchor reconciliation retains its existing policy. Ordinary rows expose only their
+finite mounted card receipts. Native
+scroll, source/query/selection changes, owner loss and window migration cancel pending preparation;
+creation also retains its controller's three-second deadline. Captured ref/query/source/window/visibility/capture intent and
 controller expiry are rechecked after each await; cancellation releases pins and never falls back
 to legacy scrolling or focus. Finite active attempts are drained by state, source and window owners.
 CaptureSessions forwards the request through its captured reveal epoch, links input/blur/unmount
 cancellation to a finite per-session wait, and leaves submitted commands and drafts intact.
+A finite `TaskListInclusion` distinguishes navigation from creation without persisted metadata.
+Creation preserves the actual query hits and list filters, adding only the exact created root under
+“Created task” when excluded; ordinary lists insert that snapshot into the retained surface. The
+compact publication handoff belongs to the originating request and retires on cancellation or
+replacement. A returned card does not accept membership: CreationPresentationController calls the
+optional `onPresented` acknowledgement only after its canonical identity/root/currentness proof and
+before successful cleanup abort. CaptureSessions keeps forwarding abort through that acceptance
+boundary. Preaccept cancellation removes the exception; accepted membership survives pulse expiry
+until another selection, creation, filter, navigation or stale source retires it.
 CaptureSessions owns request/input-focus validity;
 CenterPanel binds it to the originating surface and list/query revision and reveals the exact
 canonical TaskRef without moving focus. `CreationPresentationController` remains the only pending

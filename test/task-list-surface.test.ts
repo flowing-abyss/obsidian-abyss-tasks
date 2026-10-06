@@ -1183,3 +1183,76 @@ describe('synchronous reveal convergence', () => {
     expect(h.writes).not.toHaveBeenCalled();
   });
 });
+
+it('yields pending destination holders without replacing settled heights, then converges after hydration', () => {
+  const h = harness(true);
+  const ready = new Set<string>();
+  const mounted = new Set<string>();
+  const original = expectDefined(h.mount.getMockImplementation());
+  h.mount.mockImplementation((host, row) => {
+    mounted.add(row.key);
+    h.heights.set(row.key, ready.has(row.key) ? 57 + (Number(row.key.split(':')[1]) % 3) * 90 : 12);
+    const mount = original(host, row);
+    return {
+      ...mount,
+      measurementReady: () => ready.has(row.key),
+      destroy: () => {
+        mounted.delete(row.key);
+        mount.destroy();
+      },
+    };
+  });
+  const settle = (): void => {
+    for (const key of mounted) {
+      ready.add(key);
+      h.heights.set(key, 57 + (Number(key.split(':')[1]) % 3) * 90);
+    }
+  };
+  h.surface.update(rows(1201), { ...presentation, estimate: () => 64 });
+  settle();
+  const release = h.surface.pin('n.md:1200');
+  settle();
+  expect(h.surface.reveal('n.md:1200', { waitForReady: true })).toBe('pending');
+  expect(h.reportFailure).not.toHaveBeenCalled();
+  let result: ReturnType<TaskListSurface['reveal']>;
+  for (let round = 0; round < 8; round++) {
+    settle();
+    result = h.surface.reveal('n.md:1200', { waitForReady: true });
+    if (result !== 'pending') break;
+  }
+  expect(result).not.toBe('pending');
+  const card = expectDefined(typeof result === 'string' ? undefined : result);
+  expect(card.getBoundingClientRect().top).toBeGreaterThanOrEqual(0);
+  expect(card.getBoundingClientRect().bottom).toBeLessThanOrEqual(480);
+  expect(mounted.size).toBeLessThan(100);
+  expect(h.reportFailure).not.toHaveBeenCalled();
+  release();
+  h.surface.destroy();
+});
+
+it.each(['removed', 'destroyed'] as const)(
+  'retires a pending destination when its surface is %s before hydration',
+  (change) => {
+    const h = harness(true);
+    const original = expectDefined(h.mount.getMockImplementation());
+    let ready = false;
+    h.mount.mockImplementation((host, row) => ({
+      ...original(host, row),
+      measurementReady: () => ready,
+    }));
+    h.surface.update(rows(1201), presentation);
+    const release = h.surface.pin('n.md:1200');
+    expect(h.surface.reveal('n.md:1200', { waitForReady: true })).toBe('pending');
+    if (change === 'removed') h.surface.update(rows(2), presentation);
+    else h.surface.destroy();
+    release();
+    ready = true;
+    h.frame();
+    h.writes.mockClear();
+    expect(h.surface.reveal('n.md:1200', { waitForReady: true })).toBeUndefined();
+    expect(h.writes).not.toHaveBeenCalled();
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+    expect(h.pending()).toBe(0);
+  },
+);

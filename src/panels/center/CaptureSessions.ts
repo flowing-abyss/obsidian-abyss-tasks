@@ -181,6 +181,7 @@ export class CaptureSessions {
     const epoch = session.revealEpoch;
     return {
       isCurrent: () => session.revealEpoch === epoch && authority.isCurrent(),
+      onPresented: (ref, element) => authority.onPresented?.(ref, element),
       reveal: (ref, request) => {
         const input = session.surface?.input;
         const controller = new AbortController();
@@ -227,10 +228,8 @@ export class CaptureSessions {
             });
             return Promise.race([result, cancelled]).finally(() => {
               release?.();
-              cleanup();
             });
           }
-          cleanup();
           return result;
         } catch (error) {
           cleanup();

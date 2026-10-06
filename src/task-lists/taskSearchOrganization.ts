@@ -43,6 +43,7 @@ export interface TaskSearchOrganizationInput {
   readonly observedTags?: readonly string[];
   readonly generation: number;
   readonly reveal?: TaskSearchAddress | undefined;
+  readonly revealKind?: 'navigation' | 'creation' | undefined;
   readonly records: readonly TaskOrganizationRecord[];
   readonly hits: readonly TaskSearchHit[] | null;
   readonly selection: ListSelection | null;
@@ -272,6 +273,12 @@ function compareSource(a: TaskOrganizationRecord, b: TaskOrganizationRecord): nu
   return path !== 0 ? path : a.source.line - b.source.line;
 }
 
+function revealGroup(kind: TaskSearchOrganizationInput['revealKind']): {
+  key: string;
+  label: string;
+} {
+  return { key: 'search-reveal', label: kind === 'creation' ? 'Created task' : 'Revealed task' };
+}
 function* revealOccurrence(
   input: TaskSearchOrganizationInput,
   occurrences: TaskSearchOccurrence[],
@@ -295,7 +302,7 @@ function* revealOccurrence(
     yield 'cheap';
   }
   const index = occurrences.length;
-  const group = { key: 'search-reveal', label: 'Revealed from search' };
+  const group = revealGroup(input.revealKind);
   counts.set(group.key, 1);
   occurrences.push({
     taskKey: `${record.source.filePath}:${record.source.line}`,

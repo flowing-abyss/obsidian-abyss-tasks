@@ -2,6 +2,7 @@ import { Scope, setIcon, type App } from 'obsidian';
 import { AppState } from '../app/AppState';
 import { createBrowserTaskScheduler } from '../browserTaskScheduler';
 import { RightPanel, type RightPanelMutationLifecycle } from '../panels/RightPanel';
+import type { ShowInTaskList } from '../panels/right/inspectorTypes';
 import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskSearchApi } from '../tasks';
@@ -45,6 +46,7 @@ import { TrackingTicker } from './timeTracking/TrackingTicker';
 import { createTrackingActions } from './timeTracking/trackingActions';
 
 interface TaskModalOptions {
+  readonly onShowInTaskList?: ShowInTaskList | undefined;
   readonly app: App;
   readonly statusRegistry: StatusRegistry;
   readonly settings?: CalendarSettings | undefined;
@@ -69,6 +71,7 @@ export class TaskModal {
   private readonly statusRegistry_abyssPrivate: StatusRegistry;
   private readonly settings_abyssPrivate: CalendarSettings | undefined;
   private readonly queries_abyssPrivate: TaskQueryApi | undefined;
+  private readonly onShowInTaskList_abyssPrivate: ShowInTaskList | undefined;
   private readonly search_abyssPrivate: TaskSearchApi | undefined;
   private readonly tasks_abyssPrivate: TaskApplicationApi | undefined;
   private readonly commentTimeContext_abyssPrivate: CommentTimeContextProvider | undefined;
@@ -105,6 +108,7 @@ export class TaskModal {
     this.queries_abyssPrivate = queries;
     this.tasks_abyssPrivate = tasks;
     this.search_abyssPrivate = options.search;
+    this.onShowInTaskList_abyssPrivate = options.onShowInTaskList;
     this.commentTimeContext_abyssPrivate = commentTimeContext;
     this.interactionOwnership_abyssPrivate = ownership ?? noInteractionOwnership;
   }
@@ -159,6 +163,7 @@ export class TaskModal {
       settings: this.settings_abyssPrivate,
       tasks: this.tasks_abyssPrivate,
       search: this.search_abyssPrivate,
+      onShowInTaskList: this.onShowInTaskList_abyssPrivate,
       dependencySearch: this.createDependencySearch_abyssPrivate(),
       onRenderHeaderActions: (actions) => {
         this.renderCloseButton_abyssPrivate(actions);

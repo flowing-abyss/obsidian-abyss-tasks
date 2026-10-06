@@ -677,6 +677,8 @@ export class PanelView extends ItemView {
       settings: this.settings_abyssPrivate,
       tasks: this.createInspectorTasks_abyssPrivate(selectionTasks),
       search: this.search_abyssPrivate,
+      onShowInTaskList: (target, request) =>
+        this.center_abyssPrivate.showTaskInList(target, request),
       dependencySearch: this.createDependencySearch_abyssPrivate(),
       onMutationLifecycle: (event) => {
         if (event.operation !== 'hierarchy') this.trackOwnWrite_abyssPrivate(event);

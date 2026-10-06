@@ -54,6 +54,7 @@ interface MountedRow {
   root: RootLease;
   card?: TaskCardMount | undefined;
   receipt?: Promise<TaskRenderOutcome>;
+  readyReceipt?: Promise<TaskRenderOutcome>;
   failure?: { readonly type: 'failed'; readonly error: unknown };
 }
 function rootKey(address: TaskSearchAddress): string {
@@ -194,6 +195,10 @@ export class TaskSearchRows {
     let live = true;
     return {
       element,
+      measurementReady: () =>
+        !mounted.dirty &&
+        mounted.card !== undefined &&
+        mounted.card.settled === mounted.readyReceipt,
       update: (next) => {
         if (!live || next.kind !== 'task') return;
         if (!mounted.leased || mounted.root.key !== rootKey(next.task.address)) {
@@ -223,7 +228,18 @@ export class TaskSearchRows {
     };
   }
 
+  get receiptRevision(): number {
+    return this.#revision;
+  }
+
   mountedChanged(keys: readonly string[]): void {
+    if (
+      keys.length === this.#keys.length &&
+      keys.every((key, index) => this.#keys[index] === key)
+    ) {
+      this.#pump();
+      return;
+    }
     this.#keys = [...keys];
     this.#notify();
     this.#pump();
@@ -288,7 +304,17 @@ export class TaskSearchRows {
     if (initial !== undefined) return initial;
     const receipt = row.dirty ? undefined : row.card?.settled;
     const outcome = await this.#wait(receipt, signal);
-    return this.#mountedOutcome(row) ?? (row.card?.settled === receipt ? outcome : undefined);
+    return this.#mountedOutcome(row) ?? this.#currentReceiptOutcome(row, receipt, outcome);
+  }
+
+  #currentReceiptOutcome(
+    row: MountedRow,
+    receipt: Promise<TaskRenderOutcome> | undefined,
+    outcome: TaskRenderOutcome | undefined,
+  ): TaskRenderOutcome | undefined {
+    if (row.card?.settled !== receipt) return undefined;
+    if (receipt !== undefined && outcome?.type === 'ready') row.readyReceipt = receipt;
+    return outcome;
   }
 
   #mountedOutcome(row: MountedRow): TaskRenderOutcome | undefined {
@@ -613,6 +639,7 @@ export class TaskSearchRows {
       row.leased = false;
       this.#options.reportFailure(outcome.error);
     }
+    if (outcome.type === 'ready') row.readyReceipt = receipt;
     this.#options.refreshMeasurements();
     this.#notify();
   }

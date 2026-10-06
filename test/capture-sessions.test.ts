@@ -247,7 +247,9 @@ describe('capture publication through a bounded task surface', () => {
       panel.refresh();
       const scroll = expectDefined(root.querySelector<HTMLElement>('.abyss-center-scroll'));
       if (scenario === 'before-result' || scenario === 'after-result') {
-        expect(scroll.scrollTop).toBeGreaterThan(50000);
+        await vi.waitFor(() => {
+          expect(scroll.scrollTop).toBeGreaterThan(50000);
+        });
         expect(root.querySelector('[data-line="1200"]')).not.toBeNull();
         expect(activeDocument.activeElement).toBe(input);
         expect(root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(100);

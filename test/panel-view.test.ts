@@ -2902,7 +2902,7 @@ describe('PanelView', () => {
 
       expect(view.contentEl.querySelector('.abyss-task-card.is-just-created')).not.toBeNull();
       expect(matchMedia).toHaveBeenCalledWith('(prefers-reduced-motion: reduce)');
-      expect(reveal).toHaveBeenCalledWith('capture.md:0');
+      expect(reveal).toHaveBeenCalledWith('capture.md:0', { waitForReady: true });
       expect(scrollIntoView).not.toHaveBeenCalled();
       expect(input.ownerDocument.activeElement).toBe(input);
       const delays = setTimeout.mock.calls.map(([, delay]) => delay);

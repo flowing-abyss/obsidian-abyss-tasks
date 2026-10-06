@@ -653,7 +653,7 @@ it('temporarily includes an excluded completed target without changing saved fil
     });
     await h.completed();
     expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
-    expect(h.root.textContent).toContain('Revealed from search');
+    expect(h.root.textContent).toContain('Revealed task');
     expect(h.settings.listViewStates?.['inbox']).toEqual(before);
     expect(h.list).not.toHaveBeenCalled();
     expect(h.nodes).not.toHaveBeenCalled();
@@ -1346,3 +1346,73 @@ it('keeps the reveal pulse on the first physical occurrence when duplicate group
     h.dispose();
   }
 });
+
+it.each(['accepted', 'later-selection', 'replacement', 'disposal'] as const)(
+  'inspector exact child navigation owns a real delayed project guard through %s',
+  async (outcome) => {
+    const h = await navigationSearchHarness(3);
+    try {
+      const signal = new AbortController().signal;
+      const cursor = await h.search.open({ kind: 'roots', query: 'needle' }, signal);
+      const batch = await h.search.read(cursor, 0, 10, signal);
+      h.search.release(cursor);
+      const hit = expectDefined(
+        (
+          await h.search.resolveHits(
+            [
+              {
+                address: { ...expectDefined(batch.hits[0]).address, childLines: [2, 2] },
+                score: 0,
+              },
+            ],
+            signal,
+          )
+        )[0],
+      );
+      h.state.set('taskStack', [hit.task.root]);
+      h.state.set('mode', 'projects');
+      let accept: (() => void) | undefined;
+      vi.spyOn(h.panel, 'finishProjectTableEditorBefore').mockImplementation((action) => {
+        accept = action;
+      });
+      await h.panel.showTaskInList(hit.task.target, { signal, isCurrent: () => true });
+      expect(h.state.get('mode')).toBe('projects');
+      const firstAccept = expectDefined(accept);
+      if (outcome === 'later-selection') h.state.set('taskStack', []);
+      if (outcome === 'replacement') {
+        const firstCancel = h.panel['cancelListActivation_abyssPrivate'];
+        await h.panel.showTaskInList(hit.task.target, { signal, isCurrent: () => true });
+        expect(h.panel['cancelListActivation_abyssPrivate']).not.toBe(firstCancel);
+        firstAccept();
+        expect(h.state.get('mode')).toBe('projects');
+        expect(h.receipt()).toBeUndefined();
+      }
+      if (outcome === 'disposal') {
+        h.dispose();
+        expect(h.panel['cancelListActivation_abyssPrivate']).toBeUndefined();
+        firstAccept();
+        expect(h.state.get('mode')).toBe('projects');
+        expect(h.receipt()).toBeUndefined();
+        return;
+      }
+      expectDefined(accept)();
+      if (outcome === 'later-selection') {
+        expect(h.state.get('mode')).toBe('projects');
+        expect(h.state.get('taskStack')).toEqual([]);
+        expect(h.receipt()).toBeUndefined();
+      } else {
+        expect(h.state.get('mode')).toBe('tasks');
+        expect(h.state.get('taskStack')).toHaveLength(3);
+        expect(h.state.get('selectedList')).toBe('inbox');
+        expect(h.receipt()?.address.childLines).toEqual([2, 2]);
+        expect(h.panel['cancelListActivation_abyssPrivate']).toBeUndefined();
+        await h.completed();
+        expect(h.root.querySelector('.is-search-revealed')).not.toBeNull();
+      }
+      expect(h.list).not.toHaveBeenCalled();
+      expect(h.nodes).not.toHaveBeenCalled();
+    } finally {
+      h.dispose();
+    }
+  },
+);

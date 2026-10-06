@@ -12,6 +12,7 @@ import type {
   InspectorTaskOwner,
   PlanningControlKey,
   SchedulingDateField,
+  ShowInTaskList,
   TaskLike,
 } from './right/inspectorTypes';
 
@@ -85,6 +86,7 @@ import {
 } from '../ui/timeTracking/TimeBadge';
 
 interface RightPanelOptions {
+  readonly onShowInTaskList?: ShowInTaskList | undefined;
   readonly state: AppState;
   readonly app: App;
   readonly statusRegistry: StatusRegistry;
@@ -280,6 +282,7 @@ export class RightPanel {
   private readonly completionConfirmationAbortController_abyssPrivate = new AbortController();
   private el_abyssPrivate!: HTMLElement;
   private mounted_abyssPrivate = false;
+  private listActivation_abyssPrivate = new AbortController();
   private pendingPlanningRender_abyssPrivate = false;
   private pendingPlanningMetadata_abyssPrivate = false;
   private queuedPlanningRender_abyssPrivate:
@@ -382,6 +385,12 @@ export class RightPanel {
       interactionOwnership,
       timeTracking,
       host: {
+        showInTaskList:
+          options.onShowInTaskList === undefined
+            ? undefined
+            : (task) => {
+                this.showInTaskList_abyssPrivate(task, options.onShowInTaskList);
+              },
         root: () => this.el_abyssPrivate,
         mounted: () => this.mounted_abyssPrivate,
         component: () => this.md_abyssPrivate,
@@ -421,6 +430,33 @@ export class RightPanel {
     });
     this.dependencies_abyssPrivate = this.createDependencies_abyssPrivate(options);
     this.sections_abyssPrivate = this.createSections_abyssPrivate();
+  }
+
+  private showInTaskList_abyssPrivate(task: TaskLike, action: ShowInTaskList | undefined): void {
+    if (action === undefined) return;
+    this.listActivation_abyssPrivate.abort();
+    const controller = new AbortController();
+    this.listActivation_abyssPrivate = controller;
+    const owner = this.taskOwner_abyssPrivate(task);
+    const target = taskNodeRef(task);
+    const intent = this.state_abyssPrivate.taskSelectionIntentGeneration;
+    const window = this.el_abyssPrivate.ownerDocument.defaultView;
+    const isCurrent = (): boolean =>
+      !controller.signal.aborted &&
+      this.mounted_abyssPrivate &&
+      this.el_abyssPrivate.ownerDocument.defaultView === window &&
+      this.state_abyssPrivate.taskSelectionIntentGeneration === intent &&
+      owner.current !== undefined &&
+      sameTaskNodeRef(taskNodeRef(owner.current), target);
+    if (!isCurrent()) return;
+    void action(target, { signal: controller.signal, isCurrent }).catch((error: unknown) => {
+      if (!isCurrent()) return;
+      console.error('[abyss-tasks] task list navigation failed', {
+        phase: 'activation',
+        category: error instanceof Error ? error.name : typeof error,
+      });
+      new Notice('Could not show task in task list');
+    });
   }
 
   private createDependencies_abyssPrivate(options: RightPanelOptions): InspectorDependencies {
@@ -637,6 +673,7 @@ export class RightPanel {
   }
 
   onWindowMigrated(): void {
+    this.listActivation_abyssPrivate.abort();
     const draft = this.captureDraftState();
     this.dependencies_abyssPrivate.cancelSearch();
     this.planningSurfaces_abyssPrivate.clearAnchoredSurfaces();
@@ -647,6 +684,7 @@ export class RightPanel {
   }
 
   destroy(): void {
+    this.listActivation_abyssPrivate.abort();
     this.retireTaskOwners_abyssPrivate();
     this.invalidateDeferredPlanningRender_abyssPrivate();
     clearOptionalTimer(

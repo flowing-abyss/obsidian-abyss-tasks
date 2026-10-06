@@ -29,7 +29,6 @@ import {
 import type { LocalSearchFocusTarget } from '../../ui/localSearchKeys';
 import { SearchStatus } from '../../ui/searchStatus';
 import type { TaskRenderOutcome } from '../../ui/taskRenderScope';
-import { taskSelectionRefPath } from '../../ui/taskSelection';
 import type { PanelNavigationActions } from '../../views/panelNavigation';
 import {
   runTaskOrganization,
@@ -39,7 +38,8 @@ import {
 import type { TaskSearchRowsIdentity } from '../task-list/TaskSearchRows';
 import type { SearchViewState } from './SearchViewState';
 import type { TaskCardHighlight, TaskCardSearchPresentation } from './TaskCardRenderer';
-import type { TaskRevealReceipt } from './TaskSearchReveal';
+import { navigateTaskListTarget } from './TaskListNavigation';
+import type { TaskListInclusion, TaskRevealReceipt } from './TaskSearchReveal';
 
 export interface TaskSearchRowOptions {
   readonly identity: TaskSearchRowsIdentity;
@@ -57,6 +57,7 @@ interface TaskSearchHost {
   destination(task: TaskSnapshot): ListSelection;
   installReveal(receipt: TaskRevealReceipt): void;
   currentReveal(): TaskRevealReceipt | undefined;
+  currentInclusion?(): TaskListInclusion | undefined;
   expireReveal(): void;
   revealTask(key: string, identity: TaskSearchRowsIdentity): Promise<void>;
   beginResults(): void;
@@ -150,6 +151,16 @@ export class TaskSearch {
   #organization: TaskSearchOrganization | undefined;
   constructor(options: TaskSearchOptions) {
     this.#options = options;
+  }
+  #inclusion(): TaskListInclusion | undefined {
+    const creation = this.#options.host.currentInclusion?.();
+    const navigation = this.#options.host.currentReveal();
+    return (
+      creation ??
+      (navigation === undefined
+        ? undefined
+        : { id: navigation.id, kind: 'navigation', address: navigation.address })
+    );
   }
   refresh(reason: 'view' | 'source' | 'projects' | 'links' = 'view'): boolean {
     if (!this.#live()) return false;
@@ -262,7 +273,7 @@ export class TaskSearch {
     }
     if (
       (state.phase === 'failed' || state.phase === 'disposed') &&
-      (this.#currentQuery().trim() !== '' || this.#options.host.currentReveal() !== undefined)
+      (this.#currentQuery().trim() !== '' || this.#inclusion() !== undefined)
     ) {
       this.#cancelPending();
       this.#handleFailure(
@@ -350,7 +361,7 @@ export class TaskSearch {
       this.#options.host.clearSelection();
     }
     this.#status?.pending(request, query);
-    if (query.trim().length === 0 && this.#options.host.currentReveal() === undefined) {
+    if (query.trim().length === 0 && this.#inclusion() === undefined) {
       this.#empty(request);
       return;
     }
@@ -572,6 +583,19 @@ export class TaskSearch {
       return this.#drainCursor(query, current, collection, handoff);
     }
   }
+  #projectionRequest(
+    generation: number,
+    collection: SearchCollection,
+  ): Parameters<TaskReadProjectionApi['organization']>[0] {
+    const inclusion = this.#inclusion();
+    return inclusion?.kind === 'navigation'
+      ? { expectedGeneration: generation }
+      : {
+          expectedGeneration: generation,
+          roots:
+            inclusion === undefined ? collection.roots : [...collection.roots, inclusion.address],
+        };
+  }
   async #collectProjection(
     generation: number,
     current: SearchPreparation,
@@ -582,10 +606,7 @@ export class TaskSearch {
     const reads = this.#options.reads;
     if (reads === undefined) throw new TaskSearchError('unavailable', 'Search capability missing');
     const batches = reads.organization(
-      {
-        expectedGeneration: generation,
-        ...(this.#options.host.currentReveal() === undefined ? { roots: collection.roots } : {}),
-      },
+      this.#projectionRequest(generation, collection),
       current.signal,
     );
     const iterator = batches[Symbol.asyncIterator]();
@@ -662,9 +683,15 @@ export class TaskSearch {
     });
     return new TaskSearchError('unavailable', 'Task organization failed');
   }
-  #revealInput(collection: SearchCollection): Pick<TaskSearchOrganizationInput, 'hits' | 'reveal'> {
-    const receipt = this.#options.host.currentReveal();
-    return { hits: receipt === undefined ? collection.hits : null, reveal: receipt?.address };
+  #revealInput(
+    collection: SearchCollection,
+  ): Pick<TaskSearchOrganizationInput, 'hits' | 'reveal' | 'revealKind'> {
+    const receipt = this.#inclusion();
+    return {
+      hits: receipt?.kind === 'navigation' ? null : collection.hits,
+      reveal: receipt?.address,
+      revealKind: receipt?.kind,
+    };
   }
   async #organizeCollected(
     current: SearchPreparation,
@@ -741,8 +768,9 @@ export class TaskSearch {
       const scheduler = this.#organizationScheduler(current);
       const handoff = (): Promise<void> => this.#handoff(current, scheduler, continuation.signal);
       let generation: number;
-      if (this.#options.host.currentReveal() === undefined) {
+      if (this.#inclusion()?.kind !== 'navigation') {
         generation = await this.#collectCursor(query, current, collection, handoff);
+        if (this.#inclusion() !== undefined) await this.#proveReveal(current);
       } else {
         await this.#options.search?.prepare(signal);
         if (this.#observed?.phase !== 'ready')
@@ -766,7 +794,7 @@ export class TaskSearch {
     }
   }
   async #proveReveal(current: SearchPreparation): Promise<void> {
-    const reveal = this.#options.host.currentReveal();
+    const reveal = this.#inclusion();
     if (reveal === undefined) throw new TaskSearchError('aborted', 'Reveal cancelled');
     try {
       const result = await this.#options.search?.resolveHits(
@@ -823,7 +851,8 @@ export class TaskSearch {
       organization.revealIndex === undefined
         ? undefined
         : organization.occurrences[organization.revealIndex];
-    if (occurrence !== undefined) await this.#options.host.revealTask(occurrence.key, identity);
+    if (occurrence !== undefined && this.#inclusion()?.kind !== 'creation')
+      await this.#options.host.revealTask(occurrence.key, identity);
   }
   #publicationState(
     organization: TaskSearchOrganization,
@@ -956,19 +985,22 @@ export class TaskSearch {
       this.#options.state.taskSelectionIntentGeneration === intent &&
       this.canPublish(request, generation, controller.signal);
     try {
-      const hydrated = (await search.resolveHits([{ address, score: 0 }], controller.signal))[0];
-      if (!current()) return;
-      if (hydrated === undefined) throw new TaskSearchError('stale', 'Task changed');
-      const path = taskSelectionRefPath(hydrated.task.root, hydrated.task.target);
-      if (path === undefined) throw new TaskSearchError('stale', 'Task changed');
-      const selection = this.#options.host.destination(hydrated.task.root);
-      this.#options.navigation.openList(selection, {
-        canCommit: current,
-        commit: () => {
-          this.#options.host.installReveal({ id, address, selection });
-          this.#options.state.set('taskStack', path);
+      await navigateTaskListTarget(
+        { type: 'address', address },
+        {
+          search,
+          state: this.#options.state,
+          navigation: this.#options.navigation,
+          request: { signal: controller.signal, isCurrent: current },
+          destination: (root) => this.#options.host.destination(root),
+          installReveal: (address, selection) => {
+            this.#options.host.installReveal({ id, address, selection });
+          },
+          onCommitted: () => {
+            this.#activation = null;
+          },
         },
-      });
+      );
     } catch (error) {
       if (current()) this.#activationFailed(request, error);
     }

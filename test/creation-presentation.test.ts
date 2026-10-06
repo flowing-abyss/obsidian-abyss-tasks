@@ -1063,7 +1063,9 @@ it('waits for real compact creation hydration and Markdown, then repaints only r
     expect(renderedTaskElements(h.root, created.ref)).toContain(card);
     expect(document.activeElement).toBe(input);
     expect(input.isConnected).toBe(true);
-    expect(reveal).toHaveBeenCalledTimes(1);
+    const revealRounds = reveal.mock.calls.length;
+    expect(revealRounds).toBeGreaterThanOrEqual(1);
+    expect(revealRounds).toBeLessThanOrEqual(8);
     expect(complete).toHaveBeenCalledTimes(completions);
     const deadline = Date.now() + 1100;
     const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
@@ -1077,7 +1079,7 @@ it('waits for real compact creation hydration and Markdown, then repaints only r
     await vi.waitFor(() => {
       expect(h.root.querySelector('.is-just-created')).not.toBeNull();
     });
-    expect(reveal).toHaveBeenCalledTimes(1);
+    expect(reveal).toHaveBeenCalledTimes(revealRounds);
     expect(complete).toHaveBeenCalledTimes(completions);
     vi.spyOn(Date, 'now').mockReturnValue(deadline + 1);
     h.creation?.refreshMounted(h.root);
@@ -1319,5 +1321,108 @@ it.each(['hydration', 'markdown'] as const)(
       h.dispose();
     }
     expect(resources.counts()).toEqual(empty);
+  },
+);
+
+it.each([false, true])(
+  'acknowledges only accepted creation before cleanup abort; revoked=%s',
+  async (revoked) => {
+    const snapshot = task();
+    const h = controllerHarness(exact(snapshot));
+    const held = deferred<HTMLElement | undefined>();
+    let valid = true;
+    let request: CreationRevealRequest | undefined;
+    const presented = vi.fn(() => {
+      expect(request?.signal.aborted).toBe(false);
+    });
+    h.controller.afterRender(h.root);
+    const result = successfulCreation(snapshot);
+    h.controller.present(result, describeTaskCreationResult(result), {
+      isCurrent: () => valid,
+      reveal: (_ref, next) => {
+        request = next;
+        return held.promise;
+      },
+      onPresented: presented,
+    });
+    const element = renderIdentity(h.root, snapshot.ref);
+    held.resolve(element);
+    if (revoked) valid = false;
+    await flushMicrotasks();
+    expect(presented).toHaveBeenCalledTimes(revoked ? 0 : 1);
+    expect(element.classList.contains('is-just-created')).toBe(!revoked);
+    h.controller.destroy();
+  },
+);
+
+it.each([false, true])(
+  'includes only accepted exact creation with query/input retained; revoke after card=%s',
+  async (revoke) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.taskFilePath = 'created.md';
+    const h = await mountCanonicalSearchUi(
+      { 'many.md': '- [ ] Filler\n- [ ] Existing unrelated task', 'created.md': '' },
+      settings,
+      'tasks',
+      undefined,
+      true,
+    );
+    try {
+      h.query('Filler');
+      await h.completed();
+      const list = h.state.get('selectedList');
+      const fullReads = vi.spyOn(h.index, 'list');
+      const fullNodes = vi.spyOn(h.index, 'listNodes');
+      expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')).click();
+      await flushMicrotasks();
+      const input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-capture-input'));
+      if (revoke) {
+        const presentation = expectDefined(h.creation);
+        const present = presentation.present.bind(presentation);
+        vi.spyOn(presentation, 'present').mockImplementation((result, description, authority) => {
+          if (authority !== undefined) {
+            const reveal = authority.reveal.bind(authority);
+            authority.reveal = async (ref, request) => {
+              const card = await reveal(ref, request);
+              if (card !== undefined) {
+                input.value = 'later draft';
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+              return card;
+            };
+          }
+          present(result, description, authority);
+        });
+      }
+
+      input.value = 'New unrelated task';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      if (revoke) {
+        await vi.waitFor(() => {
+          expect(input.value).toBe('later draft');
+        });
+        await vi.waitFor(() => {
+          expect(h.root.textContent).not.toContain('New unrelated task');
+        });
+        expect(h.root.querySelector('.is-just-created')).toBeNull();
+        expect(h.panel['creationInclusion_abyssPrivate']).toBeUndefined();
+        return;
+      }
+      await vi.waitFor(() => {
+        expect(h.root.querySelector('.is-just-created')).not.toBeNull();
+      });
+      expect(h.state.get('centerFilter')).toBe('Filler');
+      expect(h.state.get('selectedList')).toEqual(list);
+      expect(h.root.textContent).toContain('New unrelated task');
+      expect(h.root.textContent).not.toContain('Existing unrelated task');
+      expect(h.root.textContent).toContain('Created task');
+      expect(input.isConnected).toBe(true);
+      expect(input.ownerDocument.activeElement).toBe(input);
+      expect(fullReads).not.toHaveBeenCalled();
+      expect(fullNodes).not.toHaveBeenCalled();
+    } finally {
+      h.dispose();
+    }
   },
 );

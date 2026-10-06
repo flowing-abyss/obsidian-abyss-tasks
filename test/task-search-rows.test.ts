@@ -703,3 +703,43 @@ it('fails only eligible roots in a shared allocation and leaves a hidden root re
     h.dispose();
   }
 });
+
+it('admits measurements only for the current mounted card receipt', async () => {
+  const receipt = deferred<TaskRenderOutcome>();
+  const settled = vi.fn(() => receipt.promise);
+  const h = await rowsHarness(1, {
+    mountCard: (element) => ({
+      element,
+      get settled() {
+        return settled();
+      },
+      update: () => {},
+      destroy: () => {
+        element.remove();
+      },
+    }),
+  });
+  try {
+    const row = expectDefined(h.rows.rows[0]);
+    const mount = h.owner.mount(h.host, row);
+    expect(mount.measurementReady?.()).toBe(false);
+    receipt.resolve({ type: 'ready' });
+    expect(await h.owner.settleRow(row.key, h.identity.signal)).toEqual({ type: 'ready' });
+    expect(mount.measurementReady?.()).toBe(true);
+    const next = deferred<TaskRenderOutcome>();
+    settled.mockReturnValue(next.promise);
+    expect(mount.measurementReady?.()).toBe(false);
+    const changed = h.owner.settleRow(row.key, h.identity.signal);
+    next.resolve({ type: 'ready' });
+    expect(await changed).toEqual({ type: 'ready' });
+    expect(mount.measurementReady?.()).toBe(true);
+    mount.destroy();
+    const remount = h.owner.mount(h.host, row);
+    expect(remount.measurementReady?.()).toBe(false);
+    expect(await h.owner.settleRow(row.key, h.identity.signal)).toEqual({ type: 'ready' });
+    expect(remount.measurementReady?.()).toBe(true);
+    remount.destroy();
+  } finally {
+    h.dispose();
+  }
+});

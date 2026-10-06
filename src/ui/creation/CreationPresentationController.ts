@@ -22,6 +22,7 @@ export interface CreationRevealRequest {
 
 /** A single capture result may reveal only while its originating interaction still owns it. */
 export interface CreationRevealAuthority {
+  onPresented?(ref: TaskRef, element: HTMLElement): void;
   isCurrent(): boolean;
   reveal(
     ref: TaskRef,
@@ -368,7 +369,10 @@ export class CreationPresentationController {
         target.isConnected &&
         root.contains(target) &&
         renderedTaskElements(root, ref).includes(target);
-      if (ready) entry.revealReady = true;
+      if (ready) {
+        entry.revealReady = true;
+        authority.onPresented?.(ref, target);
+      }
       clear();
       return ready;
     };

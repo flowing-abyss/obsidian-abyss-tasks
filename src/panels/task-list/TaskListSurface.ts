@@ -9,6 +9,7 @@ import { indexedRows, type TaskListRow, type TaskListRows } from './taskListRows
 import type { MountedTaskListRows } from './taskListRowView';
 
 export interface TaskRowMount<T = TaskSnapshot> {
+  measurementReady?(): boolean;
   readonly element: HTMLElement;
   update(row: TaskListRow<T>): void;
   destroy(): void;
@@ -32,11 +33,13 @@ const maxRevealMeasurementPasses = 16;
 interface RevealPlacement {
   readonly key: string;
   readonly alignTall: boolean;
+  readonly onPending?: (() => void) | undefined;
   readonly current: () => boolean;
 }
 
 interface TaskListScroll {
   readonly revealKey?: string;
+  readonly onPending?: () => void;
   readonly top: number;
   readonly anchor: RowAnchor | undefined;
 }
@@ -131,9 +134,18 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     }, failure);
   }
 
-  reveal(key: string): HTMLElement | undefined {
+  reveal(key: string): HTMLElement | undefined;
+  reveal(
+    key: string,
+    options: { readonly waitForReady: true },
+  ): HTMLElement | 'pending' | undefined;
+  reveal(
+    key: string,
+    options?: { readonly waitForReady: true },
+  ): HTMLElement | 'pending' | undefined {
     if (!this.#active() || this.#viewport.rowBounds(key) === undefined) return undefined;
     let revealed: HTMLElement | undefined;
+    const readiness = { pending: false };
     this.#guard(() => {
       if (!this.#bind()) return;
       const top = this.#checkLayout()?.top ?? this.#top();
@@ -142,11 +154,18 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
           top: this.#viewport.reveal(key, top, this.#height()),
           anchor: undefined,
           revealKey: key,
+          ...(options === undefined
+            ? {}
+            : {
+                onPending: () => {
+                  readiness.pending = true;
+                },
+              }),
         })
       )
         revealed = this.element(key);
     });
-    return revealed;
+    return readiness.pending ? 'pending' : revealed;
   }
 
   pin(key: string, onInvalidated?: () => void): () => void {
@@ -410,8 +429,8 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     current: () => boolean,
     alignTall: boolean,
   ): boolean {
-    const revealKey = target?.revealKey;
-    if (revealKey !== undefined) return this.#measureReveal(top, revealKey, current, alignTall);
+    if (target?.revealKey !== undefined)
+      return this.#measureReveal(top, { ...target, key: target.revealKey, current, alignTall });
     const measuredTop = this.#measure(top, target?.anchor, current);
     if (!current()) return false;
     // Ordinary frames retain their fractional/key anchor policy and one measurement pass.
@@ -421,10 +440,11 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     if (corrected !== undefined) this.#writeTop(corrected, current);
     return current();
   }
-  #measureReveal(top: number, key: string, current: () => boolean, alignTall: boolean): boolean {
+  #measureReveal(top: number, reveal: RevealPlacement): boolean {
+    const { key, current } = reveal;
     let desired = top;
-    const reveal = { key, current, alignTall };
     for (let pass = 0; pass < maxRevealMeasurementPasses; pass++) {
+      if (this.#yieldPendingReveal(desired, reveal)) return false;
       const next = this.#measureRevealWindow(desired, reveal, pass === 0);
       if (!current()) return false;
       desired = next.top;
@@ -432,6 +452,16 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       return this.#finishReveal(key, desired, current);
     }
     throw new Error('Task reveal measurements did not converge');
+  }
+  #yieldPendingReveal(top: number, reveal: RevealPlacement): boolean {
+    if (
+      reveal.onPending === undefined ||
+      ![...this.#mounts.values()].some((mount) => mount.measurementReady?.() === false)
+    )
+      return false;
+    this.#writeTop(top, reveal.current);
+    if (reveal.current()) reveal.onPending();
+    return true;
   }
   #finishReveal(key: string, desired: number, current: () => boolean): boolean {
     this.#writeTop(desired, current);
@@ -520,6 +550,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #measure(top: number, anchor: RowAnchor | undefined, current: () => boolean): number | undefined {
     const measurements: RowMeasurement[] = [];
     for (const [key, mount] of this.#mounts) {
+      if (mount.measurementReady?.() === false) continue;
       const style = this.#owner?.getComputedStyle(mount.element);
       if (!current()) return;
       const rect = mount.element.getBoundingClientRect();

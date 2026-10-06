@@ -2226,3 +2226,41 @@ it('uses multiline comment disclosure and description keyboard submission in the
     vi.restoreAllMocks();
   }
 });
+
+it.each([false, true])(
+  'modal offers task-list navigation only with a real outer capability: %s',
+  async (enabled) => {
+    const app = await createAppWithFiles({});
+    const callback = vi.fn<
+      NonNullable<ConstructorParameters<typeof TaskModal>[0]['onShowInTaskList']>
+    >(async () => {});
+    const modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      ...(enabled ? { onShowInTaskList: callback } : {}),
+    });
+    const snapshot = task();
+    try {
+      modal.open(snapshot);
+      click(
+        expectDefined(
+          activeDocument.querySelector<HTMLElement>('.abyss-modal [aria-label="More actions"]'),
+        ),
+      );
+      const action = [
+        ...activeDocument.querySelectorAll<HTMLElement>('.abyss-modal .abyss-context-item'),
+      ].find((item) => item.textContent === 'Show in task list');
+      expect(action !== undefined).toBe(enabled);
+      if (action !== undefined) {
+        click(action);
+        expect(callback).toHaveBeenCalledWith(
+          { type: 'task', ref: snapshot.ref },
+          expect.anything(),
+        );
+        expect(expectDefined(callback.mock.calls[0]?.[1]).isCurrent()).toBe(true);
+      }
+    } finally {
+      modal.close();
+    }
+  },
+);

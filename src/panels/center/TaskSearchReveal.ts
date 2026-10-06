@@ -1,6 +1,12 @@
 import type { ListSelection } from '../../app/AppState';
 import type { TaskSearchAddress } from '../../tasks';
 
+export interface TaskListInclusion {
+  readonly id: number;
+  readonly kind: 'navigation' | 'creation';
+  readonly address: TaskSearchAddress;
+}
+
 export interface TaskRevealReceipt {
   readonly id: number;
   readonly address: TaskSearchAddress;

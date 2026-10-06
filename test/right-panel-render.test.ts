@@ -459,6 +459,7 @@ async function makePanel(
     onSuccessfulMutation,
     commentTimeContext,
     interactionOwnership,
+    onShowInTaskList,
   ]: readonly [
     files?: Record<string, string>,
     tasks?: TaskApplicationApi,
@@ -466,6 +467,7 @@ async function makePanel(
     onSuccessfulMutation?: (ref?: TaskRef) => void,
     commentTimeContext?: CommentTimeContextProvider,
     interactionOwnership?: InteractionOwnershipPort,
+    onShowInTaskList?: ConstructorParameters<typeof RightPanel>[0]['onShowInTaskList'],
   ]
 ): Promise<{ panel: RightPanel; state: AppState; app: App; el: HTMLElement; index: TaskIndex }> {
   const app = await createAppWithFiles(files);
@@ -492,6 +494,7 @@ async function makePanel(
     statusRegistry,
     settings: DEFAULT_SETTINGS,
     onSuccessfulMutation,
+    onShowInTaskList,
     tasks: tasks ?? defaultTasks,
     commentTimeContext,
     interactionOwnership,
@@ -3697,4 +3700,28 @@ it('renders formatting-only description and comment through the shared Markdown 
   expect(description.querySelector('.abyss-task-desc')).toBeNull();
   expect(description.querySelector(':scope > .abyss-md')).not.toBeNull();
   expect(el.querySelector('.abyss-comment-text code')?.textContent).toBe('comment');
+});
+
+it('offers exact list navigation only with a capability and retains accepted action beyond menu dismissal', async () => {
+  const accepted = vi.fn<
+    NonNullable<ConstructorParameters<typeof RightPanel>[0]['onShowInTaskList']>
+  >(async () => {});
+  const h = await makePanel({}, undefined, undefined, undefined, undefined, undefined, accepted);
+  document.body.append(h.el);
+  const root = task();
+  h.state.set('taskStack', [root]);
+  click(expectDefined(h.el.querySelector<HTMLElement>('[aria-label="More actions"]')));
+  const action = expectDefined(
+    [...h.el.querySelectorAll<HTMLElement>('.abyss-context-item')].find(
+      (el) => el.textContent === 'Show in task list',
+    ),
+  );
+  click(action);
+  expect(h.el.querySelector('.abyss-task-context-menu')).toBeNull();
+  expect(accepted.mock.calls[0]?.[0]).toEqual({ type: 'task', ref: root.ref });
+  const request = expectDefined(accepted.mock.calls[0]?.[1]);
+  expect(request.isCurrent()).toBe(true);
+  h.state.set('taskStack', [task({ title: 'later', source: { filePath: 'later.md', line: 0 } })]);
+  expect(request.isCurrent()).toBe(false);
+  h.el.remove();
 });

@@ -54,6 +54,7 @@ import type {
 const DURATION_INPUT_EXAMPLE = '1h30m';
 
 interface InspectorPlanningHost {
+  readonly showInTaskList?: ((task: TaskLike) => void) | undefined;
   readonly root: () => HTMLElement;
   readonly mounted: () => boolean;
   readonly component: () => Component;
@@ -1319,6 +1320,7 @@ export class InspectorPlanningSurfaces {
 
     this.#addTrackingMenuItem(menu, task);
     const contextTarget = taskNodeRef(task);
+    const contextOwner = this.#host.taskOwner(task);
     this.#createContextMenuSeparator(menu);
     this.#createContextMenuItem(menu, 'abyss-context-item', 'Open in note', () => {
       this.#removeAnchoredSurface(menu);
@@ -1326,6 +1328,15 @@ export class InspectorPlanningSurfaces {
       if (root != null && 'source' in root)
         runAsyncAction(openInFile(this.#app, root, taskNodeLine(root, task)));
     });
+    if (this.#host.showInTaskList !== undefined)
+      this.#createContextMenuItem(menu, 'abyss-context-item', 'Show in task list', () => {
+        this.#removeAnchoredSurface(menu);
+        if (
+          contextOwner.current !== undefined &&
+          sameTaskNodeRef(taskNodeRef(contextOwner.current), contextTarget)
+        )
+          this.#host.showInTaskList?.(contextOwner.current);
+      });
     this.#createContextMenuSeparator(menu);
     if (contextTarget.type === 'task') {
       this.#createContextMenuItem(menu, 'abyss-context-item', 'Archive', () => {
