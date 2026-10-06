@@ -78,6 +78,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskSearchEligibilityRequest: ['src/ui/TaskDependencySearchProvider.ts'],
   TaskSearchEligibilityBatch: ['src/ui/TaskDependencySearchProvider.ts'],
   createSearchWordSegmenter: [
+    'src/ui/dependencySearch.ts',
     'src/panels/center/TaskSearch.ts',
     'src/ui/NoteSuggest.ts',
     'src/ui/ProjectPropertySuggest.ts',
@@ -98,6 +99,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/projects/projectTableModel.ts',
   ],
   prepareSearchQuery: [
+    'src/ui/dependencySearch.ts',
     'src/panels/center/TaskSearch.ts',
     'src/ui/NoteSuggest.ts',
     'src/ui/ProjectPropertySuggest.ts',
@@ -108,6 +110,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/projects/projectTableModel.ts',
   ],
   PreparedSearchQuery: [
+    'src/ui/dependencySearch.ts',
     'src/ui/markSearchText.ts',
     'src/panels/projects/projectCellValuePicker.ts',
     'src/projects/projectTableModel.ts',

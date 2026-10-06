@@ -7,9 +7,12 @@ import {
   type TaskRowMount,
 } from '../panels/task-list/TaskListSurface';
 import {
+  createSearchWordSegmenter,
+  prepareSearchQuery,
   sameTaskNodeRef,
   TaskSearchError,
   type DependencyDirection,
+  type PreparedSearchQuery,
   type TaskDependencyEligibility,
   type TaskNodeRef,
   type TaskNodeSnapshot,
@@ -29,6 +32,7 @@ import {
   localSearchSurfaceIsVisible,
   type LocalSearchScopeHost,
 } from './localSearchKeys';
+import { markSearchText } from './markSearchText';
 import { runAsyncAction } from './runAsyncAction';
 import { SearchStatus } from './searchStatus';
 import { dependencyDirectionLabel } from './taskDependencyPresentation';
@@ -44,6 +48,7 @@ export interface DependencySearchOption {
   readonly offset: number;
   readonly title: string;
   readonly context: string;
+  readonly sourcePath?: string;
   readonly directions: readonly DependencyDirection[];
   readonly disabledReason?: string;
 }
@@ -400,6 +405,8 @@ class DependencySearchController {
   #intentGeneration: number | undefined;
   #intentDirection: DependencyDirection | undefined;
   #query = '';
+  readonly #segment = createSearchWordSegmenter();
+  #highlight: PreparedSearchQuery | undefined;
   #state: TaskSearchState | undefined;
   readonly #status: SearchStatus;
   readonly #commit: ReturnType<typeof createSearchCommitter>;
@@ -550,6 +557,7 @@ class DependencySearchController {
     if (this.#intentGeneration !== this.#state?.generation) this.#selectedOffset = undefined;
     this.#current = current;
     this.#query = this.view.input.value;
+    this.#highlight = undefined;
     this.#intentGeneration = this.#state?.generation;
     this.#intentDirection = this.#direction;
     this.#cancel();
@@ -587,6 +595,7 @@ class DependencySearchController {
   }
   async #open(request: number, owner: AbortController): Promise<void> {
     await this.#paint(owner.signal);
+    this.#highlight = prepareSearchQuery(this.#query, this.#segment);
     const current = this.#current;
     if (current === undefined) throw new TaskSearchError('stale', 'Task changed');
     const session = await this.callbacks.provider.open(
@@ -1016,8 +1025,26 @@ class DependencySearchController {
     holder.setAttribute('aria-posinset', String(option.offset + 1));
     holder.setAttribute('aria-setsize', String(this.#session?.totalCandidates ?? 0));
     holder.setAttribute('aria-disabled', String(!isEligible(this.#direction, option)));
-    holder.createSpan({ cls: 'abyss-dep-search-title', text: option.title });
-    holder.createSpan({ cls: 'abyss-dep-search-context', text: option.context });
+    const title = holder.createSpan({ cls: 'abyss-dep-search-title', text: option.title });
+    const context = holder.createSpan({ cls: 'abyss-dep-search-context' });
+    const path = context.createSpan({ text: option.sourcePath ?? option.context });
+    if (option.sourcePath !== undefined)
+      context.appendText(option.context.slice(option.sourcePath.length));
+    if (this.#highlight !== undefined) {
+      markSearchText(
+        title,
+        { visible: { text: option.title, map: [] }, destinations: [] },
+        this.#highlight,
+        this.#segment,
+      );
+      if (option.sourcePath !== undefined)
+        markSearchText(
+          path,
+          { visible: { text: option.sourcePath, map: [] }, destinations: [] },
+          this.#highlight,
+          this.#segment,
+        );
+    }
     if (option.disabledReason !== undefined)
       holder.createSpan({ cls: 'abyss-dep-search-reason', text: option.disabledReason });
   }

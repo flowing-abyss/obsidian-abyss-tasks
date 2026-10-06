@@ -1025,9 +1025,15 @@ it('keeps canonical node matching to title, tags and source path while excluding
   ui.query('tasks.md');
   await ui.completed();
   expect(ui.handle.element.querySelector('[role="option"]')?.textContent).toContain('Candidate');
+  expect(
+    [...ui.handle.element.querySelectorAll('.abyss-dep-search-context mark')].map(
+      (mark) => mark.textContent,
+    ),
+  ).toEqual(['tasks.md']);
   ui.query('owned');
   await ui.completed();
   expect(ui.handle.element.querySelector('[role="option"]')?.textContent).toContain('Candidate');
+  expect(ui.handle.element.querySelector('mark')).toBeNull();
 });
 it.each(['existing', 'create'] as const)(
   'keeps thrown %s command errors in the existing command boundary',
@@ -3226,3 +3232,42 @@ it('native End setup cancellation closes the late real owner without reacquiring
     harness.mockRestore();
   }
 });
+
+it.each(['blocks', 'blocked-by'] as const)(
+  'marks typo and swap matches in %s picker labels while preserving literal paths',
+  async (direction) => {
+    const h = await fixture(1, direction, {
+      'a-current.md': '- [ ] Current 🆔 current',
+      'budget_[literal]:note.md': '- [ ] **Budget** [[Target|ledger]] task 1 🆔 candidate',
+    });
+    const ui = h.mount();
+    for (const query of ['budgte', 'budgwt']) {
+      ui.query(query);
+      await ui.completed();
+      const option = expectDefined(ui.handle.element.querySelector('[role="option"]'));
+      expect(option.querySelector('.abyss-dep-search-title mark')?.textContent).toBe('Budget');
+      expect(option.querySelector('.abyss-dep-search-context mark')?.textContent).toBe('budget_');
+      expect(option.querySelector('.abyss-dep-search-context')?.textContent).toBe(
+        'budget_[literal]:note.md:1',
+      );
+    }
+    ui.query('taks');
+    await ui.completed();
+    expect(ui.handle.element.querySelector('.abyss-dep-search-title mark')?.textContent).toBe(
+      'task',
+    );
+    ui.query('1');
+    await ui.completed();
+    expect(ui.handle.element.querySelector('.abyss-dep-search-title mark')?.textContent).toBe('1');
+    expect(ui.handle.element.querySelector('.abyss-dep-search-context mark')).toBeNull();
+    ui.query('ledger');
+    await ui.completed();
+    expect(ui.handle.element.querySelector('.abyss-dep-search-title mark')?.textContent).toBe(
+      'ledger',
+    );
+    expect(ui.handle.element.querySelector('.abyss-dep-search-context mark')).toBeNull();
+    ui.query('');
+    await ui.completed();
+    expect(ui.handle.element.querySelector('mark')).toBeNull();
+  },
+);

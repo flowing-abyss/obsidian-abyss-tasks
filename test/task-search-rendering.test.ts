@@ -1276,3 +1276,33 @@ it('limits the narrow metadata width track to the root card row', async () => {
     h.dispose();
   }
 });
+
+it('marks Tasks filter title, visible description and tags without Search context', async () => {
+  const h = await mountCanonicalSearchUi(
+    {
+      'tasks/active.md':
+        '- [ ] budget ledger #budget\n  - > budget first line\n  - > hidden second budget line\n  - [ ] budget hidden child',
+    },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  try {
+    h.state.set('selectedList', { type: 'tag', tag: '#budget' });
+    h.panel.refresh();
+    h.query('budgte');
+    await h.completed();
+    const card = expectDefined(h.root.querySelector('.abyss-task-card'));
+    expect(card.querySelector('.abyss-task-title mark')?.textContent).toBe('budget');
+    expect(card.querySelector('.abyss-task-desc mark')?.textContent).toBe('budget');
+    expect(card.querySelector('.abyss-task-tag mark')?.textContent).toBe('budget');
+    expect(card.querySelector('.abyss-search-context')).toBeNull();
+    expect(card.textContent).not.toContain('hidden second');
+    expect(card.textContent).not.toContain('hidden child');
+    h.query('ledger');
+    await h.completed();
+    expect(h.root.querySelector('.abyss-task-title mark')?.textContent).toBe('ledger');
+    expect(h.root.querySelector('.abyss-task-desc mark')).toBeNull();
+  } finally {
+    h.dispose();
+  }
+});

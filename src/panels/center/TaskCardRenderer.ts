@@ -54,10 +54,13 @@ import {
   type TaskSearchSemanticEvidence,
 } from './TaskSearchTree';
 
-export interface TaskCardSearchPresentation {
-  readonly context: TaskSearchContext;
+export interface TaskCardHighlight {
   readonly query: PreparedSearchQuery;
   readonly segment: SearchWordSegmenter;
+}
+
+export interface TaskCardSearchPresentation extends TaskCardHighlight {
+  readonly context: TaskSearchContext;
   readonly onActivate: (address: TaskSearchAddress) => void;
 }
 
@@ -72,6 +75,7 @@ interface TaskCardFlags {
   readonly rowKey?: string;
   readonly renderScope?: TaskRenderScope | undefined;
   readonly search?: TaskCardSearchPresentation | undefined;
+  readonly highlight?: TaskCardHighlight | undefined;
   readonly onActivate?: ((task: TaskSnapshot) => void) | undefined;
   readonly isCurrent?: (() => boolean) | undefined;
   readonly signal?: AbortSignal | undefined;
@@ -161,6 +165,19 @@ function canReuseTaskText(
 ): boolean {
   // Ready text owns its wired DOM; pending text still needs its originating request.
   return outcome === undefined ? flags?.isCurrent?.() !== false : outcome.type === 'ready';
+}
+
+function sameTaskText(
+  task: TaskSnapshot,
+  flags: TaskCardFlags,
+  rendered: TaskSnapshot | undefined,
+  renderedFlags: TaskCardFlags | undefined,
+): boolean {
+  return (
+    rendered === task &&
+    renderedFlags?.search === flags.search &&
+    renderedFlags?.highlight === flags.highlight
+  );
 }
 
 export class TaskCardRenderer {
@@ -370,7 +387,7 @@ export class TaskCardRenderer {
     const refresh = (): void => {
       if (!live || latest === undefined) return;
       const reusable = canReuseTaskText(outcome, renderedFlags);
-      if (reusable && rendered === latest && renderedFlags?.search === flags.search) return;
+      if (reusable && sameTaskText(latest, flags, rendered, renderedFlags)) return;
       if (reusable && element.contains(element.ownerDocument.activeElement)) return;
       release();
       owner = context.component.addChild(new Component());
@@ -486,6 +503,7 @@ export class TaskCardRenderer {
     mainRow.querySelector(':scope > .abyss-task-meta-right')?.remove();
     this.#renderCardMetadata(mainRow, current.task, current.tagGroups, {
       search: current.flags.search,
+      highlight: current.flags.highlight,
       currentRoot: () => current.task,
     });
     const metadata = mainRow.querySelector(':scope > .abyss-task-meta-right');
@@ -530,6 +548,7 @@ export class TaskCardRenderer {
       readonly rowKey?: string;
       readonly renderScope?: TaskRenderScope;
       readonly search?: TaskCardSearchPresentation | undefined;
+      readonly highlight?: TaskCardHighlight | undefined;
       readonly onActivate?: (() => void) | undefined;
     },
   ): HTMLElement {
@@ -546,7 +565,10 @@ export class TaskCardRenderer {
     const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
     this.#renderStatus(mainRow, task);
     this.#renderBody(mainRow, task, tagGroups, flags);
-    this.#renderCardMetadata(mainRow, task, tagGroups, { search: flags.search });
+    this.#renderCardMetadata(mainRow, task, tagGroups, {
+      search: flags.search,
+      highlight: flags.highlight,
+    });
     this.#host.mountInteractions(card, task, flags.rowKey, {
       component: this.#host.component(),
       currentTask: () => task,
@@ -619,27 +641,29 @@ export class TaskCardRenderer {
     };
   }
 
+  #highlightOptions(
+    text: string,
+    mode: 'title' | 'prose',
+    highlight: TaskCardHighlight | undefined,
+  ): Pick<RenderTaskTextOptions, 'onRendered'> {
+    if (highlight === undefined) return {};
+    return {
+      onRendered: (element) => {
+        markSearchText(element, projectSearchText(text, mode), highlight.query, highlight.segment);
+      },
+    };
+  }
+
   #renderTitle(
     titleEl: HTMLElement,
     task: TaskSnapshot,
     context?: CardContentContext,
     flags = context?.flags,
   ): void {
-    const search = flags?.search;
+    const search = flags?.search ?? flags?.highlight;
     const titleRender = renderTaskText(titleEl, task.markdownTitle, {
       presentation: 'title',
-      ...(search === undefined
-        ? {}
-        : {
-            onRendered: (element: HTMLElement) => {
-              markSearchText(
-                element,
-                projectSearchText(task.markdownTitle, 'title'),
-                search.query,
-                search.segment,
-              );
-            },
-          }),
+      ...this.#highlightOptions(task.markdownTitle, 'title', search),
       app: this.#app,
       sourcePath: task.source.filePath,
       ...this.#textLifetime(context, flags),
@@ -749,16 +773,14 @@ export class TaskCardRenderer {
     task: TaskSnapshot,
     context?: CardContentContext,
   ): void {
-    const description = task.description ?? '';
-    const descriptionRender = renderTaskDescriptionText(
-      descriptionElement,
-      description.split('\n')[0] ?? '',
-      {
-        app: this.#app,
-        sourcePath: task.source.filePath,
-        ...this.#textLifetime(context),
-      },
-    );
+    const description = (task.description ?? '').split('\n')[0] ?? '';
+    const highlight = context?.flags?.highlight;
+    const descriptionRender = renderTaskDescriptionText(descriptionElement, description, {
+      app: this.#app,
+      sourcePath: task.source.filePath,
+      ...this.#textLifetime(context),
+      ...this.#highlightOptions(description, 'prose', highlight),
+    });
     if (context?.track !== undefined) context.track(descriptionRender);
     else context?.flags?.renderScope?.track(descriptionRender);
   }
@@ -813,11 +835,12 @@ export class TaskCardRenderer {
     tagGroups: readonly EffectiveTagGroup[],
     options: {
       readonly search?: TaskCardSearchPresentation | undefined;
+      readonly highlight?: TaskCardHighlight | undefined;
       readonly currentRoot?: () => TaskSnapshot;
     },
   ): void {
     const { search, currentRoot } = options;
-    if (search === undefined) this.#renderMetadata(mainRow, task, tagGroups, currentRoot);
+    if (search === undefined) this.#renderMetadata(mainRow, task, tagGroups, options);
     else
       this.#renderSearchSemantics(
         mainRow.createDiv({ cls: 'abyss-task-meta-right' }),
@@ -848,11 +871,8 @@ export class TaskCardRenderer {
       this.#renderSearchSemanticGroup(host, node, records, options);
   }
 
-  #markSemanticValue(
-    element: HTMLElement,
-    value: string,
-    search: TaskCardSearchPresentation,
-  ): void {
+  #markSemanticValue(element: HTMLElement, value: string, search?: TaskCardHighlight): void {
+    if (search === undefined) return;
     markSearchText(
       element,
       { visible: { text: value, map: [] }, destinations: [] },
@@ -944,8 +964,12 @@ export class TaskCardRenderer {
     mainRow: HTMLElement,
     task: TaskSnapshot,
     tagGroups: readonly EffectiveTagGroup[],
-    currentTask?: () => TaskSnapshot,
+    options: {
+      readonly currentRoot?: () => TaskSnapshot;
+      readonly highlight?: TaskCardHighlight | undefined;
+    },
   ): void {
+    const currentTask = options.currentRoot;
     const today = localDate(moment().format('YYYY-MM-DD'));
     const sel = this.#state.get('selectedList');
     const d = task.planning.due ?? task.planning.scheduled;
@@ -969,8 +993,10 @@ export class TaskCardRenderer {
         this.#listControls.addPropertyFilter({ type: 'file', filePath });
       });
     }
-    for (const tag of tags.slice(0, 2))
-      this.#renderTagMetadata(metaRight, tag, tagGroups, { task, currentTask });
+    for (const tag of tags.slice(0, 2)) {
+      const element = this.#renderTagMetadata(metaRight, tag, tagGroups, { task, currentTask });
+      this.#markSemanticValue(element, tag, options.highlight);
+    }
   }
 
   #renderDateMetadata(

@@ -273,6 +273,7 @@ class DependencySession implements TaskDependencySearchSession {
             address: hit.address,
             offset: candidate.offset,
             title: task.node.title,
+            sourcePath: task.root.source.filePath,
             context: `${task.root.source.filePath}:${taskNodeLine(task.root, task.node) + 1}`,
             directions: eligibility.type === 'allowed' ? [this.selection.direction] : [],
             ...(eligibility.type === 'rejected' && {

@@ -777,6 +777,7 @@ export class CenterPanel {
     return {
       ...this.taskCardOptions_abyssPrivate(task, occurrence.key),
       search: options?.presentation?.(task, occurrence.address),
+      highlight: options?.highlight,
       onActivate:
         options?.onActivate === undefined
           ? undefined

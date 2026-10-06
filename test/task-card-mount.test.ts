@@ -596,3 +596,55 @@ it('refreshes only root Search metadata and leaves descendant headers and recurr
     h.hostComponent.unload();
   }
 });
+
+it.each([false, true])(
+  'changes and clears highlight on a reused card and retains link behavior (focused=%s)',
+  async (focused) => {
+    const { prepareSearchQuery } = await import('../src/tasks');
+    const { fallbackSearchWords } = await import('../src/tasks/domain/searchMatchPolicy');
+    const h = renderer();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _source, holder) => {
+      holder.createEl('a', {
+        cls: 'internal-link',
+        text: 'Budget',
+        attr: { 'data-href': 'Budget', href: 'Budget' },
+      });
+      holder.appendText(' ledger');
+    });
+    const root = task({ markdownTitle: '[[Budget]] ledger', title: 'Budget ledger' });
+    const flags = { selected: false, showDelete: false };
+    const highlight = (query: string) => ({
+      query: prepareSearchQuery(query, fallbackSearchWords),
+      segment: fallbackSearchWords,
+    });
+    const mount = h.subject.mount(document.body, root, [], {
+      ...flags,
+      highlight: highlight('budget'),
+    });
+    try {
+      await mount.settled;
+      expect(mount.element.querySelector('a mark')?.textContent).toBe('Budget');
+      const anchor = expectDefined(mount.element.querySelector('a'));
+      anchor.click();
+      await Promise.resolve();
+      expect(h.openLinkText).toHaveBeenCalled();
+      if (focused) anchor.focus();
+      mount.update(root, [], { ...flags, highlight: highlight('ledger') });
+      if (focused) {
+        expect(mount.element.querySelector('a')).toBe(anchor);
+        expect(anchor.querySelector('mark')?.textContent).toBe('Budget');
+        document.body.createEl('button').focus();
+      }
+      await mount.settled;
+      expect(mount.element.querySelector('a mark')).toBeNull();
+      expect(mount.element.querySelector('mark')?.textContent).toBe('ledger');
+      mount.update(root, [], flags);
+      await mount.settled;
+      expect(mount.element.querySelector('mark')).toBeNull();
+      expect(mount.element.querySelector('.abyss-task-title')?.textContent).toBe('Budget ledger');
+    } finally {
+      mount.destroy();
+      h.hostComponent.unload();
+    }
+  },
+);

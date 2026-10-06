@@ -2576,8 +2576,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   margin-top: var(--size-4-1);
 }
 
-.abyss-task-card .abyss-search-match {
-  background: var(--background-modifier-active-hover);
+:is(.abyss-task-card, .abyss-dep-search) .abyss-search-match {
+  background: var(--highlight-background, var(--text-highlight-bg));
   color: var(--text-normal);
   border-radius: var(--radius-s);
 }
@@ -9813,4 +9813,23 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   );
   overflow-anchor: none;
   pointer-events: none;
+}
+
+.abyss-task-card .abyss-search-context .abyss-comment-row {
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  flex-direction: row;
+  align-items: baseline;
+  gap: var(--size-4-1);
+}
+
+.abyss-task-card .abyss-search-context .abyss-comment-row::before {
+  content: '-';
+  flex: none;
+}
+
+.abyss-task-card .abyss-search-context .abyss-comment-text {
+  min-width: 0;
 }

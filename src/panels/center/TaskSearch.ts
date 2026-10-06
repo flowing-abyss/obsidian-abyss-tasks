@@ -38,7 +38,7 @@ import {
 } from '../task-list/runTaskOrganization';
 import type { TaskSearchRowsIdentity } from '../task-list/TaskSearchRows';
 import type { SearchViewState } from './SearchViewState';
-import type { TaskCardSearchPresentation } from './TaskCardRenderer';
+import type { TaskCardHighlight, TaskCardSearchPresentation } from './TaskCardRenderer';
 import type { TaskRevealReceipt } from './TaskSearchReveal';
 
 export interface TaskSearchRowOptions {
@@ -48,6 +48,7 @@ export interface TaskSearchRowOptions {
   readonly isCurrent: () => boolean;
   readonly reportFailure: (error: unknown) => void;
   readonly onActivate?: ((address: TaskSearchAddress) => void) | undefined;
+  readonly highlight?: TaskCardHighlight | undefined;
   readonly presentation?:
     ((task: TaskSnapshot, address: TaskSearchAddress) => TaskCardSearchPresentation) | undefined;
 }
@@ -844,6 +845,10 @@ export class TaskSearch {
         this.#handleFailure(identity.request, error);
       });
     };
+    const highlight =
+      this.#query.trim() === ''
+        ? undefined
+        : { query: prepareSearchQuery(this.#query, this.#segment), segment: this.#segment };
     return {
       identity,
       groupBy: this.#options.view().list.groupBy,
@@ -853,7 +858,8 @@ export class TaskSearch {
         if (isCurrent()) this.#renderFailed(identity.request, error);
       },
       onActivate: this.#filter ? undefined : activate,
-      presentation: this.#presentation(activate),
+      highlight: this.#filter ? highlight : undefined,
+      presentation: this.#presentation(activate, highlight),
     };
   }
   async #renderRows(
@@ -873,9 +879,10 @@ export class TaskSearch {
   }
   #presentation(
     activate: (address: TaskSearchAddress) => void,
+    highlight: TaskCardHighlight | undefined,
   ): TaskSearchRowOptions['presentation'] {
-    if (this.#filter || this.#query.trim() === '') return undefined;
-    const query = prepareSearchQuery(this.#query, this.#segment);
+    if (this.#filter || highlight === undefined) return undefined;
+    const { query } = highlight;
     const contexts = new WeakMap<TaskSnapshot, TaskCardSearchPresentation>();
     return (task, address) => {
       let presentation = contexts.get(task);
