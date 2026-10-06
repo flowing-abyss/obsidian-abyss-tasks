@@ -83,6 +83,7 @@ import { TaskMenus, type TaskMenuTargets } from './center/TaskMenus';
 import { TaskSearch, type TaskSearchOptions, type TaskSearchRowOptions } from './center/TaskSearch';
 import { TaskSearchReveal } from './center/TaskSearchReveal';
 import { taskSearchDestination } from './center/taskSearchDestination';
+import { mountTaskSearchKeyboardActivation } from './center/taskSearchKeyboardActivation';
 import { ProjectsPanel } from './projects/ProjectsPanel';
 import { TaskListSurface, type TaskRowMount } from './task-list/TaskListSurface';
 import { TaskSearchRows, type TaskSearchRowsIdentity } from './task-list/TaskSearchRows';
@@ -2333,16 +2334,7 @@ export class CenterPanel {
       this.handleTaskCardClick_abyssPrivate(event, currentTask(), rowKey);
     });
     if (context?.onActivate !== undefined) {
-      card.tabIndex = 0;
-      component.registerDomEvent(card, 'keydown', (event) => {
-        if (
-          event.target !== card ||
-          isImeOwnedEvent(event) ||
-          (event.key !== 'Enter' && event.key !== ' ')
-        )
-          return;
-        event.preventDefault();
-        event.stopPropagation();
+      mountTaskSearchKeyboardActivation(card, component, () => {
         context.onActivate?.(currentTask());
       });
     }

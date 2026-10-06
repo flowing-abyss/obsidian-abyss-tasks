@@ -13,6 +13,127 @@ import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 useRealMoment();
 afterEach(() => vi.restoreAllMocks());
 
+it.each(['Enter', ' '])(
+  'opens exact repeated children, comment-only descendants, retained ancestors, and roots with %s',
+  async (key) => {
+    for (const [rowIndex, relativeLines] of [
+      [0, [1]],
+      [1, [1, 1]],
+      [2, [4]],
+      [-1, []],
+    ] as const) {
+      const h = await mountCanonicalSearchUi(
+        {
+          'a.md': [
+            '- [ ] root',
+            '  - [ ] repeated',
+            '    - [ ] repeated',
+            '      - 2026-10-04: zebra needle',
+            '  - [ ] repeated needle',
+          ].join('\n'),
+        },
+        structuredClone(DEFAULT_SETTINGS),
+      );
+      try {
+        h.query('needle');
+        await h.completed();
+        const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+        const rows = [...card.querySelectorAll<HTMLElement>('.abyss-subtask-row')];
+        expect(rows).toHaveLength(3);
+        expect(rows.map((row) => row.tabIndex)).toEqual([0, 0, 0]);
+        expect(
+          [...card.querySelectorAll<HTMLElement>('.abyss-subtask-label, .abyss-comment-text')].map(
+            (field) => field.tabIndex,
+          ),
+        ).toEqual([-1, -1, -1, -1]);
+        expect(card.querySelector('.abyss-search-context button, [role="button"]')).toBeNull();
+        const target = rowIndex < 0 ? card : expectDefined(rows[rowIndex]);
+        target.focus();
+        expect(document.activeElement).toBe(target);
+        const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+        target.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(true);
+        await vi.waitFor(() => {
+          expect(h.state.get('mode')).toBe('tasks');
+        });
+        await h.completed();
+        const path = h.state.get('taskStack');
+        expect(path[0]?.title).toBe('root');
+        expect(
+          path.slice(1).map((node) => ('parent' in node.ref ? node.ref.relativeLine : -1)),
+        ).toEqual(relativeLines);
+      } finally {
+        h.dispose();
+      }
+    }
+  },
+);
+
+it.each([{ key: 'Enter', isComposing: true }, { key: ' ', keyCode: 229 }, { key: 'Process' }])(
+  'leaves IME-owned child activation untouched (%o)',
+  async (init) => {
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': '- [ ] root\n  - [ ] child needle' },
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    try {
+      h.query('needle');
+      await h.completed();
+      const row = expectDefined(h.root.querySelector<HTMLElement>('.abyss-subtask-row'));
+      expect(row.tabIndex).toBe(0);
+      row.focus();
+      const event = new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true });
+      row.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(h.state.get('mode')).toBe('search');
+      expect(h.state.get('taskStack')).toEqual([]);
+      expect(document.activeElement).toBe(row);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each(['Enter', ' '])(
+  'preserves descendant link and status keys under child activation (%s)',
+  async (key) => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _source, holder) => {
+      holder.createEl('a', {
+        text: 'Needle',
+        attr: { href: 'https://example.com', tabindex: '0' },
+      });
+    });
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': '- [ ] root\n  - [ ] [Needle](https://example.com)' },
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    try {
+      h.query('needle');
+      await h.completed();
+      const row = expectDefined(h.root.querySelector<HTMLElement>('.abyss-subtask-row'));
+      expect(row.tabIndex).toBe(0);
+      const anchor = expectDefined(row.querySelector<HTMLAnchorElement>('a'));
+      anchor.focus();
+      const linkKey = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      anchor.dispatchEvent(linkKey);
+      expect(linkKey.defaultPrevented).toBe(false);
+      expect(document.activeElement).toBe(anchor);
+      expect(h.state.get('mode')).toBe('search');
+      const status = expectDefined(row.querySelector<HTMLElement>('[role="checkbox"]'));
+      status.focus();
+      status.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+      await vi.waitFor(() => {
+        expect(h.index.list()[0]?.subtasks[0]?.statusSymbol).toBe('x');
+      });
+      expect(h.index.list()[0]?.statusSymbol).toBe(' ');
+      expect(h.state.get('mode')).toBe('search');
+      expect(h.state.get('taskStack')).toEqual([]);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
 it('renders and marks the complete second paragraph and split child term with no unrelated preview', async () => {
   vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
     expect(source).toBe('unrelated paragraph\n\nsecond **bud**get paragraph');

@@ -3,7 +3,7 @@ import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { fallbackSearchWords, prepareSearchQuery } from '../../src/tasks/domain/searchMatchPolicy';
 import { createMiniSearchTaskEngine } from '../../src/tasks/infrastructure/search/MiniSearchTaskEngine';
 import { TaskSearchRuntime } from '../../src/tasks/infrastructure/search/TaskSearchRuntime';
-import { expectDefined } from '../helpers';
+import { deferred, expectDefined } from '../helpers';
 import {
   assertNoRevision,
   createCanonicalSearchHarness,
@@ -79,32 +79,61 @@ it('twenty churn cycles and vacuum parity', async () => {
   r.dispose();
 });
 
-it('publishes accepted replacements without waiting for maintenance vacuum', async () => {
+it('publishes accepted replacements without waiting for maintenance vacuum', async ({
+  onTestFinished,
+}) => {
   const engine = createMiniSearchTaskEngine(fallbackSearchWords);
-  const original = engine.vacuum.bind(engine);
-  let finish: (() => void) | undefined;
-  engine.vacuum = async () => {
-    await new Promise<void>((resolve) => {
-      finish = resolve;
-    });
-    await original();
-  };
   const r = new TaskSearchRuntime(engine);
-  await r.mutate({ type: 'begin', path: 'a.md' });
-  await r.mutate({ type: 'add', documents: nodeDocuments(2) });
-  await r.mutate({ type: 'commit', path: 'a.md' });
-  let published = false;
-  const publishing = r.mutate({ type: 'publish', generation: 1 }).then(() => {
-    published = true;
-  });
-  await Promise.resolve();
-  await Promise.resolve();
-  const publishedBeforeMaintenance = published;
-  finish?.();
-  await publishing;
-  expect(publishedBeforeMaintenance).toBe(true);
-  expect((await r.open(request('roots'), 1)).total).toBe(2);
-  r.dispose();
+  const original = engine.vacuum.bind(engine);
+  const entered = deferred<void>(),
+    finish = deferred<void>();
+  let maintenance = Promise.resolve();
+  let vacuumCompleted = false;
+  const cleanup = async (): Promise<void> => {
+    finish.resolve();
+    try {
+      await maintenance;
+    } finally {
+      r.dispose();
+    }
+  };
+  onTestFinished(cleanup);
+  try {
+    await r.mutate({ type: 'begin', path: 'a.md' });
+    await r.mutate({ type: 'add', documents: nodeDocuments(1) });
+    await r.mutate({ type: 'commit', path: 'a.md' });
+    await r.mutate({ type: 'publish', generation: 1 });
+    const initial = await r.open(request('roots'), 1);
+    expect((await r.read(initial, 0, 200)).hits.map((hit) => hit.id)).toEqual([1]);
+    engine.vacuum = () => {
+      entered.resolve();
+      maintenance = (async () => {
+        await finish.promise;
+        await original();
+        vacuumCompleted = true;
+      })();
+      return maintenance;
+    };
+    const replacements = nodeDocuments(2).map((doc) => ({
+      ...doc,
+      id: doc.id + 100,
+      rootId: doc.rootId + 100,
+    }));
+    await r.mutate({ type: 'begin', path: 'a.md' });
+    await r.mutate({ type: 'add', documents: replacements });
+    await r.mutate({ type: 'commit', path: 'a.md' });
+    const publishing = r.mutate({ type: 'publish', generation: 2 });
+    await entered.promise;
+    await publishing;
+    for (const kind of ['roots', 'nodes'] as const) {
+      const cursor = await r.open(request(kind), 2);
+      expect((await r.read(cursor, 0, 200)).hits.map((hit) => hit.id)).toEqual([101, 102]);
+      r.release(cursor);
+    }
+    expect(vacuumCompleted).toBe(false);
+  } finally {
+    await cleanup();
+  }
 });
 
 it('actual compact runtime vectors exclude canonical source-bearing revisions', async () => {

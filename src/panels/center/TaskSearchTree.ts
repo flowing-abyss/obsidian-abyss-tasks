@@ -19,6 +19,7 @@ import {
 import type { TaskTextRender } from '../../ui/taskRenderScope';
 import { taskNodeRef, type TaskSelectionNode } from '../../ui/taskSelection';
 import type { TaskCardSearchPresentation } from './TaskCardRenderer';
+import { mountTaskSearchKeyboardActivation } from './taskSearchKeyboardActivation';
 
 export type TaskSearchSemanticEvidence = TaskSearchEvidence & {
   readonly field: 'tag' | 'metadata';
@@ -108,6 +109,9 @@ function renderHeader(entry: TreeEntry, options: TaskSearchTreeRenderOptions): H
   const { node, host, tree } = entry;
   if ('source' in node) return host;
   const row = host.createDiv({ cls: 'abyss-subtask-row' });
+  mountTaskSearchKeyboardActivation(row, options.textOptions.component, () => {
+    options.search.onActivate(tree.address);
+  });
   options.renderChildStatus(row, node);
   const body = row.createDiv({ cls: 'abyss-subtask-content' });
   const titleRow = body.createDiv({ cls: 'abyss-subtask-title-row' });

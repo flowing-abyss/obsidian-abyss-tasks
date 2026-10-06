@@ -2344,7 +2344,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   box-shadow: inset 2px 0 0 var(--interactive-accent);
 }
 
-.abyss-task-card:focus-visible {
+.abyss-task-card:focus-visible,
+.abyss-search-context .abyss-subtask-row:focus-visible {
   outline: 1px solid var(--background-modifier-border-focus);
   outline-offset: -1px;
 }
