@@ -27,11 +27,18 @@ export function resolveDraggedItems(
   return { externalFiles: [], vaultFiles };
 }
 
-export interface AttachmentDropOptions {
-  app: App;
+interface AttachmentDropContext {
   sourcePath: string;
   onLinks: (linkMarkdown: string) => void;
 }
+
+export type AttachmentDropOptions = { app: App } & (
+  | AttachmentDropContext
+  | {
+      /** Capture once before asynchronous saving; undefined rejects a retired target. */
+      capture: () => AttachmentDropContext | undefined;
+    }
+);
 
 interface AppWithDragManager {
   dragManager?: DragManagerLike;
@@ -68,7 +75,12 @@ export function enableAttachmentDrop(el: HTMLElement, opts: AttachmentDropOption
     e.preventDefault();
     e.stopPropagation();
     el.removeClass('abyss-drop-active');
-    runAsyncAction(handleDrop(opts, externalFiles, vaultFiles), 'Could not attach dropped files');
+    const captured = 'capture' in opts ? opts.capture() : opts;
+    if (captured === undefined) return;
+    runAsyncAction(
+      handleDrop({ app: opts.app, ...captured }, externalFiles, vaultFiles),
+      'Could not attach dropped files',
+    );
   };
 
   el.addEventListener('dragover', onDragOver);
@@ -134,7 +146,7 @@ export function insertAtCaret(textarea: HTMLTextAreaElement, text: string): void
 }
 
 async function handleDrop(
-  opts: AttachmentDropOptions,
+  opts: AttachmentDropContext & { app: App },
   externalFiles: File[],
   vaultFiles: TFile[],
 ): Promise<void> {

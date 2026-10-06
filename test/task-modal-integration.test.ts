@@ -28,6 +28,7 @@ import {
 import { scopeKeyboardEvent } from './support/scopeKeyboardEvent';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 
+import { inspectorCleanups, inspectorHarness } from './support/inspectorHarness';
 useRealMoment();
 
 function queryEvents(): {
@@ -195,6 +196,42 @@ describe('TaskModal with real RightPanel', () => {
     activeDocument.querySelectorAll('.abyss-status-popover').forEach((element) => {
       element.remove();
     });
+  });
+
+  it('keeps the original nested modal entry connected through repeated real-index insertions', async () => {
+    const h = await inspectorHarness('- [ ] Root\n  - [ ] Owner\n    - [ ] Existing', 'Owner');
+    modal = new TaskModal({
+      app: h.app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.api,
+    });
+    modal.open(h.node('Root').root);
+    try {
+      expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-subtask-label'),
+      ).click();
+      const root = expectDefined(activeDocument.querySelector('.abyss-modal'));
+      expectDefined(root.querySelector<HTMLElement>('.abyss-subtask-add-row')).click();
+      const input = expectDefined(root.querySelector<HTMLInputElement>('.abyss-subtask-new-input'));
+      const header = expectDefined(root.querySelector('.abyss-right-header'));
+      for (const title of ['First', 'Second', 'Third']) {
+        input.value = title;
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await vi.waitFor(() => {
+          expect(h.node('Owner').node.subtasks.some((child) => child.title === title)).toBe(true);
+        });
+        await flushMicrotasks(20);
+        expect(input.isConnected).toBe(true);
+        expect(root.querySelector('.abyss-subtask-new-input')).toBe(input);
+        expect(activeDocument.activeElement).toBe(input);
+        expect(root.querySelector('.abyss-right-header')).toBe(header);
+      }
+    } finally {
+      modal.close();
+      for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+    }
   });
 
   it('retains the inspector DOM, focus, caret and scroll when another root changes', async () => {

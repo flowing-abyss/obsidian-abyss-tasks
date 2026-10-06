@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { localDate, type TaskCommand } from '../src/tasks';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { projectTaskSnapshot } from '../src/tasks/infrastructure/markdown/TaskSnapshotProjector';
-import { rebuildOwnedTaskSelection } from '../src/ui/ownedTaskSelection';
+import { proveOwnedTaskSelection, rebuildOwnedTaskSelection } from '../src/ui/ownedTaskSelection';
 import { canonicalStatusCatalog, expectDefined } from './helpers';
 
 function snapshot(markdown: string, revision: string) {
@@ -29,6 +29,79 @@ const target = { type: 'subtask' as const, ref: expectDefined(before.subtasks[1]
 const selection = [before, expectDefined(before.subtasks[1])];
 
 describe('owned non-structural inspector selection', () => {
+  it.each(['title', 'description', 'comment'] as const)(
+    'proves only the exact %s link occurrence and unchanged surrounding source',
+    (field) => {
+      const markdown =
+        '- [ ] Root ^root-id\n  - [ ] Owner [[Title]]\n    - > [[Description]]\n    - Existing [[Comment]]\n    - [ ] Child';
+      const original = snapshot(markdown, 'before');
+      const owner = expectDefined(original.subtasks[0]);
+      const target = { type: 'subtask' as const, ref: owner.ref };
+      const textTarget =
+        field === 'comment'
+          ? { type: 'comment' as const, ref: expectDefined(owner.comments[0]).ref }
+          : { type: field, target };
+      const raw = {
+        title: '[[Title]]',
+        description: '[[Description]]',
+        comment: '[[Comment]]',
+      }[field];
+      const changed = markdown.replace(raw, '[[Changed]]');
+      const command: TaskCommand = {
+        type: 'edit-link',
+        target: textTarget,
+        occurrence: 0,
+        replacement: '[[Changed]]',
+      };
+      const current = snapshot(changed, 'after');
+      expect(
+        proveOwnedTaskSelection(current, [original, owner], command)?.selection[1]?.ref,
+      ).toEqual(current.subtasks[0]?.ref);
+      for (const foreign of [
+        changed.replace('^root-id', '^foreign-id'),
+        changed.replace('Child', 'Other'),
+        changed.replace('[[Changed]]', '[[Wrong]]'),
+      ])
+        expect(
+          proveOwnedTaskSelection(snapshot(foreign, 'foreign'), [original, owner], command),
+        ).toBeUndefined();
+      expect(
+        proveOwnedTaskSelection(current, [original, owner], { ...command, occurrence: 1 }),
+      ).toBeUndefined();
+    },
+  );
+
+  it('indexes exact survivors of a removal and restoration without granting the removed child authority', () => {
+    const original = snapshot(
+      '- [ ] Root\n  - [ ] First\n  - [ ] Removed\n    - [ ] Deep\n  - [ ] Last',
+      'before',
+    );
+    const removed = expectDefined(original.subtasks[1]);
+    const current = snapshot('- [ ] Root\n  - [ ] First\n  - [ ] Last', 'after');
+    const proof = expectDefined(
+      proveOwnedTaskSelection(current, [original, removed], {
+        type: 'delete-subtask',
+        subtask: removed.ref,
+      }),
+    );
+    expect(proof.selection).toEqual([current]);
+    expect(proof.successor(removed)).toBeUndefined();
+    expect(proof.successor(expectDefined(removed.subtasks[0]))).toBeUndefined();
+    expect(proof.successor(expectDefined(original.subtasks[0]))).toBe(current.subtasks[0]);
+    expect(proof.successor(expectDefined(original.subtasks[2]))).toBe(current.subtasks[1]);
+    const restored = snapshot(original.source.originalBlock, 'restored');
+    const restore = expectDefined(
+      proveOwnedTaskSelection(restored, [current], {
+        type: 'restore-subtask',
+        parent: { type: 'task', ref: current.ref },
+        markdown: `${removed.ref.originalBlock}\n`,
+        placement: { relativeLine: removed.ref.relativeLine },
+      }),
+    );
+    expect(restore.successor(expectDefined(current.subtasks[1]))).toBe(restored.subtasks[2]);
+    expect(restore.successor(removed)).toBeUndefined();
+  });
+
   it.each(['add-subtask', 'add-comment'] as const)(
     'retains the exact child after %s shifts trailing root time entries',
     (type) => {

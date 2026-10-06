@@ -1009,8 +1009,9 @@ describe('RightPanel.renderTask', () => {
         .reverse()
         .find(([el]) => el.classList.contains('abyss-right-title-view')),
     );
-    expect(call[2].component).toBe(headerCall[2].component);
+    const unloadHeader = vi.spyOn(headerCall[2].component, 'unload');
     click(crumb);
+    expect(unloadHeader).toHaveBeenCalledOnce();
     expect(state.get('taskStack')).toEqual([parent]);
   });
 

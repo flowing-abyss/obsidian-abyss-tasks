@@ -1,4 +1,4 @@
-import type { App, Component } from 'obsidian';
+import { Component, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import type { LinkToken } from '../../markdown/links';
 import type { StatusRegistry } from '../../status/StatusRegistry';
@@ -29,7 +29,7 @@ import {
 } from '../../ui/taskNodeText';
 import { rootTaskRef, taskNodeRef } from '../../ui/taskSelection';
 import { renderRowRemove } from './inspectorRowRemove';
-import type { TaskLike } from './inspectorTypes';
+import type { InspectorTaskOwner, TaskLike } from './inspectorTypes';
 
 interface InspectorSectionsOptions {
   readonly app: App;
@@ -39,6 +39,7 @@ interface InspectorSectionsOptions {
   readonly host: {
     readonly root: () => HTMLElement;
     readonly component: () => Component;
+    readonly taskOwner: (task: TaskLike) => InspectorTaskOwner;
     readonly renderTaskStatusMarker: (parent: HTMLElement, task: TaskLike) => void;
     readonly bindHierarchyDrop: (surface: HTMLElement, task: TaskLike) => void;
     readonly finishTaskDrag: () => void;
@@ -81,6 +82,14 @@ interface InspectorSectionsOptions {
   };
 }
 
+interface InspectorCommentRow {
+  row: HTMLElement;
+  comment: TaskCommentSnapshot;
+  component: Component;
+  textComponent: Component | undefined;
+  update: () => void;
+}
+
 class AsyncEditLifecycle {
   #phase: 'idle' | 'saving' | 'closed' = 'idle';
 
@@ -109,6 +118,125 @@ export class InspectorSections {
   readonly #interactionOwnership: InteractionOwnershipPort;
   readonly #host: InspectorSectionsOptions['host'];
   readonly #commands: InspectorSectionsOptions['commands'];
+  #titleComponent: Component | undefined;
+  #descriptionComponent: Component | undefined;
+  #titleUpdate: (() => void) | undefined;
+  #descriptionUpdate: (() => void) | undefined;
+  #renderedTask: TaskLike | undefined;
+  #subSection: HTMLElement | undefined;
+  #subList: HTMLElement | undefined;
+  #commentSection: HTMLElement | undefined;
+  #commentList: HTMLElement | undefined;
+  #subRows: Array<{
+    row: HTMLElement;
+    owner: InspectorTaskOwner;
+    snapshot: SubtaskSnapshot;
+    component: Component;
+  }> = [];
+  #commentRows: InspectorCommentRow[] = [];
+
+  destroy(): void {
+    for (const { component } of [...this.#subRows, ...this.#commentRows])
+      this.#host.component().removeChild(component);
+    if (this.#titleComponent !== undefined)
+      this.#host.component().removeChild(this.#titleComponent);
+    if (this.#descriptionComponent !== undefined)
+      this.#host.component().removeChild(this.#descriptionComponent);
+    this.#titleComponent = undefined;
+    this.#descriptionComponent = undefined;
+    this.#titleUpdate = undefined;
+    this.#descriptionUpdate = undefined;
+    this.#renderedTask = undefined;
+    this.#subRows = [];
+    this.#commentRows = [];
+    this.#subSection = undefined;
+    this.#subList = undefined;
+    this.#commentSection = undefined;
+    this.#commentList = undefined;
+  }
+
+  #sameSubtaskContent(previous: SubtaskSnapshot, next: TaskLike): boolean {
+    return (
+      previous.markdownTitle === next.markdownTitle &&
+      previous.subtasks.length === next.subtasks.length &&
+      previous.comments.length === next.comments.length &&
+      previous.subtasks.filter((child) => child.status === 'done').length ===
+        next.subtasks.filter((child) => child.status === 'done').length
+    );
+  }
+
+  update(task: TaskLike, context?: CommentTimeContext): void {
+    this.#updateText(task);
+    const list = this.#subList;
+    const comments = this.#commentList;
+    if (list === undefined || comments === undefined) return;
+    this.#updateSubtasks(list, task);
+    this.#updateComments(comments, task, context);
+    this.#updateCount(
+      this.#subSection,
+      task.subtasks.length === 0
+        ? ''
+        : `${task.subtasks.filter((child) => child.status === 'done').length}/${task.subtasks.length}`,
+    );
+    this.#updateCount(
+      this.#commentSection,
+      task.comments.length === 0 ? '' : String(task.comments.length),
+    );
+  }
+
+  #updateComments(list: HTMLElement, task: TaskLike, context?: CommentTimeContext): void {
+    task.comments.forEach((comment, index) => {
+      const entry = this.#commentRows[index];
+      if (entry === undefined) this.#renderComment(list, comment, task, context);
+      else {
+        const changed = entry.comment.text !== comment.text;
+        entry.comment = comment;
+        if (changed && entry.row.querySelector('.abyss-comment-edit-input') === null)
+          entry.update();
+      }
+    });
+  }
+
+  #updateText(task: TaskLike): void {
+    const previous = this.#renderedTask;
+    if (previous?.markdownTitle !== task.markdownTitle) this.#titleUpdate?.();
+    if (previous?.description !== task.description) this.#descriptionUpdate?.();
+    this.#renderedTask = task;
+  }
+
+  #updateSubtasks(list: HTMLElement, task: TaskLike): void {
+    for (const entry of [...this.#subRows]) {
+      const current = entry.owner.current;
+      if (
+        current === undefined ||
+        !task.subtasks.includes(current as SubtaskSnapshot) ||
+        !this.#sameSubtaskContent(entry.snapshot, current)
+      ) {
+        entry.row.remove();
+        this.#host.component().removeChild(entry.component);
+        this.#subRows.splice(this.#subRows.indexOf(entry), 1);
+      }
+    }
+    task.subtasks.forEach((sub, index) => {
+      let entry = this.#subRows.find((candidate) => candidate.owner.current === sub);
+      if (entry === undefined) {
+        this.#renderSubTask(list, sub, task);
+        entry = this.#subRows[this.#subRows.length - 1];
+        if (entry !== undefined && list.children[index] !== entry.row)
+          list.insertBefore(entry.row, list.children[index] ?? null);
+      }
+      if (entry !== undefined) entry.snapshot = sub;
+    });
+  }
+
+  #updateCount(section: HTMLElement | undefined, text: string): void {
+    const header = section?.querySelector<HTMLElement>('.abyss-right-section-header');
+    if (header === undefined || header === null) return;
+    const count = header.querySelector<HTMLElement>('.abyss-right-section-count');
+    if (text === '') count?.remove();
+    else (count ?? header.createSpan({ cls: 'abyss-right-section-count' })).setText(text);
+  }
+
   #draggingSub: SubtaskSnapshot | null = null;
 
   constructor(options: InspectorSectionsOptions) {
@@ -119,14 +247,39 @@ export class InspectorSections {
     this.#commands = options.commands;
   }
 
+  #enableTaskDrop(
+    element: HTMLElement,
+    owner: InspectorTaskOwner,
+    onLinks: (task: TaskLike, links: string) => void,
+  ): void {
+    this.#host.component().register(
+      enableAttachmentDrop(element, {
+        app: this.#app,
+        capture: () => {
+          const task = owner.current;
+          return task === undefined
+            ? undefined
+            : {
+                sourcePath: rootTaskRef(task).filePath,
+                onLinks: (links) => {
+                  onLinks(task, links);
+                },
+              };
+        },
+      }),
+    );
+  }
+
   #enablePaste(el: HTMLTextAreaElement, task: TaskLike): void {
-    enableAttachmentPaste(el, {
-      app: this.#app,
-      sourcePath: rootTaskRef(task).filePath,
-      onInsert: (links) => {
-        insertAtCaret(el, links);
-      },
-    });
+    this.#host.component().register(
+      enableAttachmentPaste(el, {
+        app: this.#app,
+        sourcePath: rootTaskRef(task).filePath,
+        onInsert: (links) => {
+          insertAtCaret(el, links);
+        },
+      }),
+    );
   }
 
   editLink(task: TaskLike, occ: number, token: LinkToken): void {
@@ -161,29 +314,27 @@ export class InspectorSections {
   }
 
   #renderDescriptionBlock(section: HTMLElement, task: TaskLike): void {
+    const owner = this.#host.taskOwner(task);
     const view = section.createDiv({ cls: 'abyss-right-desc abyss-right-desc-view' });
-    enableAttachmentDrop(view, {
-      app: this.#app,
-      sourcePath: rootTaskRef(task).filePath,
-      onLinks: (links) => {
-        // The closure carries the observed revision; a concurrent edit is surfaced as a
-        // structured conflict instead of overwriting the changed block.
-        const current = task.description ?? '';
-        runAsyncAction(
-          this.#commands.updateDescription(
-            task,
-            current.trim().length > 0 ? `${current} ${links}` : links,
-          ),
-        );
-      },
+    this.#enableTaskDrop(view, owner, (current, links) => {
+      const description = current.description ?? '';
+      runAsyncAction(
+        this.#commands.updateDescription(
+          current,
+          description.trim().length > 0 ? `${description} ${links}` : links,
+        ),
+      );
     });
     const showView = (): void => {
-      this.#showDescription(view, task);
+      const current = owner.current;
+      if (current !== undefined) this.#showDescription(view, current);
     };
     view.addEventListener('click', (e) => {
       if ((e.target as HTMLElement).closest('a') != null) return; // let links navigate
-      this.#enterDescriptionEdit(section, view, task, showView);
+      const current = owner.current;
+      if (current !== undefined) this.#enterDescriptionEdit(section, view, current, showView);
     });
+    this.#descriptionUpdate = showView;
     showView();
   }
 
@@ -231,6 +382,10 @@ export class InspectorSections {
   }
 
   #showDescription(view: HTMLElement, task: TaskLike): void {
+    if (this.#descriptionComponent !== undefined)
+      this.#host.component().removeChild(this.#descriptionComponent);
+    this.#descriptionComponent = this.#host.component().addChild(new Component());
+    const owner = this.#host.taskOwner(task);
     const description = task.description ?? '';
     if (description.trim().length === 0) {
       view.empty();
@@ -242,9 +397,11 @@ export class InspectorSections {
     renderTaskDescriptionText(view, description, {
       app: this.#app,
       sourcePath: rootTaskRef(task).filePath,
-      component: this.#host.component(),
+      component: this.#descriptionComponent,
       onEditLink: (occurrence, token) => {
-        const target = taskNodeRef(task);
+        const current = owner.current;
+        if (current === undefined) return;
+        const target = taskNodeRef(current);
         this.#editLinkInString(
           { type: 'description', target },
           occurrence,
@@ -276,22 +433,28 @@ export class InspectorSections {
         text: `${doneSubs}/${totalSubs}`,
       });
     }
+    this.#subSection = subSection;
     const subList = subSection.createDiv({ cls: 'abyss-subtask-list' });
+    this.#subList = subList;
     for (const sub of task.subtasks) this.#renderSubTask(subList, sub, task);
     this.#renderAddSubtaskControl(subSection, task);
     this.#host.bindHierarchyDrop(subSection, task);
   }
 
   #renderAddSubtaskControl(subSection: HTMLElement, task: TaskLike): void {
+    const owner = this.#host.taskOwner(task);
     const addSubRow = subSection.createDiv({ cls: 'abyss-subtask-add-row' });
     addSubRow.createSpan({ cls: 'abyss-subtask-add-icon', text: '+' });
     addSubRow.createSpan({ cls: 'abyss-subtask-add-label', text: 'Add sub-task' });
     addSubRow.addEventListener('click', () => {
-      this.#openSubtaskInput(subSection, addSubRow, task);
+      const current = owner.current;
+      if (current !== undefined && subSection.querySelector('.abyss-subtask-new-input') === null)
+        this.#openSubtaskInput(subSection, addSubRow, current);
     });
   }
 
   #openSubtaskInput(section: HTMLElement, trigger: HTMLElement, task: TaskLike): void {
+    const owner = this.#host.taskOwner(task);
     trigger.addClass('abyss-subtask-add-row--hidden');
     const input = section.createEl('input', {
       cls: 'abyss-subtask-new-input',
@@ -308,7 +471,9 @@ export class InspectorSections {
     const commit = async (): Promise<void> => {
       const text = input.value.trim();
       if (text === '' || !lifecycle.begin()) return;
-      const succeeded = await this.#commands.addSubTask(task, text);
+      const current = owner.current;
+      if (current === undefined) return;
+      const succeeded = await this.#commands.addSubTask(current, text);
       if (lifecycle.isClosed() || !input.isConnected) return;
       lifecycle.retry();
       if (!succeeded && input.ownerDocument.activeElement === input) input.focus();
@@ -330,9 +495,11 @@ export class InspectorSections {
     kind: 'new-subtask' | 'new-comment',
     close: () => void,
   ): () => void {
+    const owner = this.#host.taskOwner(task);
     const document = input.ownerDocument;
     const dismiss = (): void => {
-      this.#host.dismissEntrySubmission(kind, taskNodeRef(task));
+      const current = owner.current;
+      if (current !== undefined) this.#host.dismissEntrySubmission(kind, taskNodeRef(current));
       this.#host.cancelRestoredDraftFocus(document);
       close();
     };
@@ -367,6 +534,7 @@ export class InspectorSections {
   }
 
   renderCommentSection(task: TaskLike, commentTimeContext?: CommentTimeContext): void {
+    const owner = this.#host.taskOwner(task);
     const commentSection = this.#host.root().createDiv({ cls: 'abyss-right-section' });
     const commentHeader = commentSection.createDiv({ cls: 'abyss-right-section-header' });
     commentHeader.createSpan({ cls: 'abyss-right-section-label', text: 'Comments' });
@@ -377,7 +545,9 @@ export class InspectorSections {
         text: String(commentCount),
       });
     }
+    this.#commentSection = commentSection;
     const commentList = commentSection.createDiv({ cls: 'abyss-comment-list' });
+    this.#commentList = commentList;
     for (const comment of task.comments) {
       this.#renderComment(commentList, comment, task, commentTimeContext);
     }
@@ -385,14 +555,16 @@ export class InspectorSections {
       cls: 'abyss-comment-input',
       attr: { placeholder: 'Write a comment…', rows: '2' },
     });
-    enableAttachmentDrop(commentInput, {
-      app: this.#app,
-      sourcePath: rootTaskRef(task).filePath,
-      onLinks: (links) => {
-        commentInput.value = commentInput.value === '' ? links : `${commentInput.value} ${links}`;
-        commentInput.focus();
-      },
-    });
+    this.#host.component().register(
+      enableAttachmentDrop(commentInput, {
+        app: this.#app,
+        sourcePath: rootTaskRef(task).filePath,
+        onLinks: (links) => {
+          commentInput.value = commentInput.value === '' ? links : `${commentInput.value} ${links}`;
+          commentInput.focus();
+        },
+      }),
+    );
     this.#enablePaste(commentInput, task);
     this.#registerEntryDismissal(commentInput, task, 'new-comment', () => {
       commentInput.blur();
@@ -401,40 +573,47 @@ export class InspectorSections {
       if (e.key === 'Enter' && !e.shiftKey && !isImeOwnedEvent(e)) {
         e.preventDefault();
         const text = commentInput.value.trim();
-        if (text !== '') {
-          runAsyncAction(this.#commands.addComment(task, text, commentList, commentInput));
+        const current = owner.current;
+        if (text !== '' && current !== undefined) {
+          runAsyncAction(this.#commands.addComment(current, text, commentList, commentInput));
         }
       }
     });
   }
 
   renderTitleBlock(header: HTMLElement, task: TaskLike): void {
+    const owner = this.#host.taskOwner(task);
     const view = header.createDiv({ cls: 'abyss-right-title abyss-right-title-view' });
-    enableAttachmentDrop(view, {
-      app: this.#app,
-      sourcePath: rootTaskRef(task).filePath,
-      onLinks: (links) => {
-        runAsyncAction(this.#commands.appendToTitle(task, links));
-      },
+    this.#enableTaskDrop(view, owner, (current, links) => {
+      runAsyncAction(this.#commands.appendToTitle(current, links));
     });
     const renderView = (): void => {
-      view.setAttribute('aria-label', task.title);
-      renderTaskText(view, task.markdownTitle, {
+      const current = owner.current;
+      if (current === undefined) return;
+      if (this.#titleComponent !== undefined)
+        this.#host.component().removeChild(this.#titleComponent);
+      this.#titleComponent = this.#host.component().addChild(new Component());
+      view.setAttribute('aria-label', current.title);
+      renderTaskText(view, current.markdownTitle, {
         presentation: 'title',
         app: this.#app,
         sourcePath: rootTaskRef(task).filePath,
-        component: this.#host.component(),
+        component: this.#titleComponent,
         onEditLink: (occ, token) => {
-          this.editLink(task, occ, token);
+          const current = owner.current;
+          if (current !== undefined) this.editLink(current, occ, token);
         },
       });
     };
+    this.#titleUpdate = renderView;
+    this.#renderedTask = task;
     renderView();
 
     // Click on empty space / non-link text enters edit mode.
     view.addEventListener('click', (e) => {
       if ((e.target as HTMLElement).closest('a') != null) return; // let links navigate
-      this.#enterTitleEdit(header, view, task, renderView);
+      const current = owner.current;
+      if (current !== undefined) this.#enterTitleEdit(header, view, current, renderView);
     });
   }
 
@@ -499,27 +678,41 @@ export class InspectorSections {
   }
 
   #renderSubTask(container: HTMLElement, sub: SubtaskSnapshot, parentTask: TaskLike): void {
+    const component = this.#host.component().addChild(new Component());
+    const owner = this.#host.taskOwner(sub);
     const row = container.createDiv({
       cls: 'abyss-subtask-row',
       attr: { draggable: 'true', tabindex: '-1' },
     });
-    this.#bindSubtaskDragAndDrop(row, container, sub, parentTask);
+    this.#subRows.push({ row, owner, snapshot: sub, component });
+    this.#bindSubtaskDragAndDrop(row, container, { sub, parentTask }, component);
     this.#host.renderTaskStatusMarker(row, sub);
-    this.#renderSubtaskContent(row, sub);
+    this.#renderSubtaskContent(row, sub, component);
   }
 
   #bindSubtaskDragAndDrop(
     row: HTMLElement,
     container: HTMLElement,
-    sub: SubtaskSnapshot,
-    parentTask: TaskLike,
+    tasks: { sub: SubtaskSnapshot; parentTask: TaskLike },
+    component: Component,
   ): void {
-    row.addEventListener('dragstart', (e) => {
-      this.#startSubtaskDrag(row, container, sub, e);
+    const { sub, parentTask } = tasks;
+    const owner = this.#host.taskOwner(sub);
+    const parentOwner = this.#host.taskOwner(parentTask);
+    component.registerDomEvent(row, 'dragstart', (e) => {
+      const current = owner.current;
+      if (current !== undefined && !('source' in current))
+        this.#startSubtaskDrag(row, container, current, e);
     });
 
-    row.addEventListener('dragover', (e) => {
-      if (this.#draggingSub == null || this.#draggingSub.ref.relativeLine === sub.ref.relativeLine)
+    component.registerDomEvent(row, 'dragover', (e) => {
+      const current = owner.current;
+      if (
+        current === undefined ||
+        'source' in current ||
+        this.#draggingSub == null ||
+        this.#draggingSub.ref.relativeLine === current.ref.relativeLine
+      )
         return;
       e.preventDefault();
       const rect = row.getBoundingClientRect();
@@ -531,19 +724,28 @@ export class InspectorSections {
       row.addClass(isAbove ? 'drop-above' : 'drop-below');
     });
 
-    row.addEventListener('dragleave', (e) => {
+    component.registerDomEvent(row, 'dragleave', (e) => {
       if (!row.contains(e.relatedTarget as Node)) {
         row.removeClass('drop-above', 'drop-below');
       }
     });
 
-    row.addEventListener('drop', (e) => {
+    component.registerDomEvent(row, 'drop', (e) => {
       const dragged = this.#draggingSub;
-      if (dragged == null || dragged.ref.relativeLine === sub.ref.relativeLine) return;
+      const current = owner.current;
+      if (
+        current === undefined ||
+        'source' in current ||
+        dragged == null ||
+        dragged.ref.relativeLine === current.ref.relativeLine
+      )
+        return;
       e.preventDefault();
       const position = row.hasClass('drop-above') ? 'before' : 'after';
       row.removeClass('drop-above', 'drop-below');
-      runAsyncAction(this.#commands.reorderSubTask(parentTask, dragged, sub, position));
+      const parent = parentOwner.current;
+      if (parent !== undefined)
+        runAsyncAction(this.#commands.reorderSubTask(parent, dragged, current, position));
     });
   }
 
@@ -583,26 +785,32 @@ export class InspectorSections {
     }
   }
 
-  #renderSubtaskContent(row: HTMLElement, sub: SubtaskSnapshot): void {
+  #renderSubtaskContent(row: HTMLElement, sub: SubtaskSnapshot, component: Component): void {
+    const owner = this.#host.taskOwner(sub);
     const content = row.createDiv({ cls: 'abyss-subtask-content' });
     const titleRow = content.createDiv({ cls: 'abyss-subtask-title-row' });
     const { element: label } = renderSubtaskTitleText(titleRow, sub, {
       app: this.#app,
       sourcePath: rootTaskRef(sub).filePath,
-      component: this.#host.component(),
+      component,
       onEditLink: (occ, token) => {
-        this.editLink(sub, occ, token);
+        const current = owner.current;
+        if (current !== undefined) this.editLink(current, occ, token);
       },
     });
-    label.addEventListener('click', () => {
+    component.registerDomEvent(label, 'click', () => {
       const stack = this.#state.get('taskStack');
-      this.#state.navigateInspectorSelection([...stack, sub]);
+      const current = owner.current;
+      if (current !== undefined) this.#state.navigateInspectorSelection([...stack, current]);
     });
     renderRowRemove(
       titleRow,
       'abyss-subtask-remove',
       { label: 'Delete sub-task', failure: 'Could not delete sub-task' },
-      () => this.#commands.deleteTask(sub),
+      async () => {
+        const current = owner.current;
+        if (current !== undefined) await this.#commands.deleteTask(current);
+      },
     );
 
     // Progress + comment count indicators
@@ -629,16 +837,40 @@ export class InspectorSections {
     task: TaskLike,
     commentTimeContext?: CommentTimeContext,
   ): void {
+    const component = this.#host.component().addChild(new Component());
+    const owner = this.#host.taskOwner(task);
     const row = container.createDiv({ cls: 'abyss-comment-row' });
-    enableAttachmentDrop(row, {
-      app: this.#app,
-      sourcePath: rootTaskRef(task).filePath,
-      onLinks: (links) => {
-        runAsyncAction(
-          this.#commands.updateComment(task, comment, `${comment.text} ${links}`.trim()),
-        );
-      },
-    });
+    const entry: InspectorCommentRow = {
+      row,
+      comment,
+      component,
+      textComponent: undefined,
+      update: () => {},
+    };
+    this.#commentRows.push(entry);
+    component.register(
+      enableAttachmentDrop(row, {
+        app: this.#app,
+        capture: () => {
+          const current = owner.current;
+          const captured = entry.comment;
+          return current === undefined
+            ? undefined
+            : {
+                sourcePath: rootTaskRef(current).filePath,
+                onLinks: (links) => {
+                  runAsyncAction(
+                    this.#commands.updateComment(
+                      current,
+                      captured,
+                      `${captured.text} ${links}`.trim(),
+                    ),
+                  );
+                },
+              };
+        },
+      }),
+    );
     if (comment.timestamp != null && commentTimeContext != null) {
       row.createSpan({
         cls: 'abyss-comment-date',
@@ -646,33 +878,42 @@ export class InspectorSections {
       });
     }
     const showText = (): void => {
-      this.#renderCommentText(row, comment, task, showText);
+      const current = owner.current;
+      if (current !== undefined) this.#renderCommentText(row, entry, current, showText);
     };
+    entry.update = showText;
     showText();
   }
 
   #renderCommentText(
     row: HTMLElement,
-    comment: TaskCommentSnapshot,
+    entry: InspectorCommentRow,
     task: TaskLike,
     showText: () => void,
   ): void {
+    const owner = this.#host.taskOwner(task);
+    if (entry.textComponent !== undefined) entry.component.removeChild(entry.textComponent);
+    entry.textComponent = entry.component.addChild(new Component());
+    row.querySelector('.abyss-comment-text')?.remove();
+    const { comment, textComponent: component } = entry;
     const { element: textEl } = renderTaskCommentText(row, comment.text, {
       app: this.#app,
       sourcePath: rootTaskRef(task).filePath,
-      component: this.#host.component(),
+      component,
       onEditLink: (occurrence, token) => {
+        if (owner.current === undefined) return;
         this.#editLinkInString(
-          { type: 'comment', ref: comment.ref },
+          { type: 'comment', ref: entry.comment.ref },
           occurrence,
           token,
           rootTaskRef(task).filePath,
         );
       },
     });
-    textEl.addEventListener('click', (event) => {
+    component.registerDomEvent(textEl, 'click', (event) => {
       if ((event.target as HTMLElement).closest('a') != null) return;
-      this.#openCommentEditor(row, comment, task, showText);
+      const current = owner.current;
+      if (current !== undefined) this.#openCommentEditor(row, entry.comment, current, showText);
     });
   }
 

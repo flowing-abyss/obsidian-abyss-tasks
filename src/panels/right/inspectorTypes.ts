@@ -1,5 +1,8 @@
 import type { SubtaskSnapshot, TaskSnapshot } from '../../tasks';
 export type TaskLike = TaskSnapshot | SubtaskSnapshot;
+export interface InspectorTaskOwner {
+  current: TaskLike | undefined;
+}
 export type SchedulingDateField = 'due' | 'scheduled' | 'start';
 export type AddDateField = Exclude<SchedulingDateField, 'due'>;
 export type PlanningControlKey =

@@ -2043,34 +2043,44 @@ describe('RightPanel IME-owned keys', () => {
 });
 
 describe('consumed draft recovery over the real index', () => {
-  it.each([
-    { label: 'plain', entries: [] },
-    {
-      label: 'one stopped entry',
-      entries: ['  - 2026-10-06T09:00:00+07:00 → 2026-10-06T09:20:00+07:00'],
-    },
-    {
-      label: 'two stopped entries',
-      entries: [
-        '  - 2026-10-06T09:00:00+07:00 → 2026-10-06T09:20:00+07:00',
-        '  - 2026-10-06T10:00:00+07:00 → 2026-10-06T10:20:00+07:00',
-      ],
-    },
-    { label: 'running entry', entries: ['  - 2026-10-06T09:00:00+07:00 → ...'] },
-  ])('retains the exact nested Owner across repeated inserts with $label', async ({ entries }) => {
+  afterEach(() => {
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+  });
+
+  it.each(
+    [
+      { label: 'plain', entries: [] },
+      {
+        label: 'one stopped entry',
+        entries: ['  - 2026-10-06T09:00:00+07:00 → 2026-10-06T09:20:00+07:00'],
+      },
+      {
+        label: 'two stopped entries',
+        entries: [
+          '  - 2026-10-06T09:00:00+07:00 → 2026-10-06T09:20:00+07:00',
+          '  - 2026-10-06T10:00:00+07:00 → 2026-10-06T10:20:00+07:00',
+        ],
+      },
+      { label: 'running entry', entries: ['  - 2026-10-06T09:00:00+07:00 → ...'] },
+    ].flatMap((fixture) => ['result-first', 'index-first'].map((order) => ({ ...fixture, order }))),
+  )('retains connected nested entry with $label and $order', async ({ entries, order }) => {
     const h = await inspectorHarness(
       ['- [ ] Root', '  - [ ] Owner', '    - [ ] Existing', ...entries].join('\n'),
       'Owner',
     );
-    const unsubscribe = subscribeInspectorReconciliation(h);
+    const unsubscribe = order === 'index-first' ? subscribeInspectorReconciliation(h) : () => {};
     try {
       expectDefined(
         h.el.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
       ).click();
+      const input = expectDefined(h.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input'));
+      const header = h.el.querySelector('.abyss-right-header');
+      const description = h.el.querySelector('.abyss-right-desc-view');
+      const existing = expectDefined(h.el.querySelector('.abyss-subtask-row'));
+      const execute = vi.spyOn(h.api, 'execute');
+      h.el.scrollTop = 73;
       for (const text of ['First', 'Second', 'Third']) {
-        const input = expectDefined(
-          h.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
-        );
+        const parent = taskNodeRef(h.node('Owner').node);
         input.value = text;
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -2081,11 +2091,21 @@ describe('consumed draft recovery over the real index', () => {
           );
         });
         await flushMicrotasks(20);
+        expect(execute).toHaveBeenLastCalledWith({ type: 'add-subtask', parent, text });
+        expect(input.isConnected).toBe(true);
+        expect(h.el.querySelector('.abyss-subtask-new-input')).toBe(input);
+        expect(input.ownerDocument.activeElement).toBe(input);
+        expect(h.el.querySelector('.abyss-right-header')).toBe(header);
+        expect(h.el.querySelector('.abyss-right-desc-view')).toBe(description);
+        expect(existing.isConnected).toBe(true);
+        expect(h.el.scrollTop).toBe(73);
       }
+      const commentInput = expectDefined(
+        h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
+      commentInput.focus();
       for (const text of ['Comment one', 'Comment two']) {
-        const input = expectDefined(
-          h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
-        );
+        const input = commentInput;
         input.value = text;
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -2096,6 +2116,9 @@ describe('consumed draft recovery over the real index', () => {
           );
         });
         await flushMicrotasks(20);
+        expect(input.isConnected).toBe(true);
+        expect(h.el.querySelector('.abyss-comment-input')).toBe(input);
+        expect(input.ownerDocument.activeElement).toBe(input);
       }
       expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Root', 'Owner']);
       expect(h.node('Root').node.timeEntries).toHaveLength(entries.length);
@@ -2104,8 +2127,122 @@ describe('consumed draft recovery over the real index', () => {
     }
   });
 
-  afterEach(() => {
-    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+  it.each(['navigate', 'toggle', 'delete'] as const)(
+    'uses the proven existing child for its retained %s action',
+    async (action) => {
+      const h = await inspectorHarness('- [ ] Owner\n  - [ ] Existing', 'Owner');
+      const off = subscribeInspectorReconciliation(h);
+      try {
+        const row = expectDefined(h.el.querySelector('.abyss-subtask-row'));
+        const label = expectDefined(row.querySelector<HTMLElement>('.abyss-subtask-label'));
+        const marker = expectDefined(row.querySelector<HTMLElement>('.abyss-status-marker'));
+        const remove = expectDefined(row.querySelector<HTMLElement>('.abyss-subtask-remove'));
+        await call<Promise<boolean>>(h.panel, 'addSubTask', h.node('Owner').node, 'Added');
+        const target = taskNodeRef(h.node('Existing').node);
+        const execute = vi.spyOn(h.api, 'execute');
+        expect(row.isConnected).toBe(true);
+        if (action === 'navigate') {
+          label.click();
+          expect(taskNodeRef(expectDefined(h.state.get('taskStack')[1]))).toEqual(target);
+        } else if (action === 'toggle') {
+          marker.click();
+          await vi.waitFor(() => {
+            expect(h.node('Existing').node.status).toBe('done');
+          });
+          expect(execute).toHaveBeenLastCalledWith({ type: 'toggle-completion', target });
+          expect(marker.isConnected).toBe(true);
+          expect(marker.getAttribute('aria-checked')).toBe('true');
+        } else {
+          remove.click();
+          await vi.waitFor(() => {
+            expect(h.node('Owner').node.subtasks.map((child) => child.title)).toEqual(['Added']);
+          });
+          expect(target.type).toBe('subtask');
+          expect(execute).toHaveBeenLastCalledWith({ type: 'delete-subtask', subtask: target.ref });
+          expect(row.isConnected).toBe(false);
+          execute.mockClear();
+          remove.click();
+          expect(execute).not.toHaveBeenCalled();
+        }
+      } finally {
+        off();
+      }
+    },
+  );
+
+  it('keeps the original open editor target while new actions acquire the proven successor', async () => {
+    const h = await inspectorHarness('- [ ] Owner\n  Original description', 'Owner');
+    const off = subscribeInspectorReconciliation(h);
+    try {
+      const original = taskNodeRef(h.node('Owner').node);
+      expectDefined(h.el.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
+      const editor = expectDefined(
+        h.el.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+      );
+      await call<Promise<boolean>>(h.panel, 'addSubTask', h.node('Owner').node, 'Added');
+      expect(editor.isConnected).toBe(true);
+      const execute = vi.spyOn(h.api, 'execute');
+      editor.value = 'Captured edit';
+      editor.dispatchEvent(new Event('blur'));
+      await vi.waitFor(() => {
+        expect(execute).toHaveBeenCalledWith({
+          type: 'set-description',
+          target: original,
+          text: 'Captured edit',
+        });
+      });
+    } finally {
+      off();
+    }
+  });
+
+  it('retires document listeners on window migration and restores the owned entry draft', async () => {
+    const h = await inspectorHarness('- [ ] Owner', 'Owner');
+    expectDefined(h.el.querySelector<HTMLElement>('.abyss-subtask-add-row')).click();
+    const original = expectDefined(
+      h.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
+    );
+    original.value = 'Migration draft';
+    original.setSelectionRange(2, 6);
+    h.panel.onWindowMigrated();
+    const restored = expectDefined(
+      h.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
+    );
+    expect(original.isConnected).toBe(false);
+    expect(restored.value).toBe('Migration draft');
+    expect([restored.selectionStart, restored.selectionEnd]).toEqual([2, 6]);
+    const execute = vi.spyOn(h.api, 'execute');
+    original.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(execute).not.toHaveBeenCalled();
+    restored.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(restored.isConnected).toBe(false);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('updates only the edited selected field while retaining unrelated inspector regions', async () => {
+    const h = await inspectorHarness('- [ ] Owner\n  Old description\n  - [ ] Existing', 'Owner');
+    const off = subscribeInspectorReconciliation(h);
+    try {
+      const header = expectDefined(h.el.querySelector('.abyss-right-header'));
+      const row = expectDefined(h.el.querySelector('.abyss-subtask-row'));
+      const input = expectDefined(h.el.querySelector('.abyss-comment-input'));
+      expectDefined(h.el.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
+      const edit = expectDefined(h.el.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'));
+      edit.value = 'New description';
+      edit.dispatchEvent(new Event('blur'));
+      await vi.waitFor(() => {
+        expect(h.node('Owner').node.description).toBe('New description');
+      });
+      await flushMicrotasks(20);
+      expect(header.isConnected).toBe(true);
+      expect(row.isConnected).toBe(true);
+      expect(input.isConnected).toBe(true);
+      expect(h.el.querySelector('.abyss-right-desc-view')?.textContent).toContain(
+        'New description',
+      );
+    } finally {
+      off();
+    }
   });
 
   it('preserves the exact newer live continuation and trays the original submitted text', async () => {
@@ -2137,6 +2274,7 @@ describe('consumed draft recovery over the real index', () => {
       const stack = h.state.get('taskStack').map(taskNodeRef);
       expect(stack).toEqual([h.node('A').target]);
       const newer = expectDefined(h.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input'));
+      expect(newer).toBe(submitted);
       expect(newer.value).toBe('');
       expect(activeDocument.activeElement).toBe(newer);
       newer.value = 'QA-SP1j newer';
@@ -2261,6 +2399,7 @@ describe('consumed draft recovery over the real index', () => {
         const live = expectDefined(
           h.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
         );
+        expect(live).toBe(submitted);
         live.value = value;
         live.dispatchEvent(new Event('input', { bubbles: true }));
         live.setSelectionRange(0, 0);

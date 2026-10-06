@@ -2184,11 +2184,11 @@ describe('RightPanel dependency inspector', () => {
     expect(divider.hidden).toBe(true);
     expect(blocks.hidden).toBe(true);
     expect(body.getAttribute('aria-label')).toBe('Dependencies: blocked by 0; blocks 0');
-    expect(body.getAttribute('aria-label')).toBe('Dependencies: blocked by 0; blocks 0');
+    expect(body.hasAttribute('title')).toBe(false);
     expect(plus.parentElement).toBe(badge);
     expect(body.contains(plus)).toBe(false);
     expect(plus.getAttribute('aria-label')).toBe('Add dependency sections');
-    expect(plus.getAttribute('aria-label')).toBe('Add dependency sections');
+    expect(plus.hasAttribute('title')).toBe(false);
 
     const decoy = body.createSpan({ cls: 'abyss-dep-test-decoy' });
     body.insertBefore(decoy, blockedBy);

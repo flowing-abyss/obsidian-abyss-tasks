@@ -33,7 +33,7 @@ import {
 } from '../../ui/recurrence/renderRecurrenceBadge';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { bindSegmentedInputCommit, isUsableDateInputValue } from '../../ui/segmentedInputCommit';
-import { setStatusMarkerCompletionBlocked } from '../../ui/StatusMarker';
+import { setStatusMarkerCompletionBlocked, updateStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt, type StatusMenuHandle } from '../../ui/statusMenu';
 import { showTagDropdown } from '../../ui/tagDropdown';
 import { type RightPanelDraftState } from '../../ui/taskDraftContinuity';
@@ -46,6 +46,7 @@ import {
 } from '../../ui/timeTracking/TimeBadge';
 import type {
   AddDateField,
+  InspectorTaskOwner,
   PlanningControlKey,
   SchedulingDateField,
   TaskLike,
@@ -56,6 +57,7 @@ interface InspectorPlanningHost {
   readonly root: () => HTMLElement;
   readonly mounted: () => boolean;
   readonly component: () => Component;
+  readonly taskOwner: (task: TaskLike) => InspectorTaskOwner;
   readonly stack: () => readonly TaskLike[];
   readonly rebuildPlanningTargetStack: (
     root: TaskSnapshot,
@@ -318,7 +320,7 @@ export class InspectorPlanningSurfaces {
     return { kind: 'recurrence-editor', target: recurrence.target, editor, hadFocus };
   }
 
-  readonly #dependencyStatusMarkers = new Map<HTMLElement, TaskLike>();
+  readonly #dependencyStatusMarkers = new Map<HTMLElement, InspectorTaskOwner>();
 
   #dependencyStatusMenu: StatusMenuHandle | undefined;
 
@@ -360,6 +362,14 @@ export class InspectorPlanningSurfaces {
     if (controls === undefined) return;
     this.registerPlanningControl('tracking-toggle', controls.toggle);
     this.registerPlanningControl('tracking-sessions', controls.body);
+  }
+
+  resetMetadataControls(): void {
+    for (const [element, key] of this.#planningControlKeys) {
+      if (key === 'more-actions') continue;
+      this.#planningControlKeys.delete(element);
+      this.#planningControls.delete(key);
+    }
   }
 
   resetRenderedControls(): void {
@@ -452,8 +462,10 @@ export class InspectorPlanningSurfaces {
   ): TaskNodeRef | undefined {
     const focused = this.#host.root().ownerDocument.activeElement;
     if (focused === null) return undefined;
-    for (const [marker, task] of this.#dependencyStatusMarkers) {
-      if (marker !== focused && marker.closest('.abyss-status-control') !== focused) continue;
+    for (const [marker, owner] of this.#dependencyStatusMarkers) {
+      const task = owner.current;
+      if (task === undefined) continue;
+      if (!(marker === focused || marker.closest('.abyss-status-control') === focused)) continue;
       const current = resolve(task === stack[stack.length - 1] ? stack : [...stack, task]);
       return current === undefined ? undefined : taskNodeRef(current);
     }
@@ -461,7 +473,9 @@ export class InspectorPlanningSurfaces {
   }
 
   #restoreStatusFocus(target: TaskNodeRef): void {
-    for (const [marker, task] of this.#dependencyStatusMarkers) {
+    for (const [marker, owner] of this.#dependencyStatusMarkers) {
+      const task = owner.current;
+      if (task === undefined) continue;
       if (!sameTaskNodeRef(taskNodeRef(task), target)) continue;
       (marker.closest<HTMLElement>('.abyss-status-control') ?? marker).focus({
         preventScroll: true,
@@ -471,6 +485,7 @@ export class InspectorPlanningSurfaces {
   }
 
   renderTimeChip(container: HTMLElement, task: TaskLike): void {
+    const owner = this.#host.taskOwner(task);
     const duration = 'source' in task ? task.planning.duration : undefined;
     const time = task.planning.time;
     const presentation = timeChipPresentation(time, duration);
@@ -486,11 +501,14 @@ export class InspectorPlanningSurfaces {
     this.registerPlanningControl('time', chip);
     chip.addEventListener('click', (event) => {
       event.stopPropagation();
-      this.#showTimePopover(chip, task);
+      const current = owner.current;
+      if (current === undefined) return;
+      this.#showTimePopover(chip, current);
     });
   }
 
   renderDateChip(container: HTMLElement, task: TaskLike): void {
+    const owner = this.#host.taskOwner(task);
     const d = task.planning.due ?? task.planning.scheduled;
     let field: 'due' | 'scheduled' = 'due';
     if (task.planning.due == null && task.planning.scheduled != null) field = 'scheduled';
@@ -501,12 +519,15 @@ export class InspectorPlanningSurfaces {
     this.registerPlanningControl('date', chip);
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
-      this.#showDatePopover(chip, task, field);
+      const current = owner.current;
+      if (current === undefined) return;
+      this.#showDatePopover(chip, current, field);
     });
   }
 
   /** "Plan" (⏳/`scheduled`) chip — same round-pill/popover pattern as the due-date chip. */
   renderScheduledChip(container: HTMLElement, task: TaskLike): void {
+    const owner = this.#host.taskOwner(task);
     const value = task.planning.scheduled;
     const chip = container.createEl('button', {
       cls: `abyss-chip abyss-chip-scheduled${value != null ? '' : ' abyss-chip-empty'}`,
@@ -516,12 +537,15 @@ export class InspectorPlanningSurfaces {
     this.registerPlanningControl('scheduled', chip);
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
-      this.#showDatePopover(chip, task, 'scheduled');
+      const current = owner.current;
+      if (current === undefined) return;
+      this.#showDatePopover(chip, current, 'scheduled');
     });
   }
 
   /** "Start" (🛫/`start`) chip — same round-pill/popover pattern as the due-date chip. */
   renderStartChip(container: HTMLElement, task: TaskLike): void {
+    const owner = this.#host.taskOwner(task);
     const value = task.planning.start;
     const chip = container.createEl('button', {
       cls: `abyss-chip abyss-chip-start${value != null ? '' : ' abyss-chip-empty'}`,
@@ -531,7 +555,9 @@ export class InspectorPlanningSurfaces {
     this.registerPlanningControl('start', chip);
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
-      this.#showDatePopover(chip, task, 'start');
+      const current = owner.current;
+      if (current === undefined) return;
+      this.#showDatePopover(chip, current, 'start');
     });
   }
 
@@ -542,6 +568,7 @@ export class InspectorPlanningSurfaces {
    * to offer), and remains extensible for future addable properties (e.g. recurrence).
    */
   renderAddDateMenu(container: HTMLElement, task: TaskLike): void {
+    const owner = this.#host.taskOwner(task);
     const options: Array<{ field: AddDateField; label: string }> = [];
     if (task.planning.start == null) options.push({ field: 'start', label: '🛫 Start' });
     if (task.planning.scheduled == null) options.push({ field: 'scheduled', label: '⏳ Plan' });
@@ -559,7 +586,9 @@ export class InspectorPlanningSurfaces {
     this.registerPlanningControl('add-date', addBtn);
     addBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      this.#showAddDateMenu(addBtn, task, options);
+      const current = owner.current;
+      if (current === undefined) return;
+      this.#showAddDateMenu(addBtn, current, options);
     });
   }
 
@@ -641,6 +670,7 @@ export class InspectorPlanningSurfaces {
   }
 
   renderPriorityChip(container: HTMLElement, task: TaskLike): void {
+    const owner = this.#host.taskOwner(task);
     const chip = container.createEl('button', {
       attr: { 'aria-haspopup': 'listbox', 'aria-expanded': 'false' },
     });
@@ -648,11 +678,14 @@ export class InspectorPlanningSurfaces {
     this.registerPlanningControl('priority', chip);
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
-      this.#showPriorityPopover(chip, task);
+      const current = owner.current;
+      if (current === undefined) return;
+      this.#showPriorityPopover(chip, current);
     });
   }
 
-  renderRecurrenceChip(container: HTMLElement, task: TaskLike, stack: readonly TaskLike[]): void {
+  renderRecurrenceChip(container: HTMLElement, task: TaskLike): void {
+    const owner = this.#host.taskOwner(task);
     const recurrence = task.recurrence;
     const hasRecurrence = recurrence !== undefined && recurrence !== '';
     const chip = container.createEl('button', {
@@ -668,7 +701,9 @@ export class InspectorPlanningSurfaces {
     }
     chip.addEventListener('click', (event) => {
       event.stopPropagation();
-      this.#showRecurrencePopover(chip, task, stack);
+      const current = owner.current;
+      if (current === undefined) return;
+      this.#showRecurrencePopover(chip, current, this.#host.stack());
     });
   }
 
@@ -757,6 +792,7 @@ export class InspectorPlanningSurfaces {
   }
 
   renderTagChip(container: HTMLElement, task: TaskLike, tag: string): void {
+    const owner = this.#host.taskOwner(task);
     const chip = container.createSpan({ cls: 'abyss-chip abyss-chip-tag' });
     const color = this.#getTagColor(tag);
     if (color !== undefined && color !== '') {
@@ -767,7 +803,9 @@ export class InspectorPlanningSurfaces {
     this.#registerTagRemoveControl(x);
     x.addEventListener('click', (e) => {
       e.stopPropagation();
-      runAsyncAction(this.#commands.removeTag(task, tag));
+      const current = owner.current;
+      if (current === undefined) return;
+      runAsyncAction(this.#commands.removeTag(current, tag));
     });
   }
 
@@ -1428,11 +1466,21 @@ export class InspectorPlanningSurfaces {
   }
 
   registerStatusMarker(marker: HTMLElement, task: TaskLike): void {
-    this.#dependencyStatusMarkers.set(marker, task);
+    this.#dependencyStatusMarkers.set(marker, this.#host.taskOwner(task));
   }
+  updateTaskOwners(): void {
+    for (const [marker, owner] of this.#dependencyStatusMarkers) {
+      if (owner.current === undefined || !marker.isConnected)
+        this.#dependencyStatusMarkers.delete(marker);
+      else updateStatusMarker(marker, { task: owner.current, registry: this.#statusRegistry });
+    }
+  }
+
   refreshStatusMarkers(isBlocked: (task: TaskLike) => boolean): void {
-    for (const [marker, task] of this.#dependencyStatusMarkers)
-      setStatusMarkerCompletionBlocked(marker, isBlocked(task));
+    for (const [marker, owner] of this.#dependencyStatusMarkers) {
+      const current = owner.current;
+      if (current !== undefined) setStatusMarkerCompletionBlocked(marker, isBlocked(current));
+    }
   }
   openDependencyStatusMenu(event: MouseEvent, task: TaskLike): void {
     this.closeDependencyStatusMenu();
@@ -1444,6 +1492,11 @@ export class InspectorPlanningSurfaces {
   releasePlacement(surface: HTMLElement): void {
     this.#anchoredSurfaceCleanups.get(surface)?.();
   }
+  consumeRecurrenceDraft(): void {
+    const editor = this.#recurrenceDraftEditor;
+    if (editor !== undefined) this.#removeAnchoredSurface(editor.surface);
+  }
+
   restoreRecurrenceDraft(
     draft: Extract<RightPanelDraftState, { kind: 'recurrence-editor' }>,
     task: TaskLike,

@@ -3,12 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   attachFilesAsLinks,
   defaultPastedName,
+  enableAttachmentDrop,
   enableAttachmentPaste,
   insertAtCaret,
   resolveDraggedItems,
   whenPasteSettled,
 } from '../src/ui/attachmentDrop';
-import { createAppWithFiles, methodOf } from './helpers';
+import { createAppWithFiles, deferred, flushMicrotasks, methodOf } from './helpers';
 
 const file = (name: string): File => ({ name }) as unknown as File;
 
@@ -180,5 +181,81 @@ describe('resolveDraggedItems', () => {
 
   it('returns empty for a null dataTransfer and no drag manager', () => {
     expect(resolveDraggedItems(null, undefined)).toEqual({ externalFiles: [], vaultFiles: [] });
+  });
+});
+
+describe('attachment drop target capture', () => {
+  it('captures once before asynchronous file saving and disposes its listeners', async () => {
+    const bytes = deferred<ArrayBuffer>();
+    const app = await createAppWithFiles({ 'saved.png': '' });
+    Object.assign(app, { dragManager: undefined });
+    const saved = await tfile('saved.png');
+    vi.spyOn(app.fileManager, 'getAvailablePathForAttachment').mockResolvedValue('saved.png');
+    vi.spyOn(app.vault, 'createBinary').mockResolvedValue(saved);
+    vi.spyOn(app.fileManager, 'generateMarkdownLink').mockReturnValue('[[saved.png]]');
+    const element = activeDocument.body.createDiv();
+    let target = 'before';
+    const received: string[] = [];
+    const capture = vi.fn(() => {
+      const captured = target;
+      return {
+        sourcePath: 'tasks.md',
+        onLinks: (links: string) => {
+          received.push(`${captured}:${links}`);
+        },
+      };
+    });
+    const cleanup = enableAttachmentDrop(element, {
+      app,
+      sourcePath: 'tasks.md',
+      onLinks: () => {
+        received.push('uncaptured');
+      },
+      capture,
+    });
+    const event = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', {
+      value: {
+        files: [{ name: 'image.png', type: 'image/png', arrayBuffer: () => bytes.promise }],
+      },
+    });
+    element.dispatchEvent(event);
+    target = 'after';
+    bytes.resolve(new ArrayBuffer(1));
+    await vi.waitFor(() => {
+      expect(received).toEqual(['before:[[saved.png]]']);
+    });
+    expect(capture).toHaveBeenCalledOnce();
+    cleanup();
+    element.dispatchEvent(event);
+    await flushMicrotasks();
+    expect(capture).toHaveBeenCalledOnce();
+    element.remove();
+  });
+
+  it('rejects a retired owner before saving any file', async () => {
+    const app = await createAppWithFiles({});
+    Object.assign(app, { dragManager: undefined });
+    const save = vi.spyOn(app.vault, 'createBinary');
+    const bytes = vi.fn().mockResolvedValue(new ArrayBuffer(1));
+    const element = activeDocument.body.createDiv();
+    const onLinks = vi.fn();
+    const cleanup = enableAttachmentDrop(element, {
+      app,
+      sourcePath: 'tasks.md',
+      onLinks,
+      capture: () => undefined,
+    });
+    const event = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', {
+      value: { files: [{ name: 'image.png', type: 'image/png', arrayBuffer: bytes }] },
+    });
+    element.dispatchEvent(event);
+    await flushMicrotasks();
+    expect(bytes).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    expect(onLinks).not.toHaveBeenCalled();
+    cleanup();
+    element.remove();
   });
 });

@@ -835,8 +835,20 @@ RightPanel constructs three presentation owners:
 
 They read live shell state and invoke retained command callbacks. RightPanel keeps write targets,
 submission records, late-result handling, draft ownership, and the decision to restore a draft.
-The owners share its Markdown Component and drag cleanup rather than introducing separate
-subscriptions or persistence.
+The owners share its lifecycle and drag cleanup rather than introducing separate subscriptions or
+persistence. InspectorSections owns disposable Markdown components for mounted title, description,
+subtask and comment regions. A proven owned command updates affected regions and counters in place;
+unaffected headers, text, rows and continuous-entry inputs remain connected. Planning controls obtain
+one current `InspectorTaskOwner` snapshot when an action opens. Open editors, confirmations and
+submitted commands retain their captured target; attachment drops capture at the synchronous drop
+boundary before asynchronous file saving. `proveOwnedTaskSelection` checks the whole transition once
+and indexes exact surviving occurrences for all mounted owners. RightPanel alone advances those owners
+from the accepted proof, and retirement clears them. Link saves participate in the same owned
+submission flow; their proof requires the exact parsed occurrence replacement in the selected field
+and a single corresponding replacement in the complete root source block, including comment source
+blocks. Unrelated source changes cannot acquire successor authority. Ordinary explicit redraws keep their existing
+teardown and settlement semantics; exact unchanged index events are filtered by the shells. Window
+migration retires document listeners and components, then restores eligible drafts into the new owner.
 
 Refresh continuity depends on identity and interaction ownership. Focused, unsubmitted date/tag
 entries keep their connected input and original command target while the full selected reference

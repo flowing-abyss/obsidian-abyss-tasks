@@ -9,6 +9,7 @@ import { StatusRegistry } from '../src/status/StatusRegistry';
 import type { TaskApplicationApi } from '../src/tasks';
 import type { TaskRef, TaskSnapshot } from '../src/tasks/domain/types';
 import { LinkEditModal } from '../src/ui/LinkEditModal';
+import { taskNodeRef } from '../src/ui/taskSelection';
 import {
   createAppWithFiles,
   editSettingControl,
@@ -18,6 +19,11 @@ import {
   testStatusRegistry,
   useRealMoment,
 } from './helpers';
+import {
+  inspectorCleanups,
+  inspectorHarness,
+  subscribeInspectorReconciliation,
+} from './support/inspectorHarness';
 import {
   captureLinkModals,
   captureMenus,
@@ -62,6 +68,78 @@ function saveImmediately(replacement: string) {
 }
 
 describe('task link rewrite delegation', () => {
+  it.each(['description', 'comment'] as const)(
+    'keeps retained %s link targets fresh while preserving already-open editor authority',
+    async (field) => {
+      for (const openBefore of [false, true]) {
+        mockReadingView();
+        const menus = captureMenus();
+        const modals = captureLinkModals();
+        const h = await inspectorHarness(
+          '- [ ] Root\n  - [ ] Branch\n    - [ ] Owner\n      - > [[Old]]\n      - [[Old]]\n      - [ ] Existing\n  - 2026-10-06T09:00:00+07:00 → 2026-10-06T09:20:00+07:00',
+          'Owner',
+        );
+        const off = subscribeInspectorReconciliation(h);
+        try {
+          await settleRender();
+          const selector =
+            field === 'description' ? '.abyss-right-desc-view' : '.abyss-comment-text';
+          const link = expectDefined(h.el.querySelector(`${selector} a`));
+          const textTarget = () =>
+            field === 'description'
+              ? { type: 'description' as const, target: taskNodeRef(h.node('Owner').node) }
+              : {
+                  type: 'comment' as const,
+                  ref: expectDefined(h.node('Owner').node.comments[0]).ref,
+                };
+          const original = textTarget();
+          const header = expectDefined(h.el.querySelector('.abyss-right-header'));
+          const row = expectDefined(h.el.querySelector('.abyss-subtask-row'));
+          const open = () => {
+            rightClick(link);
+            expectDefined(menus[menus.length - 1]).pick('Edit link…');
+          };
+          if (openBefore) open();
+          await call<Promise<boolean>>(h.panel, 'addSubTask', h.node('Owner').node, 'Added');
+          expect(link.isConnected).toBe(true);
+          if (!openBefore) open();
+          const target = openBefore ? original : textTarget();
+          const execute = vi.spyOn(h.api, 'execute');
+          const modal = modals.last();
+          editSettingControl(modalInputs(modal).target, 'Changed');
+          clickSave(modal);
+          await vi.waitFor(() => {
+            expect(execute).toHaveBeenCalledWith({
+              type: 'edit-link',
+              target,
+              occurrence: 0,
+              replacement: '[[Changed]]',
+            });
+          });
+          if (!openBefore) {
+            await vi.waitFor(() => {
+              expect(h.el.querySelector(selector)?.textContent).toBe('Changed');
+            });
+            expect(h.state.get('taskStack').map((node) => node.title)).toEqual([
+              'Root',
+              'Branch',
+              'Owner',
+            ]);
+            expect(header.isConnected).toBe(true);
+            expect(row.isConnected).toBe(true);
+          } else {
+            await settleRender();
+            expect(h.el.querySelector(selector)?.textContent).toBe('Old');
+          }
+        } finally {
+          off();
+          for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+        }
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
   it('owns a link editor once per open and releases it idempotently on close', async () => {
     const app = await createAppWithFiles({});
     const release = vi.fn();
@@ -205,7 +283,7 @@ describe('task link rewrite delegation', () => {
         const modal = modals.last();
         editSettingControl(modalInputs(modal).target, 'Changed');
         clickSave(modal);
-        await Promise.resolve();
+        await settleRender();
       }
     } finally {
       panel.destroy();

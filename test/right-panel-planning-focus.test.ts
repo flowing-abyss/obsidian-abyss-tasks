@@ -69,8 +69,7 @@ function change(input: HTMLInputElement, value: string): void {
 }
 
 function expectRebuiltFocus(before: HTMLElement, after: HTMLElement): void {
-  expect(before.isConnected).toBe(false);
-  expect(after).not.toBe(before);
+  expect(before.isConnected).toBe(before === after);
   expect(activeDocument.activeElement).toBe(after);
 }
 
@@ -193,7 +192,7 @@ describe('inspector planning focus continuity', () => {
   });
 
   it.each(['Current', 'Child'])(
-    'retains the rebuilt child status focus under %s',
+    'retains the child status control and focus under %s',
     async (selected) => {
       const h = await hosted(childCompleted, selected);
       const locate = () => {
