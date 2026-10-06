@@ -3951,6 +3951,53 @@ describe('PanelView', () => {
       );
     });
 
+    it('retains the inspector DOM, focus, caret and scroll when an unrelated root changes', async () => {
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      const root = expectDefined(taskApplication.index.list()[0]);
+      state.set('taskStack', [root]);
+      const header = expectDefined(view.contentEl.querySelector('.abyss-right-header'));
+      const input = expectDefined(
+        view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
+      const scroll = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-right'));
+      input.value = 'Unsubmitted comment';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.focus();
+      input.setSelectionRange(3, 8);
+      scroll.scrollTop = 137;
+      const stack = state.get('taskStack');
+      const file = expectDefined(app.vault.getAbstractFileByPath('today.md'));
+      if (!(file instanceof TFile)) throw new Error('Missing fixture');
+      await app.vault.modify(file, `${await app.vault.read(file)}\n- [ ] Unrelated root`);
+      await vi.waitFor(() => {
+        expect(taskApplication.index.list()).toHaveLength(2);
+      });
+      expect(state.get('taskStack')).toBe(stack);
+      expect(view.contentEl.querySelector('.abyss-right-header')).toBe(header);
+      expect(view.contentEl.querySelector('.abyss-comment-input')).toBe(input);
+      expect(input.isConnected).toBe(true);
+      expect(activeDocument.activeElement).toBe(input);
+      expect([input.selectionStart, input.selectionEnd]).toEqual([3, 8]);
+      expect(scroll.scrollTop).toBe(137);
+    });
+
+    it('refreshes same-ref custom status semantics through the actual sidebar reconciliation', () => {
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      const root = expectDefined(taskApplication.index.list()[0]);
+      state.set('taskStack', [root]);
+      const header = expectDefined(view.contentEl.querySelector('.abyss-right-header'));
+      const current = { ...root, status: 'cancelled' as const };
+      vi.spyOn(taskApplication.index, 'resolve').mockReturnValue({
+        type: 'exact',
+        task: current,
+        basis: { observed: root },
+      });
+      emitQueryEvent(taskApplication.index, { type: 'changed', files: [root.ref.filePath] });
+      expect(state.get('taskStack')[0]?.ref).toEqual(root.ref);
+      expect(state.get('taskStack')[0]?.status).toBe('cancelled');
+      expect(view.contentEl.querySelector('.abyss-right-header')).not.toBe(header);
+    });
+
     it('query update with non-matching changedFile → taskStack unchanged', () => {
       const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       const root = expectDefined(taskApplication.index.list()[0]);

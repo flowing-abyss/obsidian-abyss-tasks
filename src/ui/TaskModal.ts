@@ -31,6 +31,7 @@ import {
 import { presentTaskCommandResult } from './taskCommandResult';
 import { isDirtyDraftBundle, type RightPanelDraftBundle } from './taskDraftContinuity';
 import {
+  isCurrentTaskSelectionSnapshot,
   rebuildTaskSelection,
   renamedRootSelection,
   rootTaskRef,
@@ -490,18 +491,13 @@ export class TaskModal {
     stack: TaskSelectionNode[],
   ): void {
     const current = resolution.type === 'exact' ? resolution.task : resolution.current;
+    if (resolution.type === 'exact' && isCurrentTaskSelectionSnapshot(current, stack)) return;
     const consumedOwnedRef = this.consumedOwnedRef_abyssPrivate(resolution);
     const ownedSelection =
       consumedOwnedRef === undefined
         ? undefined
         : this.ownedSelection_abyssPrivate(consumedOwnedRef, current, stack);
-    const draft =
-      consumedOwnedRef != null
-        ? this.innerPanel_abyssPrivate?.captureDraftStateForOwnedTransition(
-            consumedOwnedRef,
-            current.ref,
-          )
-        : this.innerPanel_abyssPrivate?.captureDraftState();
+    const draft = this.captureResolvedDraft_abyssPrivate(consumedOwnedRef, current.ref);
     this.ownedWriteRef_abyssPrivate = undefined;
     this.innerState_abyssPrivate?.updateInspectorSelection(
       ownedSelection ??
@@ -511,6 +507,15 @@ export class TaskModal {
         }),
     );
     this.innerPanel_abyssPrivate?.restoreDraftState(draft, current);
+  }
+
+  private captureResolvedDraft_abyssPrivate(
+    ownedRef: TaskRef | undefined,
+    currentRef: TaskRef,
+  ): RightPanelDraftBundle | undefined {
+    return ownedRef === undefined
+      ? this.innerPanel_abyssPrivate?.captureDraftState()
+      : this.innerPanel_abyssPrivate?.captureDraftStateForOwnedTransition(ownedRef, currentRef);
   }
 
   private consumedOwnedRef_abyssPrivate(

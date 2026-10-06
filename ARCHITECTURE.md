@@ -845,9 +845,13 @@ references and relevant relations/status inputs still match. Drop eligibility is
 the actual drop; a retained preview or menu never grants write authority.
 
 Continuous subtask/comment entry and selected-child restoration after owned writes require a
-command-specific successor proof. The proof checks the permitted source change and captured creation
-or tag policy. Only a proven successor can receive continuation, selection, or focus. A recovered
-draft may reopen only for its original selection or proven successor and draft owner. Newer live
+command-specific successor proof. Insertion proof excludes only a time entry’s derived line position;
+its content, state, order and owner remain protected by semantic and exact source checks. Sidebar
+and modal index reconciliation skip draft capture and selection replacement only for an exact, fully
+unchanged root snapshot and selected ancestor path, including status and presentation semantics.
+This read-only equality grants no successor or write authority. The proof checks the permitted source
+change and captured creation or tag policy. Only a proven successor can receive continuation, selection,
+or focus. A recovered draft may reopen only for its original selection or proven successor and draft owner. Newer live
 input, including an intentionally empty value, wins; conflicting recovery stays unfocused in Unsaved
 drafts with its origin. Navigation, dismissal, and teardown end the owned interaction.
 

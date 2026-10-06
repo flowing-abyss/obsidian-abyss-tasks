@@ -323,7 +323,7 @@ const surfaceNames = [
 type Surface = (typeof surfaceNames)[number];
 async function mountSurface(h: Harness, surface: Surface): Promise<HTMLElement> {
   const task = h.node('Current').root;
-  if (['center', 'search'].includes(surface)) {
+  if (surface === 'center' || surface === 'search') {
     if (surface === 'search') {
       h.state.set('mode', 'search');
       h.state.set('searchQuery', 'Current');

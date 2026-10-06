@@ -18,7 +18,11 @@ import {
   type RecurrenceEditorDraft,
   type RightPanelDraftState,
 } from '../src/ui/taskDraftContinuity';
-import { rebuildTaskSelection, taskNodeLine } from '../src/ui/taskSelection';
+import {
+  isCurrentTaskSelectionSnapshot,
+  rebuildTaskSelection,
+  taskNodeLine,
+} from '../src/ui/taskSelection';
 import { expectDefined, taskQueryApi, testStatusRegistry } from './helpers';
 
 const captured = vi.hoisted(() => ({
@@ -357,6 +361,58 @@ describe('revision-aware nested selection rebuild', () => {
       expectDefined(staleRoot.subtasks[0]),
     ]);
     expect(rebuilt).toHaveLength(1);
+  });
+
+  it('recognizes only an unchanged complete root and exact selected ancestor path', () => {
+    const root = withChild(snapshot('same', 'Root'), '  - [ ] Child');
+    const child = expectDefined(root.subtasks[0]);
+    const nested = withChild(root, '  - [ ] Child');
+    const grandchild = {
+      ...child,
+      ref: {
+        parent: { type: 'subtask' as const, ref: child.ref },
+        relativeLine: 1,
+        originalBlock: '    - [ ] Grandchild',
+      },
+    };
+    const branch = { ...expectDefined(nested.subtasks[0]), subtasks: [grandchild] };
+    const tree = { ...nested, subtasks: [branch] };
+    expect(isCurrentTaskSelectionSnapshot(root, [root, child])).toBe(true);
+    expect(
+      isCurrentTaskSelectionSnapshot(structuredClone(root), [root, structuredClone(child)]),
+    ).toBe(true);
+    expect(isCurrentTaskSelectionSnapshot(tree, [tree, branch, grandchild])).toBe(true);
+    expect(isCurrentTaskSelectionSnapshot(root, [])).toBe(false);
+    expect(isCurrentTaskSelectionSnapshot(root, [child])).toBe(false);
+    expect(isCurrentTaskSelectionSnapshot(root, [root, child, child])).toBe(false);
+    expect(isCurrentTaskSelectionSnapshot(tree, [tree, grandchild])).toBe(false);
+    expect(isCurrentTaskSelectionSnapshot(root, [root, { ...child, status: 'done' }])).toBe(false);
+    expect(
+      isCurrentTaskSelectionSnapshot(tree, [
+        tree,
+        { ...branch, description: 'Changed' },
+        grandchild,
+      ]),
+    ).toBe(false);
+  });
+
+  it.each([
+    { status: 'in-progress' as const },
+    { statusSymbol: '?' },
+    { presentation: { linkCount: 0, noteColor: '#fff' } },
+    { tags: ['changed'] },
+    { ref: { filePath: 'tasks.md', line: 4, revision: 'successor' } },
+    { source: { ...snapshot('same', 'Root').source, originalBlock: '- [ ] Changed' } },
+  ])('refreshes an exact ref when the full snapshot changes: %j', (change) => {
+    const root = snapshot('same', 'Root');
+    expect(isCurrentTaskSelectionSnapshot({ ...root, ...change }, [root])).toBe(false);
+  });
+
+  it('does not hide a descendant status-semantic change behind an unchanged root ref', () => {
+    const root = withChild(snapshot('same', 'Root'), '  - [ ] Child');
+    const child = expectDefined(root.subtasks[0]);
+    const changed = { ...root, subtasks: [{ ...child, status: 'cancelled' as const }] };
+    expect(isCurrentTaskSelectionSnapshot(changed, [root])).toBe(false);
   });
 
   it.each(['title', 'priority', 'status', 'description', 'child-structure', 'ambiguous-position'])(

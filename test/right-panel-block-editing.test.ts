@@ -2043,6 +2043,67 @@ describe('RightPanel IME-owned keys', () => {
 });
 
 describe('consumed draft recovery over the real index', () => {
+  it.each([
+    { label: 'plain', entries: [] },
+    {
+      label: 'one stopped entry',
+      entries: ['  - 2026-10-06T09:00:00+07:00 → 2026-10-06T09:20:00+07:00'],
+    },
+    {
+      label: 'two stopped entries',
+      entries: [
+        '  - 2026-10-06T09:00:00+07:00 → 2026-10-06T09:20:00+07:00',
+        '  - 2026-10-06T10:00:00+07:00 → 2026-10-06T10:20:00+07:00',
+      ],
+    },
+    { label: 'running entry', entries: ['  - 2026-10-06T09:00:00+07:00 → ...'] },
+  ])('retains the exact nested Owner across repeated inserts with $label', async ({ entries }) => {
+    const h = await inspectorHarness(
+      ['- [ ] Root', '  - [ ] Owner', '    - [ ] Existing', ...entries].join('\n'),
+      'Owner',
+    );
+    const unsubscribe = subscribeInspectorReconciliation(h);
+    try {
+      expectDefined(
+        h.el.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
+      ).click();
+      for (const text of ['First', 'Second', 'Third']) {
+        const input = expectDefined(
+          h.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
+        );
+        input.value = text;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await vi.waitFor(() => {
+          expect(h.node('Owner').node.subtasks.some((child) => child.title === text)).toBe(true);
+          expect(h.state.get('taskStack')[h.state.get('taskStack').length - 1]?.ref).toEqual(
+            h.node('Owner').node.ref,
+          );
+        });
+        await flushMicrotasks(20);
+      }
+      for (const text of ['Comment one', 'Comment two']) {
+        const input = expectDefined(
+          h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+        );
+        input.value = text;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await vi.waitFor(() => {
+          expect(h.node('Owner').node.comments.some((comment) => comment.text === text)).toBe(true);
+          expect(h.state.get('taskStack')[h.state.get('taskStack').length - 1]?.ref).toEqual(
+            h.node('Owner').node.ref,
+          );
+        });
+        await flushMicrotasks(20);
+      }
+      expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Root', 'Owner']);
+      expect(h.node('Root').node.timeEntries).toHaveLength(entries.length);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   afterEach(() => {
     for (const cleanup of inspectorCleanups.splice(0)) cleanup();
   });

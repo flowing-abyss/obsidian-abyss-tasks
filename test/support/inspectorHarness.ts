@@ -21,7 +21,11 @@ import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../../src/tasks/infrastructure/TaskRefAuthority';
 import { createTaskDependencySearchProvider } from '../../src/ui/TaskDependencySearchProvider';
-import { rebuildTaskSelection, rootTaskRef } from '../../src/ui/taskSelection';
+import {
+  isCurrentTaskSelectionSnapshot,
+  rebuildTaskSelection,
+  rootTaskRef,
+} from '../../src/ui/taskSelection';
 import { createAppWithFiles, expectDefined } from '../helpers';
 import { canonicalSearchForIndex, ControlledSearchScheduler } from './taskSearchHarness';
 
@@ -140,6 +144,7 @@ export function subscribeInspectorReconciliation(h: InspectorHarness): () => voi
     const resolution = h.index.resolve(rootTaskRef(root));
     if (resolution.type !== 'exact' && resolution.type !== 'rebased') return;
     const current = resolution.type === 'exact' ? resolution.task : resolution.current;
+    if (resolution.type === 'exact' && isCurrentTaskSelectionSnapshot(current, stack)) return;
     const ownedRef =
       resolution.type === 'rebased' && resolution.evidence === 'authority-transition'
         ? resolution.previous.ref

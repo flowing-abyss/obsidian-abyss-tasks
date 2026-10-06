@@ -29,6 +29,48 @@ const target = { type: 'subtask' as const, ref: expectDefined(before.subtasks[1]
 const selection = [before, expectDefined(before.subtasks[1])];
 
 describe('owned non-structural inspector selection', () => {
+  it.each(['add-subtask', 'add-comment'] as const)(
+    'retains the exact child after %s shifts trailing root time entries',
+    (type) => {
+      const entries = [
+        '  - 2026-10-06T09:00:00+07:00 → 2026-10-06T09:20:00+07:00',
+        '  - 2026-10-06T10:00:00+07:00 → 2026-10-06T10:30:00+07:00',
+      ];
+      const base = ['- [ ] Root', '  - [ ] Owner', '    - [ ] Existing'];
+      const original = snapshot([...base, ...entries, '  - [ ] Neighbor'].join('\n'), 'before');
+      const parent = expectDefined(original.subtasks[0]);
+      const added =
+        type === 'add-subtask' ? '    - [ ] Added' : '    - 2026-10-06T11:00:00+07:00: Added';
+      const current = snapshot(
+        [...base, added, ...entries, '  - [ ] Neighbor'].join('\n'),
+        'after',
+      );
+      const command = {
+        type,
+        parent: { type: 'subtask' as const, ref: parent.ref },
+        text: 'Added',
+      };
+      expect(rebuildOwnedTaskSelection(current, [original, parent], command)?.[1]?.ref).toEqual(
+        current.subtasks[0]?.ref,
+      );
+      const foreignSources = [
+        current.source.originalBlock.replace('09:20:00', '09:21:00'),
+        current.source.originalBlock.replace(' → 2026-10-06T09:20:00+07:00', ' → ...'),
+        [...base, added, entries[1], entries[0], '  - [ ] Neighbor'].join('\n'),
+        [...base, added, entries[0]?.replace('  -', '    -'), entries[1], '  - [ ] Neighbor'].join(
+          '\n',
+        ),
+        [...base, added, entries[0], '  - [ ] Neighbor'].join('\n'),
+        current.source.originalBlock.replace('Neighbor', 'Changed neighbor'),
+      ];
+      for (const foreign of foreignSources) {
+        expect(
+          rebuildOwnedTaskSelection(snapshot(foreign, 'foreign'), [original, parent], command),
+        ).toBeUndefined();
+      }
+    },
+  );
+
   it.each([
     { label: 'add', from: 'B.2', to: 'B.2 #added', tags: { add: ['added'] } },
     { label: 'remove', from: 'B.2 #old', to: 'B.2', tags: { remove: ['old'] } },

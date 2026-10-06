@@ -37,7 +37,10 @@ function comparable(value: unknown, omitted: ReadonlySet<string>, path = ''): un
       .sort(([a], [b]) => a.localeCompare(b))
       .flatMap(([key, child]) => {
         const next = path === '' ? key : `${path}.${key}`;
-        return key === 'ref' || omitted.has(next) ? [] : [[key, comparable(child, omitted, next)]];
+        const isTimeEntryPosition = next === 'timeEntries.relativeLine';
+        return key === 'ref' || omitted.has(next) || isTimeEntryPosition
+          ? []
+          : [[key, comparable(child, omitted, next)]];
       }),
   );
 }

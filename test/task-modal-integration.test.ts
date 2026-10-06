@@ -197,6 +197,81 @@ describe('TaskModal with real RightPanel', () => {
     });
   });
 
+  it('retains the inspector DOM, focus, caret and scroll when another root changes', async () => {
+    const h = await createCanonicalSearchHarness(
+      { 'tasks.md': '- [ ] Selected\n- [ ] Other' },
+      DEFAULT_SETTINGS,
+    );
+    modal = new TaskModal({
+      app: h.app,
+      statusRegistry: h.statusRegistry,
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.tasks,
+    });
+    try {
+      modal.open(expectDefined(h.index.list()[0]));
+      const state = (modal as unknown as { innerState_abyssPrivate: AppState })
+        .innerState_abyssPrivate;
+      const header = expectDefined(
+        activeDocument.querySelector('.abyss-modal .abyss-right-header'),
+      );
+      const input = expectDefined(
+        activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+      );
+      const scroll = expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-right'),
+      );
+      input.value = 'Unsubmitted comment';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.focus();
+      input.setSelectionRange(3, 8);
+      scroll.scrollTop = 137;
+      const stack = state.get('taskStack');
+      const other = expectDefined(h.index.list()[1]);
+      const result = await h.tasks.execute({
+        type: 'patch',
+        target: { type: 'task', ref: other.ref },
+        patch: { markdownTitle: { type: 'set', value: 'Changed other' } },
+      });
+      expect(result.type).toBe('ok');
+      await vi.waitFor(() => {
+        expect(h.index.list()[1]?.title).toBe('Changed other');
+      });
+      expect(state.get('taskStack')).toBe(stack);
+      expect(activeDocument.querySelector('.abyss-modal .abyss-right-header')).toBe(header);
+      expect(activeDocument.querySelector('.abyss-modal .abyss-comment-input')).toBe(input);
+      expect(input.isConnected).toBe(true);
+      expect(activeDocument.activeElement).toBe(input);
+      expect([input.selectionStart, input.selectionEnd]).toEqual([3, 8]);
+      expect(scroll.scrollTop).toBe(137);
+    } finally {
+      modal.close();
+      h.close();
+    }
+  });
+
+  it('refreshes same-ref custom status semantics through the actual modal reconciliation', async () => {
+    const app = await createAppWithFiles({ 'tasks.md': '- [?] Custom' });
+    const observed = task({ title: 'Custom', statusSymbol: '?' });
+    const events = queryEvents();
+    let current = observed;
+    const queries = taskQueryApi({
+      resolve: () => ({ type: 'exact', task: current, basis: { observed } }),
+      subscribe: events.subscribe,
+    });
+    modal = new TaskModal({ app, statusRegistry: testStatusRegistry(), queries });
+    modal.open(observed);
+    const header = expectDefined(activeDocument.querySelector('.abyss-modal .abyss-right-header'));
+    current = { ...observed, status: 'cancelled' };
+    events.publish({ type: 'changed', files: [observed.ref.filePath] });
+    const state = (modal as unknown as { innerState_abyssPrivate: AppState })
+      .innerState_abyssPrivate;
+    expect(state.get('taskStack')[0]?.ref).toEqual(observed.ref);
+    expect(state.get('taskStack')[0]?.status).toBe('cancelled');
+    expect(activeDocument.querySelector('.abyss-modal .abyss-right-header')).not.toBe(header);
+  });
+
   it('keeps unsaved Weekly inline after current modal chips through a same-file line shift', async () => {
     const app = await createAppWithFiles({ 'f.md': '- [ ] observed 📅 2031-10-02\n' });
     const observed = task({

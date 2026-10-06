@@ -55,6 +55,7 @@ import {
 import { QuickCaptureCoordinator } from '../ui/taskCapture/QuickCaptureCoordinator';
 import { presentTaskCommandResult, type CreationResultDescription } from '../ui/taskCommandResult';
 import {
+  isCurrentTaskSelectionSnapshot,
   rebuildTaskSelection,
   renamedRootSelection,
   rootTaskNodeRef,
@@ -1118,6 +1119,7 @@ export class PanelView extends ItemView {
     stack: readonly TaskSelectionNode[],
   ): void {
     const current = resolution.type === 'exact' ? resolution.task : resolution.current;
+    if (resolution.type === 'exact' && isCurrentTaskSelectionSnapshot(current, stack)) return;
     const consumedOwnedRef = this.consumedOwnedRef_abyssPrivate(resolution);
     const ownedSelection = this.right_abyssPrivate.selectionForOwnedTransition(
       consumedOwnedRef,
