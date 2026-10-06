@@ -433,6 +433,8 @@ export default defineConfig(
       'src/markdown/searchTextTypes.ts',
       'src/tasks/domain/taskSearchProjection.ts',
       'src/tasks/domain/taskDuration.ts',
+      'src/tasks/domain/commentText.ts',
+      'src/tasks/domain/commentSource.ts',
       'src/tasks/domain/taskHierarchy.ts',
       'src/tasks/infrastructure/markdown/taskHierarchyTransfer.ts',
       'src/markdown/sourceReferences.ts',

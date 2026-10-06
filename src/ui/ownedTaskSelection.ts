@@ -2,6 +2,7 @@ import { parseLinks } from '../markdown/links';
 import { sameTag } from '../markdown/tagSyntax';
 import {
   dependencySubtaskChild,
+  normalizeCommentText,
   sameTaskNodeRef,
   sameTaskTreeWithOwnedChanges,
   type SubtaskSnapshot,
@@ -448,6 +449,11 @@ function rebuildInsertionSelection(
   command: Extract<TaskCommand, { type: 'add-subtask' | 'add-comment' }>,
   policy?: Parameters<typeof dependencySubtaskChild>[3],
 ): TaskSelectionNode[] | undefined {
+  const normalized =
+    command.type === 'add-comment'
+      ? normalizeCommentText(command.text)
+      : { type: 'ready' as const, text: command.text };
+  if (normalized.type !== 'ready') return undefined;
   const paths = selectionPaths(current, selection, command.parent, false);
   if (paths === undefined) return undefined;
   const { before, selectedPath, editedPath } = paths;
@@ -457,7 +463,7 @@ function rebuildInsertionSelection(
       append: command.type === 'add-subtask',
       insertion: {
         type: command.type,
-        text: command.text,
+        text: normalized.text,
         ...(policy === undefined ? {} : { policy }),
       },
     })

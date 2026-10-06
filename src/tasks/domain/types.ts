@@ -51,6 +51,7 @@ export interface SubtaskRef {
   readonly originalBlock: string;
 }
 
+/** Owns the complete contiguous comment block, including its authored continuation prefixes. */
 export interface CommentRef {
   readonly parent: TaskNodeRef;
   readonly relativeLine: number;

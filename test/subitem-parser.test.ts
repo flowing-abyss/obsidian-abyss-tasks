@@ -10,6 +10,18 @@ const parseSubItems = (lines: string[], taskLineIdx: number, filePath: string) =
   parseSubItemsWithCatalog(lines, taskLineIdx, filePath, statusCatalog);
 
 describe('parseSubItems', () => {
+  it('shares canonical multiline comment ownership and preserves hard-break spaces', () => {
+    const lines = [
+      '> - [ ] Parent',
+      '> \t- 2026-10-06:  first  ',
+      '> \t  second',
+      '> \t  \\- [ ] literal',
+      '> \t- [ ] Child',
+    ];
+    const result = parseSubItems(lines, 0, FILE);
+    expect(result.comments).toMatchObject([{ line: 1, text: ' first  \nsecond\n\\- [ ] literal' }]);
+    expect(result.subtasks).toMatchObject([{ line: 4, text: 'Child' }]);
+  });
   it('preserves mixed-marker nested children and their source positions', () => {
     const lines = ['12) [ ] Parent', '  * [x] Child', '    + [ ] Grandchild', '  3. [ ] Sibling'];
     const result = parseSubItems(lines, 0, FILE);

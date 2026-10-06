@@ -124,6 +124,169 @@ const DESCRIPTION_LAYOUTS = [
 ] as const;
 
 for (const adapter of ['in-memory', 'obsidian'] as const) {
+  describe(`${adapter} multiline comment source`, () => {
+    it.each(['\n', '\r\n'])(
+      'adds before tracking and roundtrips one ↔ many with %j endings',
+      async (ending) => {
+        const source = [
+          '- [ ] Root',
+          '  - 2026-10-06: old',
+          `  - ${TRACK_START} → ${TRACK_END}`,
+          '',
+        ].join(ending);
+        const h = await makeHarness(adapter, source);
+        await expect(
+          h.repository.edit({
+            type: 'add-comment',
+            parent: { type: 'task', ref: rootRef(h, source) },
+            text: 'first\n\\- [ ] literal\nlast  ',
+            stamp: atomDateTime('2026-10-06T12:00:00Z'),
+          }),
+        ).resolves.toMatchObject({ type: 'committed' });
+        const added = [
+          '- [ ] Root',
+          '  - 2026-10-06: old',
+          '  - 2026-10-06T12:00:00Z: first',
+          '    \\- [ ] literal',
+          '    last  ',
+          `  - ${TRACK_START} → ${TRACK_END}`,
+          '',
+        ].join(ending);
+        expect(await h.read()).toBe(added);
+        let root = expectDefined(h.snapshots(added)[0]);
+        expect(root.subtasks).toHaveLength(0);
+        expect(root.timeEntries).toHaveLength(1);
+        let comment = expectDefined(root.comments[1]);
+        await expect(
+          h.repository.edit({ type: 'update-comment', comment: comment.ref, text: comment.text }),
+        ).resolves.toMatchObject({ type: 'committed', changed: false });
+        expect(await h.read()).toBe(added);
+        await expect(
+          h.repository.edit({ type: 'update-comment', comment: comment.ref, text: 'single' }),
+        ).resolves.toMatchObject({ type: 'committed', changed: true });
+        const single = [
+          '- [ ] Root',
+          '  - 2026-10-06: old',
+          '  - 2026-10-06T12:00:00Z: single',
+          `  - ${TRACK_START} → ${TRACK_END}`,
+          '',
+        ].join(ending);
+        expect(await h.read()).toBe(single);
+        root = expectDefined(h.snapshots(single)[0]);
+        comment = expectDefined(root.comments[1]);
+        await h.repository.edit({
+          type: 'update-comment',
+          comment: comment.ref,
+          text: 'first\n\\- [ ] literal\nlast  ',
+        });
+        expect(await h.read()).toBe(added);
+      },
+    );
+    it('edits the second duplicate block and rejects stale tails with a fresh parent', async () => {
+      const source = '- [ ] Root\n  - same [[A]]\n    tail [[B]]\n  - same [[A]]\n    tail [[B]]';
+      const h = await makeHarness(adapter, source);
+      const comment = expectDefined(expectDefined(h.snapshots(source)[0]).comments[1]);
+      await h.repository.edit({
+        type: 'update-comment',
+        comment: comment.ref,
+        text: 'same [[A]]\nchanged [[B]]',
+      });
+      const changed =
+        '- [ ] Root\n  - same [[A]]\n    tail [[B]]\n  - same [[A]]\n    changed [[B]]';
+      expect(await h.read()).toBe(changed);
+      const parent = { type: 'task' as const, ref: rootRef(h, changed) };
+      const stale = { ...comment.ref, parent };
+      await expect(
+        h.repository.edit({ type: 'delete-comment', comment: stale }),
+      ).resolves.toMatchObject({ type: 'conflict' });
+      await expect(
+        h.repository.edit({
+          type: 'edit-link',
+          target: { type: 'comment', ref: stale },
+          occurrence: 1,
+          replacement: '[[X]]',
+        }),
+      ).resolves.toMatchObject({ type: 'conflict' });
+      expect(await h.read()).toBe(changed);
+    });
+    it('refuses a child comment forged into its parent', async () => {
+      const source = '- [ ] Root\n  - [ ] Child\n    - one [[A]]\n      two [[B]]';
+      const h = await makeHarness(adapter, source);
+      const root = expectDefined(h.snapshots(source)[0]);
+      const comment = expectDefined(expectDefined(root.subtasks[0]).comments[0]);
+      const forged = {
+        ...comment.ref,
+        parent: { type: 'task' as const, ref: root.ref },
+        relativeLine: 2,
+      };
+      await expect(
+        h.repository.edit({
+          type: 'edit-link',
+          target: { type: 'comment', ref: forged },
+          occurrence: 1,
+          replacement: '[[X]]',
+        }),
+      ).resolves.toMatchObject({ type: 'conflict' });
+      await expect(
+        h.repository.edit({ type: 'delete-comment', comment: forged }),
+      ).resolves.toMatchObject({ type: 'conflict' });
+      expect(await h.read()).toBe(source);
+    });
+    it('refuses a joined cross-line token but edits the later physical occurrence', async () => {
+      const source = '- [ ] Root\n  - [first\n    second](target) and [[Later]]';
+      const h = await makeHarness(adapter, source);
+      const comment = expectDefined(expectDefined(h.snapshots(source)[0]).comments[0]);
+      await expect(
+        h.repository.edit({
+          type: 'edit-link',
+          target: { type: 'comment', ref: comment.ref },
+          occurrence: 0,
+          replacement: '[[X]]',
+        }),
+      ).resolves.toMatchObject({ type: 'invalid' });
+      expect(await h.read()).toBe(source);
+      await expect(
+        h.repository.edit({
+          type: 'edit-link',
+          target: { type: 'comment', ref: comment.ref },
+          occurrence: 1,
+          replacement: '[[X]]',
+        }),
+      ).resolves.toMatchObject({ type: 'committed' });
+      expect(await h.read()).toBe('- [ ] Root\n  - [first\n    second](target) and [[X]]');
+    });
+    it('maps a later continuation link to its exact source token', async () => {
+      const source = '- [ ] Root\r\n\t- 2026-10-06: one [[A]]\r\n\t  two [[B]]\r\n\t- other\r\n';
+      const h = await makeHarness(adapter, source);
+      const comment = expectDefined(expectDefined(h.snapshots(source)[0]).comments[0]);
+      expect(comment.text).toBe('one [[A]]\ntwo [[B]]');
+      await expect(
+        h.repository.edit({
+          type: 'edit-link',
+          target: { type: 'comment', ref: comment.ref },
+          occurrence: 1,
+          replacement: '[[Changed]]',
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+      expect(await h.read()).toBe(source.replace('[[B]]', '[[Changed]]'));
+    });
+    it('updates and deletes the complete block without consuming the real child', async () => {
+      const source = '> - [ ] Root\r\n> \t- 2026-10-06: one\r\n> \t  two\r\n> \t  - [ ] child';
+      const h = await makeHarness(adapter, source);
+      const comment = expectDefined(expectDefined(h.snapshots(source)[0]).comments[0]);
+      await expect(
+        h.repository.edit({ type: 'update-comment', comment: comment.ref, text: 'new\n  tail  ' }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+      const updated =
+        '> - [ ] Root\r\n> \t- 2026-10-06: new\r\n> \t    tail  \r\n> \t  - [ ] child';
+      expect(await h.read()).toBe(updated);
+      const next = expectDefined(expectDefined(h.snapshots(updated)[0]).comments[0]);
+      await expect(
+        h.repository.edit({ type: 'delete-comment', comment: next.ref }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+      expect(await h.read()).toBe('> - [ ] Root\r\n> \t  - [ ] child');
+    });
+  });
   describe(`${adapter} TaskRepository shared contract`, () => {
     it('inserts, replaces, and removes dependency metadata on roots and subtasks losslessly', async () => {
       const source =

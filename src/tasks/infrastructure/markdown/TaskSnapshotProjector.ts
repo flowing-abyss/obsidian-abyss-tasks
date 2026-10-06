@@ -1,6 +1,6 @@
 import { countLinksIn } from '../../../markdown/links';
+import { readCommentBlock } from '../../domain/commentSource';
 import type { CommentTimestamp } from '../../domain/commentTimestamp';
-import { parseCommentTimestampPrefix } from '../../domain/commentTimestamp';
 import type { StatusCatalog } from '../../domain/StatusCatalog';
 import { readTaskLinePrefix } from '../../domain/taskLineSourceModel';
 import type { OffsetAt } from '../../domain/timeEntry';
@@ -187,6 +187,7 @@ interface ProjectedContentTarget {
   readonly parentLine: number;
   readonly line: number;
   readonly source: string;
+  readonly lines: readonly string[];
   readonly offsetAt: OffsetAt;
   readonly descriptions: string[];
   readonly comments: TaskCommentSnapshot[];
@@ -212,25 +213,26 @@ function appendProjectedTimeEntry(target: ProjectedContentTarget): boolean {
   return true;
 }
 
-function appendProjectedContent(target: ProjectedContentTarget): void {
+function appendProjectedContent(target: ProjectedContentTarget): number {
   const description = readTaskDescriptionLine(target.source);
   if (description !== undefined) {
     target.descriptions.push(description.text);
-    return;
+    return target.line + 1;
   }
-  if (appendProjectedTimeEntry(target)) return;
-  const comment = parseCommentTimestampPrefix(target.source);
-  if (comment == null) return;
+  if (appendProjectedTimeEntry(target)) return target.line + 1;
+  const comment = readCommentBlock(target.lines, target.line, target.lines.length);
+  if (comment == null) return target.line + 1;
   target.comments.push(
     commentSnapshot({
       parent: target.parent,
       parentLine: target.parentLine,
       line: target.line,
-      originalMarkdown: target.source,
-      text: comment.text.trim(),
+      originalMarkdown: comment.originalMarkdown,
+      text: comment.text,
       ...(comment.timestamp !== undefined && { timestamp: comment.timestamp }),
     }),
   );
+  return comment.toExclusive;
 }
 
 /** Most nodes track no time, so they all share one array instead of freezing an empty one each. */
@@ -261,8 +263,6 @@ function projectChildren(
       continue;
     }
     if (quoteDepth(source) !== parentQuoteDepth || indentation(source) <= parentIndent) break;
-    toLine = line;
-
     const child = projectedSubtask(context, parent, line, source);
     if (child != null) {
       subtasks.push(child.snapshot);
@@ -270,17 +270,18 @@ function projectChildren(
       line = child.toLine + 1;
       continue;
     }
-    appendProjectedContent({
+    line = appendProjectedContent({
       parent,
       parentLine,
       line,
       source,
+      lines: context.lines,
       offsetAt: context.offsetAt,
       descriptions,
       comments,
       timeEntries,
     });
-    line++;
+    toLine = line - 1;
   }
 
   const description = descriptions.join('\n');

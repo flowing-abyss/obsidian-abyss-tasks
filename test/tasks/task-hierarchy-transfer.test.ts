@@ -57,6 +57,14 @@ function contents(result: ReturnType<typeof transfer>, path: string): string | u
   return result.type === 'prepared' ? result.contents.get(path) : undefined;
 }
 describe('hierarchy source transfer', () => {
+  it('moves one multiline comment with escaped task text as exact source', () => {
+    const source = '- [ ] Move\r\n\t- 2026-10-06: first\r\n\t  \\- [ ] literal\r\n\t  tail  ';
+    const result = transfer(source, '> - [ ] Parent\r\n> \t- [ ] Existing');
+    expect(contents(result, 'source.md')).toBe('');
+    expect(contents(result, 'target.md')).toBe(
+      '> - [ ] Parent\r\n> \t- [ ] Existing\r\n> \t- [ ] Move\r\n> \t\t- 2026-10-06: first\r\n> \t\t  \\- [ ] literal\r\n> \t\t  tail  ',
+    );
+  });
   it('moves exact subtree bytes under the destination after its existing children', () => {
     const source =
       '- [ ] Move 🆔 move ^move\n  description [[People/Alice|Alice]]\n  - [ ] Child ^child\n    child body\n  - 2026-10-03T10:00:00 comment\n- [ ] Sibling\n';

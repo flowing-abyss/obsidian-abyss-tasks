@@ -6,6 +6,7 @@ import type {
   TaskPatch,
   TaskStatusTarget,
 } from '../domain/commands';
+import { normalizeCommentText } from '../domain/commentText';
 import { formatNewCommentTimestamp } from '../domain/commentTimestamp';
 import { shiftLocalDate } from '../domain/localDateMath';
 import { parseRecurrenceRule } from '../domain/recurrence';
@@ -296,14 +297,15 @@ function titleInputIssue(command: TaskCommand): TaskCommandResult | undefined {
   return undefined;
 }
 
-function commentInputIssue(command: TaskCommand): TaskCommandResult | undefined {
-  if (
-    (command.type === 'add-comment' || command.type === 'update-comment') &&
-    (!isSingleLineText(command.text) || command.text.trim().length === 0)
-  ) {
-    return invalidTaskTarget('comment');
-  }
-  return undefined;
+function prepareCommentCommand(
+  command: TaskCommand,
+): TaskCommand | Extract<TaskCommandResult, { type: 'invalid' }> {
+  if (command.type !== 'add-comment' && command.type !== 'update-comment') return command;
+  const normalized = normalizeCommentText(command.text);
+  if (normalized.type === 'empty') return invalidTaskTarget('comment');
+  if (normalized.type === 'invalid')
+    return invalidTaskResult([{ code: 'unsafe-comment-continuation', field: 'comment' }]);
+  return { ...command, text: normalized.text };
 }
 
 function subtaskInputIssue(command: TaskCommand): TaskCommandResult | undefined {
@@ -340,7 +342,6 @@ function multilineInputIssue(command: TaskCommand): TaskCommandResult | undefine
   return (
     scheduleInputIssue(command) ??
     titleInputIssue(command) ??
-    commentInputIssue(command) ??
     subtaskInputIssue(command) ??
     timeEntryInputIssue(command) ??
     descriptionInputIssue(command)
@@ -604,7 +605,9 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
 
   async execute(command: TaskCommand): Promise<TaskCommandResult> {
     try {
-      return await this.executeCommand_abyssPrivate(command);
+      const prepared = prepareCommentCommand(command);
+      if (prepared.type === 'invalid') return prepared;
+      return await this.executeCommand_abyssPrivate(prepared);
     } catch {
       this.diagnostics_abyssPrivate({
         operation: command.type,

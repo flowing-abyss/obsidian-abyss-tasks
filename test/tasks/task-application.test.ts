@@ -627,7 +627,7 @@ describe('TaskApplicationService planning commands', () => {
       application.execute({
         type: 'add-comment',
         parent: { type: 'task', ref },
-        text: 'from the injected clock',
+        text: 'from the injected clock\r\n \t\r- literal',
       }),
     ).resolves.toEqual({ type: 'ok', outcome: committed.outcome, changed: true });
 
@@ -635,9 +635,26 @@ describe('TaskApplicationService planning commands', () => {
     expect(edit).toHaveBeenCalledWith({
       type: 'add-comment',
       parent: { type: 'task', ref },
-      text: 'from the injected clock',
+      text: 'from the injected clock\n\\- literal',
       stamp: '2026-07-14T12:04:03+07:00',
     });
+  });
+
+  it('rejects unsafe multiline code before repository or clock access', async () => {
+    const edit = vi.fn<TaskRepository['edit']>();
+    clock.today.mockClear();
+    await expect(
+      service({ edit }).execute({
+        type: 'add-comment',
+        parent: { type: 'task', ref },
+        text: '`code\n2. literal`',
+      }),
+    ).resolves.toEqual({
+      type: 'invalid',
+      issues: [{ code: 'unsafe-comment-continuation', field: 'comment' }],
+    });
+    expect(edit).not.toHaveBeenCalled();
+    expect(clock.today).not.toHaveBeenCalled();
   });
 
   it('rejects add-comment when a legacy date-only clock cannot supply a real instant', async () => {
@@ -738,7 +755,7 @@ describe('TaskApplicationService planning commands', () => {
         relativeLine: 1,
         originalMarkdown: '  - old',
       },
-      text: 'line one\nline two',
+      text: ' \t\n',
     },
   ])('rejects invalid $type text before the repository or Clock', async (command) => {
     const edit = vi.fn<TaskRepository['edit']>();

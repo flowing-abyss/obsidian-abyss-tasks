@@ -284,7 +284,12 @@ function describeCommandError(
     case 'not-found':
       return { message: 'This task no longer exists.', requiresRecovery: true };
     case 'invalid':
-      return { message: 'The task update is invalid and was not saved.', requiresRecovery: false };
+      return {
+        message: result.issues.some((issue) => issue.code === 'unsafe-comment-continuation')
+          ? 'Could not save comment: a structural marker inside multiline code cannot be escaped safely. Use a separate inline-code span on each line.'
+          : 'The task update is invalid and was not saved.',
+        requiresRecovery: false,
+      };
     case 'io-error':
       return describeIoError(result.cause);
     case 'partial':

@@ -29,6 +29,66 @@ const target = { type: 'subtask' as const, ref: expectDefined(before.subtasks[1]
 const selection = [before, expectDefined(before.subtasks[1])];
 
 describe('owned non-structural inspector selection', () => {
+  it('proves a full multiline comment link while protecting timestamps, order and opaque ancestor bytes', () => {
+    const markdown =
+      '- [ ] Root ^opaque\n  - [ ] Owner\n    - 2026-10-06: first [[A]]\n      second [[B]]\n    - untouched';
+    const original = snapshot(markdown, 'before');
+    const owner = expectDefined(original.subtasks[0]);
+    const comment = expectDefined(owner.comments[0]);
+    const command: TaskCommand = {
+      type: 'edit-link',
+      target: { type: 'comment', ref: comment.ref },
+      occurrence: 1,
+      replacement: '[[Changed]]',
+    };
+    const changed = markdown.replace('[[B]]', '[[Changed]]');
+    expect(
+      proveOwnedTaskSelection(snapshot(changed, 'after'), [original, owner], command),
+    ).toBeDefined();
+    for (const foreign of [
+      changed.replace('^opaque', '^foreign'),
+      changed.replace('2026-10-06', '2026-10-05'),
+      changed.replace('untouched', 'foreign'),
+      changed.replace('[[A]]', '[[Wrong]]'),
+      markdown.replace('[[A]]', '[[Changed]]'),
+    ]) {
+      expect(
+        proveOwnedTaskSelection(snapshot(foreign, 'foreign'), [original, owner], command),
+      ).toBeUndefined();
+    }
+  });
+  it('admits one exact contiguous comment insertion before tracking and rejects unrelated tails', () => {
+    const markdown =
+      '- [ ] Root\r\n  - [ ] Owner\r\n    - 2026-10-06T12:00:00Z → 2026-10-06T13:00:00Z';
+    const original = snapshot(markdown, 'before');
+    const owner = expectDefined(original.subtasks[0]);
+    const command: TaskCommand = {
+      type: 'add-comment',
+      parent: { type: 'subtask', ref: owner.ref },
+      text: 'first\r\n \t\r- [ ] literal',
+    };
+    const changed = markdown.replace(
+      '    - 2026-10-06T12:',
+      '    - 2026-10-06: first\r\n      \\- [ ] literal\r\n    - 2026-10-06T12:',
+    );
+    expect(
+      proveOwnedTaskSelection(snapshot(changed, 'after'), [original, owner], command),
+    ).toBeDefined();
+    expect(
+      proveOwnedTaskSelection(
+        snapshot(changed.replace('literal', 'foreign'), 'foreign'),
+        [original, owner],
+        command,
+      ),
+    ).toBeUndefined();
+    expect(
+      proveOwnedTaskSelection(
+        snapshot(changed.replace('Root', 'Foreign'), 'foreign'),
+        [original, owner],
+        command,
+      ),
+    ).toBeUndefined();
+  });
   it.each(['title', 'description', 'comment'] as const)(
     'proves only the exact %s link occurrence and unchanged surrounding source',
     (field) => {

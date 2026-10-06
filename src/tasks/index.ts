@@ -133,3 +133,5 @@ export {
 } from './infrastructure/search/taskSearchContext';
 
 export { createSearchWordSegmenter } from './infrastructure/search/searchWordSegmenter';
+
+export { normalizeCommentText } from './domain/commentText';

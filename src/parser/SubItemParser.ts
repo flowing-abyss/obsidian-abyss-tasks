@@ -1,8 +1,7 @@
 import { collapseLinks } from '../markdown/links';
 import type { StatusCatalog } from '../tasks/domain/StatusCatalog';
-import { parseCommentTimestampPrefix } from '../tasks/domain/commentTimestamp';
+import { readCommentBlock } from '../tasks/domain/commentSource';
 import { readTaskLinePrefix } from '../tasks/domain/taskLineSourceModel';
-import { isTimeEntryShape } from '../tasks/domain/timeEntry';
 import { extractMetadata, type ExtractedMetadata } from './extractMetadata';
 import type { SubTask, TaskComment } from './types';
 
@@ -144,16 +143,14 @@ function consumeNestedLine(context: ConsumeNestedLineContext): {
     return { nextIndex: index + 1, rangeTo: index };
   }
 
-  // A tracked time entry is owned by the canonical snapshot, so it never reads as a comment.
-  if (isTimeEntryShape(line)) return { nextIndex: index + 1, rangeTo: index };
-
-  const comment = parseCommentTimestampPrefix(line);
+  const comment = readCommentBlock(lines, index, lines.length);
   if (comment != null) {
     accumulator.comments.push({
       line: index,
       ...(comment.timestamp != null && { timestamp: comment.timestamp }),
-      text: comment.text.trim(),
+      text: comment.text,
     });
+    return { nextIndex: comment.toExclusive, rangeTo: comment.toExclusive - 1 };
   }
   return { nextIndex: index + 1, rangeTo: index };
 }

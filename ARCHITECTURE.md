@@ -117,6 +117,19 @@ or comment identifies an occurrence; the repository must find the corresponding 
 before replacing it. Missing or synthetic joined-fragment targets fail instead of authorizing an
 edit to another link.
 
+Comments share a domain text policy and source reader. New submissions normalize line endings to LF,
+remove whitespace-only lines, preserve nonblank whitespace, and escape structural continuation
+markers only outside recognized literal regions. Unsafe literal edits return the existing invalid
+command outcome; the presentation boundary owns its single Notice and retains the draft.
+`CommentRef.originalMarkdown` owns the complete contiguous block. Continuations align with the
+head's exact authored indentation/quote prefix plus two spaces and stop at structural content.
+Canonical projection and the legacy parser consume that same range. `TaskBlockEditor.commentLink`
+proves the full block, maps the logical occurrence to one physical token, and reuses coordinate
+replacement in both repositories. Whole-block update/delete preserve timestamp prefixes, file line
+endings and final-newline state; no-op writes preserve all bytes. Day, instant and undated legacy
+heads remain supported without load-time migration. Older plugin versions preserve continuation
+bytes but cannot fully display or edit those new blocks.
+
 Task timing edits normalize duration at the codec's final correlated candidate, using the domain
 `clampDurationToDay` rule. Only explicit time/duration edits and newly created task lines acquire
 that normalization; legacy reads, unrelated edits, and transfers preserve authored bytes. Without a

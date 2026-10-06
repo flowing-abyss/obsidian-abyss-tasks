@@ -131,7 +131,7 @@ function validInsertion(
   );
 }
 
-/** A single new line at the exact edited parent; every pre-existing source byte stays put. */
+/** A single contiguous insertion at the exact edited parent; every pre-existing source byte stays put. */
 function insertionSourceMatches(
   before: Node,
   after: Node,
@@ -154,10 +154,17 @@ function insertionSourceMatches(
   const { source } = inserted;
   const line = offset + inserted.line;
   const lines = sourceBlock(after).split('\n');
-  if (lines[line]?.replace(/\r$/u, '') !== source.replace(/\r$/u, '') || source.includes('\n'))
+  const insertedLines = source.split('\n');
+  if (insertion.type === 'add-subtask' && insertedLines.length !== 1) return false;
+  if (
+    lines
+      .slice(line, line + insertedLines.length)
+      .join('\n')
+      .replace(/\r$/u, '') !== source.replace(/\r$/u, '')
+  )
     return false;
-  const last = line === lines.length - 1;
-  lines.splice(line, 1);
+  const last = line + insertedLines.length === lines.length;
+  lines.splice(line, insertedLines.length);
   const retained = lines.join('\n');
   return retained === sourceBlock(before) || (last && retained === `${sourceBlock(before)}\r`);
 }

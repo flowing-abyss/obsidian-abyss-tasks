@@ -64,6 +64,8 @@ async function makeHarness(
   }
   await flushMicrotasks();
   const snapshotState: TaskSnapshotState = {
+    currentRoots: (path) => index.currentRoots(path),
+    installCommittedBatch: (contents, proof) => index.installCommittedBatch(contents, proof),
     currentRoot: (filePath, line, blockSource) => index.currentRoot(filePath, line, blockSource),
     previewContent: (filePath, content) => {
       if (options.failFinalProjection === true && content !== source)
@@ -147,6 +149,53 @@ function rootTarget(harness: Harness, source: string, index = 0): TaskNodeRef {
 
 for (const adapter of ['in-memory', 'obsidian'] as const) {
   describe(`${adapter} recurrence repository contract`, () => {
+    it('promotes a subtree with an owned multiline comment and preserves source bytes', async () => {
+      const source =
+        '- [ ] Root\r\n  - [ ] Move\r\n    - 2026-10-06: first\r\n      \\- [ ] literal\r\n      tail  ';
+      const h = await makeHarness(adapter, source);
+      const root = expectDefined(h.snapshots(source)[0]);
+      const child = expectDefined(root.subtasks[0]);
+      const target = { type: 'subtask' as const, ref: child.ref };
+      await expect(
+        h.repository.hierarchy({
+          command: { type: 'promote-subtask', subtask: child.ref },
+          source: { baseRoot: root, baseTarget: target, reconciliation: { observed: root } },
+        }),
+      ).resolves.toMatchObject({ type: 'committed' });
+      const expected =
+        '- [ ] Root\r\n- [ ] Move\r\n  - 2026-10-06: first\r\n    \\- [ ] literal\r\n    tail  ';
+      expect(await h.read()).toBe(expected);
+      const moved = expectDefined(h.snapshots(expected)[1]);
+      expect(moved.comments[0]?.text).toBe('first\n\\- [ ] literal\ntail  ');
+      expect(moved.subtasks).toHaveLength(0);
+      expect(moved.timeEntries).toHaveLength(0);
+    });
+    it('preserves multiline comment bytes and installs their continuation in search after recurrence', async () => {
+      const source =
+        '- [ ] Repeat 🔁 every day 📅 2026-08-01\r\n  - 2026-07-31: first\r\n    searchable-tail\r\n    \\- [ ] literal\r\n';
+      const h = await makeHarness(adapter, source);
+      await expect(
+        h.repository.completeRecurrence(
+          request(rootTarget(h, source), { addCreatedDate: false, addCompletionDate: false }),
+        ),
+      ).resolves.toMatchObject({ type: 'committed' });
+      const content =
+        '- [ ] Repeat 🔁 every day 📅 2026-08-02\r\n  - 2026-07-31: first\r\n    searchable-tail\r\n    \\- [ ] literal\r\n- [x] Repeat 🔁 every day 📅 2026-08-01\r\n  - 2026-07-31: first\r\n    searchable-tail\r\n    \\- [ ] literal\r\n';
+      expect(await h.read()).toBe(content);
+      const roots = h.snapshots(content);
+      expect(roots).toHaveLength(2);
+      for (const root of roots) {
+        expect(root.comments[0]?.text).toBe('first\nsearchable-tail\n\\- [ ] literal');
+        expect(root.subtasks).toHaveLength(0);
+        expect(root.timeEntries).toHaveLength(0);
+      }
+      const search = h.index.searchSource();
+      const documents = [...search.documents(expectDefined(search.files()[0]))];
+      expect(documents).toHaveLength(2);
+      expect(documents.every((document) => document.comments.includes('searchable-tail'))).toBe(
+        true,
+      );
+    });
     it.each([
       {
         rule: 'every February on the last',

@@ -75,6 +75,7 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
 };
 
 const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
+  normalizeCommentText: ['src/ui/ownedTaskSelection.ts'],
   TaskSearchEligibilityRequest: ['src/ui/TaskDependencySearchProvider.ts'],
   TaskSearchEligibilityBatch: ['src/ui/TaskDependencySearchProvider.ts'],
   createSearchWordSegmenter: [
