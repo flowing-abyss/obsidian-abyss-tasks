@@ -22,25 +22,27 @@ import {
   taskQueryApi,
   useRealMoment,
 } from './helpers';
-import { useTaskPanelViewport } from './support/taskPanelViewport';
+import { taskListRect, useTaskPanelViewport } from './support/taskPanelViewport';
 
 useRealMoment();
-useTaskPanelViewport();
+useTaskPanelViewport(true);
 beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
     this: HTMLElement,
   ) {
-    return {
-      x: 0,
-      y: 0,
-      top: 0,
-      left: 0,
-      right: this.clientWidth,
-      bottom: this.clientHeight,
-      width: this.clientWidth,
-      height: this.clientHeight,
-      toJSON: () => ({}),
-    };
+    return (
+      taskListRect(this) ?? {
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: this.clientWidth,
+        bottom: this.clientHeight,
+        width: this.clientWidth,
+        height: this.clientHeight,
+        toJSON: () => ({}),
+      }
+    );
   });
 });
 afterEach(() => {

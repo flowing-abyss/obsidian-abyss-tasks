@@ -62,7 +62,13 @@ function harness(clampWrites = false, sameHost = false) {
   let origin = 0;
   host.getBoundingClientRect = () => ({ top: origin - top }) as DOMRect;
   scroll.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
+  let onMeasure: ((key: string) => void) | undefined;
   const writes = vi.fn((value: number) => {
+    const style = window.getComputedStyle(host);
+    const padding = [style.paddingTop, style.paddingBottom].reduce((sum, value) => {
+      const pixels = Number.parseFloat(value);
+      return sum + (Number.isFinite(pixels) ? pixels : 0);
+    }, 0);
     const extent = Array.from(host.children).reduce((sum, child) => {
       const element = child as HTMLElement;
       return (
@@ -72,7 +78,7 @@ function harness(clampWrites = false, sameHost = false) {
           : element.getBoundingClientRect().height)
       );
     }, 0);
-    top = clampWrites ? Math.max(0, Math.min(value, origin + extent - height)) : value;
+    top = clampWrites ? Math.max(0, Math.min(value, origin + padding + extent - height)) : value;
   });
   Object.defineProperties(scroll, {
     clientHeight: { get: () => height },
@@ -87,6 +93,7 @@ function harness(clampWrites = false, sameHost = false) {
     element.dataset['key'] = row.key;
     element.tabIndex = -1;
     element.getBoundingClientRect = () => {
+      onMeasure?.(row.key);
       const padding = Number.parseFloat(window.getComputedStyle(host).paddingTop);
       let y = origin + host.clientTop + (Number.isFinite(padding) ? padding : 0) - top;
       for (const child of host.children) {
@@ -130,7 +137,10 @@ function harness(clampWrites = false, sameHost = false) {
   });
   return {
     host,
-    style(property: 'paddingTop' | 'fontWeight' | 'fontStyle' | 'letterSpacing', value: string) {
+    style(
+      property: 'paddingTop' | 'paddingBottom' | 'fontWeight' | 'fontStyle' | 'letterSpacing',
+      value: string,
+    ) {
       host.style[property] = value;
     },
     scroll,
@@ -142,6 +152,9 @@ function harness(clampWrites = false, sameHost = false) {
     observed,
     frames,
     reportFailure,
+    onMeasure(callback: ((key: string) => void) | undefined) {
+      onMeasure = callback;
+    },
     resizeCallback: () => expectDefined(resize),
     origin(value: number) {
       origin = value;
@@ -968,4 +981,205 @@ it('indexes compact numeric payloads without snapshot fields', () => {
   expect(compact.task('occurrence')).toBe(42);
   expect(compact.physicalKey('occurrence')).toBe('physical');
   expect(compact.occurrencesOf('physical')).toEqual(['occurrence']);
+});
+
+describe('synchronous reveal convergence', () => {
+  it.each([35.5, 18])('keeps the final short row visible after measurement: %s', (actual) => {
+    const h = harness(true);
+    h.size(600, 935);
+    h.style('paddingTop', '8px');
+    h.style('paddingBottom', '8px');
+    for (let n = 0; n < 1201; n++) h.heights.set(`n.md:${n}`, actual);
+    h.surface.update(rows(1201), { ...presentation, estimate: () => 64 });
+    const target = expectDefined(h.surface.reveal('n.md:1200'));
+    const visible = () => {
+      const rect = target.getBoundingClientRect();
+      expect(rect.top).toBeGreaterThanOrEqual(0);
+      expect(rect.bottom).toBeLessThanOrEqual(935);
+      expect(target.isConnected).toBe(true);
+      expect(h.reportFailure).not.toHaveBeenCalled();
+      expect([...h.surface.cards()].length).toBeLessThan(120);
+    };
+    visible();
+    const settledTop = h.scroll.scrollTop;
+    for (let i = 0; i < 8; i++) {
+      h.resize();
+      h.frame();
+      visible();
+    }
+    expect(h.scroll.scrollTop).toBe(settledTop);
+    h.scrollTo(settledTop - 80.5);
+    h.writes.mockClear();
+    h.frame();
+    expect(h.scroll.scrollTop).toBe(settledTop - 80.5);
+    expect(h.writes).not.toHaveBeenCalled();
+  });
+  it.each([600, 1200])(
+    'settles variable grouped rows at %s while retaining the focused input',
+    (line) => {
+      const h = harness(true);
+      h.size(390, 684);
+      h.style('paddingTop', '8px');
+      h.style('paddingBottom', '8px');
+      const list = rows(1201);
+      const grouped = indexedRows(
+        list.rows.flatMap((row, index): TaskListRow[] =>
+          index % 100 === 0
+            ? [
+                {
+                  kind: 'group',
+                  key: `group:${index}`,
+                  label: 'Group',
+                  count: 100,
+                  first: index === 0,
+                },
+                row,
+              ]
+            : [row],
+        ),
+      );
+      for (let n = 0; n < 1201; n++) h.heights.set(`n.md:${n}`, n % 3 === 0 ? 90 : 18);
+      h.surface.update(grouped, { ...presentation, estimate: () => 64 });
+      const first = expectDefined(h.surface.element('n.md:0'));
+      const input = first.createEl('input');
+      input.value = 'capture draft';
+      input.focus();
+      input.setSelectionRange(4, 4);
+      const target = expectDefined(h.surface.reveal(`n.md:${line}`));
+      for (let i = 0; i < 8; i++) {
+        expect(target.getBoundingClientRect().top).toBeGreaterThanOrEqual(0);
+        expect(target.getBoundingClientRect().bottom).toBeLessThanOrEqual(684);
+        expect(input.isConnected).toBe(true);
+        expect(document.activeElement).toBe(input);
+        expect(input.selectionStart).toBe(4);
+        expect([...h.surface.cards()].length).toBeLessThan(120);
+        h.resize();
+        h.frame();
+      }
+      expect(h.reportFailure).not.toHaveBeenCalled();
+    },
+  );
+  it.each(['removed', 'revision', 'destroyed', 'owner', 'reentrant reveal'] as const)(
+    'cancels old reveal authority when %s during measurement',
+    (change) => {
+      const h = harness(true);
+      const list = rows(1201);
+      h.surface.update(list, presentation);
+      const owner = change === 'owner' ? taskViewportOwner() : undefined;
+      let latestTop = 0;
+      h.onMeasure((key) => {
+        if (key !== 'n.md:1200') return;
+        h.onMeasure(undefined);
+        if (change === 'removed') h.surface.update(rows(2), presentation);
+        else if (change === 'revision')
+          h.surface.update(list, { ...presentation, revision: 'new' });
+        else if (change === 'destroyed') h.surface.destroy();
+        else if (owner !== undefined) owner.doc.body.append(h.scroll);
+        else h.surface.reveal('n.md:0');
+        latestTop = h.scroll.scrollTop;
+        h.writes.mockClear();
+      });
+      expect(h.surface.reveal('n.md:1200')).toBeUndefined();
+      expect(h.scroll.scrollTop).toBe(latestTop);
+      expect(h.writes).not.toHaveBeenCalled();
+      expect(h.reportFailure).not.toHaveBeenCalled();
+      h.surface.destroy();
+      owner?.destroy();
+    },
+  );
+  it('reports finite nonconvergence without returning a false success or leaking scroll correction', () => {
+    const h = harness(true);
+    for (let n = 0; n < 1201; n++) h.heights.set(`n.md:${n}`, 1);
+    h.surface.update(rows(1201), { ...presentation, estimate: () => 64 });
+    h.writes.mockClear();
+    let targetReads = 0;
+    h.onMeasure((key) => {
+      if (key === 'n.md:1200') targetReads++;
+    });
+    expect(h.surface.reveal('n.md:1200')).toBeUndefined();
+    expect(h.reportFailure).toHaveBeenCalledTimes(1);
+    expect(targetReads).toBe(16);
+    expect([...h.surface.cards()].length).toBeLessThan(500);
+    expect(h.writes).not.toHaveBeenCalled();
+    h.resize();
+    h.frame();
+    expect(h.writes).not.toHaveBeenCalled();
+    expect(h.pending()).toBe(0);
+  });
+  it.each([40, -40])('corrects actual row placement by %s pixels before returning', (offset) => {
+    const h = harness(true);
+    h.surface.update(rows(1201), presentation);
+    if (offset < 0) h.scrollTo(40000);
+    const original = expectDefined(h.mount.getMockImplementation());
+    h.mount.mockImplementation((host, row) => {
+      const mounted = original(host, row);
+      const read = mounted.element.getBoundingClientRect.bind(mounted.element);
+      mounted.element.getBoundingClientRect = () => {
+        const rect = read();
+        return { ...rect, top: rect.top + offset, bottom: rect.bottom + offset };
+      };
+      return mounted;
+    });
+    h.writes.mockClear();
+    const target = expectDefined(h.surface.reveal('n.md:600'));
+    expect(target.getBoundingClientRect().top).toBeGreaterThanOrEqual(0);
+    expect(target.getBoundingClientRect().bottom).toBeLessThanOrEqual(480);
+    expect(h.writes).toHaveBeenCalledTimes(1);
+    for (let i = 0; i < 8; i++) {
+      h.resize();
+      h.frame();
+    }
+    expect(target.isConnected).toBe(true);
+    expect(target.getBoundingClientRect().top).toBeGreaterThanOrEqual(0);
+    expect(target.getBoundingClientRect().bottom).toBeLessThanOrEqual(480);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+  });
+  it('reports a native setter that cannot place the target rather than returning an offscreen row', () => {
+    const h = harness();
+    h.surface.update(rows(1201), presentation);
+    Object.defineProperty(h.scroll, 'scrollTop', {
+      get: () => 0,
+      set: () => undefined,
+      configurable: true,
+    });
+    expect(h.surface.reveal('n.md:1200')).toBeUndefined();
+    expect(h.reportFailure).toHaveBeenCalledTimes(1);
+    h.resize();
+    h.frame();
+    expect(h.pending()).toBe(0);
+  });
+  it('rejects changing geometry within the pass cap without scheduling a correction loop', () => {
+    const h = harness(true);
+    h.surface.update(rows(1201), presentation);
+    let reads = 0;
+    h.onMeasure((key) => {
+      if (key === 'n.md:1200') h.heights.set(key, ++reads % 2 === 0 ? 49 : 80);
+    });
+    h.writes.mockClear();
+    expect(h.surface.reveal('n.md:1200')).toBeUndefined();
+    expect(reads).toBe(16);
+    expect(h.reportFailure).toHaveBeenCalledTimes(1);
+    expect(h.writes).not.toHaveBeenCalled();
+    h.resize();
+    h.frame();
+    expect(h.pending()).toBe(0);
+  });
+  it('aligns the header of an initially offscreen tall target and retains an existing intersection', () => {
+    const h = harness(true);
+    h.style('paddingTop', '8px');
+    h.style('paddingBottom', '8px');
+    Object.defineProperty(h.scroll, 'clientTop', { value: 3 });
+    h.origin(3);
+    h.heights.set('n.md:999', 900);
+    h.surface.update(rows(1000), { ...presentation, estimate: () => 64 });
+    const target = expectDefined(h.surface.reveal('n.md:999'));
+    expect(target.getBoundingClientRect().top).toBe(3);
+    h.scrollTo(h.scroll.scrollTop + 100.5);
+    h.frame();
+    const top = h.scroll.scrollTop;
+    h.writes.mockClear();
+    expect(h.surface.reveal('n.md:999')).toBe(target);
+    expect(h.scroll.scrollTop).toBe(top);
+    expect(h.writes).not.toHaveBeenCalled();
+  });
 });

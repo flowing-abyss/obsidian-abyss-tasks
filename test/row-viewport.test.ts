@@ -226,3 +226,33 @@ it('uses an explicit pre-replacement key instead of an estimated numeric neighbo
     ),
   ).toEqual({ changed: true, scrollTop: 220.5 });
 });
+
+it.each([35.5, 18])(
+  'converges shrinking reveal geometry for %s-pixel rows with a finite demanded window',
+  (actual) => {
+    const v = new RowViewport();
+    const keys = Array.from({ length: 1201 }, (_, index) => String(index));
+    v.replace(rows(keys, 64));
+    let top = v.reveal('1200', 0, 935);
+    let window = v.window(top, 935, ['1200']);
+    let stable = false;
+    for (let pass = 0; pass < 16; pass++) {
+      const measured = v.measure(
+        window.segments.flatMap((segment) =>
+          'index' in segment ? [{ key: String(segment.index), height: actual }] : [],
+        ),
+        top,
+      );
+      top = v.reveal('1200', measured.scrollTop, 935);
+      window = v.window(top, 935, ['1200']);
+      if (!measured.changed) {
+        stable = true;
+        break;
+      }
+    }
+    expect(stable).toBe(true);
+    expect(v.rowBounds('1200')?.bottom).toBeLessThanOrEqual(top + 935);
+    expect(v.rowBounds('1200')?.top).toBeGreaterThanOrEqual(top);
+    expect(window.segments.filter((segment) => 'index' in segment).length).toBeLessThan(120);
+  },
+);

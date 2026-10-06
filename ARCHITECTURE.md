@@ -1056,9 +1056,17 @@ retain that key through synchronous replacement and measurement, so a tall row's
 offset cannot become an estimated neighbor's anchor. Native owners temporarily include that row
 when reconciling its replacement window. Ordinary scroll measurement omits the anchor, and explicit
 reveal starts from its own current target; no retained anchor outlives the reconciliation.
-TaskListSurface keeps the explicit reveal key through destination measurement and recomputes its
-reveal position before the final window and native write, so taller measured destination rows cannot
-evict the requested row. Task lists supply offsets from the host's actual content origin, including padding and nested-host borders,
+TaskListSurface retains the explicit reveal key through at most sixteen synchronous measurement
+and window reconciliations, including newly demanded rows after shrinking geometry and minimal
+actual-rectangle correction. It writes native scroll once the measured mount set stabilizes and
+returns a row only after validating actual containment in the scroll content viewport (or intersection
+for a taller row). An initially offscreen tall destination aligns its header; only a preexisting
+intersection retains tall-row placement. Revision, reentrant reconciliation, document/window change,
+and disposal cancel the old operation between host callbacks without reporting an operational failure.
+Invalid placement or finite nonconvergence reaches the existing surface failure owner and returns no
+successful row. The reveal key and its scroll authority end with that operation; subsequent ordinary
+frames preserve their existing fractional/key anchors. Async hydration and Markdown receipts remain
+with their existing presentation owners. Task lists supply offsets from the host's actual content origin, including padding and nested-host borders,
 while retaining negative displacement when the scroller still shows preceding dashboard content.
 [`projectTableViewport`](src/panels/projects/projectTableViewport.ts) adapts the existing Table
 estimates and signatures to that neutral module. Logical projection, sorting, and grouping still

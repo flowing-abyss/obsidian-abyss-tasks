@@ -7,7 +7,7 @@ import type { CalendarSettings } from '../../src/settings/types';
 import type { Clock } from '../../src/tasks/domain/clock';
 import { createSearchWordSegmenter } from '../../src/tasks/infrastructure/search/searchWordSegmenter';
 import { CreationPresentationController } from '../../src/ui/creation/CreationPresentationController';
-import { prepareTaskPanelViewport } from './taskPanelViewport';
+import { prepareTaskPanelViewport, taskListRect } from './taskPanelViewport';
 import { createCanonicalSearchHarness } from './taskSearchHarness';
 
 export interface SearchUiCompletionLifetime {
@@ -223,10 +223,12 @@ export async function mountCanonicalSearchUi(
       statusRegistry: h.statusRegistry,
       tasks: h.tasks,
     }));
-    prepareTaskPanelViewport(root);
+    prepareTaskPanelViewport(root, true);
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
       this: HTMLElement,
     ) {
+      const taskRect = taskListRect(this);
+      if (taskRect !== undefined) return taskRect;
       let height = 900;
       if (this.hasClass('abyss-task-card')) height = 64;
       if (this.hasClass('abyss-group-header')) height = 32;

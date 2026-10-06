@@ -1,5 +1,10 @@
 import type { TaskSnapshot } from '../../tasks';
-import { RowViewport, type RowAnchor, type RowSegment } from '../virtualization/rowViewport';
+import {
+  RowViewport,
+  type RowAnchor,
+  type RowMeasurement,
+  type RowSegment,
+} from '../virtualization/rowViewport';
 import { indexedRows, type TaskListRow, type TaskListRows } from './taskListRows';
 import type { MountedTaskListRows } from './taskListRowView';
 
@@ -20,6 +25,14 @@ export interface TaskListSurfaceOptions<T = TaskSnapshot> {
   mount(host: HTMLElement, row: TaskListRow<T>): TaskRowMount<T>;
   mountedChanged(): void;
   reportFailure(error: unknown): void;
+}
+
+const maxRevealMeasurementPasses = 16;
+
+interface RevealPlacement {
+  readonly key: string;
+  readonly alignTall: boolean;
+  readonly current: () => boolean;
 }
 
 interface TaskListScroll {
@@ -46,6 +59,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #destroyed = false;
   #failed = false;
   #revision = 0;
+  #reconciliation = 0;
   #invalidating = false;
   #layoutRevision = 0;
   #width = -1;
@@ -119,16 +133,20 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
 
   reveal(key: string): HTMLElement | undefined {
     if (!this.#active() || this.#viewport.rowBounds(key) === undefined) return undefined;
+    let revealed: HTMLElement | undefined;
     this.#guard(() => {
       if (!this.#bind()) return;
       const top = this.#checkLayout()?.top ?? this.#top();
-      this.#reconcile(false, {
-        top: this.#viewport.reveal(key, top, this.#height()),
-        anchor: undefined,
-        revealKey: key,
-      });
+      if (
+        this.#reconcile(false, {
+          top: this.#viewport.reveal(key, top, this.#height()),
+          anchor: undefined,
+          revealKey: key,
+        })
+      )
+        revealed = this.element(key);
     });
-    return this.element(key);
+    return revealed;
   }
 
   pin(key: string, onInvalidated?: () => void): () => void {
@@ -212,8 +230,9 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #top(): number {
     return this.#options.scroll.scrollTop - this.#origin();
   }
-  #writeTop(top: number): void {
+  #writeTop(top: number, current: () => boolean): void {
     const next = top + this.#origin();
+    if (!current()) return;
     if (Number.isFinite(next) && Math.abs(next - this.#options.scroll.scrollTop) > 0.01)
       this.#options.scroll.scrollTop = next;
   }
@@ -351,32 +370,146 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
         break;
       }
   }
-  #reconcile(update: boolean, target?: TaskListScroll): void {
-    this.#readFocus();
+  #currentReconciliation(): () => boolean {
     const revision = this.#revision;
+    const reconciliation = ++this.#reconciliation;
+    const generation = this.#nativeGeneration;
+    const owner = this.#owner;
+    return (): boolean =>
+      revision === this.#revision &&
+      reconciliation === this.#reconciliation &&
+      generation === this.#nativeGeneration &&
+      owner === this.#owner &&
+      owner?.document === this.#options.host.ownerDocument &&
+      owner.document === this.#options.scroll.ownerDocument &&
+      this.#active();
+  }
+  #intersects(key: string | undefined): boolean {
+    const rect = key === undefined ? undefined : this.element(key)?.getBoundingClientRect();
+    const top = this.#options.scroll.getBoundingClientRect().top + this.#options.scroll.clientTop;
+    return rect !== undefined && rect.bottom > top && rect.top < top + this.#height();
+  }
+  #reconcile(update: boolean, target?: TaskListScroll): boolean {
+    const current = this.#currentReconciliation();
+    this.#readFocus();
     this.#resolvePinOrder();
-    if (revision !== this.#revision || this.#destroyed) return;
+    if (!current()) return false;
     this.#readFocus();
     const nativeTop = target?.top ?? this.#top();
-    const anchor = target?.anchor;
     const revealKey = target?.revealKey;
-    this.#renderWindow(update, nativeTop, revealKey ?? this.#anchorKey(anchor));
-    this.#measureWindow(nativeTop, target);
+    // Only a row already intersecting before provisional measurement retains tall-row placement.
+    const alignTall = !this.#intersects(revealKey);
+    if (!current()) return false;
+    this.#renderWindow(update, nativeTop, revealKey ?? this.#anchorKey(target?.anchor), current);
+    if (!current()) return false;
+    return this.#measureWindow(nativeTop, target, current, alignTall);
   }
-  #measureWindow(top: number, target: TaskListScroll | undefined): void {
+  #measureWindow(
+    top: number,
+    target: TaskListScroll | undefined,
+    current: () => boolean,
+    alignTall: boolean,
+  ): boolean {
     const revealKey = target?.revealKey;
-    const measuredTop = this.#measure(top, target?.anchor);
-    let corrected = measuredTop ?? target?.top;
-    if (measuredTop !== undefined) {
-      // Reveal owns its requested key, even when the destination grows beyond its estimate.
-      corrected =
-        revealKey === undefined
-          ? measuredTop
-          : this.#viewport.reveal(revealKey, measuredTop, this.#height());
-      // Establish the new extent before a native setter can clamp the correction.
-      this.#renderWindow(false, corrected, revealKey);
+    if (revealKey !== undefined) return this.#measureReveal(top, revealKey, current, alignTall);
+    const measuredTop = this.#measure(top, target?.anchor, current);
+    if (!current()) return false;
+    // Ordinary frames retain their fractional/key anchor policy and one measurement pass.
+    if (measuredTop !== undefined) this.#renderWindow(false, measuredTop, undefined, current);
+    if (!current()) return false;
+    const corrected = measuredTop ?? target?.top;
+    if (corrected !== undefined) this.#writeTop(corrected, current);
+    return current();
+  }
+  #measureReveal(top: number, key: string, current: () => boolean, alignTall: boolean): boolean {
+    let desired = top;
+    const reveal = { key, current, alignTall };
+    for (let pass = 0; pass < maxRevealMeasurementPasses; pass++) {
+      const next = this.#measureRevealWindow(desired, reveal, pass === 0);
+      if (!current()) return false;
+      desired = next.top;
+      if (!next.stable) continue;
+      return this.#finishReveal(key, desired, current);
     }
-    if (corrected !== undefined) this.#writeTop(corrected);
+    throw new Error('Task reveal measurements did not converge');
+  }
+  #finishReveal(key: string, desired: number, current: () => boolean): boolean {
+    this.#writeTop(desired, current);
+    if (!current()) return false;
+    const adjustment = this.#revealAdjustment(key, this.#top(), false, current);
+    if (!current()) return false;
+    if (Math.abs(adjustment) > 0.5)
+      throw new Error('Task reveal did not reach the visible viewport');
+    return true;
+  }
+  #revealTop(key: string, top: number, alignTall: boolean): number {
+    const bounds = this.#viewport.rowBounds(key);
+    if (bounds === undefined) return top;
+    return alignTall && bounds.bottom - bounds.top > this.#height()
+      ? bounds.top
+      : this.#viewport.reveal(key, top, this.#height());
+  }
+  #measureRevealWindow(
+    top: number,
+    reveal: RevealPlacement,
+    initial: boolean,
+  ): { top: number; stable: boolean } {
+    const { key, current, alignTall } = reveal;
+    const measuredTop = this.#measure(top, undefined, current);
+    if (!current()) return { top, stable: false };
+    const desired =
+      measuredTop !== undefined || initial
+        ? this.#revealTop(key, measuredTop ?? top, alignTall)
+        : top;
+    const previous = new Set(this.#mounts.keys());
+    // Establish the measured extent before the final native setter can clamp it.
+    this.#renderWindow(false, desired, key, current);
+    if (!current()) return { top: desired, stable: false };
+    const mountedChanged = this.#mountsChanged(previous);
+    const changed = measuredTop !== undefined || mountedChanged;
+    if (changed) return { top: desired, stable: false };
+    const adjustment = this.#revealAdjustment(key, desired, alignTall, current);
+    if (!current()) return { top: desired, stable: false };
+    if (Math.abs(adjustment) <= 0.5) return { top: desired, stable: true };
+    const corrected = desired + adjustment;
+    this.#renderWindow(false, corrected, key, current);
+    return { top: corrected, stable: false };
+  }
+  #mountsChanged(previous: ReadonlySet<string>): boolean {
+    return (
+      previous.size !== this.#mounts.size ||
+      [...this.#mounts.keys()].some((key) => !previous.has(key))
+    );
+  }
+  #revealAdjustment(key: string, top: number, alignTall: boolean, current: () => boolean): number {
+    const element = this.element(key);
+    if (element?.isConnected !== true) throw new Error('Task reveal row is not mounted');
+    const rect = element.getBoundingClientRect();
+    if (!current()) return 0;
+    const scroll = this.#options.scroll;
+    const viewportTop = scroll.getBoundingClientRect().top + scroll.clientTop;
+    const displacement = this.#top() - top;
+    if (!current()) return 0;
+    const projectedTop = rect.top + displacement;
+    const projectedBottom = rect.bottom + displacement;
+    if (![projectedTop, projectedBottom, rect.height].every(Number.isFinite) || rect.height <= 0)
+      throw new Error('Task reveal row has invalid geometry');
+    return this.#visibleAdjustment(
+      projectedTop - viewportTop,
+      projectedBottom - viewportTop,
+      rect.height,
+      alignTall,
+    );
+  }
+  #visibleAdjustment(top: number, bottom: number, rowHeight: number, alignTall: boolean): number {
+    const height = this.#height();
+    if (rowHeight > height) {
+      if (alignTall || top >= height) return top;
+      if (bottom <= 0) return bottom - height;
+      return 0;
+    }
+    if (top < 0) return top;
+    return Math.max(0, bottom - height);
   }
   #anchorKey(anchor: RowAnchor | undefined): string | undefined {
     // A tall row's old offset can place its replacement estimate outside overscan.
@@ -384,21 +517,19 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       ? undefined
       : this.#viewport.rowAt(this.#viewport.restoreAnchor({ ...anchor, offset: 0 }, 0))?.key;
   }
-  #measure(top: number, anchor: RowAnchor | undefined): number | undefined {
-    const measured = this.#viewport.measure(
-      [...this.#mounts].map(([key, mount]) => {
-        const style = this.#owner?.getComputedStyle(mount.element);
-        return {
-          key,
-          height:
-            mount.element.getBoundingClientRect().height +
-            this.#margin(style?.marginTop) +
-            this.#margin(style?.marginBottom),
-        };
-      }),
-      Math.max(0, top),
-      anchor,
-    );
+  #measure(top: number, anchor: RowAnchor | undefined, current: () => boolean): number | undefined {
+    const measurements: RowMeasurement[] = [];
+    for (const [key, mount] of this.#mounts) {
+      const style = this.#owner?.getComputedStyle(mount.element);
+      if (!current()) return;
+      const rect = mount.element.getBoundingClientRect();
+      if (!current()) return;
+      measurements.push({
+        key,
+        height: rect.height + this.#margin(style?.marginTop) + this.#margin(style?.marginBottom),
+      });
+    }
+    const measured = this.#viewport.measure(measurements, Math.max(0, top), anchor);
     if (!measured.changed) return;
     return top + measured.scrollTop - Math.max(0, top);
   }
@@ -406,7 +537,12 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const size = Number.parseFloat(value ?? '');
     return Number.isFinite(size) ? size : 0;
   }
-  #segment(segment: RowSegment, update: boolean, spacer?: HTMLElement): HTMLElement | undefined {
+  #segment(
+    segment: RowSegment,
+    update: boolean,
+    current: () => boolean,
+    spacer?: HTMLElement,
+  ): HTMLElement | undefined {
     if ('height' in segment) {
       const element = spacer ?? this.#options.host.createDiv();
       element.addClass('abyss-virtual-row-spacer');
@@ -419,42 +555,69 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     if (row === undefined) return undefined;
     let mount = this.#mounts.get(row.key);
     if (mount === undefined) {
-      mount = this.#options.mount(this.#options.host, row);
-      this.#mounts.set(row.key, mount);
-      this.#observer?.observe(mount.element, { box: 'border-box' });
+      mount = this.#mountRow(row, current);
     } else if (update) mount.update(row);
-    return mount.element;
+    return mount?.element;
   }
-  #renderWindow(update: boolean, top: number, anchorKey?: string): void {
+  #mountRow(row: TaskListRow<T>, current: () => boolean): TaskRowMount<T> | undefined {
+    const mount = this.#options.mount(this.#options.host, row);
+    if (!current()) {
+      mount.destroy();
+      return;
+    }
+    this.#mounts.set(row.key, mount);
+    this.#observer?.observe(mount.element, { box: 'border-box' });
+    return mount;
+  }
+  #renderWindow(
+    update: boolean,
+    top: number,
+    anchorKey: string | undefined,
+    current: () => boolean,
+  ): void {
     const pinned = [...this.#pins.keys()];
     if (anchorKey !== undefined) pinned.push(anchorKey);
     if (this.#focusedKey !== undefined) pinned.push(this.#focusedKey);
     const window = this.#viewport.window(top, this.#height(), pinned);
     const established = new Set(this.#mounts.keys());
+    const rendered = this.#renderSegments(window.segments, update, current);
+    if (rendered === undefined) return;
+    this.#evictOutside(rendered.keys, current);
+    if (!current()) return;
+    this.#order(rendered.desired, established);
+    this.#ordered = [...rendered.keys];
+    this.#options.mountedChanged();
+  }
+  #renderSegments(
+    segments: readonly RowSegment[],
+    update: boolean,
+    current: () => boolean,
+  ): { desired: HTMLElement[]; keys: Set<string> } | undefined {
     const desired: HTMLElement[] = [];
     const keys = new Set<string>();
     const oldSpacers = Array.from(
       this.#options.host.querySelectorAll<HTMLElement>(':scope > .abyss-virtual-row-spacer'),
     );
     let spacerIndex = 0;
-    for (const segment of window.segments) {
+    for (const segment of segments) {
       const spacer = 'height' in segment ? oldSpacers[spacerIndex++] : undefined;
-      const element = this.#segment(segment, update, spacer);
+      const element = this.#segment(segment, update, current, spacer);
+      if (!current()) return;
       if (element !== undefined) desired.push(element);
       const key = this.#segmentKey(segment);
       if (key !== undefined) keys.add(key);
     }
-    this.#evictOutside(keys);
     for (const spacer of oldSpacers.slice(spacerIndex)) spacer.remove();
-    this.#order(desired, established);
-    this.#ordered = [...keys];
-    this.#options.mountedChanged();
+    return { desired, keys };
   }
   #segmentKey(segment: RowSegment): string | undefined {
     return 'index' in segment ? this.#rows.rows[segment.index]?.key : undefined;
   }
-  #evictOutside(keys: ReadonlySet<string>): void {
-    for (const [key, mount] of this.#mounts) if (!keys.has(key)) this.#evict(key, mount);
+  #evictOutside(keys: ReadonlySet<string>, current: () => boolean): void {
+    for (const [key, mount] of this.#mounts) {
+      if (!keys.has(key)) this.#evict(key, mount);
+      if (!current()) return;
+    }
   }
   #invalidatePins(keys: readonly string[]): void {
     const callbacks: Array<() => void> = [];
