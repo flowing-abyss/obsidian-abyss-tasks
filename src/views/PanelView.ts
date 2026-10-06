@@ -1120,11 +1120,18 @@ export class PanelView extends ItemView {
   ): void {
     const current = resolution.type === 'exact' ? resolution.task : resolution.current;
     if (resolution.type === 'exact' && isCurrentTaskSelectionSnapshot(current, stack)) return;
-    const consumedOwnedRef = this.consumedOwnedRef_abyssPrivate(resolution);
+    const consumedOwnedRef =
+      this.consumedOwnedRef_abyssPrivate(resolution) ??
+      this.right_abyssPrivate.ownedRefForCompletionFollowUp(
+        current,
+        stack,
+        resolution.basis.authorityTransition?.completionTracking,
+      );
     const ownedSelection = this.right_abyssPrivate.selectionForOwnedTransition(
       consumedOwnedRef,
       current,
       stack,
+      resolution.basis.authorityTransition?.completionTracking,
     );
     const draft =
       consumedOwnedRef != null

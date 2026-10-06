@@ -149,7 +149,12 @@ export function subscribeInspectorReconciliation(h: InspectorHarness): () => voi
       resolution.type === 'rebased' && resolution.evidence === 'authority-transition'
         ? resolution.previous.ref
         : undefined;
-    const ownedSelection = h.panel.selectionForOwnedTransition(ownedRef, current, stack);
+    const ownedSelection = h.panel.selectionForOwnedTransition(
+      ownedRef,
+      current,
+      stack,
+      completionWitness(resolution),
+    );
     const draft =
       ownedRef === undefined
         ? h.panel.captureDraftState()
@@ -160,4 +165,13 @@ export function subscribeInspectorReconciliation(h: InspectorHarness): () => voi
     );
     h.panel.restoreDraftState(draft, current);
   });
+}
+
+function completionWitness(
+  resolution: Extract<
+    ReturnType<InspectorHarness['index']['resolve']>,
+    { type: 'exact' | 'rebased' }
+  >,
+) {
+  return resolution.basis.authorityTransition?.completionTracking;
 }

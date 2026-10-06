@@ -202,6 +202,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/RightPanel.ts',
     'src/panels/right/InspectorPlanningSurfaces.ts',
   ],
+  CompletionTrackingWitness: ['src/panels/RightPanel.ts'],
   TaskCommentSnapshot: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorSections.ts'],
   TaskCreateSession: ['src/ui/taskCapture/CaptureTargetResolver.ts'],
   TaskIndexEvent: ['src/projects/ProjectStore.ts'],

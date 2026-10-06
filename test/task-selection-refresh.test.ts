@@ -49,6 +49,7 @@ vi.mock('../src/panels/RightPanel', () => ({
 
     destroy(): void {}
 
+    ownedRefForCompletionFollowUp = vi.fn<RightPanel['ownedRefForCompletionFollowUp']>();
     captureDraftState = captured.captureDraftState;
     restoreDraftState = captured.restoreDraftState;
     detachDraftState = captured.detachDraftState;

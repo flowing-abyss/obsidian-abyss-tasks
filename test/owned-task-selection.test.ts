@@ -1,9 +1,14 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { localDate, type TaskCommand } from '../src/tasks';
+import { localDate, type CompletionTrackingWitness, type TaskCommand } from '../src/tasks';
+import { atomDateTime } from '../src/tasks/domain/commentTimestamp';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { projectTaskSnapshot } from '../src/tasks/infrastructure/markdown/TaskSnapshotProjector';
-import { proveOwnedTaskSelection, rebuildOwnedTaskSelection } from '../src/ui/ownedTaskSelection';
+import {
+  proveOwnedCompletionFollowUp,
+  proveOwnedTaskSelection,
+  rebuildOwnedTaskSelection,
+} from '../src/ui/ownedTaskSelection';
 import { canonicalStatusCatalog, expectDefined } from './helpers';
 
 function snapshot(markdown: string, revision: string) {
@@ -708,3 +713,159 @@ describe('owned non-structural inspector selection', () => {
     ).toBeUndefined();
   });
 });
+
+describe('exact existing comment transition proof', () => {
+  it.each(['update-comment', 'delete-comment'] as const)(
+    'proves only the captured %s block splice',
+    (type) => {
+      const markdown =
+        '- [ ] Root ^opaque\r\n  - [ ] Branch\r\n    - [ ] Owner\r\n      - 2026-10-06: old\r\n        second\r\n      - neighbor\r\n      - 2026-10-06T09:00:00Z → ...\r\n  - [ ] Sibling';
+      const original = snapshot(markdown, 'before');
+      const branch = expectDefined(original.subtasks[0]);
+      const owner = expectDefined(branch.subtasks[0]);
+      const comment = expectDefined(owner.comments[0]);
+      const command: TaskCommand =
+        type === 'delete-comment'
+          ? { type, comment: comment.ref }
+          : { type, comment: comment.ref, text: 'new\n\n- [ ] literal\nthird' };
+      const replacement =
+        type === 'delete-comment'
+          ? ''
+          : '      - 2026-10-06: new\r\n        \\- [ ] literal\r\n        third\r\n';
+      const changed = markdown.replace(
+        '      - 2026-10-06: old\r\n        second\r\n',
+        replacement,
+      );
+      const current = snapshot(changed, 'after');
+      const proof = proveOwnedTaskSelection(current, [original, branch, owner], command);
+      expect(proof?.selection.map((node) => node.title)).toEqual(['Root', 'Branch', 'Owner']);
+      expect(proof?.successor(owner)).toBe(current.subtasks[0]?.subtasks[0]);
+      for (const foreign of [
+        changed.replace('^opaque', '^foreign'),
+        changed.replace('neighbor', 'foreign'),
+        changed.replace('09:00', '08:00'),
+        changed.replace('Sibling', 'Foreign'),
+        type === 'delete-comment'
+          ? markdown.replace('      - neighbor\r\n', '')
+          : changed.replace('2026-10-06: new', '2026-10-05: new'),
+        type === 'delete-comment' ? markdown : changed.replace('third', 'wrong'),
+      ]) {
+        expect(
+          proveOwnedTaskSelection(snapshot(foreign, 'foreign'), [original, branch, owner], command),
+        ).toBeUndefined();
+      }
+      const forged = {
+        ...command,
+        comment: {
+          ...comment.ref,
+          originalMarkdown: comment.ref.originalMarkdown.replace('old', 'forged'),
+        },
+      };
+      expect(proveOwnedTaskSelection(current, [original, branch, owner], forged)).toBeUndefined();
+    },
+  );
+});
+
+it.each(
+  ['\n', '\r\n'].flatMap((ending) =>
+    ['  ', '\t', '>   '].flatMap((prefix) =>
+      ['update-comment', 'delete-comment'].map((type) => ({ ending, prefix, type })),
+    ),
+  ),
+)('proves the final comment block with $ending $prefix $type', ({ ending, prefix, type }) => {
+  const rootPrefix = prefix.startsWith('>') ? '> ' : '';
+  const source = `${rootPrefix}- [ ] Root${ending}${prefix}- [ ] Owner${ending}${prefix}  - 2026-10-06: old${ending}${prefix}    second`;
+  const original = snapshot(source, 'before');
+  const owner = expectDefined(original.subtasks[0]);
+  const comment = expectDefined(owner.comments[0]);
+  const command: TaskCommand =
+    type === 'update-comment'
+      ? { type, comment: comment.ref, text: 'new\nthird\nfourth' }
+      : { type: 'delete-comment', comment: comment.ref };
+  const replacement =
+    type === 'update-comment'
+      ? `${prefix}  - 2026-10-06: new${ending}${prefix}    third${ending}${prefix}    fourth`
+      : '';
+  const changed =
+    type === 'update-comment'
+      ? source.replace(comment.ref.originalMarkdown, replacement)
+      : `${rootPrefix}- [ ] Root${ending}${prefix}- [ ] Owner`;
+  const proof = proveOwnedTaskSelection(snapshot(changed, 'after'), [original, owner], command);
+  expect(proof?.selection.map((node) => node.title)).toEqual(['Root', 'Owner']);
+});
+
+it.each([false, true])(
+  'requires exact completion tracking witness including discard policy (short=%s)',
+  (short) => {
+    const initialText = `- [ ] Root\n  - [ ] Owner\n    - [ ] Leaf\n      - 2026-09-05T${short ? '11:59:30' : '11:58:00'}Z →\n  - [ ] Neighbor`;
+    const initial = snapshot(initialText, 'initial');
+    const branch = expectDefined(initial.subtasks[0]);
+    const leaf = expectDefined(branch.subtasks[0]);
+    const command: TaskCommand = {
+      type: 'toggle-completion',
+      target: { type: 'subtask', ref: leaf.ref },
+    };
+    const completedText = initialText.replace('[ ] Leaf', '[x] Leaf ✅ 2026-09-05');
+    const completed = snapshot(completedText, 'completed');
+    const completedOwner = expectDefined(completed.subtasks[0]);
+    const completedLeaf = expectDefined(completedOwner.subtasks[0]);
+    const entry = expectDefined(completedLeaf.timeEntries[0]);
+    const afterText = short
+      ? completedText.replace(`${entry.originalMarkdown}\n`, '')
+      : completedText.replace(
+          entry.originalMarkdown,
+          `${entry.originalMarkdown} 2026-09-05T12:00:00Z`,
+        );
+    const current = snapshot(afterText, 'after');
+    const witness: CompletionTrackingWitness = {
+      before: completed.ref,
+      after: current.ref,
+      entry: {
+        parent: { type: 'subtask', ref: completedLeaf.ref },
+        relativeLine: entry.relativeLine,
+        originalMarkdown: entry.originalMarkdown,
+      },
+      stamp: atomDateTime('2026-09-05T12:00:00Z'),
+      endMs: Date.parse('2026-09-05T12:00:00Z'),
+      minimumMs: 60_000,
+      disposition: short ? 'discarded' : 'closed',
+    };
+    const selection = [completed, completedOwner];
+    const original = [initial, branch];
+    expect(
+      proveOwnedCompletionFollowUp(current, selection, {
+        original,
+        command,
+        witness,
+      })?.selection.map((node) => node.title),
+    ).toEqual(['Root', 'Owner']);
+    for (const forged of [
+      undefined,
+      { ...witness, before: { ...witness.before, line: 99 } },
+      { ...witness, after: { ...witness.after, filePath: 'other.md' } },
+      { ...witness, entry: { ...witness.entry, originalMarkdown: 'foreign' } },
+      { ...witness, entry: { ...witness.entry, relativeLine: 99 } },
+      { ...witness, endMs: witness.endMs + 1000 },
+      { ...witness, minimumMs: 120_000 },
+      { ...witness, disposition: short ? ('closed' as const) : ('discarded' as const) },
+    ]) {
+      expect(
+        proveOwnedCompletionFollowUp(current, selection, { original, command, witness: forged }),
+      ).toBeUndefined();
+    }
+    expect(
+      proveOwnedCompletionFollowUp(
+        snapshot(afterText.replace('Neighbor', 'Foreign'), 'after'),
+        selection,
+        { original, command, witness },
+      ),
+    ).toBeUndefined();
+    expect(
+      proveOwnedCompletionFollowUp(current, selection, {
+        original,
+        command: { type: 'set-description', target: command.target, text: 'foreign' },
+        witness,
+      }),
+    ).toBeUndefined();
+  },
+);

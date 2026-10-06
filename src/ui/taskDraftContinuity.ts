@@ -6,6 +6,7 @@ import type {
   TaskSnapshot,
   TaskTextTarget,
 } from '../tasks';
+import type { OwnedTaskSelectionProof } from './ownedTaskSelection';
 import {
   buildRecurrenceRule,
   type MonthlyChoice,
@@ -14,6 +15,7 @@ import {
   type Weekday,
   type YearlyChoice,
 } from './recurrence/recurrenceEditorModel';
+import { taskNodeRef } from './taskSelection';
 
 interface TextDraftBase {
   readonly value: string;
@@ -110,13 +112,21 @@ interface UniqueEntry<T> {
 }
 
 export interface RightPanelDraftRebaseContext {
+  readonly owned?: OwnedTaskSelectionProof;
   readonly children: WeakMap<TaskNode, ReadonlyMap<string, UniqueEntry<SubtaskSnapshot>>>;
   readonly comments: WeakMap<TaskNode, ReadonlyMap<string, UniqueEntry<TaskCommentSnapshot>>>;
   readonly paths: WeakMap<SubtaskRef, readonly SubtaskRef[]>;
 }
 
-export function createRightPanelDraftRebaseContext(): RightPanelDraftRebaseContext {
-  return { children: new WeakMap(), comments: new WeakMap(), paths: new WeakMap() };
+export function createRightPanelDraftRebaseContext(
+  owned?: OwnedTaskSelectionProof,
+): RightPanelDraftRebaseContext {
+  return {
+    ...(owned === undefined ? {} : { owned }),
+    children: new WeakMap(),
+    comments: new WeakMap(),
+    paths: new WeakMap(),
+  };
 }
 
 function uniqueIndex<T>(
@@ -156,7 +166,17 @@ function rebaseNode(
   stale: TaskNodeRef,
   context: RightPanelDraftRebaseContext,
 ): { readonly ref: TaskNodeRef; readonly node: TaskNode } | undefined {
+  const owned = context.owned?.nodeSuccessor(stale);
+  if (owned !== undefined) return { ref: taskNodeRef(owned), node: owned };
   if (stale.type === 'task') return { ref: { type: 'task', ref: root.ref }, node: root };
+  return rebaseChildNode(root, stale, context);
+}
+
+function rebaseChildNode(
+  root: TaskSnapshot,
+  stale: TaskNodeRef,
+  context: RightPanelDraftRebaseContext,
+): { readonly ref: TaskNodeRef; readonly node: TaskNode } | undefined {
   let node: TaskNode = root;
   let ref: TaskNodeRef = { type: 'task', ref: root.ref };
   for (const staleChild of childPath(stale, context)) {
@@ -188,6 +208,8 @@ function rebaseComment(
   draft: Extract<RightPanelDraftState, { readonly kind: 'existing-comment' }>,
   context: RightPanelDraftRebaseContext,
 ): Extract<TaskTextTarget, { readonly type: 'comment' }> | undefined {
+  const owned = context.owned?.commentSuccessor({ ref: draft.target.ref, text: draft.value });
+  if (owned !== undefined) return { type: 'comment', ref: owned.ref };
   const parent = rebaseNode(root, draft.target.ref.parent, context);
   if (parent == null) return undefined;
   let index = context.comments.get(parent.node);

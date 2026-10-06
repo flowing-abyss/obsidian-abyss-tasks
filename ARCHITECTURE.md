@@ -861,13 +861,34 @@ and indexes exact surviving occurrences for all mounted owners. RightPanel alone
 from the accepted proof, and retirement clears them. Link saves participate in the same owned
 submission flow; their proof requires the exact parsed occurrence replacement in the selected field
 and a single corresponding replacement in the complete root source block, including comment source
-blocks. Multiline comments keep disclosure state on the retained row and render their first line
+blocks. Existing comment updates/deletions prove the captured complete block splice, normalized text,
+authored prefixes, timestamp and line endings, with all neighboring source and timer semantics intact.
+The accepted proof indexes surviving comment occurrences for retained rows; draft consumption retires
+only the exact submitted editor, while deleted rows dispose their components. Multiline comments keep disclosure state on the retained row and render their first line
 through the shared Markdown renderer; preview link edits require matching raw tokens and original
 full-field offsets. Editors retain the complete field. Comment Enter and description Enter (with
 or without Shift) begin one submission, await the existing paste-settlement boundary, and read the
 original live textarea before dispatch. Cancellation or retirement invalidates pending insertion and
 submission. Attachment paste supports a captured insertion context, acquired once before attachment
 work, so reusing an entry cannot revive a cancelled paste; disposal suppresses its late callback.
+The existing paste helper tracks every outstanding acquisition and awaits all captured live work before
+submission. Captured session validity excludes cancelled acquisitions from later plaintext submission
+waits, while preventing their insertion into a reused input.
+Completion/cancellation may publish status and timer changes separately. Only that existing application
+completion phase marks an internal repository close request as a completion follow-up. The repository
+attaches a transient `CompletionTrackingWitness` to its existing exact staged root transition: before
+and after root revisions, the captured original entry, the atomic clock stamp and actual epoch,
+minimum duration and actual close/discard outcome. Authority acquisition and observations, reconciliation
+basis and index transport copy nested evidence defensively; abort/restoration removes it, and later
+unrelated transitions cannot inherit it. No persisted task field or additional write authority is added.
+A second publication can obtain an owned ref only from RightPanel's still-pending, already-consumed
+status submission with the exact before-root alias, current successor epoch and selected stack. Both
+sidebar and modal use that accepted ref for proof and draft/convergence handoff; the original editor
+escrow is consumed once. The proof permits only the identified running entry's canonical closure or
+the existing under-minimum discard, preserving starts, previous entries, source neighbors and tree
+semantics. Written clock stamps have second precision; proof checks the canonical written second,
+while discard uses the captured actual millisecond duration and fixed application minimum. Pending
+command settlement or newer selection retires this authority. A witness alone grants no continuity.
 Submitted drafts retain the original DOM value for result comparison, including normalized comment
 writes and clear-to-delete. Unrelated source changes cannot acquire successor authority. Ordinary explicit redraws keep their existing
 teardown and settlement semantics; exact unchanged index events are filtered by the shells. Window

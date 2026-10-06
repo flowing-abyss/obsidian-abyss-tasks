@@ -3,6 +3,9 @@ import type { TaskNodeRef, TaskRef, TaskStatus, TimeEntryRef } from './types';
 
 export type { TimeEntryIssue } from './timeEntry';
 
+/** Existing completion policy: shorter unannotated sessions leave no source line. */
+export const MINIMUM_TRACKED_MS = 60_000;
+
 const MS_PER_DAY = 86_400_000;
 const MS_PER_MINUTE = 60_000;
 const MS_PER_SECOND = 1000;

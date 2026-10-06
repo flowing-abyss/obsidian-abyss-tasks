@@ -11,6 +11,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { type AppState, type ListSelection } from '../src/app/AppState';
 import type { CenterPanel } from '../src/panels/CenterPanel';
+import type { RightPanel } from '../src/panels/RightPanel';
 import { TaskListSurface } from '../src/panels/task-list/TaskListSurface';
 import { ProjectManager } from '../src/projects/ProjectManager';
 import type { ProjectStore } from '../src/projects/ProjectStore';
@@ -31,6 +32,8 @@ import type {
   TaskRef,
   TaskSnapshot,
 } from '../src/tasks';
+import { clockFrom } from '../src/tasks/domain/clock';
+import { TaskModal } from '../src/ui/TaskModal';
 import type { CreationPresentationController } from '../src/ui/creation/CreationPresentationController';
 import type { InteractionRegistry } from '../src/ui/interactionOwnership';
 import { PanelShortcutRouter } from '../src/ui/panelShortcutRouter';
@@ -4409,9 +4412,17 @@ describe('PanelView', () => {
       );
       (
         view as unknown as {
-          applyResolution_abyssPrivate(result: { type: 'exact'; task: typeof snapshot }): void;
+          applyResolution_abyssPrivate(result: {
+            type: 'exact';
+            task: typeof snapshot;
+            basis: { observed: typeof snapshot };
+          }): void;
         }
-      ).applyResolution_abyssPrivate({ type: 'exact', task: snapshot });
+      ).applyResolution_abyssPrivate({
+        type: 'exact',
+        task: snapshot,
+        basis: { observed: snapshot },
+      });
       const stack = state.get('taskStack');
       // Stack should still have 2 elements (root + fresh subtask found by line match)
       expect(stack).toHaveLength(2);
@@ -4443,9 +4454,17 @@ describe('PanelView', () => {
       );
       (
         view as unknown as {
-          applyResolution_abyssPrivate(result: { type: 'exact'; task: typeof snapshot }): void;
+          applyResolution_abyssPrivate(result: {
+            type: 'exact';
+            task: typeof snapshot;
+            basis: { observed: typeof snapshot };
+          }): void;
         }
-      ).applyResolution_abyssPrivate({ type: 'exact', task: snapshot });
+      ).applyResolution_abyssPrivate({
+        type: 'exact',
+        task: snapshot,
+        basis: { observed: snapshot },
+      });
       const stack = state.get('taskStack');
       // Fresh subtask not found at line 999 → break → stack truncated to [freshRoot]
       expect(stack).toHaveLength(1);
@@ -5375,4 +5394,124 @@ it('Find followed by Escape cancels the Search shell pending autofocus', async (
   } finally {
     await h.dispose();
   }
+});
+
+async function openCompletionShell(
+  shell: string,
+  app: App,
+  application: TaskApplication,
+  root: TaskSnapshot,
+) {
+  if (shell === 'modal') {
+    const modal = new TaskModal({
+      app,
+      statusRegistry: application.statusRegistry,
+      settings: DEFAULT_SETTINGS,
+      queries: application.index,
+      tasks: application.tasks,
+    });
+    modal.open(root);
+    const internals = modal as unknown as {
+      innerState_abyssPrivate: AppState;
+      innerPanel_abyssPrivate: RightPanel;
+    };
+    return {
+      state: internals.innerState_abyssPrivate,
+      panel: internals.innerPanel_abyssPrivate,
+      surface: expectDefined(activeDocument.querySelector<HTMLElement>('.abyss-modal-body')),
+      close: async () => {
+        modal.close();
+      },
+    };
+  }
+  const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+  const view = new PanelView(
+    leaf,
+    DEFAULT_SETTINGS,
+    makeTagManager(app),
+    application.index,
+    application.tasks,
+    application.statusRegistry,
+  );
+  await view.onOpen();
+  activeDocument.body.append(view.containerEl);
+  const internals = view as unknown as {
+    state_abyssPrivate: AppState;
+    right_abyssPrivate: RightPanel;
+  };
+  return {
+    state: internals.state_abyssPrivate,
+    panel: internals.right_abyssPrivate,
+    surface: view.contentEl,
+    close: async () => {
+      await view.onClose();
+    },
+  };
+}
+
+describe('real shell completion follow-up ownership', () => {
+  it.each(
+    ['panel', 'modal'].flatMap((shell) =>
+      ['Owner', 'Leaf'].flatMap((selected) =>
+        [59_999, 60_000].flatMap((duration) =>
+          ['\n', '\r\n'].map((eol) => ({ shell, selected, duration, eol })),
+        ),
+      ),
+    ),
+  )(
+    '$shell retains selected $selected through both publications at $duration ms eol=$eol',
+    async ({ shell, selected, duration, eol }) => {
+      const start = Date.parse('2026-09-05T11:59:00Z');
+      const app = await createAppWithFiles({
+        'tracked.md':
+          '\n- [ ] Root\n  - [ ] Owner\n    - [ ] Leaf\n      - 2026-09-05T11:59:00Z →\n  - [ ] Neighbor\n    - 2026-09-05T11:55:00Z →'.replaceAll(
+            '\n',
+            eol,
+          ),
+      });
+      const application = configuredTaskApplication(app, DEFAULT_SETTINGS, {
+        authority: true,
+        clock: clockFrom(start + duration, 420),
+      });
+      await application.index.initialize();
+      const root = expectDefined(application.index.list()[0]);
+      const owner = expectDefined(root.subtasks[0]);
+      const leafTask = expectDefined(owner.subtasks[0]);
+      const mounted = await openCompletionShell(shell, app, application, root);
+      const { state, panel, surface } = mounted;
+      state.set('taskStack', selected === 'Owner' ? [root, owner] : [root, owner, leafTask]);
+      const header = expectDefined(surface.querySelector('.abyss-right-header'));
+      const input = expectDefined(
+        surface.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
+      input.value = 'live draft';
+      const observations: boolean[] = [];
+      const off = state.on('taskStack', () => {
+        observations.push(header.isConnected && input.isConnected);
+      });
+      try {
+        await (
+          panel as unknown as { toggleTaskLike_abyssPrivate(node: typeof leafTask): Promise<void> }
+        ).toggleTaskLike_abyssPrivate(leafTask);
+        await flushMicrotasks(30);
+        expect(observations.length).toBeGreaterThanOrEqual(2);
+        expect(observations.every(Boolean)).toBe(true);
+        expect(surface.querySelector('.abyss-right-header')).toBe(header);
+        expect(surface.querySelector('.abyss-comment-input')).toBe(input);
+        expect(input.value).toBe('live draft');
+        const current = expectDefined(application.index.list()[0]);
+        expect(current.subtasks[0]?.subtasks[0]?.timeEntries).toHaveLength(
+          duration < 60_000 ? 0 : 1,
+        );
+        expect(current.subtasks[1]?.timeEntries[0]?.state).toBe('running');
+        expect(state.get('taskStack').map((node) => node.title)).toEqual(
+          selected === 'Owner' ? ['Root', 'Owner'] : ['Root', 'Owner', 'Leaf'],
+        );
+      } finally {
+        off();
+        await mounted.close();
+        application.index.destroy();
+      }
+    },
+  );
 });

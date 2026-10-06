@@ -51,6 +51,7 @@ export {
   sameTaskTreeExceptDependencies,
   sameTaskTreeExceptTimeEntries,
   taskReconciliationKey,
+  type CompletionTrackingWitness,
   type TaskResolution,
 } from './domain/taskReconciliation';
 export { normalizeTaskTagInput } from './domain/taskTags';

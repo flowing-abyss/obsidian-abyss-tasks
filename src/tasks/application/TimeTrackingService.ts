@@ -2,7 +2,12 @@ import type { ClockReading } from '../domain/clock';
 import type { TaskCommandResult } from '../domain/commands';
 import { rebaseTaskNode, taskNodeChain, taskNodeRootRef } from '../domain/taskCommandTargets';
 import type { TaskResolution } from '../domain/taskReconciliation';
-import { timeEntryRef, type TimeEntrySnapshot, type TrackedEntry } from '../domain/timeTracking';
+import {
+  MINIMUM_TRACKED_MS,
+  timeEntryRef,
+  type TimeEntrySnapshot,
+  type TrackedEntry,
+} from '../domain/timeTracking';
 import type {
   SubtaskSnapshot,
   TaskNodeRef,
@@ -20,7 +25,7 @@ import type { TaskDiagnosticSink } from './TaskDependencyService';
 import type { TaskEditCommand } from './TaskRepository';
 
 /** A session shorter than this leaves no trace, so a mistaken start costs the note nothing. */
-export const MINIMUM_TRACKED_MS = 60_000;
+export { MINIMUM_TRACKED_MS } from '../domain/timeTracking';
 
 const NOTHING_DISCARDED = { discardedShortEntry: false } as const;
 
@@ -373,6 +378,7 @@ export class TimeTrackingService {
       if (next === undefined) return { type: 'closed', root: current, closed, discarded };
       const result = await this.edit_abyssPrivate({
         type: 'close-time-entry',
+        ...(phase === 'completion-follow-up' ? { completionFollowUp: true as const } : {}),
         entry: timeEntryRef(next.target, next.entry),
         stamp: reading.atom,
         endMs: reading.epochMs,

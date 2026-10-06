@@ -5,6 +5,7 @@ import type { StatusRegistry } from '../../status/StatusRegistry';
 import {
   formatCommentTimeLabel,
   normalizeCommentText,
+  type CommentRef,
   type CommentTimeContext,
   type SubtaskSnapshot,
   type TaskCommentSnapshot,
@@ -21,6 +22,7 @@ import { commentPreview } from '../../ui/commentPreview';
 import { isImeOwnedEvent } from '../../ui/ime';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import { LinkEditModal } from '../../ui/LinkEditModal';
+import type { OwnedTaskSelectionProof } from '../../ui/ownedTaskSelection';
 import { renderTaskText } from '../../ui/renderTaskText';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { startTaskNodeDrag } from '../../ui/taskNodeDrag';
@@ -169,13 +171,13 @@ export class InspectorSections {
     );
   }
 
-  update(task: TaskLike, context?: CommentTimeContext): void {
+  update(task: TaskLike, context?: CommentTimeContext, proof?: OwnedTaskSelectionProof): void {
     this.#updateText(task);
     const list = this.#subList;
     const comments = this.#commentList;
     if (list === undefined || comments === undefined) return;
     this.#updateSubtasks(list, task);
-    this.#updateComments(comments, task, context);
+    this.#updateComments(comments, task, context, proof);
     this.#updateCount(
       this.#subSection,
       task.subtasks.length === 0
@@ -188,7 +190,33 @@ export class InspectorSections {
     );
   }
 
-  #updateComments(list: HTMLElement, task: TaskLike, context?: CommentTimeContext): void {
+  consumeCommentEditor(ref: CommentRef): void {
+    const entry = this.#commentRows.find(
+      (candidate) =>
+        candidate.comment.ref.relativeLine === ref.relativeLine &&
+        candidate.comment.ref.originalMarkdown === ref.originalMarkdown &&
+        JSON.stringify(candidate.comment.ref.parent) === JSON.stringify(ref.parent),
+    );
+    const editor = entry?.row.querySelector('.abyss-comment-edit-input');
+    if (entry === undefined || editor === null || editor === undefined) return;
+    editor.remove();
+    entry.update();
+  }
+
+  #updateComments(
+    list: HTMLElement,
+    task: TaskLike,
+    context?: CommentTimeContext,
+    proof?: OwnedTaskSelectionProof,
+  ): void {
+    if (proof !== undefined)
+      this.#commentRows = this.#commentRows.filter((entry) => {
+        const successor = proof.commentSuccessor(entry.comment);
+        if (successor !== undefined) return true;
+        entry.row.remove();
+        this.#host.component().removeChild(entry.component);
+        return false;
+      });
     task.comments.forEach((comment, index) => {
       const entry = this.#commentRows[index];
       if (entry === undefined) this.#renderComment(list, comment, task, context);
@@ -287,6 +315,7 @@ export class InspectorSections {
           if (!el.isConnected || !isCurrent()) return undefined;
           return {
             sourcePath: rootTaskRef(task).filePath,
+            isCurrent: () => el.isConnected && isCurrent(),
             onInsert: (links) => {
               if (el.isConnected && isCurrent()) insertAtCaret(el, links);
             },

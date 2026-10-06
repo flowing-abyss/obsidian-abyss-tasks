@@ -3,7 +3,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import type { TaskApplicationApi, TaskCommandResult, TaskSnapshot } from '../src/tasks';
+import type {
+  CompletionTrackingWitness,
+  SubtaskSnapshot,
+  TaskApplicationApi,
+  TaskCommandResult,
+  TaskSnapshot,
+} from '../src/tasks';
 import type { TaskRef } from '../src/tasks/domain/types';
 import { createTaskBlock } from '../src/tasks/infrastructure/markdown/createTaskBlock';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
@@ -2920,3 +2926,324 @@ it.each([
     }
   },
 );
+
+describe('nested existing comment continuity', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+  });
+  it.each(
+    ['plain', 'stopped', 'active'].flatMap((mode) =>
+      ['result-first', 'index-first'].flatMap((order) =>
+        ['update', 'delete'].map((operation) => ({ mode, order, operation })),
+      ),
+    ),
+  )(
+    'retains the exact owner and controls for $mode $order $operation',
+    async ({ mode, order, operation }) => {
+      const trackingEnd = mode === 'active' ? '...' : '2026-10-06T09:20:00+07:00';
+      const tracking =
+        mode === 'plain' ? '' : `\n      - 2026-10-06T09:00:00+07:00 → ${trackingEnd}`;
+      const source = `- [ ] Root\n  - [ ] Branch\n    - [ ] Owner\n      - 2026-10-06: old\n        second\n      - neighbor\n      - [ ] Child${tracking}\n  - [ ] Sibling`;
+      const h = await inspectorHarness(source, 'Owner');
+      const off = order === 'index-first' ? subscribeInspectorReconciliation(h) : () => {};
+      try {
+        const header = expectDefined(h.el.querySelector('.abyss-right-header'));
+        const create = expectDefined(h.el.querySelector('.abyss-comment-input'));
+        const rows = [...h.el.querySelectorAll('.abyss-comment-row')];
+        const neighbor = expectDefined(rows[1]);
+        expectDefined(
+          expectDefined(rows[0]).querySelector<HTMLElement>('.abyss-comment-text'),
+        ).click();
+        const input = expectDefined(
+          h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input'),
+        );
+        input.value = operation === 'delete' ? '' : 'updated\n- [ ] literal\nthird';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await vi.waitFor(() => {
+          expect(h.node('Owner').node.comments[0]?.text).toBe(
+            operation === 'delete' ? 'neighbor' : 'updated\n\\- [ ] literal\nthird',
+          );
+          expect(h.el.querySelector('.abyss-comment-edit-input')).toBeNull();
+        });
+        expect(h.state.get('taskStack').map((node) => node.title)).toEqual([
+          'Root',
+          'Branch',
+          'Owner',
+        ]);
+        expect(
+          taskNodeRef(expectDefined(h.state.get('taskStack')[h.state.get('taskStack').length - 1])),
+        ).toEqual(taskNodeRef(h.node('Owner').node));
+        expect(h.el.querySelector('.abyss-right-header')).toBe(header);
+        expect(h.el.querySelector('.abyss-comment-input')).toBe(create);
+        expect(header.isConnected && create.isConnected && neighbor.isConnected).toBe(true);
+        expect(h.el.querySelectorAll('.abyss-comment-row')).toHaveLength(
+          operation === 'delete' ? 1 : 2,
+        );
+        expect(neighbor.querySelector('.abyss-comment-text')?.textContent).toBe('neighbor');
+        expect(h.el.querySelector('.abyss-detached-drafts')).toBeNull();
+        expect(await h.read()).toBe(
+          source.replace(
+            '      - 2026-10-06: old\n        second\n',
+            operation === 'delete'
+              ? ''
+              : '      - 2026-10-06: updated\n        \\- [ ] literal\n        third\n',
+          ),
+        );
+      } finally {
+        off();
+      }
+    },
+  );
+});
+
+describe('all live paste settlement in the inspector', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+  });
+  async function setup() {
+    const h = await inspectorHarness('- [ ] Owner\n  - old', 'Owner', { 'saved.png': '' });
+    vi.spyOn(h.app.fileManager, 'getAvailablePathForAttachment').mockResolvedValue('saved.png');
+    vi.spyOn(h.app.fileManager, 'generateMarkdownLink').mockReturnValue('[[saved.png]]');
+    vi.spyOn(h.app.vault, 'createBinary').mockResolvedValue(
+      expectDefined(h.app.vault.getFileByPath('saved.png')),
+    );
+    return h;
+  }
+  it.each(['create', 'edit'] as const)(
+    'waits for A after faster B before %s submission',
+    async (kind) => {
+      const h = await setup();
+      if (kind === 'edit')
+        expectDefined(h.el.querySelector<HTMLElement>('.abyss-comment-text')).click();
+      const input = expectDefined(
+        h.el.querySelector<HTMLTextAreaElement>(submissionSelector(kind)),
+      );
+      input.value = 'one\ntwo';
+      input.setSelectionRange(7, 7);
+      const a = deferred<ArrayBuffer>(),
+        b = deferred<ArrayBuffer>();
+      pasteFile(input, a.promise);
+      pasteFile(input, b.promise);
+      const execute = vi.spyOn(h.api, 'execute');
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      b.resolve(new ArrayBuffer(1));
+      await flushMicrotasks(40);
+      expect(execute).not.toHaveBeenCalled();
+      expect(input.value).toBe('one\ntwo [[saved.png]]');
+      a.resolve(new ArrayBuffer(1));
+      await vi.waitFor(() => {
+        expect(execute).toHaveBeenCalledTimes(1);
+      });
+      expect(
+        h
+          .node('Owner')
+          .node.comments.some((comment) => comment.text === 'one\ntwo [[saved.png]] [[saved.png]]'),
+      ).toBe(true);
+    },
+  );
+  it('submits fresh plaintext before a cancelled session file finishes without replacement paste', async () => {
+    const h = await setup();
+    const input = expectDefined(h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input'));
+    const a = deferred<ArrayBuffer>();
+    input.value = 'cancelled';
+    pasteFile(input, a.promise);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    input.focus();
+    input.value = 'live plaintext';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks(50);
+    expect(h.node('Owner').node.comments.map((comment) => comment.text)).toEqual([
+      'old',
+      'live plaintext',
+    ]);
+    a.resolve(new ArrayBuffer(1));
+    await flushMicrotasks(40);
+    expect(input.value).toBe('');
+    expect(h.node('Owner').node.comments.map((comment) => comment.text)).toEqual([
+      'old',
+      'live plaintext',
+    ]);
+  });
+});
+
+describe('owned tracked completion publications', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+  });
+  it.each(
+    ['Owner', 'Leaf'].flatMap((selected) => [false, true].map((short) => ({ selected, short }))),
+  )(
+    'keeps selected $selected controls through status and timer close publications (short=$short)',
+    async ({ selected, short }) => {
+      const h = await inspectorHarness(
+        `- [ ] Root\n  - [ ] Owner\n    - [ ] Leaf\n      - 2026-09-05T11:00:00Z → 2026-09-05T11:01:00Z\n      - 2026-09-05T${short ? '11:59:30' : '11:58:00'}Z →\n  - [ ] Neighbor\n    - 2026-09-05T11:55:00Z →`,
+        selected,
+      );
+      const off = subscribeInspectorReconciliation(h);
+      const header = expectDefined(h.el.querySelector('.abyss-right-header'));
+      const input = expectDefined(h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input'));
+      input.value = 'pending local draft';
+      const observations: boolean[] = [];
+      const stop = h.state.on('taskStack', () => {
+        observations.push(header.isConnected && input.isConnected);
+      });
+      try {
+        const leaf = h.node('Leaf').node;
+        await call<Promise<void>>(h.panel, 'toggleTaskLike', leaf);
+        await flushMicrotasks(30);
+        expect(h.node('Leaf').node.status).toBe('done');
+        expect(h.node('Leaf').node.timeEntries.map((entry) => entry.state)).toEqual(
+          short ? ['closed'] : ['closed', 'closed'],
+        );
+        expect(h.node('Neighbor').node.timeEntries[0]?.state).toBe('running');
+        expect(h.state.get('taskStack').map((node) => node.title)).toEqual(
+          selected === 'Owner' ? ['Root', 'Owner'] : ['Root', 'Owner', 'Leaf'],
+        );
+        expect(observations.length).toBeGreaterThanOrEqual(2);
+        expect(observations.every(Boolean)).toBe(true);
+        expect(h.el.querySelector('.abyss-right-header')).toBe(header);
+        expect(h.el.querySelector('.abyss-comment-input')).toBe(input);
+        expect(input.value).toBe('pending local draft');
+        expect(h.el.querySelector('.abyss-detached-drafts')).toBeNull();
+      } finally {
+        stop();
+        off();
+      }
+    },
+  );
+});
+
+it('retires completion follow-up ownership with newer selection and settled commands', async () => {
+  const h = await inspectorHarness(
+    '- [ ] Root\n  - [ ] Owner\n    - [ ] Leaf\n      - 2026-09-05T11:58:00Z →\n  - [ ] Neighbor',
+    'Owner',
+  );
+  const held = deferred<void>();
+  const execute = h.api.execute.bind(h.api);
+  vi.spyOn(h.api, 'execute').mockImplementation(async (command) => {
+    const result = await execute(command);
+    await held.promise;
+    return result;
+  });
+  let follow:
+    | {
+        witness: CompletionTrackingWitness;
+        current: TaskSnapshot;
+        stack: Array<TaskSnapshot | SubtaskSnapshot>;
+      }
+    | undefined;
+  const off = h.index.subscribe(() => {
+    const stack = h.state.get('taskStack');
+    const root = expectDefined(stack[0]);
+    const resolution = h.index.resolve((root as TaskSnapshot).ref);
+    if (resolution.type !== 'rebased' || resolution.evidence !== 'authority-transition') return;
+    const witness = resolution.basis.authorityTransition?.completionTracking;
+    if (witness !== undefined) {
+      follow = { witness, current: resolution.current, stack };
+      expect(
+        h.panel.ownedRefForCompletionFollowUp(resolution.current, stack, undefined),
+      ).toBeUndefined();
+      expect(
+        h.panel.ownedRefForCompletionFollowUp(resolution.current, stack, {
+          ...witness,
+          before: { ...witness.before, line: 99 },
+        }),
+      ).toBeUndefined();
+      expect(
+        h.panel.ownedRefForCompletionFollowUp(resolution.current, stack, {
+          ...witness,
+          entry: { ...witness.entry, originalMarkdown: 'forged' },
+        }),
+      ).toBeUndefined();
+      expect(h.panel.ownedRefForCompletionFollowUp(resolution.current, stack, witness)).toEqual(
+        witness.before,
+      );
+      return;
+    }
+    const owned = h.panel.selectionForOwnedTransition(
+      resolution.previous.ref,
+      resolution.current,
+      stack,
+    );
+    const draft = h.panel.captureDraftStateForOwnedTransition(
+      resolution.previous.ref,
+      resolution.current.ref,
+    );
+    h.state.updateInspectorSelection(expectDefined(owned));
+    h.panel.restoreDraftState(draft, resolution.current);
+  });
+  try {
+    const completion = call<Promise<void>>(h.panel, 'toggleTaskLike', h.node('Leaf').node);
+    await flushMicrotasks(30);
+    const captured = expectDefined(follow);
+    h.state.set('taskStack', [h.node('Root').root]);
+    expect(
+      h.panel.ownedRefForCompletionFollowUp(captured.current, captured.stack, captured.witness),
+    ).toBeUndefined();
+    held.resolve();
+    await completion;
+    expect(
+      h.panel.ownedRefForCompletionFollowUp(captured.current, captured.stack, captured.witness),
+    ).toBeUndefined();
+  } finally {
+    off();
+    held.resolve();
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+    vi.restoreAllMocks();
+  }
+});
+
+it('ordinary stop does not acquire completion follow-up evidence', async () => {
+  const h = await inspectorHarness('- [ ] Current\n  - 2026-09-05T11:58:00Z →');
+  const previous = expectDefined(h.index.list()[0]);
+  const evidence: unknown[] = [];
+  const off = h.index.subscribe(() => {
+    const resolution = h.index.resolve(previous.ref);
+    if (resolution.type === 'rebased')
+      evidence.push(resolution.basis.authorityTransition?.completionTracking);
+  });
+  try {
+    expect((await h.api.execute({ type: 'stop-tracking' })).type).toBe('ok');
+    expect(evidence.length).toBeGreaterThan(0);
+    expect(evidence.every((item) => item === undefined)).toBe(true);
+  } finally {
+    off();
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+  }
+});
+
+it('aborts completion witness staging when its source callback rejects', async () => {
+  const h = await inspectorHarness('- [ ] Current\n  - 2026-09-05T11:58:00Z →');
+  const process = h.app.vault.process.bind(h.app.vault);
+  vi.spyOn(h.app.vault, 'process').mockImplementation((file, transform, options) =>
+    process(
+      file,
+      (content) => {
+        const candidate = transform(content);
+        if (candidate.includes('→ 2026-09-05T12:00:00')) throw new Error('rejected close callback');
+        return candidate;
+      },
+      options,
+    ),
+  );
+  try {
+    const original = expectDefined(h.index.list()[0]);
+    await h.api.execute({ type: 'toggle-completion', target: { type: 'task', ref: original.ref } });
+    const content = await h.app.vault.read(h.file);
+    const current = expectDefined(h.index.installCommittedContent('tasks.md', content)[0]);
+    expect(current.status).toBe('done');
+    expect(current.timeEntries[0]?.state).toBe('running');
+    const resolution = h.index.resolve(current.ref);
+    expect(resolution.type).toBe('exact');
+    if (resolution.type === 'exact')
+      expect(resolution.basis.authorityTransition?.completionTracking).toBeUndefined();
+    expect(content).not.toContain('→ 2026-09-05T12:00:00');
+  } finally {
+    vi.restoreAllMocks();
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+  }
+});

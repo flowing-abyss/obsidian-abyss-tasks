@@ -492,11 +492,11 @@ export class TaskModal {
   ): void {
     const current = resolution.type === 'exact' ? resolution.task : resolution.current;
     if (resolution.type === 'exact' && isCurrentTaskSelectionSnapshot(current, stack)) return;
-    const consumedOwnedRef = this.consumedOwnedRef_abyssPrivate(resolution);
+    const consumedOwnedRef = this.ownedRefForResolution_abyssPrivate(resolution, current, stack);
     const ownedSelection =
       consumedOwnedRef === undefined
         ? undefined
-        : this.ownedSelection_abyssPrivate(consumedOwnedRef, current, stack);
+        : this.ownedSelection_abyssPrivate(consumedOwnedRef, current, stack, resolution);
     const draft = this.captureResolvedDraft_abyssPrivate(consumedOwnedRef, current.ref);
     this.ownedWriteRef_abyssPrivate = undefined;
     this.innerState_abyssPrivate?.updateInspectorSelection(
@@ -507,6 +507,35 @@ export class TaskModal {
         }),
     );
     this.innerPanel_abyssPrivate?.restoreDraftState(draft, current);
+  }
+
+  private ownedRefForResolution_abyssPrivate(
+    resolution: Extract<TaskResolution, { type: 'exact' | 'rebased' }>,
+    current: TaskSnapshot,
+    stack: readonly TaskSelectionNode[],
+  ): TaskRef | undefined {
+    return (
+      this.consumedOwnedRef_abyssPrivate(resolution) ??
+      this.innerPanel_abyssPrivate?.ownedRefForCompletionFollowUp(
+        current,
+        stack,
+        resolution.basis.authorityTransition?.completionTracking,
+      )
+    );
+  }
+
+  private ownedSelection_abyssPrivate(
+    ref: TaskRef,
+    current: TaskSnapshot,
+    stack: readonly TaskSelectionNode[],
+    resolution: Extract<TaskResolution, { type: 'exact' | 'rebased' }>,
+  ): TaskSelectionNode[] | undefined {
+    return this.innerPanel_abyssPrivate?.selectionForOwnedTransition(
+      ref,
+      current,
+      stack,
+      resolution.basis.authorityTransition?.completionTracking,
+    );
   }
 
   private captureResolvedDraft_abyssPrivate(
@@ -529,14 +558,6 @@ export class TaskModal {
       this.sameRef_abyssPrivate(ownedWriteRef, resolution.previous.ref)
       ? ownedWriteRef
       : undefined;
-  }
-
-  private ownedSelection_abyssPrivate(
-    ref: TaskRef,
-    current: TaskSnapshot,
-    stack: TaskSelectionNode[],
-  ): TaskSelectionNode[] | undefined {
-    return this.innerPanel_abyssPrivate?.selectionForOwnedTransition(ref, current, stack);
   }
 
   private acknowledgeOwnWrite_abyssPrivate(taskOrRef?: TaskSelectionNode | TaskRef): void {

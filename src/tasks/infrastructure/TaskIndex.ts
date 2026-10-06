@@ -820,7 +820,7 @@ function clonedReconciliationBasis(basis: RootReconciliationBasis): RootReconcil
     }),
     ...(basis.nextRootAnchor != null && { nextRootAnchor: { ...basis.nextRootAnchor } }),
     ...(basis.authorityTransition != null && {
-      authorityTransition: { ...basis.authorityTransition },
+      authorityTransition: structuredClone(basis.authorityTransition),
     }),
   };
 }

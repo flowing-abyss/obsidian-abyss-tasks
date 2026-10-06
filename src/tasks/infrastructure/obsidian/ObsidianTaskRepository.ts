@@ -42,6 +42,7 @@ import {
   taskNodeRootRef as rootRefOf,
   taskMutationNodeRef,
 } from '../../domain/taskCommandTargets';
+import type { CompletionTrackingWitness } from '../../domain/taskReconciliation';
 import type {
   CommentRef,
   LocalDate,
@@ -771,6 +772,31 @@ interface SurvivingEditStageInput {
   readonly edit: EditOutcome;
   readonly originalContent: string;
   readonly surviving: TaskRootBlock;
+}
+
+function completionTrackingWitness(
+  input: SurvivingEditStageInput,
+  revision: string,
+): CompletionTrackingWitness | undefined {
+  const { process, edit, surviving } = input;
+  const command = process.command;
+  return command.type === 'close-time-entry' &&
+    command.completionFollowUp === true &&
+    edit.result.type === 'committed' &&
+    edit.result.outcome.type === 'task'
+    ? {
+        before: { ...process.rootRef },
+        after: { filePath: process.rootRef.filePath, line: surviving.line, revision },
+        entry: structuredClone(command.entry),
+        stamp: command.stamp,
+        endMs: command.endMs,
+        minimumMs: command.minimumMs,
+        disposition:
+          edit.result.outcome.discardedShortEntry === true
+            ? ('discarded' as const)
+            : ('closed' as const),
+      }
+    : undefined;
 }
 
 interface RejectedRollbackContext {
@@ -2252,13 +2278,21 @@ export class ObsidianTaskRepository implements TaskRepository {
       this.invalidateStagedEdit_abyssPrivate(transaction);
       return originalContent;
     }
+    const completionTracking = completionTrackingWitness(input, revision);
     const staged = authority.stage(
       {
         filePath: process.rootRef.filePath,
         candidateFingerprint: taskRefContentFingerprint(edit.content),
         candidateLength: edit.content.length,
         expectedRevision: process.rootRef.revision,
-        roots: [{ line: surviving.line, source: surviving.source, revision }],
+        roots: [
+          {
+            line: surviving.line,
+            source: surviving.source,
+            revision,
+            ...(completionTracking === undefined ? {} : { completionTracking }),
+          },
+        ],
       },
       indexedRevision,
     );

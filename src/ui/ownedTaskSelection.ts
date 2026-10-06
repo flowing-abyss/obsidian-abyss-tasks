@@ -5,8 +5,10 @@ import {
   normalizeCommentText,
   sameTaskNodeRef,
   sameTaskTreeWithOwnedChanges,
+  type CompletionTrackingWitness,
   type SubtaskSnapshot,
   type TaskCommand,
+  type TaskCommentSnapshot,
   type TaskNodeRef,
   type TaskPatch,
   type TaskSnapshot,
@@ -181,6 +183,8 @@ function selectionPaths(
 export interface OwnedTaskSelectionProof {
   readonly selection: TaskSelectionNode[];
   readonly successor: (previous: TaskSelectionNode) => TaskSelectionNode | undefined;
+  readonly nodeSuccessor: (previous: TaskNodeRef) => TaskSelectionNode | undefined;
+  readonly commentSuccessor: (previous: TaskCommentSnapshot) => TaskCommentSnapshot | undefined;
 }
 
 /** Prove once, then index the exact surviving occurrences for mounted action owners. */
@@ -193,7 +197,17 @@ export function proveOwnedTaskSelection(
   const rebuilt = rebuildSelection(current, selection, command, policy);
   const before = selection[0];
   if (rebuilt === undefined || before === undefined) return undefined;
+  return indexSelectionProof(current, before, command, rebuilt);
+}
+
+function indexSelectionProof(
+  current: TaskSnapshot,
+  before: TaskSelectionNode,
+  command: TaskCommand,
+  rebuilt: TaskSelectionNode[],
+): OwnedTaskSelectionProof {
   const successors = new Map<string, TaskSelectionNode>();
+  const comments = new Map<string, TaskCommentSnapshot>();
   const splice = command.type === 'delete-subtask' || command.type === 'restore-subtask';
   const restore = command.type === 'restore-subtask';
   let parent: TaskNodeRef | undefined;
@@ -201,6 +215,21 @@ export function proveOwnedTaskSelection(
   if (command.type === 'delete-subtask') parent = command.subtask.parent;
   const visit = (previous: TaskSelectionNode, next: TaskSelectionNode): void => {
     successors.set(JSON.stringify(taskNodeRef(previous)), next);
+    const deletedComment =
+      command.type === 'delete-comment' &&
+      sameTaskNodeRef(taskNodeRef(previous), command.comment.parent)
+        ? previous.comments.findIndex(
+            (comment) =>
+              comment.ref.relativeLine === command.comment.relativeLine &&
+              comment.ref.originalMarkdown === command.comment.originalMarkdown,
+          )
+        : -1;
+    previous.comments.forEach((comment, position) => {
+      if (position === deletedComment) return;
+      const successor =
+        next.comments[position - (deletedComment >= 0 && position > deletedComment ? 1 : 0)];
+      if (successor !== undefined) comments.set(JSON.stringify(comment.ref), successor);
+    });
     const edited = parent !== undefined && sameTaskNodeRef(taskNodeRef(previous), parent);
     const expanded = restore ? next : previous;
     const index = edited && splice ? removalIndex(expanded, command) : -1;
@@ -216,6 +245,8 @@ export function proveOwnedTaskSelection(
   return {
     selection: rebuilt,
     successor: (previous) => successors.get(JSON.stringify(taskNodeRef(previous))),
+    nodeSuccessor: (previous) => successors.get(JSON.stringify(previous)),
+    commentSuccessor: (previous) => comments.get(JSON.stringify(previous.ref)),
   };
 }
 
@@ -235,6 +266,8 @@ function rebuildSelection(
   command: TaskCommand,
   policy?: Parameters<typeof dependencySubtaskChild>[3],
 ): TaskSelectionNode[] | undefined {
+  if (command.type === 'update-comment' || command.type === 'delete-comment')
+    return rebuildCommentSelection(current, selection, command);
   if (command.type === 'edit-link') return rebuildLinkSelection(current, selection, command);
   if (command.type === 'delete-subtask' || command.type === 'restore-subtask')
     return rebuildRemovalSelection(current, selection, command);
@@ -470,4 +503,86 @@ function rebuildInsertionSelection(
   )
     return undefined;
   return follow(current, selectedPath, false);
+}
+
+function rebuildCommentSelection(
+  current: TaskSnapshot,
+  selection: readonly TaskSelectionNode[],
+  command: Extract<TaskCommand, { type: 'update-comment' | 'delete-comment' }>,
+): TaskSelectionNode[] | undefined {
+  const paths = selectionPaths(current, selection, command.comment.parent, false);
+  if (paths === undefined) return undefined;
+  const normalized =
+    command.type === 'update-comment' ? normalizeCommentText(command.text) : undefined;
+  if (normalized !== undefined && normalized.type !== 'ready') return undefined;
+  const edit = {
+    ref: command.comment,
+    ...(normalized?.type === 'ready' ? { text: normalized.text } : {}),
+  };
+  if (
+    !sameTaskTreeWithOwnedChanges(paths.before, current, paths.editedPath, {
+      fields: new Set(['comments']),
+      comment: edit,
+    })
+  )
+    return undefined;
+  return follow(current, paths.selectedPath, false);
+}
+
+/** Accept only the exact application-witnessed timer step of a still-pending completed status command. */
+export function proveOwnedCompletionFollowUp(
+  current: TaskSnapshot,
+  selection: readonly TaskSelectionNode[],
+  context: {
+    readonly original: readonly TaskSelectionNode[];
+    readonly command: TaskCommand;
+    readonly witness: CompletionTrackingWitness | undefined;
+  },
+): OwnedTaskSelectionProof | undefined {
+  const { original, command, witness } = context;
+  if (
+    (command.type !== 'set-status' && command.type !== 'toggle-completion') ||
+    witness === undefined
+  )
+    return undefined;
+  const paths = completionFollowUpPaths(current, selection, {
+    original,
+    target: command.target,
+    witness,
+  });
+  if (paths === undefined) return undefined;
+  if (
+    !sameTaskTreeWithOwnedChanges(paths.before, current, paths.editedPath, {
+      fields: new Set(['timeEntries']),
+      tracking: witness,
+    })
+  )
+    return undefined;
+  const rebuilt = follow(current, paths.selectedPath, false);
+  return rebuilt === undefined
+    ? undefined
+    : indexSelectionProof(current, paths.before, command, rebuilt);
+}
+
+function completionFollowUpPaths(
+  current: TaskSnapshot,
+  selection: readonly TaskSelectionNode[],
+  context: {
+    readonly original: readonly TaskSelectionNode[];
+    readonly target: TaskNodeRef;
+    readonly witness: CompletionTrackingWitness;
+  },
+): ReturnType<typeof selectionPaths> {
+  const { original, target, witness } = context;
+  const initial = original[0];
+  if (initial === undefined || !('source' in initial)) return undefined;
+  const targetPath = childPath(initial, target, false);
+  const paths = selectionPaths(current, selection, witness.entry.parent, false);
+  if (
+    paths === undefined ||
+    targetPath?.every((index, position) => paths.editedPath[position] === index) !== true
+  )
+    return undefined;
+  const completed = follow(paths.before, targetPath, false)?.[targetPath.length];
+  return ['done', 'cancelled'].includes(completed?.status ?? '') ? paths : undefined;
 }

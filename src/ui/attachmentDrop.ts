@@ -160,6 +160,8 @@ async function handleDrop(
 }
 
 interface AttachmentPasteContext {
+  /** Frozen session validity; later input reuse must not revive this acquisition. */
+  readonly isCurrent?: () => boolean;
   sourcePath: string;
   onInsert: (linkMarkdown: string) => void;
 }
@@ -172,19 +174,24 @@ export type AttachmentPasteOptions = { app: App } & (
     }
 );
 
-// Tracks an in-flight paste-attach per element so a caller that finalizes on blur
-// (an edit textarea removed on save) can await it before reading/removing the element.
-// The stored promise never rejects: attachFilesAsLinks catches per-file errors internally,
-// so awaiting it in a blur handler cannot turn into an unhandled rejection.
-const pendingPastes = new WeakMap<HTMLElement, Promise<unknown>>();
+interface PendingPaste {
+  readonly work: Promise<unknown>;
+  readonly isCurrent: () => boolean;
+}
+const pendingPastes = new WeakMap<HTMLElement, Set<PendingPaste>>();
 
-/**
- * Resolve once any in-flight paste-attach for `el` has inserted its link. Callers that
- * destroy the element on blur/save must await this first, or a paste that resolves after
- * removal is silently lost (the file is saved but its link never persisted).
- */
-export function whenPasteSettled(el: HTMLElement): Promise<void> {
-  return Promise.resolve(pendingPastes.get(el)).then(() => undefined);
+/** Wait for every acquisition in the currently live session, including work acquired while waiting. */
+export async function whenPasteSettled(el: HTMLElement): Promise<void> {
+  const session = pendingPastes.get(el);
+  if (session === undefined) return;
+  // Freeze this session's work: a cancelled session never waits on later reuse of the element.
+  const live = [...session].filter((paste) => paste.isCurrent());
+  await Promise.all(live.map((paste) => paste.work));
+  if (
+    live.some((paste) => paste.isCurrent()) &&
+    [...(pendingPastes.get(el) ?? [])].some((paste) => paste.isCurrent())
+  )
+    await whenPasteSettled(el);
 }
 
 /** Wire clipboard paste-to-attach onto a textarea. Returns a disposer. */
@@ -196,16 +203,23 @@ export function enableAttachmentPaste(el: HTMLElement, opts: AttachmentPasteOpti
     e.preventDefault();
     e.stopPropagation();
     const captured = 'capture' in opts ? opts.capture() : opts;
-    if (captured === undefined) return;
+    if (captured === undefined || captured.isCurrent?.() === false) return;
     const done = attachFilesAsLinks(opts.app, files, captured.sourcePath).then((links) => {
-      if (!active || links.length === 0) return;
+      if (!active || captured.isCurrent?.() === false || links.length === 0) return;
       captured.onInsert(links.join(' '));
       new Notice(`Attached ${links.length} file${links.length > 1 ? 's' : ''}`);
     });
+    const session = pendingPastes.get(el) ?? new Set<PendingPaste>();
     const tracked = done.finally(() => {
-      if (pendingPastes.get(el) === tracked) pendingPastes.delete(el);
+      session.delete(pending);
+      if (session.size === 0 && pendingPastes.get(el) === session) pendingPastes.delete(el);
     });
-    pendingPastes.set(el, tracked);
+    const pending: PendingPaste = {
+      work: tracked,
+      isCurrent: () => active && captured.isCurrent?.() !== false,
+    };
+    session.add(pending);
+    pendingPastes.set(el, session);
     runAsyncAction(tracked, 'Could not attach pasted files');
   };
   el.addEventListener('paste', onPaste);
