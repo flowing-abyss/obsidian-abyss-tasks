@@ -837,7 +837,9 @@ They read live shell state and invoke retained command callbacks. RightPanel kee
 submission records, late-result handling, draft ownership, and the decision to restore a draft.
 The owners share its lifecycle and drag cleanup rather than introducing separate subscriptions or
 persistence. InspectorSections owns disposable Markdown components for mounted title, description,
-subtask and comment regions. A proven owned command updates affected regions and counters in place;
+subtask and comment regions. RightPanel owns a disposable Markdown component for each breadcrumb
+title and refreshes changed ancestor titles before their next action. A proven owned command updates
+affected regions and counters in place;
 unaffected headers, text, rows and continuous-entry inputs remain connected. Planning controls obtain
 one current `InspectorTaskOwner` snapshot when an action opens. Open editors, confirmations and
 submitted commands retain their captured target; attachment drops capture at the synchronous drop

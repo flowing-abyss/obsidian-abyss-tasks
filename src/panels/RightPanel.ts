@@ -313,6 +313,12 @@ export class RightPanel {
   private detachedFocusTimer_abyssPrivate: number | undefined;
 
   private readonly taskOwners_abyssPrivate = new Map<string, InspectorTaskOwner>();
+  private readonly breadcrumbTitles_abyssPrivate: Array<{
+    readonly element: HTMLElement;
+    readonly owner: InspectorTaskOwner;
+    task: TaskLike;
+    component: Component;
+  }> = [];
   private retainedStack_abyssPrivate: readonly TaskLike[] = [];
   private retainedDocument_abyssPrivate: Document | undefined;
   private metadataTask_abyssPrivate: TaskLike | undefined;
@@ -331,6 +337,7 @@ export class RightPanel {
   private retireTaskOwners_abyssPrivate(): void {
     for (const owner of this.taskOwners_abyssPrivate.values()) owner.current = undefined;
     this.taskOwners_abyssPrivate.clear();
+    this.breadcrumbTitles_abyssPrivate.length = 0;
     this.retainedStack_abyssPrivate = [];
     this.retainedProof_abyssPrivate = undefined;
     this.sections_abyssPrivate.destroy();
@@ -1488,6 +1495,7 @@ export class RightPanel {
       return false;
     this.advanceTaskOwners_abyssPrivate(proof);
     this.retainedStack_abyssPrivate = stack;
+    this.updateBreadcrumbTitles_abyssPrivate();
     this.sections_abyssPrivate.update(next, this.commentTimeContext_abyssPrivate?.());
     this.refreshTaskMetadata_abyssPrivate(next);
     this.planningSurfaces_abyssPrivate.updateTaskOwners();
@@ -1574,16 +1582,11 @@ export class RightPanel {
       if (index > 0) breadcrumb.createSpan({ cls: 'abyss-breadcrumb-sep', text: ' › ' });
       const owner = this.taskOwner_abyssPrivate(item);
       const crumb = breadcrumb.createSpan({ cls: 'abyss-breadcrumb-item' });
-      renderTaskText(crumb, item.markdownTitle, {
-        presentation: 'title',
-        app: this.app_abyssPrivate,
-        sourcePath: rootTaskRef(item).filePath,
-        component: this.md_abyssPrivate,
-        onEditLink: (occurrence, token) => {
-          const current = owner.current;
-          if (current !== undefined)
-            this.sections_abyssPrivate.editLink(current, occurrence, token);
-        },
+      this.breadcrumbTitles_abyssPrivate.push({
+        element: crumb,
+        owner,
+        task: item,
+        component: this.renderBreadcrumbTitle_abyssPrivate(crumb, item, owner),
       });
       crumb.addEventListener('click', () => {
         if (owner.current === undefined) return;
@@ -1592,6 +1595,40 @@ export class RightPanel {
         );
       });
     }
+  }
+
+  private updateBreadcrumbTitles_abyssPrivate(): void {
+    for (const title of this.breadcrumbTitles_abyssPrivate) {
+      const current = title.owner.current;
+      if (current === undefined || current.markdownTitle === title.task.markdownTitle) continue;
+      this.md_abyssPrivate.removeChild(title.component);
+      title.task = current;
+      title.component = this.renderBreadcrumbTitle_abyssPrivate(
+        title.element,
+        current,
+        title.owner,
+      );
+    }
+  }
+
+  private renderBreadcrumbTitle_abyssPrivate(
+    element: HTMLElement,
+    task: TaskLike,
+    owner: InspectorTaskOwner,
+  ): Component {
+    const component = this.md_abyssPrivate.addChild(new Component());
+    renderTaskText(element, task.markdownTitle, {
+      presentation: 'title',
+      app: this.app_abyssPrivate,
+      sourcePath: rootTaskRef(task).filePath,
+      component,
+      linkEventOwner: component,
+      onEditLink: (occurrence, token) => {
+        const current = owner.current;
+        if (current !== undefined) this.sections_abyssPrivate.editLink(current, occurrence, token);
+      },
+    });
+    return component;
   }
 
   private restoreDependencyFrame_abyssPrivate(): void {

@@ -140,6 +140,66 @@ describe('task link rewrite delegation', () => {
     },
   );
 
+  it('refreshes an edited ancestor breadcrumb before a second alias-only link edit', async () => {
+    mockReadingView();
+    const menus = captureMenus();
+    const modals = captureLinkModals();
+    const h = await inspectorHarness(
+      '- [ ] Root [[Old]]\n  - [ ] Branch [[Unchanged]]\n    - [ ] Owner\n      - > Selected description\n      - [ ] Existing',
+      'Owner',
+    );
+    const off = subscribeInspectorReconciliation(h);
+    try {
+      await settleRender();
+      const crumbs = h.el.querySelectorAll('.abyss-breadcrumb-item');
+      const rootCrumb = expectDefined(crumbs[0]);
+      const branchLink = expectDefined(expectDefined(crumbs[1]).querySelector('a'));
+      const originalLink = expectDefined(rootCrumb.querySelector('a'));
+      const header = expectDefined(h.el.querySelector('.abyss-right-header'));
+      const description = expectDefined(h.el.querySelector('.abyss-right-desc-view'));
+      const open = (link: Element) => {
+        rightClick(link);
+        expectDefined(menus[menus.length - 1]).pick('Edit link…');
+        return modals.last();
+      };
+      const first = open(originalLink);
+      editSettingControl(modalInputs(first).target, 'New');
+      clickSave(first);
+      await vi.waitFor(async () => {
+        expect(await h.read()).toContain('Root [[New]]');
+      });
+      await settleRender();
+      expect(rootCrumb.querySelector('a')?.textContent).toBe('New');
+      expect(header.isConnected).toBe(true);
+      expect(description.isConnected).toBe(true);
+      expect(branchLink.isConnected).toBe(true);
+      const menuCount = menus.length;
+      rightClick(originalLink);
+      expect(menus).toHaveLength(menuCount);
+      const second = open(expectDefined(rootCrumb.querySelector('a')));
+      expect(modalInputs(second).target.value).toBe('New');
+      editSettingControl(modalInputs(second).display, 'Alias');
+      clickSave(second);
+      await vi.waitFor(async () => {
+        expect(await h.read()).toContain('Root [[New|Alias]]');
+      });
+      await settleRender();
+      expect(rootCrumb.querySelector('a')?.textContent).toBe('Alias');
+      expect(rootCrumb.querySelector('a')?.getAttribute('data-href')).toBe('New');
+      expect(h.state.get('taskStack').map((node) => node.markdownTitle)).toEqual([
+        'Root [[New|Alias]]',
+        'Branch [[Unchanged]]',
+        'Owner',
+      ]);
+      expect(header.isConnected).toBe(true);
+      expect(description.isConnected).toBe(true);
+      expect(branchLink.isConnected).toBe(true);
+    } finally {
+      off();
+      for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+    }
+  });
+
   it('owns a link editor once per open and releases it idempotently on close', async () => {
     const app = await createAppWithFiles({});
     const release = vi.fn();
