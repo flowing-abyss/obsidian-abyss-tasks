@@ -5355,7 +5355,7 @@ describe('project Kanban overview', () => {
       ),
     );
     expect(start.textContent).toBe('Sep 10, 2026');
-    expect(start.title).toBe(startRaw);
+    expect(start.getAttribute('aria-label')).toBe(startRaw);
     expect(end.textContent).toBe(endRaw);
   });
 

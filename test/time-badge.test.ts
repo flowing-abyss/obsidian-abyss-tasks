@@ -23,8 +23,10 @@ import {
   loadPluginStyles,
   useRealMoment,
 } from './helpers';
+import { accessibleName, useHostTooltips } from './support/hostTooltips';
 
 useRealMoment();
+useHostTooltips();
 
 const css = await loadPluginStyles();
 
@@ -265,11 +267,21 @@ describe('inspector tracked time badge', () => {
 
     expect(badge(el).classList.contains('is-tracking')).toBe(false);
     expect(body(el).textContent).toBe('0m');
+    expect(accessibleName(body(el))).toBe('Tracked time 0m');
     expect(body(el).getAttribute('aria-label')).toBe('Tracked time 0m');
+    expect(body(el).hasAttribute('title')).toBe(false);
     expect(body(el).getAttribute('aria-haspopup')).toBe('dialog');
     expect(body(el).getAttribute('aria-expanded')).toBe('false');
-    expect(toggle(el).getAttribute('aria-label')).toBe('Start tracking');
+    expect(accessibleName(toggle(el))).toBe('Start tracking');
+    if (!toggle(el).disabled) expect(toggle(el).getAttribute('aria-label')).toBe('Start tracking');
     expect(toggle(el).disabled).toBe(false);
+  });
+
+  it('uses a stale timer question as the host hint while preserving the tracked total name', async () => {
+    const { el } = await inspector('- [ ] Current\n  - 2026-09-18T02:00:00+03:00 →\n');
+    expect(body(el).getAttribute('aria-label')).toBe('Still tracking since 02:00?');
+    expect(accessibleName(body(el))).toBe('Tracked time 12h 5m');
+    expect(body(el).hasAttribute('title')).toBe(false);
   });
 
   it('leads the dependency badge in the chips row', async () => {
@@ -303,14 +315,16 @@ describe('inspector tracked time badge', () => {
     const { el } = await inspector(CLOSED_SESSIONS);
 
     expect(body(el).textContent).toBe('1h 35m');
-    expect(body(el).getAttribute('aria-label')).toBe('Tracked time 1h 35m');
+    expect(accessibleName(body(el))).toBe('Tracked time 1h 35m');
   });
 
   it('refuses to track a finished task', async () => {
     const { el } = await inspector('- [x] Current\n');
 
     expect(toggle(el).disabled).toBe(true);
-    expect(toggle(el).title).toBe('Finished tasks cannot be tracked');
+    expect(toggle(el).getAttribute('aria-label')).toBe('Finished tasks cannot be tracked');
+    expect(accessibleName(toggle(el))).toBe('Start tracking');
+    expect(toggle(el).hasAttribute('title')).toBe(false);
   });
 
   it('opens a session from the badge and closes it again', async () => {
@@ -321,6 +335,7 @@ describe('inspector tracked time badge', () => {
 
     expect(await harness.read()).toBe(`- [ ] Current\n\t- ${NOW_ATOM} →\n`);
     expect(badge(harness.el).classList.contains('is-tracking')).toBe(true);
+    expect(accessibleName(toggle(harness.el))).toBe('Pause tracking');
     expect(toggle(harness.el).getAttribute('aria-label')).toBe('Pause tracking');
     expect(body(harness.el).textContent).toBe('0m');
 
@@ -332,7 +347,7 @@ describe('inspector tracked time badge', () => {
       `- [ ] Current\n\t- ${NOW_ATOM} → 2026-09-18T14:07:32+03:00\n`,
     );
     expect(badge(harness.el).classList.contains('is-tracking')).toBe(false);
-    expect(toggle(harness.el).getAttribute('aria-label')).toBe('Start tracking');
+    expect(accessibleName(toggle(harness.el))).toBe('Start tracking');
     expect(body(harness.el).textContent).toBe('2m');
     expect(harness.reported).toEqual([]);
   });
@@ -672,3 +687,8 @@ describe('inspector tracked time badge weight', () => {
     ]);
   });
 });
+
+vi.mock('obsidian', async () => ({
+  ...(await import('obsidian-test-mocks/obsidian')),
+  setTooltip: vi.fn(),
+}));

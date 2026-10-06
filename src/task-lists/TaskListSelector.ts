@@ -20,7 +20,7 @@ import {
   type TaskStatusType,
 } from '../tasks';
 import type { TaskLinkValue, TaskLinkValues } from './taskLinkValues';
-import { todayTaskCategory } from './todayTaskCategory';
+import { taskListDate, todayTaskCategory } from './todayTaskCategory';
 
 export type TaskOrganizationSettings = Pick<
   CalendarSettings,
@@ -159,15 +159,23 @@ function compareCreated(left: TaskListValue, right: TaskListValue): number {
   return a.localeCompare(b);
 }
 
-function compareDate(left: TaskListValue, right: TaskListValue): number {
-  const dateOrder = compareOptional(dateOf(left), dateOf(right));
+function compareDate(
+  left: TaskListValue,
+  right: TaskListValue,
+  input: Pick<TaskValueSelectionInput<TaskListValue>, 'selection' | 'today'>,
+): number {
+  const todayListDate = input.selection === 'today' ? input.today : undefined;
+  const dateOrder = compareOptional(
+    taskListDate(left, todayListDate),
+    taskListDate(right, todayListDate),
+  );
   return dateOrder !== 0 ? dateOrder : compareOptional(left.planning.time, right.planning.time);
 }
 
 function compare<T extends TaskListValue>(left: T, right: T, order: TaskOrder<T>): number {
   const { input } = order;
   const field = input.viewState.sortBy.field;
-  if (field === 'date') return compareDate(left, right);
+  if (field === 'date') return compareDate(left, right, input);
   if (field === 'priority') return left.priority.localeCompare(right.priority);
   if (field === 'title') return left.title.localeCompare(right.title);
   if (field === 'source-note') return left.source.filePath.localeCompare(right.source.filePath);

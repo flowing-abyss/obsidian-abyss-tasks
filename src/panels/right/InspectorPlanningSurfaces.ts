@@ -1,5 +1,5 @@
 import type { App } from 'obsidian';
-import { setIcon, type Component } from 'obsidian';
+import { setIcon, setTooltip, type Component } from 'obsidian';
 import { formatDurationFromMinutes, parseDurationToMinutes } from '../../parser/TaskParser';
 import { DEFAULT_SETTINGS } from '../../settings/defaults';
 import type { CalendarSettings } from '../../settings/types';
@@ -478,7 +478,6 @@ export class InspectorPlanningSurfaces {
       cls: `abyss-chip abyss-chip-time${time == null ? ' abyss-chip-empty' : ''}`,
       text: presentation.text,
       attr: {
-        title: time == null ? 'Set time and duration' : 'Change time and duration',
         'aria-label': presentation.label,
         'aria-haspopup': 'dialog',
         'aria-expanded': 'false',
@@ -512,8 +511,8 @@ export class InspectorPlanningSurfaces {
     const chip = container.createEl('button', {
       cls: `abyss-chip abyss-chip-scheduled${value != null ? '' : ' abyss-chip-empty'}`,
       text: value != null ? `⏳ ${this.#host.formatDate(value)}` : '⏳ Plan',
-      attr: { title: 'Set plan date' },
     });
+    setTooltip(chip, 'Set plan date');
     this.registerPlanningControl('scheduled', chip);
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -527,8 +526,8 @@ export class InspectorPlanningSurfaces {
     const chip = container.createEl('button', {
       cls: `abyss-chip abyss-chip-start${value != null ? '' : ' abyss-chip-empty'}`,
       text: value != null ? `🛫 ${this.#host.formatDate(value)}` : '🛫 Start',
-      attr: { title: 'Set start date' },
     });
+    setTooltip(chip, 'Set start date');
     this.registerPlanningControl('start', chip);
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -552,7 +551,6 @@ export class InspectorPlanningSurfaces {
       cls: 'abyss-chip abyss-chip-add abyss-chip-add-date',
       text: '+ date',
       attr: {
-        title: 'Add start or plan date',
         'aria-label': 'Add start or plan date',
         'aria-haspopup': 'menu',
         'aria-expanded': 'false',
@@ -659,8 +657,8 @@ export class InspectorPlanningSurfaces {
     const hasRecurrence = recurrence !== undefined && recurrence !== '';
     const chip = container.createEl('button', {
       cls: `abyss-chip abyss-repeat-chip${hasRecurrence ? '' : ' abyss-chip-add abyss-chip-empty'}`,
-      attr: { title: hasRecurrence ? 'Edit repeat' : 'Add repeat' },
     });
+    setTooltip(chip, hasRecurrence ? 'Edit repeat' : 'Add repeat');
     this.registerPlanningControl('repeat', chip);
     if (hasRecurrence) {
       renderRecurrenceBadge(chip, recurrenceBadgeInput(recurrence));
@@ -1243,7 +1241,7 @@ export class InspectorPlanningSurfaces {
   #renderPopoverClear(row: HTMLElement, label: string, action: () => void): void {
     const button = row.createEl('button', {
       cls: 'abyss-popover-clear-icon-btn',
-      attr: { title: label, 'aria-label': label },
+      attr: { 'aria-label': label },
     });
     setIcon(button, 'x');
     button.addEventListener('mousedown', (event) => {

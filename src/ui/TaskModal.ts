@@ -264,7 +264,6 @@ export class TaskModal {
     const closeBtn = parent.createEl('button');
     closeBtn.className = 'clickable-icon abyss-right-action-btn abyss-modal-close-btn';
     closeBtn.setAttribute('aria-label', 'Close');
-    closeBtn.setAttribute('title', 'Close');
     setIcon(closeBtn, 'x');
     closeBtn.addEventListener('click', () => {
       this.closeFromUser_abyssPrivate();

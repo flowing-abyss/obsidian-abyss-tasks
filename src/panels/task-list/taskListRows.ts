@@ -19,7 +19,12 @@ export type TaskListGrouping =
   | { readonly by: 'none' }
   | { readonly by: 'priority' }
   | { readonly by: 'tag' }
-  | { readonly by: 'date'; readonly today: string; readonly tomorrow: string }
+  | {
+      readonly by: 'date';
+      readonly today: string;
+      readonly tomorrow: string;
+      readonly todayList?: boolean;
+    }
   | { readonly by: 'status'; readonly statuses: StatusRegistry };
 
 /** A group header: `Label  count` above its tasks, `first` on the list's first header. */
@@ -78,6 +83,7 @@ export function taskListGrouping(
   context: {
     readonly today: string;
     readonly tomorrow: string;
+    readonly todayList?: boolean;
     readonly statuses: StatusRegistry;
     readonly outgoingLinks?: TaskLinkValues;
   },
@@ -86,7 +92,13 @@ export function taskListGrouping(
   if (groupBy === 'outgoing-link')
     return { by: 'outgoing-link', values: context.outgoingLinks ?? new Map() };
   if (groupBy === 'none') return { by: 'none' };
-  if (groupBy === 'date') return { by: 'date', today: context.today, tomorrow: context.tomorrow };
+  if (groupBy === 'date')
+    return {
+      by: 'date',
+      today: context.today,
+      tomorrow: context.tomorrow,
+      ...(context.todayList === undefined ? {} : { todayList: context.todayList }),
+    };
   if (groupBy === 'priority') return { by: 'priority' };
   if (groupBy === 'status') return { by: 'status', statuses: context.statuses };
   return { by: 'tag' };
@@ -106,7 +118,7 @@ function taskGroups(
     case 'outgoing-link':
       return groupTasksByOutgoingLink(tasks, grouping.values);
     case 'date':
-      return groupTasksByDate(tasks, grouping.today, grouping.tomorrow);
+      return groupTasksByDate(tasks, grouping.today, grouping.tomorrow, grouping.todayList);
     case 'priority':
       return groupTasksByPriority(tasks);
     case 'status':

@@ -2307,15 +2307,17 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
    icon, so its baseline is the icon's bottom edge. The same strut as the marker's gives the lock a
    baseline half a cap height below its centre, so the icon centres on the title's caps instead of
    sitting on the baseline. */
-.abyss-task-card-main-row > .abyss-dep-indicator {
+.abyss-task-title-row > .abyss-dep-indicator {
   min-height: var(--abyss-task-card-marker-size);
+  margin-inline-end: var(--size-4-1);
+  vertical-align: baseline;
 }
 
-.abyss-task-card-main-row > .abyss-dep-indicator > .abyss-dep-lock {
+.abyss-task-title-row > .abyss-dep-indicator > .abyss-dep-lock {
   align-items: center;
 }
 
-.abyss-task-card-main-row > .abyss-dep-indicator > .abyss-dep-lock::before {
+.abyss-task-title-row > .abyss-dep-indicator > .abyss-dep-lock::before {
   content: '';
   inline-size: 0;
   block-size: calc(2 * var(--abyss-task-card-cap-half));
@@ -2846,31 +2848,6 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
     width: 100%;
     min-inline-size: 0;
     justify-content: flex-start;
-  }
-
-  .abyss-task-card-main-row--has-dep {
-    grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr);
-  }
-
-  .abyss-task-card-main-row--has-dep.abyss-task-card-main-row--has-delete {
-    grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr) 24px;
-  }
-
-  .abyss-task-card-main-row > .abyss-dep-indicator {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .abyss-task-card-main-row--has-dep > .abyss-task-body {
-    grid-column: 3;
-  }
-
-  .abyss-task-card-main-row--has-dep > .abyss-task-meta-right {
-    grid-column: 3 / -1;
-  }
-
-  .abyss-task-card-main-row--has-dep > .abyss-task-delete-btn {
-    grid-column: 4;
   }
 
   .abyss-task-source-note {

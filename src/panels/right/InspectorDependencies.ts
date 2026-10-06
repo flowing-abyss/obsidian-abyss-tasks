@@ -1,3 +1,4 @@
+import { setTooltip } from 'obsidian';
 import type { AppState, TaskNodeDragPayload } from '../../app/AppState';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import {
@@ -217,7 +218,6 @@ export class InspectorDependencies {
       this.#createDependencyBadgeBody(badge);
     const counts = dependencyCountPresentation(projection);
     body.setAttribute('aria-label', counts.ariaLabel);
-    body.title = counts.title;
     body.setAttribute('aria-expanded', String(this.#search !== undefined));
     updateDependencyBadgeCounts(body, counts);
     this.#updateDependencyBadgeAdd(badge, projection);
@@ -258,7 +258,7 @@ export class InspectorDependencies {
       const add = badge.createEl('button', {
         cls: 'abyss-dep-badge-add',
         text: '+',
-        attr: { type: 'button', 'aria-label': 'Add dependency sections', title: 'Add dependency' },
+        attr: { type: 'button', 'aria-label': 'Add dependency sections' },
       });
       add.addEventListener('click', () => {
         this.#search?.close(false);
@@ -546,19 +546,19 @@ export class InspectorDependencies {
           this.#host.root().querySelector<HTMLElement>('.abyss-inspector-back')?.focus();
       });
     }
-    row.createEl(relation.type === 'resolved' ? 'button' : 'span', {
+    const title = row.createEl(relation.type === 'resolved' ? 'button' : 'span', {
       cls: `abyss-subtask-label abyss-dep-title${presentation.done ? ' is-done' : ''}`,
       text: presentation.title,
       attr: {
-        title: presentation.title,
         ...(relation.type === 'resolved' ? { type: 'button' } : {}),
       },
     });
+    setTooltip(title, presentation.title);
     if (presentation.unavailable)
       row.createSpan({
         cls: 'abyss-dep-id',
         text: relation.dependencyId,
-        attr: { title: relation.dependencyId },
+        attr: { 'aria-label': relation.dependencyId },
       });
     const dependent =
       direction === 'blocks' && relation.type === 'resolved' ? relation.task.target : current;

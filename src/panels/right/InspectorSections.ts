@@ -418,7 +418,6 @@ export class InspectorSections {
       },
     });
     const renderView = (): void => {
-      view.setAttribute('title', task.title);
       view.setAttribute('aria-label', task.title);
       renderTaskText(view, task.markdownTitle, {
         presentation: 'title',

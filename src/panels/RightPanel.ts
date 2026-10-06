@@ -1450,7 +1450,6 @@ export class RightPanel {
         attr: {
           type: 'button',
           'aria-label': 'Back to previous task',
-          title: 'Back to previous task',
         },
       });
       setIcon(back, 'arrow-left');
@@ -1557,7 +1556,6 @@ export class RightPanel {
     const menuBtn = headerActions.createEl('button', {
       cls: 'clickable-icon abyss-right-action-btn',
       attr: {
-        title: 'More actions',
         'aria-label': 'More actions',
         'aria-haspopup': 'menu',
         'aria-expanded': 'false',

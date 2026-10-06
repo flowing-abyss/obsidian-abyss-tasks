@@ -135,3 +135,20 @@ describe('groupTasksByDate', () => {
     expect(groups[0]?.tasks).toHaveLength(1);
   });
 });
+
+it('uses Today membership for mixed dates only when grouping the Today list', () => {
+  const scheduled = task({ planning: { due: '2026-07-20', scheduled: '2026-07-13' } });
+  const overdue = task({ planning: { due: '2026-07-12', scheduled: '2026-07-13' } });
+  expect(
+    groupTasksByDate([scheduled, overdue], '2026-07-13', '2026-07-14', true).map((g) => [
+      g.label,
+      g.tasks,
+    ]),
+  ).toEqual([
+    ['Overdue', [overdue]],
+    ['Today', [scheduled]],
+  ]);
+  expect(groupTasksByDate([scheduled], '2026-07-13', '2026-07-14').map((g) => g.label)).toEqual([
+    'Upcoming',
+  ]);
+});

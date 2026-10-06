@@ -69,7 +69,7 @@ export class RailPanel {
     for (const item of ITEMS) {
       const btn = topGroup.createEl('button', {
         cls: `abyss-rail-btn${mode === item.mode ? ' is-active' : ''}`,
-        attr: { 'aria-label': item.label, title: item.label },
+        attr: { 'aria-label': item.label },
       });
       setIcon(btn, item.icon);
       btn.addEventListener('click', () => {
@@ -82,7 +82,7 @@ export class RailPanel {
     if (this.trackingHostEl !== undefined) bottomGroup.appendChild(this.trackingHostEl);
     const settingsBtn = bottomGroup.createEl('button', {
       cls: 'abyss-rail-btn',
-      attr: { 'aria-label': 'Settings', title: 'Settings' },
+      attr: { 'aria-label': 'Settings' },
     });
     setIcon(settingsBtn, 'settings');
     settingsBtn.addEventListener('click', () => {

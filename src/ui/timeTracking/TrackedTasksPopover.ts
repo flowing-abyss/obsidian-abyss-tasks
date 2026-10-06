@@ -169,7 +169,7 @@ function renderRowControl(
   const label = running ? `Pause ${title}` : `Resume ${title}`;
   const control = rowEl.createEl('button', {
     cls: 'abyss-tracked-row-toggle',
-    attr: { type: 'button', 'aria-label': label, title: label, 'data-control': 'toggle' },
+    attr: { type: 'button', 'aria-label': label, 'data-control': 'toggle' },
   });
   setIcon(control, running ? 'pause' : 'play');
   control.addEventListener('click', (event) => {

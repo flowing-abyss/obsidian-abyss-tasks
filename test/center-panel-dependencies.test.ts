@@ -230,7 +230,7 @@ describe('center dependency indicator DOM', () => {
       type: 'both',
     },
   ])(
-    'renders $type inline between checkbox and title without secondary copy',
+    'renders $type inline in the title row without secondary copy',
     async ({ suffix, dependent, counts, type }) => {
       addIcon(
         'lock',
@@ -248,7 +248,7 @@ describe('center dependency indicator DOM', () => {
       );
       const row = element(expectDefined(card), '.abyss-task-card-main-row');
       const indicator = row.querySelector<HTMLElement>('.abyss-dep-indicator');
-      expect(row.classList.contains('abyss-task-card-main-row--has-dep')).toBe(type !== 'none');
+      expect(row.classList.contains('abyss-task-card-main-row--has-dep')).toBe(false);
       expect(expectDefined(card).classList.contains('abyss-task-card-main-row--has-dep')).toBe(
         false,
       );
@@ -259,8 +259,8 @@ describe('center dependency indicator DOM', () => {
         ).toBe(true);
       } else {
         const group = expectDefined(indicator);
-        expect(group.previousElementSibling?.matches('[role="checkbox"]')).toBe(true);
-        expect(group.nextElementSibling?.classList.contains('abyss-task-body')).toBe(true);
+        expect(group.parentElement?.matches('.abyss-task-title-row')).toBe(true);
+        expect(group.nextElementSibling?.matches('.abyss-task-title')).toBe(true);
         expect(group.querySelectorAll('svg')).toHaveLength(1);
         expect(
           [...group.querySelectorAll('[data-dependency-count]')].map((count) => count.textContent),
@@ -270,7 +270,7 @@ describe('center dependency indicator DOM', () => {
         );
         expect(group.getAttribute('aria-label')).toContain('blocked by');
         expect(group.getAttribute('aria-label')).toContain('blocks');
-        expect(group.title).toBe(group.getAttribute('aria-label'));
+        expect(group.hasAttribute('title')).toBe(false);
         expect(group.matches('button, [role="button"]')).toBe(false);
         expect(
           [...group.children].every((piece) => piece.getAttribute('aria-hidden') === 'true'),
@@ -282,15 +282,15 @@ describe('center dependency indicator DOM', () => {
     },
   );
 
-  it("marks a selected card's main row for both the indicator and the delete button", async () => {
+  it("keeps a selected card's inline indicator beside its title and its delete button in the main row", async () => {
     const h = await harness('- [ ] Current ⛔ a\n- [ ] Schema 🆔 a\n');
     h.state.set('taskStack', [h.node('Current').root]);
     mountCenter(h);
     const row = element(h.el, '.abyss-task-card.is-selected .abyss-task-card-main-row');
 
-    expect(row.querySelector(':scope > .abyss-dep-indicator')).not.toBeNull();
+    expect(row.querySelector('.abyss-task-title-row > .abyss-dep-indicator')).not.toBeNull();
     expect(row.querySelector(':scope > .abyss-task-delete-btn')).not.toBeNull();
-    expect(row.classList.contains('abyss-task-card-main-row--has-dep')).toBe(true);
+    expect(row.classList.contains('abyss-task-card-main-row--has-dep')).toBe(false);
     expect(row.classList.contains('abyss-task-card-main-row--has-delete')).toBe(true);
   });
 
@@ -323,7 +323,7 @@ const surfaceNames = [
 type Surface = (typeof surfaceNames)[number];
 async function mountSurface(h: Harness, surface: Surface): Promise<HTMLElement> {
   const task = h.node('Current').root;
-  if (surface === 'center' || surface === 'search') {
+  if (['center', 'search'].includes(surface)) {
     if (surface === 'search') {
       h.state.set('mode', 'search');
       h.state.set('searchQuery', 'Current');
@@ -544,7 +544,7 @@ describe('strict dependency checkbox surfaces', () => {
       expect(wrapper?.getAttribute('aria-disabled')).toBe('true');
       expect(wrapper?.getAttribute('role')).toBe('checkbox');
       expect(wrapper?.tabIndex).toBe(0);
-      expect(wrapper?.title).toMatch(/prerequisite.*remove.*dependenc/iu);
+      expect(wrapper?.getAttribute('aria-label')).toMatch(/prerequisite.*remove.*dependenc/iu);
       wrapper?.focus();
       expect(activeDocument.activeElement).toBe(wrapper);
       physicalActivation(expectDefined(wrapper), activation);
@@ -552,7 +552,9 @@ describe('strict dependency checkbox surfaces', () => {
       expect(h.execute).not.toHaveBeenCalled();
       if (!surface.startsWith('inspector')) {
         const indicator = element(row, '.abyss-dep-indicator');
-        expect(indicator.previousElementSibling).toBe(wrapper);
+        if (['center', 'search'].includes(surface))
+          expect(indicator.parentElement?.matches('.abyss-task-title-row')).toBe(true);
+        else expect(indicator.previousElementSibling).toBe(wrapper);
       }
     },
   );

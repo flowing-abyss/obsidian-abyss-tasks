@@ -1,4 +1,4 @@
-import { setIcon } from 'obsidian';
+import { setIcon, setTooltip } from 'obsidian';
 
 /**
  * DOM writes that do nothing when the value is already there.
@@ -27,8 +27,24 @@ export function writeOptionalAttribute(
   } else writeAttribute(element, name, value);
 }
 
-export function writeTitle(element: HTMLElement, value: string): void {
-  if (element.title !== value) element.title = value;
+const tooltips = new WeakMap<HTMLElement, string>();
+
+export function writeTooltip(element: HTMLElement, value: string): void {
+  if (tooltips.get(element) === value) return;
+  tooltips.set(element, value);
+  setTooltip(element, value);
+}
+
+let controlNameSequence = 0;
+
+/** A connected owner label keeps a control's action name independent of its tooltip. */
+export function createControlName(control: HTMLElement, owner: HTMLElement): HTMLElement {
+  const name = owner.createSpan({
+    cls: 'abyss-sr-only',
+    attr: { id: `abyss-control-name-${String(++controlNameSequence)}` },
+  });
+  control.setAttribute('aria-labelledby', name.id);
+  return name;
 }
 
 export function writeClass(element: HTMLElement, name: string, present: boolean): void {

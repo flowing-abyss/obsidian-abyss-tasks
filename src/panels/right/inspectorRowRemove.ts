@@ -1,4 +1,4 @@
-import { setIcon } from 'obsidian';
+import { setIcon, setTooltip } from 'obsidian';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 
 export function renderRowRemove(
@@ -9,8 +9,9 @@ export function renderRowRemove(
 ): void {
   const remove = container.createEl('button', {
     cls,
-    attr: { type: 'button', 'aria-label': label, ...(title === undefined ? {} : { title }) },
+    attr: { type: 'button', 'aria-label': label },
   });
+  if (title !== undefined) setTooltip(remove, title);
   setIcon(remove, 'x');
   remove.addEventListener('click', (event) => {
     event.stopPropagation();

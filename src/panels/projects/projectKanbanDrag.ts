@@ -1,3 +1,4 @@
+import { setTooltip } from 'obsidian';
 import type { ProjectTableGroup } from '../../projects/projectTableModel';
 import type {
   ProjectKanbanDropPlan,
@@ -513,7 +514,7 @@ export class ProjectKanbanDragController {
     const zone = group ?? column;
     if (zone === null) return;
     zone.addClass(plan.allowed ? 'is-drop-target' : 'is-drop-disabled');
-    zone.setAttribute('title', plan.message);
+    setTooltip(zone, plan.message);
     let line: HTMLElement | undefined;
     if (plan.allowed && plan.insertion.kind !== 'none') {
       const location =
@@ -535,7 +536,8 @@ export class ProjectKanbanDragController {
     this.preview_abyssPrivate = undefined;
     for (const element of preview?.elements ?? []) {
       element.removeClass('is-drop-target', 'is-drop-disabled');
-      element.removeAttribute('title');
+      setTooltip(element, '');
+      element.removeAttribute('aria-label');
     }
     preview?.line?.remove();
   }

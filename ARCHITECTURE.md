@@ -554,7 +554,10 @@ Today list membership and sidebar counts share the date-only
 [`todayTaskCategory`](src/task-lists/todayTaskCategory.ts), supplied an explicit local date. Past due
 dates take precedence over scheduling today. The list selector retains its configured status filters;
 LeftPanel counts unique active roots (open and in-progress) by file and line and displays separate
-today/overdue totals.
+today/overdue totals. Shared `taskListDate` uses Today membership when the selected list is Today,
+so ordinary snapshots and compact records sort and group a task scheduled today by today's date
+even when its due date is later. Other lists retain due/scheduled/start precedence. Date sort keeps
+time as its secondary key and the configured direction remains authoritative.
 
 ### Centre services, rows, and calendar
 

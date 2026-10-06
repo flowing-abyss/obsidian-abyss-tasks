@@ -1,4 +1,4 @@
-import { Component, Menu, Notice, TFile, type App } from 'obsidian';
+import { Component, Menu, Notice, setTooltip, TFile, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import { exactLinkToken, parseLinks } from '../../markdown/links';
 import { moment } from '../../obsidianMoment';
@@ -2384,11 +2384,11 @@ export class ProjectsTableView {
       field.type === 'name' ? cell.createDiv({ cls: 'abyss-project-table-name-content' }) : cell;
     this.renderProjectCellContent_abyssPrivate(content, rendered, component, {});
     if (invalidRange) {
-      cell.createSpan({
+      const warning = cell.createSpan({
         cls: 'abyss-project-table-range-warning',
         text: '!',
-        attr: { 'aria-label': 'Invalid date range' },
       });
+      setTooltip(warning, 'Project start is after its end date');
     }
   }
 
@@ -2405,28 +2405,24 @@ export class ProjectsTableView {
     writeClass(cell, 'abyss-project-table-name-cell', field.type === 'name');
     writeOptionalAttribute(cell, 'tabindex', '0');
     writeOptionalAttribute(cell, 'data-column-id', rendered.identity.columnId);
+    const invalidRange =
+      (field.id === 'start' || field.id === 'end') &&
+      this.projectHasInvalidRange_abyssPrivate(project);
     writeOptionalAttribute(cell, 'aria-label', `${field.label} for ${project.name}`);
+    const description =
+      field.type === 'name' ? 'Use the context menu to add or edit the description' : undefined;
     writeOptionalAttribute(
       cell,
       'aria-description',
-      field.type === 'name' ? 'Use the context menu to add or edit the description' : undefined,
+      invalidRange ? 'Project start is after its end date' : description,
     );
     writeOptionalAttribute(
       cell,
       'aria-keyshortcuts',
       field.type === 'name' ? 'Shift+F10' : undefined,
     );
-    const invalidRange =
-      (field.id === 'start' || field.id === 'end') &&
-      this.projectHasInvalidRange_abyssPrivate(project);
     writeClass(cell, 'is-invalid-range', invalidRange);
-    if (invalidRange) {
-      writeOptionalAttribute(cell, 'aria-invalid', 'true');
-      writeOptionalAttribute(cell, 'title', 'Project start is after its end date');
-    } else {
-      writeOptionalAttribute(cell, 'aria-invalid', undefined);
-      writeOptionalAttribute(cell, 'title', undefined);
-    }
+    writeOptionalAttribute(cell, 'aria-invalid', invalidRange ? 'true' : undefined);
     writeClass(cell, 'is-editable', editableField(field));
     return invalidRange;
   }

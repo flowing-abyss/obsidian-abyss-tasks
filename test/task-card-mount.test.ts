@@ -34,13 +34,15 @@ function renderer() {
   hostComponent.load();
   const registry = testStatusRegistry();
   const settings = structuredClone(DEFAULT_SETTINGS);
+  const state = new AppState();
+  const listControls = { addPropertyFilter: vi.fn() };
   const subject = new TaskCardRenderer({
     app: { workspace: { openLinkText, trigger } } as unknown as App,
-    state: new AppState(),
+    state,
     settings,
     statusRegistry: registry,
     commands: { toggleTask, deleteTask, patchTaskTags: vi.fn(), editTaskLink },
-    listControls: { addPropertyFilter: vi.fn() },
+    listControls,
     trackingEnabled: true,
     host: {
       component: () => hostComponent,
@@ -58,6 +60,8 @@ function renderer() {
   });
   return {
     subject,
+    state,
+    listControls,
     hostComponent,
     openLinkText,
     trigger,
@@ -648,3 +652,59 @@ it.each([false, true])(
     }
   },
 );
+
+it.each(['due', 'scheduled'] as const)(
+  'keeps Today time visible and filterable for %s membership',
+  (field) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 13, 12));
+    const h = renderer();
+    h.state.set('selectedList', 'today');
+    h.settings.sourceNoteDisplay = 'never';
+    const candidate = task({
+      planning: {
+        due: field === 'due' ? '2026-07-13' : '2026-07-20',
+        ...(field === 'scheduled' ? { scheduled: '2026-07-13' } : {}),
+        time: '09:00',
+      },
+    });
+    const mount = h.subject.mount(document.body, candidate, [], {
+      selected: false,
+      showDelete: false,
+    });
+    const meta = expectDefined(mount.element.querySelector<HTMLElement>('.abyss-task-meta-right'));
+    expect(meta.textContent).toBe('09:00');
+    expectDefined(meta.querySelector<HTMLElement>('.abyss-task-date')).click();
+    expect(h.listControls.addPropertyFilter).toHaveBeenCalledWith({ type: 'time', value: '09:00' });
+    mount.destroy();
+  },
+);
+
+it('keeps dependency decoration inside the title on initial and retained rendering', () => {
+  const h = renderer();
+  h.dependenciesFor.mockReturnValue({
+    blockedBy: [],
+    blocks: [],
+    activeBlockedByCount: 1,
+    activeBlocksCount: 0,
+  });
+  const original = task({ description: 'Body' });
+  const flags = { selected: false, showDelete: false };
+  const mount = h.subject.mount(document.body, original, [], flags);
+  const titleRow = expectDefined(mount.element.querySelector<HTMLElement>('.abyss-task-title-row'));
+  expect(mount.element.querySelector('.abyss-dep-indicator')?.parentElement).toBe(titleRow);
+  expect(
+    mount.element
+      .querySelector('.abyss-task-body')
+      ?.previousElementSibling?.matches('.abyss-status-control'),
+  ).toBe(true);
+  mount.update(task({ description: 'Body', status: 'done', statusSymbol: 'x' }), [], flags);
+  expect(mount.element.querySelectorAll('.abyss-dep-indicator')).toHaveLength(1);
+  expect(mount.element.querySelector('.abyss-dep-indicator')?.parentElement).toBe(titleRow);
+  expect(mount.element.querySelector('.abyss-dep-indicator')?.hasAttribute('title')).toBe(false);
+  mount.destroy();
+  const legacy = h.subject.render(document.body, original, [], flags);
+  expect(
+    legacy.querySelector('.abyss-dep-indicator')?.parentElement?.matches('.abyss-task-title-row'),
+  ).toBe(true);
+});

@@ -8,7 +8,13 @@ import {
   type TrackedEntry,
   type TrackedTotal,
 } from '../../tasks';
-import { writeAttribute, writeClass, writeText, writeTitle } from '../guardedDomWrites';
+import {
+  createControlName,
+  writeAttribute,
+  writeClass,
+  writeText,
+  writeTooltip,
+} from '../guardedDomWrites';
 import type { InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
 import {
@@ -59,6 +65,8 @@ interface BadgeElements {
   readonly badge: HTMLElement;
   readonly body: HTMLButtonElement;
   readonly toggle: HTMLButtonElement;
+  readonly toggleName: HTMLElement;
+  readonly bodyName: HTMLElement;
 }
 
 /**
@@ -133,10 +141,11 @@ function paintToggle(session: BadgeSession, view: BadgeElements, model: BadgeMod
     setIcon(view.toggle, wanted);
     session.icon = wanted;
   }
-  writeAttribute(view.toggle, 'aria-label', running ? 'Pause tracking' : 'Start tracking');
+  const label = running ? 'Pause tracking' : 'Start tracking';
+  writeText(view.toggleName, label);
   const blocked = model.finished && !running;
   if (view.toggle.disabled !== blocked) view.toggle.disabled = blocked;
-  writeTitle(view.toggle, blocked ? FINISHED_TITLE : '');
+  writeTooltip(view.toggle, blocked ? FINISHED_TITLE : label);
 }
 
 function paint(session: BadgeSession, context = session.options.context()): void {
@@ -145,7 +154,8 @@ function paint(session: BadgeSession, context = session.options.context()): void
   if (view === undefined || model === undefined) return;
   const tracked = formatTrackedDuration(totalMs(model.total, context.nowMs));
   writeText(view.body, tracked);
-  writeAttribute(view.body, 'aria-label', `Tracked time ${tracked}`);
+  const label = `Tracked time ${tracked}`;
+  writeText(view.bodyName, label);
   writeAttribute(view.body, 'aria-expanded', String(session.popover !== undefined));
   const question =
     model.runningSinceMs === undefined
@@ -153,7 +163,7 @@ function paint(session: BadgeSession, context = session.options.context()): void
       : staleTrackingQuestion(model.runningSinceMs, context);
   writeClass(view.badge, 'is-tracking', model.runningSinceMs !== undefined);
   writeClass(view.badge, 'is-stale', question !== undefined);
-  writeTitle(view.body, question ?? '');
+  writeTooltip(view.body, question ?? label);
   paintToggle(session, view, model);
 }
 
@@ -219,7 +229,13 @@ function createBadge(session: BadgeSession, host: HTMLElement): BadgeElements {
     cls: 'abyss-time-badge-toggle',
     attr: { type: 'button' },
   });
-  const view: BadgeElements = { badge, body, toggle };
+  const view: BadgeElements = {
+    badge,
+    body,
+    toggle,
+    toggleName: createControlName(toggle, badge),
+    bodyName: createControlName(body, badge),
+  };
   body.addEventListener('click', (event) => {
     event.stopPropagation();
     openSessions(session, view);

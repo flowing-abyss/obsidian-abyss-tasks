@@ -24,8 +24,10 @@ import {
   methodOf,
   useRealMoment,
 } from './helpers';
+import { useHostTooltips } from './support/hostTooltips';
 
 useRealMoment();
+useHostTooltips();
 
 const css = await loadPluginStyles();
 
@@ -385,7 +387,7 @@ describe('tracked sessions popover', () => {
 
     // The cell truncates wherever it is shown and is dropped outright in a narrow pane, so the row
     // always says what it holds. A broken line carries its own text for the same reason.
-    expect(rows(harness.el).map((row) => row.title)).toEqual([
+    expect(rows(harness.el).map((row) => row.getAttribute('aria-label'))).toEqual([
       '',
       'Child',
       '',
@@ -400,7 +402,7 @@ describe('tracked sessions popover', () => {
     );
     open(harness.el);
 
-    expect(rows(harness.el).map((row) => row.title)).toEqual([
+    expect(rows(harness.el).map((row) => row.getAttribute('aria-label'))).toEqual([
       'Still tracking since yesterday at 20:00?',
     ]);
   });
@@ -1639,3 +1641,8 @@ describe('tracking a selected sub-task', () => {
     expect(await harness.read()).toBe(before);
   });
 });
+
+vi.mock('obsidian', async () => ({
+  ...(await import('obsidian-test-mocks/obsidian')),
+  setTooltip: vi.fn(),
+}));

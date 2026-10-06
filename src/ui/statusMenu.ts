@@ -236,7 +236,6 @@ function renderPriorityRow(
         'aria-label': option.label,
         role: 'menuitemradio',
         'aria-checked': String(active),
-        title: option.label,
       },
     });
     setIcon(button, 'flag');

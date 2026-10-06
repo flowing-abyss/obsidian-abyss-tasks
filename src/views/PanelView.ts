@@ -572,7 +572,6 @@ export class PanelView extends ItemView {
     compactLeftButton.setAttrs({
       type: 'button',
       'aria-label': 'Show task lists',
-      title: 'Show task lists',
       'aria-expanded': 'false',
     });
     setIcon(compactLeftButton, 'panel-left');
@@ -581,7 +580,6 @@ export class PanelView extends ItemView {
     compactRightButton.setAttrs({
       type: 'button',
       'aria-label': 'Show task details',
-      title: 'Show task details',
       'aria-expanded': 'false',
     });
     setIcon(compactRightButton, 'panel-right');

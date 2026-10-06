@@ -1997,6 +1997,7 @@ export class CenterPanel {
   ): void {
     const vs = this.state_abyssPrivate.get('centerListViewState');
     const grouping = taskListGrouping(vs.groupBy, {
+      todayList: this.state_abyssPrivate.get('selectedList') === 'today',
       today: localDate(window.moment().format('YYYY-MM-DD')),
       tomorrow: window.moment().add(1, 'day').format('YYYY-MM-DD'),
       statuses: this.statusRegistry_abyssPrivate,

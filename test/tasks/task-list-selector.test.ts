@@ -111,6 +111,67 @@ describe('selectTaskList', () => {
     expect(titles(tasks, selection)).toEqual(expected);
   });
 
+  it('sorts mixed Today dates by time, retaining elapsed and equal-time order', () => {
+    const candidates = [
+      task({
+        source: { filePath: 'tasks.md' },
+        title: 'late',
+        planning: { due: today, time: '18:00' },
+      }),
+      task({ source: { filePath: 'tasks.md' }, title: 'untimed', planning: { due: today } }),
+      task({
+        source: { filePath: 'tasks.md' },
+        title: 'early scheduled',
+        planning: { scheduled: today, due: '2026-07-14', time: '08:00' },
+      }),
+      task({
+        source: { filePath: 'tasks.md' },
+        title: 'morning',
+        planning: { due: today, time: '09:00' },
+      }),
+      task({
+        source: { filePath: 'tasks.md' },
+        title: 'same morning',
+        planning: { scheduled: today, due: '2026-07-20', time: '09:00' },
+      }),
+      task({
+        source: { filePath: 'tasks.md' },
+        title: 'overdue',
+        planning: { due: '2026-07-12', scheduled: today, time: '20:00' },
+      }),
+    ];
+    expect(titles(candidates, 'today')).toEqual([
+      'overdue',
+      'early scheduled',
+      'morning',
+      'same morning',
+      'late',
+      'untimed',
+    ]);
+    expect(
+      titles(candidates, 'today', {
+        groupBy: 'none',
+        sortBy: { field: 'date', dir: 'desc' },
+        filters: [],
+      }),
+    ).toEqual(['untimed', 'late', 'morning', 'same morning', 'early scheduled', 'overdue']);
+    expect(
+      titles(candidates, 'today', {
+        groupBy: 'none',
+        sortBy: { field: 'title', dir: 'asc' },
+        filters: [],
+      }),
+    ).toEqual(['early scheduled', 'late', 'morning', 'overdue', 'same morning', 'untimed']);
+    expect(titles(candidates, { type: 'project', path: 'tasks.md' })).toEqual([
+      'overdue',
+      'morning',
+      'late',
+      'untimed',
+      'early scheduled',
+      'same morning',
+    ]);
+  });
+
   it('keeps Today membership date-only and respects requested completed statuses', () => {
     const candidates = [
       task({

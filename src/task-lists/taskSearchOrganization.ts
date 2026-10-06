@@ -251,6 +251,7 @@ function* organizationGroups(
         records,
         input.today,
         shiftLocalDate(input.today, 1) ?? input.today,
+        input.selection === 'today',
       );
     case 'tag':
       return yield* groupTasksByTagSteps(records);

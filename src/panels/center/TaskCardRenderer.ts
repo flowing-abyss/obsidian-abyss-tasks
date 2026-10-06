@@ -5,6 +5,7 @@ import { moment } from '../../obsidianMoment';
 import type { CalendarSettings } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import type { EffectiveTagGroup } from '../../tags/effectiveTagGroups';
+import { todayTaskCategory } from '../../task-lists/todayTaskCategory';
 import {
   localDate,
   subtreeTotal,
@@ -460,6 +461,7 @@ export class TaskCardRenderer {
       task.recurrence !== ''
     )
       renderRecurrenceBadge(titleRow, recurrenceBadgeInput(task.recurrence));
+    renderDependencyIndicator(titleRow, this.#host.dependenciesFor(task));
     this.#renderCountBadges(titleRow, task, context);
     // Only new decoration nodes move; the focused Markdown subtree stays connected.
     for (const child of Array.from(titleRow.children)) if (child !== title) title.before(child);
@@ -520,11 +522,6 @@ export class TaskCardRenderer {
       registry: this.#statusRegistry,
       completionBlocked: dependencyCompletionBlocked(projection),
     });
-    mainRow.querySelector('.abyss-dep-indicator')?.remove();
-    const indicator = renderDependencyIndicator(mainRow, projection);
-    mainRow.toggleClass('abyss-task-card-main-row--has-dep', indicator !== undefined);
-    if (indicator !== undefined)
-      (marker.closest('.abyss-status-control') ?? marker).after(indicator);
   }
 
   #reportFailure(error: unknown): void {
@@ -592,10 +589,6 @@ export class TaskCardRenderer {
         this.#host.openStatusMenu(event, currentTask());
       },
     });
-    mainRow.toggleClass(
-      'abyss-task-card-main-row--has-dep',
-      renderDependencyIndicator(mainRow, projection) !== undefined,
-    );
   }
 
   #renderBody(
@@ -606,6 +599,7 @@ export class TaskCardRenderer {
   ): void {
     const body = mainRow.createDiv({ cls: 'abyss-task-body' });
     const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
+    renderDependencyIndicator(titleRow, this.#host.dependenciesFor(task));
     const recurrence = task.recurrence;
     if (flags?.search === undefined && recurrence !== undefined && recurrence !== '') {
       renderRecurrenceBadge(titleRow, recurrenceBadgeInput(recurrence));
@@ -974,7 +968,7 @@ export class TaskCardRenderer {
     const sel = this.#state.get('selectedList');
     const d = task.planning.due ?? task.planning.scheduled;
     const tags = task.tags;
-    const suppressToday = sel === 'today' && d === today;
+    const suppressToday = sel === 'today' && todayTaskCategory(task, today) === 'today';
     const showSourceNote = shouldShowSourceNote(
       task,
       this.#settings.sourceNoteDisplay,
@@ -1014,7 +1008,7 @@ export class TaskCardRenderer {
       if (time != null) this.#renderTimeFilterPart(dateElement, time, 'abyss-task-time-part');
       return;
     }
-    if (date == null && time != null) this.#renderTimeFilterPart(host, time, 'abyss-task-date');
+    if (time != null) this.#renderTimeFilterPart(host, time, 'abyss-task-date');
   }
 
   #renderDateFilterPart(host: HTMLElement, date: LocalDate): void {
@@ -1113,7 +1107,7 @@ export class TaskCardRenderer {
     if (existing != null) return;
     const deleteButton = mainRow.createEl('button', {
       cls: 'abyss-task-delete-btn',
-      attr: { title: 'Delete task', 'aria-label': 'Delete task' },
+      attr: { 'aria-label': 'Delete task' },
     });
     setIcon(deleteButton, 'x');
     deleteButton.addEventListener('click', (event) => {

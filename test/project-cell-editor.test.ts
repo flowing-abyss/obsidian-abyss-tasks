@@ -968,7 +968,7 @@ describe('mountProjectCellEditor', () => {
     expect(selected.querySelector('.abyss-suggest-title')?.classList.contains('is-link')).toBe(
       true,
     );
-    expect(selected.title).toBe(raw);
+    expect(selected.getAttribute('aria-label')).toBe(raw);
     expect(selected.getAttribute('aria-selected')).toBe('true');
     await expect(handle.commit()).resolves.toBe(true);
     expect(save).not.toHaveBeenCalled();

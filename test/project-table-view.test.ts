@@ -41,9 +41,11 @@ import {
   freshContainer,
   loadPluginStyles,
 } from './helpers';
+import { useHostTooltips } from './support/hostTooltips';
 import { useProjectTableViewport } from './support/projectTableViewport';
 
 useProjectTableViewport();
+useHostTooltips();
 
 beforeEach(() => {
   const original = vi.spyOn(Element.prototype, 'clientHeight', 'get').getMockImplementation();
@@ -2146,7 +2148,7 @@ describe('ProjectsTableView', () => {
     const pretty = expectDefined(start.querySelector<HTMLElement>('.abyss-project-pretty-date'));
 
     expect(pretty.textContent).toBe('Sep 10, 2026');
-    expect(pretty.title).toBe(startRaw);
+    expect(pretty.getAttribute('aria-label')).toBe(startRaw);
     expect(end.textContent).toBe(endRaw);
     start.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     const copied = transfer();
@@ -2402,7 +2404,7 @@ describe('ProjectsTableView', () => {
     );
     const relative = expectDefined(host.querySelector<HTMLElement>('.abyss-project-relative-date'));
     expect(relative.textContent).toBe('in 15 minutes');
-    expect(relative.title).toBe('2026-09-10T23:15:00');
+    expect(relative.getAttribute('aria-label')).toBe('2026-09-10T23:15:00');
 
     vi.advanceTimersByTime(60_000);
 
@@ -3938,6 +3940,25 @@ describe('ProjectsTableView', () => {
     expect(activeDocument.activeElement).toBe(editor);
   });
 
+  it('keeps an invalid range description stable when an unchanged cell is reconciled', () => {
+    const item = project({ frontmatter: { start: '2026-10-10', end: '2026-09-01' } });
+    const { host, view } = mount([item]);
+    const start = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/A.md"] [data-column-id="start"]',
+      ),
+    );
+    const observer = new MutationObserver(() => {});
+    observer.observe(start, { attributes: true });
+    view.update([item]);
+    const descriptionMutations = observer
+      .takeRecords()
+      .filter((record) => record.attributeName === 'aria-description');
+    observer.disconnect();
+    expect(start.getAttribute('aria-description')).toBe('Project start is after its end date');
+    expect(descriptionMutations).toEqual([]);
+  });
+
   it('patches retained cell presentation when column, type and range inputs change', () => {
     const config = settings();
     config.projects.table.columns.push({
@@ -3963,7 +3984,12 @@ describe('ProjectsTableView', () => {
 
     expect(budget.hasClass('is-align-right')).toBe(true);
     expect(budget.hasClass('is-editable')).toBe(true);
-    expect(start.getAttribute('title')).toBe('Project start is after its end date');
+    expect(start.getAttribute('aria-label')).toBe('Start for A');
+    expect(start.getAttribute('aria-description')).toBe('Project start is after its end date');
+    expect(start.hasAttribute('title')).toBe(false);
+    expect(
+      start.querySelector('.abyss-project-table-range-warning')?.getAttribute('aria-label'),
+    ).toBe('Project start is after its end date');
 
     const budgetColumn = expectDefined(
       config.projects.table.columns.find(({ id }) => id === 'property:Budget'),
@@ -3994,6 +4020,7 @@ describe('ProjectsTableView', () => {
     expect(start.hasClass('is-invalid-range')).toBe(false);
     expect(start.getAttribute('aria-invalid')).toBeNull();
     expect(start.getAttribute('title')).toBeNull();
+    expect(start.getAttribute('aria-description')).toBeNull();
     expect(
       host.querySelector(
         '.abyss-project-table-header-cell[data-column-id="property:Budget"] .abyss-project-table-column-label',
@@ -6849,17 +6876,17 @@ describe('ProjectsTableView', () => {
     target.dispatchEvent(dragEvent('dragover', data));
     expect(target.classList.contains('is-drop-target')).toBe(true);
     expect(target.querySelector('.is-drop-before, .is-drop-after')).toBeNull();
-    expect(target.getAttribute('title')).toContain('Drop to move to');
+    expect(target.getAttribute('aria-label')).toContain('Drop to move to');
     const leave = dragEvent('dragleave', data);
     Object.defineProperty(leave, 'relatedTarget', { value: document.body });
     target.dispatchEvent(leave);
-    expect(target.getAttribute('title')).toBeNull();
+    expect(target.getAttribute('aria-label')).toBeNull();
 
     target.dispatchEvent(dragEvent('dragover', data));
     sourceRow.dispatchEvent(dragEvent('dragend', data));
     title.click();
     expect(openProject).not.toHaveBeenCalled();
-    expect(target.getAttribute('title')).toBeNull();
+    expect(target.getAttribute('aria-label')).toBeNull();
 
     protectedStore = false;
     sourceRow.dispatchEvent(dragEvent('dragstart', data));
@@ -6867,7 +6894,7 @@ describe('ProjectsTableView', () => {
     target.dispatchEvent(dragEvent('dragover', data));
     protectedStore = false;
     target.dispatchEvent(dragEvent('drop', data));
-    expect(target.getAttribute('title')).toBeNull();
+    expect(target.getAttribute('aria-label')).toBeNull();
     await flushMicrotasks();
 
     expect(applyEdits).toHaveBeenCalledOnce();
@@ -7559,3 +7586,8 @@ it('persists lazy Timeline settings and normalized Table columns after their ren
     visible: true,
   });
 });
+
+vi.mock('obsidian', async () => ({
+  ...(await import('obsidian-test-mocks/obsidian')),
+  setTooltip: vi.fn(),
+}));

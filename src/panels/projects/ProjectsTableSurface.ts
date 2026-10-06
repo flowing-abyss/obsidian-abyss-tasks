@@ -1,4 +1,4 @@
-import { Component } from 'obsidian';
+import { Component, setTooltip } from 'obsidian';
 import type { ProjectFieldCatalogItem, ProjectTableSettings } from '../../projects/projectFields';
 import {
   projectGroupCollapseKey,
@@ -1336,7 +1336,7 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     const state = result.allowed ? 'is-drop-target' : 'is-drop-disabled';
     for (const row of rows) {
       row.addClass(state);
-      row.setAttribute('title', result.message);
+      setTooltip(row, result.message);
     }
     markDropRunEnds(targetRows, state);
     groupRow?.dropHint.setText(result.message);
@@ -1387,7 +1387,8 @@ export class ProjectsTableSurface implements ProjectsOverviewSurface<RenderedCel
     this.#groupDropPreview = undefined;
     for (const row of preview.rows) {
       row.removeClass('is-drop-target', 'is-drop-disabled', 'is-drop-end');
-      row.removeAttribute('title');
+      setTooltip(row, '');
+      row.removeAttribute('aria-label');
     }
     preview.line?.removeClass('is-drop-before', 'is-drop-after');
     this.groupRow(preview.targetGroupKey)?.dropHint.empty();

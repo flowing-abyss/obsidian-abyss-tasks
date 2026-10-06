@@ -45,7 +45,7 @@ export function renderDependencyIndicator(
   if (presentation.type === 'none') return undefined;
   const group = parent.createSpan({
     cls: 'abyss-dep-indicator',
-    attr: { role: 'img', 'aria-label': presentation.ariaLabel, title: presentation.ariaLabel },
+    attr: { role: 'img', 'aria-label': presentation.ariaLabel },
   });
   const direction = presentation.type === 'blocks' ? 'blocks' : 'blocked-by';
   setIcon(

@@ -1023,7 +1023,8 @@ describe('RightPanel.renderTask', () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [task({ title, markdownTitle })]);
     const view = expectDefined(el.querySelector<HTMLElement>('.abyss-right-title-view'));
-    expect(view.title).toBe(title);
+    expect(view.getAttribute('aria-label')).toBe(title);
+    expect(view.hasAttribute('title')).toBe(false);
     click(view);
     expect(el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')?.value).toBe(
       markdownTitle,

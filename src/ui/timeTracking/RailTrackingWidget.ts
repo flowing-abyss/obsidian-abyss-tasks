@@ -13,7 +13,13 @@ import {
   type TrackedDayRow,
   type TrackedEntry,
 } from '../../tasks';
-import { writeAttribute, writeClass, writeText, writeTitle } from '../guardedDomWrites';
+import {
+  createControlName,
+  writeAttribute,
+  writeClass,
+  writeText,
+  writeTooltip,
+} from '../guardedDomWrites';
 import type { InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
 import {
@@ -60,6 +66,8 @@ function railNumber(label: string): string {
 interface WidgetElements {
   readonly toggle: HTMLButtonElement;
   readonly task: HTMLButtonElement;
+  readonly toggleName: HTMLElement;
+  readonly taskName: HTMLElement;
 }
 
 /**
@@ -217,10 +225,10 @@ function paintToggle(
   const blocked = !running && !resumable(model.current);
   const label = toggleLabel(model, running, blocked);
   const question = toggleQuestion(model, context);
-  writeAttribute(view.toggle, 'aria-label', label);
+  writeText(view.toggleName, label);
   // The question replaces the tooltip but never the accessible name, so a reader still hears which
   // task the control acts on.
-  writeTitle(view.toggle, question ?? label);
+  writeTooltip(view.toggle, question ?? label);
   writeClass(session.options.host, 'is-stale', question !== undefined);
   if (view.toggle.disabled !== blocked) view.toggle.disabled = blocked;
 }
@@ -236,7 +244,7 @@ function paint(session: WidgetSession, context: TrackedTimeContext): void {
   writeText(view.task, railNumber(task));
   // The button reads as a bare number, so the accessible name carries what it counts as well; the
   // tooltip stays the short phrase a pointer wants.
-  writeAttribute(view.task, 'aria-label', `${TASK_TITLE}, ${task}`);
+  writeText(view.taskName, `${TASK_TITLE}, ${task}`);
   writeClass(session.options.host, 'is-tracking', model.openSinceMs !== undefined);
   paintToggle(session, view, model, context);
 }
@@ -298,14 +306,18 @@ function createElements(session: WidgetSession): WidgetElements {
     cls: 'abyss-rail-tracking-task',
     attr: {
       type: 'button',
-      'aria-label': TASK_TITLE,
-      title: TASK_TITLE,
       'aria-haspopup': 'dialog',
       'aria-expanded': 'false',
     },
   });
   host.createSpan({ cls: 'abyss-rail-tracking-rule', attr: { 'aria-hidden': 'true' } });
-  const view: WidgetElements = { toggle, task };
+  const view: WidgetElements = {
+    toggle,
+    task,
+    toggleName: createControlName(toggle, host),
+    taskName: createControlName(task, host),
+  };
+  writeTooltip(task, TASK_TITLE);
   toggle.addEventListener('click', (event) => {
     event.stopPropagation();
     toggleTracking(session);

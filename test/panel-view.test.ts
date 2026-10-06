@@ -1594,6 +1594,21 @@ describe('PanelView', () => {
         layout.querySelector<HTMLButtonElement>('[aria-label="Show task details"]'),
       );
 
+      for (const [region, label] of [
+        [left, 'Task lists'],
+        [right, 'Task details'],
+      ] as const) {
+        expect(region.hasAttribute('aria-label')).toBe(false);
+        const name = expectDefined(
+          region.ownerDocument.getElementById(
+            expectDefined(region.getAttribute('aria-labelledby')),
+          ),
+        );
+        expect(name.isConnected).toBe(true);
+        expect(name.textContent).toBe(label);
+      }
+      expect(lists.hasAttribute('title')).toBe(false);
+      expect(details.hasAttribute('title')).toBe(false);
       expect(lists.tagName).toBe('BUTTON');
       expect(details.tagName).toBe('BUTTON');
       expect(lists.getAttribute('aria-controls')).toBe(left.id);

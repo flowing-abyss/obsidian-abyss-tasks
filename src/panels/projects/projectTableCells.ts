@@ -1,4 +1,4 @@
-import type { App, Component } from 'obsidian';
+import { setTooltip, type App, type Component } from 'obsidian';
 import type {
   ProjectDateDisplay,
   ProjectFieldCatalogItem,
@@ -107,7 +107,7 @@ function renderUnavailableType(cell: HTMLElement, field: ProjectFieldCatalogItem
   cell.createSpan({
     cls: 'abyss-project-table-unavailable',
     text: 'Type unavailable',
-    attr: { role: 'note', title: explanation, 'aria-label': explanation },
+    attr: { role: 'note', 'aria-label': explanation },
   });
 }
 
@@ -402,8 +402,9 @@ function renderDate(
   const text = cell.createSpan({
     cls: projectDateClass(display),
     text: displayed,
-    attr: { title: value },
+    attr: { 'aria-label': value },
   });
+  setTooltip(text, value);
   if (display === 'relative') text.dataset['relativeDateValue'] = value;
   return true;
 }
@@ -468,8 +469,9 @@ function renderName(
   const button = cell.createEl('button', {
     cls: 'abyss-project-table-name',
     text: project.name,
-    attr: { type: 'button', title: project.path },
+    attr: { type: 'button' },
   });
+  setTooltip(button, project.path);
   options.component.registerDomEvent(button, 'click', () => {
     options.openProject(project.path);
   });

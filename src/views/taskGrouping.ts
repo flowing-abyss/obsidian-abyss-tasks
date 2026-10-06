@@ -2,6 +2,7 @@ import { drainCollectionSteps, stableSortSteps, type CollectionSteps } from '../
 import { noteNameOfPath, withoutMarkdownExtension } from '../markdown/noteName';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskLinkValue, TaskLinkValues } from '../task-lists/taskLinkValues';
+import { taskListDate } from '../task-lists/todayTaskCategory';
 import type { TaskSnapshot, TaskStatusType } from '../tasks';
 
 const PRIORITY_LABELS: Record<string, string> = {
@@ -217,8 +218,13 @@ function* tagGroups<T extends TaskGroupValue>(
   }
 }
 type DateGroupLabel = 'Overdue' | 'Today' | 'Tomorrow' | 'Upcoming' | 'No date';
-function dateGroupLabel(task: TaskGroupValue, today: string, tomorrow: string): DateGroupLabel {
-  const date = task.planning.due ?? task.planning.scheduled ?? task.planning.start;
+function dateGroupLabel(
+  task: TaskGroupValue,
+  today: string,
+  tomorrow: string,
+  todayList: boolean,
+): DateGroupLabel {
+  const date = taskListDate(task, todayList ? today : undefined);
   if (date === undefined) return 'No date';
   if (date < today) return 'Overdue';
   if (date === today) return 'Today';
@@ -226,15 +232,15 @@ function dateGroupLabel(task: TaskGroupValue, today: string, tomorrow: string): 
 }
 function* dateGroups<T extends TaskGroupValue>(
   tasks: readonly T[],
-  today: string,
-  tomorrow: string,
+  context: { readonly today: string; readonly tomorrow: string; readonly todayList: boolean },
   cooperative: boolean,
 ): CollectionSteps<Array<TaskGroup<T>>> {
+  const { today, tomorrow, todayList } = context;
   const buckets = new Map<string, T[]>();
   let groups: Array<TaskGroup<T>> = [];
   try {
     for (const task of tasks) {
-      appendToBucket(buckets, dateGroupLabel(task, today, tomorrow), task);
+      appendToBucket(buckets, dateGroupLabel(task, today, tomorrow, todayList), task);
       if (cooperative) yield 'cheap';
     }
     for (const label of ['Overdue', 'Today', 'Tomorrow', 'Upcoming', 'No date']) {
@@ -480,15 +486,17 @@ export function groupTasksByDate<T extends TaskGroupValue>(
   tasks: readonly T[],
   today: string,
   tomorrow: string,
+  todayList = false,
 ): Array<TaskGroup<T>> {
-  return drainCollectionSteps(dateGroups(tasks, today, tomorrow, false));
+  return drainCollectionSteps(dateGroups(tasks, { today, tomorrow, todayList }, false));
 }
 export function groupTasksByDateSteps<T extends TaskGroupValue>(
   tasks: readonly T[],
   today: string,
   tomorrow: string,
+  todayList = false,
 ): CollectionSteps<Array<TaskGroup<T>>> {
-  return dateGroups(tasks, today, tomorrow, true);
+  return dateGroups(tasks, { today, tomorrow, todayList }, true);
 }
 
 export function groupTasksBySourceNote<T extends TaskGroupValue>(

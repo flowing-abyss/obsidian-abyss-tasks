@@ -282,3 +282,17 @@ it('rebases an occurrence address without changing its group and rejects unrelat
   expect(rebaseTaskRowKey('list.md:2', 'list.md:2', 'list.md:1')).toBe('list.md:1');
   expect(rebaseTaskRowKey('list.md:3', 'list.md:2', 'list.md:1')).toBe('list.md:3');
 });
+
+it('threads Today context to date rows for a scheduled task with a later due date', () => {
+  const grouping = taskListGrouping('date', {
+    today: TODAY,
+    tomorrow: TOMORROW,
+    statuses,
+    todayList: true,
+  });
+  const rows = buildTaskListRows(
+    [at(0, { planning: { scheduled: TODAY, due: '2026-07-20' } })],
+    grouping,
+  );
+  expect(describeRows(rows)).toEqual(['group:date:Today | Today | 1 | first', 'list.md:0']);
+});

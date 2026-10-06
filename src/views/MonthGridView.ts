@@ -242,7 +242,7 @@ export class MonthGridView extends BaseView {
     });
     const addButton = cell.createEl('button', {
       cls: 'abyss-mg-add-btn',
-      attr: { type: 'button', 'aria-label': 'Add task', title: 'Add task' },
+      attr: { type: 'button', 'aria-label': 'Add task' },
       text: '+',
     });
     addButton.addEventListener('click', (event) => {

@@ -26,6 +26,7 @@ import {
   useRealMoment,
 } from './helpers';
 import { expandCompoundSelectorLists } from './support/expandedCss';
+import { useHostTooltips } from './support/hostTooltips';
 import {
   inspectorCleanups as cleanups,
   inspectorHarness as harness,
@@ -36,6 +37,7 @@ import { prepareTaskPanelViewport, useTaskPanelViewport } from './support/taskPa
 import { searchUiCompleted } from './support/taskSearchUiHarness';
 
 useRealMoment();
+useHostTooltips();
 useTaskPanelViewport();
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) {
@@ -1007,7 +1009,7 @@ describe('inspector dependency navigation', () => {
       else label.click();
       expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
       const firstBack = button(h.el, '[aria-label="Back to previous task"]');
-      expect(firstBack.title).toBe('Back to previous task');
+      expect(firstBack.getAttribute('aria-label')).toBe('Back to previous task');
       expect(firstBack.tabIndex).toBe(0);
       expect(activeDocument.activeElement).toBe(firstBack);
       button(h.el, '[data-dependency-direction="blocked-by"] .abyss-dep-title').click();
@@ -2182,11 +2184,11 @@ describe('RightPanel dependency inspector', () => {
     expect(divider.hidden).toBe(true);
     expect(blocks.hidden).toBe(true);
     expect(body.getAttribute('aria-label')).toBe('Dependencies: blocked by 0; blocks 0');
-    expect(body.title).toBe('Dependencies: blocked by 0; blocks 0');
+    expect(body.getAttribute('aria-label')).toBe('Dependencies: blocked by 0; blocks 0');
     expect(plus.parentElement).toBe(badge);
     expect(body.contains(plus)).toBe(false);
     expect(plus.getAttribute('aria-label')).toBe('Add dependency sections');
-    expect(plus.title).toBe('Add dependency');
+    expect(plus.getAttribute('aria-label')).toBe('Add dependency sections');
 
     const decoy = body.createSpan({ cls: 'abyss-dep-test-decoy' });
     body.insertBefore(decoy, blockedBy);
@@ -3153,3 +3155,8 @@ it.each(['End', 'Home'])(
     expect(ownership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
   },
 );
+
+vi.mock('obsidian', async () => ({
+  ...(await import('obsidian-test-mocks/obsidian')),
+  setTooltip: vi.fn(),
+}));

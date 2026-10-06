@@ -1,4 +1,4 @@
-import { Component, Platform, setIcon, type App } from 'obsidian';
+import { Component, Platform, setIcon, setTooltip, type App } from 'obsidian';
 import {
   createSearchWordSegmenter,
   matchesSearchText,
@@ -364,8 +364,13 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
   private createRow_abyssPrivate(choice: PickerChoice): PickerRow {
     const element = this.options_abyssPrivate.root.createDiv({
       cls: 'abyss-project-value-picker-option',
-      attr: { role: 'option', 'data-value': String(choice.value), title: String(choice.value) },
+      attr: {
+        role: 'option',
+        'data-value': String(choice.value),
+        'aria-label': String(choice.value),
+      },
     });
+    setTooltip(element, String(choice.value));
     element.remove();
     element.id = `abyss-project-value-picker-${String(this.sequence_abyssPrivate)}-${choice.key}`;
     element.createSpan({
@@ -383,7 +388,6 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
       cls: 'abyss-project-value-picker-edit',
       attr: {
         type: 'button',
-        title: `Edit ${choice.suggestion.label} (Shift+Enter)`,
         'aria-label': `Edit ${choice.suggestion.label}`,
         'aria-keyshortcuts': 'Shift+Enter',
       },
@@ -420,7 +424,7 @@ class ProjectCellValuePicker implements ProjectCellValuePickerControl {
     const label = `${verb} ${String(literal)}`;
     const action = this.actionHost_abyssPrivate.createEl('button', {
       cls: 'abyss-project-value-picker-action',
-      attr: { type: 'button', title: label, 'aria-label': label },
+      attr: { type: 'button', 'aria-label': label },
     });
     const icon = action.createSpan({
       cls: 'abyss-project-value-picker-action-icon',

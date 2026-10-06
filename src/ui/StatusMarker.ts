@@ -47,6 +47,8 @@ function bindContextMenu(control: HTMLElement, onContextMenu: (event: MouseEvent
   };
 }
 
+const BLOCKED_HINT = 'Complete prerequisite tasks or remove the dependency first.';
+
 function makeMarkerInteractive(
   ...args: [HTMLElement, string, boolean, () => void, (event: MouseEvent) => void]
 ): void {
@@ -92,7 +94,7 @@ function makeMarkerInteractive(
     isDone = nextDone;
     semantics(wrapper ?? marker);
     if (wrapper !== undefined)
-      wrapper.setAttribute('aria-label', `Task status: ${label}. ${wrapper.title}`);
+      wrapper.setAttribute('aria-label', `Task status: ${label}. ${BLOCKED_HINT}`);
   });
   semantics(marker);
   bind(marker);
@@ -107,10 +109,9 @@ function makeMarkerInteractive(
       marker.before(wrapper);
       wrapper.append(marker);
       semantics(wrapper);
-      wrapper.title = 'Complete prerequisite tasks or remove the dependency first.';
       wrapper.setAttrs({
         'aria-disabled': 'true',
-        'aria-label': `Task status: ${label}. ${wrapper.title}`,
+        'aria-label': `Task status: ${label}. ${BLOCKED_HINT}`,
       });
       bind(wrapper);
       for (const attr of ['role', 'aria-checked', 'aria-label', 'tabindex'])

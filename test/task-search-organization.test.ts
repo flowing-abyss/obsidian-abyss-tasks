@@ -260,3 +260,48 @@ it('preserves engine relevance order even when exact-title precedence has a smal
     h.close();
   }
 });
+
+it('groups mixed Today dates together and orders compact records by time', async () => {
+  const h = await createCanonicalSearchHarness(
+    {
+      'a.md':
+        '- [ ] late 📅 2026-10-04 ⏰ 18:00\n- [ ] untimed 📅 2026-10-04\n- [ ] early scheduled ⏳ 2026-10-04 📅 2026-10-05 ⏰ 08:00\n- [ ] morning 📅 2026-10-04 ⏰ 09:00\n- [ ] same morning ⏳ 2026-10-04 📅 2026-10-06 ⏰ 09:00\n- [ ] overdue 📅 2026-10-03 ⏳ 2026-10-04 ⏰ 20:00',
+    },
+    settings,
+  );
+  try {
+    const subscription = h.index.searchSource().subscribe(() => {});
+    const generation = subscription.state.generation;
+    subscription.unsubscribe();
+    const records = [];
+    for await (const batch of h.index.organization(
+      { expectedGeneration: generation },
+      new AbortController().signal,
+    ))
+      records.push(...batch.items);
+    const compact = organizeTaskSearch({
+      generation,
+      records,
+      hits: null,
+      selection: 'today',
+      view: {
+        list: { groupBy: 'date', sortBy: { field: 'date', dir: 'asc' }, filters: [] },
+        relevance: false,
+      },
+      settings,
+      today,
+      nowMs: 0,
+      outgoingLinks: new Map(),
+    });
+    expect(compact.occurrences.map((o) => [o.key, o.group?.label])).toEqual([
+      ['a.md:5', 'Overdue'],
+      ['a.md:2', 'Today'],
+      ['a.md:3', 'Today'],
+      ['a.md:4', 'Today'],
+      ['a.md:0', 'Today'],
+      ['a.md:1', 'Today'],
+    ]);
+  } finally {
+    h.close();
+  }
+});

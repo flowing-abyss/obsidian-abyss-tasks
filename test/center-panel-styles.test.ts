@@ -45,7 +45,7 @@ describe('CenterPanel task metadata styles', () => {
       '.abyss-task-delete-btn',
     ].map((child) => declarationsFor(`.abyss-task-card-main-row > ${child}`));
     const metadata = declarationsFor('.abyss-task-card-main-row > .abyss-task-meta-right');
-    const dependency = declarationsFor('.abyss-task-card-main-row > .abyss-dep-indicator');
+    const dependency = declarationsFor('.abyss-task-title-row > .abyss-dep-indicator');
     const deleteStrut = declarationsFor(
       '.abyss-task-card-main-row > .abyss-task-delete-btn::before',
     );
@@ -97,11 +97,9 @@ describe('CenterPanel task metadata styles', () => {
     expect(deleteStrut).toContain('block-size: calc(2 * var(--abyss-task-card-cap-half))');
     // The indicator's lock is an inline-flex box around the icon, so its baseline would be the
     // icon's bottom edge; the same strut centres the icon on the caps.
-    const lock = declarationsFor(
-      '.abyss-task-card-main-row > .abyss-dep-indicator > .abyss-dep-lock',
-    );
+    const lock = declarationsFor('.abyss-task-title-row > .abyss-dep-indicator > .abyss-dep-lock');
     const lockStrut = declarationsFor(
-      '.abyss-task-card-main-row > .abyss-dep-indicator > .abyss-dep-lock::before',
+      '.abyss-task-title-row > .abyss-dep-indicator > .abyss-dep-lock::before',
     );
     expect(lock).toContain('align-items: center');
     expect(lockStrut).toContain("content: ''");
@@ -429,35 +427,16 @@ describe('CenterPanel task metadata styles', () => {
     expect(declarationsFor('.abyss-task-card:hover .abyss-task-delete-btn')).toBe('');
   });
 
-  it('keeps active dependency indicators between the checkbox and title at constrained widths', () => {
+  it('uses the same body and metadata columns for blocked and plain cards', () => {
     const compact = atRuleBlock('@container abyss-task-list (max-width: 28rem)');
-    const withIndicator = '.abyss-task-card-main-row--has-dep';
-    expect(declarationsForSource(compact, withIndicator)).toBe(
-      'grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr);',
-    );
+    expect(declarationsForSource(compact, '.abyss-task-body')).toContain('grid-column: 2;');
     expect(
-      declarationsForSource(
-        compact,
-        '.abyss-task-card-main-row--has-dep.abyss-task-card-main-row--has-delete',
-      ),
-    ).toBe('grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr) 24px;');
+      declarationsForSource(compact, '.abyss-task-card-main-row > .abyss-task-meta-right'),
+    ).toContain('grid-column: 2 / -1;');
+    expect(declarationsForSource(compact, '.abyss-task-card-main-row--has-dep')).toBe('');
     expect(
-      declarationsForSource(compact, '.abyss-task-card-main-row > .abyss-status-control'),
-    ).toBe(['grid-column: 1;', 'grid-row: 1;'].join('\n'));
-    const indicator = declarationsForSource(
-      compact,
-      '.abyss-task-card-main-row > .abyss-dep-indicator',
-    );
-    expect(indicator).toBe(['grid-column: 2;', 'grid-row: 1;'].join('\n'));
-    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-body`)).toBe(
-      'grid-column: 3;',
-    );
-    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-meta-right`)).toBe(
-      'grid-column: 3 / -1;',
-    );
-    expect(declarationsForSource(compact, `${withIndicator} > .abyss-task-delete-btn`)).toBe(
-      'grid-column: 4;',
-    );
+      declarationsForSource(compact, '.abyss-task-card-main-row--has-dep > .abyss-task-body'),
+    ).toBe('');
   });
 
   it('keeps hover and selection states paint-only so controls do not shift', () => {

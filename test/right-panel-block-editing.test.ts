@@ -830,7 +830,7 @@ describe('RightPanel block editing', () => {
       panel.mount(container);
       try {
         const view = expectDefined(container.querySelector<HTMLElement>('.abyss-right-title-view'));
-        expect(view.title).toBe(plain);
+        expect(view.hasAttribute('title')).toBe(false);
         expect(view.getAttribute('aria-label')).toBe(plain);
         view.click();
         await flushMicrotasks();
@@ -854,7 +854,7 @@ describe('RightPanel block editing', () => {
         const returned = expectDefined(
           container.querySelector<HTMLElement>('.abyss-right-title-view'),
         );
-        expect(returned.title).toBe(finish === 'Enter' ? updatedPlain : plain);
+        expect(returned.hasAttribute('title')).toBe(false);
         expect(returned.getAttribute('aria-label')).toBe(finish === 'Enter' ? updatedPlain : plain);
         returned.click();
         expect(container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')?.value).toBe(
