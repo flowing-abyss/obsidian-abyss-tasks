@@ -990,7 +990,7 @@ export class RightPanel {
     if (command.type === 'add-comment') {
       return draft.kind === 'new-comment' && sameTaskNodeRef(draft.parent, command.parent);
     }
-    if (command.type === 'update-comment') {
+    if (command.type === 'update-comment' || command.type === 'delete-comment') {
       return draft.kind === 'existing-comment' && sameCommentRef(draft.target.ref, command.comment);
     }
     return false;

@@ -259,3 +259,78 @@ describe('attachment drop target capture', () => {
     element.remove();
   });
 });
+
+describe('attachment paste captured insertion lifetime', () => {
+  it('keeps each captured session independent and suppresses insertion after disposal', async () => {
+    const app = await createAppWithFiles({ 'saved.png': '' });
+    const saved = await tfile('saved.png');
+    vi.spyOn(app.fileManager, 'getAvailablePathForAttachment').mockResolvedValue('saved.png');
+    vi.spyOn(app.vault, 'createBinary').mockResolvedValue(saved);
+    vi.spyOn(app.fileManager, 'generateMarkdownLink').mockReturnValue('[[saved.png]]');
+    const el = activeDocument.body.createEl('textarea');
+    let session = 0;
+    const values: string[] = [];
+    const cleanup = enableAttachmentPaste(el, {
+      app,
+      sourcePath: 'tasks.md',
+      onInsert: () => {
+        values.push('uncaptured');
+      },
+      capture: () => {
+        const captured = session;
+        return {
+          sourcePath: 'tasks.md',
+          onInsert: (links: string) => {
+            if (captured === session) values.push(links);
+          },
+        };
+      },
+    });
+    const paste = (bytes: Promise<ArrayBuffer>) => {
+      const event = new Event('paste', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'clipboardData', {
+        value: { files: [{ name: 'saved.png', arrayBuffer: () => bytes }] },
+      });
+      el.dispatchEvent(event);
+    };
+    const stale = deferred<ArrayBuffer>();
+    paste(stale.promise);
+    session++;
+    const live = deferred<ArrayBuffer>();
+    paste(live.promise);
+    stale.resolve(new ArrayBuffer(1));
+    await flushMicrotasks(20);
+    expect(values).toEqual([]);
+    live.resolve(new ArrayBuffer(1));
+    await whenPasteSettled(el);
+    expect(values).toEqual(['[[saved.png]]']);
+    const disposed = deferred<ArrayBuffer>();
+    paste(disposed.promise);
+    cleanup();
+    disposed.resolve(new ArrayBuffer(1));
+    await whenPasteSettled(el);
+    expect(values).toEqual(['[[saved.png]]']);
+    el.remove();
+  });
+
+  it('rejects a retired context before starting attachment work', async () => {
+    const app = await createAppWithFiles({});
+    const bytes = vi.fn().mockResolvedValue(new ArrayBuffer(1));
+    const el = activeDocument.body.createEl('textarea');
+    const cleanup = enableAttachmentPaste(el, {
+      app,
+      sourcePath: 'tasks.md',
+      onInsert: () => {},
+      capture: () => undefined,
+    });
+    const event = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', {
+      value: { files: [{ name: 'saved.png', arrayBuffer: bytes }] },
+    });
+    el.dispatchEvent(event);
+    await whenPasteSettled(el);
+    expect(bytes).not.toHaveBeenCalled();
+    cleanup();
+    el.remove();
+  });
+});

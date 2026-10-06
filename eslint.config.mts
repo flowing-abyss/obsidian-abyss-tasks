@@ -430,6 +430,7 @@ export default defineConfig(
       'src/tasks/domain/taskSearchTypes.ts',
       'src/tasks/domain/searchMatchPolicy.ts',
       'src/markdown/searchText.ts',
+      'src/ui/commentPreview.ts',
       'src/markdown/searchTextTypes.ts',
       'src/tasks/domain/taskSearchProjection.ts',
       'src/tasks/domain/taskDuration.ts',

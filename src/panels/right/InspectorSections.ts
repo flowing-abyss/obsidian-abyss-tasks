@@ -4,6 +4,7 @@ import type { LinkToken } from '../../markdown/links';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import {
   formatCommentTimeLabel,
+  normalizeCommentText,
   type CommentTimeContext,
   type SubtaskSnapshot,
   type TaskCommentSnapshot,
@@ -16,6 +17,7 @@ import {
   insertAtCaret,
   whenPasteSettled,
 } from '../../ui/attachmentDrop';
+import { commentPreview } from '../../ui/commentPreview';
 import { isImeOwnedEvent } from '../../ui/ime';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import { LinkEditModal } from '../../ui/LinkEditModal';
@@ -88,6 +90,8 @@ interface InspectorCommentRow {
   component: Component;
   textComponent: Component | undefined;
   update: () => void;
+  expanded: boolean;
+  disclosure: HTMLButtonElement | undefined;
 }
 
 class AsyncEditLifecycle {
@@ -270,13 +274,23 @@ export class InspectorSections {
     );
   }
 
-  #enablePaste(el: HTMLTextAreaElement, task: TaskLike): void {
+  #enablePaste(
+    el: HTMLTextAreaElement,
+    task: TaskLike,
+    captureSession: () => () => boolean = () => () => true,
+  ): void {
     this.#host.component().register(
       enableAttachmentPaste(el, {
         app: this.#app,
-        sourcePath: rootTaskRef(task).filePath,
-        onInsert: (links) => {
-          insertAtCaret(el, links);
+        capture: () => {
+          const isCurrent = captureSession();
+          if (!el.isConnected || !isCurrent()) return undefined;
+          return {
+            sourcePath: rootTaskRef(task).filePath,
+            onInsert: (links) => {
+              if (el.isConnected && isCurrent()) insertAtCaret(el, links);
+            },
+          };
         },
       }),
     );
@@ -350,34 +364,45 @@ export class InspectorSections {
       cls: 'abyss-right-desc abyss-right-desc-edit',
     });
     view.insertAdjacentElement('afterend', textarea);
+    const lifecycle = new AsyncEditLifecycle();
     textarea.value = task.description ?? '';
-    this.#enablePaste(textarea, task);
+    this.#enablePaste(textarea, task, () => () => !lifecycle.isClosed());
     textarea.setCssStyles({ height: `${Math.max(start, 60)}px` });
     textarea.ownerDocument.defaultView?.setTimeout(() => {
       textarea.focus();
     }, 0);
-    const lifecycle = new AsyncEditLifecycle();
-    const finish = async (save: boolean): Promise<void> => {
-      if (!lifecycle.begin()) return;
-      await whenPasteSettled(textarea);
-      const changed = textarea.value !== (task.description ?? '');
-      if (save && changed && !(await this.#commands.updateDescription(task, textarea.value))) {
-        lifecycle.retry();
-        textarea.focus();
-        return;
-      }
+    const close = (): void => {
       lifecycle.close();
       textarea.remove();
       view.show();
       showView();
     };
+    const isCurrent = (): boolean => !lifecycle.isClosed() && textarea.isConnected;
+    const finish = async (): Promise<void> => {
+      if (!lifecycle.begin()) return;
+      await whenPasteSettled(textarea);
+      if (!isCurrent()) return;
+      const value = textarea.value;
+      const changed = value !== (task.description ?? '');
+      const committed = !changed || (await this.#commands.updateDescription(task, value));
+      if (!isCurrent()) return;
+      if (!committed || textarea.value !== value) {
+        lifecycle.retry();
+        if (!committed) textarea.focus();
+        return;
+      }
+      close();
+    };
     textarea.addEventListener('blur', () => {
-      runAsyncAction(finish(true));
+      runAsyncAction(finish());
     });
     textarea.addEventListener('keydown', (event) => {
-      if (event.key !== 'Escape' || isImeOwnedEvent(event)) return;
-      event.preventDefault();
-      runAsyncAction(finish(false));
+      if (isImeOwnedEvent(event)) return;
+      if (event.key === 'Enter' || event.key === 'Escape') {
+        event.preventDefault();
+        if (event.key === 'Escape') close();
+        else runAsyncAction(finish());
+      }
     });
   }
 
@@ -565,18 +590,41 @@ export class InspectorSections {
         },
       }),
     );
-    this.#enablePaste(commentInput, task);
+    let session = 0;
+    let submittingSession: number | undefined;
+    this.#enablePaste(commentInput, task, () => {
+      const capturedSession = session;
+      return () => capturedSession === session && owner.current !== undefined;
+    });
     this.#registerEntryDismissal(commentInput, task, 'new-comment', () => {
+      session++;
       commentInput.blur();
     });
     commentInput.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey && !isImeOwnedEvent(e)) {
         e.preventDefault();
-        const text = commentInput.value.trim();
         const current = owner.current;
-        if (text !== '' && current !== undefined) {
-          runAsyncAction(this.#commands.addComment(current, text, commentList, commentInput));
-        }
+        if (submittingSession === session || current === undefined) return;
+        const capturedSession = session;
+        submittingSession = capturedSession;
+        runAsyncAction(
+          (async () => {
+            try {
+              await whenPasteSettled(commentInput);
+              if (
+                !commentInput.isConnected ||
+                owner.current === undefined ||
+                capturedSession !== session
+              )
+                return;
+              const text = commentInput.value;
+              if (normalizeCommentText(text).type !== 'empty')
+                await this.#commands.addComment(current, text, commentList, commentInput);
+            } finally {
+              if (submittingSession === capturedSession) submittingSession = undefined;
+            }
+          })(),
+        );
       }
     });
   }
@@ -846,6 +894,8 @@ export class InspectorSections {
       component,
       textComponent: undefined,
       update: () => {},
+      expanded: false,
+      disclosure: undefined,
     };
     this.#commentRows.push(entry);
     component.register(
@@ -896,25 +946,50 @@ export class InspectorSections {
     entry.textComponent = entry.component.addChild(new Component());
     row.querySelector('.abyss-comment-text')?.remove();
     const { comment, textComponent: component } = entry;
-    const { element: textEl } = renderTaskCommentText(row, comment.text, {
+    const preview = entry.expanded ? undefined : commentPreview(comment.text);
+    const { element: textEl } = renderTaskCommentText(row, preview?.markdown ?? comment.text, {
       app: this.#app,
       sourcePath: rootTaskRef(task).filePath,
       component,
       onEditLink: (occurrence, token) => {
-        if (owner.current === undefined) return;
+        const fullOccurrence = preview?.fullOccurrences[occurrence] ?? occurrence;
+        if (owner.current === undefined || fullOccurrence < 0) return;
         this.#editLinkInString(
           { type: 'comment', ref: entry.comment.ref },
-          occurrence,
+          fullOccurrence,
           token,
           rootTaskRef(task).filePath,
         );
       },
     });
+    if (entry.disclosure?.parentElement === row) row.insertBefore(textEl, entry.disclosure);
+    this.#renderCommentDisclosure(entry, showText);
     component.registerDomEvent(textEl, 'click', (event) => {
       if ((event.target as HTMLElement).closest('a') != null) return;
       const current = owner.current;
       if (current !== undefined) this.#openCommentEditor(row, entry.comment, current, showText);
     });
+  }
+
+  #renderCommentDisclosure(entry: InspectorCommentRow, showText: () => void): void {
+    if (/[\r\n]/u.test(entry.comment.text)) {
+      let disclosure = entry.disclosure;
+      if (disclosure === undefined) {
+        disclosure = entry.row.createEl('button', {
+          cls: 'abyss-comment-disclosure',
+          attr: { type: 'button' },
+        });
+        entry.disclosure = disclosure;
+        entry.component.registerDomEvent(disclosure, 'click', () => {
+          entry.expanded = !entry.expanded;
+          showText();
+        });
+      }
+      disclosure.setText(entry.expanded ? 'Show less' : 'Show more');
+      disclosure.setAttribute('aria-expanded', String(entry.expanded));
+      disclosure.setAttribute('aria-label', entry.expanded ? 'Collapse comment' : 'Expand comment');
+      if (disclosure.parentElement !== entry.row) entry.row.appendChild(disclosure);
+    } else entry.disclosure?.remove();
   }
 
   #openCommentEditor(
@@ -924,14 +999,17 @@ export class InspectorSections {
     showText: () => void,
   ): void {
     row.querySelector('.abyss-comment-text')?.remove();
+    row.querySelector('.abyss-comment-disclosure')?.remove();
     const textarea = row.createEl('textarea', { cls: 'abyss-comment-edit-input' });
-    textarea.value = comment.text;
-    this.#enablePaste(textarea, task);
     const lifecycle = new AsyncEditLifecycle();
+    textarea.value = comment.text;
+    this.#enablePaste(textarea, task, () => () => !lifecycle.isClosed());
+    const isCurrent = (): boolean => !lifecycle.isClosed() && textarea.isConnected;
     const finish = async (): Promise<void> => {
       if (!lifecycle.begin()) return;
       await whenPasteSettled(textarea);
-      const value = textarea.value.trim();
+      if (!isCurrent()) return;
+      const value = textarea.value;
       if (value === comment.text) {
         lifecycle.close();
         textarea.remove();
@@ -939,16 +1017,18 @@ export class InspectorSections {
         return;
       }
       const committed =
-        value === ''
+        normalizeCommentText(value).type === 'empty'
           ? await this.#commands.deleteComment(task, comment)
           : await this.#commands.updateComment(task, comment, value);
-      if (!committed) {
+      if (!isCurrent()) return;
+      if (!committed || textarea.value !== value) {
         lifecycle.retry();
-        textarea.focus();
+        if (!committed) textarea.focus();
         return;
       }
       lifecycle.close();
       textarea.remove();
+      showText();
     };
     textarea.addEventListener('blur', () => {
       textarea.ownerDocument.defaultView?.setTimeout(() => {
@@ -959,7 +1039,7 @@ export class InspectorSections {
       if (isImeOwnedEvent(event)) return;
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
-        textarea.blur();
+        runAsyncAction(finish());
       }
       if (event.key === 'Escape') {
         event.preventDefault();

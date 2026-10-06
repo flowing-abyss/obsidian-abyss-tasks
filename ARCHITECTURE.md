@@ -861,7 +861,15 @@ and indexes exact surviving occurrences for all mounted owners. RightPanel alone
 from the accepted proof, and retirement clears them. Link saves participate in the same owned
 submission flow; their proof requires the exact parsed occurrence replacement in the selected field
 and a single corresponding replacement in the complete root source block, including comment source
-blocks. Unrelated source changes cannot acquire successor authority. Ordinary explicit redraws keep their existing
+blocks. Multiline comments keep disclosure state on the retained row and render their first line
+through the shared Markdown renderer; preview link edits require matching raw tokens and original
+full-field offsets. Editors retain the complete field. Comment Enter and description Enter (with
+or without Shift) begin one submission, await the existing paste-settlement boundary, and read the
+original live textarea before dispatch. Cancellation or retirement invalidates pending insertion and
+submission. Attachment paste supports a captured insertion context, acquired once before attachment
+work, so reusing an entry cannot revive a cancelled paste; disposal suppresses its late callback.
+Submitted drafts retain the original DOM value for result comparison, including normalized comment
+writes and clear-to-delete. Unrelated source changes cannot acquire successor authority. Ordinary explicit redraws keep their existing
 teardown and settlement semantics; exact unchanged index events are filtered by the shells. Window
 migration retires document listeners and components, then restores eligible drafts into the new owner.
 

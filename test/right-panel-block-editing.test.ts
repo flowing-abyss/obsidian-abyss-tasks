@@ -1,4 +1,4 @@
-import { requireApiVersion } from 'obsidian';
+import { MarkdownRenderer, requireApiVersion } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
@@ -8,6 +8,7 @@ import type { TaskRef } from '../src/tasks/domain/types';
 import { createTaskBlock } from '../src/tasks/infrastructure/markdown/createTaskBlock';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { projectTaskSnapshot } from '../src/tasks/infrastructure/markdown/TaskSnapshotProjector';
+import * as attachmentDrop from '../src/ui/attachmentDrop';
 import { taskNodeRef } from '../src/ui/taskSelection';
 import {
   canonicalStatusCatalog,
@@ -339,6 +340,7 @@ describe('RightPanel block editing', () => {
         input.focus();
         input.value = 'Submitted';
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await flushMicrotasks();
         const selection = panel.selectionForOwnedTransition(
           initial.ref,
           current,
@@ -401,6 +403,7 @@ describe('RightPanel block editing', () => {
         expect(activeDocument.activeElement).toBe(input);
         expect(execute).toHaveBeenCalledOnce();
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await flushMicrotasks();
         state.set('taskStack', [sourceSnapshot('- [ ] Other', 'other')]);
         const other = expectDefined(
           container.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
@@ -487,6 +490,7 @@ describe('RightPanel block editing', () => {
         input.focus();
         input.value = 'Submitted';
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await flushMicrotasks();
         input.value = 'Newer unfinished';
         input.setSelectionRange(3, 7);
         pending.resolve({
@@ -1534,6 +1538,7 @@ describe('RightPanel block editing', () => {
     });
     const { panel } = await panelWith(initial, execute);
     const container = freshContainer();
+    activeDocument.body.append(container);
     panel.mount(container);
     expectDefined(container.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
     const textarea = expectDefined(
@@ -1680,6 +1685,7 @@ describe('RightPanel block editing', () => {
     });
     const { panel } = await panelWith(initial, execute);
     const container = freshContainer();
+    activeDocument.body.append(container);
     panel.mount(container);
     vi.useFakeTimers();
     try {
@@ -1953,7 +1959,7 @@ describe('RightPanel IME-owned keys', () => {
   );
 
   it.each(['composing', 'legacy'] as const)(
-    'keeps the description editor open on an IME Escape (%s)',
+    'keeps the description editor open on IME Enter and Escape (%s)',
     async (ime) => {
       const { panel, container, execute } = await mounted();
       try {
@@ -1962,10 +1968,12 @@ describe('RightPanel IME-owned keys', () => {
         const description = expectDefined(
           container.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
         );
+        description.value = 'かな';
+        const enter = dispatchImeKey(description, 'Enter', ime);
         const escape = dispatchImeKey(description, 'Escape', ime);
         await flushMicrotasks();
 
-        // Guarding only Enter handlers misses the description, whose keydown knows only Escape.
+        expect(enter.defaultPrevented).toBe(false);
         expect(escape.defaultPrevented).toBe(false);
         expect(description.isConnected).toBe(true);
         expect(execute).not.toHaveBeenCalled();
@@ -2065,7 +2073,9 @@ describe('consumed draft recovery over the real index', () => {
     ].flatMap((fixture) => ['result-first', 'index-first'].map((order) => ({ ...fixture, order }))),
   )('retains connected nested entry with $label and $order', async ({ entries, order }) => {
     const h = await inspectorHarness(
-      ['- [ ] Root', '  - [ ] Owner', '    - [ ] Existing', ...entries].join('\n'),
+      ['- [ ] Root', '  - [ ] Branch', '    - [ ] Owner', '      - [ ] Existing', ...entries].join(
+        '\n',
+      ),
       'Owner',
     );
     const unsubscribe = order === 'index-first' ? subscribeInspectorReconciliation(h) : () => {};
@@ -2104,7 +2114,7 @@ describe('consumed draft recovery over the real index', () => {
         h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
       );
       commentInput.focus();
-      for (const text of ['Comment one', 'Comment two']) {
+      for (const text of ['Comment one\nsecond line', 'Comment two\nsecond line']) {
         const input = commentInput;
         input.value = text;
         input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -2120,8 +2130,16 @@ describe('consumed draft recovery over the real index', () => {
         expect(h.el.querySelector('.abyss-comment-input')).toBe(input);
         expect(input.ownerDocument.activeElement).toBe(input);
       }
-      expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Root', 'Owner']);
+      expect(h.state.get('taskStack').map((node) => node.title)).toEqual([
+        'Root',
+        'Branch',
+        'Owner',
+      ]);
       expect(h.node('Root').node.timeEntries).toHaveLength(entries.length);
+      expect(h.node('Root').node.comments).toHaveLength(0);
+      expect(h.node('Branch').node.comments).toHaveLength(0);
+      expect(h.node('Owner').node.timeEntries).toHaveLength(0);
+      expect((await h.read()).split('\n').filter((line) => line.includes(' → '))).toEqual(entries);
     } finally {
       unsubscribe();
     }
@@ -2476,3 +2494,429 @@ describe('consumed draft recovery over the real index', () => {
     }
   });
 });
+
+describe('multiline inspector comment and description editing', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+  });
+
+  it('collapses multiline comments, retains disclosure through proven refresh and edits full text', async () => {
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
+      holder.setText(source);
+    });
+    const h = await inspectorHarness('- [ ] Owner\n  - 2026-07-13: first\n    second', 'Owner');
+    const row = expectDefined(h.el.querySelector('.abyss-comment-row'));
+    expect(row.querySelector('.abyss-comment-text')?.textContent).toBe('first');
+    const disclosure = expectDefined(row.querySelector<HTMLButtonElement>('button[aria-expanded]'));
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
+    disclosure.focus();
+    disclosure.click();
+    expect(disclosure.ownerDocument.activeElement).toBe(disclosure);
+    expect(disclosure.isConnected).toBe(true);
+    expect(row.querySelector('button[aria-expanded]')).toBe(disclosure);
+    expect(row.querySelector('.abyss-comment-edit-input')).toBeNull();
+    expect(row.querySelector('button[aria-expanded]')?.getAttribute('aria-expanded')).toBe('true');
+    await vi.waitFor(() => {
+      expect(row.querySelector('.abyss-comment-text')?.textContent).toContain('second');
+    });
+    await call<Promise<boolean>>(
+      h.panel,
+      'addComment',
+      h.node('Owner').node,
+      'single',
+      row,
+      expectDefined(h.el.querySelector('.abyss-comment-input')),
+    );
+    expect(h.el.querySelector('.abyss-comment-row')).toBe(row);
+    expect(row.querySelector('button[aria-expanded]')?.getAttribute('aria-expanded')).toBe('true');
+    expect(h.el.querySelectorAll('.abyss-comment-row button[aria-expanded]')).toHaveLength(1);
+    expectDefined(row.querySelector<HTMLElement>('.abyss-comment-text')).click();
+    expect(row.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input')?.value).toBe(
+      'first\nsecond',
+    );
+    expect(row.querySelector('button[aria-expanded]')).toBeNull();
+  });
+
+  it.each([false, true])(
+    'submits a multiline description once on Enter (shift=%s) and retains its text',
+    async (shiftKey) => {
+      const h = await inspectorHarness('- [ ] Owner\n  - > old', 'Owner');
+      expectDefined(h.el.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
+      const editor = expectDefined(
+        h.el.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+      );
+      const execute = vi.spyOn(h.api, 'execute');
+      editor.value = 'one\ntwo';
+      const event = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        shiftKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      editor.dispatchEvent(event);
+      editor.dispatchEvent(new Event('blur'));
+      await vi.waitFor(() => {
+        expect(h.node('Owner').node.description).toBe('one\ntwo');
+      });
+      expect(event.defaultPrevented).toBe(true);
+      expect(
+        execute.mock.calls.filter(([command]) => command.type === 'set-description'),
+      ).toHaveLength(1);
+      expect(h.el.querySelector('.abyss-right-desc-edit')).toBeNull();
+    },
+  );
+
+  it('deletes a cleared comment without producing a phantom detached draft', async () => {
+    const h = await inspectorHarness('- [ ] Owner\n  - 2026-07-13: old comment', 'Owner');
+    const off = subscribeInspectorReconciliation(h);
+    try {
+      expectDefined(h.el.querySelector<HTMLElement>('.abyss-comment-text')).click();
+      const editor = expectDefined(
+        h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input'),
+      );
+      editor.value = '';
+      editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await vi.waitFor(() => {
+        expect(h.node('Owner').node.comments).toHaveLength(0);
+      });
+      await flushMicrotasks(20);
+      expect(h.panel.captureDraftState()?.entries ?? []).toEqual([]);
+      expect(h.el.textContent).not.toContain('Unsaved drafts');
+    } finally {
+      off();
+    }
+  });
+
+  it('keeps Shift+Enter and both IME Enter forms from submitting a new comment', async () => {
+    const h = await inspectorHarness('- [ ] Owner', 'Owner');
+    const input = expectDefined(h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input'));
+    const execute = vi.spyOn(h.api, 'execute');
+    input.value = 'one\ntwo';
+    const event = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    input.dispatchEvent(event);
+    for (const ime of ['composing', 'legacy'] as const)
+      expect(dispatchImeKey(input, 'Enter', ime).defaultPrevented).toBe(false);
+    await flushMicrotasks();
+    expect(event.defaultPrevented).toBe(false);
+    expect(execute).not.toHaveBeenCalled();
+    expect(input.value).toBe('one\ntwo');
+  });
+
+  it('normalizes comment submission without consuming a newer cleared entry draft', async () => {
+    const h = await inspectorHarness('- [ ] Owner', 'Owner');
+    const input = expectDefined(h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input'));
+    const result = deferred<TaskCommandResult>();
+    const realExecute = h.api.execute.bind(h.api);
+    vi.spyOn(h.api, 'execute').mockImplementation(async (command) => {
+      const committed = await realExecute(command);
+      await result.promise;
+      return committed;
+    });
+    input.focus();
+    input.value = '  one  \n \n  two  ';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.waitFor(() => {
+      expect(h.node('Owner').node.comments[0]?.text).toBe('  one  \n  two  ');
+    });
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    result.resolve({
+      type: 'ok',
+      changed: false,
+      outcome: { type: 'task', task: h.node('Owner').root },
+    });
+    await flushMicrotasks(30);
+    expect(h.el.querySelector('.abyss-comment-input')).toBe(input);
+    expect(input.value).toBe('');
+    expect(input.isConnected).toBe(true);
+  });
+});
+
+function submissionSelector(kind: 'create' | 'edit' | 'description'): string {
+  const selectors = {
+    create: '.abyss-comment-input',
+    edit: '.abyss-comment-edit-input',
+    description: '.abyss-right-desc-edit',
+  };
+  return selectors[kind];
+}
+
+describe('inspector submission waits for the original paste session', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+  });
+
+  it.each(['create', 'edit', 'description'] as const)(
+    'awaits paste and submits once for %s',
+    async (kind) => {
+      const h = await inspectorHarness(
+        '- [ ] Owner\n  - > old description\n  - 2026-07-13: old comment',
+        'Owner',
+      );
+      const paste = deferred<void>();
+      vi.spyOn(attachmentDrop, 'whenPasteSettled').mockReturnValue(paste.promise);
+      const execute = vi.spyOn(h.api, 'execute');
+      if (kind !== 'create')
+        expectDefined(
+          h.el.querySelector<HTMLElement>(
+            kind === 'edit' ? '.abyss-comment-text' : '.abyss-right-desc-view',
+          ),
+        ).click();
+      const input = expectDefined(
+        h.el.querySelector<HTMLTextAreaElement>(submissionSelector(kind)),
+      );
+      input.focus();
+      input.value = 'one';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks();
+      expect(execute).not.toHaveBeenCalled();
+      input.value = 'one\ntwo';
+      paste.resolve();
+      await vi.waitFor(() => {
+        expect(execute).toHaveBeenCalledTimes(1);
+      });
+      expect(execute.mock.calls[0]?.[0]).toMatchObject({ text: 'one\ntwo' });
+    },
+  );
+
+  it.each(['create', 'edit', 'description'] as const)(
+    'cancelling %s while paste is pending does not write later',
+    async (kind) => {
+      const h = await inspectorHarness(
+        '- [ ] Owner\n  - > old description\n  - 2026-07-13: old comment',
+        'Owner',
+      );
+      const paste = deferred<void>();
+      vi.spyOn(attachmentDrop, 'whenPasteSettled').mockReturnValue(paste.promise);
+      const execute = vi.spyOn(h.api, 'execute');
+      if (kind !== 'create')
+        expectDefined(
+          h.el.querySelector<HTMLElement>(
+            kind === 'edit' ? '.abyss-comment-text' : '.abyss-right-desc-view',
+          ),
+        ).click();
+      const input = expectDefined(
+        h.el.querySelector<HTMLTextAreaElement>(submissionSelector(kind)),
+      );
+      input.focus();
+      input.value = 'cancelled';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      paste.resolve();
+      await flushMicrotasks(30);
+      expect(execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['create', 'edit'] as const)(
+    'navigation invalidates pending %s submission',
+    async (kind) => {
+      const h = await inspectorHarness(
+        '- [ ] Owner\n  - 2026-07-13: old comment\n- [ ] Other',
+        'Owner',
+      );
+      const paste = deferred<void>();
+      vi.spyOn(attachmentDrop, 'whenPasteSettled').mockReturnValue(paste.promise);
+      const execute = vi.spyOn(h.api, 'execute');
+      if (kind === 'edit')
+        expectDefined(h.el.querySelector<HTMLElement>('.abyss-comment-text')).click();
+      const input = expectDefined(
+        h.el.querySelector<HTMLTextAreaElement>(
+          kind === 'create' ? '.abyss-comment-input' : '.abyss-comment-edit-input',
+        ),
+      );
+      input.focus();
+      input.value = 'old selection draft';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      h.state.set('taskStack', [h.node('Other').root]);
+      paste.resolve();
+      await flushMicrotasks(30);
+      expect(execute).not.toHaveBeenCalled();
+      expect(h.node('Other').node.comments).toHaveLength(0);
+    },
+  );
+});
+
+function pasteFile(input: HTMLTextAreaElement, bytes: Promise<ArrayBuffer>): void {
+  const event = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', {
+    value: { files: [{ name: 'saved.png', arrayBuffer: () => bytes }] },
+  });
+  input.dispatchEvent(event);
+}
+
+describe('real inspector attachment paste lifetime', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+  });
+
+  async function pastedInspector() {
+    const h = await inspectorHarness(
+      '- [ ] Owner\n  - 2026-07-13: old comment\n- [ ] Other',
+      'Owner',
+      { 'saved.png': '' },
+    );
+    vi.spyOn(h.app.fileManager, 'getAvailablePathForAttachment').mockResolvedValue('saved.png');
+    vi.spyOn(h.app.fileManager, 'generateMarkdownLink').mockReturnValue('[[saved.png]]');
+    const file = expectDefined(h.app.vault.getFileByPath('saved.png'));
+    vi.spyOn(h.app.vault, 'createBinary').mockResolvedValue(file);
+    return h;
+  }
+
+  it('ignores a cancelled paste after reusing the same entry and accepts its live subsequent paste', async () => {
+    const h = await pastedInspector();
+    const input = expectDefined(h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input'));
+    input.focus();
+    const stale = deferred<ArrayBuffer>();
+    pasteFile(input, stale.promise);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    input.focus();
+    input.value = 'new draft';
+    input.setSelectionRange(9, 9);
+    const live = deferred<ArrayBuffer>();
+    pasteFile(input, live.promise);
+    stale.resolve(new ArrayBuffer(1));
+    await flushMicrotasks(30);
+    expect(input.value).toBe('new draft');
+    live.resolve(new ArrayBuffer(1));
+    await attachmentDrop.whenPasteSettled(input);
+    expect(input.value).toBe('new draft [[saved.png]]');
+  });
+
+  it.each(['create', 'edit'] as const)(
+    'persists the settled attachment through %s Enter once',
+    async (kind) => {
+      const h = await pastedInspector();
+      if (kind === 'edit')
+        expectDefined(h.el.querySelector<HTMLElement>('.abyss-comment-text')).click();
+      const input = expectDefined(
+        h.el.querySelector<HTMLTextAreaElement>(submissionSelector(kind)),
+      );
+      const bytes = deferred<ArrayBuffer>();
+      const execute = vi.spyOn(h.api, 'execute');
+      input.focus();
+      input.value = 'one\ntwo';
+      input.setSelectionRange(7, 7);
+      pasteFile(input, bytes.promise);
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks();
+      expect(execute).not.toHaveBeenCalled();
+      bytes.resolve(new ArrayBuffer(1));
+      await vi.waitFor(() => {
+        expect(
+          h
+            .node('Owner')
+            .node.comments.some((comment) => comment.text === 'one\ntwo [[saved.png]]'),
+        ).toBe(true);
+      });
+      expect(execute).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(['navigate', 'dispose'] as const)(
+    'suppresses a deferred paste after %s',
+    async (action) => {
+      const h = await pastedInspector();
+      const input = expectDefined(h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input'));
+      input.value = 'original';
+      const bytes = deferred<ArrayBuffer>();
+      pasteFile(input, bytes.promise);
+      if (action === 'navigate') h.state.set('taskStack', [h.node('Other').root]);
+      else h.panel.destroy();
+      bytes.resolve(new ArrayBuffer(1));
+      await attachmentDrop.whenPasteSettled(input);
+      expect(input.value).toBe('original');
+    },
+  );
+});
+
+it('starts a fresh comment submission while the cancelled paste submission remains pending', async () => {
+  const h = await inspectorHarness('- [ ] Owner', 'Owner', { 'saved.png': '' });
+  try {
+    vi.spyOn(h.app.fileManager, 'getAvailablePathForAttachment').mockResolvedValue('saved.png');
+    vi.spyOn(h.app.fileManager, 'generateMarkdownLink').mockReturnValue('[[saved.png]]');
+    vi.spyOn(h.app.vault, 'createBinary').mockResolvedValue(
+      expectDefined(h.app.vault.getFileByPath('saved.png')),
+    );
+    const input = expectDefined(h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input'));
+    const stale = deferred<ArrayBuffer>();
+    input.focus();
+    input.value = 'cancelled';
+    pasteFile(input, stale.promise);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    input.focus();
+    input.value = 'live';
+    input.setSelectionRange(4, 4);
+    const live = deferred<ArrayBuffer>();
+    pasteFile(input, live.promise);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    live.resolve(new ArrayBuffer(1));
+    await vi.waitFor(() => {
+      expect(h.node('Owner').node.comments[0]?.text).toBe('live [[saved.png]]');
+    });
+    stale.resolve(new ArrayBuffer(1));
+    await flushMicrotasks(30);
+    expect(h.node('Owner').node.comments).toHaveLength(1);
+  } finally {
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+    vi.restoreAllMocks();
+  }
+});
+
+it.each([
+  { submitted: '', newer: 'newer typed' },
+  { submitted: '  edited  \n \nsecond', newer: 'newer typed' },
+  { submitted: '  edited  \n \nsecond', newer: '' },
+])(
+  'preserves the newer existing-comment draft after submitting $submitted',
+  async ({ submitted, newer }) => {
+    const h = await inspectorHarness('- [ ] Owner\n  - old comment', 'Owner');
+    const late = deferred<void>();
+    const published = deferred<void>();
+    const execute = h.api.execute.bind(h.api);
+    vi.spyOn(h.api, 'execute').mockImplementation(async (command) => {
+      const result = await execute(command);
+      published.resolve();
+      await late.promise;
+      return result;
+    });
+    try {
+      expectDefined(h.el.querySelector<HTMLElement>('.abyss-comment-text')).click();
+      const input = expectDefined(
+        h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input'),
+      );
+      input.value = submitted;
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await published.promise;
+      input.value = newer;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      late.resolve();
+      await flushMicrotasks(30);
+      const live = h.panel
+        .captureDraftState()
+        ?.entries.find((entry) => entry.kind === 'existing-comment');
+      if (live !== undefined) expect(live.value).toBe(newer);
+      else {
+        const preserved = expectDefined(h.el.querySelector('.abyss-detached-draft pre'));
+        expect(preserved.textContent).toBe(newer);
+      }
+      expect(h.node('Owner').node.comments.map((comment) => comment.text)).toEqual(
+        submitted === '' ? [] : ['  edited  \nsecond'],
+      );
+    } finally {
+      late.resolve();
+      for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+      vi.restoreAllMocks();
+    }
+  },
+);

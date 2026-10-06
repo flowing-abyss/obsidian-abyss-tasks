@@ -588,6 +588,7 @@ describe('TaskModal with real RightPanel', () => {
     input.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
     );
+    await flushMicrotasks();
     input.value = 'next local draft';
     input.setSelectionRange(4, 9);
     input.focus();
@@ -663,6 +664,7 @@ describe('TaskModal with real RightPanel', () => {
     input.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
     );
+    await flushMicrotasks();
     input.focus();
     input.setSelectionRange(2, 7);
     resolution = {
@@ -853,6 +855,7 @@ describe('TaskModal with real RightPanel', () => {
     input.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
     );
+    await flushMicrotasks();
     resolution = {
       type: 'rebased',
       previous: observed,
@@ -2162,6 +2165,64 @@ it('routes the real modal picker before its parent and releases child scopes fir
     modal.close();
     h.close();
     hostFrame.remove();
+    vi.restoreAllMocks();
+  }
+});
+
+it('uses multiline comment disclosure and description keyboard submission in the real modal', async () => {
+  const h = await createCanonicalSearchHarness(
+    { 'modal.md': '- [ ] Owner\n  - > old description\n  - first\n    second' },
+    DEFAULT_SETTINGS,
+  );
+  const modal = new TaskModal({
+    app: h.app,
+    statusRegistry: testStatusRegistry(),
+    settings: DEFAULT_SETTINGS,
+    queries: h.index,
+    tasks: h.tasks,
+    search: h.search,
+  });
+  try {
+    modal.open(expectDefined(h.index.list()[0]));
+    const root = expectDefined(document.querySelector('.abyss-modal'));
+    expect(root.querySelector('.abyss-comment-text')?.textContent).toBe('first');
+    const disclosure = expectDefined(
+      root.querySelector<HTMLButtonElement>('.abyss-comment-disclosure'),
+    );
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
+    disclosure.click();
+    expect(root.querySelector('.abyss-comment-edit-input')).toBeNull();
+    expectDefined(root.querySelector<HTMLElement>('.abyss-comment-text')).click();
+    const comment = expectDefined(
+      root.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input'),
+    );
+    expect(comment.value).toBe('first\nsecond');
+    comment.value = 'edited first\nedited second';
+    comment.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }),
+    );
+    await flushMicrotasks();
+    expect(h.index.list()[0]?.comments[0]?.text).toBe('first\nsecond');
+    comment.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.waitFor(() => {
+      expect(h.index.list()[0]?.comments[0]?.text).toBe('edited first\nedited second');
+    });
+    expectDefined(root.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
+    const description = expectDefined(
+      root.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+    );
+    description.value = 'one\ntwo';
+    description.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }),
+    );
+    description.dispatchEvent(new Event('blur'));
+    await vi.waitFor(() => {
+      expect(h.index.list()[0]?.description).toBe('one\ntwo');
+    });
+    expect(root.querySelector('.abyss-right-desc-edit')).toBeNull();
+  } finally {
+    modal.close();
+    h.close();
     vi.restoreAllMocks();
   }
 });

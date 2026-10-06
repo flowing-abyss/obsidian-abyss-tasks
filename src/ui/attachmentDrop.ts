@@ -159,11 +159,18 @@ async function handleDrop(
   new Notice(`Attached ${links.length} file${links.length > 1 ? 's' : ''}`);
 }
 
-export interface AttachmentPasteOptions {
-  app: App;
+interface AttachmentPasteContext {
   sourcePath: string;
   onInsert: (linkMarkdown: string) => void;
 }
+
+export type AttachmentPasteOptions = { app: App } & (
+  | AttachmentPasteContext
+  | {
+      /** Capture insertion ownership once, before asynchronous attachment saving. */
+      capture: () => AttachmentPasteContext | undefined;
+    }
+);
 
 // Tracks an in-flight paste-attach per element so a caller that finalizes on blur
 // (an edit textarea removed on save) can await it before reading/removing the element.
@@ -182,14 +189,17 @@ export function whenPasteSettled(el: HTMLElement): Promise<void> {
 
 /** Wire clipboard paste-to-attach onto a textarea. Returns a disposer. */
 export function enableAttachmentPaste(el: HTMLElement, opts: AttachmentPasteOptions): () => void {
+  let active = true;
   const onPaste = (e: ClipboardEvent): void => {
     const files = e.clipboardData != null ? Array.from(e.clipboardData.files) : [];
     if (files.length === 0) return; // no files → let the normal (text) paste happen
     e.preventDefault();
     e.stopPropagation();
-    const done = attachFilesAsLinks(opts.app, files, opts.sourcePath).then((links) => {
-      if (links.length === 0) return;
-      opts.onInsert(links.join(' '));
+    const captured = 'capture' in opts ? opts.capture() : opts;
+    if (captured === undefined) return;
+    const done = attachFilesAsLinks(opts.app, files, captured.sourcePath).then((links) => {
+      if (!active || links.length === 0) return;
+      captured.onInsert(links.join(' '));
       new Notice(`Attached ${links.length} file${links.length > 1 ? 's' : ''}`);
     });
     const tracked = done.finally(() => {
@@ -200,6 +210,7 @@ export function enableAttachmentPaste(el: HTMLElement, opts: AttachmentPasteOpti
   };
   el.addEventListener('paste', onPaste);
   return () => {
+    active = false;
     el.removeEventListener('paste', onPaste);
   };
 }

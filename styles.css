@@ -4996,6 +4996,17 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   color: var(--text-muted);
 }
 
+.abyss-panel-view .abyss-comment-disclosure,
+.abyss-modal .abyss-comment-disclosure {
+  align-self: flex-start;
+  height: auto;
+  padding: var(--size-2-1) 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
 .abyss-comment-input {
   width: 100%;
   min-height: 60px;

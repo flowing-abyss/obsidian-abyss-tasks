@@ -483,3 +483,50 @@ describe('link edit modal Save', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 });
+
+it('refuses a link acquired only by truncating a multiline code literal', async () => {
+  mockReadingView();
+  const menus = captureMenus();
+  const open = vi.spyOn(LinkEditModal.prototype, 'open');
+  const h = await inspectorHarness('- [ ] Owner\n  - `[[Hidden]]\n    code` [[Actual]]', 'Owner');
+  try {
+    await settleRender();
+    rightClick(expectDefined(h.el.querySelector('.abyss-comment-text a')));
+    expectDefined(menus[menus.length - 1]).pick('Edit link…');
+    expect(open).not.toHaveBeenCalled();
+    expect(await h.read()).toBe('- [ ] Owner\n  - `[[Hidden]]\n    code` [[Actual]]');
+  } finally {
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+    vi.restoreAllMocks();
+  }
+});
+
+it('edits the second-line link from an expanded comment through its full source occurrence', async () => {
+  mockReadingView();
+  const menus = captureMenus();
+  const modals = captureLinkModals();
+  const h = await inspectorHarness('- [ ] Owner\n  - [[First]]\n    [[Second]]', 'Owner');
+  try {
+    expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-comment-disclosure')).click();
+    await settleRender();
+    const ref = expectDefined(h.node('Owner').node.comments[0]).ref;
+    const execute = vi.spyOn(h.api, 'execute');
+    rightClick(expectDefined(h.el.querySelectorAll('.abyss-comment-text a')[1]));
+    expectDefined(menus[menus.length - 1]).pick('Edit link…');
+    const modal = modals.last();
+    editSettingControl(modalInputs(modal).target, 'Changed');
+    clickSave(modal);
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledWith({
+        type: 'edit-link',
+        target: { type: 'comment', ref },
+        occurrence: 1,
+        replacement: '[[Changed]]',
+      });
+      expect(h.node('Owner').node.comments[0]?.text).toBe('[[First]]\n[[Changed]]');
+    });
+  } finally {
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+    vi.restoreAllMocks();
+  }
+});
