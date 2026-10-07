@@ -1205,8 +1205,10 @@ validates the last accepted native top before TaskListSurface changes scroll or 
 surface acknowledges the actual post-clamp top only to still-live captured owners under the same
 reconciliation/window generation. During that synchronous DOM mutation, one transient inert spacer from the existing spacer family
 reserves the old extent so intermediate layout reads cannot clamp the viewport. Guards are excluded
-from normal spacer reuse and removed in `finally`, including reentrant owner loss. Movement while
-reserved rejects the request before cleanup; otherwise removing that guard and immediately reading
+from normal spacer reuse and removed in `finally`, including reentrant owner loss.
+The dashboard's actual scroll container also disables browser anchoring, so its Add task sibling
+cannot move this owned viewport while the temporary extent guard is present.
+Movement while reserved rejects the request before cleanup; otherwise removing that guard and immediately reading
 the actual native top proves the final clamp without reconstructing fractional geometry from rounded
 DOM dimensions. This reservation and acknowledgement are used only while native-write observers exist;
 ordinary reconciliation retains its existing path. A mismatching top vetoes the mutation, including

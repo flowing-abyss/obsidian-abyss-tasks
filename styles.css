@@ -8471,6 +8471,11 @@ button.abyss-project-table-status-pill {
   overflow-y: auto;
 }
 
+/* TaskListSurface owns this viewport; its Add task sibling must not become a native anchor. */
+.abyss-project-dashboard-session {
+  overflow-anchor: none;
+}
+
 .abyss-project-back {
   display: inline-flex;
   align-self: flex-start;
