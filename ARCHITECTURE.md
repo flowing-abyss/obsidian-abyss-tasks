@@ -693,8 +693,10 @@ An accepted Search navigation receipt activates compact cooperative organization
 restriction (`hits: null`). Organization checks the exact target, reuses its occurrence or appends one
 transient “Revealed task” occurrence when membership or saved filters exclude it. CenterPanel
 pins without scrolling, waits for exact hydration and the current card receipt, then uses the existing
-native reveal once. This writes no saved filter or collapse preference. Search options remain a
-transient CenterPanel session through ListViewControls; Relevance is never persisted.
+native reveal once. A nested project reveal acquires compact node records only from the owning
+project file while retaining root-scoped membership; only the exact temporary target can appear
+outside that root population. Retiring the receipt restores the ordinary root-only project list.
+This writes no saved filter or collapse preference. Search options remain a transient CenterPanel session through ListViewControls; Relevance is never persisted.
 
 TaskMenus receives distinct compact summaries without reading rich tasks. Selection/count/indicator
 and menu-open paths acquire no selected roots. Choosing an action resolves operation-owned exact

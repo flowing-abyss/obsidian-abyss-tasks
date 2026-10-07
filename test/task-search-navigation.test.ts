@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { TaskSearch, TaskSearchOptions } from '../src/panels/center/TaskSearch';
 import { TaskSearchReveal } from '../src/panels/center/TaskSearchReveal';
 import { CenterPanel } from '../src/panels/CenterPanel';
+import { ProjectStore } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TaskSearchError } from '../src/tasks';
 import { TaskSearchService } from '../src/tasks/infrastructure/search/TaskSearchService';
@@ -1537,6 +1538,193 @@ it('refreshes ordinary child admission after status semantics change', async () 
     h.panel.refresh();
     expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
     expect(h.root.querySelector('.abyss-task-title')?.textContent).toBe('Child');
+  } finally {
+    h.dispose();
+  }
+});
+
+async function projectChildRevealHarness() {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.projects.membershipQuery = 'Projects/';
+  const h = await mountCanonicalSearchUi(
+    {
+      'Projects/Tree.md':
+        '- [ ] Grandparent #one-off\n  - [ ] Parent #private\n    - [ ] Same #inbox 📅 2026-10-08\n  - [ ] Same #inbox 📅 2026-10-08\n- [ ] Other root',
+    },
+    settings,
+    'tasks',
+  );
+  h.panel.destroy();
+  const projects = new ProjectStore(h.app, h.index, settings);
+  projects.initialize();
+  const panel = new CenterPanel({
+    state: h.state,
+    app: h.app,
+    settings,
+    queries: h.index,
+    search: h.search,
+    statusRegistry: h.statusRegistry,
+    tasks: h.tasks,
+    projectStore: projects,
+  });
+  panel.mount(h.root);
+  return {
+    ...h,
+    settings,
+    projects,
+    panel,
+    dispose: () => {
+      panel.destroy();
+      projects.destroy();
+      h.dispose();
+    },
+  };
+}
+
+it.each([false, true])(
+  'reveals a nested parent in its project without expanding project membership (source compact=%s)',
+  async (compact) => {
+    const h = await projectChildRevealHarness();
+    try {
+      expect(h.projects.list().map((project) => project.path)).toEqual(['Projects/Tree.md']);
+      h.panel['navigation_abyssPrivate'].openList({ type: 'project', path: 'Projects/Tree.md' });
+      const lines = () =>
+        [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')].map(
+          (card) => card.dataset['line'],
+        );
+      expect(lines()).toEqual(['0', '4']);
+      h.state.set('centerListViewState', {
+        ...h.state.get('centerListViewState'),
+        filters: [{ type: 'tag', value: '#one-off' }],
+      });
+      const projectView = structuredClone(h.state.get('centerListViewState'));
+      h.panel['navigation_abyssPrivate'].openList({ type: 'tag', tag: '#inbox' });
+      if (compact) {
+        h.query('Same');
+        await h.completed();
+      }
+      expect(lines()).toEqual(['2', '3']);
+      const child = expectDefined(
+        h.root.querySelector<HTMLElement>('.abyss-task-card[data-line="2"]'),
+      );
+      const population = vi.spyOn(h.index, 'list');
+      const nodes = vi.spyOn(h.index, 'listNodes');
+      const organization = vi.spyOn(h.index, 'organization');
+      child.click();
+      expect(h.state.get('taskStack').map((node) => node.title)).toEqual([
+        'Grandparent',
+        'Parent',
+        'Same',
+      ]);
+      expectDefined(child.querySelector<HTMLButtonElement>('.abyss-task-parent-btn')).click();
+      await vi.waitFor(() => {
+        expect(h.state.get('selectedList')).toEqual({ type: 'project', path: 'Projects/Tree.md' });
+      });
+      await h.completed();
+      expect(h.state.get('selectedList')).toEqual({ type: 'project', path: 'Projects/Tree.md' });
+      expect(h.state.get('centerFilter')).toBe('');
+      expect(h.state.get('centerListViewState')).toEqual(projectView);
+      expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Grandparent', 'Parent']);
+      expect(lines()).toEqual(['0', '1']);
+      expect(population).not.toHaveBeenCalled();
+      expect(nodes).not.toHaveBeenCalled();
+      expect(organization).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: 'nodes', filePath: 'Projects/Tree.md' }),
+        expect.any(AbortSignal),
+      );
+      const parent = expectDefined(
+        h.root.querySelector<HTMLElement>('.abyss-task-card[data-line="1"]'),
+      );
+      expect(parent.querySelector('.abyss-task-title')?.textContent).toBe('Parent');
+      expect(parent.classList.contains('is-selected')).toBe(true);
+      expect(parent.classList.contains('is-search-revealed')).toBe(true);
+      const projection = h.panel['mountedProjection_abyssPrivate'](
+        expectDefined(parent.dataset['rowKey']),
+      );
+      expect(projection?.target).toEqual(taskNodeRef(expectDefined(h.state.get('taskStack')[1])));
+      h.panel['navigation_abyssPrivate'].openList({ type: 'project', path: 'Projects/Tree.md' });
+      await vi.waitFor(() => {
+        expect(lines()).toEqual(['0']);
+      });
+      h.state.set('centerListViewState', { ...projectView, filters: [] });
+      await vi.waitFor(() => {
+        expect(lines()).toEqual(['0', '4']);
+      });
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('quietly retires project child reveal while its compact projection is pending', async () => {
+  const h = await projectChildRevealHarness();
+  const entered = deferred<void>(),
+    held = deferred<void>();
+  const organization = h.index.organization.bind(h.index);
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const notices = vi.spyOn(
+    Notice.prototype as unknown as { constructor__(message: string): void },
+    'constructor__',
+  );
+  let pendingSignal: AbortSignal | undefined;
+  vi.spyOn(h.index, 'organization').mockImplementation(async function* (request, signal) {
+    for await (const batch of organization(request, signal)) {
+      const selection = h.state.get('selectedList');
+      if (typeof selection === 'object' && selection.type === 'project') {
+        pendingSignal = signal;
+        entered.resolve();
+        await held.promise;
+      }
+      yield batch;
+    }
+  });
+  try {
+    h.panel['navigation_abyssPrivate'].openList({ type: 'tag', tag: '#inbox' });
+    const child = expectDefined(
+      h.root.querySelector<HTMLElement>('.abyss-task-card[data-line="2"]'),
+    );
+    expectDefined(child.querySelector<HTMLButtonElement>('.abyss-task-parent-btn')).click();
+    await entered.promise;
+    h.panel['navigation_abyssPrivate'].openList({ type: 'tag', tag: '#one-off' });
+    h.state.set('taskStack', []);
+    expect(pendingSignal?.aborted).toBe(true);
+    held.resolve();
+    await flushMicrotasks(50);
+    expect(h.state.get('taskStack')).toEqual([]);
+    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+    expect(h.root.querySelector('.abyss-task-card')?.getAttribute('data-line')).toBe('0');
+    expect(h.root.querySelector('.is-search-revealed')).toBeNull();
+    expect(log).not.toHaveBeenCalled();
+    expect(notices).not.toHaveBeenCalled();
+  } finally {
+    held.resolve();
+    h.dispose();
+  }
+});
+
+it('rejects a project parent reveal after its source becomes excluded', async () => {
+  const h = await projectChildRevealHarness();
+  const notices = vi.spyOn(
+    Notice.prototype as unknown as { constructor__(message: string): void },
+    'constructor__',
+  );
+  try {
+    h.panel['navigation_abyssPrivate'].openList({ type: 'tag', tag: '#inbox' });
+    const parent = expectDefined(h.index.listNodes().find(({ node }) => node.title === 'Parent'));
+    await h.index.refreshSourceExclusion(({ filePath }) => filePath === 'Projects/Tree.md');
+    h.panel.refresh('source');
+    await h.panel.showTaskInList(parent.target, {
+      signal: new AbortController().signal,
+      isCurrent: () => true,
+    });
+    expect(h.state.get('selectedList')).toEqual({ type: 'tag', tag: '#inbox' });
+    expect(h.state.get('taskStack')).toEqual([]);
+    expect(h.root.querySelector('.abyss-task-card')).toBeNull();
+    expect(h.panel['taskSearchReveal_abyssPrivate'].current()).toBeUndefined();
+    expect(notices).toHaveBeenCalledExactlyOnceWith(
+      'Task changed. Show it in the task list again.',
+      undefined,
+    );
   } finally {
     h.dispose();
   }

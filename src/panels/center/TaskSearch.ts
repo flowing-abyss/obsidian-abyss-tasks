@@ -595,11 +595,19 @@ export class TaskSearch {
     collection: SearchCollection,
   ): Parameters<TaskReadProjectionApi['organization']>[0] {
     const inclusion = this.#inclusion();
+    const selection = this.#options.state.get('selectedList');
+    const request: Parameters<TaskReadProjectionApi['organization']>[0] = {
+      expectedGeneration: generation,
+      // Membership keeps its captured root scope; only the exact reveal may admit a child.
+      scope: (inclusion?.address.childLines.length ?? 0) > 0 ? 'nodes' : this.#organizationScope(),
+      ...(this.#filter && typeof selection === 'object' && selection.type === 'project'
+        ? { filePath: selection.path }
+        : {}),
+    };
     return inclusion?.kind === 'navigation'
-      ? { expectedGeneration: generation, scope: this.#organizationScope() }
+      ? request
       : {
-          expectedGeneration: generation,
-          scope: this.#organizationScope(),
+          ...request,
           roots:
             inclusion === undefined ? collection.roots : [...collection.roots, inclusion.address],
         };
