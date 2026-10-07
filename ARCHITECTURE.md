@@ -1194,10 +1194,14 @@ history. Editors and native drag sources pin their occurrence rows; evicted rows
 and Markdown Components. Detached or zero-size Table refreshes retain mounted rows and pending
 viewport state; connected layout resumes reconciliation from that saved viewport before consuming
 new native geometry. [`RowViewport`](src/panels/virtualization/rowViewport.ts) owns shared pure
-row geometry: prefix offsets, consumed overscan, sparse pins, revision-aware measurements, reveal,
-and anchor recovery against prior row order. Callers supply explicit rows and content-relative
-offsets; native owners account for sticky occlusion and viewport height. Anchors share an immutable
-key vector per replacement; final scroll clamping happens when a window's height is known.
+row geometry: arithmetic source offsets with sparse measured correction prefixes, consumed overscan,
+pins, reveal, and exact prior-order anchor recovery. `RowViewportSource` supplies indexed rows,
+key lookup, estimated boundaries and finite literal/series anchor descriptors; geometry never imports
+task data. Finite arrays retain per-row estimates and scan the entire old forward order before the
+backward order. When no old key survives, restoration returns zero. Anchors share one immutable prior-source reference.
+`IndexedRowGeometry` bounds measurement history to 2048 entries, retaining the current mounted/pinned
+set and anchor beyond that limit only while owned. Callers supply content-relative offsets; native
+owners account for sticky occlusion and viewport height. Final clamping uses the known viewport height.
 Measurement accepts an optional pre-replacement anchor: TaskListSurface, Kanban, and Timeline
 retain that key through synchronous replacement and measurement, so a tall row's old within-row
 offset cannot become an estimated neighbor's anchor. Native owners temporarily include that row
@@ -1266,8 +1270,23 @@ raw-offset dependency rows; no eager row/key array is exposed through that bound
 retain namespaced header identity (empty when ungrouped), and explicit Today/daily presentation
 retains date and kind independently of the generic payload. Selected physical nodes aggregate
 completion from their selected copies only. Search passes row presentation explicitly while exact
-rich-root hydration remains mounted/interaction-owned. Selection still stores eager keys and the
-surface still builds finite array geometry; both consume the indexed boundary.
+rich-root hydration remains mounted/interaction-owned. Selection still stores eager keys. The surface
+uses per-row finite geometry by default; presentations supplying `indexedHeights` delegate arithmetic
+boundaries and exact prior-order anchor resolution to the supplied rows without traversing the sequence.
+`LogicalScrollWindow` maps the full logical extent to at most 1,000,000 native pixels with 1:1 endpoint
+aprons and a compressed middle. Absolute thumb/track input reaches the full domain; captured wheel,
+touch and page-key sessions apply native deltas as local logical pixels. Owned write IDs and actual
+readback preserve logical precision across rounded/coalesced scroll events. The host/list offset stays
+separate from the logical coordinate correction, and native observers see actual host positions.
+The same surface owns captured-window input timers, observer lifecycle, native-write vetoes, reveal
+receipts and failure retirement. Explicit updates can retry failed source/measurement passes.
+In compressed mode, retained rows outside the buffered window stay attached in logical DOM order but
+are absolutely parked wholly above the host (`bottom: 100%`), transparent and removed from pointer hit
+areas. An enrolled runtime width preserves the host content width and row margins; parked rows retain
+full measurable height and editor/focus identity. Re-entry removes parking, and focus entering a parked
+control uses the existing reveal path. Parking and extent changes share the native-write guard.
+Finite surfaces keep their existing in-flow pin placement. Native overflow, wrapping and focus behavior
+remain dependent on the owning browser layout; automated geometry fixtures do not replace native QA.
 Ordinary unfiltered lists and compact Search/filters supply their full logical order. Direct Ctrl/Cmd+A in Tasks selects that complete current logical order while
 preserving the range and keyboard lead, native focus, and viewport. Interactive inputs and other
 modes retain their keyboard ownership. Keyed `TaskCardRenderer.mount` instances own Markdown Components and current

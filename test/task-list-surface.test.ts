@@ -8,8 +8,15 @@ import {
   indexedRows,
   type TaskListRow,
 } from '../src/panels/task-list/taskListRows';
-import { expectDefined, freshContainer, task } from './helpers';
+import {
+  cssDeclarationsFor,
+  expectDefined,
+  freshContainer,
+  loadPluginStyles,
+  task,
+} from './helpers';
 import { taskViewportOwner } from './support/taskViewportOwner';
+import { numericRowSource } from './support/virtualSurfaceAudit';
 import { taskKeys } from './task-list-row-assertions';
 
 const presentation: TaskListPresentation = {
@@ -72,6 +79,7 @@ function harness(clampWrites = false, sameHost = false, clampExtent = false) {
     }, 0);
     const extent = Array.from(host.children).reduce((sum, child) => {
       const element = child as HTMLElement;
+      if (element.hasClass('abyss-virtual-row-parked')) return sum;
       return (
         sum +
         (element.hasClass('abyss-virtual-row-spacer')
@@ -84,6 +92,7 @@ function harness(clampWrites = false, sameHost = false, clampExtent = false) {
   const nativeExtent = (): number =>
     Array.from(host.children).reduce((sum, child) => {
       const row = child as HTMLElement;
+      if (row.hasClass('abyss-virtual-row-parked')) return sum;
       return (
         sum +
         (row.hasClass('abyss-virtual-row-spacer')
@@ -118,6 +127,7 @@ function harness(clampWrites = false, sameHost = false, clampExtent = false) {
       for (const child of host.children) {
         if (child === element) break;
         const sibling = child as HTMLElement;
+        if (sibling.hasClass('abyss-virtual-row-parked')) continue;
         y += sibling.hasClass('abyss-virtual-row-spacer')
           ? Number.parseFloat(sibling.style.getPropertyValue('--abyss-virtual-row-height'))
           : (heights.get(sibling.dataset['key'] ?? '') ?? 48);
@@ -157,10 +167,20 @@ function harness(clampWrites = false, sameHost = false, clampExtent = false) {
   return {
     host,
     style(
-      property: 'paddingTop' | 'paddingBottom' | 'fontWeight' | 'fontStyle' | 'letterSpacing',
+      property:
+        | 'paddingTop'
+        | 'paddingBottom'
+        | 'paddingLeft'
+        | 'paddingRight'
+        | 'marginLeft'
+        | 'marginRight'
+        | 'fontWeight'
+        | 'fontStyle'
+        | 'letterSpacing',
       value: string,
+      element = host,
     ) {
-      host.style[property] = value;
+      element.style[property] = value;
     },
     scroll,
     surface,
@@ -1578,3 +1598,453 @@ it('acknowledges a fractional final native clamp without reconstructing it from 
   expect(expected % 1).not.toBe(0);
   expect(h.host.querySelector('[data-abyss-scroll-guard]')).toBeNull();
 });
+
+function hugeRows() {
+  const source = numericRowSource(0, 9_999_999);
+  const payload = task({ title: 'Synthetic series' });
+  return {
+    ...indexedRows<typeof payload>([]),
+    revision: 'huge',
+    rowCount: source.length,
+    taskCount: source.length,
+    rowAt(index: number): TaskListRow | undefined {
+      const row = source.rowAt(index);
+      return row === undefined
+        ? undefined
+        : { kind: 'task', key: row.key, taskKey: row.key, task: payload };
+    },
+    rowIndexOf: source.indexOf.bind(source),
+    indexOf: source.indexOf.bind(source),
+    estimatedOffset: (index: number) => index * 48,
+    anchorRanges: source.anchorRanges.bind(source),
+    survivingNeighbor: source.survivingNeighbor.bind(source),
+    slice() {
+      throw new Error('Indexed surface must not enumerate the full source');
+    },
+  };
+}
+const hugePresentation = { ...presentation, indexedHeights: { group: 48, task: 48 } };
+function pointer(scroll: HTMLElement, pointerType = 'mouse') {
+  const event = new Event('pointerdown');
+  Object.assign(event, { pointerType, button: 0, isPrimary: true });
+  scroll.dispatchEvent(event);
+}
+function rowTop(h: ReturnType<typeof harness>, key: string) {
+  return expectDefined(h.surface.element(key)).getBoundingClientRect().top;
+}
+describe('full-domain native task scrolling', () => {
+  it('reaches end, top and fractional thumb positions without reveal and bounds native extent', () => {
+    const h = harness(true);
+    h.surface.update(hugeRows(), hugePresentation);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    expect(h.scroll.scrollHeight).toBe(1_000_000);
+    pointer(h.scroll);
+    h.scrollTo(h.scroll.scrollHeight - h.scroll.clientHeight);
+    h.frame();
+    expect(h.surface.element('number:9999999')).toBeDefined();
+    expect(rowTop(h, 'number:9999999')).toBe(432);
+    pointer(h.scroll);
+    h.scrollTo(0);
+    h.frame();
+    expect(rowTop(h, 'number:0')).toBe(0);
+    pointer(h.scroll);
+    h.scrollTo(499760);
+    h.frame();
+    expect(rowTop(h, 'number:5000000')).toBe(240);
+    expect(h.scroll.scrollHeight).toBe(1_000_000);
+    expect(h.surface.mountedKeys().length).toBeLessThan(100);
+  });
+  it('attributes wheel and touch inertia locally, resets at pointer, scrollend and quiet timeout', () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness(true);
+      h.surface.update(hugeRows(), hugePresentation);
+      h.scrollTo(499760);
+      h.frame();
+      h.scroll.dispatchEvent(new Event('wheel'));
+      h.scrollTo(h.scroll.scrollTop + 120);
+      h.frame();
+      expect(rowTop(h, 'number:5000000')).toBeCloseTo(120, 4);
+      h.scroll.dispatchEvent(new Event('scroll'));
+      h.frame();
+      expect(rowTop(h, 'number:5000000')).toBeCloseTo(120, 4);
+      pointer(h.scroll);
+      h.scrollTo(499760);
+      h.frame();
+      expect(rowTop(h, 'number:5000000')).toBeCloseTo(240, 4);
+      h.scroll.dispatchEvent(new Event('touchstart'));
+      h.scrollTo(h.scroll.scrollTop + 60);
+      h.frame();
+      h.scrollTo(h.scroll.scrollTop + 60);
+      h.frame();
+      expect(rowTop(h, 'number:5000000')).toBeCloseTo(120, 4);
+      h.scroll.dispatchEvent(new Event('scrollend'));
+      h.scrollTo(499760);
+      h.frame();
+      expect(rowTop(h, 'number:5000000')).toBeCloseTo(240, 4);
+      h.scroll.dispatchEvent(new Event('wheel'));
+      h.scrollTo(h.scroll.scrollTop + 60);
+      h.frame();
+      vi.advanceTimersByTime(181);
+      h.scrollTo(499760);
+      h.frame();
+      expect(rowTop(h, 'number:5000000')).toBeCloseTo(240, 4);
+      h.surface.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('keeps host offset separate and does not swallow newer native input before owned feedback', () => {
+    const h = harness(true);
+    h.origin(80);
+    h.surface.update(hugeRows(), hugePresentation);
+    pointer(h.scroll);
+    h.scrollTo(499840);
+    h.frame();
+    h.scroll.dispatchEvent(new Event('wheel'));
+    h.scrollTo(h.scroll.scrollTop + 120);
+    h.frame();
+    expect(rowTop(h, 'number:5000000')).toBeCloseTo(120, 4);
+    h.scrollTo(h.scroll.scrollTop + 60);
+    h.frame();
+    expect(rowTop(h, 'number:5000000')).toBeCloseTo(60, 4);
+    pointer(h.scroll);
+    h.scrollTo(h.scroll.scrollHeight - 480);
+    h.frame();
+    expect(rowTop(h, 'number:9999999')).toBeCloseTo(432, 4);
+  });
+});
+
+it('retires actionable mounts on a failed indexed refresh and retries on explicit update', () => {
+  const h = harness();
+  const list = hugeRows();
+  h.surface.update(list, hugePresentation);
+  const first = expectDefined(h.surface.element('number:0'));
+  h.surface.update(
+    {
+      ...list,
+      rowAt() {
+        throw new Error('source failed');
+      },
+    },
+    hugePresentation,
+  );
+  expect(h.reportFailure).toHaveBeenCalledTimes(1);
+  expect(first.isConnected).toBe(false);
+  expect(h.surface.mountedKeys()).toEqual([]);
+  h.surface.update(list, hugePresentation);
+  expect(h.surface.element('number:0')?.isConnected).toBe(true);
+});
+
+it('keeps logical precision when rounding produces no new native pixel and events coalesce', () => {
+  const h = harness(true);
+  const descriptor = expectDefined(Object.getOwnPropertyDescriptor(h.scroll, 'scrollTop'));
+  Object.defineProperty(h.scroll, 'scrollTop', {
+    ...descriptor,
+    set(value: number) {
+      descriptor.set?.call(h.scroll, Math.round(value));
+    },
+  });
+  h.surface.update(hugeRows(), hugePresentation);
+  h.scrollTo(499760);
+  h.frame();
+  h.scroll.dispatchEvent(new Event('wheel'));
+  for (let i = 0; i < 4; i++) {
+    h.scrollTo(h.scroll.scrollTop + 120);
+    h.frame();
+  }
+  const placed = rowTop(h, 'number:5000005');
+  expect(Math.abs(placed)).toBeLessThanOrEqual(0.5);
+  h.scroll.dispatchEvent(new Event('scroll'));
+  h.frame();
+  expect(rowTop(h, 'number:5000005')).toBe(placed);
+  expect(h.reportFailure).not.toHaveBeenCalled();
+});
+
+it.each(['blur', 'replace', 'page', 'touch-pointer'] as const)(
+  'resolves %s input transitions through the native owner',
+  (transition) => {
+    const h = harness(true);
+    const list = hugeRows();
+    h.surface.update(list, hugePresentation);
+    h.scrollTo(499760);
+    h.frame();
+    h.scroll.dispatchEvent(new Event('wheel'));
+    h.scrollTo(h.scroll.scrollTop + 120);
+    h.frame();
+    if (transition === 'blur') window.dispatchEvent(new Event('blur'));
+    if (transition === 'replace') h.surface.update(list, hugePresentation);
+    if (transition === 'page') {
+      pointer(h.scroll);
+      h.scroll.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageDown' }));
+    }
+    if (transition === 'touch-pointer') {
+      pointer(h.scroll);
+      pointer(h.scroll, 'touch');
+    }
+    if (transition === 'blur' || transition === 'replace') {
+      h.scrollTo(499760);
+      h.frame();
+      expect(rowTop(h, 'number:5000000')).toBeCloseTo(240, 4);
+    } else {
+      h.scrollTo(h.scroll.scrollTop + 120);
+      h.frame();
+      expect(rowTop(h, 'number:5000000')).toBeCloseTo(0, 4);
+    }
+  },
+);
+
+it('cancels captured-owner input timers and frames across adoption and unload', () => {
+  vi.useFakeTimers();
+  try {
+    const h = harness(true);
+    h.surface.update(hugeRows(), hugePresentation);
+    h.scrollTo(499760);
+    h.frame();
+    h.scroll.dispatchEvent(new Event('wheel'));
+    h.scrollTo(h.scroll.scrollTop + 120);
+    const late = expectDefined([...h.frames.values()][0]);
+    const owner = taskViewportOwner();
+    owner.doc.body.append(h.scroll);
+    h.scrollTo(499760);
+    owner.flush();
+    expect(rowTop(h, 'number:5000000')).toBeCloseTo(240, 4);
+    late(0);
+    vi.advanceTimersByTime(181);
+    expect(rowTop(h, 'number:5000000')).toBeCloseTo(240, 4);
+    h.scroll.dispatchEvent(new owner.win.Event('wheel'));
+    h.scrollTo(h.scroll.scrollTop + 120);
+    const pending = expectDefined([...owner.frames.values()][0]);
+    owner.win.dispatchEvent(new owner.win.Event('unload'));
+    h.scroll.dispatchEvent(new owner.win.Event('scroll'));
+    expect(owner.frames.size).toBe(0);
+    const calls = h.mount.mock.calls.length;
+    pending(0);
+    vi.advanceTimersByTime(181);
+    expect(h.mount.mock.calls).toHaveLength(calls);
+    h.surface.destroy();
+    owner.destroy();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('parks oversized retained editors without shifting visible geometry, then restores the same input', async () => {
+  const selector = '.abyss-task-list-surface > .abyss-virtual-row-parked';
+  const declarations = cssDeclarationsFor(await loadPluginStyles(), selector);
+  expect(declarations).toContain('opacity: 0');
+  expect(declarations).toContain('pointer-events: none');
+  const h = harness(true);
+  h.style('paddingLeft', '13px');
+  h.style('paddingRight', '27px');
+  h.surface.update(hugeRows(), hugePresentation);
+  const first = expectDefined(h.surface.element('number:0'));
+  h.style('marginLeft', '7px', first);
+  h.style('marginRight', '11px', first);
+  const input = first.createEl('input');
+  input.value = 'unfinished edit';
+  input.focus({ preventScroll: true });
+  h.heights.set('number:0', 300_000);
+  h.heights.set('number:1', 300_000);
+  h.surface.pin('number:0');
+  h.surface.pin('number:1');
+  h.frame();
+  pointer(h.scroll);
+  h.scrollTo(999520);
+  h.frame();
+  expect(h.reportFailure).not.toHaveBeenCalled();
+  expect(h.scroll.scrollHeight).toBe(1_000_000);
+  expect(rowTop(h, 'number:9999999')).toBeCloseTo(432, 4);
+  expect(h.surface.element('number:0')).toBe(first);
+  expect(first.isConnected).toBe(true);
+  expect(first.hasClass('abyss-virtual-row-parked')).toBe(true);
+  expect(first.matches(selector)).toBe(true);
+  expect(first.style.getPropertyValue('--abyss-virtual-row-width')).toBe('542px');
+  expect(first.getBoundingClientRect().height).toBe(300_000);
+  expect(document.activeElement).toBe(input);
+  h.onMeasure((key) => {
+    if (
+      key === 'number:0' &&
+      Number.parseFloat(first.style.getPropertyValue('--abyss-virtual-row-width')) < 450
+    )
+      h.heights.set(key, 600_000);
+  });
+  h.size(500, 480);
+  h.resize();
+  h.frame();
+  expect(first.style.getPropertyValue('--abyss-virtual-row-width')).toBe('442px');
+  expect(first.getBoundingClientRect().height).toBe(600_000);
+  expect(rowTop(h, 'number:9999999')).toBeCloseTo(432, 4);
+  expect(h.scroll.scrollHeight).toBe(1_000_000);
+  expect(h.surface.reveal('number:0')).toBe(first);
+  expect(first.hasClass('abyss-virtual-row-parked')).toBe(false);
+  expect(first.matches(selector)).toBe(false);
+  expect(first.style.getPropertyValue('--abyss-virtual-row-width')).toBe('');
+  expect(document.activeElement).toBe(input);
+  expect(input.value).toBe('unfinished edit');
+  h.surface.destroy();
+  expect(first.isConnected).toBe(false);
+});
+
+it('honors pinned native-write rejection before parking or replacing visible rows', () => {
+  const h = harness(true);
+  h.surface.update(hugeRows(), hugePresentation);
+  const first = expectDefined(h.surface.element('number:0'));
+  const observed: number[] = [];
+  h.surface.pin('number:0', undefined, {
+    beforeWrite(top) {
+      observed.push(top);
+      return false;
+    },
+    afterWrite() {
+      throw new Error('rejected');
+    },
+  });
+  pointer(h.scroll);
+  h.scrollTo(999520);
+  h.frame();
+  expect(observed).toEqual([999520]);
+  expect(first.hasClass('abyss-virtual-row-parked')).toBe(false);
+  expect(h.surface.element('number:9999999')).toBeUndefined();
+  expect(h.reportFailure).not.toHaveBeenCalled();
+});
+
+it('reveals a parked retained control when keyboard focus enters it', () => {
+  const h = harness(true);
+  h.surface.update(hugeRows(), hugePresentation);
+  const first = expectDefined(h.surface.element('number:0'));
+  const input = first.createEl('input');
+  h.surface.pin('number:0');
+  pointer(h.scroll);
+  h.scrollTo(999520);
+  h.frame();
+  expect(first.hasClass('abyss-virtual-row-parked')).toBe(true);
+  input.focus({ preventScroll: true });
+  h.frame();
+  expect(first.hasClass('abyss-virtual-row-parked')).toBe(false);
+  expect(rowTop(h, 'number:0')).toBe(0);
+  expect(document.activeElement).toBe(input);
+});
+
+it('can explicitly replace a failed source whose offset callback also fails', () => {
+  const h = harness();
+  h.surface.update(hugeRows(), hugePresentation);
+  h.surface.update(
+    {
+      ...hugeRows(),
+      estimatedOffset() {
+        throw new Error('offset failed');
+      },
+    },
+    hugePresentation,
+  );
+  expect(h.reportFailure).toHaveBeenCalledTimes(1);
+  h.scrollTo(100);
+  h.scrollTo(200);
+  expect(h.reportFailure).toHaveBeenCalledTimes(1);
+  h.surface.update(hugeRows(), hugePresentation);
+  expect(h.surface.element('number:0')?.isConnected).toBe(true);
+  expect(h.reportFailure).toHaveBeenCalledTimes(1);
+});
+
+it('retires an older owned receipt once local native input moves away and back before a frame', () => {
+  const h = harness(true);
+  h.surface.update(hugeRows(), hugePresentation);
+  h.scrollTo(499760);
+  h.frame();
+  h.scroll.dispatchEvent(new Event('wheel'));
+  h.scrollTo(499880);
+  h.scrollTo(499760);
+  h.frame();
+  expect(rowTop(h, 'number:5000000')).toBeCloseTo(240, 4);
+});
+
+it('does not retire a replacement installed by a failed-pass pin cancellation', () => {
+  const h = harness();
+  const list = hugeRows();
+  h.surface.update(list, hugePresentation);
+  h.surface.pin('number:0', () => {
+    h.surface.update(list, hugePresentation);
+  });
+  h.surface.update(
+    {
+      ...list,
+      rowAt() {
+        throw new Error('old source failed');
+      },
+    },
+    hugePresentation,
+  );
+  expect(h.reportFailure).toHaveBeenCalledTimes(1);
+  expect(h.surface.element('number:0')?.isConnected).toBe(true);
+  h.resize();
+  h.frame();
+  expect(h.surface.element('number:0')?.isConnected).toBe(true);
+});
+
+it.each(['PageUp', 'PageDown'])(
+  'keeps %s from a focused button local while Space remains activation',
+  (key) => {
+    const h = harness(true);
+    h.surface.update(hugeRows(), hugePresentation);
+    h.scrollTo(499760);
+    h.frame();
+    const button = expectDefined(h.surface.element('number:5000000')).createEl('button');
+    button.focus({ preventScroll: true });
+    button.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+    h.scrollTo(h.scroll.scrollTop + 120);
+    h.frame();
+    expect(rowTop(h, 'number:5000000')).toBeCloseTo(120, 4);
+    pointer(h.scroll);
+    h.scrollTo(499760);
+    h.frame();
+    button.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    h.scrollTo(999520);
+    h.frame();
+    expect(rowTop(h, 'number:9999999')).toBe(432);
+  },
+);
+
+it('keeps reveal and pin acquisitions closed while an indexed source is failed', () => {
+  const h = harness();
+  const list = hugeRows();
+  h.surface.update(list, hugePresentation);
+  h.surface.update(
+    {
+      ...list,
+      rowAt() {
+        throw new Error('failed rows');
+      },
+    },
+    hugePresentation,
+  );
+  expect(() => h.surface.reveal('number:0')).not.toThrow();
+  expect(h.surface.reveal('number:0')).toBeUndefined();
+  const cancelled = vi.fn();
+  expect(() => h.surface.pin('number:0', cancelled)).not.toThrow();
+  h.surface.update(list, hugePresentation);
+  h.surface.destroy();
+  expect(cancelled).not.toHaveBeenCalled();
+});
+
+it.each(['reveal', 'pin'] as const)(
+  'contains an indexed source failure first encountered by %s',
+  (operation) => {
+    const h = harness();
+    const list = hugeRows();
+    h.surface.update(
+      {
+        ...list,
+        rowAt(index) {
+          if (index > 100) throw new Error('far source failed');
+          return list.rowAt(index);
+        },
+      },
+      hugePresentation,
+    );
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    expect(() => h.surface[operation]('number:9999999')).not.toThrow();
+    expect(h.reportFailure).toHaveBeenCalledTimes(1);
+    expect(h.surface.mountedKeys()).toEqual([]);
+  },
+);

@@ -1,9 +1,16 @@
 import type { TaskSnapshot } from '../../tasks';
 import {
+  LogicalScrollWindow,
+  type LogicalScrollPlacement,
+} from '../virtualization/logicalScrollWindow';
+import {
   RowViewport,
   type RowAnchor,
+  type RowBounds,
   type RowMeasurement,
   type RowSegment,
+  type RowViewportRow,
+  type RowWindow,
 } from '../virtualization/rowViewport';
 import { indexedRows, type TaskListRow, type TaskListRows } from './taskListRows';
 import type { MountedTaskListRows } from './taskListRowView';
@@ -17,6 +24,7 @@ export interface TaskRowMount<T = TaskSnapshot> {
 export interface TaskListPresentation<T = TaskSnapshot> {
   readonly revision: string;
   readonly preserveAnchor: boolean;
+  readonly indexedHeights?: { readonly group: number; readonly task: number };
   estimate(row: TaskListRow<T>): number;
   measurementRevision(row: TaskListRow<T>): string;
 }
@@ -85,6 +93,14 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #focusedKey: string | undefined;
   #ordered: string[] = [];
   #pendingScroll: TaskListScroll | undefined;
+  readonly #scrollWindow = new LogicalScrollWindow();
+  #logicalTop = 0;
+  #acceptedNativeTop = 0;
+  #renderPlacement: LogicalScrollPlacement | undefined;
+  readonly #parked = new Set<string>();
+  #ownedWrite: { generation: number; writeId: number; expectedNativeTop: number } | undefined;
+  #localInput = false;
+  #inputTimer: number | undefined;
 
   constructor(options: TaskListSurfaceOptions<T>) {
     this.#options = options;
@@ -118,13 +134,13 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     failure: 'report' | 'throw' = 'report',
   ): void {
     if (this.#destroyed) return;
+    const recovering = this.#failed;
     this.#failed = false;
     const revision = ++this.#revision;
     this.#guard(() => {
-      const top = this.#top();
-      const anchor = presentation.preserveAnchor
-        ? this.#viewport.captureAnchor(Math.max(0, top))
-        : undefined;
+      const { top, anchor } = this.#updateScroll(recovering, presentation.preserveAnchor);
+      this.#clearInput();
+      this.#ownedWrite = undefined;
       this.#rows = rows;
       this.#presentation = presentation;
       this.#replace();
@@ -158,11 +174,11 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     key: string,
     options?: { readonly waitForReady: true },
   ): HTMLElement | 'pending' | undefined {
-    if (!this.#active() || this.#viewport.rowBounds(key) === undefined) return undefined;
+    if (this.#failed || !this.#active()) return undefined;
     let revealed: HTMLElement | undefined;
     const readiness = { pending: false };
     this.#guard(() => {
-      if (!this.#bind()) return;
+      if (this.#viewport.rowBounds(key) === undefined || !this.#bind()) return;
       const top = this.#checkLayout()?.top ?? this.#top();
       if (
         this.#reconcile(false, {
@@ -189,11 +205,14 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     nativeWrite?: TaskListNativeWriteObserver,
   ): () => void {
     const token: PinOwner = { onInvalidated, nativeWrite };
-    if (!this.#destroyed && !this.#invalidating && this.#viewport.rowBounds(key) !== undefined) {
-      const owners = this.#pins.get(key) ?? new Set<PinOwner>();
-      owners.add(token);
-      this.#pins.set(key, owners);
-      this.#schedule();
+    if (!this.#destroyed && !this.#invalidating && !this.#failed) {
+      this.#guard(() => {
+        if (this.#viewport.rowBounds(key) === undefined) return;
+        const owners = this.#pins.get(key) ?? new Set<PinOwner>();
+        owners.add(token);
+        this.#pins.set(key, owners);
+        this.#schedule();
+      });
     }
     return () => {
       const owners = this.#pins.get(key);
@@ -281,7 +300,47 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     );
   }
   #top(): number {
-    return this.#options.scroll.scrollTop - this.#origin();
+    const native = this.#options.scroll.scrollTop;
+    const origin = this.#origin();
+    if (this.#viewport.totalHeight <= 1_000_000) return native - origin;
+    if (native === this.#acceptedNativeTop) return this.#logicalTop;
+    const previous = this.#scrollWindow.place(
+      this.#logicalTop,
+      this.#viewport.totalHeight,
+      this.#height(),
+    );
+    this.#scrollWindow.acknowledge(previous.writeId, this.#acceptedNativeTop - origin);
+    const owned =
+      this.#ownedWrite?.generation === this.#nativeGeneration &&
+      native === this.#ownedWrite.expectedNativeTop;
+    const intent = this.#localInput ? 'local' : 'absolute';
+    const next = this.#scrollWindow.read(
+      native - origin,
+      this.#viewport.totalHeight,
+      this.#height(),
+      owned ? 'owned' : intent,
+    );
+    this.#logicalTop = next.logicalTop;
+    this.#acceptedNativeTop = native;
+    if (!owned) this.#ownedWrite = undefined;
+    if (!owned && this.#localInput) this.#armInputTimeout();
+    return next.logicalTop;
+  }
+  #updateScroll(recovering: boolean, preserveAnchor: boolean): TaskListScroll {
+    const top = recovering ? this.#recoveryTop() : this.#top();
+    const anchor =
+      !recovering && preserveAnchor ? this.#viewport.captureAnchor(Math.max(0, top)) : undefined;
+    return { top, anchor };
+  }
+  #recoveryTop(): number {
+    // A failed source cannot supply offsets; the last rendered coordinate system is still known.
+    return this.#options.scroll.scrollTop - this.#origin() + (this.#renderPlacement?.origin ?? 0);
+  }
+  #place(top: number): LogicalScrollPlacement {
+    const placed = this.#scrollWindow.place(top, this.#viewport.totalHeight, this.#height());
+    return this.#viewport.totalHeight <= 1_000_000 || top < 0
+      ? { ...placed, nativeTop: top, logicalTop: top, origin: 0 }
+      : placed;
   }
   #livePin({ key, token }: CapturedPin, current: () => boolean): boolean {
     return (
@@ -369,22 +428,58 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     return this.#afterNativeWrite(owners, actual, current) || reject();
   }
   #writeTop(top: number, current: () => boolean): void {
-    const next = top + this.#origin();
+    const placement = this.#place(top);
+    const origin = this.#origin();
+    const next = placement.nativeTop + origin;
     if (!current()) return;
-    this.#nativeMutation(() => {
-      if (Number.isFinite(next) && Math.abs(next - this.#options.scroll.scrollTop) > 0.01)
-        this.#options.scroll.scrollTop = next;
-    }, current);
+    const owned = {
+      generation: this.#nativeGeneration,
+      writeId: placement.writeId,
+      expectedNativeTop: next,
+    };
+    this.#ownedWrite = owned;
+    if (
+      !this.#nativeMutation(() => {
+        if (Number.isFinite(next) && Math.abs(next - this.#options.scroll.scrollTop) > 0.01)
+          this.#options.scroll.scrollTop = next;
+      }, current)
+    ) {
+      if (this.#ownedWrite === owned) this.#ownedWrite = undefined;
+      return;
+    }
+    const actual = this.#options.scroll.scrollTop;
+    this.#scrollWindow.acknowledge(placement.writeId, actual - origin);
+    owned.expectedNativeTop = actual;
+    this.#acceptedNativeTop = actual;
+    this.#logicalTop = placement.logicalTop;
   }
   #replace(): void {
     const presentation = this.#presentation;
     if (presentation === undefined) return;
-    this.#viewport.replace(
-      Array.from(this.#rows.slice(0, this.#rows.rowCount), (row) => ({
-        key: row.key,
-        estimatedHeight: presentation.estimate(row),
-        measurementRevision: `${this.#layoutRevision}:${presentation.revision}:${presentation.measurementRevision(row)}`,
-      })),
+    const rows = this.#rows;
+    const revision = `${this.#layoutRevision}:${presentation.revision}`;
+    const geometryRow = (row: TaskListRow<T>): RowViewportRow => ({
+      key: row.key,
+      estimatedHeight: presentation.indexedHeights?.[row.kind] ?? presentation.estimate(row),
+      measurementRevision: `${revision}:${presentation.measurementRevision(row)}`,
+    });
+    const heights = presentation.indexedHeights;
+    if (heights === undefined) {
+      this.#viewport.replace(Array.from(rows.slice(0, rows.rowCount), geometryRow));
+      return;
+    }
+    this.#viewport.replaceIndexed(
+      Object.freeze({
+        length: rows.rowCount,
+        rowAt(index: number) {
+          const row = rows.rowAt(index);
+          return row === undefined ? undefined : geometryRow(row);
+        },
+        indexOf: (key: string) => rows.rowIndexOf(key),
+        estimatedOffset: (index: number) => rows.estimatedOffset(index, heights),
+        anchorRanges: () => rows.anchorRanges(),
+        survivingNeighbor: rows.survivingNeighbor.bind(rows),
+      }),
     );
   }
   #restoreTop(anchor: RowAnchor | undefined, top: number): number {
@@ -464,30 +559,107 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     this.#observer.observe(this.#options.host);
     if (this.#options.scroll !== this.#options.host) this.#observer.observe(this.#options.scroll);
     owner.addEventListener('resize', schedule);
+    const clearInputListeners = this.#bindInput(owner, generation);
     const fonts = owner.document.fonts;
     fonts.addEventListener('loadingdone', fontChanged);
     this.#nativeCleanup = () => {
+      clearInputListeners();
       owner.removeEventListener('resize', schedule);
       fonts.removeEventListener('loadingdone', fontChanged);
     };
     return true;
   }
+  readonly #focusEntered = (): void => {
+    if (!this.#active()) return;
+    this.#readFocus();
+    const key = this.#focusedKey;
+    if (key !== undefined && this.#parked.has(key)) this.reveal(key);
+    else this.#schedule();
+  };
   #listen(listen: boolean): void {
     const { host, scroll } = this.#options;
+    if (listen) host.addEventListener('focusin', this.#focusEntered);
+    else host.removeEventListener('focusin', this.#focusEntered);
     for (const [element, event] of [
       [scroll, 'scroll'],
-      [host, 'focusin'],
       [host, 'focusout'],
     ] as const) {
       if (listen) element.addEventListener(event, this.#schedule, { passive: true });
       else element.removeEventListener(event, this.#schedule);
     }
   }
+  #clearInput(): void {
+    if (this.#inputTimer !== undefined) this.#owner?.clearTimeout(this.#inputTimer);
+    this.#inputTimer = undefined;
+    this.#localInput = false;
+  }
+  #armInputTimeout(): void {
+    if (this.#inputTimer !== undefined) this.#owner?.clearTimeout(this.#inputTimer);
+    const generation = this.#nativeGeneration;
+    this.#inputTimer = this.#owner?.setTimeout(() => {
+      if (generation === this.#nativeGeneration) this.#clearInput();
+    }, 180);
+  }
+  #bindInput(owner: Window & typeof window, generation: number): () => void {
+    const scroll = this.#options.scroll;
+    const live = (): boolean =>
+      generation === this.#nativeGeneration && owner.document === this.#options.host.ownerDocument;
+    const local = (): void => {
+      if (!live()) return;
+      this.#localInput = true;
+      this.#armInputTimeout();
+    };
+    const clear = (): void => {
+      if (live()) this.#clearInput();
+    };
+    const pointer = (event: PointerEvent): void => {
+      if (event.pointerType === 'touch') local();
+      else if (event.button === 0 && event.isPrimary !== false) clear();
+    };
+    const key = (event: KeyboardEvent): void => {
+      const target = event.target;
+      if (target instanceof owner.HTMLElement) {
+        if (target.isContentEditable || target.closest('input, textarea, select') !== null) return;
+        if (event.key === ' ' && target.closest('button') !== null) return;
+      }
+      if (['PageUp', 'PageDown', ' '].includes(event.key)) local();
+    };
+    const onScroll = (): void => {
+      if (!live() || this.#failed) return;
+      this.#guard(() => {
+        this.#top();
+        this.#schedule();
+      });
+    };
+    const unload = (): void => {
+      if (live()) this.suspend();
+    };
+    for (const event of ['wheel', 'touchstart', 'touchmove'])
+      scroll.addEventListener(event, local, { capture: true, passive: true });
+    scroll.addEventListener('pointerdown', pointer, true);
+    scroll.addEventListener('keydown', key, true);
+    scroll.addEventListener('scroll', onScroll, { passive: true });
+    scroll.addEventListener('scrollend', clear);
+    owner.addEventListener('blur', clear);
+    owner.addEventListener('unload', unload);
+    return () => {
+      for (const event of ['wheel', 'touchstart', 'touchmove'])
+        scroll.removeEventListener(event, local, true);
+      scroll.removeEventListener('pointerdown', pointer, true);
+      scroll.removeEventListener('keydown', key, true);
+      scroll.removeEventListener('scroll', onScroll);
+      scroll.removeEventListener('scrollend', clear);
+      owner.removeEventListener('blur', clear);
+      owner.removeEventListener('unload', unload);
+    };
+  }
   #cancelFrame(): void {
     if (this.#frame !== undefined) this.#owner?.cancelAnimationFrame(this.#frame);
     this.#frame = undefined;
   }
   #unbind(): void {
+    this.#clearInput();
+    this.#ownedWrite = undefined;
     this.#nativeGeneration++;
     this.#cancelFrame();
     this.#observer?.disconnect();
@@ -499,6 +671,9 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #evict(key: string, mount: TaskRowMount<T>): void {
     this.#observer?.unobserve(mount.element);
     this.#mounts.delete(key);
+    this.#parked.delete(key);
+    mount.element.removeClass('abyss-virtual-row-parked');
+    mount.element.style.removeProperty('--abyss-virtual-row-width');
     mount.destroy();
   }
   #readFocus(): void {
@@ -557,9 +732,17 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     // Ordinary frames retain their fractional/key anchor policy and one measurement pass.
     if (measuredTop !== undefined) this.#renderWindow(false, measuredTop, undefined, current);
     if (!current()) return false;
-    const corrected = measuredTop ?? target?.top;
+    const corrected = this.#correctedTop(measuredTop, target, top);
     if (corrected !== undefined) this.#writeTop(corrected, current);
     return current();
+  }
+  #correctedTop(
+    measuredTop: number | undefined,
+    target: TaskListScroll | undefined,
+    top: number,
+  ): number | undefined {
+    const requested = this.#viewport.totalHeight > 1_000_000 ? top : undefined;
+    return measuredTop ?? target?.top ?? requested;
   }
   #measureReveal(top: number, reveal: RevealPlacement): boolean {
     const { key, current } = reveal;
@@ -587,7 +770,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #finishReveal(key: string, desired: number, current: () => boolean): boolean {
     this.#writeTop(desired, current);
     if (!current()) return false;
-    const adjustment = this.#revealAdjustment(key, this.#top(), false, current);
+    const adjustment = this.#revealAdjustment(key, undefined, false, current);
     if (!current()) return false;
     if (Math.abs(adjustment) > 0.5)
       throw new Error('Task reveal did not reach the visible viewport');
@@ -632,14 +815,22 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       [...this.#mounts.keys()].some((key) => !previous.has(key))
     );
   }
-  #revealAdjustment(key: string, top: number, alignTall: boolean, current: () => boolean): number {
+  #revealAdjustment(
+    key: string,
+    top: number | undefined,
+    alignTall: boolean,
+    current: () => boolean,
+  ): number {
     const element = this.element(key);
     if (element?.isConnected !== true) throw new Error('Task reveal row is not mounted');
     const rect = element.getBoundingClientRect();
     if (!current()) return 0;
     const scroll = this.#options.scroll;
     const viewportTop = scroll.getBoundingClientRect().top + scroll.clientTop;
-    const displacement = this.#top() - top;
+    const displacement =
+      top === undefined
+        ? 0
+        : this.#options.scroll.scrollTop - this.#origin() - this.#place(top).nativeTop;
     if (!current()) return 0;
     const projectedTop = rect.top + displacement;
     const projectedBottom = rect.bottom + displacement;
@@ -702,7 +893,27 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     if (mount === undefined) {
       mount = this.#mountRow(row, current);
     } else if (update) mount.update(row);
+    if (mount !== undefined && current()) this.#placeMount(row.key, mount.element, current);
     return mount?.element;
+  }
+  #placeMount(key: string, element: HTMLElement, current: () => boolean): void {
+    if (!this.#parked.has(key)) {
+      element.removeClass('abyss-virtual-row-parked');
+      element.style.removeProperty('--abyss-virtual-row-width');
+      return;
+    }
+    const host = this.#options.host;
+    const hostStyle = this.#owner?.getComputedStyle(host);
+    const rowStyle = this.#owner?.getComputedStyle(element);
+    if (!current()) return;
+    const width =
+      host.clientWidth -
+      this.#margin(hostStyle?.paddingLeft) -
+      this.#margin(hostStyle?.paddingRight) -
+      this.#margin(rowStyle?.marginLeft) -
+      this.#margin(rowStyle?.marginRight);
+    element.setCssProps({ '--abyss-virtual-row-width': `${Math.max(0, width)}px` });
+    element.addClass('abyss-virtual-row-parked');
   }
   #spacer(height: number, element: HTMLElement = this.#options.host.createDiv()): HTMLElement {
     element.addClass('abyss-virtual-row-spacer');
@@ -731,11 +942,12 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     if (anchorKey !== undefined) pinned.push(anchorKey);
     if (this.#focusedKey !== undefined) pinned.push(this.#focusedKey);
     const window = this.#viewport.window(top, this.#height(), pinned);
+    this.#renderPlacement = this.#place(top);
     const established = new Set(this.#mounts.keys());
     if (
       !this.#nativeMutation(
         () => {
-          const rendered = this.#renderSegments(window.segments, update, current);
+          const rendered = this.#renderSegments(this.#physicalSegments(window), update, current);
           if (rendered === undefined) return;
           this.#evictOutside(rendered.keys, current);
           if (!current()) return;
@@ -748,6 +960,33 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     )
       return;
     this.#options.mountedChanged();
+  }
+  #segmentBounds(segment: RowSegment): RowBounds | undefined {
+    const key = this.#segmentKey(segment);
+    return key === undefined ? undefined : this.#viewport.rowBounds(key);
+  }
+  #physicalSegments(window: RowWindow): readonly RowSegment[] {
+    this.#parked.clear();
+    const { segments, start, end } = window;
+    const placement = this.#renderPlacement;
+    if (placement === undefined || this.#viewport.totalHeight <= placement.extent) return segments;
+    const result: RowSegment[] = [];
+    let cursor = 0;
+    for (const segment of segments) {
+      const bounds = this.#segmentBounds(segment);
+      if (bounds === undefined) continue;
+      if (bounds.index < start || bounds.index >= end) {
+        this.#parked.add(bounds.key);
+        result.push(segment);
+        continue;
+      }
+      const top = Math.max(0, bounds.top - placement.origin);
+      if (top > cursor) result.push({ height: top - cursor });
+      result.push(segment);
+      cursor = top + bounds.bottom - bounds.top;
+    }
+    if (cursor < placement.extent) result.push({ height: placement.extent - cursor });
+    return result;
   }
   #renderSegments(
     segments: readonly RowSegment[],
@@ -862,6 +1101,32 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       next = element;
     }
   }
+  #retireFailed(error: unknown): unknown {
+    const revision = this.#revision;
+    const errors = [error];
+    try {
+      this.#invalidatePins([...this.#pins.keys()]);
+    } catch (cleanupError) {
+      errors.push(cleanupError);
+    }
+    // Cancellation may synchronously install a new source and its live mounts.
+    if (revision === this.#revision) this.#retireMounts(errors);
+    return errors.length === 1
+      ? error
+      : new AggregateError(errors, 'Task list refresh and cleanup failed');
+  }
+  #retireMounts(errors: unknown[]): void {
+    const revision = this.#revision;
+    for (const [key, mount] of this.#mounts) {
+      if (revision !== this.#revision) return;
+      try {
+        this.#evict(key, mount);
+      } catch (cleanupError) {
+        errors.push(cleanupError);
+      }
+    }
+    if (revision === this.#revision) this.#ordered = [];
+  }
   #guard(action: () => void, failure: 'report' | 'throw' = 'report'): void {
     try {
       action();
@@ -869,8 +1134,11 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       if (this.#frame !== undefined) this.#owner?.cancelAnimationFrame(this.#frame);
       this.#frame = undefined;
       this.#failed = true;
-      if (failure === 'throw') throw error;
-      this.#options.reportFailure(error);
+      this.#clearInput();
+      this.#ownedWrite = undefined;
+      const reported = this.#retireFailed(error);
+      if (failure === 'throw') throw reported;
+      this.#options.reportFailure(reported);
     }
   }
 }

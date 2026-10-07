@@ -2196,8 +2196,20 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 /* This host owns its anchor corrections; other scrollers retain native anchoring. */
 .abyss-task-list-surface {
+  position: relative;
   display: flow-root;
   overflow-anchor: none;
+}
+
+/* Retained editors keep their measurable box and DOM ownership outside the scrollable flow. */
+.abyss-task-list-surface > .abyss-virtual-row-parked {
+  position: absolute;
+  top: auto;
+  bottom: 100%;
+  width: var(--abyss-virtual-row-width);
+  box-sizing: border-box;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .abyss-task-list-surface > .abyss-virtual-row-spacer {

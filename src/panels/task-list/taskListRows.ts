@@ -14,6 +14,7 @@ import {
   type TaskGroup,
   type TaskGroupValue,
 } from '../../views/taskGrouping';
+import type { RowAnchorKeyRange, RowViewportSource } from '../virtualization/rowViewport';
 import type {
   TaskOccurrenceRange,
   TaskSelectedValue,
@@ -61,6 +62,12 @@ export interface TaskListRows<T = TaskSnapshot> {
   readonly revision: string;
   readonly rowCount: number;
   readonly taskCount: number;
+  anchorRanges(): readonly RowAnchorKeyRange[];
+  survivingNeighbor(
+    previousIndex: number,
+    direction: 1 | -1,
+    current: RowViewportSource,
+  ): string | undefined;
   rowAt(index: number): TaskListRow<T> | undefined;
   rowIndexOf(key: string): number;
   taskKeyAt(index: number): string | undefined;
@@ -255,6 +262,25 @@ function selectedArrayRows<T>(
   });
 }
 
+function arrayAnchorOrder(
+  keys: readonly string[],
+): Pick<TaskListRows, 'anchorRanges' | 'survivingNeighbor'> {
+  return {
+    anchorRanges: () => keys.map((key) => ({ kind: 'key', key })),
+    survivingNeighbor(previousIndex, direction, current) {
+      for (
+        let index = previousIndex + direction;
+        index >= 0 && index < keys.length;
+        index += direction
+      ) {
+        const key = keys[index];
+        if (key !== undefined && current.indexOf(key) >= 0) return key;
+      }
+      return undefined;
+    },
+  };
+}
+
 /** Finite array adapter. Never expand authored date intervals to feed this adapter. */
 export function indexedRows<T>(
   rows: ReadonlyArray<TaskListRow<T>>,
@@ -285,6 +311,7 @@ export function indexedRows<T>(
   };
 
   return {
+    ...arrayAnchorOrder(rows.map(({ key }) => key)),
     revision,
     rowCount: rows.length,
     taskCount: tasks.length,

@@ -1,7 +1,30 @@
+import { arrayRowSource, IndexedRowGeometry } from './indexedRowGeometry';
+
 export interface RowViewportRow {
   readonly key: string;
   readonly estimatedHeight: number;
   readonly measurementRevision: string;
+}
+
+export type RowAnchorKeyRange =
+  | { readonly kind: 'key'; readonly key: string }
+  | {
+      readonly kind: 'series';
+      readonly series: string;
+      readonly from: number;
+      readonly to: number;
+    };
+export interface RowViewportSource {
+  readonly length: number;
+  rowAt(index: number): RowViewportRow | undefined;
+  indexOf(key: string): number;
+  estimatedOffset(index: number): number;
+  anchorRanges(): readonly RowAnchorKeyRange[];
+  survivingNeighbor(
+    previousIndex: number,
+    direction: 1 | -1,
+    current: RowViewportSource,
+  ): string | undefined;
 }
 
 export interface RowMeasurement {
@@ -20,7 +43,7 @@ export interface RowAnchor {
   readonly key: string;
   readonly offset: number;
   readonly previousIndex: number;
-  readonly previousKeys: readonly string[];
+  readonly previousOrder: RowViewportSource;
 }
 
 export type RowSegment = { readonly index: number } | { readonly height: number };
@@ -38,24 +61,9 @@ interface BufferedRange {
   readonly height: number;
 }
 
-function rowBoundary(offsets: readonly number[], value: number): number {
-  let low = 0;
-  let high = offsets.length;
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2);
-    if ((offsets[middle] ?? Infinity) < value) low = middle + 1;
-    else high = middle;
-  }
-  return low;
-}
-
 /** Pure row geometry. Native owners supply content-relative offsets and usable viewport heights. */
 export class RowViewport {
-  #rows: readonly RowViewportRow[] = [];
-  #keys: readonly string[] = Object.freeze([]);
-  #indices = new Map<string, number>();
-  readonly #heights = new Map<string, { height: number; revision: string }>();
-  #offsets: number[] = [0];
+  readonly #geometry = new IndexedRowGeometry();
   #range: BufferedRange | undefined;
   readonly #overscanPx: number;
 
@@ -64,30 +72,16 @@ export class RowViewport {
   }
 
   replace(rows: readonly RowViewportRow[]): void {
-    this.#range = undefined;
-    this.#rows = rows.map((row) => ({
-      ...row,
-      estimatedHeight:
-        Number.isFinite(row.estimatedHeight) && row.estimatedHeight > 0 ? row.estimatedHeight : 1,
-    }));
-    // Anchors share one immutable order snapshot until the next replacement.
-    this.#keys = Object.freeze(rows.map(({ key }) => key));
-    this.#indices = new Map(rows.map(({ key }, index) => [key, index]));
-    for (const [key, measurement] of this.#heights) {
-      const index = this.#indices.get(key);
-      if (index === undefined || this.#rows[index]?.measurementRevision !== measurement.revision)
-        this.#heights.delete(key);
-    }
-    this.#rebuildOffsets();
+    this.replaceIndexed(arrayRowSource(rows));
   }
 
-  #rebuildOffsets(): void {
-    let total = 0;
-    this.#offsets = [0];
-    for (const row of this.#rows) {
-      total += this.#heights.get(row.key)?.height ?? row.estimatedHeight;
-      this.#offsets.push(total);
-    }
+  replaceIndexed(source: RowViewportSource): void {
+    this.#range = undefined;
+    this.#geometry.replace(source);
+  }
+
+  get totalHeight(): number {
+    return this.#geometry.offset(this.#geometry.source.length);
   }
 
   measure(
@@ -95,55 +89,44 @@ export class RowViewport {
     scrollTop: number,
     retainedAnchor?: RowAnchor,
   ): { scrollTop: number; changed: boolean } {
-    const boundary = rowBoundary(this.#offsets, scrollTop);
-    const anchor = this.#offsets[boundary] === scrollTop ? boundary : Math.max(0, boundary - 1);
+    const boundary = this.#geometry.boundary(scrollTop);
+    const anchor =
+      this.#geometry.offset(boundary) === scrollTop ? boundary : Math.max(0, boundary - 1);
     const oldOffset =
       retainedAnchor === undefined
-        ? (this.#offsets[anchor] ?? 0)
+        ? this.#geometry.offset(anchor)
         : this.restoreAnchor(retainedAnchor, scrollTop);
-    let changed = false;
-    for (const measurement of measurements) {
-      if (this.#measureRow(measurement)) changed = true;
-    }
+    const changed = this.#geometry.measure(
+      measurements,
+      retainedAnchor?.key ?? this.#bounds(anchor)?.key,
+    );
     if (!changed) return { scrollTop, changed };
     this.#range = undefined;
-    this.#rebuildOffsets();
     const nextOffset =
       retainedAnchor === undefined
-        ? (this.#offsets[anchor] ?? 0)
+        ? this.#geometry.offset(anchor)
         : this.restoreAnchor(retainedAnchor, scrollTop);
     return { scrollTop: scrollTop + nextOffset - oldOffset, changed };
   }
 
-  #measureRow({ key, height }: RowMeasurement): boolean {
-    const index = this.#indices.get(key);
-    if (index === undefined || !Number.isFinite(height) || height <= 0) return false;
-    const row = this.#rows[index];
-    if (row === undefined) return false;
-    const previous = this.#heights.get(key)?.height ?? row.estimatedHeight;
-    if (Math.abs(previous - height) < 0.5) return false;
-    this.#heights.set(key, { height, revision: row.measurementRevision });
-    return true;
-  }
-
   rowBounds(key: string): RowBounds | undefined {
-    const index = this.#indices.get(key);
-    return index === undefined ? undefined : this.#bounds(index);
+    const index = this.#geometry.source.indexOf(key);
+    return index < 0 ? undefined : this.#bounds(index);
   }
 
   rowAt(offset: number): RowBounds | undefined {
-    const total = this.#offsets[this.#rows.length] ?? 0;
+    const total = this.#geometry.offset(this.#geometry.source.length);
     if (!Number.isFinite(offset) || offset < 0 || offset >= total) return undefined;
-    const boundary = rowBoundary(this.#offsets, offset);
-    const index = this.#offsets[boundary] === offset ? boundary : boundary - 1;
+    const boundary = this.#geometry.boundary(offset);
+    const index = this.#geometry.offset(boundary) === offset ? boundary : boundary - 1;
     return this.#bounds(index);
   }
 
   #bounds(index: number): RowBounds | undefined {
-    const row = this.#rows[index];
+    const row = this.#geometry.source.rowAt(index);
     if (row === undefined) return undefined;
-    const top = this.#offsets[index] ?? 0;
-    return { key: row.key, index, top, bottom: this.#offsets[index + 1] ?? top };
+    const top = this.#geometry.offset(index);
+    return { key: row.key, index, top, bottom: this.#geometry.offset(index + 1) };
   }
 
   captureAnchor(top: number): RowAnchor | undefined {
@@ -153,7 +136,7 @@ export class RowViewport {
       key: row.key,
       offset: top - row.top,
       previousIndex: row.index,
-      previousKeys: this.#keys,
+      previousOrder: this.#geometry.source,
     };
   }
 
@@ -166,16 +149,12 @@ export class RowViewport {
   }
 
   #survivingNeighbor(anchor: RowAnchor, step: 1 | -1): RowBounds | undefined {
-    for (
-      let index = anchor.previousIndex + step;
-      index >= 0 && index < anchor.previousKeys.length;
-      index += step
-    ) {
-      const key = anchor.previousKeys[index];
-      const row = key === undefined ? undefined : this.rowBounds(key);
-      if (row !== undefined) return row;
-    }
-    return undefined;
+    const key = anchor.previousOrder.survivingNeighbor(
+      anchor.previousIndex,
+      step,
+      this.#geometry.source,
+    );
+    return key === undefined ? undefined : this.rowBounds(key);
   }
 
   reveal(key: string, requestedTop: number, viewportHeight: number): number {
@@ -193,54 +172,62 @@ export class RowViewport {
   }
 
   window(requestedTop: number, viewportHeight: number, pinned: readonly string[]): RowWindow {
-    const count = this.#rows.length;
+    const count = this.#geometry.source.length;
     const measuredHeight = viewportHeight > 0 ? viewportHeight : 0;
     const height = measuredHeight > 0 ? measuredHeight : 340;
-    const total = this.#offsets[count] ?? 0;
+    const total = this.#geometry.offset(count);
     const scrollTop = Math.max(0, Math.min(requestedTop, Math.max(0, total - measuredHeight)));
     const { start, end } = this.#rangeFor(scrollTop, height);
     const indices = new Set<number>();
     for (let index = start; index < end; index++) indices.add(index);
     for (const key of pinned) {
-      const index = this.#indices.get(key);
-      if (index !== undefined) indices.add(index);
+      const index = this.#geometry.source.indexOf(key);
+      if (index >= 0) indices.add(index);
     }
+    this.#geometry.retain(
+      [...indices].flatMap((index) => {
+        const row = this.#geometry.source.rowAt(index);
+        return row === undefined ? [] : [row.key];
+      }),
+    );
     return { start, end, scrollTop, segments: this.#segments(indices) };
   }
 
   #rangeFor(scrollTop: number, height: number): BufferedRange {
     const previous = this.#range;
-    const total = this.#offsets[this.#rows.length] ?? 0;
+    const total = this.#geometry.offset(this.#geometry.source.length);
     const visibleBottom = Math.min(total, scrollTop + height);
     if (
       previous?.height === height &&
-      (this.#offsets[previous.start] ?? Infinity) <= scrollTop &&
-      (this.#offsets[previous.end] ?? 0) >= visibleBottom
+      this.#geometry.offset(previous.start) <= scrollTop &&
+      this.#geometry.offset(previous.end) >= visibleBottom
     )
       return previous;
     // Consume the existing overscan before refilling it. Small scroll steps do not change DOM.
-    const start = Math.max(0, rowBoundary(this.#offsets, scrollTop - this.#overscanPx) - 1);
+    const start = Math.max(0, this.#geometry.boundary(scrollTop - this.#overscanPx) - 1);
     const end = Math.min(
-      this.#rows.length,
-      rowBoundary(this.#offsets, scrollTop + height + this.#overscanPx),
+      this.#geometry.source.length,
+      this.#geometry.boundary(scrollTop + height + this.#overscanPx),
     );
     this.#range = { start, end, height };
     return this.#range;
   }
 
   #segments(indices: ReadonlySet<number>): RowSegment[] {
-    const count = this.#rows.length;
-    const total = this.#offsets[count] ?? 0;
+    const count = this.#geometry.source.length;
+    const total = this.#geometry.offset(count);
     const segments: RowSegment[] = [];
     let cursor = 0;
     for (const index of [...indices].sort((left, right) => left - right)) {
       if (index > cursor) {
-        segments.push({ height: (this.#offsets[index] ?? 0) - (this.#offsets[cursor] ?? 0) });
+        segments.push({
+          height: this.#geometry.offset(index) - this.#geometry.offset(cursor),
+        });
       }
       segments.push({ index });
       cursor = index + 1;
     }
-    if (cursor < count) segments.push({ height: total - (this.#offsets[cursor] ?? 0) });
+    if (cursor < count) segments.push({ height: total - this.#geometry.offset(cursor) });
     return segments;
   }
 }

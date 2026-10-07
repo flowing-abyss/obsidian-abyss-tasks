@@ -152,3 +152,15 @@ describe('project table viewport geometry', () => {
     expect(viewport.window(999, 0, [])).toMatchObject({ scrollTop: 0, segments: [] });
   });
 });
+
+it('retains the exact forward survivor after 5000 deleted rows and a reorder', () => {
+  const viewport = new ProjectTableViewport();
+  viewport.replace(
+    ['before', 'anchor', ...Array.from({ length: 5000 }, (_, i) => `gone:${i}`), 'after'].map(
+      (key) => ({ key, height: 40 }),
+    ),
+  );
+  const anchor = viewport.captureAnchor(45);
+  viewport.replace(['after', 'before'].map((key) => ({ key, height: 40 })));
+  expect(viewport.restoreAnchor(anchor, 99)).toBe(5);
+});

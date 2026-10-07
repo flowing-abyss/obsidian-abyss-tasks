@@ -455,6 +455,8 @@ export default defineConfig(
       'src/panels/projects/projectKanbanRows.ts',
       'src/panels/projects/projectTimelineRowModel.ts',
       'src/panels/virtualization/rowViewport.ts',
+      'src/panels/virtualization/indexedRowGeometry.ts',
+      'src/panels/virtualization/logicalScrollWindow.ts',
       'src/panels/calendar/calendarPolicy.ts',
       'src/panels/calendar/calendarDateNavigation.ts',
       'src/panels/calendar/visibleCalendarDates.ts',

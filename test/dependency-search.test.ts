@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as browserScheduler from '../src/browserTaskScheduler';
 import * as taskRows from '../src/panels/task-list/taskListRows';
 import { TaskListSurface } from '../src/panels/task-list/TaskListSurface';
+import { LogicalScrollWindow } from '../src/panels/virtualization/logicalScrollWindow';
 import { RowViewport } from '../src/panels/virtualization/rowViewport';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import {
@@ -2690,7 +2691,12 @@ it('review I2 skips existing interior omission proofs in later keyboard interval
   const h = await demandFixture(100, 49_850);
   const list = h.list;
   await h.completed();
-  list.scrollTop = 49_860 * 48;
+  // Reach the same logical interval through the bounded native scroll domain.
+  list.scrollTop = new LogicalScrollWindow().place(
+    49_860 * 48,
+    50_000 * 48,
+    list.clientHeight,
+  ).nativeTop;
   h.list.dispatchEvent(new h.owner.win.Event('scroll'));
   h.owner.flush();
   await flushMicrotasks(2);

@@ -60,10 +60,12 @@ describe('shared row viewport geometry', () => {
     v.replace(rows(['a', 'b', 'c']));
     const first = v.captureAnchor(5);
     const second = v.captureAnchor(45);
-    expect(first?.previousKeys).toBe(second?.previousKeys);
-    expect(Object.isFrozen(first?.previousKeys)).toBe(true);
+    expect(first?.previousOrder).toBe(second?.previousOrder);
+    expect(Object.isFrozen(first?.previousOrder)).toBe(true);
     v.replace(rows(['d']));
-    expect(second?.previousKeys).toEqual(['a', 'b', 'c']);
+    expect(second?.previousOrder.anchorRanges()).toEqual(
+      ['a', 'b', 'c'].map((key) => ({ kind: 'key', key })),
+    );
   });
 
   it('looks up half-open bounds and excludes offsets outside the sequence', () => {
@@ -256,3 +258,17 @@ it.each([35.5, 18])(
     expect(window.segments.filter((segment) => 'index' in segment).length).toBeLessThan(120);
   },
 );
+
+it('preserves full previous-array survivors across long vanished runs', () => {
+  const v = new RowViewport();
+  v.replace(
+    rows(['before', 'anchor', ...Array.from({ length: 5000 }, (_, i) => `gone:${i}`), 'after']),
+  );
+  const anchor = v.captureAnchor(45);
+  v.replace(rows(['after', 'before']));
+  expect(v.restoreAnchor(anchor, 99)).toBe(5);
+  v.replace(rows(['before']));
+  expect(v.restoreAnchor(anchor, 99)).toBe(5);
+  v.replace(rows(['new-only']));
+  expect(v.restoreAnchor(anchor, 99)).toBe(0);
+});

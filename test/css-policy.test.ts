@@ -660,3 +660,35 @@ it('reserves dependency picker geometry while preserving constrained flex shrink
   expect(list).toContain('min-height: 0');
   expect(list).toContain('max-height: min(40vh, 16rem)');
 });
+
+it('admits only the enrolled parked-row width producer and its scoped consumer', async () => {
+  const { default: ts } = await import('typescript');
+  const source = ts.sys.readFile(ts.sys.resolvePath('src/panels/task-list/TaskListSurface.ts'));
+  if (source === undefined) throw new Error('Missing task list surface owner');
+  const runtime = discoverRuntimeVariables(source);
+  expect(runtime.produced).toContain('--abyss-virtual-row-width');
+  expect(contracts.runtime.produced).toContain('--abyss-virtual-row-width');
+  const { loadPluginStyles, cssDeclarationsFor } = await import('./helpers');
+  const parked = cssDeclarationsFor(
+    await loadPluginStyles(),
+    '.abyss-task-list-surface > .abyss-virtual-row-parked',
+  );
+  expect(parked).toContain('width: var(--abyss-virtual-row-width)');
+  expect(parked).toContain('bottom: 100%');
+  expect(parked).toContain('top: auto');
+  expect(parked).toContain('opacity: 0');
+  expect(parked).toContain('pointer-events: none');
+  expect(parked).not.toContain('transform:');
+  expect(
+    analyzeCss(`.abyss-task-list-surface > .abyss-virtual-row-parked { ${parked} }`, {
+      file: 'fixture.css',
+      contracts: { ...fixtureContracts, runtime },
+    }),
+  ).toEqual([]);
+  expect(
+    analyzeCss('.abyss-task-list-surface { width: var(--abyss-unowned-row-width); }', {
+      file: 'fixture.css',
+      contracts: { ...fixtureContracts, runtime },
+    }),
+  ).not.toEqual([]);
+});
