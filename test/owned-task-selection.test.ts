@@ -1,6 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { localDate, type CompletionTrackingWitness, type TaskCommand } from '../src/tasks';
+import {
+  localDate,
+  taskPrefixForSubtask,
+  type CompletionTrackingWitness,
+  type TaskCommand,
+} from '../src/tasks';
 import { atomDateTime } from '../src/tasks/domain/commentTimestamp';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
@@ -329,6 +334,49 @@ describe('owned non-structural inspector selection', () => {
             ),
           ).toBeUndefined();
         }
+      }
+    },
+  );
+
+  it.each([
+    { root: 'Root #project', enabled: false, child: 'Added #custom' },
+    { root: 'Root #project', enabled: true, child: '#prefix Added #custom' },
+    { root: 'Root #TASK/INBOX', enabled: true, child: 'Added #custom' },
+    { root: 'Root', enabled: true, child: 'Added #custom' },
+  ])(
+    'keeps strict owned creation proof for $root, enabled=$enabled',
+    ({ root, enabled, child }) => {
+      expect(taskPrefixForSubtask).toBeTypeOf('function');
+      const original = snapshot(`- [ ] ${root}\n  - [ ] Owner #owner`, 'before');
+      const parent = expectDefined(original.subtasks[0]);
+      const inbox = { mode: 'both' as const, tag: '#task/inbox', removeTagOnAssign: true };
+      const policy = {
+        taskPrefix: taskPrefixForSubtask('#prefix', enabled, original.tags, inbox),
+        inbox,
+        addCreatedDate: false,
+      };
+      const command: TaskCommand = {
+        type: 'add-subtask',
+        parent: { type: 'subtask', ref: parent.ref },
+        text: 'Added #custom',
+      };
+      const current = snapshot(`${original.source.originalBlock}\n    - [ ] ${child}`, 'after');
+      expect(
+        rebuildOwnedTaskSelection(current, [original, parent], command, policy)?.[1]?.ref,
+      ).toEqual(current.subtasks[0]?.ref);
+      for (const wrong of [
+        'Foreign #custom',
+        `${child} #unexpected`,
+        `${child}\n    - [ ] Extra`,
+      ]) {
+        expect(
+          rebuildOwnedTaskSelection(
+            snapshot(`${original.source.originalBlock}\n    - [ ] ${wrong}`, 'wrong'),
+            [original, parent],
+            command,
+            policy,
+          ),
+        ).toBeUndefined();
       }
     },
   );

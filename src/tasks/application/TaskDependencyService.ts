@@ -24,7 +24,11 @@ import {
   sameTaskTreeExceptDependencies,
   type RootReconciliationBasis,
 } from '../domain/taskReconciliation';
-import { applyTaskCreationTagPolicy, type TaskInboxTagPolicy } from '../domain/taskTags';
+import {
+  applyTaskCreationTagPolicy,
+  taskPrefixForSubtask,
+  type TaskInboxTagPolicy,
+} from '../domain/taskTags';
 import { sameTaskTreeWithOwnedChanges } from '../domain/taskTreeChangeProof';
 import {
   sameTaskNodeRef,
@@ -441,6 +445,7 @@ async function createSubtask(
   command: CreateDependencySubtaskCommand,
   lifecycle: Pick<CreateDependencySubtaskRequest, 'today' | 'addCreatedDate'> & {
     readonly taskPrefix: string;
+    readonly applyTaskPrefixToSubtasks: boolean;
     readonly inbox: TaskInboxTagPolicy;
   },
   rebases: readonly Rebase[] = [],
@@ -451,10 +456,16 @@ async function createSubtask(
   const allocation = creationId(context, current, command.direction);
   if ('result' in allocation) return allocation.result;
   const { id } = allocation;
-  const { taskPrefix, inbox, ...repositoryLifecycle } = lifecycle;
+  const { taskPrefix, applyTaskPrefixToSubtasks, inbox, ...repositoryLifecycle } = lifecycle;
+  const prefix = taskPrefixForSubtask(
+    taskPrefix,
+    applyTaskPrefixToSubtasks,
+    current.root.tags,
+    inbox,
+  );
   const effectiveCommand = {
     ...command,
-    text: applyTaskCreationTagPolicy(taskPrefix, command.text, inbox).markdown,
+    text: applyTaskCreationTagPolicy(prefix, command.text, inbox).markdown,
   };
   const result = await context.repository.createDependencySubtask({
     baseRoot: current.root,
@@ -933,6 +944,7 @@ export class TaskDependencyService {
     command: CreateDependencySubtaskCommand,
     lifecycle: Pick<CreateDependencySubtaskRequest, 'today' | 'addCreatedDate'> & {
       readonly taskPrefix: string;
+      readonly applyTaskPrefixToSubtasks: boolean;
       readonly inbox: TaskInboxTagPolicy;
     },
   ): Promise<TaskCommandResult> {

@@ -89,6 +89,52 @@ function stateEnvelope(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe('SettingsPersistenceCoordinator migration', () => {
+  it.each([
+    [undefined, false],
+    [false, false],
+    [true, true],
+    ['true', false],
+    [1, false],
+    [null, false],
+  ])(
+    'loads subtask prefix opt-in %j and keeps static and view saves separate',
+    async (value, expected) => {
+      const staticData = markedStatic({ futureStatic: { retained: 7 } });
+      delete staticData['applyTaskPrefixToSubtasks'];
+      if (value !== undefined) staticData['applyTaskPrefixToSubtasks'] = value;
+      const port = memoryPort(staticData, stateEnvelope({ futureView: { retained: 9 } }));
+      const coordinator = new SettingsPersistenceCoordinator(port);
+      const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      expect(settings.applyTaskPrefixToSubtasks).toBe(expected);
+      const before = structuredClone(port.staticData);
+      settings.applyTaskPrefixToSubtasks = true;
+      settings.sectionCollapse.tags = true;
+      port.writes.length = 0;
+      await coordinator.saveViewState(settings);
+      expect(port.writes).toEqual([STATE_PATH]);
+      expect(port.staticData).toEqual(before);
+      expect(JSON.parse(port.stateText ?? '')).toMatchObject({
+        views: { futureView: { retained: 9 } },
+      });
+      expect(port.stateText).not.toContain('applyTaskPrefixToSubtasks');
+      await coordinator.saveSettings(settings);
+      expect(port.staticData).toMatchObject({
+        applyTaskPrefixToSubtasks: true,
+        futureStatic: { retained: 7 },
+      });
+      const reloaded = await new SettingsPersistenceCoordinator(port).loadSettings(
+        DEFAULT_SETTINGS,
+      );
+      expect(reloaded.settings.applyTaskPrefixToSubtasks).toBe(true);
+      reloaded.settings.applyTaskPrefixToSubtasks = false;
+      await coordinator.saveSettings(reloaded.settings);
+      expect(
+        (await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS)).settings
+          .applyTaskPrefixToSubtasks,
+      ).toBe(false);
+    },
+  );
+
   it('saves independent group collapse through state only and reloads it', async () => {
     const port = memoryPort(legacySettings(), undefined);
     const coordinator = new SettingsPersistenceCoordinator(port);

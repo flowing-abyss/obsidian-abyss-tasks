@@ -135,6 +135,7 @@ function applicationFor(
     provider,
     () => ({
       taskPrefix: settings.taskPrefix,
+      applyTaskPrefixToSubtasks: settings.applyTaskPrefixToSubtasks,
       inbox: settings.inbox,
       taskLifecycle: settings.taskLifecycle,
       recurrence: settings.recurrence,
@@ -1101,6 +1102,7 @@ describe('TaskApplicationService lifecycle routing', () => {
     const clock = vi.fn(() => today);
     const behavior = vi.fn<TaskBehaviorSettingsProvider>(() => ({
       taskPrefix,
+      applyTaskPrefixToSubtasks: false,
       inbox,
       taskLifecycle: { addCreatedDate, addCompletionDate: true },
       recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
@@ -1576,6 +1578,7 @@ describe('TaskApplicationService lifecycle settings', () => {
     const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
     const behavior: TaskBehaviorSettingsProvider = vi.fn<TaskBehaviorSettingsProvider>(() => ({
       taskPrefix: '',
+      applyTaskPrefixToSubtasks: false,
       inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
       taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
       recurrence: { newOccurrencePlacement: 'before' as const, removeScheduledDate: false },
@@ -1668,6 +1671,7 @@ describe('TaskApplicationService lifecycle settings', () => {
       undefined,
       () => ({
         taskPrefix: '',
+        applyTaskPrefixToSubtasks: false,
         inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
         taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
         recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
@@ -1701,6 +1705,7 @@ describe('TaskApplicationService lifecycle settings', () => {
       undefined,
       () => ({
         taskPrefix: '#work',
+        applyTaskPrefixToSubtasks: false,
         inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
         taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
         recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
@@ -1730,6 +1735,7 @@ describe('TaskApplicationService lifecycle settings', () => {
       undefined,
       () => ({
         taskPrefix: '',
+        applyTaskPrefixToSubtasks: false,
         inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
         taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
         recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
@@ -1759,6 +1765,7 @@ describe('TaskApplicationService lifecycle settings', () => {
       undefined,
       () => ({
         taskPrefix: '',
+        applyTaskPrefixToSubtasks: false,
         inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
         taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
         recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
@@ -2341,5 +2348,95 @@ describe('configured destination end-to-end lifecycle', () => {
     const file = fileAt(app, 'daily/2026-07-14.md');
     expect(await app.vault.cachedRead(file)).toContain('- [ ] retry this draft');
     expect(attempt).toBe(2);
+  });
+});
+
+describe('ordinary subtask prefix ownership through repositories', () => {
+  const cases = [
+    {
+      name: 'disabled',
+      root: 'Root #project',
+      owner: undefined,
+      enabled: false,
+      child: 'Added #custom',
+    },
+    {
+      name: 'enabled outside Inbox',
+      root: 'Root #project',
+      owner: undefined,
+      enabled: true,
+      child: '#task/one-off Added #custom',
+    },
+    {
+      name: 'untagged Inbox',
+      root: 'Root',
+      owner: undefined,
+      enabled: true,
+      child: 'Added #custom',
+    },
+    {
+      name: 'tagged Inbox with tagged child',
+      root: 'Root #TASK/INBOX',
+      owner: 'Owner #project',
+      enabled: true,
+      child: 'Added #custom',
+    },
+    {
+      name: 'non-Inbox with untagged child',
+      root: 'Root #project',
+      owner: 'Owner',
+      enabled: true,
+      child: '#task/one-off Added #custom',
+    },
+    {
+      name: 'non-Inbox with Inbox-tagged child',
+      root: 'Root #project',
+      owner: 'Owner #task/inbox',
+      enabled: true,
+      child: '#task/one-off Added #custom',
+    },
+  ];
+  it.each(
+    cases.flatMap((testCase) =>
+      (['in-memory', 'obsidian'] as const).map((adapter) => ({ ...testCase, adapter })),
+    ),
+  )('$adapter: $name', async ({ root, owner, enabled, child, adapter }) => {
+    const source = [`- [ ] ${root}`, ...(owner === undefined ? [] : [`  - [ ] ${owner}`]), ''].join(
+      '\n',
+    );
+    const h = await makeHarness(adapter, source);
+    const original = expectDefined(h.snapshots(source)[0]);
+    const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+    const api = new TaskApplicationService(
+      {
+        ...taskQueryApi(),
+        resolve: () => ({ type: 'exact', task: original, basis: { observed: original } }),
+      },
+      h.repository,
+      catalog,
+      { today: () => localDate('2026-10-07') },
+      undefined,
+      () => ({
+        taskPrefix: '#task/one-off',
+        applyTaskPrefixToSubtasks: enabled,
+        inbox: { mode: 'both', tag: '#task/inbox', removeTagOnAssign: true },
+        taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+        recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
+      }),
+    );
+    const parent =
+      owner === undefined
+        ? { type: 'task' as const, ref: original.ref }
+        : { type: 'subtask' as const, ref: expectDefined(original.subtasks[0]).ref };
+    const current = taskFrom(
+      await api.execute({ type: 'add-subtask', parent, text: 'Added #custom' }),
+      'child not added',
+    );
+    const added = owner === undefined ? current.subtasks[0] : current.subtasks[0]?.subtasks[0];
+    expect(added?.markdownTitle).toBe('Added');
+    expect(added?.tags).toEqual(
+      child.startsWith('#task/one-off') ? ['#task/one-off', '#custom'] : ['#custom'],
+    );
+    expect(await h.read()).toContain(`- [ ] ${child}`);
   });
 });

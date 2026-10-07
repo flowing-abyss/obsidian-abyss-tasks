@@ -4,7 +4,7 @@ import { AppState } from '../../src/app/AppState';
 import { RightPanel } from '../../src/panels/RightPanel';
 import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
-import type { TaskStatusDef } from '../../src/settings/types';
+import type { CalendarSettings, TaskStatusDef } from '../../src/settings/types';
 import { StatusRegistry } from '../../src/status/StatusRegistry';
 import type { TaskApplicationApi } from '../../src/tasks';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
@@ -37,8 +37,11 @@ export async function inspectorHarness(
   markdown: string,
   selected = 'Current',
   additionalFiles = {},
-  statusDefinitions: readonly TaskStatusDef[] = buildDefaultTaskStatuses(),
+  settingsOrStatuses: CalendarSettings | readonly TaskStatusDef[] = buildDefaultTaskStatuses(),
 ) {
+  const settings = 'taskStatuses' in settingsOrStatuses ? settingsOrStatuses : DEFAULT_SETTINGS;
+  const statusDefinitions =
+    'taskStatuses' in settingsOrStatuses ? settingsOrStatuses.taskStatuses : settingsOrStatuses;
   // The mock metadata parser uses -0 for a root list beginning on line zero.
   const app = await createAppWithFiles({ 'tasks.md': `\n${markdown}`, ...additionalFiles });
   const statuses = new StatusCatalog(toStatusRules(statusDefinitions));
@@ -65,7 +68,13 @@ export async function inspectorHarness(
     statuses,
     clockFrom(Date.parse('2026-09-05T12:00:00Z'), 0),
     undefined,
-    undefined,
+    () => ({
+      taskPrefix: settings.taskPrefix,
+      applyTaskPrefixToSubtasks: settings.applyTaskPrefixToSubtasks,
+      inbox: settings.inbox,
+      taskLifecycle: settings.taskLifecycle,
+      recurrence: settings.recurrence,
+    }),
     new TaskDependencyService(
       index,
       repository,
@@ -95,7 +104,7 @@ export async function inspectorHarness(
     state,
     app,
     statusRegistry: new StatusRegistry([...statusDefinitions]),
-    settings: DEFAULT_SETTINGS,
+    settings,
     tasks: api,
     search,
     dependencySearch: createTaskDependencySearchProvider(

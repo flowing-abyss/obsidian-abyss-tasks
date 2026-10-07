@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { taskPrefixForSubtask } from '../../src/tasks';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import type { TaskBehaviorSettingsProvider } from '../../src/tasks/application/TaskBehaviorSettings';
 import type {
@@ -81,6 +82,7 @@ function behaviorSettings(
 ): ReturnType<TaskBehaviorSettingsProvider> {
   return {
     taskPrefix: '',
+    applyTaskPrefixToSubtasks: false,
     inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
     taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
     recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
@@ -153,6 +155,7 @@ describe('TaskApplicationService planning commands', () => {
       undefined,
       () => ({
         taskPrefix: '',
+        applyTaskPrefixToSubtasks: false,
         inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
         taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
         recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
@@ -543,7 +546,11 @@ describe('TaskApplicationService planning commands', () => {
     });
 
     await service({ edit }, queries(), () =>
-      behaviorSettings({ taskPrefix: 'Plan #work' }),
+      behaviorSettings({
+        taskPrefix: 'Plan #work',
+        applyTaskPrefixToSubtasks: true,
+        inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
+      }),
     ).execute({
       type: 'add-subtask',
       parent: { type: 'task', ref },
@@ -566,9 +573,10 @@ describe('TaskApplicationService planning commands', () => {
       changed: true,
     });
 
-    await service({ edit }, queries(), () =>
+    await service({ edit }, exactQueries({ ...snapshot(), tags: ['#project'] }), () =>
       behaviorSettings({
         taskPrefix: 'Plan `#inbox` #inbox',
+        applyTaskPrefixToSubtasks: true,
         inbox: { mode: 'both', tag: '#inbox', removeTagOnAssign: true },
       }),
     ).execute({
@@ -914,6 +922,7 @@ describe('TaskApplicationService planning commands', () => {
       taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
       recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
       taskPrefix: '',
+      applyTaskPrefixToSubtasks: false,
       inbox: { mode: 'both', tag: '#inbox', removeTagOnAssign: true },
     }));
 
@@ -962,6 +971,7 @@ describe('TaskApplicationService planning commands', () => {
       taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
       recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
       taskPrefix: '',
+      applyTaskPrefixToSubtasks: false,
       inbox: { mode: 'tag', tag: '#Inbox', removeTagOnAssign: true },
     }));
     for (const tags of [
@@ -1778,6 +1788,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
     const today = vi.fn(() => localDate('2026-07-14'));
     const behavior = vi.fn(() => ({
       taskPrefix: '',
+      applyTaskPrefixToSubtasks: false,
       inbox: { mode: 'untagged' as const, tag: '', removeTagOnAssign: true },
       taskLifecycle: { addCreatedDate: false, addCompletionDate: true },
       recurrence: { newOccurrencePlacement: 'after' as const, removeScheduledDate: true },
@@ -2210,4 +2221,41 @@ it('reports a conflict without replaying a time edit over a concurrently changed
     }),
   ).resolves.toEqual({ type: 'conflict', current });
   expect(edit).toHaveBeenCalledOnce();
+});
+
+describe('subtask prefix root membership policy', () => {
+  it.each(
+    (
+      [
+        [false, ['#work'], 'both', '#task/inbox', ''],
+        [true, ['#work'], 'both', '#task/inbox', '#task/one-off'],
+        [true, [], 'both', '#task/inbox', ''],
+        [true, ['#TASK/INBOX'], 'both', '#task/inbox', ''],
+        [true, [], 'tag', '#task/inbox', '#task/one-off'],
+        [true, ['#TASK/INBOX'], 'untagged', '#task/inbox', '#task/one-off'],
+        [true, ['#task/inbox/child'], 'tag', '#task/inbox', '#task/one-off'],
+        [true, ['#task/inbox'], 'tag', 'task/inbox', ''],
+        [true, ['#task/inbox'], 'tag', '#task/inbox #other', '#task/one-off'],
+        [true, ['#task/inbox'], 'tag', '#bad//tag', '#task/one-off'],
+      ] as const
+    ).map(([enabled, rootTags, mode, tag, expected]) => ({
+      enabled,
+      rootTags,
+      mode,
+      tag,
+      expected,
+    })),
+  )(
+    'uses enabled=$enabled root=$rootTags mode=$mode tag=$tag',
+    ({ enabled, rootTags, mode, tag, expected }) => {
+      expect(taskPrefixForSubtask).toBeTypeOf('function');
+      expect(
+        taskPrefixForSubtask('#task/one-off', enabled, rootTags, {
+          mode,
+          tag,
+          removeTagOnAssign: false,
+        }),
+      ).toBe(expected);
+    },
+  );
 });

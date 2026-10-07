@@ -28,6 +28,7 @@ import {
   normalizeTaskTagInput,
   sameTag,
   tagComparisonKey,
+  taskPrefixForSubtask,
 } from '../domain/taskTags';
 import type {
   LocalDate,
@@ -189,6 +190,7 @@ function refKey(ref: TaskRef): string {
 const RECENT_OUTCOME_LIMIT = 64;
 const DEFAULT_BEHAVIOR_SETTINGS: TaskBehaviorSettings = {
   taskPrefix: '',
+  applyTaskPrefixToSubtasks: false,
   inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
   taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
   recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
@@ -390,10 +392,31 @@ function snapshotBehaviorSettings(provider: TaskBehaviorSettingsProvider): TaskB
   const settings = provider();
   return {
     taskPrefix: settings.taskPrefix,
+    applyTaskPrefixToSubtasks: settings.applyTaskPrefixToSubtasks,
     inbox: { ...settings.inbox },
     taskLifecycle: { ...settings.taskLifecycle },
     recurrence: { ...settings.recurrence },
   };
+}
+
+function subtaskCreationMarkdown(
+  text: string,
+  root: TaskSnapshot,
+  settings: TaskBehaviorSettings,
+): string {
+  const prefix = taskPrefixForSubtask(
+    settings.taskPrefix,
+    settings.applyTaskPrefixToSubtasks,
+    root.tags,
+    settings.inbox,
+  );
+  return applyTaskCreationTagPolicy(prefix, text, settings.inbox).markdown;
+}
+
+function subtaskSubmission(
+  command: EditableTaskCommand,
+): Pick<PreparedMutation, 'submittedSubtaskText'> {
+  return command.type === 'add-subtask' ? { submittedSubtaskText: command.text } : {};
 }
 
 function captureClock(
@@ -644,6 +667,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
         today: reading.localDate,
         addCreatedDate: settings.taskLifecycle.addCreatedDate,
         taskPrefix: settings.taskPrefix,
+        applyTaskPrefixToSubtasks: settings.applyTaskPrefixToSubtasks,
         inbox: settings.inbox,
       });
     if (command.type === 'create')
@@ -804,6 +828,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       targetBase,
       clock: reading,
       settings,
+      ...subtaskSubmission(command),
       retry:
         'recurrence' in preparedCommand ? 'exact-target' : retryPolicy(preparedCommand.command),
       ...(validateCurrent === undefined ? {} : { validateCurrent }),
@@ -1140,8 +1165,11 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       return {
         command: {
           ...command,
-          text: applyTaskCreationTagPolicy(settings.taskPrefix, command.text, settings.inbox)
-            .markdown,
+          text: subtaskCreationMarkdown(
+            command.text,
+            resolution.type === 'exact' ? resolution.task : resolution.current,
+            settings,
+          ),
           today: reading.localDate,
           addCreatedDate: settings.taskLifecycle.addCreatedDate,
         },
@@ -1408,9 +1436,25 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     if (first.type !== 'rebased') return this.terminalRepositoryResult_abyssPrivate(first);
     const retry = prepareRetry(prepared, first);
     if (retry.type === 'unsafe') return { type: 'conflict', current: first.current };
-    const invalidCurrent = this.validateCompletion_abyssPrivate(prepared, retry.request);
+    const retryRequest =
+      retry.type === 'edit' &&
+      retry.request.command.type === 'add-subtask' &&
+      prepared.submittedSubtaskText !== undefined
+        ? {
+            ...retry.request,
+            command: {
+              ...retry.request.command,
+              text: subtaskCreationMarkdown(
+                prepared.submittedSubtaskText,
+                first.current,
+                prepared.settings,
+              ),
+            },
+          }
+        : retry.request;
+    const invalidCurrent = this.validateCompletion_abyssPrivate(prepared, retryRequest);
     if (invalidCurrent !== undefined) return invalidCurrent;
-    const second = await this.dispatch_abyssPrivate(retry.request);
+    const second = await this.dispatch_abyssPrivate(retryRequest);
     return second.type === 'committed'
       ? this.committedResult_abyssPrivate(prepared, second)
       : this.terminalRepositoryResult_abyssPrivate(second);

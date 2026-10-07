@@ -59,6 +59,22 @@ function makeTab(): CalendarSettingsTab {
 }
 
 describe('CalendarSettingsTab sections', () => {
+  it('places the subtask prefix opt-in immediately after Task prefix', () => {
+    const tab = makeTab();
+    const prefix = expectDefined(
+      [...tab.containerEl.querySelectorAll('.setting-item')].find(
+        (row) => row.querySelector('.setting-item-name')?.textContent === 'Task prefix',
+      ),
+    );
+    const toggle = expectDefined(prefix.nextElementSibling);
+    expect(toggle.querySelector('.setting-item-name')?.textContent).toBe(
+      'Apply task prefix to subtasks',
+    );
+    expect(toggle.querySelector('.setting-item-description')?.textContent).toBe(
+      'Use the task prefix for new subtasks outside inbox. Subtasks of inbox tasks never receive an automatic prefix or inbox tag.',
+    );
+  });
+
   it('nests each top-level section body in a padded inner wrapper', () => {
     const tab = makeTab();
     const sections = [...tab.containerEl.querySelectorAll(':scope > .abyss-settings-section')];

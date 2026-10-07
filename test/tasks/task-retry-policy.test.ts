@@ -104,6 +104,7 @@ function prepared(
     clock: clockFrom(Date.parse('2026-08-11T09:32:10Z'), 0).read(),
     settings: {
       taskPrefix: '',
+      applyTaskPrefixToSubtasks: false,
       inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
       taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
       recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
@@ -1253,6 +1254,7 @@ describe('TaskApplicationService one-shot retry', () => {
     const clock = { read: vi.fn(() => clockFrom(Date.parse('2026-08-11T09:32:10Z'), 0).read()) };
     const settings = vi.fn(() => ({
       taskPrefix: '',
+      applyTaskPrefixToSubtasks: false,
       inbox: { mode: 'untagged' as const, tag: '', removeTagOnAssign: true },
       taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
       recurrence: { newOccurrencePlacement: 'before' as const, removeScheduledDate: false },

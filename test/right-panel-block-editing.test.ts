@@ -212,6 +212,59 @@ function entryParent(root: TaskSnapshot, path: readonly number[]) {
 }
 
 describe('RightPanel block editing', () => {
+  it.each([
+    { root: 'Root #project', owner: 'Owner', enabled: false, prefix: '' },
+    { root: 'Root #project', owner: 'Owner', enabled: true, prefix: '#prefix ' },
+    { root: 'Root #TASK/INBOX', owner: 'Owner #project', enabled: true, prefix: '' },
+    { root: 'Root', owner: 'Owner #project', enabled: true, prefix: '' },
+  ])(
+    'retains the original input and nested selection for $root with subtask prefix=$enabled',
+    async ({ root, owner, enabled, prefix }) => {
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      settings.taskPrefix = '#prefix';
+      settings.applyTaskPrefixToSubtasks = enabled;
+      settings.inbox = { mode: 'both', tag: '#task/inbox', removeTagOnAssign: true };
+      const h = await inspectorHarness(
+        `- [ ] ${root}\n  - [ ] ${owner}\n    - [ ] Existing`,
+        'Owner',
+        {},
+        settings,
+      );
+      const unsubscribe = subscribeInspectorReconciliation(h);
+      try {
+        expectDefined(
+          h.el.querySelector<HTMLElement>('.abyss-subtask-section .abyss-subtask-add-row'),
+        ).click();
+        const input = expectDefined(
+          h.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input'),
+        );
+        for (const text of ['First #custom', 'Second #custom']) {
+          input.value = text;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+          await vi.waitFor(() => {
+            expect(
+              h.node('Owner').node.subtasks.some((child) => child.title === text.split(' #')[0]),
+            ).toBe(true);
+          });
+          await flushMicrotasks(20);
+          expect(
+            h.node('Owner').node.subtasks[h.node('Owner').node.subtasks.length - 1]?.tags,
+          ).toEqual(prefix === '' ? ['#custom'] : ['#prefix', '#custom']);
+          expect(h.el.querySelector('.abyss-subtask-new-input')).toBe(input);
+          expect(input.isConnected).toBe(true);
+          expect(input.value).toBe('');
+          expect(input.ownerDocument.activeElement).toBe(input);
+          expect(h.state.get('taskStack')[h.state.get('taskStack').length - 1]?.ref).toEqual(
+            h.node('Owner').node.ref,
+          );
+        }
+      } finally {
+        unsubscribe();
+      }
+    },
+  );
+
   it('removes temporary entry document listeners when Escape ends the editor', async () => {
     const { panel } = await panelWith(snapshot('before'), vi.fn<TaskApplicationApi['execute']>());
     const container = freshContainer();
@@ -247,6 +300,8 @@ describe('RightPanel block editing', () => {
   it('keeps the creation policy captured before a pending submission', async () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.taskPrefix = '#original';
+    settings.applyTaskPrefixToSubtasks = true;
+    settings.inbox.mode = 'tag';
     const initial = sourceSnapshot('- [ ] Root\n  - [ ] Owner', 'before');
     const pending = deferred<TaskCommandResult>();
     const { panel, state } = await panelWith(initial, () => pending.promise, undefined, settings);

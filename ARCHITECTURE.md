@@ -327,6 +327,17 @@ atomic tag validation. Presentation supplies typed fields. Transient Inbox inten
 global prefix for one retained session and is not persisted. Tag changes share case identity,
 removal-wins precedence, and preservation of authored spelling.
 
+`applyTaskPrefixToSubtasks` is a static, opt-in preference, defaulting to false for missing or
+invalid persisted values. The shared `taskPrefixForSubtask` domain policy suppresses automatic
+prefixes for Inbox roots, using only the owning root's own tags and the configured tag/untagged/both
+selector semantics. Ordinary and dependency-linked commands evaluate that policy against their
+resolved root before applying existing authored-tag policy. Settings and the day remain frozen
+through a bounded retry; ordinary retries retain only the submitted child text and recompute its
+prefix after the existing source/target proof accepts a root rebase. The inspector captures the
+same effective prefix for strict submitted-child proof and retains existing input/selection ownership.
+Root creation policy is unchanged. This setting migrates no note data; older builds ignore the field
+and resume their prior automatic subtask prefix behavior.
+
 Moves and archives use the same root-transfer path. The repository proves the appended destination
 root before removing the source. Bounded recovery receipts require fresh destination evidence and
 source revision continuity on retry; identical Markdown alone cannot authorize removal. Archive

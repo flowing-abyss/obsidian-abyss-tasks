@@ -23,6 +23,7 @@ import {
   durationMinutes,
   localTime,
   sameTaskNodeRef,
+  taskPrefixForSubtask,
   type CommentRef,
   type CommentTimeContext,
   type CommentTimeContextProvider,
@@ -1158,10 +1159,16 @@ export class RightPanel {
 
   private creationProofPolicy_abyssPrivate(): Parameters<typeof rebuildOwnedTaskSelection>[3] {
     const settings = this.settings_abyssPrivate;
-    return settings === undefined
+    const root = this.state_abyssPrivate.get('taskStack')[0];
+    return settings === undefined || root === undefined
       ? undefined
       : {
-          taskPrefix: settings.taskPrefix,
+          taskPrefix: taskPrefixForSubtask(
+            settings.taskPrefix,
+            settings.applyTaskPrefixToSubtasks,
+            root.tags,
+            settings.inbox,
+          ),
           inbox: { ...settings.inbox },
           addCreatedDate: settings.taskLifecycle.addCreatedDate,
         };

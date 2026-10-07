@@ -381,6 +381,20 @@ export class CalendarSettingsTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName('Apply task prefix to subtasks')
+      .setDesc(
+        'Use the task prefix for new subtasks outside inbox. Subtasks of inbox tasks never receive an automatic prefix or inbox tag.',
+      )
+      .addToggle((t) =>
+        t
+          .setValue(this.plugin_abyssPrivate.settings.applyTaskPrefixToSubtasks)
+          .onChange(async (value) => {
+            this.plugin_abyssPrivate.settings.applyTaskPrefixToSubtasks = value;
+            await this.plugin_abyssPrivate.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
       .setName('Source note display')
       .setDesc('Show which note a task comes from, before the tag chip in list view.')
       .addDropdown((d) =>

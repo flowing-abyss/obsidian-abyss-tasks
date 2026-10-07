@@ -176,6 +176,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   MoveRecovery: ['src/ui/TaskMoveRecoveryModal.ts'],
   TaskHierarchyRecovery: ['src/ui/taskCommandResult.ts'],
   hierarchyWouldCycle: ['src/ui/taskHierarchyActions.ts'],
+  taskPrefixForSubtask: ['src/panels/RightPanel.ts'],
   normalizeTaskTagInput: [
     'src/settings/SettingsTab.ts',
     'src/task-lists/TaskListSelector.ts',

@@ -447,6 +447,8 @@ function removeObsoleteCaptureSettings(raw: Record<string, unknown>): void {
 export function migrateSettings(raw: Record<string, unknown>): SettingsMigrationResult {
   const result: SettingsMigrationResult = { notices: [] };
   migrateInbox(raw);
+  if (typeof raw['applyTaskPrefixToSubtasks'] !== 'boolean')
+    raw['applyTaskPrefixToSubtasks'] = false;
   if (!('pinnedTags' in raw)) raw['pinnedTags'] = [];
   if (!('archivedTags' in raw)) raw['archivedTags'] = [];
   if (!('archivedTagPrefixes' in raw)) raw['archivedTagPrefixes'] = [];

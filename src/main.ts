@@ -190,6 +190,7 @@ export default class TaskCalendarPlugin extends Plugin {
       destinationProvider,
       () => ({
         taskPrefix: this.settings.taskPrefix,
+        applyTaskPrefixToSubtasks: this.settings.applyTaskPrefixToSubtasks,
         inbox: this.settings.inbox,
         taskLifecycle: this.settings.taskLifecycle,
         recurrence: this.settings.recurrence,

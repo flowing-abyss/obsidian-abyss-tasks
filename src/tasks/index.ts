@@ -54,7 +54,7 @@ export {
   type CompletionTrackingWitness,
   type TaskResolution,
 } from './domain/taskReconciliation';
-export { normalizeTaskTagInput } from './domain/taskTags';
+export { normalizeTaskTagInput, taskPrefixForSubtask } from './domain/taskTags';
 export { sameTaskTreeWithOwnedChanges } from './domain/taskTreeChangeProof';
 export type { OffsetAt } from './domain/timeEntry';
 export {

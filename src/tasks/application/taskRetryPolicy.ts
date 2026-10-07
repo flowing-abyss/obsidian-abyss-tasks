@@ -49,6 +49,8 @@ export interface PreparedMutation {
   readonly clock: ClockReading | { readonly localDate: ClockReading['localDate'] };
   readonly settings: TaskBehaviorSettings;
   readonly retry: RetryPolicy;
+  // Retain only the authored child text so a proven root rebase can recompute its prefix.
+  readonly submittedSubtaskText?: string;
   readonly validateCurrent?: (
     currentRoot: TaskSnapshot,
     rebasedTarget: TaskNodeRef,

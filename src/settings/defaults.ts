@@ -101,6 +101,7 @@ export function buildDefaultTaskStatuses(): TaskStatusDef[] {
 export const DEFAULT_SETTINGS: CalendarSettings = {
   firstDayOfWeek: 1,
   taskPrefix: '',
+  applyTaskPrefixToSubtasks: false,
   taskFilePath: 'tasks/active.md',
   taskArchivePath: 'tasks/archive.md',
   taskIgnoreQuery: '',
