@@ -1641,6 +1641,7 @@ export class CenterPanel {
   private createTaskMenus_abyssPrivate(): TaskMenus {
     return new TaskMenus({
       app: this.app_abyssPrivate,
+      queries: this.queries_abyssPrivate,
       settings: this.settings_abyssPrivate,
       statusRegistry: this.statusRegistry_abyssPrivate,
       interactionOwnership: this.interactionOwnership_abyssPrivate,
@@ -3787,7 +3788,7 @@ export class CenterPanel {
 
   private openRecurrenceEditor_abyssPrivate(anchor: HTMLElement, task: TaskCommandSubject): void {
     if (commandTarget(task) === undefined) return;
-    const source = commandSource(task);
+    const source = commandSource(task, this.queries_abyssPrivate);
     if (source === undefined) return;
     const { root } = source;
     this.dismissRecurrenceEditor_abyssPrivate();

@@ -73,12 +73,20 @@ export function commandPatch(
   return { type: 'patch', target, patch };
 }
 
-export function commandSource(subject: TaskCommandSubject): CalendarTaskSource | undefined {
-  if ('root' in subject) return subject;
-  if (!('source' in subject)) return undefined;
-  const occurrence = calendarOccurrenceForTask(subject);
-  if (occurrence !== undefined) return occurrence.source;
-  return { root: subject, node: subject, target: taskNodeRef(subject) };
+export function commandSource(
+  subject: TaskCommandSubject,
+  queries: TaskQueryApi,
+): CalendarTaskSource | undefined {
+  const target = commandTarget(subject);
+  if (target === undefined) return undefined;
+  const owner = queries.resolve(rootTaskNodeRef(target));
+  if (owner.type === 'exact') {
+    const path = taskSelectionRefPath(owner.task, target);
+    const node = path?.[path.length - 1];
+    if (node !== undefined) return { root: owner.task, node, target };
+  }
+  presentTaskCommandResult({ type: 'not-found', target });
+  return undefined;
 }
 
 interface PendingTask<T> {

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import type { LinkToken } from '../src/markdown/links';
-import { TaskCommands } from '../src/panels/center/TaskCommands';
+import { commandSource, TaskCommands } from '../src/panels/center/TaskCommands';
 import { buildTaskListRows } from '../src/panels/task-list/taskListRows';
 import { TaskRowSelection } from '../src/panels/task-list/taskRowSelection';
 import type { ProjectManager } from '../src/projects/ProjectManager';
@@ -498,4 +498,21 @@ it('clears the deleted root from Inspector selection after a bulk delete', async
   await f.commands.deleteBulkTasks([root]);
   expect(f.state.get('taskStack')).toEqual([]);
   f.commands.dispose();
+});
+
+it('rejects forecast source authority before resolving its template owner', async () => {
+  const h = await hierarchyHarness();
+  const child = expectDefined([...taskTreeNodes(h.source)][1]);
+  const forecast = taskSnapshotForCalendarOccurrence({
+    kind: 'forecast',
+    key: 'forecast-child',
+    source: child,
+    planning: child.node.planning,
+    referenceDate: localDate('2026-10-09'),
+    ordinal: 1,
+  });
+  const resolve = vi.spyOn(h.index, 'resolve');
+  expect(commandSource(forecast, h.index)).toBeUndefined();
+  expect(resolve).not.toHaveBeenCalled();
+  h.index.destroy();
 });

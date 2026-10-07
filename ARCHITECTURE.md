@@ -831,7 +831,9 @@ TaskCommands accepts `TaskCommandSubject` (an ordinary selection node or a hydra
 Menus resolve `TaskSelectedNode` entries with explicit occurrence completion capabilities;
 continuation-only status actions stay passive, while Inspector callers default to allowed.
 Date and recurrence surfaces retain the exact subject through submission, and timers use its
-physical target. Child menus offer the existing hierarchy promotion workflow; archive/move reject
+physical target. Source navigation and recurrence opening resolve the canonical owner through the
+public query facade and verify the exact child path; unavailable authority receives existing action
+feedback, including for bare child subjects. Child menus offer the existing hierarchy promotion workflow; archive/move reject
 an entire child or mixed selection before any root command.
 `taskNodeBatch` deduplicates exact reference paths, collapses selected subtree ancestors for delete,
 and orders structural status changes deepest first. TaskCommands executes sequentially, consumes

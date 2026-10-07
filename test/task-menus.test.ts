@@ -6,8 +6,10 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { localDate } from '../src/tasks';
 import { taskTreeNodes } from '../src/tasks/domain/taskSearchProjection';
+import * as commandFeedback from '../src/ui/taskCommandResult';
 import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import { createTrackingActions } from '../src/ui/timeTracking/trackingActions';
+import { taskSnapshotForCalendarOccurrence } from '../src/views/calendarOccurrences';
 import { expectDefined, fixedToday, methodOf, task, taskQueryApi } from './helpers';
 import { hierarchyHarness } from './support/taskHierarchyHarness';
 import { useTaskPanelViewport } from './support/taskPanelViewport';
@@ -233,66 +235,102 @@ it('offers Promote for a child, disables root transfer and continuation status, 
   }
 });
 
-it.each(['date', 'recurrence'] as const)(
-  'retains the child authority through the %s surface callback',
-  async (kind) => {
-    vi.useRealTimers();
-    mockMenuDom();
-    const h = await hierarchyHarness({
-      'source.md': '- [ ] Parent\n  - [ ] Child 📅 2026-10-09\n',
-      'target.md': '- [ ] Other\n',
-    });
-    const child = expectDefined([...taskTreeNodes(h.source)][1]);
-    const state = new AppState();
-    state.set('selectedList', 'inbox');
-    const panel = new CenterPanel({
-      app: h.app,
-      state,
-      settings: structuredClone(DEFAULT_SETTINGS),
-      queries: h.index,
-      tasks: h.service,
-      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-    });
-    const el = activeDocument.body.createDiv();
-    panel.mount(el);
-    const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
-    const execute = vi.spyOn(h.service, 'execute');
-    try {
-      const menu = panel['taskMenus_abyssPrivate'].createTaskContextMenu(card, child);
-      const item = expectDefined(
-        items(menu).find(
-          (item) => item.title__ === (kind === 'date' ? 'Set date…' : 'Edit repeat…'),
-        ),
-      );
-      (item as unknown as { onClick__: () => void }).onClick__();
-      if (kind === 'date') {
-        const input = expectDefined(
-          activeDocument.querySelector<HTMLInputElement>('input[type="date"]'),
-        );
-        input.value = '2026-10-10';
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-      } else {
-        expectDefined(
-          activeDocument.querySelector<HTMLElement>('[data-recurrence-preset="weekly"]'),
-        ).click();
-        expectDefined(
-          activeDocument.querySelector<HTMLButtonElement>('.abyss-recurrence-save'),
-        ).click();
-      }
-      await vi.waitFor(() => {
-        expect(execute).toHaveBeenCalledTimes(1);
+it.each(
+  (['hydrated', 'bare', 'calendar'] as const).flatMap((form) =>
+    (['date', 'recurrence', 'source', 'unavailable-source', 'unavailable-recurrence'] as const).map(
+      (kind) => ({ form, kind }),
+    ),
+  ),
+)('retains $form child authority through the $kind surface callback', async ({ form, kind }) => {
+  vi.useRealTimers();
+  mockMenuDom();
+  const h = await hierarchyHarness({
+    'source.md': '- [ ] Parent\n  - [ ] Child 📅 2026-10-09\n',
+    'target.md': '- [ ] Other\n',
+  });
+  const child = expectDefined([...taskTreeNodes(h.source)][1]);
+  const state = new AppState();
+  state.set('selectedList', 'inbox');
+  const panel = new CenterPanel({
+    app: h.app,
+    state,
+    settings: structuredClone(DEFAULT_SETTINGS),
+    queries: h.index,
+    tasks: h.service,
+    statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+  });
+  const el = activeDocument.body.createDiv();
+  panel.mount(el);
+  const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
+  const execute = vi.spyOn(h.service, 'execute');
+  try {
+    let subject = form === 'bare' ? child.node : child;
+    if (form === 'calendar')
+      subject = taskSnapshotForCalendarOccurrence({
+        kind: 'materialized',
+        key: 'child',
+        source: child,
+        planning: child.node.planning,
+        recurring: true,
       });
-      expect(execute.mock.calls[0]?.[0]).toMatchObject({ type: 'patch', target: child.target });
-      await vi.waitFor(async () => {
-        expect(await h.read('source.md')).toBe(
-          kind === 'date'
-            ? '- [ ] Parent\n  - [ ] Child 📅 2026-10-10\n'
-            : '- [ ] Parent\n  - [ ] Child 🔁 every week on Friday 📅 2026-10-09\n',
-        );
-      });
-    } finally {
-      panel.destroy();
-      h.index.destroy();
+    const menu = panel['taskMenus_abyssPrivate'].createTaskContextMenu(card, subject);
+    const unavailable = kind.startsWith('unavailable');
+    const sourceAction = kind.endsWith('source');
+    const feedback = vi.spyOn(commandFeedback, 'presentTaskCommandResult');
+    const leaf = {
+      openFile: vi.fn().mockResolvedValue(undefined),
+      view: { editor: { setCursor: vi.fn() } },
+    };
+    const getLeaf = vi.spyOn(h.app.workspace, 'getLeaf').mockReturnValue(leaf as never);
+    if (unavailable)
+      h.index.installCommittedContent('source.md', '- [ ] Replacement\n  - [ ] Child\n');
+    let title = kind === 'date' ? 'Set date…' : 'Edit repeat…';
+    if (sourceAction) title = 'Open in note';
+    const item = expectDefined(items(menu).find((item) => item.title__ === title));
+    (item as unknown as { onClick__: () => void }).onClick__();
+    if (unavailable) {
+      expect(feedback).toHaveBeenCalledWith({ type: 'not-found', target: child.target });
+      expect(getLeaf).not.toHaveBeenCalled();
+      expect(activeDocument.querySelector('.abyss-recurrence-save')).toBeNull();
+      expect(execute).not.toHaveBeenCalled();
+      return;
     }
-  },
-);
+    if (sourceAction) {
+      await vi.waitFor(() => {
+        expect(leaf.view.editor.setCursor).toHaveBeenCalledWith({ line: 1, ch: 0 });
+      });
+      expect(leaf.openFile).toHaveBeenCalledExactlyOnceWith(h.file('source.md'));
+      expect(execute).not.toHaveBeenCalled();
+      expect(await h.read('source.md')).toBe('- [ ] Parent\n  - [ ] Child 📅 2026-10-09\n');
+      return;
+    }
+    if (kind === 'date') {
+      const input = expectDefined(
+        activeDocument.querySelector<HTMLInputElement>('input[type="date"]'),
+      );
+      input.value = '2026-10-10';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    } else {
+      expectDefined(
+        activeDocument.querySelector<HTMLElement>('[data-recurrence-preset="weekly"]'),
+      ).click();
+      expectDefined(
+        activeDocument.querySelector<HTMLButtonElement>('.abyss-recurrence-save'),
+      ).click();
+    }
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledTimes(1);
+    });
+    expect(execute.mock.calls[0]?.[0]).toMatchObject({ type: 'patch', target: child.target });
+    await vi.waitFor(async () => {
+      expect(await h.read('source.md')).toBe(
+        kind === 'date'
+          ? '- [ ] Parent\n  - [ ] Child 📅 2026-10-10\n'
+          : '- [ ] Parent\n  - [ ] Child 🔁 every week on Friday 📅 2026-10-09\n',
+      );
+    });
+  } finally {
+    panel.destroy();
+    h.index.destroy();
+  }
+});

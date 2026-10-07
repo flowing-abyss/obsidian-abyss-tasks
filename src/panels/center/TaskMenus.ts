@@ -16,6 +16,7 @@ import {
   type LocalDate,
   type TaskOccurrenceCompletion,
   type TaskPriority,
+  type TaskQueryApi,
 } from '../../tasks';
 import { TagPickerModal } from '../../ui/TagPickerModal';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
@@ -73,6 +74,7 @@ interface TaskMenusHost {
 
 interface TaskMenusOptions {
   readonly app: App;
+  readonly queries: TaskQueryApi;
   readonly settings: CalendarSettings;
   readonly statusRegistry: StatusRegistry;
   readonly interactionOwnership: InteractionOwnershipPort;
@@ -266,7 +268,7 @@ export class TaskMenus {
         .onClick(() => {
           const target = commandTarget(task);
           if (target !== undefined) {
-            const source = commandSource(task);
+            const source = commandSource(task, this.#options.queries);
             if (source !== undefined)
               runAsyncAction(
                 openInFile(this.#options.app, source.root, taskNodeSourceLine(target)),
