@@ -15,7 +15,7 @@ import {
   renderDependencyIndicator,
   type TaskDependencyLookup,
 } from '../../ui/taskDependencyPresentation';
-import type { CalendarOccurrence } from '../calendarOccurrences';
+import { calendarOccurrenceForRender, type CalendarOccurrence } from '../calendarOccurrences';
 import { renderTimedContent } from './calendarPreview';
 import type { TimedDragTarget, TimedVerticalResizeTarget } from './dragGeometry';
 import {
@@ -157,7 +157,13 @@ function timedContinuity(
   task: TaskSnapshot,
   terminal: boolean,
 ): 'single' | 'continuation' | 'terminal' {
-  if (task.planning.start == null || task.planning.due == null) return 'single';
+  const occurrence = calendarOccurrenceForRender(task);
+  if (
+    (occurrence.kind === 'materialized' && occurrence.occupied.kind === 'point') ||
+    task.planning.start == null ||
+    task.planning.due == null
+  )
+    return 'single';
   return terminal ? 'terminal' : 'continuation';
 }
 
@@ -296,14 +302,16 @@ function renderTimedBlock(input: TimedBlockRenderInput): void {
   const occurrence = callbacks.occurrenceFor(task);
   const terminal =
     options?.terminal ??
-    (options == null || task.planning.due == null || task.planning.due === options.date);
+    ((occurrence.kind === 'materialized' && occurrence.occupied.kind === 'point') ||
+      options == null ||
+      task.planning.due == null ||
+      task.planning.due === options.date);
   const block = createTimedBlockElement(hourColumnEl, blockLayout, terminal, options, occurrence);
   applyTimedBlockGeometry(block, blockLayout, input.minHeightCap);
   applyTimedBlockColor(block, task, tagGroups);
   renderTimedBlockContent(block, task, blockLayout, occurrence, terminal, callbacks);
-  bindMaterializedInteractions(occurrence, (target) => {
+  bindMaterializedInteractions(occurrence, () => {
     bindTaskSelection(block, task, callbacks.onTaskSelect);
-    if (target.type !== 'task') return;
     attachTimedBlockControls({
       block,
       hourColumnEl,
@@ -341,8 +349,8 @@ function createTimedBlockElement(
   block.setAttribute('data-abyss-task-line', String(layout.task.source.line));
   block.setAttribute('data-abyss-start-minutes', String(layout.startMinutes));
   if (options != null) block.setAttribute('data-tg-segment-date', options.date);
-  bindMaterializedInteractions(occurrence, (target) => {
-    if (target.type === 'task') block.setAttribute('tabindex', '0');
+  bindMaterializedInteractions(occurrence, () => {
+    block.setAttribute('tabindex', '0');
   });
   return block;
 }
@@ -496,10 +504,14 @@ function createBoundaryHandles(input: TimedBlockControlsInput): BoundaryHandleBi
     return [];
   }
   const handles: BoundaryHandleBinding[] = [];
-  const isSpan = task.planning.start != null && task.planning.due != null;
-  if (isSpan && task.planning.start === options.date)
+  const occurrence = calendarOccurrenceForRender(task);
+  const isSpan =
+    occurrence.kind === 'materialized'
+      ? occurrence.occupied.kind === 'interval'
+      : task.planning.start != null && task.planning.due != null;
+  if (isSpan && String(task.planning.start) === options.date)
     handles.push({ element: createBoundaryHandle(block, 'left', 'start'), boundary: 'start' });
-  if (isSpan && task.planning.due === options.date)
+  if (isSpan && String(task.planning.due) === options.date)
     handles.push({ element: createBoundaryHandle(block, 'right', 'due'), boundary: 'due' });
   else if (!isSpan && terminal)
     handles.push({

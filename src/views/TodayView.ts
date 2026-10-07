@@ -3,7 +3,8 @@ import type { ResolvedConfig, TagGroup } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskPriority, TaskSnapshot } from '../tasks';
 import { BaseView } from './BaseView';
-import { calendarTaskWithPlanning } from './calendarOccurrences';
+import { type CalendarNativeDragStart } from './calendarNativeDrag';
+import { calendarOccurrenceForTask, calendarTaskWithPlanning } from './calendarOccurrences';
 import {
   createSpanInteractionOwner,
   type InteractiveSpanBoundaryTarget,
@@ -37,6 +38,7 @@ import type { TimedBoundaryTarget } from './timegrid/timedInteractions';
 import { createTimedInteractionOwner } from './timegrid/timedInteractions';
 
 export interface TimeGridCallbacks extends ForecastInteractionCallbacks {
+  readonly onNativeDragStart?: CalendarNativeDragStart | undefined;
   dependenciesFor?: TimedBlockCallbacks['dependenciesFor'];
   app: App;
   onTaskClick: (task: TaskSnapshot) => void;
@@ -88,7 +90,29 @@ interface TodayAllDayContext {
 }
 
 function taskSourceIdentity(task: TaskSnapshot): string {
-  return `${task.source.filePath}:::${task.source.line}`;
+  return taskLayoutIdentity(task);
+}
+
+function classifyMaterializedPoint(
+  task: TaskSnapshot,
+  date: string,
+  buckets: DateTaskBuckets,
+): boolean {
+  const occurrence = calendarOccurrenceForTask(task);
+  if (occurrence?.kind !== 'materialized' || occurrence.occupied.kind !== 'point') return false;
+  if (occurrence.occupied.date !== date) return true;
+  const deadline =
+    occurrence.occupied.roles.length === 1 &&
+    occurrence.occupied.roles[0] === 'due' &&
+    task.planning.scheduled !== undefined;
+  const bucket = task.planning.time === undefined ? buckets.plain : buckets.timed;
+  (deadline ? buckets.deadlines : bucket).push(task);
+  return true;
+}
+
+function singleDateAnchor(task: TaskSnapshot): string {
+  const { scheduled, due, start } = task.planning;
+  return String(scheduled ?? due ?? start);
 }
 
 function classifyTaskForDate(
@@ -97,18 +121,20 @@ function classifyTaskForDate(
   buckets: DateTaskBuckets,
   spanIdentities: Set<string>,
 ): void {
-  const { start, due, time, scheduled } = task.planning;
-  if (start !== undefined && due !== undefined) {
+  if (classifyMaterializedPoint(task, date, buckets)) return;
+  const { start, due, time } = task.planning;
+  if (start !== undefined && due !== undefined && start <= due) {
     if (!window.moment(date).isBetween(start, due, 'day', '[]')) return;
     (time === undefined ? buckets.spans : buckets.timedSpans).push(task);
     spanIdentities.add(taskSourceIdentity(task));
     return;
   }
-  if (String(scheduled ?? due) !== date) return;
+  if (singleDateAnchor(task) !== date) return;
   (time === undefined ? buckets.plain : buckets.timed).push(task);
 }
 
 function isDistinctDeadline(task: TaskSnapshot, date: string): boolean {
+  if (calendarOccurrenceForTask(task)?.kind === 'materialized') return false;
   const { due, scheduled } = task.planning;
   return String(due) === date && scheduled !== undefined && scheduled !== due;
 }
@@ -380,6 +406,7 @@ export class TodayView extends BaseView {
       onTaskClick: this.callbacks.onTaskClick,
       onTaskSelect: this.callbacks.onTaskSelect,
       onDrop: this.callbacks.onDrop,
+      onNativeDragStart: this.callbacks.onNativeDragStart,
       onStartChange: this.callbacks.onStartChange,
       onDueChange: this.callbacks.onDueChange,
       onExtendToSpan: this.callbacks.onExtendToSpan,

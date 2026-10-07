@@ -40,7 +40,7 @@ function timingSnapshot(source: string, revision = 'old'): TaskSnapshot {
       codec: new TaskMarkdownCodec(statusCatalog),
       statusCatalog,
       filePath: 'tasks.md',
-      lines: [source],
+      lines: source.split('\n'),
       line: 0,
       exactBlock: source,
       ref: { filePath: 'tasks.md', line: 0, revision },
@@ -49,6 +49,8 @@ function timingSnapshot(source: string, revision = 'old'): TaskSnapshot {
     }),
   );
 }
+
+const timingTreeSnapshot = timingSnapshot;
 
 function plannedSnapshot(planning: TaskPlanning, revision = 'old'): TaskSnapshot {
   const fields = [
@@ -1575,7 +1577,7 @@ it('does not retry a child time edit over a duration hidden from its planning pr
         { ...changedChild, ref: { ...changedChild.ref, originalBlock: child.ref.originalBlock } },
       ],
     }).type,
-  ).toBe('edit');
+  ).toBe('unsafe');
 });
 
 describe('source-proven timing retries', () => {
@@ -1674,4 +1676,99 @@ describe('source-proven timing retries', () => {
       ).toBe('edit');
     }
   });
+});
+
+describe('exact child timing retry proof', () => {
+  function childMutation(previous: TaskSnapshot) {
+    const child = expectDefined(previous.subtasks[0]);
+    const command: TaskEditRequest['command'] = {
+      type: 'patch',
+      target: { type: 'subtask', ref: child.ref },
+      patch: { duration: { type: 'set', value: durationMinutes(90) } },
+    };
+    return preparedFor(previous, command, 'field-compare', command.target);
+  }
+  it.each([
+    '⏰ 09:00 ⏰ 10:00 ⏱️ 1h',
+    '⏰ 09:00 ⏱️ 1h ⏱️ 2h',
+    '⏰ 99:99 ⏱️ 1h',
+    '⏰ ⏱️ 1h',
+    '⏰ 09:00 ⏱️ 0m',
+  ])('rejects unchanged opaque child timing after root-only change: %s', (timing) => {
+    const previous = timingTreeSnapshot(`- [ ] Parent\n  - [ ] Child ${timing}`, 'old');
+    const current = timingTreeSnapshot(`- [ ] Renamed parent\n  - [ ] Child ${timing}`, 'new');
+    expect(retryAgainst(childMutation(previous), previous, current).type).toBe('unsafe');
+  });
+  it.each(['⏰ 09:00 ⏱️ 1h', '⏰ 09:00', '⏰ 09:00 ⏱️ 1h30m', '⏰ 23:30 ⏱️ 30m'])(
+    'accepts faithful unchanged child after root-only change: %s',
+    (timing) => {
+      const previous = timingTreeSnapshot(`- [ ] Parent\n  - [ ] Child ${timing}`, 'old');
+      const current = timingTreeSnapshot(`- [ ] Renamed parent\n  - [ ] Child ${timing}`, 'new');
+      const result = retryAgainst(childMutation(previous), previous, current);
+      expect(result).toMatchObject({
+        type: 'edit',
+        request: {
+          command: { type: 'patch', target: { type: 'subtask', ref: current.subtasks[0]?.ref } },
+          baseRoot: current,
+        },
+      });
+      if (result.type !== 'edit') throw new Error('expected retry');
+      const written = applyTaskCommand(
+        new TaskMarkdownCodec(canonicalStatusCatalog()),
+        expectDefined(current.subtasks[0]).ref.originalBlock,
+        result.request.command,
+      );
+      expect(['changed', 'unchanged']).toContain(written.type);
+      const expected = timing.startsWith('⏰ 23:30')
+        ? '  - [ ] Child ⏰ 23:30 ⏱️ 30m'
+        : '  - [ ] Child ⏰ 09:00 ⏱️ 1h30m';
+      expect(
+        written.type === 'changed' ? written.content : current.subtasks[0]?.ref.originalBlock,
+      ).toBe(expected);
+    },
+  );
+  it.each([
+    '  - [ ] Child ⏰ 09:00 ⏱️ 2h',
+    '  - [ ] Child ⏰ 10:00 ⏱️ 1h',
+    '  - [ ] Child ⏰ 09:00 ⏱️ 1h\n    competing body',
+    '  - [ ] Child ⏰ 09:00 ⏱️ 1h\n  - [ ] Child ⏰ 09:00 ⏱️ 1h',
+    '  - [ ] Inserted\n  - [ ] Child ⏰ 09:00 ⏱️ 1h\n  - [ ] Child ⏰ 09:00 ⏱️ 1h',
+  ])('preserves strict complete child block proof: %s', (children) => {
+    const previous = timingTreeSnapshot('- [ ] Parent\n  - [ ] Child ⏰ 09:00 ⏱️ 1h', 'old');
+    const current = timingTreeSnapshot(`- [ ] Parent\n${children}`, 'new');
+    expect(retryAgainst(childMutation(previous), previous, current).type).toBe('unsafe');
+  });
+});
+
+import { applyTaskCommand } from '../../src/tasks/infrastructure/markdown/applyTaskCommand';
+
+it('requires the whole unchanged deep child chain and faithful projections for timing retry', () => {
+  const text = '- [ ] Parent\n  - [ ] Ancestor\n    - [ ] Child ⏰ 09:00 ⏱️ 1h';
+  const previous = timingTreeSnapshot(text, 'old');
+  const current = timingTreeSnapshot(text.replace('Parent', 'Renamed parent'), 'new');
+  const child = expectDefined(previous.subtasks[0]?.subtasks[0]);
+  const command: TaskEditRequest['command'] = {
+    type: 'patch',
+    target: { type: 'subtask', ref: child.ref },
+    patch: { duration: { type: 'set', value: durationMinutes(90) } },
+  };
+  const mutation = preparedFor(previous, command, 'field-compare', command.target);
+  expect(retryAgainst(mutation, previous, current).type).toBe('edit');
+  for (const change of [
+    text.replace('Ancestor', 'Changed ancestor'),
+    `${text}\n    competing ancestor body`,
+  ])
+    expect(retryAgainst(mutation, previous, timingTreeSnapshot(change, 'new')).type).toBe('unsafe');
+  const currentAncestor = expectDefined(current.subtasks[0]);
+  const currentChild = expectDefined(currentAncestor.subtasks[0]);
+  const lossy = {
+    ...current,
+    subtasks: [
+      {
+        ...currentAncestor,
+        subtasks: [{ ...currentChild, planning: { time: localTime('09:00') } }],
+      },
+    ],
+  };
+  expect(retryAgainst(mutation, previous, lossy).type).toBe('unsafe');
 });

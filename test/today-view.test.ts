@@ -684,3 +684,64 @@ describe('TodayView', () => {
     });
   });
 });
+
+it('buckets actual root and ordinary child fallback points in month/week without span handles', async () => {
+  const h = await hierarchyHarness({
+    'source.md':
+      '- [ ] Root 🛫 2026-10-08\n  - [ ] Start only 🛫 2026-10-08\n  - [ ] Inverted 🛫 2026-10-10 📅 2026-10-08 ⏳ 2026-10-10 ⏰ 09:00 ⏱️ 1h',
+    'target.md': '- [ ] Target',
+  });
+  const dates = ['2026-10-08', '2026-10-09', '2026-10-10'].map(localDate);
+  const projection = projectCalendarOccurrences(
+    h.index.forCalendarProjection(dates),
+    { from: localDate('2026-10-08'), to: localDate('2026-10-10') },
+    { removeScheduledDate: false },
+  );
+  const tasks = projection.occurrences.map(taskSnapshotForCalendarOccurrence);
+  expect(tasks.map((task) => task.title)).toEqual(['Inverted', 'Root', 'Start only', 'Inverted']);
+  const eighth = bucketTasksForDate(tasks, '2026-10-08');
+  expect(eighth.plain.map((task) => task.title)).toEqual(['Root', 'Start only']);
+  expect(eighth.deadlines.map((task) => task.title)).toEqual(['Inverted']);
+  const tenth = bucketTasksForDate(tasks, '2026-10-10');
+  expect(tenth.timed.map((task) => task.title)).toEqual(['Inverted']);
+  expect(tenth.timedSpans).toEqual([]);
+  const month = layoutVisibleMonth(tasks, dates);
+  expect(month.rows.flatMap((row) => row.spanRow.segments)).toEqual([]);
+  const container = freshContainer();
+  const view = new TodayView(callbacks());
+  view.render(container, tasks, resolvedConfig({ startPosition: '2026-10-10' }));
+  const block = expectDefined(container.querySelector('.abyss-tg-block'));
+  expect(block.querySelectorAll('.abyss-tg-resize-handle')).toHaveLength(2);
+  expect(block.querySelector('[data-boundary="start"]')).toBeNull();
+  expect(block.querySelector('[data-boundary="due"]')).toBeNull();
+  const monthContainer = freshContainer();
+  const monthView = new MonthGridView({
+    ...callbacks(),
+    onDayClick: vi.fn(),
+    onCreateAtDate: vi.fn(),
+    onWeekClick: vi.fn(),
+  });
+  monthView.render(monthContainer, tasks, resolvedConfig({ startPosition: '2026-10' }));
+  const rootPoint = expectDefined(
+    [...monthContainer.querySelectorAll<HTMLElement>('.abyss-mg-plain')].find((item) =>
+      item.textContent.includes('Root'),
+    ),
+  );
+  expect(rootPoint.getAttribute('draggable')).toBe('true');
+  expect(rootPoint.querySelector('[data-boundary="create-span"]')).not.toBeNull();
+  const deadline = expectDefined(monthContainer.querySelector('.abyss-mg-deadline-marker'));
+  expect(deadline.querySelector('[data-boundary="create-span"]')).not.toBeNull();
+  monthView.destroy();
+  view.destroy();
+  h.index.destroy();
+});
+
+import { localDate } from '../src/tasks';
+import {
+  projectCalendarOccurrences,
+  taskSnapshotForCalendarOccurrence,
+} from '../src/views/calendarOccurrences';
+import { layoutVisibleMonth } from '../src/views/monthLayout';
+import { hierarchyHarness } from './support/taskHierarchyHarness';
+
+import { MonthGridView } from '../src/views/MonthGridView';

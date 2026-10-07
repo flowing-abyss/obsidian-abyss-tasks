@@ -220,7 +220,7 @@ function calendarSources(tasks: readonly TaskSnapshot[]): readonly CalendarTaskS
   const visit = (root: TaskSnapshot, subtasks: readonly SubtaskSnapshot[]): void => {
     for (const node of subtasks) {
       const target: TaskNodeRef = { type: 'subtask', ref: node.ref };
-      if (node.recurrence !== undefined) sources.push({ root, target, node });
+      sources.push({ root, target, node });
       visit(root, node.subtasks);
     }
   };

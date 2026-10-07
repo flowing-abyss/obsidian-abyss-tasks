@@ -14,6 +14,7 @@ import type {
   TaskSnapshot,
 } from '../src/tasks';
 import { localDate, taskReconciliationKey } from '../src/tasks';
+import { localDate as occupiedFixtureDate } from '../src/tasks/domain/validation';
 import {
   CreationPresentationController,
   type CreationRevealRequest,
@@ -198,7 +199,10 @@ describe('task presentation identity', () => {
   });
 
   it('applies identity only to materialized canonical calendar tasks', () => {
-    const snapshot = task({ source: { filePath: 'capture.md', line: 8 } });
+    const snapshot = task({
+      source: { filePath: 'capture.md', line: 8 },
+      planning: { due: '2026-10-08' },
+    });
     const source = {
       root: snapshot,
       target: { type: 'task' as const, ref: snapshot.ref },
@@ -206,6 +210,7 @@ describe('task presentation identity', () => {
     };
     const materialized: CalendarOccurrence = {
       kind: 'materialized',
+      occupied: { kind: 'point', date: occupiedFixtureDate('2026-10-08'), roles: ['due'] },
       key: 'materialized',
       source,
       planning: snapshot.planning,
@@ -232,7 +237,10 @@ describe('task presentation identity', () => {
   });
 
   it('applies the same canonical identity in the shared list and project task-card renderer', () => {
-    const snapshot = task({ source: { filePath: 'capture.md', line: 8 } });
+    const snapshot = task({
+      source: { filePath: 'capture.md', line: 8 },
+      planning: { due: '2026-10-08' },
+    });
     const queries: TaskQueryApi = taskQueryApi({
       resolve: () => exact(snapshot),
       list: () => [snapshot],

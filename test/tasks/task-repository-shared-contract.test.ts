@@ -2297,7 +2297,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       expect(await h.read()).toBe(source);
     });
 
-    it('rejects a runtime-injected subtask duration patch', async () => {
+    it('writes child duration through the exact canonical child patch', async () => {
       const source = '- [ ] root\n  - [ ] child\n';
       const h = await makeHarness(adapter, source);
       const child = expectDefined(expectDefined(h.snapshots(source)[0]).subtasks[0]);
@@ -2307,12 +2307,9 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
           type: 'patch',
           target: { type: 'subtask', ref: child.ref },
           patch: { duration: { type: 'set', value: durationMinutes(30) } },
-        } as never),
-      ).resolves.toEqual({
-        type: 'invalid',
-        issues: [{ code: 'invalid-target', field: 'duration' }],
-      });
-      expect(await h.read()).toBe(source);
+        }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+      expect(await h.read()).toBe('- [ ] root\n  - [ ] child ⏱️ 30m\n');
     });
 
     it('returns a detached no-op for an unchanged time/span command', async () => {

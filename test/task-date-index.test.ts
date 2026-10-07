@@ -308,3 +308,15 @@ describe('TaskDateIndex', () => {
     expect(idx.get(localDate('2026-07-10'))).toHaveLength(0);
   });
 });
+
+it('indexes start-only and each distinct inverted point while admitting valid intervals by range', () => {
+  expect(calendarDatesForPlanning({ start: localDate('2026-10-08') })).toEqual(['2026-10-08']);
+  const inverted = {
+    start: localDate('2026-10-10'),
+    scheduled: localDate('2026-10-10'),
+    due: localDate('2026-10-08'),
+  };
+  expect(calendarDatesForPlanning(inverted)).toEqual(['2026-10-08', '2026-10-10']);
+  expect(calendarRangeForPlanning(inverted)).toBeUndefined();
+  expect(calendarDatesForPlanning({ ...inverted, start: localDate('2026-10-07') })).toEqual([]);
+});

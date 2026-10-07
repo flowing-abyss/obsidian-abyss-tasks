@@ -174,6 +174,7 @@ describe('TaskQueryApi contract', () => {
       'nested visible',
       'nested done',
       'nested cancelled',
+      'nested plain',
     ]);
     expect(projection.recurringSources.map(({ node }) => node.title)).toEqual([
       'root owner',

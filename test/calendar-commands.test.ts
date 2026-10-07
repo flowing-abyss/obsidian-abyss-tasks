@@ -9,7 +9,7 @@ import {
   type TaskCommand,
   type TaskSnapshot,
 } from '../src/tasks';
-import { canonicalStatusCatalog, task, taskQueryApi } from './helpers';
+import { canonicalStatusCatalog, expectDefined, task, taskQueryApi } from './helpers';
 
 import { applyTaskCommand } from '../src/tasks/infrastructure/markdown/applyTaskCommand';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
@@ -42,14 +42,26 @@ describe('CalendarCommands.rescheduleFromDrag', () => {
     const plain = task({ planning: { due: '2026-09-20' } });
     const h = harness([plain]);
     await h.commands.rescheduleFromDrag(dragData(plain), '2026-09-23');
-    expect(h.lastCommand()).toEqual({ type: 'reschedule', ref: plain.ref, date: '2026-09-23' });
+    expect(h.lastCommand()).toEqual({
+      type: 'patch',
+      target: { type: 'task', ref: plain.ref },
+      patch: { due: { type: 'set', value: '2026-09-23' } },
+    });
   });
 
   it('moves a timed task with an anchor by the day difference', async () => {
     const timed = task({ planning: { due: '2026-09-20', time: '09:00' } });
     const h = harness([timed]);
     await h.commands.rescheduleFromDrag(dragData(timed), '2026-09-23');
-    expect(h.lastCommand()).toEqual({ type: 'move-to-all-day', ref: timed.ref, days: 3 });
+    expect(h.lastCommand()).toEqual({
+      type: 'patch',
+      target: { type: 'task', ref: timed.ref },
+      patch: {
+        due: { type: 'set', value: '2026-09-23' },
+        time: { type: 'clear' },
+        duration: { type: 'clear' },
+      },
+    });
   });
 
   it('converts a timed task without any anchor to all-day on the target date', async () => {
@@ -96,10 +108,9 @@ describe('CalendarCommands.setTimeFromDrag', () => {
     const h = harness([plain]);
     await h.commands.setTimeFromDrag(dragData(plain), '2026-09-23', '10:15');
     expect(h.lastCommand()).toEqual({
-      type: 'set-time-slot',
-      ref: plain.ref,
-      date: '2026-09-23',
-      time: '10:15',
+      type: 'patch',
+      target: { type: 'task', ref: plain.ref },
+      patch: { due: { type: 'set', value: '2026-09-23' }, time: { type: 'set', value: '10:15' } },
     });
   });
 
@@ -121,7 +132,15 @@ describe('CalendarCommands timed gestures', () => {
       dayDelta: 1,
       destination: 'all-day',
     });
-    expect(h.lastCommand()).toEqual({ type: 'move-to-all-day', ref: timed.ref, days: 1 });
+    expect(h.lastCommand()).toEqual({
+      type: 'patch',
+      target: { type: 'task', ref: timed.ref },
+      patch: {
+        due: { type: 'set', value: '2026-09-21' },
+        time: { type: 'clear' },
+        duration: { type: 'clear' },
+      },
+    });
     await h.commands.commitTimedMove(timed, {
       date: localDate('2026-09-21'),
       startMinutes: 615,
@@ -129,10 +148,9 @@ describe('CalendarCommands timed gestures', () => {
       destination: 'time-grid',
     });
     expect(h.lastCommand()).toEqual({
-      type: 'move-time-slot',
-      ref: timed.ref,
-      days: 1,
-      time: '10:15',
+      type: 'patch',
+      target: { type: 'task', ref: timed.ref },
+      patch: { due: { type: 'set', value: '2026-09-21' }, time: { type: 'set', value: '10:15' } },
     });
   });
 
@@ -239,8 +257,8 @@ describe('calendar writes use the authored duration invariant', () => {
       startMinutes: Number(time.slice(0, 2)) * 60 + Number(time.slice(3)),
     });
     const command = h.lastCommand();
-    expect(command?.type).toBe('move-time-slot');
-    if (command?.type !== 'move-time-slot') return;
+    expect(command?.type).toBe('patch');
+    if (command?.type !== 'patch') throw new Error('expected point patch');
     const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
     expect(
       applyTaskCommand(
@@ -249,5 +267,145 @@ describe('calendar writes use the authored duration invariant', () => {
         command,
       ),
     ).toEqual({ type: 'changed', content: `- [ ] Task ${expected}` });
+  });
+});
+
+it('resizes an actual materialized child through exact planning and the canonical writer', async () => {
+  const source = '- [ ] Root\n  - [ ] Timed ⏳ 2026-10-08 ⏰ 09:00 ⏱️ 1h';
+  const statuses = canonicalStatusCatalog();
+  const codec = new TaskMarkdownCodec(statuses);
+  const root = expectDefined(
+    projectTaskSnapshot({
+      codec,
+      statusCatalog: statuses,
+      filePath: 'tasks.md',
+      lines: source.split('\n'),
+      line: 0,
+      exactBlock: source,
+      ref: { filePath: 'tasks.md', line: 0, revision: 'old' },
+      presentation: { linkCount: 0 },
+      offsetAt: () => 0,
+    }),
+  );
+  const node = expectDefined(root.subtasks[0]);
+  expect(node.planning.duration).toBe(60);
+  const occurrence = expectDefined(
+    projectCalendarOccurrences(
+      {
+        materialized: [{ root, node, target: { type: 'subtask', ref: node.ref } }],
+        recurringSources: [],
+      },
+      { from: localDate('2026-10-08'), to: localDate('2026-10-08') },
+      { removeScheduledDate: false },
+    ).occurrences[0],
+  );
+  const display = taskSnapshotForCalendarOccurrence(occurrence);
+  const h = harness();
+  await h.commands.setDuration(display, 90);
+  const command = h.lastCommand();
+  expect(command).toEqual({
+    type: 'patch',
+    target: { type: 'subtask', ref: node.ref },
+    patch: { duration: { type: 'set', value: 90 } },
+  });
+  if (command?.type !== 'patch') throw new Error('expected exact patch');
+  expect(applyTaskCommand(codec, expectDefined(source.split('\n')[1]), command)).toEqual({
+    type: 'changed',
+    content: '  - [ ] Timed ⏳ 2026-10-08 ⏰ 09:00 ⏱️ 1h30m',
+  });
+});
+
+import { projectTaskSnapshot } from '../src/tasks/infrastructure/markdown/TaskSnapshotProjector';
+import {
+  projectCalendarOccurrences,
+  taskSnapshotForCalendarOccurrence,
+} from '../src/views/calendarOccurrences';
+
+it('keeps the start-only role when a root is dropped from a native task payload', async () => {
+  const root = task({ planning: { start: '2026-10-08' } });
+  const h = harness([root]);
+  await h.commands.rescheduleFromDrag(dragData(root), '2026-10-09');
+  expect(h.lastCommand()).toEqual({
+    type: 'patch',
+    target: { type: 'task', ref: root.ref },
+    patch: { start: { type: 'set', value: '2026-10-09' } },
+  });
+  await h.commands.setTimeFromDrag(dragData(root), '2026-10-09', '09:00');
+  expect(h.lastCommand()).toEqual({
+    type: 'patch',
+    target: { type: 'task', ref: root.ref },
+    patch: { start: { type: 'set', value: '2026-10-09' }, time: { type: 'set', value: '09:00' } },
+  });
+});
+
+it('moves and resizes a canonical child interval, retaining unrelated dates and root all-day semantics', async () => {
+  const statuses = canonicalStatusCatalog();
+  const codec = new TaskMarkdownCodec(statuses);
+  const text =
+    '- [ ] Parent\n  - [ ] Span 🛫 2026-10-07 📅 2026-10-09 ⏳ 2026-10-05 ⏰ 09:00 ⏱️ 1h';
+  const root = expectDefined(
+    projectTaskSnapshot({
+      codec,
+      statusCatalog: statuses,
+      filePath: 'tasks.md',
+      lines: text.split('\n'),
+      line: 0,
+      exactBlock: text,
+      ref: { filePath: 'tasks.md', line: 0, revision: 'old' },
+      presentation: { linkCount: 0 },
+      offsetAt: () => 0,
+    }),
+  );
+  const node = expectDefined(root.subtasks[0]);
+  const occurrence = expectDefined(
+    projectCalendarOccurrences(
+      {
+        materialized: [{ root, node, target: { type: 'subtask', ref: node.ref } }],
+        recurringSources: [],
+      },
+      { from: localDate('2026-10-08'), to: localDate('2026-10-08') },
+      { removeScheduledDate: false },
+    ).occurrences[0],
+  );
+  const display = taskSnapshotForCalendarOccurrence(occurrence);
+  const h = harness();
+  await h.commands.commitTimedMove(display, {
+    destination: 'time-grid',
+    date: localDate('2026-10-09'),
+    dayDelta: 1,
+    startMinutes: 600,
+  });
+  expect(h.lastCommand()).toMatchObject({
+    type: 'patch',
+    target: { type: 'subtask', ref: node.ref },
+    patch: {
+      start: { type: 'set', value: '2026-10-08' },
+      due: { type: 'set', value: '2026-10-10' },
+      time: { type: 'set', value: '10:00' },
+    },
+  });
+  const moved = expectDefined(h.lastCommand());
+  if (moved.type !== 'patch') throw new Error('expected child patch');
+  expect(applyTaskCommand(codec, node.ref.originalBlock, moved)).toEqual({
+    type: 'changed',
+    content: '  - [ ] Span 🛫 2026-10-08 📅 2026-10-10 ⏳ 2026-10-05 ⏰ 10:00 ⏱️ 1h',
+  });
+  await h.commands.setDue(display, '2026-10-11');
+  expect(h.lastCommand()).toEqual({
+    type: 'patch',
+    target: { type: 'subtask', ref: node.ref },
+    patch: { due: { type: 'set', value: '2026-10-11' } },
+  });
+  await h.commands.commitTimedMove(display, {
+    destination: 'all-day',
+    date: localDate('2026-10-09'),
+    dayDelta: 1,
+    startMinutes: 0,
+  });
+  const allDay = expectDefined(h.lastCommand());
+  if (allDay.type !== 'patch') throw new Error('expected child patch');
+  expect(applyTaskCommand(codec, node.ref.originalBlock, allDay)).toEqual({
+    type: 'changed',
+    content: '  - [ ] Span 🛫 2026-10-08 📅 2026-10-10 ⏳ 2026-10-05',
   });
 });

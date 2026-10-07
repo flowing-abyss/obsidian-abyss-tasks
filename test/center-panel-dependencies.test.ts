@@ -10,6 +10,7 @@ import {
   type TaskCommand,
   type TaskSnapshot,
 } from '../src/tasks';
+import { localDate as occupiedFixtureDate } from '../src/tasks/domain/validation';
 import { presentTaskCommandResult } from '../src/ui/taskCommandResult';
 import {
   calendarMutationTarget,
@@ -500,6 +501,7 @@ describe('strict dependency checkbox surfaces', () => {
       const source = h.node('Current');
       const child = taskSnapshotForCalendarOccurrence({
         kind: 'materialized',
+        occupied: { kind: 'point', date: occupiedFixtureDate('2026-09-05'), roles: ['due'] },
         key: 'indexed-child',
         source,
         planning: source.node.planning,

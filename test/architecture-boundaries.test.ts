@@ -167,6 +167,9 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   CreateTaskCommandInitial: ['src/ui/taskCapture/CaptureTargetResolver.ts'],
   CreateDependencySubtaskCommand: ['src/panels/RightPanel.ts'],
   DateRange: ['src/views/calendarOccurrences.ts'],
+  FieldUpdate: ['src/views/calendarOccurrences.ts'],
+  LocalTime: ['src/views/calendarOccurrences.ts'],
+  taskOccupiedDates: ['src/views/calendarOccurrences.ts'],
   DependencyDirection: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorDependencies.ts'],
   LocalDate: [
     'src/panels/CenterPanel.ts',
@@ -227,7 +230,11 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/task-lists/taskSearchOrganization.ts',
   ],
   nodeAtSearchAddress: ['src/panels/task-list/TaskSearchRows.ts'],
-  TaskDateRole: ['src/task-lists/taskOccurrencePresentation.ts'],
+  TaskDateRole: [
+    'src/app/AppState.ts',
+    'src/task-lists/taskOccurrencePresentation.ts',
+    'src/views/calendarOccurrences.ts',
+  ],
   taskHasFutureDate: ['src/task-lists/taskNodeMembership.ts'],
   taskTodayOccurrence: [
     'src/task-lists/taskNodeMembership.ts',

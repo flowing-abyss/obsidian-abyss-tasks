@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { localDate } from '../src/tasks';
 import { taskTreeNodes } from '../src/tasks/domain/taskSearchProjection';
+import { localDate as occupiedFixtureDate } from '../src/tasks/domain/validation';
 import * as commandFeedback from '../src/ui/taskCommandResult';
 import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import { createTrackingActions } from '../src/ui/timeTracking/trackingActions';
@@ -268,6 +269,7 @@ it.each(
     if (form === 'calendar')
       subject = taskSnapshotForCalendarOccurrence({
         kind: 'materialized',
+        occupied: { kind: 'point', date: occupiedFixtureDate('2026-10-09'), roles: ['due'] },
         key: 'child',
         source: child,
         planning: child.node.planning,

@@ -257,6 +257,7 @@ export class WeekTimeGridView extends BaseView {
       onTaskClick: this.callbacks.onTaskClick,
       onTaskSelect: this.callbacks.onTaskSelect,
       onDrop: this.callbacks.onDrop,
+      onNativeDragStart: this.callbacks.onNativeDragStart,
       onStartChange: this.callbacks.onStartChange,
       onDueChange: this.callbacks.onDueChange,
       onExtendToSpan: this.callbacks.onExtendToSpan,

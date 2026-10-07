@@ -1,5 +1,5 @@
 import { localDate, type LocalDate, type TaskSnapshot } from '../tasks';
-import { calendarTaskWithPlanning } from './calendarOccurrences';
+import { calendarOccurrenceForTask, calendarTaskWithPlanning } from './calendarOccurrences';
 import { taskLayoutIdentity } from './timegrid/layout';
 
 export interface VisibleSpanSegment {
@@ -42,7 +42,9 @@ function isSpan(task: TaskSnapshot): task is TaskSnapshot & {
     readonly due: LocalDate;
   };
 } {
+  const occurrence = calendarOccurrenceForTask(task);
   return (
+    !(occurrence?.kind === 'materialized' && occurrence.occupied.kind === 'point') &&
     task.planning.start !== undefined &&
     task.planning.due !== undefined &&
     task.planning.start <= task.planning.due

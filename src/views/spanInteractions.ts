@@ -1,5 +1,5 @@
 import { daysBetweenLocalDates, localDate, type LocalDate, type TaskSnapshot } from '../tasks';
-import { calendarShiftPlanning } from './calendarOccurrences';
+import { calendarOccurrenceForRender, calendarShiftPlanning } from './calendarOccurrences';
 import type { VisibleSpanLayout } from './spanLayout';
 import { populateCalendarPreview } from './timegrid/calendarPreview';
 import { resolveBoundaryTarget, type SpanBoundaryTarget } from './timegrid/dragGeometry';
@@ -373,6 +373,25 @@ function spanBoundaryRange(
   return { from, to, planning: { ...planning, start: from, due: to } };
 }
 
+function movePreviewPlanning(
+  task: TaskSnapshot,
+  days: number,
+): { planning: TaskSnapshot['planning']; from: LocalDate; to: LocalDate } | undefined {
+  const occurrence = calendarOccurrenceForRender(task);
+  if (occurrence.kind === 'forecast') return undefined;
+  const occupied = occurrence.occupied;
+  const planning = calendarShiftPlanning(task.planning, days, occupied);
+  if (planning === undefined) return undefined;
+  if (occupied.kind === 'interval') {
+    return planning.start !== undefined && planning.due !== undefined
+      ? { planning, from: planning.start, to: planning.due }
+      : undefined;
+  }
+  const role = occupied.roles[0];
+  const date = role === undefined ? undefined : planning[role];
+  return date === undefined ? undefined : { planning, from: date, to: date };
+}
+
 class SpanDragSession {
   private readonly binding: SpanInteractionBinding;
   private readonly kind: SpanInteractionKind;
@@ -431,18 +450,15 @@ class SpanDragSession {
   private renderMovePreview(target: SpanMoveTarget): boolean {
     this.clearPreview();
     const { binding, columns } = this;
-    const planning = calendarShiftPlanning(binding.task.planning, target.days);
-    if (planning == null) return false;
-    const isSpan = planning.start != null && planning.due != null;
-    const shiftedStart = isSpan ? planning.start : (planning.scheduled ?? planning.due);
-    const shiftedEnd = isSpan ? planning.due : shiftedStart;
-    if (shiftedStart == null || shiftedEnd == null) return false;
+    const candidate = movePreviewPlanning(binding.task, target.days);
+    if (candidate === undefined) return false;
+    const { planning, from, to } = candidate;
     this.previews = renderSpanRangePreview({
       source: binding.source,
       task: binding.task,
       columns,
-      from: shiftedStart,
-      to: shiftedEnd,
+      from,
+      to,
       className: 'abyss-span-move-preview',
       target,
       layout: binding.previewLayoutFor?.(binding.task, planning),

@@ -41,7 +41,7 @@ export interface TaskPatch {
   };
 }
 
-export type SubtaskPatch = Omit<TaskPatch, 'duration'>;
+export type SubtaskPatch = TaskPatch;
 
 type TaskInitialFields = Omit<TaskPatch, 'markdownTitle'>;
 

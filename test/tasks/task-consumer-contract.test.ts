@@ -65,7 +65,11 @@ const PARSER_GRAMMAR_TESTS = new Set([
   'test/task-parser-deep.test.ts',
 ]);
 
-const CALENDAR_PROJECTION_CONSUMERS = new Set(['src/panels/calendar/calendarContent.ts']);
+// Rendering and claimed native drag context both reconstruct through this exact adapter boundary.
+const CALENDAR_PROJECTION_CONSUMERS = new Set([
+  'src/panels/calendar/calendarContent.ts',
+  'src/views/calendarNativeDrag.ts',
+]);
 
 function source(path: string): string {
   return node.fs.readFileSync(resolve(ROOT, path), 'utf8');
@@ -352,7 +356,7 @@ describe('final task consumer contract', () => {
   });
 
   it(
-    'confines projection adapters to the two calendar composition roots',
+    'confines projection adapters to calendar content and validated native context',
     () => {
       const projectionBindings = new Set([
         'projectCalendarOccurrences',

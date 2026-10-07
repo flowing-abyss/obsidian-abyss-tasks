@@ -153,10 +153,12 @@ overflow. Ordinary and linked-child creation share this normalization; their res
 only the exact canonical duration change. The existing duration token writer retains validation
 and source ownership.
 Retries compare the effective requested timing and protect any implicit companion-duration write.
-Root timing retries require faithful source projections; opaque or ambiguous timing fails closed
-rather than treating an invalid authored time as absent.
-Subtask projections do not expose duration, so a subtask time-edit retry requires an unchanged
-original block; concurrent edits within that block require a fresh user action.
+Root and child planning expose authored duration through the canonical and compact projections.
+Both timing retry paths require faithful source projections: roots use the authored root header,
+and children use the authored header from their exact original block. Opaque, duplicate or lossy
+timing fails closed. Every child and ancestor child block must still match uniquely before timing
+comparison; a proved unrelated root change can retry, but changed child bytes require a fresh action.
+Child duration patches use the existing codec, clamp and write authority, with no note migration.
 
 ### Canonical read projections
 
@@ -934,6 +936,31 @@ centre shell. CalendarCommands translates gestures into public task commands; th
 selects Today, Week, or Month. Calendar policy/content helpers receive time and data explicitly.
 Capture placement belongs to the grid; CaptureSessions retains the capture session. Calendar
 collaborators use their owning document/window and release scheduled work on teardown.
+
+Calendar sources enumerate all children of accepted canonical trees after source exclusions.
+`taskOccupiedDates` supplies date-index admission and materialized occurrence identity: a valid
+inclusive interval, or distinct authored points with their exact contributing start/scheduled/due
+roles. A scheduled date outside a valid interval does not add a materialized calendar occurrence.
+The calendar snapshot WeakMap retains the canonical target and occupied shape through month,
+span and time-grid layouts and planning previews. TodayView's shared month/week buckets consume
+that shape, so start-only and inverted pairs render as points. Forecasts retain separate immutable
+identity, bounded recurrence expansion, and explicit source-only editing.
+
+CalendarCommands and the exact subject adapter permit child duration after source validation.
+Point moves patch only their contributing roles; timed moves also set or clear shared time through
+the existing clamp. Valid intervals keep correlated moves and boundary edits. MonthGridView and renderAllDay retain native date/time-lane drops through the optional
+`CalendarNativeDragStart` callback forwarded by the calendar view factory. CalendarMode publishes
+an exact canonical center-card `TaskNodeDragPayload` through `startTaskNodeDrag`; its optional
+transient `calendar` context contains occupied shape and native payload identity. AppState clones
+it with the actual root-to-node path, and the existing owner retires it on drop, dragend, Escape,
+detachment or replacement. `calendarNativeDrag.ts` marks calendar payloads with `abyss-calendar:`;
+CalendarCommands captures current context before awaiting, validates shape and identity against
+canonical planning, and reconstructs only through the materialized calendar adapter. Retired,
+mismatched and forecast context cannot fall back to file/line root lookup; genuinely legacy drags
+retain that path. The same canonical payload remains available to existing cross-panel consumers.
+Timed materialized child controls share root timing/resize gestures. The renderer
+and preview owners use occupied shape for continuity and handles, so raw inverted tokens cannot
+turn a point into a span; ordinary validation rejects invalid final pairs without writing bytes.
 
 The shared timed-day layout bounds effective durations before overlap packing and caps minimum
 heights at the next block or day end. Labels and gesture origins consume this derived geometry,

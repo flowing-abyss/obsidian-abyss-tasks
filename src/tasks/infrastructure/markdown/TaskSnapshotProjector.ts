@@ -129,6 +129,7 @@ function subtaskPlanningFrom(planning: {
   readonly completion?: string;
   readonly cancelled?: string;
   readonly time?: string;
+  readonly duration?: number;
 }): SubtaskPlanning {
   const created = asLocalDate(planning.created);
   const due = asLocalDate(planning.due);
@@ -137,6 +138,7 @@ function subtaskPlanningFrom(planning: {
   const completion = asLocalDate(planning.completion);
   const cancelled = asLocalDate(planning.cancelled);
   const time = asLocalTime(planning.time);
+  const duration = asDuration(planning.duration);
   return {
     ...(created != null && { created }),
     ...(due != null && { due }),
@@ -145,6 +147,7 @@ function subtaskPlanningFrom(planning: {
     ...(completion != null && { completion }),
     ...(cancelled != null && { cancelled }),
     ...(time != null && { time }),
+    ...(duration !== undefined && { duration }),
   };
 }
 

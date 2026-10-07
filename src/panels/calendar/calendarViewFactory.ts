@@ -8,6 +8,7 @@ import type { BaseView } from '../../views/BaseView';
 import { MonthGridView } from '../../views/MonthGridView';
 import { TodayView } from '../../views/TodayView';
 import { WeekTimeGridView } from '../../views/WeekTimeGridView';
+import type { CalendarNativeDragStart } from '../../views/calendarNativeDrag';
 import type { InteractiveSpanBoundaryTarget, SpanMoveTarget } from '../../views/spanInteractions';
 import type { TimedDragTarget, TimedVerticalResizeTarget } from '../../views/timegrid/dragGeometry';
 import type {
@@ -20,6 +21,7 @@ import type { CalViewType } from './calendarViewType';
 
 /** Everything a calendar view can ask the controller to do. Built once per calendar render. */
 export interface CalendarHandlers {
+  readonly onNativeDragStart?: CalendarNativeDragStart | undefined;
   readonly onTaskClick: (task: TaskSnapshot) => void;
   readonly onTaskSelect: (task: TaskSnapshot) => void;
   readonly onForecastClick: NonNullable<ForecastInteractionCallbacks['onForecastClick']>;
@@ -75,6 +77,7 @@ function createTodayView(deps: CalendarViewDependencies, handlers: CalendarHandl
     onForecastClick: handlers.onForecastClick,
     onForecastContextMenu: handlers.onForecastContextMenu,
     onDrop: handlers.onDrop,
+    onNativeDragStart: handlers.onNativeDragStart,
     onDropTime: handlers.onDropTime,
     onCreateAtTime: handlers.onCreateAtTime,
     onCreateAtDate: handlers.onCreateAtDateAllDay,
@@ -112,6 +115,7 @@ function createWeekView(
     onForecastClick: handlers.onForecastClick,
     onForecastContextMenu: handlers.onForecastContextMenu,
     onDrop: handlers.onDrop,
+    onNativeDragStart: handlers.onNativeDragStart,
     onDropTime: handlers.onDropTime,
     onCreateAtTime: handlers.onCreateAtTime,
     onCreateAtDate: handlers.onCreateAtDateAllDay,
@@ -156,6 +160,7 @@ function createMonthView(
     onForecastClick: handlers.onForecastClick,
     onForecastContextMenu: handlers.onForecastContextMenu,
     onDrop: handlers.onDrop,
+    onNativeDragStart: handlers.onNativeDragStart,
     onSpanMove: handlers.onSpanMove,
     onSpanBoundary: handlers.onSpanBoundary,
     onToggle: handlers.onToggle,

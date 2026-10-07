@@ -17,6 +17,7 @@ export { cloneTaskSnapshot } from './domain/cloneTaskSnapshot';
 export type {
   ArchiveRecovery,
   CreateDependencySubtaskCommand,
+  FieldUpdate,
   MoveRecovery,
   PlanningTarget,
   SubtaskPatch,
@@ -83,6 +84,7 @@ export type {
   CommentRef,
   DateRange,
   LocalDate,
+  LocalTime,
   SubtaskRef,
   SubtaskSnapshot,
   TaskCommentSnapshot,
@@ -138,7 +140,11 @@ export { createSearchWordSegmenter } from './infrastructure/search/searchWordSeg
 
 export { normalizeCommentText } from './domain/commentText';
 
-export { taskHasFutureDate, taskTodayOccurrence } from './domain/taskOccupiedDates';
+export {
+  taskHasFutureDate,
+  taskOccupiedDates,
+  taskTodayOccurrence,
+} from './domain/taskOccupiedDates';
 export { taskNodeSourceLine } from './domain/taskSearchProjection';
 
 export type { TaskOccurrenceCompletion } from './domain/taskOccupiedDates';

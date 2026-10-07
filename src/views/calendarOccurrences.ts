@@ -4,12 +4,16 @@ import {
   localDate,
   parseRecurrenceRule,
   shiftLocalDate,
+  taskOccupiedDates,
   type CalendarProjectionSources,
   type CalendarTaskSource,
   type DateRange,
+  type FieldUpdate,
   type LocalDate,
+  type LocalTime,
   type RecurrencePolicy,
   type TaskApplicationApi,
+  type TaskDateRole,
   type TaskNodeRef,
   type TaskPlanning,
   type TaskRef,
@@ -22,6 +26,13 @@ export type { CalendarProjectionSources, CalendarTaskSource } from '../tasks';
 export type CalendarOccurrence =
   | {
       readonly kind: 'materialized';
+      readonly occupied:
+        | { readonly kind: 'interval'; readonly start: LocalDate; readonly due: LocalDate }
+        | {
+            readonly kind: 'point';
+            readonly date: LocalDate;
+            readonly roles: readonly TaskDateRole[];
+          };
       readonly key: string;
       readonly source: CalendarTaskSource;
       readonly planning: TaskPlanning;
@@ -269,30 +280,49 @@ function forecastEntry(
   return cachedForecast(key) ?? cacheForecast(key, computeForecasts(source, visible, policy));
 }
 
-function materializedOccurrence(
+function materializedOccurrences(
   source: CalendarTaskSource,
   visible: DateRange,
   policy: RecurrencePolicy,
-): CalendarOccurrence | undefined {
+): readonly CalendarOccurrence[] {
   const planning = Object.freeze({ ...source.node.planning });
-  if (!intersectsVisible(planning, visible)) return undefined;
-  const reference = recurrenceReference(planning, policy);
-  if (reference === undefined) return undefined;
-  return Object.freeze({
-    kind: 'materialized',
-    key: `${semanticSourceKey(source)}:${reference}`,
+  const occupied = taskOccupiedDates(planning);
+  const common = {
+    kind: 'materialized' as const,
     source,
     planning,
     recurring: source.node.recurrence !== undefined,
-  });
+  };
+  if (occupied.kind === 'interval') {
+    if (occupied.start > visible.to || occupied.due < visible.from) return [];
+    return [
+      Object.freeze({
+        ...common,
+        occupied,
+        key: `${semanticSourceKey(source)}:${recurrenceReference(planning, policy)}`,
+      }),
+    ];
+  }
+  return occupied.points
+    .filter((point) => point.date >= visible.from && point.date <= visible.to)
+    .map((point) =>
+      Object.freeze({
+        ...common,
+        occupied: { kind: 'point' as const, ...point },
+        key: `${semanticSourceKey(source)}:${point.date}`,
+      }),
+    );
 }
 
 function occurrenceDate(occurrence: CalendarOccurrence): LocalDate {
+  if (occurrence.kind === 'materialized')
+    return occurrence.occupied.kind === 'point'
+      ? occurrence.occupied.date
+      : occurrence.occupied.start;
   const planned =
     occurrence.planning.start ?? occurrence.planning.scheduled ?? occurrence.planning.due;
   if (planned !== undefined) return planned;
-  if (occurrence.kind === 'forecast') return occurrence.referenceDate;
-  return localDate('0000-01-01');
+  return occurrence.referenceDate;
 }
 
 function stableOccurrenceOrder(left: CalendarOccurrence, right: CalendarOccurrence): number {
@@ -333,9 +363,8 @@ function addMaterializedOccurrences(
   occurrencesByKey: Map<string, CalendarOccurrence>,
 ): void {
   for (const source of sources) {
-    const occurrence = materializedOccurrence(source, visible, policy);
-    if (occurrence !== undefined && !occurrencesByKey.has(occurrence.key)) {
-      occurrencesByKey.set(occurrence.key, occurrence);
+    for (const occurrence of materializedOccurrences(source, visible, policy)) {
+      if (!occurrencesByKey.has(occurrence.key)) occurrencesByKey.set(occurrence.key, occurrence);
     }
   }
 }
@@ -421,7 +450,28 @@ export function calendarOccurrenceForTask(task: TaskSnapshot): CalendarOccurrenc
 export function calendarTaskWithPlanning(task: TaskSnapshot, planning: TaskPlanning): TaskSnapshot {
   const preview = { ...task, planning };
   const occurrence = occurrenceBySnapshot.get(task);
-  if (occurrence !== undefined) occurrenceBySnapshot.set(preview, occurrence);
+  if (occurrence?.kind === 'materialized') {
+    const occupied = occurrence.occupied;
+    if (occupied.kind === 'point') {
+      const role = occupied.roles[0];
+      const date = role === undefined ? undefined : planning[role];
+      occurrenceBySnapshot.set(preview, {
+        ...occurrence,
+        planning,
+        occupied: { ...occupied, date: date ?? occupied.date },
+      });
+    } else {
+      occurrenceBySnapshot.set(preview, {
+        ...occurrence,
+        planning,
+        occupied: {
+          ...occupied,
+          start: planning.start ?? occupied.start,
+          due: planning.due ?? occupied.due,
+        },
+      });
+    }
+  } else if (occurrence !== undefined) occurrenceBySnapshot.set(preview, occurrence);
   return preview;
 }
 
@@ -431,6 +481,15 @@ export function calendarTaskWithPlanning(task: TaskSnapshot, planning: TaskPlann
  * by non-projected callers and renderer unit tests) receive the same revision-free root contract
  * without inventing a persisted identity.
  */
+function occupiedForUnprojectedTask(
+  planning: TaskPlanning,
+): Extract<CalendarOccurrence, { kind: 'materialized' }>['occupied'] {
+  const dates = taskOccupiedDates(planning);
+  if (dates.kind === 'interval') return dates;
+  const point = dates.points[0];
+  return { kind: 'point', date: point?.date ?? localDate('0000-01-01'), roles: point?.roles ?? [] };
+}
+
 export function calendarOccurrenceForRender(task: TaskSnapshot): CalendarOccurrence {
   const projected = occurrenceBySnapshot.get(task);
   if (projected !== undefined) return projected;
@@ -442,6 +501,7 @@ export function calendarOccurrenceForRender(task: TaskSnapshot): CalendarOccurre
   };
   return {
     kind: 'materialized',
+    occupied: occupiedForUnprojectedTask(task.planning),
     key: `${semanticSourceKey(source)}:${reference ?? 'undated'}`,
     source,
     planning: task.planning,
@@ -467,8 +527,26 @@ export function calendarPatchCommand(
   const target = calendarMutationTarget(task);
   if (target === undefined) return undefined;
   if (target.type === 'task') return { type: 'patch', target, patch };
-  if (patch.duration !== undefined) return undefined;
   return { type: 'patch', target, patch };
+}
+
+/** Point gestures edit only the roles carried by this exact materialized occurrence. */
+export function calendarPointPatchCommand(
+  task: TaskSnapshot,
+  date: LocalDate,
+  time?: FieldUpdate<LocalTime>,
+): TaskCommand | undefined {
+  const occurrence = calendarOccurrenceForRender(task);
+  if (
+    occurrence.kind !== 'materialized' ||
+    occurrence.occupied.kind !== 'point' ||
+    occurrence.occupied.roles.length === 0
+  )
+    return undefined;
+  let patch: TaskPatch = {};
+  for (const role of occurrence.occupied.roles)
+    patch = { ...patch, [role]: { type: 'set', value: date } };
+  return calendarPatchCommand(task, time === undefined ? patch : { ...patch, time });
 }
 
 /** Builds the source-owner patch used by the forecast's explicit Edit repeat action. */
@@ -479,7 +557,6 @@ export function calendarSourcePatchCommand(
   if (source.target.type === 'task') {
     return { type: 'patch', target: source.target, patch };
   }
-  if (patch.duration !== undefined) return undefined;
   return { type: 'patch', target: source.target, patch };
 }
 
@@ -516,9 +593,10 @@ function calendarShiftFields(planning: TaskPlanning): ReadonlyArray<'start' | 's
 export function calendarShiftPlanning(
   planning: TaskPlanning,
   days: number,
+  occupied?: Extract<CalendarOccurrence, { kind: 'materialized' }>['occupied'],
 ): TaskPlanning | undefined {
   const shiftedPlanning = { ...planning };
-  for (const field of calendarShiftFields(planning)) {
+  for (const field of occupied?.kind === 'point' ? occupied.roles : calendarShiftFields(planning)) {
     const value = planning[field];
     const shifted = value == null ? undefined : shiftLocalDate(value, days);
     if (shifted == null) return undefined;
@@ -533,7 +611,16 @@ export function calendarShiftScheduleCommand(
 ): TaskCommand | undefined {
   const target = calendarMutationTarget(task);
   if (target == null || !Number.isSafeInteger(days) || days === 0) return undefined;
+  const occurrence = calendarOccurrenceForRender(task);
+  if (occurrence.kind === 'materialized' && occurrence.occupied.kind === 'point') {
+    const date = shiftLocalDate(occurrence.occupied.date, days);
+    return date === undefined ? undefined : calendarPointPatchCommand(task, date);
+  }
   if (target.type === 'task') return { type: 'shift-schedule', ref: target.ref, days };
+  return calendarChildShiftCommand(task, days);
+}
+
+function calendarChildShiftCommand(task: TaskSnapshot, days: number): TaskCommand | undefined {
   const planning = calendarShiftPlanning(task.planning, days);
   if (planning == null) return undefined;
   const fields = calendarShiftFields(task.planning);

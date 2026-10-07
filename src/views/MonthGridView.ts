@@ -16,6 +16,8 @@ import {
   type TaskDependencyLookup,
 } from '../ui/taskDependencyPresentation';
 import { BaseView } from './BaseView';
+import { attachCalendarNativeDrag, type CalendarNativeDragStart } from './calendarNativeDrag';
+import { calendarOccurrenceForTask } from './calendarOccurrences';
 import {
   layoutVisibleMonth,
   layoutVisibleMonthWithReplacement,
@@ -85,6 +87,7 @@ function configuredMonth(startPosition: string): MonthGridMoment {
 }
 
 export interface MonthGridViewCallbacks extends ForecastInteractionCallbacks {
+  readonly onNativeDragStart?: CalendarNativeDragStart | undefined;
   dependenciesFor?: TaskDependencyLookup | undefined;
   app: App;
   onDayClick: (date: string) => void;
@@ -346,6 +349,7 @@ export class MonthGridView extends BaseView {
       onTaskClick: this.callbacks.onTaskClick,
       onTaskSelect: this.callbacks.onTaskSelect,
       onDrop: this.callbacks.onDrop,
+      onNativeDragStart: this.callbacks.onNativeDragStart,
       onStartChange: (task, date) =>
         this.callbacks.onSpanBoundary?.(task, {
           boundary: 'start',
@@ -428,8 +432,8 @@ export class MonthGridView extends BaseView {
           e.stopPropagation();
           this.callbacks.onTaskClick(t);
         });
-        if (kind !== 'deadline') {
-          this.makeDraggable(item, t, occurrence.source.target.type);
+        if (kind !== 'deadline' || calendarOccurrenceForTask(t)?.kind === 'materialized') {
+          attachCalendarNativeDrag(item, t, this.callbacks.onNativeDragStart);
           renderPlainTaskResizeHandle({ cellEl: cell, date, callbacks, tagGroups }, item, t);
         }
       });
@@ -501,25 +505,6 @@ export class MonthGridView extends BaseView {
       },
     });
     renderDependencyIndicator(el, projection);
-  }
-
-  // Native HTML5 drag source, mirroring renderAllDay.ts's renderDraggableBody pattern
-  // exactly: `dragstart`/`dragend` are independent of `click`, so a plain click on a
-  // child (status marker, rendered link) inside a draggable item still fires that
-  // child's own click handler undisturbed — only an actual drag gesture (pointer moves
-  // while down) fires `dragstart`. Deadline markers are deliberately excluded — they
-  // stay non-draggable per the existing structural rule (Task 2).
-  private makeDraggable(el: HTMLElement, t: TaskSnapshot, targetType: 'task' | 'subtask'): void {
-    if (targetType !== 'task') return;
-    el.setAttribute('draggable', 'true');
-    el.addEventListener('dragstart', (e) => {
-      e.dataTransfer?.setData('text/plain', `${t.source.filePath}:::${t.source.line}`);
-      if (e.dataTransfer != null) e.dataTransfer.effectAllowed = 'move';
-      el.addClass('is-dragging');
-    });
-    el.addEventListener('dragend', () => {
-      el.removeClass('is-dragging');
-    });
   }
 
   /**

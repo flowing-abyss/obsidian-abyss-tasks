@@ -4,6 +4,7 @@ import { firstVisibleWeekDate } from '../src/domain/weekGridOffset';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { localDate } from '../src/tasks';
+import { localDate as occupiedFixtureDate } from '../src/tasks/domain/validation';
 import { taskSnapshotForCalendarOccurrence } from '../src/views/calendarOccurrences';
 import * as spanLayout from '../src/views/spanLayout';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
@@ -1702,6 +1703,7 @@ describe('materialized child all-day movement', () => {
       const child = expectDefined(root.subtasks[0]);
       const projected = taskSnapshotForCalendarOccurrence({
         kind: 'materialized',
+        occupied: { kind: 'point', date: occupiedFixtureDate('2026-07-08'), roles: ['scheduled'] },
         key: 'child',
         source: { root, node: child, target: { type: 'subtask', ref: child.ref } },
         planning: child.planning,
@@ -1758,6 +1760,13 @@ describe('materialized child all-day movement', () => {
     const child = expectDefined(root.subtasks[0]);
     const projected = taskSnapshotForCalendarOccurrence({
       kind: 'materialized',
+      occupied: span
+        ? {
+            kind: 'interval',
+            start: occupiedFixtureDate('2026-07-08'),
+            due: occupiedFixtureDate('2026-07-09'),
+          }
+        : { kind: 'point', date: occupiedFixtureDate('2026-07-08'), roles: ['due'] },
       key: 'child',
       source: { root, node: child, target: { type: 'subtask', ref: child.ref } },
       planning: child.planning,

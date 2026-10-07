@@ -69,7 +69,6 @@ export function commandPatch(
   const target = commandTarget(subject);
   if (target === undefined) return undefined;
   if (target.type === 'task') return { type: 'patch', target, patch };
-  if (patch.duration !== undefined) return undefined;
   return { type: 'patch', target, patch };
 }
 

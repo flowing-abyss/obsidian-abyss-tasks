@@ -14,7 +14,9 @@ import type {
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import type { TaskDependencyLookup } from '../../ui/taskDependencyPresentation';
+import { startTaskNodeDrag } from '../../ui/taskNodeDrag';
 import { taskSelectionPath } from '../../ui/taskSelection';
+import { calendarNativeDragPayload } from '../../views/calendarNativeDrag';
 import {
   calendarOccurrenceForTask,
   calendarRootTaskRef,
@@ -117,6 +119,7 @@ export class CalendarMode {
     this.commands_abyssPrivate = new CalendarCommands({
       tasks: deps_abyssPrivate.tasks,
       queries: deps_abyssPrivate.queries,
+      nativeDrag: () => deps_abyssPrivate.state.get('draggingTaskNode'),
     });
     this.focusRetention_abyssPrivate = new TimedBlockFocusRetention(deps_abyssPrivate.tasks, {
       isCalendarActive: () => deps_abyssPrivate.state.get('mode') === 'calendar',
@@ -416,6 +419,7 @@ export class CalendarMode {
     | 'onTaskSelect'
     | 'onForecastClick'
     | 'onForecastContextMenu'
+    | 'onNativeDragStart'
     | 'onDrop'
     | 'onDropTime'
     | 'onCreateAtTime'
@@ -442,6 +446,17 @@ export class CalendarMode {
       },
       onForecastContextMenu: (source, _referenceDate, anchor) => {
         host.openForecastRecurrenceEditor(anchor, source);
+      },
+      onNativeDragStart: (task, source) => {
+        const payload = calendarNativeDragPayload(task);
+        if (payload?.source !== 'center-card' || payload.calendar === undefined) return undefined;
+        startTaskNodeDrag(state, viewContainer, source, {
+          payload,
+          onEnd: () => {
+            source.removeClass('is-dragging');
+          },
+        });
+        return state.get('draggingTaskNode') === null ? undefined : payload.calendar.nativePayload;
       },
       onDrop: (dragData, targetDate) => {
         runAsyncAction(this.commands_abyssPrivate.rescheduleFromDrag(dragData, targetDate));

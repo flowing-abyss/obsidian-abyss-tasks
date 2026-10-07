@@ -4,7 +4,9 @@ import {
   cloneTaskSnapshot,
   sameTaskNodeRef,
   type DependencyDirection,
+  type LocalDate,
   type TaskCommand,
+  type TaskDateRole,
   type TaskNodeSnapshot,
   type TaskRef,
   type TaskSnapshot,
@@ -28,7 +30,20 @@ export interface InspectorHistoryFrame {
 }
 
 export type TaskNodeDragPayload = { readonly task: TaskNodeSnapshot } & (
-  | { readonly source: 'center-card' | 'inspector-subtask' }
+  | {
+      readonly source: 'center-card';
+      readonly calendar?: {
+        readonly nativePayload: string;
+        readonly occupied:
+          | { readonly kind: 'interval'; readonly start: LocalDate; readonly due: LocalDate }
+          | {
+              readonly kind: 'point';
+              readonly date: LocalDate;
+              readonly roles: readonly TaskDateRole[];
+            };
+      };
+    }
+  | { readonly source: 'inspector-subtask' }
   | {
       readonly source: 'inspector-relation';
       readonly relation: Omit<Extract<TaskCommand, { type: 'reverse-dependency' }>, 'type'> & {

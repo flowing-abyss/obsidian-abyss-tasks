@@ -2187,11 +2187,8 @@ describe('CalendarCommands.rescheduleFromDrag', () => {
     }
   });
 
-  // Task 26: dropping a previously-timed block onto the all-day/"No-time" row reuses this
-  // same onDrop path (renderAllDayCell's generic onDrop callback) — the inverse of Round 2
-  // Task 8's setTaskTimeFromDrop. A task carrying ⏰/⏱️ tokens must have both stripped, in
-  // addition to the date move every onDrop call already performs.
-  it('a previously-timed task dropped onto the all-day row has ⏰ time and ⏱️ duration stripped, date still moved', async () => {
+  // Moving an already timed point to all-day preserves the existing time-and-duration clearing.
+  it('a timed point dropped onto the all-day row clears time and duration and moves its date', async () => {
     const { panel, index, app } = await makePanel(
       { 't.md': '- [ ] task 📅 2026-06-20 ⏰ 09:00 ⏱️ 1h30m' },
       DEFAULT_SETTINGS,
@@ -3765,7 +3762,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
 
     const item = el.querySelector<HTMLElement>('.abyss-mg-block-dot');
     expect(item).not.toBeNull();
-    expect(item?.getAttribute('draggable')).toBeNull();
+    expect(item?.getAttribute('draggable')).toBe('true');
     item?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(openModal).not.toHaveBeenCalled();
     const marker = item?.querySelector<HTMLElement>('.abyss-status-marker');
@@ -3781,7 +3778,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     expect(timedBlock.getAttribute('tabindex')).toBe('0');
     timedBlock.click();
     expect(state.get('taskStack')).toEqual([root, child]);
-    expect(timedBlock.querySelector('[data-resize-edge]')).toBeNull();
+    expect(timedBlock.querySelector('[data-resize-edge="duration"]')).not.toBeNull();
   });
 
   it('keeps direct RightPanel and modal completion on the same exact application target seam', async () => {
@@ -6701,13 +6698,18 @@ describe('calendar child day gestures persist on the child', () => {
       });
       const root = expectDefined(h.index.list()[0]);
       const child = expectDefined(root.subtasks[0]);
-      const projected = taskSnapshotForCalendarOccurrence({
-        kind: 'materialized',
-        key: 'child',
-        source: { root, node: child, target: { type: 'subtask', ref: child.ref } },
-        planning: child.planning,
-        recurring: false,
-      });
+      const projected = taskSnapshotForCalendarOccurrence(
+        expectDefined(
+          projectCalendarOccurrences(
+            {
+              materialized: [{ root, node: child, target: { type: 'subtask', ref: child.ref } }],
+              recurringSources: [],
+            },
+            { from: localDate('2026-07-08'), to: localDate('2026-07-08') },
+            { removeScheduledDate: false },
+          ).occurrences[0],
+        ),
+      );
       await calendarCommand<Promise<void>>(h.panel, method, projected, target);
       const file = h.app.vault.getAbstractFileByPath('child.md');
       if (!(file instanceof TFile)) throw new Error('Missing fixture');
@@ -7236,4 +7238,60 @@ it('offers readable source-note and outgoing-link controls with explanatory hove
     panel.destroy();
     el.remove();
   }
+});
+
+describe('calendar native exact-node drag authority', () => {
+  it.each([false, true].flatMap((child) => ['date', 'time'].map((lane) => ({ child, lane }))))(
+    'retains native $lane drops for child=$child',
+    async ({ child, lane }) => {
+      const header = '- [ ] Start only 🛫 2026-10-08';
+      const original = child ? `- [ ] Parent\n  ${header}\n` : `${header}\n`;
+      const h = await makePanel({ 'native.md': original });
+      h.state.set('mode', 'calendar');
+      setCalendarViewType(h.panel, 'week');
+      setCalendarDate(h.panel, moment('2026-10-08'));
+      const container = freshContainer();
+      h.panel.mount(container);
+      const chip = expectDefined(
+        [...container.querySelectorAll<HTMLElement>('.abyss-tg-plain')].find((item) =>
+          item.textContent.includes('Start only'),
+        ),
+      );
+      expect(chip.getAttribute('draggable')).toBe('true');
+      let serialized = '';
+      const transfer = {
+        setData: (_format: string, text: string) => {
+          serialized = text;
+        },
+        getData: () => serialized,
+        effectAllowed: '',
+      };
+      const start = new MouseEvent('dragstart', { bubbles: true, cancelable: true });
+      Object.defineProperty(start, 'dataTransfer', { value: transfer });
+      chip.dispatchEvent(start);
+      const payload = expectDefined(h.state.get('draggingTaskNode'));
+      expect(payload.task.target.type).toBe(child ? 'subtask' : 'task');
+      expect(serialized.startsWith('abyss-calendar:')).toBe(true);
+      const selector =
+        lane === 'time'
+          ? '.abyss-tg-day-column[data-tg-date="2026-10-09"] .abyss-tg-hour-column'
+          : '.abyss-tg-allday-cell[data-tg-date="2026-10-09"]';
+      const destination = expectDefined(container.querySelector<HTMLElement>(selector));
+      const drop = new MouseEvent('drop', { bubbles: true, cancelable: true, clientY: 432 });
+      Object.defineProperty(drop, 'dataTransfer', { value: transfer });
+      destination.dispatchEvent(drop);
+      const file = h.app.vault.getAbstractFileByPath('native.md');
+      if (!(file instanceof TFile)) throw new Error('missing native fixture');
+      const expected =
+        lane === 'time'
+          ? original.replace('Start only 🛫 2026-10-08', 'Start only ⏰ 09:00 🛫 2026-10-09')
+          : original.replace('2026-10-08', '2026-10-09');
+      await vi.waitFor(async () => {
+        expect(await h.app.vault.read(file)).toBe(expected);
+      });
+      expect(h.state.get('draggingTaskNode')).toBeNull();
+      h.panel.destroy();
+      container.remove();
+    },
+  );
 });

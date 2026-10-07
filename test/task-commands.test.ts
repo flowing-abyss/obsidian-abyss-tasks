@@ -1,13 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import type { LinkToken } from '../src/markdown/links';
-import { commandSource, TaskCommands } from '../src/panels/center/TaskCommands';
+import { commandPatch, commandSource, TaskCommands } from '../src/panels/center/TaskCommands';
 import { buildTaskListRows } from '../src/panels/task-list/taskListRows';
 import { TaskRowSelection } from '../src/panels/task-list/taskRowSelection';
 import type { ProjectManager } from '../src/projects/ProjectManager';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import {
+  durationMinutes,
   localDate,
   type TaskApplicationApi,
   type TaskCommand,
@@ -183,7 +184,10 @@ describe('TaskCommands submission routing', () => {
     '$name targets a materialized child occurrence and refuses a forecast',
     async ({ submit, command }) => {
       const f = await fixture();
-      const h = await hierarchyHarness();
+      const h = await hierarchyHarness({
+        'source.md': '- [ ] Move\n  - [ ] Child 🛫 2026-10-04 ^child\n',
+        'target.md': '- [ ] Parent\n',
+      });
       const root = h.source;
       const source = {
         root,
@@ -192,9 +196,10 @@ describe('TaskCommands submission routing', () => {
       };
       const current = taskSnapshotForCalendarOccurrence({
         kind: 'materialized',
+        occupied: { kind: 'point', date: due, roles: ['start'] },
         key: 'child',
         source,
-        planning: {},
+        planning: source.node.planning,
         recurring: false,
       });
       const forecast = taskSnapshotForCalendarOccurrence({
@@ -514,5 +519,16 @@ it('rejects forecast source authority before resolving its template owner', asyn
   const resolve = vi.spyOn(h.index, 'resolve');
   expect(commandSource(forecast, h.index)).toBeUndefined();
   expect(resolve).not.toHaveBeenCalled();
+  h.index.destroy();
+});
+
+it('routes duration from an exact child subject without dropping calendar authority', async () => {
+  const h = await hierarchyHarness();
+  const child = expectDefined([...taskTreeNodes(h.source)][1]);
+  expect(commandPatch(child, { duration: { type: 'set', value: durationMinutes(90) } })).toEqual({
+    type: 'patch',
+    target: child.target,
+    patch: { duration: { type: 'set', value: 90 } },
+  });
   h.index.destroy();
 });

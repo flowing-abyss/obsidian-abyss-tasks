@@ -216,7 +216,6 @@ function patchPlan(parsed: ParsedTaskLine, command: TaskEditCommand): CommandPla
   if (command.type !== 'patch') return undefined;
   if (patchHasInvertedSpan(command.patch))
     return { type: 'invalid', issues: [{ code: 'inverted-span', field: 'start,due' }] };
-  if (subtaskPatchHasDuration(command)) return invalidTaskTarget('duration');
   return { edits: orderedPatchEdits(parsed, command.patch), requestedFields: [] };
 }
 
@@ -224,12 +223,6 @@ function patchHasInvertedSpan(patch: TaskPatch): boolean {
   const start = patch.start?.type === 'set' ? patch.start.value : undefined;
   const due = patch.due?.type === 'set' ? patch.due.value : undefined;
   return start != null && due != null && start > due;
-}
-
-function subtaskPatchHasDuration(
-  command: Extract<TaskEditCommand, { readonly type: 'patch' }>,
-): boolean {
-  return command.target.type === 'subtask' && 'duration' in command.patch;
 }
 
 function basicPlan(command: TaskEditCommand): CommandPlan | undefined {

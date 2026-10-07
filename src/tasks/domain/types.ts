@@ -117,6 +117,7 @@ export interface SubtaskPlanning {
   readonly completion?: LocalDate;
   readonly cancelled?: LocalDate;
   readonly time?: LocalTime;
+  readonly duration?: DurationMinutes;
 }
 
 interface TaskSource {

@@ -1036,3 +1036,32 @@ describe('AppState task selection intent', () => {
     expect(state.taskSelectionIntentGeneration).toBe(1);
   });
 });
+
+import { localDate } from '../src/tasks';
+
+it('detaches and freezes calendar roles with the canonical center-card drag path', () => {
+  const state = new AppState();
+  const location = inspectorLocation('Root', ['Child']);
+  const roles: Array<'start' | 'scheduled'> = ['start', 'scheduled'];
+  state.set('draggingTaskNode', {
+    source: 'center-card',
+    task: location,
+    calendar: {
+      nativePayload: 'abyss-calendar:captured',
+      occupied: { kind: 'point', date: localDate('2026-10-10'), roles },
+    },
+  });
+  roles.pop();
+  const payload = expectDefined(state.get('draggingTaskNode'));
+  if (payload.source !== 'center-card' || payload.calendar === undefined)
+    throw new Error('missing calendar context');
+  expect(payload.calendar.occupied).toEqual({
+    kind: 'point',
+    date: '2026-10-10',
+    roles: ['start', 'scheduled'],
+  });
+  expect(payload.task.node).toBe(payload.task.path[0]);
+  expect(Reflect.set(payload.calendar.occupied, 'date', localDate('2026-10-11'))).toBe(false);
+  state.set('draggingTaskNode', null);
+  expect(state.get('draggingTaskNode')).toBeNull();
+});

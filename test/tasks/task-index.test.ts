@@ -1789,7 +1789,7 @@ describe('TaskIndex lifecycle and events', () => {
 
     const projection = index.forCalendarProjection([localDate('2026-08-08')]);
     expect(projection.recurringSources).toEqual([]);
-    expect(projection.materialized.map(({ node }) => node.title)).toEqual([]);
+    expect(projection.materialized.map(({ node }) => node.title)).toEqual(['no longer repeating']);
     index.destroy();
   });
 

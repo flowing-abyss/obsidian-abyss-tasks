@@ -14,6 +14,8 @@ import {
   renderDependencyIndicator,
   type TaskDependencyLookup,
 } from '../../ui/taskDependencyPresentation';
+import { attachCalendarNativeDrag, type CalendarNativeDragStart } from '../calendarNativeDrag';
+import { calendarOccurrenceForTask } from '../calendarOccurrences';
 import {
   attachSpanInteractions,
   type InteractiveSpanBoundaryTarget,
@@ -35,6 +37,7 @@ import {
 } from './renderTaskMeta';
 
 export interface AllDayCallbacks extends ForecastInteractionCallbacks {
+  readonly onNativeDragStart?: CalendarNativeDragStart | undefined;
   dependenciesFor?: TaskDependencyLookup | undefined;
   occurrenceFor: CalendarOccurrenceLookup;
   app: App;
@@ -235,19 +238,9 @@ function bindAllDayBodyInteractions(
 ): void {
   const { nativeDraggable, selectable } = options;
   const occurrence = callbacks.occurrenceFor(task);
-  bindMaterializedInteractions(occurrence, (target) => {
+  bindMaterializedInteractions(occurrence, () => {
     if (selectable) bindTaskSelection(el, task, callbacks.onTaskSelect);
-    if (nativeDraggable && target.type === 'task') {
-      el.setAttribute('draggable', 'true');
-      el.addEventListener('dragstart', (event) => {
-        event.dataTransfer?.setData('text/plain', `${task.source.filePath}:::${task.source.line}`);
-        if (event.dataTransfer != null) event.dataTransfer.effectAllowed = 'move';
-        el.addClass('is-dragging');
-      });
-      el.addEventListener('dragend', () => {
-        el.removeClass('is-dragging');
-      });
-    }
+    if (nativeDraggable) attachCalendarNativeDrag(el, task, callbacks.onNativeDragStart);
     el.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -702,7 +695,10 @@ export function renderPlainTaskResizeHandle(
     onBoundary: (targetTask, target) => {
       callbacks.onExtendToSpan(targetTask, target.date);
     },
-    enableMove: callbacks.occurrenceFor(task).source.target.type === 'subtask',
+    enableMove:
+      callbacks.onNativeDragStart === undefined &&
+      (callbacks.occurrenceFor(task).source.target.type === 'subtask' ||
+        calendarOccurrenceForTask(task)?.kind === 'materialized'),
   });
 }
 
@@ -788,6 +784,10 @@ function renderDeadlineTask(context: AllDayCellRenderContext, task: TaskSnapshot
   }
   bindMaterializedInteractions(occurrence, () => {
     bindTaskSelection(marker, task, callbacks.onTaskSelect);
+    if (callbacks.onNativeDragStart !== undefined)
+      attachCalendarNativeDrag(marker, task, callbacks.onNativeDragStart);
+    if (calendarOccurrenceForTask(task)?.kind === 'materialized')
+      renderPlainTaskResizeHandle(context, marker, task);
     marker.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();
