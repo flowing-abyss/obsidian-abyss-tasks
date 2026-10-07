@@ -647,9 +647,13 @@ membership owner. Inbox, Today, Upcoming and tag/group badges count unique physi
 with catalog-resolved open/in-progress status, independently of saved center filters. TagNavigation
 receives the captured pass's counter. LeftPanel reads nodes through its injected `TaskApplicationApi`
 query capability; PanelView no longer supplies a redundant root-only query option. Today retains
-separate Today/Overdue totals and the existing
-midnight refresh lifecycle. `taskNodeSourceLine` is published through the public barrel for the
-presentation adapter; it resolves nested relative lines without promoting a child to root authority.
+separate Today/Overdue totals. PanelView owns a single local-midnight timeout for shared day
+invalidation, using the public civil-day arithmetic and device time context. A changed host-Moment
+day key refreshes LeftPanel and CenterPanel with a `view` reason, including compact Tasks
+organization without a source event. Owner-window focus and visible-document wake check the same
+key; same-day wakes only re-arm the timeout. Window migration cancels old-owner work, retains the
+last day, and checks the new owner immediately; close cancels pending callbacks and listeners.
+`taskNodeSourceLine` is published through the public barrel for the presentation adapter; it resolves nested relative lines without promoting a child to root authority.
 
 Global Search and nonempty Tasks filters use `taskSearchOrganization` over compact canonical
 records, with the same structural membership, property/status filters, comparator and grouping

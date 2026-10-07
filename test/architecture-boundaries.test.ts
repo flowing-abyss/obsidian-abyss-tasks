@@ -284,6 +284,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   groupTrackedDays: ['src/ui/timeTracking/RailTrackingWidget.ts'],
   localDate: ['src/main.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
   localDayStartMs: [
+    'src/views/PanelView.ts',
     'src/ui/timeTracking/formatTracked.ts',
     'src/ui/timeTracking/RailTrackingWidget.ts',
     'src/ui/timeTracking/TrackedTasksPopover.ts',
@@ -315,6 +316,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   ],
   shiftLocalDate: ['src/ui/timedBlockKeyboardQueue.ts'],
   shiftLocalDayStartMs: [
+    'src/views/PanelView.ts',
     'src/ui/timeTracking/formatTracked.ts',
     'src/ui/timeTracking/RailTrackingWidget.ts',
   ],

@@ -1,6 +1,7 @@
 import { ItemView, Notice, Platform, Scope, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
 import { AppState, type AppStateData } from '../app/AppState';
 import { createBrowserTaskScheduler } from '../browserTaskScheduler';
+import { moment } from '../obsidianMoment';
 import { CenterPanel } from '../panels/CenterPanel';
 import { LeftPanel } from '../panels/LeftPanel';
 import { RailPanel } from '../panels/RailPanel';
@@ -34,7 +35,13 @@ import type {
   TaskSnapshot,
   TimeTrackingQueryApi,
 } from '../tasks';
-import { parseRecurrenceRule, taskCommandRootRef, taskNodeAddress } from '../tasks';
+import {
+  localDayStartMs,
+  parseRecurrenceRule,
+  shiftLocalDayStartMs,
+  taskCommandRootRef,
+  taskNodeAddress,
+} from '../tasks';
 import {
   createTaskDependencySearchProvider,
   type TaskDependencySearchProvider,
@@ -206,6 +213,8 @@ export class PanelView extends ItemView {
   private railTracking_abyssPrivate: RailTrackingWidgetHandle | undefined;
   private searchWait_abyssPrivate: AbortController | undefined = undefined;
   private panelsMounted_abyssPrivate = false;
+  private dayBoundaryCleanup_abyssPrivate: (() => void) | undefined = undefined;
+  private lastLocalDay_abyssPrivate: string | undefined = undefined;
   private searchOpportunityConsumed_abyssPrivate = false;
   private cancelSearchPresentation_abyssPrivate: (() => void) | undefined = undefined;
   private searchOpportunitiesCleanup_abyssPrivate: (() => void) | undefined = undefined;
@@ -318,9 +327,52 @@ export class PanelView extends ItemView {
     this.refreshHostHeader_abyssPrivate();
     this.watchPhoneKeyboard_abyssPrivate();
     this.panelsMounted_abyssPrivate = true;
+    this.bindDayBoundary_abyssPrivate();
     this.registerSearchOpportunities_abyssPrivate();
     this.checkSearchOpportunity_abyssPrivate();
     return Promise.resolve();
+  }
+
+  /** One owner-window wake path for date-sensitive lists and navigation counts. */
+  private bindDayBoundary_abyssPrivate(): void {
+    this.dayBoundaryCleanup_abyssPrivate?.();
+    this.dayBoundaryCleanup_abyssPrivate = undefined;
+    const document = this.contentEl.ownerDocument;
+    const owner = document.defaultView;
+    if (owner === null || !this.panelsMounted_abyssPrivate) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const current = (): boolean =>
+      !cancelled &&
+      this.panelsMounted_abyssPrivate &&
+      this.contentEl.ownerDocument === document &&
+      this.contentEl.ownerDocument.defaultView === owner;
+    const check = (): void => {
+      if (!current()) return;
+      if (timer !== undefined) owner.clearTimeout(timer);
+      const { nowMs, offsetAt } = deviceTrackedTimeContext();
+      const day = moment(nowMs).format('YYYY-MM-DD');
+      const previous = this.lastLocalDay_abyssPrivate;
+      this.lastLocalDay_abyssPrivate = day;
+      if (previous !== undefined && previous !== day) {
+        this.left_abyssPrivate.refresh();
+        this.center_abyssPrivate.refresh('view');
+      }
+      const next = shiftLocalDayStartMs(localDayStartMs(nowMs, offsetAt), 1, offsetAt);
+      timer = owner.setTimeout(check, Math.max(1, next - nowMs));
+    };
+    const visible = (): void => {
+      if (document.visibilityState === 'visible') check();
+    };
+    owner.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', visible);
+    this.dayBoundaryCleanup_abyssPrivate = () => {
+      cancelled = true;
+      if (timer !== undefined) owner.clearTimeout(timer);
+      owner.removeEventListener('focus', check);
+      document.removeEventListener('visibilitychange', visible);
+    };
+    check();
   }
 
   private registerSearchOpportunities_abyssPrivate(): void {
@@ -877,6 +929,7 @@ export class PanelView extends ItemView {
     this.bindPanelShortcuts_abyssPrivate();
     this.shortcutMigrationCleanup_abyssPrivate = this.contentEl.onWindowMigrated(() => {
       this.bindPanelShortcuts_abyssPrivate();
+      this.bindDayBoundary_abyssPrivate();
       this.center_abyssPrivate.onWindowMigrated();
       this.right_abyssPrivate.onWindowMigrated();
       this.cancelSearchPresentation_abyssPrivate?.();
@@ -1028,6 +1081,8 @@ export class PanelView extends ItemView {
 
   override async onClose(): Promise<void> {
     this.panelsMounted_abyssPrivate = false;
+    this.dayBoundaryCleanup_abyssPrivate?.();
+    this.dayBoundaryCleanup_abyssPrivate = undefined;
     this.searchWait_abyssPrivate?.abort();
     this.cancelSearchPresentation_abyssPrivate?.();
     this.searchOpportunitiesCleanup_abyssPrivate?.();

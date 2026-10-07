@@ -42,6 +42,7 @@ import type { QuickCaptureCoordinator } from '../src/ui/taskCapture/QuickCapture
 import { requestTaskCompletion } from '../src/ui/taskCommandResult';
 import { renderedTaskNodeElements, taskPresentationKey } from '../src/ui/taskPresentationIdentity';
 import { taskNodeLine, type TaskSelectionNode } from '../src/ui/taskSelection';
+import * as timeBadge from '../src/ui/timeTracking/TimeBadge';
 import type { CompactPaneAccess } from '../src/views/CompactPaneAccess';
 import { MonthGridView } from '../src/views/MonthGridView';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
@@ -5515,6 +5516,271 @@ describe('real shell completion follow-up ownership', () => {
         off();
         await mounted.close();
         application.index.destroy();
+      }
+    },
+  );
+});
+
+describe('PanelView local day boundary', () => {
+  const source = [
+    '- [ ] needle due 📅 2026-10-07',
+    '- [ ] needle tomorrow 📅 2026-10-08',
+    '- [ ] needle interval 🛫 2026-10-06 📅 2026-10-09',
+  ].join('\n');
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([
+    ['today', false],
+    ['today', true],
+    ['upcoming', false],
+    ['upcoming', true],
+  ] as const)(
+    'refreshes idle %s membership and badges, compact: %s',
+    async (selection, compact) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 9, 7, 12));
+      const h = await prewarmPanel(true, source);
+      const timers = vi.spyOn(window, 'setTimeout');
+      try {
+        const { view } = await h.mount();
+        const state = view['state_abyssPrivate'];
+        state.set('mode', 'tasks');
+        state.set('selectedList', selection);
+        state.set('centerListViewState', { ...state.get('centerListViewState'), groupBy: 'none' });
+        const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+        if (compact) {
+          const input = expectDefined(root.querySelector<HTMLInputElement>('.abyss-center-search'));
+          input.value = 'needle';
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          await searchUiCompleted(root);
+        }
+        const titles = () =>
+          Array.from(root.querySelectorAll('.abyss-task-title'), (el) => el.textContent);
+        const badge = (index: number) => {
+          const row = view.contentEl.querySelectorAll('.abyss-left-item')[index];
+          return row?.querySelector('.abyss-left-count')?.textContent;
+        };
+        expect(titles()).toEqual(
+          selection === 'today'
+            ? ['needle due', 'needle interval']
+            : ['needle tomorrow', 'needle interval'],
+        );
+        expect(badge(1)).toBe('2');
+        expect(badge(2)).toBe('2');
+        const commit = vi.fn();
+        const unsubscribe = state.onCommit(commit);
+        const generation = root.dataset['searchGeneration'];
+        const request = Number(root.dataset['searchRequest'] ?? 0);
+        const boundaryCallbacks = timers.mock.calls
+          .filter(([, delay]) => delay === 12 * 60 * 60 * 1000)
+          .map(([callback]) => callback);
+        expect(boundaryCallbacks.length).toBeGreaterThan(0);
+        vi.setSystemTime(new Date(2026, 9, 8));
+        for (const callback of boundaryCallbacks) {
+          if (typeof callback === 'function') callback();
+        }
+        if (compact) await searchUiCompleted(root);
+        expect(badge(1)).toBe('2+1');
+        expect(badge(2)).toBe('1');
+        expect(titles()).toEqual(
+          selection === 'today'
+            ? ['needle due', 'needle tomorrow', 'needle interval']
+            : ['needle interval'],
+        );
+        if (compact) {
+          expect(Number(root.dataset['searchRequest'])).toBeGreaterThan(request);
+          expect(root.dataset['searchGeneration']).toBe(generation);
+        }
+        expect(commit).not.toHaveBeenCalled();
+        unsubscribe();
+        const file = expectDefined(h.app.vault.getFileByPath('tasks.md'));
+        expect(await h.app.vault.read(file)).toBe(source);
+      } finally {
+        await h.dispose();
+      }
+    },
+  );
+
+  function observeBoundaryTimers(owner: Window) {
+    const set = vi.spyOn(owner, 'setTimeout');
+    const clear = vi.spyOn(owner, 'clearTimeout');
+    return {
+      set,
+      clear,
+      latest() {
+        const [callback, delay] = expectDefined(set.mock.lastCall);
+        if (typeof callback !== 'function') throw new Error('Expected a boundary callback');
+        return {
+          fire: callback as () => void,
+          delay,
+          id: set.mock.results[set.mock.results.length - 1]?.value as number,
+        };
+      },
+    };
+  }
+
+  it('re-arms early timers and same-day wakes, then refreshes once on focus or visible wake', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 7, 12));
+    const h = await prewarmPanel(true, source);
+    try {
+      const { view } = await h.mount();
+      const timers = observeBoundaryTimers(window);
+      view['bindDayBoundary_abyssPrivate']();
+      const first = timers.latest();
+      const left = vi.spyOn(view['left_abyssPrivate'], 'refresh');
+      const center = vi.spyOn(view['center_abyssPrivate'], 'refresh');
+      first.fire();
+      expect(timers.clear).toHaveBeenCalledWith(first.id);
+      expect(timers.latest().delay).toBe(12 * 60 * 60 * 1000);
+      window.dispatchEvent(new Event('focus'));
+      expect(left).not.toHaveBeenCalled();
+      expect(center).not.toHaveBeenCalled();
+      vi.setSystemTime(new Date(2026, 9, 7, 23, 59, 59, 999));
+      window.dispatchEvent(new Event('focus'));
+      expect(timers.latest().delay).toBe(1);
+      timers.latest().fire();
+      expect(timers.latest().delay).toBe(1);
+      expect(left).not.toHaveBeenCalled();
+      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+      vi.setSystemTime(new Date(2026, 9, 8, 8));
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(left).toHaveBeenCalledTimes(1);
+      expect(center).toHaveBeenCalledExactlyOnceWith('view');
+      expect(timers.latest().delay).toBe(16 * 60 * 60 * 1000);
+      vi.setSystemTime(new Date(2026, 9, 9, 9));
+      visibility.mockReturnValue('hidden');
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(left).toHaveBeenCalledTimes(1);
+      visibility.mockReturnValue('visible');
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('focus'));
+      expect(left).toHaveBeenCalledTimes(2);
+      expect(center).toHaveBeenCalledTimes(2);
+      expect(timers.latest().delay).toBe(15 * 60 * 60 * 1000);
+    } finally {
+      await h.dispose();
+    }
+  });
+
+  it('moves the day owner once, checks the retained day immediately, and retires stale callbacks', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 7, 12));
+    const h = await prewarmPanel(true, source);
+    const iframe = document.body.createEl('iframe');
+    try {
+      const { view, migrate } = await h.mount();
+      const oldTimers = observeBoundaryTimers(window);
+      const oldRemove = vi.spyOn(window, 'removeEventListener');
+      const oldDocumentRemove = vi.spyOn(document, 'removeEventListener');
+      view['bindDayBoundary_abyssPrivate']();
+      const old = oldTimers.latest();
+      oldRemove.mockClear();
+      oldDocumentRemove.mockClear();
+      const left = vi.spyOn(view['left_abyssPrivate'], 'refresh');
+      const center = vi.spyOn(view['center_abyssPrivate'], 'refresh');
+      const owner = expectDefined(iframe.contentWindow) as EventWindow;
+      vi.spyOn(owner.document, 'createElement').mockImplementation((tag, options) =>
+        owner.document.adoptNode(document.createElement(tag, options)),
+      );
+      const timers = observeBoundaryTimers(owner);
+      const add = vi.spyOn(owner, 'addEventListener');
+      const remove = vi.spyOn(owner, 'removeEventListener');
+      const documentAdd = vi.spyOn(owner.document, 'addEventListener');
+      const documentRemove = vi.spyOn(owner.document, 'removeEventListener');
+      owner.document.body.append(view.containerEl);
+      prepareTaskPanelViewport(view.containerEl);
+      vi.setSystemTime(new Date(2026, 9, 8, 8));
+      // A queued callback is inert even before the host announces the new owner.
+      old.fire();
+      expect(left).not.toHaveBeenCalled();
+      migrate(owner);
+      expect(left).toHaveBeenCalledTimes(1);
+      expect(center).toHaveBeenCalledExactlyOnceWith('view');
+      expect(oldTimers.clear).toHaveBeenCalledWith(old.id);
+      expect(oldRemove).toHaveBeenCalledWith('focus', old.fire);
+      const oldVisibility = expectDefined(
+        oldDocumentRemove.mock.calls.find(([type]) => type === 'visibilitychange'),
+      )[1];
+      expect(oldVisibility).toBeTypeOf('function');
+      const current = timers.latest();
+      expect(current.delay).toBe(16 * 60 * 60 * 1000);
+      expect(add).toHaveBeenCalledWith('focus', current.fire);
+      expect(documentAdd.mock.calls.filter(([type]) => type === 'visibilitychange')).toHaveLength(
+        1,
+      );
+      migrate(owner);
+      expect(timers.clear).toHaveBeenCalledWith(current.id);
+      expect(remove).toHaveBeenCalledWith('focus', current.fire);
+      expect(left).toHaveBeenCalledTimes(1);
+      const final = timers.latest();
+      expect(documentAdd.mock.calls.filter(([type]) => type === 'visibilitychange')).toHaveLength(
+        2,
+      );
+      vi.setSystemTime(new Date(2026, 9, 9));
+      old.fire();
+      current.fire();
+      expect(left).toHaveBeenCalledTimes(1);
+      const visibilityListeners = documentAdd.mock.calls.filter(
+        ([type]) => type === 'visibilitychange',
+      );
+      const visible = expectDefined(visibilityListeners[visibilityListeners.length - 1])[1];
+      expect(documentRemove).not.toHaveBeenCalledWith('visibilitychange', visible);
+      await view.onClose();
+      expect(timers.clear).toHaveBeenCalledWith(final.id);
+      expect(remove).toHaveBeenCalledWith('focus', final.fire);
+      expect(documentRemove).toHaveBeenCalledWith('visibilitychange', visible);
+      vi.setSystemTime(new Date(2026, 9, 9));
+      old.fire();
+      current.fire();
+      final.fire();
+      window.dispatchEvent(new Event('focus'));
+      owner.dispatchEvent(new owner.Event('focus'));
+      owner.document.dispatchEvent(new owner.Event('visibilitychange'));
+      expect(left).toHaveBeenCalledTimes(1);
+      expect(center).toHaveBeenCalledTimes(1);
+    } finally {
+      await h.dispose();
+      iframe.remove();
+    }
+  });
+
+  it.each([
+    {
+      start: '2026-03-29T00:00:00+01:00',
+      transition: '2026-03-29T01:00:00Z',
+      before: 60,
+      after: 120,
+      hours: 23,
+    },
+    {
+      start: '2026-10-25T00:00:00+02:00',
+      transition: '2026-10-25T01:00:00Z',
+      before: 120,
+      after: 60,
+      hours: 25,
+    },
+  ] as const)(
+    'schedules a $hours-hour civil day across the $transition offset transition',
+    async ({ start, transition, before, after, hours }) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(start));
+      const h = await prewarmPanel();
+      try {
+        const { view } = await h.mount();
+        vi.spyOn(timeBadge, 'deviceTrackedTimeContext').mockReturnValue({
+          nowMs: Date.parse(start),
+          offsetAt: (epochMs) => (epochMs < Date.parse(transition) ? before : after),
+        });
+        const timers = observeBoundaryTimers(window);
+        view['bindDayBoundary_abyssPrivate']();
+        expect(timers.latest().delay).toBe(hours * 60 * 60 * 1000);
+      } finally {
+        await h.dispose();
       }
     },
   );
