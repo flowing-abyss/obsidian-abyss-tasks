@@ -1091,23 +1091,28 @@ describe('RightPanel.renderTask', () => {
   it('editing the title and blurring writes back via updateTaskTitle', async () => {
     const fileContent = '- [ ] My task\n';
     const { panel, state, el, app } = await makePanel({ 'f.md': fileContent });
-    const current = task({
-      title: 'My task',
-      source: { originalMarkdown: '- [ ] My task', originalBlock: '- [ ] My task' },
-    });
-    attachCurrentRef(panel, current);
-    state.set('taskStack', [current]);
-    const view = expectDefined(el.querySelector<HTMLElement>('.abyss-right-title-view'));
-    click(view);
-    const ta = expectDefined(el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'));
-    ta.value = 'Updated task';
-    ta.dispatchEvent(new Event('blur', { bubbles: true }));
-    await flushMicrotasks();
+    activeDocument.body.append(el);
+    try {
+      const current = task({
+        title: 'My task',
+        source: { originalMarkdown: '- [ ] My task', originalBlock: '- [ ] My task' },
+      });
+      attachCurrentRef(panel, current);
+      state.set('taskStack', [current]);
+      const view = expectDefined(el.querySelector<HTMLElement>('.abyss-right-title-view'));
+      click(view);
+      const ta = expectDefined(el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'));
+      ta.value = 'Updated task';
+      ta.dispatchEvent(new Event('blur', { bubbles: true }));
+      await flushMicrotasks();
 
-    const written = await readMd(app, 'f.md');
-    expect(written).toContain('Updated task');
-    expect(el.querySelector('.abyss-right-title-edit')).toBeNull();
-    expect(el.querySelector('.abyss-right-title-view')).not.toBeNull();
+      const written = await readMd(app, 'f.md');
+      expect(written).toContain('Updated task');
+      expect(el.querySelector('.abyss-right-title-edit')).toBeNull();
+      expect(el.querySelector('.abyss-right-title-view')).not.toBeNull();
+    } finally {
+      el.remove();
+    }
   });
 
   it.each(['blur', 'Escape'] as const)(
