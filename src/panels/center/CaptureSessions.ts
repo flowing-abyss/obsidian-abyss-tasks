@@ -10,6 +10,7 @@ import type {
 import type { CreationRevealAuthority } from '../../ui/creation/CreationPresentationController';
 import { isRealmHTMLElement } from '../../ui/domRealm';
 import { runAsyncAction } from '../../ui/runAsyncAction';
+import { CaptureRevealIntent } from '../../ui/taskCapture/CaptureRevealIntent';
 import { CaptureSurface } from '../../ui/taskCapture/CaptureSurface';
 import {
   CaptureTargetResolver,
@@ -45,10 +46,7 @@ interface PanelCaptureSession {
   returnFocus?: HTMLElement;
   restoreFocusOnClose: boolean;
   focusOnMount: boolean;
-  revealEpoch: number;
-  readonly cancelReveals: Set<() => void>;
-  revealAuthority?: CreationRevealAuthority | undefined;
-  releaseRevealFocus?: (() => void) | undefined;
+  revealIntent?: CaptureRevealIntent | undefined;
 }
 
 interface CaptureSessionsOptions {
@@ -144,7 +142,7 @@ export class CaptureSessions {
             if (current?.requestId === requestId && description.kind !== 'success') {
               current.restoreFocusOnClose = false;
             }
-            this.#onCreationResult(result, description, this.#resultRevealAuthority(current));
+            this.#onCreationResult(result, description, current?.revealIntent?.forResult());
           },
           onRequestClose: () => {
             this.#closeCaptureByRequestId(requestId);
@@ -157,86 +155,23 @@ export class CaptureSessions {
           ...(returnFocus !== null && { returnFocus }),
           restoreFocusOnClose: false,
           focusOnMount: true,
-          revealEpoch: 0,
-          cancelReveals: new Set(),
         };
         this.#activeCapture = session;
         this.remountActiveCapture();
         if (!isCalendarCapturePlacement(placement)) {
-          session.revealAuthority = this.#captureReveal?.(
-            () =>
-              this.#activeCapture === session &&
-              session.controller.snapshot().phase === 'idle' &&
-              session.surface?.input.isConnected === true &&
-              session.surface.input.ownerDocument.activeElement === session.surface.input,
+          session.revealIntent = new CaptureRevealIntent(
+            this.#captureReveal?.(
+              () =>
+                this.#activeCapture === session &&
+                session.controller.snapshot().phase === 'idle' &&
+                session.surface?.input.isConnected === true &&
+                session.surface.input.ownerDocument.activeElement === session.surface.input,
+            ),
           );
+          if (session.surface !== undefined) session.revealIntent.mount(session.surface.input);
         }
       }),
     );
-  }
-
-  #resultRevealAuthority(session: PanelCaptureSession | null): CreationRevealAuthority | undefined {
-    const authority = session?.revealAuthority;
-    if (session === null || authority === undefined) return undefined;
-    const epoch = session.revealEpoch;
-    return {
-      isCurrent: () => session.revealEpoch === epoch && authority.isCurrent(),
-      onPresented: (ref, element) => authority.onPresented?.(ref, element),
-      reveal: (ref, request) => {
-        const input = session.surface?.input;
-        const controller = new AbortController();
-        const cleanup = (): void => {
-          request.signal.removeEventListener('abort', cancel);
-          input?.removeEventListener('blur', revoke);
-          input?.removeEventListener('input', revoke);
-          session.cancelReveals.delete(cancel);
-        };
-        const cancel = (): void => {
-          controller.abort();
-          cleanup();
-        };
-        const revoke = (): void => {
-          session.revealEpoch++;
-          cancel();
-        };
-        session.cancelReveals.add(cancel);
-        request.signal.addEventListener('abort', cancel, { once: true });
-        input?.addEventListener('blur', revoke);
-        input?.addEventListener('input', revoke);
-        const isCurrent = (): boolean =>
-          !controller.signal.aborted &&
-          request.isCurrent() &&
-          session.revealEpoch === epoch &&
-          authority.isCurrent();
-        if (request.signal.aborted || !isCurrent()) {
-          cancel();
-          return undefined;
-        }
-        try {
-          const result = authority.reveal(ref, { signal: controller.signal, isCurrent });
-          if (result !== undefined && 'then' in result) {
-            let release: (() => void) | undefined;
-            const cancelled = new Promise<undefined>((resolve) => {
-              const done = (): void => {
-                resolve(undefined);
-              };
-              controller.signal.addEventListener('abort', done, { once: true });
-              release = () => {
-                controller.signal.removeEventListener('abort', done);
-              };
-              if (controller.signal.aborted) done();
-            });
-            return Promise.race([result, cancelled]).finally(() => {
-              release?.();
-            });
-          }
-          return result;
-        } catch (error) {
-          cleanup();
-          throw error;
-        }
-      },
-    };
   }
 
   remountActiveCapture(): void {
@@ -288,15 +223,7 @@ export class CaptureSessions {
         : 'default';
     const surface = new CaptureSurface(host, active.controller, { ...options, presentation });
     this.#applyCaptureInputClass(surface, active.placement);
-    const revokeReveal = (): void => {
-      active.revealEpoch++;
-    };
-    surface.input.addEventListener('blur', revokeReveal);
-    surface.input.addEventListener('input', revokeReveal);
-    active.releaseRevealFocus = () => {
-      surface.input.removeEventListener('blur', revokeReveal);
-      surface.input.removeEventListener('input', revokeReveal);
-    };
+    active.revealIntent?.mount(surface.input);
     active.surface = surface;
     active.host = host;
     this.#focusNewCaptureSurface(active, surface);
@@ -335,13 +262,10 @@ export class CaptureSessions {
   unmountActiveCapture(): void {
     const active = this.#activeCapture;
     const surface = active?.surface;
-    for (const cancel of active?.cancelReveals ?? []) cancel();
+    active?.revealIntent?.unmount();
     if (active == null || surface == null) return;
     active.focusOnMount =
       active.focusOnMount || surface.input.ownerDocument.activeElement === surface.input;
-    active.revealEpoch++;
-    active.releaseRevealFocus?.();
-    active.releaseRevealFocus = undefined;
     active.surface = undefined;
     active.host = undefined;
     surface.destroy();

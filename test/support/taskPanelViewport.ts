@@ -77,7 +77,9 @@ export function prepareTaskPanelViewport(el: HTMLElement, clampWrites = false): 
 
 /** Capacity from the fixture's measured cards, native viewport and existing 170px overscan. */
 export function taskCardMountBound(root: HTMLElement, pins = 0): number {
-  const scroll = root.querySelector<HTMLElement>('.abyss-center-scroll');
+  const scroll = root.querySelector<HTMLElement>(
+    '.abyss-project-dashboard-session, .abyss-center-scroll',
+  );
   const heights = [...root.querySelectorAll<HTMLElement>('.abyss-task-card')].map(
     (card) => card.getBoundingClientRect().height,
   );
@@ -114,7 +116,14 @@ export function taskListRect(element: HTMLElement): DOMRect | undefined {
   if (element === scroll) return geometryRect(0, scroll.clientWidth, scroll.clientHeight);
   if (host?.classList.contains('abyss-task-list-surface') !== true) return;
   const origin = scroll.clientTop - scroll.scrollTop;
-  if (element === host) return geometryRect(origin, host.clientWidth, 0);
+  if (element === host) {
+    const padding = hostPadding(host);
+    const height =
+      padding.top +
+      padding.bottom +
+      [...host.children].reduce((sum, row) => sum + rowHeight(row), 0);
+    return geometryRect(origin, host.clientWidth, height);
+  }
   let top = origin + (host === scroll ? 0 : host.clientTop) + hostPadding(host).top;
   for (const row of host.children) {
     if (row === element) break;
@@ -123,9 +132,11 @@ export function taskListRect(element: HTMLElement): DOMRect | undefined {
   return geometryRect(top, host.clientWidth, rowHeight(element));
 }
 function taskListScroll(element: HTMLElement, host: HTMLElement | null): HTMLElement | null {
-  return host?.classList.contains('abyss-dep-search-results') === true
-    ? host
-    : element.closest<HTMLElement>('.abyss-center-scroll');
+  if (host?.classList.contains('abyss-dep-search-results') === true) return host;
+  return (
+    element.closest<HTMLElement>('.abyss-project-dashboard-session') ??
+    element.closest<HTMLElement>('.abyss-center-scroll')
+  );
 }
 function geometryRect(top: number, width: number, height: number): DOMRect {
   return {
@@ -180,7 +191,12 @@ function installTaskListGeometry(owner: Window & typeof window): void {
       const host = this.classList.contains('abyss-task-list-surface')
         ? this
         : this.querySelector<HTMLElement>('.abyss-task-list-surface');
-      if (host === null || (!this.classList.contains('abyss-center-scroll') && host !== this)) {
+      if (
+        host === null ||
+        (!this.classList.contains('abyss-center-scroll') &&
+          !this.classList.contains('abyss-project-dashboard-session') &&
+          host !== this)
+      ) {
         write.call(this, requested);
         return;
       }

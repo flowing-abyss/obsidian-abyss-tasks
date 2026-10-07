@@ -1253,6 +1253,18 @@ export class CenterPanel {
     };
   }
 
+  /** Retains only the live task surface that the capture actually opened from. */
+  captureCreationReveal(isCaptureCurrent: () => boolean): CreationRevealAuthority | undefined {
+    const retained = this.taskSurface_abyssPrivate;
+    if (
+      retained === null ||
+      !this.el.contains(retained.host) ||
+      !this.creationHostVisible_abyssPrivate(retained.host)
+    )
+      return undefined;
+    return this.captureRevealAuthority_abyssPrivate(isCaptureCurrent);
+  }
+
   private reportCaptureRevealFailure_abyssPrivate(
     retained: TaskSurfaceState,
     error: unknown,

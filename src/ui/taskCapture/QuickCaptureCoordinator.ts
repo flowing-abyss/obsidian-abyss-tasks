@@ -1,8 +1,10 @@
 import type { ShortcutActionId } from '../../settings/shortcuts';
 import type { TaskCommandResult } from '../../tasks';
+import type { CreationRevealAuthority } from '../creation/CreationPresentationController';
 import type { InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
 import { describeTaskCreationResult, type CreationResultDescription } from '../taskCommandResult';
+import { CaptureRevealIntent } from './CaptureRevealIntent';
 import { CaptureSurface } from './CaptureSurface';
 import type { CaptureContext, CaptureTarget } from './CaptureTargetResolver';
 import { TaskCaptureController } from './TaskCaptureController';
@@ -14,7 +16,12 @@ interface QuickCaptureCoordinatorOptions {
   readonly context: () => CaptureContext;
   readonly resolveTarget: (context: CaptureContext) => Promise<CaptureTarget>;
   readonly interactionOwnership: InteractionOwnershipPort<ShortcutActionId>;
-  readonly onResult?: (result: TaskCommandResult, description: CreationResultDescription) => void;
+  readonly onResult?: (
+    result: TaskCommandResult,
+    description: CreationResultDescription,
+    revealAuthority?: CreationRevealAuthority,
+  ) => void;
+  readonly captureReveal?: (isCurrent: () => boolean) => CreationRevealAuthority | undefined;
 }
 
 function frozenContext(context: CaptureContext): CaptureContext {
@@ -37,6 +44,7 @@ export class QuickCaptureCoordinator {
   private outsidePointerCleanup: (() => void) | null = null;
   private focusOrigin: HTMLElement | null = null;
   private restoreFocusOnClose = false;
+  private revealIntent: CaptureRevealIntent | null = null;
   private destroyed = false;
 
   constructor(private readonly options: QuickCaptureCoordinatorOptions) {}
@@ -61,6 +69,17 @@ export class QuickCaptureCoordinator {
     this.focusOrigin = this.currentFocusOrigin();
     this.restoreFocusOnClose = false;
     this.currentPhase = 'resolving';
+    this.revealIntent = new CaptureRevealIntent(
+      this.options.captureReveal?.(
+        () =>
+          !this.destroyed &&
+          this.generation === generation &&
+          this.currentPhase === 'open' &&
+          this.controller?.snapshot().phase === 'idle' &&
+          this.surface?.input.isConnected === true &&
+          this.surface.input.ownerDocument.activeElement === this.surface.input,
+      ),
+    );
     this.ownershipToken = this.options.interactionOwnership.acquire({
       blocksShortcuts: true,
       allowActions: ['openQuickCapture'],
@@ -99,7 +118,7 @@ export class QuickCaptureCoordinator {
       onResult: (result, description) => {
         if (this.generation === generation && this.controller === controller) {
           if (description.kind !== 'success') this.restoreFocusOnClose = false;
-          this.options.onResult?.(result, description);
+          this.options.onResult?.(result, description, this.revealIntent?.forResult());
         }
       },
       onRequestClose: () => {
@@ -133,6 +152,7 @@ export class QuickCaptureCoordinator {
     this.controller = controller;
     this.surface = surface;
     this.currentPhase = 'open';
+    this.revealIntent?.mount(surface.input);
     surface.focus();
   }
 
@@ -200,6 +220,8 @@ export class QuickCaptureCoordinator {
     this.outsidePointerCleanup = null;
     this.focusOrigin = null;
     this.restoreFocusOnClose = false;
+    this.revealIntent?.unmount();
+    this.revealIntent = null;
     outsidePointerCleanup?.();
     surface?.destroy();
     controller?.destroy();

@@ -1,0 +1,632 @@
+import { MarkdownRenderer, WorkspaceLeaf, type App } from 'obsidian';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AppState } from '../src/app/AppState';
+import type { CenterPanel } from '../src/panels/CenterPanel';
+import { TaskListSurface } from '../src/panels/task-list/TaskListSurface';
+import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import type { CalendarSettings } from '../src/settings/types';
+import { TagManager } from '../src/tags/TagManager';
+import type {
+  CreationPresentationController,
+  CreationRevealRequest,
+} from '../src/ui/creation/CreationPresentationController';
+import { renderedTaskElements } from '../src/ui/taskPresentationIdentity';
+import { PanelView } from '../src/views/PanelView';
+import { deferred, expectDefined, flushMicrotasks, useRealMoment } from './helpers';
+import {
+  prepareTaskPanelViewport,
+  taskCardMountBound,
+  taskListRect,
+} from './support/taskPanelViewport';
+import { createCanonicalSearchHarness } from './support/taskSearchHarness';
+import { searchUiCompleted } from './support/taskSearchUiHarness';
+
+useRealMoment();
+let legacyScroll = vi.fn();
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return taskListRect(this) ?? new DOMRect(0, 0, 700, 900);
+  });
+  legacyScroll = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: legacyScroll,
+  });
+});
+afterEach(() => {
+  Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+  vi.restoreAllMocks();
+});
+
+const rows = Array.from(
+  { length: 1200 },
+  (_, n) => `- [ ] A row ${String(n).padStart(4, '0')}`,
+).join('\n');
+
+async function mountQuickPanel(dashboard = false, tag = false, needle = false) {
+  const settings: CalendarSettings = structuredClone(DEFAULT_SETTINGS);
+  settings.taskFilePath = 'created.md';
+  settings.taskInsertionMode = 'append';
+  settings.projects.taskInsertionMode = 'append';
+  settings.listViewStates = {
+    inbox: { groupBy: 'none', sortBy: { field: 'title', dir: 'asc' }, filters: [] },
+    'tag:#work': { groupBy: 'none', sortBy: { field: 'title', dir: 'asc' }, filters: [] },
+  };
+  const content = rows
+    .split('\n')
+    .map((row) => `${row}${needle ? ' needle' : ''}${tag ? ' #work' : ''}`)
+    .join('\n');
+  const h = await createCanonicalSearchHarness(
+    {
+      'many.md': dashboard ? '' : content,
+      'created.md': '',
+      'Projects/P.md': `---\nstatus: todo\n---\n\n# Tasks\n${dashboard ? rows : ''}\n`,
+      'excluded.md': '- [ ] Unrelated excluded #other\n',
+    },
+    settings,
+  );
+  const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(h.app);
+  const tags = new TagManager(h.app, settings, async () => {}, {
+    check: () => 'ready',
+    apply: async (_change, applyLive) => {
+      applyLive();
+    },
+  });
+  const view = new PanelView(
+    leaf,
+    settings,
+    tags,
+    h.index,
+    h.tasks,
+    h.statusRegistry,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    h.search,
+  );
+  prepareTaskPanelViewport(view.contentEl, true);
+  for (const element of [view.contentEl, view.containerEl]) {
+    const bounds = new DOMRect(0, 0, 700, 900);
+    Object.defineProperty(element, 'getClientRects', {
+      configurable: true,
+      value: () => Object.assign([bounds], { item: () => bounds }),
+    });
+  }
+  vi.spyOn(h.app.workspace, 'getActiveViewOfType').mockImplementation((type) =>
+    type === PanelView ? view : null,
+  );
+  (h.app.workspace as { activeLeaf: WorkspaceLeaf | null }).activeLeaf = leaf;
+  await view.onOpen();
+  const internals = view as unknown as {
+    state_abyssPrivate: AppState;
+    center_abyssPrivate: CenterPanel;
+    creationPresentation_abyssPrivate: CreationPresentationController;
+  };
+  const state = internals.state_abyssPrivate;
+  state.set('selectedList', 'inbox');
+  if (tag) state.set('selectedList', { type: 'tag', tag: '#work' });
+  if (dashboard) {
+    state.set('mode', 'projects');
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/P.md' });
+  }
+  const root = view.contentEl;
+  const center = expectDefined(root.querySelector<HTMLElement>('.abyss-center'));
+  return {
+    ...h,
+    view,
+    root,
+    center,
+    state,
+    settings,
+    panel: internals.center_abyssPrivate,
+    presentation: internals.creationPresentation_abyssPrivate,
+    query(value: string) {
+      const input = expectDefined(
+        root.querySelector<HTMLInputElement>('.abyss-center-search, .abyss-search-global'),
+      );
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    },
+    async openQ() {
+      center.tabIndex = -1;
+      center.focus();
+      const event = new KeyboardEvent('keydown', {
+        key: 'q',
+        code: 'KeyQ',
+        bubbles: true,
+        cancelable: true,
+      });
+      center.dispatchEvent(event);
+      await flushMicrotasks(0);
+      expect(event.defaultPrevented).toBe(true);
+      const input = expectDefined(
+        root.querySelector<HTMLInputElement>('.abyss-quick-capture-host .abyss-capture-input'),
+      );
+      expect(document.activeElement).toBe(input);
+      return input;
+    },
+    async dispose() {
+      await view.onClose();
+      view.containerEl.remove();
+      (h.app.workspace as { activeLeaf: WorkspaceLeaf | null }).activeLeaf = null;
+      h.close();
+    },
+  };
+}
+
+function enter(input: HTMLInputElement, text: string): void {
+  input.value = text;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+  );
+}
+
+const revealRevocations = [
+  'input',
+  'blur',
+  'escape',
+  'navigation',
+  'selection',
+  'scroll-before-event',
+] as const;
+
+function revokeQuickReveal(
+  h: Awaited<ReturnType<typeof mountQuickPanel>>,
+  input: HTMLInputElement,
+  reason: (typeof revealRevocations)[number],
+  hosts: { readonly scroll: HTMLElement; readonly outside: HTMLInputElement },
+): void {
+  const { scroll, outside } = hosts;
+  switch (reason) {
+    case 'input':
+      input.value = 'new draft';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      break;
+    case 'blur':
+      outside.focus();
+      break;
+    case 'escape':
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      break;
+    case 'navigation':
+      h.state.set('selectedList', 'upcoming');
+      break;
+    case 'selection':
+      h.state.set('taskStack', [expectDefined(h.index.list({ filePath: 'many.md' })[0])]);
+      break;
+    case 'scroll-before-event':
+      scroll.scrollTop = 64;
+      break;
+  }
+}
+
+describe('physical Q creation reveal through PanelView', () => {
+  it.each([
+    { origin: 'Inbox', dashboard: false, tag: false },
+    { origin: 'tag', dashboard: false, tag: true },
+    { origin: 'dashboard', dashboard: true, tag: false },
+  ])(
+    'reveals the exact offscreen root through the retained bounded $origin surface',
+    async ({ dashboard, tag }) => {
+      const h = await mountQuickPanel(dashboard, tag);
+      try {
+        const reveal = vi.spyOn(TaskListSurface.prototype, 'reveal');
+        const input = await h.openQ();
+        enter(input, 'Z created Q');
+        await flushMicrotasks();
+        const created = expectDefined(h.index.list().find((task) => task.title === 'Z created Q'));
+        expect(h.state.get('taskStack')).toEqual([created]);
+        if (tag) expect(created.tags).toContain('#work');
+        expect(
+          h.index
+            .list({ filePath: dashboard ? 'Projects/P.md' : 'created.md' })
+            .filter((task) => task.title === 'Z created Q'),
+        ).toHaveLength(1);
+        await vi.waitFor(() => {
+          expect(
+            renderedTaskElements(h.root, created.ref).some((el) =>
+              el.classList.contains('is-just-created'),
+            ),
+          ).toBe(true);
+        });
+        const card = expectDefined(renderedTaskElements(h.root, created.ref)[0]);
+        const scroll = expectDefined(
+          h.root.querySelector<HTMLElement>(
+            dashboard ? '.abyss-project-dashboard-session' : '.abyss-center-scroll',
+          ),
+        );
+        const viewport = scroll.getBoundingClientRect();
+        const bounds = card.getBoundingClientRect();
+        expect(bounds.top).toBeGreaterThanOrEqual(viewport.top);
+        expect(bounds.bottom).toBeLessThanOrEqual(viewport.bottom);
+        expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
+          taskCardMountBound(h.root, 1),
+        );
+        expect(h.panel['taskSurface_abyssPrivate']?.surface.rows.taskKeys).toHaveLength(1201);
+        expect(reveal).toHaveBeenCalledWith(`${created.ref.filePath}:${created.ref.line}`, {
+          waitForReady: true,
+        });
+        expect(legacyScroll).not.toHaveBeenCalled();
+        expect(document.activeElement).toBe(input);
+        expect(input.isConnected).toBe(true);
+        expect(input.value).toBe('');
+      } finally {
+        await h.dispose();
+      }
+    },
+  );
+
+  it.each([
+    {
+      name: 'matched-text',
+      global: false,
+      property: false,
+      destination: 'created.md',
+      title: 'Z created Q needle',
+    },
+    {
+      name: 'excluded-text',
+      global: false,
+      property: false,
+      destination: 'created.md',
+      title: 'Z created Q excluded',
+    },
+    {
+      name: 'matched-property',
+      global: false,
+      property: true,
+      destination: 'many.md',
+      title: 'Z created Q needle',
+    },
+    {
+      name: 'excluded-property',
+      global: false,
+      property: true,
+      destination: 'created.md',
+      title: 'Z created Q needle',
+    },
+    {
+      name: 'global-search',
+      global: true,
+      property: false,
+      destination: 'created.md',
+      title: 'Z created Q needle',
+    },
+    {
+      name: 'global-search-excluded',
+      global: true,
+      property: false,
+      destination: 'created.md',
+      title: 'Z created Q excluded',
+    },
+  ])(
+    'preserves query and unrelated exclusions while revealing only the created root ($name)',
+    async ({ global, property, destination, title }) => {
+      const h = await mountQuickPanel(false, false, true);
+      try {
+        h.state.set('mode', global ? 'search' : 'tasks');
+        h.settings.taskFilePath = destination;
+        if (property) {
+          h.state.set('centerListViewState', {
+            ...h.state.get('centerListViewState'),
+            filters: [{ type: 'file', filePath: 'many.md' }],
+          });
+        }
+        h.query('needle');
+        await searchUiCompleted(h.center);
+        const filters = structuredClone(h.state.get('centerListViewState').filters);
+        const input = await h.openQ();
+        enter(input, title);
+        await vi.waitFor(() => {
+          const created = expectDefined(h.index.list().find((task) => task.title === title));
+          expect(
+            renderedTaskElements(h.root, created.ref).some((el) =>
+              el.classList.contains('is-just-created'),
+            ),
+          ).toBe(true);
+        });
+        expect(h.state.get('selectedList')).toBe('inbox');
+        expect(h.state.get(global ? 'searchQuery' : 'centerFilter')).toBe('needle');
+        expect(h.state.get('mode')).toBe(global ? 'search' : 'tasks');
+        expect(h.state.get('centerListViewState').filters).toEqual(filters);
+        expect(
+          h.center.querySelector<HTMLInputElement>('.abyss-center-search, .abyss-search-global')
+            ?.value,
+        ).toBe('needle');
+        expect(h.panel['taskSurface_abyssPrivate']?.surface.rows.taskKeys).toHaveLength(1201);
+        const unrelated = expectDefined(h.index.list({ filePath: 'excluded.md' })[0]);
+        expect(renderedTaskElements(h.root, unrelated.ref)).toEqual([]);
+        expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
+          taskCardMountBound(h.root, 1),
+        );
+        expect(document.activeElement).toBe(input);
+        expect(input.value).toBe('');
+        expect(legacyScroll).not.toHaveBeenCalled();
+      } finally {
+        await h.dispose();
+      }
+    },
+  );
+
+  it.each(['calendar', 'overview'] as const)(
+    'keeps %s creation without a stale disconnected list capability',
+    async (origin) => {
+      const h = await mountQuickPanel();
+      try {
+        h.state.set('mode', origin === 'calendar' ? 'calendar' : 'projects');
+        const present = vi.spyOn(h.presentation, 'present');
+        const reveal = vi.spyOn(TaskListSurface.prototype, 'reveal');
+        const input = await h.openQ();
+        enter(input, 'Z created Q');
+        await flushMicrotasks();
+        const created = expectDefined(h.index.list({ filePath: 'created.md' })[0]);
+        expect(h.state.get('taskStack')).toEqual([created]);
+        expect(present.mock.calls[0]?.[2]).toBeUndefined();
+        expect(reveal).not.toHaveBeenCalled();
+        expect(h.state.get('mode')).toBe(origin === 'calendar' ? 'calendar' : 'projects');
+        expect(document.activeElement).toBe(input);
+        expect(input.value).toBe('');
+      } finally {
+        await h.dispose();
+      }
+    },
+  );
+
+  it.each(['blur', 'escape'] as const)(
+    'keeps a %s-during-submit result scoped after its controller closes',
+    async (cause) => {
+      const h = await mountQuickPanel();
+      const write = deferred<void>(),
+        writing = deferred<void>();
+      const outside = document.body.createEl('input');
+      try {
+        const plan = h.tasks.planCreate.bind(h.tasks);
+        vi.spyOn(h.tasks, 'planCreate').mockImplementation(async (intent) => {
+          const session = await plan(intent);
+          if (session.type !== 'ready') return session;
+          return {
+            ...session,
+            execute: async (request) => {
+              writing.resolve();
+              await write.promise;
+              return session.execute(request);
+            },
+          };
+        });
+        let currentAtResult: boolean | undefined;
+        const present = h.presentation.present.bind(h.presentation);
+        vi.spyOn(h.presentation, 'present').mockImplementation((result, description, authority) => {
+          currentAtResult = authority?.isCurrent();
+          present(result, description, authority);
+        });
+        const input = await h.openQ();
+        enter(input, 'Z created Q');
+        await writing.promise;
+        if (cause === 'blur') outside.focus();
+        else input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        write.resolve();
+        await flushMicrotasks();
+        expect(h.index.list({ filePath: 'created.md' })).toHaveLength(1);
+        expect(currentAtResult).toBe(false);
+        expect(h.root.querySelector('.is-just-created')).toBeNull();
+        expect(h.root.querySelector('.abyss-quick-capture-host .abyss-capture-input')).toBeNull();
+        expect(document.activeElement).toBe(cause === 'blur' ? outside : h.center);
+        expect(legacyScroll).not.toHaveBeenCalled();
+      } finally {
+        write.resolve();
+        outside.remove();
+        await h.dispose();
+      }
+    },
+  );
+
+  it('retains the opening surface across destination resolution and keeps revoked results scoped', async () => {
+    const h = await mountQuickPanel();
+    const destination = deferred<void>();
+    try {
+      const plan = h.tasks.planCreate.bind(h.tasks);
+      vi.spyOn(h.tasks, 'planCreate').mockImplementation(async (intent) => {
+        await destination.promise;
+        return plan(intent);
+      });
+      const chrome = h.center;
+      chrome.tabIndex = -1;
+      chrome.focus();
+      chrome.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'q', code: 'KeyQ', bubbles: true, cancelable: true }),
+      );
+      h.state.set('selectedList', 'upcoming');
+      destination.resolve();
+      await flushMicrotasks();
+      const input = expectDefined(
+        h.root.querySelector<HTMLInputElement>('.abyss-quick-capture-host .abyss-capture-input'),
+      );
+      let currentAtResult: boolean | undefined;
+      const present = h.presentation.present.bind(h.presentation);
+      vi.spyOn(h.presentation, 'present').mockImplementation((result, description, authority) => {
+        currentAtResult = authority?.isCurrent();
+        present(result, description, authority);
+      });
+      enter(input, 'Z created Q');
+      await flushMicrotasks();
+      expect(h.index.list({ filePath: 'created.md' })).toHaveLength(1);
+      expect(currentAtResult).toBe(false);
+      expect(h.state.get('selectedList')).toBe('upcoming');
+      expect(h.root.querySelector('.is-just-created')).toBeNull();
+      expect(legacyScroll).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(input);
+    } finally {
+      destination.resolve();
+      await h.dispose();
+    }
+  });
+
+  it('waits for exact hydration and current mounted Markdown without changing the focused Q input', async () => {
+    const h = await mountQuickPanel(false, false, true);
+    const hydration = deferred<void>(),
+      markdown = deferred<void>();
+    const entered = deferred<void>(),
+      rendered = deferred<void>();
+    try {
+      h.query('needle');
+      await searchUiCompleted(h.center);
+      const actual = h.index.resolveSearchHits.bind(h.index);
+      vi.spyOn(h.index, 'resolveSearchHits').mockImplementation(async (hits, signal) => {
+        const created = h.source.files().find((file) => file.path === 'created.md');
+        if (
+          created !== undefined &&
+          hits.some((hit) =>
+            [...h.source.nodes(created)].some((node) => node.rootId === hit.address.rootId),
+          )
+        ) {
+          entered.resolve();
+          await hydration.promise;
+        }
+        return actual(hits, signal);
+      });
+      vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, holder) => {
+        holder.createEl('strong', { text });
+        if (text.includes('Z created Q needle')) {
+          rendered.resolve();
+          await markdown.promise;
+        }
+      });
+      let request: CreationRevealRequest | undefined;
+      const present = h.presentation.present.bind(h.presentation);
+      vi.spyOn(h.presentation, 'present').mockImplementation((result, description, authority) => {
+        if (authority !== undefined) {
+          const reveal = authority.reveal.bind(authority);
+          vi.spyOn(authority, 'reveal').mockImplementation((ref, next) => {
+            request = next;
+            return reveal(ref, next);
+          });
+        }
+        present(result, description, authority);
+      });
+      const input = await h.openQ();
+      enter(input, '**Z created Q needle**');
+      await vi.waitFor(() => {
+        expect(request).toBeDefined();
+      });
+      await entered.promise;
+      const reveal = vi.spyOn(expectDefined(h.panel['taskSurface_abyssPrivate']).surface, 'reveal');
+      expect(h.root.querySelector('.is-just-created')).toBeNull();
+      expect(reveal).not.toHaveBeenCalled();
+      hydration.resolve();
+      await rendered.promise;
+      expect(h.root.querySelector('.is-just-created')).toBeNull();
+      expect(reveal).not.toHaveBeenCalled();
+      markdown.resolve();
+      await vi.waitFor(() => {
+        expect(h.root.querySelector('.is-just-created')).not.toBeNull();
+      });
+      const created = expectDefined(h.index.list({ filePath: 'created.md' })[0]);
+      expect(renderedTaskElements(h.root, created.ref)).toContain(
+        h.root.querySelector('.is-just-created'),
+      );
+      expect(reveal.mock.calls.length).toBeGreaterThanOrEqual(1);
+      expect(reveal.mock.calls.length).toBeLessThanOrEqual(8);
+      expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
+        taskCardMountBound(h.root, 1),
+      );
+      expect(document.activeElement).toBe(input);
+      expect(input.value).toBe('');
+      expect(legacyScroll).not.toHaveBeenCalled();
+    } finally {
+      hydration.resolve();
+      markdown.resolve();
+      await h.dispose();
+    }
+  });
+
+  it.each(
+    (['hydration', 'markdown'] as const).flatMap((stage) =>
+      revealRevocations.map((reason) => ({ stage, reason })),
+    ),
+  )('revokes the full Q $stage wait on $reason', async ({ stage, reason }) => {
+    const h = await mountQuickPanel(false, false, true);
+    const hydration = deferred<void>(),
+      markdown = deferred<void>();
+    const entered = deferred<void>(),
+      rendered = deferred<void>();
+    let request: CreationRevealRequest | undefined;
+    try {
+      h.query('needle');
+      await searchUiCompleted(h.center);
+      const actual = h.index.resolveSearchHits.bind(h.index);
+      vi.spyOn(h.index, 'resolveSearchHits').mockImplementation(async (hits, signal) => {
+        const created = h.source.files().find((file) => file.path === 'created.md');
+        if (
+          created !== undefined &&
+          hits.some((hit) =>
+            [...h.source.nodes(created)].some((node) => node.rootId === hit.address.rootId),
+          )
+        ) {
+          entered.resolve();
+          await hydration.promise;
+        }
+        return actual(hits, signal);
+      });
+      vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, holder) => {
+        holder.createEl('strong', { text });
+        if (text.includes('Z created Q needle')) {
+          rendered.resolve();
+          await markdown.promise;
+        }
+      });
+      const present = h.presentation.present.bind(h.presentation);
+      vi.spyOn(h.presentation, 'present').mockImplementation((result, description, authority) => {
+        if (authority !== undefined) {
+          const reveal = authority.reveal.bind(authority);
+          vi.spyOn(authority, 'reveal').mockImplementation((ref, next) => {
+            request = next;
+            return reveal(ref, next);
+          });
+        }
+        present(result, description, authority);
+      });
+      const input = await h.openQ();
+      enter(input, '**Z created Q needle**');
+      await vi.waitFor(() => {
+        expect(request).toBeDefined();
+      });
+      await entered.promise;
+      const reveal = vi.spyOn(expectDefined(h.panel['taskSurface_abyssPrivate']).surface, 'reveal');
+      if (stage === 'markdown') {
+        hydration.resolve();
+        await rendered.promise;
+      }
+      const scroll = expectDefined(h.center.querySelector<HTMLElement>('.abyss-center-scroll'));
+      const outside = document.body.createEl('input');
+      revokeQuickReveal(h, input, reason, { scroll, outside });
+      const active = document.activeElement;
+      const top = scroll.scrollTop;
+      if (reason !== 'scroll-before-event')
+        await vi.waitFor(() => {
+          expect(request?.signal.aborted).toBe(true);
+        });
+      hydration.resolve();
+      markdown.resolve();
+      await flushMicrotasks();
+      await flushMicrotasks();
+      if (reason === 'scroll-before-event') scroll.dispatchEvent(new Event('scroll'));
+      expect(request?.signal.aborted).toBe(true);
+      expect(reveal).not.toHaveBeenCalled();
+      expect(h.root.querySelector('.is-just-created')).toBeNull();
+      expect(h.panel['creationAttempts_abyssPrivate'].size).toBe(0);
+      expect(document.activeElement).toBe(active);
+      expect(scroll.scrollTop).toBe(top);
+      if (reason === 'input') expect(input.value).toBe('new draft');
+      expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThan(1200);
+      outside.remove();
+    } finally {
+      hydration.resolve();
+      markdown.resolve();
+      await h.dispose();
+    }
+  });
+});

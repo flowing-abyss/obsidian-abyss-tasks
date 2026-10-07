@@ -2015,8 +2015,9 @@ describe('PanelView', () => {
         expect(present).toHaveBeenCalledWith(
           failure,
           expect.objectContaining({ kind: 'error' }),
-          undefined,
+          expect.anything(),
         );
+        expect(expectDefined(present.mock.calls[0]?.[2]).isCurrent()).toBe(false);
         expect(internals.interactionRegistry_abyssPrivate.allows('openCalendar')).toBe(false);
 
         input.dispatchEvent(
@@ -2082,8 +2083,9 @@ describe('PanelView', () => {
       expect(present).toHaveBeenCalledWith(
         result,
         expect.objectContaining({ kind: 'success' }),
-        undefined,
+        expect.anything(),
       );
+      expect(expectDefined(present.mock.calls[0]?.[2]).isCurrent()).toBe(false);
       expect(internals.interactionRegistry_abyssPrivate.allows('openCalendar')).toBe(true);
       expect(right.classList.contains('is-compact-open')).toBe(true);
       const outside = activeDocument.body.createEl('button');

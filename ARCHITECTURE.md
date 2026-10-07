@@ -1215,8 +1215,16 @@ Other native scroll, source/query/selection changes, owner loss and window migra
 creation also retains its controller's three-second deadline. Captured ref/query/source/window/visibility/capture intent and
 controller expiry are rechecked after each await; cancellation releases pins and never falls back
 to legacy scrolling or focus. Finite active attempts are drained by state, source and window owners.
-CaptureSessions forwards the request through its captured reveal epoch, links input/blur/unmount
-cancellation to a finite per-session wait, and leaves submitted commands and drafts intact.
+[`CaptureRevealIntent`](src/ui/taskCapture/CaptureRevealIntent.ts) forwards the request through a
+captured result epoch, joins request aborts with input/blur/unmount cancellation, and forwards the
+presenter's `onPresented` acceptance. Both CaptureSessions and QuickCaptureCoordinator retain that
+finite owner while leaving submitted commands and drafts with TaskCaptureController. Physical Q
+acquires CenterPanel's live `captureCreationReveal` capability when opening, before destination
+resolution, and PanelView forwards each result authority unchanged to its existing presenter. Q's
+proof joins its coordinator generation, an idle controller, and the connected focused input; a
+closed or revoked result stays scoped. Calendar and project overview expose no list capability,
+including disconnected surfaces left by rendering. CenterPanel retains surface/context/window
+ownership and creates selection intent only when revealing, after the result's own selection.
 A finite `TaskListInclusion` distinguishes navigation from creation without persisted metadata.
 Creation preserves the actual query hits and list filters, adding only the exact created root under
 “Created task” when excluded; ordinary lists insert that snapshot into the retained surface. The

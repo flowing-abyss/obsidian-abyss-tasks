@@ -852,12 +852,13 @@ export class PanelView extends ItemView {
       host: elements.quickCaptureHost,
       context: () => this.quickCaptureContext_abyssPrivate(),
       resolveTarget: (context) => captureTargets.resolve(context),
+      captureReveal: (isCurrent) => this.center_abyssPrivate.captureCreationReveal(isCurrent),
       interactionOwnership: interactionRegistry,
-      onResult: (result, description) => {
+      onResult: (result, description, revealAuthority) => {
         // Taken before presenting, so a presentation failure cannot leave it for a later capture.
         const pendingPane = this.compactPaneAccess_abyssPrivate.takePending();
         try {
-          this.presentCreationResult_abyssPrivate(result, description);
+          this.presentCreationResult_abyssPrivate(result, description, revealAuthority);
         } finally {
           if (description.kind === 'success' && pendingPane != null) {
             this.compactPaneAccess_abyssPrivate.schedule(pendingPane);
