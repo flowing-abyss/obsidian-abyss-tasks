@@ -216,18 +216,34 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   ],
   TaskPlanning: ['src/views/calendarOccurrences.ts', 'src/task-lists/taskNodeMembership.ts'],
   TaskStatus: ['src/task-lists/taskNodeMembership.ts'],
-  taskNodeSourceLine: ['src/task-lists/taskNodeMembership.ts'],
+  taskNodeSourceLine: [
+    'src/task-lists/taskNodeMembership.ts',
+    'src/panels/center/TaskCardRenderer.ts',
+  ],
+  taskTreeNodes: ['src/panels/CenterPanel.ts'],
+  taskSearchAddressKey: [
+    'src/panels/CenterPanel.ts',
+    'src/panels/task-list/TaskSearchRows.ts',
+    'src/task-lists/taskSearchOrganization.ts',
+  ],
+  nodeAtSearchAddress: ['src/panels/task-list/TaskSearchRows.ts'],
+  TaskDateRole: ['src/task-lists/taskOccurrencePresentation.ts'],
   taskHasFutureDate: ['src/task-lists/taskNodeMembership.ts'],
   taskTodayOccurrence: [
     'src/task-lists/taskNodeMembership.ts',
     'src/task-lists/todayTaskCategory.ts',
   ],
   TaskOccurrenceCompletion: [
+    'src/task-lists/taskOccurrencePresentation.ts',
     'src/panels/center/taskNodeBatch.ts',
     'src/panels/center/TaskCommands.ts',
     'src/panels/center/TaskMenus.ts',
   ],
-  rootTaskNodeSnapshot: ['src/panels/CenterPanel.ts', 'src/panels/center/TaskCommands.ts'],
+  rootTaskNodeSnapshot: [
+    'src/panels/CenterPanel.ts',
+    'src/panels/center/TaskCommands.ts',
+    'src/panels/center/TaskCardRenderer.ts',
+  ],
   TaskOccurrenceResult: ['src/ui/recurrence/RecurrenceEditor.ts'],
   TaskPatch: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
   TaskPriority: [

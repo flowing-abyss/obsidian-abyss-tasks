@@ -10,7 +10,12 @@ import type {
   TaskSearchOccurrence,
   TaskSearchOrganization,
 } from '../src/task-lists/taskSearchOrganization';
-import type { TaskSearchHydratedHit, TaskSearchState, TaskSnapshot } from '../src/tasks';
+import type {
+  TaskNodeSnapshot,
+  TaskSearchHydratedHit,
+  TaskSearchState,
+  TaskSnapshot,
+} from '../src/tasks';
 import * as cloning from '../src/tasks/domain/cloneTaskSnapshot';
 import type { TaskRenderOutcome } from '../src/ui/taskRenderScope';
 import { deferred, expectDefined, flushMicrotasks, useRealMoment } from './helpers';
@@ -27,6 +32,7 @@ async function rowsHarness(
   count = 120,
   overrides: Partial<TaskSearchRowsOptions> = {},
   sourceText?: string,
+  scope: 'roots' | 'nodes' = 'roots',
 ) {
   const h = await createCanonicalSearchHarness(
     {
@@ -48,11 +54,13 @@ async function rowsHarness(
   source.unsubscribe();
   const records = [];
   for await (const batch of h.index.organization(
-    { expectedGeneration: source.state.generation },
+    { expectedGeneration: source.state.generation, scope },
     signal,
   ))
     records.push(...batch.items);
   const occurrences: TaskSearchOccurrence[] = records.map((record) => ({
+    depth: record.depth,
+    presentation: { kind: 'node', completion: { kind: 'allowed' } },
     key: `${record.source.filePath}:${record.source.line}`,
     taskKey: `${record.source.filePath}:${record.source.line}`,
     address: record.address,
@@ -68,6 +76,7 @@ async function rowsHarness(
   }));
   const organization: TaskSearchOrganization = {
     generation: source.state.generation,
+    scope: 'roots',
     rootTotal: count,
     occurrences,
     groupCounts: new Map(),
@@ -81,6 +90,7 @@ async function rowsHarness(
     signal: controller.signal,
   };
   const mounted: TaskSnapshot[] = [];
+  const projections: TaskNodeSnapshot[] = [];
   const failure = vi.fn();
   const owner = new TaskSearchRows({
     search: h.search,
@@ -88,7 +98,8 @@ async function rowsHarness(
     prepareDependencies: (g, s) => h.index.prepareDependencies(g, s),
     isCurrent: (next) => next === identity && !controller.signal.aborted,
     mountCard: (element, task) => {
-      mounted.push(task);
+      mounted.push(task.root);
+      projections.push(task);
       element.addClass('abyss-task-card');
       return {
         element,
@@ -114,6 +125,7 @@ async function rowsHarness(
     identity,
     organization,
     mounted,
+    projections,
     failure,
     publication: () => expectDefined(publication),
     replace(next: TaskSearchRowsIdentity) {
@@ -342,8 +354,8 @@ it('explicit bulk resolution preserves physical order through bounded calls and 
   keys.push(expectDefined(keys[0]));
   const tasks = await h.owner.resolve(keys, h.identity.signal);
   expect(tasks).toHaveLength(101);
-  expect(tasks[0]?.title).toBe('Root 100');
-  expect(tasks[100]?.title).toBe('Root 0');
+  expect(tasks[0]?.node.title).toBe('Root 100');
+  expect(tasks[100]?.node.title).toBe('Root 0');
   expect(read.mock.calls.map(([hits]) => hits.length)).toEqual([50, 50, 1]);
   expect(h.mounted).toHaveLength(0);
   h.index.installCommittedContent('many.md', '- [ ] Changed');
@@ -414,7 +426,7 @@ it('invalidates classified roots on a semantic-only G while exact addresses rema
   const mount = h.owner.mount(h.host, expectDefined(h.rows.rows[0]));
   try {
     expect(await h.owner.settleRow(key, h.identity.signal)).toEqual({ type: 'ready' });
-    expect((await h.owner.snapshot(key, h.identity.signal)).subtasks[0]?.status).toBe('done');
+    expect((await h.owner.snapshot(key, h.identity.signal)).node.subtasks[0]?.status).toBe('done');
     h.statusCatalog.replace(
       h.statusCatalog
         .all()
@@ -448,7 +460,7 @@ it('invalidates classified roots on a semantic-only G while exact addresses rema
       next.signal,
     );
     expect(canonical[0]?.task.root.subtasks[0]?.status).toBe('open');
-    expect((await h.owner.snapshot(key, next.signal)).subtasks[0]?.status).toBe('open');
+    expect((await h.owner.snapshot(key, next.signal)).node.subtasks[0]?.status).toBe('open');
   } finally {
     mount.destroy();
     h.dispose();
@@ -498,7 +510,7 @@ it('retains same-source cards and ignores old Markdown failure while semantic re
         destroy,
       }),
       updateCard: (_card, task) => {
-        updates.push(task);
+        updates.push(task.root);
         receipt = Promise.resolve({ type: 'ready' });
       },
     },
@@ -591,7 +603,7 @@ it('discards a late pre-semantic hydration and cancels its snapshot waiter befor
   expect(await h.owner.settleRow(row.key, next.signal)).toEqual({ type: 'ready' });
   held.resolve(expectDefined(old));
   await Promise.resolve();
-  expect((await h.owner.snapshot(row.key, next.signal)).subtasks[0]?.status).toBe('open');
+  expect((await h.owner.snapshot(row.key, next.signal)).node.subtasks[0]?.status).toBe('open');
   expect(h.failure).not.toHaveBeenCalled();
   mount.destroy();
   h.dispose();
@@ -740,6 +752,116 @@ it('admits measurements only for the current mounted card receipt', async () => 
     expect(remount.measurementReady?.()).toBe(true);
     remount.destroy();
   } finally {
+    h.dispose();
+  }
+});
+
+it('shares a rich root while mounting exact root, parent, and same-title sibling projections', async () => {
+  const h = await rowsHarness(
+    4,
+    {},
+    '- [ ] Grandparent #one-off\n  - [ ] Parent #private\n    - [ ] Same #inbox 📅 2026-10-08\n  - [ ] Same #inbox 📅 2026-10-08',
+    'nodes',
+  );
+  const detach = vi.spyOn(cloning, 'taskSnapshotWithStatuses');
+  const mounts = h.rows.rows.map((row) => h.owner.mount(h.host, row));
+  h.owner.mountedChanged(h.rows.taskKeys);
+  try {
+    expect(await h.owner.settleMounted(h.identity.signal)).toEqual({ type: 'ready' });
+    expect(h.projections.map((task) => task.node.title)).toEqual([
+      'Grandparent',
+      'Parent',
+      'Same',
+      'Same',
+    ]);
+    expect(h.projections.map((task) => task.path.map((node) => node.ref.relativeLine))).toEqual([
+      [],
+      [1],
+      [1, 1],
+      [3],
+    ]);
+    expect(new Set(h.projections.map((task) => task.root)).size).toBe(1);
+    expect(detach).toHaveBeenCalledTimes(1);
+    const children = await h.owner.resolve(['many.md:2', 'many.md:3'], h.identity.signal);
+    expect(children.map((task) => task.path.map((node) => node.title))).toEqual([
+      ['Parent', 'Same'],
+      ['Same'],
+    ]);
+  } finally {
+    mounts.forEach((mount) => {
+      mount.destroy();
+    });
+    h.dispose();
+  }
+});
+
+it('does not accept the pending receipt of an exact child after its row is remounted', async () => {
+  const held = deferred<TaskRenderOutcome>();
+  let first = true;
+  const h = await rowsHarness(
+    2,
+    {
+      mountCard: (element) => {
+        const settled = first ? held.promise : Promise.resolve({ type: 'ready' as const });
+        first = false;
+        return {
+          element,
+          settled,
+          update: () => {},
+          destroy: () => {
+            element.remove();
+          },
+        };
+      },
+    },
+    '- [ ] Root\n  - [ ] Child',
+    'nodes',
+  );
+  const row = expectDefined(h.rows.rows[1]);
+  let mount = h.owner.mount(h.host, row);
+  h.owner.mountedChanged([row.key]);
+  await flushMicrotasks(20);
+  const old = h.owner.settleRow(row.key, h.identity.signal);
+  await flushMicrotasks();
+  mount.destroy();
+  mount = h.owner.mount(h.host, row);
+  held.resolve({ type: 'ready' });
+  try {
+    expect(await old).toEqual({ type: 'cancelled' });
+    expect(await h.owner.settleRow(row.key, h.identity.signal)).toEqual({ type: 'ready' });
+  } finally {
+    mount.destroy();
+    h.dispose();
+  }
+});
+
+it('removes actionable cards on live dependency failure and retries the same exact address', async () => {
+  let fail = false;
+  const h = await rowsHarness(1, {
+    prepareDependencies: async () => {
+      if (fail) throw new Error('unavailable');
+    },
+  });
+  const row = expectDefined(h.rows.rows[0]);
+  const mount = h.owner.mount(h.host, row);
+  h.owner.mountedChanged([row.key]);
+  try {
+    expect(await h.owner.settleRow(row.key, h.identity.signal)).toEqual({ type: 'ready' });
+    fail = true;
+    const failedIdentity = { ...h.identity, request: 2 };
+    const rows = h.replace(failedIdentity);
+    mount.update(expectDefined(rows.rows[0]));
+    expect((await h.owner.settleRow(row.key, failedIdentity.signal)).type).toBe('failed');
+    expect(mount.element.inert || !mount.element.isConnected).toBe(true);
+    fail = false;
+    const retry = { ...h.identity, request: 3 };
+    const retried = h.replace(retry);
+    h.host.append(mount.element);
+    mount.update(expectDefined(retried.rows[0]));
+    expect(await h.owner.settleRow(row.key, retry.signal)).toEqual({ type: 'ready' });
+    expect(h.failure).toHaveBeenCalledTimes(1);
+  } finally {
+    mount.destroy();
     h.dispose();
   }
 });

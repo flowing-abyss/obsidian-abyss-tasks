@@ -5,6 +5,9 @@ import type {
 } from '../../task-lists/taskSearchOrganization';
 import {
   TaskSearchError,
+  nodeAtSearchAddress,
+  taskSearchAddressKey,
+  type TaskNodeSnapshot,
   type TaskSearchAddress,
   type TaskSearchApi,
   type TaskSearchHydratedHit,
@@ -30,10 +33,10 @@ export interface TaskSearchRowsOptions {
   isCurrent(identity: TaskSearchRowsIdentity): boolean;
   mountCard(
     element: HTMLElement,
-    task: TaskSnapshot,
+    task: TaskNodeSnapshot,
     occurrence: TaskSearchOccurrence,
   ): TaskCardMount;
-  updateCard(card: TaskCardMount, task: TaskSnapshot, occurrence: TaskSearchOccurrence): void;
+  updateCard(card: TaskCardMount, task: TaskNodeSnapshot, occurrence: TaskSearchOccurrence): void;
   refreshMeasurements(): void;
   reportFailure(error: unknown): void;
 }
@@ -136,16 +139,18 @@ export class TaskSearchRows {
   #reconcileRoots(semanticsChanged: boolean): void {
     // Exact addresses prove source identity, not descendant status classification.
     // Keep finite leases/cards; reacquire their classified snapshots only on semantic changes.
-    if (semanticsChanged) {
-      for (const root of this.#roots.values()) {
-        root.task = undefined;
-        delete root.failure;
-      }
+    for (const root of this.#roots.values()) {
+      if (semanticsChanged) root.task = undefined;
+      delete root.failure;
     }
     // A surviving exact address keeps its root across unrelated G after dependency readiness.
     for (const row of this.#mounted.values()) {
       const next = this.#rows.task(row.occurrence.key);
-      if (next === undefined || rootKey(next.address) !== row.root.key) this.#retire(row);
+      if (
+        next === undefined ||
+        taskSearchAddressKey(next.address) !== taskSearchAddressKey(row.occurrence.address)
+      )
+        this.#retire(row);
       else {
         row.occurrence = next;
         row.dirty = true;
@@ -201,7 +206,11 @@ export class TaskSearchRows {
         mounted.card.settled === mounted.readyReceipt,
       update: (next) => {
         if (!live || next.kind !== 'task') return;
-        if (!mounted.leased || mounted.root.key !== rootKey(next.task.address)) {
+        if (
+          !mounted.leased ||
+          taskSearchAddressKey(mounted.occurrence.address) !==
+            taskSearchAddressKey(next.task.address)
+        ) {
           mounted.card?.destroy();
           mounted.card = undefined;
           if (mounted.leased) this.#release(mounted.root);
@@ -322,7 +331,7 @@ export class TaskSearchRows {
     return row.failure ?? row.root.failure ?? (this.#eligible(row) ? undefined : cancelled);
   }
 
-  async snapshot(key: string, signal: AbortSignal): Promise<TaskSnapshot> {
+  async snapshot(key: string, signal: AbortSignal): Promise<TaskNodeSnapshot> {
     const identity = this.#identity;
     const occurrence = this.#rows.task(key);
     this.#check(identity, signal);
@@ -345,13 +354,16 @@ export class TaskSearchRows {
       }
       if (outcome.type === 'failed') throw outcome.error;
       this.#check(identity, signal);
-      return root.task;
+      return nodeAtSearchAddress(root.task, occurrence.address);
     } finally {
       this.#release(root);
     }
   }
 
-  async resolve(keys: readonly string[], signal: AbortSignal): Promise<readonly TaskSnapshot[]> {
+  async resolve(
+    keys: readonly string[],
+    signal: AbortSignal,
+  ): Promise<readonly TaskNodeSnapshot[]> {
     const identity = this.#identity;
     this.#check(identity, signal);
     const distinct = new Map<string, TaskSearchOccurrence>();
@@ -361,7 +373,7 @@ export class TaskSearchRows {
       distinct.set(occurrence.taskKey, occurrence);
     }
     const occurrences = [...distinct.values()];
-    const tasks: TaskSnapshot[] = [];
+    const tasks: TaskNodeSnapshot[] = [];
     for (let offset = 0; offset < occurrences.length; offset += 50) {
       this.#check(identity, signal);
       const hits = await this.#options.search.resolveHits(
@@ -369,7 +381,7 @@ export class TaskSearchRows {
         signal,
       );
       this.#check(identity, signal);
-      tasks.push(...hits.map((hit) => hit.task.root));
+      tasks.push(...hits.map((hit) => hit.task));
       if (offset + 50 < occurrences.length) await this.#options.scheduler.yield(signal);
     }
     this.#check(identity, signal);
@@ -516,7 +528,10 @@ export class TaskSearchRows {
       });
       return await Promise.race([
         this.#options.search.resolveHits(
-          roots.map((root) => root.occurrence),
+          roots.map((root) => ({
+            ...root.occurrence,
+            address: { ...root.occurrence.address, childLines: [] },
+          })),
           controller.signal,
         ),
         cancelled,
@@ -566,6 +581,15 @@ export class TaskSearchRows {
     for (const root of roots) {
       if (this.#roots.get(root.key) !== root || !this.#demanded(root)) continue;
       root.failure = { type: 'failed', error };
+      for (const row of this.#mounted.values()) {
+        if (row.root !== root) continue;
+        row.card?.destroy();
+        row.card = undefined;
+        row.element.inert = true;
+        row.element.empty();
+        delete row.receipt;
+        delete row.readyReceipt;
+      }
       failed = true;
     }
     this.#notify();
@@ -661,8 +685,17 @@ export class TaskSearchRows {
       row.dirty = false;
       try {
         if (row.card === undefined)
-          row.card = this.#options.mountCard(row.element, task, row.occurrence);
-        else this.#options.updateCard(row.card, task, row.occurrence);
+          row.card = this.#options.mountCard(
+            row.element,
+            nodeAtSearchAddress(task, row.occurrence.address),
+            row.occurrence,
+          );
+        else
+          this.#options.updateCard(
+            row.card,
+            nodeAtSearchAddress(task, row.occurrence.address),
+            row.occurrence,
+          );
         row.element.inert = false;
         row.element.removeAttribute('aria-busy');
         const receipt = row.card.settled;

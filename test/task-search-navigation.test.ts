@@ -7,6 +7,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TaskSearchError } from '../src/tasks';
 import { TaskSearchService } from '../src/tasks/infrastructure/search/TaskSearchService';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
+import { taskNodeRef } from '../src/ui/taskSelection';
 import { deferred, expectDefined, flushMicrotasks, methodOf, useRealMoment } from './helpers';
 import { taskCardMountBound } from './support/taskPanelViewport';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
@@ -540,7 +541,7 @@ it('normal finish aborts the local lifetime and releases acquired owners', async
   );
 });
 
-it('installs exact child and receipt before mode delivery, then reaches its exact root in the complete compact order', async () => {
+it('installs exact child and receipt before mode delivery, then reaches its exact child in the complete compact order', async () => {
   const h = await navigationSearchHarness();
   try {
     const deliveries: unknown[] = [];
@@ -557,8 +558,8 @@ it('installs exact child and receipt before mode delivery, then reaches its exac
     expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
       taskCardMountBound(h.root, 1),
     );
-    expect(h.root.querySelector('.is-search-revealed')?.textContent).toContain('zzz needle');
-    expect(h.root.dataset['searchLogicalResults']).toBe('101');
+    expect(h.root.querySelector('.is-search-revealed')?.textContent).toContain('repeated');
+    expect(h.root.dataset['searchLogicalResults']).toBe('102');
     expect(h.root.querySelector('.abyss-search-paging')).toBeNull();
     expect(h.list).not.toHaveBeenCalled();
     expect(h.nodes).not.toHaveBeenCalled();
@@ -677,7 +678,7 @@ it('expires a deleted receipt into ordinary Tasks without selecting a successor'
     expect(h.state.get('taskStack')[h.state.get('taskStack').length - 1]?.title).not.toBe(
       'replacement at old location',
     );
-    expect(h.list).toHaveBeenCalled();
+    expect(h.nodes).toHaveBeenCalled();
   } finally {
     h.dispose();
   }
@@ -786,7 +787,7 @@ it('chooses configured prefix children in actual sidebar order after archived pi
     });
     expect(h.state.get('selectedList')).toEqual({ type: 'tag', tag: '#Work/One' });
     await h.completed();
-    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(2);
     expect(all).not.toHaveBeenCalled();
     expect(nodes).not.toHaveBeenCalled();
   } finally {
@@ -869,7 +870,10 @@ it.each(['command-toggle', 'other-root-update'] as const)(
       expect(h.root.dataset['searchLogicalResults']).toBeUndefined();
       expect(h.root.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);
       if (reason === 'command-toggle')
-        expect(h.index.list().find((task) => task.title === 'zzz needle')?.status).toBe('done');
+        expect(
+          h.index.list().find((task) => task.title === 'zzz needle')?.subtasks[0]?.subtasks[0]
+            ?.status,
+        ).toBe('done');
       else expect(h.root.textContent).toContain('changed other root');
       const input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-center-search'));
       input.value = 'aaa';
@@ -964,7 +968,7 @@ async function runCanonicalSearchNavigationScaleAudit({
     ).toBeLessThan(100);
     expect(yields).toBeGreaterThan(300);
     expect(readYields).toBeGreaterThan(1000);
-    expect(h.root.dataset['searchLogicalResults']).toBe('50000');
+    expect(h.root.dataset['searchLogicalResults']).toBe('50001');
     expect(h.root.querySelector('.abyss-search-paging')).toBeNull();
     expect(h.root.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);
     expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
@@ -1144,7 +1148,7 @@ it.each(['reveal', 'filter'] as const)(
         true,
       );
       expect(h.root.dataset['searchPhase']).toBe('complete');
-      expect(h.root.dataset['searchLogicalResults']).toBe(surface === 'reveal' ? '2' : '1');
+      expect(h.root.dataset['searchLogicalResults']).toBe(surface === 'reveal' ? '3' : '1');
       const before = h.captureNavigation();
       const status = h.root.querySelector('.abyss-search-status');
       expectDefined(h.backends[2]).crash();
@@ -1305,7 +1309,7 @@ it.each(['accepted', 'later-intent'] as const)(
       expectDefined(release)();
       await h.completed();
       if (reason === 'accepted') {
-        expect(h.root.querySelector('.is-search-revealed')?.textContent).toContain('zzz');
+        expect(h.root.querySelector('.is-search-revealed')?.textContent).toContain('repeated');
         expect(surfaceReveal).toHaveBeenCalledTimes(1);
         expect(h.state.get('taskStack').map((node) => node.title)).toEqual([
           'zzz **needle**',
@@ -1329,7 +1333,10 @@ it('keeps the reveal pulse on the first physical occurrence when duplicate group
   const h = await navigationSearchHarness(2, undefined, 'zzz needle [[Alice]] [[Bob]]');
   try {
     expectDefined(expectDefined(h.settings.listViewStates)['inbox']).groupBy = 'outgoing-link';
-    await h.activateChild();
+    expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card')).click();
+    await vi.waitFor(() => {
+      expect(h.state.get('mode')).toBe('tasks');
+    });
     await h.completed();
     const compact = expectDefined(h.panel['taskSurface_abyssPrivate']?.search);
     const target = expectDefined(h.state.get('taskStack')[0]);
@@ -1416,3 +1423,121 @@ it.each(['accepted', 'later-selection', 'replacement', 'disposal'] as const)(
     }
   },
 );
+
+it.each([
+  ['click', false],
+  ['Enter', false],
+  [' ', false],
+  ['click', true],
+  ['Enter', true],
+  [' ', true],
+] as const)(
+  'selects deep child and reveals its filtered immediate parent by %s (compact=%s)',
+  async (activation, compact) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const h = await mountCanonicalSearchUi(
+      {
+        'tree.md':
+          '- [ ] Grandparent #one-off\n  - [ ] Parent #private\n    - [ ] Same #inbox 📅 2026-10-08\n  - [ ] Same #inbox 📅 2026-10-08',
+      },
+      settings,
+      'tasks',
+    );
+    try {
+      h.state.set('selectedList', { type: 'tag', tag: '#inbox' });
+      h.panel.refresh();
+      if (compact) {
+        h.query('Same');
+        await h.completed();
+      }
+      const cards = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')];
+      expect(cards.map((card) => card.dataset['line'])).toEqual(['2', '3']);
+      const card = expectDefined(cards[0]);
+      card.click();
+      const selectedStack = h.state.get('taskStack');
+      expect(selectedStack.map((n) => n.title)).toEqual(['Grandparent', 'Parent', 'Same']);
+      const parentButton = expectDefined(
+        card.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'),
+      );
+      expect(parentButton.getAttribute('aria-label')).toContain('Parent');
+      const show = vi.spyOn(h.panel, 'showTaskInList');
+      if (activation === 'click') parentButton.click();
+      else
+        parentButton.dispatchEvent(
+          new KeyboardEvent('keydown', { key: activation, bubbles: true, cancelable: true }),
+        );
+      await flushMicrotasks(40);
+      expect(show).toHaveBeenCalledTimes(1);
+      const revealTarget = show.mock.calls[0]?.[0];
+      expect(revealTarget).toEqual(taskNodeRef(expectDefined(selectedStack[1])));
+      await show.mock.results[0]?.value;
+      await h.completed();
+      expect(h.state.get('taskStack').map((n) => n.title)).toEqual(['Grandparent', 'Parent']);
+      const parentCard = expectDefined(
+        h.root.querySelector<HTMLElement>('.abyss-task-card[data-line="1"]'),
+      );
+      expect(parentCard.querySelector('.abyss-task-title')?.textContent).toBe('Parent');
+      expect(parentCard.classList.contains('is-selected')).toBe(true);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each([false, true])(
+  'preserves child capabilities in mixed bulk selection (compact=%s)',
+  async (compact) => {
+    const h = await mountCanonicalSearchUi(
+      {
+        'tree.md':
+          '- [ ] Grandparent #inbox\n  - [ ] Parent #private\n    - [ ] Same #inbox 📅 2026-10-08\n  - [ ] Same #inbox 📅 2026-10-08',
+      },
+      structuredClone(DEFAULT_SETTINGS),
+      'tasks',
+    );
+    try {
+      h.state.set('selectedList', { type: 'tag', tag: '#inbox' });
+      h.panel.refresh();
+      if (compact) {
+        h.query('#inbox');
+        await h.completed();
+      }
+      const cards = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')];
+      expect(cards).toHaveLength(3);
+      for (const card of cards)
+        card.dispatchEvent(new MouseEvent('click', { ctrlKey: true, bubbles: true }));
+      const targets = h.panel['taskMenuTargets_abyssPrivate']();
+      expect(targets.summaries.map((summary) => summary.depth)).toEqual([2, 1, 0]);
+      const selected = await targets.resolve(targets.signal);
+      expect(selected.map((entry) => entry.task.path.length)).toEqual([2, 1, 0]);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('refreshes ordinary child admission after status semantics change', async () => {
+  const h = await mountCanonicalSearchUi(
+    { 'tree.md': '- [ ] Grandparent #one-off\n  - [x] Child #inbox' },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  try {
+    h.state.set('selectedList', { type: 'tag', tag: '#inbox' });
+    h.panel.refresh();
+    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(0);
+    h.statusCatalog.replace(
+      h.statusCatalog
+        .all()
+        .map((rule) =>
+          rule.symbol === 'x' ? { ...rule, type: 'todo', defaultForType: false } : rule,
+        ),
+    );
+    h.index.setStatusCatalog(h.statusCatalog);
+    h.panel.refresh();
+    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+    expect(h.root.querySelector('.abyss-task-title')?.textContent).toBe('Child');
+  } finally {
+    h.dispose();
+  }
+});

@@ -5,7 +5,9 @@ import {
   TaskCardRenderer,
   type TaskCardInteractionContext,
 } from '../src/panels/center/TaskCardRenderer';
+import type { TaskListNavigationRequest } from '../src/panels/center/TaskListNavigation';
 import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
+import type { TaskNodeRef } from '../src/tasks';
 import { taskNodeAddress, type TaskDependencyProjection, type TaskSnapshot } from '../src/tasks';
 import {
   deferred,
@@ -15,6 +17,7 @@ import {
   testStatusRegistry,
   useRealMoment,
 } from './helpers';
+import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 useRealMoment();
 afterEach(() => {
   vi.useRealTimers();
@@ -28,6 +31,9 @@ function renderer() {
   const unbound = vi.fn();
   const editTaskLink = vi.fn();
   const dependenciesFor = vi.fn<() => TaskDependencyProjection | undefined>(() => undefined);
+  const showTaskInList = vi.fn<
+    (target: TaskNodeRef, request: TaskListNavigationRequest) => Promise<void>
+  >(async () => {});
   const openLinkText = vi.fn().mockResolvedValue(undefined);
   const trigger = vi.fn();
   const hostComponent = new Component();
@@ -46,6 +52,7 @@ function renderer() {
     trackingEnabled: true,
     host: {
       component: () => hostComponent,
+      showTaskInList,
       dependenciesFor,
       dependenciesForNode: () => undefined,
       mountInteractions: (_card, _task, _key, next) => {
@@ -60,6 +67,7 @@ function renderer() {
   });
   return {
     subject,
+    showTaskInList,
     state,
     listControls,
     hostComponent,
@@ -734,4 +742,100 @@ it('keeps dependency decoration inside the title on initial and retained renderi
   expect(
     legacy.querySelector('.abyss-dep-indicator')?.parentElement?.matches('.abyss-task-title-row'),
   ).toBe(true);
+});
+
+it('renders own child metadata and retires parent controls on update and unload', async () => {
+  const source = await createCanonicalSearchHarness(
+    {
+      'tree.md':
+        '- [ ] Grandparent #one-off\n  - [ ] Parent #private\n    - [/] Same #inbox 📅 2026-10-08\n  - [ ] Same #inbox 📅 2026-10-08',
+    },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  const h = renderer();
+  try {
+    h.state.set('selectedList', 'inbox');
+    const projection = expectDefined(
+      source.index.listNodes().find((task) => task.path.length === 2),
+    );
+    const flags = { selected: false, showDelete: true, projection };
+    const mount = h.subject.mount(document.body, projection.root, [], flags);
+    expect(mount.element.querySelector('.abyss-task-title')?.textContent).toBe('Same');
+    expect(mount.element.querySelector('.abyss-task-tag')?.textContent).toBe('#inbox');
+    expect(mount.element.querySelector('.abyss-task-date')?.textContent).toContain('2026-10-08');
+    expect(
+      mount.element.querySelector('.abyss-status-marker')?.getAttribute('data-status-type'),
+    ).toBe('in-progress');
+    expect(mount.element.dataset['line']).toBe('2');
+    expect(mount.element.className).toBe('abyss-task-card');
+    expectDefined(mount.element.querySelector<HTMLElement>('.abyss-status-marker')).click();
+    expect(h.toggleTask).toHaveBeenCalledWith(projection.node);
+    const button = expectDefined(
+      mount.element.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'),
+    );
+    expect(button.getAttribute('aria-label')).toContain('Parent');
+    expect(button.closest('.abyss-task-count-badge')).toBeNull();
+    button.click();
+    const request = h.showTaskInList.mock.calls[0]?.[1];
+    expect(request?.signal.aborted).toBe(false);
+    mount.update(projection.root, [], flags);
+    expect(request?.signal.aborted).toBe(true);
+    button.click();
+    expect(h.showTaskInList).toHaveBeenCalledTimes(1);
+    const replacement = expectDefined(
+      mount.element.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'),
+    );
+    replacement.click();
+    const next = h.showTaskInList.mock.calls[1]?.[1];
+    const sibling = expectDefined(
+      source.index.listNodes().find((task) => task.path.length === 1 && task.node.title === 'Same'),
+    );
+    expect(() => {
+      mount.update(sibling.root, [], { ...flags, projection: sibling });
+    }).toThrow('different source');
+    mount.destroy();
+    expect(next?.signal.aborted).toBe(true);
+  } finally {
+    source.close();
+    h.hostComponent.unload();
+  }
+});
+
+it('ticks root and child badges using their own subtree totals', async () => {
+  const source = await createCanonicalSearchHarness(
+    {
+      'tree.md':
+        '- [ ] Root\n  - 2026-10-04T10:00:00+07:00 → 2026-10-04T10:05:00+07:00\n  - [ ] Child\n    - 2026-10-04T10:05:00+07:00 →',
+    },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  const h = renderer();
+  const mounts = [];
+  try {
+    h.subject.beginRender(Date.parse('2026-10-04T10:10:00+07:00'));
+    for (const projection of source.index.listNodes())
+      mounts.push(
+        h.subject.mount(document.body, projection.root, [], {
+          selected: false,
+          showDelete: false,
+          projection,
+        }),
+      );
+    expect(
+      mounts.map((m) => m.element.querySelector('.abyss-task-time-badge span')?.textContent),
+    ).toEqual(['10m', '5m']);
+    h.subject.paintTracking({
+      nowMs: Date.parse('2026-10-04T10:11:00+07:00'),
+      active: source.index.activeEntries(),
+    });
+    expect(
+      mounts.map((m) => m.element.querySelector('.abyss-task-time-badge span')?.textContent),
+    ).toEqual(['11m', '6m']);
+  } finally {
+    mounts.forEach((m) => {
+      m.destroy();
+    });
+    source.close();
+    h.hostComponent.unload();
+  }
 });

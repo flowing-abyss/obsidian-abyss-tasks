@@ -76,7 +76,7 @@ it('organizes 50k compact roots and 100k outgoing occurrences with bounded steps
       budget: { targetMs: 4, maxSteps: 8192, clockCheckEvery: 32 },
     });
     expect(yields).toBeGreaterThan(100);
-    expect(result.rootTotal).toBe(50000);
+    expect(result.scope === 'roots' ? result.rootTotal : undefined).toBe(50000);
     expect(result.occurrences).toHaveLength(100000);
     expect(result.groupCounts.get('note:all')).toBe(50000);
     expect(new Set(result.occurrences.map((o) => o.key)).size).toBe(100000);
@@ -84,10 +84,10 @@ it('organizes 50k compact roots and 100k outgoing occurrences with bounded steps
       throw new Error('Native sort in cooperative path');
     });
     try {
-      expect(
-        drainCollectionSteps(organizeTaskSearch({ ...input, records: records.slice(0, 100) }))
-          .rootTotal,
-      ).toBe(100);
+      const partial = drainCollectionSteps(
+        organizeTaskSearch({ ...input, records: records.slice(0, 100) }),
+      );
+      expect(partial.scope === 'roots' ? partial.rootTotal : undefined).toBe(100);
     } finally {
       native.mockRestore();
     }

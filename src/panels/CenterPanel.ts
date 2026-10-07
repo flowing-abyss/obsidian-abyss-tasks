@@ -14,7 +14,7 @@ import {
   tagNavigationGroupTags,
   type EffectiveTagGroup,
 } from '../tags/effectiveTagGroups';
-import { selectTaskList } from '../task-lists/TaskListSelector';
+import { selectTaskNodes } from '../task-lists/TaskListSelector';
 import { outgoingTaskLinkValues, type TaskLinkValues } from '../task-lists/taskLinkValues';
 import type {
   TaskSearchOccurrence,
@@ -23,14 +23,18 @@ import type {
 import {
   localDate,
   rootTaskNodeSnapshot,
+  sameTaskNodeRef,
   taskReconciliationKey,
+  taskSearchAddressKey,
   TaskSearchError,
+  taskTreeNodes,
   type CommentTimeContextProvider,
   type LocalDate,
   type TaskApplicationApi,
   type TaskCaptureApplicationApi,
   type TaskCommandResult,
   type TaskNodeRef,
+  type TaskNodeSnapshot,
   type TaskQueryApi,
   type TaskRef,
   type TaskSearchAddress,
@@ -109,7 +113,7 @@ import {
   type MountedTaskListRows,
 } from './task-list/taskListRowView';
 import {
-  buildTaskListRows,
+  buildTaskNodeListRows,
   indexedRows,
   NO_TASK_LIST_ROWS,
   taskListGrouping,
@@ -120,7 +124,7 @@ import {
 } from './task-list/taskListRows';
 import { TaskRowSelection } from './task-list/taskRowSelection';
 
-type SurfaceTask = TaskSnapshot | TaskSearchOccurrence;
+type SurfaceTask = TaskNodeSnapshot | TaskSearchOccurrence;
 interface TaskRowOptions {
   readonly signal?: AbortSignal;
   readonly isCurrent?: () => boolean;
@@ -174,7 +178,7 @@ interface CenterPanelOptions {
   readonly state: AppState;
   readonly app: App;
   readonly settings: CalendarSettings;
-  readonly queries: TaskQueryApi;
+  readonly queries: TaskQueryApi & Partial<Pick<TaskApplicationApi['queries'], 'listNodes'>>;
   readonly search?: TaskSearchApi;
   readonly organizationScheduler?: TaskSearchOptions['organizationScheduler'];
   readonly statusRegistry: StatusRegistry;
@@ -257,7 +261,7 @@ export class CenterPanel {
     readonly cancel: () => void;
   }>();
   private readonly ordinaryCards_abyssPrivate = new Map<string, TaskCardMount>();
-  private readonly mountedSnapshots_abyssPrivate = new Map<string, TaskSnapshot>();
+  private readonly mountedSnapshots_abyssPrivate = new Map<string, TaskNodeSnapshot>();
   private keyboardTarget_abyssPrivate: AbortController | undefined;
   private taskSurface_abyssPrivate: TaskSurfaceState | null = null;
   private outgoingLinks_abyssPrivate: TaskLinkValues = new Map();
@@ -302,7 +306,7 @@ export class CenterPanel {
   private readonly state_abyssPrivate: AppState;
   private readonly app_abyssPrivate: App;
   private readonly settings_abyssPrivate: CalendarSettings;
-  private readonly queries_abyssPrivate: TaskQueryApi;
+  private readonly queries_abyssPrivate: CenterPanelOptions['queries'];
   private readonly statusRegistry_abyssPrivate: StatusRegistry;
   private readonly projectStore_abyssPrivate: ProjectStore | null;
   private readonly projectManager_abyssPrivate: ProjectManager | null;
@@ -422,6 +426,7 @@ export class CenterPanel {
         component: () => this.md_abyssPrivate,
         dependenciesFor: (task) => this.dependenciesFor_abyssPrivate(task),
         dependenciesForNode: (target) => this.tasks_abyssPrivate?.queries.dependencySummary(target),
+        showTaskInList: (target, request) => this.showTaskInList(target, request),
         mountInteractions: (card, task, rowKey, context) => {
           this.mountTaskCardInteractions_abyssPrivate(card, task, rowKey, context);
         },
@@ -700,7 +705,7 @@ export class CenterPanel {
       if (
         !current() ||
         task === undefined ||
-        (expectedRef !== undefined && !this.sameCardRef_abyssPrivate(task.ref, expectedRef))
+        (expectedRef !== undefined && !this.sameCardRef_abyssPrivate(task.root.ref, expectedRef))
       )
         return undefined;
       return await this.settleTaskDestination_abyssPrivate(retained, key, task, lifetime);
@@ -861,7 +866,7 @@ export class CenterPanel {
   private async settleTaskDestination_abyssPrivate(
     retained: TaskSurfaceState,
     key: string,
-    task: TaskSnapshot,
+    task: TaskNodeSnapshot,
     lifetime: TaskListNavigationRequest,
   ): Promise<{ task: TaskSnapshot; card: HTMLElement } | undefined> {
     for (let round = 0; round < 8 && lifetime.isCurrent(); round++) {
@@ -869,10 +874,9 @@ export class CenterPanel {
       if (outcome.type === 'cancelled') return undefined;
       if (outcome.type === 'changed') continue;
       const card = outcome.card;
-      const mounted = this.mountedSnapshot_abyssPrivate(key);
-      if (mounted === undefined || !this.sameCardRef_abyssPrivate(task.ref, mounted.ref))
-        return undefined;
-      return { task, card };
+      const mounted = this.mountedProjection_abyssPrivate(key);
+      if (mounted === undefined || !sameTaskNodeRef(task.target, mounted.target)) return undefined;
+      return { task: task.root, card };
     }
     if (lifetime.isCurrent()) throw new Error('Task destination receipts did not converge');
     return undefined;
@@ -1095,7 +1099,7 @@ export class CenterPanel {
       updateCard: (card, task, occurrence) => {
         this.mountedSnapshots_abyssPrivate.set(occurrence.key, task);
         card.update(
-          task,
+          task.root,
           this.taskSurface_abyssPrivate?.tagGroups ?? [],
           this.compactCardOptions_abyssPrivate(task, occurrence),
         );
@@ -1110,7 +1114,7 @@ export class CenterPanel {
       host,
       scroll: host,
       mount: (container, row) => {
-        if (row.kind === 'task' && 'ref' in row.task) throw new Error('Expected compact row');
+        if (row.kind === 'task' && 'root' in row.task) throw new Error('Expected compact row');
         const mount = rows.mount(
           container,
           row.kind === 'group' ? row : { ...row, task: row.task as TaskSearchOccurrence },
@@ -1145,22 +1149,25 @@ export class CenterPanel {
   private taskSearchScrollReset_abyssPrivate = false;
   private compactPresentation_abyssPrivate: TaskSearchRowOptions | undefined;
   private taskRowRevision_abyssPrivate(task: SurfaceTask): string {
-    return 'ref' in task ? task.ref.revision : String(task.address.version);
+    return 'root' in task ? task.root.ref.revision : String(task.address.version);
   }
   private rowMeasurementIdentity_abyssPrivate(
     task: SurfaceTask,
     semanticsRevision?: number,
   ): unknown {
-    return 'ref' in task ? task.ref : [task.address, semanticsRevision];
+    return 'root' in task ? task.target : [task.address, semanticsRevision];
   }
   private compactCardOptions_abyssPrivate(
-    task: TaskSnapshot,
+    task: TaskNodeSnapshot,
     occurrence: TaskSearchOccurrence,
   ): Parameters<TaskCardMount['update']>[2] {
     const options = this.compactPresentation_abyssPrivate;
     return {
       ...this.taskCardOptions_abyssPrivate(task, occurrence.key),
-      search: options?.presentation?.(task, occurrence.address),
+      projection: task,
+      occurrence: occurrence.presentation,
+      selected: taskStackRowKey(this.state_abyssPrivate.get('taskStack')) === occurrence.taskKey,
+      search: options?.presentation?.(task.root, occurrence.address),
       highlight: options?.highlight,
       onActivate:
         options?.onActivate === undefined
@@ -1170,12 +1177,12 @@ export class CenterPanel {
   }
   private mountCompactCard_abyssPrivate(
     element: HTMLElement,
-    task: TaskSnapshot,
+    task: TaskNodeSnapshot,
     occurrence: TaskSearchOccurrence,
   ): TaskCardMount {
     const card = this.taskCardRenderer_abyssPrivate.mountInto(
       element,
-      task,
+      task.root,
       this.taskSurface_abyssPrivate?.tagGroups ?? [],
       this.compactCardOptions_abyssPrivate(task, occurrence),
     );
@@ -1183,11 +1190,17 @@ export class CenterPanel {
     this.observeTaskCardReceipt_abyssPrivate(card);
     return card;
   }
-  private mountedSnapshot_abyssPrivate(key: string): TaskSnapshot | undefined {
+  private mountedProjection_abyssPrivate(key: string): TaskNodeSnapshot | undefined {
     if (this.taskSurface_abyssPrivate?.search !== undefined)
       return this.mountedSnapshots_abyssPrivate.get(key);
     const task = this.mountedRows_abyssPrivate.rows.task(key);
-    return task !== undefined && 'ref' in task ? task : undefined;
+    return task !== undefined && 'root' in task ? task : undefined;
+  }
+  private mountedSnapshot_abyssPrivate(key: string): TaskSnapshot | undefined {
+    if (this.taskSurface_abyssPrivate?.search !== undefined)
+      return this.mountedSnapshots_abyssPrivate.get(key)?.root;
+    const task = this.mountedRows_abyssPrivate.rows.task(key);
+    return task !== undefined && 'root' in task ? task.root : undefined;
   }
   private invalidateCompactInteractions_abyssPrivate(
     previous: TaskListRows<TaskSearchOccurrence>,
@@ -1197,7 +1210,7 @@ export class CenterPanel {
       const a = previous.task(key)?.address,
         b = next.task(key)?.address;
       return (
-        a !== undefined && a.epoch === b?.epoch && a.version === b.version && a.rootId === b.rootId
+        a !== undefined && b !== undefined && taskSearchAddressKey(a) === taskSearchAddressKey(b)
       );
     };
     this.invalidateCompactReturn_abyssPrivate(same);
@@ -1498,16 +1511,16 @@ export class CenterPanel {
     task: TaskSnapshot,
   ): void {
     const rows = this.withCreationInclusion_abyssPrivate(
-      retained.surface.rows as TaskListRows<TaskSnapshot>,
+      retained.surface.rows as TaskListRows<TaskNodeSnapshot>,
       task,
     );
     this.mountTaskRows_abyssPrivate(retained.host, rows, retained.tagGroups);
   }
 
   private withCreationInclusion_abyssPrivate(
-    rows: TaskListRows<TaskSnapshot>,
+    rows: TaskListRows<TaskNodeSnapshot>,
     task: TaskSnapshot,
-  ): TaskListRows<TaskSnapshot> {
+  ): TaskListRows<TaskNodeSnapshot> {
     const key = taskRowKey(task);
     return indexedRows([
       ...rows.rows,
@@ -1518,7 +1531,7 @@ export class CenterPanel {
         count: 1,
         first: rows.taskKeys.length === 0,
       },
-      { kind: 'task', key, taskKey: key, task },
+      { kind: 'task', key, taskKey: key, task: rootTaskNodeSnapshot(task) },
     ]);
   }
 
@@ -1539,11 +1552,11 @@ export class CenterPanel {
   private async snapshotForKey_abyssPrivate(
     key: string,
     signal: AbortSignal,
-  ): Promise<TaskSnapshot | undefined> {
+  ): Promise<TaskNodeSnapshot | undefined> {
     if (signal.aborted) return undefined;
     const retained = this.taskSurface_abyssPrivate;
     if (retained?.search !== undefined) return retained.search.rows.snapshot(key, signal);
-    return this.mountedSnapshot_abyssPrivate(key);
+    return this.mountedProjection_abyssPrivate(key);
   }
 
   private readyCreationCard_abyssPrivate(element: HTMLElement, ref: TaskRef): boolean {
@@ -1586,11 +1599,11 @@ export class CenterPanel {
     this.creationAttempts_abyssPrivate.clear();
   }
 
-  private sameSearchRoot_abyssPrivate(
+  private sameSearchAddress_abyssPrivate(
     a: TaskSearchAddress | undefined,
     b: TaskSearchAddress,
   ): boolean {
-    return a?.rootId === b.rootId && a.epoch === b.epoch && a.version === b.version;
+    return a !== undefined && taskSearchAddressKey(a) === taskSearchAddressKey(b);
   }
 
   private refreshSearchPulse_abyssPrivate(): void {
@@ -1600,7 +1613,7 @@ export class CenterPanel {
     for (const key of retained.surface.mountedKeys()) {
       const address = retained.search?.order.task(key)?.address;
       if (
-        !this.sameSearchRoot_abyssPrivate(address, receipt.address) ||
+        !this.sameSearchAddress_abyssPrivate(address, receipt.address) ||
         this.mountedSnapshot_abyssPrivate(key) === undefined
       )
         continue;
@@ -1852,11 +1865,8 @@ export class CenterPanel {
     const current = stack[stack.length - 1];
     const detailKey = this.detailOccurrenceKey_abyssPrivate();
     const deletable =
-      root !== undefined &&
-      'source' in root &&
-      current === root &&
-      this.rowSelection_abyssPrivate.size === 0
-        ? root
+      root !== undefined && 'source' in root && this.rowSelection_abyssPrivate.size === 0
+        ? current
         : undefined;
     for (const [key, card] of this.mountedRows_abyssPrivate.cards()) {
       const isSelected = key === detailKey;
@@ -1990,9 +2000,15 @@ export class CenterPanel {
       });
       return;
     }
-    const task = extend ? undefined : this.mountedSnapshot_abyssPrivate(next);
-    if (task !== undefined) this.state_abyssPrivate.set('taskStack', [task]);
+    const task = extend ? undefined : this.mountedProjection_abyssPrivate(next);
+    if (task !== undefined) this.state_abyssPrivate.set('taskStack', [task.root, ...task.path]);
     this.focusTaskKey_abyssPrivate(next);
+  }
+
+  private selectMountedProjection_abyssPrivate(key: string): void {
+    const projection = this.mountedProjection_abyssPrivate(key);
+    if (projection !== undefined)
+      this.state_abyssPrivate.set('taskStack', [projection.root, ...projection.path]);
   }
 
   private async readyKeyboardTarget_abyssPrivate(key: string, extend: boolean): Promise<void> {
@@ -2030,7 +2046,9 @@ export class CenterPanel {
         isCurrent: current,
       });
       if (ready === undefined || !current()) return;
-      if (!extend) this.state_abyssPrivate.set('taskStack', [ready.task]);
+      if (!extend) {
+        this.selectMountedProjection_abyssPrivate(key);
+      }
       ready.card.focus({ preventScroll: true });
     } catch (error) {
       if (current()) this.reportTaskRenderFailure_abyssPrivate(error);
@@ -2524,7 +2542,7 @@ export class CenterPanel {
 
   private renderWithGrouping_abyssPrivate(
     container: HTMLElement,
-    tasks: TaskSnapshot[],
+    tasks: TaskNodeSnapshot[],
     tagGroups: readonly EffectiveTagGroup[] = this.effectiveTagGroups_abyssPrivate(),
   ): void {
     const vs = this.state_abyssPrivate.get('centerListViewState');
@@ -2535,7 +2553,7 @@ export class CenterPanel {
       statuses: this.statusRegistry_abyssPrivate,
       outgoingLinks: this.outgoingLinks_abyssPrivate,
     });
-    const rows = buildTaskListRows(tasks, grouping);
+    const rows = buildTaskNodeListRows(tasks, grouping);
     const inclusion = this.creationInclusion_abyssPrivate;
     if (inclusion !== undefined && rows.occurrencesOf(taskRowKey(inclusion.task)).length === 0) {
       const exact = this.queries_abyssPrivate.resolve(inclusion.task.ref);
@@ -2561,7 +2579,7 @@ export class CenterPanel {
   ): void {
     this.mountTaskRows_abyssPrivate(
       container,
-      buildTaskListRows(tasks, { by: 'none' }),
+      buildTaskNodeListRows(tasks.map(rootTaskNodeSnapshot), { by: 'none' }),
       tagGroups,
       options,
     );
@@ -2570,7 +2588,7 @@ export class CenterPanel {
   /** The one place list rows become elements; the handle it keeps serves every later patch. */
   private mountTaskRows_abyssPrivate(
     container: HTMLElement,
-    rows: TaskListRows,
+    rows: TaskListRows<TaskNodeSnapshot>,
     tagGroups: readonly EffectiveTagGroup[],
     options: TaskRowOptions = {},
   ): void {
@@ -2579,7 +2597,7 @@ export class CenterPanel {
 
   private updateTaskSurface_abyssPrivate(
     host: HTMLElement,
-    rows: TaskListRows,
+    rows: TaskListRows<TaskNodeSnapshot>,
     tagGroups: readonly EffectiveTagGroup[],
     options: TaskRowOptions = {},
   ): void {
@@ -2592,10 +2610,11 @@ export class CenterPanel {
         host,
         scroll: host.closest<HTMLElement>('.abyss-project-dashboard-session') ?? host,
         mount: (container, row) => {
-          if (row.kind === 'task' && !('ref' in row.task)) throw new Error('Expected snapshot row');
+          if (row.kind === 'task' && !('root' in row.task))
+            throw new Error('Expected snapshot row');
           return this.mountTaskRow_abyssPrivate(
             container,
-            row.kind === 'group' ? row : { ...row, task: row.task as TaskSnapshot },
+            row.kind === 'group' ? row : { ...row, task: row.task as TaskNodeSnapshot },
             tagGroups,
           );
         },
@@ -2634,22 +2653,22 @@ export class CenterPanel {
 
   private mountTaskRow_abyssPrivate(
     container: HTMLElement,
-    row: TaskListRow,
+    row: TaskListRow<TaskNodeSnapshot>,
     tagGroups: readonly EffectiveTagGroup[],
-  ): TaskRowMount {
+  ): TaskRowMount<TaskNodeSnapshot> {
     let card: TaskCardMount | undefined;
     let releaseNavigation: void | (() => void);
     const element = mountTaskListRow(container, row, (parent, taskRow) => {
       card = this.taskCardRenderer_abyssPrivate.mount(
         parent,
-        taskRow.task,
+        taskRow.task.root,
         this.taskSurface_abyssPrivate?.tagGroups ?? tagGroups,
         this.taskCardOptions_abyssPrivate(taskRow.task, taskRow.key),
       );
       try {
         releaseNavigation = this.taskSurface_abyssPrivate?.options.onCard?.(
           card.element,
-          taskRow.task,
+          taskRow.task.root,
         );
       } catch (error) {
         card.destroy();
@@ -2666,12 +2685,15 @@ export class CenterPanel {
           if (typeof releaseNavigation === 'function') releaseNavigation();
           releaseNavigation = undefined;
           card?.update(
-            next.task,
+            next.task.root,
             this.taskSurface_abyssPrivate?.tagGroups ?? tagGroups,
             this.taskCardOptions_abyssPrivate(next.task, next.key),
           );
           if (card !== undefined) this.observeTaskCardReceipt_abyssPrivate(card);
-          releaseNavigation = this.taskSurface_abyssPrivate?.options.onCard?.(element, next.task);
+          releaseNavigation = this.taskSurface_abyssPrivate?.options.onCard?.(
+            element,
+            next.task.root,
+          );
         } else {
           element.textContent = `${next.label}  ${next.count}`;
           element.toggleClass('abyss-group-header--first', next.first);
@@ -2700,12 +2722,15 @@ export class CenterPanel {
   }
 
   private taskCardOptions_abyssPrivate(
-    task: TaskSnapshot,
+    task: TaskNodeSnapshot,
     rowKey: string,
   ): Parameters<TaskCardMount['update']>[2] {
     const options = this.taskSurface_abyssPrivate?.options;
     return {
-      selected: this.isTaskCardSelected_abyssPrivate(task),
+      projection: task,
+      selected:
+        taskStackRowKey(this.state_abyssPrivate.get('taskStack')) ===
+        taskStackRowKey([task.root, ...task.path]),
       showDelete: false,
       rowKey,
       get renderScope() {
@@ -2739,10 +2764,10 @@ export class CenterPanel {
     };
   }
 
-  private invalidateTaskInteractions_abyssPrivate(rows: TaskListRows): void {
+  private invalidateTaskInteractions_abyssPrivate(rows: TaskListRows<TaskNodeSnapshot>): void {
     for (const record of [...this.taskInteractionPins_abyssPrivate]) {
       const next = rows.task(record.key);
-      if (next === undefined || !this.sameCardRef_abyssPrivate(next.ref, record.ref)) {
+      if (next === undefined || !this.sameCardRef_abyssPrivate(next.root.ref, record.ref)) {
         this.taskInteractionPins_abyssPrivate.delete(record);
         record.cancel();
       }
@@ -2750,7 +2775,7 @@ export class CenterPanel {
     this.invalidateTaskFocus_abyssPrivate(rows);
   }
 
-  private invalidateTaskFocus_abyssPrivate(rows: TaskListRows): void {
+  private invalidateTaskFocus_abyssPrivate(rows: TaskListRows<TaskNodeSnapshot>): void {
     const active = this.el.ownerDocument.activeElement;
     const key = this.eventTaskCardKey_abyssPrivate(active);
     if (key === undefined || !isRealmHTMLElement(active)) return;
@@ -2758,10 +2783,10 @@ export class CenterPanel {
     const next = rows.task(key);
     if (
       previous === undefined ||
-      (next !== undefined && this.sameCardRef_abyssPrivate(previous.ref, next.ref))
+      (next !== undefined && this.sameCardRef_abyssPrivate(previous.ref, next.root.ref))
     )
       return;
-    if (next === undefined || !this.acceptedTaskFocusRef_abyssPrivate(key, next.ref)) {
+    if (next === undefined || !this.acceptedTaskFocusRef_abyssPrivate(key, next.root.ref)) {
       active.blur();
       this.wholeCardFocus_abyssPrivate = null;
     }
@@ -2812,10 +2837,6 @@ export class CenterPanel {
   ): void {
     host.querySelector(':scope > .abyss-center-empty')?.remove();
     if (empty) host.createDiv({ cls: 'abyss-center-empty', text: label });
-  }
-
-  private isTaskCardSelected_abyssPrivate(task: TaskSnapshot): boolean {
-    return taskStackRowKey(this.state_abyssPrivate.get('taskStack')) === taskRowKey(task);
   }
 
   private readonly dependenciesFor_abyssPrivate: TaskDependencyLookup = (task) => {
@@ -2875,26 +2896,24 @@ export class CenterPanel {
     context?: TaskCardInteractionContext,
   ): void {
     const currentTask = context?.currentTask ?? (() => task);
+    const currentProjection =
+      context?.currentProjection ?? (() => rootTaskNodeSnapshot(currentTask()));
     const component = context?.component ?? this.md_abyssPrivate;
     component.registerDomEvent(card, 'click', (event) => {
       if (context?.onActivate !== undefined) {
         context.onActivate(currentTask());
         return;
       }
-      this.handleTaskCardClick_abyssPrivate(event, currentTask(), rowKey);
+      this.handleTaskCardClick_abyssPrivate(event, currentTask(), rowKey, currentProjection());
     });
     if (context?.onActivate !== undefined) {
       mountTaskSearchKeyboardActivation(card, component, () => {
         context.onActivate?.(currentTask());
       });
     }
-    this.mountTaskCardDrag_abyssPrivate(
-      card,
-      currentTask,
-      context?.component ?? this.md_abyssPrivate,
-    );
+    this.mountTaskCardDrag_abyssPrivate(card, currentTask, component, currentProjection);
     component.registerDomEvent(card, 'contextmenu', (event) => {
-      this.handleTaskContextMenu_abyssPrivate(event, card, currentTask(), rowKey);
+      this.handleTaskContextMenu_abyssPrivate(event, card, currentProjection(), rowKey);
     });
   }
 
@@ -2902,6 +2921,7 @@ export class CenterPanel {
     event: MouseEvent,
     task: TaskSnapshot,
     key = taskRowKey(task),
+    projection = rootTaskNodeSnapshot(task),
   ): void {
     if (event.ctrlKey || event.metaKey) {
       this.rowSelection_abyssPrivate.toggle(key);
@@ -2918,13 +2938,14 @@ export class CenterPanel {
     this.rowSelection_abyssPrivate.collapseTo(key);
     this.updateSelectionVisuals_abyssPrivate();
     this.focusTaskKey_abyssPrivate(key);
-    this.state_abyssPrivate.set('taskStack', [task]);
+    this.state_abyssPrivate.set('taskStack', [projection.root, ...projection.path]);
   }
 
   private mountTaskCardDrag_abyssPrivate(
     card: HTMLElement,
     currentTask: () => TaskSnapshot,
     component: Component,
+    currentProjection = () => rootTaskNodeSnapshot(currentTask()),
   ): void {
     if (isForecastCalendarTask(currentTask())) return;
     card.setAttribute('draggable', 'true');
@@ -2945,7 +2966,7 @@ export class CenterPanel {
       this.endTaskDrag_abyssPrivate = startTaskNodeDrag(this.state_abyssPrivate, this.el, card, {
         payload: {
           source: 'center-card',
-          task: { root: task, path: [], node: task, target: { type: 'task', ref: task.ref } },
+          task: currentProjection(),
         },
         onEnd: () => {
           card.classList.remove('abyss-dragging');
@@ -2957,7 +2978,10 @@ export class CenterPanel {
       const draggingTag = this.state_abyssPrivate.get('draggingTag');
       if (
         (draggingTag === null || draggingTag === '') &&
-        !this.canDropProjectOnTask_abyssPrivate(currentTask())
+        !(
+          currentProjection().target.type === 'task' &&
+          this.canDropProjectOnTask_abyssPrivate(currentTask())
+        )
       )
         return;
       event.preventDefault();
@@ -2967,7 +2991,7 @@ export class CenterPanel {
       card.classList.remove('abyss-drop-target');
     });
     component.registerDomEvent(card, 'drop', (event) => {
-      this.handleTaskCardDrop_abyssPrivate(event, card, currentTask());
+      this.handleTaskCardDrop_abyssPrivate(event, card, currentTask(), currentProjection());
     });
     if (this.tasks_abyssPrivate !== undefined) {
       const tasks = this.tasks_abyssPrivate;
@@ -2977,7 +3001,7 @@ export class CenterPanel {
           tasks,
           parent: () =>
             this.state_abyssPrivate.get('mode') === 'tasks'
-              ? { type: 'task', ref: currentTask().ref }
+              ? currentProjection().target
               : undefined,
           execute: (command) =>
             executeTaskHierarchy(
@@ -3006,16 +3030,18 @@ export class CenterPanel {
     event: DragEvent,
     card: HTMLElement,
     task: TaskSnapshot,
+    projection = rootTaskNodeSnapshot(task),
   ): void {
     card.classList.remove('abyss-drop-target');
     const tag = this.state_abyssPrivate.get('draggingTag');
     if (tag !== null && tag !== '') {
       event.preventDefault();
-      runAsyncAction(this.taskCommands_abyssPrivate.patchTaskTags(task, [tag], []));
+      runAsyncAction(this.taskCommands_abyssPrivate.patchTaskTags(projection, [tag], []));
       return;
     }
     const project = this.state_abyssPrivate.get('draggingProject');
     if (
+      projection.target.type !== 'task' ||
       !this.canDropProjectOnTask_abyssPrivate(task) ||
       project === null ||
       this.tasks_abyssPrivate == null ||
@@ -3224,8 +3250,8 @@ export class CenterPanel {
   private handleTaskContextMenu_abyssPrivate(
     event: MouseEvent,
     card: HTMLElement,
-    task: TaskSnapshot,
-    key = taskRowKey(task),
+    task: TaskNodeSnapshot,
+    key: string,
   ): void {
     event.preventDefault();
     const selection = this.rowSelection_abyssPrivate;
@@ -3254,10 +3280,12 @@ export class CenterPanel {
     const tasks = compact === undefined ? this.selectedTasksInVisualOrder_abyssPrivate() : [];
     const summaries =
       compact === undefined
-        ? tasks
+        ? tasks.map((task) => ({ ...task.node, depth: task.path.length }))
         : keys.flatMap((key) => {
             const row = compact.order.task(key);
-            return row === undefined ? [] : [row.menu];
+            return row === undefined
+              ? []
+              : [{ ...row.menu, depth: row.depth, completion: row.presentation.completion }];
           });
     const abort = (): void => {
       controller.abort();
@@ -3280,9 +3308,9 @@ export class CenterPanel {
         this.assertMenuTargets_abyssPrivate(signal, controller.signal, compact);
         const resolved = compact === undefined ? tasks : await compact.rows.resolve(keys, signal);
         this.assertMenuTargets_abyssPrivate(signal, controller.signal, compact);
-        if (compact === undefined) this.assertExactMenuSnapshots_abyssPrivate(resolved);
-        return resolved.map((root) => ({
-          task: rootTaskNodeSnapshot(root),
+        if (compact === undefined) this.assertExactMenuSnapshots_abyssPrivate(tasks);
+        return resolved.map((task) => ({
+          task,
           completion: { kind: 'allowed' as const },
         }));
       },
@@ -3297,10 +3325,10 @@ export class CenterPanel {
     if (compact !== undefined && this.taskSurface_abyssPrivate?.search !== compact)
       throw new TaskSearchError('stale', 'Menu changed');
   }
-  private assertExactMenuSnapshots_abyssPrivate(tasks: readonly TaskSnapshot[]): void {
+  private assertExactMenuSnapshots_abyssPrivate(tasks: readonly TaskNodeSnapshot[]): void {
     for (const task of tasks) {
-      const proof = this.queries_abyssPrivate.resolve(task.ref);
-      if (proof.type !== 'exact' || !this.sameCardRef_abyssPrivate(proof.task.ref, task.ref))
+      const proof = this.queries_abyssPrivate.resolve(task.root.ref);
+      if (proof.type !== 'exact' || !this.sameCardRef_abyssPrivate(proof.task.ref, task.root.ref))
         throw new TaskSearchError('stale', 'Task changed');
     }
   }
@@ -3322,31 +3350,42 @@ export class CenterPanel {
   }
 
   /** The selected tasks in display order, as the snapshots their cards were rendered from. */
-  private selectedTasksInVisualOrder_abyssPrivate(): TaskSnapshot[] {
+  private selectedTasksInVisualOrder_abyssPrivate(): TaskNodeSnapshot[] {
     const order = this.listOrder_abyssPrivate();
-    const unique = new Map<string, TaskSnapshot>();
+    const unique = new Map<string, TaskNodeSnapshot>();
     for (const key of this.rowSelection_abyssPrivate.inOrder(order)) {
-      const task = this.mountedSnapshot_abyssPrivate(key);
-      if (task !== undefined) unique.set(taskRowKey(task), task);
+      const task = this.mountedProjection_abyssPrivate(key);
+      if (task !== undefined) unique.set(taskStackRowKey([task.root, ...task.path]) ?? key, task);
     }
     return [...unique.values()];
   }
 
-  private getFilteredTasks_abyssPrivate(): TaskSnapshot[] {
+  private taskNodeSnapshots_abyssPrivate(
+    query: Parameters<TaskQueryApi['list']>[0],
+  ): readonly TaskNodeSnapshot[] {
+    if (query !== undefined) return this.queries_abyssPrivate.list(query).map(rootTaskNodeSnapshot);
+    return (
+      this.queries_abyssPrivate.listNodes?.() ??
+      this.queries_abyssPrivate.list().flatMap((root) => [...taskTreeNodes(root)])
+    );
+  }
+
+  private getFilteredTasks_abyssPrivate(): TaskNodeSnapshot[] {
     const selection = this.state_abyssPrivate.get('selectedList');
     let query: { filePath: string } | { tag: string } | undefined;
     if (typeof selection === 'object') {
       if (selection.type === 'project') query = { filePath: selection.path };
     }
-    const tasks = this.queries_abyssPrivate.list(query);
+    const nodes = this.taskNodeSnapshots_abyssPrivate(query);
+    const tasks = query === undefined ? nodes : nodes.filter((task) => task.target.type === 'task');
     const viewState = this.state_abyssPrivate.get('centerListViewState');
     this.outgoingLinks_abyssPrivate =
       viewState.groupBy === 'outgoing-link' || viewState.sortBy.field === 'outgoing-link'
         ? new Map(
             tasks.map((task) => [
-              taskRowKey(task),
+              taskStackRowKey([task.root, ...task.path]) ?? '',
               outgoingTaskLinkValues(
-                task,
+                { ...task.node, source: task.root.source },
                 (target, sourcePath) =>
                   this.app_abyssPrivate.metadataCache.getFirstLinkpathDest(target, sourcePath)
                     ?.path,
@@ -3355,7 +3394,7 @@ export class CenterPanel {
           )
         : new Map();
     return [
-      ...selectTaskList({
+      ...selectTaskNodes({
         tasks,
         outgoingLinks: this.outgoingLinks_abyssPrivate,
         selection,

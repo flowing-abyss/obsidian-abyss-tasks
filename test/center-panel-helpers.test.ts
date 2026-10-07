@@ -7,7 +7,7 @@ import { type CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import type { CalendarSettings, PropertyFilter, TagGroup } from '../src/settings/types';
 import { discoveredPrefixGroupId } from '../src/tags/effectiveTagGroups';
-import type { TaskSnapshot } from '../src/tasks';
+import type { TaskNodeSnapshot, TaskSnapshot } from '../src/tasks';
 import { PanelNavigator } from '../src/views/panelNavigation';
 import { expectDefined, fixedToday, makeStubStore, subtask, task, useRealMoment } from './helpers';
 import { listViewControlsOf, makeCenterPanelForTest } from './support/panelHarness';
@@ -77,8 +77,8 @@ describe('CenterPanel pure helpers', () => {
       };
       const { panel, state } = makePanel(tasks, settings);
       state.set('selectedList', 'inbox');
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-      expect(result.map((t) => t.title)).toEqual(['no tag']);
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
+      expect(result.map((t) => t.node.title)).toEqual(['no tag']);
     });
 
     it('today includes only tasks due or scheduled today', () => {
@@ -102,8 +102,8 @@ describe('CenterPanel pure helpers', () => {
       const { panel, state } = makePanel(tasks);
       state.set('selectedList', 'today');
       fixedToday(TODAY);
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-      expect(result.map((t) => t.title).sort((a, b) => a.localeCompare(b))).toEqual([
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
+      expect(result.map((t) => t.node.title).sort((a, b) => a.localeCompare(b))).toEqual([
         'dueToday',
         'schedToday',
       ]);
@@ -120,8 +120,8 @@ describe('CenterPanel pure helpers', () => {
       const { panel, state } = makePanel(tasks);
       state.set('selectedList', 'today');
       fixedToday('2026-06-25');
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-      expect(result.map((t) => t.title)).toEqual(['overdue']);
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
+      expect(result.map((t) => t.node.title)).toEqual(['overdue']);
     });
 
     it('today excludes past scheduled dates and undated tasks', () => {
@@ -141,7 +141,7 @@ describe('CenterPanel pure helpers', () => {
       const { panel, state } = makePanel(tasks);
       state.set('selectedList', 'today');
       fixedToday('2026-06-25');
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
       // Only past due dates trigger overdue inclusion.
       expect(result).toHaveLength(0);
     });
@@ -164,8 +164,8 @@ describe('CenterPanel pure helpers', () => {
       const { panel, state } = makePanel(tasks);
       state.set('selectedList', 'today');
       fixedToday('2026-06-25');
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-      expect(result.map((t) => t.title)).toEqual(['open']);
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
+      expect(result.map((t) => t.node.title)).toEqual(['open']);
     });
 
     it('today excludes future tasks (due > today, not overdue)', () => {
@@ -180,7 +180,7 @@ describe('CenterPanel pure helpers', () => {
       ];
       const { panel, state } = makePanel(tasks);
       state.set('selectedList', 'today');
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
       expect(result).toHaveLength(0);
     });
 
@@ -215,8 +215,8 @@ describe('CenterPanel pure helpers', () => {
       ];
       const { panel, state } = makePanel(tasks);
       state.set('selectedList', 'upcoming');
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-      expect(result.map((t) => t.title)).toEqual(['near', 'far']);
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
+      expect(result.map((t) => t.node.title)).toEqual(['near', 'far']);
     });
 
     it('upcoming includes scheduled tasks and excludes undated tasks', () => {
@@ -236,8 +236,8 @@ describe('CenterPanel pure helpers', () => {
       ];
       const { panel, state } = makePanel(tasks);
       state.set('selectedList', 'upcoming');
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-      expect(result.map((t) => t.title)).toEqual(['sched']);
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
+      expect(result.map((t) => t.node.title)).toEqual(['sched']);
     });
 
     it('default string selection returns all open tasks', () => {
@@ -256,8 +256,8 @@ describe('CenterPanel pure helpers', () => {
       ];
       const { panel, state } = makePanel(tasks);
       state.set('selectedList', 'unknown-list' as unknown as 'inbox');
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-      expect(result.map((t) => t.title)).toEqual(['open']);
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
+      expect(result.map((t) => t.node.title)).toEqual(['open']);
     });
 
     it('{type:"tag"} filters query snapshots by tag and open status', () => {
@@ -288,8 +288,8 @@ describe('CenterPanel pure helpers', () => {
       ];
       const { panel, state } = makePanel(tasks);
       state.set('selectedList', { type: 'tag', tag: '#work' });
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-      expect(result.map((t) => t.title)).toEqual(['work']);
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
+      expect(result.map((t) => t.node.title)).toEqual(['work']);
     });
 
     it('{type:"tag"} does not borrow a matching tag from a subtask', () => {
@@ -298,15 +298,15 @@ describe('CenterPanel pure helpers', () => {
         task({
           title: 'Subtask tag',
           source: { filePath: 'subtask.md' },
-          subtasks: [subtask({ tags: ['#work/subtask'] })],
+          subtasks: [subtask({ title: 'Matching child', tags: ['#work/subtask'] })],
         }),
       ];
       const { panel, state } = makePanel(tasks);
       state.set('selectedList', { type: 'tag', tag: '#work/subtask' });
 
-      expect(call<TaskSnapshot[]>(panel, 'getFilteredTasks').map(({ title }) => title)).toEqual([
-        'Root tag',
-      ]);
+      expect(
+        call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks').map(({ node }) => node.title),
+      ).toEqual(['Root tag', 'Matching child']);
     });
 
     it('{type:"group"} prefix mode matches rawText includes #prefix', () => {
@@ -350,8 +350,8 @@ describe('CenterPanel pure helpers', () => {
       ];
       const { panel, state } = makePanel(tasks, settings);
       state.set('selectedList', { type: 'group', groupId: 'g1' });
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-      expect(result.map((t) => t.title).sort((a, b) => a.localeCompare(b))).toEqual([
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
+      expect(result.map((t) => t.node.title).sort((a, b) => a.localeCompare(b))).toEqual([
         'work',
         'workSub',
       ]);
@@ -384,8 +384,11 @@ describe('CenterPanel pure helpers', () => {
       ];
       const { panel, state } = makePanel(tasks, settings);
       state.set('selectedList', { type: 'group', groupId: 'g1' });
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-      expect(result.map((t) => t.title).sort((a, b) => a.localeCompare(b))).toEqual(['a', 'b']);
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
+      expect(result.map((t) => t.node.title).sort((a, b) => a.localeCompare(b))).toEqual([
+        'a',
+        'b',
+      ]);
     });
 
     it('{type:"group"} with missing groupId returns empty', () => {
@@ -398,7 +401,7 @@ describe('CenterPanel pure helpers', () => {
       ];
       const { panel, state } = makePanel(tasks);
       state.set('selectedList', { type: 'group', groupId: 'nope' });
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
       expect(result).toHaveLength(0);
     });
 
@@ -420,8 +423,8 @@ describe('CenterPanel pure helpers', () => {
       const { panel, state } = makePanel(tasks, settings);
       state.set('selectedList', 'inbox');
       state.set('centerFilter', 'milk');
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-      expect(result.map((t) => t.title)).toEqual(['Buy Milk']);
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
+      expect(result.map((t) => t.node.title)).toEqual(['Buy Milk']);
     });
 
     it('centerFilter filters by rawText', () => {
@@ -443,7 +446,7 @@ describe('CenterPanel pure helpers', () => {
       const { panel, state } = makePanel(tasks);
       state.set('selectedList', 'inbox');
       state.set('centerFilter', 'urgent-marker');
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
       // CURRENT BEHAVIOR: inbox=untagged mode excludes tagged tasks before filter,
       // so the #urgent-marker task is removed by getInboxTasks; centerFilter then
       // has nothing to match. Use tag selection to keep tagged tasks.
@@ -473,9 +476,9 @@ describe('CenterPanel pure helpers', () => {
       const { panel, state } = makePanel(tasks);
       state.set('selectedList', { type: 'tag', tag: '#work' });
       state.set('centerFilter', 'urgent-marker');
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
       expect(result).toHaveLength(1);
-      expect(result[0]?.source.originalMarkdown).toContain('urgent-marker');
+      expect(result[0]?.root.source.originalMarkdown).toContain('urgent-marker');
     });
 
     it('centerFilter empty returns all (no filtering)', () => {
@@ -490,7 +493,7 @@ describe('CenterPanel pure helpers', () => {
       const { panel, state } = makePanel(tasks, settings);
       state.set('selectedList', 'inbox');
       state.set('centerFilter', '');
-      const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
+      const result = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
       expect(result).toHaveLength(2);
     });
   });
@@ -757,8 +760,8 @@ describe('getFilteredTasks respects the unified Show status filter (statusGroups
       filters: [],
     });
     state.set('selectedList', 'inbox');
-    const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-    expect(tasks.every((t) => t.status !== 'done')).toBe(true);
+    const tasks = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
+    expect(tasks.every((t) => t.node.status !== 'done')).toBe(true);
   });
 
   it('statusGroups=[done,cancelled] returns only done/cancelled tasks', () => {
@@ -786,8 +789,8 @@ describe('getFilteredTasks respects the unified Show status filter (statusGroups
       filters: [],
     });
     state.set('selectedList', 'inbox');
-    const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-    expect(tasks.every((t) => t.status === 'done')).toBe(true);
+    const tasks = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
+    expect(tasks.every((t) => t.node.status === 'done')).toBe(true);
   });
 
   it('statusGroups=undefined (All preset) returns both', () => {
@@ -814,7 +817,7 @@ describe('getFilteredTasks respects the unified Show status filter (statusGroups
       filters: [],
     });
     state.set('selectedList', 'inbox');
-    const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
+    const tasks = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
     expect(tasks).toHaveLength(2);
   });
 });
@@ -847,9 +850,9 @@ describe('getFilteredTasks respects property filters', () => {
       filters: [{ type: 'tag', value: '#work' }],
     });
     state.set('selectedList', { type: 'tag', tag: '#work' });
-    const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
+    const tasks = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
     expect(tasks).toHaveLength(1);
-    expect(tasks[0]?.title).toBe('work task');
+    expect(tasks[0]?.node.title).toBe('work task');
   });
 
   it('tag filter does not match partial tags (#work does not match #work/deep)', () => {
@@ -877,9 +880,9 @@ describe('getFilteredTasks respects property filters', () => {
     });
     // 'upcoming' with no dates → default branch returns all query snapshots
     state.set('selectedList', 'all-tasks' as unknown as ListSelection);
-    const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
+    const tasks = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
     expect(tasks).toHaveLength(1);
-    expect(tasks[0]?.title).toBe('exact');
+    expect(tasks[0]?.node.title).toBe('exact');
   });
 
   it('file filter keeps only tasks from that file', () => {
@@ -893,9 +896,9 @@ describe('getFilteredTasks respects property filters', () => {
       filters: [{ type: 'file', filePath: 'notes/a.md' }],
     });
     state.set('selectedList', 'all-tasks' as unknown as ListSelection);
-    const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
+    const tasks = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
     expect(tasks).toHaveLength(1);
-    expect(tasks[0]?.title).toBe('from a');
+    expect(tasks[0]?.node.title).toBe('from a');
   });
 
   it('time filter keeps only tasks with matching time', () => {
@@ -910,9 +913,9 @@ describe('getFilteredTasks respects property filters', () => {
       filters: [{ type: 'time', value: '09:00' }],
     });
     state.set('selectedList', 'all-tasks' as unknown as ListSelection);
-    const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
+    const tasks = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
     expect(tasks).toHaveLength(1);
-    expect(tasks[0]?.title).toBe('morning');
+    expect(tasks[0]?.node.title).toBe('morning');
   });
 
   it('priority filter keeps only tasks with matching priority', () => {
@@ -926,9 +929,9 @@ describe('getFilteredTasks respects property filters', () => {
       filters: [{ type: 'priority', value: 'B' }],
     });
     state.set('selectedList', 'all-tasks' as unknown as ListSelection);
-    const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
+    const tasks = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
     expect(tasks).toHaveLength(1);
-    expect(tasks[0]?.title).toBe('high');
+    expect(tasks[0]?.node.title).toBe('high');
   });
 
   it('status filter keeps only tasks with matching statusSymbol', () => {
@@ -942,9 +945,9 @@ describe('getFilteredTasks respects property filters', () => {
       filters: [{ type: 'status', value: '/' }],
     });
     state.set('selectedList', 'all-tasks' as unknown as ListSelection);
-    const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
+    const tasks = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
     expect(tasks).toHaveLength(1);
-    expect(tasks[0]?.title).toBe('inProgress');
+    expect(tasks[0]?.node.title).toBe('inProgress');
   });
 
   it('date filter matches explicit planning dates, not daily-note metadata', () => {
@@ -960,9 +963,9 @@ describe('getFilteredTasks respects property filters', () => {
       filters: [{ type: 'date', value: '2026-01-10' }],
     });
     state.set('selectedList', 'all-tasks' as unknown as ListSelection);
-    const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
+    const tasks = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
     expect(tasks).toHaveLength(2);
-    expect(tasks.map((t) => t.title)).toEqual(expect.arrayContaining(['due', 'sched']));
+    expect(tasks.map((t) => t.node.title)).toEqual(expect.arrayContaining(['due', 'sched']));
   });
 
   it('multiple property filters are combined with AND', () => {
@@ -998,9 +1001,9 @@ describe('getFilteredTasks respects property filters', () => {
       ],
     });
     state.set('selectedList', 'all-tasks' as unknown as ListSelection);
-    const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
+    const tasks = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks');
     expect(tasks).toHaveLength(1);
-    expect(tasks[0]?.title).toBe('work morning');
+    expect(tasks[0]?.node.title).toBe('work morning');
   });
 });
 

@@ -187,11 +187,7 @@ describe('Search supplied result viewport', () => {
     const logical = h.panel['mountedRows_abyssPrivate'].rows;
     expect(logical.taskKeys).toHaveLength(50);
     expect(
-      logical.taskKeys.map((key) =>
-        'source' in (logical.task(key) ?? {})
-          ? (logical.task(key) as ReturnType<typeof task>).source.line
-          : undefined,
-      ),
+      logical.taskKeys.map((key) => h.panel['mountedSnapshot_abyssPrivate'](key)?.source.line),
     ).toEqual(Array.from({ length: 50 }, (_, i) => 249 - i));
     expect(h.list).toHaveBeenCalledTimes(calls);
   });
@@ -472,11 +468,7 @@ it('preserves the full supplied native order and far-window adoption independent
   const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
   expect(surface.rows.taskKeys).toHaveLength(1200);
   expect(
-    surface.rows.taskKeys.map((key) =>
-      'source' in (surface.rows.task(key) ?? {})
-        ? (surface.rows.task(key) as ReturnType<typeof task>).source.line
-        : undefined,
-    ),
+    surface.rows.taskKeys.map((key) => h.panel['mountedSnapshot_abyssPrivate'](key)?.source.line),
   ).toEqual(Array.from({ length: 1200 }, (_, line) => line));
   const queries = h.list.mock.calls.length;
   const reads = h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0);

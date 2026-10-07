@@ -463,9 +463,16 @@ export class TaskSearch {
     const error = this.#preparationInvalidation(current);
     if (error !== undefined) throw error;
   }
+  #organizationScope(): 'nodes' | 'roots' {
+    const selection = this.#options.state.get('selectedList');
+    return this.#filter && !(typeof selection === 'object' && selection.type === 'project')
+      ? 'nodes'
+      : 'roots';
+  }
   #captureOrganization(): CapturedOrganization {
     const { settings } = this.#options;
     const captured = structuredClone({
+      scope: this.#organizationScope(),
       selection: this.#filter ? this.#options.state.get('selectedList') : null,
       view: this.#options.view(),
       settings: {
@@ -525,7 +532,7 @@ export class TaskSearch {
         for (const hit of batch.hits) {
           this.#assertPreparation(current);
           collection.hits.push(hit);
-          collection.roots.push(hit.address);
+          collection.roots.push({ ...hit.address, childLines: [] });
         }
         offset += batch.hits.length;
         done = batch.done;
@@ -542,7 +549,7 @@ export class TaskSearch {
   ): Promise<number> {
     const search = this.#options.search;
     if (search === undefined) throw new TaskSearchError('unavailable', 'Search capability missing');
-    const cursor = await search.open({ kind: 'roots', query }, current.signal);
+    const cursor = await search.open({ kind: this.#organizationScope(), query }, current.signal);
     this.#joinPreparation(current, cursor.generation);
     let failed = false,
       failure: unknown;
@@ -589,9 +596,10 @@ export class TaskSearch {
   ): Parameters<TaskReadProjectionApi['organization']>[0] {
     const inclusion = this.#inclusion();
     return inclusion?.kind === 'navigation'
-      ? { expectedGeneration: generation }
+      ? { expectedGeneration: generation, scope: this.#organizationScope() }
       : {
           expectedGeneration: generation,
+          scope: this.#organizationScope(),
           roots:
             inclusion === undefined ? collection.roots : [...collection.roots, inclusion.address],
         };
@@ -839,7 +847,10 @@ export class TaskSearch {
     this.#completeRows(organization, request, complete);
   }
   #completeRows(organization: TaskSearchOrganization, request: number, complete: boolean): void {
-    this.#root?.setAttribute('data-search-logical-results', String(organization.rootTotal));
+    this.#root?.setAttribute(
+      'data-search-logical-results',
+      String(organization.scope === 'roots' ? organization.rootTotal : organization.nodeTotal),
+    );
     this.#status?.complete(request, organization.generation);
     if (complete) this.#options.host.completeResults();
   }

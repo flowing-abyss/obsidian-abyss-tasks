@@ -66,7 +66,7 @@ export function mountTaskListRows<T = TaskSnapshot>(
 }
 
 /** Nothing mounted: the handle before the first card render and at the start of each one. */
-export const NO_MOUNTED_TASK_LIST_ROWS: MountedTaskListRows = {
+export const NO_MOUNTED_TASK_LIST_ROWS: MountedTaskListRows<never> = {
   rows: NO_TASK_LIST_ROWS,
   element: () => undefined,
   cards: () => [],

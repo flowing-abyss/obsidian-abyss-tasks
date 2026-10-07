@@ -25,6 +25,7 @@ import type {
   TaskCommandResult,
   TaskCreateSession,
   TaskIndexEvent,
+  TaskNodeSnapshot,
   TaskQueryApi,
   TaskSnapshot,
 } from '../src/tasks';
@@ -440,10 +441,10 @@ describe('CenterPanel list selection', () => {
       .queries_abyssPrivate;
     const list = vi.spyOn(queries, 'list');
 
-    const selected = call<TaskSnapshot[]>(panel, 'getFilteredTasks') as TaskSnapshot[];
+    const selected = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks') as TaskNodeSnapshot[];
 
     expect(list).toHaveBeenCalledWith(undefined);
-    expect(selected.map(({ title }) => title)).toEqual(['exact']);
+    expect(selected.map(({ node }) => node.title)).toEqual(['exact']);
   });
 
   it('excludes a date-less task from today while retaining an explicitly planned task from the same daily note', () => {
@@ -465,7 +466,9 @@ describe('CenterPanel list selection', () => {
     const panel = makeStaticPanel(state, [dailyOnly, planned]);
 
     expect(
-      (call<TaskSnapshot[]>(panel, 'getFilteredTasks') as TaskSnapshot[]).map((item) => item.title),
+      (call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks') as TaskNodeSnapshot[]).map(
+        (item) => item.node.title,
+      ),
     ).toEqual(['planned']);
   });
 });
@@ -2261,7 +2264,12 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     const container = freshContainer();
     panel.mount(container);
     const host = expectDefined(container.querySelector<HTMLElement>('.abyss-center-scroll'));
-    const renderResult = call<void>(panel, 'renderWithGrouping', host, tasks);
+    const renderResult = call<void>(
+      panel,
+      'renderWithGrouping',
+      host,
+      tasks.map(rootTaskNodeSnapshot),
+    );
     if (renderResult instanceof Promise) throw new Error('Expected synchronous grouped rendering');
     return container;
   }
@@ -2652,10 +2660,14 @@ describe('CenterPanel project selection', () => {
     const { panel, state, index } = await makePanel(files, DEFAULT_SETTINGS, seeds);
     const list = vi.spyOn(index, 'list');
     state.set('selectedList', { type: 'project', path: 'Projects/A.md' });
-    const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks') as TaskSnapshot[];
+    const tasks = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks') as TaskNodeSnapshot[];
     expect(list).toHaveBeenCalledWith({ filePath: 'Projects/A.md' });
     expect(tasks).toHaveLength(2);
-    expect(tasks.every((item) => item.source.filePath === 'Projects/A.md')).toBe(true);
+    expect(
+      tasks.every(
+        (item) => item.root.source.filePath === 'Projects/A.md' && item.target.type === 'task',
+      ),
+    ).toBe(true);
     expect(call<string>(panel, 'getTitle')).toBe('A');
   });
 
@@ -3386,6 +3398,9 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const queries = queryApiForSnapshots(() => tasks);
     const listNodes = vi.fn(queries.listNodes.bind(queries));
     queries.listNodes = listNodes;
+    // Match the production compact tag port; count population and color reads independently.
+    const observedTags = vi.fn(() => tasks.flatMap((task) => task.tags));
+    queries.observedTags = observedTags;
     const state = new AppState();
     state.set('selectedList', 'today');
     const panel = new CenterPanel({
@@ -3410,6 +3425,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
 
     expect(el.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(100);
     expect(listNodes).toHaveBeenCalledTimes(1);
+    expect(observedTags).toHaveBeenCalledTimes(1);
     const firstTag = expectDefined(el.querySelector<HTMLElement>('.abyss-task-tag'));
     expect(firstTag.textContent).toBe('#work/client');
     expect(firstTag.classList.contains('abyss-task-tag--colored')).toBe(true);

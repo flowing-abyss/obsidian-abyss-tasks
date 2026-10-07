@@ -1,6 +1,7 @@
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import type { TaskLinkValues } from '../../task-lists/taskLinkValues';
-import { type TaskSnapshot } from '../../tasks';
+import { taskNodeMembershipValue } from '../../task-lists/taskNodeMembership';
+import { type TaskNodeSnapshot, type TaskSnapshot } from '../../tasks';
 import { taskNodeLine, type TaskSelectionNode } from '../../ui/taskSelection';
 import {
   groupTasksByDate,
@@ -10,6 +11,7 @@ import {
   groupTasksByStatus,
   groupTasksByTag,
   type TaskGroup,
+  type TaskGroupValue,
 } from '../../views/taskGrouping';
 
 /** How the centre list groups its rows. */
@@ -64,7 +66,7 @@ export interface TaskListRows<T = TaskSnapshot> {
 export type TaskListOrder = Pick<TaskListRows, 'taskKeys' | 'indexOf'>;
 
 /** A root task's physical key: its note and line, independent of visual occurrences. */
-export function taskRowKey(task: TaskSnapshot): string {
+export function taskRowKey(task: Pick<TaskGroupValue, 'source'>): string {
   return `${task.source.filePath}:${task.source.line}`;
 }
 
@@ -104,14 +106,14 @@ export function taskListGrouping(
   return { by: 'tag' };
 }
 
-function taskRow(task: TaskSnapshot, key = taskRowKey(task)): TaskListTaskRow {
+function taskRow<T extends TaskGroupValue>(task: T, key = taskRowKey(task)): TaskListTaskRow<T> {
   return { kind: 'task', key, taskKey: taskRowKey(task), task };
 }
 
-function taskGroups(
-  tasks: readonly TaskSnapshot[],
+function taskGroups<T extends TaskGroupValue>(
+  tasks: readonly T[],
   grouping: Exclude<TaskListGrouping, { readonly by: 'none' }>,
-): readonly TaskGroup[] {
+): ReadonlyArray<TaskGroup<T>> {
   switch (grouping.by) {
     case 'source-note':
       return groupTasksBySourceNote(tasks);
@@ -128,11 +130,11 @@ function taskGroups(
   }
 }
 
-function groupedRows(
-  tasks: readonly TaskSnapshot[],
+function groupedRows<T extends TaskGroupValue>(
+  tasks: readonly T[],
   grouping: Exclude<TaskListGrouping, { readonly by: 'none' }>,
-): TaskListRow[] {
-  const rows: TaskListRow[] = [];
+): Array<TaskListRow<T>> {
+  const rows: Array<TaskListRow<T>> = [];
   for (const group of taskGroups(tasks, grouping)) {
     if (group.tasks.length === 0) continue;
     rows.push({
@@ -188,10 +190,10 @@ export function indexedRows<T>(rows: ReadonlyArray<TaskListRow<T>>): TaskListRow
  * The list's rows for the selected, sorted root tasks: one row per task in input order, or per
  * non-empty group a header followed by its tasks in input order.
  */
-export function buildTaskListRows(
-  tasks: readonly TaskSnapshot[],
+export function buildTaskListRows<T extends TaskGroupValue>(
+  tasks: readonly T[],
   grouping: TaskListGrouping,
-): TaskListRows {
+): TaskListRows<T> {
   return indexedRows(
     grouping.by === 'none' ? tasks.map((task) => taskRow(task)) : groupedRows(tasks, grouping),
   );
@@ -206,4 +208,20 @@ export function taskStackRowKey(stack: readonly TaskSelectionNode[]): string | u
 }
 
 /** The order of a surface that has no list: no rows, so no ranges, arrows, or bulk menu. */
-export const NO_TASK_LIST_ROWS: TaskListRows = indexedRows([]);
+export const NO_TASK_LIST_ROWS: TaskListRows<never> = indexedRows([]);
+
+/** Group own node metadata while retaining canonical root authority in each row. */
+export function buildTaskNodeListRows(
+  tasks: readonly TaskNodeSnapshot[],
+  grouping: TaskListGrouping,
+): TaskListRows<TaskNodeSnapshot> {
+  const values = tasks.map((projection) => ({
+    ...projection.node,
+    ...taskNodeMembershipValue(projection),
+    projection,
+  }));
+  const rows = buildTaskListRows(values, grouping);
+  return indexedRows(
+    rows.rows.map((row) => (row.kind === 'group' ? row : { ...row, task: row.task.projection })),
+  );
+}

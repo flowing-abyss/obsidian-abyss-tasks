@@ -681,17 +681,17 @@ and finite demanded root leases, with preparation vectors and sort workspaces re
 
 `TaskSearch` publishes one complete compact order to CenterPanel's existing native `TaskListSurface`.
 `TaskSearchRows` acquires at most 50 distinct exact roots per allocation batch, sharing one detached
-snapshot and presentation context across duplicate occurrences. Hydrated snapshots and card Components
+root across duplicate occurrences and sibling nodes. Every mounted row and explicit action retains its complete exact-node address and projects its own node/path from that validated root; a root card cannot settle a child receipt. Hydrated snapshots and card Components
 exist only for mounted rows, sparse interaction pins or an explicit acquisition; the last lease drops
 the rich root. Headers/counts describe the complete logical order, independent of viewport demand.
 Tasks selection, ranges and Ctrl/Cmd+A operate on that order, retaining occurrence identity while counts
-and actions deduplicate physical roots. Same-query sort/group updates reconcile selection and retain
+and actions deduplicate physical nodes. Same-query sort/group updates reconcile selection and retain
 connected holders, capture/input/focus and key/fractional anchors. Changed query replaces the surface,
 resets its viewport and clears only row selection; inspector history remains independently owned.
-Global Search remains activation-only. Unfiltered ordinary lists retain their existing snapshot owner.
+Global Search remains activation-only and root-scoped. Unfiltered ordinary lists retain their existing snapshot owner, read classified canonical nodes through the optional `listNodes` capability on their same injected query port (production supplies the application query facade; root-only query callers enumerate their snapshots through `taskTreeNodes`), select with `selectTaskNodes`, and group own metadata through `buildTaskNodeListRows`. Project lists retain their root-only file query and population. Organization totals are discriminated as root totals or node totals; filters use exact-node cursors and address-keyed scores/menus, while Search retains root relevance order.
 An accepted Search navigation receipt activates compact cooperative organization with no query
 restriction (`hits: null`). Organization checks the exact target, reuses its occurrence or appends one
-transient “Revealed from search” occurrence when membership or saved filters exclude it. CenterPanel
+transient “Revealed task” occurrence when membership or saved filters exclude it. CenterPanel
 pins without scrolling, waits for exact hydration and the current card receipt, then uses the existing
 native reveal once. This writes no saved filter or collapse preference. Search options remain a
 transient CenterPanel session through ListViewControls; Relevance is never persisted.
@@ -708,7 +708,7 @@ and inspector/focus handoff, yielding to later selection, source, outside focus 
 `TaskSearchPages`, its model/test, the hydrated page row builder, page-local selection and Search pager
 DOM/state are removed. Dependency picker paging DOM/state and CSS are also removed. Allocation-batch bounds are read contracts, not UI page limits.
 
-TaskSearch subscribes before opening, drains one forward root cursor, joins each compact organization
+TaskSearch subscribes before opening, drains the root Search or exact-node filter cursor, joins each compact organization
 batch to that cursor's generation (including zero hits), then supplies the compact order and prepares dependencies before demanded card hydration.
 Accepted service generations are observed synchronously, so an unrelated accepted update cancels
 the entire old match-set publication even when individual unchanged handles remain hydratable.
@@ -758,6 +758,8 @@ address before navigation. The mounted source subscription and AppState selectio
 remain live across a delayed project-editor guard. Source/semantic changes, project-context changes,
 new intent, query replacement, migration and disposal veto the old continuation before any
 list-state persistence or navigation mutation.
+
+`TaskOccurrencePresentation` carries occurrence kind, optional display date/roles/interval and completion capability outside the renderer. Ordinary cards receive canonical roots plus explicit `TaskNodeSnapshot` flags; title, status, tags, planning, source-link edits, menus, drag and selection act on the node. The root remains the source/ancestor authority. Child selection supplies the complete root-to-child stack to Inspector. Each child card's neutral parent button names its immediate parent and delegates click/Enter/Space to CenterPanel's existing navigation boundary. Its finite Component aborts the request on replacement or unload, and prevents row selection propagation. Root subtree content and project/root-only transfer semantics remain unchanged. Tracked badges share ticker wakeups by root while retaining each node's subtree total.
 
 `TaskListNavigation` shares exact address hydration and the accepted navigation transition. Inspector
 refs scan only their source note's compact organization at the captured generation, close the iterator,
@@ -880,7 +882,7 @@ no migration.
 and focus pins, synchronous reveal, revision-aware measurements, and content-relative anchoring.
 It owns its document's observer, animation frame, font/resize/scroll listeners, inert spacers, and
 row eviction. Generic rows retain structural physical/occurrence lookups without requiring snapshots.
-The production `TaskSearchRows` owner retains one compact order and finite demanded exact-root leases.
+The production `TaskSearchRows` owner retains one compact order and finite demanded exact-node rows backed by shared exact-root leases. Live dependency/hydration failures retire actionable cards and report through the established owner; explicit refresh retries the same address. Retired requests and remounted row receipts cannot settle a replacement.
 Its identity carries request, generation, query, signal and the public `semanticsRevision`. A semantic
 revision change drops classified snapshots and obsolete row receipts, reacquiring only demanded roots
 after dependency readiness while retaining same-source cards/holders. An unrelated generation with

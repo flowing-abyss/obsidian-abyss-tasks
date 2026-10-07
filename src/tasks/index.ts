@@ -142,4 +142,11 @@ export { taskHasFutureDate, taskTodayOccurrence } from './domain/taskOccupiedDat
 export { taskNodeSourceLine } from './domain/taskSearchProjection';
 
 export type { TaskOccurrenceCompletion } from './domain/taskOccupiedDates';
-export { rootTaskNodeSnapshot } from './domain/taskSearchProjection';
+export {
+  nodeAtSearchAddress,
+  rootTaskNodeSnapshot,
+  taskSearchAddressKey,
+  taskTreeNodes,
+} from './domain/taskSearchProjection';
+
+export type { TaskDateRole } from './domain/taskOccupiedDates';

@@ -4,7 +4,13 @@ import { AppState } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
-import { localDate, type TaskApplicationApi, type TaskRef, type TaskSnapshot } from '../src/tasks';
+import {
+  localDate,
+  sameTaskNodeRef,
+  type TaskApplicationApi,
+  type TaskRef,
+  type TaskSnapshot,
+} from '../src/tasks';
 import { TagPickerModal } from '../src/ui/TagPickerModal';
 import {
   appWithFiles,
@@ -265,7 +271,15 @@ function acceptUnchangedCommands(h: ReturnType<typeof makeCenter>): void {
       command.target.type === 'task'
     )
       ref = command.target.ref;
-    const current = expectDefined(h.queries.list().find((task) => task.ref === ref));
+    const current = expectDefined(
+      h.queries
+        .list()
+        .find(
+          (task) =>
+            ref !== undefined &&
+            sameTaskNodeRef({ type: 'task', ref: task.ref }, { type: 'task', ref }),
+        ),
+    );
     return unchangedTaskResult(current);
   });
 }
@@ -1697,7 +1711,9 @@ describe('CenterPanel task date context menus', () => {
       if (command.type !== 'patch' || command.target.type !== 'task')
         throw new Error('Expected root tag patch');
       return unchangedTaskResult(
-        expectDefined(tasks.find((task) => task.ref === command.target.ref)),
+        expectDefined(
+          tasks.find((task) => sameTaskNodeRef({ type: 'task', ref: task.ref }, command.target)),
+        ),
       );
     });
     const opened: TagPickerModal[] = [];

@@ -9864,3 +9864,9 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 .abyss-task-card .abyss-search-context .abyss-comment-text {
   min-width: 0;
 }
+
+.abyss-panel-view .abyss-task-parent-btn {
+  flex-shrink: 0;
+  padding: var(--size-2-1);
+  color: var(--text-muted);
+}

@@ -226,7 +226,8 @@ describe('NO_TASK_LIST_ROWS', () => {
     expect(NO_TASK_LIST_ROWS.rows).toEqual([]);
     expect(NO_TASK_LIST_ROWS.taskKeys).toEqual([]);
     expect(NO_TASK_LIST_ROWS.indexOf('list.md:0')).toBe(-1);
-    expect(NO_TASK_LIST_ROWS.task('list.md:0')).toBeUndefined();
+    const rows: TaskListRows = NO_TASK_LIST_ROWS;
+    expect(rows.task('list.md:0')).toBeUndefined();
   });
 });
 

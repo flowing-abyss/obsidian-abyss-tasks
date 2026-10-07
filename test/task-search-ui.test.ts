@@ -436,7 +436,7 @@ it.each([
     groupId: 'discovered:prefix:work',
     collision: false,
     want: undefined,
-    initial: 1,
+    initial: 2,
     markdown: '- [ ] needle\n  - [ ] child #Work',
   },
 ] as const)(
@@ -578,7 +578,7 @@ it('refreshes retained real cards for child-only status semantics without changi
     expect(after.order.task(key)?.menu.status).toBe(before.order.task(key)?.menu.status);
     expect(h.root.querySelector('.abyss-task-card')).toBe(holder);
     expect(await after.rows.snapshot(key, new AbortController().signal)).toMatchObject({
-      subtasks: [{ status: 'open' }],
+      node: { subtasks: [{ status: 'open' }] },
     });
     expect(hydrate).toHaveBeenCalledTimes(1);
     expect(documents).not.toHaveBeenCalled();

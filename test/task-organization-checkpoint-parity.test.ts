@@ -119,7 +119,7 @@ it('matches checkpoint ordering, groups, counts, scores, aliases and membership'
         outgoingLinks,
       });
       output[key] = {
-        total: result.rootTotal,
+        total: result.scope === 'roots' ? result.rootTotal : undefined,
         counts: [...result.groupCounts],
         rows: result.occurrences.map((o) => [o.key, o.score, o.group]),
       };

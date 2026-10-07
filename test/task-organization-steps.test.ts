@@ -106,5 +106,6 @@ it('compact organization is lazy cooperative work, not a synchronous native sort
     },
   });
   expect(typeof steps.next).toBe('function');
-  expect(drainCollectionSteps(steps).rootTotal).toBe(0);
+  const result = drainCollectionSteps(steps);
+  expect(result.scope === 'roots' ? result.rootTotal : undefined).toBe(0);
 });

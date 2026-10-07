@@ -8,6 +8,7 @@ import {
   taskNodeAddress,
   type TaskApplicationApi,
   type TaskCommandResult,
+  type TaskNodeSnapshot,
   type TaskRef,
   type TaskSnapshot,
 } from '../src/tasks';
@@ -22,7 +23,6 @@ import {
   makeStubStore,
   methodOf,
   task,
-  taskQueryApi,
   useRealMoment,
 } from './helpers';
 import { makeCenterPanelForTest, taskCommandsOf } from './support/panelHarness';
@@ -977,9 +977,9 @@ describe('outgoing-link repeated cards', () => {
     expect(selectedLines(el)).toEqual(['0', '0']);
     expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('1 task selected');
     expect(
-      (
-        panel as unknown as { selectedTasksInVisualOrder_abyssPrivate(): TaskSnapshot[] }
-      ).selectedTasksInVisualOrder_abyssPrivate(),
+      (panel as unknown as { selectedTasksInVisualOrder_abyssPrivate(): TaskNodeSnapshot[] })
+        .selectedTasksInVisualOrder_abyssPrivate()
+        .map(({ node }) => node),
     ).toEqual([linked]);
     click(expectDefined(rows[0]));
     key(expectDefined(rows[0]), 'ArrowDown');
@@ -1208,7 +1208,7 @@ it('selects all outgoing occurrences across windows while deduplicating physical
   expect(last.dataset['line']).toBe('1199');
   click(last, { shiftKey: true });
   expect(panel['rowSelection_abyssPrivate'].size).toBe(2400);
-  expect(panel['selectedTasksInVisualOrder_abyssPrivate']()).toEqual(tasks);
+  expect(panel['selectedTasksInVisualOrder_abyssPrivate']().map(({ node }) => node)).toEqual(tasks);
   expect(cards(el).length).toBeLessThanOrEqual(100);
   panel.destroy();
 });
@@ -1255,7 +1255,7 @@ it.each([false, true])(
     ];
     const pending = deferred<TaskCommandResult>();
     const application: TaskApplicationApi = {
-      queries: taskQueryApi(),
+      queries: makeStubStore(tasks).queries,
       execute: vi.fn(() => pending.promise),
     };
     const { el, panel } = makeCenter(tasks, application);
@@ -1382,7 +1382,9 @@ it.each([{ ctrlKey: true }, { metaKey: true }])(
     const event = key(first, 'a', modifier);
     expect(event.defaultPrevented).toBe(true);
     expect(panel['rowSelection_abyssPrivate'].size).toBe(2400);
-    expect(panel['selectedTasksInVisualOrder_abyssPrivate']()).toEqual(tasks);
+    expect(panel['selectedTasksInVisualOrder_abyssPrivate']().map(({ node }) => node)).toEqual(
+      tasks,
+    );
     expect(cards(el).length).toBeLessThanOrEqual(100);
     await taskCommandsOf(panel).archiveTasks(panel['selectedTasksInVisualOrder_abyssPrivate']());
     expect(planArchive).toHaveBeenCalledOnce();
@@ -1637,7 +1639,10 @@ it('Mod+A follows the current filtered and reordered logical projection', async 
   });
   await h.completed();
   expect(key(el, 'a', { ctrlKey: true }).defaultPrevented).toBe(true);
-  expect(panel['selectedTasksInVisualOrder_abyssPrivate']()).toEqual([tasks[2], tasks[0]]);
+  expect(panel['selectedTasksInVisualOrder_abyssPrivate']().map(({ node }) => node)).toEqual([
+    tasks[2],
+    tasks[0],
+  ]);
   h.query('No matching rows');
   await h.completed();
   expect(key(el, 'a', { ctrlKey: true }).defaultPrevented).toBe(false);
@@ -1799,7 +1804,7 @@ it.each([false, true])(
       selected ? '1200 tasks selected' : '',
     );
     const collect = vi.spyOn(
-      panel as unknown as { selectedTasksInVisualOrder_abyssPrivate(): TaskSnapshot[] },
+      panel as unknown as { selectedTasksInVisualOrder_abyssPrivate(): TaskNodeSnapshot[] },
       'selectedTasksInVisualOrder_abyssPrivate',
     );
     const visits = vi.spyOn(panel['rowSelection_abyssPrivate'], 'inOrder');
@@ -1817,7 +1822,9 @@ it.each([false, true])(
       tasks.splice(0, 600);
       panel.refresh();
       expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('600 tasks selected');
-      expect(panel['selectedTasksInVisualOrder_abyssPrivate']()).toEqual(tasks);
+      expect(panel['selectedTasksInVisualOrder_abyssPrivate']().map(({ node }) => node)).toEqual(
+        tasks,
+      );
     }
     panel.destroy();
   },
