@@ -1179,8 +1179,19 @@ provisional holder heights and its optional `reveal(key, { waitForReady: true })
 receipt set before another round. Cancellation remains `undefined`, never a successful reveal.
 Existing synchronous `reveal(key)` callers retain actual containment and the 16-pass measurement
 bound; ordinary anchor reconciliation retains its existing policy. Ordinary rows expose only their
-finite mounted card receipts. Native
-scroll, source/query/selection changes, owner loss and window migration cancel pending preparation;
+finite mounted card receipts. A reveal pin may carry a synchronous native-write observer: CenterPanel
+validates the last accepted native top before TaskListSurface changes scroll or DOM extent, and the
+surface acknowledges the actual post-clamp top only to still-live captured pin owners under the same
+reconciliation/window generation. During that synchronous DOM mutation, one transient inert spacer from the existing spacer family
+reserves the old extent so intermediate layout reads cannot clamp the viewport. Guards are excluded
+from normal spacer reuse and removed in `finally`, including reentrant owner loss. Movement while
+reserved rejects the request before cleanup; otherwise removing that guard and immediately reading
+the actual native top proves the final clamp without reconstructing fractional geometry from rounded
+DOM dimensions. This reservation and acknowledgement are used only while native-write observers exist;
+ordinary reconciliation retains its existing path. A mismatching top vetoes the mutation, including
+when a user scroll event has not yet arrived; no-op writes and final preparation checks retain that
+proof. Coalesced owned writes update one expected top, with no historical grace or extra scroll owner.
+Other native scroll, source/query/selection changes, owner loss and window migration cancel pending preparation;
 creation also retains its controller's three-second deadline. Captured ref/query/source/window/visibility/capture intent and
 controller expiry are rechecked after each await; cancellation releases pins and never falls back
 to legacy scrolling or focus. Finite active attempts are drained by state, source and window owners.

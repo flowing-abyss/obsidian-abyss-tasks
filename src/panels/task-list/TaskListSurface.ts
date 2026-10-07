@@ -28,6 +28,20 @@ export interface TaskListSurfaceOptions<T = TaskSnapshot> {
   reportFailure(error: unknown): void;
 }
 
+export interface TaskListNativeWriteObserver {
+  beforeWrite(top: number): boolean;
+  afterWrite(top: number): void;
+}
+interface PinOwner {
+  readonly onInvalidated?: (() => void) | undefined;
+  readonly nativeWrite?: TaskListNativeWriteObserver | undefined;
+}
+
+interface CapturedPin {
+  readonly key: string;
+  readonly token: PinOwner;
+}
+
 const maxRevealMeasurementPasses = 16;
 
 interface RevealPlacement {
@@ -49,7 +63,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   readonly #options: TaskListSurfaceOptions<T>;
   readonly #viewport = new RowViewport();
   readonly #mounts = new Map<string, TaskRowMount<T>>();
-  readonly #pins = new Map<string, Set<{ onInvalidated?: () => void }>>();
+  readonly #pins = new Map<string, Set<PinOwner>>();
   #rows: TaskListRows<T> = indexedRows<T>([]);
   #presentation: TaskListPresentation<T> | undefined;
   #owner: Window | null = null;
@@ -168,10 +182,14 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     return readiness.pending ? 'pending' : revealed;
   }
 
-  pin(key: string, onInvalidated?: () => void): () => void {
-    const token = onInvalidated === undefined ? {} : { onInvalidated };
+  pin(
+    key: string,
+    onInvalidated?: () => void,
+    nativeWrite?: TaskListNativeWriteObserver,
+  ): () => void {
+    const token: PinOwner = { onInvalidated, nativeWrite };
     if (!this.#destroyed && !this.#invalidating && this.#viewport.rowBounds(key) !== undefined) {
-      const owners = this.#pins.get(key) ?? new Set<{ onInvalidated?: () => void }>();
+      const owners = this.#pins.get(key) ?? new Set<PinOwner>();
       owners.add(token);
       this.#pins.set(key, owners);
       this.#schedule();
@@ -249,11 +267,90 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #top(): number {
     return this.#options.scroll.scrollTop - this.#origin();
   }
+  #livePin({ key, token }: CapturedPin, current: () => boolean): boolean {
+    return current() && this.#pins.get(key)?.has(token) === true;
+  }
+  #beforeNativeWrite(owners: readonly CapturedPin[], top: number, current: () => boolean): boolean {
+    for (const owner of owners) {
+      if (this.#livePin(owner, current) && owner.token.nativeWrite?.beforeWrite(top) === false)
+        return false;
+      if (!current() || this.#options.scroll.scrollTop !== top) return false;
+    }
+    return current();
+  }
+  #afterNativeWrite(owners: readonly CapturedPin[], top: number, current: () => boolean): boolean {
+    for (const owner of owners) {
+      if (this.#livePin(owner, current)) owner.token.nativeWrite?.afterWrite(top);
+      if (!current() || this.#options.scroll.scrollTop !== top) return false;
+    }
+    return current();
+  }
+  #nativeOwners(): CapturedPin[] | undefined {
+    let owners: CapturedPin[] | undefined;
+    for (const [key, tokens] of this.#pins)
+      for (const token of tokens)
+        if (token.nativeWrite !== undefined) {
+          owners ??= [];
+          owners.push({ key, token });
+        }
+    return owners;
+  }
+  #mutateExtent(
+    action: () => void,
+    owners: readonly CapturedPin[],
+    before: number,
+    current: () => boolean,
+  ): number | undefined {
+    // Keep intermediate spacer shrink/layout reads from clamping before the final DOM order exists.
+    const scroll = this.#options.scroll;
+    const guard = this.#spacer(scroll.scrollHeight);
+    guard.setAttribute('data-abyss-scroll-guard', '');
+    try {
+      action();
+      if (!current()) return;
+      const actual = scroll.scrollTop;
+      if (actual !== before) {
+        this.#beforeNativeWrite(owners, actual, current);
+        return;
+      }
+      // No application callback separates this proof, native removal and the actual clamp receipt.
+      guard.remove();
+      return scroll.scrollTop;
+    } finally {
+      guard.remove();
+    }
+  }
+  #nativeMutation(action: () => void, current: () => boolean, extent = false): boolean {
+    const owners = this.#nativeOwners();
+    // Ordinary reconciliation retains its existing behavior and does no ownership proof work.
+    if (owners === undefined) {
+      action();
+      return current();
+    }
+    const scroll = this.#options.scroll;
+    const before = scroll.scrollTop;
+    const reject = (): false => {
+      if (current()) this.#reconciliation++;
+      return false;
+    };
+    if (!this.#beforeNativeWrite(owners, before, current)) return reject();
+    let actual: number | undefined;
+    if (extent) actual = this.#mutateExtent(action, owners, before, current);
+    else {
+      action();
+      actual = scroll.scrollTop;
+    }
+    if (actual === undefined) return reject();
+    if (!current()) return false;
+    return this.#afterNativeWrite(owners, actual, current) || reject();
+  }
   #writeTop(top: number, current: () => boolean): void {
     const next = top + this.#origin();
     if (!current()) return;
-    if (Number.isFinite(next) && Math.abs(next - this.#options.scroll.scrollTop) > 0.01)
-      this.#options.scroll.scrollTop = next;
+    this.#nativeMutation(() => {
+      if (Number.isFinite(next) && Math.abs(next - this.#options.scroll.scrollTop) > 0.01)
+        this.#options.scroll.scrollTop = next;
+    }, current);
   }
   #replace(): void {
     const presentation = this.#presentation;
@@ -574,14 +671,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     current: () => boolean,
     spacer?: HTMLElement,
   ): HTMLElement | undefined {
-    if ('height' in segment) {
-      const element = spacer ?? this.#options.host.createDiv();
-      element.addClass('abyss-virtual-row-spacer');
-      element.setAttribute('aria-hidden', 'true');
-      element.inert = true;
-      element.setCssProps({ '--abyss-virtual-row-height': `${segment.height}px` });
-      return element;
-    }
+    if ('height' in segment) return this.#spacer(segment.height, spacer);
     const row = this.#rows.rows[segment.index];
     if (row === undefined) return undefined;
     let mount = this.#mounts.get(row.key);
@@ -589,6 +679,13 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       mount = this.#mountRow(row, current);
     } else if (update) mount.update(row);
     return mount?.element;
+  }
+  #spacer(height: number, element: HTMLElement = this.#options.host.createDiv()): HTMLElement {
+    element.addClass('abyss-virtual-row-spacer');
+    element.setAttribute('aria-hidden', 'true');
+    element.inert = true;
+    element.setCssProps({ '--abyss-virtual-row-height': `${height}px` });
+    return element;
   }
   #mountRow(row: TaskListRow<T>, current: () => boolean): TaskRowMount<T> | undefined {
     const mount = this.#options.mount(this.#options.host, row);
@@ -611,12 +708,21 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     if (this.#focusedKey !== undefined) pinned.push(this.#focusedKey);
     const window = this.#viewport.window(top, this.#height(), pinned);
     const established = new Set(this.#mounts.keys());
-    const rendered = this.#renderSegments(window.segments, update, current);
-    if (rendered === undefined) return;
-    this.#evictOutside(rendered.keys, current);
-    if (!current()) return;
-    this.#order(rendered.desired, established);
-    this.#ordered = [...rendered.keys];
+    if (
+      !this.#nativeMutation(
+        () => {
+          const rendered = this.#renderSegments(window.segments, update, current);
+          if (rendered === undefined) return;
+          this.#evictOutside(rendered.keys, current);
+          if (!current()) return;
+          this.#order(rendered.desired, established);
+          this.#ordered = [...rendered.keys];
+        },
+        current,
+        true,
+      )
+    )
+      return;
     this.#options.mountedChanged();
   }
   #renderSegments(
@@ -627,7 +733,9 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const desired: HTMLElement[] = [];
     const keys = new Set<string>();
     const oldSpacers = Array.from(
-      this.#options.host.querySelectorAll<HTMLElement>(':scope > .abyss-virtual-row-spacer'),
+      this.#options.host.querySelectorAll<HTMLElement>(
+        ':scope > .abyss-virtual-row-spacer:not([data-abyss-scroll-guard])',
+      ),
     );
     let spacerIndex = 0;
     for (const segment of segments) {

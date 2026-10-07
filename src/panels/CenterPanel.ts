@@ -148,7 +148,6 @@ interface ListActivation extends TaskListNavigationRequest {
 }
 interface RevealLifetime extends TaskListNavigationRequest {
   readonly cancel: () => void;
-  readonly scrolled: () => void;
 }
 
 interface CreationInclusion {
@@ -724,10 +723,19 @@ export class CenterPanel {
     const scroll =
       retained.host.closest<HTMLElement>('.abyss-project-dashboard-session') ?? retained.host;
     let expectedTop = scroll.scrollTop;
-    const onScroll = (): void => {
-      if (scroll.scrollTop !== expectedTop) abort();
+    const beforeWrite = (top: number): boolean => {
+      if (!current() || top !== expectedTop) abort();
+      return !controller.signal.aborted;
     };
-    const release = retained.surface.pin(key, abort);
+    const onScroll = (): void => {
+      beforeWrite(scroll.scrollTop);
+    };
+    const release = retained.surface.pin(key, abort, {
+      beforeWrite,
+      afterWrite: (top) => {
+        expectedTop = top;
+      },
+    });
     const document = retained.host.ownerDocument;
     const checkVisibility = (): void => {
       if (!current()) abort();
@@ -755,11 +763,8 @@ export class CenterPanel {
     controller.signal.addEventListener('abort', dispose, { once: true });
     return {
       signal: controller.signal,
-      isCurrent: current,
+      isCurrent: () => beforeWrite(scroll.scrollTop),
       cancel: abort,
-      scrolled: () => {
-        expectedTop = scroll.scrollTop;
-      },
     };
   }
 
@@ -804,7 +809,7 @@ export class CenterPanel {
     retained: TaskSurfaceState,
     key: string,
     task: TaskSnapshot,
-    lifetime: TaskListNavigationRequest & { scrolled(): void },
+    lifetime: TaskListNavigationRequest,
   ): Promise<{ task: TaskSnapshot; card: HTMLElement } | undefined> {
     for (let round = 0; round < 8 && lifetime.isCurrent(); round++) {
       const outcome = await this.settleDestinationRound_abyssPrivate(retained, key, lifetime);
@@ -823,7 +828,7 @@ export class CenterPanel {
   private async settleDestinationRound_abyssPrivate(
     retained: TaskSurfaceState,
     key: string,
-    lifetime: TaskListNavigationRequest & { scrolled(): void },
+    lifetime: TaskListNavigationRequest,
   ): Promise<{ type: 'cancelled' } | { type: 'changed' } | { type: 'ready'; card: HTMLElement }> {
     const rows = retained.search?.rows;
     if (!(await this.settleRevealRows_abyssPrivate(retained, key, lifetime.signal)))
@@ -832,7 +837,6 @@ export class CenterPanel {
     const revision = rows?.receiptRevision;
     const receipts = this.revealReceipts_abyssPrivate();
     const card = retained.surface.reveal(key, { waitForReady: true });
-    lifetime.scrolled();
     if (!lifetime.isCurrent() || card === undefined) return { type: 'cancelled' };
     if (!(await this.settleRevealRows_abyssPrivate(retained, key, lifetime.signal)))
       return { type: 'cancelled' };

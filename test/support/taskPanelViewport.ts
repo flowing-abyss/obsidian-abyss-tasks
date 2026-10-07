@@ -96,6 +96,8 @@ function rowHeight(element: Element): number {
   if (row.classList.contains('abyss-virtual-row-spacer'))
     return pixels(row.style.getPropertyValue('--abyss-virtual-row-height'));
   if (row.classList.contains('abyss-dep-search-option')) return 48;
+  const explicit = pixels(row.style.height);
+  if (explicit > 0) return explicit;
   return row.classList.contains('abyss-group-header') ? 32 : 64;
 }
 function hostPadding(host: HTMLElement): { top: number; bottom: number } {

@@ -25,7 +25,7 @@ function rows(count: number) {
     { by: 'none' },
   );
 }
-function harness(clampWrites = false, sameHost = false) {
+function harness(clampWrites = false, sameHost = false, clampExtent = false) {
   const scroll = freshContainer();
   document.body.append(scroll);
   Object.defineProperty(document, 'fonts', { value: new EventTarget(), configurable: true });
@@ -80,9 +80,27 @@ function harness(clampWrites = false, sameHost = false) {
     }, 0);
     top = clampWrites ? Math.max(0, Math.min(value, origin + padding + extent - height)) : value;
   });
+  const nativeExtent = (): number =>
+    Array.from(host.children).reduce((sum, child) => {
+      const row = child as HTMLElement;
+      return (
+        sum +
+        (row.hasClass('abyss-virtual-row-spacer')
+          ? Number.parseFloat(row.style.getPropertyValue('--abyss-virtual-row-height'))
+          : (heights.get(row.dataset['key'] ?? '') ?? 48))
+      );
+    }, origin);
   Object.defineProperties(scroll, {
     clientHeight: { get: () => height },
-    scrollTop: { get: () => top, set: writes, configurable: true },
+    scrollHeight: { get: nativeExtent, configurable: true },
+    scrollTop: {
+      get: () => {
+        if (clampExtent) top = Math.max(0, Math.min(top, nativeExtent() - height));
+        return top;
+      },
+      set: writes,
+      configurable: true,
+    },
   });
   Object.defineProperty(host, 'clientWidth', { get: () => width });
   const heights = new Map<string, number>();
@@ -1256,3 +1274,296 @@ it.each(['removed', 'destroyed'] as const)(
     expect(h.pending()).toBe(0);
   },
 );
+
+describe('pinned native-write ownership', () => {
+  it('acknowledges actual clamped and coalesced writes, including no-op validation', () => {
+    const h = harness(true);
+    h.surface.update(rows(100), presentation);
+    let expected = h.scroll.scrollTop;
+    const beforeWrite = vi.fn((top: number) => top === expected);
+    const afterWrite = vi.fn((top: number) => {
+      expected = top;
+    });
+    h.surface.pin('n.md:99', undefined, { beforeWrite, afterWrite });
+    expect(h.surface.reveal('n.md:99')).toBeDefined();
+    expect(expected).toBe(h.scroll.scrollTop);
+    expect(afterWrite).toHaveBeenCalled();
+    h.surface.reveal('n.md:98');
+    expect(expected).toBe(h.scroll.scrollTop);
+    beforeWrite.mockClear();
+    h.surface.reveal('n.md:99');
+    expect(beforeWrite).toHaveBeenCalled();
+    expect(expected).toBe(h.scroll.scrollTop);
+  });
+
+  it('vetoes a pending native user move before an owned measurement write', () => {
+    const h = harness();
+    h.surface.update(rows(100), presentation);
+    h.surface.reveal('n.md:80');
+    const expected = h.scroll.scrollTop;
+    const afterWrite = vi.fn();
+    h.surface.pin('n.md:80', undefined, { beforeWrite: (top) => top === expected, afterWrite });
+    h.scroll.scrollTop = expected - 17;
+    h.heights.set('n.md:69', 96);
+    h.surface.refreshMeasurements();
+    h.writes.mockClear();
+    h.frame();
+    expect(h.scroll.scrollTop).toBe(expected - 17);
+    expect(h.writes).not.toHaveBeenCalled();
+    expect(afterWrite).not.toHaveBeenCalled();
+  });
+
+  it.each(['release', 'destroy'] as const)(
+    'retires captured acknowledgements on reentrant %s',
+    (operation) => {
+      const h = harness();
+      h.surface.update(rows(100), presentation);
+      const afterWrite = vi.fn();
+      let release = () => {};
+      release = h.surface.pin('n.md:80', undefined, {
+        beforeWrite: () => {
+          if (operation === 'release') release();
+          else h.surface.destroy();
+          return true;
+        },
+        afterWrite,
+      });
+      h.surface.reveal('n.md:80');
+      expect(afterWrite).not.toHaveBeenCalled();
+      expect(h.reportFailure).not.toHaveBeenCalled();
+    },
+  );
+});
+
+it.each(['clamp', 'non-clamp'] as const)('validates owned DOM extent changes: %s', (scenario) => {
+  const h = harness(true, false, true);
+  const initial = rows(100);
+  h.surface.update(initial, presentation);
+  h.surface.reveal('n.md:99');
+  let expected = h.scroll.scrollTop;
+  const beforeWrite = vi.fn((top: number) => top === expected);
+  const afterWrite = vi.fn((top: number) => {
+    expected = top;
+  });
+  h.surface.pin('n.md:99', undefined, { beforeWrite, afterWrite });
+  for (const result of h.mount.mock.results) {
+    const mount = result.value as ReturnType<typeof h.mount>;
+    vi.spyOn(mount, 'update').mockImplementation((row) => {
+      if (scenario === 'clamp') h.heights.set(row.key, 24);
+      else h.scroll.scrollTop -= 7;
+    });
+  }
+  const before = expected;
+  h.surface.update(initial, { ...presentation, revision: 'layout:2', estimate: () => 24 });
+  if (scenario === 'clamp') {
+    expect(afterWrite).toHaveBeenCalled();
+    expect(afterWrite.mock.calls.some(([top]) => top < before)).toBe(true);
+    expect(expected).toBe(h.scroll.scrollTop);
+    expect(beforeWrite.mock.results.every((result) => result.value === true)).toBe(true);
+  } else {
+    expect(afterWrite).not.toHaveBeenCalled();
+    expect(beforeWrite.mock.results.some((result) => result.value === false)).toBe(true);
+  }
+  expect(h.reportFailure).not.toHaveBeenCalled();
+});
+
+it('rechecks captured pin membership after an acknowledgement callback releases another owner', () => {
+  const h = harness();
+  h.surface.update(rows(100), presentation);
+  let releaseSecond = () => {};
+  h.surface.pin('n.md:80', undefined, {
+    beforeWrite: () => true,
+    afterWrite: () => {
+      releaseSecond();
+    },
+  });
+  const afterWrite = vi.fn();
+  releaseSecond = h.surface.pin('n.md:80', undefined, { beforeWrite: () => true, afterWrite });
+  h.surface.reveal('n.md:80');
+  expect(afterWrite).not.toHaveBeenCalled();
+  expect(h.reportFailure).not.toHaveBeenCalled();
+});
+
+it('rejects the old reconciliation after a before-write callback replaces rows', () => {
+  const h = harness();
+  h.surface.update(rows(100), presentation);
+  let release = () => {};
+  const afterWrite = vi.fn();
+  release = h.surface.pin('n.md:80', undefined, {
+    beforeWrite: () => {
+      release();
+      h.surface.update(rows(20), presentation);
+      return true;
+    },
+    afterWrite,
+  });
+  expect(h.surface.reveal('n.md:80')).toBeUndefined();
+  expect(afterWrite).not.toHaveBeenCalled();
+  expect(h.reportFailure).not.toHaveBeenCalled();
+});
+
+it('acknowledges the actual native clamp of a pending reveal setter', () => {
+  const h = harness(true);
+  const mount = expectDefined(h.mount.getMockImplementation());
+  h.mount.mockImplementation((host, row) => {
+    h.heights.set(row.key, 12);
+    return { ...mount(host, row), measurementReady: () => false };
+  });
+  h.surface.update(rows(100), presentation);
+  let expected = h.scroll.scrollTop;
+  const afterWrite = vi.fn((top: number) => {
+    expected = top;
+  });
+  h.surface.pin('n.md:99', undefined, {
+    beforeWrite: (top) => top === expected,
+    afterWrite,
+  });
+  h.writes.mockClear();
+  expect(h.surface.reveal('n.md:99', { waitForReady: true })).toBe('pending');
+  const requested = expectDefined(h.writes.mock.calls[h.writes.mock.calls.length - 1]?.[0]);
+  expect(h.scroll.scrollTop).toBeLessThan(requested);
+  expect(expected).toBe(h.scroll.scrollTop);
+  expect(afterWrite).toHaveBeenLastCalledWith(h.scroll.scrollTop);
+});
+
+it('vetoes pending user movement even when a reveal would need no native setter', () => {
+  const h = harness();
+  h.surface.update(rows(100), presentation);
+  h.surface.reveal('n.md:80');
+  const expected = h.scroll.scrollTop;
+  const afterWrite = vi.fn();
+  h.surface.pin('n.md:80', undefined, { beforeWrite: (top) => top === expected, afterWrite });
+  h.scroll.scrollTop = expected + 1;
+  h.writes.mockClear();
+  expect(h.surface.reveal('n.md:80')).toBeUndefined();
+  expect(h.writes).not.toHaveBeenCalled();
+  expect(afterWrite).not.toHaveBeenCalled();
+  expect(h.scroll.scrollTop).toBe(expected + 1);
+});
+
+it('preserves ordinary reconciliation without a native-write observer', () => {
+  const h = harness();
+  h.surface.update(rows(100), presentation);
+  const mount = expectDefined(h.mount.getMockImplementation());
+  h.mount.mockImplementation((host, row) => {
+    h.scroll.scrollTop += 1;
+    return mount(host, row);
+  });
+  expect(h.surface.reveal('n.md:80')).toBeDefined();
+  expect(h.reportFailure).not.toHaveBeenCalled();
+});
+
+it('prevents intermediate extent clamping before later row callbacks restore some native extent', () => {
+  const h = harness(true, false, true);
+  const initial = rows(100);
+  h.surface.update(initial, presentation);
+  h.surface.reveal('n.md:99');
+  let expected = h.scroll.scrollTop;
+  const before = expected;
+  const afterWrite = vi.fn((top: number) => {
+    expected = top;
+  });
+  h.surface.pin('n.md:99', undefined, {
+    beforeWrite: (top) => top === expected,
+    afterWrite,
+  });
+  let during: number | undefined;
+  for (const result of h.mount.mock.results) {
+    const mount = result.value as ReturnType<typeof h.mount>;
+    vi.spyOn(mount, 'update').mockImplementation((row) => {
+      if (during !== undefined) return;
+      // The earlier spacer shrink has forced native layout before this row grows.
+      during = h.scroll.scrollTop;
+      h.heights.set(row.key, 128);
+    });
+  }
+  h.surface.update(initial, { ...presentation, revision: 'layout:2', estimate: () => 47 });
+  expect(during).toBe(before);
+  expect(afterWrite).toHaveBeenCalled();
+  expect(expected).toBe(h.scroll.scrollTop);
+  expect(h.host.querySelector('[data-abyss-scroll-guard]')).toBeNull();
+  expect(h.reportFailure).not.toHaveBeenCalled();
+});
+
+it.each(['throw', 'destroy', 'replace', 'migrate', 'move'] as const)(
+  'cleans up the transient extent reservation after a row callback causes %s',
+  (operation) => {
+    const h = harness();
+    const owner = taskViewportOwner();
+    h.surface.update(rows(100), presentation);
+    let expected = h.scroll.scrollTop;
+    const afterWrite = vi.fn((top: number) => {
+      expected = top;
+    });
+    const release = h.surface.pin('n.md:80', undefined, {
+      beforeWrite: (top) => top === expected,
+      afterWrite,
+    });
+    const original = expectDefined(h.mount.getMockImplementation());
+    let acted = false;
+    h.mount.mockImplementation((host, row) => {
+      const mount = original(host, row);
+      if (!acted) {
+        acted = true;
+        expect(h.host.querySelector('[data-abyss-scroll-guard]')).not.toBeNull();
+        const actions = {
+          throw: () => {
+            throw new Error('row failure');
+          },
+          destroy: () => {
+            h.surface.destroy();
+          },
+          replace: () => {
+            release();
+            h.surface.update(rows(20), presentation);
+          },
+          migrate: () => {
+            owner.doc.body.append(h.scroll);
+          },
+          move: () => {
+            h.scroll.scrollTop += 17;
+          },
+        };
+        actions[operation]();
+      }
+      return mount;
+    });
+    try {
+      expect(h.surface.reveal('n.md:80')).toBeUndefined();
+      expect(acted).toBe(true);
+      expect(h.host.querySelector('[data-abyss-scroll-guard]')).toBeNull();
+      expect(afterWrite).not.toHaveBeenCalled();
+      expect(h.reportFailure).toHaveBeenCalledTimes(operation === 'throw' ? 1 : 0);
+    } finally {
+      h.surface.destroy();
+      owner.destroy();
+    }
+  },
+);
+
+it('acknowledges a fractional final native clamp without reconstructing it from rounded dimensions', () => {
+  const h = harness(true, false, true);
+  const initial = rows(100);
+  h.surface.update(initial, presentation);
+  h.surface.reveal('n.md:99');
+  let expected = h.scroll.scrollTop;
+  const nativeHeight = expectDefined(Object.getOwnPropertyDescriptor(h.scroll, 'scrollHeight'));
+  Object.defineProperty(h.scroll, 'scrollHeight', {
+    get: () => Math.round(Number(nativeHeight.get?.call(h.scroll))),
+  });
+  const afterWrite = vi.fn((top: number) => {
+    expected = top;
+  });
+  h.surface.pin('n.md:99', undefined, { beforeWrite: (top) => top === expected, afterWrite });
+  for (const result of h.mount.mock.results) {
+    const mount = result.value as ReturnType<typeof h.mount>;
+    vi.spyOn(mount, 'update').mockImplementation((row) => {
+      h.heights.set(row.key, 24.125);
+    });
+  }
+  h.surface.update(initial, { ...presentation, revision: 'layout:2', estimate: () => 24.125 });
+  expect(afterWrite).toHaveBeenCalled();
+  expect(expected).toBe(h.scroll.scrollTop);
+  expect(expected % 1).not.toBe(0);
+  expect(h.host.querySelector('[data-abyss-scroll-guard]')).toBeNull();
+});

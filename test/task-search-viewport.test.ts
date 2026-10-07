@@ -724,3 +724,99 @@ it.each(['accepted', 'cancelled'] as const)(
     }
   },
 );
+
+it.each(['owned', 'coalesced', 'pending-user', 'historical-user', 'no-op-user'] as const)(
+  'tracks native scroll ownership while another destination receipt is pending: %s',
+  async (scenario) => {
+    const clock = frames();
+    const h = await mountCanonicalSearchUi(
+      {
+        'search.md': Array.from({ length: 1200 }, (_, line) => {
+          const title = line === 1199 ? 'needle target' : `neighbor ${line}`;
+          return `- [ ] **${title}**`;
+        }).join('\n'),
+      },
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    const pending = new Map<HTMLElement, ReturnType<typeof deferred<void>>>();
+    const lifetime = vi.spyOn(h.panel, 'createRevealLifetime_abyssPrivate');
+    const pulse = vi.spyOn(h.panel['taskSearchReveal_abyssPrivate'], 'show');
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, host) => {
+      host.createEl('strong', { text });
+      const line = Number(/neighbor (\d+)/u.exec(text)?.[1]);
+      if (h.state.get('mode') !== 'tasks' || line < 1180 || !Number.isFinite(line)) return;
+      const card = expectDefined(host.closest<HTMLElement>('.abyss-task-card'));
+      const gate = deferred<void>();
+      pending.set(card, gate);
+      await gate.promise;
+    });
+    function applyUserScroll(scroll: HTMLElement, before: number): void {
+      if (scenario === 'pending-user') expect(scroll.scrollTop).toBe(before - 17);
+      if (scenario === 'historical-user') scroll.scrollTop = before;
+      if (scenario === 'no-op-user') {
+        scroll.scrollTop -= 1;
+        const retained = expectDefined(h.panel['taskSurface_abyssPrivate']);
+        const key = expectDefined(retained.search?.order.occurrencesOf('search.md:1199')[0]);
+        retained.surface.reveal(key, { waitForReady: true });
+      }
+    }
+    const acceptsOwned = ['owned', 'coalesced'].includes(scenario);
+    try {
+      h.query('needle');
+      await h.completed();
+      expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-title')).click();
+      await vi.waitFor(() => {
+        clock.flush();
+        expect(pending.size).toBeGreaterThan(1);
+      });
+      const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
+      const before = scroll.scrollTop;
+      expect(before).toBeGreaterThan(10000);
+      const pair = expectDefined(
+        [...pending].find(([card]) => card.getBoundingClientRect().bottom <= 0),
+      );
+      if (scenario === 'pending-user') scroll.scrollTop = before - 17;
+      pair[0].setCssProps({ height: '96px' });
+      pair[1].resolve();
+      await flushMicrotasks(30);
+      expect(clock.flush()).toBeGreaterThan(0);
+      expect(scroll.scrollTop).not.toBe(before);
+      if (scenario === 'coalesced') {
+        const next = expectDefined(
+          [...pending].find(
+            ([card]) => card !== pair[0] && card.getBoundingClientRect().bottom <= 0,
+          ),
+        );
+        next[0].setCssProps({ height: '112px' });
+        next[1].resolve();
+        await flushMicrotasks(30);
+        expect(clock.flush()).toBeGreaterThan(0);
+      }
+      applyUserScroll(scroll, before);
+      const request = expectDefined(
+        lifetime.mock.results[0]?.value as
+          ReturnType<(typeof h.panel)['createRevealLifetime_abyssPrivate']> | undefined,
+      );
+      // A user move with no event must already have lost authority before an owned frame/setter.
+      if (['pending-user', 'no-op-user'].includes(scenario))
+        expect(request.signal.aborted).toBe(true);
+      scroll.dispatchEvent(new Event('scroll'));
+      expect(request.signal.aborted).toBe(!acceptsOwned);
+      expect(pulse).not.toHaveBeenCalled();
+      for (const gate of pending.values()) gate.resolve();
+      await h.completed();
+      if (acceptsOwned) {
+        const target = expectDefined(h.root.querySelector<HTMLElement>('.is-search-revealed'));
+        expect(target.getBoundingClientRect().top).toBeGreaterThanOrEqual(0);
+        expect(target.getBoundingClientRect().bottom).toBeLessThanOrEqual(scroll.clientHeight);
+        expect(pulse).toHaveBeenCalledTimes(1);
+      } else {
+        expect(h.root.querySelector('.is-search-revealed')).toBeNull();
+        expect(pulse).not.toHaveBeenCalled();
+      }
+    } finally {
+      for (const gate of pending.values()) gate.resolve();
+      h.dispose();
+    }
+  },
+);
