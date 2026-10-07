@@ -105,23 +105,27 @@ function htmlBlockEnd(
 }
 
 /** Recognized HTML literals only; an ordinary less-than sign grants no raw authority. */
-function htmlRawEnd(text: string, from: number): number | undefined {
+function htmlRawEnd(text: string, from: number, paragraphStart: number): number | undefined {
   const tail = text.slice(from);
-  const block = /^ {0,3}$/u.test(text.slice(text.lastIndexOf('\n', from - 1) + 1, from));
+  const block = /(?:^|\n) {0,3}$/u.test(text.slice(Math.max(0, from - 4), from));
   const delimiter = htmlDelimiter(tail);
   if (delimiter !== undefined) return terminatedHtml(text, from, delimiter, block);
   HTML_TAG.lastIndex = from;
   const tag = HTML_TAG.exec(text)?.[0];
-  const blockEnd = block
-    ? htmlBlockEnd(tail, tag, text.slice(0, from).trim().length === 0)
-    : undefined;
+  const blockEnd = block ? htmlBlockEnd(tail, tag, from <= paragraphStart) : undefined;
   if (blockEnd !== undefined) return from + blockEnd;
   return tag === undefined ? undefined : from + tag.length;
 }
 
-function literalEnd(text: string, from: number): number | undefined {
+function literalOpenerAt(text: string, at: number): boolean {
+  const character = text[at];
+  return character === '<' || character === '$' || (character === '%' && text[at + 1] === '%');
+}
+
+function literalEnd(text: string, from: number, paragraphStart: number): number | undefined {
+  if (!literalOpenerAt(text, from) || escapedAt(text, from)) return undefined;
   if (text.startsWith('%%', from)) return delimiterEnd(text, from + 2, '%%') ?? text.length;
-  if (text[from] === '<') return htmlRawEnd(text, from);
+  if (text[from] === '<') return htmlRawEnd(text, from, paragraphStart);
   if (text[from] !== '$') return undefined;
   const delimiter = text.startsWith('$$', from) ? '$$' : '$';
   const end = delimiterEnd(text, from + delimiter.length, delimiter);
@@ -161,13 +165,14 @@ function rawRanges(text: string): readonly SourceRange[] {
   const ranges: SourceRange[] = fence === undefined ? [...code] : [...code, fence];
   let cursor = 0;
   const codeCursor = { index: 0 };
+  const paragraphStart = text.search(/\S/u);
   while (cursor < text.length) {
     const span = nextOrderedRange(code, cursor, codeCursor);
     if (span !== undefined && cursor >= span.from) {
       cursor = span.to;
       continue;
     }
-    const end = escapedAt(text, cursor) ? undefined : literalEnd(text, cursor);
+    const end = literalEnd(text, cursor, paragraphStart);
     if (end === undefined) cursor++;
     else {
       ranges.push({ from: cursor, to: end });

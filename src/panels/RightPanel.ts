@@ -53,6 +53,7 @@ import {
   proveOwnedCompletionFollowUp,
   proveOwnedTaskSelection,
   rebuildOwnedTaskSelection,
+  taskNodeOccurrencePath,
   type OwnedTaskSelectionProof,
 } from '../ui/ownedTaskSelection';
 import { renderTaskText } from '../ui/renderTaskText';
@@ -326,7 +327,7 @@ export class RightPanel {
   private detachedAnnouncement_abyssPrivate = '';
   private detachedFocusTimer_abyssPrivate: number | undefined;
 
-  private readonly taskOwners_abyssPrivate = new Map<string, InspectorTaskOwner>();
+  private readonly taskOwners_abyssPrivate = new Map<string, InspectorTaskOwner[]>();
   private readonly breadcrumbTitles_abyssPrivate: Array<{
     readonly element: HTMLElement;
     readonly owner: InspectorTaskOwner;
@@ -339,17 +340,22 @@ export class RightPanel {
   private retainedProof_abyssPrivate: OwnedTaskSelectionProof | undefined;
 
   private taskOwner_abyssPrivate(task: TaskLike): InspectorTaskOwner {
-    const key = JSON.stringify(taskNodeRef(task));
-    let owner = this.taskOwners_abyssPrivate.get(key);
-    if (owner === undefined) {
-      owner = { current: task };
-      this.taskOwners_abyssPrivate.set(key, owner);
-    }
+    const ref = taskNodeRef(task);
+    const key = taskNodeOccurrencePath(ref);
+    const owners = this.taskOwners_abyssPrivate.get(key) ?? [];
+    const existing = owners.find(
+      (owner) => owner.current !== undefined && sameTaskNodeRef(taskNodeRef(owner.current), ref),
+    );
+    if (existing !== undefined) return existing;
+    const owner = { current: task };
+    owners.push(owner);
+    this.taskOwners_abyssPrivate.set(key, owners);
     return owner;
   }
 
   private retireTaskOwners_abyssPrivate(): void {
-    for (const owner of this.taskOwners_abyssPrivate.values()) owner.current = undefined;
+    for (const owners of this.taskOwners_abyssPrivate.values())
+      for (const owner of owners) owner.current = undefined;
     this.taskOwners_abyssPrivate.clear();
     this.breadcrumbTitles_abyssPrivate.length = 0;
     this.retainedStack_abyssPrivate = [];
@@ -1703,12 +1709,16 @@ export class RightPanel {
   }
 
   private advanceTaskOwners_abyssPrivate(proof: OwnedTaskSelectionProof): void {
-    const owners = [...this.taskOwners_abyssPrivate.values()];
+    const owners = [...this.taskOwners_abyssPrivate.values()].flat();
     this.taskOwners_abyssPrivate.clear();
     for (const owner of owners) {
       owner.current = owner.current === undefined ? undefined : proof.successor(owner.current);
-      if (owner.current !== undefined)
-        this.taskOwners_abyssPrivate.set(JSON.stringify(taskNodeRef(owner.current)), owner);
+      if (owner.current !== undefined) {
+        const key = taskNodeOccurrencePath(taskNodeRef(owner.current));
+        const survivors = this.taskOwners_abyssPrivate.get(key) ?? [];
+        survivors.push(owner);
+        this.taskOwners_abyssPrivate.set(key, survivors);
+      }
     }
   }
 
@@ -2025,8 +2035,10 @@ export class RightPanel {
   private refreshTaskMetadata_abyssPrivate(task: TaskLike): void {
     const fields = (node: TaskLike | undefined): unknown =>
       node === undefined ? undefined : [node.planning, node.priority, node.tags, node.recurrence];
-    if (JSON.stringify(fields(this.metadataTask_abyssPrivate)) === JSON.stringify(fields(task)))
+    if (JSON.stringify(fields(this.metadataTask_abyssPrivate)) === JSON.stringify(fields(task))) {
+      this.metadataTask_abyssPrivate = task;
       return;
+    }
     const previous = this.metadataTask_abyssPrivate;
     if (
       previous !== undefined &&
@@ -2041,6 +2053,7 @@ export class RightPanel {
     this.renderTaskMetadata_abyssPrivate(task);
     const next = this.el_abyssPrivate.querySelector('.abyss-chips-row:last-child');
     if (next !== null && old !== null) old.replaceWith(next);
+    this.dependencies_abyssPrivate.updateBadge();
   }
 
   private renderTaskMetadata_abyssPrivate(task: TaskLike): void {

@@ -1,5 +1,6 @@
 import { parseLinks } from '../../../markdown/links';
 import {
+  commentBlockEnd,
   readCommentBlock,
   replacementCommentSourceLines,
   type CommentSource,
@@ -333,21 +334,24 @@ function compatibleBlankLine(line: string, parent: string): boolean {
   );
 }
 
+function compatibleNestedLine(line: string, parent: string): boolean {
+  return (
+    compatibleBlankLine(line, parent) ||
+    (indentation(line) > indentation(parent) && quoteDepth(line) === quoteDepth(parent))
+  );
+}
+
 function validRestoredSubtree(lines: readonly SourceLine[], parent: string): boolean {
   const first = lines[0]?.text;
   if (first === undefined || readTaskLinePrefix(first) === null) return false;
-  const depth = indentation(first);
-  return (
-    depth > indentation(parent) &&
-    quoteDepth(first) === quoteDepth(parent) &&
-    lines
-      .slice(1)
-      .every(
-        (line) =>
-          compatibleBlankLine(line.text, parent) ||
-          (indentation(line.text) > depth && quoteDepth(line.text) === quoteDepth(first)),
-      )
-  );
+  if (!compatibleNestedLine(first, parent)) return false;
+  const commentLines = lines.map((line) => line.text);
+  let at = 1;
+  while (at < lines.length) {
+    if (!compatibleNestedLine(commentLines[at] ?? '', first)) return false;
+    at = commentBlockEnd(commentLines, at);
+  }
+  return true;
 }
 
 type RestorePlacement = Extract<TaskBlockEdit, { readonly type: 'restore-subtask' }>['placement'];
@@ -439,6 +443,7 @@ function restoreSeparator(
 
 function rootBlockAt(
   lines: readonly SourceLine[],
+  commentLines: readonly string[],
   content: string,
   index: number,
 ): { readonly block: TaskRootBlock; readonly next: number } | undefined {
@@ -456,8 +461,8 @@ function rootBlockAt(
       continue;
     }
     if (quoteDepth(line.text) !== rootQuote || indentation(line.text) <= rootIndent) break;
-    toLine = cursor;
-    cursor++;
+    cursor = commentBlockEnd(commentLines, cursor);
+    toLine = cursor - 1;
   }
   const last = lines[toLine];
   const to = last != null ? last.to - last.ending.length : rootLine.from;
@@ -641,9 +646,10 @@ function isOwnedSectionBlock(
 function readTaskRootBlocks(content: string): readonly TaskRootBlock[] {
   const lines = sourceLines(content);
   const roots: TaskRootBlock[] = [];
+  const commentLines = lines.map((line) => line.text);
   let index = 0;
   while (index < lines.length) {
-    const found = rootBlockAt(lines, content, index);
+    const found = rootBlockAt(lines, commentLines, content, index);
     if (found === undefined) {
       index++;
       continue;
@@ -807,17 +813,27 @@ function appendChildLine(context: BlockEditContext, text: string): void {
 }
 
 /** Where a child's own block ends, by the same indentation rule that bounds a root block. */
-function childBlockEnd(context: BlockEditContext, from: number, blockEnd: number): number {
+function childBlockEnd(
+  context: BlockEditContext,
+  commentLines: readonly string[],
+  from: number,
+  blockEnd: number,
+): number {
   const child = context.lines[from]?.text ?? '';
   const childIndent = indentation(child);
   const childQuote = quoteDepth(child);
   let to = from;
-  for (let at = from + 1; at < blockEnd; at++) {
+  let at = from + 1;
+  while (at < blockEnd) {
     const text = context.lines[at]?.text;
     if (text === undefined) break;
-    if (isTaskBlockBlankLine(text)) continue;
+    if (isTaskBlockBlankLine(text)) {
+      at++;
+      continue;
+    }
     if (quoteDepth(text) !== childQuote || indentation(text) <= childIndent) break;
-    to = at;
+    at = commentBlockEnd(commentLines, at, blockEnd);
+    to = at - 1;
   }
   return to;
 }
@@ -833,18 +849,19 @@ function directChildBlocks(
 ): ReadonlyArray<{ readonly from: number; readonly to: number }> {
   const parentIndent = indentation(context.parent.text);
   const blockEnd = blockEndLine(context);
+  const commentLines = context.lines.map((line) => line.text);
   const ranges: Array<{ readonly from: number; readonly to: number }> = [];
   let at = context.parentLine + 1;
   while (at < blockEnd) {
     const text = context.lines[at]?.text;
     if (text === undefined) break;
     if (readTaskLinePrefix(text) !== null && indentation(text) > parentIndent) {
-      const to = childBlockEnd(context, at, blockEnd);
+      const to = childBlockEnd(context, commentLines, at, blockEnd);
       ranges.push({ from: at, to });
       at = to + 1;
       continue;
     }
-    at++;
+    at = commentBlockEnd(commentLines, at, blockEnd);
   }
   return ranges;
 }

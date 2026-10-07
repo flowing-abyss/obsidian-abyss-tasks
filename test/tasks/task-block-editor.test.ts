@@ -1119,3 +1119,20 @@ describe('TaskBlockEditor content order', () => {
     });
   });
 });
+
+it('inserts after complete child comments with reformatted quote continuations', () => {
+  const editor = new TaskBlockEditor();
+  const source =
+    '   >   > - [ ] Root\n   >   >   - [ ] Child\n   >   >     - head\n> >       tail\n   >   >   - root note';
+  const result = editor.edit(
+    source,
+    expectDefined(editor.rootBlocks(source)[0]),
+    { relativeLine: 0, lineCount: 5, childRanges: [{ from: 1, to: 3 }] },
+    { type: 'add-subtask', text: 'Added' },
+  );
+  expect(result).toMatchObject({
+    type: 'changed',
+    content:
+      '   >   > - [ ] Root\n   >   >   - [ ] Child\n   >   >     - head\n> >       tail\n   >   >   - [ ] Added\n   >   >   - root note',
+  });
+});

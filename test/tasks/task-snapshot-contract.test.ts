@@ -1,5 +1,7 @@
 import { TFile, type CachedMetadata } from 'obsidian';
 import { describe, expect, it } from 'vitest';
+import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
+import { projectTaskSnapshot } from '../../src/tasks/infrastructure/markdown/TaskSnapshotProjector';
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import {
   canonicalStatusCatalog,
@@ -273,4 +275,24 @@ describe('TaskSnapshot contract', () => {
       }
     },
   );
+});
+
+it('bounds a projected comment to the exact supplied root block', () => {
+  const statusCatalog = canonicalStatusCatalog();
+  const exactBlock = '   >   > - [ ] Root\n   >   >   - head';
+  const projected = expectDefined(
+    projectTaskSnapshot({
+      codec: new TaskMarkdownCodec(statusCatalog),
+      statusCatalog,
+      filePath: 'tasks.md',
+      lines: `${exactBlock}\n> >     tail\n   >   >   - [ ] Child`.split('\n'),
+      line: 0,
+      exactBlock,
+      ref: { filePath: 'tasks.md', line: 0, revision: 'before' },
+      presentation: { linkCount: 0 },
+      offsetAt: () => 0,
+    }),
+  );
+  expect(projected.comments.map((comment) => comment.text)).toEqual(['head']);
+  expect(projected.subtasks).toEqual([]);
 });

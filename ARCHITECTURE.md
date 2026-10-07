@@ -132,7 +132,12 @@ container prefix plus two spaces, subject to the same container and structural b
 References captured before external formatting remain stale. The writer and owned-change proof
 share replacement formatting that preserves each accepted line's raw prefix and uses the first
 continuation prefix (or the canonical head-container prefix plus two spaces) for added lines.
-Canonical projection and the legacy parser consume that same range. `TaskBlockEditor.commentLink`
+Canonical projection and the legacy parser consume that same range. Root/subtree bounds, restoration,
+recurrence ownership and fallback list ancestry skip accepted comment continuations before applying
+raw indentation boundaries again. Each source scan constructs its string-line view once; projection
+also bounds comment reads to the supplied exact root block. Source transfer still requires every
+nonblank line to carry its captured raw prefix and rejects quote spellings it cannot preserve.
+`TaskBlockEditor.commentLink`
 proves the full block, maps the logical occurrence to one physical token, and reuses coordinate
 replacement in both repositories. Whole-block update/delete preserve timestamp prefixes, file line
 endings and final-newline state; no-op writes preserve all bytes. Day, instant and undated legacy
@@ -904,8 +909,11 @@ unaffected headers, text, rows and continuous-entry inputs remain connected. Pla
 one current `InspectorTaskOwner` snapshot when an action opens. Open editors, confirmations and
 submitted commands retain their captured target; attachment drops capture at the synchronous drop
 boundary before asynchronous file saving. `proveOwnedTaskSelection` checks the whole transition once
-and indexes exact surviving occurrences for all mounted owners. RightPanel alone advances those owners
-from the accepted proof, and retirement clears them. Link saves participate in the same owned
+and indexes surviving occurrences by compact root-relative line paths without serializing source-bearing
+root revisions into each key. Those paths select candidates only: complete root, ancestor and occurrence
+reference equality still authorizes detached snapshot lookups. Mounted owners use the same candidate
+paths and exact equality. RightPanel alone advances those owners from the accepted proof, and
+retirement clears them. Link saves participate in the same owned
 submission flow; their proof requires the exact parsed occurrence replacement in the selected field
 and a single corresponding replacement in the complete root source block, including comment source
 blocks. Existing comment updates/deletions prove the captured complete block splice, normalized text,
@@ -937,7 +945,9 @@ semantics. Written clock stamps have second precision; proof checks the canonica
 while discard uses the captured actual millisecond duration and fixed application minimum. Pending
 command settlement or newer selection retires this authority. A witness alone grants no continuity.
 Submitted drafts retain the original DOM value for result comparison, including normalized comment
-writes and clear-to-delete. Unrelated source changes cannot acquire successor authority. Ordinary explicit redraws keep their existing
+writes and clear-to-delete. A newer live title, description or comment draft survives its pending
+submission; only that editor's successful save can advance its baseline and captured target through
+the proven owner/comment successor for another submission. Unrelated source changes cannot acquire successor authority. Ordinary explicit redraws keep their existing
 teardown and settlement semantics; exact unchanged index events are filtered by the shells. Window
 migration retires document listeners and components, then restores eligible drafts into the new owner.
 

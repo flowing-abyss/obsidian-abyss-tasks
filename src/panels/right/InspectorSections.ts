@@ -275,7 +275,12 @@ export class InspectorSections {
         if (entry !== undefined && list.children[index] !== entry.row)
           list.insertBefore(entry.row, list.children[index] ?? null);
       }
-      if (entry !== undefined) entry.snapshot = sub;
+      if (entry !== undefined) {
+        entry.snapshot = sub;
+        entry.row
+          .querySelector('.abyss-subtask-label')
+          ?.classList.toggle('is-done', sub.status === 'done');
+      }
     });
   }
 
@@ -406,6 +411,11 @@ export class InspectorSections {
     task: TaskLike,
     showView: () => void,
   ): void {
+    const owner = this.#host.taskOwner(task);
+    let currentTask = task;
+    const advanceTarget = (): void => {
+      if (owner.current !== undefined) currentTask = owner.current;
+    };
     const start = view.offsetHeight;
     view.hide();
     const textarea = section.createEl('textarea', {
@@ -434,9 +444,10 @@ export class InspectorSections {
       await whenPasteSettled(textarea);
       if (!isCurrent()) return;
       const value = textarea.value;
-      const changed = value !== (task.description ?? '');
-      const committed = !changed || (await this.#commands.updateDescription(task, value));
+      const changed = value !== (currentTask.description ?? '');
+      const committed = !changed || (await this.#commands.updateDescription(currentTask, value));
       if (!isCurrent()) return;
+      if (committed) advanceTarget();
       if (!committed || textarea.value !== value) {
         lifecycle.retry();
         if (!committed) textarea.focus();
@@ -760,6 +771,11 @@ export class InspectorSections {
     task: TaskLike,
     renderView: () => void,
   ): void {
+    const owner = this.#host.taskOwner(task);
+    let currentTask = task;
+    const advanceTarget = (): void => {
+      if (owner.current !== undefined) currentTask = owner.current;
+    };
     // Start editing at the rendered title height, then grow for the complete source.
     const startHeight = view.offsetHeight;
     view.hide();
@@ -784,18 +800,21 @@ export class InspectorSections {
     editorOwner.register(() => {
       lifecycle.close();
     });
+    const isCurrent = (): boolean => !lifecycle.isClosed() && ta.isConnected;
     const finish = async (save: boolean): Promise<void> => {
       if (!lifecycle.begin()) return;
       // Let any in-flight paste insert its link into the value before we save/remove.
       await whenPasteSettled(ta);
-      if (lifecycle.isClosed() || !ta.isConnected) return;
-      if (save && ta.value !== task.markdownTitle) {
-        const saved = await this.#commands.saveTaskTitle(task, ta.value.trim());
-        if (!saved) {
-          lifecycle.retry();
-          ta.focus();
-          return;
-        }
+      if (!isCurrent()) return;
+      const submitted = ta.value;
+      const changed = save && submitted !== currentTask.markdownTitle;
+      const saved = !changed || (await this.#commands.saveTaskTitle(currentTask, submitted.trim()));
+      if (!isCurrent()) return;
+      if (saved) advanceTarget();
+      if (!saved || ta.value !== submitted) {
+        lifecycle.retry();
+        if (!saved) ta.focus();
+        return;
       }
       view.style.removeProperty('height');
       this.#releaseEditor(ta);
@@ -1056,7 +1075,7 @@ export class InspectorSections {
     component.registerDomEvent(textEl, 'click', (event) => {
       if ((event.target as HTMLElement).closest('a') != null) return;
       const current = owner.current;
-      if (current !== undefined) this.#openCommentEditor(row, entry.comment, current, showText);
+      if (current !== undefined) this.#openCommentEditor(row, entry, current, showText);
     });
   }
 
@@ -1083,15 +1102,23 @@ export class InspectorSections {
 
   #openCommentEditor(
     row: HTMLElement,
-    comment: TaskCommentSnapshot,
+    entry: InspectorCommentRow,
     task: TaskLike,
     showText: () => void,
   ): void {
+    const owner = this.#host.taskOwner(task);
+    let currentTask = task;
+    let currentComment = entry.comment;
+    const advanceTarget = (): void => {
+      if (owner.current === undefined) return;
+      currentTask = owner.current;
+      currentComment = entry.comment;
+    };
     row.querySelector('.abyss-comment-text')?.remove();
     row.querySelector('.abyss-comment-disclosure')?.remove();
     const textarea = row.createEl('textarea', { cls: 'abyss-comment-edit-input' });
     const lifecycle = new AsyncEditLifecycle();
-    textarea.value = comment.text;
+    textarea.value = entry.comment.text;
     const editorOwner = this.#editorOwner(
       textarea,
       this.#commentRows.find((entry) => entry.row === row)?.component,
@@ -1106,16 +1133,17 @@ export class InspectorSections {
       await whenPasteSettled(textarea);
       if (!isCurrent()) return;
       const value = textarea.value;
-      if (value === comment.text) {
+      if (value === currentComment.text) {
         this.#releaseEditor(textarea);
         showText();
         return;
       }
       const committed =
         normalizeCommentText(value).type === 'empty'
-          ? await this.#commands.deleteComment(task, comment)
-          : await this.#commands.updateComment(task, comment, value);
+          ? await this.#commands.deleteComment(currentTask, currentComment)
+          : await this.#commands.updateComment(currentTask, currentComment, value);
       if (!isCurrent()) return;
+      if (committed) advanceTarget();
       if (!committed || textarea.value !== value) {
         lifecycle.retry();
         if (!committed) textarea.focus();

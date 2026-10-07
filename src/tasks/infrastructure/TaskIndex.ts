@@ -30,6 +30,7 @@ import type {
 } from '../application/TaskSearchSource';
 import { cloneTaskSnapshot, taskSnapshotWithStatuses } from '../domain/cloneTaskSnapshot';
 import type { TaskResolutionCandidate } from '../domain/commands';
+import { readCommentBlock } from '../domain/commentSource';
 import type { StatusCatalog } from '../domain/StatusCatalog';
 import {
   assembleTaskDependencyGraphSteps,
@@ -490,8 +491,20 @@ function fallbackListItems(data: string): FallbackListItem[] {
     fence: undefined,
     previousQuoteDepth: undefined,
   };
-  for (let lineNumber = 0; lineNumber < lines.length; lineNumber++) {
+  let lineNumber = 0;
+  while (lineNumber < lines.length) {
+    const comment =
+      !state.frontmatter && state.fence === undefined
+        ? readCommentBlock(lines, lineNumber)
+        : undefined;
     consumeFallbackLine(state, lines[lineNumber] ?? '', lineNumber);
+    // Accepted continuations belong to the list head even when quote spacing changes.
+    // Their raw indentation must not pop the head's task ancestors.
+    if (comment !== undefined) {
+      for (let continuation = lineNumber + 1; continuation < comment.toExclusive; continuation++)
+        advanceFallbackOffset(state, lines[continuation] ?? '');
+      lineNumber = comment.toExclusive;
+    } else lineNumber++;
   }
   return state.items;
 }

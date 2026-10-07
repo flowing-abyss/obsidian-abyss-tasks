@@ -200,21 +200,44 @@ export function proveOwnedTaskSelection(
   return indexSelectionProof(current, before, command, rebuilt);
 }
 
+/** Root-scoped candidate address only; callers must still validate the complete reference. */
+export function taskNodeOccurrencePath(target: TaskNodeRef): string {
+  const lines: number[] = [];
+  let current = target;
+  while (current.type === 'subtask') {
+    lines.push(current.ref.relativeLine);
+    current = current.ref.parent;
+  }
+  lines.reverse();
+  return lines.join('/');
+}
+
 function indexSelectionProof(
   current: TaskSnapshot,
   before: TaskSelectionNode,
   command: TaskCommand,
   rebuilt: TaskSelectionNode[],
 ): OwnedTaskSelectionProof {
-  const successors = new Map<string, TaskSelectionNode>();
-  const comments = new Map<string, TaskCommentSnapshot>();
+  const successors = new Map<
+    string,
+    {
+      previous: TaskNodeRef;
+      next: TaskSelectionNode;
+      comments: Map<number, { previous: TaskCommentSnapshot; next: TaskCommentSnapshot }>;
+    }
+  >();
   const splice = command.type === 'delete-subtask' || command.type === 'restore-subtask';
   const restore = command.type === 'restore-subtask';
   let parent: TaskNodeRef | undefined;
   if (command.type === 'restore-subtask') parent = command.parent;
   if (command.type === 'delete-subtask') parent = command.subtask.parent;
   const visit = (previous: TaskSelectionNode, next: TaskSelectionNode): void => {
-    successors.set(JSON.stringify(taskNodeRef(previous)), next);
+    const ref = taskNodeRef(previous);
+    const comments = new Map<
+      number,
+      { previous: TaskCommentSnapshot; next: TaskCommentSnapshot }
+    >();
+    successors.set(taskNodeOccurrencePath(ref), { previous: ref, next, comments });
     const deletedComment =
       command.type === 'delete-comment' &&
       sameTaskNodeRef(taskNodeRef(previous), command.comment.parent)
@@ -228,7 +251,8 @@ function indexSelectionProof(
       if (position === deletedComment) return;
       const successor =
         next.comments[position - (deletedComment >= 0 && position > deletedComment ? 1 : 0)];
-      if (successor !== undefined) comments.set(JSON.stringify(comment.ref), successor);
+      if (successor !== undefined)
+        comments.set(comment.ref.relativeLine, { previous: comment, next: successor });
     });
     const edited = parent !== undefined && sameTaskNodeRef(taskNodeRef(previous), parent);
     const expanded = restore ? next : previous;
@@ -242,11 +266,24 @@ function indexSelectionProof(
     });
   };
   visit(before, current);
+  const exactOccurrence = (ref: TaskNodeRef): ReturnType<typeof successors.get> => {
+    const candidate = successors.get(taskNodeOccurrencePath(ref));
+    return candidate !== undefined && sameTaskNodeRef(candidate.previous, ref)
+      ? candidate
+      : undefined;
+  };
   return {
     selection: rebuilt,
-    successor: (previous) => successors.get(JSON.stringify(taskNodeRef(previous))),
-    nodeSuccessor: (previous) => successors.get(JSON.stringify(previous)),
-    commentSuccessor: (previous) => comments.get(JSON.stringify(previous.ref)),
+    successor: (previous) => exactOccurrence(taskNodeRef(previous))?.next,
+    nodeSuccessor: (previous) => exactOccurrence(previous)?.next,
+    commentSuccessor: (previous) => {
+      const candidate = exactOccurrence(previous.ref.parent)?.comments.get(
+        previous.ref.relativeLine,
+      );
+      return candidate?.previous.ref.originalMarkdown === previous.ref.originalMarkdown
+        ? candidate.next
+        : undefined;
+    },
   };
 }
 

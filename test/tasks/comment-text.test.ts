@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { readCommentBlock } from '../../src/tasks/domain/commentSource';
 import { commentStructuralMarker, normalizeCommentText } from '../../src/tasks/domain/commentText';
+import { interleavedRatio } from '../helpers';
 
 describe('comment text policy', () => {
   it('retains normalized escape and literal policy after prefix formatting', () => {
@@ -126,3 +127,41 @@ it('protects a large code-rich comment while rejecting a structural marker insid
     reason: 'unsafe-raw-continuation',
   });
 });
+
+it.each(['\\', '<'])(
+  'scales linearly through a long %s run before an escaped marker',
+  (character) => {
+    const small = `${character.repeat(2000)}\n- next`;
+    const large = `${character.repeat(8000)}\n- next`;
+    expect(normalizeCommentText(large)).toEqual({
+      type: 'ready',
+      text: `${character.repeat(8000)}\n\\- next`,
+    });
+    const ratio = interleavedRatio({
+      small: () => {
+        normalizeCommentText(small);
+      },
+      large: () => {
+        normalizeCommentText(large);
+      },
+      pairs: 9,
+      warmup: 2,
+    });
+    expect(ratio).toBeLessThan(8);
+  },
+);
+
+it.each([
+  ['\\%% raw\n- next', 'ready'],
+  ['\\\\%% raw\n- next', 'invalid'],
+  ['\\<div>\n- next', 'ready'],
+  ['\\\\<div>\n- next', 'ready'],
+  ['`code\nordinary`\n<div>\n- next', 'invalid'],
+  ['%%raw\nordinary%%\n<custom>\n- next', 'ready'],
+  ['%%raw\nordinary%%\n  <div>\n- next', 'invalid'],
+])(
+  'preserves literal recognition after escaped and multiline skipped ranges: %j',
+  (input, type) => {
+    expect(normalizeCommentText(input).type).toBe(type);
+  },
+);

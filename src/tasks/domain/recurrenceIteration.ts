@@ -1,3 +1,4 @@
+import { commentBlockEnd } from './commentSource';
 import { shiftLocalDate } from './localDateMath';
 import { parseRecurrenceRule, type RecurrenceIssueCode } from './recurrence';
 import {
@@ -154,14 +155,18 @@ function blankSourceLine(line: SourceLine): boolean {
   return /^[\s>]*$/u.test(line.text);
 }
 
-function rootBlockStructureIsValid(lines: readonly SourceLine[], root: SourceLine): boolean {
+function rootBlockStructureIsValid(
+  lines: readonly SourceLine[],
+  commentLines: readonly string[],
+  root: SourceLine,
+): boolean {
   const rootIndent = indentation(root.text);
   const rootQuote = quoteDepth(root.text);
-  for (let index = 1; index < lines.length; index++) {
+  let index = 1;
+  while (index < lines.length) {
     const line = lines[index];
-    if (line === undefined) return false;
-    if (blankSourceLine(line)) continue;
-    if (quoteDepth(line.text) !== rootQuote || indentation(line.text) <= rootIndent) return false;
+    if (line === undefined || !withinOwner(line, rootIndent, rootQuote)) return false;
+    index = commentBlockEnd(commentLines, index);
   }
   return true;
 }
@@ -187,17 +192,20 @@ function trimTrailingBlankLines(
 
 function ownedSubtreeEnd(
   lines: readonly SourceLine[],
+  commentLines: readonly string[],
   ownerRelativeLine: number,
   owner: SourceLine,
 ): number | undefined {
   const ownerIndent = indentation(owner.text);
   const ownerQuote = quoteDepth(owner.text);
   let toLine = ownerRelativeLine;
-  for (let index = ownerRelativeLine + 1; index < lines.length; index++) {
+  let index = ownerRelativeLine + 1;
+  while (index < lines.length) {
     const line = lines[index];
     if (line === undefined) return undefined;
     if (!withinOwner(line, ownerIndent, ownerQuote)) break;
-    toLine = index;
+    index = commentBlockEnd(commentLines, index);
+    toLine = index - 1;
   }
   return trimTrailingBlankLines(lines, ownerRelativeLine, toLine);
 }
@@ -234,8 +242,9 @@ export function recurrenceOwnedSubtree(
   ) {
     return undefined;
   }
-  if (!rootBlockStructureIsValid(lines, root)) return undefined;
-  const toLine = ownedSubtreeEnd(lines, ownerRelativeLine, owner);
+  const commentLines = lines.map((line) => line.text);
+  if (!rootBlockStructureIsValid(lines, commentLines, root)) return undefined;
+  const toLine = ownedSubtreeEnd(lines, commentLines, ownerRelativeLine, owner);
   if (toLine === undefined) return undefined;
   const taskLines = ownedTaskLines(lines, ownerRelativeLine, toLine);
   if (taskLines === undefined) return undefined;

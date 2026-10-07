@@ -184,6 +184,15 @@ export function readCommentBlock(
   };
 }
 
+/** Advances a structural scan over exactly one accepted comment, or one ordinary line. */
+export function commentBlockEnd(
+  lines: readonly string[],
+  from: number,
+  toExclusive = lines.length,
+): number {
+  return readCommentBlock(lines, from, toExclusive)?.toExclusive ?? from + 1;
+}
+
 /** Retains each authored physical prefix; added continuations use one stable fallback. */
 export function replacementCommentSourceLines(
   original: CommentSource,

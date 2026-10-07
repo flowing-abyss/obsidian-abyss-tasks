@@ -205,3 +205,11 @@ it.each(unprovedHierarchyReferences)(
     expect(result).toEqual({ type: 'invalid' });
   },
 );
+
+it('refuses transfer when a recognized quote continuation cannot preserve the source prefix', () => {
+  const source = '   >   > - [ ] Move\n   >   >   - head\n> >     tail';
+  const block = expectDefined(editor.rootBlocks(source)[0]);
+  expect(block.source).toBe(source);
+  expect(editor.ownedTaskSubtree(source, 0)).toEqual({ fromLine: 0, toLine: 2, taskLines: [0] });
+  expect(transfer(source, '- [ ] Parent')).toEqual({ type: 'invalid' });
+});

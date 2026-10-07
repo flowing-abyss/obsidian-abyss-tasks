@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   localDate,
   taskPrefixForSubtask,
@@ -7,6 +7,7 @@ import {
   type TaskCommand,
 } from '../src/tasks';
 import { atomDateTime } from '../src/tasks/domain/commentTimestamp';
+import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { projectTaskSnapshot } from '../src/tasks/infrastructure/markdown/TaskSnapshotProjector';
@@ -994,6 +995,107 @@ it('rejects an offsetless completion witness whose wall time cannot prove the ac
       original: [initial],
       command: { type: 'toggle-completion', target: { type: 'subtask', ref: owner.ref } },
       witness,
+    }),
+  ).toBeUndefined();
+});
+
+it('indexes source-bearing occurrences without serializing the root for every child', () => {
+  const source = [
+    '- [ ] Root',
+    ...Array.from(
+      { length: 1000 },
+      (_, index) => `  - [ ] Child ${index} ${'a'.repeat(60)}\n    - comment ${index}`,
+    ),
+  ].join('\n');
+  const authority = new TaskRefAuthority('proof-work');
+  const original = snapshot(source, authority.revision(source));
+  const changed = `${source}\n  - [ ] Added`;
+  const current = snapshot(changed, authority.revision(changed));
+  const stringify = JSON.stringify;
+  let serializedCharacters = 0;
+  const serialization = vi.spyOn(JSON, 'stringify').mockImplementation((...args) => {
+    const result = stringify(...args);
+    serializedCharacters += result.length;
+    return result;
+  });
+  try {
+    const proof = expectDefined(
+      proveOwnedTaskSelection(current, [original], {
+        type: 'add-subtask',
+        parent: { type: 'task', ref: original.ref },
+        text: 'Added',
+      }),
+    );
+    for (const [index, child] of original.subtasks.entries()) {
+      expect(proof.nodeSuccessor({ type: 'subtask', ref: structuredClone(child.ref) })).toBe(
+        current.subtasks[index],
+      );
+      expect(proof.commentSuccessor(structuredClone(expectDefined(child.comments[0])))).toBe(
+        current.subtasks[index]?.comments[0],
+      );
+    }
+    expect(serializedCharacters).toBeLessThan(source.length * 20);
+  } finally {
+    serialization.mockRestore();
+  }
+});
+
+it('resolves detached exact refs while rejecting changed child, ancestor, root and comment bytes', () => {
+  const original = snapshot(
+    '- [ ] Root\n  - [ ] Owner\n    - [ ] Deep\n      - comment',
+    'root-before',
+  );
+  const current = snapshot(`${original.source.originalBlock}\n  - [ ] Added`, 'root-after');
+  const proof = expectDefined(
+    proveOwnedTaskSelection(current, [original], {
+      type: 'add-subtask',
+      parent: { type: 'task', ref: original.ref },
+      text: 'Added',
+    }),
+  );
+  const child = expectDefined(original.subtasks[0]?.subtasks[0]);
+  const next = expectDefined(current.subtasks[0]?.subtasks[0]);
+  const ref = { type: 'subtask' as const, ref: structuredClone(child.ref) };
+  expect(proof.nodeSuccessor(ref)).toBe(next);
+  expect(proof.successor(structuredClone(child))).toBe(next);
+  expect(
+    proof.nodeSuccessor({ ...ref, ref: { ...ref.ref, originalBlock: 'foreign' } }),
+  ).toBeUndefined();
+  expect(proof.nodeSuccessor({ ...ref, ref: { ...ref.ref, relativeLine: 99 } })).toBeUndefined();
+  const parent = ref.ref.parent;
+  if (parent.type !== 'subtask' || parent.ref.parent.type !== 'task')
+    throw new Error('Expected nested fixture');
+  expect(
+    proof.nodeSuccessor({
+      ...ref,
+      ref: { ...ref.ref, parent: { ...parent, ref: { ...parent.ref, originalBlock: 'foreign' } } },
+    }),
+  ).toBeUndefined();
+  for (const root of [
+    { ...original.ref, revision: 'foreign' },
+    { ...original.ref, filePath: 'other.md' },
+    { ...original.ref, line: 99 },
+  ]) {
+    const changedParent = {
+      ...parent,
+      ref: { ...parent.ref, parent: { type: 'task' as const, ref: root } },
+    };
+    expect(
+      proof.nodeSuccessor({ ...ref, ref: { ...ref.ref, parent: changedParent } }),
+    ).toBeUndefined();
+  }
+  const comment = expectDefined(child.comments[0]);
+  expect(proof.commentSuccessor(structuredClone(comment))).toBe(next.comments[0]);
+  expect(
+    proof.commentSuccessor({ ...comment, ref: { ...comment.ref, originalMarkdown: 'foreign' } }),
+  ).toBeUndefined();
+  expect(
+    proof.commentSuccessor({ ...comment, ref: { ...comment.ref, relativeLine: 99 } }),
+  ).toBeUndefined();
+  expect(
+    proof.commentSuccessor({
+      ...comment,
+      ref: { ...comment.ref, parent: { ...ref, ref: { ...ref.ref, originalBlock: 'foreign' } } },
     }),
   ).toBeUndefined();
 });

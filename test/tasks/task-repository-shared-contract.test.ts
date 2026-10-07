@@ -238,6 +238,45 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         expect(await h.read()).toBe(`${quote}- [ ] Root\r\n\t${quote}- neighbor`);
       },
     );
+    it.each(['\n', '\r\n'])(
+      'keeps reformatted quote continuations editable and owned once with %j',
+      async (ending) => {
+        const block = [
+          '   >   > - [ ] Root',
+          '   >   >   - head',
+          '> >     tail',
+          '   >   >   - [ ] Child',
+        ].join(ending);
+        const source = `before${ending}${block}${ending}after${ending}`;
+        const h = await makeHarness(adapter, source);
+        const roots = h.snapshots(source);
+        expect(roots.map((root) => root.title)).toEqual(['Root']);
+        const root = expectDefined(roots[0]);
+        expect(root.source.originalBlock).toBe(block);
+        expect(root.subtasks.map((child) => child.title)).toEqual(['Child']);
+        const comment = expectDefined(root.comments[0]);
+        expect(comment.text).toBe('head\ntail');
+        expect(comment.ref.originalMarkdown).toBe(
+          `   >   >   - head${ending}> >     tail${ending === '\r\n' ? '\r' : ''}`,
+        );
+        await expect(
+          h.repository.edit({
+            type: 'update-comment',
+            comment: comment.ref,
+            text: 'changed\ncontinued',
+          }),
+        ).resolves.toMatchObject({ type: 'committed', changed: true });
+        const changed = source.replace('head', 'changed').replace('tail', 'continued');
+        expect(await h.read()).toBe(changed);
+        const updated = expectDefined(h.snapshots(changed)[0]?.comments[0]);
+        await expect(
+          h.repository.edit({ type: 'delete-comment', comment: updated.ref }),
+        ).resolves.toMatchObject({ type: 'committed', changed: true });
+        expect(await h.read()).toBe(
+          ['before', '   >   > - [ ] Root', '   >   >   - [ ] Child', 'after', ''].join(ending),
+        );
+      },
+    );
     it('preserves mixed physical prefixes while growing and deleting a formatted comment', async () => {
       const source =
         '- [ ] Root\r\n\t- 2026-10-07: head\r\n\t\ttail\r\n      third\r\n\t- neighbor\r\n\t- [ ] Child';

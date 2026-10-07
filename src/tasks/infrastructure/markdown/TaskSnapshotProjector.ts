@@ -32,6 +32,7 @@ interface ProjectionContext {
   readonly statusCatalog: StatusCatalog;
   readonly filePath: string;
   readonly lines: readonly string[];
+  readonly toExclusive: number;
   readonly offsetAt: OffsetAt;
 }
 
@@ -188,6 +189,7 @@ interface ProjectedContentTarget {
   readonly line: number;
   readonly source: string;
   readonly lines: readonly string[];
+  readonly toExclusive: number;
   readonly offsetAt: OffsetAt;
   readonly descriptions: string[];
   readonly comments: TaskCommentSnapshot[];
@@ -220,7 +222,7 @@ function appendProjectedContent(target: ProjectedContentTarget): number {
     return target.line + 1;
   }
   if (appendProjectedTimeEntry(target)) return target.line + 1;
-  const comment = readCommentBlock(target.lines, target.line, target.lines.length);
+  const comment = readCommentBlock(target.lines, target.line, target.toExclusive);
   if (comment == null) return target.line + 1;
   target.comments.push(
     commentSnapshot({
@@ -255,7 +257,7 @@ function projectChildren(
   let toLine = parentLine;
   let line = parentLine + 1;
 
-  while (line < context.lines.length) {
+  while (line < context.toExclusive) {
     const source = context.lines[line];
     if (source === undefined) break;
     if (isTaskBlockBlankLine(source)) {
@@ -276,6 +278,7 @@ function projectChildren(
       line,
       source,
       lines: context.lines,
+      toExclusive: context.toExclusive,
       offsetAt: context.offsetAt,
       descriptions,
       comments,
@@ -381,7 +384,13 @@ export function projectTaskSnapshot(projection: TaskSnapshotProjection): TaskSna
   });
   if (parsed == null) return undefined;
   const rootNode: TaskNodeRef = { type: 'task', ref: projection.ref };
-  const context: ProjectionContext = projection;
+  const context: ProjectionContext = {
+    ...projection,
+    toExclusive: Math.min(
+      projection.lines.length,
+      projection.line + projection.exactBlock.split('\n').length,
+    ),
+  };
   const children = projectChildren(context, projection.line, rootNode);
   const status =
     parsed.planning.cancelled !== undefined && parsed.planning.cancelled.length > 0

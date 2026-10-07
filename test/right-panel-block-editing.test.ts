@@ -1656,6 +1656,153 @@ describe('RightPanel block editing', () => {
     }
   });
 
+  it.each([false, true])(
+    'keeps the dependency badge after a typed input defers metadata (prior status edits: %s)',
+    async (statusFirst) => {
+      const h = await inspectorHarness('- [ ] Owner #remove\n  - [ ] Child', 'Owner');
+      const stop = subscribeInspectorReconciliation(h);
+      if (statusFirst) {
+        for (let iteration = 0; iteration < 2; iteration++) {
+          expectDefined(
+            h.el.querySelector<HTMLElement>('.abyss-subtask-row .abyss-status-marker'),
+          ).click();
+          await flushMicrotasks(30);
+        }
+      }
+      const release = deferred<void>();
+      const execute = h.api.execute.bind(h.api);
+      vi.spyOn(h.api, 'execute').mockImplementationOnce(async (command) => {
+        await release.promise;
+        return execute(command);
+      });
+      try {
+        const badge = expectDefined(h.el.querySelector('.abyss-dep-badge-body'));
+        const remove = expectDefined(
+          h.el.querySelector<HTMLButtonElement>('.abyss-chip-tag .abyss-chip-remove'),
+        );
+        remove.focus();
+        remove.click();
+        const add = expectDefined(h.el.querySelector<HTMLButtonElement>('[aria-label="Add tag"]'));
+        add.focus();
+        add.click();
+        await flushMicrotasks(10);
+        const input = expectDefined(h.el.querySelector<HTMLInputElement>('.abyss-tag-input'));
+        input.focus();
+        input.value = 'new draft';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        release.resolve();
+        await flushMicrotasks(30);
+        expect(h.node('Owner').node.tags).toEqual([]);
+        expect(h.el.querySelector('.abyss-tag-input')).toBe(input);
+        expect(h.el.querySelector('.abyss-dep-badge-body')).toBe(badge);
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await flushMicrotasks(30);
+        expect(h.el.querySelector('.abyss-tag-input')).toBeNull();
+        expect(h.el.querySelector('.abyss-dep-badge-body')).not.toBeNull();
+      } finally {
+        release.resolve();
+        stop();
+      }
+    },
+  );
+
+  it('updates completion styling on retained child Markdown in both directions', async () => {
+    const h = await inspectorHarness('- [ ] Current\n  - [ ] Child [[note]]');
+    const stop = subscribeInspectorReconciliation(h);
+    try {
+      const row = expectDefined(h.el.querySelector<HTMLElement>('.abyss-subtask-row'));
+      const label = expectDefined(row.querySelector<HTMLElement>('.abyss-subtask-label'));
+      const content = label.innerHTML;
+      for (const done of [true, false]) {
+        expectDefined(row.querySelector<HTMLElement>('.abyss-status-marker')).click();
+        await flushMicrotasks(30);
+        expect(h.node('Child 🔗 note').node.status).toBe(done ? 'done' : 'open');
+        expect(h.el.querySelector('.abyss-subtask-row')).toBe(row);
+        expect(row.querySelector('.abyss-subtask-label')).toBe(label);
+        expect(label.innerHTML).toBe(content);
+        expect(label.classList.contains('is-done')).toBe(done);
+      }
+    } finally {
+      stop();
+    }
+  });
+
+  it.each([
+    {
+      field: 'title',
+      view: '.abyss-right-title-view',
+      editor: '.abyss-right-title-edit',
+      original: 'Current',
+      first: 'First saved title',
+    },
+    {
+      field: 'description',
+      view: '.abyss-right-desc-view',
+      editor: '.abyss-right-desc-edit',
+      original: 'Original description',
+      first: 'First saved description',
+    },
+    {
+      field: 'comment',
+      view: '.abyss-comment-text',
+      editor: '.abyss-comment-edit-input',
+      original: 'Original comment',
+      first: 'First saved comment',
+    },
+  ])('keeps a newer $field draft usable after its pending save', async (field) => {
+    for (const next of ['Later draft', field.original, '']) {
+      const h = await inspectorHarness(
+        '- [ ] Current\n  - > Original description\n  - Original comment',
+      );
+      const unsubscribe = subscribeInspectorReconciliation(h);
+      const release = deferred<void>();
+      const originalExecute = h.api.execute.bind(h.api);
+      let started = false;
+      vi.spyOn(h.api, 'execute').mockImplementation(async (command) => {
+        started = true;
+        await release.promise;
+        return originalExecute(command);
+      });
+      try {
+        expectDefined(h.el.querySelector<HTMLElement>(field.view)).click();
+        await flushMicrotasks();
+        const editor = expectDefined(h.el.querySelector<HTMLTextAreaElement>(field.editor));
+        editor.focus();
+        editor.value = field.first;
+        editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await flushMicrotasks();
+        expect(started).toBe(true);
+        editor.value = next;
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        editor.setSelectionRange(0, next.length);
+        release.resolve();
+        await flushMicrotasks(20);
+
+        expect(await h.read()).toContain(field.first);
+        expect(h.el.querySelector(field.editor)).toBe(editor);
+        expect(editor.value).toBe(next);
+        expect(activeDocument.activeElement).toBe(editor);
+        expect(editor.selectionEnd).toBe(next.length);
+        // A title cannot be empty, but even that unfinished draft must survive settlement.
+        const submitted = field.field === 'title' && next === '' ? 'Final title' : next;
+        editor.value = submitted;
+        editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await flushMicrotasks(20);
+
+        expect(h.el.querySelector(field.editor)).toBeNull();
+        expect(await h.read()).not.toContain(field.first);
+        if (submitted !== '') expect(await h.read()).toContain(submitted);
+        else if (field.field === 'comment') expect(h.node('Current').node.comments).toEqual([]);
+        else expect(h.node('Current').node.description).toBeUndefined();
+      } finally {
+        release.resolve();
+        unsubscribe();
+        h.panel.destroy();
+        h.el.remove();
+      }
+    }
+  });
+
   it('closes the title editor after a save that changes nothing', async () => {
     const initial = snapshot('old');
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
@@ -3457,4 +3604,67 @@ describe('transient inspector editor ownership', () => {
     });
     expect(await h.read()).not.toContain('stale submission');
   });
+});
+
+it.each(['\n', '\r\n'])(
+  'restores exact reformatted comment bytes with child removal Undo (%j)',
+  async (ending) => {
+    const source = [
+      '   >   > - [ ] Root',
+      '   >   >   - [ ] Child',
+      '   >   >     - head',
+      '> >       tail',
+      '   >   >     - [ ] Deep',
+      '   >   >   - [ ] Neighbor',
+      'after',
+    ].join(ending);
+    const h = await inspectorHarness(source, 'Root');
+    const stop = subscribeInspectorReconciliation(h);
+    try {
+      expect(h.index.list().map((root) => root.title)).toEqual(['Root']);
+      expect(h.node('Child').node.comments[0]?.text).toBe('head\ntail');
+      expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-subtask-remove')).click();
+      await flushMicrotasks(30);
+      expect(await h.read()).toBe(
+        ['   >   > - [ ] Root', '   >   >   - [ ] Neighbor', 'after'].join(ending),
+      );
+      expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-undo-row button')).click();
+      await flushMicrotasks(30);
+      expect(await h.read()).toBe(source);
+      expect(h.index.list().map((root) => root.title)).toEqual(['Root']);
+      expect(h.node('Child').node.subtasks.map((child) => child.title)).toEqual(['Deep']);
+    } finally {
+      stop();
+    }
+  },
+);
+
+it('reuses exact detached mounted owners without copying source into lookup keys', async () => {
+  const source = [
+    '- [ ] Current',
+    ...Array.from({ length: 200 }, (_, index) => `  - [ ] Child ${index} ${'a'.repeat(60)}`),
+  ].join('\n');
+  const h = await inspectorHarness(source);
+  const children = h.node('Current').node.subtasks;
+  const stringify = JSON.stringify;
+  let serializedCharacters = 0;
+  const serialization = vi.spyOn(JSON, 'stringify').mockImplementation((...args) => {
+    const result = stringify(...args);
+    serializedCharacters += result.length;
+    return result;
+  });
+  try {
+    for (const child of children) {
+      const owner = call<{ current: SubtaskSnapshot | undefined }>(h.panel, 'taskOwner', child);
+      const detached = call(h.panel, 'taskOwner', structuredClone(child));
+      expect(detached).toBe(owner);
+      expect(owner.current?.ref).toEqual(child.ref);
+      expect(
+        call(h.panel, 'taskOwner', { ...child, ref: { ...child.ref, originalBlock: 'foreign' } }),
+      ).not.toBe(owner);
+    }
+    expect(serializedCharacters).toBeLessThan(source.length * 5);
+  } finally {
+    serialization.mockRestore();
+  }
 });
