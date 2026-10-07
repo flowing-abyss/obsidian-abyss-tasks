@@ -5012,6 +5012,10 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   margin-bottom: 10px;
 }
 
+.abyss-comment-list:empty {
+  display: none;
+}
+
 .abyss-comment-row {
   font-size: 13px;
   color: var(--text-normal);
