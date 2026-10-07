@@ -10,7 +10,10 @@ import type {
 import type { CreationRevealAuthority } from '../../ui/creation/CreationPresentationController';
 import { isRealmHTMLElement } from '../../ui/domRealm';
 import { runAsyncAction } from '../../ui/runAsyncAction';
-import { CaptureRevealIntent } from '../../ui/taskCapture/CaptureRevealIntent';
+import {
+  CaptureRevealIntent,
+  type CaptureRevealAuthority,
+} from '../../ui/taskCapture/CaptureRevealIntent';
 import { CaptureSurface } from '../../ui/taskCapture/CaptureSurface';
 import {
   CaptureTargetResolver,
@@ -59,7 +62,7 @@ interface CaptureSessionsOptions {
     description: CreationResultDescription,
     revealAuthority?: CreationRevealAuthority,
   ) => void;
-  readonly captureReveal?: (isCurrent: () => boolean) => CreationRevealAuthority;
+  readonly captureReveal?: (isCurrent: () => boolean) => CaptureRevealAuthority;
   readonly root: () => HTMLElement;
 }
 
@@ -137,12 +140,17 @@ export class CaptureSessions {
         const controller = new TaskCaptureController({
           target,
           describe: describeTaskCreationResult,
+          onSubmit: () => this.#activeCapture?.revealIntent?.beginSubmission(),
           onResult: (result, description) => {
             const current = this.#activeCapture;
             if (current?.requestId === requestId && description.kind !== 'success') {
               current.restoreFocusOnClose = false;
             }
-            this.#onCreationResult(result, description, current?.revealIntent?.forResult());
+            this.#onCreationResult(
+              result,
+              description,
+              current?.revealIntent?.forResult(description.kind === 'success'),
+            );
           },
           onRequestClose: () => {
             this.#closeCaptureByRequestId(requestId);
@@ -163,7 +171,7 @@ export class CaptureSessions {
             this.#captureReveal?.(
               () =>
                 this.#activeCapture === session &&
-                session.controller.snapshot().phase === 'idle' &&
+                session.controller.snapshot().phase !== 'closed' &&
                 session.surface?.input.isConnected === true &&
                 session.surface.input.ownerDocument.activeElement === session.surface.input,
             ),

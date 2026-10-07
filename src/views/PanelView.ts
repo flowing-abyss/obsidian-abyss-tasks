@@ -848,17 +848,26 @@ export class PanelView extends ItemView {
       undefined,
       () => selectionTasks.queries.listNodes(),
     );
+    let selectionIntent = this.state_abyssPrivate.taskSelectionIntentGeneration;
     this.quickCapture_abyssPrivate = new QuickCaptureCoordinator({
       host: elements.quickCaptureHost,
       context: () => this.quickCaptureContext_abyssPrivate(),
       resolveTarget: (context) => captureTargets.resolve(context),
       captureReveal: (isCurrent) => this.center_abyssPrivate.captureCreationReveal(isCurrent),
+      onSubmit: () => {
+        selectionIntent = this.state_abyssPrivate.taskSelectionIntentGeneration;
+      },
       interactionOwnership: interactionRegistry,
       onResult: (result, description, revealAuthority) => {
         // Taken before presenting, so a presentation failure cannot leave it for a later capture.
         const pendingPane = this.compactPaneAccess_abyssPrivate.takePending();
         try {
-          this.presentCreationResult_abyssPrivate(result, description, revealAuthority);
+          this.presentCreationResult_abyssPrivate(
+            result,
+            description,
+            revealAuthority,
+            selectionIntent === this.state_abyssPrivate.taskSelectionIntentGeneration,
+          );
         } finally {
           if (description.kind === 'success' && pendingPane != null) {
             this.compactPaneAccess_abyssPrivate.schedule(pendingPane);
@@ -910,7 +919,19 @@ export class PanelView extends ItemView {
     result: TaskCommandResult,
     description: CreationResultDescription,
     revealAuthority?: CreationRevealAuthority,
+    ownsSelection = true,
   ): void {
+    const maySelect = ownsSelection && revealAuthority?.canSelect?.() !== false;
+    if (maySelect) this.selectCreationResult_abyssPrivate(result);
+    this.creationPresentation_abyssPrivate?.present(
+      result,
+      description,
+      revealAuthority,
+      maySelect,
+    );
+  }
+
+  private selectCreationResult_abyssPrivate(result: TaskCommandResult): void {
     if (result.type === 'ok' && result.outcome.type === 'task') {
       const resolution = this.queries_abyssPrivate.resolve(result.outcome.task.ref);
       if (resolution.type === 'exact' || resolution.type === 'rebased') {
@@ -918,7 +939,6 @@ export class PanelView extends ItemView {
         this.state_abyssPrivate.set('taskStack', [current]);
       }
     }
-    this.creationPresentation_abyssPrivate?.present(result, description, revealAuthority);
   }
 
   private subscribeToState_abyssPrivate(layout: HTMLElement): void {

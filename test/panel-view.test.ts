@@ -2016,6 +2016,7 @@ describe('PanelView', () => {
           failure,
           expect.objectContaining({ kind: 'error' }),
           expect.anything(),
+          trigger !== 'task selection',
         );
         expect(expectDefined(present.mock.calls[0]?.[2]).isCurrent()).toBe(false);
         expect(internals.interactionRegistry_abyssPrivate.allows('openCalendar')).toBe(false);
@@ -2084,6 +2085,7 @@ describe('PanelView', () => {
         result,
         expect.objectContaining({ kind: 'success' }),
         expect.anything(),
+        true,
       );
       expect(expectDefined(present.mock.calls[0]?.[2]).isCurrent()).toBe(false);
       expect(internals.interactionRegistry_abyssPrivate.allows('openCalendar')).toBe(true);

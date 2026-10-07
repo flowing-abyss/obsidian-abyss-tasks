@@ -354,11 +354,13 @@ it.each(['blur', 'input', 'unmount', 'parent'] as const)(
       listNodes: () => [],
       root: () => root,
       captureReveal: () => ({
-        isCurrent: () => true,
-        reveal: (_ref, request) => {
-          forwarded = request;
-          return held.promise;
-        },
+        forSubmission: () => ({
+          isCurrent: () => true,
+          reveal: (_ref, request) => {
+            forwarded = request;
+            return held.promise;
+          },
+        }),
       }),
       onCreationResult: (_result, _description, authority) => {
         revealing = authority?.reveal(snapshot.ref, {

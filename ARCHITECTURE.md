@@ -320,7 +320,8 @@ current source exclusions before provisioning and before each retained-session w
 
 Sidebar retries reuse the session. Project capture uses the selected note and project insertion
 policy; overview capture follows the active surface's logical selection. Both panel capture routes
-select the query-resolved root through AppState before reveal presentation.
+select the query-resolved root through AppState before reveal presentation, provided their
+submission still owns AppState selection intent. Blur alone does not revoke result selection.
 
 Application code owns prefix and Inbox policy for roots, subtasks, and linked subtasks, including
 atomic tag validation. Presentation supplies typed fields. Transient Inbox intent can suppress the
@@ -1201,7 +1202,7 @@ Existing synchronous `reveal(key)` callers retain actual containment and the 16-
 bound; ordinary anchor reconciliation retains its existing policy. Ordinary rows expose only their
 finite mounted card receipts. A reveal pin may carry a synchronous native-write observer: CenterPanel
 validates the last accepted native top before TaskListSurface changes scroll or DOM extent, and the
-surface acknowledges the actual post-clamp top only to still-live captured pin owners under the same
+surface acknowledges the actual post-clamp top only to still-live captured owners under the same
 reconciliation/window generation. During that synchronous DOM mutation, one transient inert spacer from the existing spacer family
 reserves the old extent so intermediate layout reads cannot clamp the viewport. Guards are excluded
 from normal spacer reuse and removed in `finally`, including reentrant owner loss. Movement while
@@ -1216,15 +1217,29 @@ creation also retains its controller's three-second deadline. Captured ref/query
 controller expiry are rechecked after each await; cancellation releases pins and never falls back
 to legacy scrolling or focus. Finite active attempts are drained by state, source and window owners.
 [`CaptureRevealIntent`](src/ui/taskCapture/CaptureRevealIntent.ts) forwards the request through a
-captured result epoch, joins request aborts with input/blur/unmount cancellation, and forwards the
+submission epoch, joins request aborts with input/blur/unmount cancellation, and forwards the
 presenter's `onPresented` acceptance. Both CaptureSessions and QuickCaptureCoordinator retain that
 finite owner while leaving submitted commands and drafts with TaskCaptureController. Physical Q
-acquires CenterPanel's live `captureCreationReveal` capability when opening, before destination
-resolution, and PanelView forwards each result authority unchanged to its existing presenter. Q's
-proof joins its coordinator generation, an idle controller, and the connected focused input; a
-closed or revoked result stays scoped. Calendar and project overview expose no list capability,
-including disconnected surfaces left by rendering. CenterPanel retains surface/context/window
-ownership and creates selection intent only when revealing, after the result's own selection.
+acquires CenterPanel's live `captureCreationReveal` origin capability when opening, before destination
+resolution. TaskCaptureController's submission callback obtains fresh scroll and selection witnesses
+for each actual write; neither opening time nor result time resets those witnesses. Before the new
+row is known, CenterPanel's existing scroll lifetime joins TaskListSurface's native-write observers
+without pinning a placeholder row. It remains valid across acknowledged native scroll/clamp writes
+and the command's source publication, and spans excluded-root preparation/resolution. Changed native
+top before its scroll event still revokes it. Exact destination preparation additionally binds the
+current source and selection after the result's own selection.
+PanelView checks the submission's independent `canSelect` proof against AppState's intent generation
+before selecting the canonical result. Later explicit selection or navigation wins; undisturbed blur
+still saves, selects and announces success while revoking reveal. The focused capture proof permits
+the submitting phase, but closed or revoked results stay scoped. Each new submission acquires fresh
+permission after earlier scrolling. Calendar and project overview expose no list capability, including
+disconnected surfaces left by rendering, and retain their unscoped reveal behavior. PanelView also
+freezes Q's selection generation through its submission callback, independently of the optional list
+capability, so those routes cannot replace a later selection or reopen cleared details either.
+Presentation attempts may abort and retry during source publication. The submission witness outlives
+those individual attempts and is released on acceptance, capture revocation, failure, or the presenter's
+`onFinished` callback at final disposal/expiry. Acceptance consumes scroll permission while retaining
+only the ordinary highlight/inclusion lifetime; no new timer or navigation owner is introduced.
 A finite `TaskListInclusion` distinguishes navigation from creation without persisted metadata.
 Creation preserves the actual query hits and list filters, adding only the exact created root under
 “Created task” when excluded; ordinary lists insert that snapshot into the retained surface. The

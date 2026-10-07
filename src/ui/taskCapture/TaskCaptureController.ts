@@ -20,6 +20,7 @@ export interface CaptureObserver {
 
 interface TaskCaptureControllerOptions {
   readonly target: CaptureTarget;
+  readonly onSubmit?: () => void;
   readonly describe: typeof describeTaskCreationResult;
   readonly onResult: (result: TaskCommandResult, description: CreationResultDescription) => void;
   readonly onRequestClose: () => void;
@@ -39,6 +40,7 @@ export class TaskCaptureController {
   private focusEpoch = 0;
   private error: CreationResultDescription | undefined;
   private readonly observers = new Set<CaptureObserver>();
+  private readonly onSubmit: TaskCaptureControllerOptions['onSubmit'];
   private readonly describe: typeof describeTaskCreationResult;
   private readonly onResult: TaskCaptureControllerOptions['onResult'];
   private readonly onRequestClose: TaskCaptureControllerOptions['onRequestClose'];
@@ -48,6 +50,7 @@ export class TaskCaptureController {
 
   constructor(options: TaskCaptureControllerOptions) {
     this.target = options.target;
+    this.onSubmit = options.onSubmit;
     this.describe = options.describe;
     this.onResult = options.onResult;
     this.onRequestClose = options.onRequestClose;
@@ -111,6 +114,7 @@ export class TaskCaptureController {
     this.phase = 'submitting';
     this.error = undefined;
     this.closeAfterSuccess = false;
+    this.onSubmit?.();
     this.emit();
     return submission;
   }

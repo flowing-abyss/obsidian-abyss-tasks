@@ -51,6 +51,7 @@ import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
 import { mountAnchoredRecurrenceEditor } from '../ui/recurrence/RecurrenceEditor';
 import { runAsyncAction } from '../ui/runAsyncAction';
 import { showStatusMenuAt } from '../ui/statusMenu';
+import type { CaptureRevealAuthority } from '../ui/taskCapture/CaptureRevealIntent';
 import { type CreationResultDescription } from '../ui/taskCommandResult';
 import type { TaskDependencyLookup } from '../ui/taskDependencyPresentation';
 import type { TaskListDraftHandoff } from '../ui/taskDraftContinuity';
@@ -134,12 +135,15 @@ interface TaskSurfaceState {
     readonly order: TaskListRows<TaskSearchOccurrence>;
   };
 }
-interface CreationRowAttempt {
+interface CreationAttempt {
   readonly retained: TaskSurfaceState;
   readonly ref: TaskRef;
-  readonly key: string;
   readonly request: CreationRevealRequest;
-  isCurrent(): boolean;
+  readonly scroll: RevealLifetime;
+  readonly isCurrent: () => boolean;
+}
+interface CreationRowAttempt extends CreationAttempt {
+  readonly key: string;
 }
 
 interface ListActivation extends TaskListNavigationRequest {
@@ -680,9 +684,10 @@ export class CenterPanel {
     retained: TaskSurfaceState,
     key: string,
     request: TaskListNavigationRequest,
-    expectedRef?: TaskRef,
+    options: { readonly expectedRef?: TaskRef; readonly scroll?: RevealLifetime } = {},
   ): Promise<{ task: TaskSnapshot; card: HTMLElement } | undefined> {
-    const lifetime = this.createRevealLifetime_abyssPrivate(retained, key, request);
+    const { expectedRef, scroll } = options;
+    const lifetime = this.createRevealLifetime_abyssPrivate(retained, key, request, scroll);
     const current = lifetime.isCurrent;
     try {
       const task = await this.snapshotForKey_abyssPrivate(key, lifetime.signal);
@@ -702,23 +707,65 @@ export class CenterPanel {
     retained: TaskSurfaceState,
     key: string,
     request: TaskListNavigationRequest,
+    sharedScroll?: RevealLifetime,
   ): RevealLifetime {
     const compact = retained.search;
+    const intent = this.state_abyssPrivate.taskSelectionIntentGeneration;
+    const controller = new AbortController();
+    const current = (): boolean =>
+      !controller.signal.aborted &&
+      !request.signal.aborted &&
+      request.isCurrent() &&
+      retained.search === compact &&
+      retained.options.isCurrent?.() !== false &&
+      intent === this.state_abyssPrivate.taskSelectionIntentGeneration;
+    const scroll =
+      sharedScroll ??
+      this.createScrollLifetime_abyssPrivate(retained, {
+        signal: controller.signal,
+        isCurrent: current,
+      });
+    const abort = (): void => {
+      controller.abort();
+    };
+    const release = retained.surface.pin(key, abort);
+    const signals = [request.signal, scroll.signal, compact?.identity.signal];
+    for (const signal of signals) signal?.addEventListener('abort', abort, { once: true });
+    controller.signal.addEventListener(
+      'abort',
+      () => {
+        release();
+        for (const signal of signals) signal?.removeEventListener('abort', abort);
+        if (sharedScroll === undefined) scroll.cancel();
+      },
+      { once: true },
+    );
+    if (signals.some((signal) => signal?.aborted === true)) abort();
+    return {
+      signal: controller.signal,
+      isCurrent: () => {
+        if (!current() || !scroll.isCurrent()) abort();
+        return !controller.signal.aborted;
+      },
+      cancel: abort,
+    };
+  }
+
+  private createScrollLifetime_abyssPrivate(
+    retained: TaskSurfaceState,
+    request: CreationRevealRequest,
+  ): RevealLifetime {
     const controller = new AbortController();
     const abort = (): void => {
       controller.abort();
     };
     const window = retained.host.ownerDocument.defaultView;
-    const intent = this.state_abyssPrivate.taskSelectionIntentGeneration;
     const current = (): boolean =>
       !controller.signal.aborted &&
       !request.signal.aborted &&
       request.isCurrent() &&
       retained === this.taskSurface_abyssPrivate &&
-      retained.search === compact &&
       retained.host.ownerDocument.defaultView === window &&
-      intent === this.state_abyssPrivate.taskSelectionIntentGeneration &&
-      retained.options.isCurrent?.() !== false &&
       this.creationHostVisible_abyssPrivate(retained.host);
     const scroll =
       retained.host.closest<HTMLElement>('.abyss-project-dashboard-session') ?? retained.host;
@@ -730,21 +777,22 @@ export class CenterPanel {
     const onScroll = (): void => {
       beforeWrite(scroll.scrollTop);
     };
-    const release = retained.surface.pin(key, abort, {
+    const observer = {
       beforeWrite,
-      afterWrite: (top) => {
+      afterWrite: (top: number) => {
         expectedTop = top;
       },
-    });
+    };
+    const release = retained.surface.observeNativeWrites(observer, abort);
     const document = retained.host.ownerDocument;
     const checkVisibility = (): void => {
       if (!current()) abort();
     };
-    const observer = window === null ? undefined : new window.ResizeObserver(checkVisibility);
-    observer?.observe(retained.host);
+    const visibilityObserver =
+      window === null ? undefined : new window.ResizeObserver(checkVisibility);
+    visibilityObserver?.observe(retained.host);
     document.addEventListener('visibilitychange', checkVisibility);
     request.signal.addEventListener('abort', abort, { once: true });
-    compact?.identity.signal.addEventListener('abort', abort, { once: true });
     scroll.addEventListener('scroll', onScroll, { passive: true });
     const off = this.state_abyssPrivate.onCommit(() => {
       if (!current()) abort();
@@ -753,12 +801,11 @@ export class CenterPanel {
     const dispose = (): void => {
       off();
       release();
-      observer?.disconnect();
+      visibilityObserver?.disconnect();
       document.removeEventListener('visibilitychange', checkVisibility);
       this.creationAttempts_abyssPrivate.delete(abort);
       scroll.removeEventListener('scroll', onScroll);
       request.signal.removeEventListener('abort', abort);
-      compact?.identity.signal.removeEventListener('abort', abort);
     };
     controller.signal.addEventListener('abort', dispose, { once: true });
     return {
@@ -1202,12 +1249,12 @@ export class CenterPanel {
     this.onTaskRowsSettled_abyssPrivate = options.onTaskRowsSettled;
   }
 
-  private captureRevealAuthority_abyssPrivate(ownsCapture: () => boolean): CreationRevealAuthority {
+  private captureRevealAuthority_abyssPrivate(ownsCapture: () => boolean): CaptureRevealAuthority {
     const retained = this.taskSurface_abyssPrivate;
     const context = this.captureContextRevision_abyssPrivate;
     const document = retained?.host.ownerDocument;
     const owner = document?.defaultView;
-    const isCurrent = (): boolean =>
+    const ownsOrigin = (): boolean =>
       retained !== null &&
       retained === this.taskSurface_abyssPrivate &&
       context === this.captureContextRevision_abyssPrivate &&
@@ -1216,45 +1263,82 @@ export class CenterPanel {
       this.creationHostVisible_abyssPrivate(retained.host) &&
       ownsCapture();
     return {
-      isCurrent,
-      onPresented: (ref, element) => {
-        const pending = this.creationInclusion_abyssPrivate;
-        if (pending?.element === element && this.sameCardRef_abyssPrivate(pending.task.ref, ref))
-          pending.accepted = true;
-      },
-      reveal: (ref, request) => {
-        const current = (): boolean =>
-          isCurrent() && request.isCurrent() && !request.signal.aborted;
-        if (!current() || retained === null) return undefined;
-        const previous = this.creationInclusion_abyssPrivate;
-        if (previous !== undefined && !this.sameCardRef_abyssPrivate(previous.task.ref, ref)) {
-          this.clearCreationInclusion_abyssPrivate();
-          if (retained.search !== undefined) this.taskSearch_abyssPrivate.refresh();
-          else this.render_abyssPrivate();
-          return undefined;
-        }
-        const order = retained.search?.order ?? retained.surface.rows;
-        const key = order.occurrencesOf(`${ref.filePath}:${ref.line}`)[0];
-        const result =
-          key === undefined
-            ? this.includeCreatedTask_abyssPrivate(retained, ref, request, current)
-            : this.revealSnapshotCreation_abyssPrivate({
-                retained,
-                ref,
-                key,
-                request,
-                isCurrent: current,
+      forSubmission: (submission) => {
+        const selection = this.state_abyssPrivate.taskSelectionIntentGeneration;
+        let revealSelection: number | undefined;
+        const lifetime =
+          retained === null
+            ? undefined
+            : this.createScrollLifetime_abyssPrivate(retained, {
+                signal: submission.signal,
+                isCurrent: () =>
+                  ownsOrigin() &&
+                  submission.isCurrent() &&
+                  (revealSelection === undefined ||
+                    revealSelection === this.state_abyssPrivate.taskSelectionIntentGeneration),
               });
-        return result.catch((error: unknown) => {
-          if (current()) this.reportCaptureRevealFailure_abyssPrivate(retained, error);
-          return undefined;
-        });
+        let accepted = false;
+        const isCurrent = (): boolean =>
+          ownsOrigin() && (accepted || lifetime?.isCurrent() === true);
+        return {
+          canSelect: () => selection === this.state_abyssPrivate.taskSelectionIntentGeneration,
+          isCurrent,
+          onPresented: (ref, element) => {
+            accepted = true;
+            const pending = this.creationInclusion_abyssPrivate;
+            if (
+              pending?.element === element &&
+              this.sameCardRef_abyssPrivate(pending.task.ref, ref)
+            )
+              pending.accepted = true;
+          },
+          reveal: (ref, request) => {
+            const intent = this.state_abyssPrivate.taskSelectionIntentGeneration;
+            revealSelection = intent;
+            const current = (): boolean =>
+              isCurrent() &&
+              request.isCurrent() &&
+              !request.signal.aborted &&
+              intent === this.state_abyssPrivate.taskSelectionIntentGeneration;
+            if (!current() || retained === null || lifetime === undefined) return undefined;
+            return this.revealCreatedTask_abyssPrivate({
+              retained,
+              ref,
+              request,
+              isCurrent: current,
+              scroll: lifetime,
+            });
+          },
+        };
       },
     };
   }
 
+  private revealCreatedTask_abyssPrivate(
+    attempt: CreationAttempt,
+  ): Promise<HTMLElement | undefined> | undefined {
+    const { retained, ref, isCurrent: current } = attempt;
+    const previous = this.creationInclusion_abyssPrivate;
+    if (previous !== undefined && !this.sameCardRef_abyssPrivate(previous.task.ref, ref)) {
+      this.clearCreationInclusion_abyssPrivate();
+      if (retained.search !== undefined) this.taskSearch_abyssPrivate.refresh();
+      else this.render_abyssPrivate();
+      return undefined;
+    }
+    const order = retained.search?.order ?? retained.surface.rows;
+    const key = order.occurrencesOf(`${ref.filePath}:${ref.line}`)[0];
+    const result =
+      key === undefined
+        ? this.includeCreatedTask_abyssPrivate(attempt)
+        : this.revealSnapshotCreation_abyssPrivate({ ...attempt, key });
+    return result.catch((error: unknown) => {
+      if (current()) this.reportCaptureRevealFailure_abyssPrivate(retained, error);
+      return undefined;
+    });
+  }
+
   /** Retains only the live task surface that the capture actually opened from. */
-  captureCreationReveal(isCaptureCurrent: () => boolean): CreationRevealAuthority | undefined {
+  captureCreationReveal(isCaptureCurrent: () => boolean): CaptureRevealAuthority | undefined {
     const retained = this.taskSurface_abyssPrivate;
     if (
       retained === null ||
@@ -1282,11 +1366,9 @@ export class CenterPanel {
   }
 
   private async includeCreatedTask_abyssPrivate(
-    retained: TaskSurfaceState,
-    ref: TaskRef,
-    request: CreationRevealRequest,
-    current: () => boolean,
+    attempt: CreationAttempt,
   ): Promise<HTMLElement | undefined> {
+    const { retained, ref, request, isCurrent: current, scroll } = attempt;
     this.clearCreationInclusion_abyssPrivate();
     const resolved = await this.resolveCreationInclusion_abyssPrivate(
       retained,
@@ -1317,7 +1399,7 @@ export class CenterPanel {
       retained,
       key,
       { signal: request.signal, isCurrent: current },
-      ref,
+      { expectedRef: ref, scroll },
     );
     return this.recordCreationElement_abyssPrivate(inclusion, ready?.card);
   }
@@ -1432,7 +1514,7 @@ export class CenterPanel {
       attempt.retained,
       attempt.key,
       { signal: attempt.request.signal, isCurrent: () => attempt.isCurrent() },
-      attempt.ref,
+      { expectedRef: attempt.ref, scroll: attempt.scroll },
     );
     return ready !== undefined && this.readyCreationCard_abyssPrivate(ready.card, attempt.ref)
       ? ready.card

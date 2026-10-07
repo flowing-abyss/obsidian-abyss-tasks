@@ -22,6 +22,9 @@ export interface CreationRevealRequest {
 
 /** A single capture result may reveal only while its originating interaction still owns it. */
 export interface CreationRevealAuthority {
+  /** Selection ownership is independent of focus/blur permission to reveal. */
+  canSelect?(): boolean;
+  onFinished?(): void;
   onPresented?(ref: TaskRef, element: HTMLElement): void;
   isCurrent(): boolean;
   reveal(
@@ -178,10 +181,12 @@ export class CreationPresentationController {
     result: TaskCommandResult,
     description: CreationResultDescription,
     revealAuthority?: CreationRevealAuthority,
+    ownsSelection = true,
   ): void {
     if (this.destroyed) return;
     this.announce(description);
     if (
+      !ownsSelection ||
       description.kind !== 'success' ||
       description.task === undefined ||
       result.type !== 'ok' ||
@@ -201,10 +206,8 @@ export class CreationPresentationController {
       this.expire(entry);
     }, PRESENTATION_TIMEOUT_MS);
     this.pending.push(entry);
-    while (this.pending.length > MAX_PENDING_PRESENTATIONS) {
-      const oldest = this.pending.shift();
-      if (oldest != null) this.discard(oldest);
-    }
+    const overflow = Math.max(0, this.pending.length - MAX_PENDING_PRESENTATIONS);
+    for (const oldest of this.pending.splice(0, overflow)) this.discard(oldest);
     this.resolve(entry);
     this.presentResolved();
   }
@@ -455,14 +458,11 @@ export class CreationPresentationController {
     const index = this.pending.indexOf(entry);
     if (index < 0) return;
     this.pending.splice(index, 1);
-    entry.attempt?.abort();
-    entry.attempt = undefined;
-    entry.attemptCurrent = undefined;
-    this.clearTimeout(entry.timeout);
-    this.releaseHighlight(entry);
+    this.discard(entry);
   }
 
   private discard(entry: PendingPresentation): void {
+    entry.revealAuthority?.onFinished?.();
     entry.attempt?.abort();
     entry.attempt = undefined;
     entry.attemptCurrent = undefined;

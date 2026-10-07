@@ -38,7 +38,7 @@ interface PinOwner {
 }
 
 interface CapturedPin {
-  readonly key: string;
+  readonly key?: string;
   readonly token: PinOwner;
 }
 
@@ -64,6 +64,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   readonly #viewport = new RowViewport();
   readonly #mounts = new Map<string, TaskRowMount<T>>();
   readonly #pins = new Map<string, Set<PinOwner>>();
+  readonly #nativeObservers = new Set<PinOwner>();
   #rows: TaskListRows<T> = indexedRows<T>([]);
   #presentation: TaskListPresentation<T> | undefined;
   #owner: Window | null = null;
@@ -202,6 +203,18 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     };
   }
 
+  /** Joins native write acknowledgements before a capture has a row to pin. */
+  observeNativeWrites(
+    observer: TaskListNativeWriteObserver,
+    onInvalidated: () => void,
+  ): () => void {
+    const token: PinOwner = { nativeWrite: observer, onInvalidated };
+    if (!this.#destroyed) this.#nativeObservers.add(token);
+    return () => {
+      this.#nativeObservers.delete(token);
+    };
+  }
+
   suspend(): void {
     this.#suspended = true;
     this.#listen(false);
@@ -231,6 +244,9 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     this.#unbind();
     this.#guard(() => {
       this.#invalidatePins([...this.#pins.keys()]);
+      const observers = [...this.#nativeObservers];
+      this.#nativeObservers.clear();
+      for (const observer of observers) observer.onInvalidated?.();
     });
     for (const [key, mount] of this.#mounts) this.#evict(key, mount);
     this.#ordered = [];
@@ -268,7 +284,12 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     return this.#options.scroll.scrollTop - this.#origin();
   }
   #livePin({ key, token }: CapturedPin, current: () => boolean): boolean {
-    return current() && this.#pins.get(key)?.has(token) === true;
+    return (
+      current() &&
+      (key === undefined
+        ? this.#nativeObservers.has(token)
+        : this.#pins.get(key)?.has(token) === true)
+    );
   }
   #beforeNativeWrite(owners: readonly CapturedPin[], top: number, current: () => boolean): boolean {
     for (const owner of owners) {
@@ -286,7 +307,10 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     return current();
   }
   #nativeOwners(): CapturedPin[] | undefined {
-    let owners: CapturedPin[] | undefined;
+    let owners: CapturedPin[] | undefined =
+      this.#nativeObservers.size === 0
+        ? undefined
+        : [...this.#nativeObservers].map((token) => ({ token }));
     for (const [key, tokens] of this.#pins)
       for (const token of tokens)
         if (token.nativeWrite !== undefined) {

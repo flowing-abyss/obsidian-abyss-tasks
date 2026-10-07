@@ -376,6 +376,265 @@ describe('physical Q creation reveal through PanelView', () => {
     },
   );
 
+  it.each(
+    (['command', 'excluded-prepare'] as const).flatMap((stage) =>
+      [true, false].map((scrollEvent) => ({ stage, scrollEvent })),
+    ),
+  )(
+    'keeps a Q write but drops its late reveal after scrolling during $stage; native event=$scrollEvent',
+    async ({ stage, scrollEvent }) => {
+      const h = await mountQuickPanel(false, false, true);
+      const held = deferred<void>(),
+        entered = deferred<void>();
+      try {
+        let presenting = false;
+        const presented = deferred<void>();
+        let revealing: HTMLElement | undefined | Promise<HTMLElement | undefined>;
+        const present = h.presentation.present.bind(h.presentation);
+        vi.spyOn(h.presentation, 'present').mockImplementation((result, description, authority) => {
+          presenting = true;
+          if (authority !== undefined) {
+            const reveal = authority.reveal.bind(authority);
+            vi.spyOn(authority, 'reveal').mockImplementation((ref, request) => {
+              revealing = reveal(ref, request);
+              return revealing;
+            });
+          }
+          present(result, description, authority);
+          presented.resolve();
+        });
+        if (stage === 'excluded-prepare') h.query('needle');
+        if (stage === 'excluded-prepare') await searchUiCompleted(h.center);
+        const plan = h.tasks.planCreate.bind(h.tasks);
+        vi.spyOn(h.tasks, 'planCreate').mockImplementation(async (intent) => {
+          const session = await plan(intent);
+          if (session.type !== 'ready') return session;
+          return {
+            ...session,
+            execute: async (request) => {
+              if (stage === 'command') {
+                entered.resolve();
+                await held.promise;
+              }
+              const result = await session.execute(request);
+              if (stage === 'excluded-prepare') await searchUiCompleted(h.center);
+              return result;
+            },
+          };
+        });
+        if (stage === 'excluded-prepare') {
+          const prepare = h.search.prepare.bind(h.search);
+          vi.spyOn(h.search, 'prepare').mockImplementation(async (signal) => {
+            await prepare(signal);
+            if (presenting) {
+              presenting = false;
+              entered.resolve();
+              await held.promise;
+            }
+          });
+        }
+        const input = await h.openQ();
+        const title = stage === 'command' ? 'Z late Q needle' : 'Z late Q excluded';
+        enter(input, title);
+        await entered.promise;
+        const scroll = expectDefined(h.center.querySelector<HTMLElement>('.abyss-center-scroll'));
+        expect(document.activeElement).toBe(input);
+        const reveal = vi.spyOn(TaskListSurface.prototype, 'reveal');
+        scroll.dispatchEvent(new WheelEvent('wheel', { deltaY: 550, bubbles: true }));
+        scroll.scrollTop = 550;
+        if (scrollEvent) scroll.dispatchEvent(new Event('scroll'));
+        await new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+        await flushMicrotasks();
+        held.resolve();
+        await presented.promise;
+        await revealing;
+        await flushMicrotasks();
+        expect(h.index.list({ filePath: 'created.md' }).map((task) => task.title)).toEqual([title]);
+        expect(h.root.querySelector('.abyss-creation-feedback')?.textContent).toContain('added');
+        expect(reveal).not.toHaveBeenCalled();
+        expect(scroll.scrollTop).toBe(550);
+        expect(h.root.querySelector('.is-just-created')).toBeNull();
+        expect(h.panel['creationInclusion_abyssPrivate']).toBeUndefined();
+        expect(h.panel['creationAttempts_abyssPrivate'].size).toBe(0);
+        expect(h.root.querySelectorAll('.abyss-task-card').length).toBeGreaterThan(0);
+        expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
+          taskCardMountBound(h.root),
+        );
+        expect(document.activeElement).toBe(input);
+        enter(input, 'ZZ fresh Q needle');
+        await vi.waitFor(() => {
+          expect(h.root.querySelector('.is-just-created')).not.toBeNull();
+        });
+        const fresh = expectDefined(
+          h.index
+            .list({ filePath: 'created.md' })
+            .find((task) => task.title === 'ZZ fresh Q needle'),
+        );
+        expect(h.state.get('taskStack')).toEqual([fresh]);
+        expect(renderedTaskElements(h.root, fresh.ref)).toContain(
+          h.root.querySelector('.is-just-created'),
+        );
+        expect(scroll.scrollTop).toBeGreaterThan(550);
+        expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
+          taskCardMountBound(h.root, 1),
+        );
+        expect(document.activeElement).toBe(input);
+        expect(legacyScroll).not.toHaveBeenCalled();
+      } finally {
+        held.resolve();
+        await h.dispose();
+      }
+    },
+  );
+
+  it('retains Q submission permission across acknowledged programmatic native scroll', async () => {
+    const h = await mountQuickPanel();
+    const held = deferred<void>(),
+      entered = deferred<void>();
+    try {
+      const plan = h.tasks.planCreate.bind(h.tasks);
+      vi.spyOn(h.tasks, 'planCreate').mockImplementation(async (intent) => {
+        const session = await plan(intent);
+        if (session.type !== 'ready') return session;
+        return {
+          ...session,
+          execute: async (request) => {
+            entered.resolve();
+            await held.promise;
+            return session.execute(request);
+          },
+        };
+      });
+      const input = await h.openQ();
+      enter(input, 'Z acknowledged Q');
+      await entered.promise;
+      const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
+      expect(surface.reveal('many.md:600')).toBeDefined();
+      const scroll = expectDefined(h.center.querySelector<HTMLElement>('.abyss-center-scroll'));
+      expect(scroll.scrollTop).toBeGreaterThan(0);
+      scroll.dispatchEvent(new Event('scroll'));
+      held.resolve();
+      await vi.waitFor(() => {
+        expect(h.root.querySelector('.is-just-created')).not.toBeNull();
+      });
+      const created = expectDefined(h.index.list({ filePath: 'created.md' })[0]);
+      expect(renderedTaskElements(h.root, created.ref)).toContain(
+        h.root.querySelector('.is-just-created'),
+      );
+      expect(h.panel['creationAttempts_abyssPrivate'].size).toBe(0);
+      expect(document.activeElement).toBe(input);
+      expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
+        taskCardMountBound(h.root, 1),
+      );
+    } finally {
+      held.resolve();
+      await h.dispose();
+    }
+  });
+
+  it.each(['Q', 'button'] as const)(
+    'selects an undisturbed %s blur submission without revealing',
+    async (route) => {
+      const h = await mountQuickPanel();
+      const outside = document.body.createEl('input');
+      try {
+        let input: HTMLInputElement;
+        if (route === 'Q') input = await h.openQ();
+        else {
+          expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')).click();
+          await flushMicrotasks();
+          input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-capture-input'));
+        }
+        input.value = 'Z blur submission';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        outside.focus();
+        await flushMicrotasks();
+        const created = expectDefined(h.index.list({ filePath: 'created.md' })[0]);
+        expect(h.state.get('taskStack')).toEqual([created]);
+        expect(h.root.querySelector('.abyss-right .abyss-right-title-view')?.textContent).toBe(
+          created.title,
+        );
+        expect(h.root.querySelector('.abyss-creation-feedback')?.textContent).toContain('added');
+        expect(h.root.querySelector('.is-just-created')).toBeNull();
+        expect(h.panel['creationAttempts_abyssPrivate'].size).toBe(0);
+        expect(document.activeElement).toBe(outside);
+        expect(legacyScroll).not.toHaveBeenCalled();
+      } finally {
+        outside.remove();
+        await h.dispose();
+      }
+    },
+  );
+
+  it.each(
+    (['list', 'calendar', 'overview'] as const).flatMap((origin) =>
+      (['task-click', 'navigation'] as const).map((laterIntent) => ({ origin, laterIntent })),
+    ),
+  )(
+    'retains newer $laterIntent selection after a delayed Q write from $origin',
+    async ({ origin, laterIntent }) => {
+      const h = await mountQuickPanel();
+      const held = deferred<void>(),
+        entered = deferred<void>();
+      try {
+        if (origin !== 'list') h.state.set('mode', origin === 'calendar' ? 'calendar' : 'projects');
+        const present = vi.spyOn(h.presentation, 'present');
+        const plan = h.tasks.planCreate.bind(h.tasks);
+        vi.spyOn(h.tasks, 'planCreate').mockImplementation(async (intent) => {
+          const session = await plan(intent);
+          if (session.type !== 'ready') return session;
+          return {
+            ...session,
+            execute: async (request) => {
+              entered.resolve();
+              await held.promise;
+              return session.execute(request);
+            },
+          };
+        });
+        const previous = expectDefined(h.index.list({ filePath: 'many.md' })[0]);
+        h.state.set('taskStack', [previous]);
+        const input = await h.openQ();
+        enter(input, 'Z late Q selection');
+        await entered.promise;
+        if (origin !== 'list') {
+          h.state.set('mode', 'tasks');
+          await flushMicrotasks();
+        }
+        const newer = expectDefined(h.index.list({ filePath: 'many.md' })[1]);
+        if (laterIntent === 'task-click') {
+          const card = expectDefined(renderedTaskElements(h.center, newer.ref)[0]);
+          card.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+          card.click();
+          expect(h.state.get('taskStack')).toEqual([newer]);
+        } else {
+          h.state.set('selectedList', 'upcoming');
+          h.state.set('taskStack', []);
+        }
+        const selection = h.state.get('taskStack');
+        held.resolve();
+        await flushMicrotasks();
+        await flushMicrotasks();
+        expect(h.index.list({ filePath: 'created.md' })).toHaveLength(1);
+        if (origin !== 'list') expect(present.mock.calls[0]?.[2]).toBeUndefined();
+        expect(h.state.get('taskStack')).toEqual(selection);
+        const title = h.root.querySelector('.abyss-right .abyss-right-title-view');
+        if (laterIntent === 'task-click') expect(title?.textContent).toBe(newer.title);
+        else expect(title).toBeNull();
+        expect(h.root.querySelector('.abyss-creation-feedback')?.textContent).toContain('added');
+        expect(h.root.querySelector('.is-just-created')).toBeNull();
+        expect(legacyScroll).not.toHaveBeenCalled();
+      } finally {
+        held.resolve();
+        await h.dispose();
+      }
+    },
+  );
+
   it.each(['blur', 'escape'] as const)(
     'keeps a %s-during-submit result scoped after its controller closes',
     async (cause) => {
@@ -411,6 +670,7 @@ describe('physical Q creation reveal through PanelView', () => {
         write.resolve();
         await flushMicrotasks();
         expect(h.index.list({ filePath: 'created.md' })).toHaveLength(1);
+        expect(h.state.get('taskStack')).toEqual(h.index.list({ filePath: 'created.md' }));
         expect(currentAtResult).toBe(false);
         expect(h.root.querySelector('.is-just-created')).toBeNull();
         expect(h.root.querySelector('.abyss-quick-capture-host .abyss-capture-input')).toBeNull();
@@ -621,7 +881,12 @@ describe('physical Q creation reveal through PanelView', () => {
       expect(document.activeElement).toBe(active);
       expect(scroll.scrollTop).toBe(top);
       if (reason === 'input') expect(input.value).toBe('new draft');
-      expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThan(1200);
+      const mounted = h.root.querySelectorAll('.abyss-task-card').length;
+      if (reason === 'navigation') expect(mounted).toBe(0);
+      else {
+        expect(mounted).toBeGreaterThan(0);
+        expect(mounted).toBeLessThanOrEqual(taskCardMountBound(h.root));
+      }
       outside.remove();
     } finally {
       hydration.resolve();

@@ -4,7 +4,7 @@ import type { CreationRevealAuthority } from '../creation/CreationPresentationCo
 import type { InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
 import { describeTaskCreationResult, type CreationResultDescription } from '../taskCommandResult';
-import { CaptureRevealIntent } from './CaptureRevealIntent';
+import { CaptureRevealIntent, type CaptureRevealAuthority } from './CaptureRevealIntent';
 import { CaptureSurface } from './CaptureSurface';
 import type { CaptureContext, CaptureTarget } from './CaptureTargetResolver';
 import { TaskCaptureController } from './TaskCaptureController';
@@ -16,12 +16,13 @@ interface QuickCaptureCoordinatorOptions {
   readonly context: () => CaptureContext;
   readonly resolveTarget: (context: CaptureContext) => Promise<CaptureTarget>;
   readonly interactionOwnership: InteractionOwnershipPort<ShortcutActionId>;
+  readonly onSubmit?: () => void;
   readonly onResult?: (
     result: TaskCommandResult,
     description: CreationResultDescription,
     revealAuthority?: CreationRevealAuthority,
   ) => void;
-  readonly captureReveal?: (isCurrent: () => boolean) => CreationRevealAuthority | undefined;
+  readonly captureReveal?: (isCurrent: () => boolean) => CaptureRevealAuthority | undefined;
 }
 
 function frozenContext(context: CaptureContext): CaptureContext {
@@ -75,7 +76,7 @@ export class QuickCaptureCoordinator {
           !this.destroyed &&
           this.generation === generation &&
           this.currentPhase === 'open' &&
-          this.controller?.snapshot().phase === 'idle' &&
+          this.controller?.snapshot().phase !== 'closed' &&
           this.surface?.input.isConnected === true &&
           this.surface.input.ownerDocument.activeElement === this.surface.input,
       ),
@@ -115,10 +116,18 @@ export class QuickCaptureCoordinator {
     const controller = new TaskCaptureController({
       target,
       describe: describeTaskCreationResult,
+      onSubmit: () => {
+        this.options.onSubmit?.();
+        this.revealIntent?.beginSubmission();
+      },
       onResult: (result, description) => {
         if (this.generation === generation && this.controller === controller) {
           if (description.kind !== 'success') this.restoreFocusOnClose = false;
-          this.options.onResult?.(result, description, this.revealIntent?.forResult());
+          this.options.onResult?.(
+            result,
+            description,
+            this.revealIntent?.forResult(description.kind === 'success'),
+          );
         }
       },
       onRequestClose: () => {

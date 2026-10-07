@@ -18,6 +18,7 @@ import {
   CreationPresentationController,
   type CreationRevealRequest,
 } from '../src/ui/creation/CreationPresentationController';
+import { CaptureRevealIntent } from '../src/ui/taskCapture/CaptureRevealIntent';
 import { describeTaskCreationResult } from '../src/ui/taskCommandResult';
 import {
   applyTaskPresentationIdentity,
@@ -875,6 +876,48 @@ describe('scoped virtual creation reveal', () => {
     expect(scroll).not.toHaveBeenCalled();
     h.controller.destroy();
   });
+  it.each(['expiry', 'destroy', 'replacement'] as const)(
+    'retains submission permission across unready attempts and releases it on %s',
+    (end) => {
+      const snapshot = task();
+      const h = controllerHarness(exact(snapshot));
+      let submission: CreationRevealRequest | undefined;
+      let attempts = 0;
+      const capture = new CaptureRevealIntent({
+        forSubmission: (request) => {
+          submission = request;
+          return {
+            isCurrent: () => true,
+            reveal: () => {
+              attempts++;
+              return undefined;
+            },
+          };
+        },
+      });
+      const input = h.root.createEl('input');
+      capture.mount(input);
+      capture.beginSubmission();
+      const result = successfulCreation(snapshot);
+      h.controller.afterRender(h.root);
+      h.controller.present(result, describeTaskCreationResult(result), capture.forResult(true));
+      h.controller.afterRender(h.root);
+      expect(attempts).toBeGreaterThan(1);
+      expect(submission?.signal.aborted).toBe(false);
+      if (end === 'expiry') {
+        vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3001);
+        h.controller.afterRender(h.root);
+      } else if (end === 'destroy') h.controller.destroy();
+      else {
+        for (let n = 0; n < 20; n++)
+          h.controller.present(result, describeTaskCreationResult(result));
+      }
+      expect(submission?.signal.aborted).toBe(true);
+      capture.unmount();
+      h.controller.destroy();
+    },
+  );
+
   it('never falls back to legacy scrolling after per-result capture authority is revoked', () => {
     const snapshot = task({ source: { filePath: 'capture.md', line: 999 } });
     const h = controllerHarness({ type: 'not-found', ref: snapshot.ref });

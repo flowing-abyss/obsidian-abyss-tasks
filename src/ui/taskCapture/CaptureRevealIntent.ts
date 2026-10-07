@@ -1,8 +1,23 @@
-import type { CreationRevealAuthority } from '../creation/CreationPresentationController';
+import type {
+  CreationRevealAuthority,
+  CreationRevealRequest,
+} from '../creation/CreationPresentationController';
+
+/** Opening captures the origin; each submission acquires fresh interaction permission. */
+export interface CaptureRevealAuthority {
+  forSubmission(request: CreationRevealRequest): CreationRevealAuthority;
+}
 
 /** Finite result permission shared by capture owners; presentation and scrolling stay external. */
 export class CaptureRevealIntent {
   private epoch = 0;
+  private submission:
+    | {
+        readonly authority: CreationRevealAuthority;
+        readonly epoch: number;
+        readonly cancel: () => void;
+      }
+    | undefined;
   private input: HTMLInputElement | undefined;
   private readonly cancellations = new Set<() => void>();
   private readonly revoke = (): void => {
@@ -10,7 +25,7 @@ export class CaptureRevealIntent {
     for (const cancel of [...this.cancellations]) cancel();
   };
 
-  constructor(private readonly authority: CreationRevealAuthority | undefined) {}
+  constructor(private readonly authority: CaptureRevealAuthority | undefined) {}
 
   mount(input: HTMLInputElement): void {
     if (this.input === input) return;
@@ -27,14 +42,42 @@ export class CaptureRevealIntent {
     this.input = undefined;
   }
 
-  forResult(): CreationRevealAuthority | undefined {
-    const authority = this.authority;
-    if (authority === undefined) return undefined;
+  beginSubmission(): void {
+    this.revoke();
+    const origin = this.authority;
+    if (origin === undefined) return;
     const epoch = this.epoch;
-    const isCurrent = (): boolean => this.epoch === epoch && authority.isCurrent();
+    const controller = new AbortController();
+    const cancel = (): void => {
+      controller.abort();
+      this.cancellations.delete(cancel);
+    };
+    this.cancellations.add(cancel);
+    const authority = origin.forSubmission({
+      signal: controller.signal,
+      isCurrent: () => this.epoch === epoch,
+    });
+    this.submission = { authority, epoch, cancel };
+  }
+
+  forResult(success: boolean): CreationRevealAuthority | undefined {
+    const submission = this.submission;
+    if (submission === undefined) return undefined;
+    const { authority, epoch, cancel: cancelSubmission } = submission;
+    const selectionCurrent = authority.canSelect?.() !== false;
+    const isCurrent = (): boolean =>
+      selectionCurrent && this.epoch === epoch && authority.isCurrent();
+    if (!success || !isCurrent()) cancelSubmission();
     return {
+      ...(authority.canSelect === undefined
+        ? {}
+        : { canSelect: () => authority.canSelect?.() !== false }),
       isCurrent,
-      onPresented: (ref, element) => authority.onPresented?.(ref, element),
+      onFinished: cancelSubmission,
+      onPresented: (ref, element) => {
+        authority.onPresented?.(ref, element);
+        cancelSubmission();
+      },
       reveal: (ref, request) => {
         const controller = new AbortController();
         const cleanup = (): void => {
