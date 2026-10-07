@@ -3543,7 +3543,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: flex;
   flex-wrap: wrap;
   gap: var(--size-2-3);
-  padding: var(--size-4-1) var(--size-4-4) 10px;
+  padding: var(--size-4-1) var(--size-4-4) var(--size-2-3);
 }
 
 .abyss-chip {
@@ -4409,14 +4409,13 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 /* Right panel body */
 .abyss-right-section {
-  padding: var(--size-4-4) var(--size-4-4) 0;
-  font-size: var(--font-ui-medium);
+  padding: var(--size-4-3) var(--size-4-4) 0;
+  font-size: var(--font-ui-small);
 }
 
-/* These classes also render Search context; only inspector sections use the primary UI tier. */
+/* Keep inspector content and editors on one UI tier without changing shared Search context. */
 .abyss-right-section
   :is(
-    .abyss-right-section-label,
     .abyss-right-desc,
     .abyss-subtask-label,
     .abyss-subtask-new-input,
@@ -4426,7 +4425,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
     .abyss-comment-input,
     .abyss-comment-edit-input
   ) {
-  font-size: var(--font-ui-medium);
+  font-size: var(--font-ui-small);
 }
 
 .abyss-right-section
@@ -4442,14 +4441,14 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: flex;
   align-items: center;
   gap: var(--size-4-2);
-  margin-bottom: 10px;
+  margin-bottom: var(--size-4-2);
 }
 
 .abyss-right-section-label {
   font-size: var(--font-ui-smaller, 11px);
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   color: var(--text-muted);
 }
 
@@ -4854,7 +4853,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 /* Center the existing 19px marker on the first 1.4-line-height label, independent of
    wrapping and metadata. Use the label's tier because the marker has its own 12px font. */
 .abyss-subtask-section .abyss-subtask-row > :is(.abyss-status-marker, .abyss-status-control) {
-  margin-block-start: calc((var(--font-ui-medium) * 1.4 - 19px) / 2);
+  margin-block-start: calc((var(--font-ui-small) * 1.4 - 19px) / 2);
 }
 
 .abyss-subtask-section .abyss-subtask-title-row {
@@ -4876,7 +4875,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
  * The time entries popover sizes its own Undo row.
  */
 .abyss-subtask-section .abyss-undo-row {
-  font-size: var(--font-ui-medium);
+  font-size: var(--font-ui-small);
 }
 
 :is(.abyss-subtask-section, .abyss-dep-section) .abyss-undo-row button {

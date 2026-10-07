@@ -987,7 +987,7 @@ export class TaskCardRenderer {
         this.#listControls.addPropertyFilter({ type: 'file', filePath });
       });
     }
-    for (const tag of tags.slice(0, 2)) {
+    for (const tag of tags) {
       const element = this.#renderTagMetadata(metaRight, tag, tagGroups, { task, currentTask });
       this.#markSemanticValue(element, tag, options.highlight);
     }

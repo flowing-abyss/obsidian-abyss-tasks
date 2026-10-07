@@ -887,15 +887,15 @@ describe('inspector subtask row removal', () => {
     const cssReader = createCssReader(css);
     const value = (selector: string, property: string) =>
       cssDeclarationValue(cssReader.declarationText(selector), property);
-    // Shared/Search labels keep their tier; inspector labels and Undo use the primary UI tier.
+    // Inspector labels and their Undo replacement share the ordinary UI text tier.
     expect(value('.abyss-subtask-label', 'font-size')).toBe('var(--font-ui-small)');
     expect(value('.abyss-right-section .abyss-subtask-label', 'font-size')).toBe(
-      'var(--font-ui-medium)',
+      'var(--font-ui-small)',
     );
     // The 22px remove control sets the row's minimum height, including its Undo replacement.
     expect(value('.abyss-subtask-remove', 'height')).toBe('22px');
     expect(value('.abyss-subtask-section .abyss-undo-row', 'font-size')).toBe(
-      'var(--font-ui-medium)',
+      'var(--font-ui-small)',
     );
     expect(value('.abyss-subtask-section .abyss-undo-row button', 'height')).toBe('22px');
     // A dependency title inherits the list's size, and so does the row that stands in for it.

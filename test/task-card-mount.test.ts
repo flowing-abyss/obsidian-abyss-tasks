@@ -75,6 +75,33 @@ function renderer() {
     context: () => context,
   };
 }
+it('keeps every added tag available as a filter, including tags from the same prefix', () => {
+  const h = renderer();
+  const original = task({ tags: ['#work/one', '#work/two'] });
+  const flags = { selected: false, showDelete: true, rowKey: 'same' };
+  const mount = h.subject.mount(document.body, original, [], flags);
+  mount.update(
+    task({ tags: ['#work/one', '#work/two', '#work/three', '#work/four', '#personal'] }),
+    [],
+    flags,
+  );
+  const tags = [...mount.element.querySelectorAll<HTMLElement>('.abyss-task-tag')];
+  expect(tags.map((element) => element.textContent)).toEqual([
+    '#work/one',
+    '#work/two',
+    '#work/three',
+    '#work/four',
+    '#personal',
+  ]);
+  expectDefined(tags[2]).click();
+  expectDefined(tags[4]).click();
+  expect(h.listControls.addPropertyFilter.mock.calls).toEqual([
+    [{ type: 'tag', value: '#work/three' }],
+    [{ type: 'tag', value: '#personal' }],
+  ]);
+  mount.destroy();
+});
+
 it('owns Markdown and interactions per mount and updates ordinary event authority', () => {
   const owners: Component[] = [];
   const unloaded = vi.fn();
