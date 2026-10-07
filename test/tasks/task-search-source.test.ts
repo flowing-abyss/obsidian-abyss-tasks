@@ -373,37 +373,49 @@ describe('canonical search source', () => {
     },
   );
 
-  it('wide child document traversal performs only linear child-coordinate work', async () => {
-    const count = 500;
-    const index = await openedIndex(
-      ['- [ ] Root', ...Array.from({ length: count }, (_, i) => `  - [ ] Child ${i}`)].join('\n'),
-    );
-    const enumerate = searchProjection.taskTreeNodes;
-    const instrumented = new WeakSet<object>();
-    let lineReads = 0;
-    vi.spyOn(searchProjection, 'taskTreeNodes').mockImplementation(function* (root) {
-      for (const task of enumerate(root)) {
-        if (task.target.type === 'subtask' && !instrumented.has(task.target.ref)) {
-          const ref = task.target.ref;
-          instrumented.add(ref);
-          const line = ref.relativeLine;
-          Object.defineProperty(ref, 'relativeLine', {
-            get: () => {
-              lineReads++;
-              return line;
-            },
-          });
+  it.each(['documents', 'organization'] as const)(
+    'wide child %s traversal performs only linear child-coordinate work',
+    async (read) => {
+      const count = 500;
+      const index = await openedIndex(
+        ['- [ ] Root', ...Array.from({ length: count }, (_, i) => `  - [ ] Child ${i}`)].join('\n'),
+      );
+      const enumerate = searchProjection.taskTreeNodes;
+      const instrumented = new WeakSet<object>();
+      let lineReads = 0;
+      vi.spyOn(searchProjection, 'taskTreeNodes').mockImplementation(function* (root) {
+        for (const task of enumerate(root)) {
+          if (task.target.type === 'subtask' && !instrumented.has(task.target.ref)) {
+            const ref = task.target.ref;
+            instrumented.add(ref);
+            const line = ref.relativeLine;
+            Object.defineProperty(ref, 'relativeLine', {
+              get: () => {
+                lineReads++;
+                return line;
+              },
+            });
+          }
+          yield task;
         }
-        yield task;
+      });
+      const source = index.searchSource();
+      const docs = [];
+      if (read === 'documents') docs.push(...source.documents(expectDefined(source.files()[0])));
+      else {
+        const generation = source.subscribe(() => {}).state.generation;
+        for await (const batch of index.organization(
+          { expectedGeneration: generation, scope: 'nodes' },
+          signal(),
+        ))
+          docs.push(...batch.items);
       }
-    });
-    const source = index.searchSource();
-    const docs = [...source.documents(expectDefined(source.files()[0]))];
-    expect(docs).toHaveLength(count + 1);
-    expect(docs[1]?.title).toBe('Child 0');
-    expect(docs[count]?.title).toBe('Child 499');
-    expect(lineReads).toBeLessThanOrEqual(count * 6);
-  });
+      expect(docs).toHaveLength(count + 1);
+      expect(docs[1]?.title).toBe('Child 0');
+      expect(docs[count]?.title).toBe('Child 499');
+      expect(lineReads).toBeLessThanOrEqual(count * 6);
+    },
+  );
 
   it('allocates one compact handle per yield and reuses prefixes across overlapping iterators', async () => {
     const index = await openedIndex('- [ ] Root\n  - [ ] Child\n- [ ] Other');

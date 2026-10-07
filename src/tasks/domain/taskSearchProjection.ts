@@ -6,7 +6,25 @@ import {
   type TaskSearchAddress,
 } from './taskSearchTypes';
 import { subtreeTotal } from './timeTracking';
-import type { SubtaskSnapshot, TaskSnapshot, TaskStatus } from './types';
+import type { SubtaskSnapshot, TaskNodeRef, TaskSnapshot, TaskStatus } from './types';
+
+export function taskSearchAddressKey(address: TaskSearchAddress): string {
+  return JSON.stringify([address.epoch, address.version, address.rootId, address.childLines]);
+}
+
+export function rootTaskNodeSnapshot(root: TaskSnapshot): TaskNodeSnapshot {
+  return { root, node: root, target: { type: 'task', ref: root.ref }, path: [] };
+}
+
+export function taskNodeSourceLine(target: TaskNodeRef): number {
+  let line = 0;
+  let current = target;
+  while (current.type === 'subtask') {
+    line += current.ref.relativeLine;
+    current = current.ref.parent;
+  }
+  return line + current.ref.line;
+}
 
 /** The caller proves root authority; this walk never guesses or rebases a child. */
 export function nodeAtSearchAddress(
@@ -37,7 +55,7 @@ export function nodeAtSearchAddress(
 
 /** A borrowed walk: no source/ref serialization, cloning or freezing. */
 export function* taskTreeNodes(root: TaskSnapshot): Iterable<TaskNodeSnapshot> {
-  yield { root, path: [], node: root, target: { type: 'task', ref: root.ref } };
+  yield rootTaskNodeSnapshot(root);
   function* children(
     parent: TaskSnapshot | SubtaskSnapshot,
     path: readonly SubtaskSnapshot[],
@@ -61,22 +79,29 @@ export function observedTaskTags(tags: Iterable<string>): readonly string[] {
   return [...representatives.values()];
 }
 
+function* subtreeTags(node: TaskSnapshot | SubtaskSnapshot): Iterable<string> {
+  yield* node.tags;
+  for (const child of node.subtasks) yield* subtreeTags(child);
+}
+
 export function taskOrganizationRecord(
-  root: TaskSnapshot,
+  task: TaskNodeSnapshot,
   address: TaskSearchAddress,
   status: TaskStatus,
 ): TaskOrganizationRecord {
+  const { root, node, path } = task;
   return {
     address: { ...address, childLines: [...address.childLines] },
-    title: root.title,
-    markdownTitle: root.markdownTitle,
-    source: { filePath: root.source.filePath, line: root.source.line },
+    depth: path.length,
+    title: node.title,
+    markdownTitle: node.markdownTitle,
+    source: { filePath: root.source.filePath, line: taskNodeSourceLine(task.target) },
     status,
-    statusSymbol: root.statusSymbol,
-    priority: root.priority,
-    planning: { ...root.planning },
-    tags: [...root.tags],
-    treeTags: observedTaskTags([...taskTreeNodes(root)].flatMap(({ node }) => node.tags)),
-    tracked: subtreeTotal(root),
+    statusSymbol: node.statusSymbol,
+    priority: node.priority,
+    planning: { ...node.planning },
+    tags: [...node.tags],
+    treeTags: observedTaskTags(subtreeTags(node)),
+    tracked: subtreeTotal(node),
   };
 }

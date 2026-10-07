@@ -188,10 +188,20 @@ field and separately indexes authored link destinations. Comments are projected 
 before joining for retrieval. Metadata contains canonical planning, duration, priority, recurrence
 and dependency values; status rules and checkbox markers are excluded. Status-catalog changes
 advance semantic generation and organization/counts without changing text documents. This boundary
-does not resolve outgoing links. Organization emits detached root scalars, tree tags and tracked totals in batches of at most
-200, checking its requested generation before traversal, each yield and completion. Its read-yield
-hook cooperates between slices. Presentation still resolves outgoing grouping links through
-`taskLinkValues` and evaluates open timer totals at its explicit instant.
+does not resolve outgoing links. Organization defaults to `scope: 'roots'` for Search's existing
+root context-tree population; `scope: 'nodes'` traverses roots and their exact descendants through
+the same borrowed `TaskNodeSnapshot` walk. Optional root constraints remain root-only and are
+deduplicated before traversal; child constraints are invalid. Both scopes read accepted,
+source-exclusion-filtered files and emit detached scalars without canonical clones or source blocks.
+Records carry the node's own title, status, priority, planning, tags, absolute source line and path
+depth. `treeTags` and tracked totals cover that node's subtree; a child's aggregates exclude its
+ancestors and siblings. The inward `taskSearchAddressKey` includes epoch, file version, root ID and
+the entire child path. `rootTaskNodeSnapshot`, `taskNodeSourceLine` and `taskOrganizationRecord`
+own the shared pure projection helpers in `tasks/domain/taskSearchProjection`.
+Organization batches contain at most 200 records, checking the requested generation and cancellation
+before traversal, each node, each yield and completion. Its read-yield hook cooperates between
+slices, and source changes after a yield reject continuation. Presentation still resolves outgoing
+grouping links through `taskLinkValues` and evaluates open timer totals at its explicit instant.
 
 The public `resolveHits` read delegates to `TaskIndex.resolveSearchHits`. Exact hydration accepts at most 200 occurrences and 50 distinct roots per allocation batch, validates every address,
 detaches each requested canonical root once and reconstructs ordinary root/subtask refs against that

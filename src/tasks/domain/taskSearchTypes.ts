@@ -18,6 +18,7 @@ export interface TaskSearchHydratedHit {
 }
 export interface TaskOrganizationRecord {
   readonly address: TaskSearchAddress;
+  readonly depth: number;
   readonly title: string;
   readonly markdownTitle: string;
   readonly source: Pick<TaskSnapshot['source'], 'filePath' | 'line'>;
@@ -31,6 +32,7 @@ export interface TaskOrganizationRecord {
 }
 export interface TaskOrganizationRequest {
   readonly expectedGeneration: number;
+  readonly scope?: 'roots' | 'nodes';
   readonly roots?: readonly TaskSearchAddress[];
   readonly filePath?: string;
 }

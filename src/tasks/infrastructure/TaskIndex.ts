@@ -53,6 +53,7 @@ import {
 import {
   nodeAtSearchAddress,
   observedTaskTags,
+  rootTaskNodeSnapshot,
   taskOrganizationRecord,
   taskTreeNodes,
 } from '../domain/taskSearchProjection';
@@ -1380,23 +1381,20 @@ export class TaskIndex
     }
   }
 
-  private *organizationAddresses_abyssPrivate(
+  private *organizationRoots_abyssPrivate(
     request: TaskOrganizationRequest,
-  ): Iterable<TaskSearchAddress> {
-    if (request.roots === undefined) {
-      yield* this.allOrganizationAddresses_abyssPrivate(request.filePath);
-      return;
-    }
+  ): Iterable<{ address: TaskSearchAddress; root: TaskSnapshot }> {
+    const addresses = request.roots ?? this.allOrganizationAddresses_abyssPrivate(request.filePath);
     const seen = new Set<number>();
-    for (const address of request.roots) {
+    for (const address of addresses) {
       if (address.childLines.length !== 0)
         throw new TaskSearchError('invalid-request', 'Expected root address');
       const root = this.currentSearchRoot_abyssPrivate(address);
       if (root === undefined) throw new TaskSearchError('stale', 'Task changed');
       if (seen.has(address.rootId)) continue;
       seen.add(address.rootId);
-      if (request.filePath === undefined || root.source.filePath === request.filePath)
-        yield address;
+      if (request.filePath !== undefined && root.source.filePath !== request.filePath) continue;
+      yield { address, root };
     }
   }
 
@@ -1408,29 +1406,31 @@ export class TaskIndex
     const generation = request.expectedGeneration;
     this.checkSearchGeneration_abyssPrivate(generation, signal);
     let items: TaskOrganizationRecord[] = [];
-    let emitted = false;
-    for (const address of this.organizationAddresses_abyssPrivate(request)) {
-      this.checkSearchGeneration_abyssPrivate(generation, signal);
-      const root = this.currentSearchRoot_abyssPrivate(address);
-      if (root === undefined) throw new TaskSearchError('stale', 'Task changed');
-      items.push(
-        taskOrganizationRecord(
-          root,
-          address,
-          this.statusCatalog_abyssPrivate.statusForSymbol(root.statusSymbol),
-        ),
-      );
-      if (items.length < 200) continue;
-      this.checkSearchGeneration_abyssPrivate(generation, signal);
-      yield { generation, items };
-      emitted = true;
-      items = [];
-      await (this.options_abyssPrivate.readYield?.(signal) ??
-        new Promise<void>((resolve) => window.setTimeout(resolve, 0)));
-      this.checkSearchGeneration_abyssPrivate(generation, signal);
+    let needsFinalBatch = true;
+    for (const { address, root } of this.organizationRoots_abyssPrivate(request)) {
+      const nodes = request.scope === 'nodes' ? taskTreeNodes(root) : [rootTaskNodeSnapshot(root)];
+      for (const task of nodes) {
+        this.checkSearchGeneration_abyssPrivate(generation, signal);
+        items.push(
+          taskOrganizationRecord(
+            task,
+            { ...address, childLines: task.path.map((child) => child.ref.relativeLine) },
+            this.statusCatalog_abyssPrivate.statusForSymbol(task.node.statusSymbol),
+          ),
+        );
+        needsFinalBatch = true;
+        if (items.length < 200) continue;
+        this.checkSearchGeneration_abyssPrivate(generation, signal);
+        yield { generation, items };
+        needsFinalBatch = false;
+        items = [];
+        await (this.options_abyssPrivate.readYield?.(signal) ??
+          new Promise<void>((resolve) => window.setTimeout(resolve, 0)));
+        this.checkSearchGeneration_abyssPrivate(generation, signal);
+      }
     }
     this.checkSearchGeneration_abyssPrivate(generation, signal);
-    if (items.length > 0 || !emitted) yield { generation, items };
+    if (needsFinalBatch) yield { generation, items };
     this.checkSearchGeneration_abyssPrivate(generation, signal);
   }
 
