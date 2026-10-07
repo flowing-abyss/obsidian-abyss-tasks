@@ -28,7 +28,7 @@ import type {
   TaskQueryApi,
   TaskSnapshot,
 } from '../src/tasks';
-import { localDate, localTime } from '../src/tasks';
+import { localDate, localTime, rootTaskNodeSnapshot } from '../src/tasks';
 import type { TaskQuery } from '../src/tasks/application/TaskApplicationApi';
 import { TaskModal } from '../src/ui/TaskModal';
 import { InteractionRegistry, type InteractionOwnershipPort } from '../src/ui/interactionOwnership';
@@ -3504,7 +3504,11 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
       panel['taskMenus_abyssPrivate'].showBulkContextMenu(new MouseEvent('contextmenu'), card, {
         signal: new AbortController().signal,
         summaries: tasks.slice(0, 2),
-        resolve: async () => tasks.slice(0, 2),
+        resolve: async () =>
+          tasks.slice(0, 2).map((root) => ({
+            task: rootTaskNodeSnapshot(root),
+            completion: { kind: 'allowed' as const },
+          })),
       });
       clickSetTag(expectDefined(shown.mock.instances[0]) as Menu);
       shown.mockRestore();
@@ -7034,7 +7038,7 @@ describe('CenterPanel actual centre focus continuity', () => {
             ? '- [ ] first #task/inbox 📅 2026-10-02'
             : '- [ ] first #task/inbox #work 📅 2026-10-02';
         const secondLine =
-          disposition === 'other-failed'
+          disposition !== 'outside'
             ? '- [ ] second #task/inbox 📅 2026-10-02'
             : '- [ ] second #task/inbox #work 📅 2026-10-02';
         expect(await readMd(h.app, 'focus.md')).toBe(

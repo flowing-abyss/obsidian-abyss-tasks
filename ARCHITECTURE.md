@@ -822,10 +822,25 @@ Evidence grants no edit authority.
 TaskCardRenderer owns the contributing semantic header renderer for both roots and exact children,
 reusing existing date/time/tag filter and recurrence badge primitives. It deduplicates equal metadata
 text per node, preserves all contributing accessible key meanings and excludes unmatched metadata
-and recurrence on refresh. Root tags retain their existing drop command context; child tags retain
-color/filter clicks and stop bubbling drops without accepting them or acquiring write authority.
-TaskCommands uses the shared `TaskSelectionNode` union for status/toggle/priority; children execute
-their exact subtask targets while roots retain calendar/forecast handling. `requestTaskStatusChange`
+and recurrence on refresh. Root and child tags retain their own exact drop command context and stop propagation before a
+containing root can receive the drop. Tag navigation also carries the dragged physical node;
+project transfers remain root-only.
+TaskCommands accepts `TaskCommandSubject` (an ordinary selection node or a hydrated
+`TaskNodeSnapshot`) across tags, dates, priority, links, status, deletion and root transfers.
+`commandTarget` retains the legacy calendar WeakMap capability, including forecast rejection.
+Menus resolve `TaskSelectedNode` entries with explicit occurrence completion capabilities;
+continuation-only status actions stay passive, while Inspector callers default to allowed.
+Date and recurrence surfaces retain the exact subject through submission, and timers use its
+physical target. Child menus offer the existing hierarchy promotion workflow; archive/move reject
+an entire child or mixed selection before any root command.
+`taskNodeBatch` deduplicates exact reference paths, collapses selected subtree ancestors for delete,
+and orders structural status changes deepest first. TaskCommands executes sequentially, consumes
+proven root transitions immediately, and re-proves pending children with the shared owned-selection
+proof. Structural child completion additionally requires the exact command-result root and unchanged
+source outside the edited subtree; generated recurring successors never inherit pending actions.
+Unproved targets stop the batch with the existing result feedback. Actual command outcomes and
+subtree recovery receipts continue through the existing application result boundary. Central rows
+retain ordinary root-list deletion behavior; the existing visible removal Undo remains Inspector-owned. `requestTaskStatusChange`
 shares only the completion confirmation decision with RightPanel, whose owned command/draft
 reconciliation remains local. Child markers read the public exact-node dependency summary, and
 CenterPanel's existing combined status/priority menu pins the owning root and releases its finite

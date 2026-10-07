@@ -140,3 +140,6 @@ export { normalizeCommentText } from './domain/commentText';
 
 export { taskHasFutureDate, taskTodayOccurrence } from './domain/taskOccupiedDates';
 export { taskNodeSourceLine } from './domain/taskSearchProjection';
+
+export type { TaskOccurrenceCompletion } from './domain/taskOccupiedDates';
+export { rootTaskNodeSnapshot } from './domain/taskSearchProjection';

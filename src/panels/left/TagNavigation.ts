@@ -13,7 +13,7 @@ import {
 } from '../../tags/effectiveTagGroups';
 import { tagSettingsFailureNotice } from '../../tags/tagSettingsFailure';
 import { collectTaskNodeTags } from '../../tags/taskTagCatalog';
-import type { TaskDependencyQueryApi, TaskNodeSnapshot, TaskSnapshot } from '../../tasks';
+import type { TaskDependencyQueryApi, TaskNodeSnapshot } from '../../tasks';
 import {
   TagGroupAppearanceModal,
   type TagGroupAppearanceResult,
@@ -25,8 +25,8 @@ import type { PanelNavigationActions } from '../../views/panelNavigation';
 export interface TagNavigationHost {
   render(): void;
   appendCustomDot(parent: HTMLElement, selection: ListSelection): void;
-  draggedCenterRoot(): TaskSnapshot | undefined;
-  assignTagFromInbox(task: TaskSnapshot, tag: string): Promise<void>;
+  draggedCenterNode(): TaskNodeSnapshot | undefined;
+  assignTagFromInbox(task: TaskNodeSnapshot, tag: string): Promise<void>;
 }
 
 export interface TagNavigationOptions {
@@ -598,7 +598,7 @@ export class TagNavigation {
 
   #attachDropZone(el: HTMLElement, tag: string): void {
     el.addEventListener('dragover', (e) => {
-      if (this.#host.draggedCenterRoot() == null) return;
+      if (this.#host.draggedCenterNode() == null) return;
       e.preventDefault();
       el.classList.add('abyss-drop-target');
     });
@@ -607,7 +607,7 @@ export class TagNavigation {
     });
     el.addEventListener('drop', (e) => {
       el.classList.remove('abyss-drop-target');
-      const dragging = this.#host.draggedCenterRoot();
+      const dragging = this.#host.draggedCenterNode();
       if (dragging == null) return;
       e.preventDefault();
       runAsyncAction(this.#host.assignTagFromInbox(dragging, tag));

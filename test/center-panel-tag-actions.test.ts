@@ -4,7 +4,7 @@ import { AppState } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
-import { localDate, type TaskApplicationApi, type TaskSnapshot } from '../src/tasks';
+import { localDate, type TaskApplicationApi, type TaskRef, type TaskSnapshot } from '../src/tasks';
 import { TagPickerModal } from '../src/ui/TagPickerModal';
 import {
   appWithFiles,
@@ -254,6 +254,20 @@ function unchangedTaskResult(
     changed: false,
     outcome: { type: 'task', task: unchangedTask },
   };
+}
+
+function acceptUnchangedCommands(h: ReturnType<typeof makeCenter>): void {
+  h.execute.mockImplementation(async (command) => {
+    let ref: TaskRef | undefined;
+    if (command.type === 'delete' || command.type === 'archive') ref = command.ref;
+    else if (
+      (command.type === 'patch' || command.type === 'set-status') &&
+      command.target.type === 'task'
+    )
+      ref = command.target.ref;
+    const current = expectDefined(h.queries.list().find((task) => task.ref === ref));
+    return unchangedTaskResult(current);
+  });
 }
 
 async function settleChangedCustomDate(
@@ -1360,6 +1374,7 @@ describe('CenterPanel task date context menus', () => {
     const mixedSecond = { ...second, planning: { due: tomorrow as never } };
     const items = captureMenu();
     const mixedCenter = makeCenter([first, mixedSecond]);
+    acceptUnchangedCommands(mixedCenter);
     const mixedCards = Array.from(mixedCenter.el.querySelectorAll<HTMLElement>('.abyss-task-card'));
     for (const card of mixedCards) {
       card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
@@ -1388,6 +1403,7 @@ describe('CenterPanel task date context menus', () => {
     const matchingSecond = { ...second, planning: { due: tomorrow as never } };
     const clearItems = captureMenu();
     const matchingCenter = makeCenter([matchingFirst, matchingSecond]);
+    acceptUnchangedCommands(matchingCenter);
     const matchingCards = Array.from(
       matchingCenter.el.querySelectorAll<HTMLElement>('.abyss-task-card'),
     );
@@ -1463,11 +1479,7 @@ describe('CenterPanel task date context menus', () => {
       patch: { due: { type: 'set', value: '2026-08-02' } },
     });
 
-    resolveFirst?.({
-      type: 'io-error',
-      cause: 'test',
-      contentState: 'unchanged',
-    });
+    resolveFirst?.(unchangedTaskResult(datedSecond));
     await flushMicrotasks();
     expect(execute).toHaveBeenNthCalledWith(2, {
       type: 'patch',
@@ -1681,6 +1693,13 @@ describe('CenterPanel task date context menus', () => {
       task({ ...second, tags: ['#work', '#task/inbox'] }),
     ];
     const { el, panel, execute } = makeCenter(tasks);
+    execute.mockImplementation(async (command) => {
+      if (command.type !== 'patch' || command.target.type !== 'task')
+        throw new Error('Expected root tag patch');
+      return unchangedTaskResult(
+        expectDefined(tasks.find((task) => task.ref === command.target.ref)),
+      );
+    });
     const opened: TagPickerModal[] = [];
     vi.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
       if (!(this instanceof TagPickerModal)) throw new Error('Expected tag picker');
@@ -1972,6 +1991,7 @@ describe('repeated outgoing rows command boundary', () => {
       expect(h.el.querySelectorAll('.abyss-multi-selected')).toHaveLength(3);
       openMenu(expectDefined(rows[1]));
       expect(items.some((item) => item.title__ === '2 tasks selected')).toBe(true);
+      acceptUnchangedCommands(h);
       if (label === 'Archive all')
         h.execute.mockImplementation(async (command) => ({
           type: 'ok',
@@ -2143,7 +2163,7 @@ it.each([
   },
 );
 
-it('lets already submitted compact bulk commands settle after source invalidates the menu pin', async () => {
+it('settles a submitted compact command but stops unproved later targets after source invalidation', async () => {
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.pinnedTags = ['#work'];
   const h = await mountCanonicalSearchUi(
@@ -2175,14 +2195,15 @@ it('lets already submitted compact bulk commands settle after source invalidates
       new MouseEvent('click'),
     );
     await vi.waitFor(() => {
-      expect(execute).toHaveBeenCalledTimes(2);
+      expect(execute).toHaveBeenCalledTimes(1);
     });
     h.index.installCommittedContent('a.md', '- [ ] replacement needle');
     await h.completed();
     expect(h.panel['taskInteractionPins_abyssPrivate'].size).toBe(0);
     pending.resolve();
     await vi.waitFor(() => {
-      expect(settled).toBe(2);
+      expect(settled).toBe(1);
+      expect(execute).toHaveBeenCalledTimes(1);
     });
     expect(h.state.get('taskStack')).toHaveLength(0);
   } finally {

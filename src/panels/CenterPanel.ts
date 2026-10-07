@@ -22,6 +22,7 @@ import type {
 } from '../task-lists/taskSearchOrganization';
 import {
   localDate,
+  rootTaskNodeSnapshot,
   taskReconciliationKey,
   TaskSearchError,
   type CommentTimeContextProvider,
@@ -63,8 +64,6 @@ import { rootTaskRef, taskNodeRef, type TaskSelectionNode } from '../ui/taskSele
 import type { TrackingSurface } from '../ui/timeTracking/TimeBadge';
 import {
   calendarMutationTarget,
-  calendarOccurrenceForTask,
-  calendarPatchCommand,
   calendarSourcePatchCommand,
   hasOtherCalendarRecurrenceOwner,
   isForecastCalendarTask,
@@ -82,7 +81,14 @@ import {
   type TaskCardInteractionContext,
   type TaskCardMount,
 } from './center/TaskCardRenderer';
-import { TaskCommands } from './center/TaskCommands';
+import {
+  commandNode,
+  commandPatch,
+  commandSource,
+  commandTarget,
+  TaskCommands,
+  type TaskCommandSubject,
+} from './center/TaskCommands';
 import {
   navigateTaskListTarget,
   resolveTaskListRef,
@@ -1662,11 +1668,7 @@ export class CenterPanel {
         },
         applyBulkTaskTags: (card, tasks, add, remove) => {
           this.runBulkMenuAction_abyssPrivate(card, (onResult) =>
-            Promise.all(
-              tasks.map((task) =>
-                this.taskCommands_abyssPrivate.patchTaskTags(task, add, remove, onResult),
-              ),
-            ),
+            this.taskCommands_abyssPrivate.applyBulkTaskTags(tasks, add, remove, onResult),
           );
         },
         openDatePicker: (anchor, selectedTasks, targets) => {
@@ -3172,7 +3174,7 @@ export class CenterPanel {
 
   private applyBulkDuePreset_abyssPrivate(
     card: HTMLElement,
-    tasks: readonly TaskSnapshot[],
+    tasks: readonly TaskCommandSubject[],
     value: LocalDate,
   ): void {
     this.runBulkMenuAction_abyssPrivate(card, (onResult) =>
@@ -3182,7 +3184,9 @@ export class CenterPanel {
 
   private runBulkMenuAction_abyssPrivate(
     card: HTMLElement,
-    action: (onResult: (task: TaskSnapshot, result: TaskCommandResult) => void) => Promise<unknown>,
+    action: (
+      onResult: (task: TaskCommandSubject, result: TaskCommandResult) => void,
+    ) => Promise<unknown>,
   ): void {
     const existing = this.cardReturn_abyssPrivate;
     const record =
@@ -3191,17 +3195,22 @@ export class CenterPanel {
       record.pending = true;
       if (record !== existing) record.hidden = true;
     }
+    let openerAccepted = false;
     runAsyncAction(
       action((submitted, result) => {
+        if (record == null || this.cardReturn_abyssPrivate !== record) return;
+        if (result.type !== 'ok') {
+          if (!openerAccepted) this.clearCardReturn_abyssPrivate();
+          return;
+        }
         if (
-          record == null ||
-          this.cardReturn_abyssPrivate !== record ||
-          !this.sameCardRef_abyssPrivate(submitted.ref, record.original.ref)
+          !this.sameCardRef_abyssPrivate(rootTaskRef(commandNode(submitted)), record.original.ref)
         )
           return;
-        if (result.type === 'ok' && result.outcome.type === 'task')
+        if (result.outcome.type === 'task') {
+          openerAccepted = true;
           record.ref = result.outcome.task.ref;
-        else this.clearCardReturn_abyssPrivate();
+        } else this.clearCardReturn_abyssPrivate();
       }).finally(() => {
         if (record != null && this.cardReturn_abyssPrivate === record) {
           record.pending = false;
@@ -3271,7 +3280,10 @@ export class CenterPanel {
         const resolved = compact === undefined ? tasks : await compact.rows.resolve(keys, signal);
         this.assertMenuTargets_abyssPrivate(signal, controller.signal, compact);
         if (compact === undefined) this.assertExactMenuSnapshots_abyssPrivate(resolved);
-        return resolved;
+        return resolved.map((root) => ({
+          task: rootTaskNodeSnapshot(root),
+          completion: { kind: 'allowed' as const },
+        }));
       },
     };
   }
@@ -3294,11 +3306,11 @@ export class CenterPanel {
 
   private async resolveMenuCommit_abyssPrivate(
     targets: TaskMenuTargets,
-    submit: (tasks: readonly TaskSnapshot[]) => void,
+    submit: (tasks: readonly TaskCommandSubject[]) => void,
   ): Promise<void> {
     try {
       const tasks = await targets.resolve(targets.signal);
-      if (!targets.signal.aborted) submit(tasks);
+      if (!targets.signal.aborted) submit(tasks.map((entry) => entry.task));
     } catch (error) {
       if (
         !targets.signal.aborted &&
@@ -3415,16 +3427,16 @@ export class CenterPanel {
 
   private openTaskDatePicker_abyssPrivate(
     anchor: HTMLElement,
-    tasks: readonly TaskSnapshot[],
+    tasks: readonly TaskCommandSubject[],
     targets?: TaskMenuTargets,
   ): void {
     this.clearTaskDatePicker_abyssPrivate();
     const focusKey = this.taskDateTriggerKey_abyssPrivate(anchor);
     const openerRef =
       focusKey === undefined ? undefined : this.mountedSnapshot_abyssPrivate(focusKey)?.ref;
-    const firstDue = tasks[0]?.planning.due;
+    const firstDue = tasks[0] === undefined ? undefined : commandNode(tasks[0]).planning.due;
     const initialValue =
-      firstDue != null && tasks.every((task) => task.planning.due === firstDue)
+      firstDue != null && tasks.every((task) => commandNode(task).planning.due === firstDue)
         ? firstDue
         : undefined;
     const releasePin =
@@ -3442,7 +3454,7 @@ export class CenterPanel {
       ...(initialValue !== undefined && { initialValue }),
       onPick: (inputValue, pick) => {
         // A pick made by leaving the picker arms no focus continuity: focus stays where it went.
-        const commit = (snapshots: readonly TaskSnapshot[]): void => {
+        const commit = (snapshots: readonly TaskCommandSubject[]): void => {
           this.pickTaskDate_abyssPrivate(
             snapshots,
             inputValue,
@@ -3472,7 +3484,7 @@ export class CenterPanel {
   }
 
   private pickTaskDate_abyssPrivate(
-    tasks: readonly TaskSnapshot[],
+    tasks: readonly TaskCommandSubject[],
     inputValue: string,
     focusKey: string | undefined,
   ): void {
@@ -3494,11 +3506,14 @@ export class CenterPanel {
       }
       const firstTask = tasks[0];
       if (firstTask === undefined) return;
-      const onResult = (submitted: TaskSnapshot, result: TaskCommandResult): void => {
+      const onResult = (submitted: TaskCommandSubject, result: TaskCommandResult): void => {
         if (pendingFocus === undefined || this.pendingTaskDateFocus_abyssPrivate !== pendingFocus)
           return;
         const originalRef = this.taskDateFocusRefs_abyssPrivate[0];
-        if (originalRef === undefined || !this.sameCardRef_abyssPrivate(submitted.ref, originalRef))
+        if (
+          originalRef === undefined ||
+          !this.sameCardRef_abyssPrivate(rootTaskRef(commandNode(submitted)), originalRef)
+        )
           return;
         if (result.type === 'ok' && result.outcome.type === 'task')
           this.taskDateFocusRefs_abyssPrivate.push(result.outcome.task.ref);
@@ -3770,15 +3785,12 @@ export class CenterPanel {
     });
   }
 
-  private openRecurrenceEditor_abyssPrivate(anchor: HTMLElement, task: TaskSnapshot): void {
-    if (isForecastCalendarTask(task)) return;
+  private openRecurrenceEditor_abyssPrivate(anchor: HTMLElement, task: TaskCommandSubject): void {
+    if (commandTarget(task) === undefined) return;
+    const source = commandSource(task);
+    if (source === undefined) return;
+    const { root } = source;
     this.dismissRecurrenceEditor_abyssPrivate();
-    const occurrence = calendarOccurrenceForTask(task);
-    const source = occurrence?.source ?? {
-      root: task,
-      target: { type: 'task' as const, ref: task.ref },
-      node: task,
-    };
     const lifecycle: { handle?: ReturnType<typeof mountAnchoredRecurrenceEditor> } = {};
     const cleanup = (): void => {
       lifecycle.handle?.dismiss();
@@ -3787,7 +3799,7 @@ export class CenterPanel {
     const releasePin =
       key === undefined
         ? undefined
-        : this.pinTaskInteraction_abyssPrivate(key, task.ref, () => {
+        : this.pinTaskInteraction_abyssPrivate(key, root.ref, () => {
             const previous = this.renderingRecurrenceCleanup_abyssPrivate;
             this.renderingRecurrenceCleanup_abyssPrivate = true;
             try {
@@ -3802,7 +3814,7 @@ export class CenterPanel {
       policy: { removeScheduledDate: this.settings_abyssPrivate.recurrence.removeScheduledDate },
       ownershipConflict: hasOtherCalendarRecurrenceOwner(source),
       onSubmit: async (patch) => {
-        const command = calendarPatchCommand(task, patch);
+        const command = commandPatch(task, patch);
         if (this.tasks_abyssPrivate == null || command == null) {
           return Promise.resolve({
             type: 'io-error' as const,

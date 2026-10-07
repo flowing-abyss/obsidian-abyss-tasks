@@ -17,7 +17,12 @@ import { tagSettingsFailureNotice } from '../tags/tagSettingsFailure';
 import { collectTaskNodeTags } from '../tags/taskTagCatalog';
 import { activeTaskNodes } from '../task-lists/taskNodeMembership';
 import { todayTaskCategory } from '../task-lists/todayTaskCategory';
-import { localDate, type TaskApplicationApi, type TaskSnapshot } from '../tasks';
+import {
+  localDate,
+  type TaskApplicationApi,
+  type TaskNodeSnapshot,
+  type TaskSnapshot,
+} from '../tasks';
 import { isImeOwnedEvent } from '../ui/ime';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
 import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
@@ -143,7 +148,10 @@ export class LeftPanel {
         appendCustomDot: (parent, selection) => {
           this.appendCustomDot_abyssPrivate(parent, selection);
         },
-        draggedCenterRoot: () => this.draggedCenterRoot_abyssPrivate(),
+        draggedCenterNode: () => {
+          const payload = this.state_abyssPrivate.get('draggingTaskNode');
+          return payload?.source === 'center-card' ? payload.task : undefined;
+        },
         assignTagFromInbox: (task, tag) => this.assignTagFromInbox_abyssPrivate(task, tag),
       },
     });
@@ -836,13 +844,20 @@ export class LeftPanel {
       : undefined;
   }
 
-  private async assignTagFromInbox_abyssPrivate(task: TaskSnapshot, tag: string): Promise<void> {
+  private async assignTagFromInbox_abyssPrivate(
+    task: TaskNodeSnapshot,
+    tag: string,
+  ): Promise<void> {
+    const { target } = task;
+    const patch = { tags: { add: [tag] } };
+    if (target.type === 'task') {
+      presentTaskCommandResult(
+        await this.tasks_abyssPrivate.execute({ type: 'patch', target, patch }),
+      );
+      return;
+    }
     presentTaskCommandResult(
-      await this.tasks_abyssPrivate.execute({
-        type: 'patch',
-        target: { type: 'task', ref: task.ref },
-        patch: { tags: { add: [tag] } },
-      }),
+      await this.tasks_abyssPrivate.execute({ type: 'patch', target, patch }),
     );
   }
 }

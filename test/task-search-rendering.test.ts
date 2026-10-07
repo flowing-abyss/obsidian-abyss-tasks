@@ -955,24 +955,21 @@ it('uses shared tag colors and prevents child tag drops from writing the bubblin
     );
     expect(h.root.textContent).not.toContain('unmatched');
     h.state.set('draggingTag', '#replacement');
-    for (const chip of chips.filter((e) => e.textContent !== '#needle-root')) {
-      const over = new Event('dragover', { bubbles: true, cancelable: true });
-      chip.dispatchEvent(over);
-      chip.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
-      expect(over.defaultPrevented).toBe(false);
-      expect(chip.hasClass('abyss-drop-target')).toBe(false);
-      expect(chip.closest('.abyss-task-card')?.classList.contains('abyss-drop-target')).toBe(false);
-    }
-    expect(execute).not.toHaveBeenCalled();
-    expect(await h.app.vault.adapter.read('a.md')).toBe(tagTree);
-    const rootChip = expectDefined(chips.find((e) => e.textContent === '#needle-root'));
-    rootChip.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+    const childChip = expectDefined(chips.find((e) => e.textContent === '#needle-child'));
+    const over = new Event('dragover', { bubbles: true, cancelable: true });
+    childChip.dispatchEvent(over);
+    expect(over.defaultPrevented).toBe(true);
+    childChip.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
     await vi.waitFor(async () => {
       expect(await h.app.vault.adapter.read('a.md')).toBe(
-        tagTree.replace('#needle-root #unmatched-root', '#unmatched-root #replacement'),
+        tagTree.replace('#needle-child', '#replacement'),
       );
     });
     expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0]?.[0]).toMatchObject({
+      type: 'patch',
+      target: { type: 'subtask', ref: { relativeLine: 1 } },
+    });
     expect(h.state.get('mode')).toBe('search');
   } finally {
     h.dispose();

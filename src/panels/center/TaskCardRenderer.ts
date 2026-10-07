@@ -892,7 +892,7 @@ export class TaskCardRenderer {
         host,
         record.text,
         options.tagGroups,
-        'source' in node ? { task: node, currentTask: options.currentRoot } : undefined,
+        'source' in node ? { task: node, currentTask: options.currentRoot } : { task: node },
       );
       this.#markSemanticValue(element, record.text, options.search);
       return;
@@ -1038,8 +1038,8 @@ export class TaskCardRenderer {
     tag: string,
     tagGroups: readonly EffectiveTagGroup[],
     dropContext?: {
-      readonly task: TaskSnapshot;
-      readonly currentTask?: (() => TaskSnapshot) | undefined;
+      readonly task: TaskSelectionNode;
+      readonly currentTask?: (() => TaskSelectionNode) | undefined;
     },
   ): HTMLElement {
     const element = host.createSpan({ cls: 'abyss-task-tag abyss-cursor-pointer', text: tag });
@@ -1079,7 +1079,7 @@ export class TaskCardRenderer {
   #handleTagDrop(
     event: DragEvent,
     element: HTMLElement,
-    task: TaskSnapshot,
+    task: TaskSelectionNode,
     replacedTag: string,
   ): void {
     event.preventDefault();

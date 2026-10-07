@@ -1833,7 +1833,7 @@ describe('LeftPanel inbox logic (new inbox object)', () => {
 });
 
 describe('LeftPanel drop zones', () => {
-  it.each(['inspector-root', 'inspector-subtask', 'center-subtask', 'inspector-relation'] as const)(
+  it.each(['inspector-root', 'inspector-subtask', 'inspector-relation'] as const)(
     'does not assign a parent tag for a %s drag',
     (kind) => {
       const root = task({ title: 'Root' });
@@ -1852,7 +1852,7 @@ describe('LeftPanel drop zones', () => {
                 direction: 'blocks',
               },
             } as const)
-          : { source: kind === 'center-subtask' ? 'center-card' : 'inspector-subtask' }),
+          : { source: 'inspector-subtask' }),
         task: {
           root,
           path: nested ? [child] : [],
@@ -1870,6 +1870,30 @@ describe('LeftPanel drop zones', () => {
       expect(execute).not.toHaveBeenCalled();
     },
   );
+
+  it('assigns a center child tag to the exact child, never its parent', () => {
+    const root = task({ title: 'Root' });
+    const child = subtask({ title: 'Child', ref: { parent: { type: 'task', ref: root.ref } } });
+    Object.assign(root, { subtasks: [child] });
+    const { el, state, execute } = makePanel([root], {}, ['#task/next']);
+    state.set('draggingTaskNode', {
+      source: 'center-card',
+      task: {
+        root,
+        node: child,
+        path: [child],
+        target: { type: 'subtask', ref: child.ref },
+      },
+    });
+    expectDefined(el.querySelector<HTMLElement>('.abyss-pinned-tag')).dispatchEvent(
+      new MouseEvent('drop', { bubbles: true, cancelable: true }),
+    );
+    expect(execute).toHaveBeenCalledExactlyOnceWith({
+      type: 'patch',
+      target: { type: 'subtask', ref: child.ref },
+      patch: { tags: { add: ['#task/next'] } },
+    });
+  });
 
   it('adds abyss-drop-target class on dragover when a center root is dragged', () => {
     const t = task({

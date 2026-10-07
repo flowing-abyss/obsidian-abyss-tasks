@@ -222,6 +222,12 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/task-lists/taskNodeMembership.ts',
     'src/task-lists/todayTaskCategory.ts',
   ],
+  TaskOccurrenceCompletion: [
+    'src/panels/center/taskNodeBatch.ts',
+    'src/panels/center/TaskCommands.ts',
+    'src/panels/center/TaskMenus.ts',
+  ],
+  rootTaskNodeSnapshot: ['src/panels/CenterPanel.ts', 'src/panels/center/TaskCommands.ts'],
   TaskOccurrenceResult: ['src/ui/recurrence/RecurrenceEditor.ts'],
   TaskPatch: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
   TaskPriority: [

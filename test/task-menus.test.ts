@@ -4,9 +4,12 @@ import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
+import { localDate } from '../src/tasks';
+import { taskTreeNodes } from '../src/tasks/domain/taskSearchProjection';
 import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import { createTrackingActions } from '../src/ui/timeTracking/trackingActions';
 import { expectDefined, fixedToday, methodOf, task, taskQueryApi } from './helpers';
+import { hierarchyHarness } from './support/taskHierarchyHarness';
 import { useTaskPanelViewport } from './support/taskPanelViewport';
 
 useTaskPanelViewport();
@@ -36,7 +39,7 @@ function sequence(menu: Menu): ReadonlyArray<readonly [string, string]> {
   return items(menu).map((item) => [item.title__, item.section]);
 }
 
-function fixture() {
+function mockMenuDom(): void {
   const originalAddItem = methodOf(Menu.prototype, 'addItem');
   vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, callback) {
     return originalAddItem.call(this, (item) => {
@@ -44,6 +47,10 @@ function fixture() {
       callback(item);
     });
   });
+}
+
+function fixture() {
+  mockMenuDom();
   const first = task({
     title: 'First',
     tags: ['#one', '#both'],
@@ -194,3 +201,98 @@ describe('task menu registration contract', () => {
     }
   });
 });
+
+it('offers Promote for a child, disables root transfer and continuation status, and targets its timer', async () => {
+  vi.useRealTimers();
+  const h = await hierarchyHarness();
+  const child = expectDefined([...taskTreeNodes(h.source)][1]);
+  const { panel, card } = fixture();
+  try {
+    const menu = panel['taskMenus_abyssPrivate'].createTaskContextMenu(card, child, {
+      kind: 'continuation',
+      due: localDate('2026-10-09'),
+    });
+    expect(items(menu).find((item) => item.title__.startsWith('Archive'))?.disabled).toBe(true);
+    expect(items(menu).find((item) => item.title__.startsWith('Status'))?.disabled).toBe(true);
+    expect(items(menu).find((item) => item.title__ === 'Make independent task')?.disabled).toBe(
+      false,
+    );
+    const start = vi
+      .spyOn(expectDefined(panel['timeTracking_abyssPrivate']).actions, 'start')
+      .mockResolvedValue(undefined);
+    const click = (
+      items(menu).find((item) => item.title__ === 'Start tracking') as unknown as {
+        onClick__: () => void;
+      }
+    ).onClick__;
+    click();
+    expect(start).toHaveBeenCalledExactlyOnceWith(child.target);
+  } finally {
+    panel.destroy();
+    h.index.destroy();
+  }
+});
+
+it.each(['date', 'recurrence'] as const)(
+  'retains the child authority through the %s surface callback',
+  async (kind) => {
+    vi.useRealTimers();
+    mockMenuDom();
+    const h = await hierarchyHarness({
+      'source.md': '- [ ] Parent\n  - [ ] Child 📅 2026-10-09\n',
+      'target.md': '- [ ] Other\n',
+    });
+    const child = expectDefined([...taskTreeNodes(h.source)][1]);
+    const state = new AppState();
+    state.set('selectedList', 'inbox');
+    const panel = new CenterPanel({
+      app: h.app,
+      state,
+      settings: structuredClone(DEFAULT_SETTINGS),
+      queries: h.index,
+      tasks: h.service,
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    });
+    const el = activeDocument.body.createDiv();
+    panel.mount(el);
+    const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
+    const execute = vi.spyOn(h.service, 'execute');
+    try {
+      const menu = panel['taskMenus_abyssPrivate'].createTaskContextMenu(card, child);
+      const item = expectDefined(
+        items(menu).find(
+          (item) => item.title__ === (kind === 'date' ? 'Set date…' : 'Edit repeat…'),
+        ),
+      );
+      (item as unknown as { onClick__: () => void }).onClick__();
+      if (kind === 'date') {
+        const input = expectDefined(
+          activeDocument.querySelector<HTMLInputElement>('input[type="date"]'),
+        );
+        input.value = '2026-10-10';
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      } else {
+        expectDefined(
+          activeDocument.querySelector<HTMLElement>('[data-recurrence-preset="weekly"]'),
+        ).click();
+        expectDefined(
+          activeDocument.querySelector<HTMLButtonElement>('.abyss-recurrence-save'),
+        ).click();
+      }
+      await vi.waitFor(() => {
+        expect(execute).toHaveBeenCalledTimes(1);
+      });
+      expect(execute.mock.calls[0]?.[0]).toMatchObject({ type: 'patch', target: child.target });
+      await vi.waitFor(async () => {
+        expect(await h.read('source.md')).toBe(
+          kind === 'date'
+            ? '- [ ] Parent\n  - [ ] Child 📅 2026-10-10\n'
+            : '- [ ] Parent\n  - [ ] Child 🔁 every week on Friday 📅 2026-10-09\n',
+        );
+      });
+    } finally {
+      panel.destroy();
+      h.index.destroy();
+    }
+  },
+);
