@@ -1,4 +1,8 @@
-import { readCommentBlock, type CommentSource } from './commentSource';
+import {
+  readCommentBlock,
+  replacementCommentSourceLines,
+  type CommentSource,
+} from './commentSource';
 import { matchesSubmittedChild, type TaskCreationProofPolicy } from './dependencySubtaskProof';
 import type { CompletionTrackingWitness } from './taskReconciliation';
 import { closeEntryLine, parseTimeEntryLine, type ParsedTimeEntry } from './timeEntry';
@@ -301,12 +305,12 @@ function replacementCommentLines(
 ): string[] {
   if (text === undefined) return [];
   const ending = lines[offset]?.endsWith('\r') === true ? '\r' : '';
-  return text.split('\n').map((line, position) => {
+  return replacementCommentSourceLines(original, text).map((line, position) => {
     let suffix = ending;
     const at = original.from + position;
     if (at < original.toExclusive && at < lines.length - 1)
       suffix = lines[at]?.endsWith('\r') === true ? '\r' : '';
-    return `${position === 0 ? original.headPrefix : original.continuationPrefix}${line}${suffix}`;
+    return `${line}${suffix}`;
   });
 }
 

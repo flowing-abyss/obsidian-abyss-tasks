@@ -11,6 +11,32 @@ import { TaskRefAuthority } from '../../src/tasks/infrastructure/TaskRefAuthorit
 import { canonicalStatusCatalog, expectDefined } from './../helpers';
 
 describe('TaskBlockEditor', () => {
+  it('refuses a formatted comment range overlapping an owned child', () => {
+    const editor = new TaskBlockEditor();
+    const content = '- [ ] root\n\t- head\n\t\ttail\n\t- neighbor';
+    const block = expectDefined(editor.rootBlocks(content)[0]);
+    const target = { relativeLine: 0, lineCount: 4, childRanges: [{ from: 2, to: 2 }] };
+    expect(
+      editor.edit(content, block, target, {
+        type: 'delete-comment',
+        relativeLine: 1,
+        originalMarkdown: '\t- head\n\t\ttail',
+      }),
+    ).toEqual({ type: 'conflict' });
+    expect(
+      editor.commentLink(
+        content,
+        block,
+        target,
+        {
+          relativeLine: 1,
+          originalMarkdown: '\t- head\n\t\ttail',
+          parent: { type: 'task', ref: { filePath: 'tasks.md', line: 0, revision: 'before' } },
+        },
+        0,
+      ),
+    ).toEqual({ type: 'conflict' });
+  });
   it.each(['blocked-by', 'blocks'] as const)(
     'creates a canonical nested linked child (%s)',
     (direction) => {

@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { localDate, type CompletionTrackingWitness, type TaskCommand } from '../src/tasks';
 import { atomDateTime } from '../src/tasks/domain/commentTimestamp';
+import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { projectTaskSnapshot } from '../src/tasks/infrastructure/markdown/TaskSnapshotProjector';
 import {
@@ -715,6 +716,53 @@ describe('owned non-structural inspector selection', () => {
 });
 
 describe('exact existing comment transition proof', () => {
+  it.each(['update-comment', 'delete-comment'] as const)(
+    'accepts the actual formatted writer %s and rejects prefix/timestamp/neighbor tampering',
+    (type) => {
+      const markdown =
+        '- [ ] Root\r\n\t- 2026-10-07: head\r\n\t\ttail\r\n      third\r\n\t- neighbor';
+      const original = snapshot(markdown, 'before');
+      const comment = expectDefined(original.comments[0]);
+      expect(comment.text).toBe('head\ntail\nthird');
+      const command: TaskCommand =
+        type === 'update-comment'
+          ? { type, comment: comment.ref, text: 'new\nchanged\nthird changed\nadded' }
+          : { type, comment: comment.ref };
+      const editor = new TaskBlockEditor();
+      const result = editor.edit(
+        markdown,
+        expectDefined(editor.rootBlocks(markdown)[0]),
+        { relativeLine: 0, lineCount: 5, childRanges: [] },
+        type === 'update-comment'
+          ? {
+              type,
+              relativeLine: comment.ref.relativeLine,
+              originalMarkdown: comment.ref.originalMarkdown,
+              text: 'new\nchanged\nthird changed\nadded',
+            }
+          : {
+              type,
+              relativeLine: comment.ref.relativeLine,
+              originalMarkdown: comment.ref.originalMarkdown,
+            },
+      );
+      if (result.type !== 'changed') throw new Error(`Expected changed, got ${result.type}`);
+      expect(
+        proveOwnedTaskSelection(snapshot(result.content, 'after'), [original], command),
+      ).toBeDefined();
+      const foreign = [result.content.replace('neighbor', 'foreign')];
+      if (type === 'update-comment')
+        foreign.push(
+          result.content.replace('2026-10-07', '2026-10-06'),
+          result.content.replace('\t\tchanged', '      changed'),
+          result.content.replace('      third changed', '\t\tthird changed'),
+        );
+      for (const content of foreign)
+        expect(
+          proveOwnedTaskSelection(snapshot(content, 'foreign'), [original], command),
+        ).toBeUndefined();
+    },
+  );
   it.each(['update-comment', 'delete-comment'] as const)(
     'proves only the captured %s block splice',
     (type) => {

@@ -1,6 +1,7 @@
 import { parseLinks } from '../../../markdown/links';
 import {
   readCommentBlock,
+  replacementCommentSourceLines,
   type CommentSource,
   type CommentSourceLine,
 } from '../../domain/commentSource';
@@ -1032,11 +1033,7 @@ function editExistingComment(
   if (normalized.type !== 'ready') return { type: 'invalid', field: 'comment' };
   if (comment.text === normalized.text)
     return { type: 'unchanged', content: context.content, block: context.block };
-  const replacements = commentLines(
-    normalized.text,
-    comment.headPrefix,
-    comment.continuationPrefix,
-  );
+  const replacements = replacementCommentSourceLines(comment, normalized.text);
   const original = context.lines.splice(comment.from, comment.toExclusive - comment.from);
   const additions = insertedLines(replacements, context.ending);
   for (const [index, line] of additions.entries()) {

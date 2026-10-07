@@ -121,8 +121,17 @@ Comments share a domain text policy and source reader. New submissions normalize
 remove whitespace-only lines, preserve nonblank whitespace, and escape structural continuation
 markers only outside recognized literal regions. Unsafe literal edits return the existing invalid
 command outcome; the presentation boundary owns its single Notice and retains the draft.
-`CommentRef.originalMarkdown` owns the complete contiguous block. Continuations align with the
-head's exact authored indentation/quote prefix plus two spaces and stop at structural content.
+`CommentRef.originalMarkdown` owns the complete contiguous block. Continuations require the head's
+explicit quote depth and list-content indentation within its final container, using fixed
+four-column structural tab stops independently of visual/editor/formatter settings. The reader
+consumes the shortest whole raw whitespace prefix reaching that threshold, retains the remaining
+payload and physical UTF-16 coordinates exactly, and stops at the first blank, insufficiently
+indented, changed-container or structural line. Existing source is never rewritten on load;
+heads without a final quote-delimiter blank also retain their previously accepted exact raw
+container prefix plus two spaces, subject to the same container and structural boundary guards.
+References captured before external formatting remain stale. The writer and owned-change proof
+share replacement formatting that preserves each accepted line's raw prefix and uses the first
+continuation prefix (or the canonical head-container prefix plus two spaces) for added lines.
 Canonical projection and the legacy parser consume that same range. `TaskBlockEditor.commentLink`
 proves the full block, maps the logical occurrence to one physical token, and reuses coordinate
 replacement in both repositories. Whole-block update/delete preserve timestamp prefixes, file line

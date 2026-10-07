@@ -5,6 +5,7 @@ import { isTimeEntryShape } from './timeEntry';
 
 export interface CommentSourceLine {
   readonly line: number;
+  readonly prefix: string;
   readonly column: number;
   readonly textFrom: number;
   readonly text: string;
@@ -50,38 +51,125 @@ function commentHead(
   };
 }
 
-function continuationText(line: string | undefined, prefix: string): string | undefined {
+function advanceColumn(column: number, character: string): number {
+  return character === '\t' ? column + 4 - (column % 4) : column + 1;
+}
+
+function commentContainer(prefix: string): {
+  quoteDepth: number;
+  indentation: number;
+  legacyPrefix: string | undefined;
+} {
+  let column = 0;
+  let containerColumn = 0;
+  let quoteDepth = 0;
+  for (let at = 0; at < prefix.length; at++) {
+    const character = prefix[at] ?? '';
+    column = advanceColumn(column, character);
+    if (character !== '>') continue;
+    quoteDepth++;
+    // One column belongs to optional quote spacing. A delimiter tab's remaining
+    // columns still contribute indentation, although its raw byte is consumed whole.
+    containerColumn = column + (/[\t ]/u.test(prefix[at + 1] ?? '') ? 1 : 0);
+  }
+  return {
+    quoteDepth,
+    indentation: column - containerColumn,
+    legacyPrefix: prefix.endsWith('>') ? `${prefix}  ` : undefined,
+  };
+}
+
+function quoteContainerPosition(
+  source: string,
+  quoteDepth: number,
+): { at: number; column: number; containerColumn: number } | undefined {
+  let at = 0;
+  let column = 0;
+  let containerColumn = 0;
+  for (let depth = 0; depth < quoteDepth; depth++) {
+    while (/[\t ]/u.test(source.charAt(at))) {
+      column = advanceColumn(column, source.charAt(at));
+      at++;
+    }
+    if (source[at] !== '>') return undefined;
+    at++;
+    column++;
+    containerColumn = column;
+    if (/[\t ]/u.test(source.charAt(at))) {
+      containerColumn++;
+      column = advanceColumn(column, source.charAt(at));
+      at++;
+    }
+  }
+  return { at, column, containerColumn };
+}
+
+function continuationColumn(
+  source: string,
+  container: ReturnType<typeof commentContainer>,
+): number | undefined {
+  const position = quoteContainerPosition(source, container.quoteDepth);
+  if (position === undefined) return undefined;
+  // Earlier comments without a final quote-delimiter blank used exactly two
+  // spaces after that marker. Keep their raw spelling and payload coordinates.
+  if (container.legacyPrefix !== undefined && source.startsWith(container.legacyPrefix))
+    return container.legacyPrefix.length;
+  let { at, column } = position;
+  const { containerColumn } = position;
+  const threshold = containerColumn + container.indentation + 2;
+  while (column < threshold && /[\t ]/u.test(source.charAt(at))) {
+    column = advanceColumn(column, source.charAt(at));
+    at++;
+  }
+  return column < threshold ? undefined : at;
+}
+
+function continuationText(
+  line: string | undefined,
+  container: ReturnType<typeof commentContainer>,
+): { prefix: string; text: string } | undefined {
   const source = line?.replace(/\r$/u, '');
-  if (source?.startsWith(prefix) !== true) return undefined;
-  const tail = source.slice(prefix.length);
-  return /^[\t ]*$/u.test(tail) || commentStructuralMarker(tail) !== undefined ? undefined : tail;
+  if (source === undefined) return undefined;
+  const at = continuationColumn(source, container);
+  if (at === undefined) return undefined;
+  const text = source.slice(at);
+  return /^[\t ]*$/u.test(text) || commentStructuralMarker(text) !== undefined
+    ? undefined
+    : { prefix: source.slice(0, at), text };
 }
 
 /** Reads one contiguous owned block from split-LF source, retaining terminal CR evidence. */
 export function readCommentBlock(
   lines: readonly string[],
   from: number,
-  toExclusive: number,
+  toExclusive = lines.length,
 ): CommentSource | undefined {
   if (from < 0 || from >= toExclusive) return undefined;
   const head = commentHead(lines[from]);
   if (head === undefined) return undefined;
-  const continuationPrefix = `${head.prefix}  `;
+  const container = commentContainer(head.prefix);
   const result: CommentSourceLine[] = [
-    { line: from, column: head.headPrefix.length, textFrom: 0, text: head.text },
+    {
+      line: from,
+      prefix: head.headPrefix,
+      column: head.headPrefix.length,
+      textFrom: 0,
+      text: head.text,
+    },
   ];
   let text = head.text;
   let end = from + 1;
   while (end < toExclusive) {
-    const tail = continuationText(lines[end], continuationPrefix);
+    const tail = continuationText(lines[end], container);
     if (tail === undefined) break;
     result.push({
       line: end,
-      column: continuationPrefix.length,
+      prefix: tail.prefix,
+      column: tail.prefix.length,
       textFrom: text.length + 1,
-      text: tail,
+      text: tail.text,
     });
-    text += `\n${tail}`;
+    text += `\n${tail.text}`;
     end++;
   }
   return {
@@ -89,9 +177,22 @@ export function readCommentBlock(
     toExclusive: end,
     originalMarkdown: lines.slice(from, end).join('\n'),
     headPrefix: head.headPrefix,
-    continuationPrefix,
+    continuationPrefix: result[1]?.prefix ?? `${head.prefix}  `,
     text,
     ...(head.timestamp !== undefined && { timestamp: head.timestamp }),
     lines: result,
   };
+}
+
+/** Retains each authored physical prefix; added continuations use one stable fallback. */
+export function replacementCommentSourceLines(
+  original: CommentSource,
+  text: string,
+): readonly string[] {
+  return text
+    .split('\n')
+    .map(
+      (line, index) =>
+        `${index === 0 ? original.headPrefix : (original.lines[index]?.prefix ?? original.continuationPrefix)}${line}`,
+    );
 }

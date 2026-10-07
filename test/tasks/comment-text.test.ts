@@ -1,8 +1,31 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
+import { readCommentBlock } from '../../src/tasks/domain/commentSource';
 import { commentStructuralMarker, normalizeCommentText } from '../../src/tasks/domain/commentText';
 
 describe('comment text policy', () => {
+  it('retains normalized escape and literal policy after prefix formatting', () => {
+    const input = 'head\n- [ ] literal\n2. item\n<div>\nordinary\n</div>\n%%raw\nordinary%%';
+    const normalized = normalizeCommentText(input);
+    if (normalized.type !== 'ready') throw new Error('Expected ready');
+    expect(normalized.text).toBe(
+      'head\n\\- [ ] literal\n2\\. item\n<div>\nordinary\n</div>\n%%raw\nordinary%%',
+    );
+    const block = readCommentBlock(
+      [
+        '\t- head',
+        ...normalized.text
+          .split('\n')
+          .slice(1)
+          .map((line) => `\t\t${line}`),
+      ],
+      0,
+      9,
+    );
+    expect(block?.text).toBe(
+      'head\n\\- [ ] literal\n2\\. item\n<div>\nordinary\n</div>\n%%raw\nordinary%%',
+    );
+  });
   it.each([
     ['  first  \r\n \t\rsecond\t\r\n', '  first  \nsecond\t'],
     ['first\n- [ ] literal\n> quote\n2. item', 'first\n\\- [ ] literal\n\\> quote\n2\\. item'],
