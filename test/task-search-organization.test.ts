@@ -12,6 +12,7 @@ import {
 } from '../src/task-lists/taskSearchOrganization';
 import { localDate, taskSearchAddressKey } from '../src/tasks';
 import { assertNoRevision, createCanonicalSearchHarness } from './support/taskSearchHarness';
+import { taskKeys } from './task-list-row-assertions';
 const organizeTaskSearch = (input: TaskSearchOrganizationInput) =>
   drainCollectionSteps(organizationSteps(input));
 
@@ -94,7 +95,7 @@ describe('compact organization shares ordinary list semantics', () => {
             expect(
               compact.occurrences.map((o) => o.key),
               `${field}/${groupBy}/${dir}`,
-            ).toEqual(rows.taskKeys);
+            ).toEqual(taskKeys(rows));
             expect(compact.scope === 'roots' ? compact.rootTotal : undefined).toBe(selected.length);
             checkCompact(compact, tasks[0]?.ref.revision ?? '');
             expect([...compact.groupCounts.values()].reduce((a, b) => a + b, 0)).toBe(

@@ -1259,7 +1259,16 @@ revive a revoked pending drop. Each native owner releases its migration notifica
 `CenterPanel` owns one [`TaskListSurface`](src/panels/task-list/TaskListSurface.ts)
 for the active task host. Tasks use their list scroller; dashboard tasks use the dashboard scroller
 and a content-relative origin. The surface’s supplied logical occurrence order drives selection and
-physical writes remain deduplicated. Ordinary unfiltered lists and compact Search/filters supply their full logical order. Direct Ctrl/Cmd+A in Tasks selects that complete current logical order while
+physical writes remain deduplicated. The shared `TaskListRows<T>` boundary provides row/task counts,
+indexed row/key/physical-node lookups, bounded slices, arithmetic height estimates and occurrence
+selection descriptors. `indexedRows` owns finite-array maps for ordinary lists, compact Search and
+raw-offset dependency rows; no eager row/key array is exposed through that boundary. Its descriptors
+retain namespaced header identity (empty when ungrouped), and explicit Today/daily presentation
+retains date and kind independently of the generic payload. Selected physical nodes aggregate
+completion from their selected copies only. Search passes row presentation explicitly while exact
+rich-root hydration remains mounted/interaction-owned. Selection still stores eager keys and the
+surface still builds finite array geometry; both consume the indexed boundary.
+Ordinary unfiltered lists and compact Search/filters supply their full logical order. Direct Ctrl/Cmd+A in Tasks selects that complete current logical order while
 preserving the range and keyboard lead, native focus, and viewport. Interactive inputs and other
 modes retain their keyboard ownership. Keyed `TaskCardRenderer.mount` instances own Markdown Components and current
 snapshot interactions; eviction unloads each row. `mountInto` uses the existing attached card holder.

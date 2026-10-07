@@ -1354,7 +1354,7 @@ export class CenterPanel {
       return undefined;
     }
     const order = retained.search?.order ?? retained.surface.rows;
-    const key = order.occurrencesOf(`${ref.filePath}:${ref.line}`)[0];
+    const key = order.firstOccurrenceOf(`${ref.filePath}:${ref.line}`);
     const result =
       key === undefined
         ? this.includeCreatedTask_abyssPrivate(attempt)
@@ -1419,9 +1419,9 @@ export class CenterPanel {
       aborted();
       return undefined;
     }
-    const key = (retained.search?.order ?? retained.surface.rows).occurrencesOf(
+    const key = (retained.search?.order ?? retained.surface.rows).firstOccurrenceOf(
       taskRowKey(resolved.root),
-    )[0];
+    );
     if (key === undefined) return undefined;
     const ready = await this.prepareTaskReveal_abyssPrivate(
       retained,
@@ -1523,13 +1523,13 @@ export class CenterPanel {
   ): TaskListRows<TaskNodeSnapshot> {
     const key = taskRowKey(task);
     return indexedRows([
-      ...rows.rows,
+      ...rows.slice(0, rows.rowCount),
       {
         kind: 'group',
         key: 'creation-reveal',
         label: 'Created task',
         count: 1,
-        first: rows.taskKeys.length === 0,
+        first: rows.taskCount === 0,
       },
       { kind: 'task', key, taskKey: key, task: rootTaskNodeSnapshot(task) },
     ]);
@@ -1856,7 +1856,7 @@ export class CenterPanel {
     const previous = this.rowSelection_abyssPrivate.focus;
     return previous !== null && rows.physicalKey(previous) === physical
       ? previous
-      : rows.occurrencesOf(physical)[0];
+      : rows.firstOccurrenceOf(physical);
   }
 
   private updateTaskStackSelection_abyssPrivate(): void {
@@ -1930,7 +1930,7 @@ export class CenterPanel {
     if (this.selectAllTaskRows_abyssPrivate(event)) return;
     if (!this.isTaskNavigationEvent_abyssPrivate(event)) return;
     const order = this.listOrder_abyssPrivate();
-    if (order.taskKeys.length === 0) return;
+    if (order.taskCount === 0) return;
     event.preventDefault();
     this.moveTaskSelection_abyssPrivate(event, order);
   }
@@ -1956,7 +1956,7 @@ export class CenterPanel {
     )
       return false;
     const order = this.listOrder_abyssPrivate();
-    if (order.taskKeys.length === 0) return false;
+    if (order.taskCount === 0) return false;
     event.preventDefault();
     event.stopPropagation();
     this.rowSelection_abyssPrivate.selectAll(order, {
@@ -2555,7 +2555,10 @@ export class CenterPanel {
     });
     const rows = buildTaskNodeListRows(tasks, grouping);
     const inclusion = this.creationInclusion_abyssPrivate;
-    if (inclusion !== undefined && rows.occurrencesOf(taskRowKey(inclusion.task)).length === 0) {
+    if (
+      inclusion !== undefined &&
+      rows.firstOccurrenceOf(taskRowKey(inclusion.task)) === undefined
+    ) {
       const exact = this.queries_abyssPrivate.resolve(inclusion.task.ref);
       if (exact.type === 'exact') {
         this.mountTaskRows_abyssPrivate(

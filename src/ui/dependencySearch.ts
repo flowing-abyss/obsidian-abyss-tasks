@@ -1,6 +1,6 @@
 import { Platform, Scope } from 'obsidian';
 import { createBrowserTaskScheduler, type BrowserTaskScheduler } from '../browserTaskScheduler';
-import { indexedRows, type TaskListRow } from '../panels/task-list/taskListRows';
+import { indexedRows, type TaskListRow, type TaskListRows } from '../panels/task-list/taskListRows';
 import {
   TaskListSurface,
   type TaskListPresentation,
@@ -926,7 +926,7 @@ class DependencySearchController {
     if (fill.omittedRevision !== this.#publishedOmittedRevision) {
       this.#publishing = true;
       try {
-        const rows = surface.rows.rows.filter(
+        const rows = [...surface.rows.slice(0, surface.rows.rowCount)].filter(
           (row) => row.kind === 'task' && !this.#omitted.has(row.task),
         );
         surface.update(indexedRows<number>(rows), this.#presentation(true), 'throw');
@@ -1195,22 +1195,24 @@ class DependencySearchController {
     this.#releaseMovePin?.();
     this.#releaseMovePin = undefined;
   }
-  #moveEdge(rows: ReadonlyArray<TaskListRow<number>>, backwards: boolean, total: number): number {
-    const row = backwards ? rows[rows.length - 1] : rows[0];
-    if (row?.kind === 'task') return row.task;
+  #moveEdge(rows: TaskListRows<number> | undefined, backwards: boolean, total: number): number {
+    const key = rows?.taskKeyAt(backwards ? rows.taskCount - 1 : 0);
+    const task = key === undefined ? undefined : rows?.task(key);
+    if (task !== undefined) return task;
     return backwards ? total - 1 : 0;
   }
   #moveStart(key: string, delta: number, total: number): number {
-    const rows = this.#surface?.rows.rows ?? [];
+    const rows = this.#surface?.rows;
     if (key === 'Home') return this.#moveEdge(rows, false, total);
     if (key === 'End') return this.#moveEdge(rows, true, total);
     return this.#adjacentOffset(rows, delta, total);
   }
-  #adjacentOffset(rows: ReadonlyArray<TaskListRow<number>>, delta: number, total: number): number {
+  #adjacentOffset(rows: TaskListRows<number> | undefined, delta: number, total: number): number {
     if (this.#selectedOffset === undefined) return this.#moveEdge(rows, delta < 0, total);
     const index = this.#surface?.rows.indexOf(String(this.#selectedOffset)) ?? -1;
-    const row = rows[index + delta];
-    if (index >= 0 && row?.kind === 'task') return row.task;
+    const key = rows?.taskKeyAt(index + delta);
+    const task = key === undefined ? undefined : rows?.task(key);
+    if (index >= 0 && task !== undefined) return task;
     return this.#selectedOffset + delta;
   }
   #move(key: string): void {

@@ -127,6 +127,7 @@ export class TaskSearchRows {
         key: occurrence.key,
         taskKey: occurrence.taskKey,
         task: occurrence,
+        presentation: occurrence.presentation,
       });
     }
     this.#rows = indexedRows(rows);

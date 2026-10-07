@@ -5,6 +5,7 @@ import { deferred, expectDefined, flushMicrotasks, task, useRealMoment } from '.
 import { taskCardMountBound } from './support/taskPanelViewport';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 import { taskViewportOwner } from './support/taskViewportOwner';
+import { taskKeys } from './task-list-row-assertions';
 
 useRealMoment();
 const cleanup: Array<() => void> = [];
@@ -185,9 +186,9 @@ describe('Search supplied result viewport', () => {
     const calls = h.list.mock.calls.length;
     h.panel['renderFlat_abyssPrivate'](h.results, supplied, [], { onCard: () => undefined });
     const logical = h.panel['mountedRows_abyssPrivate'].rows;
-    expect(logical.taskKeys).toHaveLength(50);
+    expect(taskKeys(logical)).toHaveLength(50);
     expect(
-      logical.taskKeys.map((key) => h.panel['mountedSnapshot_abyssPrivate'](key)?.source.line),
+      taskKeys(logical).map((key) => h.panel['mountedSnapshot_abyssPrivate'](key)?.source.line),
     ).toEqual(Array.from({ length: 50 }, (_, i) => 249 - i));
     expect(h.list).toHaveBeenCalledTimes(calls);
   });
@@ -466,9 +467,9 @@ it('preserves the full supplied native order and far-window adoption independent
   const supplied = h.index.list();
   h.panel['renderFlat_abyssPrivate'](h.results, [...supplied]);
   const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
-  expect(surface.rows.taskKeys).toHaveLength(1200);
+  expect(taskKeys(surface.rows)).toHaveLength(1200);
   expect(
-    surface.rows.taskKeys.map((key) => h.panel['mountedSnapshot_abyssPrivate'](key)?.source.line),
+    taskKeys(surface.rows).map((key) => h.panel['mountedSnapshot_abyssPrivate'](key)?.source.line),
   ).toEqual(Array.from({ length: 1200 }, (_, line) => line));
   const queries = h.list.mock.calls.length;
   const reads = h.backends.reduce((sum, backend) => sum + backend.searchCalls, 0);
@@ -522,7 +523,7 @@ it('retires a held context action with its native row generation', async () => {
     h.root.querySelector<HTMLElement>('.abyss-search-context .abyss-task-desc'),
   );
   const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
-  surface.reveal(expectDefined(surface.rows.taskKeys[surface.rows.taskKeys.length - 1]));
+  surface.reveal(expectDefined(surface.rows.taskKeyAt(surface.rows.taskCount - 1)));
   clock.flush();
   expect(held.isConnected).toBe(false);
   const navigate = vi.spyOn(h.panel['navigation_abyssPrivate'], 'openList');
@@ -662,7 +663,7 @@ it.each(['accepted', 'cancelled'] as const)(
         }).toMatchObject({ targetRendered: true });
       });
       const compact = expectDefined(h.panel['taskSurface_abyssPrivate']?.search);
-      const key = expectDefined(compact.order.occurrencesOf('search.md:1199')[0]);
+      const key = expectDefined(compact.order.firstOccurrenceOf('search.md:1199'));
       expect(await compact.rows.settleRow(key, compact.identity.signal)).toEqual({ type: 'ready' });
       expect(h.root.querySelector('.is-search-revealed')).toBeNull();
       await vi.waitFor(() => {
@@ -748,7 +749,7 @@ it.each(['owned', 'coalesced', 'pending-user', 'historical-user', 'no-op-user'] 
       if (scenario === 'no-op-user') {
         scroll.scrollTop -= 1;
         const retained = expectDefined(h.panel['taskSurface_abyssPrivate']);
-        const key = expectDefined(retained.search?.order.occurrencesOf('search.md:1199')[0]);
+        const key = expectDefined(retained.search?.order.firstOccurrenceOf('search.md:1199'));
         retained.surface.reveal(key, { waitForReady: true });
       }
     }

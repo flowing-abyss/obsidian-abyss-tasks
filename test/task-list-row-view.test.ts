@@ -191,7 +191,7 @@ it('settles a failed mount without leaving another render pending', async () => 
 });
 it('mounts an isolated non-first logical header without the first-header class', () => {
   const container = freshContainer();
-  const header = rows.rows.find((row) => row.key === 'group:date:Today');
+  const header = rows.rowAt(rows.rowIndexOf('group:date:Today'));
   if (header === undefined) throw new Error('Missing Today fixture');
   const element = mountTaskListRow(container, header, renderCard);
   expect(container.firstElementChild).toBe(element);

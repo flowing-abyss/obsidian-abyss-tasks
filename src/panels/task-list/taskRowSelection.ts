@@ -17,11 +17,10 @@ function nextKey(
   order: TaskListOrder,
   current: string | undefined,
 ): string | undefined {
-  const keys = order.taskKeys;
   const index = current === undefined ? -1 : order.indexOf(current);
-  if (index === -1) return direction === 'down' ? keys[0] : keys[keys.length - 1];
+  if (index === -1) return order.taskKeyAt(direction === 'down' ? 0 : order.taskCount - 1);
   const step = direction === 'down' ? 1 : -1;
-  return keys[Math.max(0, Math.min(keys.length - 1, index + step))];
+  return order.taskKeyAt(Math.max(0, Math.min(order.taskCount - 1, index + step)));
 }
 
 /**
@@ -88,13 +87,15 @@ export class TaskRowSelection {
     const from = order.indexOf(anchor);
     const to = order.indexOf(key);
     if (from === -1 || to === -1) return;
-    const range = order.taskKeys.slice(Math.min(from, to), Math.max(from, to) + 1);
-    for (const listedKey of range) this.#selected.add(listedKey);
+    for (let index = Math.min(from, to); index <= Math.max(from, to); index++) {
+      const listedKey = order.taskKeyAt(index);
+      if (listedKey !== undefined) this.#selected.add(listedKey);
+    }
   }
 
   /** Select the complete display order without moving a surviving range or keyboard lead. */
   selectAll(order: TaskListOrder, origin: TaskRowOrigin): void {
-    const focus = [this.#focus, origin.target, origin.detail, order.taskKeys[0]].find(
+    const focus = [this.#focus, origin.target, origin.detail, order.taskKeyAt(0)].find(
       (candidate): candidate is string => listed(candidate, order),
     );
     if (focus === undefined) {
@@ -102,7 +103,10 @@ export class TaskRowSelection {
       return;
     }
     this.#selected.clear();
-    for (const key of order.taskKeys) this.#selected.add(key);
+    for (let index = 0; index < order.taskCount; index++) {
+      const key = order.taskKeyAt(index);
+      if (key !== undefined) this.#selected.add(key);
+    }
     if (!listed(this.#anchor, order)) this.#anchor = focus;
     this.#focus = focus;
   }
@@ -134,14 +138,16 @@ export class TaskRowSelection {
     for (const key of [...this.#selected]) {
       if (order.indexOf(key) === -1) this.#selected.delete(key);
     }
-    const first = order.taskKeys.find((key) => this.#selected.has(key)) ?? null;
+    const first = this.inOrder(order)[0] ?? null;
     if (!listed(this.#anchor, order)) this.#anchor = first;
     if (!listed(this.#focus, order)) this.#focus = first;
   }
 
   /** The selected keys in display order, whatever order they were added in. */
   inOrder(order: TaskListOrder): string[] {
-    return order.taskKeys.filter((key) => this.#selected.has(key));
+    return [...this.#selected]
+      .filter((key) => order.indexOf(key) !== -1)
+      .sort((a, b) => order.indexOf(a) - order.indexOf(b));
   }
 
   /** Archive: drops one key that left the list. */

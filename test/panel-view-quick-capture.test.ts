@@ -274,7 +274,7 @@ describe('physical Q creation reveal through PanelView', () => {
         expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
           taskCardMountBound(h.root, 1),
         );
-        expect(h.panel['taskSurface_abyssPrivate']?.surface.rows.taskKeys).toHaveLength(1201);
+        expect(h.panel['taskSurface_abyssPrivate']?.surface.rows.taskCount).toBe(1201);
         expect(reveal).toHaveBeenCalledWith(`${created.ref.filePath}:${created.ref.line}`, {
           waitForReady: true,
         });
@@ -364,7 +364,7 @@ describe('physical Q creation reveal through PanelView', () => {
           h.center.querySelector<HTMLInputElement>('.abyss-center-search, .abyss-search-global')
             ?.value,
         ).toBe('needle');
-        expect(h.panel['taskSurface_abyssPrivate']?.surface.rows.taskKeys).toHaveLength(1201);
+        expect(h.panel['taskSurface_abyssPrivate']?.surface.rows.taskCount).toBe(1201);
         const unrelated = expectDefined(h.index.list({ filePath: 'excluded.md' })[0]);
         expect(renderedTaskElements(h.root, unrelated.ref)).toEqual([]);
         expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
@@ -437,7 +437,7 @@ describe('physical Q creation reveal through PanelView', () => {
           const viewport = scroll.getBoundingClientRect();
           expect(card.getBoundingClientRect().top).toBeGreaterThanOrEqual(viewport.top);
           expect(card.getBoundingClientRect().bottom).toBeLessThanOrEqual(viewport.bottom);
-          expect(h.panel['taskSurface_abyssPrivate']?.surface.rows.taskKeys).toHaveLength(1201);
+          expect(h.panel['taskSurface_abyssPrivate']?.surface.rows.taskCount).toBe(1201);
           expect(document.activeElement).toBe(input);
           expect(input.isConnected).toBe(true);
           expect(input.value).toBe('');

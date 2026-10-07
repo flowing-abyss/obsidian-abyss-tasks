@@ -31,6 +31,7 @@ import { taskViewportOwner } from './support/taskViewportOwner';
 import { VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS } from './support/timeouts';
 import { runVirtualSurfaceAuditCycles } from './support/virtualSurfaceAudit';
 import { recordVirtualSurfaceResources } from './support/virtualSurfaceResources';
+import { taskKeys } from './task-list-row-assertions';
 
 useRealMoment();
 
@@ -1443,7 +1444,7 @@ it.each(['tasks', 'dashboard', 'search'] as const)(
       surface.resume();
       flushViewport();
       await flushMicrotasks();
-      const keys = surface.rows.taskKeys;
+      const keys = taskKeys(surface.rows);
       expect(keys).toHaveLength(count);
       const first = expectDefined(keys[0]);
       const last = expectDefined(keys[keys.length - 1]);
@@ -1554,7 +1555,7 @@ it.each(['title', 'desc'])(
     const open = vi.spyOn(panel['app_abyssPrivate'].workspace, 'openLinkText');
     const hover = vi.spyOn(panel['app_abyssPrivate'].workspace, 'trigger');
     const surface = expectDefined(panel['taskSurface_abyssPrivate']).surface;
-    surface.reveal(expectDefined(surface.rows.taskKeys[surface.rows.taskKeys.length - 1]));
+    surface.reveal(expectDefined(surface.rows.taskKeyAt(surface.rows.taskCount - 1)));
     flushViewport();
     expect(anchor.isConnected).toBe(false);
     const click = new MouseEvent('click', { cancelable: true });

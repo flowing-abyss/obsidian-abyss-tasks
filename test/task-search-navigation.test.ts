@@ -1343,7 +1343,7 @@ it('keeps the reveal pulse on the first physical occurrence when duplicate group
     const target = expectDefined(h.state.get('taskStack')[0]);
     if (!('filePath' in target.ref)) throw new Error('Expected exact root destination');
     const first = expectDefined(
-      compact.order.occurrencesOf(`${target.ref.filePath}:${target.ref.line}`)[0],
+      compact.order.firstOccurrenceOf(`${target.ref.filePath}:${target.ref.line}`),
     );
     const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
     scroll.dispatchEvent(new Event('scroll'));

@@ -4,7 +4,12 @@ import { NO_TASK_LIST_ROWS, type TaskListOrder } from '../src/panels/task-list/t
 import { TaskRowSelection } from '../src/panels/task-list/taskRowSelection';
 
 function orderOf(...keys: string[]): TaskListOrder {
-  return { taskKeys: keys, indexOf: (key) => keys.indexOf(key) };
+  return {
+    revision: keys.join(','),
+    taskCount: keys.length,
+    taskKeyAt: (index) => keys[index],
+    indexOf: (key) => keys.indexOf(key),
+  };
 }
 
 const order = orderOf('a', 'b', 'c', 'd', 'e');

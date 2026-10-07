@@ -1585,7 +1585,8 @@ it.each([false, true])(
       await vi.waitFor(() => {
         expect(h.root.querySelector('.is-just-created')).not.toBeNull();
       });
-      const before = expectDefined(h.panel['taskSurface_abyssPrivate']).surface.rows.rows;
+      const order = expectDefined(h.panel['taskSurface_abyssPrivate']).surface.rows;
+      const before = [...order.slice(0, order.rowCount)];
       expect(before.filter((row) => row.kind === 'group' && row.label === 'Created task')).toEqual([
         {
           kind: 'group',
@@ -1596,7 +1597,8 @@ it.each([false, true])(
         },
       ]);
       h.panel.refresh('view');
-      expect(expectDefined(h.panel['taskSurface_abyssPrivate']).surface.rows.rows).toEqual(before);
+      const refreshed = expectDefined(h.panel['taskSurface_abyssPrivate']).surface.rows;
+      expect([...refreshed.slice(0, refreshed.rowCount)]).toEqual(before);
       expect(h.root.textContent).not.toContain('Excluded astronomy');
       expect(input.isConnected).toBe(true);
       expect(input.ownerDocument.activeElement).toBe(input);

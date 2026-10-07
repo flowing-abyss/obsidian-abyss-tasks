@@ -1,6 +1,7 @@
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import type { TaskLinkValues } from '../../task-lists/taskLinkValues';
 import { taskNodeMembershipValue } from '../../task-lists/taskNodeMembership';
+import type { TaskOccurrencePresentation } from '../../task-lists/taskOccurrencePresentation';
 import { type TaskNodeSnapshot, type TaskSnapshot } from '../../tasks';
 import { taskNodeLine, type TaskSelectionNode } from '../../ui/taskSelection';
 import {
@@ -13,6 +14,11 @@ import {
   type TaskGroup,
   type TaskGroupValue,
 } from '../../views/taskGrouping';
+import type {
+  TaskOccurrenceRange,
+  TaskSelectedValue,
+  TaskSelectionSpans,
+} from './taskOccurrenceSelection';
 
 /** How the centre list groups its rows. */
 export type TaskListGrouping =
@@ -39,31 +45,42 @@ export interface TaskListGroupRow {
   readonly sourcePath?: string;
 }
 
-/** One visual occurrence of a root task, with its separate physical source identity. */
+/** One visual occurrence of a task node, with its separate physical source identity. */
 export interface TaskListTaskRow<T = TaskSnapshot> {
   readonly kind: 'task';
   readonly key: string;
   readonly taskKey: string;
   readonly task: T;
+  readonly presentation?: TaskOccurrencePresentation;
 }
 
 export type TaskListRow<T = TaskSnapshot> = TaskListGroupRow | TaskListTaskRow<T>;
 
 /** The rows of one render in display order, with lookups for the task rows among them. */
 export interface TaskListRows<T = TaskSnapshot> {
-  readonly rows: ReadonlyArray<TaskListRow<T>>;
-  /** The task occurrence keys in display order (the historic property name is retained). */
-  readonly taskKeys: readonly string[];
-  /** A task row's place in `taskKeys`; -1 for a header or an unknown key. */
+  readonly revision: string;
+  readonly rowCount: number;
+  readonly taskCount: number;
+  rowAt(index: number): TaskListRow<T> | undefined;
+  rowIndexOf(key: string): number;
+  taskKeyAt(index: number): string | undefined;
   indexOf(key: string): number;
-  occurrencesOf(taskKey: string): readonly string[];
+  firstOccurrenceOf(taskKey: string): string | undefined;
   physicalKey(occurrenceKey: string): string | undefined;
-  /** The snapshot a task row was built from; undefined for a header or an unknown key. */
   task(key: string): T | undefined;
+  slice(from: number, toExclusive: number): Iterable<TaskListRow<T>>;
+  captureSelection(selection: TaskSelectionSpans): readonly TaskOccurrenceRange[];
+  selectedCount(ranges: readonly TaskOccurrenceRange[]): number;
+  isSelected(key: string, ranges: readonly TaskOccurrenceRange[]): boolean;
+  selectedNodes(ranges: readonly TaskOccurrenceRange[]): ReadonlyArray<TaskSelectedValue<T>>;
+  estimatedOffset(
+    index: number,
+    heights: { readonly group: number; readonly task: number },
+  ): number;
 }
 
-/** What a selection reads of the list: the task keys in display order and their places. */
-export type TaskListOrder = Pick<TaskListRows, 'taskKeys' | 'indexOf'>;
+/** Indexed access to the complete header-free occurrence order. */
+export type TaskListOrder = Pick<TaskListRows, 'revision' | 'taskCount' | 'taskKeyAt' | 'indexOf'>;
 
 /** A root task's physical key: its note and line, independent of visual occurrences. */
 export function taskRowKey(task: Pick<TaskGroupValue, 'source'>): string {
@@ -158,31 +175,157 @@ function groupedRows<T extends TaskGroupValue>(
   return rows;
 }
 
-export function indexedRows<T>(rows: ReadonlyArray<TaskListRow<T>>): TaskListRows<T> {
-  const taskKeys: string[] = [];
-  const places = new Map<string, number>();
-  const occurrences = new Map<string, string[]>();
-  const physical = new Map<string, string>();
-  const snapshots = new Map<string, T>();
-  for (const row of rows) {
-    if (row.kind !== 'task') continue;
-    if (!places.has(row.key)) {
-      places.set(row.key, taskKeys.length);
-      snapshots.set(row.key, row.task);
+let nextRowsRevision = 0;
+
+function occurrenceRange<T>(row: TaskListTaskRow<T>, groupKey: string): TaskOccurrenceRange {
+  const presentation = row.presentation;
+  if (
+    presentation !== undefined &&
+    presentation.kind !== 'node' &&
+    presentation.displayDate !== undefined
+  )
+    return {
+      kind: 'dates',
+      taskKey: row.taskKey,
+      occurrenceKind: presentation.kind,
+      groupKey: presentation.kind === 'daily' ? 'upcoming-date' : groupKey,
+      from: presentation.displayDate,
+      to: presentation.displayDate,
+    };
+  return { kind: 'group', taskKey: row.taskKey, groupKey };
+}
+
+function includesOccurrence(
+  occurrence: TaskOccurrenceRange,
+  ranges: readonly TaskOccurrenceRange[],
+): boolean {
+  return ranges.some(
+    (range) =>
+      range.taskKey === occurrence.taskKey &&
+      range.groupKey === occurrence.groupKey &&
+      (range.kind === 'group'
+        ? occurrence.kind === 'group'
+        : occurrence.kind === 'dates' &&
+          range.occurrenceKind === occurrence.occurrenceKind &&
+          range.from <= occurrence.from &&
+          range.to >= occurrence.to),
+  );
+}
+
+function captureArraySelection<T>(
+  tasks: ReadonlyArray<TaskListTaskRow<T>>,
+  occurrences: ReadonlyMap<string, TaskOccurrenceRange>,
+  selection: TaskSelectionSpans,
+): readonly TaskOccurrenceRange[] {
+  const keys = new Set(selection.include);
+  for (const span of selection.spans) {
+    if (!Number.isSafeInteger(span.from) || !Number.isSafeInteger(span.to)) continue;
+    for (
+      let index = Math.max(0, span.from);
+      index <= Math.min(tasks.length - 1, span.to);
+      index++
+    ) {
+      const row = tasks[index];
+      if (row !== undefined) keys.add(row.key);
     }
-    taskKeys.push(row.key);
-    physical.set(row.key, row.taskKey);
-    const keys = occurrences.get(row.taskKey) ?? [];
-    keys.push(row.key);
-    occurrences.set(row.taskKey, keys);
   }
+  for (const key of selection.exclude) keys.delete(key);
+  return tasks.flatMap((row) => {
+    const occurrence = occurrences.get(row.key);
+    return keys.has(row.key) && occurrence !== undefined ? [occurrence] : [];
+  });
+}
+
+function selectedArrayRows<T>(
+  tasks: ReadonlyArray<TaskListTaskRow<T>>,
+  occurrences: ReadonlyMap<string, TaskOccurrenceRange>,
+  ranges: readonly TaskOccurrenceRange[],
+): Array<TaskListTaskRow<T>> {
+  const byTask = new Map<string, TaskOccurrenceRange[]>();
+  for (const range of ranges) {
+    const entries = byTask.get(range.taskKey) ?? [];
+    entries.push(range);
+    byTask.set(range.taskKey, entries);
+  }
+  return tasks.filter((row) => {
+    const occurrence = occurrences.get(row.key);
+    return (
+      occurrence !== undefined && includesOccurrence(occurrence, byTask.get(row.taskKey) ?? [])
+    );
+  });
+}
+
+/** Finite array adapter. Never expand authored date intervals to feed this adapter. */
+export function indexedRows<T>(
+  rows: ReadonlyArray<TaskListRow<T>>,
+  revision = `array:${++nextRowsRevision}`,
+): TaskListRows<T> {
+  const tasks: Array<TaskListTaskRow<T>> = [];
+  const places = new Map<string, number>();
+  const rowPlaces = new Map<string, number>();
+  const first = new Map<string, string>();
+  const occurrences = new Map<string, TaskOccurrenceRange>();
+  const headersBefore: number[] = [0];
+  let groupKey = '';
+  for (const [index, row] of rows.entries()) {
+    rowPlaces.set(row.key, index);
+    headersBefore.push((headersBefore[index] ?? 0) + (row.kind === 'group' ? 1 : 0));
+    if (row.kind === 'group') {
+      groupKey = row.key;
+      continue;
+    }
+    if (!places.has(row.key)) places.set(row.key, tasks.length);
+    if (!first.has(row.taskKey)) first.set(row.taskKey, row.key);
+    tasks.push(row);
+    occurrences.set(row.key, occurrenceRange(row, groupKey));
+  }
+  const taskRowAt = (key: string): TaskListTaskRow<T> | undefined => {
+    const index = places.get(key);
+    return index === undefined ? undefined : tasks[index];
+  };
+
   return {
-    rows,
-    taskKeys,
+    revision,
+    rowCount: rows.length,
+    taskCount: tasks.length,
+    rowAt: (index) => (Number.isSafeInteger(index) ? rows[index] : undefined),
+    rowIndexOf: (key) => rowPlaces.get(key) ?? -1,
+    taskKeyAt: (index) => (Number.isSafeInteger(index) ? tasks[index]?.key : undefined),
     indexOf: (key) => places.get(key) ?? -1,
-    task: (key) => snapshots.get(key),
-    occurrencesOf: (key) => occurrences.get(key) ?? [],
-    physicalKey: (key) => physical.get(key),
+    task: (key) => taskRowAt(key)?.task,
+    firstOccurrenceOf: (key) => first.get(key),
+    physicalKey: (key) => taskRowAt(key)?.taskKey,
+    *slice(from, toExclusive) {
+      if (!Number.isSafeInteger(from) || !Number.isSafeInteger(toExclusive)) return;
+      for (let index = Math.max(0, from); index < Math.min(rows.length, toExclusive); index++) {
+        const row = rows[index];
+        if (row !== undefined) yield row;
+      }
+    },
+    captureSelection: (selection) => captureArraySelection(tasks, occurrences, selection),
+    selectedCount: (ranges) => selectedArrayRows(tasks, occurrences, ranges).length,
+    isSelected: (key, ranges) => {
+      const occurrence = occurrences.get(key);
+      return occurrence !== undefined && includesOccurrence(occurrence, ranges);
+    },
+    selectedNodes: (ranges) => {
+      const nodes = new Map<string, TaskSelectedValue<T>>();
+      for (const row of selectedArrayRows(tasks, occurrences, ranges)) {
+        const prior = nodes.get(row.taskKey);
+        const completion = row.presentation?.completion ?? { kind: 'allowed' as const };
+        if (prior === undefined)
+          nodes.set(row.taskKey, { taskKey: row.taskKey, task: row.task, completion });
+        else if (prior.completion.kind !== 'allowed' && completion.kind === 'allowed')
+          nodes.set(row.taskKey, { ...prior, completion });
+      }
+      return [...nodes.values()];
+    },
+    estimatedOffset: (index, heights) => {
+      if (!Number.isSafeInteger(index)) return 0;
+      const end = Math.max(0, Math.min(rows.length, index));
+      const groups = headersBefore[end] ?? 0;
+      return groups * heights.group + (end - groups) * heights.task;
+    },
   };
 }
 
@@ -222,6 +365,8 @@ export function buildTaskNodeListRows(
   }));
   const rows = buildTaskListRows(values, grouping);
   return indexedRows(
-    rows.rows.map((row) => (row.kind === 'group' ? row : { ...row, task: row.task.projection })),
+    Array.from(rows.slice(0, rows.rowCount), (row) =>
+      row.kind === 'group' ? row : { ...row, task: row.task.projection },
+    ),
   );
 }

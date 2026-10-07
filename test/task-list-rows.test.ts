@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildTaskListRows,
+  indexedRows,
   NO_TASK_LIST_ROWS,
   rebaseTaskRowKey,
   taskListGrouping,
@@ -12,8 +13,9 @@ import {
 } from '../src/panels/task-list/taskListRows';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import type { TaskSnapshot } from '../src/tasks';
+import { localDate, type TaskSnapshot } from '../src/tasks';
 import { expectDefined, subtask, task, type TaskFixtureInput } from './helpers';
+import { taskKeys } from './task-list-row-assertions';
 
 const TODAY = '2026-06-26';
 const TOMORROW = '2026-06-27';
@@ -27,7 +29,7 @@ function at(line: number, overrides: TaskFixtureInput = {}): TaskSnapshot {
 
 /** Each row as its key, and a header also as `label | count`, plus `| first` on the first one. */
 function describeRows(list: TaskListRows): string[] {
-  return list.rows.map((row) => {
+  return [...list.slice(0, list.rowCount)].map((row) => {
     if (row.kind === 'task') return row.key;
     const header = `${row.key} | ${row.label} | ${row.count}`;
     return row.first ? `${header} | first` : header;
@@ -45,7 +47,7 @@ describe('buildTaskListRows', () => {
     const list = buildTaskListRows([at(2), at(0), at(1)], { by: 'none' });
 
     expect(describeRows(list)).toEqual(['list.md:2', 'list.md:0', 'list.md:1']);
-    expect(list.taskKeys).toEqual(['list.md:2', 'list.md:0', 'list.md:1']);
+    expect(taskKeys(list)).toEqual(['list.md:2', 'list.md:0', 'list.md:1']);
   });
 
   it('puts date headers in fixed order with counts, the first flag, and no empty bucket', () => {
@@ -71,7 +73,7 @@ describe('buildTaskListRows', () => {
       'group:date:No date | No date | 1',
       'list.md:1',
     ]);
-    expect(list.taskKeys).toEqual([
+    expect(taskKeys(list)).toEqual([
       'list.md:3',
       'list.md:0',
       'list.md:2',
@@ -155,15 +157,15 @@ describe('buildTaskListRows', () => {
       byDate,
     );
 
-    expect(after.taskKeys.slice(0, 2)).toEqual(before.taskKeys);
-    expect(before.rows[0]).toEqual({
+    expect(taskKeys(after).slice(0, 2)).toEqual(taskKeys(before));
+    expect(before.rowAt(0)).toEqual({
       kind: 'group',
       key: 'group:date:No date',
       label: 'No date',
       count: 2,
       first: true,
     });
-    expect(after.rows[0]).toEqual({
+    expect(after.rowAt(0)).toEqual({
       kind: 'group',
       key: 'group:date:No date',
       label: 'No date',
@@ -223,8 +225,8 @@ describe('taskStackRowKey', () => {
 
 describe('NO_TASK_LIST_ROWS', () => {
   it('holds no rows and answers no lookup', () => {
-    expect(NO_TASK_LIST_ROWS.rows).toEqual([]);
-    expect(NO_TASK_LIST_ROWS.taskKeys).toEqual([]);
+    expect([...NO_TASK_LIST_ROWS.slice(0, NO_TASK_LIST_ROWS.rowCount)]).toEqual([]);
+    expect(taskKeys(NO_TASK_LIST_ROWS)).toEqual([]);
     expect(NO_TASK_LIST_ROWS.indexOf('list.md:0')).toBe(-1);
     const rows: TaskListRows = NO_TASK_LIST_ROWS;
     expect(rows.task('list.md:0')).toBeUndefined();
@@ -244,17 +246,19 @@ describe('note organization occurrences', () => {
       ],
     ]);
     const list = buildTaskListRows([linked, linked, at(3)], { by: 'outgoing-link', values });
-    const cards = list.rows.filter((row) => row.kind === 'task');
+    const cards = [...list.slice(0, list.rowCount)].filter((row) => row.kind === 'task');
     expect(cards).toHaveLength(3);
     expect(new Set(cards.map((row) => row.key)).size).toBe(3);
     expect(cards.map((row) => row.taskKey)).toEqual(['list.md:2', 'list.md:2', 'list.md:3']);
-    expect(list.occurrencesOf('list.md:2')).toEqual(cards.slice(0, 2).map((row) => row.key));
+    expect(taskKeys(list).filter((key) => list.physicalKey(key) === 'list.md:2')).toEqual(
+      cards.slice(0, 2).map((row) => row.key),
+    );
     expect(list.physicalKey(expectDefined(cards[1]).key)).toBe('list.md:2');
-    expect(list.rows.filter((row) => row.kind === 'group').map((row) => row.label)).toEqual([
-      'Alice',
-      'Bob',
-      'No outgoing links',
-    ]);
+    expect(
+      [...list.slice(0, list.rowCount)]
+        .filter((row) => row.kind === 'group')
+        .map((row) => row.label),
+    ).toEqual(['Alice', 'Bob', 'No outgoing links']);
   });
   it('keeps same-name source notes separate and disambiguates their labels', () => {
     const list = buildTaskListRows(
@@ -264,11 +268,12 @@ describe('note organization occurrences', () => {
       ],
       { by: 'source-note' },
     );
-    expect(list.rows.filter((row) => row.kind === 'group').map((row) => row.label)).toEqual([
-      'A/Tasks',
-      'B/Tasks',
-    ]);
-    expect(list.taskKeys).toEqual(['A/Tasks.md:0', 'B/Tasks.md:0']);
+    expect(
+      [...list.slice(0, list.rowCount)]
+        .filter((row) => row.kind === 'group')
+        .map((row) => row.label),
+    ).toEqual(['A/Tasks', 'B/Tasks']);
+    expect(taskKeys(list)).toEqual(['A/Tasks.md:0', 'B/Tasks.md:0']);
   });
 });
 
@@ -296,4 +301,191 @@ it('threads Today context to date rows for a scheduled task with a later due dat
     grouping,
   );
   expect(describeRows(rows)).toEqual(['group:date:Today | Today | 1 | first', 'list.md:0']);
+});
+
+describe('indexed finite row contract', () => {
+  const group = (key: string) => ({
+    kind: 'group' as const,
+    key,
+    label: key,
+    count: 1,
+    first: false,
+  });
+  it('indexes headers, occurrence order and deduplicated physical selection', () => {
+    const rows = indexedRows<string>(
+      [
+        group('group:a'),
+        { kind: 'task', key: 'a:one', taskKey: 'one', task: 'first' },
+        { kind: 'task', key: 'a:two', taskKey: 'two', task: 'second' },
+        group('group:b'),
+        { kind: 'task', key: 'b:one', taskKey: 'one', task: 'first' },
+      ],
+      'r1',
+    );
+    expect(rows.revision).toBe('r1');
+    expect([rows.rowCount, rows.taskCount]).toEqual([5, 3]);
+    expect(rows.taskKeyAt(2)).toBe('b:one');
+    expect(rows.indexOf('group:a')).toBe(-1);
+    expect(rows.rowIndexOf('b:one')).toBe(4);
+    expect(rows.firstOccurrenceOf('one')).toBe('a:one');
+    const selected = rows.captureSelection({
+      spans: [{ from: 0, to: 2 }],
+      include: [],
+      exclude: ['a:two'],
+    });
+    expect(rows.selectedCount(selected)).toBe(2);
+    expect(rows.selectedNodes(selected).map((n) => n.taskKey)).toEqual(['one']);
+    expect(rows.isSelected('b:one', selected)).toBe(true);
+    expect(rows.isSelected('a:two', selected)).toBe(false);
+    expect(rows.isSelected('group:a', selected)).toBe(false);
+    expect([...rows.slice(3, 5)].map((r) => r.key)).toEqual(['group:b', 'b:one']);
+    expect(rows.estimatedOffset(4, { group: 20, task: 50 })).toBe(140);
+    expect(rows.estimatedOffset(5, { group: 20, task: 50 })).toBe(190);
+    expect(rows).not.toHaveProperty('rows');
+    expect(rows).not.toHaveProperty('taskKeys');
+    expect(rows).not.toHaveProperty('occurrencesOf');
+  });
+
+  it('clamps bounded reads and spans and rejects unsafe indices', () => {
+    const rows = indexedRows([{ kind: 'task', key: 'a', taskKey: 'a', task: 42 }]);
+    expect([...rows.slice(-20, 20)]).toHaveLength(1);
+    expect([...rows.slice(1, 0)]).toEqual([]);
+    for (const index of [NaN, Infinity, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(rows.rowAt(index)).toBeUndefined();
+      expect(rows.taskKeyAt(index)).toBeUndefined();
+      expect([...rows.slice(index, 1)]).toEqual([]);
+      expect([...rows.slice(0, index)]).toEqual([]);
+      expect(
+        rows.captureSelection({ spans: [{ from: index, to: 1 }], include: [], exclude: [] }),
+      ).toEqual([]);
+    }
+    const selected = rows.captureSelection({
+      spans: [{ from: -20, to: 20 }],
+      include: [],
+      exclude: [],
+    });
+    expect(rows.selectedNodes(selected)).toEqual([
+      { taskKey: 'a', task: 42, completion: { kind: 'allowed' } },
+    ]);
+    expect(rows.rowAt(-1)).toBeUndefined();
+    expect(rows.firstOccurrenceOf('missing')).toBeUndefined();
+    expect(rows.rowIndexOf('missing')).toBe(-1);
+  });
+
+  it('keeps exact date, kind and group identity across refreshed orders and midnight', () => {
+    const today = {
+      kind: 'today' as const,
+      displayDate: localDate('2026-10-07'),
+      completion: { kind: 'allowed' as const },
+    };
+    const rows = indexedRows([
+      group('group:outgoing-link:a'),
+      { kind: 'task', key: 'a:today', taskKey: 'physical', task: 1, presentation: today },
+      group('group:outgoing-link:b'),
+      { kind: 'task', key: 'b:today', taskKey: 'physical', task: 1, presentation: today },
+      {
+        kind: 'task',
+        key: 'daily',
+        taskKey: 'physical',
+        task: 1,
+        presentation: { ...today, kind: 'daily' },
+      },
+    ]);
+    const selected = rows.captureSelection({ spans: [], include: ['a:today'], exclude: [] });
+    expect(selected).toEqual([
+      {
+        kind: 'dates',
+        taskKey: 'physical',
+        occurrenceKind: 'today',
+        groupKey: 'group:outgoing-link:a',
+        from: '2026-10-07',
+        to: '2026-10-07',
+      },
+    ]);
+    expect(rows.isSelected('b:today', selected)).toBe(false);
+    expect(rows.isSelected('daily', selected)).toBe(false);
+    const next = indexedRows([
+      group('group:outgoing-link:a'),
+      {
+        kind: 'task',
+        key: 'a:tomorrow',
+        taskKey: 'physical',
+        task: 1,
+        presentation: { ...today, displayDate: localDate('2026-10-08') },
+      },
+    ]);
+    expect(next.selectedCount(selected)).toBe(0);
+    const daily = rows.captureSelection({ spans: [], include: ['daily'], exclude: [] });
+    expect(daily[0]).toMatchObject({ occurrenceKind: 'daily', groupKey: 'upcoming-date' });
+  });
+
+  it('applies sparse overrides and aggregates completion only from selected copies', () => {
+    const rows = indexedRows([
+      {
+        kind: 'task',
+        key: 'day7',
+        taskKey: 'physical',
+        task: 1,
+        presentation: {
+          kind: 'daily',
+          displayDate: localDate('2026-10-07'),
+          completion: { kind: 'continuation', due: localDate('2026-10-09') },
+        },
+      },
+      {
+        kind: 'task',
+        key: 'day8',
+        taskKey: 'physical',
+        task: 1,
+        presentation: {
+          kind: 'daily',
+          displayDate: localDate('2026-10-08'),
+          completion: { kind: 'continuation', due: localDate('2026-10-09') },
+        },
+      },
+      {
+        kind: 'task',
+        key: 'day9',
+        taskKey: 'physical',
+        task: 1,
+        presentation: {
+          kind: 'daily',
+          displayDate: localDate('2026-10-09'),
+          completion: { kind: 'allowed' },
+        },
+      },
+    ]);
+    const selected = rows.captureSelection({
+      spans: [{ from: 0, to: 2 }],
+      include: ['day9'],
+      exclude: ['day8', 'day9'],
+    });
+    expect(rows.selectedCount(selected)).toBe(1);
+    expect(rows.selectedNodes(selected)[0]?.completion).toEqual({
+      kind: 'continuation',
+      due: localDate('2026-10-09'),
+    });
+    const mixed = rows.captureSelection({
+      spans: [{ from: 0, to: 0 }],
+      include: ['day9'],
+      exclude: [],
+    });
+    expect(rows.selectedCount(mixed)).toBe(2);
+    expect(rows.isSelected('day8', mixed)).toBe(false);
+    expect(rows.selectedNodes(mixed)).toEqual([
+      { taskKey: 'physical', task: 1, completion: { kind: 'allowed' } },
+    ]);
+  });
+
+  it('does not infer occurrence presentation from a generic payload', () => {
+    const task = {
+      kind: 'daily',
+      displayDate: localDate('2026-10-07'),
+      completion: { kind: 'continuation', due: localDate('2026-10-09') },
+    };
+    const rows = indexedRows([{ kind: 'task', key: 'one', taskKey: 'one', task }]);
+    const selected = rows.captureSelection({ spans: [], include: ['one'], exclude: [] });
+    expect(selected).toEqual([{ kind: 'group', taskKey: 'one', groupKey: '' }]);
+    expect(rows.selectedNodes(selected)[0]?.completion).toEqual({ kind: 'allowed' });
+  });
 });

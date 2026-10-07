@@ -10,6 +10,7 @@ import {
 } from '../src/panels/task-list/taskListRows';
 import { expectDefined, freshContainer, task } from './helpers';
 import { taskViewportOwner } from './support/taskViewportOwner';
+import { taskKeys } from './task-list-row-assertions';
 
 const presentation: TaskListPresentation = {
   revision: 'layout:1',
@@ -208,7 +209,7 @@ describe('TaskListSurface', () => {
     const list = rows(10000);
     h.surface.update(list, presentation);
     expect([...h.surface.cards()].length).toBeLessThanOrEqual(100);
-    const last = expectDefined(list.taskKeys[list.taskKeys.length - 1]);
+    const last = expectDefined(list.taskKeyAt(list.taskCount - 1));
     expect(h.surface.element(last)).toBeUndefined();
     expect(h.surface.reveal(last)).toBe(h.surface.element(last));
     const release = h.surface.pin(last);
@@ -402,7 +403,9 @@ it('restores a fractional anchor after prepend against the new mounted DOM exten
   const added = Array.from({ length: 100 }, (_, line) =>
     task({ title: `Added ${line}`, source: { filePath: 'added.md', line } }),
   );
-  const prior = list.rows.flatMap((row) => (row.kind === 'task' ? [row.task] : []));
+  const prior = [...list.slice(0, list.rowCount)].flatMap((row) =>
+    row.kind === 'task' ? [row.task] : [],
+  );
   h.surface.update(buildTaskListRows([...added, ...prior], { by: 'none' }), presentation);
   expect(h.scroll.scrollTop).toBe(9072.5);
   expect(h.surface.element('n.md:89')).toBe(original);
@@ -418,11 +421,13 @@ it('preserves the actual focused descendant when its row reorders across a spars
   h.surface.reveal('n.md:1');
   const control = h.surface.element('n.md:1')?.createEl('input');
   control?.focus();
-  const tasks = list.rows.flatMap((row) => (row.kind === 'task' ? [row.task] : []));
+  const tasks = [...list.slice(0, list.rowCount)].flatMap((row) =>
+    row.kind === 'task' ? [row.task] : [],
+  );
   h.surface.update(buildTaskListRows([...tasks].reverse(), { by: 'none' }), presentation);
   expect(document.activeElement).toBe(control);
   expect(h.surface.element('n.md:1')?.contains(control ?? null)).toBe(true);
-  expect(h.surface.rows.taskKeys[0]).toBe('n.md:99');
+  expect(h.surface.rows.taskKeyAt(0)).toBe('n.md:99');
   pinned();
   h.surface.destroy();
 });
@@ -441,14 +446,16 @@ it('invalidates conflicting owners before moving their nodes and keeps snapshots
     expect(document.activeElement).toBe(control);
   });
   const release = h.surface.pin('n.md:99', canceled);
-  const tasks = list.rows.flatMap((row) => (row.kind === 'task' ? [row.task] : []));
+  const tasks = [...list.slice(0, list.rowCount)].flatMap((row) =>
+    row.kind === 'task' ? [row.task] : [],
+  );
   const changed = tasks.map((value) => task({ ...value, title: `Updated ${value.title}` }));
   h.surface.update(buildTaskListRows([...changed].reverse(), { by: 'none' }), presentation);
   expect(canceled).toHaveBeenCalledExactlyOnceWith();
   expect(document.activeElement).toBe(control);
   expect(first.textContent).toBe('Updated Task 1');
   expect([...h.surface.cards()].map(([key]) => key)).toEqual(
-    h.surface.rows.taskKeys.filter((key) => h.surface.element(key) !== undefined),
+    taskKeys(h.surface.rows).filter((key) => h.surface.element(key) !== undefined),
   );
   release();
   h.surface.destroy();
@@ -491,7 +498,9 @@ it('reports a throwing cancellation once after revoking every conflicting acquis
   const second = vi.fn();
   h.surface.pin('n.md:1', first);
   h.surface.pin('n.md:2', second);
-  const tasks = list.rows.flatMap((row) => (row.kind === 'task' ? [row.task] : []));
+  const tasks = [...list.slice(0, list.rowCount)].flatMap((row) =>
+    row.kind === 'task' ? [row.task] : [],
+  );
   tasks.reverse();
   const reverse = buildTaskListRows(tasks, { by: 'none' });
   h.surface.update(reverse, presentation);
@@ -499,7 +508,7 @@ it('reports a throwing cancellation once after revoking every conflicting acquis
   expect(second).toHaveBeenCalledTimes(1);
   expect(h.reportFailure).toHaveBeenCalledExactlyOnceWith(error);
   h.surface.update(reverse, presentation);
-  expect([...h.surface.cards()].map(([key]) => key)).toEqual(reverse.taskKeys);
+  expect([...h.surface.cards()].map(([key]) => key)).toEqual(taskKeys(reverse));
   expect(first).toHaveBeenCalledTimes(1);
   h.surface.destroy();
 });
@@ -512,11 +521,13 @@ it('lets a cancellation reenter update without applying the superseded projectio
   h.surface.pin('n.md:2', () => {
     h.surface.update(rows(4), presentation);
   });
-  const tasks = list.rows.flatMap((row) => (row.kind === 'task' ? [row.task] : []));
+  const tasks = [...list.slice(0, list.rowCount)].flatMap((row) =>
+    row.kind === 'task' ? [row.task] : [],
+  );
   tasks.reverse();
   h.surface.update(buildTaskListRows(tasks, { by: 'none' }), presentation);
-  expect(h.surface.rows.taskKeys).toEqual(rows(4).taskKeys);
-  expect([...h.surface.cards()].map(([key]) => key)).toEqual(rows(4).taskKeys);
+  expect(taskKeys(h.surface.rows)).toEqual(taskKeys(rows(4)));
+  expect([...h.surface.cards()].map(([key]) => key)).toEqual(taskKeys(rows(4)));
   h.surface.destroy();
 });
 
@@ -526,7 +537,7 @@ it('establishes a grown layout extent before restoring its fractional anchor', (
   h.surface.update(list, presentation);
   h.scrollTo(4272.5);
   h.frame();
-  for (const key of list.taskKeys) h.heights.set(key, 96);
+  for (const key of taskKeys(list)) h.heights.set(key, 96);
   h.surface.update(list, { ...presentation, revision: 'layout:2', estimate: () => 96 });
   expect(h.scroll.scrollTop).toBe(8544.5);
   expect(h.surface.element('n.md:89')).toBeDefined();
@@ -683,7 +694,7 @@ it('admits an adopted owner before coalescing a pending old-window frame', () =>
   owner.flush();
   expect(h.surface.element('n.md:999')?.isConnected).toBe(true);
   expect([...h.surface.cards()].length).toBeLessThan(30);
-  expect(h.surface.rows.taskKeys).toHaveLength(1000);
+  expect(taskKeys(h.surface.rows)).toHaveLength(1000);
   expect(h.scroll.scrollTop).toBe(47520.5);
   h.scrollTo(24000);
   const currentFrame = [...owner.frames.values()][0];
@@ -713,7 +724,7 @@ it.each(['same owner', 'adopted owner'] as const)(
     expect(h.surface.element('n.md:999')?.isConnected).toBe(true);
     expect(h.mount.mock.calls.length).toBeGreaterThan(mounted);
     expect([...h.surface.cards()].length).toBeLessThan(30);
-    expect(h.surface.rows.taskKeys).toHaveLength(1000);
+    expect(taskKeys(h.surface.rows)).toHaveLength(1000);
     h.surface.destroy();
     expect(h.observed.size).toBe(0);
     expect(owner?.observers.every(({ elements }) => elements.size === 0) ?? true).toBe(true);
@@ -998,7 +1009,7 @@ it('indexes compact numeric payloads without snapshot fields', () => {
   const compact = indexedRows([{ kind: 'task', key: 'occurrence', taskKey: 'physical', task: 42 }]);
   expect(compact.task('occurrence')).toBe(42);
   expect(compact.physicalKey('occurrence')).toBe('physical');
-  expect(compact.occurrencesOf('physical')).toEqual(['occurrence']);
+  expect(compact.firstOccurrenceOf('physical')).toBe('occurrence');
 });
 
 describe('synchronous reveal convergence', () => {
@@ -1041,7 +1052,7 @@ describe('synchronous reveal convergence', () => {
       h.style('paddingBottom', '8px');
       const list = rows(1201);
       const grouped = indexedRows(
-        list.rows.flatMap((row, index): TaskListRow[] =>
+        [...list.slice(0, list.rowCount)].flatMap((row, index): TaskListRow[] =>
           index % 100 === 0
             ? [
                 {

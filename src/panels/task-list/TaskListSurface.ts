@@ -380,7 +380,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const presentation = this.#presentation;
     if (presentation === undefined) return;
     this.#viewport.replace(
-      this.#rows.rows.map((row) => ({
+      Array.from(this.#rows.slice(0, this.#rows.rowCount), (row) => ({
         key: row.key,
         estimatedHeight: presentation.estimate(row),
         measurementRevision: `${this.#layoutRevision}:${presentation.revision}:${presentation.measurementRevision(row)}`,
@@ -696,7 +696,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     spacer?: HTMLElement,
   ): HTMLElement | undefined {
     if ('height' in segment) return this.#spacer(segment.height, spacer);
-    const row = this.#rows.rows[segment.index];
+    const row = this.#rows.rowAt(segment.index);
     if (row === undefined) return undefined;
     let mount = this.#mounts.get(row.key);
     if (mount === undefined) {
@@ -774,7 +774,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     return { desired, keys };
   }
   #segmentKey(segment: RowSegment): string | undefined {
-    return 'index' in segment ? this.#rows.rows[segment.index]?.key : undefined;
+    return 'index' in segment ? this.#rows.rowAt(segment.index)?.key : undefined;
   }
   #evictOutside(keys: ReadonlySet<string>, current: () => boolean): void {
     for (const [key, mount] of this.#mounts) {

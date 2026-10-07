@@ -554,7 +554,7 @@ it('refreshes retained real cards for child-only status semantics without changi
     h.query('needle');
     await h.completed();
     const before = expectDefined(h.panel['taskSurface_abyssPrivate']?.search);
-    const key = expectDefined(before.order.taskKeys[0]);
+    const key = expectDefined(before.order.taskKeyAt(0));
     const address = before.order.task(key)?.address;
     const holder = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
     const hydrate = vi.spyOn(h.index, 'resolveSearchHits');

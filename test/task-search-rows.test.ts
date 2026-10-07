@@ -22,6 +22,7 @@ import { deferred, expectDefined, flushMicrotasks, useRealMoment } from './helpe
 import { prepareTaskPanelViewport } from './support/taskPanelViewport';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
+import { taskKeys } from './task-list-row-assertions';
 useRealMoment();
 afterEach(() => {
   vi.restoreAllMocks();
@@ -151,8 +152,8 @@ it('shares one detached root across occurrences, bounds more than 50 demanded ro
     'none',
     h.identity,
   );
-  const mounts = rows.rows.map((row) => h.owner.mount(h.host, row));
-  h.owner.mountedChanged(rows.taskKeys);
+  const mounts = [...rows.slice(0, rows.rowCount)].map((row) => h.owner.mount(h.host, row));
+  h.owner.mountedChanged(taskKeys(rows));
   expect(await h.owner.settleMounted(h.identity.signal)).toEqual({ type: 'ready' });
   expect(hydrate.mock.calls.length).toBeGreaterThan(2);
   expect(
@@ -165,7 +166,7 @@ it('shares one detached root across occurrences, bounds more than 50 demanded ro
   mounts[0]?.destroy();
   expect(await h.owner.settleRow('repeat', h.identity.signal)).toEqual({ type: 'ready' });
   mounts[mounts.length - 1]?.destroy();
-  const remount = h.owner.mount(h.host, expectDefined(rows.rows[0]));
+  const remount = h.owner.mount(h.host, expectDefined(rows.rowAt(0)));
   expect(await h.owner.settleRow(first.key, h.identity.signal)).toEqual({ type: 'ready' });
   expect(detach).toHaveBeenCalledTimes(121);
   remount.destroy();
@@ -177,9 +178,9 @@ it('shares one detached root across occurrences, bounds more than 50 demanded ro
 it('skips queued evicted roots and cancels a never-mounted row wait on dispose', async () => {
   const h = await rowsHarness(2);
   const hydrate = vi.spyOn(h.index, 'resolveSearchHits');
-  const mounted = h.owner.mount(h.host, expectDefined(h.rows.rows[0]));
+  const mounted = h.owner.mount(h.host, expectDefined(h.rows.rowAt(0)));
   mounted.destroy();
-  const pending = h.owner.settleRow(expectDefined(h.rows.taskKeys[1]), h.identity.signal);
+  const pending = h.owner.settleRow(expectDefined(h.rows.taskKeyAt(1)), h.identity.signal);
   h.owner.dispose();
   expect(await pending).toEqual({ type: 'cancelled' });
   expect(hydrate).not.toHaveBeenCalled();
@@ -195,15 +196,15 @@ it('cancels an evicted row immediately while its sibling retains a held batch', 
       await hold.promise;
       return read(hits, signal);
     });
-  const mounts = h.rows.rows.map((row) => h.owner.mount(h.host, row));
-  const pending = h.owner.settleRow(expectDefined(h.rows.taskKeys[0]), h.identity.signal);
+  const mounts = [...h.rows.slice(0, h.rows.rowCount)].map((row) => h.owner.mount(h.host, row));
+  const pending = h.owner.settleRow(expectDefined(h.rows.taskKeyAt(0)), h.identity.signal);
   await vi.waitFor(() => {
     expect(hydration).toHaveBeenCalledTimes(1);
   });
   mounts[0]?.destroy();
   expect(await pending).toEqual({ type: 'cancelled' });
   hold.resolve();
-  expect(await h.owner.settleRow(expectDefined(h.rows.taskKeys[1]), h.identity.signal)).toEqual({
+  expect(await h.owner.settleRow(expectDefined(h.rows.taskKeyAt(1)), h.identity.signal)).toEqual({
     type: 'ready',
   });
   h.dispose();
@@ -246,9 +247,9 @@ it('waits for a pinned row mount, then cancels held Markdown on last-lease unmou
       },
     }),
   });
-  const key = expectDefined(h.rows.taskKeys[0]);
+  const key = expectDefined(h.rows.taskKeyAt(0));
   const pending = h.owner.settleRow(key, h.identity.signal);
-  const mount = h.owner.mount(h.host, expectDefined(h.rows.rows[0]));
+  const mount = h.owner.mount(h.host, expectDefined(h.rows.rowAt(0)));
   await vi.waitFor(() => {
     expect(h.host.firstElementChild?.getAttribute('aria-busy')).toBeNull();
   });
@@ -265,7 +266,7 @@ it.each(['hidden', 'detached', 'migrated'] as const)(
     const hold = deferred<void>();
     const h = await rowsHarness(1, { scheduler: { yield: () => hold.promise } });
     const read = vi.spyOn(h.index, 'resolveSearchHits');
-    const mount = h.owner.mount(h.host, expectDefined(h.rows.rows[0]));
+    const mount = h.owner.mount(h.host, expectDefined(h.rows.rowAt(0)));
     if (reason === 'hidden') h.host.hide();
     if (reason === 'detached') h.host.remove();
     if (reason === 'migrated') {
@@ -273,7 +274,7 @@ it.each(['hidden', 'detached', 'migrated'] as const)(
       expectDefined(frame.contentDocument).body.append(h.host);
     }
     hold.resolve();
-    expect(await h.owner.settleRow(expectDefined(h.rows.taskKeys[0]), h.identity.signal)).toEqual({
+    expect(await h.owner.settleRow(expectDefined(h.rows.taskKeyAt(0)), h.identity.signal)).toEqual({
       type: 'cancelled',
     });
     await Promise.resolve();
@@ -287,7 +288,7 @@ it.each(['hidden', 'detached', 'migrated'] as const)(
 it('reuses exact roots across unrelated G only after new dependency readiness', async () => {
   const h = await rowsHarness(1);
   const read = vi.spyOn(h.index, 'resolveSearchHits');
-  const row = expectDefined(h.rows.rows[0]);
+  const row = expectDefined(h.rows.rowAt(0));
   const mount = h.owner.mount(h.host, row);
   expect(await h.owner.settleRow(row.key, h.identity.signal)).toEqual({ type: 'ready' });
   h.index.installCommittedContent('other.md', '- [ ] Unrelated');
@@ -307,7 +308,7 @@ it('reuses exact roots across unrelated G only after new dependency readiness', 
     signal: new AbortController().signal,
   };
   const rows = h.replace(next);
-  mount.update(expectDefined(rows.rows[0]));
+  mount.update(expectDefined(rows.rowAt(0)));
   let ready = false;
   const pending = h.owner.settleRow(row.key, next.signal).then((outcome) => {
     ready = true;
@@ -333,14 +334,14 @@ it('releases a held allocation when its last lease leaves and starts new demand'
       return held.promise;
     })
     .mockImplementation(actual);
-  const first = h.owner.mount(h.host, expectDefined(h.rows.rows[0]));
+  const first = h.owner.mount(h.host, expectDefined(h.rows.rowAt(0)));
   await vi.waitFor(() => {
     expect(read).toHaveBeenCalledTimes(1);
   });
   first.destroy();
   expect(batchSignal?.aborted).toBe(true);
-  const next = h.owner.mount(h.host, expectDefined(h.rows.rows[1]));
-  expect(await h.owner.settleRow(expectDefined(h.rows.taskKeys[1]), h.identity.signal)).toEqual({
+  const next = h.owner.mount(h.host, expectDefined(h.rows.rowAt(1)));
+  expect(await h.owner.settleRow(expectDefined(h.rows.taskKeyAt(1)), h.identity.signal)).toEqual({
     type: 'ready',
   });
   held.resolve([]);
@@ -350,7 +351,7 @@ it('releases a held allocation when its last lease leaves and starts new demand'
 it('explicit bulk resolution preserves physical order through bounded calls and rejects stale membership', async () => {
   const h = await rowsHarness(101);
   const read = vi.spyOn(h.index, 'resolveSearchHits');
-  const keys = [...h.rows.taskKeys].reverse();
+  const keys = taskKeys(h.rows).reverse();
   keys.push(expectDefined(keys[0]));
   const tasks = await h.owner.resolve(keys, h.identity.signal);
   expect(tasks).toHaveLength(101);
@@ -397,8 +398,8 @@ it('fails a current card mount once and never completes its row as ready', async
       throw error;
     },
   });
-  h.owner.mount(h.host, expectDefined(h.rows.rows[0]));
-  expect(await h.owner.settleRow(expectDefined(h.rows.taskKeys[0]), h.identity.signal)).toEqual({
+  h.owner.mount(h.host, expectDefined(h.rows.rowAt(0)));
+  expect(await h.owner.settleRow(expectDefined(h.rows.taskKeyAt(0)), h.identity.signal)).toEqual({
     type: 'failed',
     error,
   });
@@ -411,7 +412,7 @@ it('cancels old zero and nonzero mounted joins on identity replacement', async (
   const next = { ...h.identity, request: 2, signal: new AbortController().signal };
   h.replace(next);
   expect(await empty).toEqual({ type: 'cancelled' });
-  const row = expectDefined(h.rows.rows[0]);
+  const row = expectDefined(h.rows.rowAt(0));
   h.owner.mount(h.host, row);
   h.owner.mountedChanged([row.key]);
   const pending = h.owner.settleMounted(next.signal);
@@ -422,8 +423,8 @@ it('cancels old zero and nonzero mounted joins on identity replacement', async (
 
 it('invalidates classified roots on a semantic-only G while exact addresses remain stable (contract correction)', async () => {
   const h = await rowsHarness(1, {}, '- [ ] Root\n  - [x] Child');
-  const key = expectDefined(h.rows.taskKeys[0]);
-  const mount = h.owner.mount(h.host, expectDefined(h.rows.rows[0]));
+  const key = expectDefined(h.rows.taskKeyAt(0));
+  const mount = h.owner.mount(h.host, expectDefined(h.rows.rowAt(0)));
   try {
     expect(await h.owner.settleRow(key, h.identity.signal)).toEqual({ type: 'ready' });
     expect((await h.owner.snapshot(key, h.identity.signal)).node.subtasks[0]?.status).toBe('done');
@@ -453,7 +454,7 @@ it('invalidates classified roots on a semantic-only G while exact addresses rema
     expect(records[0]?.address).toEqual(h.organization.occurrences[0]?.address);
     expect(records[0]?.status).toBe(h.organization.occurrences[0]?.menu.status);
     const rows = h.replace(next);
-    mount.update(expectDefined(rows.rows[0]));
+    mount.update(expectDefined(rows.rowAt(0)));
     expect(await h.owner.settleRow(key, next.signal)).toEqual({ type: 'ready' });
     const canonical = await h.index.resolveSearchHits(
       [expectDefined(h.organization.occurrences[0])],
@@ -518,7 +519,7 @@ it('retains same-source cards and ignores old Markdown failure while semantic re
   );
   const actual = h.index.resolveSearchHits.bind(h.index);
   const read = vi.spyOn(h.index, 'resolveSearchHits');
-  const row = expectDefined(h.rows.rows[0]);
+  const row = expectDefined(h.rows.rowAt(0));
   const mount = h.owner.mount(h.host, row);
   const holder = mount.element;
   const oldWait = h.owner.settleRow(row.key, h.identity.signal);
@@ -546,7 +547,7 @@ it('retains same-source cards and ignores old Markdown failure while semantic re
     signal: new AbortController().signal,
   };
   const rows = h.replace(next);
-  mount.update(expectDefined(rows.rows[0]));
+  mount.update(expectDefined(rows.rowAt(0)));
   expect(await oldWait).toEqual({ type: 'cancelled' });
   markdown.resolve({ type: 'failed', error: new Error('obsolete Markdown') });
   await Promise.resolve();
@@ -573,7 +574,7 @@ it('discards a late pre-semantic hydration and cancels its snapshot waiter befor
     old = await actual(hits, signal);
     return held.promise;
   });
-  const row = expectDefined(h.rows.rows[0]);
+  const row = expectDefined(h.rows.rowAt(0));
   const mount = h.owner.mount(h.host, row);
   const pending = h.owner.snapshot(row.key, h.identity.signal);
   const rejected = expect(pending).rejects.toMatchObject({ code: 'stale' });
@@ -597,7 +598,7 @@ it('discards a late pre-semantic hydration and cancels its snapshot waiter befor
     signal: new AbortController().signal,
   };
   const rows = h.replace(next);
-  mount.update(expectDefined(rows.rows[0]));
+  mount.update(expectDefined(rows.rowAt(0)));
   await rejected;
   expect(oldSignal?.aborted).toBe(true);
   expect(await h.owner.settleRow(row.key, next.signal)).toEqual({ type: 'ready' });
@@ -628,9 +629,9 @@ it.each(['sibling', 'explicit'] as const)(
       await held.promise;
       throw error;
     });
-    const hidden = h.owner.mount(h.host, expectDefined(rows.rows[0]));
+    const hidden = h.owner.mount(h.host, expectDefined(rows.rowAt(0)));
     const sibling =
-      demand === 'sibling' ? h.owner.mount(h.host, expectDefined(rows.rows[1])) : undefined;
+      demand === 'sibling' ? h.owner.mount(h.host, expectDefined(rows.rowAt(1))) : undefined;
     const explicit =
       demand === 'explicit'
         ? h.owner.snapshot(first.key, h.identity.signal).catch((reason: unknown) => reason)
@@ -663,7 +664,7 @@ it('drops a hidden dependency failure and prepares again on renewed mounted dema
     await held.promise;
     throw new Error('hidden dependency failure');
   });
-  const row = expectDefined(h.rows.rows[0]);
+  const row = expectDefined(h.rows.rowAt(0));
   const mount = h.owner.mount(h.host, row);
   try {
     await entered.promise;
@@ -691,8 +692,8 @@ it('fails only eligible roots in a shared allocation and leaves a hidden root re
     await held.promise;
     throw error;
   });
-  const first = expectDefined(h.rows.rows[0]);
-  const second = expectDefined(h.rows.rows[1]);
+  const first = expectDefined(h.rows.rowAt(0));
+  const second = expectDefined(h.rows.rowAt(1));
   const hidden = h.owner.mount(h.host, first);
   const live = h.owner.mount(h.host, second);
   try {
@@ -705,7 +706,7 @@ it('fails only eligible roots in a shared allocation and leaves a hidden root re
     });
     expect(h.failure).toHaveBeenCalledExactlyOnceWith(error);
     hidden.element.show();
-    h.owner.mountedChanged(h.rows.taskKeys);
+    h.owner.mountedChanged(taskKeys(h.rows));
     expect(await h.owner.settleRow(first.key, h.identity.signal)).toEqual({ type: 'ready' });
     expect(h.failure).toHaveBeenCalledTimes(1);
   } finally {
@@ -732,7 +733,7 @@ it('admits measurements only for the current mounted card receipt', async () => 
     }),
   });
   try {
-    const row = expectDefined(h.rows.rows[0]);
+    const row = expectDefined(h.rows.rowAt(0));
     const mount = h.owner.mount(h.host, row);
     expect(mount.measurementReady?.()).toBe(false);
     receipt.resolve({ type: 'ready' });
@@ -764,8 +765,8 @@ it('shares a rich root while mounting exact root, parent, and same-title sibling
     'nodes',
   );
   const detach = vi.spyOn(cloning, 'taskSnapshotWithStatuses');
-  const mounts = h.rows.rows.map((row) => h.owner.mount(h.host, row));
-  h.owner.mountedChanged(h.rows.taskKeys);
+  const mounts = [...h.rows.slice(0, h.rows.rowCount)].map((row) => h.owner.mount(h.host, row));
+  h.owner.mountedChanged(taskKeys(h.rows));
   try {
     expect(await h.owner.settleMounted(h.identity.signal)).toEqual({ type: 'ready' });
     expect(h.projections.map((task) => task.node.title)).toEqual([
@@ -817,7 +818,7 @@ it('does not accept the pending receipt of an exact child after its row is remou
     '- [ ] Root\n  - [ ] Child',
     'nodes',
   );
-  const row = expectDefined(h.rows.rows[1]);
+  const row = expectDefined(h.rows.rowAt(1));
   let mount = h.owner.mount(h.host, row);
   h.owner.mountedChanged([row.key]);
   await flushMicrotasks(20);
@@ -842,7 +843,7 @@ it('removes actionable cards on live dependency failure and retries the same exa
       if (fail) throw new Error('unavailable');
     },
   });
-  const row = expectDefined(h.rows.rows[0]);
+  const row = expectDefined(h.rows.rowAt(0));
   const mount = h.owner.mount(h.host, row);
   h.owner.mountedChanged([row.key]);
   try {
@@ -850,14 +851,14 @@ it('removes actionable cards on live dependency failure and retries the same exa
     fail = true;
     const failedIdentity = { ...h.identity, request: 2 };
     const rows = h.replace(failedIdentity);
-    mount.update(expectDefined(rows.rows[0]));
+    mount.update(expectDefined(rows.rowAt(0)));
     expect((await h.owner.settleRow(row.key, failedIdentity.signal)).type).toBe('failed');
     expect(mount.element.inert || !mount.element.isConnected).toBe(true);
     fail = false;
     const retry = { ...h.identity, request: 3 };
     const retried = h.replace(retry);
     h.host.append(mount.element);
-    mount.update(expectDefined(retried.rows[0]));
+    mount.update(expectDefined(retried.rowAt(0)));
     expect(await h.owner.settleRow(row.key, retry.signal)).toEqual({ type: 'ready' });
     expect(h.failure).toHaveBeenCalledTimes(1);
   } finally {

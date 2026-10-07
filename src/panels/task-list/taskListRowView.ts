@@ -49,7 +49,7 @@ export function mountTaskListRows<T = TaskSnapshot>(
 ): MountedTaskListRows<T> & { readonly settled: Promise<TaskRenderOutcome>; cancel(): void } {
   const elements = new Map<string, HTMLElement>();
   const cards: Array<readonly [string, HTMLElement]> = [];
-  for (const row of rows.rows) {
+  for (const row of rows.slice(0, rows.rowCount)) {
     const element = mountTaskListRow(container, row, renderTask);
     elements.set(row.key, element);
     if (row.kind === 'task') cards.push([row.key, element]);

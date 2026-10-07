@@ -7098,7 +7098,7 @@ describe('CenterPanel actual centre focus continuity', () => {
       expect(h.state.get('selectedList')).toBe('today');
       expect(h.state.get('taskStack')[0]).toEqual(h.index.list()[0]);
       const surface = expectDefined(h.panel['taskSurface_abyssPrivate']);
-      const key = expectDefined(surface.search?.order.occurrencesOf('focus.md:0')[0]);
+      const key = expectDefined(surface.search?.order.firstOccurrenceOf('focus.md:0'));
       expect(reveal).toHaveBeenCalledWith(key, { waitForReady: true });
       expect(surface.surface.element(key)?.classList.contains('is-search-revealed')).toBe(true);
       expect(document.activeElement).not.toBe(h.cards()[0]);

@@ -101,7 +101,10 @@ interface TaskCommandsOptions {
   readonly interactionOwnership: InteractionOwnershipPort;
   readonly projectManager: ProjectManager | null;
   readonly selection: TaskRowSelection;
-  readonly rows: () => Pick<TaskListRows, 'occurrencesOf'>;
+  readonly rows: () => Pick<
+    TaskListRows,
+    'revision' | 'taskCount' | 'taskKeyAt' | 'indexOf' | 'physicalKey'
+  >;
   readonly onSelectionChanged: () => void;
 }
 
@@ -113,7 +116,10 @@ export class TaskCommands {
   readonly #interactionOwnership: InteractionOwnershipPort;
   readonly #projectManager: ProjectManager | null;
   readonly #selection: TaskRowSelection;
-  readonly #rows: () => Pick<TaskListRows, 'occurrencesOf'>;
+  readonly #rows: () => Pick<
+    TaskListRows,
+    'revision' | 'taskCount' | 'taskKeyAt' | 'indexOf' | 'physicalKey'
+  >;
   readonly #onSelectionChanged: () => void;
   readonly #completionConfirmationAbortController = new AbortController();
 
@@ -146,11 +152,10 @@ export class TaskCommands {
     const entries = this.#batchEntries(subjects, 'patch');
     if (entries === undefined) return;
     const selectedTasks = entries.map((entry) => entry.task.root);
+    const selected = this.#selectedOccurrences();
     const pending = selectedTasks.map((task) => ({
       task,
-      selected: this.#rows()
-        .occurrencesOf(taskRowKey(task))
-        .filter((key) => this.#selection.has(key)),
+      selected: selected.get(taskRowKey(task)) ?? [],
     }));
     const session: TaskArchiveSession | undefined = await tasks.planArchive?.();
     for (let next = pending[0]; next !== undefined; next = pending[0]) {
@@ -161,6 +166,19 @@ export class TaskCommands {
       if (!archived || !refreshed) break;
     }
     this.#onSelectionChanged();
+  }
+
+  #selectedOccurrences(): Map<string, string[]> {
+    const rows = this.#rows();
+    const selected = new Map<string, string[]>();
+    for (const key of this.#selection.inOrder(rows)) {
+      const physical = rows.physicalKey(key);
+      if (physical === undefined) continue;
+      const keys = selected.get(physical) ?? [];
+      keys.push(key);
+      selected.set(physical, keys);
+    }
+    return selected;
   }
 
   async #archiveOne(
@@ -204,7 +222,9 @@ export class TaskCommands {
 
   #removeArchivedSelection(task: TaskSnapshot, result: TaskCommandResult): void {
     if (result.type !== 'ok' || result.outcome.type !== 'archived') return;
-    for (const key of this.#rows().occurrencesOf(taskRowKey(task))) this.#selection.delete(key);
+    const rows = this.#rows();
+    for (const key of this.#selection.inOrder(rows))
+      if (rows.physicalKey(key) === taskRowKey(task)) this.#selection.delete(key);
     const current = this.#state.get('taskStack')[0];
     if (current != null && this.#sameTaskRef(rootTaskRef(current), task.ref)) {
       this.#state.set('taskStack', []);
