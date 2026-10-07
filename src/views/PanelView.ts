@@ -848,14 +848,14 @@ export class PanelView extends ItemView {
       undefined,
       () => selectionTasks.queries.listNodes(),
     );
-    let selectionIntent = this.state_abyssPrivate.taskSelectionIntentGeneration;
+    let ownsSelection = this.center_abyssPrivate.captureCreationSelection();
     this.quickCapture_abyssPrivate = new QuickCaptureCoordinator({
       host: elements.quickCaptureHost,
       context: () => this.quickCaptureContext_abyssPrivate(),
       resolveTarget: (context) => captureTargets.resolve(context),
       captureReveal: (isCurrent) => this.center_abyssPrivate.captureCreationReveal(isCurrent),
       onSubmit: () => {
-        selectionIntent = this.state_abyssPrivate.taskSelectionIntentGeneration;
+        ownsSelection = this.center_abyssPrivate.captureCreationSelection();
       },
       interactionOwnership: interactionRegistry,
       onResult: (result, description, revealAuthority) => {
@@ -866,7 +866,7 @@ export class PanelView extends ItemView {
             result,
             description,
             revealAuthority,
-            selectionIntent === this.state_abyssPrivate.taskSelectionIntentGeneration,
+            ownsSelection(),
           );
         } finally {
           if (description.kind === 'success' && pendingPane != null) {

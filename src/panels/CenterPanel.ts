@@ -1249,6 +1249,15 @@ export class CenterPanel {
     this.onTaskRowsSettled_abyssPrivate = options.onTaskRowsSettled;
   }
 
+  /** Selection permission survives blur, but not a later selection or list context change. */
+  captureCreationSelection(): () => boolean {
+    const selection = this.state_abyssPrivate.taskSelectionIntentGeneration;
+    const context = this.captureContextRevision_abyssPrivate;
+    return () =>
+      selection === this.state_abyssPrivate.taskSelectionIntentGeneration &&
+      context === this.captureContextRevision_abyssPrivate;
+  }
+
   private captureRevealAuthority_abyssPrivate(ownsCapture: () => boolean): CaptureRevealAuthority {
     const retained = this.taskSurface_abyssPrivate;
     const context = this.captureContextRevision_abyssPrivate;
@@ -1264,7 +1273,7 @@ export class CenterPanel {
       ownsCapture();
     return {
       forSubmission: (submission) => {
-        const selection = this.state_abyssPrivate.taskSelectionIntentGeneration;
+        const canSelect = this.captureCreationSelection();
         let revealSelection: number | undefined;
         const lifetime =
           retained === null
@@ -1281,7 +1290,7 @@ export class CenterPanel {
         const isCurrent = (): boolean =>
           ownsOrigin() && (accepted || lifetime?.isCurrent() === true);
         return {
-          canSelect: () => selection === this.state_abyssPrivate.taskSelectionIntentGeneration,
+          canSelect,
           isCurrent,
           onPresented: (ref, element) => {
             accepted = true;

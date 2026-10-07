@@ -1228,13 +1228,16 @@ without pinning a placeholder row. It remains valid across acknowledged native s
 and the command's source publication, and spans excluded-root preparation/resolution. Changed native
 top before its scroll event still revokes it. Exact destination preparation additionally binds the
 current source and selection after the result's own selection.
-PanelView checks the submission's independent `canSelect` proof against AppState's intent generation
-before selecting the canonical result. Later explicit selection or navigation wins; undisturbed blur
+CenterPanel's `captureCreationSelection` freezes AppState's intent generation and its existing capture
+context revision per submission. Scoped `canSelect` and PanelView's Q callback share this proof before
+selecting the canonical result, independently of focus, scroll permission or a materialized list.
+Later explicit selection or list-context navigation wins, including away/back while retaining the
+inspector; undisturbed blur
 still saves, selects and announces success while revoking reveal. The focused capture proof permits
 the submitting phase, but closed or revoked results stay scoped. Each new submission acquires fresh
 permission after earlier scrolling. Calendar and project overview expose no list capability, including
 disconnected surfaces left by rendering, and retain their unscoped reveal behavior. PanelView also
-freezes Q's selection generation through its submission callback, independently of the optional list
+captures Q's same selection proof through its submission callback, independently of the optional list
 capability, so those routes cannot replace a later selection or reopen cleared details either.
 Presentation attempts may abort and retry during source publication. The submission witness outlives
 those individual attempts and is released on acceptance, capture revocation, failure, or the presenter's

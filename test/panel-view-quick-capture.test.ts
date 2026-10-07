@@ -572,6 +572,88 @@ describe('physical Q creation reveal through PanelView', () => {
 
   it.each(
     (['list', 'calendar', 'overview'] as const).flatMap((origin) =>
+      [false, true].map((returnToOrigin) => ({ origin, returnToOrigin })),
+    ),
+  )(
+    'retains the inspector after real sidebar navigation from $origin; return=$returnToOrigin',
+    async ({ origin, returnToOrigin }) => {
+      const h = await mountQuickPanel();
+      const held = deferred<void>(),
+        entered = deferred<void>();
+      const openMode = (label: string): void => {
+        expectDefined(
+          h.root.querySelector<HTMLButtonElement>(`.abyss-rail-btn[aria-label="${label}"]`),
+        ).click();
+      };
+      const openOrigin = (): void => {
+        if (origin !== 'list') openMode(origin === 'calendar' ? 'Calendar' : 'Projects');
+      };
+      const openList = (label: string): void => {
+        const row = expectDefined(
+          [...h.root.querySelectorAll<HTMLElement>('.abyss-left-item')].find(
+            (candidate) => candidate.querySelector('.abyss-left-label')?.textContent === label,
+          ),
+        );
+        row.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+        row.click();
+      };
+      try {
+        openList('Inbox');
+        openOrigin();
+        const previous = expectDefined(h.index.list({ filePath: 'many.md' })[0]);
+        h.state.set('taskStack', [previous]);
+        const present = vi.spyOn(h.presentation, 'present');
+        const plan = h.tasks.planCreate.bind(h.tasks);
+        vi.spyOn(h.tasks, 'planCreate').mockImplementation(async (intent) => {
+          const session = await plan(intent);
+          if (session.type !== 'ready') return session;
+          return {
+            ...session,
+            execute: async (request) => {
+              entered.resolve();
+              await held.promise;
+              return session.execute(request);
+            },
+          };
+        });
+        const input = await h.openQ();
+        enter(input, 'Z retained navigation');
+        await entered.promise;
+        if (origin === 'overview') openMode('Tasks');
+        openList('Today');
+        expect(h.state.get('selectedList')).toBe('today');
+        expect(h.state.get('taskStack')).toEqual([previous]);
+        if (returnToOrigin) {
+          openList('Inbox');
+          openOrigin();
+          expect(h.state.get('selectedList')).toBe('inbox');
+        }
+        expect(h.state.get('taskStack')).toEqual([previous]);
+        held.resolve();
+        await flushMicrotasks();
+        await flushMicrotasks();
+        expect(h.index.list({ filePath: 'created.md' }).map((task) => task.title)).toEqual([
+          'Z retained navigation',
+        ]);
+        const authority = present.mock.calls[0]?.[2];
+        if (origin === 'list') expect(authority?.canSelect?.()).toBe(false);
+        else expect(authority).toBeUndefined();
+        expect(h.state.get('taskStack')).toEqual([previous]);
+        expect(h.root.querySelector('.abyss-right .abyss-right-title-view')?.textContent).toBe(
+          previous.title,
+        );
+        expect(h.root.querySelector('.abyss-creation-feedback')?.textContent).toContain('added');
+        expect(h.root.querySelector('.is-just-created')).toBeNull();
+        expect(legacyScroll).not.toHaveBeenCalled();
+      } finally {
+        held.resolve();
+        await h.dispose();
+      }
+    },
+  );
+
+  it.each(
+    (['list', 'calendar', 'overview'] as const).flatMap((origin) =>
       (['task-click', 'navigation'] as const).map((laterIntent) => ({ origin, laterIntent })),
     ),
   )(
