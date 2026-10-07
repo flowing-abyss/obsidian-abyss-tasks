@@ -424,6 +424,8 @@ export default defineConfig(
     files: [
       'src/collectionSteps.ts',
       'src/task-lists/TaskListSelector.ts',
+      'src/task-lists/taskNodeMembership.ts',
+      'src/tasks/domain/taskOccupiedDates.ts',
       'src/tags/effectiveTagGroups.ts',
       'src/task-lists/todayTaskCategory.ts',
       'src/tasks/infrastructure/search/TaskSearchRuntime.ts',

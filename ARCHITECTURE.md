@@ -602,7 +602,7 @@ do not acquire independent task writers or duplicate shell subscriptions.
 Today list membership and sidebar counts share the date-only
 [`todayTaskCategory`](src/task-lists/todayTaskCategory.ts), supplied an explicit local date. Past due
 dates take precedence over scheduling today. The list selector retains its configured status filters;
-LeftPanel counts unique active roots (open and in-progress) by file and line and displays separate
+LeftPanel counts unique active nodes (open and in-progress) by file and line and displays separate
 today/overdue totals. Shared `taskListDate` uses Today membership when the selected list is Today,
 so ordinary snapshots and compact records sort and group a task scheduled today by today's date
 even when its due date is later. Other lists retain due/scheduled/start precedence. Date sort keeps
@@ -627,6 +627,29 @@ multi-selection from DOM mounting. `TaskRowSelection` works against an explicit 
 `MountedTaskListRows` maps row keys to mounted elements. Logical multi-selection belongs to Lists
 and Tags; other surfaces reuse card rendering without acquiring that selection model. CenterPanel
 owns selection across renders and mode changes.
+
+`taskNodeMembership` owns destination admission over each node's own tags, canonical planning,
+semantic status, depth and exact source line. Root-only `selectTaskList` and hydrated
+`selectTaskNodes` share its cooperative rule body with compact organization, whose depth adapter
+reads `TaskOrganizationRecord.depth`. Tag discovery still scans canonical trees; membership never
+borrows descendant tags. Untagged Inbox admits roots only, and generic/project collections retain
+root populations. Node selection returns the original `TaskNodeSnapshot`, retaining canonical
+ancestors and children for progress and command authority.
+
+The pure domain `taskOccupiedDates` derives inclusive valid start/due intervals or distinct authored
+start/scheduled/due points. Its Today occurrence and future-membership rules are shared through the
+public task barrel. Today uses one containing-interval occurrence, then past-due precedence; Upcoming
+membership uses any future occupied date without recurrence forecasts or day expansion. Completion
+capability is derived from a represented interval date; no metadata is persisted.
+
+LeftPanel captures one date/instant per render and counts accepted exact nodes through the same
+membership owner. Inbox, Today, Upcoming and tag/group badges count unique physical source lines
+with catalog-resolved open/in-progress status, independently of saved center filters. TagNavigation
+receives the captured pass's counter. LeftPanel reads nodes through its injected `TaskApplicationApi`
+query capability; PanelView no longer supplies a redundant root-only query option. Today retains
+separate Today/Overdue totals and the existing
+midnight refresh lifecycle. `taskNodeSourceLine` is published through the public barrel for the
+presentation adapter; it resolves nested relative lines without promoting a child to root authority.
 
 Global Search and nonempty Tasks filters use `taskSearchOrganization` over compact canonical
 records, with the same structural membership, property/status filters, comparator and grouping

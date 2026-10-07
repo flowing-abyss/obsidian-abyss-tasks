@@ -435,8 +435,8 @@ it.each([
   {
     groupId: 'discovered:prefix:work',
     collision: false,
-    want: 'needle',
-    initial: 2,
+    want: undefined,
+    initial: 1,
     markdown: '- [ ] needle\n  - [ ] child #Work',
   },
 ] as const)(
@@ -466,9 +466,9 @@ it.each([
       });
       h.query('needle');
       await h.completed();
-      expect(h.root.dataset['searchLogicalResults']).toBe('1');
+      expect(h.root.dataset['searchLogicalResults']).toBe(want === undefined ? '0' : '1');
       const cards = h.root.querySelectorAll('.abyss-task-card');
-      expect(cards).toHaveLength(1);
+      expect(cards).toHaveLength(want === undefined ? 0 : 1);
       expect(cards[0]?.querySelector('.abyss-task-title')?.textContent).toBe(want);
     } finally {
       h.dispose();

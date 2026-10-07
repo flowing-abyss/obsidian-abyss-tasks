@@ -627,7 +627,6 @@ export class PanelView extends ItemView {
       settings: this.settings_abyssPrivate,
       tagManager: this.tagManager_abyssPrivate,
       app: this.app,
-      queries: this.queries_abyssPrivate,
       tasks: selectionTasks,
       projectStore,
       projectManager,

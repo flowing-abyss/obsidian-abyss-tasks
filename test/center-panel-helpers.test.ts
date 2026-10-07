@@ -292,7 +292,7 @@ describe('CenterPanel pure helpers', () => {
       expect(result.map((t) => t.title)).toEqual(['work']);
     });
 
-    it('{type:"tag"} includes a root whose matching tag exists only on a subtask', () => {
+    it('{type:"tag"} does not borrow a matching tag from a subtask', () => {
       const tasks = [
         task({ title: 'Root tag', tags: ['#work/subtask'] }),
         task({
@@ -306,7 +306,6 @@ describe('CenterPanel pure helpers', () => {
 
       expect(call<TaskSnapshot[]>(panel, 'getFilteredTasks').map(({ title }) => title)).toEqual([
         'Root tag',
-        'Subtask tag',
       ]);
     });
 

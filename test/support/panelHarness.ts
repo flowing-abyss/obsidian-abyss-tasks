@@ -162,7 +162,6 @@ export function makeLeftPanelForTest(
     settings,
     tagManager,
     app,
-    queries: taskHarness.queries,
     tasks: application,
     projectStore,
     projectManager,

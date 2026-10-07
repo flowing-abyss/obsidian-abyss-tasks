@@ -1,13 +1,10 @@
-import type { TaskSnapshot } from '../tasks';
+import { localDate, taskTodayOccurrence, type TaskSnapshot } from '../tasks';
 
 export function todayTaskCategory(
   task: Pick<TaskSnapshot, 'planning'>,
   today: string,
 ): 'today' | 'overdue' | undefined {
-  if (task.planning.due !== undefined && task.planning.due < today) return 'overdue';
-  if (task.planning.due?.toString() === today || task.planning.scheduled?.toString() === today)
-    return 'today';
-  return undefined;
+  return taskTodayOccurrence(task.planning, localDate(today))?.category;
 }
 
 export function taskListDate(

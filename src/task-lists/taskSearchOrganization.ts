@@ -104,6 +104,7 @@ function* matchingRecords(
     ...input,
     tasks: canonical,
     viewState: input.view.list,
+    depth: (r: TaskOrganizationRecord) => r.depth,
     treeTags: (r: TaskOrganizationRecord) => r.treeTags,
     trackedMs: (r: TaskOrganizationRecord) => totalMs(r.tracked, input.nowMs),
   };

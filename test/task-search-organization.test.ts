@@ -105,7 +105,7 @@ describe('compact organization shares ordinary list semantics', () => {
       h.close();
     }
   });
-  it('uses subtree membership and property/status filters with resolved link changes', async () => {
+  it('uses own-tag membership and property/status filters with resolved link changes', async () => {
     const h = await createCanonicalSearchHarness(files, settings);
     try {
       const signal = new AbortController().signal;
@@ -118,7 +118,10 @@ describe('compact organization shares ordinary list semantics', () => {
       const list: ListViewState = {
         sortBy: { field: 'title', dir: 'asc' },
         groupBy: 'outgoing-link',
-        filters: [{ type: 'tag', value: '#work' }],
+        filters: [
+          { type: 'tag', value: '#work' },
+          { type: 'file', filePath: 'a.md' },
+        ],
         statusGroups: ['todo'],
       };
       for (const resolved of ['Alice.md', 'People/Alice.md']) {
@@ -132,7 +135,7 @@ describe('compact organization shares ordinary list semantics', () => {
           generation,
           records,
           hits: null,
-          selection: { type: 'tag', tag: '#nested/one' },
+          selection: { type: 'tag', tag: '#work' },
           view: { list, relevance: false },
           settings,
           today,
@@ -156,7 +159,7 @@ it('reads actual subtree tracked totals at two explicit instants and configured 
   const h = await createCanonicalSearchHarness(
     {
       'a.md':
-        '- [ ] Running\n  - [ ] child #child\n    - 2026-10-04T10:00:00+07:00 →\n- [ ] Closed #home\n  - 2026-10-04T10:00:00+07:00 → 2026-10-04T10:30:00+07:00',
+        '- [ ] Running #child\n  - [ ] child #child\n    - 2026-10-04T10:00:00+07:00 →\n- [ ] Closed #home\n  - 2026-10-04T10:00:00+07:00 → 2026-10-04T10:30:00+07:00',
     },
     settings,
   );

@@ -233,7 +233,7 @@ describe('selectTaskList', () => {
     ).toEqual(['tagged']);
   });
 
-  it('opens the unique root whose subtask owns a selected discovered tag or prefix group', () => {
+  it('does not borrow child tags for root-only tag or group selections', () => {
     const rootRef = snapshot('root').ref;
     const child = {
       ...snapshot('child'),
@@ -256,7 +256,7 @@ describe('selectTaskList', () => {
         today,
         nowMs: Date.parse('2026-07-13T12:00:00Z'),
       }).map((task) => task.title),
-    ).toEqual(['root']);
+    ).toEqual([]);
     expect(
       selectTaskList({
         tasks: [root],
@@ -266,7 +266,7 @@ describe('selectTaskList', () => {
         today,
         nowMs: Date.parse('2026-07-13T12:00:00Z'),
       }).map((task) => task.title),
-    ).toEqual(['root']);
+    ).toEqual([]);
   });
 
   it.each([
@@ -511,9 +511,9 @@ describe('selectTaskList', () => {
     expect(titles([inlineOnly], { type: 'tag', tag: '#work' })).toEqual([]);
   });
 
-  it('does not treat a start-only task as Today list membership', () => {
+  it('admits a start-only task to Today', () => {
     const startOnly = snapshot('start only', { planning: { start: today } });
-    expect(titles([startOnly], 'today')).toEqual([]);
+    expect(titles([startOnly], 'today')).toEqual(['start only']);
   });
 
   it('includes Today when scheduled matches despite a future due date', () => {
@@ -696,7 +696,7 @@ describe('selectTaskList sorted by tracked time', () => {
       nowMs: NOW,
     });
 
-    expect(result.map((task) => task.title)).toEqual(['nested tag', 'root tag']);
+    expect(result.map((task) => task.title)).toEqual(['root tag']);
   });
 
   it('puts the most tracked task first when sorting down', () => {

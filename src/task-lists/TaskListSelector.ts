@@ -1,26 +1,19 @@
 import type { ListSelection } from '../app/AppState';
-import { resolveListViewStateKey } from '../app/listViewState';
 import { drainCollectionSteps, stableSortSteps, type CollectionSteps } from '../collectionSteps';
 import { sameTag } from '../markdown/tagSyntax';
 import type { CalendarSettings, ListViewState, PropertyFilter } from '../settings/types';
 import {
-  resolveEffectiveTagGroups,
-  resolveEffectiveTagGroupsSteps,
-  tagMatchesGroup,
-  tagMatchesGroupSteps,
-  type EffectiveTagGroup,
-} from '../tags/effectiveTagGroups';
-import {
-  normalizeTaskTagInput,
   subtreeTotal,
   totalMs,
   type LocalDate,
   type SubtaskSnapshot,
+  type TaskNodeSnapshot,
   type TaskSnapshot,
   type TaskStatusType,
 } from '../tasks';
 import type { TaskLinkValue, TaskLinkValues } from './taskLinkValues';
-import { taskListDate, todayTaskCategory } from './todayTaskCategory';
+import { prepareTaskNodeMembershipSteps, taskNodeMembershipValue } from './taskNodeMembership';
+import { taskListDate } from './todayTaskCategory';
 
 export type TaskOrganizationSettings = Pick<
   CalendarSettings,
@@ -55,6 +48,7 @@ export interface TaskValueSelectionInput<T extends TaskListValue> {
   readonly today: LocalDate;
   readonly nowMs: number;
   readonly outgoingLinks?: TaskLinkValues;
+  readonly depth: (task: T) => number;
   readonly treeTags: (task: T) => readonly string[];
   readonly trackedMs: (task: T) => number;
 }
@@ -199,8 +193,7 @@ export function filterTaskValuesSteps<T extends TaskListValue>(
   return filterValues(input, true);
 }
 interface MembershipContext {
-  readonly group: EffectiveTagGroup | undefined;
-  readonly inboxTag: string | undefined;
+  readonly admits: (value: TaskListValue & { readonly depth: number }) => CollectionSteps<boolean>;
   readonly allowed: ReadonlySet<TaskStatusType>;
 }
 function* observedTags<T extends TaskListValue>(
@@ -217,65 +210,6 @@ function* observedTags<T extends TaskListValue>(
     }
   }
   return observed;
-}
-function* configuredGroupIds(
-  groups: readonly EffectiveTagGroup[],
-  cooperative: boolean,
-): CollectionSteps<Set<string>> {
-  const configuredIds = new Set<string>();
-  for (const group of groups) {
-    if (group.origin === 'configured') configuredIds.add(group.id);
-    if (cooperative) yield 'cheap';
-  }
-  return configuredIds;
-}
-function* exactGroup(
-  groups: readonly EffectiveTagGroup[],
-  groupId: string,
-  cooperative: boolean,
-): CollectionSteps<EffectiveTagGroup | null> {
-  for (const group of groups) {
-    if (cooperative) yield 'cheap';
-    if (group.id === groupId) return group;
-  }
-  return null;
-}
-function* findSelectedGroup(
-  groups: readonly EffectiveTagGroup[],
-  groupId: string,
-  cooperative: boolean,
-): CollectionSteps<EffectiveTagGroup | null> {
-  const configuredIds = yield* configuredGroupIds(groups, cooperative);
-  if (configuredIds === undefined) throw new Error('Group identities ended without a result');
-  const key = resolveListViewStateKey({ type: 'group', groupId }, undefined, configuredIds);
-  if (cooperative) yield 'atom';
-  const exact = yield* exactGroup(groups, groupId, cooperative);
-  if (exact === undefined) throw new Error('Group lookup ended without a result');
-  if (exact !== null) return exact;
-  for (const group of groups) {
-    const matches =
-      group.origin === 'discovered' &&
-      resolveListViewStateKey({ type: 'group', groupId: group.id }, undefined, configuredIds) ===
-        key;
-    if (cooperative) yield 'atom';
-    if (matches) return group;
-  }
-  return null;
-}
-function* selectedGroup<T extends TaskListValue>(
-  input: TaskValueSelectionInput<T>,
-  cooperative: boolean,
-): CollectionSteps<EffectiveTagGroup | null> {
-  const selection = input.selection;
-  if (selection === null || typeof selection === 'string' || selection.type !== 'group')
-    return null;
-  const observed = input.observedTags ?? (yield* observedTags(input, cooperative));
-  if (observed === undefined) throw new Error('Observed tags ended without a result');
-  const catalog = cooperative
-    ? yield* resolveEffectiveTagGroupsSteps(input.settings, observed)
-    : resolveEffectiveTagGroups(input.settings, observed);
-  if (catalog === undefined) throw new Error('Catalog ended without a result');
-  return yield* findSelectedGroup(catalog, selection.groupId, cooperative);
 }
 function* allowedStatuses(
   view: ListViewState,
@@ -294,77 +228,20 @@ function* membershipContext<T extends TaskListValue>(
   input: TaskValueSelectionInput<T>,
   cooperative: boolean,
 ): CollectionSteps<MembershipContext> {
-  const group = yield* selectedGroup(input, cooperative);
-  if (group === undefined) throw new Error('Group selection ended without a result');
-  let inboxTag: string | undefined;
-  if (input.selection === 'inbox') {
-    const tags = normalizeTaskTagInput(input.settings.inbox.tag);
-    if (cooperative) yield 'atom';
-    inboxTag = tags?.length === 1 ? tags[0] : undefined;
-  }
+  const selection = input.selection;
+  const needsCatalog =
+    selection !== null && typeof selection === 'object' && selection.type === 'group';
+  const observed =
+    input.observedTags ?? (needsCatalog ? yield* observedTags(input, cooperative) : []);
+  if (observed === undefined) throw new Error('Observed tags ended without a result');
+  const admits = yield* prepareTaskNodeMembershipSteps(
+    { ...input, observedTags: observed },
+    cooperative,
+  );
+  if (admits === undefined) throw new Error('Membership preparation ended without a result');
   const allowed = yield* allowedStatuses(input.viewState, cooperative);
   if (allowed === undefined) throw new Error('Statuses ended without a result');
-  return { group: group ?? undefined, inboxTag, allowed };
-}
-function* selectedInbox(
-  task: TaskListValue,
-  settings: TaskOrganizationSettings,
-  inboxTag: string | undefined,
-  cooperative: boolean,
-): CollectionSteps<boolean> {
-  let tagged = false;
-  if (settings.inbox.mode !== 'untagged' && inboxTag !== undefined) {
-    const matches = yield* matchesTags(task.tags, inboxTag, cooperative);
-    if (matches === undefined) throw new Error('Inbox membership ended without a result');
-    tagged = matches;
-  }
-  return tagged || (settings.inbox.mode !== 'tag' && task.tags.length === 0);
-}
-function* selectedTree(
-  tags: readonly string[],
-  group: EffectiveTagGroup | undefined,
-  cooperative: boolean,
-): CollectionSteps<boolean> {
-  if (group === undefined) return false;
-  for (const tag of tags) {
-    const matches = cooperative
-      ? yield* tagMatchesGroupSteps(tag, group)
-      : tagMatchesGroup(tag, group);
-    if (matches === undefined) throw new Error('Membership ended without a result');
-    if (cooperative) yield 'cheap';
-    if (matches) return true;
-  }
-  return false;
-}
-function* selectedObject<T extends TaskListValue>(
-  task: T,
-  input: TaskValueSelectionInput<T>,
-  context: MembershipContext & { selection: Exclude<ListSelection, string> },
-  cooperative: boolean,
-): CollectionSteps<boolean> {
-  const { selection } = context;
-  if (selection.type === 'project') return task.source.filePath === selection.path;
-  const tags = input.treeTags(task);
-  if (cooperative) yield 'atom';
-  if (selection.type === 'tag') return yield* matchesTags(tags, selection.tag, cooperative);
-  return yield* selectedTree(tags, context.group, cooperative);
-}
-function* selected<T extends TaskListValue>(
-  task: T,
-  input: TaskValueSelectionInput<T>,
-  context: MembershipContext,
-  cooperative: boolean,
-): CollectionSteps<boolean> {
-  const { selection, settings, today } = input;
-  if (selection === 'inbox')
-    return yield* selectedInbox(task, settings, context.inboxTag, cooperative);
-  if (selection === 'today') return todayTaskCategory(task, today) !== undefined;
-  if (selection === 'upcoming') {
-    const date = task.planning.due ?? task.planning.scheduled;
-    return date !== undefined && date > today;
-  }
-  if (selection === null || typeof selection === 'string') return true;
-  return yield* selectedObject(task, input, { ...context, selection }, cooperative);
+  return { admits, allowed };
 }
 function* matchesProperties(
   task: TaskListValue,
@@ -385,7 +262,7 @@ function* matchesTask<T extends TaskListValue>(
   context: MembershipContext,
   cooperative: boolean,
 ): CollectionSteps<boolean> {
-  const included = yield* selected(task, input, context, cooperative);
+  const included = yield* context.admits({ ...task, depth: input.depth(task) });
   if (included === undefined) throw new Error('Membership ended without a result');
   if (cooperative) yield 'cheap';
   if (!included) return false;
@@ -529,6 +406,7 @@ export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnap
   );
   const values: TaskValueSelectionInput<TaskSnapshot> = {
     ...input,
+    depth: () => 0,
     treeTags: taskTreeTags,
     trackedMs: (task) => totalMs(subtreeTotal(task), input.nowMs),
   };
@@ -553,4 +431,39 @@ export function searchTaskList(
       task.title.toLowerCase().includes(query) ||
       task.source.originalMarkdown.toLowerCase().includes(query),
   );
+}
+
+/** Hydrated own-node values share the root selector's filtering and ordering engine. */
+export function selectTaskNodes(
+  input: Omit<TaskListSelectionInput, 'tasks'> & {
+    readonly tasks: readonly TaskNodeSnapshot[];
+  },
+): readonly TaskNodeSnapshot[] {
+  const query = input.textQuery?.toLowerCase() ?? '';
+  const values = input.tasks.map((projection) => ({
+    ...projection.node,
+    ...taskNodeMembershipValue(projection),
+    projection,
+  }));
+  const observedTags = values.flatMap((value) => value.tags);
+  return selectTaskValues({
+    ...input,
+    tasks: values.filter(
+      (value) =>
+        query.length === 0 ||
+        value.title.toLowerCase().includes(query) ||
+        taskNodeSourceText(value.projection).toLowerCase().includes(query),
+    ),
+    observedTags,
+    depth: (value) => value.depth,
+    treeTags: (value) => value.tags,
+    trackedMs: (value) => totalMs(subtreeTotal(value.projection.node), input.nowMs),
+  }).map((value) => value.projection);
+}
+
+function taskNodeSourceText(task: TaskNodeSnapshot): string {
+  if (task.target.type === 'task') return task.root.source.originalMarkdown;
+  const block = task.target.ref.originalBlock;
+  const end = block.indexOf('\n');
+  return end === -1 ? block : block.slice(0, end);
 }

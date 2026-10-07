@@ -2120,14 +2120,42 @@ exports[`matches checkpoint ordering, groups, counts, scores, aliases and member
     "total": 1,
   },
   "membership/3/false": {
-    "counts": [],
-    "rows": [],
-    "total": 0,
+    "counts": [
+      [
+        "no-outgoing-links",
+        1,
+      ],
+    ],
+    "rows": [
+      [
+        "["task-occurrence","outgoing-link","no-outgoing-links","a/Same.md:4"]",
+        2,
+        {
+          "key": "no-outgoing-links",
+          "label": "No outgoing links",
+        },
+      ],
+    ],
+    "total": 1,
   },
   "membership/3/true": {
-    "counts": [],
-    "rows": [],
-    "total": 0,
+    "counts": [
+      [
+        "no-outgoing-links",
+        1,
+      ],
+    ],
+    "rows": [
+      [
+        "["task-occurrence","outgoing-link","no-outgoing-links","a/Same.md:4"]",
+        0,
+        {
+          "key": "no-outgoing-links",
+          "label": "No outgoing links",
+        },
+      ],
+    ],
+    "total": 1,
   },
   "membership/4/false": {
     "counts": [
@@ -2264,66 +2292,14 @@ exports[`matches checkpoint ordering, groups, counts, scores, aliases and member
     "total": 5,
   },
   "membership/5/false": {
-    "counts": [
-      [
-        "note:a/Same.md",
-        1,
-      ],
-      [
-        "note:b/Same.md",
-        1,
-      ],
-    ],
-    "rows": [
-      [
-        "["task-occurrence","outgoing-link","note:a/Same.md","a/Same.md:0"]",
-        0,
-        {
-          "key": "note:a/Same.md",
-          "label": "a/Same",
-        },
-      ],
-      [
-        "["task-occurrence","outgoing-link","note:b/Same.md","a/Same.md:0"]",
-        0,
-        {
-          "key": "note:b/Same.md",
-          "label": "b/Same",
-        },
-      ],
-    ],
-    "total": 1,
+    "counts": [],
+    "rows": [],
+    "total": 0,
   },
   "membership/5/true": {
-    "counts": [
-      [
-        "note:a/Same.md",
-        1,
-      ],
-      [
-        "note:b/Same.md",
-        1,
-      ],
-    ],
-    "rows": [
-      [
-        "["task-occurrence","outgoing-link","note:a/Same.md","a/Same.md:0"]",
-        0,
-        {
-          "key": "note:a/Same.md",
-          "label": "a/Same",
-        },
-      ],
-      [
-        "["task-occurrence","outgoing-link","note:b/Same.md","a/Same.md:0"]",
-        0,
-        {
-          "key": "note:b/Same.md",
-          "label": "b/Same",
-        },
-      ],
-    ],
-    "total": 1,
+    "counts": [],
+    "rows": [],
+    "total": 0,
   },
   "membership/6/false": {
     "counts": [

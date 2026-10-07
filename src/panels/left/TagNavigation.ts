@@ -8,7 +8,6 @@ import type { TagManager } from '../../tags/TagManager';
 import {
   isTagNavigationArchived,
   resolveEffectiveTagGroups,
-  tagMatchesGroup,
   tagNavigationGroupTags,
   type EffectiveTagGroup,
 } from '../../tags/effectiveTagGroups';
@@ -40,18 +39,14 @@ export interface TagNavigationOptions {
   readonly host: TagNavigationHost;
 }
 
+type NodeCounter = (selection: ListSelection) => number;
+
 interface TagGroupRenderContext {
+  readonly countNodes: NodeCounter;
   readonly group: EffectiveTagGroup;
   readonly tags: readonly string[];
-  readonly allNodes: readonly TaskNodeSnapshot[];
   readonly isExpanded: boolean;
   readonly isGroupActive: boolean;
-}
-
-/** A task is "active" (actionable) when open or in-progress — the same set the
- *  center list shows by default, so left-panel badges match the opened list. */
-function isActiveTask(t: TaskSnapshot): boolean {
-  return t.status === 'open' || t.status === 'in-progress';
 }
 
 function uniqueStrings(values: readonly string[]): string[] {
@@ -84,12 +79,10 @@ export class TagNavigation {
     this.#host = options.host;
   }
 
-  renderPinnedTag(parent: HTMLElement, tag: string, allNodes: readonly TaskNodeSnapshot[]): void {
+  renderPinnedTag(parent: HTMLElement, tag: string, countNodes: NodeCounter): void {
     const sel = this.#state.get('selectedList');
     const isActive = typeof sel === 'object' && sel.type === 'tag' && sameTag(sel.tag, tag);
-    const count = this.#countMatchingRoots(allNodes, ({ node }) =>
-      node.tags.some((candidate) => sameTag(candidate, tag)),
-    );
+    const count = countNodes({ type: 'tag', tag });
 
     const row = parent.createDiv({
       cls: `abyss-left-item abyss-pinned-tag${isActive ? ' is-active' : ''}`,
@@ -119,13 +112,11 @@ export class TagNavigation {
     parent: HTMLElement,
     group: EffectiveTagGroup,
     tag: string,
-    allNodes: readonly TaskNodeSnapshot[],
+    countNodes: NodeCounter,
   ): void {
     const sel = this.#state.get('selectedList');
     const isActive = typeof sel === 'object' && sel.type === 'tag' && sameTag(sel.tag, tag);
-    const count = this.#countMatchingRoots(allNodes, ({ node }) =>
-      node.tags.some((candidate) => sameTag(candidate, tag)),
-    );
+    const count = countNodes({ type: 'tag', tag });
 
     const row = parent.createDiv({
       cls: `abyss-left-item abyss-tag-leaf${isActive ? ' is-active' : ''}`,
@@ -159,8 +150,9 @@ export class TagNavigation {
     parent: HTMLElement,
     group: EffectiveTagGroup,
     allNodes: readonly TaskNodeSnapshot[],
+    countNodes: NodeCounter,
   ): void {
-    if (this.#renderSingleTagGroup(parent, group, allNodes)) return;
+    if (this.#renderSingleTagGroup(parent, group, countNodes)) return;
     const sel = this.#state.get('selectedList');
     const isGroupActive =
       typeof sel === 'object' && sel.type === 'group' && this.#selectionMatchesGroup(sel, group);
@@ -173,7 +165,7 @@ export class TagNavigation {
     this.#expandActiveTagGroup(group.id, hasActiveChild);
     const isExpanded = this.#expandedGroups.has(group.id);
     const container = parent.createDiv({ cls: 'abyss-tag-group' });
-    const context = { group, tags, allNodes, isExpanded, isGroupActive };
+    const context = { group, tags, isExpanded, isGroupActive, countNodes };
     this.#renderTagGroupHeader(container, context);
     if (isExpanded) this.#renderTagGroupChildren(container, context);
   }
@@ -181,12 +173,12 @@ export class TagNavigation {
   #renderSingleTagGroup(
     parent: HTMLElement,
     group: EffectiveTagGroup,
-    allNodes: readonly TaskNodeSnapshot[],
+    countNodes: NodeCounter,
   ): boolean {
     const soleTag = group.mode === 'manual' && group.tags?.length === 1 ? group.tags[0] : undefined;
     if (soleTag === undefined) return false;
     if (!this.#settings.archivedTags.some((candidate) => sameTag(candidate, soleTag))) {
-      this.#renderTagLeaf(parent, group, soleTag, allNodes);
+      this.#renderTagLeaf(parent, group, soleTag, countNodes);
     }
     return true;
   }
@@ -199,7 +191,7 @@ export class TagNavigation {
   }
 
   #renderTagGroupHeader(container: HTMLElement, context: TagGroupRenderContext): void {
-    const { group, allNodes, isExpanded, isGroupActive } = context;
+    const { group, countNodes, isExpanded, isGroupActive } = context;
     const header = container.createDiv({
       cls: `abyss-tag-group-header${isGroupActive ? ' is-active' : ''}`,
     });
@@ -220,7 +212,7 @@ export class TagNavigation {
     header.createSpan({ cls: 'abyss-left-label', text: group.name });
     this.#host.appendCustomDot(header, { type: 'group', groupId: group.id });
 
-    const groupCount = this.#tagGroupTaskCount(group, allNodes);
+    const groupCount = countNodes({ type: 'group', groupId: group.id });
     if (groupCount > 0) {
       header.createSpan({ cls: 'abyss-left-count', text: String(groupCount) });
     }
@@ -232,12 +224,6 @@ export class TagNavigation {
       e.stopPropagation();
       this.#showTagGroupMenu(e, group);
     });
-  }
-
-  #tagGroupTaskCount(group: EffectiveTagGroup, allNodes: readonly TaskNodeSnapshot[]): number {
-    return this.#countMatchingRoots(allNodes, ({ node }) =>
-      node.tags.some((tag) => tagMatchesGroup(tag, group)),
-    );
   }
 
   #toggleTagGroup(groupId: string): void {
@@ -253,7 +239,7 @@ export class TagNavigation {
   #renderTagGroupChildren(container: HTMLElement, context: TagGroupRenderContext): void {
     const children = container.createDiv({ cls: 'abyss-tag-group-children' });
     for (const tag of context.tags) {
-      this.#renderTagGroupChild(children, context.group, tag, context.allNodes);
+      this.#renderTagGroupChild(children, context.group, tag, context.countNodes);
     }
   }
 
@@ -261,16 +247,14 @@ export class TagNavigation {
     parent: HTMLElement,
     group: EffectiveTagGroup,
     tag: string,
-    allNodes: readonly TaskNodeSnapshot[],
+    countNodes: NodeCounter,
   ): void {
     const prefix = group.mode === 'prefix' ? group.prefix : undefined;
     const label = prefix !== undefined && prefix.length > 0 ? tag.replace(`#${prefix}/`, '') : tag;
     const selected = this.#state.get('selectedList');
     const isActive =
       typeof selected === 'object' && selected.type === 'tag' && sameTag(selected.tag, tag);
-    const count = this.#countMatchingRoots(allNodes, ({ node }) =>
-      node.tags.some((candidate) => sameTag(candidate, tag)),
-    );
+    const count = countNodes({ type: 'tag', tag });
     const child = parent.createDiv({
       cls: `abyss-left-item abyss-tag-child${isActive ? ' is-active' : ''}`,
     });
@@ -636,19 +620,5 @@ export class TagNavigation {
       allNodes.flatMap(({ node }) => node.tags),
       this.#settings.tagGroups,
     );
-  }
-
-  #countMatchingRoots(
-    allNodes: readonly TaskNodeSnapshot[],
-    matches: (node: TaskNodeSnapshot) => boolean,
-  ): number {
-    const roots = new Set<string>();
-    for (const candidate of allNodes) {
-      if (!isActiveTask(candidate.root) || !matches(candidate)) continue;
-      roots.add(
-        `${candidate.root.source.filePath}:${candidate.root.source.line}:${candidate.root.ref.revision}`,
-      );
-    }
-    return roots.size;
   }
 }

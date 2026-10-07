@@ -179,7 +179,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   taskPrefixForSubtask: ['src/panels/RightPanel.ts'],
   normalizeTaskTagInput: [
     'src/settings/SettingsTab.ts',
-    'src/task-lists/TaskListSelector.ts',
+    'src/task-lists/taskNodeMembership.ts',
     'src/ui/tagDropdown.ts',
     'src/ui/taskCapture/CaptureTargetResolver.ts',
   ],
@@ -214,7 +214,14 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/right/InspectorDependencies.ts',
     'src/panels/right/InspectorSections.ts',
   ],
-  TaskPlanning: ['src/views/calendarOccurrences.ts'],
+  TaskPlanning: ['src/views/calendarOccurrences.ts', 'src/task-lists/taskNodeMembership.ts'],
+  TaskStatus: ['src/task-lists/taskNodeMembership.ts'],
+  taskNodeSourceLine: ['src/task-lists/taskNodeMembership.ts'],
+  taskHasFutureDate: ['src/task-lists/taskNodeMembership.ts'],
+  taskTodayOccurrence: [
+    'src/task-lists/taskNodeMembership.ts',
+    'src/task-lists/todayTaskCategory.ts',
+  ],
   TaskOccurrenceResult: ['src/ui/recurrence/RecurrenceEditor.ts'],
   TaskPatch: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
   TaskPriority: [

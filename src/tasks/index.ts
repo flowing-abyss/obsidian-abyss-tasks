@@ -92,6 +92,7 @@ export type {
   TaskPriority,
   TaskRef,
   TaskSnapshot,
+  TaskStatus,
   TaskStatusType,
   TaskTextTarget,
   TimeEntryRef,
@@ -136,3 +137,6 @@ export {
 export { createSearchWordSegmenter } from './infrastructure/search/searchWordSegmenter';
 
 export { normalizeCommentText } from './domain/commentText';
+
+export { taskHasFutureDate, taskTodayOccurrence } from './domain/taskOccupiedDates';
+export { taskNodeSourceLine } from './domain/taskSearchProjection';

@@ -5,12 +5,14 @@ import { AppState } from '../src/app/AppState';
 import { ProjectCreationError, type ProjectCreateOptions } from '../src/projects/projectCreation';
 import { ProjectEditValidationError } from '../src/projects/projectEditError';
 import type { ProjectStats } from '../src/projects/types';
-import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { RenameTagModal } from '../src/tags/RenameTagModal';
 import { TagManager } from '../src/tags/TagManager';
 import { discoveredPrefixGroupId, discoveredTagGroupId } from '../src/tags/effectiveTagGroups';
+import { selectTaskNodes } from '../src/task-lists/TaskListSelector';
 import type { TaskApplicationApi, TaskSnapshot } from '../src/tasks';
+import { localDate } from '../src/tasks';
 import { TagGroupAppearanceModal } from '../src/ui/TagGroupAppearanceModal';
 import {
   createAppWithFiles,
@@ -26,6 +28,7 @@ import {
   useRealMoment,
 } from './helpers';
 import { makeLeftPanelForTest } from './support/panelHarness';
+import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 
 function firstNoticeText(): string {
   const message = vi.mocked(Notice).mock.calls[0]?.[0];
@@ -192,17 +195,21 @@ describe('LeftPanel smart lists', () => {
       task({
         status: 'open',
         tags: ['#inbox'],
-        source: { originalMarkdown: '- [ ] t #inbox', originalBlock: '- [ ] t #inbox' },
+        source: { line: 0, originalMarkdown: '- [ ] t #inbox', originalBlock: '- [ ] t #inbox' },
       }),
       task({
         status: 'open',
         tags: ['#inbox'],
-        source: { originalMarkdown: '- [ ] t2 #inbox', originalBlock: '- [ ] t2 #inbox' },
+        source: { line: 1, originalMarkdown: '- [ ] t2 #inbox', originalBlock: '- [ ] t2 #inbox' },
       }),
       task({
         status: 'done',
         tags: ['#inbox'],
-        source: { originalMarkdown: '- [x] done #inbox', originalBlock: '- [x] done #inbox' },
+        source: {
+          line: 2,
+          originalMarkdown: '- [x] done #inbox',
+          originalBlock: '- [x] done #inbox',
+        },
       }),
     ];
     const { el } = makePanel(tasks, {
@@ -342,11 +349,11 @@ describe('LeftPanel smart lists', () => {
 
   it('countUpcoming matches due ?? scheduled > today', () => {
     const tasks = [
-      task({ status: 'open', planning: { due: '2099-12-31' } }),
-      task({ status: 'open', planning: { scheduled: '2099-01-01' } }),
-      task({ status: 'open', presentation: {} }),
-      task({ status: 'open', planning: { due: '2020-01-01' } }),
-      task({ status: 'done', planning: { due: '2099-12-31' } }),
+      task({ source: { line: 0 }, status: 'open', planning: { due: '2099-12-31' } }),
+      task({ source: { line: 1 }, status: 'open', planning: { scheduled: '2099-01-01' } }),
+      task({ source: { line: 2 }, status: 'open', presentation: {} }),
+      task({ source: { line: 3 }, status: 'open', planning: { due: '2020-01-01' } }),
+      task({ source: { line: 4 }, status: 'done', planning: { due: '2099-12-31' } }),
     ];
     const { el } = makePanel(tasks);
     const rows = el.querySelectorAll('.abyss-left-item');
@@ -428,17 +435,29 @@ describe('LeftPanel tag groups (prefix mode)', () => {
       task({
         status: 'open',
         tags: ['#work'],
-        source: { originalMarkdown: '- [ ] #work task', originalBlock: '- [ ] #work task' },
+        source: {
+          line: 0,
+          originalMarkdown: '- [ ] #work task',
+          originalBlock: '- [ ] #work task',
+        },
       }),
       task({
         status: 'open',
         tags: ['#work/dev'],
-        source: { originalMarkdown: '- [ ] #work/dev task', originalBlock: '- [ ] #work/dev task' },
+        source: {
+          line: 1,
+          originalMarkdown: '- [ ] #work/dev task',
+          originalBlock: '- [ ] #work/dev task',
+        },
       }),
       task({
         status: 'done',
         tags: ['#work'],
-        source: { originalMarkdown: '- [x] #work done', originalBlock: '- [x] #work done' },
+        source: {
+          line: 2,
+          originalMarkdown: '- [x] #work done',
+          originalBlock: '- [x] #work done',
+        },
       }),
     ];
     const { el } = makePanel(tasks, {
@@ -593,17 +612,29 @@ describe('LeftPanel tag groups (prefix mode)', () => {
       task({
         status: 'open',
         tags: ['#work/dev'],
-        source: { originalMarkdown: '- [ ] #work/dev a', originalBlock: '- [ ] #work/dev a' },
+        source: {
+          line: 0,
+          originalMarkdown: '- [ ] #work/dev a',
+          originalBlock: '- [ ] #work/dev a',
+        },
       }),
       task({
         status: 'open',
         tags: ['#work/dev'],
-        source: { originalMarkdown: '- [ ] #work/dev b', originalBlock: '- [ ] #work/dev b' },
+        source: {
+          line: 1,
+          originalMarkdown: '- [ ] #work/dev b',
+          originalBlock: '- [ ] #work/dev b',
+        },
       }),
       task({
         status: 'done',
         tags: ['#work/dev'],
-        source: { originalMarkdown: '- [x] #work/dev done', originalBlock: '- [x] #work/dev done' },
+        source: {
+          line: 2,
+          originalMarkdown: '- [x] #work/dev done',
+          originalBlock: '- [x] #work/dev done',
+        },
       }),
     ];
     const { el } = makePanel(tasks, {
@@ -749,17 +780,17 @@ describe('LeftPanel tag groups (manual mode)', () => {
       task({
         status: 'open',
         tags: ['#foo'],
-        source: { originalMarkdown: '- [ ] #foo task', originalBlock: '- [ ] #foo task' },
+        source: { line: 0, originalMarkdown: '- [ ] #foo task', originalBlock: '- [ ] #foo task' },
       }),
       task({
         status: 'open',
         tags: ['#bar'],
-        source: { originalMarkdown: '- [ ] #bar task', originalBlock: '- [ ] #bar task' },
+        source: { line: 1, originalMarkdown: '- [ ] #bar task', originalBlock: '- [ ] #bar task' },
       }),
       task({
         status: 'done',
         tags: ['#foo'],
-        source: { originalMarkdown: '- [x] #foo done', originalBlock: '- [x] #foo done' },
+        source: { line: 2, originalMarkdown: '- [x] #foo done', originalBlock: '- [x] #foo done' },
       }),
     ];
     const { el } = makePanel(tasks, {
@@ -809,7 +840,7 @@ describe('LeftPanel effective tag groups', () => {
     expect(merged.tagGroups).toEqual([]);
   });
 
-  it('counts a subtask-only tag as one root and opens a nonempty root list', () => {
+  it('counts a subtask-only tag as one node and opens its exact tag destination', () => {
     const root = task({
       title: 'Root',
       subtasks: [subtask({ tags: ['#work/subtask'] })],
@@ -846,9 +877,9 @@ describe('LeftPanel effective tag groups', () => {
         : [];
       const { el } = makePanel(
         [
-          task({ title: 'Exact', tags: [`#${prefix}`] }),
-          task({ title: 'Claimed child', tags: [`#${prefix}/client`] }),
-          task({ title: 'Free child', tags: [`#${prefix}/other`] }),
+          task({ source: { line: 0 }, title: 'Exact', tags: [`#${prefix}`] }),
+          task({ source: { line: 1 }, title: 'Claimed child', tags: [`#${prefix}/client`] }),
+          task({ source: { line: 2 }, title: 'Free child', tags: [`#${prefix}/other`] }),
         ],
         {
           tagGroups: [
@@ -1948,7 +1979,10 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
   }) {
     const state = new AppState();
     const store = makeStubStore(opts.tasks ?? []);
-    const taskList = vi.spyOn(store.queries, 'list');
+    const taskList = vi.spyOn(
+      (store as unknown as { taskQueries: TaskApplicationApi['queries'] }).taskQueries,
+      'listNodes',
+    );
     const merged: CalendarSettings = {
       ...DEFAULT_SETTINGS,
       sectionCollapse: { ...DEFAULT_SETTINGS.sectionCollapse },
@@ -3061,4 +3095,112 @@ it('keeps a case-alias discovered prefix selection visibly active', () => {
     'Work',
   );
   panel.destroy();
+});
+
+it('counts all 22 active Inbox nodes in smart, exact and prefix navigation independent of center filters', async () => {
+  const openTasks = Array.from({ length: 21 }, (_, i) => `- [ ] Open ${i} #type/inbox`).join('\n');
+  const markdown = `${openTasks}\n- [/] Working #type/inbox\n`;
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    inbox: { ...DEFAULT_SETTINGS.inbox, mode: 'tag' as const, tag: '#type/inbox' },
+  };
+  const h = await createCanonicalSearchHarness({ 'counts.md': markdown }, settings);
+  const { el, panel, state } = makePanel([...h.index.list()], settings, ['#type/inbox']);
+  try {
+    const badge = (selector: string) => el.querySelector(selector)?.textContent;
+    expect(badge('.abyss-left-item .abyss-left-count')).toBe('22');
+    expect(badge('.abyss-pinned-tag .abyss-left-count')).toBe('22');
+    expect(badge('.abyss-tag-group-header .abyss-left-count')).toBe('22');
+    const input = {
+      tasks: h.index.listNodes(),
+      settings,
+      today: localDate('2026-10-08'),
+      nowMs: 0,
+      viewState: getListViewDefaults('inbox'),
+    };
+    for (const selection of [
+      'inbox',
+      { type: 'tag', tag: '#type/inbox' },
+      { type: 'group', groupId: 'discovered:prefix:type' },
+    ] as const) {
+      expect(selectTaskNodes({ ...input, selection })).toHaveLength(22);
+    }
+    expect(selectTaskNodes({ ...input, selection: 'inbox', textQuery: 'Working' })).toHaveLength(1);
+    state.set('centerFilter', 'Working');
+    state.set('centerListViewState', { ...input.viewState, statusGroups: ['done'] });
+    panel.refresh();
+    expect(badge('.abyss-left-item .abyss-left-count')).toBe('22');
+    expect(badge('.abyss-pinned-tag .abyss-left-count')).toBe('22');
+    expect(badge('.abyss-tag-group-header .abyss-left-count')).toBe('22');
+  } finally {
+    panel.destroy();
+    h.close();
+  }
+});
+
+it('counts independently active canonical children, ranges and custom status symbols after exclusions', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(2026, 9, 8, 12));
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.inbox = { ...settings.inbox, mode: 'both', tag: '#inbox' };
+  settings.tagGroups = [
+    { id: 'inbox-group', name: 'Inbox group', mode: 'prefix', prefix: 'inbox' },
+  ];
+  settings.taskStatuses = settings.taskStatuses.filter(
+    ({ symbol }) => symbol !== '?' && symbol !== '!',
+  );
+  settings.taskStatuses.push(
+    { id: 'custom-todo', symbol: '!', name: 'Custom todo', type: 'todo', icon: '', core: false },
+    {
+      id: 'custom-progress',
+      symbol: '?',
+      name: 'Custom progress',
+      type: 'in-progress',
+      icon: '',
+      core: false,
+    },
+  );
+  const h = await createCanonicalSearchHarness(
+    {
+      'nodes.md':
+        '- [!] Parent #one-off\n  - [?] Child #INBOX 🛫 2026-10-07 📅 2026-10-09\n    - [ ] Deep untagged\n  - [x] Done #inbox\n- [ ] Both #inbox\n  - [?] Both child #inbox 🛫 2026-10-08\n- [x] Completed parent\n  - [!] Independent #inbox 🛫 2026-10-10\n- [ ] Root untagged',
+      'excluded.md': '- [!] Excluded #inbox\n  - [?] Excluded child #inbox 🛫 2026-10-08',
+    },
+    settings,
+  );
+  await h.index.refreshSourceExclusion(({ filePath }) => filePath === 'excluded.md');
+  const { el, panel } = makePanel([...h.index.list()], settings, ['#inbox', '#one-off']);
+  try {
+    const badges = Array.from(el.querySelectorAll('.abyss-left-section > .abyss-left-item'))
+      .slice(0, 3)
+      .map((row) => row.querySelector('.abyss-left-count')?.textContent);
+    expect(badges).toEqual(['5', '2', '2']);
+    expect(
+      Array.from(el.querySelectorAll('.abyss-pinned-tag .abyss-left-count')).map(
+        (badge) => badge.textContent,
+      ),
+    ).toEqual(['4', '1']);
+    expect(el.querySelector('.abyss-tag-group-header .abyss-left-count')?.textContent).toBe('4');
+    const input = {
+      tasks: h.index.listNodes(),
+      settings,
+      today: localDate('2026-10-08'),
+      nowMs: 0,
+      viewState: getListViewDefaults('inbox'),
+    };
+    expect(selectTaskNodes({ ...input, selection: 'inbox' })).toHaveLength(5);
+    expect(selectTaskNodes({ ...input, selection: 'today' })).toHaveLength(2);
+    expect(selectTaskNodes({ ...input, selection: 'upcoming' })).toHaveLength(2);
+    expect(
+      selectTaskNodes({
+        ...input,
+        selection: 'inbox',
+        viewState: { ...input.viewState, statusGroups: ['done'] },
+      }).map(({ node }) => node.title),
+    ).toEqual(['Done', 'Completed parent']);
+  } finally {
+    panel.destroy();
+    h.close();
+    vi.useRealTimers();
+  }
 });

@@ -1,4 +1,5 @@
 /** Golden outputs generated from git archive 76c667a7697defa85529f2c2e2689fe8b659ab8e.
+ * Task 2 intentionally updates only Upcoming start-only and own-tag destination membership.
  * The old implementation is an ignored, temporary oracle, never a production dependency.
  */
 import { expect, it } from 'vitest';
@@ -155,6 +156,46 @@ it('matches checkpoint ordering, groups, counts, scores, aliases and membership'
     run('renamed', list, null, { renamed: true });
     run('later-tracking', list, null, { nowMs: 1791087600000 });
     expect(output).toMatchSnapshot();
+  } finally {
+    h.close();
+  }
+});
+
+it('uses compact record depth to keep untagged Inbox and project populations root-only', async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.inbox.mode = 'untagged';
+  const h = await createCanonicalSearchHarness(
+    { 'depth.md': '- [ ] Root\n  - [ ] Child\n    - [ ] Deep' },
+    settings,
+  );
+  try {
+    const subscription = h.index.searchSource().subscribe(() => {});
+    const generation = subscription.state.generation;
+    subscription.unsubscribe();
+    const records: TaskOrganizationRecord[] = [];
+    for await (const batch of h.index.organization(
+      { expectedGeneration: generation, scope: 'nodes' },
+      new AbortController().signal,
+    ))
+      records.push(...batch.items);
+    expect(records).toHaveLength(3);
+    for (const selection of ['inbox', { type: 'project', path: 'depth.md' }, null] as const) {
+      const result = organizeTaskSearch({
+        generation,
+        records,
+        hits: null,
+        selection,
+        settings,
+        today: localDate('2026-10-08'),
+        nowMs: 0,
+        outgoingLinks: new Map(),
+        view: {
+          relevance: false,
+          list: { groupBy: 'none', sortBy: { field: 'title', dir: 'asc' }, filters: [] },
+        },
+      });
+      expect(result.occurrences.map(({ taskKey }) => taskKey)).toEqual(['depth.md:0']);
+    }
   } finally {
     h.close();
   }

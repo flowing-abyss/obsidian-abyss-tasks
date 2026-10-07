@@ -45,6 +45,7 @@ it('ordinary sorts stay native while all cooperative sorting bypasses native sor
       groupBy: 'none' as const,
       filters: [],
     },
+    depth: () => 0,
     treeTags: () => [],
     trackedMs: () => 0,
   };
@@ -75,6 +76,7 @@ it('skips unused subtree/catalog/tracked preparation outside relevant membership
       groupBy: 'none' as const,
       filters: [],
     },
+    depth: () => 0,
     treeTags: vi.fn(() => {
       throw new Error('unused tree tags');
     }),

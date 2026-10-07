@@ -209,6 +209,8 @@ describe('task architecture ESLint boundaries', () => {
 const pureFiles = [
   'src/collectionSteps.ts',
   'src/task-lists/TaskListSelector.ts',
+  'src/task-lists/taskNodeMembership.ts',
+  'src/tasks/domain/taskOccupiedDates.ts',
   'src/tags/effectiveTagGroups.ts',
   'src/task-lists/taskSearchOrganization.ts',
   'src/panels/center/taskSearchDestination.ts',
