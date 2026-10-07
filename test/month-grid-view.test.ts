@@ -8,6 +8,7 @@ import { StatusRegistry } from '../src/status/StatusRegistry';
 import { localDate } from '../src/tasks';
 import {
   calendarOccurrenceForRender,
+  calendarSpanBoundaryCommand,
   projectCalendarOccurrences,
   taskSnapshotForCalendarOccurrence,
 } from '../src/views/calendarOccurrences';
@@ -28,6 +29,8 @@ import {
   useRealMoment,
 } from './helpers';
 import { expandCompoundSelectorLists } from './support/expandedCss';
+
+import { hierarchyHarness } from './support/taskHierarchyHarness';
 
 useRealMoment();
 const fakeApp = {} as App;
@@ -2042,3 +2045,78 @@ describe('Month compact date range gestures', () => {
     view.destroy();
   });
 });
+
+it.each([false, true].flatMap((child) => ['⏳', '🛫'].map((anchor) => ({ child, anchor }))))(
+  'projected month Create span reserves destination lane: child=$child anchor=$anchor',
+  async ({ child, anchor }) => {
+    const header = `- [ ] Extending ${anchor} 2026-10-08`;
+    const original = child ? `- [ ] Parent\n  ${header}\n` : `${header}\n`;
+    const h = await hierarchyHarness({
+      'source.md': original,
+      'target.md': '- [ ] Earlier 📅 2026-10-09 ⏰ 08:00\n',
+    });
+    const displays = () =>
+      projectCalendarOccurrences(
+        h.index.forCalendarProjection([localDate('2026-10-08'), localDate('2026-10-09')]),
+        { from: localDate('2026-10-01'), to: localDate('2026-10-31') },
+        { removeScheduledDate: false },
+      ).occurrences.map(taskSnapshotForCalendarOccurrence);
+    const source = expectDefined(displays().find((item) => item.title === 'Extending'));
+    const cbs = callbacks();
+    const view = new MonthGridView(cbs);
+    const container = freshContainer();
+    const config = resolvedConfig({ startPosition: '2026-10', firstDayOfWeek: 1 });
+    view.render(container, displays(), config);
+    measureMonthCells(container);
+    const cell = expectDefined(container.querySelector<HTMLElement>('[data-mg-date="2026-10-08"]'));
+    const handle = expectDefined(cell.querySelector<HTMLElement>('[data-boundary="create-span"]'));
+    const origin = cell.getBoundingClientRect();
+    const destination = expectDefined(
+      container.querySelector<HTMLElement>('[data-mg-date="2026-10-09"]'),
+    ).getBoundingClientRect();
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        pointerId: 93,
+        clientX: origin.x + 50,
+        clientY: origin.y + 50,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', {
+        pointerId: 93,
+        clientX: destination.x + 50,
+        clientY: destination.y + 50,
+      }),
+    );
+    const previews = [...container.querySelectorAll<HTMLElement>('.abyss-span-boundary-preview')];
+    expect(previews.map((item) => item.style.gridRow)).toEqual(['2', '2']);
+    window.dispatchEvent(
+      new PointerEvent('pointerup', {
+        pointerId: 93,
+        clientX: destination.x + 50,
+        clientY: destination.y + 50,
+      }),
+    );
+    expect(cbs.onSpanBoundary).toHaveBeenCalledWith(
+      source,
+      expect.objectContaining({ boundary: 'create-span', date: '2026-10-09' }),
+    );
+    const command = expectDefined(
+      calendarSpanBoundaryCommand(source, 'create-span', localDate('2026-10-09')),
+    );
+    expect(await h.service.execute(command)).toMatchObject({ type: 'ok' });
+    const bytes = await h.read('source.md');
+    expect(bytes).toContain('📅 2026-10-09');
+    const withoutDue = bytes.replace(' 📅 2026-10-09', '');
+    expect(anchor === '⏳' ? withoutDue.replace(' 🛫 2026-10-08', '') : withoutDue).toBe(original);
+    view.patch(container, displays(), config);
+    const committed = expectDefined(
+      container.querySelector<HTMLElement>('[data-task-path="source.md"][data-span-kind="ghost"]'),
+    );
+    expect(committed.style.gridRow).toBe('2');
+    view.destroy();
+    h.index.destroy();
+  },
+);

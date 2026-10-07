@@ -171,7 +171,7 @@ export function layoutVisibleMonthWithReplacement(
   return layoutVisibleMonth(
     tasks.map((candidate) =>
       taskLayoutIdentity(candidate) === identity
-        ? calendarTaskWithPlanning(candidate, planning)
+        ? calendarTaskWithPlanning(source, planning)
         : candidate,
     ),
     dates,

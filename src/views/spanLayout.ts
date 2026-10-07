@@ -231,7 +231,7 @@ export function layoutVisibleSpansWithReplacement(
   return layoutVisibleSpans(
     tasks.map((candidate) =>
       taskLayoutIdentity(candidate) === identity
-        ? calendarTaskWithPlanning(candidate, planning)
+        ? calendarTaskWithPlanning(source, planning)
         : candidate,
     ),
     dates,

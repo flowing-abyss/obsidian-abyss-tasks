@@ -943,7 +943,12 @@ inclusive interval, or distinct authored points with their exact contributing st
 roles. A scheduled date outside a valid interval does not add a materialized calendar occurrence.
 The calendar snapshot WeakMap retains the canonical target and occupied shape through month,
 span and time-grid layouts and planning previews. TodayView's shared month/week buckets consume
-that shape, so start-only and inverted pairs render as points. Forecasts retain separate immutable
+that shape, so start-only and inverted pairs render as points. Explicit Create span gesture previews
+opt into interval promotion through `calendarTaskWithPlanning`; ordinary planning previews preserve
+point roles even when their candidate has valid start/due. Timed, week and month replacement layouts
+consume that preview's registered source and key, so destination overlap lanes match committed spans.
+Unregistered root payloads have no displayed-point authority and retain the single legacy scheduling
+anchor (scheduled, then due, with start-only support). Forecasts retain separate immutable
 identity, bounded recurrence expansion, and explicit source-only editing.
 
 CalendarCommands and the exact subject adapter permit child duration after source validation.

@@ -174,7 +174,7 @@ export function previewTimedPositionFor(
   const identity = taskLayoutIdentity(source);
   const prospectiveTasks = tasks.map((candidate) =>
     taskLayoutIdentity(candidate) === identity
-      ? calendarTaskWithPlanning(candidate, planning)
+      ? calendarTaskWithPlanning(source, planning)
       : candidate,
   );
   const { timed, timedSpans } = bucketTasksForDate(prospectiveTasks, date);

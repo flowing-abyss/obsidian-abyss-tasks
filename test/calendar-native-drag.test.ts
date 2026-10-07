@@ -279,3 +279,22 @@ it('rejects native context after source exclusion without writing bytes', async 
   expect(await h.read('source.md')).toBe(h.original);
   h.index.destroy();
 });
+
+it.each(
+  ['2026-10-08', '2026-10-10'].flatMap((due) => ['date', 'time'].map((lane) => ({ due, lane }))),
+)('legacy $lane drag preserves scheduled anchor and due=$due', async ({ due, lane }) => {
+  const original = `- [ ] Node ⏳ 2026-10-10 📅 ${due}\n`;
+  const h = await hierarchyHarness({ 'source.md': original, 'target.md': '- [ ] Other\n' });
+  const queries = taskQueryApi({ list: () => [h.source] });
+  const commands = new CalendarCommands({
+    tasks: { queries, execute: (command) => h.service.execute(command) },
+    queries,
+  });
+  const legacy = `${h.source.source.filePath}:::${h.source.source.line}`;
+  if (lane === 'date') await commands.rescheduleFromDrag(legacy, '2026-10-12');
+  else await commands.setTimeFromDrag(legacy, '2026-10-12', '09:00');
+  expect(await h.read('source.md')).toBe(
+    `- [ ] Node${lane === 'time' ? ' ⏰ 09:00' : ''} ⏳ 2026-10-12 📅 ${due}\n`,
+  );
+  h.index.destroy();
+});

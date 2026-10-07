@@ -447,32 +447,40 @@ export function calendarOccurrenceForTask(task: TaskSnapshot): CalendarOccurrenc
  * occurrence registration. The identity stays non-enumerable and process-local in the existing
  * WeakMap; no persisted ref/id or second metadata grammar is introduced.
  */
-export function calendarTaskWithPlanning(task: TaskSnapshot, planning: TaskPlanning): TaskSnapshot {
+export function calendarTaskWithPlanning(
+  task: TaskSnapshot,
+  planning: TaskPlanning,
+  intent?: 'create-span',
+): TaskSnapshot {
   const preview = { ...task, planning };
   const occurrence = occurrenceBySnapshot.get(task);
   if (occurrence?.kind === 'materialized') {
-    const occupied = occurrence.occupied;
-    if (occupied.kind === 'point') {
-      const role = occupied.roles[0];
-      const date = role === undefined ? undefined : planning[role];
-      occurrenceBySnapshot.set(preview, {
-        ...occurrence,
-        planning,
-        occupied: { ...occupied, date: date ?? occupied.date },
-      });
-    } else {
-      occurrenceBySnapshot.set(preview, {
-        ...occurrence,
-        planning,
-        occupied: {
-          ...occupied,
-          start: planning.start ?? occupied.start,
-          due: planning.due ?? occupied.due,
-        },
-      });
-    }
+    const promoted = intent === 'create-span' ? taskOccupiedDates(planning) : undefined;
+    occurrenceBySnapshot.set(preview, {
+      ...occurrence,
+      planning,
+      occupied:
+        promoted?.kind === 'interval'
+          ? promoted
+          : occupiedWithPlanning(occurrence.occupied, planning),
+    });
   } else if (occurrence !== undefined) occurrenceBySnapshot.set(preview, occurrence);
   return preview;
+}
+
+function occupiedWithPlanning(
+  occupied: Extract<CalendarOccurrence, { kind: 'materialized' }>['occupied'],
+  planning: TaskPlanning,
+): Extract<CalendarOccurrence, { kind: 'materialized' }>['occupied'] {
+  if (occupied.kind === 'interval')
+    return {
+      ...occupied,
+      start: planning.start ?? occupied.start,
+      due: planning.due ?? occupied.due,
+    };
+  const role = occupied.roles[0];
+  const date = role === undefined ? undefined : planning[role];
+  return { ...occupied, date: date ?? occupied.date };
 }
 
 /**
@@ -486,8 +494,16 @@ function occupiedForUnprojectedTask(
 ): Extract<CalendarOccurrence, { kind: 'materialized' }>['occupied'] {
   const dates = taskOccupiedDates(planning);
   if (dates.kind === 'interval') return dates;
-  const point = dates.points[0];
-  return { kind: 'point', date: point?.date ?? localDate('0000-01-01'), roles: point?.roles ?? [] };
+  // Unregistered callers have no displayed-point authority: retain the legacy scheduling anchor.
+  let role: TaskDateRole = 'start';
+  if (planning.due !== undefined) role = 'due';
+  if (planning.scheduled !== undefined) role = 'scheduled';
+  const date = planning[role];
+  return {
+    kind: 'point',
+    date: date ?? localDate('0000-01-01'),
+    roles: date === undefined ? [] : [role],
+  };
 }
 
 export function calendarOccurrenceForRender(task: TaskSnapshot): CalendarOccurrence {

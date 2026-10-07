@@ -5,7 +5,11 @@ import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { localDate } from '../src/tasks';
 import { localDate as occupiedFixtureDate } from '../src/tasks/domain/validation';
-import { taskSnapshotForCalendarOccurrence } from '../src/views/calendarOccurrences';
+import {
+  calendarSpanBoundaryCommand,
+  projectCalendarOccurrences,
+  taskSnapshotForCalendarOccurrence,
+} from '../src/views/calendarOccurrences';
 import * as spanLayout from '../src/views/spanLayout';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
 import {
@@ -19,6 +23,8 @@ import {
   task,
   useRealMoment,
 } from './helpers';
+
+import { hierarchyHarness } from './support/taskHierarchyHarness';
 
 useRealMoment();
 const fakeApp = {} as App;
@@ -1952,3 +1958,137 @@ it('bounds forecast clone duration without modifying the source planning', () =>
   expect(cb.onDurationChange).not.toHaveBeenCalled();
   view.destroy();
 });
+
+async function projectedSpanFixture(child: boolean, anchor: string, timed: boolean) {
+  const header = `- [ ] Extending ${anchor} 2026-10-08${timed ? ' ⏰ 09:00 ⏱️ 1h' : ''}`;
+  const original = child ? `- [ ] Parent\n  ${header}\n` : `${header}\n`;
+  const h = await hierarchyHarness({
+    'source.md': original,
+    'target.md': timed
+      ? '- [ ] Overlap 📅 2026-10-09 ⏰ 09:00 ⏱️ 1h\n'
+      : '- [ ] Overlap 🛫 2026-10-07 📅 2026-10-10\n',
+  });
+  const displays = () =>
+    projectCalendarOccurrences(
+      h.index.forCalendarProjection([localDate('2026-10-08'), localDate('2026-10-09')]),
+      { from: localDate('2026-10-05'), to: localDate('2026-10-11') },
+      { removeScheduledDate: false },
+    ).occurrences.map(taskSnapshotForCalendarOccurrence);
+  const source = expectDefined(displays().find((item) => item.title === 'Extending'));
+  const commit = async () => {
+    const command = expectDefined(
+      calendarSpanBoundaryCommand(source, 'create-span', localDate('2026-10-09')),
+    );
+    expect(command.type === 'patch' ? command.target.type : 'task').toBe(
+      child ? 'subtask' : 'task',
+    );
+    expect(await h.service.execute(command)).toMatchObject({ type: 'ok' });
+    const bytes = await h.read('source.md');
+    expect(bytes).toContain('🛫 2026-10-08');
+    expect(bytes).toContain('📅 2026-10-09');
+    const withoutDue = bytes.replace(' 📅 2026-10-09', '');
+    expect(anchor === '⏳' ? withoutDue.replace(' 🛫 2026-10-08', '') : withoutDue).toBe(original);
+    return displays();
+  };
+  return { ...h, displays, source, commit };
+}
+
+it.each([false, true].flatMap((child) => ['⏳', '🛫'].map((anchor) => ({ child, anchor }))))(
+  'projected timed Create span packs destination like committed interval: child=$child anchor=$anchor',
+  async ({ child, anchor }) => {
+    const h = await projectedSpanFixture(child, anchor, true);
+    const cbs = { ...callbacks(), onTimedBoundary: vi.fn() };
+    const view = new WeekTimeGridView(cbs);
+    const container = freshContainer();
+    const config = resolvedConfig({ startPosition: '2026-10-05', firstDayOfWeek: 1 });
+    view.render(container, h.displays(), config);
+    measureTimedColumns(container);
+    const source = expectDefined(
+      container.querySelector<HTMLElement>(
+        '[data-tg-date="2026-10-08"] [data-abyss-task-file="source.md"]',
+      ),
+    );
+    vi.spyOn(source, 'getBoundingClientRect').mockReturnValue(new DOMRect(300, 532, 100, 48));
+    const handle = expectDefined(
+      source.querySelector<HTMLElement>('[data-boundary="create-span"]'),
+    );
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 350,
+        clientY: 544,
+        pointerId: 91,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 450, clientY: 544, pointerId: 91 }),
+    );
+    const preview = expectDefined(
+      container.querySelector<HTMLElement>(
+        '[data-tg-date="2026-10-09"] .abyss-tg-boundary-preview',
+      ),
+    );
+    expect(preview.style.width).toBe('50%');
+    const geometry = { left: preview.style.left, width: preview.style.width };
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { clientX: 450, clientY: 544, pointerId: 91 }),
+    );
+    expect(cbs.onTimedBoundary).toHaveBeenCalledWith(
+      h.source,
+      expect.objectContaining({ boundary: 'create-span', date: '2026-10-09' }),
+    );
+    view.patch(container, await h.commit(), config);
+    const committed = expectDefined(
+      container.querySelector<HTMLElement>(
+        '[data-tg-date="2026-10-09"] [data-abyss-task-file="source.md"]',
+      ),
+    );
+    expect({ left: committed.style.left, width: committed.style.width }).toEqual(geometry);
+    view.destroy();
+    h.index.destroy();
+  },
+);
+
+it.each([false, true].flatMap((child) => ['⏳', '🛫'].map((anchor) => ({ child, anchor }))))(
+  'projected all-day Create span uses committed overlap lane: child=$child anchor=$anchor',
+  async ({ child, anchor }) => {
+    const h = await projectedSpanFixture(child, anchor, false);
+    const cbs = callbacks();
+    const view = new WeekTimeGridView(cbs);
+    const container = freshContainer();
+    const config = resolvedConfig({ startPosition: '2026-10-05', firstDayOfWeek: 1 });
+    view.render(container, h.displays(), config);
+    const restore = measureAllDayCells(container);
+    const source = expectDefined(container.querySelector<HTMLElement>('.abyss-tg-plain'));
+    const handle = expectDefined(
+      source.querySelector<HTMLElement>('[data-boundary="create-span"]'),
+    );
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 350,
+        clientY: 50,
+        pointerId: 92,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 450, clientY: 50, pointerId: 92 }),
+    );
+    const previews = [...container.querySelectorAll<HTMLElement>('.abyss-span-boundary-preview')];
+    expect(previews.map((item) => item.style.gridRow)).toEqual(['2', '2']);
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { clientX: 450, clientY: 50, pointerId: 92 }),
+    );
+    expect(cbs.onExtendToSpan).toHaveBeenCalledWith(h.source, '2026-10-09');
+    view.patch(container, await h.commit(), config);
+    const committed = expectDefined(
+      container.querySelector<HTMLElement>('[data-task-path="source.md"][data-span-kind="ghost"]'),
+    );
+    expect(committed.style.gridRow).toBe('2');
+    view.destroy();
+    restore();
+    h.index.destroy();
+  },
+);

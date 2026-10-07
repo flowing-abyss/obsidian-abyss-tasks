@@ -548,6 +548,27 @@ it('retains exact date roles for real ordinary child and root points', () => {
     expect(occurrence).toMatchObject({
       occupied: { kind: 'point', date: '2026-10-08', roles: ['start'] },
     });
+    const display = taskSnapshotForCalendarOccurrence(occurrence);
+    const spanPlanning = { ...display.planning, due: localDate('2026-10-09') };
+    const ordinaryPreview = calendarTaskWithPlanning(display, spanPlanning);
+    const spanPreview = calendarTaskWithPlanning(display, spanPlanning, 'create-span');
+    expect(calendarOccurrenceForTask(ordinaryPreview)).toMatchObject({
+      occupied: { kind: 'point' },
+    });
+    const promoted = expectDefined(calendarOccurrenceForTask(spanPreview));
+    expect(promoted).toMatchObject({
+      occupied: { kind: 'interval', start: '2026-10-08', due: '2026-10-09' },
+    });
+    expect(promoted.source).toBe(occurrence.source);
+    expect(promoted.key).toBe(occurrence.key);
+    expect(calendarOccurrenceForTask(display)).toBe(occurrence);
+    const invalid = calendarTaskWithPlanning(
+      display,
+      { ...spanPlanning, due: localDate('2026-10-07') },
+      'create-span',
+    );
+    expect(calendarOccurrenceForTask(invalid)).toMatchObject({ occupied: { kind: 'point' } });
+
     expect(
       calendarPointPatchCommand(
         taskSnapshotForCalendarOccurrence(occurrence),

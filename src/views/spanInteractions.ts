@@ -1,5 +1,9 @@
 import { daysBetweenLocalDates, localDate, type LocalDate, type TaskSnapshot } from '../tasks';
-import { calendarOccurrenceForRender, calendarShiftPlanning } from './calendarOccurrences';
+import {
+  calendarOccurrenceForRender,
+  calendarShiftPlanning,
+  calendarTaskWithPlanning,
+} from './calendarOccurrences';
 import type { VisibleSpanLayout } from './spanLayout';
 import { populateCalendarPreview } from './timegrid/calendarPreview';
 import { resolveBoundaryTarget, type SpanBoundaryTarget } from './timegrid/dragGeometry';
@@ -479,7 +483,14 @@ class SpanDragSession {
       to: range.to,
       className: 'abyss-span-boundary-preview',
       target,
-      layout: binding.previewLayoutFor?.(binding.task, range.planning),
+      layout: binding.previewLayoutFor?.(
+        calendarTaskWithPlanning(
+          binding.task,
+          range.planning,
+          target.boundary === 'create-span' ? 'create-span' : undefined,
+        ),
+        range.planning,
+      ),
     });
     return this.previews.length > 0;
   }

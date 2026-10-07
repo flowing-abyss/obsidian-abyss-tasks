@@ -5,7 +5,11 @@ import {
   durationMinutes as validatedDurationMinutes,
   type TaskSnapshot,
 } from '../../tasks';
-import { calendarOccurrenceForRender, calendarShiftPlanning } from '../calendarOccurrences';
+import {
+  calendarOccurrenceForRender,
+  calendarShiftPlanning,
+  calendarTaskWithPlanning,
+} from '../calendarOccurrences';
 import { populateCalendarPreview } from './calendarPreview';
 import {
   resolveBoundaryTarget,
@@ -227,7 +231,12 @@ function applyPreviewPacking(
 ): void {
   const planning = prospectivePlanning(binding.task, target);
   if (planning === undefined || binding.previewPositionFor === undefined) return;
-  const positioned = binding.previewPositionFor(binding.task, planning, date);
+  const source = calendarTaskWithPlanning(
+    binding.task,
+    planning,
+    'boundary' in target && target.boundary === 'create-span' ? 'create-span' : undefined,
+  );
+  const positioned = binding.previewPositionFor(source, planning, date);
   if (positioned === undefined) return;
   const width = 100 / positioned.columns;
   preview.style.left = `${positioned.column * width}%`;
