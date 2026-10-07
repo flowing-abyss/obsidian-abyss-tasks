@@ -6,6 +6,7 @@ import { TaskListSurface } from '../src/panels/task-list/TaskListSurface';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
+import type { TaskRef } from '../src/tasks';
 import type {
   CreationPresentationController,
   CreationRevealRequest,
@@ -165,6 +166,36 @@ function enter(input: HTMLInputElement, text: string): void {
   );
 }
 
+/** Observe the real reveal; a short-lived pulse is not a reliable asynchronous completion clock. */
+function nextQuickPresentation(presentation: CreationPresentationController) {
+  const receipt = deferred<{ ref: TaskRef; element: HTMLElement } | undefined>();
+  const present = presentation.present.bind(presentation);
+  vi.spyOn(presentation, 'present').mockImplementationOnce(
+    (result, description, authority, ownsSelection) => {
+      present(
+        result,
+        description,
+        authority === undefined
+          ? undefined
+          : {
+              ...authority,
+              onPresented(ref, element) {
+                authority.onPresented?.(ref, element);
+                receipt.resolve({ ref, element });
+              },
+              onFinished() {
+                authority.onFinished?.();
+                receipt.resolve(undefined);
+              },
+            },
+        ownsSelection,
+      );
+      if (authority === undefined) receipt.resolve(undefined);
+    },
+  );
+  return receipt.promise;
+}
+
 const revealRevocations = [
   'input',
   'blur',
@@ -216,8 +247,9 @@ describe('physical Q creation reveal through PanelView', () => {
       try {
         const reveal = vi.spyOn(TaskListSurface.prototype, 'reveal');
         const input = await h.openQ();
+        const presented = nextQuickPresentation(h.presentation);
         enter(input, 'Z created Q');
-        await flushMicrotasks();
+        const receipt = expectDefined(await presented);
         const created = expectDefined(h.index.list().find((task) => task.title === 'Z created Q'));
         expect(h.state.get('taskStack')).toEqual([created]);
         if (tag) expect(created.tags).toContain('#work');
@@ -226,14 +258,10 @@ describe('physical Q creation reveal through PanelView', () => {
             .list({ filePath: dashboard ? 'Projects/P.md' : 'created.md' })
             .filter((task) => task.title === 'Z created Q'),
         ).toHaveLength(1);
-        await vi.waitFor(() => {
-          expect(
-            renderedTaskElements(h.root, created.ref).some((el) =>
-              el.classList.contains('is-just-created'),
-            ),
-          ).toBe(true);
-        });
-        const card = expectDefined(renderedTaskElements(h.root, created.ref)[0]);
+        expect(receipt.ref).toEqual(created.ref);
+        const card = receipt.element;
+        expect(renderedTaskElements(h.root, created.ref)).toContain(card);
+        expect(card.classList.contains('is-just-created')).toBe(true);
         const scroll = expectDefined(
           h.root.querySelector<HTMLElement>(
             dashboard ? '.abyss-project-dashboard-session' : '.abyss-center-scroll',
@@ -320,15 +348,14 @@ describe('physical Q creation reveal through PanelView', () => {
         await searchUiCompleted(h.center);
         const filters = structuredClone(h.state.get('centerListViewState').filters);
         const input = await h.openQ();
+        const presented = nextQuickPresentation(h.presentation);
         enter(input, title);
-        await vi.waitFor(() => {
-          const created = expectDefined(h.index.list().find((task) => task.title === title));
-          expect(
-            renderedTaskElements(h.root, created.ref).some((el) =>
-              el.classList.contains('is-just-created'),
-            ),
-          ).toBe(true);
-        });
+        const receipt = expectDefined(await presented);
+        const created = expectDefined(h.index.list().find((task) => task.title === title));
+        expect(receipt.ref).toEqual(created.ref);
+        expect(renderedTaskElements(h.root, created.ref)).toContain(receipt.element);
+        expect(receipt.element.classList.contains('is-just-created')).toBe(true);
+        expect(h.state.get('taskStack')).toEqual([created]);
         expect(h.state.get('selectedList')).toBe('inbox');
         expect(h.state.get(global ? 'searchQuery' : 'centerFilter')).toBe('needle');
         expect(h.state.get('mode')).toBe(global ? 'search' : 'tasks');
@@ -347,6 +374,84 @@ describe('physical Q creation reveal through PanelView', () => {
         expect(input.value).toBe('');
         expect(legacyScroll).not.toHaveBeenCalled();
       } finally {
+        await h.dispose();
+      }
+    },
+  );
+
+  it.each(['presented', 'cancelled'] as const)(
+    'observes a %s excluded reveal after the old polling window expires',
+    async (outcome) => {
+      const h = await mountQuickPanel(false, false, true);
+      const entered = deferred<void>();
+      const hydration = deferred<void>();
+      try {
+        h.query('needle');
+        await searchUiCompleted(h.center);
+        const resolve = h.index.resolveSearchHits.bind(h.index);
+        vi.spyOn(h.index, 'resolveSearchHits').mockImplementation(async (hits, signal) => {
+          const created = h.source.files().find((file) => file.path === 'created.md');
+          if (
+            created !== undefined &&
+            hits.some((hit) =>
+              [...h.source.nodes(created)].some((node) => node.rootId === hit.address.rootId),
+            )
+          ) {
+            entered.resolve();
+            await hydration.promise;
+          }
+          return resolve(hits, signal);
+        });
+        const input = await h.openQ();
+        const presented = nextQuickPresentation(h.presentation);
+        enter(input, 'Z created Q excluded');
+        await entered.promise;
+        // Reproduce the old assertion's false negative while real hydration is still pending.
+        await expect(
+          vi.waitFor(() => {
+            expect(h.root.querySelector('.is-just-created')).not.toBeNull();
+          }),
+        ).rejects.toThrow();
+        if (outcome === 'cancelled') {
+          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        }
+        hydration.resolve();
+        const receipt = await presented;
+        const created = expectDefined(h.index.list({ filePath: 'created.md' })[0]);
+        expect(created.title).toBe('Z created Q excluded');
+        expect(h.state.get('centerFilter')).toBe('needle');
+        expect(h.state.get('centerListViewState').filters).toEqual([]);
+        expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
+          taskCardMountBound(h.root, 1),
+        );
+        const unrelated = expectDefined(h.index.list({ filePath: 'excluded.md' })[0]);
+        expect(renderedTaskElements(h.root, unrelated.ref)).toEqual([]);
+        expect(legacyScroll).not.toHaveBeenCalled();
+        if (outcome === 'presented') {
+          const card = expectDefined(receipt).element;
+          expect(receipt?.ref).toEqual(created.ref);
+          expect(renderedTaskElements(h.root, created.ref)).toContain(card);
+          expect(card.classList.contains('is-just-created')).toBe(true);
+          expect(h.state.get('taskStack')).toEqual([created]);
+          const scroll = expectDefined(h.center.querySelector<HTMLElement>('.abyss-center-scroll'));
+          const viewport = scroll.getBoundingClientRect();
+          expect(card.getBoundingClientRect().top).toBeGreaterThanOrEqual(viewport.top);
+          expect(card.getBoundingClientRect().bottom).toBeLessThanOrEqual(viewport.bottom);
+          expect(h.panel['taskSurface_abyssPrivate']?.surface.rows.taskKeys).toHaveLength(1201);
+          expect(document.activeElement).toBe(input);
+          expect(input.isConnected).toBe(true);
+          expect(input.value).toBe('');
+        } else {
+          expect(receipt).toBeUndefined();
+          await flushMicrotasks();
+          expect(h.root.querySelector('.is-just-created')).toBeNull();
+          expect(h.panel['creationInclusion_abyssPrivate']).toBeUndefined();
+          expect(h.panel['creationAttempts_abyssPrivate'].size).toBe(0);
+          expect(input.isConnected).toBe(false);
+          expect(document.activeElement).toBe(h.center);
+        }
+      } finally {
+        hydration.resolve();
         await h.dispose();
       }
     },

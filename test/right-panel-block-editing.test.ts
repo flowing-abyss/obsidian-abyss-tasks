@@ -37,6 +37,10 @@ import {
 
 useRealMoment();
 
+afterEach(() => {
+  for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+});
+
 function snapshot(revision: string, description = 'old description'): TaskSnapshot {
   const ref: TaskRef = { filePath: 'tasks.md', line: 0, revision };
   const parent = { type: 'task' as const, ref };
