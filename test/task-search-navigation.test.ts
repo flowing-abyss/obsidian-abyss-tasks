@@ -6,7 +6,7 @@ import { CenterPanel } from '../src/panels/CenterPanel';
 import { indexedRows } from '../src/panels/task-list/taskListRows';
 import { TaskSearchRows } from '../src/panels/task-list/TaskSearchRows';
 import { ProjectStore } from '../src/projects/ProjectStore';
-import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import type { TaskSearchAddress } from '../src/tasks';
 import { TaskSearchError, localDate, rootTaskNodeSnapshot } from '../src/tasks';
 import { TaskSearchService } from '../src/tasks/infrastructure/search/TaskSearchService';
@@ -1484,6 +1484,296 @@ it.each([
       expect(parentCard.classList.contains('is-selected')).toBe(true);
     } finally {
       h.dispose();
+    }
+  },
+);
+
+it.each([
+  ['0000-01-01', '9999-12-31', 2912165, 'click'],
+  ['0000-01-01', '9999-12-31', 2912165, 'Enter'],
+  ['0000-01-01', '9999-12-31', 2912165, ' '],
+  ['2026-10-09', '2026-10-10', 5, 'click'],
+] as const)(
+  'reveals the exact same-list parent in %s..%s (%s positions) by %s',
+  async (start, due, baseCount, activation) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 8, 12));
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.pinnedTags = [];
+    settings.tagGroups = [];
+    const h = await mountCanonicalSearchUi(
+      {
+        'tree.md': [
+          `- [ ] Base 🛫 ${start} 📅 ${due}`,
+          '- [ ] Owner ⏳ 2026-10-09',
+          '  - [ ] Same parent',
+          '    - [ ] Child one ⏳ 2026-10-09',
+          '  - [ ] Same parent',
+          '    - [ ] Child two ⏳ 2026-10-09',
+        ].join('\n'),
+      },
+      settings,
+      'tasks',
+    );
+    try {
+      h.panel['navigation_abyssPrivate'].openList('upcoming');
+      await h.completed();
+      const retained = expectDefined(h.panel['taskSurface_abyssPrivate']);
+      const order = expectDefined(retained.search).order;
+      expect(order.taskCount).toBe(baseCount);
+      expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThan(40);
+      const header = expectDefined(h.root.querySelector('.abyss-center-search'));
+      const organization = vi.spyOn(h.index, 'organization');
+      const commits: string[][] = [];
+      const unsubscribe = h.state.onCommit((changed) => commits.push([...changed]));
+      const child = expectDefined(
+        h.root.querySelector<HTMLElement>('.abyss-task-card[data-line="3"]'),
+      );
+      child.click();
+      await flushMicrotasks();
+      expect(commits).toEqual([['taskStack']]);
+      expect(h.panel['taskSurface_abyssPrivate']).toBe(retained);
+      expect(expectDefined(retained.search).order).toBe(order);
+      expect(h.root.querySelector('.abyss-center-search')).toBe(header);
+      expect(organization).not.toHaveBeenCalled();
+      const show = vi.spyOn(h.panel, 'showTaskInList');
+      const parentButton = expectDefined(
+        child.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'),
+      );
+      parentButton.focus();
+      if (activation === 'click') parentButton.click();
+      else
+        parentButton.dispatchEvent(
+          new KeyboardEvent('keydown', { key: activation, bubbles: true, cancelable: true }),
+        );
+      await flushMicrotasks(40);
+      await show.mock.results[0]?.value;
+      await h.completed();
+      unsubscribe();
+      expect(commits).toEqual([['taskStack'], ['taskStack']]);
+      expect(h.state.get('selectedList')).toBe('upcoming');
+      expect(h.state.get('centerFilter')).toBe('');
+      expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Owner', 'Same parent']);
+      const revealed = expectDefined(
+        expectDefined(h.panel['taskSurface_abyssPrivate']).search,
+      ).order;
+      expect(revealed.taskCount).toBe(baseCount + 1);
+      expect(revealed.rowCount).toBe(order.rowCount + 2);
+      const key = expectDefined(revealed.taskKeyAt(baseCount));
+      expect(key).toContain('task-reveal');
+      await vi.waitFor(() => {
+        expect(h.root.querySelector('.is-search-revealed')).not.toBeNull();
+      });
+      const parent = expectDefined(h.root.querySelector<HTMLElement>('.is-search-revealed'));
+      expect(parent.dataset['line']).toBe('2');
+      expect(parent.classList.contains('is-selected')).toBe(true);
+      expect(h.panel['mountedProjection_abyssPrivate'](key)?.target).toEqual(
+        taskNodeRef(expectDefined(h.state.get('taskStack')[1])),
+      );
+      expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThan(40);
+
+      // A second exact path with the same title replaces only the finite receipt tail.
+      const second = expectDefined(
+        h.index.listNodes().find(({ node }) => node.title === 'Child two'),
+      );
+      if (second.target.type !== 'subtask') throw new Error('Expected nested child');
+      const secondParent = second.target.ref.parent;
+      await h.panel.showTaskInList(secondParent, {
+        signal: new AbortController().signal,
+        isCurrent: () => true,
+      });
+      await h.completed();
+      const replaced = expectDefined(
+        expectDefined(h.panel['taskSurface_abyssPrivate']).search,
+      ).order;
+      expect(replaced.taskCount).toBe(baseCount + 1);
+      expect(replaced.rowIndexOf(key)).toBe(-1);
+      await vi.waitFor(() => {
+        expect(h.root.querySelector<HTMLElement>('.is-search-revealed')?.dataset['line']).toBe('4');
+      });
+      h.panel['navigation_abyssPrivate'].openList('upcoming');
+      await h.completed();
+      expect(
+        expectDefined(expectDefined(h.panel['taskSurface_abyssPrivate']).search).order.taskCount,
+      ).toBe(baseCount);
+      expect(h.root.querySelector('.is-search-revealed')).toBeNull();
+    } finally {
+      h.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each(['retirement', 'replacement', 'selection', 'source'] as const)(
+  'does not let delayed same-list parent hydration outlive %s',
+  async (ending) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 8, 12));
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.pinnedTags = [];
+    settings.tagGroups = [];
+    const markdown = [
+      '- [ ] Owner ⏳ 2026-10-09',
+      '  - [ ] Same parent',
+      '    - [ ] Child one ⏳ 2026-10-09',
+      '  - [ ] Same parent',
+      '    - [ ] Child two ⏳ 2026-10-09',
+    ].join('\n');
+    const h = await mountCanonicalSearchUi({ 'tree.md': markdown }, settings, 'tasks');
+    const held = deferred<void>();
+    let heldSignal: AbortSignal | undefined;
+    function assertDelayedOutcome(): void {
+      if (ending === 'replacement') {
+        expect(h.panel['taskSearchReveal_abyssPrivate'].current()?.address.childLines).toEqual([3]);
+        expect(h.root.querySelector<HTMLElement>('.is-search-revealed')?.dataset['line']).toBe('3');
+        expect(h.root.querySelector('.abyss-task-card[data-line="1"]')).toBeNull();
+      } else {
+        expect(h.root.querySelector('.is-search-revealed')).toBeNull();
+        if (ending === 'selection') {
+          expect(h.state.get('taskStack')).toEqual([]);
+          expect(h.root.ownerDocument.activeElement).toBe(
+            h.root.querySelector('.abyss-center-search'),
+          );
+        } else expect(h.panel['taskSearchReveal_abyssPrivate'].current()).toBeUndefined();
+      }
+    }
+    try {
+      h.panel['navigation_abyssPrivate'].openList('upcoming');
+      await h.completed();
+      const replacement = expectDefined(
+        h.index.listNodes().find(({ node }) => node.title === 'Child two'),
+      );
+      if (replacement.target.type !== 'subtask') throw new Error('Expected nested child');
+      const resolve = h.search.resolveHits.bind(h.search);
+      vi.spyOn(h.search, 'resolveHits').mockImplementation(async (hits, signal) => {
+        const result = await resolve(hits, signal);
+        if (
+          heldSignal === undefined &&
+          h.panel['taskSearchReveal_abyssPrivate'].current() !== undefined
+        ) {
+          heldSignal = signal;
+          await held.promise;
+        }
+        return result;
+      });
+      const button = expectDefined(
+        h.root.querySelector<HTMLButtonElement>(
+          '.abyss-task-card[data-line="2"] .abyss-task-parent-btn',
+        ),
+      );
+      button.focus();
+      button.click();
+      await vi.waitFor(() => {
+        expect(heldSignal).toBeDefined();
+      });
+      expect(h.panel['taskSearchReveal_abyssPrivate'].current()?.address.childLines).toEqual([1]);
+      if (ending === 'replacement') {
+        await h.panel.showTaskInList(replacement.target.ref.parent, {
+          signal: new AbortController().signal,
+          isCurrent: () => true,
+        });
+      } else if (ending === 'retirement') {
+        h.panel['navigation_abyssPrivate'].openList('upcoming');
+      } else if (ending === 'source') {
+        h.index.installCommittedContent(
+          'tree.md',
+          markdown.replace('Same parent', 'Changed parent'),
+        );
+      } else {
+        h.state.set('taskStack', []);
+        expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-center-search')).focus();
+      }
+      if (ending !== 'selection') expect(heldSignal?.aborted).toBe(true);
+      held.resolve();
+      await flushMicrotasks(50);
+      await h.completed();
+      const order = expectDefined(expectDefined(h.panel['taskSurface_abyssPrivate']).search).order;
+      expect(order.taskCount).toBe(ending === 'retirement' || ending === 'source' ? 3 : 4);
+      assertDelayedOutcome();
+    } finally {
+      held.resolve();
+      h.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it.each(['navigation', 'selection'] as const)(
+  'retires accepted creation with one list request for later %s',
+  async (action) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 8, 12));
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.pinnedTags = [];
+    settings.tagGroups = [];
+    settings.taskFilePath = 'created.md';
+    settings.listViewStates = {
+      upcoming: {
+        ...getListViewDefaults('upcoming'),
+        filters: [{ type: 'tag', value: '#visible' }],
+      },
+    };
+    const h = await mountCanonicalSearchUi(
+      {
+        'tree.md':
+          '- [ ] Owner #visible ⏳ 2026-10-09\n  - [ ] Parent\n    - [ ] Child #visible ⏳ 2026-10-09',
+        'created.md': '',
+      },
+      settings,
+      'tasks',
+      undefined,
+      true,
+    );
+    try {
+      h.panel['navigation_abyssPrivate'].openList('upcoming');
+      await h.completed();
+      expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')).click();
+      await flushMicrotasks();
+      const input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-capture-input'));
+      input.value = 'Outside saved filter';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await vi.waitFor(() => {
+        expect(h.root.querySelector('.is-just-created')).not.toBeNull();
+      });
+      expect(h.panel['creationInclusion_abyssPrivate']?.accepted).toBe(true);
+      const child = expectDefined(
+        h.root.querySelector<HTMLElement>('.abyss-task-card[data-line="2"]'),
+      );
+      const button = expectDefined(
+        child.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'),
+      );
+      button.focus();
+      await flushMicrotasks();
+      expect(h.panel['creationInclusion_abyssPrivate']?.accepted).toBe(true);
+      const request = Number(h.root.dataset['searchRequest']);
+      const show = vi.spyOn(h.panel, 'showTaskInList');
+      if (action === 'navigation') {
+        button.click();
+        await flushMicrotasks(40);
+        await show.mock.results[0]?.value;
+      } else child.click();
+      await h.completed();
+      expect(Number(h.root.dataset['searchRequest']) - request).toBe(1);
+      expect(h.panel['creationInclusion_abyssPrivate']).toBeUndefined();
+      expect(h.root.textContent).not.toContain('Outside saved filter');
+      expect(h.state.get('centerFilter')).toBe('');
+      expect(h.state.get('selectedList')).toBe('upcoming');
+      const order = expectDefined(expectDefined(h.panel['taskSurface_abyssPrivate']).search).order;
+      expect(order.taskCount).toBe(action === 'navigation' ? 3 : 2);
+      if (action === 'navigation') {
+        expect(h.root.querySelector<HTMLElement>('.is-search-revealed')?.dataset['line']).toBe('1');
+      } else {
+        expect(h.state.get('taskStack').map((node) => node.title)).toEqual([
+          'Owner',
+          'Parent',
+          'Child',
+        ]);
+        expect(h.root.querySelector('.is-search-revealed')).toBeNull();
+      }
+    } finally {
+      h.dispose();
+      vi.useRealTimers();
     }
   },
 );

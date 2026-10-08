@@ -33,11 +33,11 @@ export class TaskSearchReveal {
   current(): TaskRevealReceipt | undefined {
     return this.#receipt;
   }
-  committed(changed: ReadonlySet<string>): void {
+  committed(changed: ReadonlySet<string>): boolean {
     if (this.#installing) {
       this.#installing = false;
       this.#intent = this.intent();
-      return;
+      return true;
     }
     if (
       ['mode', 'selectedList', 'centerFilter', 'centerListViewState'].some((key) =>
@@ -46,6 +46,7 @@ export class TaskSearchReveal {
     )
       this.clear();
     if (this.#intent !== this.intent()) this.cancelPulse();
+    return false;
   }
   get consumedScroll(): boolean {
     return this.#consumedScroll;

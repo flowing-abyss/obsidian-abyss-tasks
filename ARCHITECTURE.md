@@ -827,7 +827,9 @@ callbacks cannot commit. Search retains its existing failure boundary.
 
 `PanelNavigator.openList` accepts an optional synchronous transition. Inside its accepted batch it
 installs CenterPanel's `TaskSearchReveal` receipt and the exact `taskSelectionRefPath` through AppState
-before publishing list/mode. Ordinary callers retain their established navigation flow. Destination
+before publishing list/mode. A newly committed receipt schedules the existing list renderer even when
+the destination is unchanged and only `taskStack` changes; ordinary selection alone retains the current
+organization and input owners. Ordinary callers retain their established navigation flow. Destination
 policy uses current ProjectStore source membership, then configured visible tag leaves in sidebar
 order (pins first), then the shared Today/date fallback. Sidebar prefix children and Search reuse
 `tagNavigationGroupTags`; tag membership traverses the hydrated task tree with exact case-insensitive

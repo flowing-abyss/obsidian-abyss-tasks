@@ -1945,7 +1945,7 @@ export class CenterPanel {
   }
 
   private handleStateCommit_abyssPrivate(changed: ReadonlySet<string>): void {
-    this.taskSearchReveal_abyssPrivate.committed(changed);
+    const revealCommitted = this.taskSearchReveal_abyssPrivate.committed(changed);
     const hadCreationInclusion = this.creationInclusion_abyssPrivate !== undefined;
     if (
       ['taskStack', 'selectedList', 'centerFilter', 'centerListViewState', 'mode'].some((key) =>
@@ -1953,7 +1953,6 @@ export class CenterPanel {
       )
     )
       this.clearCreationInclusion_abyssPrivate();
-    if (hadCreationInclusion && changed.has('taskStack')) this.render_abyssPrivate();
     if (changed.size === 0 && this.state_abyssPrivate.get('mode') === 'calendar') {
       this.calendar_abyssPrivate.cancelKeyboardInteraction();
     }
@@ -1963,7 +1962,12 @@ export class CenterPanel {
       this.cancelCreationAttempts_abyssPrivate();
       this.captureContextRevision_abyssPrivate++;
     }
-    if (changed.size === 0 || renderKeys.some((key) => changed.has(key)))
+    if (
+      revealCommitted ||
+      (hadCreationInclusion && changed.has('taskStack')) ||
+      changed.size === 0 ||
+      renderKeys.some((key) => changed.has(key))
+    )
       this.render_abyssPrivate();
   }
 
