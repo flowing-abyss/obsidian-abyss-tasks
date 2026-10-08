@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { BrowserTaskCancelled } from '../src/browserTaskScheduler';
+import * as collection from '../src/collectionSteps';
 import { drainCollectionSteps } from '../src/collectionSteps';
+import { runTaskOrganization } from '../src/panels/task-list/runTaskOrganization';
 import { taskDailyRowsAudit } from '../src/panels/task-list/taskDailyRows';
 import type { TaskListRows } from '../src/panels/task-list/taskListRows';
 import { TaskRowSelection } from '../src/panels/task-list/taskRowSelection';
@@ -10,6 +13,7 @@ import {
   organizeTaskSearch,
   type TaskSearchOrganizationInput,
 } from '../src/task-lists/taskSearchOrganization';
+import * as taskApi from '../src/tasks';
 import { localDate, type TaskOrganizationRecord } from '../src/tasks';
 import { expectDefined } from './helpers';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
@@ -441,3 +445,88 @@ it('resolves selected lead in only the earliest selected day vector', async () =
     h.close();
   }
 });
+
+it.each(['events', 'event-sort', 'first-day-sort'] as const)(
+  'cancels actual daily %s work through the production driver without publishing',
+  async (target) => {
+    const h = await dailyFixture(
+      '- [ ] B 🛫 2026-10-07 📅 2026-10-09\n- [ ] A 🛫 2026-10-07 📅 2026-10-10',
+    );
+    const controller = new AbortController();
+    const reached: string[] = [];
+    let stage = 'ordinary';
+    const occupied = taskApi.taskOccupiedDates;
+    vi.spyOn(taskApi, 'taskOccupiedDates').mockImplementation((planning) => {
+      const value = occupied(planning);
+      stage = 'events';
+      reached.push(stage);
+      return value;
+    });
+    const sort = collection.stableSortSteps;
+    const assertSortClosed: Array<() => void> = [];
+    vi.spyOn(collection, 'stableSortSteps').mockImplementation(
+      <T>(values: T[], compare: (a: T, b: T) => number) => {
+        const first: unknown = values[0];
+        let kind = stage === 'event-sort' ? 'first-day-sort' : 'ordinary';
+        if (first !== null && typeof first === 'object' && 'delta' in first) kind = 'event-sort';
+        const steps = sort(values, (a, b) => {
+          if (kind !== 'ordinary') {
+            stage = kind;
+            reached.push(kind);
+          }
+          return compare(a, b);
+        });
+        if (kind !== 'ordinary') {
+          const closed = vi.spyOn(steps, 'return');
+          assertSortClosed.push(() => {
+            expect(closed).toHaveBeenCalledExactlyOnceWith(undefined);
+          });
+        }
+        return steps;
+      },
+    );
+    const add = vi.spyOn(controller.signal, 'addEventListener');
+    const remove = vi.spyOn(controller.signal, 'removeEventListener');
+    const log = vi.spyOn(console, 'error');
+    const publish = vi.fn();
+    const continuations = new Set<AbortSignal>();
+    const steps = organizeTaskSearch(h.input);
+    const next = vi.spyOn(steps, 'next');
+    const close = vi.spyOn(steps, 'return');
+    const handoff = vi.fn(async (signal: AbortSignal) => {
+      continuations.add(signal);
+      if (stage === target) controller.abort();
+    });
+    try {
+      await expect(
+        runTaskOrganization(steps, {
+          signal: controller.signal,
+          scheduler: { now: () => 0, yield: handoff },
+          assertCurrent: () => {},
+          phase: 'organization',
+          budget: { targetMs: 4, maxSteps: 1, clockCheckEvery: 1 },
+        }).then(publish),
+      ).rejects.toBeInstanceOf(BrowserTaskCancelled);
+      expect(reached).toContain(target);
+      expect(stage).toBe(target);
+      expect(publish).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+      expect(close).toHaveBeenCalledExactlyOnceWith(undefined);
+      if (target !== 'events') expectDefined(assertSortClosed[assertSortClosed.length - 1])();
+      expect([...continuations]).toHaveLength(1);
+      expect([...continuations].every((signal) => signal.aborted)).toBe(true);
+      expect(add).toHaveBeenCalledExactlyOnceWith('abort', expect.any(Function), { once: true });
+      expect(remove).toHaveBeenCalledExactlyOnceWith('abort', add.mock.calls[0]?.[1]);
+      const advances = next.mock.calls.length;
+      const handoffs = handoff.mock.calls.length;
+      await Promise.resolve();
+      expect(next).toHaveBeenCalledTimes(advances);
+      expect(handoff).toHaveBeenCalledTimes(handoffs);
+      expect(steps.next()).toEqual({ done: true, value: undefined });
+    } finally {
+      controller.abort();
+      h.close();
+      vi.restoreAllMocks();
+    }
+  },
+);

@@ -4,8 +4,10 @@ import type { TaskSearch, TaskSearchOptions } from '../src/panels/center/TaskSea
 import { TaskSearchReveal } from '../src/panels/center/TaskSearchReveal';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { indexedRows } from '../src/panels/task-list/taskListRows';
+import { TaskSearchRows } from '../src/panels/task-list/TaskSearchRows';
 import { ProjectStore } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import type { TaskSearchAddress } from '../src/tasks';
 import { TaskSearchError, localDate, rootTaskNodeSnapshot } from '../src/tasks';
 import { TaskSearchService } from '../src/tasks/infrastructure/search/TaskSearchService';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
@@ -1700,6 +1702,147 @@ it('quietly retires project child reveal while its compact projection is pending
   } finally {
     held.resolve();
     h.dispose();
+  }
+});
+
+it('retires only a mounted daily reveal tail while its hydration and Shift+End focus are pending', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2026, 9, 6, 12));
+  const mounts = new Map<string, { element: HTMLElement; destroys: () => number }>();
+  const mount = methodOf(TaskSearchRows.prototype, 'mount');
+  vi.spyOn(TaskSearchRows.prototype, 'mount').mockImplementation(function (
+    this: TaskSearchRows,
+    host,
+    row,
+  ) {
+    const result = mount.call(this, host, row);
+    const destroy = vi.spyOn(result, 'destroy');
+    if (row.kind === 'task')
+      mounts.set(row.key, { element: result.element, destroys: () => destroy.mock.calls.length });
+    return result;
+  });
+  const h = await mountCanonicalSearchUi(
+    {
+      'base.md': '- [ ] Base 🛫 2026-10-07 📅 2026-10-09',
+      'tail.md': '- [ ] Owner\n  - [ ] Parent 🛫 2026-10-01 📅 2026-10-02',
+    },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  const held = deferred<void>();
+  const entered = deferred<void>();
+  const log = vi.spyOn(console, 'error');
+  const notice = vi.spyOn(
+    Notice.prototype as unknown as { constructor__(message: string): void },
+    'constructor__',
+  );
+  let heldSignal: AbortSignal | undefined;
+  try {
+    h.state.set('selectedList', 'upcoming');
+    h.state.set('centerListViewState', { ...h.state.get('centerListViewState'), groupBy: 'date' });
+    await h.completed();
+    const retained = expectDefined(h.panel['taskSurface_abyssPrivate']);
+    const base = expectDefined(retained.search).order;
+    expect(base.taskCount).toBe(3);
+    const baseKeys = Array.from({ length: base.taskCount }, (_, i) =>
+      expectDefined(base.taskKeyAt(i)),
+    );
+    const baseMounts = baseKeys.map((key) => expectDefined(mounts.get(key)));
+    const subscription = h.source.subscribe(() => {});
+    const generation = subscription.state.generation;
+    subscription.unsubscribe();
+    let parent: TaskSearchAddress | undefined;
+    for await (const batch of h.index.organization(
+      { expectedGeneration: generation, scope: 'nodes' },
+      new AbortController().signal,
+    ))
+      parent = batch.items.find((record) => record.title === 'Parent')?.address ?? parent;
+    const address = expectDefined(parent);
+    expect(address.childLines).toEqual([1]);
+    const resolve = h.search.resolveHits.bind(h.search);
+    const hydrate = vi.spyOn(h.search, 'resolveHits').mockImplementation(async (hits, signal) => {
+      const result = await resolve(hits, signal);
+      if (
+        hits.some(
+          (hit) => hit.address.rootId === address.rootId && hit.address.childLines.length === 0,
+        )
+      ) {
+        heldSignal = signal;
+        entered.resolve();
+        await held.promise;
+      }
+      return result;
+    });
+    const reveal = h.panel['taskSearchReveal_abyssPrivate'];
+    reveal.install({ id: 77, address, selection: 'upcoming' });
+    reveal.committed(new Set());
+    h.panel.refresh();
+    await entered.promise;
+    const overlay = expectDefined(expectDefined(h.panel['taskSurface_abyssPrivate']).search).order;
+    expect(overlay.taskCount).toBe(4);
+    const tailKey = expectDefined(overlay.taskKeyAt(3));
+    expect(tailKey).toContain('task-reveal');
+    const tailMount = expectDefined(mounts.get(tailKey));
+    expect(heldSignal?.aborted).toBe(false);
+    expect(tailMount.element.inert).toBe(true);
+    expect(tailMount.element.querySelector('.abyss-task-title')).toBeNull();
+    const selection = h.panel['rowSelection_abyssPrivate'];
+    h.root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+    h.root.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'End', shiftKey: true, bubbles: true }),
+    );
+    expect(selection.size).toBe(4);
+    expect(selection.focus).toBe(tailKey);
+    expect(selection.selectedNodes(overlay)).toHaveLength(2);
+    const rows = expectDefined(retained.search).rows;
+    const tailReceipt = rows.settleRow(tailKey, new AbortController().signal);
+    const selectedBase = selection.ranges().filter((range) => range.taskKey === 'base.md:0');
+    reveal.clear();
+    h.panel.refresh();
+    await h.completed();
+    expect(reveal.current()).toBeUndefined();
+    expect(heldSignal?.aborted).toBe(true);
+    expect(await tailReceipt).toEqual({ type: 'cancelled' });
+    expect(h.panel['taskSurface_abyssPrivate']).toBe(retained);
+    expect(expectDefined(retained.search).rows).toBe(rows);
+    expect(tailMount.destroys()).toBe(1);
+    expect(tailMount.element.isConnected).toBe(false);
+    for (const [i, mounted] of baseMounts.entries()) {
+      expect(mounted.destroys()).toBe(0);
+      expect(retained.surface.element(expectDefined(baseKeys[i]))).toBe(mounted.element);
+      expect(mounted.element.inert).toBe(false);
+    }
+    expect(
+      hydrate.mock.calls
+        .flatMap(([hits]) => hits)
+        .every((hit) => hit.address.rootId === address.rootId),
+    ).toBe(true);
+    expect(selection.size).toBe(3);
+    expect(selection.ranges()).toEqual(selectedBase);
+    expect(selection.has(tailKey)).toBe(false);
+    expect(selection.focus).toBe(baseKeys[0]);
+    const current = expectDefined(retained.search).order;
+    expect(current.taskCount).toBe(3);
+    expect(current.rowIndexOf(tailKey)).toBe(-1);
+    held.resolve();
+    await flushMicrotasks(50);
+    await h.completed();
+    expect(selection.ranges()).toEqual(selectedBase);
+    expect(selection.size).toBe(3);
+    expect(selection.focus).toBe(baseKeys[0]);
+    expect(retained.surface.element(tailKey)).toBeUndefined();
+    expect(tailMount.element.isConnected).toBe(false);
+    expect(tailMount.destroys()).toBe(1);
+    expect(h.panel['mountedProjection_abyssPrivate'](tailKey)).toBeUndefined();
+    expect(h.root.querySelector('.is-search-revealed')).toBeNull();
+    expect(h.root.querySelectorAll('.abyss-task-title')).toHaveLength(3);
+    expect(h.panel['taskMenuTargets_abyssPrivate']().summaries).toHaveLength(1);
+    expect(log).not.toHaveBeenCalled();
+    expect(notice).not.toHaveBeenCalled();
+  } finally {
+    held.resolve();
+    h.dispose();
+    vi.useRealTimers();
   }
 });
 
