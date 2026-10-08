@@ -1,7 +1,7 @@
 import type { LocalDate, TaskPlanning } from './types';
 
 export type TaskDateRole = 'start' | 'scheduled' | 'due';
-export interface TaskOccupiedPoint {
+interface TaskOccupiedPoint {
   readonly date: LocalDate;
   readonly roles: readonly TaskDateRole[];
 }

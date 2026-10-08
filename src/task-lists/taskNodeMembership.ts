@@ -64,7 +64,7 @@ export function* prepareTaskNodeMembershipSteps(
   }
   return (value) => selected(value, input, { group: group ?? undefined, inboxTag }, cooperative);
 }
-export function prepareTaskNodeMembership(
+function prepareTaskNodeMembership(
   context: TaskMembershipContext,
 ): (value: TaskMembershipValue) => boolean {
   const admits = drainCollectionSteps(prepareTaskNodeMembershipSteps(context, false));
