@@ -76,6 +76,7 @@ const privateOwners = new Set([
   'TaskCaptureController',
   'CaptureSurface',
   'CaptureTargetResolver',
+  'TaskSearch',
 ]);
 
 function privateOwner(node: ts.Node): string | undefined {

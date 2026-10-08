@@ -394,8 +394,9 @@ export class TaskSearch {
     const controller = new AbortController();
     this.#pending = controller;
     try {
-      const organization = await this.collectOrganization(query, controller.signal);
-      if (!this.canPublish(request, organization.generation, controller.signal)) return;
+      const organization = await this.collectOrganization_abyssPrivate(query, controller.signal);
+      if (!this.canPublish_abyssPrivate(request, organization.generation, controller.signal))
+        return;
       await this.#publishRows(organization, request, controller);
     } catch (error) {
       this.#handleFailure(request, error);
@@ -786,7 +787,7 @@ export class TaskSearch {
     this.#assertPreparation(current);
     return organization;
   }
-  private async collectOrganization(
+  private async collectOrganization_abyssPrivate(
     query: string,
     signal: AbortSignal,
   ): Promise<TaskSearchOrganization> {
@@ -920,13 +921,13 @@ export class TaskSearch {
   ): TaskSearchState | undefined {
     const observed = this.#observed;
     return observed?.generation === organization.generation &&
-      this.canPublish(request, organization.generation, signal)
+      this.canPublish_abyssPrivate(request, organization.generation, signal)
       ? observed
       : undefined;
   }
   #rowOptions(identity: TaskSearchRowsIdentity): TaskSearchRowOptions {
     const isCurrent = (): boolean =>
-      this.canPublish(identity.request, identity.generation, identity.signal);
+      this.canPublish_abyssPrivate(identity.request, identity.generation, identity.signal);
     const activate = (address: TaskSearchAddress): void => {
       if (!isCurrent()) return;
       void this.activate(address).catch((error: unknown) => {
@@ -997,7 +998,11 @@ export class TaskSearch {
     });
     this.#failResults(request, error);
   }
-  private canPublish(request: number, generation: number, signal: AbortSignal): boolean {
+  private canPublish_abyssPrivate(
+    request: number,
+    generation: number,
+    signal: AbortSignal,
+  ): boolean {
     return (
       this.#live() &&
       request === this.#request &&
@@ -1042,7 +1047,7 @@ export class TaskSearch {
     const current = (): boolean =>
       this.#activation === controller &&
       this.#options.state.taskSelectionIntentGeneration === intent &&
-      this.canPublish(request, generation, controller.signal);
+      this.canPublish_abyssPrivate(request, generation, controller.signal);
     try {
       await navigateTaskListTarget(
         { type: 'address', address },
