@@ -775,8 +775,9 @@ export class TaskCommands {
     result: Extract<TaskCommandResult, { type: 'ok' }>,
   ): TaskNodeSnapshot | undefined {
     const resolution = this.#tasks?.queries.resolve(pending.root.ref);
-    if (resolution?.type !== 'exact' && resolution?.type !== 'rebased') return undefined;
-    const current = resolution.type === 'exact' ? resolution.task : resolution.current;
+    if (resolution?.type === 'exact') return pending;
+    if (resolution?.type !== 'rebased') return undefined;
+    const current = resolution.current;
     if (
       sameTaskNodeRef({ type: 'task', ref: pending.root.ref }, { type: 'task', ref: current.ref })
     )
@@ -787,6 +788,7 @@ export class TaskCommands {
     );
     if (sameRoot) return this.#advanceOwned(pending, current, { edited, command, result });
     // Other roots survive only via a proven byte-preserving relocation.
+    if (resolution.evidence !== 'byte-identical-relocation') return undefined;
     if (pending.root.source.originalBlock !== current.source.originalBlock) return undefined;
     return this.#atRelativeLines(pending, current, 0);
   }

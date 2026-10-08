@@ -27,6 +27,7 @@ import { taskSnapshotForCalendarOccurrence } from '../src/views/calendarOccurren
 import {
   canonicalStatusCatalog,
   createAppWithFiles,
+  deferred,
   expectDefined,
   flushMicrotasks,
   task,
@@ -375,6 +376,108 @@ async function realCommands(source: string) {
 }
 
 describe('sequential exact node batches against vault source', () => {
+  it.each(['root', 'child'] as const)(
+    'stops before a pending %s inherits a byte-identical recurring replacement',
+    async (selected) => {
+      const recurring = '- [ ] Owner 🔁 every day 🏁 delete\n  - [ ] Child\n';
+      const files = {
+        'source.md': '- [ ] First\n',
+        'target.md': recurring,
+        'last.md': '- [ ] Last\n',
+      };
+      const h = await hierarchyHarness(files);
+      const service = new TaskApplicationService(
+        h.index,
+        h.repository,
+        canonicalStatusCatalog(),
+        clockFrom(Date.UTC(2026, 9, 3), 0),
+        undefined,
+        () => ({
+          ...DEFAULT_SETTINGS,
+          taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+        }),
+      );
+      const firstSettled = deferred<void>();
+      const releaseFirst = deferred<void>();
+      const execute = vi.fn<TaskApplicationApi['execute']>(async (command, options) => {
+        const result = await service.execute(command, options);
+        if (execute.mock.calls.length === 1) {
+          firstSettled.resolve();
+          await releaseFirst.promise;
+        }
+        return result;
+      });
+      const f = await fixture({ queries: h.index, execute });
+      const pending = expectDefined([...taskTreeNodes(h.parent)][selected === 'root' ? 0 : 1]);
+      const last = expectDefined(h.index.list({ filePath: 'last.md' })[0]);
+      const batch = f.commands.applyBulkTaskTags([h.source, pending, last], ['#batch'], []);
+      try {
+        await firstSettled.promise;
+        const completed = await service.execute({
+          type: 'toggle-completion',
+          target: { type: 'task', ref: h.parent.ref },
+        });
+        expect(completed).toMatchObject({ type: 'ok', outcome: { type: 'recurrence' } });
+        expect(await h.read('target.md')).toBe(recurring);
+        const active = expectDefined(h.index.list({ filePath: 'target.md' })[0]);
+        expect(active.ref).not.toEqual(h.parent.ref);
+        expect(h.index.resolve(h.parent.ref)).toMatchObject({
+          type: 'rebased',
+          evidence: 'authority-transition',
+          current: { ref: active.ref },
+        });
+        releaseFirst.resolve();
+        await batch;
+        expect(await h.read('source.md')).toBe('- [ ] First #batch\n');
+        expect(await h.read('target.md')).toBe(recurring);
+        expect(await h.read('last.md')).toBe('- [ ] Last\n');
+        expect(execute).toHaveBeenCalledTimes(1);
+      } finally {
+        releaseFirst.resolve();
+        await batch;
+        f.commands.dispose();
+        h.index.destroy();
+      }
+    },
+  );
+
+  it('continues to an unrelated byte-identical root relocated by the earlier bulk write', async () => {
+    const h = await realCommands(
+      '- [ ] First 🔁 every day 📅 2026-10-03\n- [ ] Later\n  - [ ] Child\n',
+    );
+    const later = expectDefined(h.index.list({ filePath: 'source.md' })[1]);
+    const pending = [expectDefined([...taskTreeNodes(later)][0])];
+    const execute = h.service.execute.bind(h.service);
+    let resolution: ReturnType<typeof h.index.resolve> | undefined;
+    vi.spyOn(h.service, 'execute').mockImplementation(async (command, options) => {
+      const result = await execute(command, options);
+      resolution ??= h.index.resolve(later.ref);
+      return result;
+    });
+    try {
+      await h.commands.setBulkTaskStatus(
+        [expectDefined(h.nodes[0]), ...pending].map((task) => ({
+          task,
+          completion: { kind: 'allowed' },
+        })),
+        'x',
+      );
+      expect(resolution).toMatchObject({
+        type: 'rebased',
+        evidence: 'byte-identical-relocation',
+        current: {
+          source: { line: 2, originalBlock: '- [ ] Later\n  - [ ] Child' },
+        },
+      });
+      expect(await h.read('source.md')).toBe(
+        '- [ ] First 🔁 every day ➕ 2026-10-03 📅 2026-10-04\n- [x] First 🔁 every day 📅 2026-10-03 ✅ 2026-10-03\n- [x] Later ✅ 2026-10-03\n  - [ ] Child\n',
+      );
+    } finally {
+      h.commands.dispose();
+      h.index.destroy();
+    }
+  });
+
   it('patches both same-title siblings and their parent without rewriting prose', async () => {
     const h = await realCommands(
       '- [ ] Parent\n  - [ ] Child\n  - untouched comment\n  - [ ] Child\n\nprose\n',
