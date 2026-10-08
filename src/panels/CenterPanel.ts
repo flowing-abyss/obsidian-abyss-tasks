@@ -117,6 +117,7 @@ import { ProjectsPanel } from './projects/ProjectsPanel';
 import { TaskListSurface, type TaskRowMount } from './task-list/TaskListSurface';
 import { TaskSearchRows, type TaskSearchRowsIdentity } from './task-list/TaskSearchRows';
 import {
+  mountGroupHeader,
   mountTaskListRow,
   NO_MOUNTED_TASK_LIST_ROWS,
   type MountedTaskListRows,
@@ -1139,6 +1140,11 @@ export class CenterPanel {
     if (search === undefined || owner === null) return false;
     const rows = new TaskSearchRows({
       search,
+      ...(this.state_abyssPrivate.get('mode') === 'tasks' && {
+        onDateCapture: (date) => {
+          this.captureSessions_abyssPrivate.openDateCapture(date);
+        },
+      }),
       scheduler: createBrowserTaskScheduler(owner),
       prepareDependencies: (g, signal) =>
         this.tasks_abyssPrivate?.queries.prepareDependencies(g, signal) ??
@@ -2828,6 +2834,16 @@ export class CenterPanel {
     row: TaskListRow<TaskNodeSnapshot>,
     tagGroups: readonly EffectiveTagGroup[],
   ): TaskRowMount<TaskNodeSnapshot> {
+    if (row.kind === 'group')
+      return mountGroupHeader(
+        container,
+        row,
+        this.state_abyssPrivate.get('mode') === 'tasks'
+          ? (date) => {
+              this.captureSessions_abyssPrivate.openDateCapture(date);
+            }
+          : undefined,
+      );
     let card: TaskCardMount | undefined;
     let releaseNavigation: void | (() => void);
     const element = mountTaskListRow(container, row, (parent, taskRow) => {
@@ -2875,9 +2891,6 @@ export class CenterPanel {
             element,
             next.task.root,
           );
-        } else {
-          element.textContent = `${next.label}  ${next.count}`;
-          element.toggleClass('abyss-group-header--first', next.first);
         }
       },
       destroy: () => {

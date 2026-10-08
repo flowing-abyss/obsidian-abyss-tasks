@@ -17,7 +17,7 @@ import {
 } from '../../tasks';
 
 export type CaptureContext =
-  | { readonly type: 'list'; readonly selection: ListSelection }
+  | { readonly type: 'list'; readonly selection: ListSelection; readonly date?: LocalDate }
   | { readonly type: 'project-dashboard'; readonly path: string }
   | { readonly type: 'project-table'; readonly path: string }
   | { readonly type: 'default'; readonly source: 'projects' | 'calendar' | 'search' };
@@ -29,6 +29,7 @@ export interface CaptureTarget {
   readonly markdownPrefix: string;
   readonly markdownSuffixes: readonly string[];
   readonly initial?: CreateTaskCommandInitial;
+  readonly draftSeed?: string;
 }
 
 function destinationUnavailableResult(): TaskCommandResult {
@@ -60,7 +61,7 @@ function cloneContext(context: CaptureContext): CaptureContext {
     return { ...context };
   if (context.type === 'default') return { ...context };
   return {
-    type: 'list',
+    ...context,
     selection: typeof context.selection === 'string' ? context.selection : { ...context.selection },
   };
 }
@@ -98,7 +99,16 @@ export class CaptureTargetResolver {
     if (frozenContext.type === 'default') {
       return await this.defaultTarget(frozenContext);
     }
-    return await this.listTarget(frozenContext);
+    const target = await this.listTarget(frozenContext);
+    if (frozenContext.date === undefined) return target;
+    const initial = { ...target.initial };
+    delete initial.due;
+    return {
+      ...target,
+      label: `${target.label} · ${frozenContext.date}`,
+      initial,
+      draftSeed: ` 📅 ${frozenContext.date}`,
+    };
   }
 
   private async defaultTarget(
@@ -171,9 +181,11 @@ export class CaptureTargetResolver {
   ): Promise<CaptureTarget> {
     const today = this.today();
     const upcoming = selection === 'upcoming';
+    const label = upcoming ? 'Upcoming' : 'Today';
+    const relative = upcoming ? 'tomorrow' : 'today';
     const due = upcoming ? (shiftLocalDate(today, 1) ?? today) : today;
     return {
-      label: upcoming ? 'Upcoming · tomorrow' : 'Today · today',
+      label: context.date === undefined ? `${label} · ${relative}` : label,
       context,
       session: await this.application.planCreate({ type: 'configured-default' }),
       markdownPrefix: '',

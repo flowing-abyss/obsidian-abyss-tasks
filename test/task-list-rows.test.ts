@@ -161,6 +161,7 @@ describe('buildTaskListRows', () => {
       kind: 'group',
       key: 'group:date:No date',
       label: 'No date',
+      dateGroup: {},
       count: 2,
       first: true,
     });
@@ -168,6 +169,7 @@ describe('buildTaskListRows', () => {
       kind: 'group',
       key: 'group:date:No date',
       label: 'No date',
+      dateGroup: {},
       count: 3,
       first: true,
     });
@@ -475,4 +477,20 @@ describe('indexed finite row contract', () => {
     expect(selected).toEqual([{ kind: 'group', taskKey: 'one', groupKey: '' }]);
     expect(rows.selectedNodes(selected)[0]?.completion).toEqual({ kind: 'allowed' });
   });
+});
+
+it('exports captured exact dates only for single-day date buckets', () => {
+  const rows = buildTaskListRows(
+    [at(0, { planning: { due: TODAY } }), at(1, { planning: { due: TOMORROW } }), at(2)],
+    byDate,
+  );
+  expect(
+    [...rows.slice(0, rows.rowCount)]
+      .filter((row) => row.kind === 'group')
+      .map((row) => [row.label, row.dateGroup]),
+  ).toEqual([
+    ['Today', { date: TODAY }],
+    ['Tomorrow', { date: TOMORROW }],
+    ['No date', {}],
+  ]);
 });

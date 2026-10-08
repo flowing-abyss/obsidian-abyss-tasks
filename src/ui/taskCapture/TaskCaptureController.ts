@@ -50,6 +50,7 @@ export class TaskCaptureController {
 
   constructor(options: TaskCaptureControllerOptions) {
     this.target = options.target;
+    this.draft = this.target.draftSeed ?? '';
     this.onSubmit = options.onSubmit;
     this.describe = options.describe;
     this.onResult = options.onResult;
@@ -89,6 +90,11 @@ export class TaskCaptureController {
     this.emit();
   }
 
+  isEmpty(): boolean {
+    const draft = this.draft.trim();
+    return draft.length === 0 || draft === this.target.draftSeed?.trim();
+  }
+
   async submit(cause: CaptureSubmitCause): Promise<void> {
     const submission = this.beginSubmission(cause);
     if (submission === undefined || this.isSubmissionObsolete(submission.token)) return;
@@ -106,7 +112,7 @@ export class TaskCaptureController {
       if (cause === 'blur') this.closeAfterSuccess = true;
       return undefined;
     }
-    if (this.draft.trim().length === 0) {
+    if (this.isEmpty()) {
       if (cause === 'blur') this.close();
       return undefined;
     }
@@ -149,7 +155,7 @@ export class TaskCaptureController {
   ): boolean {
     if (description.kind === 'success') {
       const shouldClose = submission.cause === 'blur' || this.closeAfterSuccess;
-      this.draft = '';
+      this.draft = this.target.draftSeed ?? '';
       if (shouldClose) {
         this.phase = 'closed';
       } else {

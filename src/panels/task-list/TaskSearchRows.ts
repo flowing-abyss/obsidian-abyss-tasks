@@ -16,7 +16,7 @@ import {
 import type { TaskRenderOutcome } from '../../ui/taskRenderScope';
 import type { TaskCardMount } from '../center/TaskCardRenderer';
 import { indexedRows, type TaskListRow, type TaskListRows } from './taskListRows';
-import { mountTaskListRow } from './taskListRowView';
+import { mountGroupHeader, type DateGroupCapture } from './taskListRowView';
 import type { TaskRowMount } from './TaskListSurface';
 
 export interface TaskSearchRowsIdentity {
@@ -28,6 +28,7 @@ export interface TaskSearchRowsIdentity {
 }
 export interface TaskSearchRowsOptions {
   readonly search: TaskSearchApi;
+  readonly onDateCapture?: DateGroupCapture;
   readonly scheduler: Pick<BrowserTaskScheduler, 'yield'>;
   prepareDependencies(generation: number, signal: AbortSignal): Promise<void>;
   isCurrent(identity: TaskSearchRowsIdentity): boolean;
@@ -141,25 +142,7 @@ export class TaskSearchRows {
     host: HTMLElement,
     row: TaskListRow<TaskSearchOccurrence>,
   ): TaskRowMount<TaskSearchOccurrence> {
-    if (row.kind === 'group') {
-      const element = mountTaskListRow(host, row, () => {
-        throw new Error('Expected group');
-      });
-      return {
-        element,
-        update: (next) => {
-          if (next.kind === 'group') {
-            element.setText(`${next.label}  ${next.count}`);
-            element.toggleClass('abyss-group-header--first', next.first);
-            if (next.sourcePath === undefined) element.removeAttribute('aria-label');
-            else element.setAttribute('aria-label', next.sourcePath);
-          }
-        },
-        destroy: () => {
-          element.remove();
-        },
-      };
-    }
+    if (row.kind === 'group') return mountGroupHeader(host, row, this.#options.onDateCapture);
     const element = host.createDiv({ cls: 'abyss-task-card' });
     element.setAttribute('aria-busy', 'true');
     element.inert = true;

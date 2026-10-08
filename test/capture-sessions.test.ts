@@ -9,12 +9,15 @@ import type {
   TaskCaptureApplicationApi,
   TaskCreateSession,
 } from '../src/tasks';
+import { localDate, type TaskCommandResult } from '../src/tasks';
 import {
   CreationPresentationController,
   type CreationRevealRequest,
 } from '../src/ui/creation/CreationPresentationController';
 import {
   appWithFiles,
+  configuredTaskApplication,
+  createAppWithFiles,
   deferred,
   expectDefined,
   flushMicrotasks,
@@ -398,3 +401,154 @@ it.each(['blur', 'input', 'unmount', 'parent'] as const)(
     captures.cancelActiveCapture();
   },
 );
+
+async function dateCaptureHarness() {
+  const app = await createAppWithFiles({ 'capture.md': '' });
+  const settings = { ...DEFAULT_SETTINGS, taskFilePath: 'capture.md' };
+  const parts = configuredTaskApplication(app, settings, { authority: true });
+  await parts.index.initialize();
+  const state = new AppState();
+  state.set('selectedList', { type: 'tag', tag: '#focus' });
+  const root = activeDocument.body.createDiv();
+  const captures = new CaptureSessions({
+    state,
+    settings,
+    application: parts.tasks,
+    listNodes: () => parts.index.listNodes(),
+    onCreationResult: () => {},
+    root: () => root,
+  });
+  const placement = { type: 'list', selectionKey: 'tag:#focus' } as const;
+  const host = root.createDiv();
+  captures.renderCaptureHost(host, placement);
+  return {
+    ...parts,
+    app,
+    state,
+    root,
+    host,
+    captures,
+    placement,
+    input: () => expectDefined(root.querySelector<HTMLInputElement>('.abyss-capture-input')),
+    close: () => {
+      captures.cancelActiveCapture();
+      parts.index.destroy();
+      root.remove();
+    },
+  };
+}
+function editDateCapture(input: HTMLInputElement, value: string): void {
+  input.value = value;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+function enterDateCapture(input: HTMLInputElement): void {
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+}
+
+it('switches pristine seeds, preserves an edited draft and remounts its exact seed after success', async () => {
+  const h = await dateCaptureHarness();
+  try {
+    h.captures.openDateCapture(localDate('2026-10-10'));
+    await flushMicrotasks();
+    h.captures.openDateCapture(localDate('2026-10-11'));
+    await flushMicrotasks();
+    const input = h.input();
+    expect(input.value).toBe(' 📅 2026-10-11');
+    editDateCapture(input, 'Keep 📅 2026-10-12');
+    h.captures.openDateCapture(localDate('2026-10-13'));
+    await flushMicrotasks();
+    expect(h.input()).toBe(input);
+    expect(input.value).toBe('Keep 📅 2026-10-12');
+    expect(activeDocument.activeElement).toBe(input);
+    h.captures.unmountActiveCapture();
+    h.captures.remountActiveCapture();
+    expect(h.input()).not.toBe(input);
+    expect(h.input().value).toBe('Keep 📅 2026-10-12');
+    enterDateCapture(h.input());
+    await flushMicrotasks();
+    expect(h.input().value).toBe(' 📅 2026-10-11');
+    const file = expectDefined(h.app.vault.getFileByPath('capture.md'));
+    expect(await h.app.vault.read(file)).toContain('Keep #focus');
+    expect(await h.app.vault.read(file)).toContain('📅 2026-10-12');
+    h.input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(h.root.querySelector('.abyss-capture-input')).toBeNull();
+    expect(activeDocument.activeElement).toBe(h.host.querySelector('.abyss-add-task-trigger'));
+  } finally {
+    h.close();
+  }
+});
+
+it('retains a blur-started pending write and its retry draft when another date is requested', async () => {
+  const h = await dateCaptureHarness();
+  const pending = deferred<TaskCommandResult>();
+  const originalPlan = h.tasks.planCreate.bind(h.tasks);
+  vi.spyOn(h.tasks, 'planCreate').mockImplementation(async (...args) => {
+    const session = await originalPlan(...args);
+    let first = true;
+    return {
+      ...session,
+      execute: async (command) => {
+        if (first) {
+          first = false;
+          return await pending.promise;
+        }
+        return await session.execute(command);
+      },
+    };
+  });
+  try {
+    h.captures.openDateCapture(localDate('2026-10-10'));
+    await flushMicrotasks();
+    const input = h.input();
+    editDateCapture(input, 'Retry 📅 2026-10-12');
+    input.dispatchEvent(new Event('blur'));
+    expect(input.readOnly).toBe(true);
+    h.captures.openDateCapture(localDate('2026-10-14'));
+    expect(h.input()).toBe(input);
+    expect(input.value).toBe('Retry 📅 2026-10-12');
+    pending.resolve({ type: 'io-error', cause: 'repository-error', contentState: 'unchanged' });
+    await flushMicrotasks();
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    h.captures.openDateCapture(localDate('2026-10-15'));
+    expect(h.input()).toBe(input);
+    enterDateCapture(input);
+    await flushMicrotasks();
+    const file = expectDefined(h.app.vault.getFileByPath('capture.md'));
+    const written = await h.app.vault.read(file);
+    expect(written).toContain('Retry #focus');
+    expect(written).toContain('📅 2026-10-12');
+    expect(written.split('- [ ]')).toHaveLength(2);
+    expect(input.value).toBe(' 📅 2026-10-10');
+  } finally {
+    h.close();
+  }
+});
+
+it('ignores late date planning after a newer date and after list navigation', async () => {
+  const h = await dateCaptureHarness();
+  const originalPlan = h.tasks.planCreate.bind(h.tasks);
+  const pending = deferred<TaskCreateSession>();
+  vi.spyOn(h.tasks, 'planCreate').mockImplementationOnce(() => pending.promise);
+  try {
+    h.captures.openDateCapture(localDate('2026-10-10'));
+    h.captures.openDateCapture(localDate('2026-10-11'));
+    await flushMicrotasks();
+    const input = h.input();
+    pending.resolve(await originalPlan({ type: 'configured-default' }));
+    await flushMicrotasks();
+    expect(h.input()).toBe(input);
+    expect(input.value).toBe(' 📅 2026-10-11');
+    const next = deferred<TaskCreateSession>();
+    vi.spyOn(h.tasks, 'planCreate').mockImplementationOnce(() => next.promise);
+    h.captures.openDateCapture(localDate('2026-10-12'));
+    h.state.set('selectedList', 'today');
+    h.captures.cancelStaleListCapture();
+    next.resolve(await originalPlan({ type: 'configured-default' }));
+    await flushMicrotasks();
+    expect(h.root.querySelector('.abyss-capture-input')).toBeNull();
+    const file = expectDefined(h.app.vault.getFileByPath('capture.md'));
+    expect(await h.app.vault.read(file)).toBe('');
+  } finally {
+    h.close();
+  }
+});

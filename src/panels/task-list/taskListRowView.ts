@@ -1,4 +1,6 @@
-import type { TaskSnapshot } from '../../tasks';
+import { setIcon } from 'obsidian';
+import { moment } from '../../obsidianMoment';
+import type { LocalDate, TaskSnapshot } from '../../tasks';
 import type { TaskRenderOutcome, TaskRenderScope } from '../../ui/taskRenderScope';
 import {
   NO_TASK_LIST_ROWS,
@@ -7,6 +9,7 @@ import {
   type TaskListRows,
   type TaskListTaskRow,
 } from './taskListRows';
+import type { TaskRowMount } from './TaskListSurface';
 
 /**
  * The rows one render mounted. It is the only map from row keys to elements, so a later windowed
@@ -20,13 +23,59 @@ export interface MountedTaskListRows<T = TaskSnapshot> {
   cards(): Iterable<readonly [key: string, card: HTMLElement]>;
 }
 
-function mountGroupHeader(container: HTMLElement, row: TaskListGroupRow): HTMLElement {
-  const header = container.createDiv({
-    cls: row.first ? 'abyss-group-header abyss-group-header--first' : 'abyss-group-header',
-    text: `${row.label}  ${row.count}`,
-  });
-  if (row.sourcePath !== undefined) header.setAttribute('aria-label', row.sourcePath);
-  return header;
+export type DateGroupCapture = (date: LocalDate) => void;
+
+export function mountGroupHeader<T = TaskSnapshot>(
+  container: HTMLElement,
+  row: TaskListGroupRow,
+  onCapture?: DateGroupCapture,
+): TaskRowMount<T> {
+  const element = container.createDiv({ cls: 'abyss-group-header' });
+  const label = element.createSpan({ cls: 'abyss-group-label' });
+  let current = row;
+  let button: HTMLButtonElement | undefined;
+  let live = true;
+  const click = (event: MouseEvent): void => {
+    event.stopPropagation();
+    if (live && current.dateGroup?.date !== undefined) onCapture?.(current.dateGroup.date);
+  };
+  const retireButton = (): void => {
+    button?.removeEventListener('click', click);
+    button?.remove();
+    button = undefined;
+  };
+  const update = (next: TaskListRow<T>): void => {
+    if (!live || next.kind !== 'group') return;
+    current = next;
+    label.textContent = next.dateGroup === undefined ? `${next.label}  ${next.count}` : next.label;
+    element.toggleClass('abyss-group-header--first', next.first);
+    if (next.sourcePath === undefined) element.removeAttribute('aria-label');
+    else element.setAttribute('aria-label', next.sourcePath);
+    const date = next.dateGroup?.date;
+    if (date === undefined || onCapture === undefined) {
+      retireButton();
+      return;
+    }
+    if (button === undefined) {
+      button = element.createEl('button', {
+        cls: 'clickable-icon abyss-group-add',
+        attr: { type: 'button' },
+      });
+      setIcon(button, 'plus');
+      button.addEventListener('click', click);
+    }
+    button.setAttribute('aria-label', `Add task on ${moment(date, 'YYYY-MM-DD').format('LL')}`);
+  };
+  update(row);
+  return {
+    element,
+    update,
+    destroy: () => {
+      live = false;
+      retireButton();
+      element.remove();
+    },
+  };
 }
 
 export function mountTaskListRow<T = TaskSnapshot>(
@@ -34,7 +83,9 @@ export function mountTaskListRow<T = TaskSnapshot>(
   row: TaskListRow<T>,
   renderTask: (container: HTMLElement, row: TaskListTaskRow<T>) => HTMLElement,
 ): HTMLElement {
-  return row.kind === 'group' ? mountGroupHeader(container, row) : renderTask(container, row);
+  return row.kind === 'group'
+    ? mountGroupHeader(container, row).element
+    : renderTask(container, row);
 }
 
 /**

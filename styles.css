@@ -2256,6 +2256,30 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   border-top: 1px solid var(--background-modifier-border);
 }
 
+.abyss-group-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.abyss-group-header .abyss-group-add {
+  flex: 0 0 auto;
+  padding: var(--size-2-1);
+  color: var(--text-muted);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.abyss-group-header:hover .abyss-group-add,
+.abyss-group-header:focus-within .abyss-group-add {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.abyss-group-add:focus-visible {
+  outline: 2px solid var(--background-modifier-border-focus);
+  outline-offset: 2px;
+}
+
 .abyss-group-header--first {
   border-top: none;
   padding-top: var(--size-4-2);
@@ -2447,8 +2471,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-status-marker--continuation {
-  border-width: 1px;
-  border-style: solid;
+  opacity: 0.68;
   cursor: not-allowed;
 }
 

@@ -2,7 +2,12 @@ import type { ListSelection } from '../app/AppState';
 import { stableSortSteps, type CollectionSteps } from '../collectionSteps';
 import type { SearchViewState } from '../panels/center/SearchViewState';
 import { buildTaskDailyRowsSteps } from '../panels/task-list/taskDailyRows';
-import { indexedRows, type TaskListRow, type TaskListRows } from '../panels/task-list/taskListRows';
+import {
+  dateGroupMetadata,
+  indexedRows,
+  type TaskListRow,
+  type TaskListRows,
+} from '../panels/task-list/taskListRows';
 import { withTaskRevealRows } from '../panels/task-list/taskRevealRows';
 import { StatusRegistry } from '../status/StatusRegistry';
 import type { LocalDate, TaskOrganizationRecord, TaskSearchAddress, TaskSearchHit } from '../tasks';
@@ -272,6 +277,13 @@ function* finiteRows(
         kind: 'group',
         key: `group:${input.view.list.groupBy}:${group.key}`,
         label: group.label,
+        ...(input.view.list.groupBy === 'date' && {
+          dateGroup: dateGroupMetadata(
+            group.key,
+            input.today,
+            shiftLocalDate(input.today, 1) ?? input.today,
+          ),
+        }),
         count: group.tasks.length,
         first: finite.length === 0,
         ...(input.view.list.groupBy === 'source-note' ? { sourcePath: group.key } : {}),

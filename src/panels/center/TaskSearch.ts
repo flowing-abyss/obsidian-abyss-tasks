@@ -16,6 +16,7 @@ import {
   createSearchWordSegmenter,
   localDate,
   prepareSearchQuery,
+  shiftLocalDate,
   taskSearchContext,
   TaskSearchError,
   type TaskOrganizationRecord,
@@ -486,11 +487,14 @@ export class TaskSearch {
       },
     });
     const locale = moment.locale();
+    const today = localDate(moment().format('YYYY-MM-DD'));
+    const tomorrow = shiftLocalDate(today, 1);
     return {
       ...captured,
-      today: localDate(moment().format('YYYY-MM-DD')),
+      today,
       nowMs: Date.now(),
-      formatDate: (date) => moment(date, 'YYYY-MM-DD').locale(locale).format('ddd, LL'),
+      formatDate: (date) =>
+        `${date === tomorrow ? 'Tomorrow · ' : ''}${moment(date, 'YYYY-MM-DD').locale(locale).format('ddd, LL')}`,
     };
   }
   #organizationScheduler(current: SearchPreparation): Pick<BrowserTaskScheduler, 'now' | 'yield'> {

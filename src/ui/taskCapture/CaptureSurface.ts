@@ -97,10 +97,7 @@ export class CaptureSurface {
       }
     };
     const onBlur = (): void => {
-      if (
-        options.closeOnEmptyBlur === false &&
-        this.controller.snapshot().draft.trim().length === 0
-      ) {
+      if (options.closeOnEmptyBlur === false && this.controller.isEmpty()) {
         return;
       }
       runAsyncAction(this.controller.submit('blur'), 'Could not add task');
@@ -123,7 +120,9 @@ export class CaptureSurface {
   }
 
   focus(): void {
-    if (!this.destroyed) this.input.focus();
+    if (this.destroyed) return;
+    this.input.focus();
+    if (this.input.value === this.controller.target.draftSeed) this.input.setSelectionRange(0, 0);
   }
 
   destroy(): void {
@@ -162,7 +161,7 @@ export class CaptureSurface {
 
     if (snapshot.focusEpoch !== this.appliedFocusEpoch) {
       this.appliedFocusEpoch = snapshot.focusEpoch;
-      if (snapshot.focusEpoch > 0) this.input.focus();
+      if (snapshot.focusEpoch > 0) this.focus();
     }
   }
 }

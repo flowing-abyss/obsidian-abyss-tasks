@@ -5,10 +5,12 @@ import {
   type TaskListTaskRow,
 } from '../src/panels/task-list/taskListRows';
 import {
+  mountGroupHeader,
   mountTaskListRow,
   mountTaskListRows,
   NO_MOUNTED_TASK_LIST_ROWS,
 } from '../src/panels/task-list/taskListRowView';
+import { localDate } from '../src/tasks';
 import { TaskRenderScope, type TaskRenderOutcome } from '../src/ui/taskRenderScope';
 import { freshContainer, task } from './helpers';
 
@@ -36,11 +38,11 @@ describe('mountTaskListRows', () => {
     expect(
       Array.from(container.children).map((child) => [child.className, child.textContent]),
     ).toEqual([
-      ['abyss-group-header abyss-group-header--first', 'Overdue  1'],
+      ['abyss-group-header abyss-group-header--first', 'Overdue'],
       ['abyss-task-card', 'late'],
-      ['abyss-group-header', 'Today  1'],
+      ['abyss-group-header', 'Today'],
       ['abyss-task-card', 'now'],
-      ['abyss-group-header', 'No date  1'],
+      ['abyss-group-header', 'No date'],
       ['abyss-task-card', 'loose'],
     ]);
   });
@@ -196,5 +198,43 @@ it('mounts an isolated non-first logical header without the first-header class',
   const element = mountTaskListRow(container, header, renderCard);
   expect(container.firstElementChild).toBe(element);
   expect(element.className).toBe('abyss-group-header');
-  expect(element.textContent).toBe('Today  1');
+  expect(element.textContent).toBe('Today');
+});
+
+it('retains focused date actions across updates, uses current date and retires detached handlers', () => {
+  const host = activeDocument.body.createDiv();
+  const dates: string[] = [];
+  const row = {
+    kind: 'group',
+    key: 'opaque',
+    label: 'Localized day',
+    count: 7,
+    first: true,
+    dateGroup: { date: localDate('2026-10-08') },
+  } as const;
+  const mount = mountGroupHeader(host, row, (date) => dates.push(date));
+  const button = mount.element.querySelector('button');
+  expect(button).not.toBeNull();
+  button?.focus();
+  mount.update({
+    ...row,
+    label: 'Another day',
+    first: false,
+    dateGroup: { date: localDate('2026-10-09') },
+  });
+  expect(activeDocument.activeElement).toBe(button);
+  expect(mount.element.querySelector('button')).toBe(button);
+  button?.click();
+  expect(dates).toEqual(['2026-10-09']);
+  expect(mount.element.textContent).toBe('Another day');
+  mount.update({ ...row, dateGroup: {} });
+  expect(mount.element.querySelector('button')).toBeNull();
+  button?.click();
+  expect(dates).toHaveLength(1);
+  mount.update(row);
+  const retired = mount.element.querySelector('button');
+  mount.destroy();
+  retired?.click();
+  expect(dates).toHaveLength(1);
+  host.remove();
 });

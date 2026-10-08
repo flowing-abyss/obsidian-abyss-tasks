@@ -1390,6 +1390,14 @@ project presentation. `ProjectsPanel` invokes its `unmountTasks(): void` owner c
 or replacing a dashboard, after capturing overview focus-return eligibility and before removing the
 host. `CenterPanel` releases its surface and active capture/editor ownership there. Ordinary Tasks
 and dashboard refreshes keep the same capture input connected, preserving selection and IME state.
+Date-group rows carry transient exact-date metadata separately from aggregate buckets. The shared
+retained header mount uses that date to open the same list capture bar through CaptureSessions;
+updates preserve its focused native action and disposal retires its handlers. The requested date
+seeds editable canonical Markdown rather than an enforced due patch, so authored date edits win.
+TaskCaptureController and CaptureSurface share seed-only empty handling; successful Enter resets
+the same seed. A new header request may replace a pristine draft, while an edited, pending or error
+draft retains its original session and receives focus. Request invalidation still retires late
+planning on replacement or navigation; ordinary list and calendar capture defaults are unchanged.
 List/project capture results carry an optional per-result `CreationRevealAuthority` through the
 existing CenterPanel/PanelView callback. Its reveal request carries an AbortSignal and currentness
 proof, and authorities may return either an immediate element or a Promise. The controller retains

@@ -2306,10 +2306,10 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     const container = renderWithGroupingByDate(tasks);
     const headers = container.querySelectorAll('.abyss-group-header');
     const labels = Array.from(headers).map((h) => h.textContent.trim());
-    expect(labels).toContain('Overdue  1');
-    expect(labels).toContain('Today  1');
-    expect(labels).toContain('Tomorrow  1');
-    expect(labels).toContain('Upcoming  1');
+    expect(labels).toContain('Overdue');
+    expect(labels).toContain('Today');
+    expect(labels).toContain('Tomorrow');
+    expect(labels).toContain('Upcoming');
   });
 
   it('renders a daily-note-only task in No date rather than Today', () => {
@@ -2318,7 +2318,7 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
       Array.from(container.querySelectorAll('.abyss-group-header')).map(
         (header) => header.textContent,
       ),
-    ).toContain('No date  1');
+    ).toContain('No date');
   });
 
   it('empty groups are skipped (only non-empty groups render)', () => {
@@ -2332,7 +2332,7 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     const container = renderWithGroupingByDate(tasks);
     const headers = container.querySelectorAll('.abyss-group-header');
     const labels = Array.from(headers).map((h) => h.textContent.trim());
-    expect(labels).toEqual(['Today  1']);
+    expect(labels).toEqual(['Today']);
   });
 
   it('no-date task falls into "No date" bucket (not Overdue)', () => {
@@ -2340,7 +2340,7 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     const container = renderWithGroupingByDate(tasks);
     const headers = container.querySelectorAll('.abyss-group-header');
     const labels = Array.from(headers).map((h) => h.textContent.trim());
-    expect(labels).toEqual(['No date  1']);
+    expect(labels).toEqual(['No date']);
   });
 });
 
@@ -8163,6 +8163,93 @@ describe('calendar child inspector and parent navigation', () => {
       } finally {
         h.panel.destroy();
         h.el.remove();
+      }
+    },
+  );
+});
+
+describe('date header capture through the retained task bar', () => {
+  fixedToday('2026-10-08');
+  it.each(['today', 'upcoming'] as const)(
+    'creates on the exact %s occurrence day with an editable seed and consecutive reset',
+    async (selection) => {
+      vi.useRealTimers();
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 9, 8, 12));
+      const { panel, state, index, app } = await makePanel(
+        { 'range.md': '- [ ] Range 🛫 2026-10-08 📅 2026-10-11', 'capture.md': '' },
+        { ...DEFAULT_SETTINGS, taskFilePath: 'capture.md', listViewStates: {} },
+        [],
+        { authority: true },
+      );
+      state.set('selectedList', selection);
+      state.set('centerListViewState', {
+        groupBy: 'date',
+        sortBy: { field: 'date', dir: 'asc' },
+        filters: [],
+      });
+      const container = activeDocument.body.createDiv();
+      panel.mount(container);
+      try {
+        if (selection === 'upcoming') await searchUiCompleted(container);
+        const headers = [...container.querySelectorAll<HTMLElement>('.abyss-group-header')];
+        const header = expectDefined(headers[selection === 'upcoming' ? 1 : 0]);
+        const expectedDate = selection === 'upcoming' ? '2026-10-10' : '2026-10-08';
+        if (selection === 'upcoming') expect(headers[0]?.textContent).toContain('Tomorrow');
+        expect(
+          header.querySelector('button'),
+          headers.map((h) => h.outerHTML).join('\n'),
+        ).not.toBeNull();
+        const plus = expectDefined(header.querySelector<HTMLButtonElement>('button'));
+        plus.focus();
+        panel.refresh();
+        if (selection === 'upcoming') await searchUiCompleted(container);
+        expect(activeDocument.activeElement).toBe(plus);
+        plus.click();
+        await flushMicrotasks();
+        const input = expectDefined(
+          container.querySelector<HTMLInputElement>('.abyss-capture-input'),
+        );
+        expect(input.closest('.abyss-add-task-bar')).not.toBeNull();
+        expect(input.value).toBe(` 📅 ${expectedDate}`);
+        expect(input.selectionStart).toBe(0);
+        pressCaptureKey(input, 'Enter');
+        await flushMicrotasks();
+        const file = app.vault.getFileByPath('capture.md');
+        expect(file).not.toBeNull();
+        if (file === null) throw new Error('Missing capture fixture');
+        expect(await app.vault.read(file)).toBe('');
+        setCaptureDraft(input, ' 📅 2026-10-13');
+        pressCaptureKey(input, 'Enter');
+        await flushMicrotasks();
+        expect(input.getAttribute('aria-invalid')).toBe('true');
+        expect(await app.vault.read(file)).toBe('');
+        setCaptureDraft(input, `First 📅 ${expectedDate}`);
+        pressCaptureKey(input, 'Enter');
+        await flushMicrotasks();
+        expect(await app.vault.read(file)).toContain(
+          `- [ ] First ➕ 2026-10-08 📅 ${expectedDate}`,
+        );
+        expect(input.value).toBe(` 📅 ${expectedDate}`);
+        expect(input.selectionStart).toBe(0);
+        vi.setSystemTime(new Date(2026, 9, 9, 12));
+        setCaptureDraft(input, 'Edited 📅 2026-10-15');
+        pressCaptureKey(input, 'Enter');
+        await flushMicrotasks();
+        expect(await app.vault.read(file)).toContain('- [ ] Edited ➕ 2026-10-08 📅 2026-10-15');
+        setCaptureDraft(input, 'Undated');
+        pressCaptureKey(input, 'Enter');
+        await flushMicrotasks();
+        expect(await app.vault.read(file)).toContain('- [ ] Undated ➕ 2026-10-08');
+        const before = await app.vault.read(file);
+        input.dispatchEvent(new Event('blur'));
+        await flushMicrotasks();
+        expect(container.querySelector('.abyss-capture-input')).toBeNull();
+        expect(await app.vault.read(file)).toBe(before);
+      } finally {
+        panel.destroy();
+        index.destroy();
+        container.remove();
       }
     },
   );

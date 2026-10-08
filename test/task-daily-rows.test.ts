@@ -54,7 +54,11 @@ describe('complete Upcoming daily organization', () => {
       const rows = h.rows();
       expect(rows.rowCount).toBe(6);
       expect(rows.taskCount).toBe(3);
-      expect(rows.rowAt(0)).toMatchObject({ kind: 'group', count: 1 });
+      expect(rows.rowAt(0)).toMatchObject({
+        kind: 'group',
+        count: 1,
+        dateGroup: { date: '2026-10-07' },
+      });
       expect(rows.task(expectDefined(rows.taskKeyAt(0)))?.presentation).toMatchObject({
         displayDate: '2026-10-07',
         completion: { kind: 'continuation', due: '2026-10-09' },
@@ -121,6 +125,8 @@ describe('complete Upcoming daily organization', () => {
       const rows = h.rows();
       expect(rows.taskCount).toBe(3652424);
       expect(rows.rowCount).toBe(7304848);
+      expect(rows.rowAt(0)).toMatchObject({ dateGroup: { date: '0000-01-02' } });
+      expect(rows.rowAt(rows.rowCount - 2)).toMatchObject({ dateGroup: { date: '9999-12-31' } });
       const last = expectDefined(rows.taskKeyAt(rows.taskCount - 1));
       expect(rows.task(last)?.presentation.displayDate).toBe('9999-12-31');
       expect(rows.rowIndexOf(last)).toBe(rows.rowCount - 1);
@@ -349,6 +355,9 @@ it.each(['asc', 'desc'] as const)(
           view: { ...h.input.view, list: { ...h.input.view.list, sortBy: { field: 'date', dir } } },
         }),
       ).rows;
+      expect(before.rowAt(0)).toMatchObject({
+        dateGroup: { date: dir === 'asc' ? '2026-10-07' : '2026-10-11' },
+      });
       const after = drainCollectionSteps(
         organizeTaskSearch({
           ...h.input,
@@ -530,3 +539,28 @@ it.each(['events', 'event-sort', 'first-day-sort'] as const)(
     }
   },
 );
+
+it('keeps compact and snapshot date bucket authority distinct from aggregate labels', async () => {
+  const h = await dailyFixture(
+    '- [ ] Now 📅 2026-10-06\n- [ ] Later 📅 2026-10-07\n- [ ] Old 📅 2026-10-01',
+  );
+  try {
+    const rows = drainCollectionSteps(organizeTaskSearch({ ...h.input, selection: null })).rows;
+    expect(
+      [...rows.slice(0, rows.rowCount)]
+        .filter((row) => row.kind === 'group')
+        .map((row) => [row.label, row.dateGroup]),
+    ).toEqual([
+      ['Overdue', {}],
+      ['Today', { date: '2026-10-06' }],
+      ['Tomorrow', { date: '2026-10-07' }],
+    ]);
+    const today = drainCollectionSteps(organizeTaskSearch({ ...h.input, selection: 'today' })).rows;
+    expect(today.rowAt(today.rowIndexOf('group:date:Today'))).toMatchObject({
+      dateGroup: { date: '2026-10-06' },
+      count: 1,
+    });
+  } finally {
+    h.close();
+  }
+});

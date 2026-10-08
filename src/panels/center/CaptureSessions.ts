@@ -2,6 +2,7 @@ import type { AppState } from '../../app/AppState';
 import { listSelectionToKey } from '../../app/listViewState';
 import type { CalendarSettings } from '../../settings/types';
 import type {
+  LocalDate,
   TaskApplicationApi,
   TaskCaptureApplicationApi,
   TaskCommandResult,
@@ -121,6 +122,25 @@ export class CaptureSessions {
       active.returnFocus = trigger;
       this.#mountCaptureSurface(active, host);
     }
+  }
+
+  openDateCapture(date: LocalDate): void {
+    if (this.#state.get('mode') !== 'tasks') return;
+    const active = this.#activeCapture;
+    if (
+      active !== null &&
+      (active.controller.snapshot().phase !== 'idle' || !active.controller.isEmpty())
+    ) {
+      active.focusOnMount = true;
+      this.remountActiveCapture();
+      if (active.surface !== undefined) this.#focusNewCaptureSurface(active, active.surface);
+      return;
+    }
+    const selection = this.#state.get('selectedList');
+    this.openCapture(
+      { type: 'list', selectionKey: listSelectionToKey(selection) },
+      { type: 'list', selection, date },
+    );
   }
 
   openCapture(

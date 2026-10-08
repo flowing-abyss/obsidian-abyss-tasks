@@ -2,7 +2,7 @@ import type { StatusRegistry } from '../../status/StatusRegistry';
 import type { TaskLinkValues } from '../../task-lists/taskLinkValues';
 import { taskNodeMembershipValue } from '../../task-lists/taskNodeMembership';
 import type { TaskOccurrencePresentation } from '../../task-lists/taskOccurrencePresentation';
-import { type TaskNodeSnapshot, type TaskSnapshot } from '../../tasks';
+import { localDate, type LocalDate, type TaskNodeSnapshot, type TaskSnapshot } from '../../tasks';
 import { taskNodeLine, type TaskSelectionNode } from '../../ui/taskSelection';
 import {
   groupTasksByDate,
@@ -45,6 +45,7 @@ export interface TaskListGroupRow {
   readonly count: number;
   readonly first: boolean;
   readonly sourcePath?: string;
+  readonly dateGroup?: { readonly date?: LocalDate };
 }
 
 /** One visual occurrence of a task node, with its separate physical source identity. */
@@ -147,6 +148,17 @@ function taskGroups<T extends TaskGroupValue>(
   }
 }
 
+/** Group keys are model identities, independent of their displayed/localized labels. */
+export function dateGroupMetadata(
+  key: string,
+  today: string,
+  tomorrow: string,
+): NonNullable<TaskListGroupRow['dateGroup']> {
+  if (key === 'Today') return { date: localDate(today) };
+  if (key === 'Tomorrow') return { date: localDate(tomorrow) };
+  return {};
+}
+
 function groupedRows<T extends TaskGroupValue>(
   tasks: readonly T[],
   grouping: Exclude<TaskListGrouping, { readonly by: 'none' }>,
@@ -158,6 +170,9 @@ function groupedRows<T extends TaskGroupValue>(
       kind: 'group',
       key: `group:${grouping.by}:${group.key}`,
       label: group.label,
+      ...(grouping.by === 'date' && {
+        dateGroup: dateGroupMetadata(group.key, grouping.today, grouping.tomorrow),
+      }),
       ...(grouping.by === 'source-note' && { sourcePath: group.key }),
       count: group.tasks.length,
       first: rows.length === 0,

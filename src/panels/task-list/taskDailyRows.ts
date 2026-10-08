@@ -261,6 +261,7 @@ class DailyRows implements TaskListRows<TaskSearchOccurrence> {
         key: rowKey(place.day),
         label: this.input.formatDate(dateAt(place.day)),
         count: place.segment.count,
+        dateGroup: { date: dateAt(place.day) },
         first: index === 0,
       };
     const record = this.#vector(place.day)[place.rank - 1];
