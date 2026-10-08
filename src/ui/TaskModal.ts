@@ -11,6 +11,7 @@ import {
   type CommentTimeContextProvider,
   type TaskApplicationApi,
   type TaskIndexEvent,
+  type TaskNodeRef,
   type TaskQueryApi,
   type TaskRef,
   type TaskResolution,
@@ -43,6 +44,7 @@ import {
   selectedRootResolution,
   taskNodeRef,
   taskSelectionPath,
+  taskSelectionRefPath,
   type TaskSelectionNode,
 } from './taskSelection';
 import { deviceTrackedTimeContext, type TrackingSurface } from './timeTracking/TimeBadge';
@@ -120,17 +122,20 @@ export class TaskModal {
     this.interactionOwnership_abyssPrivate = ownership ?? noInteractionOwnership;
   }
 
-  open(task: TaskSnapshot, context?: string): void {
+  open(task: TaskSnapshot, context?: string, initialTarget?: TaskNodeRef): void {
+    const selection =
+      initialTarget === undefined ? [task] : taskSelectionRefPath(task, initialTarget);
+    if (selection === undefined) return;
     this.close();
     try {
-      this.mount_abyssPrivate(task, context);
+      this.mount_abyssPrivate(selection, context);
     } catch (error) {
       this.close();
       throw error;
     }
   }
 
-  private mount_abyssPrivate(task: TaskSnapshot, context?: string): void {
+  private mount_abyssPrivate(selection: TaskSelectionNode[], context?: string): void {
     this.ownershipToken_abyssPrivate = this.interactionOwnership_abyssPrivate.acquire({
       blocksShortcuts: true,
     });
@@ -140,7 +145,7 @@ export class TaskModal {
     this.opener_abyssPrivate =
       isRealmHTMLElement(active) && active !== this.ownerDoc_abyssPrivate.body ? active : null;
     this.innerState_abyssPrivate = new AppState();
-    this.innerState_abyssPrivate.set('taskStack', [task]);
+    this.innerState_abyssPrivate.set('taskStack', selection);
     this.selectionUnsub_abyssPrivate = this.innerState_abyssPrivate.on('taskStack', (stack) => {
       if (this.ownedWriteRef_abyssPrivate == null) return;
       const ref = stack[0] != null ? rootTaskRef(stack[0]) : undefined;

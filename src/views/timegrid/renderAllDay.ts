@@ -1,4 +1,5 @@
 import { type App, type Component } from 'obsidian';
+import type { ShowInTaskList } from '../../panels/right/inspectorTypes';
 import type { TagGroup } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import { tagColorFor } from '../../tags/tagColor';
@@ -30,6 +31,7 @@ import {
   bindTaskSelection,
   hasCountBadges,
   renderCalendarLeadingSlots,
+  renderCalendarParentButton,
   renderCountBadges,
   type CalendarContinuity,
   type CalendarOccurrenceLookup,
@@ -43,6 +45,7 @@ export interface AllDayCallbacks extends ForecastInteractionCallbacks {
   app: App;
   component: Component;
   onTaskClick: (task: TaskSnapshot) => void;
+  onShowParent?: ShowInTaskList | undefined;
   onTaskSelect?: ((task: TaskSnapshot) => void) | undefined;
   onDrop: (dragData: string, targetDate: string) => void; // native HTML5 DnD, existing convention
   onStartChange: (task: TaskSnapshot, newStart: string) => void; // pointer edge-resize
@@ -282,6 +285,7 @@ function renderAllDayBody(context: AllDayBodyRenderContext): HTMLElement {
   // blocks (renderTimedBlocks.ts) — previously missing here, so a completed all-day
   // span/plain item read as plain/untouched while the same task's timed block elsewhere
   // showed struck-through.
+  renderCalendarParentButton(el, occurrence, callbacks);
   const titleEl = el.createSpan({ cls: `abyss-tg-body-title${statusTitleClass(task.status)}` });
   if (occurrence.kind === 'materialized' && interactive) {
     renderTaskText(titleEl, task.markdownTitle, {
@@ -777,6 +781,7 @@ function renderDeadlineTask(context: AllDayCellRenderContext, task: TaskSnapshot
     occurrence.kind === 'forecast',
     renderControl,
   );
+  renderCalendarParentButton(marker, occurrence, callbacks);
   renderDeadlineTitle(marker, task, callbacks, occurrence);
   if (hasCountBadges(task)) {
     const meta = marker.createSpan({ cls: 'abyss-tg-body-meta' });

@@ -7,6 +7,7 @@ import type { EffectiveTagGroup } from '../../tags/effectiveTagGroups';
 import type {
   LocalDate,
   TaskApplicationApi,
+  TaskNodeRef,
   TaskPriority,
   TaskQueryApi,
   TaskSnapshot,
@@ -19,7 +20,6 @@ import { taskSelectionPath } from '../../ui/taskSelection';
 import { calendarNativeDragPayload } from '../../views/calendarNativeDrag';
 import {
   calendarOccurrenceForTask,
-  calendarRootTaskRef,
   isForecastCalendarTask,
   type CalendarProjectionIssue,
   type CalendarTaskSource,
@@ -31,6 +31,7 @@ import {
   type CalendarProjectionDiagnosticOwner,
   type ForecastContextMenuOwner,
 } from '../../views/timegrid/renderTaskMeta';
+import type { ShowInTaskList } from '../right/inspectorTypes';
 import { CalendarNavigationBar } from './CalendarNavigationBar';
 import type { CalendarCapturePlacement } from './calendarCapturePlacement';
 import { CalendarCommands } from './calendarCommands';
@@ -56,7 +57,8 @@ import { visibleCalendarDates } from './visibleCalendarDates';
 export interface CalendarModeHost {
   /** Full panel render, used by open-day, open-week, and following a keyboard shift. */
   readonly rerender: () => void;
-  readonly openTask: (task: TaskSnapshot) => void;
+  readonly onShowParent?: ShowInTaskList | undefined;
+  readonly openTask: (task: TaskSnapshot, initialTarget?: TaskNodeRef) => void;
   readonly openForecastTask: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
   readonly toggleTask: (task: TaskSnapshot) => Promise<void>;
   readonly setTaskStatus: (task: TaskSnapshot, symbol: string) => Promise<void>;
@@ -417,6 +419,7 @@ export class CalendarMode {
     CalendarHandlers,
     | 'onTaskClick'
     | 'onTaskSelect'
+    | 'onShowParent'
     | 'onForecastClick'
     | 'onForecastContextMenu'
     | 'onNativeDragStart'
@@ -428,8 +431,16 @@ export class CalendarMode {
   > {
     const { state, host } = this.deps_abyssPrivate;
     return {
+      onShowParent: host.onShowParent,
       onTaskClick: (task) => {
-        if (calendarRootTaskRef(task) !== undefined) host.openTask(task);
+        const occurrence = calendarOccurrenceForTask(task);
+        if (occurrence?.kind === 'forecast') return;
+        if (occurrence === undefined) {
+          host.openTask(task);
+          return;
+        }
+        if (taskSelectionPath(occurrence.source.root, occurrence.source.node) !== undefined)
+          host.openTask(occurrence.source.root, occurrence.source.target);
       },
       onTaskSelect: (task) => {
         const occurrence = calendarOccurrenceForTask(task);

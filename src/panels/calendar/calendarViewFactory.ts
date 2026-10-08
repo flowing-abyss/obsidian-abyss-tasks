@@ -17,12 +17,14 @@ import type {
 } from '../../views/timegrid/renderTaskMeta';
 import type { TimedBlockKeyboardIntent } from '../../views/timegrid/renderTimedBlocks';
 import type { TimedBoundaryTarget } from '../../views/timegrid/timedInteractions';
+import type { ShowInTaskList } from '../right/inspectorTypes';
 import type { CalViewType } from './calendarViewType';
 
 /** Everything a calendar view can ask the controller to do. Built once per calendar render. */
 export interface CalendarHandlers {
   readonly onNativeDragStart?: CalendarNativeDragStart | undefined;
   readonly onTaskClick: (task: TaskSnapshot) => void;
+  readonly onShowParent?: ShowInTaskList | undefined;
   readonly onTaskSelect: (task: TaskSnapshot) => void;
   readonly onForecastClick: NonNullable<ForecastInteractionCallbacks['onForecastClick']>;
   /** "Edit repeat…" from a forecast occurrence; the anchor is the occurrence element. */
@@ -74,6 +76,7 @@ function createTodayView(deps: CalendarViewDependencies, handlers: CalendarHandl
     forecastMenuOwner: deps.forecastMenuOwner,
     onTaskClick: handlers.onTaskClick,
     onTaskSelect: handlers.onTaskSelect,
+    onShowParent: handlers.onShowParent,
     onForecastClick: handlers.onForecastClick,
     onForecastContextMenu: handlers.onForecastContextMenu,
     onDrop: handlers.onDrop,
@@ -112,6 +115,7 @@ function createWeekView(
     forecastMenuOwner: deps.forecastMenuOwner,
     onTaskClick: handlers.onTaskClick,
     onTaskSelect: handlers.onTaskSelect,
+    onShowParent: handlers.onShowParent,
     onForecastClick: handlers.onForecastClick,
     onForecastContextMenu: handlers.onForecastContextMenu,
     onDrop: handlers.onDrop,
@@ -157,6 +161,7 @@ function createMonthView(
     onCreateAtDate: handlers.onCreateAtDate,
     onTaskClick: handlers.onTaskClick,
     onTaskSelect: handlers.onTaskSelect,
+    onShowParent: handlers.onShowParent,
     onForecastClick: handlers.onForecastClick,
     onForecastContextMenu: handlers.onForecastContextMenu,
     onDrop: handlers.onDrop,

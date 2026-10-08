@@ -1,4 +1,5 @@
 import { Component, type App } from 'obsidian';
+import type { ShowInTaskList } from '../panels/right/inspectorTypes';
 import type { ResolvedConfig, TagGroup } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskPriority, TaskSnapshot } from '../tasks';
@@ -42,6 +43,7 @@ export interface TimeGridCallbacks extends ForecastInteractionCallbacks {
   dependenciesFor?: TimedBlockCallbacks['dependenciesFor'];
   app: App;
   onTaskClick: (task: TaskSnapshot) => void;
+  onShowParent?: ShowInTaskList | undefined;
   onTaskSelect?: ((task: TaskSnapshot) => void) | undefined;
   onDrop: (dragData: string, targetDate: string) => void;
   onDropTime: (dragData: string, date: string, time: string) => void;
@@ -364,6 +366,7 @@ export class TodayView extends BaseView {
       component: this.md,
       onTaskClick: this.callbacks.onTaskClick,
       onTaskSelect: this.callbacks.onTaskSelect,
+      onShowParent: this.callbacks.onShowParent,
       onKeyboardIntent: this.callbacks.onKeyboardIntent,
       onTimeChange: this.callbacks.onTimeChange,
       onDurationChange: this.callbacks.onDurationChange,
@@ -405,6 +408,7 @@ export class TodayView extends BaseView {
       component: this.md,
       onTaskClick: this.callbacks.onTaskClick,
       onTaskSelect: this.callbacks.onTaskSelect,
+      onShowParent: this.callbacks.onShowParent,
       onDrop: this.callbacks.onDrop,
       onNativeDragStart: this.callbacks.onNativeDragStart,
       onStartChange: this.callbacks.onStartChange,

@@ -796,7 +796,9 @@ it('renders own child metadata and retires parent controls on update and unload'
     const replacement = expectDefined(
       mount.element.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'),
     );
-    replacement.click();
+    replacement.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }),
+    );
     const next = h.showTaskInList.mock.calls[1]?.[1];
     const sibling = expectDefined(
       source.index.listNodes().find((task) => task.path.length === 1 && task.node.title === 'Same'),

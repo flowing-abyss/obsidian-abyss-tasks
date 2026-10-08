@@ -16,6 +16,7 @@ import { testStatusRegistry } from './helpers';
 const HANDLER_NAMES = [
   'onTaskClick',
   'onTaskSelect',
+  'onShowParent',
   'onForecastClick',
   'onForecastContextMenu',
   'onDrop',
@@ -118,6 +119,7 @@ describe('createCalendarView', () => {
     for (const name of [
       'onTaskClick',
       'onTaskSelect',
+      'onShowParent',
       'onForecastClick',
       'onForecastContextMenu',
       'onDrop',

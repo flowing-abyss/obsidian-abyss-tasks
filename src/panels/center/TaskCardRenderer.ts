@@ -1,4 +1,4 @@
-import { Component, setIcon, setTooltip, type App } from 'obsidian';
+import { Component, setIcon, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import { countLinksIn } from '../../markdown/links';
 import { projectSearchText } from '../../markdown/searchText';
@@ -44,6 +44,7 @@ import {
   type TaskDependencyLookup,
 } from '../../ui/taskDependencyPresentation';
 import { renderTaskDescriptionText } from '../../ui/taskNodeText';
+import { renderTaskParentButton } from '../../ui/taskParentButton';
 import {
   applyTaskNodePresentationIdentity,
   applyTaskPresentationIdentity,
@@ -531,35 +532,14 @@ export class TaskCardRenderer {
     const parent =
       projection.path.length > 1 ? projection.path[projection.path.length - 2] : projection.root;
     if (parent === undefined) return;
-    const controller = new AbortController();
-    owner.register(() => {
-      controller.abort();
+    const button = renderTaskParentButton(titleRow, parent, owner, {
+      show: (target, request) => this.#host.showTaskInList(target, request),
+      isCurrent: context.isCurrent,
+      reportFailure: (error) => {
+        this.#reportFailure(error);
+      },
     });
-    const label = `Show parent: ${parent.title}`;
-    const button = titleRow.createEl('button', {
-      cls: 'abyss-task-parent-btn clickable-icon',
-      attr: { 'aria-label': label },
-    });
-    setIcon(button, 'corner-down-right');
-    setTooltip(button, label);
     titleRow.prepend(button);
-    const activate = (event: Event): void => {
-      event.stopPropagation();
-      event.preventDefault();
-      if (controller.signal.aborted || !context.isCurrent()) return;
-      void this.#host
-        .showTaskInList(taskNodeRef(parent), {
-          signal: controller.signal,
-          isCurrent: () => !controller.signal.aborted && context.isCurrent(),
-        })
-        .catch((error) => {
-          if (!controller.signal.aborted && context.isCurrent()) this.#reportFailure(error);
-        });
-    };
-    owner.registerDomEvent(button, 'click', activate);
-    owner.registerDomEvent(button, 'keydown', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') activate(event);
-    });
   }
 
   #releaseBadges(registrations: ReadonlyArray<readonly [string, HTMLElement]>): void {

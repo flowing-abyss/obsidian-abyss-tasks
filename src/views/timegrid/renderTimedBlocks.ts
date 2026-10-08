@@ -1,4 +1,5 @@
 import { type App, type Component } from 'obsidian';
+import type { ShowInTaskList } from '../../panels/right/inspectorTypes';
 import { formatDurationFromMinutes } from '../../parser/TaskParser';
 import type { TagGroup } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
@@ -34,6 +35,7 @@ import {
   bindMaterializedInteractions,
   bindTaskSelection,
   hasCountBadges,
+  renderCalendarParentButton,
   renderCountBadges,
   type CalendarOccurrenceLookup,
   type ForecastInteractionCallbacks,
@@ -57,6 +59,7 @@ export interface TimedBlockCallbacks extends ForecastInteractionCallbacks {
   app: App;
   component: Component;
   onTaskClick: (task: TaskSnapshot) => void;
+  onShowParent?: ShowInTaskList | undefined;
   onTaskSelect?: ((task: TaskSnapshot) => void) | undefined;
   onKeyboardIntent: (task: TaskSnapshot, intent: TimedBlockKeyboardIntent) => void;
   onTimeChange: (task: TaskSnapshot, newStartMinutes: number) => void;
@@ -433,6 +436,7 @@ function renderTimedBlockContent(
           }
         : {}),
       renderTitle: (head: HTMLElement): void => {
+        renderCalendarParentButton(head, occurrence, callbacks);
         renderTimedBlockTitle({ head, task, occurrence, terminal, callbacks });
       },
     },
@@ -635,8 +639,8 @@ function keyboardIntent(event: KeyboardEvent): TimedBlockKeyboardIntent | undefi
 
 /**
  * Arrow keys emit relative domain intents. Tab and Shift+Tab cycle through the visual ordering
- * of timed blocks in the current day, keeping focus on block roots even when the key originated
- * from an embedded link. Ctrl/Meta/Alt combinations are left to the host/browser.
+ * of timed blocks and their parent buttons in the current day. Embedded links retain their
+ * owning block as the starting stop. Ctrl/Meta/Alt combinations are left to the host/browser.
  */
 function attachKeyboardHandling(
   block: HTMLElement,
@@ -649,7 +653,7 @@ function attachKeyboardHandling(
 
     if (event.key === 'Tab') {
       event.preventDefault();
-      focusAdjacentTimedBlock(block, event.shiftKey ? -1 : 1);
+      focusAdjacentTimedBlock(block, event.shiftKey ? -1 : 1, event.target);
       return;
     }
 
@@ -660,7 +664,11 @@ function attachKeyboardHandling(
   });
 }
 
-function focusAdjacentTimedBlock(block: HTMLElement, direction: -1 | 1): void {
+function focusAdjacentTimedBlock(
+  block: HTMLElement,
+  direction: -1 | 1,
+  origin: EventTarget | null,
+): void {
   const scope =
     block.closest<HTMLElement>('.abyss-tg-day-column') ??
     block.closest<HTMLElement>('.abyss-tg-hour-column');
@@ -677,11 +685,14 @@ function focusAdjacentTimedBlock(block: HTMLElement, direction: -1 | 1): void {
       ? startDifference
       : (domIndex.get(a) ?? 0) - (domIndex.get(b) ?? 0);
   });
-  const currentIndex = visualBlocks.indexOf(block);
-  if (currentIndex < 0 || visualBlocks.length === 0) return;
-
-  const targetIndex = (currentIndex + direction + visualBlocks.length) % visualBlocks.length;
-  visualBlocks[targetIndex]?.focus();
+  const stops = visualBlocks.flatMap((candidate) => {
+    const parent = candidate.querySelector<HTMLElement>('.abyss-task-parent-btn');
+    return parent === null ? [candidate] : [candidate, parent];
+  });
+  const currentIndex = stops.findIndex((candidate) => candidate === origin);
+  const index = currentIndex < 0 ? stops.indexOf(block) : currentIndex;
+  if (index < 0 || stops.length === 0) return;
+  stops[(index + direction + stops.length) % stops.length]?.focus();
 }
 
 function attachSelectedState(block: HTMLElement): void {

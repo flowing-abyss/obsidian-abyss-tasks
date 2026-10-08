@@ -2466,3 +2466,41 @@ it.each([
     for (const cleanup of inspectorCleanups.splice(0)) cleanup();
   }
 });
+
+it('opens an exact nested initial target, rejects unproven ancestry and retains ordinary root opening', async () => {
+  const h = await inspectorHarness(
+    '- [ ] Current\n  - [ ] Parent\n    - [/] Same ⏳ 2026-10-08\n    - [ ] Same',
+  );
+  const root = expectDefined(h.index.list()[0]);
+  const parent = expectDefined(root.subtasks[0]);
+  const child = expectDefined(parent.subtasks[0]);
+  const sibling = expectDefined(parent.subtasks[1]);
+  const modal = new TaskModal({
+    app: h.app,
+    tasks: h.api,
+    queries: h.index,
+    settings: DEFAULT_SETTINGS,
+    statusRegistry: testStatusRegistry(),
+  });
+  try {
+    modal.open(root, undefined, { type: 'subtask', ref: child.ref });
+    const selected = () => modal['innerState_abyssPrivate']?.get('taskStack');
+    expect(selected()).toEqual([root, parent, child]);
+    expect(document.querySelector('.abyss-modal .abyss-right-title')?.textContent).toBe('Same');
+    modal.close();
+    modal.open(root, undefined, { type: 'subtask', ref: { ...child.ref, relativeLine: 999 } });
+    expect(document.querySelector('.abyss-modal')).toBeNull();
+    modal.open(root, undefined, {
+      type: 'subtask',
+      ref: { ...child.ref, parent: { type: 'task', ref: root.ref } },
+    });
+    expect(document.querySelector('.abyss-modal')).toBeNull();
+    modal.open(root, undefined, { type: 'subtask', ref: sibling.ref });
+    expect(selected()).toEqual([root, parent, sibling]);
+    modal.close();
+    modal.open(root);
+    expect(selected()).toEqual([root]);
+  } finally {
+    modal.close();
+  }
+});

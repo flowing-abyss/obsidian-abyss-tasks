@@ -1,5 +1,6 @@
 import { Component, type App } from 'obsidian';
 import { weekStartOffset } from '../domain/weekGridOffset';
+import type { ShowInTaskList } from '../panels/right/inspectorTypes';
 import type { ResolvedConfig, TagGroup } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import { tagColorFor } from '../tags/tagColor';
@@ -42,6 +43,7 @@ import {
   bindTaskSelection,
   calendarOccurrenceLookup,
   renderCalendarLeadingSlots,
+  renderCalendarParentButton,
   type CalendarOccurrenceLookup,
   type ForecastInteractionCallbacks,
 } from './timegrid/renderTaskMeta';
@@ -93,6 +95,7 @@ export interface MonthGridViewCallbacks extends ForecastInteractionCallbacks {
   onDayClick: (date: string) => void;
   onCreateAtDate: (date: string) => void;
   onTaskClick: (task: TaskSnapshot) => void;
+  onShowParent?: ShowInTaskList | undefined;
   onTaskSelect?: ((task: TaskSnapshot) => void) | undefined;
   onDrop: (dragData: string, targetDate: string) => void;
   onSpanMove?: (task: TaskSnapshot, target: SpanMoveTarget) => void;
@@ -348,6 +351,7 @@ export class MonthGridView extends BaseView {
       component: this.md,
       onTaskClick: this.callbacks.onTaskClick,
       onTaskSelect: this.callbacks.onTaskSelect,
+      onShowParent: this.callbacks.onShowParent,
       onDrop: this.callbacks.onDrop,
       onNativeDragStart: this.callbacks.onNativeDragStart,
       onStartChange: (task, date) =>
@@ -424,6 +428,7 @@ export class MonthGridView extends BaseView {
       if (kind === 'timed')
         item.createSpan({ cls: 'abyss-mg-item-time', text: `${t.planning.time} ` });
       if (kind === 'deadline') item.createSpan({ text: '📅 ' });
+      renderCalendarParentButton(item, occurrence, callbacks);
       this.renderTitle(item, t, occurrence.kind === 'forecast');
       bindMaterializedInteractions(occurrence, () => {
         bindTaskSelection(item, t, this.callbacks.onTaskSelect);

@@ -995,6 +995,11 @@ centre shell. CalendarCommands translates gestures into public task commands; th
 selects Today, Week, or Month. Calendar policy/content helpers receive time and data explicitly.
 Capture placement belongs to the grid; CaptureSessions retains the capture session. Calendar
 collaborators use their owning document/window and release scheduled work on teardown.
+Materialized calendar card opening resolves canonical root and exact node ancestry before passing
+an initial target to TaskModal. The modal validates that target and initializes its local selection
+before mounting RightPanel; display snapshots never become child write authority. The shared
+parent button reveals the canonical immediate parent through CenterPanel's existing task-list
+navigation and cancels pending reveals with the card's Component lifetime.
 
 Calendar sources enumerate all children of accepted canonical trees after source exclusions.
 `taskOccupiedDates` supplies date-index admission and materialized occurrence identity: a valid

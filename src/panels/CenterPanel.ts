@@ -1760,8 +1760,9 @@ export class CenterPanel {
       rerender: () => {
         this.render_abyssPrivate();
       },
-      openTask: (task) => {
-        this.taskModal_abyssPrivate?.open(task);
+      onShowParent: (target, request) => this.showTaskInList(target, request),
+      openTask: (task, initialTarget) => {
+        this.taskModal_abyssPrivate?.open(task, undefined, initialTarget);
       },
       openForecastTask: (source, referenceDate) => {
         this.openForecastTask_abyssPrivate(source, referenceDate);

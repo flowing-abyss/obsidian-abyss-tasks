@@ -1,4 +1,5 @@
-import { setIcon } from 'obsidian';
+import { setIcon, type Component } from 'obsidian';
+import type { ShowInTaskList } from '../../panels/right/inspectorTypes';
 import type { TagGroup } from '../../settings/types';
 import { colorForTag } from '../../tags/tagColor';
 import { subtreeRunning, type LocalDate, type TaskNodeRef, type TaskSnapshot } from '../../tasks';
@@ -11,12 +12,15 @@ import {
   recurrenceBadgeInput,
   renderRecurrenceBadge,
 } from '../../ui/recurrence/renderRecurrenceBadge';
+import { runAsyncAction } from '../../ui/runAsyncAction';
 import { closeStatusPopovers, registerStatusPopoverClose } from '../../ui/statusMenu';
+import { renderTaskParentButton } from '../../ui/taskParentButton';
 import {
   applyTaskNodePresentationIdentity,
   applyTaskPresentationIdentity,
   clearTaskNodePresentationIdentity,
 } from '../../ui/taskPresentationIdentity';
+import { taskSelectionPath } from '../../ui/taskSelection';
 import {
   calendarOccurrenceForRender,
   type CalendarOccurrence,
@@ -484,4 +488,31 @@ export function hasMeta(task: TaskSnapshot): boolean {
  */
 export function hasCountBadges(task: TaskSnapshot): boolean {
   return task.subtasks.length > 0 || task.comments.length > 0 || task.presentation.linkCount > 0;
+}
+
+/** Display adapters supply canonical ancestry, never the root identity of their display snapshot. */
+export function renderCalendarParentButton(
+  container: HTMLElement,
+  occurrence: CalendarOccurrence,
+  callbacks: { readonly component: Component; readonly onShowParent?: ShowInTaskList | undefined },
+): void {
+  if (
+    occurrence.kind !== 'materialized' ||
+    occurrence.source.target.type !== 'subtask' ||
+    callbacks.onShowParent === undefined
+  )
+    return;
+  const path = taskSelectionPath(occurrence.source.root, occurrence.source.node);
+  const parent = path?.[path.length - 2];
+  if (parent === undefined) return;
+  renderTaskParentButton(container, parent, callbacks.component, {
+    show: callbacks.onShowParent,
+    isCurrent: () => container.isConnected,
+    reportFailure: (error) => {
+      runAsyncAction(
+        Promise.reject(error instanceof Error ? error : new Error(String(error))),
+        'Could not show task parent',
+      );
+    },
+  });
 }
