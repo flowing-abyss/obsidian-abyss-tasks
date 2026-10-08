@@ -1396,8 +1396,12 @@ updates preserve its focused native action and disposal retires its handlers. Th
 seeds editable canonical Markdown rather than an enforced due patch, so authored date edits win.
 TaskCaptureController and CaptureSurface share seed-only empty handling; successful Enter resets
 the same seed. A new header request may replace a pristine draft, while an edited, pending or error
-draft retains its original session and receives focus. Request invalidation still retires late
-planning on replacement or navigation; ordinary list and calendar capture defaults are unchanged.
+draft retains its original session and receives focus. List sessions preserve that draft on input
+blur toward a live date-header action in the same panel, before native button activation; other
+blur targets keep ordinary submission. Tabbing onward from the action without activating it leaves
+the draft retained; activation returns focus to that capture. Header retirement removes the
+action's recognition class. Request invalidation still retires late planning on replacement or
+navigation; ordinary list and calendar capture defaults are unchanged.
 List/project capture results carry an optional per-result `CreationRevealAuthority` through the
 existing CenterPanel/PanelView callback. Its reveal request carries an AbortSignal and currentness
 proof, and authorities may return either an immediate element or a Promise. The controller retains

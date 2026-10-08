@@ -8,6 +8,7 @@ export interface CaptureSurfaceOptions {
   readonly inputLabel?: string;
   readonly placeholder?: string;
   readonly closeOnEmptyBlur?: boolean;
+  readonly preserveDraftOnBlur?: (next: EventTarget | null) => boolean;
   readonly feedbackHost?: HTMLElement;
   readonly onEscape?: () => void;
   readonly presentation?: CapturePresentation;
@@ -96,8 +97,11 @@ export class CaptureSurface {
         this.controller.escape();
       }
     };
-    const onBlur = (): void => {
-      if (options.closeOnEmptyBlur === false && this.controller.isEmpty()) {
+    const onBlur = (event: FocusEvent): void => {
+      if (
+        options.preserveDraftOnBlur?.(event.relatedTarget) === true ||
+        (options.closeOnEmptyBlur === false && this.controller.isEmpty())
+      ) {
         return;
       }
       runAsyncAction(this.controller.submit('blur'), 'Could not add task');

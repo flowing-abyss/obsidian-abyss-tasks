@@ -41,6 +41,7 @@ export function mountGroupHeader<T = TaskSnapshot>(
   };
   const retireButton = (): void => {
     button?.removeEventListener('click', click);
+    button?.classList.remove('abyss-group-add');
     button?.remove();
     button = undefined;
   };

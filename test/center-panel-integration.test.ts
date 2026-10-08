@@ -8170,6 +8170,62 @@ describe('calendar child inspector and parent navigation', () => {
 
 describe('date header capture through the retained task bar', () => {
   fixedToday('2026-10-08');
+  it('preserves an authored draft across native header focus before click, then submits on ordinary outside blur', async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 8, 12));
+    const { panel, state, index, app } = await makePanel(
+      { 'range.md': '- [ ] Range 🛫 2026-10-09 📅 2026-10-11', 'capture.md': '' },
+      { ...DEFAULT_SETTINGS, taskFilePath: 'capture.md', listViewStates: {} },
+      [],
+      { authority: true },
+    );
+    state.set('selectedList', 'upcoming');
+    const container = activeDocument.body.createDiv();
+    panel.mount(container);
+    try {
+      await searchUiCompleted(container);
+      const buttons = container.querySelectorAll<HTMLButtonElement>('.abyss-group-add');
+      expectDefined(buttons[1]).click();
+      await flushMicrotasks();
+      const input = expectDefined(
+        container.querySelector<HTMLInputElement>('.abyss-capture-input'),
+      );
+      setCaptureDraft(input, 'Preserved edited date 📅 2026-10-12');
+      const otherDate = expectDefined(buttons[0]);
+      // The browser transfers focus and dispatches blur/relatedTarget before activating a button.
+      otherDate.focus();
+      await flushMicrotasks();
+      const file = expectDefined(app.vault.getFileByPath('capture.md'));
+      expect(await app.vault.read(file)).toBe('');
+      expect(container.querySelector('.abyss-capture-input')).toBe(input);
+      expect(input.value).toBe('Preserved edited date 📅 2026-10-12');
+      expect(activeDocument.activeElement).toBe(otherDate);
+      const outside = container.createEl('button', { text: 'Unrelated action' });
+      // Tab through the header action without activating it leaves the retained draft available.
+      outside.focus();
+      await flushMicrotasks();
+      expect(await app.vault.read(file)).toBe('');
+      expect(container.querySelector('.abyss-capture-input')).toBe(input);
+      otherDate.focus();
+      otherDate.click();
+      await flushMicrotasks();
+      expect(container.querySelector('.abyss-capture-input')).toBe(input);
+      expect(activeDocument.activeElement).toBe(input);
+      expect(input.value).toBe('Preserved edited date 📅 2026-10-12');
+      outside.focus();
+      await flushMicrotasks();
+      expect(await app.vault.read(file)).toBe(
+        '- [ ] Preserved edited date ➕ 2026-10-08 📅 2026-10-12',
+      );
+      expect(container.querySelector('.abyss-capture-input')).toBeNull();
+      expect(activeDocument.activeElement).toBe(outside);
+    } finally {
+      panel.destroy();
+      index.destroy();
+      container.remove();
+    }
+  });
   it.each(['today', 'upcoming'] as const)(
     'creates on the exact %s occurrence day with an editable seed and consecutive reset',
     async (selection) => {

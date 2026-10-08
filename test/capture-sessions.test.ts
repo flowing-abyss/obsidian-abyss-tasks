@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CaptureSessions } from '../src/panels/center/CaptureSessions';
 import { CenterPanel } from '../src/panels/CenterPanel';
+import { mountGroupHeader } from '../src/panels/task-list/taskListRowView';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import type {
@@ -496,6 +497,21 @@ it('retains a blur-started pending write and its retry draft when another date i
       },
     };
   });
+  const header = mountGroupHeader(
+    h.root,
+    {
+      kind: 'group',
+      key: 'later',
+      label: 'Later',
+      count: 1,
+      first: true,
+      dateGroup: { date: localDate('2026-10-14') },
+    },
+    (date) => {
+      h.captures.openDateCapture(date);
+    },
+  );
+  const plus = expectDefined(header.element.querySelector('button'));
   try {
     h.captures.openDateCapture(localDate('2026-10-10'));
     await flushMicrotasks();
@@ -503,13 +519,18 @@ it('retains a blur-started pending write and its retry draft when another date i
     editDateCapture(input, 'Retry 📅 2026-10-12');
     input.dispatchEvent(new Event('blur'));
     expect(input.readOnly).toBe(true);
-    h.captures.openDateCapture(localDate('2026-10-14'));
+    plus.focus();
+    await flushMicrotasks();
+    plus.click();
     expect(h.input()).toBe(input);
     expect(input.value).toBe('Retry 📅 2026-10-12');
     pending.resolve({ type: 'io-error', cause: 'repository-error', contentState: 'unchanged' });
     await flushMicrotasks();
     expect(input.getAttribute('aria-invalid')).toBe('true');
-    h.captures.openDateCapture(localDate('2026-10-15'));
+    plus.focus();
+    await flushMicrotasks();
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    plus.click();
     expect(h.input()).toBe(input);
     enterDateCapture(input);
     await flushMicrotasks();
@@ -520,6 +541,7 @@ it('retains a blur-started pending write and its retry draft when another date i
     expect(written.split('- [ ]')).toHaveLength(2);
     expect(input.value).toBe(' 📅 2026-10-10');
   } finally {
+    header.destroy();
     h.close();
   }
 });
@@ -552,3 +574,48 @@ it('ignores late date planning after a newer date and after list navigation', as
     h.close();
   }
 });
+
+it.each(['other-panel', 'retired'] as const)(
+  'does not suppress ordinary capture blur for a %s date button',
+  async (kind) => {
+    const h = await dateCaptureHarness();
+    const otherRoot = activeDocument.body.createDiv();
+    const header = mountGroupHeader(
+      kind === 'other-panel' ? otherRoot : h.root,
+      {
+        kind: 'group',
+        key: 'test-date',
+        label: 'Date',
+        count: 1,
+        first: true,
+        dateGroup: { date: localDate('2026-10-11') },
+      },
+      (date) => {
+        h.captures.openDateCapture(date);
+      },
+    );
+    const button = expectDefined(header.element.querySelector('button'));
+    try {
+      if (kind === 'retired') {
+        header.destroy();
+        // Reattached stale DOM must not regain capture-preservation authority.
+        h.root.append(button);
+      }
+      h.captures.openDateCapture(localDate('2026-10-10'));
+      await flushMicrotasks();
+      editDateCapture(h.input(), 'Outside 📅 2026-10-12');
+      button.focus();
+      await flushMicrotasks();
+      const file = expectDefined(h.app.vault.getFileByPath('capture.md'));
+      const written = await h.app.vault.read(file);
+      expect(written).toContain('Outside #focus');
+      expect(written).toContain('📅 2026-10-12');
+      expect(written.split('- [ ]')).toHaveLength(2);
+      expect(h.root.querySelector('.abyss-capture-input')).toBeNull();
+    } finally {
+      header.destroy();
+      otherRoot.remove();
+      h.close();
+    }
+  },
+);

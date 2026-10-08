@@ -239,6 +239,14 @@ export class CaptureSessions {
       active.restoreFocusOnClose = true;
     };
     const options = {
+      ...(active.placement.type === 'list' && {
+        preserveDraftOnBlur: (next: EventTarget | null) =>
+          this.#activeCapture === active &&
+          isRealmHTMLElement(next) &&
+          next.isConnected &&
+          this.#root().contains(next) &&
+          next.matches('button.abyss-group-add'),
+      }),
       ...(active.placement.type === 'calendar-timed' && {
         placeholder: `Task at ${active.placement.time}…`,
       }),
