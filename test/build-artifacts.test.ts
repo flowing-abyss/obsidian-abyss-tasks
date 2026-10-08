@@ -74,6 +74,8 @@ const privateOwners = new Set([
   'TagPickerModal',
   'TagGroupAppearanceModal',
   'TaskCaptureController',
+  'CaptureSurface',
+  'CaptureTargetResolver',
 ]);
 
 function privateOwner(node: ts.Node): string | undefined {
