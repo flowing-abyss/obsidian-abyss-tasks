@@ -9,8 +9,10 @@ import {
   statusGroupsEqual,
 } from '../../app/listViewState';
 import { noteNameOfPath } from '../../markdown/noteName';
+import { normalizeTag } from '../../markdown/tagSyntax';
 import { PRIORITY_LEVELS } from '../../priority';
 import { getListViewDefaults } from '../../settings/defaults';
+import { upsertTagFilter } from '../../settings/tagFilters';
 import type { CalendarSettings, ListViewState, PropertyFilter } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import { ACTIVE_STATUS_GROUPS, ALL_STATUS_GROUPS, TYPE_LABELS } from '../../status/statusConstants';
@@ -104,7 +106,10 @@ export class ListViewControls {
   #nonPriorityFilterLabel(
     filter: Exclude<PropertyFilter, { readonly type: 'file' } | { readonly type: 'priority' }>,
   ): string {
-    if (filter.type === 'tag') return filter.value;
+    if (filter.type === 'tag' || filter.type === 'tag-exclude') {
+      const tag = normalizeTag(filter.value) ?? filter.value;
+      return filter.type === 'tag-exclude' ? `−${tag}` : tag;
+    }
     if (filter.type === 'time') return `⏰ ${filter.value}`;
     if (filter.type === 'status') {
       return this.#options.statusRegistry.bySymbol(filter.value)?.name ?? filter.value;
@@ -114,6 +119,12 @@ export class ListViewControls {
 
   addPropertyFilter(filter: PropertyFilter): void {
     const vs = this.#read();
+    if (filter.type === 'tag' || filter.type === 'tag-exclude') {
+      const filters = upsertTagFilter(vs.filters, filter);
+      if (JSON.stringify(filters) === JSON.stringify(vs.filters)) return;
+      this.#updateViewState({ ...vs, filters });
+      return;
+    }
     const key = this.#propertyFilterKey(filter);
     const already = vs.filters.some((existing) => this.#propertyFilterKey(existing) === key);
     if (already) return;

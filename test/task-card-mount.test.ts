@@ -1015,3 +1015,41 @@ it('renders the contributed point date for an inverted range without an interval
   expect(mount.element.querySelector('.abyss-status-marker--continuation')).toBeNull();
   mount.destroy();
 });
+
+it('disposes inclusion and exclusion tag listeners on metadata refresh and mount retirement', () => {
+  const h = renderer();
+  const mount = h.subject.mount(document.body, task({ tags: ['#Work'] }), [], {
+    selected: false,
+    showDelete: false,
+  });
+  const oldTag = expectDefined(mount.element.querySelector<HTMLElement>('.abyss-task-tag'));
+  const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+  oldTag.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
+  expect(h.listControls.addPropertyFilter).toHaveBeenCalledWith({
+    type: 'tag-exclude',
+    value: '#Work',
+  });
+  oldTag.click();
+  expect(h.listControls.addPropertyFilter).toHaveBeenLastCalledWith({
+    type: 'tag',
+    value: '#Work',
+  });
+  mount.update(task({ tags: ['#Work/deep'] }), [], { selected: false, showDelete: false });
+  h.listControls.addPropertyFilter.mockClear();
+  oldTag.click();
+  oldTag.dispatchEvent(new MouseEvent('contextmenu', { cancelable: true }));
+  expect(h.listControls.addPropertyFilter).not.toHaveBeenCalled();
+  const tag = expectDefined(mount.element.querySelector<HTMLElement>('.abyss-task-tag'));
+  tag.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  expect(h.listControls.addPropertyFilter).toHaveBeenCalledWith({
+    type: 'tag-exclude',
+    value: '#Work/deep',
+  });
+  mount.destroy();
+  h.listControls.addPropertyFilter.mockClear();
+  tag.click();
+  tag.dispatchEvent(new MouseEvent('contextmenu', { cancelable: true }));
+  expect(h.listControls.addPropertyFilter).not.toHaveBeenCalled();
+  h.hostComponent.unload();
+});

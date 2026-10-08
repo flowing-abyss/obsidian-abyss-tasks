@@ -1576,7 +1576,13 @@ last clause supplies polarity and spelling, merging unrelated clause extensions.
 and exclusion `tag-exclude` AND with other clauses on the represented node's own tags. Production
 decoding validates both as single authored tags before normalization; malformed clauses recover
 the complete original view. Tag rename folds collisions in runtime and raw saved entries. Search
-controls remain session-only, with property clauses on represented roots.
+controls remain session-only, with property clauses on represented roots. Central tag clicks and
+task-menu filters share mode-aware control routing: ordinary lists use saved view state and Search
+uses its transient state port. Tag contextmenu prevents task/bulk-menu and row-selection propagation.
+Each central card's native Task actions button opens the existing task/bulk menu with its current
+node projection and occurrence completion; the same pin and focus-return owner restores the button
+after dismissal while respecting outside focus. Metadata and Search-context tag listeners belong to
+their Component render lifetime, including metadata refresh and card retirement.
 
 Migration captures untouched legacy data, writes and verifies the state envelope with a recovery
 snapshot, then removes moved static keys. Recognized state wins when both copies exist. Corrupt,

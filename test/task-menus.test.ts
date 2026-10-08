@@ -154,6 +154,8 @@ describe('task menu registration contract', () => {
         ['Status', 'priority'],
         ['Filter by this priority', 'priority'],
         ['Filter by this status', 'priority'],
+        ['Include tag', 'priority'],
+        ['Exclude tag', 'priority'],
         ['Open in note', 'open'],
         ['Archive', 'danger'],
         ['Delete', 'danger'],
@@ -163,7 +165,7 @@ describe('task menu registration contract', () => {
           .slice(0, 6)
           .map((item) => item.checked),
       ).toEqual([true, false, null, true, true, false]);
-      expect((menu as unknown as { items: unknown[] }).items).toHaveLength(16); // no extra explicit separators
+      expect((menu as unknown as { items: unknown[] }).items).toHaveLength(18); // no extra explicit separators
       const priority = expectDefined(
         items(menu).find((item) => item.title__ === 'Priority')?.submenu,
       );
@@ -611,3 +613,35 @@ it('preserves Today continuation across grouping while nondate destinations stay
     h.dispose();
   }
 });
+
+it.each(['Include tag', 'Exclude tag'])(
+  'offers %s through task tag choices and saved list controls',
+  (title) => {
+    const { panel, card, first, second } = fixture();
+    try {
+      expect(items(singleMenu(panel, card, first)).map((item) => item.title__)).toContain(title);
+      const multi = expectDefined(
+        items(singleMenu(panel, card, first)).find((item) => item.title__ === title)?.submenu,
+      );
+      expect(items(multi).map((item) => item.title__)).toEqual(['#one', '#both']);
+      const choice = expectDefined(
+        items(multi).find((item) => item.title__ === '#both'),
+      ) as unknown as { onClick__: () => void };
+      choice.onClick__();
+      expect(panel['state_abyssPrivate'].get('centerListViewState').filters).toEqual([
+        { type: title === 'Include tag' ? 'tag' : 'tag-exclude', value: '#both' },
+      ]);
+      const single = expectDefined(
+        items(singleMenu(panel, card, second)).find((item) => item.title__ === title),
+      );
+      expect(single.submenu).toBeNull();
+      (single as unknown as { onClick__: () => void }).onClick__();
+      expect(panel['state_abyssPrivate'].get('centerListViewState').filters).toHaveLength(1);
+      expect(
+        items(singleMenu(panel, card, task({ tags: [] }))).some((item) => item.title__ === title),
+      ).toBe(false);
+    } finally {
+      panel.destroy();
+    }
+  },
+);

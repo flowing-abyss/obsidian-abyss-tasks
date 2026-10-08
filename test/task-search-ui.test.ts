@@ -1,7 +1,8 @@
-import { MarkdownRenderer } from 'obsidian';
+import { MarkdownRenderer, Menu } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { deferred, expectDefined, flushMicrotasks, useRealMoment } from './helpers';
+import { SettingsPersistenceCoordinator } from '../src/settings/persistence';
+import { deferred, expectDefined, flushMicrotasks, methodOf, useRealMoment } from './helpers';
 import { taskCardMountBound } from './support/taskPanelViewport';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 import { taskViewportOwner } from './support/taskViewportOwner';
@@ -780,3 +781,85 @@ it.each(['tasks', 'search'] as const)(
     }
   },
 );
+
+it('routes mounted Search task-menu tag actions to transient chips and returns menu focus to its button', async () => {
+  const addItem = methodOf(Menu.prototype, 'addItem');
+  vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, cb) {
+    return addItem.call(this, (item) => {
+      (item as unknown as { dom: HTMLElement }).dom = createDiv();
+      cb(item);
+    });
+  });
+  let menu: Menu | undefined;
+  vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+    menu = this.setParentElement(document.body);
+    return this;
+  });
+  const settings = structuredClone(DEFAULT_SETTINGS),
+    before = structuredClone(settings);
+  const h = await mountCanonicalSearchUi(
+    {
+      'a.md':
+        '- [ ] needle Public #work\n- [ ] needle Private #work #private\n- [ ] needle Nested #work/deep',
+    },
+    settings,
+  );
+  const saveStatic = vi.fn(async () => {}),
+    write = vi.fn(async () => {});
+  const coordinator = new SettingsPersistenceCoordinator({
+    loadStatic: async () => ({}),
+    saveStatic,
+    state: { path: 'state.json', exists: async () => false, read: async () => '', write },
+  });
+  const save = vi
+    .spyOn(h.panel, 'onSaveViewState_abyssPrivate')
+    .mockImplementation(() => coordinator.saveViewState(settings));
+  const menuItems = () =>
+    (
+      expectDefined(menu) as unknown as {
+        menuItems__: Array<{ title__: string; submenu: Menu | null; onClick__: () => void }>;
+      }
+    ).menuItems__;
+  try {
+    h.query('needle');
+    await h.completed();
+    const publicButton = expectDefined(
+      h.root.querySelector<HTMLButtonElement>('button[aria-label="Task actions"]'),
+    );
+    publicButton.focus();
+    publicButton.click();
+    expectDefined(menu).hide();
+    expect(document.activeElement).toBe(publicButton);
+    const buttons = h.root.querySelectorAll<HTMLButtonElement>('button[aria-label="Task actions"]');
+    expectDefined(buttons[1]).click();
+    const exclusion = expectDefined(
+      menuItems().find((item) => item.title__ === 'Exclude tag')?.submenu,
+    );
+    const choices = (
+      exclusion as unknown as { menuItems__: Array<{ title__: string; onClick__: () => void }> }
+    ).menuItems__;
+    expectDefined(choices.find((item) => item.title__ === '#private')).onClick__();
+    expectDefined(menu).hide();
+    await h.completed();
+    expect(h.root.dataset['searchLogicalResults']).toBe('2');
+    expect(h.root.querySelector('.abyss-filter-chip-label')?.textContent).toBe('−#private');
+    expectDefined(
+      h.root.querySelector<HTMLButtonElement>('button[aria-label="Task actions"]'),
+    ).click();
+    expectDefined(menuItems().find((item) => item.title__ === 'Include tag')).onClick__();
+    expectDefined(menu).hide();
+    await h.completed();
+    expect(h.root.dataset['searchLogicalResults']).toBe('1');
+    expect(h.root.textContent).toContain('needle Public');
+    expect(
+      [...h.root.querySelectorAll('.abyss-filter-chip-label')].map((el) => el.textContent),
+    ).toEqual(['−#private', '#work']);
+    expect(settings).toEqual(before);
+    expect(save).not.toHaveBeenCalled();
+    expect(saveStatic).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    expect(h.state.get('taskStack')).toEqual([]);
+  } finally {
+    h.dispose();
+  }
+});

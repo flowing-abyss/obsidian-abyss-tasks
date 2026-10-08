@@ -376,7 +376,7 @@ export class TaskCardRenderer {
     let settled: Promise<TaskRenderOutcome> = Promise.resolve({ type: 'ready' });
     let titleReceipt: Promise<TaskRenderOutcome> | undefined;
     let descriptionReceipt: Promise<TaskRenderOutcome> | undefined;
-    let parentOwner: Component | undefined;
+    let headerOwner: Component | undefined;
     return {
       get settled() {
         if (
@@ -394,11 +394,11 @@ export class TaskCardRenderer {
         return settled;
       },
       update: (current) => {
-        if (parentOwner !== undefined) context.component.removeChild(parentOwner);
-        parentOwner = context.component.addChild(new Component());
-        this.#identity(card, current);
+        if (headerOwner !== undefined) context.component.removeChild(headerOwner);
+        headerOwner = context.component.addChild(new Component());
+        this.#identity(card, current, headerOwner);
         this.#refreshBadges(titleRow, title, current.task, { ...context, flags: current.flags });
-        this.#renderParentButton(titleRow, context, parentOwner);
+        this.#renderParentButton(titleRow, context, headerOwner);
         titleMount.update(current.task, current.flags);
         descriptionMount.update(current.task, current.flags);
         this.syncDeleteButton(
@@ -586,7 +586,7 @@ export class TaskCardRenderer {
     );
   }
 
-  #identity(card: HTMLElement, current: CardState): void {
+  #identity(card: HTMLElement, current: CardState, component: Component): void {
     const { task, flags } = current;
     applyTaskPresentationIdentity(card, task.ref);
     const projection = flags.projection ?? rootTaskNodeSnapshot(task);
@@ -596,22 +596,24 @@ export class TaskCardRenderer {
     if (flags.rowKey !== undefined) card.dataset['rowKey'] = flags.rowKey;
     card.toggleClass('is-selected', flags.selected);
     this.#refreshStatus(card, projection.node, flags.occurrence);
-    this.#refreshMetadata(card, current);
+    this.#refreshMetadata(card, current, component);
   }
 
-  #refreshMetadata(card: HTMLElement, current: CardState): void {
+  #refreshMetadata(card: HTMLElement, current: CardState, component: Component): void {
     const mainRow = card.querySelector<HTMLElement>('.abyss-task-card-main-row');
     if (mainRow === null) return;
     mainRow.querySelector(':scope > .abyss-task-meta-right')?.remove();
     this.#renderCardMetadata(mainRow, current.task, current.tagGroups, {
       search: current.flags.search,
       highlight: current.flags.highlight,
+      component,
       currentRoot: () => current.task,
       projection: current.flags.projection,
       occurrence: current.flags.occurrence,
     });
     const metadata = mainRow.querySelector(':scope > .abyss-task-meta-right');
-    if (metadata !== null) mainRow.querySelector('.abyss-task-delete-btn')?.before(metadata);
+    if (metadata !== null)
+      mainRow.querySelector('.abyss-task-action-btn, .abyss-task-delete-btn')?.before(metadata);
   }
 
   #refreshStatus(
@@ -953,7 +955,11 @@ export class TaskCardRenderer {
         });
       },
       renderSemantics: (host, node, evidence) => {
-        this.#renderSearchSemantics(host, node, evidence, { tagGroups: options.tagGroups, search });
+        this.#renderSearchSemantics(host, node, evidence, {
+          tagGroups: options.tagGroups,
+          search,
+          component: options.owner?.component,
+        });
       },
     });
   }
@@ -965,6 +971,7 @@ export class TaskCardRenderer {
     options: {
       readonly search?: TaskCardSearchPresentation | undefined;
       readonly highlight?: TaskCardHighlight | undefined;
+      readonly component?: Component | undefined;
       readonly currentRoot?: () => TaskSnapshot;
       readonly projection?: TaskNodeSnapshot | undefined;
       readonly occurrence?: TaskOccurrencePresentation | undefined;
@@ -977,7 +984,12 @@ export class TaskCardRenderer {
         mainRow.createDiv({ cls: 'abyss-task-meta-right' }),
         task,
         search.context.tree.evidence.filter(isTaskSearchSemanticEvidence),
-        { tagGroups, search, ...(currentRoot === undefined ? {} : { currentRoot }) },
+        {
+          tagGroups,
+          search,
+          component: options.component,
+          ...(currentRoot === undefined ? {} : { currentRoot }),
+        },
       );
   }
 
@@ -988,6 +1000,7 @@ export class TaskCardRenderer {
     options: {
       readonly tagGroups: readonly EffectiveTagGroup[];
       readonly search: TaskCardSearchPresentation;
+      readonly component?: Component | undefined;
       readonly currentRoot?: () => TaskSnapshot;
     },
   ): void {
@@ -1019,18 +1032,17 @@ export class TaskCardRenderer {
     options: {
       readonly tagGroups: readonly EffectiveTagGroup[];
       readonly search: TaskCardSearchPresentation;
+      readonly component?: Component | undefined;
       readonly currentRoot?: () => TaskSnapshot;
     },
   ): void {
     const record = records[0];
     if (record === undefined) return;
     if (record.field === 'tag') {
-      const element = this.#renderTagMetadata(
-        host,
-        record.text,
-        options.tagGroups,
-        'source' in node ? { task: node, currentTask: options.currentRoot } : { task: node },
-      );
+      const element = this.#renderTagMetadata(host, record.text, options.tagGroups, {
+        component: options.component,
+        ...('source' in node ? { task: node, currentTask: options.currentRoot } : { task: node }),
+      });
       this.#markSemanticValue(element, record.text, options.search);
       return;
     }
@@ -1096,6 +1108,7 @@ export class TaskCardRenderer {
     task: TaskSnapshot,
     tagGroups: readonly EffectiveTagGroup[],
     options: {
+      readonly component?: Component | undefined;
       readonly currentRoot?: () => TaskSnapshot;
       readonly projection?: TaskNodeSnapshot | undefined;
       readonly occurrence?: TaskOccurrencePresentation | undefined;
@@ -1130,6 +1143,7 @@ export class TaskCardRenderer {
     }
     for (const tag of tags) {
       const element = this.#renderTagMetadata(metaRight, tag, tagGroups, {
+        component: options.component,
         task: node,
         currentTask,
       });
@@ -1209,21 +1223,28 @@ export class TaskCardRenderer {
     tag: string,
     tagGroups: readonly EffectiveTagGroup[],
     dropContext?: {
+      readonly component?: Component | undefined;
       readonly task: TaskSelectionNode;
       readonly currentTask?: (() => TaskSelectionNode) | undefined;
     },
   ): HTMLElement {
+    const component = dropContext?.component ?? this.#host.component();
     const element = host.createSpan({ cls: 'abyss-task-tag abyss-cursor-pointer', text: tag });
     const color = this.#host.getTagColor(tag, tagGroups);
     if (color !== undefined && color !== '') {
       element.setCssProps({ '--abyss-tag-color': color });
       element.addClass('abyss-task-tag--colored');
     }
-    element.addEventListener('click', (event) => {
+    component.registerDomEvent(element, 'click', (event) => {
       event.stopPropagation();
       this.#listControls.addPropertyFilter({ type: 'tag', value: tag });
     });
-    element.addEventListener('dragover', (event) => {
+    component.registerDomEvent(element, 'contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.#listControls.addPropertyFilter({ type: 'tag-exclude', value: tag });
+    });
+    component.registerDomEvent(element, 'dragover', (event) => {
       if (dropContext === undefined) {
         event.stopPropagation();
         return;
@@ -1234,10 +1255,10 @@ export class TaskCardRenderer {
       event.stopPropagation();
       element.classList.add('abyss-drop-target');
     });
-    element.addEventListener('dragleave', () => {
+    component.registerDomEvent(element, 'dragleave', () => {
       element.classList.remove('abyss-drop-target');
     });
-    element.addEventListener('drop', (event) => {
+    component.registerDomEvent(element, 'drop', (event) => {
       if (dropContext === undefined) {
         event.stopPropagation();
         return;

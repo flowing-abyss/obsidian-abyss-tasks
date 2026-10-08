@@ -143,3 +143,90 @@ describe('initial list options indicator', () => {
     container.remove();
   });
 });
+
+describe('mounted tag polarity chips', () => {
+  it('replaces aliases at the original slot, preserves selected spelling and removes through the chip button', () => {
+    const state = new AppState();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    state.set('selectedList', 'inbox');
+    const saveViewState = vi.fn(async () => {});
+    const root = document.body.createDiv();
+    const controls = new ListViewControls({
+      state,
+      settings,
+      saveViewState,
+      statusRegistry: makeStubStore([]).statusRegistry,
+      interactionOwnership: noInteractionOwnership,
+      host: { root: () => root, formatDate: (value) => value },
+    });
+    const button = controls.renderViewStateButton(root);
+    const render = () => {
+      root.querySelectorAll('.abyss-filter-chip').forEach((chip) => {
+        chip.remove();
+      });
+      controls.renderPropertyChips(root, button);
+    };
+    const off = state.on('centerListViewState', render);
+    try {
+      controls.addPropertyFilter({ type: 'tag', value: '#work' });
+      const included = state.get('centerListViewState');
+      controls.addPropertyFilter({ type: 'tag', value: '#WORK' });
+      expect(state.get('centerListViewState')).toBe(included);
+      expect(saveViewState).toHaveBeenCalledTimes(1);
+      controls.addPropertyFilter({ type: 'priority', value: 'A' });
+      controls.addPropertyFilter({ type: 'tag-exclude', value: '#Work' });
+      expect(
+        [...root.querySelectorAll('.abyss-filter-chip-label')].map((el) => el.textContent),
+      ).toEqual(['−#Work', '🔺 Highest']);
+      expect(saveViewState).toHaveBeenCalledTimes(3);
+      controls.addPropertyFilter({ type: 'tag-exclude', value: '#WORK' });
+      expect(saveViewState).toHaveBeenCalledTimes(3);
+      expect(state.get('centerListViewState').filters).toEqual([
+        { type: 'tag-exclude', value: '#Work' },
+        { type: 'priority', value: 'A' },
+      ]);
+      controls.addPropertyFilter({ type: 'tag', value: '#work/deep' });
+      expect(state.get('centerListViewState').filters).toHaveLength(3);
+      root.querySelector<HTMLButtonElement>('.abyss-filter-chip-x')?.click();
+      expect(state.get('centerListViewState').filters).toEqual([
+        { type: 'priority', value: 'A' },
+        { type: 'tag', value: '#work/deep' },
+      ]);
+      expect(settings.listViewStates?.['inbox']?.filters).toEqual(
+        state.get('centerListViewState').filters,
+      );
+      expect(saveViewState).toHaveBeenCalledTimes(5);
+    } finally {
+      off();
+      root.remove();
+    }
+  });
+  it('displays canonical hashes for bare and authored inclusion and exclusion values', () => {
+    const state = new AppState();
+    state.set('centerListViewState', {
+      ...getListViewDefaults('all'),
+      filters: [
+        { type: 'tag', value: 'Work' },
+        { type: 'tag-exclude', value: '#Private' },
+        { type: 'tag-exclude', value: 'Work/deep' },
+      ],
+    });
+    const root = document.body.createDiv();
+    const controls = new ListViewControls({
+      state,
+      settings: structuredClone(DEFAULT_SETTINGS),
+      statusRegistry: makeStubStore([]).statusRegistry,
+      interactionOwnership: noInteractionOwnership,
+      saveViewState: async () => {},
+      host: { root: () => root, formatDate: (value) => value },
+    });
+    try {
+      controls.renderPropertyChips(root, controls.renderViewStateButton(root));
+      expect(
+        [...root.querySelectorAll('.abyss-filter-chip-label')].map((el) => el.textContent),
+      ).toEqual(['#Work', '−#Private', '−#Work/deep']);
+    } finally {
+      root.remove();
+    }
+  });
+});

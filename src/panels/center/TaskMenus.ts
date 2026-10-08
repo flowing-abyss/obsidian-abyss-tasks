@@ -123,6 +123,7 @@ export class TaskMenus {
     this.#addTaskDatePickerMenuItem(menu, card, task);
     this.#addTaskEditMenuItems(menu, card, task);
     this.#addTaskPropertyMenuItems(menu, task, completion);
+    this.#addTaskTagFilterMenuItems(menu, task);
     this.#addTaskOpenMenuItem(menu, task);
     this.#addTaskDangerMenuItems(menu, task);
     return menu;
@@ -233,6 +234,39 @@ export class TaskMenus {
           this.#options.host.addFilter({ type: 'status', value: commandNode(task).statusSymbol });
         }),
     );
+  }
+
+  #addTaskTagFilterMenuItems(menu: Menu, task: TaskCommandSubject): void {
+    const tags = [...this.#getTaskTags(task)];
+    if (tags.length === 0) return;
+    for (const type of ['tag', 'tag-exclude'] as const) {
+      menu.addItem((item) => {
+        item
+          .setTitle(type === 'tag' ? 'Include tag' : 'Exclude tag')
+          .setIcon('filter')
+          .setSection('priority');
+        const add = (value: string): void => {
+          this.#options.host.addFilter({ type, value });
+        };
+        const tag = tags[0];
+        if (tags.length === 1 && tag !== undefined)
+          item.onClick(() => {
+            add(tag);
+          });
+        else {
+          const choices = getSubmenu(item);
+          for (const value of tags)
+            choices.addItem((choice) =>
+              choice
+                .setTitle(value)
+                .setIcon('tag')
+                .onClick(() => {
+                  add(value);
+                }),
+            );
+        }
+      });
+    }
   }
 
   #addTaskEditMenuItems(menu: Menu, card: HTMLElement, task: TaskCommandSubject): void {

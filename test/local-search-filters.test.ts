@@ -266,7 +266,87 @@ it('applies exclusions through the actual Search controls statePort to represent
     expect(h.root.textContent).not.toContain('needle Private');
     expect(h.root.textContent).not.toContain('needle Nested');
     expect(settings).toEqual(before);
-    // Task 12 owns the exclusion chip label; this checks the real transient filter/selection path.
+  } finally {
+    h.dispose();
+  }
+});
+
+it('mounted Search tag events replace polarity and remove chips without coordinator writes or row actions', async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const before = structuredClone(settings);
+  const saveStatic = vi.fn(async () => {}),
+    write = vi.fn(async () => {});
+  const coordinator = new SettingsPersistenceCoordinator({
+    loadStatic: async () => ({}),
+    saveStatic,
+    state: { path: 'state.json', exists: async () => false, read: async () => '', write },
+  });
+  const h = await mountCanonicalSearchUi(
+    {
+      'a.md':
+        '- [ ] needle Public #needle-work\n  - [ ] needle Child #needle-private\n- [ ] needle Private #needle-work #needle-private\n- [ ] needle Nested #needle-work/deep',
+    },
+    settings,
+  );
+  const saved = vi
+    .spyOn(h.panel, 'onSaveViewState_abyssPrivate')
+    .mockImplementation(() => coordinator.saveViewState(settings));
+  const single = vi
+    .spyOn(h.panel, 'handleTaskContextMenu_abyssPrivate')
+    .mockImplementation(() => {});
+  const bulk = vi.spyOn(h.panel['taskMenus_abyssPrivate'], 'showBulkContextMenu');
+  const selection = vi.spyOn(h.panel, 'handleTaskCardClick_abyssPrivate');
+  try {
+    h.query('needle');
+    await h.completed();
+    const tag = () =>
+      expectDefined(
+        [...h.root.querySelectorAll<HTMLElement>('.abyss-task-tag')].find(
+          (el) => el.textContent === '#needle-work',
+        ),
+      );
+    tag().click();
+    await h.completed();
+    expect(h.root.dataset['searchLogicalResults']).toBe('2');
+    const child = expectDefined(
+      [...h.root.querySelectorAll<HTMLElement>('.abyss-task-tag')].find(
+        (el) => el.textContent === '#needle-private',
+      ),
+    );
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    child.dispatchEvent(event);
+    await h.completed();
+    expect(event.defaultPrevented).toBe(true);
+    expect(h.root.dataset['searchLogicalResults']).toBe('1');
+    expect(h.root.textContent).toContain('needle Public');
+    expect(h.root.textContent).toContain('needle Child');
+    expect(h.root.textContent).not.toContain('needle Private');
+    expect(
+      [...h.root.querySelectorAll('.abyss-filter-chip-label')].map((el) => el.textContent),
+    ).toEqual(['#needle-work', '−#needle-private']);
+    tag().dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    await h.completed();
+    expect(
+      [...h.root.querySelectorAll('.abyss-filter-chip-label')].map((el) => el.textContent),
+    ).toEqual(['−#needle-work', '−#needle-private']);
+    expect(h.root.dataset['searchLogicalResults']).toBe('1');
+    expect(h.root.textContent).toContain('needle Nested');
+    expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-filter-chip-x')).click();
+    await h.completed();
+    expect(h.root.dataset['searchLogicalResults']).toBe('2');
+    expect(settings).toEqual(before);
+    expect(saved).not.toHaveBeenCalled();
+    expect(saveStatic).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    expect(single).not.toHaveBeenCalled();
+    expect(bulk).not.toHaveBeenCalled();
+    expect(selection).not.toHaveBeenCalled();
+    expect(h.state.get('taskStack')).toEqual([]);
+    const filter = vi.spyOn(h.panel['searchControls_abyssPrivate'], 'addPropertyFilter');
+    h.dispose();
+    child.click();
+    child.dispatchEvent(new MouseEvent('contextmenu', { cancelable: true }));
+    expect(filter).not.toHaveBeenCalled();
   } finally {
     h.dispose();
   }
