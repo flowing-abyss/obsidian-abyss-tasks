@@ -3,6 +3,7 @@ import { listSelectionToKey, resolveListViewStateKey } from '../app/listViewStat
 import type { TagRenameChange } from '../markdown/tagSyntax';
 import type { CalViewType } from '../panels/calendar/calendarViewType';
 import { getListViewDefaults } from '../settings/defaults';
+import { normalizeTagFilters } from '../settings/tagFilters';
 import { renameTagSelection } from '../settings/tagViewState';
 import type { CalendarSettings, ListViewState } from '../settings/types';
 import { renameFileFilters } from '../settings/viewStatePaths';
@@ -112,13 +113,16 @@ export class PanelNavigator implements PanelNavigationActions {
       this.state.set('selectedList', selection);
       const current = this.state.get('centerListViewState');
       const filters = current.filters.map((filter) => {
-        if (filter.type !== 'tag') return filter;
+        if (filter.type !== 'tag' && filter.type !== 'tag-exclude') return filter;
         const renamed = renameTagSelection({ type: 'tag', tag: filter.value }, change, ids);
         return typeof renamed === 'object' && renamed.type === 'tag'
           ? { ...filter, value: renamed.tag }
           : filter;
       });
-      this.state.set('centerListViewState', { ...this.listState(selection), filters });
+      this.state.set('centerListViewState', {
+        ...this.listState(selection),
+        filters: normalizeTagFilters(filters),
+      });
     });
   }
 

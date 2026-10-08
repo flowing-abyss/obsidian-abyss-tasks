@@ -1,11 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AppState } from '../src/app/AppState';
+import { ListViewControls } from '../src/panels/center/ListViewControls';
 import { mountProjectCellValuePicker } from '../src/panels/projects/projectCellValuePicker';
+import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { SettingsPersistenceCoordinator } from '../src/settings/persistence';
+import type { ListViewState } from '../src/settings/types';
 import * as policy from '../src/tasks';
 import { NoteSuggest } from '../src/ui/NoteSuggest';
 import { ProjectPropertySuggest } from '../src/ui/ProjectPropertySuggest';
 import { TagPickerModal } from '../src/ui/TagPickerModal';
+import { noInteractionOwnership } from '../src/ui/interactionOwnership';
 import { showTagDropdown } from '../src/ui/tagDropdown';
-import { appWithFiles, expectDefined } from './helpers';
+import { appWithFiles, expectDefined, makeStubStore, useRealMoment } from './helpers';
+import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
+
+useRealMoment();
 
 const closers: Array<() => void> = [];
 afterEach(() => {
@@ -189,4 +198,76 @@ it('rejects oversized property queries before evaluating candidate exclusions, i
   });
   expect(properties.getSuggestions('x'.repeat(1024 * 1024))).toEqual([]);
   expect(exclude).not.toHaveBeenCalled();
+});
+
+it('keeps exclusion changes in the Search controls session without static or view writes', () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const before = structuredClone(settings);
+  const state = new AppState();
+  state.set('mode', 'search');
+  let list: ListViewState = { groupBy: 'none', sortBy: { field: 'date', dir: 'asc' }, filters: [] };
+  const saveStatic = vi.fn(async () => {}),
+    write = vi.fn(async () => {});
+  const coordinator = new SettingsPersistenceCoordinator({
+    loadStatic: async () => ({}),
+    saveStatic,
+    state: { path: 'state.json', exists: async () => false, read: async () => '', write },
+  });
+  const controls = new ListViewControls({
+    state,
+    settings,
+    statusRegistry: makeStubStore([]).statusRegistry,
+    interactionOwnership: noInteractionOwnership,
+    host: { root: () => document.body, formatDate: (value) => value },
+    saveViewState: () => coordinator.saveViewState(settings),
+    statePort: {
+      read: () => list,
+      write: (next) => {
+        list = next;
+      },
+      relevance: () => true,
+      setRelevance: () => {},
+      canUseRelevance: () => true,
+    },
+  });
+  controls.addPropertyFilter({ type: 'tag', value: '#work' });
+  controls.addPropertyFilter({ type: 'tag-exclude', value: '#private' });
+  expect(list.filters).toEqual([
+    { type: 'tag', value: '#work' },
+    { type: 'tag-exclude', value: '#private' },
+  ]);
+  expect(settings).toEqual(before);
+  expect(saveStatic).not.toHaveBeenCalled();
+  expect(write).not.toHaveBeenCalled();
+});
+
+it('applies exclusions through the actual Search controls statePort to represented roots only', async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const before = structuredClone(settings);
+  const h = await mountCanonicalSearchUi(
+    {
+      'a.md':
+        '- [ ] needle Public #work\n  - [ ] Child #private\n- [ ] needle Private #work #private\n- [ ] needle Nested #work/deep',
+    },
+    settings,
+  );
+  try {
+    h.query('needle');
+    await h.completed();
+    h.panel['searchControls_abyssPrivate'].addPropertyFilter({ type: 'tag', value: '#work' });
+    await h.completed();
+    h.panel['searchControls_abyssPrivate'].addPropertyFilter({
+      type: 'tag-exclude',
+      value: '#private',
+    });
+    await h.completed();
+    expect(h.root.dataset['searchLogicalResults']).toBe('1');
+    expect(h.root.textContent).toContain('needle Public');
+    expect(h.root.textContent).not.toContain('needle Private');
+    expect(h.root.textContent).not.toContain('needle Nested');
+    expect(settings).toEqual(before);
+    // Task 12 owns the exclusion chip label; this checks the real transient filter/selection path.
+  } finally {
+    h.dispose();
+  }
 });

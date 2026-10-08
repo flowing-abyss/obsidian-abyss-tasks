@@ -5,7 +5,8 @@ import {
   tagHasPrefix,
   type TagRenameChange,
 } from '../markdown/tagSyntax';
-import type { CalendarSettings } from './types';
+import { normalizeTagFilters } from './tagFilters';
+import type { CalendarSettings, PropertyFilter } from './types';
 
 interface DerivedGroup {
   readonly tag: string;
@@ -128,10 +129,14 @@ function renamedFilters(value: unknown, change: TagRenameChange): unknown {
   if (!record(value) || !Array.isArray(value['filters'])) return value;
   return {
     ...value,
-    filters: value['filters'].map((filter: unknown) =>
-      record(filter) && filter['type'] === 'tag' && typeof filter['value'] === 'string'
-        ? { ...filter, value: changedTag(filter['value'], change) }
-        : filter,
+    filters: normalizeTagFilters(
+      value['filters'].map((filter: unknown) =>
+        record(filter) &&
+        (filter['type'] === 'tag' || filter['type'] === 'tag-exclude') &&
+        typeof filter['value'] === 'string'
+          ? { ...filter, value: changedTag(filter['value'], change) }
+          : filter,
+      ) as PropertyFilter[],
     ),
   };
 }

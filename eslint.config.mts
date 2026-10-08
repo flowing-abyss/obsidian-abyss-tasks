@@ -477,6 +477,7 @@ export default defineConfig(
       'src/panels/task-list/taskOccurrenceSelection.ts',
       'src/settings/viewStatePaths.ts',
       'src/settings/tagViewState.ts',
+      'src/settings/tagFilters.ts',
       'src/markdown/tagSyntax.ts',
     ],
     rules: { 'project-policy/ambient': ['error', 'pure'] },

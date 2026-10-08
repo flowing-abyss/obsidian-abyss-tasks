@@ -5,7 +5,11 @@ import type { ListSelection } from '../../src/app/AppState';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../../src/settings/defaults';
 import type { ListViewState } from '../../src/settings/types';
 import { discoveredPrefixGroupId } from '../../src/tags/effectiveTagGroups';
-import { searchTaskList, selectTaskList } from '../../src/task-lists/TaskListSelector';
+import {
+  searchTaskList,
+  selectTaskList,
+  selectTaskNodes,
+} from '../../src/task-lists/TaskListSelector';
 import {
   localDate,
   type LocalDate,
@@ -13,7 +17,8 @@ import {
   type TaskSnapshot,
   type TimeEntrySnapshot,
 } from '../../src/tasks';
-import { task, taskFromCodecLine } from '../helpers';
+import { taskTreeNodes } from '../../src/tasks/domain/taskSearchProjection';
+import { subtask, task, taskFromCodecLine } from '../helpers';
 
 function snapshot(
   title: string,
@@ -834,4 +839,77 @@ describe('complete outgoing sequence ordering', () => {
       }).map((value) => value.title),
     ).toEqual(expected);
   });
+});
+
+it('ANDs own-child exclusion with exact inclusion, status, file, priority, text and explicit group admission', () => {
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    tagGroups: [{ id: 'chosen', name: 'Chosen', mode: 'manual' as const, tags: ['#work'] }],
+  };
+  const child = (title: string, tags: string[], overrides: Partial<SubtaskSnapshot> = {}) =>
+    subtask({ title, tags, priority: 'B', ...overrides });
+  const roots = [
+    task({
+      title: 'Parent',
+      tags: ['#private'],
+      source: { filePath: 'tasks.md' },
+      subtasks: [
+        child('needle Child', ['#Work']),
+        child('needle Deep', ['#work', '#work/deep']),
+        child('needle Private', ['#work', '#private']),
+        child('needle Done', ['#work'], { status: 'done', statusSymbol: 'x' }),
+        child('needle Low', ['#work'], { priority: 'F' }),
+        child('other', ['#work']),
+        child('needle Outside', ['#else']),
+      ],
+    }),
+    task({
+      title: 'needle Other file',
+      tags: ['#work'],
+      source: { filePath: 'other.md' },
+      priority: 'B',
+    }),
+  ];
+  const filters: ListViewState['filters'] = [
+    { type: 'tag', value: '#WORK' },
+    { type: 'tag-exclude', value: '#PRIVATE' },
+    { type: 'tag-exclude', value: '#work/deep' },
+    { type: 'priority', value: 'B' },
+    { type: 'status', value: ' ' },
+    { type: 'file', filePath: 'tasks.md' },
+  ];
+  const input = {
+    tasks: roots.flatMap((root) => [...taskTreeNodes(root)]),
+    selection: { type: 'group' as const, groupId: 'chosen' },
+    settings,
+    today,
+    nowMs: 0,
+    textQuery: 'needle',
+    viewState: { ...getListViewDefaults('inbox'), filters },
+  };
+  expect(selectTaskNodes(input).map(({ node }) => node.title)).toEqual(['needle Child']);
+  expect(
+    selectTaskNodes({
+      ...input,
+      viewState: { ...input.viewState, filters: filters.filter((f) => f.type !== 'tag') },
+    }).map(({ node }) => node.title),
+  ).toEqual(['needle Child']);
+  expect(
+    selectTaskList({
+      ...input,
+      tasks: roots,
+      selection: null,
+      textQuery: '',
+      viewState: { ...input.viewState, filters: [{ type: 'tag-exclude', value: '#private' }] },
+    }).map((root) => root.title),
+  ).toEqual(['needle Other file']);
+  expect(
+    selectTaskList({
+      ...input,
+      tasks: roots,
+      selection: null,
+      textQuery: '',
+      viewState: { ...input.viewState, filters: [{ type: 'tag', value: '#work' }] },
+    }).map((root) => root.title),
+  ).toEqual(['needle Other file']);
 });

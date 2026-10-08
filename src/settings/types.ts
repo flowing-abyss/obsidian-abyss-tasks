@@ -137,11 +137,14 @@ export interface SavedViewStateRecovery {
 
 export type PropertyFilter =
   | { type: 'tag'; value: string }
+  | { type: 'tag-exclude'; value: string }
   | { type: 'file'; filePath: string }
   | { type: 'time'; value: string }
   | { type: 'priority'; value: TaskPriority }
   | { type: 'status'; value: string }
   | { type: 'date'; value: string };
+
+export type TagPropertyFilter = Extract<PropertyFilter, { type: 'tag' | 'tag-exclude' }>;
 
 export interface ListViewState {
   groupBy: 'none' | 'date' | 'priority' | 'tag' | 'status' | 'source-note' | 'outgoing-link';

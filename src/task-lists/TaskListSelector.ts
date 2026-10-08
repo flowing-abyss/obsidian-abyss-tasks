@@ -105,7 +105,11 @@ function* matchesProperty(
   filter: PropertyFilter,
   cooperative: boolean,
 ): CollectionSteps<boolean> {
-  if (filter.type === 'tag') return yield* matchesTags(task.tags, filter.value, cooperative);
+  if (filter.type === 'tag' || filter.type === 'tag-exclude') {
+    const matched = yield* matchesTags(task.tags, filter.value, cooperative);
+    if (matched === undefined) throw new Error('Tag matching ended without a result');
+    return filter.type === 'tag' ? matched : !matched;
+  }
   if (filter.type === 'file') return task.source.filePath === filter.filePath;
   if (filter.type === 'time') return String(task.planning.time) === filter.value;
   if (filter.type === 'priority') return task.priority === filter.value;

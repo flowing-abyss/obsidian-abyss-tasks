@@ -1,12 +1,19 @@
 // @vitest-environment jsdom
+import { Platform } from 'obsidian';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { initializeProjectPropertyDefinitions } from '../src/projects/initializeProjectPropertyDefinitions';
 import { buildConfiguredProjectFieldCatalog } from '../src/projects/projectFields';
+import * as historicalKanban from '../src/projects/projectKanbanSettings';
 import { buildDefaultProjectKanbanSettings } from '../src/projects/projectKanbanSettings';
+import * as historicalTable from '../src/projects/projectTableSettings';
+import * as historicalTimeline from '../src/projects/projectTimelineSettings';
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
+import * as historicalDefaults from '../src/settings/defaults';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import * as historicalMigration from '../src/settings/migration';
+import type * as PersistenceModule from '../src/settings/persistence';
 import {
   SAVED_VIEW_STATE_SCHEMA_VERSION,
   STATIC_SAVED_VIEW_STATE_MARKER,
@@ -15,15 +22,25 @@ import {
   type SettingsPersistencePort,
 } from '../src/settings/persistence';
 import { removeConfiguredProjectProperty } from '../src/settings/projectTableSettings';
+import * as historicalTagViews from '../src/settings/tagViewState';
+import * as historicalStatuses from '../src/status/statusConstants';
 import { TagManager } from '../src/tags/TagManager';
 import { PanelNavigator } from '../src/views/panelNavigation';
 import {
   CALENDAR_SETTINGS_OWNERS,
   PROJECT_SETTINGS_OWNERS,
 } from './architecture/settingsOwnership';
+import schema1Provenance from './fixtures/settings-persistence/06dee47-schema1-provenance.json';
 import priorSerializerFixture from './fixtures/settings-persistence/cc84b5d-property-definitions-roundtrip.json';
 import { createAppWithFiles, expectDefined } from './helpers';
 import { TYPESCRIPT_PROGRAM_TIMEOUT_MS } from './support/timeouts';
+
+const loadHistoricalNodeTools = async () => {
+  if (!Platform.isDesktop)
+    throw new Error('Historical persistence tests require a desktop runtime');
+  return Promise.all([import('node:crypto'), import('node:fs'), import('node:vm')]);
+};
+const [{ createHash }, { readFileSync }, { compileFunction }] = await loadHistoricalNodeTools();
 
 const STATE_PATH = '.test-config/plugins/abyss-tasks/state.json';
 
@@ -347,7 +364,7 @@ describe('SettingsPersistenceCoordinator migration', () => {
   });
 
   it('loads a legacy version-1 envelope without initializing Kanban preferences', async () => {
-    const port = memoryPort(markedStatic(), stateEnvelope());
+    const port = memoryPort(markedStatic(), { ...stateEnvelope(), schemaVersion: 1 });
     const coordinator = new SettingsPersistenceCoordinator(port);
 
     const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
@@ -360,7 +377,7 @@ describe('SettingsPersistenceCoordinator migration', () => {
       schemaVersion: number;
       views: { projects: Record<string, unknown> };
     };
-    expect(saved.schemaVersion).toBe(1);
+    expect(saved.schemaVersion).toBe(2);
     expect(saved.views.projects).not.toHaveProperty('kanban');
     expect(saved.views.projects).not.toHaveProperty('timeline');
     expect(saved.views.projects).not.toHaveProperty('overviewView');
@@ -517,7 +534,7 @@ describe('SettingsPersistenceCoordinator migration', () => {
     expect(reloaded.settings.projects.kanban?.descriptionLines).toBe('full');
   });
 
-  it('moves legacy static Kanban preferences into version-1 view state', async () => {
+  it('moves legacy static Kanban preferences into version-2 view state', async () => {
     const raw = legacySettings();
     const projects = raw['projects'] as Record<string, unknown>;
     projects['overviewView'] = 'kanban';
@@ -537,7 +554,7 @@ describe('SettingsPersistenceCoordinator migration', () => {
       schemaVersion: number;
       views: { projects: Record<string, unknown> };
     };
-    expect(saved.schemaVersion).toBe(1);
+    expect(saved.schemaVersion).toBe(2);
     expect(saved.views.projects).toMatchObject({ overviewView: 'kanban', kanban: {} });
   });
 
@@ -896,7 +913,7 @@ describe('SettingsPersistenceCoordinator migration', () => {
     const savedState = JSON.parse(port.stateText ?? '') as Record<string, unknown>;
     expect(savedState['recovery']).toEqual({ preSplitData: originalRawData });
     expect(savedState).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       views: {
         listViewStates: { today: { pluginExtra: { retained: true } } },
         projects: {
@@ -921,7 +938,7 @@ describe('SettingsPersistenceCoordinator migration', () => {
     expect((staticData['projects'] as Record<string, unknown>)['statusMigration']).toEqual({
       issue: 'retained-evidence',
     });
-    expect(staticData[STATIC_SAVED_VIEW_STATE_MARKER]).toBe(1);
+    expect(staticData[STATIC_SAVED_VIEW_STATE_MARKER]).toBe(2);
   });
 
   it('uses recognized state instead of stale legacy fields and retries static cleanup', async () => {
@@ -1447,7 +1464,7 @@ describe('complete known settings ownership', () => {
     expect(port.staticData).toEqual(staticBefore);
     expect(port.writes).toEqual([STATE_PATH]);
     expect(JSON.parse(port.stateText ?? '')).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       futureEnvelope: 'keep',
       views: {
         futureViews: 'keep',
@@ -1791,4 +1808,409 @@ describe('note list organization persistence', () => {
       expect(saved.views.listViewStates.inbox.futureList).toBe(true);
     },
   );
+});
+
+describe('schema 2 tag filter compatibility', () => {
+  const view = {
+    groupBy: 'priority',
+    sortBy: { field: 'title', dir: 'desc', sortExtension: 3 },
+    filters: [{ type: 'tag', value: '#Work', clauseExtension: 7 }],
+    viewExtension: 9,
+  };
+  it.each([1, 2])(
+    'reads literal schema 1 with marker %s without eager writes, then emits schema 2',
+    async (marker) => {
+      const port = memoryPort(
+        { ...markedStatic(), savedViewStateSchemaVersion: marker },
+        {
+          schemaVersion: 1,
+          envelopeExtension: { retained: true },
+          views: { listViewStates: { inbox: view }, viewsExtension: 8 },
+        },
+      );
+      const coordinator = new SettingsPersistenceCoordinator(port);
+      const before = port.stateText;
+      const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      expect(port.writes).toEqual([]);
+      loaded.settings.taskPrefix = '#changed';
+      await coordinator.saveSettings(loaded.settings);
+      expect(port.stateText).toBe(before);
+      expect(port.staticData).toMatchObject({ savedViewStateSchemaVersion: marker });
+      expectDefined(expectDefined(loaded.settings.listViewStates)['inbox']).filters.push({
+        type: 'tag-exclude',
+        value: '#private',
+      });
+      await coordinator.saveViewState(loaded.settings);
+      expect(JSON.parse(expectDefined(port.stateText))).toMatchObject({
+        schemaVersion: 2,
+        envelopeExtension: { retained: true },
+        views: {
+          viewsExtension: 8,
+          listViewStates: {
+            inbox: {
+              ...view,
+              filters: [...view.filters, { type: 'tag-exclude', value: '#private' }],
+            },
+          },
+        },
+      });
+      expect(port.staticData).toMatchObject({ savedViewStateSchemaVersion: 2 });
+      const reloaded = await new SettingsPersistenceCoordinator(port).loadSettings(
+        DEFAULT_SETTINGS,
+      );
+      expect(reloaded.settings.listViewStates).toEqual(loaded.settings.listViewStates);
+    },
+  );
+  it.each([1, 2])(
+    'never recaptures stale static views when state is missing with marker %s',
+    async (marker) => {
+      const port = memoryPort(
+        { ...markedStatic(), savedViewStateSchemaVersion: marker, listViewStates: { inbox: view } },
+        undefined,
+      );
+      const coordinator = new SettingsPersistenceCoordinator(port);
+      const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      expect(loaded.settings.listViewStates).toBeUndefined();
+      expect(port.writes).toEqual([]);
+      await coordinator.saveViewState(loaded.settings);
+      expect(JSON.parse(expectDefined(port.stateText))).not.toHaveProperty('recovery.preSplitData');
+    },
+  );
+  it.each([
+    { type: 'tag-exclude', value: 7 },
+    { type: 'tag-exclude', value: '#two #tags' },
+    { type: 'tag-exclude', value: '' },
+    { type: 'tag-exclude', value: '#123' },
+    { type: 'tag', value: '#bad/' },
+  ])('recovers the complete view for malformed known clause %j', async (clause) => {
+    const original = { ...view, filters: [view.filters[0], clause] };
+    const port = memoryPort(markedStatic(), {
+      schemaVersion: 2,
+      views: { listViewStates: { inbox: original } },
+      recovery: { extension: 1, malformedViews: { listViewStates: { older: { retained: 2 } } } },
+    });
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    expect(loaded.notices).toContain(
+      'Saved view preferences contained invalid values. Safe defaults were used and the original values were retained for recovery.',
+    );
+    expect(loaded.settings.listViewStates?.['inbox']).toBeUndefined();
+    await coordinator.saveViewState(loaded.settings);
+    expect(JSON.parse(expectDefined(port.stateText))).toMatchObject({
+      recovery: {
+        extension: 1,
+        malformedViews: { listViewStates: { inbox: original, older: { retained: 2 } } },
+      },
+    });
+  });
+  it.each(['write', 'verify', 'static'] as const)(
+    'preserves schema-1 authority through %s upgrade failure and retry',
+    async (failure) => {
+      const port = memoryPort(legacySettings({ listViewStates: { stale: view } }), {
+        schemaVersion: 1,
+        envelopeExtension: 4,
+        recovery: { original: 5 },
+        views: { listViewStates: { inbox: view } },
+      });
+      const before = port.stateText;
+      const write = port.state.write,
+        read = port.state.read,
+        saveStatic = port.saveStatic;
+      if (failure === 'write')
+        port.state.write = vi
+          .fn()
+          .mockRejectedValueOnce(new Error('disk'))
+          .mockImplementation(write);
+      if (failure === 'verify')
+        port.state.read = vi
+          .fn()
+          .mockImplementationOnce(read)
+          .mockResolvedValueOnce('mismatch')
+          .mockImplementation(read);
+      if (failure === 'static')
+        port.saveStatic = vi
+          .fn()
+          .mockRejectedValueOnce(new Error('disk'))
+          .mockImplementation(saveStatic);
+      await expect(
+        new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS),
+      ).rejects.toThrow();
+      expect(port.staticData).toHaveProperty('listViewStates.stale');
+      if (failure === 'write') expect(port.stateText).toBe(before);
+      else
+        expect(JSON.parse(expectDefined(port.stateText))).toMatchObject({
+          schemaVersion: 2,
+          envelopeExtension: 4,
+          recovery: { original: 5 },
+        });
+      const coordinator = new SettingsPersistenceCoordinator(port);
+      const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      expect(loaded.settings.listViewStates?.['inbox']?.groupBy).toBe('priority');
+      expect(loaded.settings.listViewStates?.['stale']).toBeUndefined();
+      await coordinator.saveViewState(loaded.settings);
+      expect(JSON.parse(expectDefined(port.stateText))).toMatchObject({
+        schemaVersion: 2,
+        envelopeExtension: 4,
+        recovery: { original: 5 },
+      });
+      expect(port.staticData).not.toHaveProperty('listViewStates');
+    },
+  );
+  it('folds renamed polarities and extensions in runtime and raw state through a failed queued save', async () => {
+    const port = memoryPort(markedStatic(), {
+      schemaVersion: 2,
+      views: {
+        listViewStates: {
+          inbox: {
+            ...view,
+            filters: [
+              { type: 'tag', value: '#old', first: 1 },
+              { type: 'priority', value: 'A' },
+              { type: 'tag-exclude', value: '#NEW', last: 2 },
+              { type: 'tag', value: '#old/deep', nested: 3 },
+            ],
+          },
+        },
+      },
+    });
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    const write = port.state.write;
+    port.state.write = vi.fn().mockRejectedValueOnce(new Error('disk')).mockImplementation(write);
+    await expect(
+      coordinator.renameTagViewState(settings, { oldTag: '#old', newTag: '#new', scope: 'prefix' }),
+    ).rejects.toThrow('disk');
+    const expected = [
+      { type: 'tag-exclude', value: '#NEW', first: 1, last: 2 },
+      { type: 'priority', value: 'A' },
+      { type: 'tag', value: '#new/deep', nested: 3 },
+    ];
+    expect(settings.listViewStates?.['inbox']?.filters).toEqual(expected);
+    await coordinator.saveViewState(settings);
+    expect(savedTagViews(port)['inbox']).toMatchObject({ filters: expected, viewExtension: 9 });
+  });
+});
+
+function frozenSchema1Coordinator(): typeof PersistenceModule {
+  const source = readFileSync(
+    `${import.meta.dirname}/fixtures/settings-persistence/06dee47-persistence-schema1.ts.txt`,
+    'utf8',
+  );
+  expect(schema1Provenance).toMatchObject({
+    commit: '06dee47f35302d5a7e60ed3c00120f4767d62122',
+    originPath: 'src/settings/persistence.ts',
+  });
+  expect(createHash('sha256').update(source).digest('hex')).toBe(schema1Provenance.sha256);
+  const bindings: Record<string, unknown> = {
+    '../projects/projectKanbanSettings': historicalKanban,
+    '../projects/projectTableSettings': historicalTable,
+    '../projects/projectTimelineSettings': historicalTimeline,
+    '../status/statusConstants': historicalStatuses,
+    './defaults': historicalDefaults,
+    './migration': historicalMigration,
+    './tagViewState': historicalTagViews,
+  };
+  const exports: Record<string, unknown> = {};
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2021 },
+  });
+  const execute = compileFunction(compiled.outputText, [
+    'exports',
+    'require',
+    'structuredClone',
+  ]) as (
+    exports: Record<string, unknown>,
+    require: (name: string) => unknown,
+    clone: typeof structuredClone,
+  ) => void;
+  execute(
+    exports,
+    (name) => {
+      if (!(name in bindings)) throw new Error(`Unbound historical dependency: ${name}`);
+      return bindings[name];
+    },
+    structuredClone,
+  );
+  expect(exports['SAVED_VIEW_STATE_SCHEMA_VERSION']).toBe(1);
+  return exports as typeof PersistenceModule;
+}
+
+it.each([false, true])(
+  'literal old coordinator suspends load and both save routes without changing schema-2 bytes (partial static failure: %s)',
+  async (partial) => {
+    const old = frozenSchema1Coordinator();
+    const port = memoryPort(
+      { ...markedStatic(), savedViewStateSchemaVersion: 1 },
+      {
+        schemaVersion: 1,
+        envelopeExtension: { exact: [1, 2] },
+        recovery: { retained: { value: 7 } },
+        views: {
+          listViewStates: {
+            inbox: {
+              groupBy: 'priority',
+              sortBy: { field: 'title', dir: 'desc', extension: 'sort' },
+              filters: [{ type: 'tag', value: '#Work', clauseExtension: 3 }],
+              viewExtension: 'view',
+            },
+          },
+        },
+      },
+    );
+    const current = new SettingsPersistenceCoordinator(port);
+    const { settings } = await current.loadSettings(DEFAULT_SETTINGS);
+    expectDefined(settings.listViewStates?.['inbox']).filters.push({
+      type: 'tag-exclude',
+      value: '#private',
+    });
+    if (partial)
+      port.saveStatic = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('static failed'))
+        .mockImplementation(port.saveStatic);
+    const pending = current.saveViewState(settings);
+    if (partial) await expect(pending).rejects.toThrow('static failed');
+    else await pending;
+    const before = expectDefined(port.stateText);
+    expect(JSON.parse(before)).toMatchObject({ schemaVersion: 2 });
+    const historical = new old.SettingsPersistenceCoordinator(port);
+    const loaded = await historical.loadSettings(DEFAULT_SETTINGS);
+    expect(loaded.issues.map(({ message }) => message)).toEqual([
+      'Saved view state uses unsupported future schema 2.',
+    ]);
+    expect(loaded.settings.listViewStates).toBeUndefined();
+    expect(loaded.settings.sectionCollapse).toEqual(DEFAULT_SETTINGS.sectionCollapse);
+    expect(port.stateText).toBe(before);
+    await expect(historical.saveViewState(loaded.settings)).rejects.toThrow(
+      'Saved view state writes are suspended.',
+    );
+    expect(port.stateText).toBe(before);
+    loaded.settings.taskPrefix = '#old-binary-static-edit';
+    await historical.saveSettings(loaded.settings);
+    expect(port.stateText).toBe(before);
+    const upgraded = new SettingsPersistenceCoordinator(port);
+    const restored = await upgraded.loadSettings(DEFAULT_SETTINGS);
+    expect(restored.settings.listViewStates).toEqual(settings.listViewStates);
+    await upgraded.saveViewState(restored.settings);
+    expect(JSON.parse(expectDefined(port.stateText))).toMatchObject({
+      schemaVersion: 2,
+      envelopeExtension: { exact: [1, 2] },
+      recovery: { retained: { value: 7 } },
+      views: {
+        listViewStates: {
+          inbox: {
+            groupBy: 'priority',
+            sortBy: { field: 'title', dir: 'desc', extension: 'sort' },
+            filters: [
+              { type: 'tag', value: '#Work', clauseExtension: 3 },
+              { type: 'tag-exclude', value: '#private' },
+            ],
+            viewExtension: 'view',
+          },
+        },
+      },
+    });
+  },
+  TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+);
+
+it.each([1, 2])(
+  'preserves guarded static legacy extensions with corrupt/future schema and marker %s',
+  async (marker) => {
+    for (const text of ['{broken', '{"schemaVersion":3,"views":{},"future":7}']) {
+      const raw = {
+        ...markedStatic(),
+        savedViewStateSchemaVersion: marker,
+        listViewStates: { legacy: { opaque: true } },
+      };
+      const port = memoryPort(raw, undefined);
+      port.stateText = text;
+      const coordinator = new SettingsPersistenceCoordinator(port);
+      const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      expect(loaded.issues).toHaveLength(1);
+      expect(loaded.settings.listViewStates).toBeUndefined();
+      await expect(coordinator.saveViewState(loaded.settings)).rejects.toThrow('suspended');
+      loaded.settings.taskPrefix = '#changed';
+      await coordinator.saveSettings(loaded.settings);
+      expect(port.stateText).toBe(text);
+      expect(port.staticData).toMatchObject({
+        savedViewStateSchemaVersion: marker,
+        listViewStates: raw.listViewStates,
+      });
+    }
+  },
+);
+
+it('migrates literal unmarked legacy inclusions in order and retains their original recovery', async () => {
+  const raw = {
+    listViewStates: {
+      inbox: {
+        groupBy: 'tag',
+        sortBy: { field: 'title', dir: 'desc' },
+        filters: [
+          { type: 'tag', value: '#Work', extension: 7 },
+          { type: 'priority', value: 'A' },
+          { type: 'tag', value: '#WORK', second: 8 },
+        ],
+        viewExtension: true,
+      },
+    },
+    staticExtension: { preserved: 3 },
+  };
+  const port = memoryPort(raw, undefined);
+  const loaded = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+  expect(port.writes).toEqual([STATE_PATH, 'data.json']);
+  expect(loaded.settings.listViewStates?.['inbox']?.filters).toEqual([
+    { type: 'tag', value: '#WORK', extension: 7, second: 8 },
+    { type: 'priority', value: 'A' },
+  ]);
+  expect(JSON.parse(expectDefined(port.stateText))).toMatchObject({
+    schemaVersion: 2,
+    recovery: { preSplitData: raw },
+  });
+  expect(port.staticData).toMatchObject({
+    savedViewStateSchemaVersion: 2,
+    staticExtension: { preserved: 3 },
+  });
+});
+
+it('renames active exclusion clauses with case-only collision folding and retained extensions', () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const state = new AppState();
+  const navigator = new PanelNavigator(state, settings, {
+    calendarView: () => 'month',
+    setCalendarView: () => {},
+    openQuickCapture: () => {},
+  });
+  const first = { type: 'tag' as const, value: '#Work', first: 1 };
+  const last = { type: 'tag-exclude' as const, value: '#work', last: 2 };
+  state.set('centerListViewState', {
+    groupBy: 'priority',
+    sortBy: { field: 'title', dir: 'desc' },
+    filters: [first, { type: 'priority', value: 'A' }, last],
+  });
+  navigator.followTagRename({ oldTag: '#work', newTag: '#WORK', scope: 'exact' });
+  expect(state.get('centerListViewState').filters).toEqual([
+    { type: 'tag-exclude', value: '#WORK', first: 1, last: 2 },
+    { type: 'priority', value: 'A' },
+  ]);
+});
+
+it('keeps marker advancement when a detached static save queues behind the schema-2 upgrade', async () => {
+  const port = memoryPort(
+    { ...markedStatic(), savedViewStateSchemaVersion: 1 },
+    {
+      schemaVersion: 1,
+      views: { listViewStates: {} },
+    },
+  );
+  const coordinator = new SettingsPersistenceCoordinator(port);
+  const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+  const upgrade = coordinator.saveViewState(settings);
+  settings.taskPrefix = '#queued';
+  const staticSave = coordinator.saveSettings(settings);
+  await upgrade;
+  await staticSave;
+  expect(port.staticData).toMatchObject({ savedViewStateSchemaVersion: 2, taskPrefix: '#queued' });
+  expect(JSON.parse(expectDefined(port.stateText))).toMatchObject({ schemaVersion: 2 });
 });

@@ -1560,10 +1560,26 @@ rollback revision and refresh project settings. View-state saves use a separate 
 neither. Task-status changes rebuild the catalog, registry, and index interpretation together;
 ProjectStore rescans membership/status changes while presentation changes reuse its snapshots.
 
+Saved views write schema 2 with the existing `savedViewStateSchemaVersion` static marker set to 2.
+Schema 1 and legacy inclusion clauses remain readable. A schema-1 read without moved static keys
+performs no writes and retains its marker until a view save writes and verifies schema 2; cleanup
+of moved keys likewise follows the verified state write. Valid state wins independently of the
+marker, and missing state with either marker 1 or 2 uses defaults without recapturing stale keys.
+An older schema-1 binary rejects schema 2 and suspends state writes, temporarily using default
+views; re-upgrading restores preferences. A literal historical coordinator fixture covers loading
+and attempted saving across that rollback, including interrupted migration.
+
+`tagFilters` folds exact normalized tag identities in saved order: the first slot survives and the
+last clause supplies polarity and spelling, merging unrelated clause extensions. Inclusion `tag`
+and exclusion `tag-exclude` AND with other clauses on the represented node's own tags. Production
+decoding validates both as single authored tags before normalization; malformed clauses recover
+the complete original view. Tag rename folds collisions in runtime and raw saved entries. Search
+controls remain session-only, with property clauses on represented roots.
+
 Migration captures untouched legacy data, writes and verifies the state envelope with a recovery
 snapshot, then removes moved static keys. Recognized state wins when both copies exist. Corrupt,
 unreadable, or future-version state stays untouched; view writes suspend and runtime uses temporary
-defaults. Static saves preserve unmarked legacy view fields until recovery is verified. Unknown
+defaults. Static saves preserve guarded legacy view fields and markers while state is unavailable. Unknown
 static and nested view values survive ordinary writes. Detached snapshots queue in order, duplicate
 writes are skipped, and a rejected write does not stop later operations.
 

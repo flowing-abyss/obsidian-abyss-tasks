@@ -209,7 +209,7 @@ describe('TaskCalendarPlugin saveSettings', () => {
     expect(saved['listViewStates']).toBeUndefined();
     expect(saved['sectionCollapse']).toBeUndefined();
     expect((saved['projects'] as Record<string, unknown>)['table']).toBeUndefined();
-    expect(saved[STATIC_SAVED_VIEW_STATE_MARKER]).toBe(1);
+    expect(saved[STATIC_SAVED_VIEW_STATE_MARKER]).toBe(2);
   });
 
   it('saves one validated storage draft and rebuilds source exclusion after durability', async () => {
