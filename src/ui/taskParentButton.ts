@@ -1,4 +1,4 @@
-import { setIcon, setTooltip, type Component } from 'obsidian';
+import { Component, setIcon, setTooltip } from 'obsidian';
 import type { ShowInTaskList } from '../panels/right/inspectorTypes';
 import { taskNodeRef, type TaskSelectionNode } from './taskSelection';
 
@@ -43,8 +43,11 @@ export function renderTaskParentButton(
   owner.registerDomEvent(button, 'focusin', (event) => {
     event.stopPropagation();
   });
+  let cancelPress: (() => void) | undefined;
   owner.registerDomEvent(button, 'pointerdown', (event) => {
     event.stopPropagation();
+    cancelPress?.();
+    if (event.button === 0 && current()) cancelPress = guardParentPress(button, event, owner);
   });
   owner.registerDomEvent(button, 'mousedown', (event) => {
     // A draggable ancestor can receive native dragstart even when pointerdown did not bubble.
@@ -59,4 +62,72 @@ export function renderTaskParentButton(
       event.stopPropagation();
     });
   return button;
+}
+
+/** A moved press can dispatch click on an ancestor, outside the button's own listeners. */
+function guardParentPress(
+  button: HTMLButtonElement,
+  start: PointerEvent,
+  owner: Component,
+): (() => void) | undefined {
+  const doc = button.ownerDocument;
+  const win = doc.defaultView;
+  if (win === null) return undefined;
+  const gesture = owner.addChild(new Component());
+  const finish = (): void => {
+    owner.removeChild(gesture);
+  };
+  let abandoned = false;
+  const observe = (event: PointerEvent): void => {
+    if (event.pointerId === start.pointerId)
+      abandoned ||= Math.hypot(event.clientX - start.clientX, event.clientY - start.clientY) >= 3;
+  };
+  gesture.registerDomEvent(doc, 'pointermove', observe, true);
+  gesture.registerDomEvent(
+    doc,
+    'pointerup',
+    (event) => {
+      if (event.pointerId !== start.pointerId) return;
+      observe(event);
+      gesture.registerDomEvent(
+        doc,
+        'click',
+        (click) => {
+          if (click.detail === 0 || ('pointerId' in click && click.pointerId !== start.pointerId))
+            return;
+          finish();
+          if (abandoned || !button.contains(click.target as Node)) {
+            click.preventDefault();
+            click.stopImmediatePropagation();
+          }
+        },
+        true,
+      );
+      // Native release and click share a turn. If no click arrives, no later action is suppressed.
+      const timer = win.setTimeout(finish, 0);
+      gesture.register(() => {
+        win.clearTimeout(timer);
+      });
+    },
+    true,
+  );
+  gesture.registerDomEvent(doc, 'pointerdown', finish, true);
+  gesture.registerDomEvent(
+    doc,
+    'pointercancel',
+    (event) => {
+      if (event.pointerId === start.pointerId) finish();
+    },
+    true,
+  );
+  gesture.registerDomEvent(win, 'blur', finish);
+  gesture.registerDomEvent(
+    doc,
+    'keydown',
+    (event) => {
+      if (event.key === 'Escape') abandoned = true;
+    },
+    true,
+  );
+  return finish;
 }

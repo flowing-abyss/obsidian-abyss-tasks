@@ -8166,6 +8166,211 @@ describe('calendar child inspector and parent navigation', () => {
       }
     },
   );
+
+  function parentPress(button: HTMLElement): void {
+    button.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        pointerId: 7,
+        button: 0,
+        clientX: 100,
+        clientY: 100,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    button.dispatchEvent(
+      new MouseEvent('mousedown', {
+        button: 0,
+        clientX: 100,
+        clientY: 100,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }
+
+  function releaseParentPress(target: HTMLElement, x = 150, y = 135): void {
+    target.dispatchEvent(
+      new PointerEvent('pointermove', {
+        pointerId: 7,
+        clientX: x,
+        clientY: y,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    target.dispatchEvent(
+      new PointerEvent('pointerup', {
+        pointerId: 7,
+        button: 0,
+        clientX: x,
+        clientY: y,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    target.dispatchEvent(
+      new MouseEvent('mouseup', {
+        button: 0,
+        clientX: x,
+        clientY: y,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }
+
+  function releasedClick(target: HTMLElement, x = 150, y = 135): void {
+    target.dispatchEvent(
+      new PointerEvent('click', {
+        pointerId: 7,
+        button: 0,
+        detail: 1,
+        clientX: x,
+        clientY: y,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }
+
+  it.each([
+    ['Day', '⏳ 2026-10-08', '.abyss-tg-cell-items'],
+    ['Day', '⏳ 2026-10-08 ⏰ 09:00', '.abyss-tg-hour-column'],
+    ['Week', '⏳ 2026-10-08', '.abyss-tg-cell-items'],
+    ['Month', '⏳ 2026-10-08', '.abyss-mg-cell-items'],
+  ] as const)(
+    '%s parent press with retargeted release does not activate the empty cell',
+    async (view, planning, selector) => {
+      const h = await mounted(planning, view, `- [ ] Neighbor ${planning}\n`);
+      try {
+        const before = await readMd(h.app, 'calendar-child.md');
+        const button = expectDefined(
+          h.el.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'),
+        );
+        const empty = expectDefined(button.closest<HTMLElement>(selector));
+        const execute = vi.spyOn(h.tasks, 'execute');
+        h.state.set('taskStack', []);
+        parentPress(button);
+        // Browser release over another item retargets click to the shared items ancestor.
+        const neighbor = expectDefined(
+          [...empty.querySelectorAll<HTMLElement>('.abyss-calendar-item')].find((item) =>
+            item.textContent.includes('Neighbor'),
+          ),
+        );
+        releaseParentPress(neighbor);
+        releasedClick(empty);
+        await vi.advanceTimersByTimeAsync(30);
+        expect(h.el.querySelector('.abyss-capture-input')).toBeNull();
+        expect(h.state.get('mode')).toBe('calendar');
+        expect(empty.isConnected).toBe(true);
+        expect(h.state.get('taskStack')).toEqual([]);
+        expect(h.state.get('draggingTaskNode')).toBeNull();
+        expect(execute).not.toHaveBeenCalled();
+        expect(await readMd(h.app, 'calendar-child.md')).toBe(before);
+        empty.dispatchEvent(
+          new PointerEvent('pointerdown', { pointerId: 8, button: 0, bubbles: true }),
+        );
+        empty.click();
+        await vi.advanceTimersByTimeAsync(30);
+        if (view === 'Month') expect(h.el.querySelector('.abyss-mg-grid')).toBeNull();
+        else expect(h.el.querySelectorAll('.abyss-capture-input')).toHaveLength(1);
+      } finally {
+        h.panel.destroy();
+        h.el.remove();
+      }
+    },
+  );
+
+  it('parent press moved away and back does not reveal on release, but the next genuine click does', async () => {
+    const h = await mounted('⏳ 2026-10-08', 'Day');
+    try {
+      const button = expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'));
+      parentPress(button);
+      document.dispatchEvent(
+        new PointerEvent('pointermove', { pointerId: 7, clientX: 150, clientY: 135 }),
+      );
+      releaseParentPress(button, 100, 100);
+      releasedClick(button, 100, 100);
+      await vi.advanceTimersByTimeAsync(30);
+      expect(h.state.get('mode')).toBe('calendar');
+      parentPress(button);
+      releaseParentPress(button, 100, 100);
+      releasedClick(button, 100, 100);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Root', 'Parent']);
+    } finally {
+      h.panel.destroy();
+      h.el.remove();
+    }
+  });
+
+  it.each(['pointercancel', 'blur', 'view', 'patch', 'next-press', 'no-click'] as const)(
+    'parent press releases its click guard on %s',
+    async (end) => {
+      const h = await mounted('⏳ 2026-10-08', 'Day');
+      try {
+        const button = expectDefined(
+          h.el.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'),
+        );
+        const initialEmpty = expectDefined(button.closest<HTMLElement>('.abyss-tg-cell-items'));
+        parentPress(button);
+        if (end === 'pointercancel')
+          document.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 7 }));
+        if (end === 'blur') window.dispatchEvent(new Event('blur'));
+        if (end === 'view') {
+          clickCalendarView(h.el, 'Month');
+          clickCalendarView(h.el, 'Day');
+        }
+        if (end === 'patch') {
+          const child = expectDefined(h.index.list()[0]?.subtasks[0]?.subtasks[0]);
+          await h.tasks.execute({
+            type: 'set-status',
+            target: { type: 'subtask', ref: child.ref },
+            symbol: ' ',
+          });
+        }
+        if (end === 'next-press')
+          initialEmpty.dispatchEvent(
+            new PointerEvent('pointerdown', { pointerId: 8, button: 0, bubbles: true }),
+          );
+        if (end === 'no-click') {
+          releaseParentPress(initialEmpty);
+          await vi.advanceTimersByTimeAsync(1);
+        }
+        const empty = expectDefined(h.el.querySelector<HTMLElement>('.abyss-tg-cell-items'));
+        releaseParentPress(empty);
+        releasedClick(empty);
+        await vi.advanceTimersByTimeAsync(30);
+        expect(h.el.querySelectorAll('.abyss-capture-input')).toHaveLength(1);
+        expect(h.state.get('taskStack')).toEqual([]);
+      } finally {
+        h.panel.destroy();
+        h.el.remove();
+      }
+    },
+  );
+
+  it('Escape abandons parent activation while consuming only its pending release click', async () => {
+    const h = await mounted('⏳ 2026-10-08', 'Day');
+    try {
+      const button = expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'));
+      const empty = expectDefined(button.closest<HTMLElement>('.abyss-tg-cell-items'));
+      parentPress(button);
+      button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      releaseParentPress(empty);
+      releasedClick(empty);
+      await vi.advanceTimersByTimeAsync(30);
+      expect(h.el.querySelector('.abyss-capture-input')).toBeNull();
+      expect(h.state.get('mode')).toBe('calendar');
+      releasedClick(empty);
+      await vi.advanceTimersByTimeAsync(30);
+      expect(h.el.querySelectorAll('.abyss-capture-input')).toHaveLength(1);
+    } finally {
+      h.panel.destroy();
+      h.el.remove();
+    }
+  });
 });
 
 describe('date header capture through the retained task bar', () => {
