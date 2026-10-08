@@ -8,6 +8,7 @@ import {
   indexedRows,
   type TaskListRow,
 } from '../src/panels/task-list/taskListRows';
+import { LogicalScrollWindow } from '../src/panels/virtualization/logicalScrollWindow';
 import {
   cssDeclarationsFor,
   expectDefined,
@@ -71,6 +72,19 @@ function harness(clampWrites = false, sameHost = false, clampExtent = false) {
   host.getBoundingClientRect = () => ({ top: origin - top }) as DOMRect;
   scroll.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
   let onMeasure: ((key: string) => void) | undefined;
+  const frameRow = (element: HTMLElement): HTMLElement =>
+    element.hasClass('abyss-virtual-row-frame')
+      ? (expectDefined(element.firstElementChild) as HTMLElement)
+      : element;
+  const flowHeight = (element: HTMLElement): number => {
+    if (element.hasClass('abyss-virtual-row-frame') && element.firstElementChild === null) return 0;
+    if (
+      element.hasClass('abyss-virtual-row-frame-clipped') ||
+      element.hasClass('abyss-virtual-row-spacer')
+    )
+      return Number.parseFloat(element.style.getPropertyValue('--abyss-virtual-row-height'));
+    return heights.get(frameRow(element).dataset['key'] ?? '') ?? 48;
+  };
   const writes = vi.fn((value: number) => {
     const style = window.getComputedStyle(host);
     const padding = [style.paddingTop, style.paddingBottom].reduce((sum, value) => {
@@ -79,26 +93,14 @@ function harness(clampWrites = false, sameHost = false, clampExtent = false) {
     }, 0);
     const extent = Array.from(host.children).reduce((sum, child) => {
       const element = child as HTMLElement;
-      if (element.hasClass('abyss-virtual-row-parked')) return sum;
-      return (
-        sum +
-        (element.hasClass('abyss-virtual-row-spacer')
-          ? Number.parseFloat(element.style.getPropertyValue('--abyss-virtual-row-height'))
-          : element.getBoundingClientRect().height)
-      );
+      return sum + flowHeight(element);
     }, 0);
     top = clampWrites ? Math.max(0, Math.min(value, origin + padding + extent - height)) : value;
   });
   const nativeExtent = (): number =>
     Array.from(host.children).reduce((sum, child) => {
       const row = child as HTMLElement;
-      if (row.hasClass('abyss-virtual-row-parked')) return sum;
-      return (
-        sum +
-        (row.hasClass('abyss-virtual-row-spacer')
-          ? Number.parseFloat(row.style.getPropertyValue('--abyss-virtual-row-height'))
-          : (heights.get(row.dataset['key'] ?? '') ?? 48))
-      );
+      return sum + flowHeight(row);
     }, origin);
   Object.defineProperties(scroll, {
     clientHeight: { get: () => height },
@@ -125,13 +127,14 @@ function harness(clampWrites = false, sameHost = false, clampExtent = false) {
       const padding = Number.parseFloat(window.getComputedStyle(host).paddingTop);
       let y = origin + host.clientTop + (Number.isFinite(padding) ? padding : 0) - top;
       for (const child of host.children) {
-        if (child === element) break;
+        if (child.contains(element)) break;
         const sibling = child as HTMLElement;
-        if (sibling.hasClass('abyss-virtual-row-parked')) continue;
-        y += sibling.hasClass('abyss-virtual-row-spacer')
-          ? Number.parseFloat(sibling.style.getPropertyValue('--abyss-virtual-row-height'))
-          : (heights.get(sibling.dataset['key'] ?? '') ?? 48);
+        y += flowHeight(sibling);
       }
+      const offset = Number.parseFloat(
+        element.style.getPropertyValue('--abyss-virtual-row-offset'),
+      );
+      y += Number.isFinite(offset) ? offset : 0;
       const rowHeight = heights.get(row.key) ?? 48;
       return {
         height: rowHeight,
@@ -255,6 +258,21 @@ describe('TaskListSurface', () => {
     expect(h.observed.size).toBe(0);
     expect(h.pending()).toBe(0);
     expect(h.destroyed).toHaveLength(h.mount.mock.calls.length);
+  });
+  it('restores a retired search holder inside its same frame before mounted settlement', () => {
+    const h = harness();
+    h.surface.update(rows(1), presentation);
+    const mount = expectDefined(h.mount.mock.results[0]?.value) as ReturnType<typeof h.mount>;
+    const element = mount.element;
+    const frame = element.parentElement;
+    vi.spyOn(mount, 'update').mockImplementation(() => {
+      element.remove();
+    });
+    h.surface.update(rows(1), presentation);
+    expect(element.isConnected).toBe(true);
+    expect(element.parentElement).toBe(frame);
+    expect(h.surface.element('n.md:0')).toBe(element);
+    expect(h.mount).toHaveBeenCalledTimes(1);
   });
   it('never rewrites fractional, elastic, or unchanged ordinary native scrolling', () => {
     const h = harness();
@@ -592,10 +610,10 @@ it('positions a newly mounted offscreen pin above the focused window before prot
   h.frame();
   const pinned = expectDefined(h.surface.element('n.md:0'));
   const assertOrder = () => {
-    expect(h.host.firstElementChild).toBe(pinned);
+    expect(h.host.firstElementChild).toBe(pinned.parentElement);
     expect(h.host.children[1]?.classList.contains('abyss-virtual-row-spacer')).toBe(true);
     const actual = Array.from(h.host.children).flatMap((element) => {
-      const key = (element as HTMLElement).dataset['key'];
+      const key = (element.firstElementChild as HTMLElement | null)?.dataset['key'];
       return key === undefined ? [] : [key];
     });
     expect(actual).toEqual([...h.surface.cards()].map(([key]) => key));
@@ -1829,8 +1847,124 @@ it('cancels captured-owner input timers and frames across adoption and unload', 
   }
 });
 
+it.each([
+  [0, 600_000],
+  [9_999_999, 600_000],
+  [0, 2_000_000],
+  [9_999_999, 2_000_000],
+])(
+  'locally scrolls inside tall visible row %i with height %i at its exact mapped position',
+  (index, height) => {
+    const h = harness(true);
+    const key = `number:${index}`;
+    h.heights.set(key, height);
+    h.surface.update(hugeRows(), hugePresentation);
+    const element = expectDefined(h.surface.reveal(key));
+    const input = element.createEl('input');
+    input.value = 'retained tall edit';
+    input.focus({ preventScroll: true });
+    const frame = expectDefined(element.parentElement);
+    const logicalTop = index * 48 + height / 2;
+    const mapped = new LogicalScrollWindow().place(logicalTop, 480_000_000 + height - 48, 480);
+    pointer(h.scroll);
+    h.scrollTo(mapped.nativeTop);
+    h.frame();
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    expect(h.scroll.scrollHeight).toBe(1_000_000);
+    expect(element.getBoundingClientRect().top).toBeCloseTo(-height / 2, 4);
+    expect(element.getBoundingClientRect().height).toBe(height);
+    h.scroll.dispatchEvent(new Event('wheel'));
+    h.scrollTo(h.scroll.scrollTop + 120);
+    h.frame();
+    expect(element.getBoundingClientRect().top).toBeCloseTo(-height / 2 - 120, 4);
+    expect(h.scroll.scrollHeight).toBe(1_000_000);
+    expect(h.surface.element(key)).toBe(element);
+    expect(element.parentElement).toBe(frame);
+    expect(
+      Number.parseFloat(frame.style.getPropertyValue('--abyss-virtual-row-height')),
+    ).toBeLessThanOrEqual(1_000_000);
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe('retained tall edit');
+  },
+);
+
+it.each([
+  [false, 100, 80],
+  [true, 100, 80],
+  [false, 40, 20],
+  [true, 40, 20],
+])(
+  'measures strict indexed replacement before native clamp with preserveAnchor=%s and height=%i',
+  (preserveAnchor, height, expectedTop) => {
+    const h = harness(true);
+    h.size(600, 20);
+    h.heights.set('n.md:0', 100);
+    const source = rows(1);
+    h.surface.update(source, { ...presentation, estimate: () => 100 });
+    h.scrollTo(80);
+    h.frame();
+    h.heights.set('n.md:0', height);
+    h.surface.update(
+      {
+        ...source,
+        estimatedOffset(index) {
+          if (index < 0 || index > 1) throw new Error(`Outside promised boundary: ${index}`);
+          return index * 40;
+        },
+      },
+      {
+        ...presentation,
+        revision: 'shrunken',
+        preserveAnchor,
+        indexedHeights: { group: 40, task: 40 },
+      },
+    );
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    expect(h.scroll.scrollTop).toBe(expectedTop);
+    expect(h.surface.element('n.md:0')?.getBoundingClientRect().height).toBe(height);
+  },
+);
+
+it('keeps the same semantic row and frame through finite/compressed mode switches', () => {
+  const h = harness(true);
+  const huge = hugeRows();
+  const finite = indexedRows([expectDefined(huge.rowAt(0))]);
+  h.surface.update(finite, presentation);
+  const element = expectDefined(h.surface.element('number:0'));
+  const frame = expectDefined(element.parentElement);
+  element.id = 'stable-row';
+  element.setAttribute('role', 'option');
+  const input = element.createEl('input');
+  input.value = 'same editor';
+  input.focus({ preventScroll: true });
+  h.surface.pin('number:0');
+  h.surface.update(huge, hugePresentation);
+  pointer(h.scroll);
+  h.scrollTo(999520);
+  h.frame();
+  expect(frame.hasClass('abyss-virtual-row-frame-clipped')).toBe(true);
+  h.surface.update(finite, presentation);
+  expect(h.surface.element('number:0')).toBe(element);
+  expect(element.parentElement).toBe(frame);
+  expect(frame.parentElement).toBe(h.host);
+  expect(frame.hasClass('abyss-virtual-row-frame-clipped')).toBe(false);
+  expect(frame.style.getPropertyValue('--abyss-virtual-row-height')).toBe('');
+  expect(element.style.getPropertyValue('--abyss-virtual-row-offset')).toBe('');
+  expect(element.style.getPropertyValue('--abyss-virtual-row-width')).toBe('');
+  expect(element.hasClass('abyss-virtual-row-parked')).toBe(false);
+  expect(element.id).toBe('stable-row');
+  expect(element.getAttribute('role')).toBe('option');
+  for (const attribute of ['role', 'tabindex', 'inert', 'aria-hidden'])
+    expect(frame.hasAttribute(attribute)).toBe(false);
+  expect(input.value).toBe('same editor');
+  expect(document.activeElement).toBe(input);
+  h.surface.destroy();
+  expect(frame.isConnected).toBe(false);
+});
+
 it('parks oversized retained editors without shifting visible geometry, then restores the same input', async () => {
-  const selector = '.abyss-task-list-surface > .abyss-virtual-row-parked';
+  const selector =
+    '.abyss-task-list-surface > .abyss-virtual-row-frame > .abyss-virtual-row-parked';
   const declarations = cssDeclarationsFor(await loadPluginStyles(), selector);
   expect(declarations).toContain('opacity: 0');
   expect(declarations).toContain('pointer-events: none');
@@ -1890,6 +2024,9 @@ it('honors pinned native-write rejection before parking or replacing visible row
   const h = harness(true);
   h.surface.update(hugeRows(), hugePresentation);
   const first = expectDefined(h.surface.element('number:0'));
+  const frame = expectDefined(first.parentElement);
+  const frameHeight = frame.style.getPropertyValue('--abyss-virtual-row-height');
+  const offset = first.style.getPropertyValue('--abyss-virtual-row-offset');
   const observed: number[] = [];
   h.surface.pin('number:0', undefined, {
     beforeWrite(top) {
@@ -1905,6 +2042,9 @@ it('honors pinned native-write rejection before parking or replacing visible row
   h.frame();
   expect(observed).toEqual([999520]);
   expect(first.hasClass('abyss-virtual-row-parked')).toBe(false);
+  expect(first.parentElement).toBe(frame);
+  expect(frame.style.getPropertyValue('--abyss-virtual-row-height')).toBe(frameHeight);
+  expect(first.style.getPropertyValue('--abyss-virtual-row-offset')).toBe(offset);
   expect(h.surface.element('number:9999999')).toBeUndefined();
   expect(h.reportFailure).not.toHaveBeenCalled();
 });

@@ -32,7 +32,11 @@ export function numericRowSource(
         : undefined;
     },
     indexOf,
-    estimatedOffset: (index) => index * 40,
+    estimatedOffset(index) {
+      if (!Number.isInteger(index) || index < 0 || index > Math.max(0, to - from + 1))
+        throw new Error(`Outside promised boundary: ${index}`);
+      return index * 40;
+    },
     anchorRanges: () => [{ kind: 'series', series: 'number', from, to }],
     survivingNeighbor(previousIndex, direction, current) {
       const candidates: number[] = [];

@@ -1,8 +1,17 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
+import { IndexedRowGeometry } from '../src/panels/virtualization/indexedRowGeometry';
 import { RowViewport } from '../src/panels/virtualization/rowViewport';
 import { expectDefined } from './helpers';
 import { numericRowSource } from './support/virtualSurfaceAudit';
+
+it.each([0, 1, 8])('keeps beyond-end lookup inside a strict %i-row boundary domain', (length) => {
+  const geometry = new IndexedRowGeometry();
+  geometry.replace(numericRowSource(0, length - 1));
+  const boundary = geometry.boundary(length * 40 + 80);
+  expect(boundary).toBe(length);
+  expect(geometry.offset(boundary)).toBe(length * 40);
+});
 
 describe('indexed sparse geometry', () => {
   it('locates and replaces ten million rows without visiting their sequence', () => {

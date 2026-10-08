@@ -1365,11 +1365,19 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       const attachedListRecords = observer.takeRecords();
       expect(attachedListRecords.length).toBeLessThanOrEqual(2);
       expect(container.querySelector('.abyss-center-scroll')).toBe(scroll);
-      expect(scroll.querySelectorAll(':scope > .abyss-group-header')).toHaveLength(1);
-      const cards = Array.from(scroll.querySelectorAll<HTMLElement>(':scope > .abyss-task-card'));
+      expect(
+        scroll.querySelectorAll(':scope > .abyss-virtual-row-frame > .abyss-group-header'),
+      ).toHaveLength(1);
+      const cards = Array.from(
+        scroll.querySelectorAll<HTMLElement>(
+          ':scope > .abyss-virtual-row-frame > .abyss-task-card',
+        ),
+      );
       expect(cards.map(({ dataset }) => dataset['line'])).toEqual(['0', '1', '2']);
-      expect(Array.from(scroll.children)).toEqual([
-        expectDefined(scroll.querySelector(':scope > .abyss-group-header')),
+      expect(Array.from(scroll.children, (frame) => frame.firstElementChild)).toEqual([
+        expectDefined(
+          scroll.querySelector(':scope > .abyss-virtual-row-frame > .abyss-group-header'),
+        ),
         ...cards,
       ]);
       expect(cards.every((card) => card.getAttribute('draggable') === 'true')).toBe(true);

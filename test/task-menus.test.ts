@@ -115,7 +115,9 @@ function singleMenu(
 
 function bulkMenu(panel: CenterPanel, card: HTMLElement): Menu {
   const cards = [
-    ...expectDefined(card.parentElement).querySelectorAll<HTMLElement>('.abyss-task-card'),
+    ...expectDefined(card.closest('.abyss-task-list-surface')).querySelectorAll<HTMLElement>(
+      '.abyss-task-card',
+    ),
   ];
   for (const selected of [...cards].reverse())
     selected.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));

@@ -667,11 +667,13 @@ it('admits only the enrolled parked-row width producer and its scoped consumer',
   if (source === undefined) throw new Error('Missing task list surface owner');
   const runtime = discoverRuntimeVariables(source);
   expect(runtime.produced).toContain('--abyss-virtual-row-width');
+  expect(runtime.produced).toContain('--abyss-virtual-row-offset');
+  expect(contracts.runtime.produced).toContain('--abyss-virtual-row-offset');
   expect(contracts.runtime.produced).toContain('--abyss-virtual-row-width');
   const { loadPluginStyles, cssDeclarationsFor } = await import('./helpers');
   const parked = cssDeclarationsFor(
     await loadPluginStyles(),
-    '.abyss-task-list-surface > .abyss-virtual-row-parked',
+    '.abyss-task-list-surface > .abyss-virtual-row-frame > .abyss-virtual-row-parked',
   );
   expect(parked).toContain('width: var(--abyss-virtual-row-width)');
   expect(parked).toContain('bottom: 100%');
@@ -679,11 +681,45 @@ it('admits only the enrolled parked-row width producer and its scoped consumer',
   expect(parked).toContain('opacity: 0');
   expect(parked).toContain('pointer-events: none');
   expect(parked).not.toContain('transform:');
+  const frame = cssDeclarationsFor(
+    await loadPluginStyles(),
+    '.abyss-task-list-surface > .abyss-virtual-row-frame',
+  );
+  expect(frame).toContain('position: static');
+  expect(frame).toContain('height: auto');
+  expect(frame).toContain('padding: 0');
+  expect(frame).toContain('border: 0');
+  const clipped = cssDeclarationsFor(
+    await loadPluginStyles(),
+    '.abyss-task-list-surface > .abyss-virtual-row-frame-clipped',
+  );
+  expect(clipped).toContain('overflow: clip');
+  expect(clipped).toContain('height: var(--abyss-virtual-row-height)');
+  const placed = cssDeclarationsFor(
+    await loadPluginStyles(),
+    '.abyss-task-list-surface > .abyss-virtual-row-frame-clipped > :not(.abyss-virtual-row-parked)',
+  );
+  expect(placed).toContain('top: var(--abyss-virtual-row-offset)');
   expect(
-    analyzeCss(`.abyss-task-list-surface > .abyss-virtual-row-parked { ${parked} }`, {
+    analyzeCss(
+      `.abyss-task-list-surface > .abyss-virtual-row-frame-clipped > :not(.abyss-virtual-row-parked) { ${placed} }`,
+      { file: 'fixture.css', contracts: { ...fixtureContracts, runtime } },
+    ),
+  ).toEqual([]);
+  expect(
+    analyzeCss('.abyss-task-list-surface { top: var(--abyss-unowned-row-offset); }', {
       file: 'fixture.css',
       contracts: { ...fixtureContracts, runtime },
     }),
+  ).not.toEqual([]);
+  expect(
+    analyzeCss(
+      `.abyss-task-list-surface > .abyss-virtual-row-frame > .abyss-virtual-row-parked { ${parked} }`,
+      {
+        file: 'fixture.css',
+        contracts: { ...fixtureContracts, runtime },
+      },
+    ),
   ).toEqual([]);
   expect(
     analyzeCss('.abyss-task-list-surface { width: var(--abyss-unowned-row-width); }', {

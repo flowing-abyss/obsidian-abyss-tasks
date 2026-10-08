@@ -95,8 +95,13 @@ function pixels(value: string): number {
 }
 function rowHeight(element: Element): number {
   const row = element as HTMLElement;
-  if (row.classList.contains('abyss-virtual-row-spacer'))
+  if (
+    row.classList.contains('abyss-virtual-row-spacer') ||
+    row.classList.contains('abyss-virtual-row-frame-clipped')
+  )
     return pixels(row.style.getPropertyValue('--abyss-virtual-row-height'));
+  if (row.classList.contains('abyss-virtual-row-frame'))
+    return row.firstElementChild === null ? 0 : rowHeight(row.firstElementChild);
   if (row.classList.contains('abyss-dep-search-option')) return 48;
   const explicit = pixels(row.style.height);
   if (explicit > 0) return explicit;
@@ -108,9 +113,7 @@ function hostPadding(host: HTMLElement): { top: number; bottom: number } {
 }
 /** Actual task-list DOM geometry, leaving unrelated widgets and explicit element overrides intact. */
 export function taskListRect(element: HTMLElement): DOMRect | undefined {
-  const host = element.classList.contains('abyss-task-list-surface')
-    ? element
-    : element.parentElement;
+  const host = taskListHost(element);
   const scroll = taskListScroll(element, host);
   if (scroll === null) return;
   if (element === scroll) return geometryRect(0, scroll.clientWidth, scroll.clientHeight);
@@ -126,10 +129,18 @@ export function taskListRect(element: HTMLElement): DOMRect | undefined {
   }
   let top = origin + (host === scroll ? 0 : host.clientTop) + hostPadding(host).top;
   for (const row of host.children) {
-    if (row === element) break;
+    if (row.contains(element)) break;
     top += rowHeight(row);
   }
+  top += pixels(element.style.getPropertyValue('--abyss-virtual-row-offset'));
   return geometryRect(top, host.clientWidth, rowHeight(element));
+}
+function taskListHost(element: HTMLElement): HTMLElement | null {
+  if (element.classList.contains('abyss-task-list-surface')) return element;
+  const parent = element.parentElement;
+  return parent?.classList.contains('abyss-virtual-row-frame') === true
+    ? parent.parentElement
+    : parent;
 }
 function taskListScroll(element: HTMLElement, host: HTMLElement | null): HTMLElement | null {
   if (host?.classList.contains('abyss-dep-search-results') === true) return host;

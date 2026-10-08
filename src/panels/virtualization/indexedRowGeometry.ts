@@ -65,7 +65,7 @@ export class IndexedRowGeometry {
 
   boundary(value: number): number {
     let low = 0;
-    let high = this.source.length + 1;
+    let high = this.source.length;
     while (low < high) {
       const middle = Math.floor((low + high) / 2);
       if (this.offset(middle) < value) low = middle + 1;

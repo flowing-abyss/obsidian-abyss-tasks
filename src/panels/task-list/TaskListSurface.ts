@@ -60,6 +60,7 @@ interface RevealPlacement {
 }
 
 interface TaskListScroll {
+  readonly clampToExtent?: boolean;
   readonly revealKey?: string;
   readonly onPending?: () => void;
   readonly top: number;
@@ -71,6 +72,8 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   readonly #options: TaskListSurfaceOptions<T>;
   readonly #viewport = new RowViewport();
   readonly #mounts = new Map<string, TaskRowMount<T>>();
+  readonly #frames = new Map<string, HTMLElement>();
+  readonly #placements = new Map<string, { height: number; offset: number }>();
   readonly #pins = new Map<string, Set<PinOwner>>();
   readonly #nativeObservers = new Set<PinOwner>();
   #rows: TaskListRows<T> = indexedRows<T>([]);
@@ -159,9 +162,9 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       if (!this.#bind()) return;
       this.#checkLayout();
       const restored = this.#restoreTop(anchor, top);
-      const clamped = this.#viewport.window(restored, this.#height(), []).scrollTop;
-      // Projection changes may shrink the scroll range. Ordinary scroll frames never clamp it.
-      this.#reconcile(true, { top: restored < 0 ? restored : clamped, anchor });
+      // A replacement estimate can be shorter than the retained row offset. Measure before
+      // the final native clamp so a still-valid offset is not discarded provisionally.
+      this.#reconcile(true, { top: restored, anchor, clampToExtent: true });
     }, failure);
   }
 
@@ -672,9 +675,17 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     this.#observer?.unobserve(mount.element);
     this.#mounts.delete(key);
     this.#parked.delete(key);
+    this.#placements.delete(key);
+    const frame = this.#frames.get(key);
+    this.#frames.delete(key);
     mount.element.removeClass('abyss-virtual-row-parked');
     mount.element.style.removeProperty('--abyss-virtual-row-width');
-    mount.destroy();
+    mount.element.style.removeProperty('--abyss-virtual-row-offset');
+    try {
+      mount.destroy();
+    } finally {
+      frame?.remove();
+    }
   }
   #readFocus(): void {
     this.#focusedKey = undefined;
@@ -742,7 +753,10 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     top: number,
   ): number | undefined {
     const requested = this.#viewport.totalHeight > 1_000_000 ? top : undefined;
-    return measuredTop ?? target?.top ?? requested;
+    const corrected = measuredTop ?? target?.top ?? requested;
+    return target?.clampToExtent === true && corrected !== undefined && corrected >= 0
+      ? Math.min(corrected, Math.max(0, this.#viewport.totalHeight - this.#height()))
+      : corrected;
   }
   #measureReveal(top: number, reveal: RevealPlacement): boolean {
     const { key, current } = reveal;
@@ -894,9 +908,10 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       mount = this.#mountRow(row, current);
     } else if (update) mount.update(row);
     if (mount !== undefined && current()) this.#placeMount(row.key, mount.element, current);
-    return mount?.element;
+    return this.#frames.get(row.key);
   }
   #placeMount(key: string, element: HTMLElement, current: () => boolean): void {
+    this.#placeFrame(key, element);
     if (!this.#parked.has(key)) {
       element.removeClass('abyss-virtual-row-parked');
       element.style.removeProperty('--abyss-virtual-row-width');
@@ -915,6 +930,21 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     element.setCssProps({ '--abyss-virtual-row-width': `${Math.max(0, width)}px` });
     element.addClass('abyss-virtual-row-parked');
   }
+  #placeFrame(key: string, element: HTMLElement): void {
+    const frame = this.#frames.get(key);
+    // Source-address retirement may detach a reused holder while destroying its old card.
+    if (element.parentElement === null) frame?.append(element);
+    const placement = this.#placements.get(key);
+    if (placement !== undefined) {
+      frame?.addClass('abyss-virtual-row-frame-clipped');
+      frame?.setCssProps({ '--abyss-virtual-row-height': `${placement.height}px` });
+      element.setCssProps({ '--abyss-virtual-row-offset': `${placement.offset}px` });
+    } else {
+      frame?.removeClass('abyss-virtual-row-frame-clipped');
+      frame?.style.removeProperty('--abyss-virtual-row-height');
+      element.style.removeProperty('--abyss-virtual-row-offset');
+    }
+  }
   #spacer(height: number, element: HTMLElement = this.#options.host.createDiv()): HTMLElement {
     element.addClass('abyss-virtual-row-spacer');
     element.setAttribute('aria-hidden', 'true');
@@ -923,12 +953,24 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     return element;
   }
   #mountRow(row: TaskListRow<T>, current: () => boolean): TaskRowMount<T> | undefined {
-    const mount = this.#options.mount(this.#options.host, row);
+    const frame = this.#options.host.createDiv({ cls: 'abyss-virtual-row-frame' });
+    let mount: TaskRowMount<T>;
+    try {
+      mount = this.#options.mount(frame, row);
+    } catch (error) {
+      frame.remove();
+      throw error;
+    }
     if (!current()) {
-      mount.destroy();
+      try {
+        mount.destroy();
+      } finally {
+        frame.remove();
+      }
       return;
     }
     this.#mounts.set(row.key, mount);
+    this.#frames.set(row.key, frame);
     this.#observer?.observe(mount.element, { box: 'border-box' });
     return mount;
   }
@@ -967,6 +1009,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   }
   #physicalSegments(window: RowWindow): readonly RowSegment[] {
     this.#parked.clear();
+    this.#placements.clear();
     const { segments, start, end } = window;
     const placement = this.#renderPlacement;
     if (placement === undefined || this.#viewport.totalHeight <= placement.extent) return segments;
@@ -977,13 +1020,17 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       if (bounds === undefined) continue;
       if (bounds.index < start || bounds.index >= end) {
         this.#parked.add(bounds.key);
+        this.#placements.set(bounds.key, { height: 0, offset: 0 });
         result.push(segment);
         continue;
       }
-      const top = Math.max(0, bounds.top - placement.origin);
+      const physicalTop = bounds.top - placement.origin;
+      const top = Math.max(0, Math.min(placement.extent, physicalTop));
+      const bottom = Math.max(top, Math.min(placement.extent, bounds.bottom - placement.origin));
+      this.#placements.set(bounds.key, { height: bottom - top, offset: physicalTop - top });
       if (top > cursor) result.push({ height: top - cursor });
       result.push(segment);
-      cursor = top + bounds.bottom - bounds.top;
+      cursor = bottom;
     }
     if (cursor < placement.extent) result.push({ height: placement.extent - cursor });
     return result;
@@ -1076,7 +1123,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     return [...conflicting];
   }
   #orderedProtectedKeys(keys: ReadonlySet<string>): string[] {
-    const elements = new Map([...this.#mounts].map(([key, mount]) => [mount.element, key]));
+    const elements = new Map([...this.#frames].map(([key, frame]) => [frame, key]));
     return Array.from(this.#options.host.children).flatMap((element) => {
       const key = elements.get(element as HTMLElement);
       return key !== undefined && keys.has(key) ? [key] : [];
@@ -1085,9 +1132,9 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #order(desired: readonly HTMLElement[], established: ReadonlySet<string>): void {
     const protectedElements = new Set<HTMLElement>();
     const focused = this.#options.host.ownerDocument.activeElement;
-    for (const [key, mount] of this.#mounts)
-      if (mount.element.contains(focused) || (established.has(key) && this.#pins.has(key)))
-        protectedElements.add(mount.element);
+    for (const [key, frame] of this.#frames)
+      if (frame.contains(focused) || (established.has(key) && this.#pins.has(key)))
+        protectedElements.add(frame);
     // New mounts must first enter logical order. Only established pins own their position;
     // actual focus is protected regardless of when its row mounted.
     // Move ordinary neighbors around owners; never detach an interaction-owned subtree.

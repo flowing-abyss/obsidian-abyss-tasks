@@ -1,10 +1,24 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { RowViewport, type RowViewportRow } from '../src/panels/virtualization/rowViewport';
+import { numericRowSource } from './support/virtualSurfaceAudit';
 
 function rows(keys: readonly string[], height = 40, revision = '1'): RowViewportRow[] {
   return keys.map((key) => ({ key, estimatedHeight: height, measurementRevision: revision }));
 }
+
+it.each([false, true])('measures a shrunken strict source with retained anchor=%s', (retained) => {
+  const viewport = new RowViewport();
+  viewport.replace(rows(['number:0'], 100));
+  const anchor = viewport.captureAnchor(80);
+  viewport.replaceIndexed(numericRowSource(0, 0));
+  expect(viewport.restoreAnchor(anchor, 0)).toBe(80);
+  expect(
+    viewport.measure([{ key: 'number:0', height: 100 }], 80, retained ? anchor : undefined),
+  ).toEqual({ scrollTop: 80, changed: true });
+  expect(viewport.rowBounds('number:0')).toMatchObject({ top: 0, bottom: 100 });
+  expect(viewport.restoreAnchor(anchor, 0)).toBe(80);
+});
 
 describe('shared row viewport geometry', () => {
   it('falls forward to the next survivor and invalidates revision-changed measurements', () => {

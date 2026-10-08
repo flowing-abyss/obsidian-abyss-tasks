@@ -2202,7 +2202,28 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 /* Retained editors keep their measurable box and DOM ownership outside the scrollable flow. */
-.abyss-task-list-surface > .abyss-virtual-row-parked {
+.abyss-task-list-surface > .abyss-virtual-row-frame {
+  display: block;
+  position: static;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.abyss-task-list-surface > .abyss-virtual-row-frame-clipped {
+  display: flow-root;
+  position: relative;
+  height: var(--abyss-virtual-row-height);
+  overflow: clip;
+}
+
+.abyss-task-list-surface > .abyss-virtual-row-frame-clipped > :not(.abyss-virtual-row-parked) {
+  position: relative;
+  top: var(--abyss-virtual-row-offset);
+}
+
+.abyss-task-list-surface > .abyss-virtual-row-frame > .abyss-virtual-row-parked {
   position: absolute;
   top: auto;
   bottom: 100%;

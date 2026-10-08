@@ -1280,11 +1280,19 @@ readback preserve logical precision across rounded/coalesced scroll events. The 
 separate from the logical coordinate correction, and native observers see actual host positions.
 The same surface owns captured-window input timers, observer lifecycle, native-write vetoes, reveal
 receipts and failure retirement. Explicit updates can retry failed source/measurement passes.
+Every mounted row owns one stable, semantic-free block frame; public element APIs and measurement
+still refer to the original row. Finite frames preserve normal width and margin flow. Compressed
+frames clip the exact physical row interval to the bounded native extent; the full-height row uses
+an enrolled relative offset inside that frame, including negative offsets. Thus a tall visible row
+retains exact local movement without growing native overflow. Frames and their focused descendants
+are protected together during ordering, and no mode transition reparents the row.
 In compressed mode, retained rows outside the buffered window stay attached in logical DOM order but
-are absolutely parked wholly above the host (`bottom: 100%`), transparent and removed from pointer hit
+are absolutely parked above their zero-height frame (`bottom: 100%`), transparent and removed from pointer hit
 areas. An enrolled runtime width preserves the host content width and row margins; parked rows retain
 full measurable height and editor/focus identity. Re-entry removes parking, and focus entering a parked
-control uses the existing reveal path. Parking and extent changes share the native-write guard.
+control uses the existing reveal path. Frame placement, parking and extent changes share the native-write guard.
+Source boundary searches stay within `[0,length]`; replacement measurements retain fractional anchor
+targets until the measured final extent can clamp them.
 Finite surfaces keep their existing in-flow pin placement. Native overflow, wrapping and focus behavior
 remain dependent on the owning browser layout; automated geometry fixtures do not replace native QA.
 Ordinary unfiltered lists and compact Search/filters supply their full logical order. Direct Ctrl/Cmd+A in Tasks selects that complete current logical order while

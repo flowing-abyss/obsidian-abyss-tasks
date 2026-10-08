@@ -1520,32 +1520,62 @@ function positionDemandSurface(
   });
   if (geometryLists.has(list)) return;
   geometryLists.add(list);
-  const create = list.createEl.bind(list);
-  vi.spyOn(list, 'createEl').mockImplementation((...args: Parameters<typeof list.createEl>) => {
-    const element = create(...args);
+  const flowHeight = (element: HTMLElement): number => {
+    if (
+      element.hasClass('abyss-virtual-row-spacer') ||
+      element.hasClass('abyss-virtual-row-frame-clipped')
+    )
+      return Number.parseFloat(element.style.getPropertyValue('--abyss-virtual-row-height'));
+    if (element.hasClass('abyss-virtual-row-frame'))
+      return element.firstElementChild === null
+        ? 0
+        : rowHeight(element.firstElementChild as HTMLElement);
+    return rowHeight(element);
+  };
+  const position = (element: HTMLElement, frame: boolean): void => {
     element.getBoundingClientRect = () => {
       let top = -list.scrollTop;
-      let previous = element.previousElementSibling;
+      let previous = (frame ? element : element.parentElement)?.previousElementSibling ?? null;
       while (previous !== null) {
-        top += previous.classList.contains('abyss-virtual-row-spacer')
-          ? Number.parseFloat(
-              (previous as HTMLElement).style.getPropertyValue('--abyss-virtual-row-height'),
-            )
-          : rowHeight(previous as HTMLElement);
+        top += flowHeight(previous as HTMLElement);
         previous = previous.previousElementSibling;
       }
+      const offset = Number.parseFloat(
+        element.style.getPropertyValue('--abyss-virtual-row-offset'),
+      );
+      if (!frame && Number.isFinite(offset)) top += offset;
+      const height = frame ? flowHeight(element) : rowHeight(element);
       return {
         top,
-        bottom: top + rowHeight(element),
+        bottom: top + height,
         left: 0,
         right: 400,
         width: 400,
-        height: rowHeight(element),
+        height,
         x: 0,
         y: top,
         toJSON() {},
       };
     };
+  };
+  const instrumentRows = (container: HTMLElement): void => {
+    const create = container.createEl.bind(container);
+    vi.spyOn(container, 'createEl').mockImplementation(
+      (...args: Parameters<typeof container.createEl>) => {
+        const element = create(...args);
+        position(element, false);
+        return element;
+      },
+    );
+  };
+  instrumentRows(list);
+  const createFrame = list.createDiv.bind(list);
+  vi.spyOn(list, 'createDiv').mockImplementation((...args: Parameters<typeof list.createDiv>) => {
+    const element = createFrame(...args);
+    if (element.hasClass('abyss-virtual-row-frame')) {
+      position(element, true);
+      instrumentRows(element);
+    }
     return element;
   });
 }
@@ -1817,13 +1847,13 @@ it('Phase A preserves a surviving measured tall anchor through one omission publ
     const height = key === '10' ? 144 : 48;
     element.getBoundingClientRect = () => {
       let top = -list.scrollTop;
-      let previous = element.previousElementSibling;
+      let previous = element.parentElement?.previousElementSibling ?? null;
       while (previous !== null) {
         if (previous.classList.contains('abyss-virtual-row-spacer'))
           top += Number.parseFloat(
             (previous as HTMLElement).style.getPropertyValue('--abyss-virtual-row-height'),
           );
-        else top += previous === anchor ? 144 : 48;
+        else top += previous.firstElementChild === anchor ? 144 : 48;
         previous = previous.previousElementSibling;
       }
       return {
