@@ -73,6 +73,7 @@ const privateOwners = new Set([
   'TimedBlockFocusRetention',
   'TagPickerModal',
   'TagGroupAppearanceModal',
+  'TaskCaptureController',
 ]);
 
 function privateOwner(node: ts.Node): string | undefined {

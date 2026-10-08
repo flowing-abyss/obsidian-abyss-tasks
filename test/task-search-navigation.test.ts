@@ -8,7 +8,7 @@ import { TaskSearchRows } from '../src/panels/task-list/TaskSearchRows';
 import { ProjectStore } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import type { TaskSearchAddress } from '../src/tasks';
-import { TaskSearchError, localDate, rootTaskNodeSnapshot } from '../src/tasks';
+import { TaskSearchError, localDate } from '../src/tasks';
 import { TaskSearchService } from '../src/tasks/infrastructure/search/TaskSearchService';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { taskNodeRef } from '../src/ui/taskSelection';
@@ -2197,40 +2197,95 @@ it('Shift+End selects the complete logical list and reveals its last row', async
   }
 });
 
-it('passes continuation-only selection capability into a single physical-node context menu', async () => {
-  const h = await mountCanonicalSearchUi(
-    { 'tasks.md': '- [ ] Interval' },
-    structuredClone(DEFAULT_SETTINGS),
-    'tasks',
-  );
-  try {
-    const task = rootTaskNodeSnapshot(expectDefined(h.index.list()[0]));
-    const completion = { kind: 'continuation' as const, due: localDate('2026-10-10') };
-    const rows = indexedRows([
-      {
-        kind: 'task' as const,
-        key: 'tasks.md:0',
-        taskKey: 'tasks.md:0',
-        task,
-        presentation: { kind: 'daily' as const, displayDate: localDate('2026-10-08'), completion },
-      },
-    ]);
-    const host = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
-    h.panel['mountTaskRows_abyssPrivate'](host, rows, []);
-    const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
-    card.dispatchEvent(new MouseEvent('click', { ctrlKey: true, bubbles: true }));
-    const create = vi
-      .spyOn(h.panel['taskMenus_abyssPrivate'], 'createTaskContextMenu')
-      .mockReturnValue(new Menu());
-    vi.spyOn(
-      h.panel as unknown as { showTaskMenu_abyssPrivate(): void },
-      'showTaskMenu_abyssPrivate',
-    ).mockImplementation(() => undefined);
-    card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
-    expect(create).toHaveBeenCalledWith(card, expect.anything(), completion, []);
-    const targets = h.panel['taskMenuTargets_abyssPrivate']();
-    expect((await targets.resolve(targets.signal))[0]?.completion).toEqual(completion);
-  } finally {
-    h.dispose();
-  }
-});
+it.each([
+  { title: 'Interval', line: 0, depth: 0 },
+  { title: 'Target', line: 2, depth: 2 },
+])(
+  'preserves selected $title marker restrictions while card-menu status writes its exact node',
+  async ({ title, line, depth }) => {
+    const before = [
+      '- [ ] Interval 🛫 2026-10-07 📅 2026-10-10',
+      '  - [ ] Branch',
+      '    - [ ] Target 🛫 2026-10-07 📅 2026-10-10',
+      '    - [ ] Target 🛫 2026-10-07 📅 2026-10-10',
+      '  - [ ] Sibling',
+      '- [ ] Other',
+    ].join('\n');
+    const h = await mountCanonicalSearchUi(
+      { 'tasks.md': before },
+      structuredClone(DEFAULT_SETTINGS),
+      'tasks',
+    );
+    const addItem = methodOf(Menu.prototype, 'addItem');
+    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, cb) {
+      return addItem.call(this, (item) => {
+        (item as unknown as { dom: HTMLElement }).dom = createDiv();
+        cb(item);
+      });
+    });
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+      this: Menu,
+    ) {
+      return this;
+    });
+    try {
+      const task = expectDefined(h.index.listNodes().find(({ node }) => node.title === title));
+      expect(task.path).toHaveLength(depth);
+      const completion = { kind: 'continuation' as const, due: localDate('2026-10-10') };
+      const key = `tasks.md:${line}`;
+      const rows = indexedRows([
+        {
+          kind: 'task' as const,
+          key,
+          taskKey: key,
+          task,
+          presentation: {
+            kind: 'daily' as const,
+            displayDate: localDate('2026-10-08'),
+            completion,
+          },
+        },
+      ]);
+      const host = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
+      h.panel['mountTaskRows_abyssPrivate'](host, rows, []);
+      const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+      card.dispatchEvent(new MouseEvent('click', { ctrlKey: true, bubbles: true }));
+      expect(h.panel['rowSelection_abyssPrivate'].size).toBe(1);
+      const targets = h.panel['taskMenuTargets_abyssPrivate']();
+      expect(targets.summaries).toHaveLength(1);
+      expect(targets.summaries[0]?.completion).toEqual(completion);
+      expect(await targets.resolve(targets.signal)).toEqual([{ task, completion }]);
+      const file = expectDefined(h.app.vault.getFileByPath('tasks.md'));
+      const marker = expectDefined(card.querySelector<HTMLElement>('[role=checkbox]'));
+      expect(marker.getAttribute('aria-disabled')).toBe('true');
+      marker.click();
+      for (const key of [' ', 'Enter'])
+        marker.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      await flushMicrotasks();
+      expect(await h.app.vault.read(file)).toBe(before);
+      card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+      const menu = expectDefined(show.mock.instances[0]) as Menu;
+      interface MenuEntry {
+        readonly title__: string;
+        readonly disabled: boolean;
+        readonly submenu: Menu | null;
+        readonly onClick__: (() => void) | null;
+      }
+      const entries = (menu: Menu): readonly MenuEntry[] =>
+        (menu as unknown as { menuItems__: MenuEntry[] }).menuItems__;
+      const status = expectDefined(entries(menu).find((entry) => entry.title__ === 'Status'));
+      expect(status.disabled).toBe(false);
+      const choice = expectDefined(
+        entries(expectDefined(status.submenu)).find((entry) => entry.title__ === 'In progress'),
+      );
+      expectDefined(choice.onClick__)();
+      await vi.waitFor(async () => {
+        expect(await h.app.vault.read(file)).toBe(
+          before.replace(`- [ ] ${title}`, `- [/] ${title}`),
+        );
+      });
+    } finally {
+      h.dispose();
+    }
+  },
+);

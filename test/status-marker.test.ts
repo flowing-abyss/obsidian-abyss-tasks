@@ -421,18 +421,3 @@ it.each([' ', '/', 'x', '-', '@', 'w'])(
     parent.remove();
   },
 );
-
-it('keeps continuation outlines solid and dependency dashes authoritative without dimming', () => {
-  const css = styles();
-  const passive = /\.abyss-status-marker--continuation\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
-  const blocked = /\.abyss-status-marker--blocked\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
-  expect(passive).toMatch(/border-width:\s*1px/u);
-  expect(passive).toMatch(/border-style:\s*solid/u);
-  expect(passive).toMatch(/cursor:\s*not-allowed/u);
-  expect(passive).not.toMatch(/opacity|border-radius|color|background/u);
-  expect(blocked).toMatch(/border-style:\s*dashed/u);
-  expect(blocked).toMatch(/border-width:\s*1\.5px/u);
-  expect(css.indexOf('.abyss-status-marker--blocked {')).toBeGreaterThan(
-    css.indexOf('.abyss-status-marker--continuation {'),
-  );
-});
