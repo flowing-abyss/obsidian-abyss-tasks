@@ -403,10 +403,7 @@ export class TaskMenus {
         } catch (error) {
           if (
             !targets.signal.aborted &&
-            !(
-              error instanceof TaskSearchError &&
-              (error.code === 'aborted' || error.code === 'stale')
-            )
+            !(error instanceof TaskSearchError && error.code === 'aborted')
           )
             this.#options.host.reportTargetFailure(error);
           return;

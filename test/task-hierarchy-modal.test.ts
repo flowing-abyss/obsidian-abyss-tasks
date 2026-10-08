@@ -41,6 +41,7 @@ async function opened() {
     prepareDependencies: h.index.prepareDependencies.bind(h.index),
     observedTags: h.index.observedTags.bind(h.index),
     organization: h.index.organization.bind(h.index),
+    matchesSearchAddress: h.index.matchesSearchAddress.bind(h.index),
     resolveSearchHits: h.index.resolveSearchHits.bind(h.index),
     forCalendarProjection: h.index.forCalendarProjection.bind(h.index),
     dependencies: h.index.dependencies.bind(h.index),

@@ -120,7 +120,7 @@ it('keeps hydrated rows pending until the actual Markdown renderer settles', asy
   }
 });
 
-it('retains exact logical selection on same-query sort changes and clears it on query changes', async () => {
+it('retains exact selection on sort changes and retires changed group/query occurrences', async () => {
   const h = await mountCanonicalSearchUi(
     { 'a.md': Array.from({ length: 101 }, (_, i) => `- [ ] needle ${i}`).join('\n') },
     structuredClone(DEFAULT_SETTINGS),
@@ -139,11 +139,20 @@ it('retains exact logical selection on same-query sort changes and clears it on 
     expect(hydrate).not.toHaveBeenCalled();
     h.state.set('centerListViewState', {
       ...h.state.get('centerListViewState'),
-      groupBy: 'priority',
+      sortBy: { field: 'title', dir: 'asc' },
     });
     await h.completed();
     expect(h.panel['rowSelection_abyssPrivate'].size).toBe(101);
+    h.state.set('centerListViewState', {
+      ...h.state.get('centerListViewState'),
+      groupBy: 'priority',
+    });
+    await h.completed();
+    expect(h.panel['rowSelection_abyssPrivate'].size).toBe(0);
     expect(h.root.querySelector('.abyss-group-header')?.textContent).toContain('101');
+    const grouped = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    grouped.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', metaKey: true, bubbles: true }));
+    expect(h.panel['rowSelection_abyssPrivate'].size).toBe(101);
     h.query('needle 100');
     await h.completed();
     expect(h.panel['rowSelection_abyssPrivate'].size).toBe(0);
@@ -324,7 +333,8 @@ it('duplicates outgoing occurrences with full counts and deduplicates the existi
     expect(h.root.querySelector('.abyss-search-footer')).toBeNull();
     for (const card of cards)
       card.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
-    const selected = h.panel['selectedTasksInVisualOrder_abyssPrivate']();
+    const targets = h.panel['taskMenuTargets_abyssPrivate']();
+    const selected = (await targets.resolve(targets.signal)).map((entry) => entry.task);
     expect(selected).toHaveLength(1);
     const execute = vi.spyOn(h.tasks, 'execute').mockResolvedValue({
       type: 'io-error',

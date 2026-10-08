@@ -4,7 +4,6 @@ import {
   buildTaskListRows,
   indexedRows,
   NO_TASK_LIST_ROWS,
-  rebaseTaskRowKey,
   taskListGrouping,
   taskRowKey,
   taskStackRowKey,
@@ -275,18 +274,6 @@ describe('note organization occurrences', () => {
     ).toEqual(['A/Tasks', 'B/Tasks']);
     expect(taskKeys(list)).toEqual(['A/Tasks.md:0', 'B/Tasks.md:0']);
   });
-});
-
-it('rebases an occurrence address without changing its group and rejects unrelated keys', () => {
-  expect(
-    rebaseTaskRowKey(
-      '["task-occurrence","outgoing-link","note:Bob.md","list.md:2"]',
-      'list.md:2',
-      'list.md:1',
-    ),
-  ).toBe('["task-occurrence","outgoing-link","note:Bob.md","list.md:1"]');
-  expect(rebaseTaskRowKey('list.md:2', 'list.md:2', 'list.md:1')).toBe('list.md:1');
-  expect(rebaseTaskRowKey('list.md:3', 'list.md:2', 'list.md:1')).toBe('list.md:3');
 });
 
 it('threads Today context to date rows for a scheduled task with a later due date', () => {

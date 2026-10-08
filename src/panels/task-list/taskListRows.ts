@@ -15,10 +15,11 @@ import {
   type TaskGroupValue,
 } from '../../views/taskGrouping';
 import type { RowAnchorKeyRange, RowViewportSource } from '../virtualization/rowViewport';
-import type {
-  TaskOccurrenceRange,
-  TaskSelectedValue,
-  TaskSelectionSpans,
+import {
+  normalizeOccurrenceRanges,
+  type TaskOccurrenceRange,
+  type TaskSelectedValue,
+  type TaskSelectionSpans,
 } from './taskOccurrenceSelection';
 
 /** How the centre list groups its rows. */
@@ -77,6 +78,7 @@ export interface TaskListRows<T = TaskSnapshot> {
   task(key: string): T | undefined;
   slice(from: number, toExclusive: number): Iterable<TaskListRow<T>>;
   captureSelection(selection: TaskSelectionSpans): readonly TaskOccurrenceRange[];
+  firstSelectedKey(ranges: readonly TaskOccurrenceRange[]): string | undefined;
   selectedCount(ranges: readonly TaskOccurrenceRange[]): number;
   isSelected(key: string, ranges: readonly TaskOccurrenceRange[]): boolean;
   selectedNodes(ranges: readonly TaskOccurrenceRange[]): ReadonlyArray<TaskSelectedValue<T>>;
@@ -92,15 +94,6 @@ export type TaskListOrder = Pick<TaskListRows, 'revision' | 'taskCount' | 'taskK
 /** A root task's physical key: its note and line, independent of visual occurrences. */
 export function taskRowKey(task: Pick<TaskGroupValue, 'source'>): string {
   return `${task.source.filePath}:${task.source.line}`;
-}
-
-/** A proven source-line successor keeps the visual group of an existing occurrence. */
-export function rebaseTaskRowKey(key: string, previous: string, next: string): string {
-  if (key === previous) return next;
-  const suffix = `,${JSON.stringify(previous)}]`;
-  return key.startsWith('["task-occurrence","outgoing-link",') && key.endsWith(suffix)
-    ? `${key.slice(0, -suffix.length)},${JSON.stringify(next)}]`
-    : key;
 }
 
 /** The grouping for a stored `groupBy`; a value the list does not know groups by tag. */
@@ -225,6 +218,8 @@ function captureArraySelection<T>(
   selection: TaskSelectionSpans,
 ): readonly TaskOccurrenceRange[] {
   const keys = new Set(selection.include);
+  for (const row of selectedArrayRows(tasks, occurrences, selection.ranges ?? []))
+    keys.add(row.key);
   for (const span of selection.spans) {
     if (!Number.isSafeInteger(span.from) || !Number.isSafeInteger(span.to)) continue;
     for (
@@ -237,10 +232,12 @@ function captureArraySelection<T>(
     }
   }
   for (const key of selection.exclude) keys.delete(key);
-  return tasks.flatMap((row) => {
-    const occurrence = occurrences.get(row.key);
-    return keys.has(row.key) && occurrence !== undefined ? [occurrence] : [];
-  });
+  return normalizeOccurrenceRanges(
+    tasks.flatMap((row) => {
+      const occurrence = occurrences.get(row.key);
+      return keys.has(row.key) && occurrence !== undefined ? [occurrence] : [];
+    }),
+  );
 }
 
 function selectedArrayRows<T>(
@@ -330,6 +327,7 @@ export function indexedRows<T>(
       }
     },
     captureSelection: (selection) => captureArraySelection(tasks, occurrences, selection),
+    firstSelectedKey: (ranges) => selectedArrayRows(tasks, occurrences, ranges)[0]?.key,
     selectedCount: (ranges) => selectedArrayRows(tasks, occurrences, ranges).length,
     isSelected: (key, ranges) => {
       const occurrence = occurrences.get(key);

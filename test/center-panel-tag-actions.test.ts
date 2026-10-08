@@ -1487,19 +1487,23 @@ describe('CenterPanel task date context menus', () => {
     await vi.waitFor(() => {
       expect(execute).toHaveBeenCalledTimes(1);
     });
-    expect(execute).toHaveBeenNthCalledWith(1, {
+    const firstCall = expectDefined(execute.mock.calls[0]);
+    expect(firstCall[0]).toEqual({
       type: 'patch',
       target: { type: 'task', ref: datedSecond.ref },
       patch: { due: { type: 'set', value: '2026-08-02' } },
     });
+    expect(expectDefined(firstCall[1]).onPreparedPatch).toBeTypeOf('function');
 
     resolveFirst?.(unchangedTaskResult(datedSecond));
     await flushMicrotasks();
-    expect(execute).toHaveBeenNthCalledWith(2, {
+    const secondCall = expectDefined(execute.mock.calls[1]);
+    expect(secondCall[0]).toEqual({
       type: 'patch',
       target: { type: 'task', ref: first.ref },
       patch: { due: { type: 'set', value: '2026-08-02' } },
     });
+    expect(expectDefined(secondCall[1]).onPreparedPatch).toBeTypeOf('function');
   });
 
   it('rejects an invalid custom date before executing a command', () => {

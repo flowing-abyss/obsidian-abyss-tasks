@@ -1327,6 +1327,23 @@ export class TaskIndex
     );
   }
 
+  matchesSearchAddress(
+    address: TaskSearchAddress,
+    target: TaskNodeRef,
+    expectedGeneration: number,
+  ): boolean {
+    const state = this.searchState_abyssPrivate();
+    if (state.type !== 'ready' || state.generation !== expectedGeneration) return false;
+    const root = this.currentSearchRoot_abyssPrivate(address);
+    if (root === undefined) return false;
+    try {
+      return sameTaskNodeRef(nodeAtSearchAddress(root, address).target, target);
+    } catch (error) {
+      if (error instanceof TaskSearchError && error.code === 'stale') return false;
+      throw error;
+    }
+  }
+
   async resolveSearchHits(
     hits: readonly TaskSearchHit[],
     signal: AbortSignal,

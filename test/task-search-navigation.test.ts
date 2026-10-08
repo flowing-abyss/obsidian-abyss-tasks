@@ -3,9 +3,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { TaskSearch, TaskSearchOptions } from '../src/panels/center/TaskSearch';
 import { TaskSearchReveal } from '../src/panels/center/TaskSearchReveal';
 import { CenterPanel } from '../src/panels/CenterPanel';
+import { indexedRows } from '../src/panels/task-list/taskListRows';
 import { ProjectStore } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { TaskSearchError } from '../src/tasks';
+import { TaskSearchError, localDate, rootTaskNodeSnapshot } from '../src/tasks';
 import { TaskSearchService } from '../src/tasks/infrastructure/search/TaskSearchService';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { taskNodeRef } from '../src/ui/taskSelection';
@@ -1725,6 +1726,77 @@ it('rejects a project parent reveal after its source becomes excluded', async ()
       'Task changed. Show it in the task list again.',
       undefined,
     );
+  } finally {
+    h.dispose();
+  }
+});
+
+it('Shift+End selects the complete logical list and reveals its last row', async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const h = await mountCanonicalSearchUi(
+    {
+      'tasks.md': Array.from(
+        { length: 150 },
+        (_, i) => `- [ ] Task ${String(i).padStart(3, '0')}`,
+      ).join('\n'),
+    },
+    settings,
+    'tasks',
+  );
+  try {
+    h.state.set('centerListViewState', {
+      ...h.state.get('centerListViewState'),
+      sortBy: { field: 'title', dir: 'asc' },
+    });
+    const first = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    first.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    first.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'End', shiftKey: true, bubbles: true }),
+    );
+    await flushMicrotasks();
+    const targets = h.panel['taskMenuTargets_abyssPrivate']();
+    expect(targets.summaries).toHaveLength(150);
+    expect(h.root.querySelector('.abyss-selection-live')?.textContent).toBe('150 tasks selected');
+    expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThan(150);
+    expect(h.root.ownerDocument.activeElement?.textContent).toContain('Task 149');
+  } finally {
+    h.dispose();
+  }
+});
+
+it('passes continuation-only selection capability into a single physical-node context menu', async () => {
+  const h = await mountCanonicalSearchUi(
+    { 'tasks.md': '- [ ] Interval' },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  try {
+    const task = rootTaskNodeSnapshot(expectDefined(h.index.list()[0]));
+    const completion = { kind: 'continuation' as const, due: localDate('2026-10-10') };
+    const rows = indexedRows([
+      {
+        kind: 'task' as const,
+        key: 'tasks.md:0',
+        taskKey: 'tasks.md:0',
+        task,
+        presentation: { kind: 'daily' as const, displayDate: localDate('2026-10-08'), completion },
+      },
+    ]);
+    const host = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
+    h.panel['mountTaskRows_abyssPrivate'](host, rows, []);
+    const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    card.dispatchEvent(new MouseEvent('click', { ctrlKey: true, bubbles: true }));
+    const create = vi
+      .spyOn(h.panel['taskMenus_abyssPrivate'], 'createTaskContextMenu')
+      .mockReturnValue(new Menu());
+    vi.spyOn(
+      h.panel as unknown as { showTaskMenu_abyssPrivate(): void },
+      'showTaskMenu_abyssPrivate',
+    ).mockImplementation(() => undefined);
+    card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    expect(create).toHaveBeenCalledWith(card, expect.anything(), completion);
+    const targets = h.panel['taskMenuTargets_abyssPrivate']();
+    expect((await targets.resolve(targets.signal))[0]?.completion).toEqual(completion);
   } finally {
     h.dispose();
   }

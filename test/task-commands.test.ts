@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import type { LinkToken } from '../src/markdown/links';
 import { commandPatch, commandSource, TaskCommands } from '../src/panels/center/TaskCommands';
-import { buildTaskListRows } from '../src/panels/task-list/taskListRows';
+import { buildTaskListRows, buildTaskNodeListRows } from '../src/panels/task-list/taskListRows';
 import { TaskRowSelection } from '../src/panels/task-list/taskRowSelection';
 import type { ProjectManager } from '../src/projects/ProjectManager';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -10,16 +10,28 @@ import { StatusRegistry } from '../src/status/StatusRegistry';
 import {
   durationMinutes,
   localDate,
+  sameTaskNodeRef,
+  taskNodeSourceLine,
   type TaskApplicationApi,
   type TaskCommand,
   type TaskCommandResult,
+  type TaskNodeSnapshot,
   type TaskSnapshot,
 } from '../src/tasks';
+import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
+import { clockFrom } from '../src/tasks/domain/clock';
 import { taskTreeNodes } from '../src/tasks/domain/taskSearchProjection';
 import { LinkEditModal } from '../src/ui/LinkEditModal';
 import { noInteractionOwnership } from '../src/ui/interactionOwnership';
 import { taskSnapshotForCalendarOccurrence } from '../src/views/calendarOccurrences';
-import { createAppWithFiles, expectDefined, flushMicrotasks, task, taskQueryApi } from './helpers';
+import {
+  canonicalStatusCatalog,
+  createAppWithFiles,
+  expectDefined,
+  flushMicrotasks,
+  task,
+  taskQueryApi,
+} from './helpers';
 import { hierarchyHarness } from './support/taskHierarchyHarness';
 
 const due = localDate('2026-10-04');
@@ -105,7 +117,10 @@ const cases: readonly SubmissionCase[] = [
   },
 ];
 
-async function fixture(application?: TaskApplicationApi) {
+async function fixture(
+  application?: TaskApplicationApi,
+  selectedSnapshots?: () => readonly TaskNodeSnapshot[],
+) {
   const app = await createAppWithFiles({});
   const execute = vi
     .fn<TaskApplicationApi['execute']>()
@@ -130,8 +145,8 @@ async function fixture(application?: TaskApplicationApi) {
     interactionOwnership: noInteractionOwnership,
     projectManager: { moveTaskToProject: move } as unknown as ProjectManager,
     selection,
-    rows: () => buildTaskListRows(tasks.queries.list(), { by: 'none' }),
     onSelectionChanged,
+    ...(selectedSnapshots === undefined ? {} : { selectedSnapshots }),
   });
   return { commands, execute, tasks, move, selection, onSelectionChanged, app, state };
 }
@@ -155,7 +170,11 @@ describe('TaskCommands submission routing', () => {
       try {
         await submit(f.commands, current);
         await flushMicrotasks();
-        expect(f.execute).toHaveBeenCalledExactlyOnceWith(command(current));
+        expect(f.execute).toHaveBeenCalledOnce();
+        expect(f.execute.mock.calls[0]?.[0]).toEqual(command(current));
+        if (['applyDueInOrder', 'applyBulkDuePreset'].includes(name))
+          expect(f.execute.mock.calls[0]?.[1]?.onPreparedPatch).toBeTypeOf('function');
+        else expect(f.execute.mock.calls[0]).toHaveLength(1);
         if (name === 'moveTaskToProject')
           expect(f.move).toHaveBeenCalledExactlyOnceWith(current.ref, 'Projects/A.md', f.tasks);
         if (name === 'deleteBulkTasks') {
@@ -182,7 +201,7 @@ describe('TaskCommands submission routing', () => {
   );
   it.each(calendarCases)(
     '$name targets a materialized child occurrence and refuses a forecast',
-    async ({ submit, command }) => {
+    async ({ submit, command, name }) => {
       const f = await fixture();
       const h = await hierarchyHarness({
         'source.md': '- [ ] Move\n  - [ ] Child 🛫 2026-10-04 ^child\n',
@@ -220,8 +239,13 @@ describe('TaskCommands submission routing', () => {
             ...expected,
             target: { type: 'title', target: source.target },
           });
-        else
-          expect(f.execute).toHaveBeenCalledExactlyOnceWith({ ...expected, target: source.target });
+        else {
+          expect(f.execute).toHaveBeenCalledOnce();
+          expect(f.execute.mock.calls[0]?.[0]).toEqual({ ...expected, target: source.target });
+          if (['applyDueInOrder', 'applyBulkDuePreset'].includes(name))
+            expect(f.execute.mock.calls[0]?.[1]?.onPreparedPatch).toBeTypeOf('function');
+          else expect(f.execute.mock.calls[0]).toHaveLength(1);
+        }
         f.execute.mockClear();
         await submit(f.commands, forecast);
         await flushMicrotasks();
@@ -532,3 +556,191 @@ it('routes duration from an exact child subject without dropping calendar author
   });
   h.index.destroy();
 });
+
+it.each([false, true])(
+  'keeps archive descriptors on delayed mounted rows and rejects intervening edits (%s)',
+  async (externalEdit) => {
+    const h = await hierarchyHarness({
+      'source.md': '- [ ] First\n- [ ] Keep [[A]] [[B]]\n',
+      'target.md': '- [ ] Parent\n',
+    });
+    const originals = h.index.list({ filePath: 'source.md' });
+    let writes = 0;
+    const application: TaskApplicationApi = {
+      queries: h.index,
+      execute: async (command) => {
+        if (++writes > 1) return { type: 'invalid', issues: [{ code: 'invalid-target' }] };
+        if (command.type !== 'archive') throw new Error('Expected archive');
+        const result = await h.service.execute({ type: 'delete', ref: command.ref });
+        if (result.type !== 'ok') throw new Error('Expected successful source deletion');
+        return {
+          type: 'ok',
+          changed: true,
+          outcome: { type: 'archived', ref: command.ref, filePath: 'archive.md' },
+        };
+      },
+    };
+    const f = await fixture(application);
+    const links = [
+      { key: 'note:A.md', label: 'A', target: 'A.md' },
+      { key: 'note:B.md', label: 'B', target: 'B.md' },
+    ];
+    const rows = buildTaskListRows(originals, {
+      by: 'outgoing-link',
+      values: new Map([['source.md:1', links]]),
+    });
+    f.selection.bind(rows);
+    f.selection.selectAll(rows, {});
+    vi.spyOn(f.selection, 'inOrder').mockImplementation(() => {
+      throw new Error('Enumerated occurrence keys');
+    });
+    await f.commands.archiveTasks(originals);
+    expect(writes).toBe(2);
+    expect(f.selection.selectedNodes(rows).map((entry) => entry.task.markdownTitle)).toEqual([
+      'Keep [[A]] [[B]]',
+    ]);
+    expect(f.selection.ranges().every((range) => range.taskKey === 'source.md:1')).toBe(true);
+    if (externalEdit) {
+      await h.app.vault.modify(h.file('source.md'), '- [ ] Replacement\n');
+      h.index.installCommittedContent('source.md', '- [ ] Replacement\n');
+    }
+    const incoming = buildTaskListRows(h.index.list({ filePath: 'source.md' }), {
+      by: 'outgoing-link',
+      values: new Map([['source.md:0', links]]),
+    });
+    f.commands.archiveSelectionRebase(
+      (current) => {
+        const key = `${current.source.filePath}:${current.source.line}`;
+        return incoming.firstOccurrenceOf(key) === undefined ? undefined : key;
+      },
+      (physicalKeys) => {
+        f.selection.bind(incoming, { physicalKeys });
+      },
+    );
+    expect(f.selection.size).toBe(externalEdit ? 0 : 2);
+    if (!externalEdit)
+      expect(f.selection.ranges().every((range) => range.taskKey === 'source.md:0')).toBe(true);
+    h.index.destroy();
+  },
+);
+
+it.each([
+  'before-result',
+  'delayed',
+  'partial-failure',
+  'external-edit',
+  'clear',
+  'dispose',
+] as const)('carries bounded owned root and child proof through %s', async (timing) => {
+  const h = await hierarchyHarness({
+    'source.md': '- [ ] First\n  - [ ] Child\n- [ ] Second\n',
+    'target.md': '- [ ] Parent\n',
+  });
+  const originals = h.index.list({ filePath: 'source.md' });
+  const sourceRows = () =>
+    buildTaskNodeListRows(
+      h.index.list({ filePath: 'source.md' }).flatMap((root) => [...taskTreeNodes(root)]),
+      { by: 'none' },
+    );
+  let rows = sourceRows();
+  let writes = 0;
+  const application: TaskApplicationApi = {
+    queries: h.index,
+    execute: async (command) => {
+      if (++writes === 2 && timing === 'partial-failure')
+        return { type: 'invalid', issues: [{ code: 'invalid-target' }] };
+      const result = await h.service.execute(command);
+      if (timing === 'before-result') bind();
+      if (timing === 'clear') f.selection.clear();
+      if (timing === 'dispose') f.commands.dispose();
+      return result;
+    },
+  };
+  const f = await fixture(application, () =>
+    f.selection.selectedNodes(rows).map((entry) => entry.task),
+  );
+  f.selection.bind(rows);
+  f.selection.selectAll(rows, {});
+  function bind() {
+    const next = sourceRows();
+    f.commands.ownedSelectionRebase(
+      (current) => {
+        const key = `${current.root.source.filePath}:${taskNodeSourceLine(current.target)}`;
+        const occurrence = next.firstOccurrenceOf(key);
+        const candidate = occurrence === undefined ? undefined : next.task(occurrence);
+        return candidate !== undefined && sameTaskNodeRef(candidate.target, current.target)
+          ? key
+          : undefined;
+      },
+      (physicalKeys) => {
+        f.selection.bind(next, { physicalKeys });
+      },
+    );
+    rows = next;
+  }
+  await f.commands.applyBulkTaskTags(originals, ['owned'], []);
+  if (timing === 'external-edit') {
+    await h.app.vault.modify(h.file('source.md'), '- [ ] Replacement\n');
+    h.index.installCommittedContent('source.md', '- [ ] Replacement\n');
+  }
+  if (timing !== 'before-result') bind();
+  expect(f.selection.size).toBe(['clear', 'dispose', 'external-edit'].includes(timing) ? 0 : 3);
+  f.commands.dispose();
+  h.index.destroy();
+});
+
+it.each([false, true])(
+  'preserves root and child selection with actual Inbox removal policy (%s)',
+  async (removeTagOnAssign) => {
+    const h = await hierarchyHarness({
+      'source.md': '- [ ] Root #inbox\n  - [ ] Child #inbox\n',
+      'target.md': '- [ ] Parent\n',
+    });
+    const service = new TaskApplicationService(
+      h.index,
+      h.repository,
+      canonicalStatusCatalog(),
+      clockFrom(Date.UTC(2026, 9, 3), 0),
+      undefined,
+      () => ({ ...DEFAULT_SETTINGS, inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign } }),
+    );
+    const nodes = () =>
+      h.index.list({ filePath: 'source.md' }).flatMap((root) => [...taskTreeNodes(root)]);
+    let rows = buildTaskNodeListRows(nodes(), { by: 'none' });
+    const original = nodes();
+    const application: TaskApplicationApi = {
+      queries: h.index,
+      execute: async (command, options) => {
+        const result = await service.execute(command, options);
+        const next = buildTaskNodeListRows(nodes(), { by: 'none' });
+        f.commands.ownedSelectionRebase(
+          (current) => {
+            const key = `${current.root.source.filePath}:${taskNodeSourceLine(current.target)}`;
+            const row = next.firstOccurrenceOf(key);
+            return row !== undefined &&
+              sameTaskNodeRef(expectDefined(next.task(row)).target, current.target)
+              ? key
+              : undefined;
+          },
+          (physicalKeys) => {
+            f.selection.bind(next, { physicalKeys });
+          },
+        );
+        rows = next;
+        return result;
+      },
+    };
+    const f = await fixture(application, () =>
+      f.selection.selectedNodes(rows).map((entry) => entry.task),
+    );
+    f.selection.bind(rows);
+    f.selection.selectAll(rows, {});
+    await f.commands.applyBulkTaskTags(original, ['#owned'], []);
+    expect(f.selection.size).toBe(2);
+    expect(nodes().map((node) => node.node.tags)).toEqual(
+      Array.from({ length: 2 }, () => (removeTagOnAssign ? ['#owned'] : ['#inbox', '#owned'])),
+    );
+    f.commands.dispose();
+    h.index.destroy();
+  },
+);

@@ -24,6 +24,7 @@ import {
   localDate,
   rootTaskNodeSnapshot,
   sameTaskNodeRef,
+  taskNodeSourceLine,
   taskReconciliationKey,
   taskSearchAddressKey,
   TaskSearchError,
@@ -250,6 +251,7 @@ export class CenterPanel {
   private taskModal_abyssPrivate: TaskModal | null = null;
   /** The list's multi-selection, anchor, and keyboard focus, kept across renders and modes. */
   private readonly rowSelection_abyssPrivate = new TaskRowSelection();
+  private selectionRows_abyssPrivate: TaskListRows<SurfaceTask> = NO_TASK_LIST_ROWS;
   private readonly taskCommands_abyssPrivate: TaskCommands;
   private readonly taskMenus_abyssPrivate: TaskMenus;
   private lastAnnouncedSelectionCount_abyssPrivate = 0;
@@ -380,7 +382,10 @@ export class CenterPanel {
       interactionOwnership,
       projectManager,
       selection: this.rowSelection_abyssPrivate,
-      rows: () => this.mountedRows_abyssPrivate.rows,
+      selectedSnapshots: () =>
+        [...this.selectionCandidates_abyssPrivate(this.selectionRows_abyssPrivate).values()].filter(
+          (task): task is TaskNodeSnapshot => 'root' in task,
+        ),
       onSelectionChanged: () => {
         this.updateSelectionVisuals_abyssPrivate();
       },
@@ -991,6 +996,7 @@ export class CenterPanel {
   private clearResultsSelection_abyssPrivate(): void {
     const selected = this.rowSelection_abyssPrivate.size > 0;
     this.rowSelection_abyssPrivate.clear();
+    this.taskCommands_abyssPrivate.retireSelectionEvidence();
     this.updateSelectionVisuals_abyssPrivate();
     if (selected)
       this.el
@@ -1018,7 +1024,7 @@ export class CenterPanel {
     const compact = retained?.search;
     if (retained === null || compact === undefined) return { type: 'cancelled' };
     const previous = compact.order;
-    this.reconcileCompactSelection_abyssPrivate(previous, organization);
+
     retained.tagGroups = this.effectiveTagGroups_abyssPrivate();
     retained.options = {
       signal: options.identity.signal,
@@ -1027,6 +1033,7 @@ export class CenterPanel {
     };
     this.compactPresentation_abyssPrivate = options;
     const order = compact.rows.set(organization, options.groupBy, options.identity);
+    this.reconcileCompactSelection_abyssPrivate(previous, order, organization.generation);
     retained.search = { rows: compact.rows, identity: options.identity, order };
     this.invalidateCompactInteractions_abyssPrivate(previous, order);
     this.mountedRows_abyssPrivate = retained.surface;
@@ -1052,7 +1059,6 @@ export class CenterPanel {
       },
       'throw',
     );
-    this.rowSelection_abyssPrivate.reconcile(this.listOrder_abyssPrivate());
     this.updateSelectionVisuals_abyssPrivate();
     this.creationInclusion_abyssPrivate?.publish();
     return compact.rows.settleMounted(options.identity.signal);
@@ -1060,21 +1066,58 @@ export class CenterPanel {
 
   private reconcileCompactSelection_abyssPrivate(
     previous: TaskListRows<TaskSearchOccurrence>,
-    organization: TaskSearchOrganization,
+    next: TaskListRows<TaskSearchOccurrence>,
+    generation: number,
   ): void {
-    // A reused path/line cannot inherit selection from a different accepted source address.
-    const incoming = new Map(organization.occurrences.map((o) => [o.key, o]));
-    for (const key of this.rowSelection_abyssPrivate.inOrder(previous)) {
-      const before = previous.task(key)?.address;
-      const after = incoming.get(key)?.address;
+    const physicalKeys = new Map<string, string>();
+    const candidates = this.selectionCandidates_abyssPrivate(previous);
+    for (const [key, before] of candidates) {
+      const occurrence = next.firstOccurrenceOf(key);
+      const after = occurrence === undefined ? undefined : next.task(occurrence);
       if (
-        before !== undefined &&
-        (after?.rootId !== before.rootId ||
-          before.epoch !== after.epoch ||
-          before.version !== after.version)
+        after !== undefined &&
+        taskSearchAddressKey(before.address) === taskSearchAddressKey(after.address)
       )
-        this.rowSelection_abyssPrivate.delete(key);
+        physicalKeys.set(key, key);
     }
+    this.taskCommands_abyssPrivate.archiveSelectionRebase(
+      (task) => {
+        const key = taskRowKey(task);
+        const occurrence = next.firstOccurrenceOf(key);
+        const after = occurrence === undefined ? undefined : next.task(occurrence);
+        return after !== undefined &&
+          this.tasks_abyssPrivate?.queries.matchesSearchAddress(
+            after.address,
+            { type: 'task', ref: task.ref },
+            generation,
+          ) === true
+          ? key
+          : undefined;
+      },
+      (proof) => {
+        for (const [before, after] of proof) physicalKeys.set(before, after);
+        this.taskCommands_abyssPrivate.ownedSelectionRebase(
+          (task) => {
+            const key = `${task.root.source.filePath}:${taskNodeSourceLine(task.target)}`;
+            const occurrence = next.firstOccurrenceOf(key);
+            const after = occurrence === undefined ? undefined : next.task(occurrence);
+            return after !== undefined &&
+              this.tasks_abyssPrivate?.queries.matchesSearchAddress(
+                after.address,
+                task.target,
+                generation,
+              ) === true
+              ? key
+              : undefined;
+          },
+          (owned) => {
+            for (const [before, after] of owned) physicalKeys.set(before, after);
+            this.rowSelection_abyssPrivate.bind(next, { physicalKeys });
+          },
+        );
+      },
+    );
+    this.selectionRows_abyssPrivate = next;
   }
 
   private createSearchSurface_abyssPrivate(
@@ -1847,6 +1890,7 @@ export class CenterPanel {
     this.clearCardReturn_abyssPrivate();
     this.captureSessions_abyssPrivate.cancelStaleListCapture();
     this.rowSelection_abyssPrivate.clear();
+    this.taskCommands_abyssPrivate.retireSelectionEvidence();
   }
 
   private detailOccurrenceKey_abyssPrivate(): string | undefined {
@@ -1937,11 +1981,12 @@ export class CenterPanel {
 
   private clearTaskSelection_abyssPrivate(): void {
     this.rowSelection_abyssPrivate.clear();
+    this.taskCommands_abyssPrivate.retireSelectionEvidence();
     this.updateSelectionVisuals_abyssPrivate();
   }
 
   private isTaskNavigationEvent_abyssPrivate(event: KeyboardEvent): boolean {
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return false;
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return false;
     return this.isTaskListKeyboardTarget_abyssPrivate(event.target);
   }
 
@@ -1983,15 +2028,16 @@ export class CenterPanel {
     order: TaskListRows<SurfaceTask>,
   ): void {
     const extend = event.shiftKey;
-    const next = this.rowSelection_abyssPrivate.move(
-      event.key === 'ArrowDown' ? 'down' : 'up',
-      order,
-      {
-        target: this.eventTaskCardKey_abyssPrivate(event.target),
-        detail: this.detailOccurrenceKey_abyssPrivate(),
-      },
-      extend,
-    );
+    const origin = {
+      target: this.eventTaskCardKey_abyssPrivate(event.target),
+      detail: this.detailOccurrenceKey_abyssPrivate(),
+    };
+    const edge = event.key === 'Home' ? 'first' : 'last';
+    const direction = event.key === 'ArrowDown' ? 'down' : 'up';
+    const next =
+      event.key === 'Home' || event.key === 'End'
+        ? this.rowSelection_abyssPrivate.moveEdge(edge, order, origin, extend)
+        : this.rowSelection_abyssPrivate.move(direction, order, origin, extend);
     if (next === undefined) return;
     this.updateSelectionVisuals_abyssPrivate();
     if (this.taskSurface_abyssPrivate?.search !== undefined) {
@@ -2222,6 +2268,9 @@ export class CenterPanel {
   }
 
   destroy(): void {
+    this.rowSelection_abyssPrivate.clear();
+    this.rowSelection_abyssPrivate.bind(NO_TASK_LIST_ROWS);
+    this.selectionRows_abyssPrivate = NO_TASK_LIST_ROWS;
     this.cancelListActivation_abyssPrivate?.();
     this.mounted_abyssPrivate = false;
     this.wholeCardFocus_abyssPrivate = null;
@@ -2432,7 +2481,6 @@ export class CenterPanel {
       type: 'list',
       selectionKey: listSelectionToKey(this.state_abyssPrivate.get('selectedList')),
     });
-    this.rowSelection_abyssPrivate.reconcile(this.listOrder_abyssPrivate());
     this.updateSelectionVisuals_abyssPrivate();
     this.completeTaskCardRender_abyssPrivate();
   }
@@ -2604,6 +2652,7 @@ export class CenterPanel {
     tagGroups: readonly EffectiveTagGroup[],
     options: TaskRowOptions = {},
   ): void {
+    this.bindSnapshotSelection_abyssPrivate(rows);
     if (
       this.taskSurface_abyssPrivate?.host !== host ||
       this.taskSurface_abyssPrivate.search !== undefined
@@ -2652,6 +2701,82 @@ export class CenterPanel {
       },
       options.failure ?? 'report',
     );
+  }
+
+  private selectionCandidates_abyssPrivate<T>(rows: TaskListRows<T>): Map<string, T> {
+    const candidates = new Map(
+      this.rowSelection_abyssPrivate
+        .selectedNodes(rows)
+        .map((entry) => [entry.taskKey, entry.task]),
+    );
+    for (const key of [
+      this.rowSelection_abyssPrivate.anchor,
+      this.rowSelection_abyssPrivate.focus,
+    ]) {
+      if (key === null) continue;
+      const task = rows.task(key),
+        physical = rows.physicalKey(key);
+      if (task !== undefined && physical !== undefined) candidates.set(physical, task);
+    }
+    return candidates;
+  }
+
+  private snapshotSelectionSuccessor_abyssPrivate(
+    key: string,
+    before: TaskNodeSnapshot,
+    rows: TaskListRows<TaskNodeSnapshot>,
+  ): string | undefined {
+    const resolution = this.queries_abyssPrivate.resolve(before.root.ref);
+    if (resolution.type !== 'exact' && resolution.type !== 'rebased') return undefined;
+    const current = resolution.type === 'exact' ? resolution.task : resolution.current;
+    if (resolution.type === 'rebased' && resolution.evidence !== 'byte-identical-relocation')
+      return undefined;
+    const line =
+      Number(key.slice(key.lastIndexOf(':') + 1)) + current.source.line - before.root.source.line;
+    const nextKey = `${current.source.filePath}:${line}`;
+    const occurrence = rows.firstOccurrenceOf(nextKey);
+    const after = occurrence === undefined ? undefined : rows.task(occurrence);
+    return after !== undefined && this.sameCardRef_abyssPrivate(after.root.ref, current.ref)
+      ? nextKey
+      : undefined;
+  }
+
+  private bindSnapshotSelection_abyssPrivate(rows: TaskListRows<TaskNodeSnapshot>): void {
+    if (this.state_abyssPrivate.get('mode') !== 'tasks') return;
+    const previous = this.selectionRows_abyssPrivate;
+    const physicalKeys = new Map<string, string>();
+    for (const [key, before] of this.selectionCandidates_abyssPrivate(previous)) {
+      if (!('root' in before)) continue;
+      const nextKey = this.snapshotSelectionSuccessor_abyssPrivate(key, before, rows);
+      if (nextKey !== undefined) physicalKeys.set(key, nextKey);
+    }
+    this.taskCommands_abyssPrivate.archiveSelectionRebase(
+      (task) => {
+        const key = rows.firstOccurrenceOf(taskRowKey(task));
+        const mounted = key === undefined ? undefined : rows.task(key);
+        return mounted !== undefined && this.sameCardRef_abyssPrivate(mounted.root.ref, task.ref)
+          ? taskRowKey(task)
+          : undefined;
+      },
+      (proof) => {
+        for (const [before, after] of proof) physicalKeys.set(before, after);
+        this.taskCommands_abyssPrivate.ownedSelectionRebase(
+          (task) => {
+            const key = `${task.root.source.filePath}:${taskNodeSourceLine(task.target)}`;
+            const occurrence = rows.firstOccurrenceOf(key);
+            const after = occurrence === undefined ? undefined : rows.task(occurrence);
+            return after !== undefined && sameTaskNodeRef(after.target, task.target)
+              ? key
+              : undefined;
+          },
+          (owned) => {
+            for (const [before, after] of owned) physicalKeys.set(before, after);
+            this.rowSelection_abyssPrivate.bind(rows, { physicalKeys });
+          },
+        );
+      },
+    );
+    this.selectionRows_abyssPrivate = rows;
   }
 
   private mountTaskRow_abyssPrivate(
@@ -3264,7 +3389,11 @@ export class CenterPanel {
       this.taskMenus_abyssPrivate.showBulkContextMenu(event, card, targets);
       return;
     }
-    const menu = this.taskMenus_abyssPrivate.createTaskContextMenu(card, task);
+    const order = this.listOrder_abyssPrivate();
+    const row = order.rowAt(order.rowIndexOf(key));
+    const occurrenceCompletion = row?.kind === 'task' ? row.presentation?.completion : undefined;
+    const completion = selection.has(key) ? targets.summaries[0]?.completion : occurrenceCompletion;
+    const menu = this.taskMenus_abyssPrivate.createTaskContextMenu(card, task, completion);
     this.showTaskMenu_abyssPrivate(menu, event, card);
   }
 
@@ -3274,22 +3403,14 @@ export class CenterPanel {
     const controller = new AbortController();
     this.menuIntent_abyssPrivate = controller;
     const order = this.listOrder_abyssPrivate();
-    const keys = [
-      ...new Map(
-        this.rowSelection_abyssPrivate.inOrder(order).map((key) => [order.physicalKey(key), key]),
-      ).values(),
-    ];
+    const selected = this.rowSelection_abyssPrivate.selectedNodes(order);
     const compact = this.taskSurface_abyssPrivate?.search;
-    const tasks = compact === undefined ? this.selectedTasksInVisualOrder_abyssPrivate() : [];
-    const summaries =
-      compact === undefined
-        ? tasks.map((task) => ({ ...task.node, depth: task.path.length }))
-        : keys.flatMap((key) => {
-            const row = compact.order.task(key);
-            return row === undefined
-              ? []
-              : [{ ...row.menu, depth: row.depth, completion: row.presentation.completion }];
-          });
+    const tasks = selected.flatMap((entry) => ('root' in entry.task ? [entry.task] : []));
+    const summaries = selected.map(({ task, completion }) =>
+      'root' in task
+        ? { ...task.node, depth: task.path.length, completion }
+        : { ...task.menu, depth: task.depth, completion },
+    );
     const abort = (): void => {
       controller.abort();
     };
@@ -3309,12 +3430,22 @@ export class CenterPanel {
       summaries,
       resolve: async (signal) => {
         this.assertMenuTargets_abyssPrivate(signal, controller.signal, compact);
-        const resolved = compact === undefined ? tasks : await compact.rows.resolve(keys, signal);
+        const resolved =
+          compact === undefined
+            ? tasks
+            : await compact.rows.resolve(
+                selected.flatMap((entry) => ('root' in entry.task ? [] : [entry.task.key])),
+                signal,
+              );
         this.assertMenuTargets_abyssPrivate(signal, controller.signal, compact);
         if (compact === undefined) this.assertExactMenuSnapshots_abyssPrivate(tasks);
-        return resolved.map((task) => ({
+        return resolved.map((task, index) => ({
           task,
-          completion: { kind: 'allowed' as const },
+          completion:
+            selected[index]?.completion ??
+            (() => {
+              throw new TaskSearchError('stale', 'Selected node changed');
+            })(),
         }));
       },
     };
@@ -3346,21 +3477,10 @@ export class CenterPanel {
     } catch (error) {
       if (
         !targets.signal.aborted &&
-        !(error instanceof TaskSearchError && (error.code === 'stale' || error.code === 'aborted'))
+        !(error instanceof TaskSearchError && error.code === 'aborted')
       )
         this.reportTaskRenderFailure_abyssPrivate(error);
     }
-  }
-
-  /** The selected tasks in display order, as the snapshots their cards were rendered from. */
-  private selectedTasksInVisualOrder_abyssPrivate(): TaskNodeSnapshot[] {
-    const order = this.listOrder_abyssPrivate();
-    const unique = new Map<string, TaskNodeSnapshot>();
-    for (const key of this.rowSelection_abyssPrivate.inOrder(order)) {
-      const task = this.mountedProjection_abyssPrivate(key);
-      if (task !== undefined) unique.set(taskStackRowKey([task.root, ...task.path]) ?? key, task);
-    }
-    return [...unique.values()];
   }
 
   private taskNodeSnapshots_abyssPrivate(
@@ -3754,9 +3874,7 @@ export class CenterPanel {
         attr: { 'aria-live': 'polite', 'aria-atomic': 'true' },
       });
     const order = this.listOrder_abyssPrivate();
-    const count = new Set(
-      this.rowSelection_abyssPrivate.inOrder(order).map((key) => order.physicalKey(key)),
-    ).size;
+    const count = this.rowSelection_abyssPrivate.selectedNodes(order).length;
     if (count !== this.lastAnnouncedSelectionCount_abyssPrivate) {
       this.lastAnnouncedSelectionCount_abyssPrivate = count;
       live.textContent = `${count} ${count === 1 ? 'task' : 'tasks'} selected`;

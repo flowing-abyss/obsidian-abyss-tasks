@@ -257,3 +257,38 @@ it.each([
     vi.restoreAllMocks();
   }
 });
+
+it('retires actionable selection after failed same-query organization', async () => {
+  let fail = false;
+  const notice = vi
+    .spyOn(Notice.prototype as unknown as { constructor__(s: string): void }, 'constructor__')
+    .mockImplementation(() => {});
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': '- [ ] needle' },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+    (owner) => {
+      if (fail) throw new Error('organization failed');
+      return createBrowserTaskScheduler(owner);
+    },
+  );
+  try {
+    h.query('needle');
+    await h.completed();
+    const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    card.dispatchEvent(new MouseEvent('click', { ctrlKey: true, bubbles: true }));
+    expect(h.panel['rowSelection_abyssPrivate'].size).toBe(1);
+    fail = true;
+    h.panel.refresh();
+    await expect(h.completed()).rejects.toThrow();
+    expect(h.panel['rowSelection_abyssPrivate'].size).toBe(0);
+    expect(h.root.querySelector('.abyss-task-card')).toBeNull();
+    expect(h.panel['taskMenuTargets_abyssPrivate']().summaries).toEqual([]);
+    expect(notice).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledTimes(1);
+  } finally {
+    h.dispose();
+    vi.restoreAllMocks();
+  }
+});

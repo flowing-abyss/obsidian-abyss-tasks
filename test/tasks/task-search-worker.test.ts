@@ -300,7 +300,12 @@ it('bounds actual browser runtime plus canonical browse vectors while open deliv
   source.ready([nodeDocuments(10)]);
   const service = new TaskSearchService({
     source,
-    reads: { observedTags: () => [], async *organization() {}, resolveSearchHits: async () => [] },
+    reads: {
+      observedTags: () => [],
+      async *organization() {},
+      matchesSearchAddress: () => false,
+      resolveSearchHits: async () => [],
+    },
     segment: fallbackSearchWords,
     scheduler: new ControlledSearchScheduler(),
     createBackend: () => BrowserTaskSearchBackend.create('source'),
@@ -343,6 +348,7 @@ it.each(['service', 'source', 'source-failure'] as const)(
       reads: {
         observedTags: () => [],
         async *organization() {},
+        matchesSearchAddress: () => false,
         resolveSearchHits: async () => [],
       },
       segment: fallbackSearchWords,
@@ -385,7 +391,12 @@ it('panel query cancellation leaves shared browser startup and bootstrap alive',
   const started = deferred<void>();
   const service = new TaskSearchService({
     source,
-    reads: { observedTags: () => [], async *organization() {}, resolveSearchHits: async () => [] },
+    reads: {
+      observedTags: () => [],
+      async *organization() {},
+      matchesSearchAddress: () => false,
+      resolveSearchHits: async () => [],
+    },
     segment: fallbackSearchWords,
     scheduler: new ControlledSearchScheduler(),
     createBackend: (_mode, signal) => {
@@ -423,7 +434,12 @@ it('does not reuse worker capacity for browse until actual release is acknowledg
   source.ready([nodeDocuments(10)]);
   const service = new TaskSearchService({
     source,
-    reads: { observedTags: () => [], async *organization() {}, resolveSearchHits: async () => [] },
+    reads: {
+      observedTags: () => [],
+      async *organization() {},
+      matchesSearchAddress: () => false,
+      resolveSearchHits: async () => [],
+    },
     segment: fallbackSearchWords,
     scheduler: new ControlledSearchScheduler(),
     createBackend: () => BrowserTaskSearchBackend.create('source'),
@@ -498,6 +514,7 @@ it.each(['open', 'read'] as const)(
       reads: {
         observedTags: () => [],
         async *organization() {},
+        matchesSearchAddress: () => false,
         resolveSearchHits: async () => [],
       },
       segment: fallbackSearchWords,

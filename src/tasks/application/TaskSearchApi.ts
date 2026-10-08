@@ -1,11 +1,19 @@
 import type {
   TaskOrganizationBatch,
   TaskOrganizationRequest,
+  TaskSearchAddress,
   TaskSearchHit,
   TaskSearchHydratedHit,
 } from '../domain/taskSearchTypes';
+import type { TaskNodeRef } from '../domain/types';
 import type { TaskQueryApi } from './TaskApplicationApi';
 export interface TaskReadProjectionApi extends Pick<TaskQueryApi, 'observedTags'> {
+  /** Validate an already-owned exact node against an accepted compact address without hydration. */
+  matchesSearchAddress(
+    address: TaskSearchAddress,
+    target: TaskNodeRef,
+    expectedGeneration: number,
+  ): boolean;
   organization(
     request: TaskOrganizationRequest,
     signal: AbortSignal,

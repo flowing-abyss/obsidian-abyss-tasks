@@ -625,10 +625,37 @@ capabilities, never on CenterPanel itself.
 | [TaskCardRenderer](src/panels/center/TaskCardRenderer.ts) | Shared card DOM, Markdown, metadata, and tracked badges; shell retains selection and whole-card interactions                                      |
 
 [`src/panels/task-list/`](src/panels/task-list/) separates the pure ordered row model and
-multi-selection from DOM mounting. `TaskRowSelection` works against an explicit display order;
+multi-selection from DOM mounting. `TaskRowSelection` binds one immutable display order;
 `MountedTaskListRows` maps row keys to mounted elements. Logical multi-selection belongs to Lists
 and Tags; other surfaces reuse card rendering without acquiring that selection model. CenterPanel
-owns selection across renders and mode changes.
+owns selection across renders and mode changes. Its retained selection rows contain immutable models,
+not mounted cards, hydration leases or scheduled work, and are released when the panel is destroyed.
+Selection stores logical spans and sparse click exceptions; before a new order is accepted, the old
+adapter captures physical-node/date/kind/group descriptors. Exact source addresses or existing proven
+source reconciliation permit key rebasing, then the incoming adapter intersects and normalizes those
+descriptors. Hidden dates/groups are retired and cannot return when filters clear. Empty proof never
+permits a replacement source to inherit selection. The adapter's `firstSelectedKey` returns the first
+selected visual occurrence, including an exact surviving singleton lead; it never substitutes an
+unselected first copy of the physical node. Home/End and arrows reuse the surface's reveal/focus owner.
+Menus and announcements collect unique selected physical nodes, with completion eligibility aggregated
+only from selected occurrences. Hydration stays bounded by the existing batch cap and owning scheduler.
+Archive commands retain their existing pending snapshots and descriptor fragments while mounted rows
+lag a write; each awaited write refreshes source proof. The next accepted bind consumes fresh proof and
+retires pending evidence, rejecting external replacement or recurrence successors.
+`TaskCommands` also retains bounded owned-write evidence per selected physical node: an origin and
+latest proved snapshot, with only the actual in-flight command used before its result arrives.
+Accepted binds consume the transition, retaining the current snapshot only for fresh proof on a later
+write; there is no command history. Selection mutation, filtered descriptors, unproved replacements
+and disposal retire that evidence. Generic rebasing accepts exact or byte-identical-relocation evidence,
+not a root authority transition or equal Markdown alone. Compact binds validate already-owned exact
+nodes through `TaskReadProjectionApi.matchesSearchAddress(address, target, expectedGeneration)`.
+`TaskIndex` checks readiness, current generation, full compact address and full node ref without I/O,
+hydration, cloning or new mutation authority; only expected stale paths return false.
+For patches, `TaskApplicationApi.execute` optionally supplies `onPreparedPatch`: the application
+service passes a detached effective patch after captured-settings normalization and before each actual
+dispatch, including retries. The command owner uses this execution-local observation for proof only,
+so automatic Inbox removal remains service policy. Retired execution callbacks cannot extend selection
+lifetime; an observer error reaches the existing execute failure boundary before writing.
 
 `taskNodeMembership` owns destination admission over each node's own tags, canonical planning,
 semantic status, depth and exact source line. Root-only `selectTaskList` and hydrated
@@ -1270,7 +1297,10 @@ raw-offset dependency rows; no eager row/key array is exposed through that bound
 retain namespaced header identity (empty when ungrouped), and explicit Today/daily presentation
 retains date and kind independently of the generic payload. Selected physical nodes aggregate
 completion from their selected copies only. Search passes row presentation explicitly while exact
-rich-root hydration remains mounted/interaction-owned. Selection still stores eager keys. The surface
+rich-root hydration remains mounted/interaction-owned. `captureSelection` unions optional canonical
+base ranges, current-revision spans and sparse includes, subtracts excludes, and intersects the current
+order. Range snapshots, membership/count queries and unique physical-node aggregation do not require
+per-day keys; finite adapters scan their finite actual rows. The surface
 uses per-row finite geometry by default; presentations supplying `indexedHeights` delegate arithmetic
 boundaries and exact prior-order anchor resolution to the supplied rows without traversing the sequence.
 `LogicalScrollWindow` maps the full logical extent to at most 1,000,000 native pixels with 1:1 endpoint

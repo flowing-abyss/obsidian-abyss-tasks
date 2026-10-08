@@ -187,7 +187,12 @@ export function createTaskSearchHarness() {
   const scheduler = new ControlledSearchScheduler();
   const service = new TaskSearchService({
     source,
-    reads: { observedTags: () => [], async *organization() {}, resolveSearchHits: async () => [] },
+    reads: {
+      observedTags: () => [],
+      async *organization() {},
+      matchesSearchAddress: () => false,
+      resolveSearchHits: async () => [],
+    },
     segment: fallbackSearchWords,
     scheduler,
     createBackend: async () => {

@@ -133,6 +133,98 @@ function service(
 }
 
 describe('TaskApplicationService planning commands', () => {
+  it('observes the detached effective tag patch before dispatch with captured policy', async () => {
+    let removeTagOnAssign = true;
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: snapshot() },
+      changed: true,
+    });
+    const application = service({ edit }, exactQueries(snapshot()), () =>
+      behaviorSettings({ inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign } }),
+    );
+    const observer = vi.fn(
+      (command: Extract<Parameters<typeof application.execute>[0], { type: 'patch' }>) => {
+        expect(edit).not.toHaveBeenCalled();
+        expect(command.patch.tags).toEqual({ add: ['#work'], remove: ['#inbox'] });
+        removeTagOnAssign = false;
+        (command.patch.tags?.remove as string[]).push('#unowned');
+      },
+    );
+    const result = await application.execute(
+      { type: 'patch', target: { type: 'task', ref }, patch: { tags: { add: ['work'] } } },
+      { onPreparedPatch: observer },
+    );
+    expect(result.type).toBe('ok');
+    expect(observer).toHaveBeenCalledOnce();
+    expect(unwrapEdit(expectDefined(edit.mock.calls[0])[0])).toMatchObject({
+      patch: { tags: { add: ['#work'], remove: ['#inbox'] } },
+    });
+  });
+
+  it('observes each retried effective patch with the original policy snapshot', async () => {
+    const previous = snapshot();
+    const current = { ...previous, ref: { ...previous.ref, revision: 'relocated' } };
+    let removeTagOnAssign = true;
+    const edit = vi
+      .fn<TaskRepository['edit']>()
+      .mockResolvedValueOnce({
+        type: 'rebased',
+        previous,
+        current,
+        evidence: 'byte-identical-relocation',
+      })
+      .mockResolvedValueOnce({
+        type: 'committed',
+        outcome: { type: 'task', task: current },
+        changed: true,
+      });
+    const application = service({ edit }, exactQueries(previous), () =>
+      behaviorSettings({ inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign } }),
+    );
+    const observed: Array<Extract<Parameters<typeof application.execute>[0], { type: 'patch' }>> =
+      [];
+    const result = await application.execute(
+      {
+        type: 'patch',
+        target: { type: 'task', ref: previous.ref },
+        patch: { tags: { add: ['work'] } },
+      },
+      {
+        onPreparedPatch: (command) => {
+          observed.push(command);
+          removeTagOnAssign = false;
+        },
+      },
+    );
+    expect(result.type).toBe('ok');
+    expect(observed.map((command) => command.target.ref)).toEqual([previous.ref, current.ref]);
+    expect(observed.map((command) => command.patch.tags)).toEqual(
+      Array.from({ length: 2 }, () => ({ add: ['#work'], remove: ['#inbox'] })),
+    );
+    expect(edit).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not write when a prepared-patch observer fails', async () => {
+    const edit = vi.fn<TaskRepository['edit']>();
+    const application = service({ edit }, exactQueries(snapshot()));
+    await expect(
+      application.execute(
+        {
+          type: 'patch',
+          target: { type: 'task', ref },
+          patch: { priority: { type: 'set', value: 'A' } },
+        },
+        {
+          onPreparedPatch: () => {
+            throw new Error('Observer failure');
+          },
+        },
+      ),
+    ).resolves.toMatchObject({ type: 'io-error', cause: 'repository-error' });
+    expect(edit).not.toHaveBeenCalled();
+  });
+
   it('always forwards the captured day for an unstamped subtask request', async () => {
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
       type: 'committed',

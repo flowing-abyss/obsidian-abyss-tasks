@@ -1,20 +1,23 @@
 import { Component, MarkdownRenderer, Menu } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
-import { type CenterPanel } from '../src/panels/CenterPanel';
+import { CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { StatusRegistry } from '../src/status/StatusRegistry';
 import { TagManager } from '../src/tags/TagManager';
 import {
   taskNodeAddress,
   type TaskApplicationApi,
   type TaskCommandResult,
-  type TaskNodeSnapshot,
   type TaskRef,
   type TaskSnapshot,
 } from '../src/tasks';
+import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
+import { clockFrom } from '../src/tasks/domain/clock';
 import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import {
   appWithFiles,
+  canonicalStatusCatalog,
   deferred,
   dispatchImeKey,
   expectDefined,
@@ -26,7 +29,10 @@ import {
   useRealMoment,
 } from './helpers';
 import { makeCenterPanelForTest, taskCommandsOf } from './support/panelHarness';
-import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
+import { hierarchyHarness } from './support/taskHierarchyHarness';
+import { prepareTaskPanelViewport, taskListRect } from './support/taskPanelViewport';
+import { canonicalSearchForIndex } from './support/taskSearchHarness';
+import { mountCanonicalSearchUi, searchUiCompleted } from './support/taskSearchUiHarness';
 import { taskViewportOwner } from './support/taskViewportOwner';
 import { VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS } from './support/timeouts';
 import { runVirtualSurfaceAuditCycles } from './support/virtualSurfaceAudit';
@@ -978,9 +984,9 @@ describe('outgoing-link repeated cards', () => {
     expect(selectedLines(el)).toEqual(['0', '0']);
     expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('1 task selected');
     expect(
-      (panel as unknown as { selectedTasksInVisualOrder_abyssPrivate(): TaskNodeSnapshot[] })
-        .selectedTasksInVisualOrder_abyssPrivate()
-        .map(({ node }) => node),
+      panel['rowSelection_abyssPrivate']
+        .selectedNodes(panel['listOrder_abyssPrivate']())
+        .map(({ task }) => ('root' in task ? task.node : undefined)),
     ).toEqual([linked]);
     click(expectDefined(rows[0]));
     key(expectDefined(rows[0]), 'ArrowDown');
@@ -1209,7 +1215,11 @@ it('selects all outgoing occurrences across windows while deduplicating physical
   expect(last.dataset['line']).toBe('1199');
   click(last, { shiftKey: true });
   expect(panel['rowSelection_abyssPrivate'].size).toBe(2400);
-  expect(panel['selectedTasksInVisualOrder_abyssPrivate']().map(({ node }) => node)).toEqual(tasks);
+  expect(
+    panel['rowSelection_abyssPrivate']
+      .selectedNodes(panel['listOrder_abyssPrivate']())
+      .map(({ task }) => ('root' in task ? task.node : undefined)),
+  ).toEqual(tasks);
   expect(cards(el).length).toBeLessThanOrEqual(100);
   panel.destroy();
 });
@@ -1383,11 +1393,16 @@ it.each([{ ctrlKey: true }, { metaKey: true }])(
     const event = key(first, 'a', modifier);
     expect(event.defaultPrevented).toBe(true);
     expect(panel['rowSelection_abyssPrivate'].size).toBe(2400);
-    expect(panel['selectedTasksInVisualOrder_abyssPrivate']().map(({ node }) => node)).toEqual(
-      tasks,
-    );
+    expect(
+      panel['rowSelection_abyssPrivate']
+        .selectedNodes(panel['listOrder_abyssPrivate']())
+        .map(({ task }) => ('root' in task ? task.node : undefined)),
+    ).toEqual(tasks);
     expect(cards(el).length).toBeLessThanOrEqual(100);
-    await taskCommandsOf(panel).archiveTasks(panel['selectedTasksInVisualOrder_abyssPrivate']());
+    const targets = panel['taskMenuTargets_abyssPrivate']();
+    await taskCommandsOf(panel).archiveTasks(
+      (await targets.resolve(targets.signal)).map((entry) => entry.task),
+    );
     expect(planArchive).toHaveBeenCalledOnce();
     expect(execute.mock.calls.map(([ref]) => ref)).toEqual(tasks.map(({ ref }) => ref));
     expect(new Set(execute.mock.calls.map(([ref]) => ref))).toHaveLength(1200);
@@ -1640,7 +1655,8 @@ it('Mod+A follows the current filtered and reordered logical projection', async 
   });
   await h.completed();
   expect(key(el, 'a', { ctrlKey: true }).defaultPrevented).toBe(true);
-  expect(panel['selectedTasksInVisualOrder_abyssPrivate']().map(({ node }) => node)).toEqual([
+  const targets = panel['taskMenuTargets_abyssPrivate']();
+  expect((await targets.resolve(targets.signal)).map(({ task }) => task.node)).toEqual([
     tasks[2],
     tasks[0],
   ]);
@@ -1804,10 +1820,7 @@ it.each([false, true])(
     expect(el.querySelector('.abyss-selection-live')?.textContent).toBe(
       selected ? '1200 tasks selected' : '',
     );
-    const collect = vi.spyOn(
-      panel as unknown as { selectedTasksInVisualOrder_abyssPrivate(): TaskNodeSnapshot[] },
-      'selectedTasksInVisualOrder_abyssPrivate',
-    );
+    const collect = vi.spyOn(panel['rowSelection_abyssPrivate'], 'selectedNodes');
     const visits = vi.spyOn(panel['rowSelection_abyssPrivate'], 'inOrder');
     const scroll = expectDefined(el.querySelector<HTMLElement>('.abyss-center-scroll'));
     scroll.scrollTop = 25000.25;
@@ -1823,10 +1836,125 @@ it.each([false, true])(
       tasks.splice(0, 600);
       panel.refresh();
       expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('600 tasks selected');
-      expect(panel['selectedTasksInVisualOrder_abyssPrivate']().map(({ node }) => node)).toEqual(
-        tasks,
-      );
+      expect(
+        panel['rowSelection_abyssPrivate']
+          .selectedNodes(panel['listOrder_abyssPrivate']())
+          .map(({ task }) => ('root' in task ? task.node : undefined)),
+      ).toEqual(tasks);
     }
     panel.destroy();
   },
 );
+
+it('keeps owned compact selections only after current exact address validation', async () => {
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': '- [ ] Keep First #task/inbox\n  - [ ] Keep Child\n- [ ] Keep Second #task/inbox\n' },
+    { ...DEFAULT_SETTINGS, inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: false } },
+    'tasks',
+  );
+  try {
+    h.query('Keep');
+    h.state.set('centerListViewState', { ...h.state.get('centerListViewState'), groupBy: 'none' });
+    await h.completed();
+    key(h.root, 'a', { ctrlKey: true });
+    const before = h.panel['rowSelection_abyssPrivate'].size;
+    expect(before).toBeGreaterThan(1);
+    const targets = h.panel['taskMenuTargets_abyssPrivate']();
+    const tasks = (await targets.resolve(targets.signal)).map((entry) => entry.task);
+    const matches = vi.spyOn(h.index, 'matchesSearchAddress');
+    await taskCommandsOf(h.panel).setBulkPriority(tasks, 'A');
+    await h.completed();
+    expect(matches).toHaveBeenCalled();
+    expect(h.panel['rowSelection_abyssPrivate'].size).toBe(before);
+    const after = h.panel['taskMenuTargets_abyssPrivate']();
+    expect((await after.resolve(after.signal)).map((entry) => entry.task.node.priority)).toEqual(
+      tasks.map(() => 'A'),
+    );
+    const nextTargets = h.panel['taskMenuTargets_abyssPrivate']();
+    const nextTasks = (await nextTargets.resolve(nextTargets.signal)).map((entry) => entry.task);
+    await taskCommandsOf(h.panel).setBulkPriority(nextTasks, 'B');
+    await h.completed();
+    expect(h.panel['rowSelection_abyssPrivate'].size).toBe(before);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('retains compact owned selection after normalized Inbox removal and delayed organization', async () => {
+  const h = await hierarchyHarness({
+    'source.md': '- [ ] Keep First #inbox\n- [ ] Keep Second #inbox\n',
+    'target.md': '- [ ] Parent\n',
+  });
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    inbox: { mode: 'tag' as const, tag: '#inbox', removeTagOnAssign: true },
+  };
+  const tasks = new TaskApplicationService(
+    h.index,
+    h.repository,
+    canonicalStatusCatalog(),
+    clockFrom(Date.UTC(2026, 9, 3), 0),
+    undefined,
+    () => settings,
+  );
+  const search = canonicalSearchForIndex(h.index);
+  const state = new AppState();
+  state.set('selectedList', { type: 'project', path: 'source.md' });
+  state.set('searchQuery', 'Keep');
+  state.set('centerListViewState', { ...state.get('centerListViewState'), groupBy: 'none' });
+  const panel = new CenterPanel({
+    state,
+    app: h.app,
+    settings,
+    queries: h.index,
+    search,
+    tasks,
+    statusRegistry: new StatusRegistry(settings.taskStatuses),
+  });
+  const el = document.body.createDiv();
+  prepareTaskPanelViewport(el, true);
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return (
+      taskListRect(this) ?? {
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: 700,
+        bottom: 900,
+        width: 700,
+        height: 900,
+        toJSON: () => ({}),
+      }
+    );
+  });
+  panel.mount(el);
+  try {
+    const input = expectDefined(el.querySelector<HTMLInputElement>('.abyss-center-search'));
+    input.value = 'Keep';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await searchUiCompleted(el);
+    key(el, 'a', { ctrlKey: true });
+    const targets = panel['taskMenuTargets_abyssPrivate']();
+    const selected = await targets.resolve(targets.signal);
+    expect(selected).toHaveLength(2);
+    await taskCommandsOf(panel).applyBulkTaskTags(
+      selected.map((entry) => entry.task),
+      ['#owned'],
+      [],
+    );
+    await searchUiCompleted(el);
+    expect(h.index.list({ filePath: 'source.md' }).map((task) => task.tags)).toEqual([
+      ['#owned'],
+      ['#owned'],
+    ]);
+    expect(panel['rowSelection_abyssPrivate'].size).toBe(2);
+  } finally {
+    panel.destroy();
+    search.dispose();
+    h.index.destroy();
+    el.remove();
+  }
+});

@@ -417,6 +417,8 @@ export class TaskSearch {
     this.#failResults(request, error);
   }
   #failResults(request: number, error: unknown): void {
+    this.#options.host.clearSelection();
+    this.#options.host.discardResults?.();
     this.#root?.removeAttribute('data-search-logical-results');
     this.#status?.fail(request, error);
   }

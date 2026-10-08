@@ -289,6 +289,7 @@ export function taskQueryApi(overrides: Partial<TestTaskQueries> = {}): TestTask
         throw new TaskSearchError('stale', 'Task generation changed');
       yield { generation: 0, items: [] };
     },
+    matchesSearchAddress: () => false,
     resolveSearchHits: async (hits, signal) => {
       if (signal.aborted) throw new TaskSearchError('aborted', 'Search cancelled');
       if (hits.length > 0 || api.listNodes().length > 0)

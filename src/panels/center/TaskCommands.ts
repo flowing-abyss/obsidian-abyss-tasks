@@ -41,7 +41,8 @@ import {
   calendarOccurrenceForTask,
   isForecastCalendarTask,
 } from '../../views/calendarOccurrences';
-import { rebaseTaskRowKey, taskRowKey, type TaskListRows } from '../task-list/taskListRows';
+import { taskRowKey } from '../task-list/taskListRows';
+import type { TaskOccurrenceRange } from '../task-list/taskOccurrenceSelection';
 import type { TaskRowSelection } from '../task-list/taskRowSelection';
 
 import { rootTaskNodeSnapshot, sameTaskNodeRef, taskNodeSourceLine } from '../../tasks';
@@ -101,14 +102,31 @@ interface TaskCommandsOptions {
   readonly interactionOwnership: InteractionOwnershipPort;
   readonly projectManager: ProjectManager | null;
   readonly selection: TaskRowSelection;
-  readonly rows: () => Pick<
-    TaskListRows,
-    'revision' | 'taskCount' | 'taskKeyAt' | 'indexOf' | 'physicalKey'
-  >;
   readonly onSelectionChanged: () => void;
+  readonly selectedSnapshots?: () => readonly TaskNodeSnapshot[];
+}
+
+interface PendingArchiveTask {
+  task: TaskSnapshot;
+  selected: readonly TaskOccurrenceRange[];
+}
+
+function selectionNodeKey(task: TaskNodeSnapshot): string {
+  return `${task.root.source.filePath}:${taskNodeSourceLine(task.target)}`;
+}
+
+interface OwnedSelectionEntry {
+  readonly origin: TaskNodeSnapshot;
+  current: TaskNodeSnapshot;
 }
 
 export class TaskCommands {
+  #ownedSelection: OwnedSelectionEntry[] = [];
+  #selectionBasis: readonly TaskOccurrenceRange[] | undefined;
+  #selectionWrite: { command: TaskCommand } | undefined;
+  readonly #selectedSnapshots: () => readonly TaskNodeSnapshot[];
+  #pendingArchive: PendingArchiveTask[] | undefined;
+  #archiving: PendingArchiveTask[] | undefined;
   readonly #app: App;
   readonly #state: AppState;
   readonly #tasks: TaskApplicationApi | undefined;
@@ -116,14 +134,11 @@ export class TaskCommands {
   readonly #interactionOwnership: InteractionOwnershipPort;
   readonly #projectManager: ProjectManager | null;
   readonly #selection: TaskRowSelection;
-  readonly #rows: () => Pick<
-    TaskListRows,
-    'revision' | 'taskCount' | 'taskKeyAt' | 'indexOf' | 'physicalKey'
-  >;
   readonly #onSelectionChanged: () => void;
   readonly #completionConfirmationAbortController = new AbortController();
 
   constructor(options: TaskCommandsOptions) {
+    this.#selectedSnapshots = options.selectedSnapshots ?? (() => []);
     this.#app = options.app;
     this.#state = options.state;
     this.#tasks = options.tasks;
@@ -131,7 +146,6 @@ export class TaskCommands {
     this.#interactionOwnership = options.interactionOwnership;
     this.#projectManager = options.projectManager;
     this.#selection = options.selection;
-    this.#rows = options.rows;
     this.#onSelectionChanged = options.onSelectionChanged;
   }
 
@@ -142,6 +156,7 @@ export class TaskCommands {
         : { type: 'delete-subtask', subtask: target.ref },
     );
     this.#selection.clear();
+    this.retireSelectionEvidence();
     this.#onSelectionChanged();
   }
 
@@ -152,33 +167,81 @@ export class TaskCommands {
     const entries = this.#batchEntries(subjects, 'patch');
     if (entries === undefined) return;
     const selectedTasks = entries.map((entry) => entry.task.root);
-    const selected = this.#selectedOccurrences();
+    const selected = this.#selection.ranges();
     const pending = selectedTasks.map((task) => ({
       task,
-      selected: selected.get(taskRowKey(task)) ?? [],
+      selected: selected.filter((range) => range.taskKey === taskRowKey(task)),
     }));
-    const session: TaskArchiveSession | undefined = await tasks.planArchive?.();
+    this.#pendingArchive = pending;
+    this.#archiving = pending;
+    try {
+      const session: TaskArchiveSession | undefined = await tasks.planArchive?.();
+      await this.#archivePending(pending, tasks, session);
+    } finally {
+      if (this.#archiving === pending) this.#archiving = undefined;
+      if (this.#pendingArchive === pending && pending.length === 0)
+        this.#pendingArchive = undefined;
+      this.#onSelectionChanged();
+    }
+  }
+
+  async #archivePending(
+    pending: PendingArchiveTask[],
+    tasks: TaskApplicationApi,
+    session: TaskArchiveSession | undefined,
+  ): Promise<void> {
     for (let next = pending[0]; next !== undefined; next = pending[0]) {
-      const { task } = next;
-      const archived = await this.#archiveOne(task, tasks, session);
-      if (archived) pending.shift();
+      const archived = await this.#archiveOne(next.task, tasks, session);
+      if (archived) {
+        for (const key of new Set(next.selected.map((range) => range.taskKey)))
+          this.#selection.deleteNode(key);
+        pending.shift();
+      }
       const refreshed = this.#refreshArchiveSelection(pending, tasks.queries);
       if (!archived || !refreshed) break;
     }
-    this.#onSelectionChanged();
   }
 
-  #selectedOccurrences(): Map<string, string[]> {
-    const rows = this.#rows();
-    const selected = new Map<string, string[]>();
-    for (const key of this.#selection.inOrder(rows)) {
-      const physical = rows.physicalKey(key);
-      if (physical === undefined) continue;
-      const keys = selected.get(physical) ?? [];
-      keys.push(key);
-      selected.set(physical, keys);
+  /** Consume pending archive snapshots at the next accepted order, with fresh source proof. */
+  archiveSelectionRebase(
+    accept: (task: TaskSnapshot) => string | undefined,
+    bind: (physicalKeys: ReadonlyMap<string, string>) => void,
+  ): void {
+    const physicalKeys = new Map<string, string>();
+    const pending = this.#pendingArchive;
+    const accepted = (pending ?? []).flatMap((entry) => {
+      const next = this.#acceptedArchiveEntry(entry, accept);
+      return next === undefined ? [] : [next];
+    });
+    for (const { entry, next } of accepted)
+      for (const range of entry.selected) physicalKeys.set(range.taskKey, next);
+    bind(physicalKeys);
+    for (const { entry, current, next } of accepted) {
+      entry.selected = entry.selected.map((range) => ({ ...range, taskKey: next }));
+      entry.task = current;
     }
-    return selected;
+    if (this.#archiving === undefined && this.#pendingArchive === pending)
+      this.#pendingArchive = undefined;
+  }
+
+  #acceptedArchiveEntry(
+    entry: PendingArchiveTask,
+    accept: (task: TaskSnapshot) => string | undefined,
+  ): { entry: PendingArchiveTask; current: TaskSnapshot; next: string } | undefined {
+    const queries = this.#tasks?.queries;
+    if (queries === undefined) return undefined;
+    const current = this.#resolveArchiveTask(entry.task, queries);
+    if (current === undefined) return undefined;
+    const next = accept(current);
+    return next === undefined ? undefined : { entry, current, next };
+  }
+
+  #resolveArchiveTask(task: TaskSnapshot, queries: TaskQueryApi): TaskSnapshot | undefined {
+    const resolution = queries.resolve(task.ref);
+    if (resolution.type === 'exact') return resolution.task;
+    if (resolution.type === 'rebased' && resolution.evidence === 'byte-identical-relocation')
+      return resolution.current;
+    return undefined;
   }
 
   async #archiveOne(
@@ -195,36 +258,25 @@ export class TaskCommands {
     return result.type === 'ok' && result.outcome.type === 'archived';
   }
 
-  #refreshArchiveSelection(
-    pending: Array<{ task: TaskSnapshot; selected: string[] }>,
-    queries: TaskQueryApi,
-  ): boolean {
+  #refreshArchiveSelection(pending: PendingArchiveTask[], queries: TaskQueryApi): boolean {
     // Each removal can shift every remaining root in the file. Consume the proven
     // transition now, before the next write replaces that reconciliation evidence.
-    const kept: string[] = [];
     for (const remaining of pending) {
-      const previous = taskRowKey(remaining.task);
-      const resolution = queries.resolve(remaining.task.ref);
-      if (resolution.type === 'exact') remaining.task = resolution.task;
-      else if (resolution.type === 'rebased') remaining.task = resolution.current;
-      else {
+      const current = this.#resolveArchiveTask(remaining.task, queries);
+      if (current === undefined) {
+        for (const key of new Set(remaining.selected.map((range) => range.taskKey)))
+          this.#selection.deleteNode(key);
         presentTaskCommandResult({ type: 'not-found', target: taskNodeRef(remaining.task) });
         return false;
       }
-      remaining.selected = remaining.selected.map((key) =>
-        rebaseTaskRowKey(key, previous, taskRowKey(remaining.task)),
-      );
-      kept.push(...remaining.selected);
+      // Keep descriptors under their mounted order until CenterPanel accepts a proven successor.
+      remaining.task = current;
     }
-    this.#selection.replaceWith(kept);
     return true;
   }
 
   #removeArchivedSelection(task: TaskSnapshot, result: TaskCommandResult): void {
     if (result.type !== 'ok' || result.outcome.type !== 'archived') return;
-    const rows = this.#rows();
-    for (const key of this.#selection.inOrder(rows))
-      if (rows.physicalKey(key) === taskRowKey(task)) this.#selection.delete(key);
     const current = this.#state.get('taskStack')[0];
     if (current != null && this.#sameTaskRef(rootTaskRef(current), task.ref)) {
       this.#state.set('taskStack', []);
@@ -244,7 +296,7 @@ export class TaskCommands {
       },
     });
     if (command === undefined || this.#tasks === undefined) return;
-    const result = await this.#tasks.execute(command);
+    const result = await this.#executeSelectionCommand(command, task);
     presentTaskCommandResult(result);
     onResult?.(task, result);
   }
@@ -318,7 +370,7 @@ export class TaskCommands {
       due: value === null ? { type: 'clear' } : { type: 'set', value },
     });
     if (command == null || this.#tasks == null) return false;
-    const result = await this.#tasks.execute(command);
+    const result = await this.#executeSelectionCommand(command, task);
     presentTaskCommandResult(result);
     onResult?.(task, result);
     return result.type === 'ok' && result.changed;
@@ -370,7 +422,7 @@ export class TaskCommands {
 
   async setPriority(task: TaskCommandSubject, priority: TaskPriority): Promise<void> {
     const command = commandPatch(task, { priority: { type: 'set', value: priority } });
-    if (command !== undefined) await this.#submit(command);
+    if (command !== undefined) await this.#submit(command, task);
   }
 
   async setBulkPriority(
@@ -414,6 +466,7 @@ export class TaskCommands {
           symbol === undefined
             ? { type: 'toggle-completion', target }
             : { type: 'set-status', target, symbol },
+          task,
         );
       },
       this.#interactionOwnership,
@@ -474,9 +527,123 @@ export class TaskCommands {
     return false;
   }
 
-  async #submit(command: TaskCommand): Promise<TaskCommandResult | undefined> {
+  #syncSelectionEvidence(): void {
+    const ranges = this.#selection.ranges();
+    if (this.#selectionBasis !== ranges) this.#ownedSelection = [];
+    this.#selectionBasis = ranges;
+  }
+
+  #captureOwnedSelection(subjects: readonly TaskNodeSnapshot[] = []): void {
+    this.#syncSelectionEvidence();
+    if (this.#completionConfirmationAbortController.signal.aborted) return;
+    const selected = new Set(this.#selection.ranges().map((range) => range.taskKey));
+    const captured = new Set(
+      this.#ownedSelection.flatMap((entry) => [
+        selectionNodeKey(entry.origin),
+        selectionNodeKey(entry.current),
+      ]),
+    );
+    for (const task of [...this.#selectedSnapshots(), ...subjects]) {
+      const key = selectionNodeKey(task);
+      if (!selected.has(key) || captured.has(key)) continue;
+      captured.add(key);
+      this.#ownedSelection.push({ origin: task, current: task });
+    }
+  }
+
+  #ownedSuccessor(entry: OwnedSelectionEntry): TaskNodeSnapshot | undefined {
+    const queries = this.#tasks?.queries;
+    if (queries === undefined) return undefined;
+    const resolution = queries.resolve(entry.current.root.ref);
+    if (resolution.type === 'exact') return entry.current;
+    if (resolution.type !== 'rebased') return undefined;
+    if (resolution.evidence === 'byte-identical-relocation')
+      return this.#atRelativeLines(entry.current, resolution.current, 0);
+    const command = this.#selectionWrite?.command;
+    if (command === undefined) return undefined;
+    const node = proveOwnedTaskSelection(
+      resolution.current,
+      [entry.current.root],
+      command,
+    )?.nodeSuccessor(entry.current.target);
+    return node === undefined ? undefined : this.#nodeInRoot(resolution.current, taskNodeRef(node));
+  }
+
+  /** Bounded command evidence, consumed only after the receiving order accepts a bind. */
+  ownedSelectionRebase(
+    accept: (task: TaskNodeSnapshot) => string | undefined,
+    bind: (physicalKeys: ReadonlyMap<string, string>) => void,
+  ): void {
+    this.#syncSelectionEvidence();
+    const physicalKeys = new Map<string, string>();
+    const accepted: Array<{ key: string; current: TaskNodeSnapshot }> = [];
+    for (const entry of this.#ownedSelection) {
+      const current = this.#ownedSuccessor(entry);
+      if (current === undefined) continue;
+      const key = accept(current);
+      if (key !== undefined) {
+        accepted.push({ key, current });
+        physicalKeys.set(selectionNodeKey(entry.origin), key);
+      }
+    }
+    bind(physicalKeys);
+    this.#selectionBasis = this.#selection.ranges();
+    const selected = new Set(this.#selectionBasis.map((range) => range.taskKey));
+    // Consume the transition; retain only the accepted current snapshot as fresh evidence.
+    this.#ownedSelection = accepted
+      .filter(({ key }) => selected.has(key))
+      .map(({ current }) => ({ origin: current, current }));
+  }
+
+  async #executeSelectionCommand(
+    command: TaskCommand,
+    subject?: TaskCommandSubject,
+    onPreparedPatch?: (command: Extract<TaskCommand, { type: 'patch' }>) => void,
+  ): Promise<TaskCommandResult> {
+    const tasks = this.#tasks;
+    if (tasks === undefined) throw new Error('Task commands unavailable');
+    const task = subject === undefined ? undefined : this.#projection(subject);
+    this.#captureOwnedSelection(task === undefined ? [] : [task]);
+    const write = { command };
+    this.#selectionWrite = write;
+    try {
+      const result = await (command.type === 'patch' &&
+      (this.#ownedSelection.length > 0 || onPreparedPatch !== undefined)
+        ? tasks.execute(command, {
+            onPreparedPatch: (prepared) => {
+              if (
+                this.#selectionWrite !== write ||
+                this.#completionConfirmationAbortController.signal.aborted
+              )
+                return;
+              write.command = prepared;
+              onPreparedPatch?.(prepared);
+            },
+          })
+        : tasks.execute(command));
+      this.#syncSelectionEvidence();
+      this.#ownedSelection =
+        result.type === 'ok'
+          ? this.#ownedSelection.flatMap((entry) => {
+              const current = this.#ownedSuccessor(entry);
+              return current === undefined ? [] : [{ ...entry, current }];
+            })
+          : this.#ownedSelection.filter(
+              (entry) => this.#tasks?.queries.resolve(entry.current.root.ref).type === 'exact',
+            );
+      return result;
+    } finally {
+      if (this.#selectionWrite === write) this.#selectionWrite = undefined;
+    }
+  }
+
+  async #submit(
+    command: TaskCommand,
+    subject?: TaskCommandSubject,
+    onPreparedPatch?: (command: Extract<TaskCommand, { type: 'patch' }>) => void,
+  ): Promise<TaskCommandResult | undefined> {
     if (this.#tasks === undefined) return undefined;
-    const result = await this.#tasks.execute(command);
+    const result = await this.#executeSelectionCommand(command, subject, onPreparedPatch);
     presentTaskCommandResult(result);
     if (command.type === 'delete') this.#clearDeletedSelection(command.ref, result);
     return result;
@@ -551,12 +718,16 @@ export class TaskCommands {
     for (const [index, entry] of pending.entries()) {
       const command = build(entry.task);
       if (command === undefined) break;
-      const result = await this.#submitBatchCommand(entry.task, command);
+      this.#captureOwnedSelection(pending.map((item) => item.task));
+      let effective = command;
+      const result = await this.#submitBatchCommand(entry.task, command, (prepared) => {
+        effective = prepared;
+      });
       if (result === undefined) break;
       onResult?.(entry.original, result);
       if (result.type !== 'ok') break;
       changed ||= result.changed;
-      if (!this.#refreshPending(pending.slice(index + 1), entry.task, command, result)) break;
+      if (!this.#refreshPending(pending.slice(index + 1), entry.task, effective, result)) break;
     }
     return changed;
   }
@@ -564,9 +735,10 @@ export class TaskCommands {
   async #submitBatchCommand(
     task: TaskNodeSnapshot,
     command: TaskCommand,
+    onPreparedPatch: (command: Extract<TaskCommand, { type: 'patch' }>) => void,
   ): Promise<TaskCommandResult | undefined> {
     if (command.type !== 'set-status' && command.type !== 'toggle-completion')
-      return this.#submit(command);
+      return this.#submit(command, task, onPreparedPatch);
     const settled: { result?: TaskCommandResult } = {};
     await requestTaskStatusChange(
       task.node,
@@ -719,7 +891,15 @@ export class TaskCommands {
     return { start, end, delta };
   }
 
+  retireSelectionEvidence(): void {
+    this.#pendingArchive = undefined;
+    this.#ownedSelection = [];
+    this.#selectionBasis = undefined;
+    this.#selectionWrite = undefined;
+  }
+
   dispose(): void {
+    this.retireSelectionEvidence();
     this.#completionConfirmationAbortController.abort();
   }
 }

@@ -400,6 +400,7 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
     'src/ui/TaskDependencySearchProvider.ts',
     'src/ui/dependencySearch.ts',
   ],
+  'TaskReadProjectionApi.matchesSearchAddress': 'src/panels/CenterPanel.ts',
   'TaskReadProjectionApi.organization': 'src/panels/center/TaskSearch.ts',
   'TaskReadProjectionApi.resolveSearchHits': 'src/tasks/infrastructure/search/TaskSearchService.ts',
   'TaskDependencyQueryApi.searchEligibility': 'src/ui/TaskDependencySearchProvider.ts',

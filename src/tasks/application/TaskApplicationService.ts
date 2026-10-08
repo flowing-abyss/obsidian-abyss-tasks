@@ -626,11 +626,14 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     }
   }
 
-  async execute(command: TaskCommand): Promise<TaskCommandResult> {
+  async execute(
+    command: TaskCommand,
+    options?: Parameters<TaskApplicationApi['execute']>[1],
+  ): Promise<TaskCommandResult> {
     try {
       const prepared = prepareCommentCommand(command);
       if (prepared.type === 'invalid') return prepared;
-      return await this.executeCommand_abyssPrivate(prepared);
+      return await this.executeCommand_abyssPrivate(prepared, options);
     } catch {
       this.diagnostics_abyssPrivate({
         operation: command.type,
@@ -646,7 +649,10 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     }
   }
 
-  private async executeCommand_abyssPrivate(command: TaskCommand): Promise<TaskCommandResult> {
+  private async executeCommand_abyssPrivate(
+    command: TaskCommand,
+    options?: Parameters<TaskApplicationApi['execute']>[1],
+  ): Promise<TaskCommandResult> {
     if (isHierarchyCommand(command))
       return new TaskHierarchyService(
         this.queries,
@@ -672,7 +678,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       });
     if (command.type === 'create')
       return await this.create_abyssPrivate(command, settings, reading);
-    return await this.executeExistingCommand_abyssPrivate(command, settings, reading);
+    return await this.executeExistingCommand_abyssPrivate(command, settings, reading, { options });
   }
 
   private async track_abyssPrivate(
@@ -756,8 +762,9 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     command: ExistingTaskCommand,
     settings: TaskBehaviorSettings,
     reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
-    serialized = false,
+    context: { serialized?: boolean; options?: Parameters<TaskApplicationApi['execute']>[1] } = {},
   ): Promise<TaskCommandResult> {
+    const { serialized = false, options } = context;
     const rootRef = rootRefForCommand(command);
     const resolution = this.resolveForCommand_abyssPrivate(command, rootRef);
     const unavailable = this.unavailableResult_abyssPrivate(command, resolution);
@@ -770,6 +777,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       settings,
       reading,
       serialized,
+      options,
     });
   }
 
@@ -793,9 +801,10 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       settings: TaskBehaviorSettings;
       reading: ClockReading | { readonly localDate: ClockReading['localDate'] };
       serialized: boolean;
+      options: Parameters<TaskApplicationApi['execute']>[1];
     },
   ): Promise<TaskCommandResult> {
-    const { settings, reading, serialized } = context;
+    const { settings, reading, serialized, options } = context;
     const currentRoot = resolution.type === 'exact' ? resolution.task : resolution.current;
     const baseRoot = resolution.type === 'exact' ? resolution.task : resolution.previous;
     const currentCommand =
@@ -838,25 +847,31 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     if (validateCurrent !== undefined && !serialized) {
       return await this.dependencies_abyssPrivate.serializeMutation(async (queued) => {
         const result = queued
-          ? await this.executeExistingCommand_abyssPrivate(command, settings, reading, true)
-          : await this.dispatchPrepared_abyssPrivate(prepared);
+          ? await this.executeExistingCommand_abyssPrivate(command, settings, reading, {
+              serialized: true,
+              options,
+            })
+          : await this.dispatchPrepared_abyssPrivate(prepared, options);
         return await this.closeTrackingAfterCompletion_abyssPrivate(command, result, reading);
       });
     }
-    return await this.dispatchPrepared_abyssPrivate(prepared);
+    return await this.dispatchPrepared_abyssPrivate(prepared, options);
   }
 
   private async dispatchPrepared_abyssPrivate(
     prepared: PreparedMutation,
+    options?: Parameters<TaskApplicationApi['execute']>[1],
   ): Promise<TaskCommandResult> {
     const invalidCurrent = this.validateCompletion_abyssPrivate(
       prepared,
       prepared.repositoryRequest,
     );
     if (invalidCurrent !== undefined) return invalidCurrent;
+    this.notifyPreparedPatch_abyssPrivate(prepared.repositoryRequest, options);
     return await this.finishPrepared_abyssPrivate(
       prepared,
       await this.dispatch_abyssPrivate(prepared.repositoryRequest),
+      options,
     );
   }
 
@@ -1381,6 +1396,19 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     return { type: 'not-found', target };
   }
 
+  private notifyPreparedPatch_abyssPrivate(
+    request: PreparedMutation['repositoryRequest'],
+    options: Parameters<TaskApplicationApi['execute']>[1],
+  ): void {
+    if (
+      'command' in request &&
+      'type' in request.command &&
+      request.command.type === 'patch' &&
+      options?.onPreparedPatch !== undefined
+    )
+      options.onPreparedPatch(structuredClone(request.command));
+  }
+
   private dispatch_abyssPrivate(
     request: TaskEditRequest | RecurrenceCompletionRevisionRequest | TaskMoveRequest,
   ): Promise<TaskRepositoryResult> {
@@ -1431,6 +1459,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   private async finishPrepared_abyssPrivate(
     prepared: PreparedMutation,
     first: TaskRepositoryResult,
+    options?: Parameters<TaskApplicationApi['execute']>[1],
   ): Promise<TaskCommandResult> {
     if (first.type === 'committed') return this.committedResult_abyssPrivate(prepared, first);
     if (first.type !== 'rebased') return this.terminalRepositoryResult_abyssPrivate(first);
@@ -1454,6 +1483,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
         : retry.request;
     const invalidCurrent = this.validateCompletion_abyssPrivate(prepared, retryRequest);
     if (invalidCurrent !== undefined) return invalidCurrent;
+    this.notifyPreparedPatch_abyssPrivate(retryRequest, options);
     const second = await this.dispatch_abyssPrivate(retryRequest);
     return second.type === 'committed'
       ? this.committedResult_abyssPrivate(prepared, second)

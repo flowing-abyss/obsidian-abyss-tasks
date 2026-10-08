@@ -47,6 +47,62 @@ async function patchFirstTask(index: TaskIndex, tasks: TaskApplicationApi): Prom
 }
 
 describe('canonical search source', () => {
+  it('matches only an exact current owned node and accepted compact address without hydration', async () => {
+    const index = await openedIndex('- [ ] Root\n  - [ ] Child\n- [ ] Other\n');
+    const source = index.searchSource();
+    const subscription = source.subscribe(() => {});
+    const generation = subscription.state.generation;
+    const docs = [...source.nodes(expectDefined(source.files()[0]))];
+    const rootAddress = expectDefined(source.address(expectDefined(docs[0]).id));
+    const childAddress = expectDefined(source.address(expectDefined(docs[1]).id));
+    const nodes = index.listNodes();
+    const root = expectDefined(nodes[0]).target;
+    const child = expectDefined(nodes[1]).target;
+    const hydrate = vi.spyOn(index, 'resolveSearchHits');
+    expect(index.matchesSearchAddress(rootAddress, root, generation)).toBe(true);
+    expect(index.matchesSearchAddress(childAddress, child, generation)).toBe(true);
+    expect(index.matchesSearchAddress(childAddress, root, generation)).toBe(false);
+    expect(index.matchesSearchAddress(rootAddress, child, generation)).toBe(false);
+    expect(
+      index.matchesSearchAddress(rootAddress, expectDefined(nodes[2]).target, generation),
+    ).toBe(false);
+    expect(index.matchesSearchAddress(rootAddress, root, generation + 1)).toBe(false);
+    expect(
+      index.matchesSearchAddress(
+        rootAddress,
+        { type: 'task', ref: { filePath: 'a.md', line: 0, revision: 'stale' } },
+        generation,
+      ),
+    ).toBe(false);
+    const unready = new TaskIndex(await createAppWithFiles({}), {
+      statusCatalog: canonicalStatusCatalog(),
+    });
+    expect(unready.matchesSearchAddress(rootAddress, root, generation)).toBe(false);
+    unready.destroy();
+    for (const address of [
+      { ...rootAddress, epoch: 'stale' },
+      { ...rootAddress, version: rootAddress.version + 1 },
+      { ...rootAddress, rootId: -1 },
+      { ...childAddress, childLines: [999] },
+    ])
+      expect(index.matchesSearchAddress(address, root, generation)).toBe(false);
+    expect(hydrate).not.toHaveBeenCalled();
+    const fail = vi.spyOn(searchProjection, 'nodeAtSearchAddress').mockImplementationOnce(() => {
+      throw new Error('Unexpected implementation failure');
+    });
+    expect(() => index.matchesSearchAddress(rootAddress, root, generation)).toThrow(
+      'Unexpected implementation failure',
+    );
+    fail.mockRestore();
+    await index.refreshSourceExclusion(() => true);
+    const current = source.subscribe(() => {});
+    expect(index.matchesSearchAddress(rootAddress, root, current.state.generation)).toBe(false);
+    index.destroy();
+    expect(index.matchesSearchAddress(rootAddress, root, generation)).toBe(false);
+    subscription.unsubscribe();
+    current.unsubscribe();
+  });
+
   it('subscribes after readiness and rejects an address after accepted replacement', async () => {
     const index = await openedIndex('- [ ] Alpha\n  - [ ] Beta\n');
     const source = index.searchSource();

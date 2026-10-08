@@ -6807,6 +6807,40 @@ describe('CenterPanel actual centre focus continuity', () => {
       },
     };
   }
+  it.each([false, true])(
+    'retires selection for a recurring successor even with identical source (%s)',
+    async (identical) => {
+      const source = `- [ ] Repeat 🔁 every day 🏁 delete${identical ? ' ➕ 2026-10-02' : ' 📅 2026-10-02'}\n`;
+      const h = await makePanel(
+        { 'repeat.md': source },
+        { ...DEFAULT_SETTINGS, taskLifecycle: { addCreatedDate: false, addCompletionDate: false } },
+        [],
+        { authority: true },
+      );
+      const el = document.body.createDiv();
+      h.panel.mount(el);
+      h.state.set('selectedList', { type: 'project', path: 'repeat.md' });
+      try {
+        const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
+        card.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
+        expect(el.querySelectorAll('.abyss-multi-selected')).toHaveLength(1);
+        const original = expectDefined(h.index.list()[0]);
+        const result = await h.tasks.execute({
+          type: 'toggle-completion',
+          target: { type: 'task', ref: original.ref },
+        });
+        expect(result).toMatchObject({ type: 'ok', outcome: { type: 'recurrence' } });
+        expect(h.index.list()[0]?.ref.revision).not.toBe(original.ref.revision);
+        if (identical) expect(await readMd(h.app, 'repeat.md')).toBe(source);
+        h.panel.refresh();
+        await vi.advanceTimersByTimeAsync(25);
+        expect(el.querySelectorAll('.abyss-multi-selected')).toHaveLength(0);
+      } finally {
+        h.panel.destroy();
+        el.remove();
+      }
+    },
+  );
   it('returns menus and unrelated publications to Bob, then yields to native note focus', async () => {
     const h = await mounted(DEFAULT_SETTINGS, false, true);
     let menu: Menu | undefined;

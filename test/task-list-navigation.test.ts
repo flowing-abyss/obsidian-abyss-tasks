@@ -155,6 +155,7 @@ it.each(['cancelled', 'changed-generation'] as const)(
       let closed = false;
       const reads = {
         observedTags: h.index.observedTags.bind(h.index),
+        matchesSearchAddress: h.index.matchesSearchAddress.bind(h.index),
         resolveSearchHits: h.index.resolveSearchHits.bind(h.index),
         async *organization(request: Parameters<typeof organization>[0], signal: AbortSignal) {
           try {

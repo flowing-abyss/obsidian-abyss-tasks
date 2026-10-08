@@ -835,7 +835,12 @@ it('treats a raw cancellation-shaped inline engine exception as a live operation
   const diagnostics: unknown[] = [];
   const service = new TaskSearchService({
     source,
-    reads: { observedTags: () => [], async *organization() {}, resolveSearchHits: async () => [] },
+    reads: {
+      observedTags: () => [],
+      async *organization() {},
+      matchesSearchAddress: () => false,
+      resolveSearchHits: async () => [],
+    },
     segment: fallbackSearchWords,
     scheduler: new ControlledSearchScheduler(),
     createBackend: async (mode) => {

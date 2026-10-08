@@ -472,6 +472,7 @@ export default defineConfig(
       'src/task-lists/taskLinkValues.ts',
       'src/markdown/linkTarget.ts',
       'src/panels/task-list/taskRowSelection.ts',
+      'src/panels/task-list/taskOccurrenceSelection.ts',
       'src/settings/viewStatePaths.ts',
       'src/settings/tagViewState.ts',
       'src/markdown/tagSyntax.ts',

@@ -69,7 +69,12 @@ export interface TaskApplicationApi {
     TimeTrackingQueryApi &
     TaskReadProjectionApi;
   /** Includes atomic linked-child creation; presentation never sequences repository edits. */
-  execute(command: TaskCommand): Promise<TaskCommandResult>;
+  execute(
+    command: TaskCommand,
+    options?: {
+      readonly onPreparedPatch?: (command: Extract<TaskCommand, { type: 'patch' }>) => void;
+    },
+  ): Promise<TaskCommandResult>;
   /** Freezes the archive destination (including its date) for one single- or multi-root action. */
   planArchive?(): Promise<TaskArchiveSession>;
 }
