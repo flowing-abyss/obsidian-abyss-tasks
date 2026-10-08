@@ -611,12 +611,9 @@ export class TaskCommands {
       (this.#ownedSelection.length > 0 || onPreparedPatch !== undefined)
         ? tasks.execute(command, {
             onPreparedPatch: (prepared) => {
-              if (
-                this.#selectionWrite !== write ||
-                this.#completionConfirmationAbortController.signal.aborted
-              )
-                return;
-              write.command = prepared;
+              if (this.#completionConfirmationAbortController.signal.aborted) return;
+              if (this.#selectionWrite === write) write.command = prepared;
+              // The authorized batch still needs its exact patch after UI selection retires.
               onPreparedPatch?.(prepared);
             },
           })

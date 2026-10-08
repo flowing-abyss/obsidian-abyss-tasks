@@ -333,7 +333,7 @@ export class AppState {
     const prev = this.data[key];
     if (prev === value) return;
     if (this.delivering) throw new AppStateReentrantMutationError(key);
-    if (key === 'taskStack' && this.data.draggingTaskNode !== null) {
+    if ((key === 'taskStack' || key === 'mode') && this.data.draggingTaskNode !== null) {
       this.batch(() => {
         this.setValue('draggingTaskNode', null);
         this.setValue(key, value, beginsSelection);

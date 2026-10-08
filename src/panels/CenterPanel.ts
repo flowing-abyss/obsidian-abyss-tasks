@@ -1033,7 +1033,7 @@ export class CenterPanel {
     };
     this.compactPresentation_abyssPrivate = options;
     const order = compact.rows.set(organization, options.groupBy, options.identity);
-    this.reconcileCompactSelection_abyssPrivate(previous, order, organization.generation);
+    this.reconcileCompactSelection_abyssPrivate(order, organization.generation);
     retained.search = { rows: compact.rows, identity: options.identity, order };
     this.invalidateCompactInteractions_abyssPrivate(previous, order);
     this.mountedRows_abyssPrivate = retained.surface;
@@ -1065,13 +1065,13 @@ export class CenterPanel {
   }
 
   private reconcileCompactSelection_abyssPrivate(
-    previous: TaskListRows<TaskSearchOccurrence>,
     next: TaskListRows<TaskSearchOccurrence>,
     generation: number,
   ): void {
     const physicalKeys = new Map<string, string>();
-    const candidates = this.selectionCandidates_abyssPrivate(previous);
+    const candidates = this.selectionCandidates_abyssPrivate(this.selectionRows_abyssPrivate);
     for (const [key, before] of candidates) {
+      if (!('address' in before)) continue;
       const occurrence = next.firstOccurrenceOf(key);
       const after = occurrence === undefined ? undefined : next.task(occurrence);
       if (
@@ -2008,6 +2008,7 @@ export class CenterPanel {
       target: this.eventTaskCardKey_abyssPrivate(event.target),
       detail: this.detailOccurrenceKey_abyssPrivate(),
     });
+    this.taskCommands_abyssPrivate.retireSelectionEvidence();
     this.updateSelectionVisuals_abyssPrivate();
     return true;
   }
@@ -2039,6 +2040,7 @@ export class CenterPanel {
         ? this.rowSelection_abyssPrivate.moveEdge(edge, order, origin, extend)
         : this.rowSelection_abyssPrivate.move(direction, order, origin, extend);
     if (next === undefined) return;
+    this.taskCommands_abyssPrivate.retireSelectionEvidence();
     this.updateSelectionVisuals_abyssPrivate();
     if (this.taskSurface_abyssPrivate?.search !== undefined) {
       void this.readyKeyboardTarget_abyssPrivate(next, extend).catch((error: unknown) => {
@@ -2343,6 +2345,7 @@ export class CenterPanel {
     this.prepareRender_abyssPrivate(mode, retainTaskShell);
     if (mode !== 'projects') this.destroyProjectsPanel_abyssPrivate();
     if (mode === 'calendar') {
+      this.destroyTaskSurface_abyssPrivate();
       this.el.removeClass('abyss-center--projects');
       this.el.addClass('abyss-center--calendar');
       this.calendar_abyssPrivate.render(this.el);
@@ -3051,6 +3054,7 @@ export class CenterPanel {
     key = taskRowKey(task),
     projection = rootTaskNodeSnapshot(task),
   ): void {
+    this.taskCommands_abyssPrivate.retireSelectionEvidence();
     if (event.ctrlKey || event.metaKey) {
       this.rowSelection_abyssPrivate.toggle(key);
       this.updateSelectionVisuals_abyssPrivate();

@@ -575,3 +575,20 @@ it.each(['promote-subtask', 'reparent-task'] as const)(
     expect(messages[0]).toMatch(/Inspect/);
   },
 );
+
+it('keeps a new task-node drag when an old native dragend arrives after a mode round trip', async () => {
+  const h = await mounted();
+  const old = h.card('Move');
+  drag(old, 'dragstart');
+  h.state.set('mode', 'calendar');
+  expect(h.state.get('draggingTaskNode')).toBeNull();
+  h.state.set('mode', 'tasks');
+  const current = h.card('Parent');
+  drag(current, 'dragstart');
+  const payload = expectDefined(h.state.get('draggingTaskNode'));
+  drag(old, 'dragend');
+  await flushMicrotasks();
+  expect(h.state.get('draggingTaskNode')).toBe(payload);
+  drag(current, 'dragend');
+  expect(h.state.get('draggingTaskNode')).toBeNull();
+});

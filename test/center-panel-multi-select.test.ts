@@ -1958,3 +1958,176 @@ it('retains compact owned selection after normalized Inbox removal and delayed o
     el.remove();
   }
 });
+
+it.each([
+  ['calendar', false],
+  ['projects', false],
+  ['calendar', true],
+  ['projects', true],
+] as const)(
+  'reconciles retained compact selection across %s (replacement=%s)',
+  async (mode, replacement) => {
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': '- [ ] Keep First #task/inbox\n- [ ] Keep Second #task/inbox\n' },
+      { ...DEFAULT_SETTINGS, inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: false } },
+      'tasks',
+    );
+    try {
+      h.query('Keep');
+      await h.completed();
+      const previous = expectDefined(h.panel['taskSurface_abyssPrivate']?.search).order;
+      key(h.root, 'a', { ctrlKey: true });
+      const selection = h.panel['rowSelection_abyssPrivate'];
+      expect(selection.size).toBe(2);
+      const ranges = selection.ranges();
+      const focus = selection.focus;
+      h.state.set('mode', mode);
+      expect(h.panel['taskSurface_abyssPrivate']?.search).toBeUndefined();
+      expect(h.panel['selectionRows_abyssPrivate']).toBe(previous);
+      if (replacement)
+        h.index.installCommittedContent(
+          'a.md',
+          '- [ ] Keep Replacement #task/inbox\n- [ ] Keep Other #task/inbox\n',
+        );
+      h.state.set('mode', 'tasks');
+      await h.completed();
+      expect(expectDefined(h.panel['taskSurface_abyssPrivate']?.search).order).not.toBe(previous);
+      expect(selection.ranges()).toEqual(replacement ? [] : ranges);
+      expect(selection.focus).toBe(replacement ? null : focus);
+      expect(h.root.querySelectorAll('.abyss-multi-selected')).toHaveLength(replacement ? 0 : 2);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+async function acceptedCompactSelection() {
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': '- [ ] Keep First #task/inbox\n- [ ] Keep Second #task/inbox\n' },
+    { ...DEFAULT_SETTINGS, inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: false } },
+    'tasks',
+  );
+  h.query('Keep');
+  await h.completed();
+  key(h.root, 'a', { ctrlKey: true });
+  const commands = taskCommandsOf(h.panel);
+  const targets = h.panel['taskMenuTargets_abyssPrivate']();
+  const subjects = (await targets.resolve(targets.signal)).map((entry) => entry.task);
+  await commands.setBulkPriority(subjects, 'A');
+  await h.completed();
+  expect(h.panel['rowSelection_abyssPrivate'].size).toBe(2);
+  return { ...h, commands };
+}
+
+it.each(['plain', 'ctrl', 'meta', 'arrow', 'range', 'all'] as const)(
+  'retires accepted compact command evidence immediately on %s input',
+  async (input) => {
+    const h = await acceptedCompactSelection();
+    try {
+      const retire = vi.spyOn(h.commands, 'retireSelectionEvidence');
+      const bind = vi.spyOn(h.panel['rowSelection_abyssPrivate'], 'bind');
+      const card = expectDefined(cards(h.root)[0]);
+      if (input === 'plain') click(card);
+      if (input === 'ctrl')
+        for (const selected of cards(h.root)) click(selected, { ctrlKey: true });
+      if (input === 'meta')
+        for (const selected of cards(h.root)) click(selected, { metaKey: true });
+      if (input === 'arrow') key(card, 'ArrowDown');
+      if (input === 'range') key(card, 'End', { shiftKey: true });
+      if (input === 'all') key(h.root, 'a', { ctrlKey: true });
+      expect(retire).toHaveBeenCalled();
+      expect(bind).not.toHaveBeenCalled();
+      if (['plain', 'ctrl', 'meta', 'arrow'].includes(input))
+        expect(h.panel['rowSelection_abyssPrivate'].size).toBe(0);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each(['plain', 'arrow'] as const)(
+  'retires compact selection observation during a deferred command on %s input',
+  async (input) => {
+    const h = await acceptedCompactSelection();
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const execute = h.tasks.execute.bind(h.tasks);
+    vi.spyOn(h.tasks, 'execute').mockImplementationOnce(async (command, options) => {
+      entered.resolve();
+      await release.promise;
+      return execute(command, options);
+    });
+    try {
+      const targets = h.panel['taskMenuTargets_abyssPrivate']();
+      const subjects = (await targets.resolve(targets.signal)).map((entry) => entry.task);
+      const pending = h.commands.setBulkPriority(subjects, 'B');
+      await entered.promise;
+      const retire = vi.spyOn(h.commands, 'retireSelectionEvidence');
+      const card = expectDefined(cards(h.root)[0]);
+      if (input === 'plain') click(card);
+      else key(card, 'ArrowDown');
+      expect(retire).toHaveBeenCalledOnce();
+      expect(h.panel['rowSelection_abyssPrivate'].size).toBe(0);
+      release.resolve();
+      await pending;
+      await h.completed();
+      expect(h.index.list().map((task) => task.priority)).toEqual(['B', 'B']);
+      expect(h.panel['rowSelection_abyssPrivate'].size).toBe(0);
+    } finally {
+      release.resolve();
+      h.dispose();
+    }
+  },
+);
+
+it('retires late compact hydration on Calendar entry while keeping the immutable selection order', async () => {
+  const h = await mountCanonicalSearchUi(
+    {
+      'a.md': Array.from(
+        { length: 120 },
+        (_, n) => `- [ ] Keep ${String(n).padStart(3, '0')} #task/inbox`,
+      ).join('\n'),
+    },
+    { ...DEFAULT_SETTINGS, inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: false } },
+    'tasks',
+  );
+  const release = deferred<void>();
+  const original = h.index.resolveSearchHits.bind(h.index);
+  try {
+    h.query('Keep');
+    await h.completed();
+    key(h.root, 'a', { ctrlKey: true });
+    const selection = h.panel['rowSelection_abyssPrivate'];
+    const focus = selection.focus;
+    const compact = expectDefined(h.panel['taskSurface_abyssPrivate']?.search);
+    const dispose = vi.spyOn(compact.rows, 'dispose');
+    let signal: AbortSignal | undefined;
+    const read = vi.spyOn(h.index, 'resolveSearchHits').mockImplementation(async (hits, abort) => {
+      signal = abort;
+      await release.promise;
+      return original(hits, abort);
+    });
+    const scroll = expectDefined(h.root.querySelector<HTMLElement>('.abyss-center-scroll'));
+    scroll.scrollTop = 6000;
+    scroll.dispatchEvent(new Event('scroll'));
+    await vi.waitFor(() => {
+      flushViewport();
+      expect(read).toHaveBeenCalled();
+    });
+    h.state.set('mode', 'calendar');
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(expectDefined(signal).aborted).toBe(true);
+    expect(h.panel['selectionRows_abyssPrivate']).toBe(compact.order);
+    release.resolve();
+    await flushMicrotasks();
+    expect(cards(h.root)).toHaveLength(0);
+    read.mockRestore();
+    h.state.set('mode', 'tasks');
+    await h.completed();
+    expect(selection.size).toBe(120);
+    expect(selection.focus).toBe(focus);
+  } finally {
+    release.resolve();
+    h.dispose();
+  }
+});

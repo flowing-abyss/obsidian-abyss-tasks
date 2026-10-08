@@ -744,3 +744,42 @@ it.each([false, true])(
     h.index.destroy();
   },
 );
+
+it('keeps normalized root and child batch proof after UI selection evidence is retired', async () => {
+  const h = await hierarchyHarness({
+    'source.md': '- [ ] Root #inbox\n  - [ ] Child #inbox\n',
+    'target.md': '- [ ] Parent\n',
+  });
+  const service = new TaskApplicationService(
+    h.index,
+    h.repository,
+    canonicalStatusCatalog(),
+    clockFrom(Date.UTC(2026, 9, 3), 0),
+    undefined,
+    () => ({
+      ...DEFAULT_SETTINGS,
+      inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
+    }),
+  );
+  const nodes = () =>
+    h.index.list({ filePath: 'source.md' }).flatMap((root) => [...taskTreeNodes(root)]);
+  const original = nodes();
+  const rows = buildTaskNodeListRows(original, { by: 'none' });
+  const execute = vi.fn<TaskApplicationApi['execute']>(async (command, options) => {
+    f.selection.clear();
+    f.commands.retireSelectionEvidence();
+    return service.execute(command, options);
+  });
+  const f = await fixture({ queries: h.index, execute });
+  f.selection.bind(rows);
+  f.selection.selectAll(rows, {});
+  try {
+    await f.commands.applyBulkTaskTags(original, ['#owned'], []);
+    expect(nodes().map((node) => node.node.tags)).toEqual([['#owned'], ['#owned']]);
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(f.selection.size).toBe(0);
+  } finally {
+    f.commands.dispose();
+    h.index.destroy();
+  }
+});

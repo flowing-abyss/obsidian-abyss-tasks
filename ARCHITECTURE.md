@@ -406,6 +406,10 @@ Existing centre cards, the inspector header, and the Subtasks section preview ex
 `hierarchyWouldCycle` boundary, after tag/project/attachment handlers; inspector relation drags
 retain dependency meaning. The ordinary selected-subtask menu sends `promote-subtask`. AppState's
 single drag payload is claimed once per drop, independent of outgoing-link row occurrences.
+An actual mode change retires `draggingTaskNode` in AppState's existing atomic selection/drag batch,
+so mode listeners and native drag cleanup see the new mode and null task drag together. Same-value
+mode writes preserve the drag; selection/history and tag/project drags are unchanged. Native cleanup
+does not write state reentrantly, and a late old drag callback cannot clear a newer payload.
 
 AppState owns a transient selection-intent generation outside its published/persisted data. Explicit
 selection, inspector navigation (including dependency Back), and effective mode changes advance
@@ -630,6 +634,9 @@ multi-selection from DOM mounting. `TaskRowSelection` binds one immutable displa
 and Tags; other surfaces reuse card rendering without acquiring that selection model. CenterPanel
 owns selection across renders and mode changes. Its retained selection rows contain immutable models,
 not mounted cards, hydration leases or scheduled work, and are released when the panel is destroyed.
+Compact surface recreation reconciles against these retained selection rows, while the surface's
+current order separately owns mounted interaction invalidation. Entering Calendar disposes the old
+task surface and its pending hydration; returning to Tasks re-proves the retained exact addresses.
 Selection stores logical spans and sparse click exceptions; before a new order is accepted, the old
 adapter captures physical-node/date/kind/group descriptors. Exact source addresses or existing proven
 source reconciliation permit key rebasing, then the incoming adapter intersects and normalizes those
@@ -646,7 +653,9 @@ retires pending evidence, rejecting external replacement or recurrence successor
 latest proved snapshot, with only the actual in-flight command used before its result arrives.
 Accepted binds consume the transition, retaining the current snapshot only for fresh proof on a later
 write; there is no command history. Selection mutation, filtered descriptors, unproved replacements
-and disposal retire that evidence. Generic rebasing accepts exact or byte-identical-relocation evidence,
+and disposal retire that evidence. Click, toggle, range and keyboard selection input retire snapshots
+and the live UI observation token immediately, without waiting for another bind or command. Accepted
+command binds retain their own current selected snapshots. Generic rebasing accepts exact or byte-identical-relocation evidence,
 not a root authority transition or equal Markdown alone. Compact binds validate already-owned exact
 nodes through `TaskReadProjectionApi.matchesSearchAddress(address, target, expectedGeneration)`.
 `TaskIndex` checks readiness, current generation, full compact address and full node ref without I/O,
@@ -656,6 +665,9 @@ service passes a detached effective patch after captured-settings normalization 
 dispatch, including retries. The command owner uses this execution-local observation for proof only,
 so automatic Inbox removal remains service policy. Retired execution callbacks cannot extend selection
 lifetime; an observer error reaches the existing execute failure boundary before writing.
+An already-authorized sequential batch still receives its execution-local effective patch after UI
+selection retires, so normalized tag policy can prove the remaining batch nodes independently of UI
+selection lifetime.
 
 `taskNodeMembership` owns destination admission over each node's own tags, canonical planning,
 semantic status, depth and exact source line. Root-only `selectTaskList` and hydrated
