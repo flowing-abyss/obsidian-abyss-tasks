@@ -2446,7 +2446,14 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   outline-offset: 2px;
 }
 
+.abyss-status-marker--continuation {
+  border-width: 1px;
+  border-style: solid;
+  cursor: not-allowed;
+}
+
 .abyss-status-marker--blocked {
+  border-width: 1.5px;
   border-style: dashed;
   cursor: not-allowed;
 }

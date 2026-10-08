@@ -7,8 +7,15 @@ import {
 } from '../src/panels/center/TaskCardRenderer';
 import type { TaskListNavigationRequest } from '../src/panels/center/TaskListNavigation';
 import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
-import type { TaskNodeRef } from '../src/tasks';
-import { taskNodeAddress, type TaskDependencyProjection, type TaskSnapshot } from '../src/tasks';
+import type { TaskOccurrencePresentation } from '../src/task-lists/taskOccurrencePresentation';
+import {
+  localDate,
+  taskNodeAddress,
+  type TaskDependencyProjection,
+  type TaskNodeRef,
+  type TaskOccurrenceCompletion,
+  type TaskSnapshot,
+} from '../src/tasks';
 import {
   deferred,
   expectDefined,
@@ -25,7 +32,10 @@ afterEach(() => {
   document.body.empty();
 });
 function renderer() {
-  const toggleTask = vi.fn(async (_task: TaskSnapshot) => {});
+  const toggleTask = vi.fn(
+    async (_task: TaskSnapshot, _completion?: TaskOccurrenceCompletion) => {},
+  );
+  const openStatusMenu = vi.fn();
   const deleteTask = vi.fn(async (_task: TaskSnapshot) => {});
   let context: TaskCardInteractionContext | undefined;
   const unbound = vi.fn();
@@ -59,7 +69,7 @@ function renderer() {
         context = next;
         next?.component.register(unbound);
       },
-      openStatusMenu: vi.fn(),
+      openStatusMenu,
       formatDate: String,
       getDateClass: () => '',
       getTagColor: () => undefined,
@@ -67,6 +77,7 @@ function renderer() {
   });
   return {
     subject,
+    openStatusMenu,
     showTaskInList,
     state,
     listControls,
@@ -769,7 +780,7 @@ it('renders own child metadata and retires parent controls on update and unload'
     expect(mount.element.dataset['line']).toBe('2');
     expect(mount.element.className).toBe('abyss-task-card');
     expectDefined(mount.element.querySelector<HTMLElement>('.abyss-status-marker')).click();
-    expect(h.toggleTask).toHaveBeenCalledWith(projection.node);
+    expect(h.toggleTask).toHaveBeenCalledWith(projection.node, undefined);
     const button = expectDefined(
       mount.element.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'),
     );
@@ -838,4 +849,169 @@ it('ticks root and child badges using their own subtree totals', async () => {
     source.close();
     h.hostComponent.unload();
   }
+});
+
+it.each([
+  ['first', '2026-10-07', 'continuation'],
+  ['middle', '2026-10-08', 'continuation'],
+  ['terminal future', '2026-10-09', 'allowed'],
+  ['overdue', '2026-10-09', 'allowed'],
+] as const)(
+  'preserves full range metadata and status identity on the %s row',
+  (_name, date, kind) => {
+    const h = renderer();
+    const original = task({
+      statusSymbol: '/',
+      status: 'in-progress',
+      priority: 'A',
+      planning: { start: '2026-10-07', due: '2026-10-09' },
+    });
+    const occurrence: TaskOccurrencePresentation = {
+      kind: 'daily',
+      displayDate: localDate(date),
+      interval: { start: localDate('2026-10-07'), due: localDate('2026-10-09') },
+      completion: kind === 'allowed' ? { kind } : { kind, due: localDate('2026-10-09') },
+    };
+    const mount = h.subject.mount(document.body, original, [], {
+      selected: false,
+      showDelete: false,
+      occurrence,
+    });
+    const marker = expectDefined(mount.element.querySelector<HTMLElement>('.abyss-status-marker'));
+    const control = expectDefined(mount.element.querySelector<HTMLElement>('[role=checkbox]'));
+    expect(marker.dataset['statusType']).toBe('in-progress');
+    expect(marker.dataset['priority']).toBe('A');
+    expect(control.getAttribute('aria-label')).toContain('Task status: In progress');
+    expect(mount.element.querySelector('.abyss-task-date')?.textContent).toContain(
+      '2026-10-07–2026-10-09',
+    );
+    expect(mount.element.querySelector('.abyss-date-icon svg')).not.toBeNull();
+    expect(marker.hasClass('abyss-status-marker--continuation')).toBe(kind === 'continuation');
+    control.click();
+    if (kind === 'continuation') {
+      expect(control.getAttribute('aria-disabled')).toBe('true');
+      expect(control.getAttribute('aria-label')).toContain(
+        'Complete from the row for 2026-10-09, or in the task details.',
+      );
+      for (const key of [' ', 'Enter'])
+        control.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      expect(h.toggleTask).not.toHaveBeenCalled();
+    } else expect(h.toggleTask).toHaveBeenCalledExactlyOnceWith(original, occurrence.completion);
+    control.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    expect(h.openStatusMenu).toHaveBeenCalledWith(
+      expect.any(MouseEvent),
+      original,
+      occurrence.completion,
+    );
+    mount.destroy();
+  },
+);
+
+it('retains range metadata in Today and updates both independent blocking explanations', () => {
+  const h = renderer();
+  h.state.set('selectedList', 'today');
+  h.dependenciesFor.mockReturnValue({
+    blockedBy: [],
+    blocks: [],
+    activeBlockedByCount: 1,
+    activeBlocksCount: 0,
+  });
+  const original = task({ planning: { start: '2026-10-07', due: '2026-10-09' } });
+  const flags = {
+    selected: false,
+    showDelete: false,
+    occurrence: {
+      kind: 'today' as const,
+      displayDate: localDate('2026-10-08'),
+      interval: { start: localDate('2026-10-07'), due: localDate('2026-10-09') },
+      completion: { kind: 'continuation' as const, due: localDate('2026-10-09') },
+    },
+  };
+  const mount = h.subject.mount(document.body, original, [], flags);
+  const control = expectDefined(mount.element.querySelector<HTMLElement>('[role=checkbox]'));
+  expect(control.getAttribute('aria-label')).toContain('Complete prerequisite tasks');
+  expect(control.getAttribute('aria-label')).toContain('Complete from the row for');
+  expect(
+    mount.element.querySelector('.abyss-status-marker--blocked.abyss-status-marker--continuation'),
+  ).not.toBeNull();
+  control.focus();
+  control.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  expect(h.toggleTask).not.toHaveBeenCalled();
+  mount.update(original, [], {
+    ...flags,
+    occurrence: { ...flags.occurrence, completion: { kind: 'allowed' } },
+  });
+  expect(document.activeElement).toBe(control);
+  expect(control.getAttribute('aria-label')).not.toContain('Complete from the row for');
+  expect(control.getAttribute('aria-label')).toContain('Complete prerequisite tasks');
+  control.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  expect(h.toggleTask).toHaveBeenCalledOnce();
+  mount.destroy();
+});
+
+it.each([
+  ['equal', '2026-10-09', '2026-10-09', true],
+  ['inverted', '2026-10-10', '2026-10-09', false],
+] as const)(
+  'keeps %s endpoint actions ordinary and only valid interval metadata',
+  (_name, start, due, valid) => {
+    const h = renderer();
+    const original = task({ planning: { start, due } });
+    const occurrence: TaskOccurrencePresentation = {
+      kind: 'daily',
+      displayDate: localDate(due),
+      completion: { kind: 'allowed' },
+      ...(valid ? { interval: { start: localDate(start), due: localDate(due) } } : {}),
+    };
+    const mount = h.subject.mount(document.body, original, [], {
+      selected: false,
+      showDelete: false,
+      occurrence,
+    });
+    expect(mount.element.querySelector('.abyss-task-date')?.textContent).toBe(
+      valid ? '2026-10-09–2026-10-09' : '2026-10-09',
+    );
+    expect(mount.element.querySelector('.abyss-status-marker--continuation')).toBeNull();
+    expectDefined(mount.element.querySelector<HTMLElement>('[role=checkbox]')).click();
+    expect(h.toggleTask).toHaveBeenCalledExactlyOnceWith(original, { kind: 'allowed' });
+    mount.destroy();
+  },
+);
+
+it.each([undefined, { kind: 'node' as const, completion: { kind: 'allowed' as const } }])(
+  'keeps full valid ranges and allowed markers on ordinary nondate cards (%j)',
+  (occurrence) => {
+    const h = renderer();
+    const original = task({ planning: { start: '2026-10-07', due: '2026-10-09' } });
+    h.state.set('selectedList', 'inbox');
+    const mount = h.subject.mount(document.body, original, [], {
+      selected: false,
+      showDelete: false,
+      ...(occurrence === undefined ? {} : { occurrence }),
+    });
+    expect(mount.element.querySelector('.abyss-task-date')?.textContent).toBe(
+      '2026-10-07–2026-10-09',
+    );
+    expect(mount.element.querySelector('[aria-disabled=true]')).toBeNull();
+    expectDefined(mount.element.querySelector<HTMLElement>('[role=checkbox]')).click();
+    expect(h.toggleTask).toHaveBeenCalledExactlyOnceWith(original, occurrence?.completion);
+    mount.destroy();
+  },
+);
+
+it('renders the contributed point date for an inverted range without an interval glyph', () => {
+  const h = renderer();
+  const original = task({ planning: { start: '2026-10-10', due: '2026-10-09' } });
+  const mount = h.subject.mount(document.body, original, [], {
+    selected: false,
+    showDelete: false,
+    occurrence: {
+      kind: 'daily',
+      displayDate: localDate('2026-10-10'),
+      completion: { kind: 'allowed' },
+    },
+  });
+  expect(mount.element.querySelector('.abyss-task-date')?.textContent).toBe('2026-10-10');
+  expect(mount.element.querySelector('.abyss-status-marker--continuation')).toBeNull();
+  mount.destroy();
 });

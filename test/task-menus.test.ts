@@ -1,4 +1,4 @@
-import { Menu, type App } from 'obsidian';
+import { addIcon, Menu, Notice, type App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
@@ -14,6 +14,7 @@ import { taskSnapshotForCalendarOccurrence } from '../src/views/calendarOccurren
 import { expectDefined, fixedToday, methodOf, task, taskQueryApi } from './helpers';
 import { hierarchyHarness } from './support/taskHierarchyHarness';
 import { useTaskPanelViewport } from './support/taskPanelViewport';
+import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 
 useTaskPanelViewport();
 
@@ -207,7 +208,7 @@ describe('task menu registration contract', () => {
   });
 });
 
-it('offers Promote for a child, disables root transfer and continuation status, and targets its timer', async () => {
+it('offers Promote for a child, disables root transfer and routes continuation status to details, and targets its timer', async () => {
   vi.useRealTimers();
   const h = await hierarchyHarness();
   const child = expectDefined([...taskTreeNodes(h.source)][1]);
@@ -218,7 +219,10 @@ it('offers Promote for a child, disables root transfer and continuation status, 
       due: localDate('2026-10-09'),
     });
     expect(items(menu).find((item) => item.title__.startsWith('Archive'))?.disabled).toBe(true);
-    expect(items(menu).find((item) => item.title__.startsWith('Status'))?.disabled).toBe(true);
+    expect(items(menu).find((item) => item.title__ === 'Status in task details…')).toMatchObject({
+      disabled: false,
+      submenu: null,
+    });
     expect(items(menu).find((item) => item.title__ === 'Make independent task')?.disabled).toBe(
       false,
     );
@@ -336,5 +340,274 @@ it.each(
   } finally {
     panel.destroy();
     h.index.destroy();
+  }
+});
+
+it.each(['quick', 'context'] as const)(
+  'routes passive %s status editing to exact child details with no command',
+  async (route) => {
+    vi.useRealTimers();
+    mockMenuDom();
+    const h = await hierarchyHarness({
+      'source.md': '- [ ] Parent\n  - [/] Child 🛫 2026-10-07 📅 2026-10-09\n',
+      'target.md': '- [ ] Other\n',
+    });
+    const child = expectDefined([...taskTreeNodes(h.source)][1]);
+    const state = new AppState();
+    const panel = new CenterPanel({
+      app: h.app,
+      state,
+      settings: structuredClone(DEFAULT_SETTINGS),
+      queries: h.index,
+      tasks: h.service,
+      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    });
+    const el = activeDocument.body.createDiv();
+    panel.mount(el);
+    const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
+    const execute = vi.spyOn(h.service, 'execute');
+    const completion = { kind: 'continuation' as const, due: localDate('2026-10-09') };
+    try {
+      if (route === 'quick')
+        panel['openStatusMenu_abyssPrivate'](new MouseEvent('contextmenu'), child.node, completion);
+      else {
+        const menu = panel['taskMenus_abyssPrivate'].createTaskContextMenu(card, child, completion);
+        const item = expectDefined(
+          items(menu).find((item) => item.title__ === 'Status in task details…'),
+        );
+        expect(item.disabled).toBe(false);
+        expect(item.submenu).toBeNull();
+        (item as unknown as { onClick__: () => void }).onClick__();
+      }
+      expect(activeDocument.querySelector('.abyss-status-popover')).toBeNull();
+      expect(state.get('taskStack').map((node) => node.title)).toEqual(['Parent', 'Child']);
+      expect(execute).not.toHaveBeenCalled();
+      // Inspector's ordinary node capability remains allowed before the due date.
+      await panel['taskCommands_abyssPrivate'].toggleTask(child.node);
+      expect(execute).toHaveBeenCalledExactlyOnceWith({
+        type: 'toggle-completion',
+        target: child.target,
+      });
+      expect(await h.read('source.md')).toContain('  - [x] Child');
+    } finally {
+      panel.destroy();
+      h.index.destroy();
+    }
+  },
+);
+
+it.each([false, true])(
+  'preserves keyboard bulk eligibility and skipped counts (terminal selected: %s)',
+  async (terminal) => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 6, 12));
+    mockMenuDom();
+    const h = await mountCanonicalSearchUi(
+      { 'source.md': '- [ ] A 🛫 2026-10-07 📅 2026-10-09\n- [ ] B 🛫 2026-10-07 📅 2026-10-10\n' },
+      structuredClone(DEFAULT_SETTINGS),
+      'tasks',
+    );
+    const execute = vi.spyOn(h.tasks, 'execute');
+    const notices = vi
+      .spyOn(
+        Notice.prototype as unknown as { constructor__(message: string): void },
+        'constructor__',
+      )
+      .mockImplementation(() => {});
+    try {
+      h.state.set('selectedList', 'upcoming');
+      h.state.set('centerListViewState', {
+        ...h.state.get('centerListViewState'),
+        groupBy: 'date',
+      });
+      await h.completed();
+      const press = (key: string, shiftKey = false): void => {
+        h.root.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey, bubbles: true }));
+      };
+      press('Home');
+      if (terminal) for (let i = 0; i < 4; i++) press('ArrowDown');
+      press('ArrowDown', true);
+      const targets = h.panel['taskMenuTargets_abyssPrivate']();
+      expect(targets.summaries).toHaveLength(2);
+      expect(targets.summaries.map((task) => task.completion?.kind)).toEqual(
+        terminal ? ['allowed', 'continuation'] : ['continuation', 'continuation'],
+      );
+      const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+      const shown = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+        this: Menu,
+      ) {
+        return this;
+      });
+      h.panel['taskMenus_abyssPrivate'].showBulkContextMenu(
+        new MouseEvent('contextmenu'),
+        card,
+        targets,
+      );
+      const menu = expectDefined(shown.mock.instances[0]) as Menu;
+      const status = expectDefined(items(menu).find((item) => item.title__ === 'Status'));
+      expect(status.disabled).toBe(!terminal);
+      // Even an already-delivered callback cannot bypass occurrence eligibility.
+      const done = expectDefined(
+        items(expectDefined(status.submenu)).find((item) => item.title__ === 'Done'),
+      );
+      (done as unknown as { onClick__: () => void }).onClick__();
+      await vi.waitFor(() => {
+        expect(notices.mock.calls.map(([message]) => message)).toContain(
+          `${terminal ? 1 : 2} task${terminal ? '' : 's'} unchanged: complete from the due-date row or task details.`,
+        );
+      });
+      if (terminal) {
+        await vi.waitFor(() => {
+          expect(execute).toHaveBeenCalledTimes(1);
+        });
+        expect(execute.mock.calls[0]?.[0]).toMatchObject({
+          type: 'set-status',
+          target: { type: 'task', ref: { filePath: 'source.md', line: 0 } },
+          symbol: 'x',
+        });
+      } else expect(execute).not.toHaveBeenCalled();
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it.each([
+  ['w', 'in-progress', 'Waiting', 'click'],
+  ['x', 'done', 'Done', 'Enter'],
+  ['-', 'cancelled', 'Cancelled', ' '],
+] as const)(
+  'keeps configured %s status on every daily child card and toggles only its terminal row',
+  async (symbol, type, name, activation) => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 6, 12));
+    addIcon('hourglass', '<svg><path d="M6 3h12M6 21h12"/></svg>');
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.taskStatuses.push({
+      id: 'waiting',
+      symbol: 'w',
+      name: 'Waiting',
+      type: 'in-progress',
+      icon: 'hourglass',
+      core: false,
+    });
+    const h = await mountCanonicalSearchUi(
+      { 'source.md': `- [ ] Parent\n  - [${symbol}] Child 🛫 2026-10-07 📅 2026-10-09 ⏫\n` },
+      settings,
+      'tasks',
+    );
+    const execute = vi.spyOn(h.tasks, 'execute');
+    try {
+      h.state.set('selectedList', 'upcoming');
+      h.state.set('centerListViewState', {
+        ...h.state.get('centerListViewState'),
+        groupBy: 'date',
+        statusGroups: ['todo', 'in-progress', 'done', 'cancelled'],
+      });
+      await h.completed();
+      const cards = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')];
+      expect(cards).toHaveLength(3);
+      const icons: string[] = [];
+      const dates: string[] = [];
+      for (const card of cards) {
+        const marker = expectDefined(card.querySelector<HTMLElement>('.abyss-status-marker'));
+        const control = expectDefined(card.querySelector<HTMLElement>('[role=checkbox]'));
+        expect(marker.dataset['statusType']).toBe(type);
+        expect(marker.dataset['priority']).toBe('B');
+        expect(control.getAttribute('aria-checked')).toBe(String(type === 'done'));
+        expect(control.getAttribute('aria-label')).toContain(`Task status: ${name}`);
+        icons.push(marker.innerHTML);
+        dates.push(card.querySelector('.abyss-task-date')?.textContent ?? '');
+      }
+      expect(new Set(icons).size).toBe(1);
+      if (symbol === 'w') expect(icons[0]).toContain('<svg');
+      expect(new Set(dates).size).toBe(1);
+      expect(dates[0]).toContain('–');
+      for (const card of cards.slice(0, 2)) {
+        const control = expectDefined(card.querySelector<HTMLElement>('[role=checkbox]'));
+        control.click();
+        for (const key of [' ', 'Enter'])
+          control.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      }
+      expect(execute).not.toHaveBeenCalled();
+      const target = expectDefined(
+        h.index.listNodes().find(({ node }) => node.title === 'Child'),
+      ).target;
+      const control = expectDefined(cards[2]?.querySelector<HTMLElement>('[role=checkbox]'));
+      if (activation === 'click') control.click();
+      else control.dispatchEvent(new KeyboardEvent('keydown', { key: activation, bubbles: true }));
+      await vi.waitFor(() => {
+        expect(execute).toHaveBeenCalledExactlyOnceWith({ type: 'toggle-completion', target });
+      });
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('preserves Today continuation across grouping while nondate destinations stay allowed', async () => {
+  vi.useRealTimers();
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2026, 9, 8, 12));
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.inbox = { mode: 'tag', tag: '#inbox', removeTagOnAssign: false };
+  const h = await mountCanonicalSearchUi(
+    { 'source.md': '- [ ] Parent #other\n  - [ ] Child #inbox 🛫 2026-10-07 📅 2026-10-09\n' },
+    settings,
+    'tasks',
+  );
+  const execute = vi.spyOn(h.tasks, 'execute');
+  try {
+    h.state.set('selectedList', 'today');
+    for (const groupBy of ['none', 'priority', 'status'] as const) {
+      h.state.set('centerListViewState', { ...h.state.get('centerListViewState'), groupBy });
+      await vi.waitFor(() => {
+        expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+        expect(h.root.querySelector('[role=checkbox]')?.getAttribute('aria-disabled')).toBe('true');
+        expect(h.root.querySelector('.abyss-task-date')?.textContent).toContain('–');
+      });
+      h.root.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'a', metaKey: true, bubbles: true }),
+      );
+      expect(h.panel['taskMenuTargets_abyssPrivate']().summaries[0]?.completion).toEqual({
+        kind: 'continuation',
+        due: localDate('2026-10-09'),
+      });
+      const control = expectDefined(h.root.querySelector<HTMLElement>('[role=checkbox]'));
+      control.click();
+      control.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+      expect(execute).not.toHaveBeenCalled();
+    }
+    for (const selection of ['upcoming', 'inbox', { type: 'tag', tag: '#inbox' }] as const) {
+      h.state.set('selectedList', selection);
+      h.state.set('centerListViewState', {
+        ...h.state.get('centerListViewState'),
+        groupBy: 'none',
+      });
+      await vi.waitFor(() => {
+        expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+        expect(h.root.querySelector('[role=checkbox]')?.hasAttribute('aria-disabled')).toBe(false);
+        expect(h.root.querySelector('.abyss-task-date')?.textContent).toContain('–');
+      });
+    }
+    h.state.set('selectedList', 'today');
+    vi.setSystemTime(new Date(2026, 9, 10, 12));
+    h.panel.refresh();
+    await vi.waitFor(() => {
+      expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+      expect(h.root.querySelector('[role=checkbox]')?.hasAttribute('aria-disabled')).toBe(false);
+      expect(h.root.querySelector('.abyss-task-date')?.textContent).toContain('–');
+    });
+    const target = expectDefined(
+      h.index.listNodes().find(({ node }) => node.title === 'Child'),
+    ).target;
+    expectDefined(h.root.querySelector<HTMLElement>('[role=checkbox]')).click();
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledExactlyOnceWith({ type: 'toggle-completion', target });
+    });
+  } finally {
+    h.dispose();
   }
 });

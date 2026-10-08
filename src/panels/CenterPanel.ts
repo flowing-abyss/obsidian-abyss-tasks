@@ -16,6 +16,7 @@ import {
 } from '../tags/effectiveTagGroups';
 import { selectTaskNodes } from '../task-lists/TaskListSelector';
 import { outgoingTaskLinkValues, type TaskLinkValues } from '../task-lists/taskLinkValues';
+import type { TaskOccurrencePresentation } from '../task-lists/taskOccurrencePresentation';
 import type {
   TaskSearchOccurrence,
   TaskSearchOrganization,
@@ -28,6 +29,7 @@ import {
   taskReconciliationKey,
   taskSearchAddressKey,
   TaskSearchError,
+  taskTodayOccurrence,
   taskTreeNodes,
   type CommentTimeContextProvider,
   type LocalDate,
@@ -36,6 +38,7 @@ import {
   type TaskCommandResult,
   type TaskNodeRef,
   type TaskNodeSnapshot,
+  type TaskOccurrenceCompletion,
   type TaskQueryApi,
   type TaskRef,
   type TaskSearchAddress,
@@ -65,7 +68,12 @@ import { bindTaskHierarchyDrop, executeTaskHierarchy } from '../ui/taskHierarchy
 import { startTaskNodeDrag } from '../ui/taskNodeDrag';
 import { renderedTaskElements, renderedTaskNodeElements } from '../ui/taskPresentationIdentity';
 import type { TaskRenderOutcome, TaskRenderScope } from '../ui/taskRenderScope';
-import { rootTaskRef, taskNodeRef, type TaskSelectionNode } from '../ui/taskSelection';
+import {
+  rootTaskRef,
+  taskNodeRef,
+  taskSelectionRefPath,
+  type TaskSelectionNode,
+} from '../ui/taskSelection';
 import type { TrackingSurface } from '../ui/timeTracking/TimeBadge';
 import {
   calendarMutationTarget,
@@ -438,8 +446,8 @@ export class CenterPanel {
         reportFailure: (error) => {
           this.reportTaskRenderFailure_abyssPrivate(error);
         },
-        openStatusMenu: (event, task) => {
-          this.openStatusMenu_abyssPrivate(event, task);
+        openStatusMenu: (event, task, completion) => {
+          this.openStatusMenu_abyssPrivate(event, task, completion);
         },
         formatDate: (date) => this.formatDate_abyssPrivate(date),
         getDateClass: (date) => this.getDateClass_abyssPrivate(date),
@@ -1705,6 +1713,9 @@ export class CenterPanel {
       timeTracking: this.timeTracking_abyssPrivate,
       commands: this.taskCommands_abyssPrivate,
       host: {
+        openTaskDetails: (task) => {
+          this.openTaskDetails_abyssPrivate(task);
+        },
         beginBulkResolution: (card) => {
           const record = this.cardReturn_abyssPrivate;
           if (record?.opener !== card) return () => {};
@@ -2602,14 +2613,34 @@ export class CenterPanel {
     tagGroups: readonly EffectiveTagGroup[] = this.effectiveTagGroups_abyssPrivate(),
   ): void {
     const vs = this.state_abyssPrivate.get('centerListViewState');
+    const today = localDate(window.moment().format('YYYY-MM-DD'));
+    const todayList = this.state_abyssPrivate.get('selectedList') === 'today';
     const grouping = taskListGrouping(vs.groupBy, {
-      todayList: this.state_abyssPrivate.get('selectedList') === 'today',
-      today: localDate(window.moment().format('YYYY-MM-DD')),
+      todayList,
+      today,
       tomorrow: window.moment().add(1, 'day').format('YYYY-MM-DD'),
       statuses: this.statusRegistry_abyssPrivate,
       outgoingLinks: this.outgoingLinks_abyssPrivate,
     });
-    const rows = buildTaskNodeListRows(tasks, grouping);
+    const grouped = buildTaskNodeListRows(tasks, grouping);
+    const rows = todayList
+      ? indexedRows(
+          Array.from(grouped.slice(0, grouped.rowCount), (row) => {
+            if (row.kind === 'group') return row;
+            const occurrence = taskTodayOccurrence(row.task.node.planning, today);
+            return occurrence === undefined
+              ? row
+              : {
+                  ...row,
+                  presentation: {
+                    kind: 'today' as const,
+                    displayDate: occurrence.displayDate,
+                    completion: occurrence.completion,
+                  },
+                };
+          }),
+        )
+      : grouped;
     const inclusion = this.creationInclusion_abyssPrivate;
     if (
       inclusion !== undefined &&
@@ -2799,7 +2830,7 @@ export class CenterPanel {
         parent,
         taskRow.task.root,
         this.taskSurface_abyssPrivate?.tagGroups ?? tagGroups,
-        this.taskCardOptions_abyssPrivate(taskRow.task, taskRow.key),
+        this.taskCardOptions_abyssPrivate(taskRow.task, taskRow.key, taskRow.presentation),
       );
       try {
         releaseNavigation = this.taskSurface_abyssPrivate?.options.onCard?.(
@@ -2823,7 +2854,7 @@ export class CenterPanel {
           card?.update(
             next.task.root,
             this.taskSurface_abyssPrivate?.tagGroups ?? tagGroups,
-            this.taskCardOptions_abyssPrivate(next.task, next.key),
+            this.taskCardOptions_abyssPrivate(next.task, next.key, next.presentation),
           );
           if (card !== undefined) this.observeTaskCardReceipt_abyssPrivate(card);
           releaseNavigation = this.taskSurface_abyssPrivate?.options.onCard?.(
@@ -2860,10 +2891,12 @@ export class CenterPanel {
   private taskCardOptions_abyssPrivate(
     task: TaskNodeSnapshot,
     rowKey: string,
+    occurrence?: TaskOccurrencePresentation,
   ): Parameters<TaskCardMount['update']>[2] {
     const options = this.taskSurface_abyssPrivate?.options;
     return {
       projection: task,
+      ...(occurrence === undefined ? {} : { occurrence }),
       selected:
         taskStackRowKey(this.state_abyssPrivate.get('taskStack')) ===
         taskStackRowKey([task.root, ...task.path]),
@@ -3927,10 +3960,25 @@ export class CenterPanel {
     }
   }
 
-  private openStatusMenu_abyssPrivate(event: MouseEvent, task: TaskSelectionNode): void {
+  private openTaskDetails_abyssPrivate(task: TaskCommandSubject): void {
+    const source = commandSource(task, this.queries_abyssPrivate);
+    if (source === undefined) return;
+    const path = taskSelectionRefPath(source.root, source.target);
+    if (path !== undefined) this.state_abyssPrivate.set('taskStack', path);
+  }
+
+  private openStatusMenu_abyssPrivate(
+    event: MouseEvent,
+    task: TaskSelectionNode,
+    completion: TaskOccurrenceCompletion = { kind: 'allowed' },
+  ): void {
     this.clearTaskDatePicker_abyssPrivate();
     this.dismissRecurrenceEditor_abyssPrivate();
     this.listViewControls_abyssPrivate.closeViewStatePopover();
+    if (completion.kind === 'continuation') {
+      this.openTaskDetails_abyssPrivate(task);
+      return;
+    }
     const key = this.eventTaskCardKey_abyssPrivate(event.target);
     const releasePin =
       key === undefined
@@ -3946,7 +3994,7 @@ export class CenterPanel {
         releasePin?.();
       },
       onPickStatus: (symbol) => {
-        runAsyncAction(this.taskCommands_abyssPrivate.setTaskStatus(task, symbol));
+        runAsyncAction(this.taskCommands_abyssPrivate.setTaskStatus(task, symbol, completion));
       },
       onPickPriority: (priority) => {
         runAsyncAction(this.taskCommands_abyssPrivate.setPriority(task, priority));

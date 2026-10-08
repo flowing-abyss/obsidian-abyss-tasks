@@ -1,6 +1,6 @@
-import { setIcon } from 'obsidian';
+import { setIcon, setTooltip } from 'obsidian';
 import type { StatusRegistry } from '../status/StatusRegistry';
-import type { TaskPriority } from '../tasks';
+import type { TaskOccurrenceCompletion, TaskPriority } from '../tasks';
 
 interface Opts {
   // Structural type: only statusSymbol/priority are read, so Task/SubTask
@@ -10,6 +10,8 @@ interface Opts {
   registry: StatusRegistry;
   interactive?: boolean | 'menu';
   completionBlocked?: boolean;
+  completion?: TaskOccurrenceCompletion;
+  completionHint?: string;
   onLeftClick: () => void;
   onContextMenu: (ev: MouseEvent) => void;
 }
@@ -39,6 +41,19 @@ export function setStatusMarkerCompletionBlocked(marker: HTMLElement, blocked: b
   completionBlockUpdates.get(marker)?.(blocked);
 }
 
+const occurrenceCompletionUpdates = new WeakMap<
+  HTMLElement,
+  (completion: TaskOccurrenceCompletion, hint: string) => void
+>();
+
+export function setStatusMarkerOccurrenceCompletion(
+  marker: HTMLElement,
+  completion: TaskOccurrenceCompletion,
+  hint: string,
+): void {
+  occurrenceCompletionUpdates.get(marker)?.(completion, hint);
+}
+
 function bindContextMenu(control: HTMLElement, onContextMenu: (event: MouseEvent) => void): void {
   control.oncontextmenu = (event) => {
     event.preventDefault();
@@ -49,6 +64,36 @@ function bindContextMenu(control: HTMLElement, onContextMenu: (event: MouseEvent
 
 const BLOCKED_HINT = 'Complete prerequisite tasks or remove the dependency first.';
 
+function setControlSemantics(
+  control: HTMLElement,
+  label: string,
+  isDone: boolean,
+  hints: readonly string[],
+): void {
+  const suffix = hints.length > 0 ? `. ${hints.join(' ')}` : '';
+  const name = `Task status: ${label}${suffix}`;
+  control.setAttrs({
+    role: 'checkbox',
+    'aria-checked': String(isDone),
+    'aria-label': name,
+    tabindex: '0',
+  });
+  if (hints.length > 0) control.setAttribute('aria-disabled', 'true');
+  else control.removeAttribute('aria-disabled');
+  setTooltip(control, name);
+}
+
+function wrapStatusMarker(marker: HTMLElement): HTMLElement | undefined {
+  const wrapper = marker.parentElement?.createSpan({ cls: 'abyss-status-control' });
+  if (wrapper === undefined) return undefined;
+  marker.before(wrapper);
+  wrapper.append(marker);
+  for (const attr of ['role', 'aria-checked', 'aria-label', 'aria-disabled', 'tabindex'])
+    marker.removeAttribute(attr);
+  marker.setAttribute('aria-hidden', 'true');
+  return wrapper;
+}
+
 function makeMarkerInteractive(
   ...args: [HTMLElement, string, boolean, () => void, (event: MouseEvent) => void]
 ): void {
@@ -56,28 +101,30 @@ function makeMarkerInteractive(
   let label = initialLabel;
   let isDone = initialDone;
   let blocked = false;
+  let continuation = false;
+  let completionHint = '';
   let wrapper: HTMLElement | undefined;
-  const semantics = (control: HTMLElement): void => {
-    control.setAttrs({
-      role: 'checkbox',
-      'aria-checked': String(isDone),
-      'aria-label': `Task status: ${label}`,
-      tabindex: '0',
-    });
+  const control = (): HTMLElement => wrapper ?? marker;
+  const semantics = (element: HTMLElement): void => {
+    setControlSemantics(element, label, isDone, [
+      ...(blocked ? [BLOCKED_HINT] : []),
+      ...(continuation ? [completionHint] : []),
+    ]);
   };
   const onClick = (event: MouseEvent): void => {
     event.preventDefault();
     event.stopPropagation();
-    if (!blocked) onLeftClick();
+    if (!blocked && !continuation) onLeftClick();
   };
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
     event.stopPropagation();
-    if (!event.repeat) onLeftClick();
+    // Dependency-only keyboard activation retains the command's confirmation path.
+    if (!event.repeat && !continuation) onLeftClick();
   };
   const onPointer = (event: Event): void => {
-    if (!blocked) return;
+    if (!blocked && !continuation) return;
     event.preventDefault();
     event.stopPropagation();
     wrapper?.focus({ preventScroll: true });
@@ -89,42 +136,43 @@ function makeMarkerInteractive(
     control.onpointerdown = onPointer;
     control.ontouchstart = onPointer;
   };
-  semanticUpdates.set(marker, (nextLabel, nextDone) => {
-    label = nextLabel;
-    isDone = nextDone;
-    semantics(wrapper ?? marker);
-    if (wrapper !== undefined)
-      wrapper.setAttribute('aria-label', `Task status: ${label}. ${BLOCKED_HINT}`);
-  });
-  semantics(marker);
-  bind(marker);
-  completionBlockUpdates.set(marker, (next) => {
-    if (blocked === next) return;
-    const focused = marker.ownerDocument.activeElement === (wrapper ?? marker);
-    blocked = next;
+  const refresh = (): void => {
+    const focused = marker.ownerDocument.activeElement === control();
     marker.classList.toggle('abyss-status-marker--blocked', blocked);
-    if (blocked) {
-      wrapper = marker.parentElement?.createSpan({ cls: 'abyss-status-control' });
-      if (wrapper === undefined) return;
-      marker.before(wrapper);
-      wrapper.append(marker);
-      semantics(wrapper);
-      wrapper.setAttrs({
-        'aria-disabled': 'true',
-        'aria-label': `Task status: ${label}. ${BLOCKED_HINT}`,
-      });
-      bind(wrapper);
-      for (const attr of ['role', 'aria-checked', 'aria-label', 'tabindex'])
-        marker.removeAttribute(attr);
-      marker.setAttribute('aria-hidden', 'true');
+    marker.classList.toggle('abyss-status-marker--continuation', continuation);
+    if (blocked || continuation) {
+      if (wrapper === undefined) {
+        wrapper = wrapStatusMarker(marker);
+        if (wrapper === undefined) return;
+        bind(wrapper);
+      }
     } else if (wrapper !== undefined) {
       wrapper.before(marker);
       wrapper.remove();
       wrapper = undefined;
       marker.removeAttribute('aria-hidden');
-      semantics(marker);
     }
-    if (focused) (wrapper ?? marker).focus({ preventScroll: true });
+    semantics(control());
+    if (focused) control().focus({ preventScroll: true });
+  };
+  semanticUpdates.set(marker, (nextLabel, nextDone) => {
+    label = nextLabel;
+    isDone = nextDone;
+    semantics(control());
+  });
+  semantics(marker);
+  bind(marker);
+  completionBlockUpdates.set(marker, (next) => {
+    if (blocked === next) return;
+    blocked = next;
+    refresh();
+  });
+  occurrenceCompletionUpdates.set(marker, (completion, hint) => {
+    const next = completion.kind === 'continuation';
+    if (continuation === next && completionHint === hint) return;
+    continuation = next;
+    completionHint = hint;
+    refresh();
   });
 }
 
@@ -190,7 +238,7 @@ function markerPresentation(
 /** Refresh the existing marker and its owned accessibility wrapper without replacing focus. */
 export function updateStatusMarker(
   marker: HTMLElement,
-  opts: Pick<Opts, 'task' | 'registry' | 'completionBlocked'>,
+  opts: Pick<Opts, 'task' | 'registry' | 'completionBlocked' | 'completion' | 'completionHint'>,
 ): void {
   const presentation = markerPresentation(opts.task, opts.registry);
   setMarkerMetadata(marker, presentation, opts.task.priority);
@@ -198,6 +246,11 @@ export function updateStatusMarker(
   renderMarkerIcon(marker, opts.task.statusSymbol, presentation.icon, presentation.defined);
   semanticUpdates.get(marker)?.(presentation.label, presentation.isDone);
   setStatusMarkerCompletionBlocked(marker, opts.completionBlocked === true);
+  setStatusMarkerOccurrenceCompletion(
+    marker,
+    opts.completion ?? { kind: 'allowed' },
+    opts.completionHint ?? '',
+  );
 }
 
 export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement {
@@ -211,6 +264,11 @@ export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement
   if (interactive === true) {
     makeMarkerInteractive(el, presentation.label, presentation.isDone, onLeftClick, onContextMenu);
     setStatusMarkerCompletionBlocked(el, opts.completionBlocked === true);
+    setStatusMarkerOccurrenceCompletion(
+      el,
+      opts.completion ?? { kind: 'allowed' },
+      opts.completionHint ?? '',
+    );
   } else if (interactive === 'menu') {
     el.setAttrs({
       role: 'img',

@@ -172,7 +172,11 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   DateRange: ['src/views/calendarOccurrences.ts'],
   FieldUpdate: ['src/views/calendarOccurrences.ts'],
   LocalTime: ['src/views/calendarOccurrences.ts'],
-  taskOccupiedDates: ['src/views/calendarOccurrences.ts', 'src/panels/task-list/taskDailyRows.ts'],
+  taskOccupiedDates: [
+    'src/views/calendarOccurrences.ts',
+    'src/panels/task-list/taskDailyRows.ts',
+    'src/panels/center/TaskCardRenderer.ts',
+  ],
   DependencyDirection: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorDependencies.ts'],
   LocalDate: [
     'src/panels/CenterPanel.ts',
@@ -240,10 +244,14 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   ],
   taskHasFutureDate: ['src/task-lists/taskNodeMembership.ts'],
   taskTodayOccurrence: [
+    'src/panels/CenterPanel.ts',
     'src/task-lists/taskNodeMembership.ts',
     'src/task-lists/todayTaskCategory.ts',
   ],
   TaskOccurrenceCompletion: [
+    'src/ui/StatusMarker.ts',
+    'src/panels/center/TaskCardRenderer.ts',
+    'src/panels/CenterPanel.ts',
     'src/task-lists/taskOccurrencePresentation.ts',
     'src/panels/center/taskNodeBatch.ts',
     'src/panels/center/TaskCommands.ts',

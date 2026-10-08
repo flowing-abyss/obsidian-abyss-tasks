@@ -44,6 +44,7 @@ export interface TaskMenuTargets {
   resolve(signal: AbortSignal): Promise<readonly TaskSelectedNode[]>;
 }
 interface TaskMenusHost {
+  openTaskDetails(task: TaskCommandSubject): void;
   beginBulkResolution(card: HTMLElement): () => void;
   reportTargetFailure(error: unknown): void;
   showTaskMenu(menu: Menu, event: MouseEvent, card: HTMLElement): void;
@@ -199,19 +200,16 @@ export class TaskMenus {
       this.#buildPrioritySubmenu(sub, task);
     });
 
-    // ── Status (submenu) ──────────────────────────────────
     menu.addItem((item) => {
-      item
-        .setTitle(
-          completion.kind === 'allowed'
-            ? 'Status'
-            : 'Status — use the due-date row or task details',
-        )
-        .setIcon('check-square')
-        .setSection('priority')
-        .setDisabled(completion.kind !== 'allowed');
-      const sub = getSubmenu(item);
-      buildStatusSubmenu(sub, commandNode(task), this.#options.statusRegistry, (c) => {
+      item.setIcon('check-square').setSection('priority');
+      if (completion.kind === 'continuation') {
+        item.setTitle('Status in task details…').onClick(() => {
+          this.#options.host.openTaskDetails(task);
+        });
+        return;
+      }
+      item.setTitle('Status');
+      buildStatusSubmenu(getSubmenu(item), commandNode(task), this.#options.statusRegistry, (c) => {
         runAsyncAction(this.#options.commands.setTaskStatus(task, c, completion));
       });
     });

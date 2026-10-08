@@ -14,6 +14,7 @@ import {
   subtreeTotal,
   taskNodeAddress,
   taskNodeSourceLine,
+  taskOccupiedDates,
   totalMs,
   type LocalDate,
   type PreparedSearchQuery,
@@ -21,6 +22,7 @@ import {
   type TaskDependencySummary,
   type TaskNodeRef,
   type TaskNodeSnapshot,
+  type TaskOccurrenceCompletion,
   type TaskRef,
   type TaskSearchAddress,
   type TaskSearchContext,
@@ -126,6 +128,7 @@ interface CardContentContext {
   readonly component: Component;
   readonly currentTask: () => TaskSnapshot;
   readonly currentProjection: () => TaskNodeSnapshot;
+  readonly currentOccurrence: () => TaskOccurrencePresentation | undefined;
   readonly isCurrent: () => boolean;
   readonly onRenderFailure: (error: unknown) => void;
   readonly tagGroups?: (() => readonly EffectiveTagGroup[]) | undefined;
@@ -143,7 +146,11 @@ interface TaskCardRendererHost {
   ): void;
   reportFailure?(error: unknown): void;
   dependenciesForNode(target: TaskNodeRef): TaskDependencySummary | undefined;
-  openStatusMenu(event: MouseEvent, task: TaskSelectionNode): void;
+  openStatusMenu(
+    event: MouseEvent,
+    task: TaskSelectionNode,
+    completion?: TaskOccurrenceCompletion,
+  ): void;
   formatDate(date: LocalDate): string;
   getDateClass(date: LocalDate): string;
   getTagColor(tag: string, groups: readonly EffectiveTagGroup[]): string | undefined;
@@ -180,6 +187,18 @@ function cardNode(
   flags?: Pick<TaskCardFlags, 'projection'>,
 ): TaskSelectionNode {
   return flags?.projection?.node ?? task;
+}
+function cardDates(
+  planning: TaskSelectionNode['planning'],
+  occurrence?: TaskOccurrencePresentation,
+): {
+  readonly date: LocalDate | undefined;
+  readonly interval: TaskOccurrencePresentation['interval'];
+} {
+  const date = occurrence?.displayDate ?? planning.due ?? planning.scheduled ?? planning.start;
+  if (occurrence?.interval !== undefined) return { date, interval: occurrence.interval };
+  const occupied = taskOccupiedDates(planning);
+  return { date, interval: occupied.kind === 'interval' ? occupied : undefined };
 }
 function cardDescription(task: TaskSnapshot, flags?: Pick<TaskCardFlags, 'projection'>): string {
   return (cardNode(task, flags).description ?? '').split('\n')[0] ?? '';
@@ -266,14 +285,14 @@ export class TaskCardRenderer {
       component: markdown,
       currentTask: () => current.task,
       currentProjection: () => current.flags.projection ?? rootTaskNodeSnapshot(current.task),
+      currentOccurrence: () => current.flags.occurrence,
       tagGroups: () => current.tagGroups,
       isCurrent: () => live && current.flags.isCurrent?.() !== false,
       onRenderFailure: (error) => {
         if (!live || failed) return;
         failed = true;
         if (current.flags.isCurrent?.() === false) return;
-        if (current.flags.reportFailure !== undefined) current.flags.reportFailure(error);
-        else this.#reportFailure(error);
+        (current.flags.reportFailure ?? this.#reportFailure.bind(this))(error);
       },
       badges: [],
     };
@@ -332,12 +351,7 @@ export class TaskCardRenderer {
 
   #mountContents(card: HTMLElement, context: CardContentContext): CardContents {
     const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
-    this.#renderStatus(
-      mainRow,
-      context.currentTask(),
-      context.currentTask,
-      context.currentProjection,
-    );
+    this.#renderStatus(mainRow, context.currentTask(), context);
     const body = mainRow.createDiv({ cls: 'abyss-task-body' });
     const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
     const title = titleRow.createSpan({ cls: 'abyss-task-title' });
@@ -581,7 +595,7 @@ export class TaskCardRenderer {
     card.dataset['line'] = String(taskNodeSourceLine(projection.target));
     if (flags.rowKey !== undefined) card.dataset['rowKey'] = flags.rowKey;
     card.toggleClass('is-selected', flags.selected);
-    this.#refreshStatus(card, projection.node);
+    this.#refreshStatus(card, projection.node, flags.occurrence);
     this.#refreshMetadata(card, current);
   }
 
@@ -594,12 +608,17 @@ export class TaskCardRenderer {
       highlight: current.flags.highlight,
       currentRoot: () => current.task,
       projection: current.flags.projection,
+      occurrence: current.flags.occurrence,
     });
     const metadata = mainRow.querySelector(':scope > .abyss-task-meta-right');
     if (metadata !== null) mainRow.querySelector('.abyss-task-delete-btn')?.before(metadata);
   }
 
-  #refreshStatus(card: HTMLElement, task: TaskSelectionNode): void {
+  #refreshStatus(
+    card: HTMLElement,
+    task: TaskSelectionNode,
+    occurrence?: TaskOccurrencePresentation,
+  ): void {
     const marker = card.querySelector<HTMLElement>('.abyss-status-marker');
     const mainRow = card.querySelector<HTMLElement>('.abyss-task-card-main-row');
     if (marker === null || mainRow === null) return;
@@ -611,6 +630,11 @@ export class TaskCardRenderer {
       task,
       registry: this.#statusRegistry,
       completionBlocked: dependencyCompletionBlocked(projection),
+      completion: occurrence?.completion ?? { kind: 'allowed' },
+      completionHint:
+        occurrence?.completion.kind === 'continuation'
+          ? `Complete from the row for ${this.#host.formatDate(occurrence.completion.due)}, or in the task details.`
+          : '',
     });
   }
 
@@ -668,8 +692,7 @@ export class TaskCardRenderer {
   #renderStatus(
     mainRow: HTMLElement,
     task: TaskSnapshot,
-    currentTask = () => task,
-    currentProjection?: () => TaskNodeSnapshot,
+    current?: Pick<CardContentContext, 'currentProjection' | 'currentOccurrence'>,
   ): void {
     const projection = this.#host.dependenciesFor(task);
     renderStatusMarker(mainRow, {
@@ -677,11 +700,20 @@ export class TaskCardRenderer {
       registry: this.#statusRegistry,
       completionBlocked: dependencyCompletionBlocked(projection),
       onLeftClick: () => {
-        runAsyncAction(this.#commands.toggleTask(currentProjection?.().node ?? currentTask()));
+        runAsyncAction(
+          this.#commands.toggleTask(
+            current?.currentProjection().node ?? task,
+            current?.currentOccurrence()?.completion,
+          ),
+        );
       },
       onContextMenu: (event) => {
         event.stopPropagation();
-        this.#host.openStatusMenu(event, currentProjection?.().node ?? currentTask());
+        this.#host.openStatusMenu(
+          event,
+          current?.currentProjection().node ?? task,
+          current?.currentOccurrence()?.completion,
+        );
       },
     });
   }
@@ -935,6 +967,7 @@ export class TaskCardRenderer {
       readonly highlight?: TaskCardHighlight | undefined;
       readonly currentRoot?: () => TaskSnapshot;
       readonly projection?: TaskNodeSnapshot | undefined;
+      readonly occurrence?: TaskOccurrencePresentation | undefined;
     },
   ): void {
     const { search, currentRoot } = options;
@@ -1065,6 +1098,7 @@ export class TaskCardRenderer {
     options: {
       readonly currentRoot?: () => TaskSnapshot;
       readonly projection?: TaskNodeSnapshot | undefined;
+      readonly occurrence?: TaskOccurrencePresentation | undefined;
       readonly highlight?: TaskCardHighlight | undefined;
     },
   ): void {
@@ -1072,7 +1106,7 @@ export class TaskCardRenderer {
     const currentTask = (): TaskSelectionNode => node;
     const today = localDate(moment().format('YYYY-MM-DD'));
     const sel = this.#state.get('selectedList');
-    const d = node.planning.due ?? node.planning.scheduled;
+    const dates = cardDates(node.planning, options.occurrence);
     const tags = node.tags;
     const suppressToday = sel === 'today' && todayTaskCategory(node, today) === 'today';
     const showSourceNote = shouldShowSourceNote(
@@ -1082,12 +1116,13 @@ export class TaskCardRenderer {
     );
     const hasRightMeta =
       showSourceNote ||
-      (d != null && !suppressToday) ||
+      dates.interval !== undefined ||
+      (dates.date != null && !suppressToday) ||
       node.planning.time != null ||
       tags.length > 0;
     if (!hasRightMeta) return;
     const metaRight = mainRow.createDiv({ cls: 'abyss-task-meta-right' });
-    this.#renderDateMetadata(metaRight, node, d, suppressToday);
+    this.#renderDateMetadata(metaRight, node, dates, suppressToday);
     if (showSourceNote) {
       renderSourceNoteChip(metaRight, task, (filePath) => {
         this.#listControls.addPropertyFilter({ type: 'file', filePath });
@@ -1105,10 +1140,35 @@ export class TaskCardRenderer {
   #renderDateMetadata(
     host: HTMLElement,
     task: TaskSelectionNode,
-    date: LocalDate | undefined,
+    dates: ReturnType<typeof cardDates>,
     suppressToday: boolean,
   ): void {
+    const { date, interval } = dates;
     const time = task.planning.time;
+    if (interval !== undefined) {
+      const dateElement = host.createSpan({ cls: 'abyss-task-date' });
+      const icon = dateElement.createSpan({
+        cls: 'abyss-date-icon',
+        attr: { 'aria-hidden': 'true' },
+      });
+      const glyph = icon.createSvg('svg', {
+        attr: {
+          viewBox: '0 0 24 24',
+          width: '16',
+          height: '16',
+          fill: 'none',
+          stroke: 'currentColor',
+          'stroke-width': '1',
+          'aria-hidden': 'true',
+        },
+      });
+      glyph.createSvg('path', { attr: { d: 'M4 6v12M4 12h16M20 6v12' } });
+      this.#renderDateFilterPart(dateElement, interval.start, false);
+      dateElement.createSpan({ text: '–' });
+      this.#renderDateFilterPart(dateElement, interval.due, false);
+      if (time != null) this.#renderTimeFilterPart(dateElement, time, 'abyss-task-time-part');
+      return;
+    }
     if (date != null && !suppressToday) {
       const dateElement = host.createSpan({
         cls: `abyss-task-date ${this.#host.getDateClass(date)}`.trim(),
@@ -1120,10 +1180,12 @@ export class TaskCardRenderer {
     if (time != null) this.#renderTimeFilterPart(host, time, 'abyss-task-date');
   }
 
-  #renderDateFilterPart(host: HTMLElement, date: LocalDate): void {
+  #renderDateFilterPart(host: HTMLElement, date: LocalDate, showIcon = true): void {
     const part = host.createSpan({ cls: 'abyss-task-date-part abyss-cursor-pointer' });
-    const icon = part.createSpan({ cls: 'abyss-date-icon' });
-    setIcon(icon, 'calendar');
+    if (showIcon) {
+      const icon = part.createSpan({ cls: 'abyss-date-icon' });
+      setIcon(icon, 'calendar');
+    }
     part.createSpan({ text: this.#host.formatDate(date) });
     part.addEventListener('click', (event) => {
       event.stopPropagation();
