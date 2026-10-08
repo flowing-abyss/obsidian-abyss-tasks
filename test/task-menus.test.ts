@@ -211,21 +211,14 @@ describe('task menu registration contract', () => {
   });
 });
 
-it('offers Promote for a child, disables root transfer and routes continuation status to details, and targets its timer', async () => {
+it('offers Promote for a child, disables root transfer, and targets its timer', async () => {
   vi.useRealTimers();
   const h = await hierarchyHarness();
   const child = expectDefined([...taskTreeNodes(h.source)][1]);
   const { panel, card } = fixture();
   try {
-    const menu = panel['taskMenus_abyssPrivate'].createTaskContextMenu(card, child, {
-      kind: 'continuation',
-      due: localDate('2026-10-09'),
-    });
+    const menu = panel['taskMenus_abyssPrivate'].createTaskContextMenu(card, child);
     expect(items(menu).find((item) => item.title__.startsWith('Archive'))?.disabled).toBe(true);
-    expect(items(menu).find((item) => item.title__ === 'Status in task details…')).toMatchObject({
-      disabled: false,
-      submenu: null,
-    });
     expect(items(menu).find((item) => item.title__ === 'Make independent task')?.disabled).toBe(
       false,
     );
@@ -346,62 +339,106 @@ it.each(
   }
 });
 
-it.each(['quick', 'context'] as const)(
-  'routes passive %s status editing to exact child details with no command',
-  async (route) => {
+it('routes passive quick status editing to exact child details with no command', async () => {
+  vi.useRealTimers();
+  mockMenuDom();
+  const h = await hierarchyHarness({
+    'source.md': '- [ ] Parent\n  - [/] Child 🛫 2026-10-07 📅 2026-10-09\n',
+    'target.md': '- [ ] Other\n',
+  });
+  const child = expectDefined([...taskTreeNodes(h.source)][1]);
+  const state = new AppState();
+  const panel = new CenterPanel({
+    app: h.app,
+    state,
+    settings: structuredClone(DEFAULT_SETTINGS),
+    queries: h.index,
+    tasks: h.service,
+    statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+  });
+  const el = activeDocument.body.createDiv();
+  panel.mount(el);
+  const execute = vi.spyOn(h.service, 'execute');
+  const completion = { kind: 'continuation' as const, due: localDate('2026-10-09') };
+  try {
+    panel['openStatusMenu_abyssPrivate'](new MouseEvent('contextmenu'), child.node, completion);
+    expect(activeDocument.querySelector('.abyss-status-popover')).toBeNull();
+    expect(state.get('taskStack').map((node) => node.title)).toEqual(['Parent', 'Child']);
+    expect(execute).not.toHaveBeenCalled();
+    // Inspector's ordinary node capability remains allowed before the due date.
+    await panel['taskCommands_abyssPrivate'].toggleTask(child.node);
+    expect(execute).toHaveBeenCalledExactlyOnceWith({
+      type: 'toggle-completion',
+      target: child.target,
+    });
+    expect(await h.read('source.md')).toContain('  - [x] Child');
+  } finally {
+    panel.destroy();
+    h.index.destroy();
+  }
+});
+
+it.each(['Parent', 'Child'] as const)(
+  'applies a continuation card-menu status choice only to the exact %s',
+  async (title) => {
     vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 8, 12));
     mockMenuDom();
-    const h = await hierarchyHarness({
-      'source.md': '- [ ] Parent\n  - [/] Child 🛫 2026-10-07 📅 2026-10-09\n',
-      'target.md': '- [ ] Other\n',
+    const before =
+      '- [ ] Parent 🛫 2026-10-07 📅 2026-10-09\n  - [ ] Child 🛫 2026-10-07 📅 2026-10-09\n  - [ ] Sibling 🛫 2026-10-07 📅 2026-10-09\n';
+    const h = await mountCanonicalSearchUi(
+      { 'source.md': before },
+      structuredClone(DEFAULT_SETTINGS),
+      'tasks',
+    );
+    let menu: Menu | undefined;
+    vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+      menu = this.setParentElement(document.body);
+      return this;
     });
-    const child = expectDefined([...taskTreeNodes(h.source)][1]);
-    const state = new AppState();
-    const panel = new CenterPanel({
-      app: h.app,
-      state,
-      settings: structuredClone(DEFAULT_SETTINGS),
-      queries: h.index,
-      tasks: h.service,
-      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-    });
-    const el = activeDocument.body.createDiv();
-    panel.mount(el);
-    const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
-    const execute = vi.spyOn(h.service, 'execute');
-    const completion = { kind: 'continuation' as const, due: localDate('2026-10-09') };
     try {
-      if (route === 'quick')
-        panel['openStatusMenu_abyssPrivate'](new MouseEvent('contextmenu'), child.node, completion);
-      else {
-        const menu = panel['taskMenus_abyssPrivate'].createTaskContextMenu(card, child, completion);
-        const item = expectDefined(
-          items(menu).find((item) => item.title__ === 'Status in task details…'),
-        );
-        expect(item.disabled).toBe(false);
-        expect(item.submenu).toBeNull();
-        (item as unknown as { onClick__: () => void }).onClick__();
-      }
-      expect(activeDocument.querySelector('.abyss-status-popover')).toBeNull();
-      expect(state.get('taskStack').map((node) => node.title)).toEqual(['Parent', 'Child']);
-      expect(execute).not.toHaveBeenCalled();
-      // Inspector's ordinary node capability remains allowed before the due date.
-      await panel['taskCommands_abyssPrivate'].toggleTask(child.node);
-      expect(execute).toHaveBeenCalledExactlyOnceWith({
-        type: 'toggle-completion',
-        target: child.target,
+      h.state.set('selectedList', 'today');
+      await vi.waitFor(() => {
+        expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(3);
       });
-      expect(await h.read('source.md')).toContain('  - [x] Child');
+      const card = expectDefined(
+        [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')].find(
+          (candidate) => candidate.dataset['line'] === (title === 'Parent' ? '0' : '1'),
+        ),
+      );
+      const control = expectDefined(card.querySelector<HTMLElement>('[role=checkbox]'));
+      control.click();
+      for (const key of [' ', 'Enter'])
+        control.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      const file = expectDefined(h.app.vault.getFileByPath('source.md'));
+      expect(await h.app.vault.read(file)).toBe(before);
+      card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const statusItem = items(expectDefined(menu)).find((item) => item.title__ === 'Status');
+      expect(statusItem).toBeDefined();
+      const status = expectDefined(statusItem);
+      const choice = expectDefined(
+        items(expectDefined(status.submenu)).find((item) => item.title__ === 'In progress'),
+      );
+      (choice as unknown as { onClick__: () => void }).onClick__();
+      await vi.waitFor(async () => {
+        expect(await h.app.vault.read(file)).toBe(
+          before.replace(`- [ ] ${title}`, `- [/] ${title}`),
+        );
+      });
     } finally {
-      panel.destroy();
-      h.index.destroy();
+      h.dispose();
     }
   },
 );
 
-it.each([false, true])(
-  'preserves keyboard bulk eligibility and skipped counts (terminal selected: %s)',
-  async (terminal) => {
+it.each([
+  { terminal: false, duplicate: false },
+  { terminal: true, duplicate: false },
+  { terminal: false, duplicate: true },
+])(
+  'applies keyboard bulk menu status to exact nodes (terminal=$terminal, duplicate=$duplicate)',
+  async ({ terminal, duplicate }) => {
     vi.useRealTimers();
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(2026, 9, 6, 12));
@@ -431,6 +468,10 @@ it.each([false, true])(
       press('Home');
       if (terminal) for (let i = 0; i < 4; i++) press('ArrowDown');
       press('ArrowDown', true);
+      if (duplicate) {
+        press('ArrowDown', true);
+        press('ArrowDown', true);
+      }
       const targets = h.panel['taskMenuTargets_abyssPrivate']();
       expect(targets.summaries).toHaveLength(2);
       expect(targets.summaries.map((task) => task.completion?.kind)).toEqual(
@@ -449,27 +490,25 @@ it.each([false, true])(
       );
       const menu = expectDefined(shown.mock.instances[0]) as Menu;
       const status = expectDefined(items(menu).find((item) => item.title__ === 'Status'));
-      expect(status.disabled).toBe(!terminal);
-      // Even an already-delivered callback cannot bypass occurrence eligibility.
+      expect(status.disabled).toBe(false);
       const done = expectDefined(
         items(expectDefined(status.submenu)).find((item) => item.title__ === 'Done'),
       );
       (done as unknown as { onClick__: () => void }).onClick__();
-      await vi.waitFor(() => {
-        expect(notices.mock.calls.map(([message]) => message)).toContain(
-          `${terminal ? 1 : 2} task${terminal ? '' : 's'} unchanged: complete from the due-date row or task details.`,
-        );
+      await vi.waitFor(async () => {
+        const file = expectDefined(h.app.vault.getFileByPath('source.md'));
+        const source = await h.app.vault.read(file);
+        expect(source).toContain('- [x] A');
+        expect(source).toContain('- [x] B');
       });
-      if (terminal) {
-        await vi.waitFor(() => {
-          expect(execute).toHaveBeenCalledTimes(1);
-        });
-        expect(execute.mock.calls[0]?.[0]).toMatchObject({
-          type: 'set-status',
-          target: { type: 'task', ref: { filePath: 'source.md', line: 0 } },
-          symbol: 'x',
-        });
-      } else expect(execute).not.toHaveBeenCalled();
+      expect(execute.mock.calls.filter(([command]) => command.type === 'set-status')).toHaveLength(
+        2,
+      );
+      expect(
+        notices.mock.calls
+          .map(([message]) => message)
+          .filter((message) => message.includes('unchanged')),
+      ).toEqual([]);
     } finally {
       h.dispose();
     }
@@ -674,12 +713,7 @@ it('keeps ordinary child tag filters and Set tag mutations on the exact own node
     expect(inclusion.submenu).toBeNull();
     (inclusion as unknown as { onClick__: () => void }).onClick__();
     expect(h.state.get('centerListViewState').filters).toEqual([{ type: 'tag', value: '#child' }]);
-    const menu = h.panel['taskMenus_abyssPrivate'].createTaskContextMenu(
-      card,
-      child,
-      { kind: 'allowed' },
-      ['#visible'],
-    );
+    const menu = h.panel['taskMenus_abyssPrivate'].createTaskContextMenu(card, child, ['#visible']);
     const choices = expectDefined(
       items(menu).find((item) => item.title__ === 'Include tag')?.submenu,
     );

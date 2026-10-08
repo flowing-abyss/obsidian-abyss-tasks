@@ -7605,7 +7605,7 @@ describe('central task contextmenu lifecycle', () => {
   });
 });
 
-it('central contextmenu preserves exact child continuation guards and the selected bulk menu route', async () => {
+it('central contextmenu preserves exact child menu authority, marker guards and the selected bulk route', async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(2026, 9, 8, 12));
   const addItem = methodOf(Menu.prototype, 'addItem');
@@ -7646,17 +7646,13 @@ it('central contextmenu preserves exact child continuation guards and the select
       target: { type: 'subtask' },
       node: { title: 'Child', tags: ['#child'] },
     });
-    expect(single.mock.lastCall?.[2]).toEqual({
-      kind: 'continuation',
-      due: localDate('2026-10-09'),
-    });
+    expect(child.querySelector('[role=checkbox]')?.getAttribute('aria-disabled')).toBe('true');
     const items = (
       expectDefined(menu) as unknown as {
         menuItems__: Array<{ title__: string; disabled: boolean }>;
       }
     ).menuItems__;
-    expect(items.find((item) => item.title__ === 'Status in task details…')?.disabled).toBe(false);
-    expect(items.find((item) => item.title__ === 'Status')).toBeUndefined();
+    expect(items.find((item) => item.title__ === 'Status')?.disabled).toBe(false);
     expect(items.find((item) => item.title__.startsWith('Archive'))?.disabled).toBe(true);
     expectDefined(menu).hide();
     expectDefined(child.querySelector<HTMLElement>('[role=checkbox]')).click();

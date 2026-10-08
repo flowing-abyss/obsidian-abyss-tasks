@@ -44,7 +44,6 @@ export interface TaskMenuTargets {
   resolve(signal: AbortSignal): Promise<readonly TaskSelectedNode[]>;
 }
 interface TaskMenusHost {
-  openTaskDetails(task: TaskCommandSubject): void;
   beginBulkResolution(card: HTMLElement): () => void;
   reportTargetFailure(error: unknown): void;
   showTaskMenu(menu: Menu, event: MouseEvent, card: HTMLElement): void;
@@ -113,7 +112,6 @@ export class TaskMenus {
   createTaskContextMenu(
     card: HTMLElement,
     task: TaskCommandSubject,
-    completion: TaskOccurrenceCompletion = { kind: 'allowed' },
     representedTags: readonly string[] = [],
   ): Menu {
     const today = localDate(moment().format('YYYY-MM-DD'));
@@ -123,7 +121,7 @@ export class TaskMenus {
     this.#addTaskTagMenuItems(menu, task);
     this.#addTaskDatePickerMenuItem(menu, card, task);
     this.#addTaskEditMenuItems(menu, card, task);
-    this.#addTaskPropertyMenuItems(menu, task, completion);
+    this.#addTaskPropertyMenuItems(menu, task);
     this.#addTaskTagFilterMenuItems(menu, [...this.#getTaskTags(task), ...representedTags]);
     this.#addTaskOpenMenuItem(menu, task);
     this.#addTaskDangerMenuItems(menu, task);
@@ -191,11 +189,7 @@ export class TaskMenus {
     }
   }
 
-  #addTaskPropertyMenuItems(
-    menu: Menu,
-    task: TaskCommandSubject,
-    completion: TaskOccurrenceCompletion,
-  ): void {
+  #addTaskPropertyMenuItems(menu: Menu, task: TaskCommandSubject): void {
     menu.addItem((item) => {
       item.setTitle('Priority').setIcon('arrow-up-narrow-wide').setSection('priority');
       const sub = getSubmenu(item);
@@ -204,15 +198,9 @@ export class TaskMenus {
 
     menu.addItem((item) => {
       item.setIcon('check-square').setSection('priority');
-      if (completion.kind === 'continuation') {
-        item.setTitle('Status in task details…').onClick(() => {
-          this.#options.host.openTaskDetails(task);
-        });
-        return;
-      }
       item.setTitle('Status');
       buildStatusSubmenu(getSubmenu(item), commandNode(task), this.#options.statusRegistry, (c) => {
-        runAsyncAction(this.#options.commands.setTaskStatus(task, c, completion));
+        runAsyncAction(this.#options.commands.setTaskStatus(task, c));
       });
     });
 
@@ -325,11 +313,7 @@ export class TaskMenus {
       );
     menu.addItem((item) =>
       item
-        .setTitle(
-          commandTarget(task)?.type === 'subtask'
-            ? 'Archive — promote to an independent task first'
-            : 'Archive',
-        )
+        .setTitle('Archive')
         .setDisabled(commandTarget(task)?.type !== 'task')
         .setIcon('archive')
         .setSection('danger')
@@ -628,11 +612,7 @@ export class TaskMenus {
     });
 
     menu.addItem((item) => {
-      item
-        .setTitle('Status')
-        .setIcon('check-square')
-        .setSection('priority')
-        .setDisabled(targets.summaries.every((task) => task.completion?.kind === 'continuation'));
+      item.setTitle('Status').setIcon('check-square').setSection('priority');
       const sub = getSubmenu(item);
       buildStatusSubmenu(sub, firstSelectedTask, this.#options.statusRegistry, (c) => {
         this.#runTargets(targets, (tasks) => this.#options.commands.setBulkTaskStatus(tasks, c));

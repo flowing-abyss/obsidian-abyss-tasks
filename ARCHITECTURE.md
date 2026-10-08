@@ -878,17 +878,20 @@ TaskCommands accepts `TaskCommandSubject` (an ordinary selection node or a hydra
 CenterPanel attaches the public Today occurrence capability to finite hydrated Today rows before
 selection and mounting, preserving it across every grouping just as compact rows do.
 Mounted cards carry their current `TaskOccurrencePresentation.completion` through status clicks,
-keyboard activation and quick menus. `StatusMarker` owns independent dependency and continuation
-reasons on one focusable checkbox control; its status shape, icon and priority metadata remain
+keyboard activation and marker quick menus. `StatusMarker` owns independent dependency and
+continuation reasons on one focusable checkbox control; its status shape, icon and priority metadata remain
 unchanged. Continuations suppress click/Space/Enter and explain the localized due-row or task-details
 path. Dependency-only keyboard confirmation remains available; dependency dashes take visual
-precedence when both reasons apply. Passive quick/context status editing opens the exact canonical
-Inspector path instead of an actionable status submenu. Valid interval metadata retains both
-localized endpoints and a neutral line/endcap glyph, including terminal and overdue rows; fallback
+precedence when both reasons apply. Passive marker quick-status editing opens the exact canonical
+Inspector path. Card context-menu Status choices apply to the exact task or child regardless of occurrence completion, through the
+existing application command, confirmation and dependency checks. Valid interval metadata retains
+both localized endpoints and a neutral line/endcap glyph, including terminal and overdue rows; fallback
 points retain ordinary date metadata. Nondate cards remain allowed and derive missing range metadata
 through the public occupied-date helper without acquiring an occurrence restriction.
-Menus resolve `TaskSelectedNode` entries with explicit occurrence completion capabilities;
-continuation-only status actions stay passive, while Inspector callers default to allowed.
+Bulk menus resolve `TaskSelectedNode` entries with explicit occurrence completion capabilities;
+explicit Status choices act on every distinct selected physical node, including continuation-only
+selections. Marker and selection projections retain completion metadata; Inspector callers default
+to allowed.
 Date and recurrence surfaces retain the exact subject through submission, and timers use its
 physical target. Source navigation and recurrence opening resolve the canonical owner through the
 public query facade and verify the exact child path; unavailable authority receives existing action

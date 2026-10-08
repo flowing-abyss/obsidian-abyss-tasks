@@ -544,20 +544,22 @@ describe('sequential exact node batches against vault source', () => {
     h.commands.dispose();
     h.index.destroy();
   });
-  it('deduplicates selected occurrence capability and excludes only continuation-only nodes', async () => {
+  it('applies explicit bulk status once per exact node despite duplicate continuation rows', async () => {
     const h = await realCommands('- [ ] Parent\n  - [ ] Child\n');
     const root = expectDefined(h.nodes[0]);
     const child = expectDefined(h.nodes[1]);
     const continuation = { kind: 'continuation' as const, due: localDate('2026-10-09') };
+    const execute = vi.spyOn(h.service, 'execute');
     await h.commands.setBulkTaskStatus(
       [
         { task: root, completion: continuation },
         { task: child, completion: continuation },
-        { task: child, completion: { kind: 'allowed' } },
+        { task: child, completion: continuation },
       ],
       '/',
     );
-    expect(await h.read('source.md')).toBe('- [ ] Parent\n  - [/] Child\n');
+    expect(await h.read('source.md')).toBe('- [/] Parent\n  - [/] Child\n');
+    expect(execute).toHaveBeenCalledTimes(2);
     h.commands.dispose();
     h.index.destroy();
   });

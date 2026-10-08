@@ -475,26 +475,15 @@ export class TaskCommands {
   }
 
   async setBulkTaskStatus(selected: readonly TaskSelectedNode[], symbol: string): Promise<void> {
-    const all = planTaskNodeBatch(
+    await this.#batch(
       selected.map((entry) => entry.task),
       'status',
+      (task) => ({
+        type: 'set-status',
+        target: task.target,
+        symbol,
+      }),
     );
-    const eligible = all.filter((task) =>
-      selected.some(
-        (entry) =>
-          sameTaskNodeRef(entry.task.target, task.target) && entry.completion.kind === 'allowed',
-      ),
-    );
-    const excluded = all.length - eligible.length;
-    if (excluded > 0)
-      new Notice(
-        `${excluded} task${excluded === 1 ? '' : 's'} unchanged: complete from the due-date row or task details.`,
-      );
-    await this.#batch(eligible, 'status', (task) => ({
-      type: 'set-status',
-      target: task.target,
-      symbol,
-    }));
   }
 
   async moveTaskToProject(task: TaskCommandSubject, path: string): Promise<void> {

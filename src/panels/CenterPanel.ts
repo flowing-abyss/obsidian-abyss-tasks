@@ -1713,9 +1713,6 @@ export class CenterPanel {
       timeTracking: this.timeTracking_abyssPrivate,
       commands: this.taskCommands_abyssPrivate,
       host: {
-        openTaskDetails: (task) => {
-          this.openTaskDetails_abyssPrivate(task);
-        },
         beginBulkResolution: (card) => {
           const record = this.cardReturn_abyssPrivate;
           if (record?.opener !== card) return () => {};
@@ -3447,20 +3444,11 @@ export class CenterPanel {
       this.taskMenus_abyssPrivate.showBulkContextMenu(event, card, targets);
       return;
     }
-    const order = this.listOrder_abyssPrivate();
-    const row = order.rowAt(order.rowIndexOf(key));
-    const occurrenceCompletion = row?.kind === 'task' ? row.presentation?.completion : undefined;
-    const completion = selection.has(key) ? targets.summaries[0]?.completion : occurrenceCompletion;
     const representedTags =
       this.state_abyssPrivate.get('mode') === 'search'
         ? [...card.querySelectorAll('.abyss-task-tag')].map((tag) => tag.textContent)
         : [];
-    const menu = this.taskMenus_abyssPrivate.createTaskContextMenu(
-      card,
-      task,
-      completion,
-      representedTags,
-    );
+    const menu = this.taskMenus_abyssPrivate.createTaskContextMenu(card, task, representedTags);
     this.showTaskMenu_abyssPrivate(menu, event, card);
   }
 
