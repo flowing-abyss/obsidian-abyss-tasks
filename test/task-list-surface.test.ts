@@ -500,18 +500,39 @@ describe('surface transaction admission', () => {
     h.onMeasure((key) => {
       if (key !== 'n.md:99' || ++reads !== 2) return;
       h.size(0, 0);
+      h.heights.set(key, 0);
       h.destroyed.length = 0;
       h.writes.mockClear();
     });
     expect(h.surface.reveal('n.md:99')).toBeUndefined();
     expect(reads).toBe(2);
+    expect(h.reportFailure).not.toHaveBeenCalled();
     expect(h.destroyed).toEqual([]);
     expect(h.writes).not.toHaveBeenCalled();
     h.onMeasure(undefined);
+    h.heights.delete('n.md:99');
     h.size(600, 480);
     h.surface.resume();
     expect(h.surface.reveal('n.md:99')).toBeDefined();
     expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
+  it('reports invalid destination geometry while the surface remains active', () => {
+    const h = harness();
+    h.surface.update(rows(100), presentation);
+    h.heights.set('n.md:99', 0);
+    h.writes.mockClear();
+    expect(h.surface.reveal('n.md:99')).toBeUndefined();
+    expect(h.reportFailure).toHaveBeenCalledExactlyOnceWith(
+      new Error('Task reveal row has invalid geometry'),
+    );
+    expect(h.surface.mountedKeys()).toEqual([]);
+    expect(h.writes).not.toHaveBeenCalled();
+    h.heights.delete('n.md:99');
+    h.surface.resume();
+    expect(h.surface.reveal('n.md:99')).toBeDefined();
+    expect(h.reportFailure).toHaveBeenCalledTimes(1);
     h.surface.destroy();
   });
 

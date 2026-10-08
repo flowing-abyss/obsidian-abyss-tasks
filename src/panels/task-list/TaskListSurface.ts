@@ -870,7 +870,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       top === undefined
         ? 0
         : this.#options.scroll.scrollTop - this.#origin() - this.#place(top).nativeTop;
-    if (!current()) return 0;
+    if (!this.#admitReconciliation(current)) return 0;
     const projectedTop = rect.top + displacement;
     const projectedBottom = rect.bottom + displacement;
     if (![projectedTop, projectedBottom, rect.height].every(Number.isFinite) || rect.height <= 0)
