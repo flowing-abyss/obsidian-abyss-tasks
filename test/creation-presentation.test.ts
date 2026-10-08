@@ -1142,125 +1142,122 @@ it('waits for real compact creation hydration and Markdown, then repaints only r
   }
 });
 
-it.each(['hydration', 'markdown'] as const)(
-  'revokes the real compact creation %s wait on later capture, source and window intent',
-  async (stage) => {
-    for (const reason of [
-      'input',
-      'blur',
-      'filter',
-      'navigation',
-      'source',
-      'hidden',
-      'migration',
-    ] as const) {
-      const settings = structuredClone(DEFAULT_SETTINGS);
-      settings.taskFilePath = 'created.md';
-      const h = await mountCanonicalSearchUi(
-        {
-          'many.md': Array.from({ length: 1200 }, (_, n) => `- [ ] needle ${n}`).join('\n'),
-          'created.md': '',
-        },
-        settings,
-        'tasks',
-        undefined,
-        true,
-      );
-      const hydration = deferred<void>(),
-        markdown = deferred<void>();
-      const entered = deferred<void>(),
-        rendered = deferred<void>();
-      let request: CreationRevealRequest | undefined;
-      let migrated: ReturnType<typeof taskViewportOwner> | undefined;
-      try {
-        h.query('needle');
-        await h.completed();
-        const presentation = expectDefined(h.creation);
-        const present = presentation.present.bind(presentation);
-        vi.spyOn(presentation, 'present').mockImplementation((result, description, authority) => {
-          if (authority !== undefined) {
-            const reveal = authority.reveal.bind(authority);
-            vi.spyOn(authority, 'reveal').mockImplementation((ref, current) => {
-              request = current;
-              return reveal(ref, current);
-            });
-          }
-          present(result, description, authority);
-        });
-        const actual = h.index.resolveSearchHits.bind(h.index);
-        vi.spyOn(h.index, 'resolveSearchHits').mockImplementation(async (hits, signal) => {
-          const created = h.source.files().find((file) => file.path === 'created.md');
-          if (
-            created !== undefined &&
-            hits.some((hit) =>
-              [...h.source.nodes(created)].some((node) => node.rootId === hit.address.rootId),
-            )
-          ) {
-            entered.resolve();
-            await hydration.promise;
-          }
-          return actual(hits, signal);
-        });
-        vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, holder) => {
-          holder.createEl('strong', { text });
-          if (text.includes('created needle')) {
-            rendered.resolve();
-            await markdown.promise;
-          }
-        });
-        expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')).click();
-        await flushMicrotasks();
-        const input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-capture-input'));
-        input.value = '**created needle**';
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-        await entered.promise;
-        await h.completed();
-        const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
-        const reveal = vi.spyOn(surface, 'reveal');
-        await settleCreationStage(stage, hydration, rendered);
-        expect(request).toBeDefined();
-        if (reason === 'input') {
-          input.value = 'new draft';
+// Each intent owns its test deadline and hooks; timed-out loops can outlive mock cleanup.
+describe.each(['hydration', 'markdown'] as const)(
+  'real compact creation %s cancellation',
+  (stage) => {
+    it.each(['input', 'blur', 'filter', 'navigation', 'source', 'hidden', 'migration'] as const)(
+      'revokes the wait on later %s intent',
+      async (reason) => {
+        const settings = structuredClone(DEFAULT_SETTINGS);
+        settings.taskFilePath = 'created.md';
+        const h = await mountCanonicalSearchUi(
+          {
+            'many.md': Array.from({ length: 1200 }, (_, n) => `- [ ] needle ${n}`).join('\n'),
+            'created.md': '',
+          },
+          settings,
+          'tasks',
+          undefined,
+          true,
+        );
+        const hydration = deferred<void>(),
+          markdown = deferred<void>();
+        const entered = deferred<void>(),
+          rendered = deferred<void>();
+        let request: CreationRevealRequest | undefined;
+        let migrated: ReturnType<typeof taskViewportOwner> | undefined;
+        try {
+          h.query('needle');
+          await h.completed();
+          const presentation = expectDefined(h.creation);
+          const present = presentation.present.bind(presentation);
+          vi.spyOn(presentation, 'present').mockImplementation((result, description, authority) => {
+            if (authority !== undefined) {
+              const reveal = authority.reveal.bind(authority);
+              vi.spyOn(authority, 'reveal').mockImplementation((ref, current) => {
+                request = current;
+                return reveal(ref, current);
+              });
+            }
+            present(result, description, authority);
+          });
+          const actual = h.index.resolveSearchHits.bind(h.index);
+          vi.spyOn(h.index, 'resolveSearchHits').mockImplementation(async (hits, signal) => {
+            const created = h.source.files().find((file) => file.path === 'created.md');
+            if (
+              created !== undefined &&
+              hits.some((hit) =>
+                [...h.source.nodes(created)].some((node) => node.rootId === hit.address.rootId),
+              )
+            ) {
+              entered.resolve();
+              await hydration.promise;
+            }
+            return actual(hits, signal);
+          });
+          vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, text, holder) => {
+            holder.createEl('strong', { text });
+            if (text.includes('created needle')) {
+              rendered.resolve();
+              await markdown.promise;
+            }
+          });
+          expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')).click();
+          await flushMicrotasks();
+          const input = expectDefined(
+            h.root.querySelector<HTMLInputElement>('.abyss-capture-input'),
+          );
+          input.value = '**created needle**';
           input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+          await entered.promise;
+          await h.completed();
+          const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
+          const reveal = vi.spyOn(surface, 'reveal');
+          await settleCreationStage(stage, hydration, rendered);
+          expect(request).toBeDefined();
+          if (reason === 'input') {
+            input.value = 'new draft';
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          if (reason === 'blur') {
+            const outside = document.body.createEl('input');
+            outside.focus();
+            outside.remove();
+          }
+          if (reason === 'filter') h.query('different');
+          if (reason === 'navigation') h.panel['navigation_abyssPrivate'].openList('upcoming');
+          if (reason === 'source')
+            h.index.installCommittedContent('created.md', '- [ ] replacement needle');
+          if (reason === 'hidden') {
+            h.root.hide();
+            h.root.ownerDocument.dispatchEvent(new Event('visibilitychange'));
+          }
+          if (reason === 'migration') {
+            migrated = taskViewportOwner();
+            migrated.doc.body.append(h.root);
+            h.panel.onWindowMigrated();
+          }
+          await vi.waitFor(() => {
+            expect(request?.signal.aborted).toBe(true);
+          });
+          hydration.resolve();
+          markdown.resolve();
+          await flushMicrotasks();
+          await flushMicrotasks();
+          expect(reveal).not.toHaveBeenCalled();
+          expect(h.root.querySelector('.is-just-created')).toBeNull();
+          expect(h.panel['creationAttempts_abyssPrivate'].size).toBe(0);
+          expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThan(1200);
+        } finally {
+          hydration.resolve();
+          markdown.resolve();
+          h.dispose();
+          migrated?.destroy();
         }
-        if (reason === 'blur') {
-          const outside = document.body.createEl('input');
-          outside.focus();
-          outside.remove();
-        }
-        if (reason === 'filter') h.query('different');
-        if (reason === 'navigation') h.panel['navigation_abyssPrivate'].openList('upcoming');
-        if (reason === 'source')
-          h.index.installCommittedContent('created.md', '- [ ] replacement needle');
-        if (reason === 'hidden') {
-          h.root.hide();
-          h.root.ownerDocument.dispatchEvent(new Event('visibilitychange'));
-        }
-        if (reason === 'migration') {
-          migrated = taskViewportOwner();
-          migrated.doc.body.append(h.root);
-          h.panel.onWindowMigrated();
-        }
-        await vi.waitFor(() => {
-          expect(request?.signal.aborted).toBe(true);
-        });
-        hydration.resolve();
-        markdown.resolve();
-        await flushMicrotasks();
-        await flushMicrotasks();
-        expect(reveal).not.toHaveBeenCalled();
-        expect(h.root.querySelector('.is-just-created')).toBeNull();
-        expect(h.panel['creationAttempts_abyssPrivate'].size).toBe(0);
-        expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThan(1200);
-      } finally {
-        hydration.resolve();
-        markdown.resolve();
-        h.dispose();
-        migrated?.destroy();
-        vi.restoreAllMocks();
-      }
-    }
+      },
+    );
   },
 );
 
