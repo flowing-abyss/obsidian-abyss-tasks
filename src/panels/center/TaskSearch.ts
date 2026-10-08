@@ -237,7 +237,11 @@ export class TaskSearch {
     this.#results = results;
     this.#filter = true;
     this.#attach(root);
-    this.#schedule(query);
+    const browse =
+      query.trim() === '' &&
+      this.#options.state.get('selectedList') === 'upcoming' &&
+      this.#options.view().list.groupBy === 'date';
+    this.#schedule(query, browse ? 0 : 60);
   }
   #attach(root: HTMLElement): void {
     this.#owner = root.ownerDocument.defaultView;

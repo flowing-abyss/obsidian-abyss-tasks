@@ -958,6 +958,7 @@ it.each([
   'keeps %s endpoint actions ordinary and only valid interval metadata',
   (_name, start, due, valid) => {
     const h = renderer();
+    h.state.set('selectedList', 'upcoming');
     const original = task({ planning: { start, due } });
     const occurrence: TaskOccurrencePresentation = {
       kind: 'daily',
@@ -1003,6 +1004,7 @@ it.each([undefined, { kind: 'node' as const, completion: { kind: 'allowed' as co
 
 it('renders the contributed point date for an inverted range without an interval glyph', () => {
   const h = renderer();
+  h.state.set('selectedList', 'upcoming');
   const original = task({ planning: { start: '2026-10-10', due: '2026-10-09' } });
   const mount = h.subject.mount(document.body, original, [], {
     selected: false,

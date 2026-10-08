@@ -2,8 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { ListSelection } from '../src/app/AppState';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import { selectTaskNodes } from '../src/task-lists/TaskListSelector';
-import { admitsTaskNode, isActiveTaskNode } from '../src/task-lists/taskNodeMembership';
+import {
+  admitsTaskNode,
+  isActiveTaskNode,
+  taskNodeMembershipValue,
+} from '../src/task-lists/taskNodeMembership';
 import { localDate } from '../src/tasks';
+import { expectDefined } from './helpers';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 
 const today = localDate('2026-10-08');
@@ -15,6 +20,36 @@ const markdown =
   '- [ ] Parent #one-off\n  - [/] Child #INBOX 🛫 2026-10-07 📅 2026-10-09\n    - [ ] Deep untagged\n    - [ ] Deep tagged #inbox\n  - [x] Done #inbox\n- [ ] Both #inbox\n  - [ ] Both child #inbox\n- [ ] Untagged\n- [ ] Work #work\n  - [ ] Nested #work/deep';
 
 describe('own-node destination membership', () => {
+  it.each(['Parent', 'Deep tagged'])(
+    'reads only membership fields from %s without enumerating the node',
+    async (title) => {
+      const h = await createCanonicalSearchHarness({ 'tasks.md': markdown }, settings);
+      try {
+        const node = expectDefined(h.index.listNodes().find(({ node }) => node.title === title));
+        let enumerations = 0;
+        const projected = taskNodeMembershipValue({
+          ...node,
+          node: new Proxy(node.node, {
+            ownKeys(target) {
+              enumerations++;
+              return Reflect.ownKeys(target);
+            },
+          }),
+        });
+        expect(enumerations).toBe(0);
+        expect(projected).toEqual({
+          depth: node.path.length,
+          tags: node.node.tags,
+          planning: node.node.planning,
+          status: node.node.status,
+          statusSymbol: node.node.statusSymbol,
+          source: { filePath: 'tasks.md', line: title === 'Parent' ? 0 : 3 },
+        });
+      } finally {
+        h.close();
+      }
+    },
+  );
   it.each([
     ['tag', 'tag', ['Both', 'Both child', 'Child', 'Deep tagged']],
     ['both', 'both', ['Both', 'Both child', 'Child', 'Deep tagged', 'Untagged']],

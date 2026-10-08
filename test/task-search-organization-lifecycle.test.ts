@@ -1,10 +1,97 @@
 import { Notice } from 'obsidian';
 import { expect, it, vi } from 'vitest';
 import { BrowserTaskCancelled, createBrowserTaskScheduler } from '../src/browserTaskScheduler';
-import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import { expectDefined, useRealMoment } from './helpers';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 useRealMoment();
+it('admits blank Upcoming at timer zero while debouncing nonblank filters and superseded queries', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2026, 9, 8, 12));
+  const h = await mountCanonicalSearchUi(
+    { 'browse.md': '- [ ] Range 🛫 2026-10-07 📅 2026-10-09' },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+    () => ({ now: () => 0, yield: async () => {} }),
+  );
+  try {
+    await h.search.prepare(new AbortController().signal);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 8, 12));
+    const open = vi.spyOn(h.search, 'open');
+    const projection = vi.spyOn(h.index, 'organization');
+    h.state.batch(() => {
+      h.state.set('selectedList', 'upcoming');
+      h.state.set('centerListViewState', getListViewDefaults('upcoming'));
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(projection).toHaveBeenCalledTimes(1);
+    expect(open).not.toHaveBeenCalled();
+    projection.mockClear();
+    h.state.set('centerFilter', 'Range');
+    await vi.advanceTimersByTimeAsync(59);
+    expect(projection).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(projection).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      { kind: 'nodes', query: 'Range' },
+      expect.any(AbortSignal),
+    );
+    projection.mockClear();
+    open.mockClear();
+    h.state.set('centerFilter', 'Ran');
+    await vi.advanceTimersByTimeAsync(30);
+    h.state.set('centerFilter', 'Range final');
+    await vi.advanceTimersByTimeAsync(59);
+    expect(projection).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(projection).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      { kind: 'nodes', query: 'Range final' },
+      expect.any(AbortSignal),
+    );
+  } finally {
+    h.dispose();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
+});
+it.each(['destroy', 'navigate'] as const)(
+  'cancels blank Upcoming before timer zero on %s',
+  async (action) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 8, 12));
+    const h = await mountCanonicalSearchUi(
+      { 'browse.md': '- [ ] Range 🛫 2026-10-07 📅 2026-10-09' },
+      structuredClone(DEFAULT_SETTINGS),
+      'tasks',
+      () => ({ now: () => 0, yield: async () => {} }),
+    );
+    try {
+      await h.search.prepare(new AbortController().signal);
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(2026, 9, 8, 12));
+      const open = vi.spyOn(h.search, 'open');
+      const projection = vi.spyOn(h.index, 'organization');
+      h.state.batch(() => {
+        h.state.set('selectedList', 'upcoming');
+        h.state.set('centerListViewState', getListViewDefaults('upcoming'));
+      });
+      if (action === 'destroy') h.dispose();
+      else h.state.set('selectedList', { type: 'tag', tag: '#absent' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(projection).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
+      expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(0);
+    } finally {
+      h.dispose();
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  },
+);
 it('reports a live raw AbortError once as unavailable with sanitized diagnostics and ordinary-input recovery', async () => {
   const sentinel = 'PRIVATE task query settings exception';
   const notice = vi

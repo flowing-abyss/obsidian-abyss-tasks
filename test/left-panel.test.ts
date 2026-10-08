@@ -10,6 +10,7 @@ import type { CalendarSettings } from '../src/settings/types';
 import { RenameTagModal } from '../src/tags/RenameTagModal';
 import { TagManager } from '../src/tags/TagManager';
 import { discoveredPrefixGroupId, discoveredTagGroupId } from '../src/tags/effectiveTagGroups';
+import * as taskTagCatalog from '../src/tags/taskTagCatalog';
 import { selectTaskNodes } from '../src/task-lists/TaskListSelector';
 import type { TaskApplicationApi, TaskSnapshot } from '../src/tasks';
 import { localDate } from '../src/tasks';
@@ -174,6 +175,20 @@ function makePanel(
 }
 
 describe('LeftPanel smart lists', () => {
+  it("collects this render's observed tags once on mount and refresh", () => {
+    const collect = vi.spyOn(taskTagCatalog, 'collectTaskNodeTags');
+    const h = makePanel([task({ tags: ['#work'] })], {}, ['#work']);
+    try {
+      expect(collect).toHaveBeenCalledTimes(1);
+      const before = h.el.textContent;
+      collect.mockClear();
+      h.panel.refresh();
+      expect(collect).toHaveBeenCalledTimes(1);
+      expect(h.el.textContent).toBe(before);
+    } finally {
+      h.panel.destroy();
+    }
+  });
   it('does not add a redundant Lists heading above the smart-list rows', () => {
     const { el } = makePanel();
     expect(el.textContent).not.toContain('Lists');
@@ -3169,6 +3184,7 @@ it('counts independently active canonical children, ranges and custom status sym
   settings.inbox = { ...settings.inbox, mode: 'both', tag: '#inbox' };
   settings.tagGroups = [
     { id: 'inbox-group', name: 'Inbox group', mode: 'prefix', prefix: 'inbox' },
+    { id: 'dormant-group', name: 'Dormant group', mode: 'manual', tags: ['#dormant'] },
   ];
   settings.taskStatuses = settings.taskStatuses.filter(
     ({ symbol }) => symbol !== '?' && symbol !== '!',
@@ -3187,24 +3203,32 @@ it('counts independently active canonical children, ranges and custom status sym
   const h = await createCanonicalSearchHarness(
     {
       'nodes.md':
-        '- [!] Parent #one-off\n  - [?] Child #INBOX 🛫 2026-10-07 📅 2026-10-09\n    - [ ] Deep untagged\n  - [x] Done #inbox\n- [ ] Both #inbox\n  - [?] Both child #inbox 🛫 2026-10-08\n- [x] Completed parent\n  - [!] Independent #inbox 🛫 2026-10-10\n- [ ] Root untagged',
+        '- [!] Parent #one-off\n  - [?] Child #INBOX 🛫 2026-10-07 📅 2026-10-09\n    - [ ] Deep untagged\n    - [ ] Deep tagged #inbox #INBOX/deep #archived\n  - [x] Done #inbox\n- [ ] Both #inbox\n  - [?] Both child #inbox 🛫 2026-10-08\n- [x] Completed parent\n  - [!] Independent #inbox 🛫 2026-10-10\n- [ ] Root untagged',
       'excluded.md': '- [!] Excluded #inbox\n  - [?] Excluded child #inbox 🛫 2026-10-08',
     },
     settings,
   );
   await h.index.refreshSourceExclusion(({ filePath }) => filePath === 'excluded.md');
-  const { el, panel } = makePanel([...h.index.list()], settings, ['#inbox', '#one-off']);
+  const { el, panel } = makePanel(
+    [...h.index.list()],
+    settings,
+    ['#inbox', '#one-off', '#dormant', '#archived'],
+    ['#archived'],
+  );
   try {
     const badges = Array.from(el.querySelectorAll('.abyss-left-section > .abyss-left-item'))
       .slice(0, 3)
       .map((row) => row.querySelector('.abyss-left-count')?.textContent);
-    expect(badges).toEqual(['5', '2', '2']);
+    expect(badges).toEqual(['6', '2', '2']);
     expect(
       Array.from(el.querySelectorAll('.abyss-pinned-tag .abyss-left-count')).map(
         (badge) => badge.textContent,
       ),
-    ).toEqual(['4', '1']);
-    expect(el.querySelector('.abyss-tag-group-header .abyss-left-count')?.textContent).toBe('4');
+    ).toEqual(['5', '1']);
+    expect(el.querySelectorAll('.abyss-pinned-tag')).toHaveLength(3);
+    expect(el.querySelector('.abyss-tag-group-header .abyss-left-count')?.textContent).toBe('5');
+    expect(el.textContent).toContain('Dormant group');
+    expect(el.textContent).not.toContain('archived');
     const input = {
       tasks: h.index.listNodes(),
       settings,
@@ -3212,7 +3236,7 @@ it('counts independently active canonical children, ranges and custom status sym
       nowMs: 0,
       viewState: getListViewDefaults('inbox'),
     };
-    expect(selectTaskNodes({ ...input, selection: 'inbox' })).toHaveLength(5);
+    expect(selectTaskNodes({ ...input, selection: 'inbox' })).toHaveLength(6);
     expect(selectTaskNodes({ ...input, selection: 'today' })).toHaveLength(2);
     expect(selectTaskNodes({ ...input, selection: 'upcoming' })).toHaveLength(2);
     expect(

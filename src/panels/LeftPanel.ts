@@ -303,7 +303,7 @@ export class LeftPanel {
     // renders so the "+" (zero-friction tag entry) stays discoverable.
     const groups = resolveEffectiveTagGroups(
       this.settings_abyssPrivate,
-      collectTaskNodeTags(allNodes),
+      membership.observedTags,
     ).filter((group) => !group.archived);
     this.renderCollapsibleSection_abyssPrivate('tags', 'Tags', {
       addAction: (): void => {

@@ -44,8 +44,11 @@ export function isActiveTaskNode(value: Pick<TaskMembershipValue, 'status'>): bo
 }
 export function taskNodeMembershipValue(task: TaskNodeSnapshot): TaskMembershipValue {
   return {
-    ...task.node,
     depth: task.path.length,
+    tags: task.node.tags,
+    planning: task.node.planning,
+    status: task.node.status,
+    statusSymbol: task.node.statusSymbol,
     source: { filePath: task.root.source.filePath, line: taskNodeSourceLine(task.target) },
   };
 }
