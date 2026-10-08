@@ -9936,3 +9936,10 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   vertical-align: middle;
   color: var(--text-muted);
 }
+
+/* Calendar rows already provide the compact indicator gap. Keep the button's start and block
+   padding for its native hover/focus target without adding space between the icon and title. */
+.abyss-panel-view .abyss-calendar-leading-row > .abyss-task-parent-btn {
+  margin-inline-end: 0;
+  padding-inline-end: 0;
+}
