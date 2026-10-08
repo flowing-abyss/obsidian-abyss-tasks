@@ -9929,7 +9929,10 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 }
 
 .abyss-panel-view .abyss-task-parent-btn {
+  display: inline-flex;
   flex-shrink: 0;
+  margin-inline-end: var(--size-2-1);
   padding: var(--size-2-1);
+  vertical-align: middle;
   color: var(--text-muted);
 }
