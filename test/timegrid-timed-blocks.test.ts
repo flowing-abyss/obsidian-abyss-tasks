@@ -1,9 +1,10 @@
 import { Component, Platform, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildDefaultTaskStatuses } from '../src/settings/defaults';
+import { TimedBlockFocusRetention } from '../src/panels/calendar/timedBlockFocusRetention';
+import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { localDate } from '../src/tasks';
-import { taskPresentationKey } from '../src/ui/taskPresentationIdentity';
+import { renderedTaskNodeElements, taskPresentationKey } from '../src/ui/taskPresentationIdentity';
 import {
   calendarOccurrenceForRender,
   projectCalendarOccurrences,
@@ -17,10 +18,13 @@ import {
 } from '../src/views/timegrid/timedInteractions';
 import { cssDeclarationText, cssRuleContaining, cssValue } from './cssHelpers';
 import {
+  configuredTaskApplication,
+  createAppWithFiles,
   dispatchDnD,
   expectDefined,
   freshContainer,
   methodOf,
+  seedTaskCache,
   task,
   taskComment,
   taskFromCodecLine,
@@ -3340,4 +3344,74 @@ describe('compatibility timed preview day bounds', () => {
     window.dispatchEvent(new PointerEvent('pointerup', { clientY: 100000, pointerId: 82 }));
     expect(cbs.onDurationChange).toHaveBeenCalledWith(source, 1);
   });
+});
+
+it('restores keyboard focus to the edited same-title child beside siblings on the same day', async () => {
+  const source =
+    '- [ ] Parent ⏳ 2026-10-08 ⏰ 12:00\n  - [ ] Same #first ⏳ 2026-10-08 ⏰ 10:00 ⏱️ 90m\n  - [ ] Same #second ⏳ 2026-10-08 ⏰ 10:00 ⏱️ 90m\n';
+  const app = await createAppWithFiles({ 'children.md': source });
+  seedTaskCache(app, 'children.md', [{ task: ' ', parent: -1, line: 0 }]);
+  const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
+  await application.index.initialize();
+  const container = document.body.createDiv(),
+    cbs = callbacks();
+  const retention = new TimedBlockFocusRetention(application.tasks, {
+    root: () => container,
+    isCalendarActive: () => true,
+    follow: vi.fn(),
+  });
+  const date = localDate('2026-10-08');
+  const render = () => {
+    const occurrences = projectCalendarOccurrences(
+      application.index.forCalendarProjection([date]),
+      { from: date, to: date },
+      { removeScheduledDate: false },
+    ).occurrences;
+    renderTimedBlocksForDay(container, occurrences.map(taskSnapshotForCalendarOccurrence), {
+      ...cbs,
+      app,
+      onKeyboardIntent: (snapshot, intent) => {
+        retention.handleIntent(snapshot, intent);
+      },
+    });
+  };
+  try {
+    render();
+    const child = expectDefined(application.index.list()[0]?.subtasks[1]);
+    const origin = expectDefined(
+      renderedTaskNodeElements(container, { type: 'subtask', ref: child.ref }).find((e) =>
+        e.classList.contains('abyss-tg-block'),
+      ),
+    );
+    origin.focus();
+    expect(document.activeElement).toBe(origin);
+    origin.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowDown', shiftKey: true, bubbles: true }),
+    );
+    await vi.waitFor(() => {
+      expect(application.index.list()[0]?.subtasks[1]?.planning.duration).toBe(95);
+    });
+    expect(application.index.list()[0]?.subtasks[0]?.planning.duration).toBe(90);
+    retention.beforeViewUpdate();
+    const generation = retention.beginRender();
+    container.empty();
+    render();
+    retention.deferFocus(container, generation);
+    const next = expectDefined(application.index.list()[0]?.subtasks[1]);
+    const replacement = expectDefined(
+      renderedTaskNodeElements(container, { type: 'subtask', ref: next.ref }).find((e) =>
+        e.classList.contains('abyss-tg-block'),
+      ),
+    );
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(replacement);
+    });
+    expect(replacement.dataset['abyssTaskLine']).toBe('2');
+    expect(retention.hasPending()).toBe(false);
+  } finally {
+    retention.cancel();
+    cbs.component.unload();
+    container.remove();
+    application.index.destroy();
+  }
 });

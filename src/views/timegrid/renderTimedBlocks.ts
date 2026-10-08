@@ -4,7 +4,7 @@ import type { TagGroup } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import { tagColorFor } from '../../tags/tagColor';
 import { tagFillTextColorVar } from '../../tags/tagFillContrast';
-import type { TaskPriority, TaskSnapshot } from '../../tasks';
+import { taskNodeSourceLine, type TaskPriority, type TaskSnapshot } from '../../tasks';
 import { plainGhostTaskTitle } from '../../ui/plainGhostTaskTitle';
 import { renderTaskText } from '../../ui/renderTaskText';
 import { renderStatusMarker } from '../../ui/StatusMarker';
@@ -346,7 +346,10 @@ function createTimedBlockElement(
     timedSpanRole(layout.task, continuity, options?.date),
   );
   block.setAttribute('data-abyss-task-file', layout.task.source.filePath);
-  block.setAttribute('data-abyss-task-line', String(layout.task.source.line));
+  block.setAttribute(
+    'data-abyss-task-line',
+    String(taskNodeSourceLine(calendarOccurrenceForRender(layout.task).source.target)),
+  );
   block.setAttribute('data-abyss-start-minutes', String(layout.startMinutes));
   if (options != null) block.setAttribute('data-tg-segment-date', options.date);
   bindMaterializedInteractions(occurrence, () => {

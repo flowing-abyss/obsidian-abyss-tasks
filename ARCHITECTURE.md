@@ -1014,7 +1014,13 @@ CalendarCommands captures current context before awaiting, validates shape and i
 canonical planning, and reconstructs only through the materialized calendar adapter. Retired,
 mismatched and forecast context cannot fall back to file/line root lookup; genuinely legacy drags
 retain that path. The same canonical payload remains available to existing cross-panel consumers.
-Timed materialized child controls share root timing/resize gestures. The renderer
+Timed materialized child controls share root timing/resize gestures and the existing serialized
+keyboard queue. The queue builds commands through calendar exact-node adapters, captures the
+normalized prepared patch, and proves a child successor in the returned canonical root before
+rebinding pending intents. Unchanged results retain exact child references; unprovable successors
+retire the sequence. Timed DOM/focus locators and queue source identities use the canonical node
+source line, so siblings on the same day cannot inherit one another's keyboard focus. Forecasts
+remain non-mutating. The renderer
 and preview owners use occupied shape for continuity and handles, so raw inverted tokens cannot
 turn a point into a span; ordinary validation rejects invalid final pairs without writing bytes.
 

@@ -227,6 +227,9 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskPlanning: ['src/views/calendarOccurrences.ts', 'src/task-lists/taskNodeMembership.ts'],
   TaskStatus: ['src/task-lists/taskNodeMembership.ts'],
   taskNodeSourceLine: [
+    'src/ui/timedBlockKeyboardQueue.ts',
+    'src/panels/calendar/timedBlockFocusRetention.ts',
+    'src/views/timegrid/renderTimedBlocks.ts',
     'src/task-lists/taskNodeMembership.ts',
     'src/panels/center/TaskCardRenderer.ts',
   ],

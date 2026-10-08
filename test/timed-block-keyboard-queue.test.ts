@@ -1,10 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import type { TaskApplicationApi, TaskCommandResult, TaskRef, TaskSnapshot } from '../src/tasks';
+import {
+  localDate,
+  type TaskApplicationApi,
+  type TaskCommandResult,
+  type TaskRef,
+  type TaskSnapshot,
+} from '../src/tasks';
 import {
   TimedBlockKeyboardQueue,
   type TimedBlockKeyboardQueueHooks,
 } from '../src/ui/timedBlockKeyboardQueue';
+import {
+  calendarMutationTarget,
+  projectCalendarOccurrences,
+  taskSnapshotForCalendarOccurrence,
+} from '../src/views/calendarOccurrences';
 import type { TimedBlockKeyboardIntent } from '../src/views/timegrid/renderTimedBlocks';
 import {
   configuredTaskApplication,
@@ -72,6 +83,7 @@ function harness(execute = vi.fn<TaskApplicationApi['execute']>()) {
     onCommitted: vi.fn<TimedBlockKeyboardQueueHooks['onCommitted']>(),
     onSettled: vi.fn<TimedBlockKeyboardQueueHooks['onSettled']>(),
     present: vi.fn<TimedBlockKeyboardQueueHooks['present']>(),
+    onInvalidated: vi.fn<TimedBlockKeyboardQueueHooks['onInvalidated']>(),
   };
   return { api, hooks, queue: new TimedBlockKeyboardQueue(api, hooks) };
 }
@@ -302,6 +314,7 @@ describe('TimedBlockKeyboardQueue', () => {
         onCommitted: vi.fn<TimedBlockKeyboardQueueHooks['onCommitted']>(),
         onSettled: vi.fn<TimedBlockKeyboardQueueHooks['onSettled']>(),
         present: vi.fn<TimedBlockKeyboardQueueHooks['present']>(),
+        onInvalidated: vi.fn<TimedBlockKeyboardQueueHooks['onInvalidated']>(),
       };
       const queue = new TimedBlockKeyboardQueue(application.tasks, hooks);
       const original = expectDefined(application.index.list({ filePath: 'qa.md' })[0]);
@@ -715,3 +728,318 @@ describe('TimedBlockKeyboardQueue', () => {
     expect(hooks.onSettled).not.toHaveBeenCalled();
   });
 });
+
+describe('materialized child timed keyboard authority', () => {
+  it.each([
+    [
+      'time',
+      { type: 'move-time', deltaMinutes: 15 },
+      { time: '10:30', duration: 90, scheduled: '2026-10-08' },
+    ],
+    [
+      'duration',
+      { type: 'resize-duration', deltaMinutes: 5 },
+      { time: '10:00', duration: 100, scheduled: '2026-10-08' },
+    ],
+    [
+      'date',
+      { type: 'shift-schedule', days: 1 },
+      { time: '10:00', duration: 90, scheduled: '2026-10-10' },
+    ],
+    [
+      'span',
+      { type: 'extend-due', days: 1 },
+      {
+        time: '10:00',
+        duration: 90,
+        scheduled: '2026-10-08',
+        start: '2026-10-08',
+        due: '2026-10-10',
+      },
+    ],
+  ] as const)(
+    'keeps two queued %s edits on the exact canonical child',
+    async (_name, intent, planning) => {
+      const source =
+        'Untouched prose.\n- [ ] Parent ⏳ 2026-10-08 ⏰ 12:00\n  - [ ] Child ⏳ 2026-10-08 ⏰ 10:00 ⏱️ 90m\n  - [ ] Sibling ⏳ 2026-10-08 ⏰ 10:00 ⏱️ 90m\nTrailing prose.\n';
+      const app = await createAppWithFiles({ 'qa.md': source });
+      seedTaskCache(app, 'qa.md', [{ task: ' ', parent: -1, line: 1 }]);
+      const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
+      await application.index.initialize();
+      try {
+        const root = expectDefined(application.index.list()[0]);
+        const node = expectDefined(root.subtasks[0]);
+        const projection = projectCalendarOccurrences(
+          {
+            materialized: [{ root, node, target: { type: 'subtask', ref: node.ref } }],
+            recurringSources: [],
+          },
+          { from: localDate('2026-10-08'), to: localDate('2026-10-10') },
+          { removeScheduledDate: false },
+        );
+        const display = taskSnapshotForCalendarOccurrence(expectDefined(projection.occurrences[0]));
+        const hooks = harness().hooks,
+          queue = new TimedBlockKeyboardQueue(application.tasks, hooks);
+        queue.enqueue(display, intent);
+        queue.enqueue(display, intent);
+        await vi.waitFor(() => {
+          expect(hooks.onSettled).toHaveBeenCalledOnce();
+        });
+        const updated = expectDefined(application.index.list()[0]);
+        expect(updated.planning).toEqual(root.planning);
+        expect(updated.subtasks[0]?.planning).toEqual(planning);
+        expect(updated.subtasks[1]?.ref.originalBlock).toBe(
+          '  - [ ] Sibling ⏳ 2026-10-08 ⏰ 10:00 ⏱️ 90m',
+        );
+        expect(hooks.onCommitted).toHaveBeenCalledTimes(2);
+        for (const [committed] of hooks.onCommitted.mock.calls) {
+          expect(committed.title).toBe('Child');
+          expect(calendarMutationTarget(committed)?.type).toBe('subtask');
+        }
+        const file = expectDefined(app.vault.getFileByPath('qa.md'));
+        const bytes = await app.vault.read(file);
+        expect(bytes.startsWith('Untouched prose.\n- [ ] Parent ⏳ 2026-10-08 ⏰ 12:00\n')).toBe(
+          true,
+        );
+        expect(
+          bytes.endsWith('  - [ ] Sibling ⏳ 2026-10-08 ⏰ 10:00 ⏱️ 90m\nTrailing prose.\n'),
+        ).toBe(true);
+      } finally {
+        application.index.destroy();
+      }
+    },
+  );
+});
+
+it('rebinds normalized child duration before the next queued time edit', async () => {
+  const source = '- [ ] Parent\n  - [ ] Child ⏳ 2026-10-08 ⏰ 23:30 ⏱️ 30m\n';
+  const app = await createAppWithFiles({ 'qa.md': source });
+  seedTaskCache(app, 'qa.md', [{ task: ' ', parent: -1, line: 0 }]);
+  const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
+  await application.index.initialize();
+  try {
+    const root = expectDefined(application.index.list()[0]),
+      node = expectDefined(root.subtasks[0]);
+    const display = taskSnapshotForCalendarOccurrence(
+      expectDefined(
+        projectCalendarOccurrences(
+          {
+            materialized: [{ root, node, target: { type: 'subtask', ref: node.ref } }],
+            recurringSources: [],
+          },
+          { from: localDate('2026-10-08'), to: localDate('2026-10-08') },
+          { removeScheduledDate: false },
+        ).occurrences[0],
+      ),
+    );
+    const hooks = harness().hooks,
+      queue = new TimedBlockKeyboardQueue(application.tasks, hooks);
+    queue.enqueue(display, { type: 'resize-duration', deltaMinutes: 5 });
+    queue.enqueue(display, { type: 'move-time', deltaMinutes: -15 });
+    await vi.waitFor(() => {
+      expect(hooks.onSettled).toHaveBeenCalledOnce();
+    });
+    expect(application.index.list()[0]?.subtasks[0]?.planning).toEqual({
+      scheduled: '2026-10-08',
+      time: '23:15',
+      duration: 30,
+    });
+    expect(application.index.list()[0]?.planning).toEqual({});
+    expect(hooks.onCommitted.mock.calls.map(([task]) => task.planning.duration)).toEqual([30, 30]);
+    expect(hooks.onInvalidated).not.toHaveBeenCalled();
+  } finally {
+    application.index.destroy();
+  }
+});
+
+it('never executes forecast keyboard intents even when called directly', () => {
+  const root = taskAt('10:00'),
+    source = { root, node: root, target: { type: 'task' as const, ref: root.ref } };
+  const forecast = taskSnapshotForCalendarOccurrence({
+    kind: 'forecast',
+    key: 'forecast-only',
+    source,
+    planning: root.planning,
+    referenceDate: localDate('2026-10-09'),
+    ordinal: 1,
+  });
+  const execute = vi.fn<TaskApplicationApi['execute']>();
+  const { queue, hooks } = harness(execute);
+  for (const intent of [
+    { type: 'move-time', deltaMinutes: 15 },
+    { type: 'resize-duration', deltaMinutes: 5 },
+    { type: 'shift-schedule', days: 1 },
+    { type: 'extend-due', days: 1 },
+  ] as const)
+    expect(queue.enqueue(forecast, intent)).toBeUndefined();
+  expect(execute).not.toHaveBeenCalled();
+  expect(hooks.onCommitted).not.toHaveBeenCalled();
+});
+
+it('retires queued child edits when a successful result cannot prove the owned child successor', async () => {
+  const source = '- [ ] Parent\n  - [ ] Child ⏳ 2026-10-08 ⏰ 10:00 ⏱️ 90m\n  - [ ] Sibling\n';
+  const app = await createAppWithFiles({ 'qa.md': source });
+  seedTaskCache(app, 'qa.md', [{ task: ' ', parent: -1, line: 0 }]);
+  const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
+  await application.index.initialize();
+  try {
+    const root = expectDefined(application.index.list()[0]),
+      node = expectDefined(root.subtasks[0]);
+    const display = taskSnapshotForCalendarOccurrence(
+      expectDefined(
+        projectCalendarOccurrences(
+          {
+            materialized: [{ root, node, target: { type: 'subtask', ref: node.ref } }],
+            recurringSources: [],
+          },
+          { from: localDate('2026-10-08'), to: localDate('2026-10-08') },
+          { removeScheduledDate: false },
+        ).occurrences[0],
+      ),
+    );
+    const release = deferred<void>();
+    let executions = 0;
+    const api: TaskApplicationApi = {
+      queries: application.tasks.queries,
+      execute: async (command, options) => {
+        executions++;
+        const result = await application.tasks.execute(command, options);
+        await release.promise;
+        return result.type === 'ok' && result.outcome.type === 'task'
+          ? {
+              ...result,
+              outcome: { ...result.outcome, task: { ...result.outcome.task, subtasks: [] } },
+            }
+          : result;
+      },
+    };
+    const hooks = harness().hooks,
+      queue = new TimedBlockKeyboardQueue(api, hooks);
+    queue.enqueue(display, { type: 'resize-duration', deltaMinutes: 5 });
+    queue.enqueue(display, { type: 'move-time', deltaMinutes: 15 });
+    release.resolve();
+    await vi.waitFor(() => {
+      expect(hooks.onInvalidated).toHaveBeenCalledOnce();
+    });
+    expect(executions).toBe(1);
+    expect(application.index.list()[0]?.planning).toEqual({});
+    expect(application.index.list()[0]?.subtasks[0]?.planning).toEqual({
+      scheduled: '2026-10-08',
+      time: '10:00',
+      duration: 95,
+    });
+    expect(hooks.onCommitted).not.toHaveBeenCalled();
+  } finally {
+    application.index.destroy();
+  }
+});
+
+it('does not let a queued child intent overwrite a source replacement after its first commit', async () => {
+  const source = '- [ ] Parent\n  - [ ] Child ⏳ 2026-10-08 ⏰ 10:00 ⏱️ 90m\n';
+  const app = await createAppWithFiles({ 'qa.md': source });
+  seedTaskCache(app, 'qa.md', [{ task: ' ', parent: -1, line: 0 }]);
+  const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
+  await application.index.initialize();
+  try {
+    const root = expectDefined(application.index.list()[0]),
+      node = expectDefined(root.subtasks[0]);
+    const display = taskSnapshotForCalendarOccurrence(
+      expectDefined(
+        projectCalendarOccurrences(
+          {
+            materialized: [{ root, node, target: { type: 'subtask', ref: node.ref } }],
+            recurringSources: [],
+          },
+          { from: localDate('2026-10-08'), to: localDate('2026-10-08') },
+          { removeScheduledDate: false },
+        ).occurrences[0],
+      ),
+    );
+    const committed = deferred<void>(),
+      release = deferred<void>();
+    let calls = 0;
+    const api: TaskApplicationApi = {
+      queries: application.tasks.queries,
+      execute: async (command, options) => {
+        calls++;
+        const result = await application.tasks.execute(command, options);
+        if (calls === 1) {
+          committed.resolve();
+          await release.promise;
+        }
+        return result;
+      },
+    };
+    const hooks = harness().hooks,
+      queue = new TimedBlockKeyboardQueue(api, hooks);
+    queue.enqueue(display, { type: 'resize-duration', deltaMinutes: 5 });
+    queue.enqueue(display, { type: 'move-time', deltaMinutes: 15 });
+    await committed.promise;
+    const file = expectDefined(app.vault.getFileByPath('qa.md')),
+      external = (await app.vault.read(file)).replace('Child', 'External replacement');
+    await app.vault.modify(file, external);
+    application.index.installCommittedContent('qa.md', external);
+    release.resolve();
+    await vi.waitFor(() => {
+      expect(hooks.onSettled).toHaveBeenCalledOnce();
+    });
+    expect(await app.vault.read(file)).toBe(external);
+    expect(application.index.list()[0]?.planning).toEqual({});
+    expect(hooks.onCommitted).toHaveBeenCalledOnce();
+    expect(hooks.present.mock.calls[1]?.[0].type).not.toBe('ok');
+  } finally {
+    application.index.destroy();
+  }
+});
+
+it.each([
+  [
+    'start-only',
+    '🛫 2026-10-08',
+    '2026-10-08',
+    { start: '2026-10-08', due: '2026-10-09', time: '10:00' },
+  ],
+  [
+    'inverted point',
+    '🛫 2026-10-10 ⏳ 2026-10-10 📅 2026-10-08',
+    '2026-10-10',
+    { start: '2026-10-10', scheduled: '2026-10-10', due: '2026-10-11', time: '10:00' },
+  ],
+] as const)(
+  'extends a materialized child %s from its occupied date',
+  async (_label, dates, displayDate, want) => {
+    const app = await createAppWithFiles({
+      'qa.md': `- [ ] Parent\n  - [ ] Child ${dates} ⏰ 10:00\n`,
+    });
+    seedTaskCache(app, 'qa.md', [{ task: ' ', parent: -1, line: 0 }]);
+    const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
+    await application.index.initialize();
+    try {
+      const root = expectDefined(application.index.list()[0]),
+        node = expectDefined(root.subtasks[0]);
+      const date = localDate(displayDate);
+      const display = taskSnapshotForCalendarOccurrence(
+        expectDefined(
+          projectCalendarOccurrences(
+            {
+              materialized: [{ root, node, target: { type: 'subtask', ref: node.ref } }],
+              recurringSources: [],
+            },
+            { from: date, to: date },
+            { removeScheduledDate: false },
+          ).occurrences[0],
+        ),
+      );
+      const hooks = harness().hooks,
+        queue = new TimedBlockKeyboardQueue(application.tasks, hooks);
+      queue.enqueue(display, { type: 'extend-due', days: 1 });
+      await vi.waitFor(() => {
+        expect(hooks.onSettled).toHaveBeenCalledOnce();
+      });
+      expect(application.index.list()[0]?.subtasks[0]?.planning).toEqual(want);
+      expect(application.index.list()[0]?.planning).toEqual({});
+    } finally {
+      application.index.destroy();
+    }
+  },
+);
