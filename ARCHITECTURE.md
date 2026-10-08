@@ -972,7 +972,10 @@ invalidate obsolete callbacks before they can render, complete, or report. Later
 belong to live card/text generations and never complete or fail a newer Search pass.
 
 `TaskCardRenderer.mount` owns one loaded Component per row, disposable Markdown generations,
-and its own badge registrations. Mounted title and description generations also own their link
+and its own badge registrations. A finite row retains its holder and presentation frame when its
+physical key survives, but asks the card's exact occurrence predicate before updating. Changed node
+ancestry retires the old card ownership and mounts into that holder again; it never weakens the
+renderer identity guard. Same-occurrence updates retain their controls. Mounted title and description generations also own their link
 listeners, so replacing or evicting a generation retires its held links. Its optional `TaskCardInteractionContext` gives whole-card hosts
 the row Component and a current snapshot getter: ordinary events read current authority, while
 started commands retain their captured reference. Explicit row updates refresh status, dependency blocking, and metadata even when the task reference

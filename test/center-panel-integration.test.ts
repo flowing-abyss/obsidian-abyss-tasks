@@ -7719,3 +7719,263 @@ it('central actions preserve exact child continuation guards and the selected bu
     show.mockRestore();
   }
 });
+
+describe('CenterPanel finite source occurrence replacement', () => {
+  fixedToday('2026-10-02');
+  async function mounted(before: string, outgoing = false) {
+    const h = await makePanel({ 'identity.md': before }, structuredClone(DEFAULT_SETTINGS), [], {
+      authority: true,
+    });
+    const el = document.body.createDiv();
+    prepareTaskPanelViewport(el);
+    h.panel.mount(el);
+    h.state.set('selectedList', 'today');
+    h.state.set('centerListViewState', {
+      ...h.state.get('centerListViewState'),
+      groupBy: outgoing ? 'outgoing-link' : 'none',
+    });
+    const off = h.index.subscribe(() => {
+      h.panel.refresh();
+    });
+    const file = h.app.vault.getAbstractFileByPath('identity.md');
+    if (!(file instanceof TFile)) throw new Error('Missing finite identity fixture');
+    await vi.advanceTimersByTimeAsync(25);
+    return {
+      ...h,
+      el,
+      cards: (line: number) => [
+        ...el.querySelectorAll<HTMLElement>(`.abyss-task-card[data-line="${line}"]`),
+      ],
+      replace: async (content: string) => {
+        await h.app.vault.modify(file, content);
+        h.index.installCommittedContent(file.path, content);
+        await vi.advanceTimersByTimeAsync(25);
+      },
+      cleanup: () => {
+        off();
+        h.panel.destroy();
+        el.remove();
+      },
+    };
+  }
+  const subject = '- [ ] Same [[A]] [[B]] ⏳ 2026-10-02';
+  const neighbor = '- [ ] Neighbor ⏳ 2026-10-02';
+  it.each([
+    {
+      name: 'child to root',
+      before: ['- [ ] Parent', `  ${subject}`, neighbor],
+      after: ['- [ ] Parent', subject, neighbor],
+      line: 1,
+      neighborLine: 2,
+      outgoing: false,
+    },
+    {
+      name: 'root to child',
+      before: ['- [ ] Parent', subject, neighbor],
+      after: ['- [ ] Parent', `  ${subject}`, neighbor],
+      line: 1,
+      neighborLine: 2,
+      outgoing: false,
+    },
+    {
+      name: 'changed child ancestry',
+      before: ['- [ ] Outer', '  - [ ] Middle', `    ${subject}`, neighbor],
+      after: ['- [ ] Outer', '- [ ] Middle', `  ${subject}`, neighbor],
+      line: 2,
+      neighborLine: 3,
+      outgoing: false,
+    },
+    {
+      name: 'duplicate outgoing child to root',
+      before: ['- [ ] Parent', `  ${subject}`, neighbor],
+      after: ['- [ ] Parent', subject, neighbor],
+      line: 1,
+      neighborLine: 2,
+      outgoing: true,
+    },
+  ])('retires exact finite ownership on $name at the same physical key', async (fixture) => {
+    const before = `${fixture.before.join('\n')}\n`;
+    const after = `${fixture.after.join('\n')}\n`;
+    const render = vi
+      .spyOn(MarkdownRenderer, 'render')
+      .mockImplementation(async (_app, text, holder) => {
+        holder.setText(text);
+      });
+    const h = await mounted(before, fixture.outgoing);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const execute = vi.spyOn(h.tasks, 'execute');
+    try {
+      const old = h.cards(fixture.line);
+      expect(old).toHaveLength(fixture.outgoing ? 2 : 1);
+      const frames = old.map((card) => card.parentElement);
+      const oldControls = old.flatMap((card) => [
+        ...card.querySelectorAll<HTMLElement>(
+          '.abyss-task-action-btn, .abyss-task-parent-btn, [role="checkbox"]',
+        ),
+      ]);
+      const untouched = expectDefined(h.cards(fixture.neighborLine)[0]);
+      const untouchedControl = untouched.querySelector('[role="checkbox"]');
+      old[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
+      await h.replace(after);
+      expect(errors).not.toHaveBeenCalled();
+      const live = h.cards(fixture.line);
+      expect(live).toHaveLength(old.length);
+      expect(live.map((card) => card.parentElement)).toEqual(frames);
+      expect(h.cards(fixture.neighborLine)[0]).toBe(untouched);
+      expect(untouched.querySelector('[role="checkbox"]')).toBe(untouchedControl);
+      expect(h.el.querySelectorAll('.abyss-multi-selected')).toHaveLength(0);
+      expect(live.every((card) => card.textContent.includes('Same'))).toBe(true);
+      for (const control of oldControls) {
+        expect(control.isConnected).toBe(false);
+        control.click();
+        control.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      }
+      await vi.advanceTimersByTimeAsync(25);
+      expect(execute).not.toHaveBeenCalled();
+      expect(h.el.querySelector('.abyss-status-popover')).toBeNull();
+      expect(h.el.querySelector('.abyss-search-revealed')).toBeNull();
+      const current = expectDefined(
+        h.index.listNodes().find((node) => node.node.title.startsWith('Same')),
+      );
+      expectDefined(live[0]?.querySelector<HTMLElement>('[role="checkbox"]')).click();
+      await vi.advanceTimersByTimeAsync(25);
+      expect(execute).toHaveBeenCalledExactlyOnceWith({
+        type: 'toggle-completion',
+        target: current.target,
+      });
+      expect(
+        h.index.listNodes().find((node) => node.node.title.startsWith('Same'))?.node.status,
+      ).toBe('done');
+      expect(await readMd(h.app, 'identity.md')).toContain(neighbor);
+    } finally {
+      h.cleanup();
+      render.mockRestore();
+      errors.mockRestore();
+    }
+  });
+
+  it('retains same-node metadata controls, focus, holder and neighboring frame', async () => {
+    const before = ['- [ ] Parent', `  ${subject}`, neighbor, ''].join('\n');
+    const h = await mounted(before);
+    try {
+      const card = expectDefined(h.cards(1)[0]);
+      const frame = card.parentElement;
+      const marker = expectDefined(card.querySelector<HTMLElement>('[role="checkbox"]'));
+      const actions = card.querySelector('.abyss-task-action-btn');
+      const other = expectDefined(h.cards(2)[0]);
+      const otherFrame = other.parentElement;
+      const updated = before.replace('Same [[A]]', 'Same ⏫ [[A]]');
+      await h.replace(updated);
+      marker.focus();
+      expect(document.activeElement).toBe(marker);
+      await h.replace(updated.replace('Neighbor ⏳', 'Neighbor updated ⏳'));
+      expect(h.cards(1)[0]).toBe(card);
+      expect(card.parentElement).toBe(frame);
+      expect(card.querySelector('[role="checkbox"]')).toBe(marker);
+      expect(card.querySelector('.abyss-task-action-btn')).toBe(actions);
+      expect(document.activeElement).toBe(marker);
+      expect(marker.getAttribute('data-priority')).toBe('B');
+      expect(h.cards(2)[0]).toBe(other);
+      expect(other.parentElement).toBe(otherFrame);
+    } finally {
+      h.cleanup();
+    }
+  });
+  it('cancels the replaced card receipt before late Markdown can settle its holder', async () => {
+    const oldText = deferred<void>();
+    const newText = deferred<void>();
+    let calls = 0;
+    const render = vi
+      .spyOn(MarkdownRenderer, 'render')
+      .mockImplementation(async (_app, text, holder) => {
+        holder.setText(text);
+        if (text !== '**Same**') return;
+        if (++calls === 1) {
+          await oldText.promise;
+          holder.setText('Obsolete text');
+          throw new Error('retired source Markdown');
+        }
+        await newText.promise;
+      });
+    const before = `- [ ] Parent\n  - [ ] **Same** ⏳ 2026-10-02\n${neighbor}\n`;
+    const h = await mounted(before);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const card = expectDefined(h.cards(1)[0]);
+      const previous = expectDefined(h.panel['ordinaryCards_abyssPrivate'].get('identity.md:1'));
+      const oldReceipt = previous.settled;
+      await h.replace(before.replace('  - [ ] **Same**', '- [ ] **Same**'));
+      expect(errors).not.toHaveBeenCalled();
+      const current = expectDefined(h.panel['ordinaryCards_abyssPrivate'].get('identity.md:1'));
+      expect(current).not.toBe(previous);
+      expect(current.element).toBe(card);
+      expect(await oldReceipt).toEqual({ type: 'cancelled' });
+      let settled = false;
+      void current.settled.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      oldText.resolve();
+      await vi.advanceTimersByTimeAsync(25);
+      expect(settled).toBe(false);
+      expect(card.textContent).not.toContain('Obsolete text');
+      expect(errors).not.toHaveBeenCalled();
+      newText.resolve();
+      expect(await current.settled).toEqual({ type: 'ready' });
+    } finally {
+      oldText.resolve();
+      newText.resolve();
+      h.cleanup();
+      render.mockRestore();
+      errors.mockRestore();
+    }
+  });
+
+  it('retires an open grouped Actions pin and its focus return on identity replacement', async () => {
+    const before = ['- [ ] Parent', `  ${subject}`, neighbor, ''].join('\n');
+    const h = await mounted(before, true);
+    const addItem = methodOf(Menu.prototype, 'addItem');
+    const add = vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, cb) {
+      return addItem.call(this, (item) => {
+        (item as unknown as { dom: HTMLElement }).dom = createDiv();
+        cb(item);
+      });
+    });
+    let menu: Menu | undefined;
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+      this: Menu,
+    ) {
+      menu = this.setParentElement(document.body);
+      return this;
+    });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const card = expectDefined(h.cards(1)[1]);
+      const button = expectDefined(card.querySelector<HTMLButtonElement>('.abyss-task-action-btn'));
+      button.focus();
+      button.click();
+      const hide = vi.spyOn(expectDefined(menu), 'hide');
+      expect(h.panel['taskInteractionPins_abyssPrivate'].size).toBe(1);
+      await h.replace(before.replace(`  ${subject}`, subject));
+      expect(errors).not.toHaveBeenCalled();
+      expect(hide).toHaveBeenCalledOnce();
+      expect(h.panel['taskInteractionPins_abyssPrivate'].size).toBe(0);
+      expect(button.isConnected).toBe(false);
+      expect(document.activeElement).not.toBe(button);
+      expect(document.activeElement).not.toBe(card);
+      expect(h.cards(1)).toHaveLength(2);
+      expect(h.cards(1).every((row) => row.querySelector('.abyss-task-parent-btn') === null)).toBe(
+        true,
+      );
+    } finally {
+      h.cleanup();
+      show.mockRestore();
+      add.mockRestore();
+      errors.mockRestore();
+    }
+  });
+});

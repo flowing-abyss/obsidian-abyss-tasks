@@ -105,6 +105,7 @@ async function rowsHarness(
       return {
         element,
         settled: Promise.resolve({ type: 'ready' }),
+        accepts: () => true,
         update: () => {},
         destroy: () => {
           element.remove();
@@ -241,6 +242,7 @@ it('waits for a pinned row mount, then cancels held Markdown on last-lease unmou
     mountCard: (element) => ({
       element,
       settled: markdown.promise,
+      accepts: () => true,
       update: () => {},
       destroy: () => {
         element.remove();
@@ -507,6 +509,7 @@ it('retains same-source cards and ignores old Markdown failure while semantic re
         get settled() {
           return receipt;
         },
+        accepts: () => true,
         update: () => {},
         destroy,
       }),
@@ -726,6 +729,7 @@ it('admits measurements only for the current mounted card receipt', async () => 
       get settled() {
         return settled();
       },
+      accepts: () => true,
       update: () => {},
       destroy: () => {
         element.remove();
@@ -808,6 +812,7 @@ it('does not accept the pending receipt of an exact child after its row is remou
         return {
           element,
           settled,
+          accepts: () => true,
           update: () => {},
           destroy: () => {
             element.remove();

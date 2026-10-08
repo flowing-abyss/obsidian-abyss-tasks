@@ -2857,14 +2857,23 @@ export class CenterPanel {
       element,
       update: (next) => {
         if (next.kind === 'task') {
+          if (card === undefined) return;
           if (typeof releaseNavigation === 'function') releaseNavigation();
           releaseNavigation = undefined;
-          card?.update(
-            next.task.root,
-            this.taskSurface_abyssPrivate?.tagGroups ?? tagGroups,
-            this.taskCardOptions_abyssPrivate(next.task, next.key, next.presentation),
-          );
-          if (card !== undefined) this.observeTaskCardReceipt_abyssPrivate(card);
+          const groups = this.taskSurface_abyssPrivate?.tagGroups ?? tagGroups;
+          const flags = this.taskCardOptions_abyssPrivate(next.task, next.key, next.presentation);
+          if (!card.accepts(next.task.root, flags)) {
+            card.destroy();
+            element.empty();
+            card = this.taskCardRenderer_abyssPrivate.mountInto(
+              element,
+              next.task.root,
+              groups,
+              flags,
+            );
+            this.ordinaryCards_abyssPrivate.set(next.key, card);
+          } else card.update(next.task.root, groups, flags);
+          this.observeTaskCardReceipt_abyssPrivate(card);
           releaseNavigation = this.taskSurface_abyssPrivate?.options.onCard?.(
             element,
             next.task.root,

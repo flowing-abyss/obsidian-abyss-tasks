@@ -99,6 +99,7 @@ interface TaskCardFlags {
 export interface TaskCardMount {
   readonly settled: Promise<TaskRenderOutcome>;
   readonly element: HTMLElement;
+  accepts(task: TaskSnapshot, flags: TaskCardFlags): boolean;
   update(
     task: TaskSnapshot,
     tagGroups: readonly EffectiveTagGroup[],
@@ -325,18 +326,15 @@ export class TaskCardRenderer {
     }
     return {
       element: card,
+      accepts: (task, flags) => live && this.#sameOccurrence(current, { task, flags }),
       get settled() {
         return content.settled;
       },
-      update: (nextTask, nextGroups, nextFlags, search) => {
+      update: (task, tagGroups, flags, search) => {
         if (!live) return;
-        if (!this.#sameOccurrence(current, { task: nextTask, flags: nextFlags }))
+        if (!this.#sameOccurrence(current, { task, flags }))
           throw new Error('Cannot rebind a task card to a different source occurrence');
-        current = {
-          task: nextTask,
-          tagGroups: nextGroups,
-          flags: search === undefined ? nextFlags : { ...nextFlags, search },
-        };
+        current = { task, tagGroups, flags: search === undefined ? flags : { ...flags, search } };
         failed = false;
         try {
           content.update(current);
@@ -694,7 +692,7 @@ export class TaskCardRenderer {
   #renderStatus(
     mainRow: HTMLElement,
     task: TaskSnapshot,
-    current?: Pick<CardContentContext, 'currentProjection' | 'currentOccurrence'>,
+    current?: Pick<CardContentContext, 'currentProjection' | 'currentOccurrence' | 'isCurrent'>,
   ): void {
     const projection = this.#host.dependenciesFor(task);
     renderStatusMarker(mainRow, {
@@ -702,6 +700,7 @@ export class TaskCardRenderer {
       registry: this.#statusRegistry,
       completionBlocked: dependencyCompletionBlocked(projection),
       onLeftClick: () => {
+        if (current?.isCurrent() === false) return;
         runAsyncAction(
           this.#commands.toggleTask(
             current?.currentProjection().node ?? task,
@@ -711,6 +710,7 @@ export class TaskCardRenderer {
       },
       onContextMenu: (event) => {
         event.stopPropagation();
+        if (current?.isCurrent() === false) return;
         this.#host.openStatusMenu(
           event,
           current?.currentProjection().node ?? task,
