@@ -1579,6 +1579,8 @@ the complete original view. Tag rename folds collisions in runtime and raw saved
 controls remain session-only, with property clauses on represented roots. Central tag clicks and
 task-menu filters share mode-aware control routing: ordinary lists use saved view state and Search
 uses its transient state port. Tag contextmenu prevents task/bulk-menu and row-selection propagation.
+Search task-menu filter choices include the card's currently rendered context tags, deduplicated
+with its own tags; task edits and Set tag retain the exact node's own tags and command subject.
 Each central card's native Task actions button opens the existing task/bulk menu with its current
 node projection and occurrence completion; the same pin and focus-return owner restores the button
 after dismissal while respecting outside focus. Metadata and Search-context tag listeners belong to

@@ -3502,7 +3502,16 @@ export class CenterPanel {
     const row = order.rowAt(order.rowIndexOf(key));
     const occurrenceCompletion = row?.kind === 'task' ? row.presentation?.completion : undefined;
     const completion = selection.has(key) ? targets.summaries[0]?.completion : occurrenceCompletion;
-    const menu = this.taskMenus_abyssPrivate.createTaskContextMenu(card, task, completion);
+    const representedTags =
+      this.state_abyssPrivate.get('mode') === 'search'
+        ? [...card.querySelectorAll('.abyss-task-tag')].map((tag) => tag.textContent)
+        : [];
+    const menu = this.taskMenus_abyssPrivate.createTaskContextMenu(
+      card,
+      task,
+      completion,
+      representedTags,
+    );
     this.showTaskMenu_abyssPrivate(menu, event, card);
   }
 

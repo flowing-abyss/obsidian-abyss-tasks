@@ -1937,7 +1937,7 @@ it('passes continuation-only selection capability into a single physical-node co
       'showTaskMenu_abyssPrivate',
     ).mockImplementation(() => undefined);
     card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
-    expect(create).toHaveBeenCalledWith(card, expect.anything(), completion);
+    expect(create).toHaveBeenCalledWith(card, expect.anything(), completion, []);
     const targets = h.panel['taskMenuTargets_abyssPrivate']();
     expect((await targets.resolve(targets.signal))[0]?.completion).toEqual(completion);
   } finally {

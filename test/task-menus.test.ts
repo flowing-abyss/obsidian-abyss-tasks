@@ -7,6 +7,7 @@ import { StatusRegistry } from '../src/status/StatusRegistry';
 import { localDate } from '../src/tasks';
 import { taskTreeNodes } from '../src/tasks/domain/taskSearchProjection';
 import { localDate as occupiedFixtureDate } from '../src/tasks/domain/validation';
+import { TagPickerModal } from '../src/ui/TagPickerModal';
 import * as commandFeedback from '../src/ui/taskCommandResult';
 import { TrackingTicker } from '../src/ui/timeTracking/TrackingTicker';
 import { createTrackingActions } from '../src/ui/timeTracking/trackingActions';
@@ -645,3 +646,77 @@ it.each(['Include tag', 'Exclude tag'])(
     }
   },
 );
+
+it('keeps ordinary child tag filters and Set tag mutations on the exact own node when filter choices include descendants', async () => {
+  vi.useRealTimers();
+  mockMenuDom();
+  const h = await mountCanonicalSearchUi(
+    { 'a.md': '- [ ] needle Parent #parent\n  - [ ] Child #child\n    - [ ] Grandchild #visible' },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  let picker: TagPickerModal | undefined;
+  const opened: TagPickerModal[] = [];
+  vi.spyOn(TagPickerModal.prototype, 'open').mockImplementation(function (this: TagPickerModal) {
+    opened.push(this);
+    this.onOpen();
+  });
+  const execute = vi.spyOn(h.tasks, 'execute');
+  try {
+    h.state.set('selectedList', { type: 'project', path: 'a.md' });
+    h.query('needle');
+    await h.completed();
+    const root = expectDefined(h.index.list({ filePath: 'a.md' })[0]);
+    const child = expectDefined([...taskTreeNodes(root)].find((node) => node.path.length === 1));
+    const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    const own = h.panel['taskMenus_abyssPrivate'].createTaskContextMenu(card, child);
+    const inclusion = expectDefined(items(own).find((item) => item.title__ === 'Include tag'));
+    expect(inclusion.submenu).toBeNull();
+    (inclusion as unknown as { onClick__: () => void }).onClick__();
+    expect(h.state.get('centerListViewState').filters).toEqual([{ type: 'tag', value: '#child' }]);
+    const menu = h.panel['taskMenus_abyssPrivate'].createTaskContextMenu(
+      card,
+      child,
+      { kind: 'allowed' },
+      ['#visible'],
+    );
+    const choices = expectDefined(
+      items(menu).find((item) => item.title__ === 'Include tag')?.submenu,
+    );
+    expect(items(choices).map((item) => item.title__)).toEqual(['#child', '#visible']);
+    const setTag = expectDefined(items(menu).find((item) => item.title__ === 'Set tag…'));
+    (setTag as unknown as { onClick__: () => void }).onClick__();
+    const modal = (picker = expectDefined(opened[0]));
+    expect(modal.contentEl.querySelector('[data-tag="#child"]')?.getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+    expect(
+      modal.contentEl.querySelector('[data-tag="#parent"]')?.getAttribute('aria-pressed'),
+    ).toBe('false');
+    expect(
+      modal.contentEl.querySelector('[data-tag="#visible"]')?.getAttribute('aria-pressed'),
+    ).toBe('false');
+    expectDefined(
+      modal.contentEl.querySelector<HTMLButtonElement>('[data-tag="#visible"]'),
+    ).click();
+    modal.onClose();
+    picker = undefined;
+    await vi.waitFor(() => {
+      expect(execute).toHaveBeenCalledExactlyOnceWith({
+        type: 'patch',
+        target: child.target,
+        patch: { tags: { add: ['#visible'] } },
+      });
+      const updated = expectDefined(h.index.list({ filePath: 'a.md' })[0]);
+      expect(updated.tags).toEqual(['#parent']);
+      expect([...taskTreeNodes(updated)].map((node) => node.node.tags)).toEqual([
+        ['#parent'],
+        ['#child', '#visible'],
+        ['#visible'],
+      ]);
+    });
+  } finally {
+    picker?.onClose();
+    h.dispose();
+  }
+});

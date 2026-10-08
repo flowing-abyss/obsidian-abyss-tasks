@@ -114,6 +114,7 @@ export class TaskMenus {
     card: HTMLElement,
     task: TaskCommandSubject,
     completion: TaskOccurrenceCompletion = { kind: 'allowed' },
+    representedTags: readonly string[] = [],
   ): Menu {
     const today = localDate(moment().format('YYYY-MM-DD'));
     const menu = new Menu();
@@ -123,7 +124,7 @@ export class TaskMenus {
     this.#addTaskDatePickerMenuItem(menu, card, task);
     this.#addTaskEditMenuItems(menu, card, task);
     this.#addTaskPropertyMenuItems(menu, task, completion);
-    this.#addTaskTagFilterMenuItems(menu, task);
+    this.#addTaskTagFilterMenuItems(menu, [...this.#getTaskTags(task), ...representedTags]);
     this.#addTaskOpenMenuItem(menu, task);
     this.#addTaskDangerMenuItems(menu, task);
     return menu;
@@ -236,8 +237,9 @@ export class TaskMenus {
     );
   }
 
-  #addTaskTagFilterMenuItems(menu: Menu, task: TaskCommandSubject): void {
-    const tags = [...this.#getTaskTags(task)];
+  #addTaskTagFilterMenuItems(menu: Menu, choices: readonly string[]): void {
+    const tags: string[] = [];
+    for (const choice of choices) if (!tags.some((tag) => sameTag(tag, choice))) tags.push(choice);
     if (tags.length === 0) return;
     for (const type of ['tag', 'tag-exclude'] as const) {
       menu.addItem((item) => {

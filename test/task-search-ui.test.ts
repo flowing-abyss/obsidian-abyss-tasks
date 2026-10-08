@@ -1,4 +1,4 @@
-import { MarkdownRenderer, Menu } from 'obsidian';
+import { MarkdownRenderer, Menu, TFile } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { SettingsPersistenceCoordinator } from '../src/settings/persistence';
@@ -859,6 +859,167 @@ it('routes mounted Search task-menu tag actions to transient chips and returns m
     expect(saveStatic).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
     expect(h.state.get('taskStack')).toEqual([]);
+  } finally {
+    h.dispose();
+  }
+});
+
+interface TagMenuItem {
+  readonly title__: string;
+  readonly submenu: Menu | null;
+  readonly onClick__: () => void;
+}
+
+function captureTaskTagMenu() {
+  const addItem = methodOf(Menu.prototype, 'addItem');
+  vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, cb) {
+    return addItem.call(this, (item) => {
+      (item as unknown as { dom: HTMLElement }).dom = createDiv();
+      cb(item);
+    });
+  });
+  let shown: Menu | undefined;
+  vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+    shown = this.setParentElement(document.body);
+    return this;
+  });
+  const items = (menu: Menu): readonly TagMenuItem[] =>
+    (menu as unknown as { menuItems__: TagMenuItem[] }).menuItems__;
+  return { menu: () => expectDefined(shown), items };
+}
+
+it.each(['Include tag', 'Exclude tag'])(
+  'reaches descendant-only Search %s through the mounted task menu without writes or row activation',
+  async (title) => {
+    const menu = captureTaskTagMenu();
+    const settings = structuredClone(DEFAULT_SETTINGS),
+      before = structuredClone(settings);
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': '- [ ] Parent\n  - [ ] Child #needle-private\n- [ ] Other #needle-private' },
+      settings,
+    );
+    const saveStatic = vi.fn(async () => {}),
+      write = vi.fn(async () => {});
+    const coordinator = new SettingsPersistenceCoordinator({
+      loadStatic: async () => ({}),
+      saveStatic,
+      state: { path: 'state.json', exists: async () => false, read: async () => '', write },
+    });
+    const save = vi
+      .spyOn(h.panel, 'onSaveViewState_abyssPrivate')
+      .mockImplementation(() => coordinator.saveViewState(settings));
+    const execute = vi.spyOn(h.tasks, 'execute');
+    const activate = vi.spyOn(h.panel, 'handleTaskCardClick_abyssPrivate');
+    try {
+      const file = h.app.vault.getAbstractFileByPath('a.md');
+      if (!(file instanceof TFile)) throw new Error('Missing fixture source');
+      const originalSource = await h.app.vault.read(file);
+      h.query('needle');
+      await h.completed();
+      const card = expectDefined(
+        [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')].find((el) =>
+          el.textContent.includes('Parent'),
+        ),
+      );
+      expect(card.querySelector('.abyss-task-tag')?.textContent).toBe('#needle-private');
+      const button = expectDefined(card.querySelector<HTMLButtonElement>('.abyss-task-action-btn'));
+      button.focus();
+      button.click();
+      const item = expectDefined(menu.items(menu.menu()).find((entry) => entry.title__ === title));
+      expect(item.submenu).toBeNull();
+      menu.menu().hide();
+      expect(document.activeElement).toBe(button);
+      button.click();
+      expectDefined(menu.items(menu.menu()).find((entry) => entry.title__ === title)).onClick__();
+      menu.menu().hide();
+      await h.completed();
+      expect(h.root.dataset['searchLogicalResults']).toBe('1');
+      expect(h.root.querySelector('.abyss-filter-chip-label')?.textContent).toBe(
+        title === 'Include tag' ? '#needle-private' : '−#needle-private',
+      );
+      if (title === 'Exclude tag') {
+        expect(h.root.textContent).toContain('Parent');
+        expect(h.root.textContent).toContain('Child');
+        expect(document.activeElement).toBe(button);
+      } else {
+        expect(h.root.textContent).not.toContain('Parent');
+        expect(h.root.textContent).toContain('Other');
+        expect(document.activeElement).not.toBe(
+          h.root.querySelector<HTMLButtonElement>('.abyss-task-action-btn'),
+        );
+      }
+      expect(settings).toEqual(before);
+      expect(save).not.toHaveBeenCalled();
+      expect(saveStatic).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
+      expect(await h.app.vault.read(file)).toBe(originalSource);
+      expect(activate).not.toHaveBeenCalled();
+      expect(h.panel['rowSelection_abyssPrivate'].size).toBe(0);
+      expect(h.state.get('taskStack')).toEqual([]);
+    } finally {
+      h.dispose();
+    }
+  },
+);
+
+it('keeps rendered Search descendant tag choices current and deduplicated beside the root tags', async () => {
+  const menu = captureTaskTagMenu();
+  const h = await mountCanonicalSearchUi(
+    {
+      'a.md':
+        '- [ ] needle Parent #needle-work\n  - [ ] Child #needle-private #NEEDLE-WORK\n  - [ ] Other #needle-other',
+    },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  const choices = (title: string) =>
+    menu.items(
+      expectDefined(menu.items(menu.menu()).find((item) => item.title__ === title)?.submenu),
+    );
+  try {
+    h.query('needle');
+    await h.completed();
+    const button = expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-task-action-btn'));
+    button.focus();
+    button.click();
+    for (const title of ['Include tag', 'Exclude tag'])
+      expect(choices(title).map((item) => item.title__)).toEqual([
+        '#needle-work',
+        '#needle-private',
+        '#needle-other',
+      ]);
+    expectDefined(
+      choices('Exclude tag').find((item) => item.title__ === '#needle-private'),
+    ).onClick__();
+    menu.menu().hide();
+    await h.completed();
+    expect(h.root.dataset['searchLogicalResults']).toBe('1');
+    expect(document.activeElement).toBe(button);
+    button.click();
+    expectDefined(
+      choices('Include tag').find((item) => item.title__ === '#needle-private'),
+    ).onClick__();
+    menu.menu().hide();
+    await h.completed();
+    expect(
+      [...h.root.querySelectorAll('.abyss-filter-chip-label')].map((el) => el.textContent),
+    ).toEqual(['#needle-private']);
+    expect(h.root.dataset['searchLogicalResults']).toBe('0');
+    expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-filter-chip-x')).click();
+    await h.completed();
+    const retired = expectDefined(
+      h.root.querySelector<HTMLButtonElement>('.abyss-task-action-btn'),
+    );
+    const previousMenu = menu.menu();
+    h.index.installCommittedContent('a.md', '- [ ] needle Parent #work\n  - [ ] Child #needle-new');
+    await h.completed();
+    retired.click();
+    expect(menu.menu()).toBe(previousMenu);
+    expect(h.root.querySelector('.abyss-task-action-btn')).not.toBe(retired);
+    expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-task-action-btn')).click();
+    for (const title of ['Include tag', 'Exclude tag'])
+      expect(choices(title).map((item) => item.title__)).toEqual(['#work', '#needle-new']);
+    menu.menu().hide();
   } finally {
     h.dispose();
   }
