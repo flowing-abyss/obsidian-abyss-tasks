@@ -3,7 +3,9 @@ import { drainCollectionSteps, stableSortSteps, type CollectionSteps } from '../
 import { sameTag } from '../markdown/tagSyntax';
 import type { CalendarSettings, ListViewState, PropertyFilter } from '../settings/types';
 import {
+  localDate,
   subtreeTotal,
+  taskOccupiedDates,
   totalMs,
   type LocalDate,
   type SubtaskSnapshot,
@@ -62,8 +64,17 @@ interface TaskOrder<T extends TaskListValue> {
   readonly statusOrder: ReadonlyMap<string, number>;
 }
 
-function dateOf(task: TaskListValue): string | undefined {
-  return task.planning.due ?? task.planning.scheduled ?? task.planning.start;
+function matchesDate(task: TaskListValue, value: string): boolean {
+  let date: LocalDate;
+  try {
+    date = localDate(value);
+  } catch {
+    return false;
+  }
+  const occupied = taskOccupiedDates(task.planning);
+  return occupied.kind === 'interval'
+    ? occupied.start <= date && date <= occupied.due
+    : occupied.points.some((point) => point.date === date);
 }
 
 function visitTaskTags(
@@ -114,8 +125,7 @@ function* matchesProperty(
   if (filter.type === 'time') return String(task.planning.time) === filter.value;
   if (filter.type === 'priority') return task.priority === filter.value;
   if (filter.type === 'status') return task.statusSymbol === filter.value;
-  const date = dateOf(task);
-  return date !== undefined && String(date) === filter.value;
+  return matchesDate(task, filter.value);
 }
 
 function compareOptional(left: string | undefined, right: string | undefined): number {

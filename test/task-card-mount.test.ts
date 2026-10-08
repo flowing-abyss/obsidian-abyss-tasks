@@ -1,12 +1,14 @@
 import { Component, MarkdownRenderer, Menu, type App, type MenuItem } from 'obsidian';
 import { afterEach, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import { ListViewControls } from '../src/panels/center/ListViewControls';
 import {
   TaskCardRenderer,
   type TaskCardInteractionContext,
 } from '../src/panels/center/TaskCardRenderer';
 import type { TaskListNavigationRequest } from '../src/panels/center/TaskListNavigation';
 import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { selectTaskNodes } from '../src/task-lists/TaskListSelector';
 import type { TaskOccurrencePresentation } from '../src/task-lists/taskOccurrencePresentation';
 import {
   localDate,
@@ -16,6 +18,7 @@ import {
   type TaskOccurrenceCompletion,
   type TaskSnapshot,
 } from '../src/tasks';
+import { noInteractionOwnership } from '../src/ui/interactionOwnership';
 import {
   deferred,
   expectDefined,
@@ -31,7 +34,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   document.body.empty();
 });
-function renderer() {
+function renderer(useListControls = false) {
   const toggleTask = vi.fn(
     async (_task: TaskSnapshot, _completion?: TaskOccurrenceCompletion) => {},
   );
@@ -51,7 +54,19 @@ function renderer() {
   const registry = testStatusRegistry();
   const settings = structuredClone(DEFAULT_SETTINGS);
   const state = new AppState();
-  const listControls = { addPropertyFilter: vi.fn() };
+  const controls = new ListViewControls({
+    state,
+    settings,
+    statusRegistry: registry,
+    interactionOwnership: noInteractionOwnership,
+    saveViewState: async () => {},
+    host: { root: () => document.body, formatDate: String },
+  });
+  const listControls = {
+    addPropertyFilter: vi.fn((filter: Parameters<ListViewControls['addPropertyFilter']>[0]) => {
+      if (useListControls) controls.addPropertyFilter(filter);
+    }),
+  };
   const subject = new TaskCardRenderer({
     app: { workspace: { openLinkText, trigger } } as unknown as App,
     state,
@@ -1056,4 +1071,65 @@ it('disposes inclusion and exclusion tag listeners on metadata refresh and mount
   tag.dispatchEvent(new MouseEvent('contextmenu', { cancelable: true }));
   expect(h.listControls.addPropertyFilter).not.toHaveBeenCalled();
   h.hostComponent.unload();
+});
+
+it('keeps exact roots and children after clicking their rendered interval endpoints', async () => {
+  const h = renderer(true);
+  const source = await createCanonicalSearchHarness(
+    {
+      'dates.md': [
+        '- [ ] Same #keep 🛫 2026-10-09 📅 2026-10-11',
+        '- [ ] Same #keep 📅 2026-10-14',
+        '  - [ ] Same #keep 🛫 2026-10-09 📅 2026-10-13',
+        '  - [ ] Same 🛫 2026-10-09 📅 2026-10-13',
+      ].join('\n'),
+    },
+    h.settings,
+  );
+  const nodes = source.index.listNodes();
+  const selection = { type: 'tag' as const, tag: '#keep' };
+  h.state.set('selectedList', selection);
+  try {
+    for (const [index, endpoint, date] of [
+      [0, 0, '2026-10-09'],
+      [0, 1, '2026-10-11'],
+      [2, 0, '2026-10-09'],
+      [2, 1, '2026-10-13'],
+    ] as const) {
+      h.state.set('centerListViewState', {
+        groupBy: 'none',
+        sortBy: { field: 'date', dir: 'asc' },
+        filters: [],
+      });
+      const projection = expectDefined(nodes[index]);
+      const mount = h.subject.mount(document.body, projection.root, [], {
+        selected: false,
+        showDelete: false,
+        projection,
+      });
+      try {
+        expectDefined(
+          mount.element.querySelectorAll<HTMLElement>('.abyss-task-date-part')[endpoint],
+        ).click();
+        const viewState = h.state.get('centerListViewState');
+        expect(viewState.filters).toEqual([{ type: 'date', value: date }]);
+        const selected = selectTaskNodes({
+          tasks: nodes,
+          selection,
+          viewState,
+          settings: h.settings,
+          today: localDate('2026-10-09'),
+          nowMs: 0,
+        });
+        expect(selected).toContain(projection);
+        expect(selected).not.toContain(nodes[1]);
+        expect(selected).not.toContain(nodes[3]);
+      } finally {
+        mount.destroy();
+      }
+    }
+  } finally {
+    source.close();
+    h.hostComponent.unload();
+  }
 });

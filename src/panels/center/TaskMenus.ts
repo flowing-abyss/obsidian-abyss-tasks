@@ -633,11 +633,7 @@ export class TaskMenus {
 
     menu.addItem((item) =>
       item
-        .setTitle(
-          targets.summaries.some((task) => (task.depth ?? 0) > 0)
-            ? 'Archive all — promote subtasks first'
-            : 'Archive all',
-        )
+        .setTitle('Archive all')
         .setDisabled(targets.summaries.some((task) => (task.depth ?? 0) > 0))
         .setIcon('archive')
         .setSection('danger')

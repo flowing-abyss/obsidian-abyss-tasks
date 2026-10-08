@@ -5,12 +5,17 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { ListViewState } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { outgoingTaskLinkValues } from '../src/task-lists/taskLinkValues';
-import { selectTaskList } from '../src/task-lists/TaskListSelector';
+import { selectTaskList, selectTaskNodes } from '../src/task-lists/TaskListSelector';
 import {
   organizeTaskSearch as organizationSteps,
   type TaskSearchOrganizationInput,
 } from '../src/task-lists/taskSearchOrganization';
-import { localDate, taskSearchAddressKey } from '../src/tasks';
+import {
+  localDate,
+  taskNodeSourceLine,
+  taskSearchAddressKey,
+  type TaskOrganizationRecord,
+} from '../src/tasks';
 import { finiteGroupCounts, finiteOccurrences } from './support/taskOrganizationRows';
 import { assertNoRevision, createCanonicalSearchHarness } from './support/taskSearchHarness';
 import { taskKeys } from './task-list-row-assertions';
@@ -437,6 +442,90 @@ it('organizes exact sibling addresses and reveals a filtered nested parent witho
     const roots = organizeTaskSearch({ ...input, scope: 'roots', selection: null });
     expect(roots.scope).toBe('roots');
     expect(finiteOccurrences(roots)).toHaveLength(1);
+  } finally {
+    h.close();
+  }
+});
+
+it('filters canonical occupied dates with own-node AND clauses in hydrated and cooperative organization', async () => {
+  const h = await createCanonicalSearchHarness(
+    {
+      'dates.md': [
+        '- [ ] Same #keep 🛫 2026-10-09 📅 2026-10-11',
+        '- [ ] Same #keep 📅 2026-10-14',
+        '  - [ ] Same #keep 🛫 2026-10-09 ⏳ 2026-10-08 📅 2026-10-13',
+        '  - [ ] Same 🛫 2026-10-09 📅 2026-10-13',
+        '- [ ] Points #keep ⏳ 2026-10-10 📅 2026-10-12',
+      ].join('\n'),
+    },
+    settings,
+  );
+  try {
+    const subscription = h.index.searchSource().subscribe(() => {});
+    const generation = subscription.state.generation;
+    subscription.unsubscribe();
+    const records: TaskOrganizationRecord[] = [];
+    for await (const batch of h.index.organization(
+      { expectedGeneration: generation, scope: 'nodes' },
+      new AbortController().signal,
+    ))
+      records.push(...batch.items);
+    const nodes = h.index.listNodes();
+    const selection = 'upcoming' as const;
+    const shared = { settings, today: localDate('2026-10-07'), nowMs: 0, selection };
+    const base: ListViewState = {
+      groupBy: 'none',
+      sortBy: { field: 'date', dir: 'asc' },
+      filters: [{ type: 'tag', value: '#keep' }],
+    };
+    // Due anchors still order the point task after the earlier-due interval, regardless of start.
+    expect(
+      selectTaskNodes({ ...shared, tasks: nodes, viewState: base }).map((node) =>
+        taskNodeSourceLine(node.target),
+      ),
+    ).toEqual([0, 4, 2, 1]);
+    for (const [value, expected] of [
+      ['2026-10-08', []], // scheduled outside the valid interval is not occupied
+      ['2026-10-09', [0, 2]], // start endpoints, excluding parent and sibling decoys
+      ['2026-10-10', [0, 4, 2]], // interior and scheduled point
+      ['2026-10-11', [0, 2]], // due endpoint and gap between fallback points
+      ['2026-10-12', [4, 2]], // due point
+      ['2026-10-13', [2]],
+      ['2026-10-10x', []], // malformed date lexically inside the interval
+      ['2026-02-30', []],
+    ] as const) {
+      const viewState: ListViewState = {
+        ...base,
+        filters: [
+          { type: 'date', value },
+          { type: 'tag', value: '#keep' },
+        ],
+      };
+      expect(
+        selectTaskNodes({ ...shared, tasks: nodes, viewState }).map((node) =>
+          taskNodeSourceLine(node.target),
+        ),
+        value,
+      ).toEqual(expected);
+      const compact = organizeTaskSearch({
+        ...shared,
+        scope: 'nodes',
+        generation,
+        records,
+        hits: null,
+        view: { list: viewState, relevance: false },
+        outgoingLinks: new Map(),
+      });
+      expect(
+        finiteOccurrences(compact).map((row) => {
+          const record = records.find(
+            (record) => taskSearchAddressKey(record.address) === taskSearchAddressKey(row.address),
+          );
+          return record?.source.line;
+        }),
+        value,
+      ).toEqual(expected);
+    }
   } finally {
     h.close();
   }

@@ -754,3 +754,31 @@ it('keeps ordinary child tag filters and Set tag mutations on the exact own node
     h.dispose();
   }
 });
+
+it.each([{ depths: [1, 1] }, { depths: [0, 1] }])(
+  'keeps bulk Archive all short and disabled for depths $depths',
+  ({ depths }) => {
+    const { panel, card, first, second } = fixture();
+    const shown = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+      this: Menu,
+    ) {
+      return this;
+    });
+    try {
+      panel['taskMenus_abyssPrivate'].showBulkContextMenu(new MouseEvent('contextmenu'), card, {
+        signal: new AbortController().signal,
+        summaries: [first, second].map((task, index) => ({
+          ...task,
+          depth: expectDefined(depths[index]),
+        })),
+        resolve: async () => [],
+      });
+      const menu = expectDefined(shown.mock.instances[0]) as Menu;
+      const archive = expectDefined(items(menu).find((item) => item.title__.startsWith('Archive')));
+      expect(archive.title__).toBe('Archive all');
+      expect(archive.disabled).toBe(true);
+    } finally {
+      panel.destroy();
+    }
+  },
+);
