@@ -1872,8 +1872,32 @@ describe('schema 2 tag filter compatibility', () => {
       const loaded = await coordinator.loadSettings(DEFAULT_SETTINGS);
       expect(loaded.settings.listViewStates).toBeUndefined();
       expect(port.writes).toEqual([]);
+      const events: string[] = [];
+      const write = port.state.write,
+        read = port.state.read,
+        saveStatic = port.saveStatic;
+      port.state.write = async (path, data) => {
+        events.push('state');
+        await write(path, data);
+      };
+      port.state.read = async (path) => {
+        events.push('verify');
+        return read(path);
+      };
+      port.saveStatic = async (data) => {
+        events.push('static');
+        await saveStatic(data);
+      };
       await coordinator.saveViewState(loaded.settings);
-      expect(JSON.parse(expectDefined(port.stateText))).not.toHaveProperty('recovery.preSplitData');
+      const saved = JSON.parse(expectDefined(port.stateText)) as Record<string, unknown>;
+      expect(saved).not.toHaveProperty('recovery.preSplitData');
+      expect(saved).toMatchObject({ schemaVersion: 2 });
+      expect(saved).not.toHaveProperty('views.listViewStates.inbox');
+      expect(port.staticData).toHaveProperty('savedViewStateSchemaVersion', 2);
+      expect(port.staticData).not.toHaveProperty('listViewStates');
+      expect(events).toEqual(['state', 'verify', 'static']);
+      await coordinator.saveSettings(loaded.settings);
+      expect(events).toEqual(['state', 'verify', 'static']);
     },
   );
   it.each([
@@ -2214,3 +2238,72 @@ it('keeps marker advancement when a detached static save queues behind the schem
   expect(port.staticData).toMatchObject({ savedViewStateSchemaVersion: 2, taskPrefix: '#queued' });
   expect(JSON.parse(expectDefined(port.stateText))).toMatchObject({ schemaVersion: 2 });
 });
+
+it.each(
+  [1, 2].flatMap((marker) => ['write', 'verify', 'static'].map((failure) => ({ marker, failure }))),
+)(
+  'retries missing-state recreation after $failure failure with marker $marker without recapturing stale views',
+  async ({ marker, failure }) => {
+    const stale = {
+      inbox: {
+        groupBy: 'priority',
+        sortBy: { field: 'title', dir: 'desc' },
+        filters: [{ type: 'tag', value: '#stale' }],
+        extension: 7,
+      },
+    };
+    const port = memoryPort(
+      { ...markedStatic(), savedViewStateSchemaVersion: marker, listViewStates: stale },
+      undefined,
+    );
+    const originalStatic = structuredClone(port.staticData);
+    const coordinator = new SettingsPersistenceCoordinator(port);
+    const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+    expect(settings.listViewStates).toBeUndefined();
+    expect(port.writes).toEqual([]);
+    await coordinator.saveSettings(settings);
+    expect(port.staticData).toEqual(originalStatic);
+    const write = port.state.write,
+      read = port.state.read,
+      saveStatic = port.saveStatic;
+    if (failure === 'write')
+      port.state.write = vi.fn().mockRejectedValueOnce(new Error('disk')).mockImplementation(write);
+    if (failure === 'verify')
+      port.state.read = vi.fn().mockResolvedValueOnce('mismatch').mockImplementation(read);
+    if (failure === 'static')
+      port.saveStatic = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('disk'))
+        .mockImplementation(saveStatic);
+    await expect(coordinator.saveViewState(settings)).rejects.toThrow();
+    expect(port.staticData).toEqual(originalStatic);
+    const afterFailure = port.stateText;
+    if (failure === 'write') expect(afterFailure).toBeUndefined();
+    else {
+      expect(JSON.parse(expectDefined(afterFailure))).toMatchObject({ schemaVersion: 2 });
+      expect(JSON.parse(expectDefined(afterFailure))).not.toHaveProperty('recovery.preSplitData');
+      expect(JSON.parse(expectDefined(afterFailure))).not.toHaveProperty(
+        'views.listViewStates.inbox',
+      );
+    }
+    port.writes = [];
+    const retry = coordinator.saveViewState(settings);
+    settings.taskPrefix = '#queued';
+    const queuedStatic = coordinator.saveSettings(settings);
+    settings.taskPrefix = '#not-in-snapshot';
+    await retry;
+    await queuedStatic;
+    expect(port.writes).toEqual(
+      failure === 'static' ? ['data.json', 'data.json'] : [STATE_PATH, 'data.json', 'data.json'],
+    );
+    expect(port.staticData).toMatchObject({
+      savedViewStateSchemaVersion: 2,
+      taskPrefix: '#queued',
+    });
+    expect(port.staticData).not.toHaveProperty('listViewStates');
+    if (afterFailure !== undefined) expect(port.stateText).toBe(afterFailure);
+    const reload = await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS);
+    expect(reload.settings.listViewStates).toBeUndefined();
+    expect(reload.settings.taskPrefix).toBe('#queued');
+  },
+);

@@ -777,7 +777,9 @@ export class SettingsPersistenceCoordinator {
       composed.settings.projects.table = buildDefaultConfiguredProjectTableSettings(
         composed.settings.projects,
       );
-      this.lastStaticSerialized = serialize(createStaticDocument(composed.settings));
+      // Recreating missing state must verify durability before clearing stale fields or its marker.
+      this.guardedLegacyStatic = detached(rawStatic);
+      this.lastStaticSerialized = serialize(this.staticDocument(composed.settings));
       return { ...composed, issues: [] };
     }
     return this.migrateLegacyState(rawStatic, defaults);

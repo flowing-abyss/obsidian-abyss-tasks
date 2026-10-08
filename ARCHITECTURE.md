@@ -1565,6 +1565,8 @@ Schema 1 and legacy inclusion clauses remain readable. A schema-1 read without m
 performs no writes and retains its marker until a view save writes and verifies schema 2; cleanup
 of moved keys likewise follows the verified state write. Valid state wins independently of the
 marker, and missing state with either marker 1 or 2 uses defaults without recapturing stale keys.
+That missing-state path retains its static guard until the recreated state is written and verified,
+then advances the marker and cleans stale keys; failed writes or cleanup remain retryable.
 An older schema-1 binary rejects schema 2 and suspends state writes, temporarily using default
 views; re-upgrading restores preferences. A literal historical coordinator fixture covers loading
 and attempted saving across that rollback, including interrupted migration.
