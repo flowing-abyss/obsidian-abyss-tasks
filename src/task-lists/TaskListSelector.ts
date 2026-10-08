@@ -377,6 +377,25 @@ function* prepareOrder<T extends TaskListValue>(
     throw new Error('Order preparation ended without a result');
   return { input, linkOrder, trackedMs, statusOrder };
 }
+export type TaskValueOrderContext = { readonly kind: 'authored' } | { readonly kind: 'same-day' };
+export function* taskValueComparatorSteps<T extends TaskListValue>(
+  input: TaskValueSelectionInput<T>,
+  context: TaskValueOrderContext,
+): CollectionSteps<(left: T, right: T) => number> {
+  const order = yield* prepareOrder(input.tasks, input, true);
+  if (order === undefined) throw new Error('Order ended without a result');
+  return (left, right) => {
+    const primary =
+      context.kind === 'same-day' && input.viewState.sortBy.field === 'date'
+        ? compareOptional(left.planning.time, right.planning.time)
+        : compare(left, right, order);
+    if (primary !== 0) return input.viewState.sortBy.dir === 'asc' ? primary : -primary;
+    const created = compareCreated(left, right);
+    if (created !== 0) return created;
+    const path = left.source.filePath.localeCompare(right.source.filePath);
+    return path !== 0 ? path : left.source.line - right.source.line;
+  };
+}
 function* selectValues<T extends TaskListValue>(
   input: TaskValueSelectionInput<T>,
   cooperative: boolean,
@@ -384,13 +403,11 @@ function* selectValues<T extends TaskListValue>(
   const matching = cooperative ? yield* filterTaskValuesSteps(input) : filterTaskValues(input);
   if (matching === undefined) throw new Error('Selection ended without a result');
   if (matching.length < 2) return matching;
-  const order = yield* prepareOrder(matching, input, cooperative);
-  if (order === undefined) throw new Error('Order ended without a result');
-  const comparator = (left: T, right: T): number => {
-    const explicit = compare(left, right, order);
-    if (explicit !== 0) return input.viewState.sortBy.dir === 'asc' ? explicit : -explicit;
-    return compareCreated(left, right);
-  };
+  const comparator = yield* taskValueComparatorSteps(
+    { ...input, tasks: matching },
+    { kind: 'authored' },
+  );
+  if (comparator === undefined) throw new Error('Comparator ended without a result');
   if (cooperative) return yield* stableSortSteps(matching, comparator);
   matching.sort(comparator);
   return matching;

@@ -1635,3 +1635,24 @@ The full gate includes source CSS, community review rules, and freshly built
 artifact CSS. UI changes also require native interaction, screenshots, DOM evidence, and captured
 runtime errors in `dev-vault-tasks`, including constrained widths when layout changes. Follow
 [AGENTS.md](AGENTS.md) for development-vault restoration and integration rules.
+
+Upcoming with Date grouping enters the compact canonical browse owner even when the text query is
+empty. Preparation joins the ready source generation and requests unrestricted node organization;
+it never opens an empty text-search cursor. The retained task shell keeps its controls and capture
+host across grouping and filter changes. Search and Projects retain their root population.
+
+`taskDailyRows` represents complete future occupied dates with finite node descriptors and signed
+boundary events. Prefix-count segments support random task/header access, sparse measured geometry,
+and exact old-order anchor survival over the canonical 0000–9999 domain. Only requested day vectors
+are scanned/sorted and cached, with at most 64 days retained; the first vector is prepared cooperatively.
+The shared selector comparator distinguishes authored date order from same-day time order and uses
+ascending creation/source ties. Canonical date selection intersects intervals arithmetically, while
+selected-node completion combines the selected occurrences without hydrating daily copies.
+
+Compact organization publishes `TaskListRows` directly. `TaskSearchRows` leases only demanded roots
+and proves recreated occurrence receipts by complete address within the current request lifetime.
+`taskRevealRows` appends a receipt-scoped finite header/task tail after exact accepted-record proof;
+it delegates to the base index, counts physical nodes/owning roots separately, and retires only the
+receipt's ordinary occurrence descriptor. It never expands the date base or fabricates a daily reveal.
+PanelView's existing civil-day invalidation refreshes this default browse route and rebinds selection
+by surviving dates without any source publication or Markdown write.

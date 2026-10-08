@@ -2,6 +2,7 @@ import { MarkdownRenderer } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { deferred, expectDefined, flushMicrotasks, task, useRealMoment } from './helpers';
+import { finiteOccurrences } from './support/taskOrganizationRows';
 import { taskCardMountBound } from './support/taskPanelViewport';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
 import { taskViewportOwner } from './support/taskViewportOwner';
@@ -79,7 +80,7 @@ describe('Search supplied result viewport', () => {
     await h.completed();
     expect(h.root.dataset['searchLogicalResults']).toBe('1200');
     const organization = expectDefined(h.mount.mock.calls[0]?.[1]);
-    expect(organization.occurrences).toHaveLength(1200);
+    expect(finiteOccurrences(organization)).toHaveLength(1200);
     expect(h.results.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
       taskCardMountBound(h.root, 1),
     );
@@ -139,7 +140,9 @@ describe('Search supplied result viewport', () => {
     await h.completed();
     const card = expectDefined(h.results.querySelector<HTMLElement>('.abyss-task-card'));
     const stale = expectDefined(h.mount.mock.calls[0]?.[2].onActivate);
-    const original = expectDefined(h.mount.mock.calls[0]?.[1].occurrences[0]?.address);
+    const original = expectDefined(
+      finiteOccurrences(expectDefined(h.mount.mock.calls[0]?.[1]))[0]?.address,
+    );
     const add = vi.spyOn(card, 'addEventListener');
     for (let revision = 1; revision <= 4; revision++) {
       await h.replace(`- [ ] needle revision ${revision} 📅 2099-07-01`);
@@ -228,7 +231,7 @@ describe('Search supplied result viewport', () => {
     const activate = expectDefined(old[2].onActivate);
     h.query('needle 0');
     await h.completed();
-    activate(expectDefined(old[1].occurrences[0]?.address));
+    activate(expectDefined(finiteOccurrences(old[1])[0]?.address));
     await flushMicrotasks();
     expect(h.openList).not.toHaveBeenCalled();
   });

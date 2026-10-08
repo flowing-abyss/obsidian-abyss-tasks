@@ -1,9 +1,18 @@
 import type { ListSelection } from '../app/AppState';
 import { stableSortSteps, type CollectionSteps } from '../collectionSteps';
 import type { SearchViewState } from '../panels/center/SearchViewState';
+import { buildTaskDailyRowsSteps } from '../panels/task-list/taskDailyRows';
+import { indexedRows, type TaskListRow, type TaskListRows } from '../panels/task-list/taskListRows';
+import { withTaskRevealRows } from '../panels/task-list/taskRevealRows';
 import { StatusRegistry } from '../status/StatusRegistry';
 import type { LocalDate, TaskOrganizationRecord, TaskSearchAddress, TaskSearchHit } from '../tasks';
-import { TaskSearchError, shiftLocalDate, taskSearchAddressKey, totalMs } from '../tasks';
+import {
+  TaskSearchError,
+  shiftLocalDate,
+  taskSearchAddressKey,
+  taskTodayOccurrence,
+  totalMs,
+} from '../tasks';
 import {
   groupTasksByDateSteps,
   groupTasksByOutgoingLinkSteps,
@@ -17,6 +26,7 @@ import type { TaskLinkValues } from './taskLinkValues';
 import {
   filterTaskValuesSteps,
   selectTaskValuesSteps,
+  taskValueComparatorSteps,
   type TaskOrganizationSettings,
 } from './TaskListSelector';
 import type { TaskOccurrencePresentation } from './taskOccurrencePresentation';
@@ -37,14 +47,16 @@ export interface TaskSearchOccurrence {
 export type TaskSearchOrganization = {
   readonly generation: number;
   readonly revealIndex?: number;
-  readonly occurrences: readonly TaskSearchOccurrence[];
-  readonly groupCounts: ReadonlyMap<string, number>;
+  readonly rows: TaskListRows<TaskSearchOccurrence>;
 } & (
   | { readonly scope: 'roots'; readonly rootTotal: number }
   | { readonly scope: 'nodes'; readonly nodeTotal: number }
 );
 export interface TaskSearchOrganizationInput {
   readonly scope?: 'roots' | 'nodes';
+  readonly revision?: string;
+  readonly revealReceiptId?: string | undefined;
+  readonly formatDate?: (date: LocalDate) => string;
   /** Full canonical tags, independent of query hits, for selected group identity. */
   readonly observedTags?: readonly string[];
   readonly generation: number;
@@ -162,99 +174,192 @@ function occurrence(
     group,
   };
 }
-function* appendOccurrences(
-  records: readonly TaskOrganizationRecord[],
-  group: TaskSearchOccurrence['group'],
-  context: {
-    menus: Map<string, TaskSearchMenuSummary>;
-    outgoing: boolean;
-    scores: ReadonlyMap<string, number>;
-    output: TaskSearchOccurrence[];
-  },
+function authoredInterval(record: TaskOrganizationRecord): TaskOccurrencePresentation['interval'] {
+  const { start, due } = record.planning;
+  return start !== undefined && due !== undefined && start <= due ? { start, due } : undefined;
+}
+function presentation(
+  record: TaskOrganizationRecord,
+  input: TaskSearchOrganizationInput,
+): TaskOccurrencePresentation {
+  const interval = authoredInterval(record);
+  const today =
+    input.scope === 'nodes' && input.selection === 'today'
+      ? taskTodayOccurrence(record.planning, input.today)
+      : undefined;
+  return {
+    kind: today === undefined ? 'node' : 'today',
+    ...(interval === undefined ? {} : { interval }),
+    ...(today === undefined ? {} : { displayDate: today.displayDate }),
+    completion: today?.completion ?? { kind: 'allowed' },
+  };
+}
+interface OrganizationContext {
+  readonly input: TaskSearchOrganizationInput;
+  readonly matching: readonly TaskOrganizationRecord[];
+  readonly revision: string;
+  makeOccurrence(
+    this: void,
+    record: TaskOrganizationRecord,
+    group: TaskSearchOccurrence['group'],
+  ): TaskSearchOccurrence;
+}
+function* dailyRows(
+  context: OrganizationContext,
+): CollectionSteps<TaskListRows<TaskSearchOccurrence>> {
+  const { input, matching, revision, makeOccurrence } = context;
+  const compare = yield* taskValueComparatorSteps(
+    {
+      ...input,
+      tasks: matching,
+      viewState: input.view.list,
+      depth: (r) => r.depth,
+      treeTags: (r) => r.treeTags,
+      trackedMs: (r) => totalMs(r.tracked, input.nowMs),
+    },
+    { kind: 'same-day' },
+  );
+  if (compare === undefined) throw new Error('Comparator ended without a result');
+  const daily = yield* buildTaskDailyRowsSteps({
+    revision,
+    records: matching,
+    today: input.today,
+    direction: input.view.list.sortBy.field === 'date' ? input.view.list.sortBy.dir : 'asc',
+    compareWithinDay: compare,
+    formatDate: input.formatDate ?? ((date) => date),
+    occurrence: (record, date) =>
+      makeOccurrence(record, { key: date, label: input.formatDate?.(date) ?? date }),
+  });
+  if (daily === undefined) throw new Error('Daily rows ended without a result');
+  return daily;
+}
+function* appendGroupRows(
+  context: OrganizationContext,
+  group: { key: string; label: string; tasks: readonly TaskOrganizationRecord[] },
+  finite: Array<TaskListRow<TaskSearchOccurrence>>,
 ): CollectionSteps<boolean> {
-  const { output, outgoing, scores } = context;
-  for (const record of records) {
-    output.push(occurrence(record, group, outgoing, { scores, menus: context.menus }));
+  const grouped = context.input.view.list.groupBy !== 'none';
+  for (const record of group.tasks) {
+    const task = context.makeOccurrence(
+      record,
+      grouped ? { key: group.key, label: group.label } : null,
+    );
+    finite.push({
+      kind: 'task',
+      key: task.key,
+      taskKey: task.taskKey,
+      task,
+      presentation: task.presentation,
+    });
     yield 'atom';
   }
   return true;
 }
-function* groupedOccurrences(
-  input: TaskSearchOrganizationInput,
-  records: readonly TaskOrganizationRecord[],
-  scores: ReadonlyMap<string, number>,
-  output: {
-    counts: Map<string, number>;
-    occurrences: TaskSearchOccurrence[];
-    menus: Map<string, TaskSearchMenuSummary>;
-  },
-): CollectionSteps<boolean> {
-  const groups = yield* organizationGroups(records, input);
-  if (groups === undefined) throw new Error('Grouping ended without a result');
+function* finiteRows(
+  context: OrganizationContext,
+): CollectionSteps<TaskListRows<TaskSearchOccurrence>> {
+  const { input, matching, revision } = context;
+  const finite: Array<TaskListRow<TaskSearchOccurrence>> = [];
+  const groups =
+    input.view.list.groupBy === 'none'
+      ? [{ key: '', label: '', tasks: matching }]
+      : yield* organizationGroups(matching, input);
+  if (groups === undefined) throw new Error('Groups ended without a result');
   for (const group of groups) {
-    output.counts.set(group.key, group.tasks.length);
+    const grouped = input.view.list.groupBy !== 'none';
+    if (grouped)
+      finite.push({
+        kind: 'group',
+        key: `group:${input.view.list.groupBy}:${group.key}`,
+        label: group.label,
+        count: group.tasks.length,
+        first: finite.length === 0,
+        ...(input.view.list.groupBy === 'source-note' ? { sourcePath: group.key } : {}),
+      });
     yield 'cheap';
-    const appended = yield* appendOccurrences(
-      group.tasks,
-      { key: group.key, label: group.label },
-      {
-        menus: output.menus,
-        outgoing: input.view.list.groupBy === 'outgoing-link',
-        scores,
-        output: output.occurrences,
-      },
-    );
-    if (appended === undefined) throw new Error('Occurrences ended without a result');
-    group.tasks.length = 0;
+    yield* appendGroupRows(context, group, finite);
+  }
+
+  return indexedRows(finite, revision);
+}
+function* revealRows(
+  context: OrganizationContext,
+  rows: TaskListRows<TaskSearchOccurrence>,
+  ownerRoots: ReadonlySet<number>,
+): CollectionSteps<ReturnType<typeof withTaskRevealRows> | null> {
+  const { input, makeOccurrence } = context;
+  if (input.reveal === undefined) return null;
+  let record: TaskOrganizationRecord | undefined;
+  for (const candidate of input.records) {
+    if (taskSearchAddressKey(candidate.address) === taskSearchAddressKey(input.reveal))
+      record = candidate;
     yield 'cheap';
   }
-  return true;
+  if (record === undefined) throw new TaskSearchError('stale', 'Reveal target changed');
+  const reveal = withTaskRevealRows(rows, {
+    occurrence: makeOccurrence(record, null),
+    generation: input.generation,
+    kind: input.revealKind ?? 'navigation',
+    receiptId: input.revealReceiptId ?? taskSearchAddressKey(input.reveal),
+    ownerRootPresent: ownerRoots.has(record.address.rootId),
+  });
+  return reveal;
 }
 export function* organizeTaskSearch(
   input: TaskSearchOrganizationInput,
 ): CollectionSteps<TaskSearchOrganization> {
-  const menus = new Map<string, TaskSearchMenuSummary>();
   const scores = yield* scoreMap(input);
   if (scores === undefined) throw new Error('Scores ended without a result');
-  let matching: TaskOrganizationRecord[] = [],
-    occurrences: TaskSearchOccurrence[] = [];
-  let groupCounts = new Map<string, number>();
-  try {
-    const selected = yield* matchingRecords(input, scores);
-    if (selected === undefined) throw new Error('Matching ended without a result');
-    matching = selected;
-    const rootTotal = matching.length;
-    const appended =
-      input.view.list.groupBy === 'none'
-        ? yield* appendOccurrences(matching, null, {
-            menus,
-            outgoing: false,
-            scores,
-            output: occurrences,
-          })
-        : yield* groupedOccurrences(input, matching, scores, {
-            counts: groupCounts,
-            occurrences,
-            menus,
-          });
-    if (appended === undefined) throw new Error('Organization ended without a result');
-    const revealIndex = yield* revealOccurrence(input, occurrences, groupCounts);
-    return {
-      generation: input.generation,
-      ...(input.scope === 'nodes'
-        ? { scope: 'nodes' as const, nodeTotal: rootTotal + Number(revealIndex?.added === true) }
-        : { scope: 'roots' as const, rootTotal: rootTotal + Number(revealIndex?.added === true) }),
-      groupCounts,
-      occurrences,
-      ...(revealIndex === undefined ? {} : { revealIndex: revealIndex.index }),
-    };
-  } finally {
-    scores.clear();
-    menus.clear();
-    matching = [];
-    occurrences = [];
-    groupCounts = new Map();
+  const matching = yield* matchingRecords(input, scores);
+  if (matching === undefined) throw new Error('Matching ended without a result');
+  const menus = new Map<string, TaskSearchMenuSummary>();
+  const context: OrganizationContext = {
+    input,
+    matching,
+    revision:
+      input.revision ??
+      JSON.stringify([
+        'organization',
+        input.generation,
+        input.scope,
+        input.selection,
+        input.view,
+        input.today,
+        input.nowMs,
+      ]),
+    makeOccurrence: (record, group) => ({
+      ...occurrence(record, group, input.view.list.groupBy === 'outgoing-link', { scores, menus }),
+      presentation: presentation(record, input),
+    }),
+  };
+  const ownerRoots = new Set<number>();
+  for (const record of matching) {
+    ownerRoots.add(record.address.rootId);
+    yield 'cheap';
   }
+  const daily =
+    input.scope === 'nodes' && input.selection === 'upcoming' && input.view.list.groupBy === 'date';
+  const base = yield* daily ? dailyRows(context) : finiteRows(context);
+  if (base === undefined) throw new Error('Rows ended without a result');
+  const reveal = yield* revealRows(context, base, ownerRoots);
+  if (reveal === undefined) throw new Error('Reveal ended without a result');
+  return organizationResult(context, base, reveal, ownerRoots);
+}
+function organizationResult(
+  context: OrganizationContext,
+  base: TaskListRows<TaskSearchOccurrence>,
+  reveal: ReturnType<typeof withTaskRevealRows> | null,
+  ownerRoots: ReadonlySet<number>,
+): TaskSearchOrganization {
+  const { input, matching } = context;
+  return {
+    generation: input.generation,
+    rows: reveal?.rows ?? base,
+    ...(reveal === null ? {} : { revealIndex: reveal.revealIndex }),
+    ...(input.scope === 'nodes'
+      ? { scope: 'nodes', nodeTotal: matching.length + (reveal?.addedNodeCount ?? 0) }
+      : { scope: 'roots', rootTotal: ownerRoots.size + (reveal?.addedRootCount ?? 0) }),
+  };
 }
 function* organizationGroups(
   records: readonly TaskOrganizationRecord[],
@@ -289,53 +394,4 @@ function* organizationGroups(
 function compareSource(a: TaskOrganizationRecord, b: TaskOrganizationRecord): number {
   const path = a.source.filePath.localeCompare(b.source.filePath);
   return path !== 0 ? path : a.source.line - b.source.line;
-}
-
-function revealGroup(kind: TaskSearchOrganizationInput['revealKind']): {
-  key: string;
-  label: string;
-} {
-  return { key: 'search-reveal', label: kind === 'creation' ? 'Created task' : 'Revealed task' };
-}
-function* revealOccurrence(
-  input: TaskSearchOrganizationInput,
-  occurrences: TaskSearchOccurrence[],
-  counts: Map<string, number>,
-): CollectionSteps<{ index: number; added: boolean } | undefined> {
-  const target = input.reveal;
-  if (target === undefined) return undefined;
-  let record: TaskOrganizationRecord | undefined;
-  for (const candidate of input.records) {
-    if (taskSearchAddressKey(candidate.address) === taskSearchAddressKey(target))
-      record = candidate;
-    yield 'cheap';
-  }
-  if (record === undefined) throw new TaskSearchError('stale', 'Reveal target changed');
-  for (let index = 0; index < occurrences.length; index++) {
-    const item = occurrences[index];
-    if (item !== undefined && taskSearchAddressKey(item.address) === taskSearchAddressKey(target))
-      return { index, added: false };
-    yield 'cheap';
-  }
-  const index = occurrences.length;
-  const group = revealGroup(input.revealKind);
-  counts.set(group.key, 1);
-  occurrences.push({
-    depth: record.depth,
-    presentation: { kind: 'node', completion: { kind: 'allowed' } },
-    taskKey: `${record.source.filePath}:${record.source.line}`,
-    menu: {
-      status: record.status,
-      statusSymbol: record.statusSymbol,
-      priority: record.priority,
-      planning: record.planning,
-      tags: record.tags,
-    },
-    key: `search-reveal:${taskSearchAddressKey(target)}`,
-    address: record.address,
-    score: 0,
-    group,
-  });
-  yield 'atom';
-  return { index, added: true };
 }

@@ -1046,6 +1046,7 @@ export class CenterPanel {
           retained.tagGroups,
         ]),
         preserveAnchor: options.preserveAnchor,
+        indexedHeights: { group: 32, task: 64 },
         estimate: (row) => (row.kind === 'group' ? 32 : 64),
         measurementRevision: (row) =>
           row.kind === 'group'
@@ -2455,8 +2456,12 @@ export class CenterPanel {
 
   private hasCompactTasks_abyssPrivate(): boolean {
     return (
-      this.state_abyssPrivate.get('centerFilter').length > 0 ||
-      this.taskSearchReveal_abyssPrivate.current() !== undefined
+      this.state_abyssPrivate.get('mode') === 'tasks' &&
+      (this.state_abyssPrivate.get('centerFilter').length > 0 ||
+        this.taskSearchReveal_abyssPrivate.current() !== undefined ||
+        this.creationInclusion_abyssPrivate !== undefined ||
+        (this.state_abyssPrivate.get('selectedList') === 'upcoming' &&
+          this.state_abyssPrivate.get('centerListViewState').groupBy === 'date'))
     );
   }
 

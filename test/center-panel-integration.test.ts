@@ -70,6 +70,7 @@ import {
   setCalendarViewType,
   taskCommandsOf,
 } from './support/panelHarness';
+import { prepareTaskPanelViewport } from './support/taskPanelViewport';
 import { canonicalSearchForIndex } from './support/taskSearchHarness';
 import { mountCanonicalSearchUi, searchUiCompleted } from './support/taskSearchUiHarness';
 
@@ -275,7 +276,7 @@ async function makePanel(
 ): Promise<{
   panel: CenterPanel;
   state: AppState;
-  index: TaskQueryApi;
+  index: ReturnType<typeof configuredTaskApplication>['index'];
   tasks: TaskApplicationApi;
   app: App;
 }> {
@@ -7336,4 +7337,120 @@ describe('calendar native exact-node drag authority', () => {
       container.remove();
     },
   );
+});
+
+describe('default empty-query indexed Upcoming', () => {
+  fixedToday('2026-10-06');
+  it('uses canonical browse and retains shell owners through filter clear and Date/None changes', async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 6, 12));
+    const h = await makePanel({ 'daily.md': '- [ ] Range 🛫 2026-10-07 📅 2026-10-09' });
+    const el = document.body.createDiv();
+    h.state.set('selectedList', 'upcoming');
+    h.panel.mount(el);
+    try {
+      await searchUiCompleted(el);
+      const filter = el.querySelector('.abyss-center-search');
+      const view = el.querySelector('.abyss-view-state-btn');
+      const add = el.querySelector('.abyss-add-task-bar');
+      expect(el.querySelectorAll('.abyss-group-header')).toHaveLength(3);
+      expect(el.querySelectorAll('.abyss-task-card')).toHaveLength(3);
+      expect(el.getAttribute('data-search-logical-results')).toBe('1');
+      h.state.set('centerFilter', 'Range');
+      await searchUiCompleted(el);
+      h.state.set('centerFilter', '');
+      await searchUiCompleted(el);
+      expect(el.querySelectorAll('.abyss-task-card')).toHaveLength(3);
+      expectDefined(el.querySelectorAll<HTMLElement>('.abyss-task-card')[1]).dispatchEvent(
+        new MouseEvent('click', { bubbles: true, metaKey: true }),
+      );
+      expect(el.querySelectorAll('.abyss-multi-selected')).toHaveLength(1);
+      h.state.set('centerListViewState', {
+        ...h.state.get('centerListViewState'),
+        groupBy: 'none',
+      });
+      await flushMicrotasks();
+      expect(el.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+      expect(el.querySelectorAll('.abyss-multi-selected')).toHaveLength(0);
+      h.state.set('centerListViewState', {
+        ...h.state.get('centerListViewState'),
+        groupBy: 'date',
+      });
+      await searchUiCompleted(el);
+      expect(el.querySelectorAll('.abyss-task-card')).toHaveLength(3);
+      expect(el.querySelector('.abyss-center-search')).toBe(filter);
+      expect(el.querySelector('.abyss-view-state-btn')).toBe(view);
+      expect(el.querySelector('.abyss-add-task-bar')).toBe(add);
+    } finally {
+      h.panel.destroy();
+      el.remove();
+    }
+  });
+  it('mounts a bounded first window from the complete domain and reaches its last task', async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 6, 12));
+    const h = await makePanel({ 'full.md': '- [ ] All 🛫 0000-01-01 📅 9999-12-31' });
+    const hydrate = vi.spyOn(h.index, 'resolveSearchHits');
+    const updates = vi.spyOn(TaskListSurface.prototype, 'update');
+    const el = document.body.createDiv();
+    prepareTaskPanelViewport(el, true);
+    h.state.set('selectedList', 'upcoming');
+    h.panel.mount(el);
+    try {
+      await searchUiCompleted(el);
+      const order = expectDefined(updates.mock.lastCall?.[0]);
+      expect(order.taskCount).toBeGreaterThan(2_900_000);
+      expect(order.rowCount).toBe(order.taskCount * 2);
+      expect(order.anchorRanges()).toHaveLength(2);
+      expect(el.querySelectorAll('.abyss-task-card').length).toBeLessThan(100);
+      expect(hydrate.mock.calls.flatMap(([hits]) => hits).length).toBeLessThan(100);
+      const key = expectDefined(order.taskKeyAt(order.taskCount - 1));
+      expect(key).toContain('9999-12-31');
+      expect(order.rowIndexOf(key)).toBe(order.rowCount - 1);
+      expect(updates.mock.lastCall?.[1].indexedHeights).toEqual({ group: 32, task: 64 });
+      const file = expectDefined(h.app.vault.getFileByPath('full.md'));
+      expect(await h.app.vault.read(file)).toBe('- [ ] All 🛫 0000-01-01 📅 9999-12-31');
+      const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
+      surface.reveal(key);
+      await vi.waitFor(() => {
+        expect(surface.element(key)?.textContent).toContain('All');
+      });
+      const selection = h.panel['rowSelection_abyssPrivate'];
+      const press = (value: string, options: KeyboardEventInit = {}): void => {
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, ...options }));
+      };
+      press('Home');
+      expect(selection.focus).toBe(order.taskKeyAt(0));
+      press('ArrowDown');
+      expect(selection.focus).toBe(order.taskKeyAt(1));
+      press('ArrowUp');
+      expect(selection.focus).toBe(order.taskKeyAt(0));
+      press('End', { shiftKey: true });
+      expect(selection.focus).toBe(key);
+      expect(selection.size).toBe(order.taskCount);
+      expect(selection.selectedNodes(order)).toHaveLength(1);
+      expect(selection.selectedNodes(order)[0]?.completion.kind).toBe('allowed');
+      press('Home');
+      press('a', { metaKey: true });
+      expect(selection.size).toBe(order.taskCount);
+      const targets = h.panel['taskMenuTargets_abyssPrivate']();
+      expect(targets.summaries).toHaveLength(1);
+      const selected = await targets.resolve(targets.signal);
+      expect(selected).toHaveLength(1);
+      const execute = vi.spyOn(h.tasks, 'execute');
+      await taskCommandsOf(h.panel).setBulkTaskStatus(selected, 'x');
+      expect(execute.mock.calls.filter(([command]) => command.type === 'set-status')).toHaveLength(
+        1,
+      );
+      expect(await h.app.vault.read(file)).toContain('- [x] All');
+      expect(await h.app.vault.read(file)).toContain('🛫 0000-01-01 📅 9999-12-31');
+      expect(el.querySelectorAll('.abyss-task-card').length).toBeLessThan(100);
+      expect(hydrate.mock.calls.flatMap(([hits]) => hits).length).toBeLessThan(200);
+    } finally {
+      h.panel.destroy();
+      el.remove();
+    }
+  });
 });

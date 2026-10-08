@@ -292,3 +292,46 @@ it('retires actionable selection after failed same-query organization', async ()
     vi.restoreAllMocks();
   }
 });
+
+it('browses empty Upcoming without a text cursor, retires failed rows, and recovers through its existing owner', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2026, 9, 6, 12));
+  const h = await mountCanonicalSearchUi(
+    { 'browse.md': '- [ ] Range 🛫 2026-10-07 📅 2026-10-09' },
+    structuredClone(DEFAULT_SETTINGS),
+    'tasks',
+  );
+  const open = vi.spyOn(h.search, 'open');
+  const projection = vi.spyOn(h.index, 'organization');
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    h.state.set('selectedList', 'upcoming');
+    h.state.set('centerListViewState', { ...h.state.get('centerListViewState'), groupBy: 'date' });
+    await h.completed();
+    expect(open).not.toHaveBeenCalled();
+    expect(
+      projection.mock.calls.every(
+        ([request]) => request.scope === 'nodes' && request.roots === undefined,
+      ),
+    ).toBe(true);
+    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(3);
+    projection.mockImplementationOnce(() => ({
+      [Symbol.asyncIterator]: () => ({
+        next: () => Promise.reject(new Error('private failure detail')),
+      }),
+    }));
+    h.panel.refresh();
+    await expect(h.completed()).rejects.toThrow();
+    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(0);
+    expect(h.root.dataset['searchPhase']).toBe('error');
+    expect(JSON.stringify(log.mock.calls)).not.toContain('private failure detail');
+    h.panel.refresh();
+    await h.completed();
+    expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(3);
+    expect(open).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
+});

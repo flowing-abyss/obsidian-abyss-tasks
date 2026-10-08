@@ -102,7 +102,7 @@ describe('selectTaskList', () => {
   ];
 
   it.each([
-    ['inbox', 'inbox', ['overdue', 'today due', 'future', 'untagged', 'project']],
+    ['inbox', 'inbox', ['overdue', 'today due', 'future', 'project', 'untagged']],
     ['today', 'today', ['overdue', 'today due']],
     ['upcoming', 'upcoming', ['future']],
     ['tag', { type: 'tag', tag: '#work' }, ['tagged']],
@@ -363,7 +363,7 @@ describe('selectTaskList', () => {
     ).toEqual(['lower', 'legacy', 'old', 'new']);
   });
 
-  it('preserves incoming order for equal created dates', () => {
+  it('uses ascending source lines for equal created dates', () => {
     const viewState: ListViewState = {
       groupBy: 'priority',
       sortBy: { field: 'priority', dir: 'desc' },
@@ -373,14 +373,37 @@ describe('selectTaskList', () => {
     expect(
       titles(
         [
-          snapshot('first', { planning: { created: '2026-08-22' as LocalDate } }),
           snapshot('second', { line: 1, planning: { created: '2026-08-22' as LocalDate } }),
+          snapshot('first', { planning: { created: '2026-08-22' as LocalDate } }),
         ],
         { type: 'project', path: 'tasks.md' },
         viewState,
       ),
     ).toEqual(['first', 'second']);
   });
+
+  it.each(['asc', 'desc'] as const)(
+    'keeps creation, source path and source line ties ascending for %s priority',
+    (dir) => {
+      const created = localDate('2026-08-22');
+      expect(
+        titles(
+          [
+            snapshot('z new', { filePath: 'z.md', planning: { created } }),
+            snapshot('a later line', { filePath: 'a.md', line: 8, planning: { created } }),
+            snapshot('a earlier line', { filePath: 'a.md', line: 2, planning: { created } }),
+            snapshot('z old', {
+              filePath: 'z.md',
+              line: 1,
+              planning: { created: localDate('2026-08-01') },
+            }),
+          ],
+          'inbox',
+          { groupBy: 'none', sortBy: { field: 'priority', dir }, filters: [] },
+        ),
+      ).toEqual(['z old', 'a earlier line', 'a later line', 'z new']);
+    },
+  );
 
   it('does not reverse created order for a descending explicit sort', () => {
     const viewState: ListViewState = {

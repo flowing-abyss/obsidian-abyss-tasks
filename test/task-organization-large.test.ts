@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { organizeTaskSearch } from '../src/task-lists/taskSearchOrganization';
 import { localDate, type TaskOrganizationRecord } from '../src/tasks';
 import { expectDefined } from './helpers';
+import { finiteGroupCounts, finiteOccurrences } from './support/taskOrganizationRows';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 it('organizes 50k compact roots and 100k outgoing occurrences with bounded steps, and closes repeated partial work', async () => {
   const h = await createCanonicalSearchHarness(
@@ -77,9 +78,9 @@ it('organizes 50k compact roots and 100k outgoing occurrences with bounded steps
     });
     expect(yields).toBeGreaterThan(100);
     expect(result.scope === 'roots' ? result.rootTotal : undefined).toBe(50000);
-    expect(result.occurrences).toHaveLength(100000);
-    expect(result.groupCounts.get('note:all')).toBe(50000);
-    expect(new Set(result.occurrences.map((o) => o.key)).size).toBe(100000);
+    expect(finiteOccurrences(result)).toHaveLength(100000);
+    expect(finiteGroupCounts(result).get('note:all')).toBe(50000);
+    expect(new Set(finiteOccurrences(result).map((o) => o.key)).size).toBe(100000);
     const native = vi.spyOn(Array.prototype, 'sort').mockImplementation(() => {
       throw new Error('Native sort in cooperative path');
     });

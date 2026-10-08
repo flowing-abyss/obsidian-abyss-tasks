@@ -157,7 +157,10 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/ui/TaskDependencySearchProvider.ts',
   ],
   TaskSearchHydratedHit: ['src/panels/task-list/TaskSearchRows.ts'],
-  TaskOrganizationRecord: ['src/task-lists/taskSearchOrganization.ts'],
+  TaskOrganizationRecord: [
+    'src/task-lists/taskSearchOrganization.ts',
+    'src/panels/task-list/taskDailyRows.ts',
+  ],
   ArchiveRecovery: ['src/ui/TaskArchiveRecoveryModal.ts'],
   CalendarProjectionSources: ['src/views/calendarOccurrences.ts'],
   CalendarTaskSource: ['src/views/calendarOccurrences.ts'],
@@ -169,7 +172,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   DateRange: ['src/views/calendarOccurrences.ts'],
   FieldUpdate: ['src/views/calendarOccurrences.ts'],
   LocalTime: ['src/views/calendarOccurrences.ts'],
-  taskOccupiedDates: ['src/views/calendarOccurrences.ts'],
+  taskOccupiedDates: ['src/views/calendarOccurrences.ts', 'src/panels/task-list/taskDailyRows.ts'],
   DependencyDirection: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorDependencies.ts'],
   LocalDate: [
     'src/panels/CenterPanel.ts',

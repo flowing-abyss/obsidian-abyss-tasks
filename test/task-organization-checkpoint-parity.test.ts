@@ -1,3 +1,4 @@
+import { finiteGroupCounts, finiteOccurrences } from './support/taskOrganizationRows';
 /** Golden outputs generated from git archive 76c667a7697defa85529f2c2e2689fe8b659ab8e.
  * Task 2 intentionally updates only Upcoming start-only and own-tag destination membership.
  * The old implementation is an ignored, temporary oracle, never a production dependency.
@@ -120,8 +121,8 @@ it('matches checkpoint ordering, groups, counts, scores, aliases and membership'
       });
       output[key] = {
         total: result.scope === 'roots' ? result.rootTotal : undefined,
-        counts: [...result.groupCounts],
-        rows: result.occurrences.map((o) => [o.key, o.score, o.group]),
+        counts: [...finiteGroupCounts(result)],
+        rows: finiteOccurrences(result).map((o) => [o.key, o.score, o.group]),
       };
     };
     for (const field of fields)
@@ -194,7 +195,7 @@ it('uses compact record depth to keep untagged Inbox and project populations roo
           list: { groupBy: 'none', sortBy: { field: 'title', dir: 'asc' }, filters: [] },
         },
       });
-      expect(result.occurrences.map(({ taskKey }) => taskKey)).toEqual(['depth.md:0']);
+      expect(finiteOccurrences(result).map(({ taskKey }) => taskKey)).toEqual(['depth.md:0']);
     }
   } finally {
     h.close();

@@ -19,6 +19,7 @@ import type {
 import * as cloning from '../src/tasks/domain/cloneTaskSnapshot';
 import type { TaskRenderOutcome } from '../src/ui/taskRenderScope';
 import { deferred, expectDefined, flushMicrotasks, useRealMoment } from './helpers';
+import { finiteOccurrences, occurrenceRows } from './support/taskOrganizationRows';
 import { prepareTaskPanelViewport } from './support/taskPanelViewport';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
@@ -79,8 +80,7 @@ async function rowsHarness(
     generation: source.state.generation,
     scope: 'roots',
     rootTotal: count,
-    occurrences,
-    groupCounts: new Map(),
+    rows: occurrenceRows(occurrences),
   };
   const controller = new AbortController();
   let identity: TaskSearchRowsIdentity = {
@@ -145,10 +145,10 @@ it('shares one detached root across occurrences, bounds more than 50 demanded ro
   const h = await rowsHarness();
   const hydrate = vi.spyOn(h.index, 'resolveSearchHits');
   const detach = vi.spyOn(cloning, 'taskSnapshotWithStatuses');
-  const first = expectDefined(h.organization.occurrences[0]);
+  const first = expectDefined(finiteOccurrences(h.organization)[0]);
   const repeated = { ...first, key: 'repeat' };
   const rows = h.owner.set(
-    { ...h.organization, occurrences: [...h.organization.occurrences, repeated] },
+    { ...h.organization, rows: occurrenceRows([...finiteOccurrences(h.organization), repeated]) },
     'none',
     h.identity,
   );
@@ -451,13 +451,13 @@ it('invalidates classified roots on a semantic-only G while exact addresses rema
       next.signal,
     ))
       records.push(...batch.items);
-    expect(records[0]?.address).toEqual(h.organization.occurrences[0]?.address);
-    expect(records[0]?.status).toBe(h.organization.occurrences[0]?.menu.status);
+    expect(records[0]?.address).toEqual(finiteOccurrences(h.organization)[0]?.address);
+    expect(records[0]?.status).toBe(finiteOccurrences(h.organization)[0]?.menu.status);
     const rows = h.replace(next);
     mount.update(expectDefined(rows.rowAt(0)));
     expect(await h.owner.settleRow(key, next.signal)).toEqual({ type: 'ready' });
     const canonical = await h.index.resolveSearchHits(
-      [expectDefined(h.organization.occurrences[0])],
+      [expectDefined(finiteOccurrences(h.organization)[0])],
       next.signal,
     );
     expect(canonical[0]?.task.root.subtasks[0]?.status).toBe('open');
@@ -614,10 +614,10 @@ it.each(['sibling', 'explicit'] as const)(
   'retains failure reporting for a live %s sharing hidden root demand',
   async (demand) => {
     const h = await rowsHarness(1);
-    const first = expectDefined(h.organization.occurrences[0]);
+    const first = expectDefined(finiteOccurrences(h.organization)[0]);
     const repeated = { ...first, key: 'repeat' };
     const rows = h.owner.set(
-      { ...h.organization, occurrences: [first, repeated] },
+      { ...h.organization, rows: occurrenceRows([first, repeated]) },
       'none',
       h.identity,
     );

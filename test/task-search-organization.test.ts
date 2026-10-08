@@ -11,6 +11,7 @@ import {
   type TaskSearchOrganizationInput,
 } from '../src/task-lists/taskSearchOrganization';
 import { localDate, taskSearchAddressKey } from '../src/tasks';
+import { finiteGroupCounts, finiteOccurrences } from './support/taskOrganizationRows';
 import { assertNoRevision, createCanonicalSearchHarness } from './support/taskSearchHarness';
 import { taskKeys } from './task-list-row-assertions';
 const organizeTaskSearch = (input: TaskSearchOrganizationInput) =>
@@ -44,10 +45,13 @@ const files = {
 };
 
 function checkCompact(compact: ReturnType<typeof organizeTaskSearch>, revision: string): void {
-  assertNoRevision(compact, revision);
-  const repeated = compact.occurrences.filter((o) => o.taskKey === 'a.md:0');
+  const { rows, ...metadata } = compact;
+  assertNoRevision(metadata, revision);
+  assertNoRevision([...rows.slice(0, rows.rowCount)], revision);
+  expect(rows.revision).not.toContain(revision);
+  const repeated = finiteOccurrences(compact).filter((o) => o.taskKey === 'a.md:0');
   if (repeated.length > 1) expect(repeated[0]?.menu).toBe(repeated[1]?.menu);
-  expect(compact.occurrences.every((o) => !('title' in o.menu))).toBe(true);
+  expect(finiteOccurrences(compact).every((o) => !('title' in o.menu))).toBe(true);
 }
 
 describe('compact organization shares ordinary list semantics', () => {
@@ -93,13 +97,13 @@ describe('compact organization shares ordinary list semantics', () => {
               view: { list, relevance: false },
             });
             expect(
-              compact.occurrences.map((o) => o.key),
+              finiteOccurrences(compact).map((o) => o.key),
               `${field}/${groupBy}/${dir}`,
             ).toEqual(taskKeys(rows));
             expect(compact.scope === 'roots' ? compact.rootTotal : undefined).toBe(selected.length);
             checkCompact(compact, tasks[0]?.ref.revision ?? '');
-            expect([...compact.groupCounts.values()].reduce((a, b) => a + b, 0)).toBe(
-              groupBy === 'none' ? 0 : compact.occurrences.length,
+            expect([...finiteGroupCounts(compact).values()].reduce((a, b) => a + b, 0)).toBe(
+              groupBy === 'none' ? 0 : finiteOccurrences(compact).length,
             );
           }
     } finally {
@@ -144,8 +148,10 @@ describe('compact organization shares ordinary list semantics', () => {
           outgoingLinks,
         });
         expect(organized.scope === 'roots' ? organized.rootTotal : undefined).toBe(1);
-        expect(organized.occurrences).toHaveLength(2);
-        expect(organized.occurrences.some((o) => o.group?.key === `note:${resolved}`)).toBe(true);
+        expect(finiteOccurrences(organized)).toHaveLength(2);
+        expect(finiteOccurrences(organized).some((o) => o.group?.key === `note:${resolved}`)).toBe(
+          true,
+        );
       }
     } finally {
       h.close();
@@ -203,7 +209,7 @@ it('reads actual subtree tracked totals at two explicit instants and configured 
         nowMs,
         outgoingLinks: new Map(),
       });
-      expect(organization.occurrences.map((o) => o.key)).toEqual(
+      expect(finiteOccurrences(organization).map((o) => o.key)).toEqual(
         selected.map((r) => `${r.source.filePath}:${r.source.line}`),
       );
       const group = organizeTaskSearch({
@@ -259,7 +265,7 @@ it('preserves engine relevance order even when exact-title precedence has a smal
       nowMs: 0,
       outgoingLinks: new Map(),
     });
-    expect(result.occurrences.map((o) => o.key)).toEqual(['a.md:0', 'a.md:1']);
+    expect(finiteOccurrences(result).map((o) => o.key)).toEqual(['a.md:0', 'a.md:1']);
   } finally {
     h.close();
   }
@@ -297,7 +303,7 @@ it('groups mixed Today dates together and orders compact records by time', async
       nowMs: 0,
       outgoingLinks: new Map(),
     });
-    expect(compact.occurrences.map((o) => [o.key, o.group?.label])).toEqual([
+    expect(finiteOccurrences(compact).map((o) => [o.key, o.group?.label])).toEqual([
       ['a.md:5', 'Overdue'],
       ['a.md:2', 'Today'],
       ['a.md:3', 'Today'],
@@ -349,13 +355,13 @@ it.each(['creation', 'navigation'] as const)(
         outgoingLinks: new Map(),
       };
       const revealed = organizeTaskSearch({ ...input, reveal: created.address, revealKind: kind });
-      expect(revealed.occurrences.map((row) => row.taskKey)).toEqual(['a.md:0', 'a.md:1']);
-      expect(revealed.occurrences[1]?.group?.label).toBe(
+      expect(finiteOccurrences(revealed).map((row) => row.taskKey)).toEqual(['a.md:0', 'a.md:1']);
+      expect(finiteOccurrences(revealed)[1]?.group?.label).toBe(
         kind === 'creation' ? 'Created task' : 'Revealed task',
       );
       expect(revealed.scope === 'roots' ? revealed.rootTotal : undefined).toBe(2);
       const retired = organizeTaskSearch(input);
-      expect(retired.occurrences.map((row) => row.taskKey)).toEqual(['a.md:0']);
+      expect(finiteOccurrences(retired).map((row) => row.taskKey)).toEqual(['a.md:0']);
       expect(retired.revealIndex).toBeUndefined();
       expect(retired.scope === 'roots' ? retired.rootTotal : undefined).toBe(1);
       const alreadyMatching = organizeTaskSearch({
@@ -363,8 +369,8 @@ it.each(['creation', 'navigation'] as const)(
         reveal: matching.address,
         revealKind: kind,
       });
-      expect(alreadyMatching.occurrences).toHaveLength(1);
-      expect(alreadyMatching.occurrences[0]?.group).toBeNull();
+      expect(finiteOccurrences(alreadyMatching)).toHaveLength(1);
+      expect(finiteOccurrences(alreadyMatching)[0]?.group).toBeNull();
     } finally {
       h.close();
     }
@@ -408,26 +414,29 @@ it('organizes exact sibling addresses and reveals a filtered nested parent witho
     expect(organization.scope).toBe('nodes');
     if (organization.scope !== 'nodes') throw new Error('node organization expected');
     expect(organization.nodeTotal).toBe(2);
-    expect(new Set(organization.occurrences.map((o) => taskSearchAddressKey(o.address))).size).toBe(
-      2,
-    );
-    expect(organization.occurrences.map((o) => o.depth)).toEqual([2, 1]);
+    expect(
+      new Set(finiteOccurrences(organization).map((o) => taskSearchAddressKey(o.address))).size,
+    ).toBe(2);
+    expect(finiteOccurrences(organization).map((o) => o.depth)).toEqual([2, 1]);
     const relevanceNodes = organizeTaskSearch({
       ...input,
-      hits: organization.occurrences,
+      hits: finiteOccurrences(organization),
       view: { ...input.view, relevance: true },
     });
     expect(
-      new Set(relevanceNodes.occurrences.map((row) => taskSearchAddressKey(row.address))).size,
+      new Set(finiteOccurrences(relevanceNodes).map((row) => taskSearchAddressKey(row.address)))
+        .size,
     ).toBe(2);
     const parent = records.find((r) => r.title === 'Parent');
     if (parent === undefined) throw new Error('parent missing');
     const revealed = organizeTaskSearch({ ...input, reveal: parent.address });
-    expect(revealed.occurrences[revealed.revealIndex ?? -1]?.address).toEqual(parent.address);
-    expect(revealed.occurrences).toHaveLength(3);
+    expect(finiteOccurrences(revealed)[revealed.revealIndex ?? -1]?.address).toEqual(
+      parent.address,
+    );
+    expect(finiteOccurrences(revealed)).toHaveLength(3);
     const roots = organizeTaskSearch({ ...input, scope: 'roots', selection: null });
     expect(roots.scope).toBe('roots');
-    expect(roots.occurrences).toHaveLength(1);
+    expect(finiteOccurrences(roots)).toHaveLength(1);
   } finally {
     h.close();
   }

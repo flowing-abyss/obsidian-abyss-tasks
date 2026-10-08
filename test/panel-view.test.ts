@@ -5604,6 +5604,61 @@ describe('PanelView local day boundary', () => {
     },
   );
 
+  it('rebinds default indexed Upcoming dates at mounted midnight without a source event', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 7, 12));
+    const h = await prewarmPanel(true, source);
+    const timers = vi.spyOn(window, 'setTimeout');
+    try {
+      const { view } = await h.mount();
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        if (this.hasClass('abyss-group-header')) return rect(0, 0, 700, 32);
+        return rect(0, 0, 700, this.hasClass('abyss-task-card') ? 64 : 900);
+      });
+      const state = view['state_abyssPrivate'];
+      state.set('mode', 'tasks');
+      state.set('selectedList', 'upcoming');
+      const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+      await searchUiCompleted(root);
+      const cards = [...root.querySelectorAll<HTMLElement>('.abyss-task-card')];
+      expect(cards).toHaveLength(3);
+      expect(root.querySelectorAll('.abyss-group-header')).toHaveLength(2);
+      expectDefined(cards[1]).dispatchEvent(
+        new MouseEvent('click', { bubbles: true, metaKey: true }),
+      );
+      expectDefined(cards[2]).dispatchEvent(
+        new MouseEvent('click', { bubbles: true, metaKey: true }),
+      );
+      expect(root.querySelectorAll('.abyss-multi-selected')).toHaveLength(2);
+      const generation = root.dataset['searchGeneration'];
+      const request = Number(root.dataset['searchRequest']);
+      const callbacks = timers.mock.calls
+        .filter(([, delay]) => delay === 12 * 60 * 60 * 1000)
+        .map(([callback]) => callback);
+      expect(callbacks.length).toBeGreaterThan(0);
+      vi.setSystemTime(new Date(2026, 9, 8));
+      for (const callback of callbacks) if (typeof callback === 'function') callback();
+      await searchUiCompleted(root);
+      expect(root.querySelectorAll('.abyss-group-header')).toHaveLength(1);
+      expect(root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+      expect(root.querySelectorAll('.abyss-multi-selected')).toHaveLength(1);
+      expect(root.querySelector('.abyss-task-title')?.textContent).toBe('needle interval');
+      expect(root.dataset['searchGeneration']).toBe(generation);
+      expect(Number(root.dataset['searchRequest'])).toBeGreaterThan(request);
+      const badges = [...view.contentEl.querySelectorAll('.abyss-left-item')].map(
+        (row) => row.querySelector('.abyss-left-count')?.textContent,
+      );
+      expect(badges[1]).toBe('2+1');
+      expect(badges[2]).toBe('1');
+      const file = expectDefined(h.app.vault.getFileByPath('tasks.md'));
+      expect(await h.app.vault.read(file)).toBe(source);
+    } finally {
+      await h.dispose();
+    }
+  });
+
   function observeBoundaryTimers(owner: Window) {
     const set = vi.spyOn(owner, 'setTimeout');
     const clear = vi.spyOn(owner, 'clearTimeout');

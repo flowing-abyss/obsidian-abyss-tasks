@@ -99,7 +99,7 @@ interface SearchPreparation {
   secondaryCleanup: boolean;
 }
 interface SearchCollection {
-  hits: TaskSearchHit[];
+  hits: TaskSearchHit[] | null;
   roots: TaskSearchAddress[];
   records: TaskOrganizationRecord[];
 }
@@ -273,7 +273,7 @@ export class TaskSearch {
     }
     if (
       (state.phase === 'failed' || state.phase === 'disposed') &&
-      (this.#currentQuery().trim() !== '' || this.#inclusion() !== undefined)
+      (this.#filter || this.#currentQuery().trim() !== '' || this.#inclusion() !== undefined)
     ) {
       this.#cancelPending();
       this.#handleFailure(
@@ -361,7 +361,7 @@ export class TaskSearch {
       this.#options.host.clearSelection();
     }
     this.#status?.pending(request, query);
-    if (query.trim().length === 0 && this.#inclusion() === undefined) {
+    if (!this.#filter && query.trim().length === 0 && this.#inclusion() === undefined) {
       this.#empty(request);
       return;
     }
@@ -485,7 +485,13 @@ export class TaskSearch {
         archivedTagPrefixes: settings.archivedTagPrefixes,
       },
     });
-    return { ...captured, today: localDate(moment().format('YYYY-MM-DD')), nowMs: Date.now() };
+    const locale = moment.locale();
+    return {
+      ...captured,
+      today: localDate(moment().format('YYYY-MM-DD')),
+      nowMs: Date.now(),
+      formatDate: (date) => moment(date, 'YYYY-MM-DD').locale(locale).format('ddd, LL'),
+    };
   }
   #organizationScheduler(current: SearchPreparation): Pick<BrowserTaskScheduler, 'now' | 'yield'> {
     if (current.owner == null) throw new TaskSearchError('aborted', 'Search cancelled');
@@ -533,7 +539,7 @@ export class TaskSearch {
         validateBatch(batch, cursor, offset);
         for (const hit of batch.hits) {
           this.#assertPreparation(current);
-          collection.hits.push(hit);
+          collection.hits?.push(hit);
           collection.roots.push({ ...hit.address, childLines: [] });
         }
         offset += batch.hits.length;
@@ -592,6 +598,11 @@ export class TaskSearch {
       return this.#drainCursor(query, current, collection, handoff);
     }
   }
+  #projectScope(selection: ListSelection): { filePath?: string } {
+    return this.#filter && typeof selection === 'object' && selection.type === 'project'
+      ? { filePath: selection.path }
+      : {};
+  }
   #projectionRequest(
     generation: number,
     collection: SearchCollection,
@@ -602,11 +613,9 @@ export class TaskSearch {
       expectedGeneration: generation,
       // Membership keeps its captured root scope; only the exact reveal may admit a child.
       scope: (inclusion?.address.childLines.length ?? 0) > 0 ? 'nodes' : this.#organizationScope(),
-      ...(this.#filter && typeof selection === 'object' && selection.type === 'project'
-        ? { filePath: selection.path }
-        : {}),
+      ...this.#projectScope(selection),
     };
-    return inclusion?.kind === 'navigation'
+    return inclusion?.kind === 'navigation' || collection.hits === null
       ? request
       : {
           ...request,
@@ -703,13 +712,26 @@ export class TaskSearch {
   }
   #revealInput(
     collection: SearchCollection,
-  ): Pick<TaskSearchOrganizationInput, 'hits' | 'reveal' | 'revealKind'> {
+  ): Pick<TaskSearchOrganizationInput, 'hits' | 'reveal' | 'revealKind' | 'revealReceiptId'> {
     const receipt = this.#inclusion();
     return {
       hits: receipt?.kind === 'navigation' ? null : collection.hits,
       reveal: receipt?.address,
       revealKind: receipt?.kind,
+      revealReceiptId: receipt === undefined ? undefined : String(receipt.id),
     };
+  }
+  #organizationRevision(current: SearchPreparation, captured: CapturedOrganization): string {
+    return JSON.stringify([
+      current.request,
+      current.generation,
+      this.#observed?.semanticsRevision,
+      captured.selection,
+      captured.view,
+      captured.today,
+      moment.locale(),
+      this.#query,
+    ]);
   }
   async #organizeCollected(
     current: SearchPreparation,
@@ -748,6 +770,7 @@ export class TaskSearch {
     const organization = await runTaskOrganization(
       organizeTaskSearch({
         ...captured,
+        revision: this.#organizationRevision(current, captured),
         ...(observedTags === undefined ? {} : { observedTags }),
         generation,
         records: collection.records,
@@ -785,20 +808,7 @@ export class TaskSearch {
       const captured = this.#captureOrganization();
       const scheduler = this.#organizationScheduler(current);
       const handoff = (): Promise<void> => this.#handoff(current, scheduler, continuation.signal);
-      let generation: number;
-      if (this.#inclusion()?.kind !== 'navigation') {
-        generation = await this.#collectCursor(query, current, collection, handoff);
-        if (this.#inclusion() !== undefined) await this.#proveReveal(current);
-      } else {
-        await this.#options.search?.prepare(signal);
-        if (this.#observed?.phase !== 'ready')
-          throw new TaskSearchError('stale', 'Task generation changed');
-        generation = this.#observed.generation;
-        this.#joinPreparation(current, generation);
-        this.#generation = generation;
-        this.#assertPreparation(current);
-        await this.#proveReveal(current);
-      }
+      const generation = await this.#collectGeneration(query, current, collection, handoff);
       await this.#collectProjection(generation, current, collection, handoff);
       return await this.#organizeCollected(current, collection, captured, scheduler);
     } catch (error) {
@@ -810,6 +820,30 @@ export class TaskSearch {
       collection.roots = [];
       collection.records = [];
     }
+  }
+  async #collectGeneration(
+    query: string,
+    current: SearchPreparation,
+    collection: SearchCollection,
+    handoff: () => Promise<void>,
+  ): Promise<number> {
+    const signal = current.signal;
+    let generation: number;
+    if (this.#inclusion()?.kind !== 'navigation' && !(this.#filter && query.trim() === '')) {
+      generation = await this.#collectCursor(query, current, collection, handoff);
+      if (this.#inclusion() !== undefined) await this.#proveReveal(current);
+    } else {
+      collection.hits = null;
+      await this.#options.search?.prepare(signal);
+      if (this.#observed?.phase !== 'ready')
+        throw new TaskSearchError('stale', 'Task generation changed');
+      generation = this.#observed.generation;
+      this.#joinPreparation(current, generation);
+      this.#generation = generation;
+      this.#assertPreparation(current);
+      if (this.#inclusion() !== undefined) await this.#proveReveal(current);
+    }
+    return generation;
   }
   async #proveReveal(current: SearchPreparation): Promise<void> {
     const reveal = this.#inclusion();
@@ -850,7 +884,7 @@ export class TaskSearch {
     host.toggleClass('abyss-search-empty', false);
     const rendered = await this.#renderRows(host, organization, options);
     if (!options.isCurrent() || rendered.type !== 'ready') return;
-    if (organization.occurrences.length === 0)
+    if (organization.rows.taskCount === 0)
       host.createDiv({ cls: 'abyss-center-empty', text: 'No results' });
     await this.#revealOccurrence(organization, identity);
     if (!options.isCurrent()) return;
@@ -871,9 +905,9 @@ export class TaskSearch {
     const occurrence =
       organization.revealIndex === undefined
         ? undefined
-        : organization.occurrences[organization.revealIndex];
+        : organization.rows.taskKeyAt(organization.revealIndex);
     if (occurrence !== undefined && this.#inclusion()?.kind !== 'creation')
-      await this.#options.host.revealTask(occurrence.key, identity);
+      await this.#options.host.revealTask(occurrence, identity);
   }
   #publicationState(
     organization: TaskSearchOrganization,

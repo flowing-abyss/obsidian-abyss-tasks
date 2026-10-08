@@ -240,6 +240,8 @@ const pureFiles = [
   'src/panels/virtualization/rowViewport.ts',
   'src/views/taskGrouping.ts',
   'src/panels/task-list/taskListRows.ts',
+  'src/panels/task-list/taskDailyRows.ts',
+  'src/panels/task-list/taskRevealRows.ts',
   'src/task-lists/taskLinkValues.ts',
   'src/markdown/linkTarget.ts',
   'src/panels/task-list/taskRowSelection.ts',

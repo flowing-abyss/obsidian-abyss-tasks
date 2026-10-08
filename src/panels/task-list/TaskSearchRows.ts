@@ -89,7 +89,7 @@ export class TaskSearchRows {
 
   set(
     organization: TaskSearchOrganization,
-    groupBy: string,
+    _groupBy: string,
     identity: TaskSearchRowsIdentity,
   ): TaskListRows<TaskSearchOccurrence> {
     const semanticsChanged = this.#identity?.semanticsRevision !== identity.semanticsRevision;
@@ -107,30 +107,7 @@ export class TaskSearchRows {
       identity.signal.removeEventListener('abort', abort);
     };
     if (identity.signal.aborted) abort();
-    const rows: Array<TaskListRow<TaskSearchOccurrence>> = [];
-    let previous: string | undefined;
-    for (const occurrence of organization.occurrences) {
-      const group = occurrence.group;
-      if (group !== null && group.key !== previous) {
-        rows.push({
-          kind: 'group',
-          key: `group:${groupBy}:${group.key}`,
-          label: group.label,
-          count: organization.groupCounts.get(group.key) ?? 0,
-          first: rows.length === 0,
-          ...(groupBy === 'source-note' ? { sourcePath: group.key } : {}),
-        });
-        previous = group.key;
-      }
-      rows.push({
-        kind: 'task',
-        key: occurrence.key,
-        taskKey: occurrence.taskKey,
-        task: occurrence,
-        presentation: occurrence.presentation,
-      });
-    }
-    this.#rows = indexedRows(rows);
+    this.#rows = organization.rows;
     this.#reconcileRoots(semanticsChanged);
     this.#notify();
     this.#pump();
@@ -297,8 +274,12 @@ export class TaskSearchRows {
     identity: TaskSearchRowsIdentity | undefined,
     signal: AbortSignal,
   ): boolean {
+    const current = this.#rows.task(occurrence.key);
     return (
-      this.#current(identity) && !signal.aborted && this.#rows.task(occurrence.key) === occurrence
+      this.#current(identity) &&
+      !signal.aborted &&
+      current !== undefined &&
+      taskSearchAddressKey(current.address) === taskSearchAddressKey(occurrence.address)
     );
   }
 
