@@ -1,4 +1,4 @@
-import { Component, Notice, setIcon, type App, type Menu } from 'obsidian';
+import { Component, Notice, type App, type Menu } from 'obsidian';
 import type { AppState, ListSelection } from '../app/AppState';
 import { isListViewOptionsCustomized, listSelectionToKey } from '../app/listViewState';
 import { createBrowserTaskScheduler } from '../browserTaskScheduler';
@@ -236,7 +236,6 @@ export class CenterPanel {
     readonly key: string;
     ref: TaskRef;
     readonly opener: HTMLElement;
-    readonly focusActions: boolean;
     readonly list: string;
     readonly kind: 'menu' | 'recurrence';
     surface: HTMLElement | undefined;
@@ -3098,42 +3097,9 @@ export class CenterPanel {
       });
     }
     this.mountTaskCardDrag_abyssPrivate(card, currentTask, component, currentProjection);
-    this.mountTaskActionsButton_abyssPrivate(card, component, (event) => {
-      this.handleTaskContextMenu_abyssPrivate(event, card, currentProjection(), rowKey);
-    });
     component.registerDomEvent(card, 'contextmenu', (event) => {
       this.handleTaskContextMenu_abyssPrivate(event, card, currentProjection(), rowKey);
     });
-  }
-
-  private mountTaskActionsButton_abyssPrivate(
-    card: HTMLElement,
-    component: Component,
-    openMenu: (event: MouseEvent) => void,
-  ): void {
-    const mainRow = card.querySelector<HTMLElement>('.abyss-task-card-main-row');
-    if (mainRow !== null) {
-      mainRow.addClass('abyss-task-card-main-row--has-actions');
-      const button = mainRow.createEl('button', {
-        cls: 'clickable-icon abyss-task-action-btn',
-        attr: {
-          type: 'button',
-          'aria-label': 'Task actions',
-          'aria-haspopup': 'menu',
-          'aria-expanded': 'false',
-        },
-      });
-      mainRow.querySelector('.abyss-task-delete-btn')?.before(button);
-      setIcon(button, 'ellipsis');
-      component.registerDomEvent(button, 'click', (event) => {
-        event.stopPropagation();
-        openMenu(event);
-      });
-      component.register(() => {
-        button.remove();
-        mainRow.removeClass('abyss-task-card-main-row--has-actions');
-      });
-    }
   }
 
   private handleTaskCardClick_abyssPrivate(
@@ -3282,10 +3248,6 @@ export class CenterPanel {
     return taskReconciliationKey(a) === taskReconciliationKey(b);
   }
 
-  private taskActionsFocusTarget_abyssPrivate(card: HTMLElement): HTMLElement {
-    return card.querySelector<HTMLElement>('.abyss-task-action-btn') ?? card;
-  }
-
   private neutralCardFocus_abyssPrivate(opener: HTMLElement, surface?: HTMLElement): boolean {
     const doc = this.el.ownerDocument;
     const active = doc.activeElement;
@@ -3305,13 +3267,11 @@ export class CenterPanel {
     ref: TaskRef,
     key: string,
     ownsFocus: () => boolean,
-    focusActions = false,
   ): boolean {
     const valid = (): boolean => {
       const task = this.mountedSnapshot_abyssPrivate(key);
       return (
-        (this.state_abyssPrivate.get('mode') === 'tasks' ||
-          (focusActions && this.state_abyssPrivate.get('mode') === 'search')) &&
+        this.state_abyssPrivate.get('mode') === 'tasks' &&
         task !== undefined &&
         this.sameCardRef_abyssPrivate(task.ref, ref) &&
         ownsFocus()
@@ -3322,8 +3282,7 @@ export class CenterPanel {
       this.taskSurface_abyssPrivate?.surface.reveal(key) ??
       this.mountedRows_abyssPrivate.element(key);
     if (!valid() || !this.connectedTaskCard_abyssPrivate(card)) return false;
-    const target = focusActions ? this.taskActionsFocusTarget_abyssPrivate(card) : card;
-    target.focus({ preventScroll: true });
+    card.focus({ preventScroll: true });
     if (this.taskSurface_abyssPrivate === null) this.scrollTaskCardIntoView_abyssPrivate(card);
     return true;
   }
@@ -3331,7 +3290,6 @@ export class CenterPanel {
   private armCardReturn_abyssPrivate(
     opener: HTMLElement,
     kind: 'menu' | 'recurrence',
-    focusActions = false,
   ): CenterPanel['cardReturn_abyssPrivate'] {
     const key = this.eventTaskCardKey_abyssPrivate(opener);
     const task = key == null ? undefined : this.mountedSnapshot_abyssPrivate(key);
@@ -3348,7 +3306,6 @@ export class CenterPanel {
       key,
       ref: task.ref,
       opener,
-      focusActions,
       list: this.listViewControls_abyssPrivate.activeListKey(),
       kind,
       surface: undefined,
@@ -3390,34 +3347,14 @@ export class CenterPanel {
       () =>
         this.cardReturn_abyssPrivate === record &&
         record.list === this.listViewControls_abyssPrivate.activeListKey() &&
-        this.neutralCardFocus_abyssPrivate(
-          record.focusActions
-            ? this.taskActionsFocusTarget_abyssPrivate(record.opener)
-            : record.opener,
-          record.surface,
-        ),
-      record.focusActions,
+        this.neutralCardFocus_abyssPrivate(record.opener, record.surface),
     );
     if (this.cardReturn_abyssPrivate === record) this.clearCardReturn_abyssPrivate();
   }
 
   private showTaskMenu_abyssPrivate(menu: Menu, event: MouseEvent, card: HTMLElement): void {
     this.taskMenuCleanup_abyssPrivate?.();
-    const active = card.ownerDocument.activeElement;
-    let opener = card;
-    if (
-      isRealmHTMLElement(event.currentTarget) &&
-      event.currentTarget.hasClass('abyss-task-action-btn')
-    )
-      opener = event.currentTarget;
-    else if (
-      isRealmHTMLElement(active) &&
-      active.hasClass('abyss-task-action-btn') &&
-      card.contains(active)
-    )
-      opener = active;
-    if (opener.hasClass('abyss-task-action-btn')) opener.setAttribute('aria-expanded', 'true');
-    const record = this.armCardReturn_abyssPrivate(card, 'menu', opener !== card);
+    const record = this.armCardReturn_abyssPrivate(card, 'menu');
     const releasePin =
       record === null
         ? undefined
@@ -3433,7 +3370,6 @@ export class CenterPanel {
     };
     this.taskMenuCleanup_abyssPrivate = close;
     menu.onHide(() => {
-      if (opener.hasClass('abyss-task-action-btn')) opener.setAttribute('aria-expanded', 'false');
       releasePin?.();
       if (this.taskMenuCleanup_abyssPrivate === close) this.taskMenuCleanup_abyssPrivate = null;
       if (record == null || this.cardReturn_abyssPrivate !== record) return;

@@ -610,8 +610,7 @@ export class TaskCardRenderer {
       occurrence: current.flags.occurrence,
     });
     const metadata = mainRow.querySelector(':scope > .abyss-task-meta-right');
-    if (metadata !== null)
-      mainRow.querySelector('.abyss-task-action-btn, .abyss-task-delete-btn')?.before(metadata);
+    if (metadata !== null) mainRow.querySelector('.abyss-task-delete-btn')?.before(metadata);
   }
 
   #refreshStatus(

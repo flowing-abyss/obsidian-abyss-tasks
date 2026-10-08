@@ -2324,19 +2324,13 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-task-card-main-row
-  > :is(
-    .abyss-status-marker,
-    .abyss-status-control,
-    .abyss-dep-indicator,
-    .abyss-task-delete-btn,
-    .abyss-task-action-btn
-  ) {
+  > :is(.abyss-status-marker, .abyss-status-control, .abyss-dep-indicator, .abyss-task-delete-btn) {
   margin-block-end: -2px;
 }
 
 /* The delete button is a flex box whose only item is the icon, so it takes the same strut as the
    lock below and centres on the caps with the marker. */
-.abyss-task-card-main-row > :is(.abyss-task-delete-btn, .abyss-task-action-btn)::before {
+.abyss-task-card-main-row > .abyss-task-delete-btn::before {
   content: '';
   inline-size: 0;
   block-size: calc(2 * var(--abyss-task-card-cap-half));
@@ -2826,8 +2820,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 /* Delete button on task card */
-.abyss-task-delete-btn,
-.abyss-task-action-btn {
+.abyss-task-delete-btn {
   background: transparent;
   border: none;
   color: var(--text-muted);
@@ -2847,16 +2840,10 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   line-height: 1;
 }
 
-.abyss-task-delete-btn svg,
-.abyss-task-action-btn svg {
+.abyss-task-delete-btn svg {
   display: block;
   width: 16px;
   height: 16px;
-}
-
-.abyss-task-action-btn:hover {
-  color: var(--text-normal);
-  background: var(--background-modifier-hover);
 }
 
 .abyss-task-delete-btn:hover {
@@ -2874,13 +2861,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
     gap: var(--size-2-1) var(--abyss-task-card-primary-gap);
   }
 
-  .abyss-task-card-main-row--has-delete,
-  .abyss-task-card-main-row--has-actions {
+  .abyss-task-card-main-row--has-delete {
     grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr) 24px;
-  }
-
-  .abyss-task-card-main-row--has-actions.abyss-task-card-main-row--has-delete {
-    grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr) 24px 24px;
   }
 
   .abyss-task-card-main-row > :is(.abyss-status-marker, .abyss-status-control) {
@@ -2893,14 +2875,9 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
     grid-row: 1;
   }
 
-  .abyss-task-action-btn,
   .abyss-task-delete-btn {
     grid-column: 3;
     grid-row: 1;
-  }
-
-  .abyss-task-card-main-row--has-actions > .abyss-task-delete-btn {
-    grid-column: 4;
   }
 
   /* The row under the title starts at the text's left edge, so a list of cards keeps one rhythm

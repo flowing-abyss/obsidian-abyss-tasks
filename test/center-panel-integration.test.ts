@@ -336,7 +336,6 @@ describe('CenterPanel task-card primary row', () => {
         expect.stringContaining('abyss-status-marker'),
         'abyss-task-body',
         'abyss-task-meta-right',
-        'clickable-icon abyss-task-action-btn',
       ]);
       expect(mainRow.querySelector('.abyss-task-delete-btn')).toBeNull();
 
@@ -367,7 +366,6 @@ describe('CenterPanel task-card primary row', () => {
         expect.stringContaining('abyss-status-marker'),
         'abyss-task-body',
         'abyss-task-meta-right',
-        'clickable-icon abyss-task-action-btn',
         'abyss-task-delete-btn',
       ]);
       expect(deleteButton.querySelector('svg[data-lucide="x"]')).not.toBeNull();
@@ -6922,8 +6920,8 @@ describe('CenterPanel actual centre focus continuity', () => {
       h.cleanup();
     }
   });
-  it.each(['return', 'outside', 'button-retired', 'row-retired'] as const)(
-    'keeps asynchronous bulk Task actions focus ownership through %s',
+  it.each(['return', 'outside', 'row-retired'] as const)(
+    'keeps asynchronous bulk context-menu focus ownership through %s',
     async (disposition) => {
       const h = await mounted();
       const pending = deferred<void>(),
@@ -6957,14 +6955,10 @@ describe('CenterPanel actual centre focus continuity', () => {
         expectDefined(second).dispatchEvent(
           new MouseEvent('click', { bubbles: true, metaKey: true }),
         );
-        const button = expectDefined(
-          expectDefined(second).querySelector<HTMLButtonElement>(
-            'button[aria-label="Task actions"]',
-          ),
-        );
-        button.focus();
-        button.click();
-        button.blur();
+        const opener = expectDefined(second);
+        opener.focus();
+        opener.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        opener.blur();
         const items = (
           expectDefined(menu) as unknown as {
             menuItems__: Array<{ title__: string; onClick__: (event: MouseEvent) => void }>;
@@ -6978,11 +6972,10 @@ describe('CenterPanel actual centre focus continuity', () => {
         expect(execute).not.toHaveBeenCalled();
         expect(document.activeElement).toBe(document.body);
         if (disposition === 'outside') outside.focus();
-        if (disposition === 'button-retired') button.remove();
         if (disposition === 'row-retired') {
           h.index.installCommittedContent('focus.md', '- [ ] other #task/inbox');
           await vi.advanceTimersByTimeAsync(25);
-          expect(button.isConnected).toBe(false);
+          expect(opener.isConnected).toBe(false);
         }
         pending.resolve();
         await vi.advanceTimersByTimeAsync(25);
@@ -6994,10 +6987,7 @@ describe('CenterPanel actual centre focus continuity', () => {
             h.before.replaceAll('📅 2026-10-02', '📅 2026-10-03'),
           );
           const live = expectDefined(h.cards().find((card) => card.textContent.includes('second')));
-          let expectedFocus = live.querySelector('button[aria-label="Task actions"]');
-          if (disposition === 'outside') expectedFocus = outside;
-          else if (disposition === 'button-retired') expectedFocus = live;
-          expect(document.activeElement).toBe(expectedFocus);
+          expect(document.activeElement).toBe(disposition === 'outside' ? outside : live);
         }
       } finally {
         pending.resolve();
@@ -7543,104 +7533,79 @@ describe('default empty-query indexed Upcoming', () => {
   });
 });
 
-describe('central Task actions button', () => {
-  it.each(['click', 'Enter', ' '] as const)(
-    'opens the existing menu with %s activation and restores button focus',
-    (activation) => {
-      const addItem = methodOf(Menu.prototype, 'addItem');
-      const add = vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, cb) {
-        return addItem.call(this, (item) => {
-          (item as unknown as { dom: HTMLElement }).dom = createDiv();
-          cb(item);
-        });
+describe('central task contextmenu lifecycle', () => {
+  it('restores card focus without taking outside focus and retires listeners on remount', () => {
+    const addItem = methodOf(Menu.prototype, 'addItem');
+    const add = vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, cb) {
+      return addItem.call(this, (item) => {
+        (item as unknown as { dom: HTMLElement }).dom = createDiv();
+        cb(item);
       });
-      let menu: Menu | undefined;
-      const surfaces: HTMLElement[] = [];
-      const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
-        this: Menu,
-      ) {
-        menu = this.setParentElement(document.body);
-        const surface = (this as unknown as { dom: HTMLElement }).dom;
-        surface.addClass('menu');
-        surface.createDiv({ cls: 'menu-item', text: 'First action' });
-        document.body.append(surface);
-        surfaces.push(surface);
-        return this;
-      });
-      const state = new AppState();
-      state.set('selectedList', { type: 'project', path: 'f.md' });
-      const panel = makeStaticPanel(
-        state,
-        [task({ tags: ['#Work'] })],
-        structuredClone(DEFAULT_SETTINGS),
-      );
-      const root = document.body.createDiv();
-      panel.mount(root);
-      const single = vi.spyOn(panel['taskMenus_abyssPrivate'], 'createTaskContextMenu');
-      try {
-        const button = expectDefined(
-          root.querySelector<HTMLButtonElement>('button[aria-label="Task actions"]'),
-        );
-        const card = expectDefined(button.closest<HTMLElement>('.abyss-task-card'));
-        panel['taskCardRenderer_abyssPrivate'].syncDeleteButton(card, task({ tags: ['#Work'] }));
-        const row = expectDefined(card.querySelector<HTMLElement>('.abyss-task-card-main-row'));
-        expect(row.hasClass('abyss-task-card-main-row--has-actions')).toBe(true);
-        expect(row.hasClass('abyss-task-card-main-row--has-delete')).toBe(true);
-        const metadata = expectDefined(row.querySelector('.abyss-task-meta-right'));
-        expect(metadata.nextElementSibling).toBe(button);
-        expect(button.nextElementSibling?.hasClass('abyss-task-delete-btn')).toBe(true);
-        button.focus();
-        if (activation !== 'click') {
-          const press = new KeyboardEvent('keydown', {
-            key: activation,
-            bubbles: true,
-            cancelable: true,
-          });
-          button.dispatchEvent(press);
-          expect(press.defaultPrevented).toBe(false); // native button activation remains the browser's click
-        }
-        button.click();
-        expect(single).toHaveBeenCalledTimes(1);
-        expect(state.get('taskStack')).toEqual([]);
-        expect(panel['rowSelection_abyssPrivate'].size).toBe(0);
-        expect(button.getAttribute('aria-expanded')).toBe('true');
-        expectDefined(menu).hide();
-        expect(document.activeElement).toBe(button);
-        expect(button.getAttribute('aria-expanded')).toBe('false');
-        const outside = document.body.createEl('input');
-        button.click();
-        outside.focus();
-        expectDefined(menu).hide();
-        expect(document.activeElement).toBe(outside);
-        outside.remove();
-        panel.destroy();
-        const remount = document.body.createDiv();
-        panel.mount(remount);
-        button.click();
-        expect(single).toHaveBeenCalledTimes(2);
-        expect(remount.querySelectorAll('button[aria-label="Task actions"]')).toHaveLength(1);
-        const retired = expectDefined(
-          remount.querySelector<HTMLButtonElement>('button[aria-label="Task actions"]'),
-        );
-        retired.click();
-        expect(single).toHaveBeenCalledTimes(3);
-        expectDefined(menu).hide();
-        panel.destroy();
-        retired.click();
-        expect(single).toHaveBeenCalledTimes(3);
-        remount.remove();
-      } finally {
-        panel.destroy();
-        root.remove();
-        add.mockRestore();
-        show.mockRestore();
-        for (const surface of surfaces) surface.remove();
-      }
-    },
-  );
+    });
+    let menu: Menu | undefined;
+    const surfaces: HTMLElement[] = [];
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+      this: Menu,
+    ) {
+      menu = this.setParentElement(document.body);
+      const surface = (this as unknown as { dom: HTMLElement }).dom;
+      surface.addClass('menu');
+      surface.createDiv({ cls: 'menu-item', text: 'First action' });
+      document.body.append(surface);
+      surfaces.push(surface);
+      return this;
+    });
+    const state = new AppState();
+    state.set('selectedList', { type: 'project', path: 'f.md' });
+    const panel = makeStaticPanel(
+      state,
+      [task({ tags: ['#Work'] })],
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    const root = document.body.createDiv();
+    panel.mount(root);
+    const single = vi.spyOn(panel['taskMenus_abyssPrivate'], 'createTaskContextMenu');
+    try {
+      const card = expectDefined(root.querySelector<HTMLElement>('.abyss-task-card'));
+      const openMenu = (opener: HTMLElement) =>
+        opener.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      card.focus();
+      openMenu(card);
+      expect(single).toHaveBeenCalledTimes(1);
+      expect(state.get('taskStack')).toEqual([]);
+      expect(panel['rowSelection_abyssPrivate'].size).toBe(0);
+      expectDefined(menu).hide();
+      expect(document.activeElement).toBe(card);
+      const outside = document.body.createEl('input');
+      openMenu(card);
+      outside.focus();
+      expectDefined(menu).hide();
+      expect(document.activeElement).toBe(outside);
+      outside.remove();
+      panel.destroy();
+      const remount = document.body.createDiv();
+      panel.mount(remount);
+      openMenu(card);
+      expect(single).toHaveBeenCalledTimes(2);
+      const retired = expectDefined(remount.querySelector<HTMLElement>('.abyss-task-card'));
+      openMenu(retired);
+      expect(single).toHaveBeenCalledTimes(3);
+      expectDefined(menu).hide();
+      panel.destroy();
+      openMenu(retired);
+      expect(single).toHaveBeenCalledTimes(3);
+      remount.remove();
+    } finally {
+      panel.destroy();
+      root.remove();
+      add.mockRestore();
+      show.mockRestore();
+      for (const surface of surfaces) surface.remove();
+    }
+  });
 });
 
-it('central actions preserve exact child continuation guards and the selected bulk menu route', async () => {
+it('central contextmenu preserves exact child continuation guards and the selected bulk menu route', async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(2026, 9, 8, 12));
   const addItem = methodOf(Menu.prototype, 'addItem');
@@ -7676,13 +7641,7 @@ it('central actions preserve exact child continuation guards and the selected bu
     });
     const cards = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')];
     const child = expectDefined(cards.find((card) => card.dataset['line'] === '1'));
-    const button = expectDefined(
-      child.querySelector<HTMLButtonElement>('button[aria-label="Task actions"]'),
-    );
-    expect(
-      cards.every((card) => card.querySelector('button[aria-label="Task actions"]') !== null),
-    ).toBe(true);
-    button.click();
+    child.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(single.mock.lastCall?.[1]).toMatchObject({
       target: { type: 'subtask' },
       node: { title: 'Child', tags: ['#child'] },
@@ -7707,7 +7666,7 @@ it('central actions preserve exact child continuation guards and the selected bu
     const selected = h.panel['rowSelection_abyssPrivate'].size;
     const selection = vi.spyOn(h.panel, 'handleTaskCardClick_abyssPrivate');
     expect(selected).toBe(2);
-    button.click();
+    child.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(bulk).toHaveBeenCalledTimes(1);
     expect(single).toHaveBeenCalledTimes(1);
     expect(selection).not.toHaveBeenCalled();
@@ -7809,9 +7768,7 @@ describe('CenterPanel finite source occurrence replacement', () => {
       expect(old).toHaveLength(fixture.outgoing ? 2 : 1);
       const frames = old.map((card) => card.parentElement);
       const oldControls = old.flatMap((card) => [
-        ...card.querySelectorAll<HTMLElement>(
-          '.abyss-task-action-btn, .abyss-task-parent-btn, [role="checkbox"]',
-        ),
+        ...card.querySelectorAll<HTMLElement>('.abyss-task-parent-btn, [role="checkbox"]'),
       ]);
       const untouched = expectDefined(h.cards(fixture.neighborLine)[0]);
       const untouchedControl = untouched.querySelector('[role="checkbox"]');
@@ -7861,7 +7818,6 @@ describe('CenterPanel finite source occurrence replacement', () => {
       const card = expectDefined(h.cards(1)[0]);
       const frame = card.parentElement;
       const marker = expectDefined(card.querySelector<HTMLElement>('[role="checkbox"]'));
-      const actions = card.querySelector('.abyss-task-action-btn');
       const other = expectDefined(h.cards(2)[0]);
       const otherFrame = other.parentElement;
       const updated = before.replace('Same [[A]]', 'Same ⏫ [[A]]');
@@ -7872,7 +7828,6 @@ describe('CenterPanel finite source occurrence replacement', () => {
       expect(h.cards(1)[0]).toBe(card);
       expect(card.parentElement).toBe(frame);
       expect(card.querySelector('[role="checkbox"]')).toBe(marker);
-      expect(card.querySelector('.abyss-task-action-btn')).toBe(actions);
       expect(document.activeElement).toBe(marker);
       expect(marker.getAttribute('data-priority')).toBe('B');
       expect(h.cards(2)[0]).toBe(other);
@@ -7935,7 +7890,7 @@ describe('CenterPanel finite source occurrence replacement', () => {
     }
   });
 
-  it('retires an open grouped Actions pin and its focus return on identity replacement', async () => {
+  it('retires an open grouped context-menu pin and its focus return on identity replacement', async () => {
     const before = ['- [ ] Parent', `  ${subject}`, neighbor, ''].join('\n');
     const h = await mounted(before, true);
     const addItem = methodOf(Menu.prototype, 'addItem');
@@ -7955,17 +7910,17 @@ describe('CenterPanel finite source occurrence replacement', () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const card = expectDefined(h.cards(1)[1]);
-      const button = expectDefined(card.querySelector<HTMLButtonElement>('.abyss-task-action-btn'));
-      button.focus();
-      button.click();
+      const marker = expectDefined(card.querySelector<HTMLElement>('[role="checkbox"]'));
+      marker.focus();
+      card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       const hide = vi.spyOn(expectDefined(menu), 'hide');
       expect(h.panel['taskInteractionPins_abyssPrivate'].size).toBe(1);
       await h.replace(before.replace(`  ${subject}`, subject));
       expect(errors).not.toHaveBeenCalled();
       expect(hide).toHaveBeenCalledOnce();
       expect(h.panel['taskInteractionPins_abyssPrivate'].size).toBe(0);
-      expect(button.isConnected).toBe(false);
-      expect(document.activeElement).not.toBe(button);
+      expect(marker.isConnected).toBe(false);
+      expect(document.activeElement).not.toBe(marker);
       expect(document.activeElement).not.toBe(card);
       expect(h.cards(1)).toHaveLength(2);
       expect(h.cards(1).every((row) => row.querySelector('.abyss-task-parent-btn') === null)).toBe(

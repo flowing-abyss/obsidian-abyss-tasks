@@ -782,7 +782,7 @@ it.each(['tasks', 'search'] as const)(
   },
 );
 
-it('routes mounted Search task-menu tag actions to transient chips and returns menu focus to its button', async () => {
+it('routes mounted Search task-menu tag actions to transient chips and preserves card focus on dismissal', async () => {
   const addItem = methodOf(Menu.prototype, 'addItem');
   vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, cb) {
     return addItem.call(this, (item) => {
@@ -823,15 +823,15 @@ it('routes mounted Search task-menu tag actions to transient chips and returns m
   try {
     h.query('needle');
     await h.completed();
-    const publicButton = expectDefined(
-      h.root.querySelector<HTMLButtonElement>('button[aria-label="Task actions"]'),
-    );
-    publicButton.focus();
-    publicButton.click();
+    const publicCard = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    publicCard.focus();
+    publicCard.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expectDefined(menu).hide();
-    expect(document.activeElement).toBe(publicButton);
-    const buttons = h.root.querySelectorAll<HTMLButtonElement>('button[aria-label="Task actions"]');
-    expectDefined(buttons[1]).click();
+    expect(document.activeElement).toBe(publicCard);
+    const cards = h.root.querySelectorAll<HTMLElement>('.abyss-task-card');
+    expectDefined(cards[1]).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
     const exclusion = expectDefined(
       menuItems().find((item) => item.title__ === 'Exclude tag')?.submenu,
     );
@@ -843,9 +843,9 @@ it('routes mounted Search task-menu tag actions to transient chips and returns m
     await h.completed();
     expect(h.root.dataset['searchLogicalResults']).toBe('2');
     expect(h.root.querySelector('.abyss-filter-chip-label')?.textContent).toBe('−#private');
-    expectDefined(
-      h.root.querySelector<HTMLButtonElement>('button[aria-label="Task actions"]'),
-    ).click();
+    expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card')).dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
     expectDefined(menuItems().find((item) => item.title__ === 'Include tag')).onClick__();
     expectDefined(menu).hide();
     await h.completed();
@@ -922,14 +922,13 @@ it.each(['Include tag', 'Exclude tag'])(
         ),
       );
       expect(card.querySelector('.abyss-task-tag')?.textContent).toBe('#needle-private');
-      const button = expectDefined(card.querySelector<HTMLButtonElement>('.abyss-task-action-btn'));
-      button.focus();
-      button.click();
+      card.focus();
+      card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       const item = expectDefined(menu.items(menu.menu()).find((entry) => entry.title__ === title));
       expect(item.submenu).toBeNull();
       menu.menu().hide();
-      expect(document.activeElement).toBe(button);
-      button.click();
+      expect(document.activeElement).toBe(card);
+      card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       expectDefined(menu.items(menu.menu()).find((entry) => entry.title__ === title)).onClick__();
       menu.menu().hide();
       await h.completed();
@@ -940,12 +939,12 @@ it.each(['Include tag', 'Exclude tag'])(
       if (title === 'Exclude tag') {
         expect(h.root.textContent).toContain('Parent');
         expect(h.root.textContent).toContain('Child');
-        expect(document.activeElement).toBe(button);
+        expect(document.activeElement).toBe(card);
       } else {
         expect(h.root.textContent).not.toContain('Parent');
         expect(h.root.textContent).toContain('Other');
         expect(document.activeElement).not.toBe(
-          h.root.querySelector<HTMLButtonElement>('.abyss-task-action-btn'),
+          h.root.querySelector<HTMLElement>('.abyss-task-card'),
         );
       }
       expect(settings).toEqual(before);
@@ -979,9 +978,9 @@ it('keeps rendered Search descendant tag choices current and deduplicated beside
   try {
     h.query('needle');
     await h.completed();
-    const button = expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-task-action-btn'));
-    button.focus();
-    button.click();
+    const card = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    card.focus();
+    card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     for (const title of ['Include tag', 'Exclude tag'])
       expect(choices(title).map((item) => item.title__)).toEqual([
         '#needle-work',
@@ -994,8 +993,8 @@ it('keeps rendered Search descendant tag choices current and deduplicated beside
     menu.menu().hide();
     await h.completed();
     expect(h.root.dataset['searchLogicalResults']).toBe('1');
-    expect(document.activeElement).toBe(button);
-    button.click();
+    expect(document.activeElement).toBe(card);
+    card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expectDefined(
       choices('Include tag').find((item) => item.title__ === '#needle-private'),
     ).onClick__();
@@ -1007,16 +1006,25 @@ it('keeps rendered Search descendant tag choices current and deduplicated beside
     expect(h.root.dataset['searchLogicalResults']).toBe('0');
     expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-filter-chip-x')).click();
     await h.completed();
-    const retired = expectDefined(
-      h.root.querySelector<HTMLButtonElement>('.abyss-task-action-btn'),
-    );
-    const previousMenu = menu.menu();
+    const refreshed = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
     h.index.installCommittedContent('a.md', '- [ ] needle Parent #work\n  - [ ] Child #needle-new');
     await h.completed();
-    retired.click();
+    expect(h.root.querySelector('.abyss-task-card')).toBe(refreshed);
+    refreshed.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    for (const title of ['Include tag', 'Exclude tag'])
+      expect(choices(title).map((item) => item.title__)).toEqual(['#work', '#needle-new']);
+    menu.menu().hide();
+    const previousMenu = menu.menu();
+    h.query('absent');
+    await h.completed();
+    expect(refreshed.isConnected).toBe(false);
+    h.query('needle');
+    await h.completed();
+    refreshed.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(menu.menu()).toBe(previousMenu);
-    expect(h.root.querySelector('.abyss-task-action-btn')).not.toBe(retired);
-    expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-task-action-btn')).click();
+    const live = expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card'));
+    expect(live).not.toBe(refreshed);
+    live.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     for (const title of ['Include tag', 'Exclude tag'])
       expect(choices(title).map((item) => item.title__)).toEqual(['#work', '#needle-new']);
     menu.menu().hide();
