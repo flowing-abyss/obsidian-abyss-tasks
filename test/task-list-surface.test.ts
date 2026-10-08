@@ -160,11 +160,12 @@ function harness(clampWrites = false, sameHost = false, clampExtent = false) {
     };
   });
   const reportFailure = vi.fn();
+  const mountedChanged = vi.fn();
   const surface = new TaskListSurface({
     host,
     scroll,
     mount,
-    mountedChanged: vi.fn(),
+    mountedChanged,
     reportFailure,
   });
   return {
@@ -194,6 +195,7 @@ function harness(clampWrites = false, sameHost = false, clampExtent = false) {
     observed,
     frames,
     reportFailure,
+    mountedChanged,
     onMeasure(callback: ((key: string) => void) | undefined) {
       onMeasure = callback;
     },
@@ -224,6 +226,336 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   document.body.empty();
+});
+
+describe('surface transaction admission', () => {
+  it('bounds size reads in a retained 10,000-row window without skipping measurements', () => {
+    const h = harness(false, true);
+    const counts = { widths: 0, heights: 0, rects: 0, mounts: 0, updates: 0, destroys: 0 };
+    // Keep the numeric diagnostic independent of rich card and hydration costs.
+    const host = h.host.createDiv();
+    Object.defineProperties(host, {
+      clientWidth: {
+        get: () => {
+          counts.widths++;
+          return 700;
+        },
+      },
+      clientHeight: {
+        get: () => {
+          counts.heights++;
+          return 900;
+        },
+      },
+      scrollHeight: { get: () => 640000 },
+    });
+    const surface = new TaskListSurface<number>({
+      host,
+      scroll: host,
+      mount: (container) => {
+        counts.mounts++;
+        const element = container.createDiv();
+        element.getBoundingClientRect = () => {
+          counts.rects++;
+          return { height: 64 } as DOMRect;
+        };
+        return {
+          element,
+          update: () => {
+            counts.updates++;
+          },
+          destroy: () => {
+            counts.destroys++;
+            element.remove();
+          },
+        };
+      },
+      mountedChanged: () => {},
+      reportFailure: (error) => {
+        throw error;
+      },
+    });
+    const list = indexedRows(
+      Array.from({ length: 10000 }, (_, n) => ({
+        kind: 'task' as const,
+        key: String(n),
+        taskKey: String(n),
+        task: n,
+      })),
+    );
+    const reset = () => {
+      for (const key of Object.keys(counts) as Array<keyof typeof counts>) counts[key] = 0;
+    };
+    surface.update(list, {
+      revision: 'fixed',
+      preserveAnchor: true,
+      estimate: () => 64,
+      measurementRevision: () => '',
+    });
+    const initial = { ...counts };
+    reset();
+    host.scrollTop = 5000;
+    host.dispatchEvent(new Event('scroll'));
+    h.frame();
+    const disjoint = { ...counts };
+    const priorKeys = surface.mountedKeys();
+    const priorElements = priorKeys.map((key) => surface.element(key));
+    reset();
+    host.scrollTop = 5001;
+    host.dispatchEvent(new Event('scroll'));
+    h.frame();
+    expect(initial.mounts).toBeGreaterThan(0);
+    expect(disjoint.mounts).toBeGreaterThan(0);
+    expect(disjoint.destroys).toBe(initial.mounts);
+    expect(surface.mountedKeys()).toEqual(priorKeys);
+    expect(priorKeys.map((key) => surface.element(key))).toEqual(priorElements);
+    expect(counts.mounts + counts.updates + counts.destroys).toBe(0);
+    expect(counts.rects).toBe(priorKeys.length);
+    expect(counts.widths).toBeLessThanOrEqual(40);
+    expect(counts.heights).toBeLessThanOrEqual(40);
+    surface.destroy();
+    h.surface.destroy();
+  });
+
+  it.each([false, true])(
+    'retires a mount hidden by its callback even if cleanup restores geometry: %s',
+    (restore) => {
+      const h = harness();
+      const mount = expectDefined(h.mount.getMockImplementation());
+      h.mount.mockImplementationOnce((host, row) => {
+        const result = mount(host, row);
+        h.size(0, 0);
+        return {
+          ...result,
+          destroy: () => {
+            result.destroy();
+            if (restore) h.size(600, 480);
+          },
+        };
+      });
+      h.surface.update(rows(100), presentation);
+      expect(h.mount).toHaveBeenCalledTimes(1);
+      expect(h.surface.mountedKeys()).toEqual([]);
+      expect(h.writes).not.toHaveBeenCalled();
+      h.size(600, 480);
+      h.surface.resume();
+      expect(h.surface.element('n.md:0')?.isConnected).toBe(true);
+      expect(h.reportFailure).not.toHaveBeenCalled();
+      h.surface.destroy();
+    },
+  );
+
+  it.each(['update', 'destroy'] as const)(
+    'stops row work when a retained mount %s hides the surface',
+    (operation) => {
+      const h = harness();
+      h.surface.update(rows(100), presentation);
+      const mounts = h.mount.mock.results.map(
+        (result) => result.value as ReturnType<typeof h.mount>,
+      );
+      const calls = mounts.map((mount) => {
+        const original = mount[operation];
+        return vi.spyOn(mount, operation).mockImplementation((row?: TaskListRow) => {
+          if (operation === 'update') original(expectDefined(row));
+          else (original as () => void)();
+          h.size(0, 0);
+        });
+      });
+      h.writes.mockClear();
+      if (operation === 'update') h.surface.update(rows(100), { ...presentation, revision: 'new' });
+      else {
+        h.scrollTo(3000);
+        h.frame();
+      }
+      expect(calls.reduce((sum, call) => sum + call.mock.calls.length, 0)).toBe(1);
+      expect(h.writes).not.toHaveBeenCalled();
+      for (const call of calls) call.mockRestore();
+      h.size(600, 480);
+      h.surface.resume();
+      expect(h.surface.reveal('n.md:99')?.textContent).toBe('Task 99');
+      expect(h.reportFailure).not.toHaveBeenCalled();
+      h.surface.destroy();
+    },
+  );
+
+  it.each(['update', 'rebind'] as const)(
+    'preserves a source installed by %s eviction cleanup',
+    (operation) => {
+      const h = harness();
+      h.surface.update(rows(3), presentation);
+      const retiring = expectDefined(
+        h.mount.mock.results[operation === 'update' ? 2 : 0]?.value,
+      ) as ReturnType<typeof h.mount>;
+      const destroy = retiring.destroy;
+      let replacement: HTMLElement | undefined;
+      vi.spyOn(retiring, 'destroy').mockImplementationOnce(() => {
+        destroy();
+        h.surface.update(rows(4), presentation);
+        replacement = h.surface.element('n.md:3');
+        h.mountedChanged.mockClear();
+      });
+      if (operation === 'update') h.surface.update(rows(2), presentation);
+      else {
+        h.surface.suspend();
+        h.surface.resume();
+      }
+      expect(replacement?.isConnected).toBe(true);
+      expect(h.surface.element('n.md:3')).toBe(replacement);
+      expect(h.mountedChanged).not.toHaveBeenCalled();
+      expect(h.surface.mountedKeys()).toEqual(['n.md:0', 'n.md:1', 'n.md:2', 'n.md:3']);
+      expect(h.reportFailure).not.toHaveBeenCalled();
+      h.surface.destroy();
+    },
+  );
+
+  it.each(['hide', 'replace'] as const)('revalidates mounted settlement after %s', (operation) => {
+    const h = harness();
+    h.surface.update(rows(100), presentation);
+    const measured = vi.fn();
+    h.onMeasure(measured);
+    let replacement: HTMLElement | undefined;
+    h.mountedChanged.mockImplementationOnce(() => {
+      if (operation === 'hide') h.size(0, 0);
+      else {
+        h.surface.update(rows(2), presentation);
+        replacement = h.surface.element('n.md:0');
+        measured.mockClear();
+        h.writes.mockClear();
+      }
+    });
+    h.writes.mockClear();
+    expect(h.surface.reveal('n.md:99')).toBeUndefined();
+    expect(measured).not.toHaveBeenCalled();
+    expect(h.writes).not.toHaveBeenCalled();
+    h.size(600, 480);
+    h.resize();
+    h.frame();
+    if (operation === 'replace') expect(h.surface.element('n.md:0')).toBe(replacement);
+    else expect(h.surface.reveal('n.md:99')).toBeDefined();
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
+  it('stops publication after pin invalidation hides the surface', () => {
+    const h = harness();
+    const list = rows(3);
+    h.surface.update(list, presentation);
+    h.surface.element('n.md:0')?.focus();
+    h.surface.pin('n.md:2', () => {
+      h.size(0, 0);
+    });
+    const reversed = indexedRows([...list.slice(0, list.rowCount)].reverse());
+    const updates = h.mount.mock.results.map((result) =>
+      vi.spyOn(result.value as ReturnType<typeof h.mount>, 'update'),
+    );
+    h.writes.mockClear();
+    h.surface.update(reversed, presentation);
+    expect(updates.every((update) => update.mock.calls.length === 0)).toBe(true);
+    expect(h.writes).not.toHaveBeenCalled();
+    h.size(600, 480);
+    h.surface.resume();
+    expect(h.surface.mountedKeys()).toEqual(['n.md:2', 'n.md:1', 'n.md:0']);
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
+  it.each([false, true])(
+    'cancels hidden measurement readiness without reporting success or pending: %s',
+    (waitForReady) => {
+      const h = harness();
+      const original = expectDefined(h.mount.getMockImplementation());
+      let hide = false;
+      const ready = vi.fn(() => {
+        if (hide) h.size(0, 0);
+        return !hide;
+      });
+      h.mount.mockImplementation((host, row) => ({
+        ...original(host, row),
+        measurementReady: ready,
+      }));
+      h.surface.update(rows(100), presentation);
+      hide = true;
+      ready.mockClear();
+      h.writes.mockClear();
+      expect(
+        waitForReady
+          ? h.surface.reveal('n.md:99', { waitForReady: true })
+          : h.surface.reveal('n.md:99'),
+      ).toBeUndefined();
+      expect(ready).toHaveBeenCalledTimes(1);
+      expect(h.writes).not.toHaveBeenCalled();
+      hide = false;
+      h.size(600, 480);
+      h.surface.resume();
+      expect(h.surface.reveal('n.md:99')).toBeDefined();
+      expect(h.reportFailure).not.toHaveBeenCalled();
+      h.surface.destroy();
+    },
+  );
+
+  it('stops reveal corrections when destination validation hides the surface', () => {
+    const h = harness();
+    h.surface.update(rows(100), presentation);
+    let reads = 0;
+    h.onMeasure((key) => {
+      if (key !== 'n.md:99' || ++reads !== 2) return;
+      h.size(0, 0);
+      h.destroyed.length = 0;
+      h.writes.mockClear();
+    });
+    expect(h.surface.reveal('n.md:99')).toBeUndefined();
+    expect(reads).toBe(2);
+    expect(h.destroyed).toEqual([]);
+    expect(h.writes).not.toHaveBeenCalled();
+    h.onMeasure(undefined);
+    h.size(600, 480);
+    h.surface.resume();
+    expect(h.surface.reveal('n.md:99')).toBeDefined();
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+  });
+
+  it.each(['beforeWrite', 'afterWrite'] as const)(
+    'retires native ownership when %s hides without vetoing',
+    (phase) => {
+      const h = harness();
+      h.surface.update(rows(100), presentation);
+      const firstAfter = vi.fn(() => {
+        if (phase === 'afterWrite') h.size(0, 0);
+      });
+      const release = h.surface.observeNativeWrites(
+        {
+          beforeWrite: () => {
+            if (phase === 'beforeWrite') h.size(0, 0);
+            return true;
+          },
+          afterWrite: firstAfter,
+        },
+        () => {},
+      );
+      const laterBefore = vi.fn(() => true);
+      const laterAfter = vi.fn();
+      const releaseLater = h.surface.observeNativeWrites(
+        { beforeWrite: laterBefore, afterWrite: laterAfter },
+        () => {},
+      );
+      h.writes.mockClear();
+      expect(h.surface.reveal('n.md:99')).toBeUndefined();
+      expect(h.writes).not.toHaveBeenCalled();
+      expect(laterAfter).not.toHaveBeenCalled();
+      if (phase === 'beforeWrite') {
+        expect(firstAfter).not.toHaveBeenCalled();
+        expect(laterBefore).not.toHaveBeenCalled();
+      } else expect(firstAfter).toHaveBeenCalledTimes(1);
+      release();
+      releaseLater();
+      h.size(600, 480);
+      h.surface.resume();
+      expect(h.surface.reveal('n.md:99')).toBeDefined();
+      expect(h.reportFailure).not.toHaveBeenCalled();
+      h.surface.destroy();
+    },
+  );
 });
 
 describe('TaskListSurface', () => {
@@ -1126,34 +1458,42 @@ describe('synchronous reveal convergence', () => {
       expect(h.reportFailure).not.toHaveBeenCalled();
     },
   );
-  it.each(['removed', 'revision', 'destroyed', 'owner', 'reentrant reveal'] as const)(
-    'cancels old reveal authority when %s during measurement',
-    (change) => {
-      const h = harness(true);
-      const list = rows(1201);
-      h.surface.update(list, presentation);
-      const owner = change === 'owner' ? taskViewportOwner() : undefined;
-      let latestTop = 0;
-      h.onMeasure((key) => {
-        if (key !== 'n.md:1200') return;
-        h.onMeasure(undefined);
-        if (change === 'removed') h.surface.update(rows(2), presentation);
-        else if (change === 'revision')
-          h.surface.update(list, { ...presentation, revision: 'new' });
-        else if (change === 'destroyed') h.surface.destroy();
-        else if (owner !== undefined) owner.doc.body.append(h.scroll);
-        else h.surface.reveal('n.md:0');
-        latestTop = h.scroll.scrollTop;
-        h.writes.mockClear();
-      });
-      expect(h.surface.reveal('n.md:1200')).toBeUndefined();
-      expect(h.scroll.scrollTop).toBe(latestTop);
-      expect(h.writes).not.toHaveBeenCalled();
-      expect(h.reportFailure).not.toHaveBeenCalled();
-      h.surface.destroy();
-      owner?.destroy();
-    },
-  );
+  it.each([
+    'removed',
+    'revision',
+    'destroyed',
+    'owner',
+    'detached',
+    'suspended',
+    'hidden',
+    'reentrant reveal',
+  ] as const)('cancels old reveal authority when %s during measurement', (change) => {
+    const h = harness(true);
+    const list = rows(1201);
+    h.surface.update(list, presentation);
+    const owner = change === 'owner' ? taskViewportOwner() : undefined;
+    let latestTop = 0;
+    h.onMeasure((key) => {
+      if (key !== 'n.md:1200') return;
+      h.onMeasure(undefined);
+      if (change === 'removed') h.surface.update(rows(2), presentation);
+      else if (change === 'revision') h.surface.update(list, { ...presentation, revision: 'new' });
+      else if (change === 'destroyed') h.surface.destroy();
+      else if (change === 'detached') h.scroll.remove();
+      else if (change === 'suspended') h.surface.suspend();
+      else if (change === 'hidden') h.size(0, 0);
+      else if (owner !== undefined) owner.doc.body.append(h.scroll);
+      else h.surface.reveal('n.md:0');
+      latestTop = h.scroll.scrollTop;
+      h.writes.mockClear();
+    });
+    expect(h.surface.reveal('n.md:1200')).toBeUndefined();
+    expect(h.scroll.scrollTop).toBe(latestTop);
+    expect(h.writes).not.toHaveBeenCalled();
+    expect(h.reportFailure).not.toHaveBeenCalled();
+    h.surface.destroy();
+    owner?.destroy();
+  });
   it('reports finite nonconvergence without returning a false success or leaking scroll correction', () => {
     const h = harness(true);
     for (let n = 0; n < 1201; n++) h.heights.set(`n.md:${n}`, 1);

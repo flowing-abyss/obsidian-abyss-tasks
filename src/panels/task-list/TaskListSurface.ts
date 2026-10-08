@@ -150,9 +150,13 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       this.#invalidatePins(
         [...this.#pins.keys()].filter((key) => this.#viewport.rowBounds(key) === undefined),
       );
-      if (revision !== this.#revision || this.#destroyed) return;
-      for (const [key, mount] of this.#mounts)
-        if (this.#viewport.rowBounds(key) === undefined) this.#evict(key, mount);
+      if (!this.#currentSource(revision)) return;
+      for (const [key, mount] of this.#mounts) {
+        if (this.#viewport.rowBounds(key) === undefined) {
+          this.#evict(key, mount);
+          if (!this.#currentSource(revision)) return;
+        }
+      }
       if (!this.#active()) {
         this.#pendingScroll = { anchor, top };
         this.#unbind();
@@ -355,15 +359,20 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   }
   #beforeNativeWrite(owners: readonly CapturedPin[], top: number, current: () => boolean): boolean {
     for (const owner of owners) {
-      if (this.#livePin(owner, current) && owner.token.nativeWrite?.beforeWrite(top) === false)
-        return false;
+      if (this.#livePin(owner, current) && owner.token.nativeWrite !== undefined) {
+        const accepted = owner.token.nativeWrite.beforeWrite(top);
+        if (!this.#admitReconciliation(current) || !accepted) return false;
+      }
       if (!current() || this.#options.scroll.scrollTop !== top) return false;
     }
     return current();
   }
   #afterNativeWrite(owners: readonly CapturedPin[], top: number, current: () => boolean): boolean {
     for (const owner of owners) {
-      if (this.#livePin(owner, current)) owner.token.nativeWrite?.afterWrite(top);
+      if (this.#livePin(owner, current) && owner.token.nativeWrite !== undefined) {
+        owner.token.nativeWrite.afterWrite(top);
+        if (!this.#admitReconciliation(current)) return false;
+      }
       if (!current() || this.#options.scroll.scrollTop !== top) return false;
     }
     return current();
@@ -411,7 +420,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     // Ordinary reconciliation retains its existing behavior and does no ownership proof work.
     if (owners === undefined) {
       action();
-      return current();
+      return this.#admitReconciliation(current);
     }
     const scroll = this.#options.scroll;
     const before = scroll.scrollTop;
@@ -434,7 +443,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const placement = this.#place(top);
     const origin = this.#origin();
     const next = placement.nativeTop + origin;
-    if (!current()) return;
+    if (!this.#admitReconciliation(current)) return;
     const owned = {
       generation: this.#nativeGeneration,
       writeId: placement.writeId,
@@ -544,8 +553,11 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     this.#unbind();
     // Components and native event registrations belong to the document that mounted them.
     this.#invalidatePins([...this.#pins.keys()]);
-    if (this.#destroyed || revision !== this.#revision) return false;
-    for (const [key, mount] of this.#mounts) this.#evict(key, mount);
+    if (!this.#currentSource(revision)) return false;
+    for (const [key, mount] of this.#mounts) {
+      this.#evict(key, mount);
+      if (!this.#currentSource(revision)) return false;
+    }
     this.#owner = owner;
     if (owner === null) return true;
     this.#width = -1;
@@ -696,6 +708,9 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
         break;
       }
   }
+  #currentSource(revision: number): boolean {
+    return !this.#destroyed && revision === this.#revision;
+  }
   #currentReconciliation(): () => boolean {
     const revision = this.#revision;
     const reconciliation = ++this.#reconciliation;
@@ -708,7 +723,17 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       owner === this.#owner &&
       owner?.document === this.#options.host.ownerDocument &&
       owner.document === this.#options.scroll.ownerDocument &&
-      this.#active();
+      !this.#destroyed &&
+      !this.#suspended &&
+      this.#options.host.isConnected;
+  }
+  #admitReconciliation(current: () => boolean): boolean {
+    if (!current()) return false;
+    const active = this.#active();
+    if (!current()) return false;
+    // An inactive pass stays retired even if its cleanup restores geometry.
+    if (!active) this.#reconciliation++;
+    return active;
   }
   #intersects(key: string | undefined): boolean {
     const rect = key === undefined ? undefined : this.element(key)?.getBoundingClientRect();
@@ -719,15 +744,15 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const current = this.#currentReconciliation();
     this.#readFocus();
     this.#resolvePinOrder();
-    if (!current()) return false;
+    if (!this.#admitReconciliation(current)) return false;
     this.#readFocus();
     const nativeTop = target?.top ?? this.#top();
     const revealKey = target?.revealKey;
     // Only a row already intersecting before provisional measurement retains tall-row placement.
     const alignTall = !this.#intersects(revealKey);
-    if (!current()) return false;
+    if (!this.#admitReconciliation(current)) return false;
     this.#renderWindow(update, nativeTop, revealKey ?? this.#anchorKey(target?.anchor), current);
-    if (!current()) return false;
+    if (!this.#admitReconciliation(current)) return false;
     return this.#measureWindow(nativeTop, target, current, alignTall);
   }
   #measureWindow(
@@ -774,7 +799,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   #yieldPendingReveal(top: number, reveal: RevealPlacement): boolean {
     if (
       reveal.onPending === undefined ||
-      ![...this.#mounts.values()].some((mount) => mount.measurementReady?.() === false)
+      ![...this.#mounts.values()].some((mount) => !this.#measurementReady(mount, reveal.current))
     )
       return false;
     this.#writeTop(top, reveal.current);
@@ -785,7 +810,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     this.#writeTop(desired, current);
     if (!current()) return false;
     const adjustment = this.#revealAdjustment(key, undefined, false, current);
-    if (!current()) return false;
+    if (!this.#admitReconciliation(current)) return false;
     if (Math.abs(adjustment) > 0.5)
       throw new Error('Task reveal did not reach the visible viewport');
     return true;
@@ -817,7 +842,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     const changed = measuredTop !== undefined || mountedChanged;
     if (changed) return { top: desired, stable: false };
     const adjustment = this.#revealAdjustment(key, desired, alignTall, current);
-    if (!current()) return { top: desired, stable: false };
+    if (!this.#admitReconciliation(current)) return { top: desired, stable: false };
     if (Math.abs(adjustment) <= 0.5) return { top: desired, stable: true };
     const corrected = desired + adjustment;
     this.#renderWindow(false, corrected, key, current);
@@ -874,9 +899,18 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       : this.#viewport.rowAt(this.#viewport.restoreAnchor({ ...anchor, offset: 0 }, 0))?.key;
   }
   #measure(top: number, anchor: RowAnchor | undefined, current: () => boolean): number | undefined {
+    const measurements = this.#measureRows(current);
+    if (measurements === undefined || !this.#admitReconciliation(current)) return;
+    const measured = this.#viewport.measure(measurements, Math.max(0, top), anchor);
+    if (!measured.changed) return;
+    return top + measured.scrollTop - Math.max(0, top);
+  }
+  #measureRows(current: () => boolean): RowMeasurement[] | undefined {
     const measurements: RowMeasurement[] = [];
     for (const [key, mount] of this.#mounts) {
-      if (mount.measurementReady?.() === false) continue;
+      const ready = this.#measurementReady(mount, current);
+      if (!current()) return;
+      if (!ready) continue;
       const style = this.#owner?.getComputedStyle(mount.element);
       if (!current()) return;
       const rect = mount.element.getBoundingClientRect();
@@ -886,9 +920,12 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
         height: rect.height + this.#margin(style?.marginTop) + this.#margin(style?.marginBottom),
       });
     }
-    const measured = this.#viewport.measure(measurements, Math.max(0, top), anchor);
-    if (!measured.changed) return;
-    return top + measured.scrollTop - Math.max(0, top);
+    return measurements;
+  }
+  #measurementReady(mount: TaskRowMount<T>, current: () => boolean): boolean {
+    if (mount.measurementReady === undefined) return true;
+    const ready = mount.measurementReady();
+    return this.#admitReconciliation(current) && ready;
   }
   #margin(value: string | undefined): number {
     const size = Number.parseFloat(value ?? '');
@@ -906,7 +943,10 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     let mount = this.#mounts.get(row.key);
     if (mount === undefined) {
       mount = this.#mountRow(row, current);
-    } else if (update) mount.update(row);
+    } else if (update) {
+      mount.update(row);
+      if (!this.#admitReconciliation(current)) return;
+    }
     if (mount !== undefined && current()) this.#placeMount(row.key, mount.element, current);
     return this.#frames.get(row.key);
   }
@@ -961,7 +1001,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
       frame.remove();
       throw error;
     }
-    if (!current()) {
+    if (!this.#admitReconciliation(current)) {
       try {
         mount.destroy();
       } finally {
@@ -1002,6 +1042,7 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
     )
       return;
     this.#options.mountedChanged();
+    this.#admitReconciliation(current);
   }
   #segmentBounds(segment: RowSegment): RowBounds | undefined {
     const key = this.#segmentKey(segment);
@@ -1064,7 +1105,10 @@ export class TaskListSurface<T = TaskSnapshot> implements MountedTaskListRows<T>
   }
   #evictOutside(keys: ReadonlySet<string>, current: () => boolean): void {
     for (const [key, mount] of this.#mounts) {
-      if (!keys.has(key)) this.#evict(key, mount);
+      if (!keys.has(key)) {
+        this.#evict(key, mount);
+        if (!this.#admitReconciliation(current)) return;
+      }
       if (!current()) return;
     }
   }
