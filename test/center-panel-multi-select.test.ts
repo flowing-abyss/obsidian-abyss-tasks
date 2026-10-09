@@ -30,7 +30,11 @@ import {
 } from './helpers';
 import { makeCenterPanelForTest, taskCommandsOf } from './support/panelHarness';
 import { hierarchyHarness } from './support/taskHierarchyHarness';
-import { prepareTaskPanelViewport, taskListRect } from './support/taskPanelViewport';
+import {
+  prepareTaskPanelViewport,
+  taskCardMountBound,
+  taskListRect,
+} from './support/taskPanelViewport';
 import { canonicalSearchForIndex } from './support/taskSearchHarness';
 import { mountCanonicalSearchUi, searchUiCompleted } from './support/taskSearchUiHarness';
 import { taskViewportOwner } from './support/taskViewportOwner';
@@ -1060,12 +1064,19 @@ describe('windowed Tasks integration', () => {
   });
   it('extends a logical range across windows without mounting the selection', () => {
     const { el, state, panel } = makeCenter(largeTasks());
-    click(expectDefined(cards(el)[0]));
-    for (let i = 0; i < 120; i++) key(el, 'ArrowDown', { shiftKey: true });
-    expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('121 tasks selected');
-    expect(activeDocument.activeElement?.getAttribute('data-line')).toBe('120');
+    const first = expectDefined(cards(el)[0]);
+    const firstKey = expectDefined(first.dataset['rowKey']);
+    const mountBound = taskCardMountBound(el);
+    click(first);
+    for (let i = 0; i < mountBound; i++) key(el, 'ArrowDown', { shiftKey: true });
+    expect(el.querySelector('.abyss-selection-live')?.textContent).toBe(
+      `${mountBound + 1} tasks selected`,
+    );
+    expect(activeDocument.activeElement?.getAttribute('data-line')).toBe(String(mountBound));
     expect(state.get('taskStack')[0]).toMatchObject({ source: { line: 0 } });
-    expect(cards(el).length).toBeLessThanOrEqual(100);
+    expect(first.isConnected).toBe(false);
+    expect(panel['rowSelection_abyssPrivate'].has(firstKey)).toBe(true);
+    expect(cards(el).length).toBeLessThanOrEqual(mountBound);
     panel.destroy();
   });
   it('preserves fractional and elastic native scrolling without completing an application render', () => {

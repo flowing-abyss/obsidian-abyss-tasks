@@ -268,7 +268,7 @@ describe.each([
       expect(Number(required(share[1]).y) / 100).toBeCloseTo(941 / 998, 12);
       expect(Number(required(share[2]).y) / 100).toBeCloseTo(993 / 998, 12);
     });
-    it('timeline retains exact totals and physical evidence', async () => {
+    it('timeline retains exact totals and bounded density', async () => {
       views.set('timeline', await get('timeline'));
       const timeline = v('timeline');
       expect([metric(timeline, 'recorded-minutes'), metric(timeline, 'week-minutes')]).toEqual([
@@ -280,9 +280,18 @@ describe.each([
       );
       expect(chart(timeline, 'timeline').layout).toBe('density');
       expect(chart(timeline, 'timeline').marks.length).toBeLessThanOrEqual(168);
-      for (const [day, population] of [11, 1, 1, 11, 11, 1, 9].entries())
-        pageChecks(timeline, `day-time:${day}`, population * m);
-      pageChecks(timeline, 'week-time', 29 * m);
+    });
+    it.each([
+      ['day-time:0', 11],
+      ['day-time:1', 1],
+      ['day-time:2', 1],
+      ['day-time:3', 11],
+      ['day-time:4', 11],
+      ['day-time:5', 1],
+      ['day-time:6', 9],
+      ['week-time', 29],
+    ] as const)('pages exact Timeline %s physical sources', async (selection, population) => {
+      pageChecks(await get('timeline'), selection, population * m);
     });
     it('sessions retains exact totals and physical evidence', async () => {
       views.set('sessions', await get('sessions'));
