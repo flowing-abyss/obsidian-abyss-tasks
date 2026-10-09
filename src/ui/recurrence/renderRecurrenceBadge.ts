@@ -47,7 +47,6 @@ export function renderRecurrenceBadge(
   const badge = container.createSpan({
     cls: 'abyss-recurrence-badge',
     attr: {
-      title: tooltip,
       'aria-label': tooltip,
       'data-recurrence-validity': input.validity,
       ...((input.forecast ?? false) && { 'data-recurrence-forecast': 'true' }),

@@ -3,7 +3,7 @@ import { Platform } from 'obsidian';
 import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type TaskCalendarPlugin from '../src/main';
-import { appWithFiles, useRealMoment } from './helpers';
+import { appWithFiles, expectDefined, useRealMoment } from './helpers';
 import { CHILD_PROCESS_TIMEOUT_MS, TYPESCRIPT_PROGRAM_TIMEOUT_MS } from './support/timeouts';
 
 const loadNodeTools = async () => {
@@ -39,6 +39,7 @@ const privateOwners = new Set([
   'AnchoredRecurrenceEditorController',
   'LeftPanel',
   'TaskIndex',
+  'MiniSearchTaskEngine',
   'TaskApplicationService',
   'TimeTrackingService',
   'TrackingTicker',
@@ -79,6 +80,10 @@ const privateOwners = new Set([
   'StatisticsWorkScheduler',
   'StatisticsCharts',
   'ScopePicker',
+  'TaskCaptureController',
+  'CaptureSurface',
+  'CaptureTargetResolver',
+  'TaskSearch',
 ]);
 
 function privateOwner(node: ts.Node): string | undefined {
@@ -245,6 +250,7 @@ describe('production JavaScript artifact', () => {
       'node_modules/.pnpm/d3-scale@4.0.2/node_modules/d3-scale/LICENSE',
       'node_modules/.pnpm/d3-shape@3.2.0/node_modules/d3-shape/LICENSE',
       'node_modules/.pnpm/internmap@2.0.3/node_modules/internmap/LICENSE',
+      'node_modules/minisearch/LICENSE.txt',
       'node_modules/rrule/LICENCE',
     ])
       expect(code.includes(readFileSync(path.join(root, file), 'utf8').trim()), file).toBe(true);
@@ -256,11 +262,105 @@ describe('production JavaScript artifact', () => {
       'd3-scale@4.0.2',
       'd3-shape@3.2.0',
       'internmap@2.0.3',
+      'minisearch@7.2.0',
       'rrule@2.8.1',
     ]);
     const policy = readFileSync(path.join(root, 'pnpm-workspace.yaml'), 'utf8');
     expect(policy).toMatch(/^minimumReleaseAge: 1440$/m);
     expect(policy).not.toContain('minimumReleaseAgeExclude');
+  });
+
+  it('embeds a self-contained browser worker and executes its minified ready/add/query protocol', async () => {
+    let workerSource: string | undefined;
+    const parsed = ts.createSourceFile(
+      'main.js',
+      code,
+      ts.ScriptTarget.ES2021,
+      true,
+      ts.ScriptKind.JS,
+    );
+    function visit(node: ts.Node): void {
+      if (ts.isStringLiteral(node) && node.text.startsWith('/* abyss-task-search-worker */'))
+        workerSource = node.text;
+      ts.forEachChild(node, visit);
+    }
+    visit(parsed);
+    expect(workerSource).toBeDefined();
+    const source = expectDefined(workerSource);
+    expect(lookbehindOpeners(source)).toEqual([]);
+    expect(source).not.toMatch(/\brequire\s*\(|\bimport\s*\(/u);
+    const replies: Array<{ type: string; value?: { total: number } }> = [];
+    const scope = {
+      onmessage: undefined as ((event: { data: unknown }) => void) | undefined,
+      postMessage: (reply: { type: string }) => replies.push(reply),
+    };
+    const executeWorker = compileFunction(source, ['self']) as (scope: unknown) => void;
+    executeWorker(scope);
+    const send = async (data: unknown) => {
+      scope.onmessage?.({ data: structuredClone(data) });
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+    };
+    await send({ type: 'init', epoch: 1, id: 0 });
+    expect(replies[0]?.type).toBe('ready');
+    await send({ type: 'mutate', epoch: 1, id: 1, operation: { type: 'begin', path: 'a.md' } });
+    await send({
+      type: 'mutate',
+      epoch: 1,
+      id: 2,
+      operation: {
+        type: 'add',
+        documents: [
+          {
+            id: 1,
+            rootId: 1,
+            order: { filePath: 'a.md', line: 0, childLines: [] },
+            title: 'needle',
+            description: '',
+            comments: '',
+            tags: '',
+            metadata: '',
+            links: '',
+            sourcePath: '',
+          },
+        ],
+      },
+    });
+    await send({ type: 'mutate', epoch: 1, id: 3, operation: { type: 'commit', path: 'a.md' } });
+    await send({ type: 'mutate', epoch: 1, id: 4, operation: { type: 'publish', generation: 1 } });
+    await send({
+      type: 'open',
+      epoch: 1,
+      id: 5,
+      allocationId: 'reserved-artifact',
+      generation: 1,
+      request: {
+        kind: 'roots',
+        includeSourcePath: false,
+        query: {
+          original: 'needle',
+          tokens: [{ term: 'needle', edits: 2, prefix: true, swaps: [] }],
+        },
+      },
+    });
+    expect(replies[replies.length - 1]?.value?.total).toBe(1);
+    expect(replies[replies.length - 1]?.value).toMatchObject({ id: 'reserved-artifact' });
+    const reserved = {
+      id: 'reserved-artifact',
+      generation: 1,
+      total: 0,
+      kind: 'roots',
+      access: 'forward',
+    };
+    await send({ type: 'release', epoch: 1, id: 6, cursor: reserved });
+    await send({
+      type: 'read',
+      epoch: 1,
+      id: 7,
+      cursor: { ...reserved, total: 1 },
+      offset: 0,
+      limit: 1,
+    });
+    expect(replies[replies.length - 1]).toMatchObject({ type: 'failure', code: 'cursor-expired' });
   });
 
   it('ships no lookbehind, which iOS before 16.4 cannot compile', () => {

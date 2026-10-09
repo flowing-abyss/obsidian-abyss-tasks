@@ -96,6 +96,24 @@ describe('task architecture ESLint boundaries', () => {
       },
     ],
     [
+      'src/tasks/domain/taskSearchProjection.ts',
+      "import '../application/TaskSearchApi';",
+      {
+        ruleId: 'no-restricted-imports',
+        message:
+          "'../application/TaskSearchApi' import is restricted from being used by a pattern. Task domain may import sibling domain modules and shared pure tag syntax.",
+      },
+    ],
+    [
+      'src/panels/center/TaskSearch.ts',
+      "import '../../tasks/application/TaskSearchSource';",
+      {
+        ruleId: 'no-restricted-imports',
+        message:
+          "'../../tasks/application/TaskSearchSource' import is restricted from being used by a pattern. Presentation imports task contracts only through src/tasks/index.ts.",
+      },
+    ],
+    [
       'src/tasks/domain/validation.ts',
       "import { Notice } from 'obsidian';",
       {
@@ -189,7 +207,21 @@ describe('task architecture ESLint boundaries', () => {
 // The project lexical policy rows lint through the same instance, so the project service's cold
 // start is paid once for both suites. Their rule reads scopes, not types.
 const pureFiles = [
+  'src/collectionSteps.ts',
+  'src/task-lists/TaskListSelector.ts',
+  'src/task-lists/taskNodeMembership.ts',
+  'src/tasks/domain/taskOccupiedDates.ts',
+  'src/tags/effectiveTagGroups.ts',
+  'src/task-lists/taskSearchOrganization.ts',
+  'src/panels/center/taskSearchDestination.ts',
+  'src/tasks/infrastructure/search/taskSearchContext.ts',
+  'src/tasks/domain/taskSearchMetadata.ts',
   'src/task-lists/todayTaskCategory.ts',
+  'src/tasks/domain/taskSearchTypes.ts',
+  'src/tasks/domain/searchMatchPolicy.ts',
+  'src/markdown/searchText.ts',
+  'src/markdown/searchTextTypes.ts',
+  'src/tasks/domain/taskSearchProjection.ts',
   'src/tasks/domain/taskDuration.ts',
   'src/tasks/domain/taskHierarchy.ts',
   'src/tasks/infrastructure/markdown/taskHierarchyTransfer.ts',
@@ -203,8 +235,13 @@ const pureFiles = [
   'src/panels/projects/projectOverviewCells.ts',
   'src/panels/projects/projectTableSelection.ts',
   'src/panels/projects/projectTableViewport.ts',
+  'src/panels/projects/projectKanbanRows.ts',
+  'src/panels/projects/projectTimelineRowModel.ts',
+  'src/panels/virtualization/rowViewport.ts',
   'src/views/taskGrouping.ts',
   'src/panels/task-list/taskListRows.ts',
+  'src/panels/task-list/taskDailyRows.ts',
+  'src/panels/task-list/taskRevealRows.ts',
   'src/task-lists/taskLinkValues.ts',
   'src/markdown/linkTarget.ts',
   'src/panels/task-list/taskRowSelection.ts',

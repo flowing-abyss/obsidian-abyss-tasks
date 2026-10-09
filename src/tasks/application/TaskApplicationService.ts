@@ -6,6 +6,7 @@ import type {
   TaskPatch,
   TaskStatusTarget,
 } from '../domain/commands';
+import { normalizeCommentText } from '../domain/commentText';
 import { formatNewCommentTimestamp } from '../domain/commentTimestamp';
 import { shiftLocalDate } from '../domain/localDateMath';
 import { parseRecurrenceRule } from '../domain/recurrence';
@@ -27,6 +28,7 @@ import {
   normalizeTaskTagInput,
   sameTag,
   tagComparisonKey,
+  taskPrefixForSubtask,
 } from '../domain/taskTags';
 import type {
   LocalDate,
@@ -85,6 +87,7 @@ import {
   type PreparedMutation,
   type RetryPolicy,
 } from './taskRetryPolicy';
+import type { TaskReadProjectionApi } from './TaskSearchApi';
 import { TimeTrackingService } from './TimeTrackingService';
 
 function uniqueInOrder(values: readonly string[]): string[] {
@@ -187,6 +190,7 @@ function refKey(ref: TaskRef): string {
 const RECENT_OUTCOME_LIMIT = 64;
 const DEFAULT_BEHAVIOR_SETTINGS: TaskBehaviorSettings = {
   taskPrefix: '',
+  applyTaskPrefixToSubtasks: false,
   inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
   taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
   recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
@@ -295,14 +299,15 @@ function titleInputIssue(command: TaskCommand): TaskCommandResult | undefined {
   return undefined;
 }
 
-function commentInputIssue(command: TaskCommand): TaskCommandResult | undefined {
-  if (
-    (command.type === 'add-comment' || command.type === 'update-comment') &&
-    (!isSingleLineText(command.text) || command.text.trim().length === 0)
-  ) {
-    return invalidTaskTarget('comment');
-  }
-  return undefined;
+function prepareCommentCommand(
+  command: TaskCommand,
+): TaskCommand | Extract<TaskCommandResult, { type: 'invalid' }> {
+  if (command.type !== 'add-comment' && command.type !== 'update-comment') return command;
+  const normalized = normalizeCommentText(command.text);
+  if (normalized.type === 'empty') return invalidTaskTarget('comment');
+  if (normalized.type === 'invalid')
+    return invalidTaskResult([{ code: 'unsafe-comment-continuation', field: 'comment' }]);
+  return { ...command, text: normalized.text };
 }
 
 function subtaskInputIssue(command: TaskCommand): TaskCommandResult | undefined {
@@ -339,7 +344,6 @@ function multilineInputIssue(command: TaskCommand): TaskCommandResult | undefine
   return (
     scheduleInputIssue(command) ??
     titleInputIssue(command) ??
-    commentInputIssue(command) ??
     subtaskInputIssue(command) ??
     timeEntryInputIssue(command) ??
     descriptionInputIssue(command)
@@ -388,10 +392,31 @@ function snapshotBehaviorSettings(provider: TaskBehaviorSettingsProvider): TaskB
   const settings = provider();
   return {
     taskPrefix: settings.taskPrefix,
+    applyTaskPrefixToSubtasks: settings.applyTaskPrefixToSubtasks,
     inbox: { ...settings.inbox },
     taskLifecycle: { ...settings.taskLifecycle },
     recurrence: { ...settings.recurrence },
   };
+}
+
+function subtaskCreationMarkdown(
+  text: string,
+  root: TaskSnapshot,
+  settings: TaskBehaviorSettings,
+): string {
+  const prefix = taskPrefixForSubtask(
+    settings.taskPrefix,
+    settings.applyTaskPrefixToSubtasks,
+    root.tags,
+    settings.inbox,
+  );
+  return applyTaskCreationTagPolicy(prefix, text, settings.inbox).markdown;
+}
+
+function subtaskSubmission(
+  command: EditableTaskCommand,
+): Pick<PreparedMutation, 'submittedSubtaskText'> {
+  return command.type === 'add-subtask' ? { submittedSubtaskText: command.text } : {};
 }
 
 function captureClock(
@@ -460,7 +485,7 @@ function sameFilePath(left: string, right: string): boolean {
 }
 
 type TaskApplicationServiceDependencies = [
-  queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi,
+  queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi & TaskReadProjectionApi,
   repository: TaskRepository,
   statusCatalog: StatusCatalog,
   clock: Clock | LegacyClock,
@@ -479,7 +504,10 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   // service lifetime and is bounded so revision churn cannot retain an unbounded snapshot history.
   private readonly recentOutcomes_abyssPrivate = new Map<string, RecentOutcome>();
 
-  readonly queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
+  readonly queries: TaskQueryApi &
+    TaskDependencyQueryApi &
+    TimeTrackingQueryApi &
+    TaskReadProjectionApi;
   private readonly dependencies_abyssPrivate: TaskDependencyService;
   private readonly tracking_abyssPrivate: TimeTrackingService;
   private readonly diagnostics_abyssPrivate: TaskDiagnosticSink;
@@ -598,9 +626,14 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     }
   }
 
-  async execute(command: TaskCommand): Promise<TaskCommandResult> {
+  async execute(
+    command: TaskCommand,
+    options?: Parameters<TaskApplicationApi['execute']>[1],
+  ): Promise<TaskCommandResult> {
     try {
-      return await this.executeCommand_abyssPrivate(command);
+      const prepared = prepareCommentCommand(command);
+      if (prepared.type === 'invalid') return prepared;
+      return await this.executeCommand_abyssPrivate(prepared, options);
     } catch {
       this.diagnostics_abyssPrivate({
         operation: command.type,
@@ -616,7 +649,10 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     }
   }
 
-  private async executeCommand_abyssPrivate(command: TaskCommand): Promise<TaskCommandResult> {
+  private async executeCommand_abyssPrivate(
+    command: TaskCommand,
+    options?: Parameters<TaskApplicationApi['execute']>[1],
+  ): Promise<TaskCommandResult> {
     if (isHierarchyCommand(command))
       return new TaskHierarchyService(
         this.queries,
@@ -637,11 +673,12 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
         today: reading.localDate,
         addCreatedDate: settings.taskLifecycle.addCreatedDate,
         taskPrefix: settings.taskPrefix,
+        applyTaskPrefixToSubtasks: settings.applyTaskPrefixToSubtasks,
         inbox: settings.inbox,
       });
     if (command.type === 'create')
       return await this.create_abyssPrivate(command, settings, reading);
-    return await this.executeExistingCommand_abyssPrivate(command, settings, reading);
+    return await this.executeExistingCommand_abyssPrivate(command, settings, reading, { options });
   }
 
   private async track_abyssPrivate(
@@ -725,8 +762,9 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     command: ExistingTaskCommand,
     settings: TaskBehaviorSettings,
     reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
-    serialized = false,
+    context: { serialized?: boolean; options?: Parameters<TaskApplicationApi['execute']>[1] } = {},
   ): Promise<TaskCommandResult> {
+    const { serialized = false, options } = context;
     const rootRef = rootRefForCommand(command);
     const resolution = this.resolveForCommand_abyssPrivate(command, rootRef);
     const unavailable = this.unavailableResult_abyssPrivate(command, resolution);
@@ -739,6 +777,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       settings,
       reading,
       serialized,
+      options,
     });
   }
 
@@ -762,9 +801,10 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       settings: TaskBehaviorSettings;
       reading: ClockReading | { readonly localDate: ClockReading['localDate'] };
       serialized: boolean;
+      options: Parameters<TaskApplicationApi['execute']>[1];
     },
   ): Promise<TaskCommandResult> {
-    const { settings, reading, serialized } = context;
+    const { settings, reading, serialized, options } = context;
     const currentRoot = resolution.type === 'exact' ? resolution.task : resolution.current;
     const baseRoot = resolution.type === 'exact' ? resolution.task : resolution.previous;
     const currentCommand =
@@ -797,6 +837,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       targetBase,
       clock: reading,
       settings,
+      ...subtaskSubmission(command),
       retry:
         'recurrence' in preparedCommand ? 'exact-target' : retryPolicy(preparedCommand.command),
       ...(validateCurrent === undefined ? {} : { validateCurrent }),
@@ -806,25 +847,31 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     if (validateCurrent !== undefined && !serialized) {
       return await this.dependencies_abyssPrivate.serializeMutation(async (queued) => {
         const result = queued
-          ? await this.executeExistingCommand_abyssPrivate(command, settings, reading, true)
-          : await this.dispatchPrepared_abyssPrivate(prepared);
+          ? await this.executeExistingCommand_abyssPrivate(command, settings, reading, {
+              serialized: true,
+              options,
+            })
+          : await this.dispatchPrepared_abyssPrivate(prepared, options);
         return await this.closeTrackingAfterCompletion_abyssPrivate(command, result, reading);
       });
     }
-    return await this.dispatchPrepared_abyssPrivate(prepared);
+    return await this.dispatchPrepared_abyssPrivate(prepared, options);
   }
 
   private async dispatchPrepared_abyssPrivate(
     prepared: PreparedMutation,
+    options?: Parameters<TaskApplicationApi['execute']>[1],
   ): Promise<TaskCommandResult> {
     const invalidCurrent = this.validateCompletion_abyssPrivate(
       prepared,
       prepared.repositoryRequest,
     );
     if (invalidCurrent !== undefined) return invalidCurrent;
+    this.notifyPreparedPatch_abyssPrivate(prepared.repositoryRequest, options);
     return await this.finishPrepared_abyssPrivate(
       prepared,
       await this.dispatch_abyssPrivate(prepared.repositoryRequest),
+      options,
     );
   }
 
@@ -1133,8 +1180,11 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       return {
         command: {
           ...command,
-          text: applyTaskCreationTagPolicy(settings.taskPrefix, command.text, settings.inbox)
-            .markdown,
+          text: subtaskCreationMarkdown(
+            command.text,
+            resolution.type === 'exact' ? resolution.task : resolution.current,
+            settings,
+          ),
           today: reading.localDate,
           addCreatedDate: settings.taskLifecycle.addCreatedDate,
         },
@@ -1346,6 +1396,19 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     return { type: 'not-found', target };
   }
 
+  private notifyPreparedPatch_abyssPrivate(
+    request: PreparedMutation['repositoryRequest'],
+    options: Parameters<TaskApplicationApi['execute']>[1],
+  ): void {
+    if (
+      'command' in request &&
+      'type' in request.command &&
+      request.command.type === 'patch' &&
+      options?.onPreparedPatch !== undefined
+    )
+      options.onPreparedPatch(structuredClone(request.command));
+  }
+
   private dispatch_abyssPrivate(
     request: TaskEditRequest | RecurrenceCompletionRevisionRequest | TaskMoveRequest,
   ): Promise<TaskRepositoryResult> {
@@ -1396,14 +1459,32 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   private async finishPrepared_abyssPrivate(
     prepared: PreparedMutation,
     first: TaskRepositoryResult,
+    options?: Parameters<TaskApplicationApi['execute']>[1],
   ): Promise<TaskCommandResult> {
     if (first.type === 'committed') return this.committedResult_abyssPrivate(prepared, first);
     if (first.type !== 'rebased') return this.terminalRepositoryResult_abyssPrivate(first);
     const retry = prepareRetry(prepared, first);
     if (retry.type === 'unsafe') return { type: 'conflict', current: first.current };
-    const invalidCurrent = this.validateCompletion_abyssPrivate(prepared, retry.request);
+    const retryRequest =
+      retry.type === 'edit' &&
+      retry.request.command.type === 'add-subtask' &&
+      prepared.submittedSubtaskText !== undefined
+        ? {
+            ...retry.request,
+            command: {
+              ...retry.request.command,
+              text: subtaskCreationMarkdown(
+                prepared.submittedSubtaskText,
+                first.current,
+                prepared.settings,
+              ),
+            },
+          }
+        : retry.request;
+    const invalidCurrent = this.validateCompletion_abyssPrivate(prepared, retryRequest);
     if (invalidCurrent !== undefined) return invalidCurrent;
-    const second = await this.dispatch_abyssPrivate(retry.request);
+    this.notifyPreparedPatch_abyssPrivate(retryRequest, options);
+    const second = await this.dispatch_abyssPrivate(retryRequest);
     return second.type === 'committed'
       ? this.committedResult_abyssPrivate(prepared, second)
       : this.terminalRepositoryResult_abyssPrivate(second);

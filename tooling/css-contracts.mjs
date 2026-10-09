@@ -28,6 +28,7 @@ const documented = {
     '--text-accent',
     '--text-error',
     '--text-faint',
+    '--text-highlight-bg',
     '--text-muted',
     '--text-normal',
     '--text-on-accent',
@@ -93,6 +94,12 @@ const core = Object.fromEntries(
   ),
 );
 Object.assign(core, {
+  '--highlight-background': {
+    source:
+      'Obsidian Default CSSOM, 2026-10-06; `.search-result-file-matched-text` uses background-color: var(--highlight-background), whose host definition is var(--text-highlight-bg, var(--highlight-background-yellow)). No minimum-runtime proof.',
+    minimum: false,
+    fallback: 'var(--text-highlight-bg)',
+  },
   '--font-interface': {
     source:
       'Obsidian 1.13.7 Default CSSOM, 2026-09-20; no minimum-runtime proof. Native font/semantic fallback; optional shadows may safely disappear.',
@@ -162,7 +169,14 @@ export const contracts = {
     '72px': '--size-4-18',
   },
   runtime: {
-    produced: [],
+    // Exact native spacer producer/consumer is exercised by css-policy.test.ts.
+    produced: [
+      '--abyss-virtual-row-height',
+      '--abyss-virtual-row-offset',
+      '--abyss-virtual-row-width',
+      '--abyss-project-kanban-spacer-height',
+      '--abyss-project-timeline-spacer-height',
+    ],
     // The pinned external DOM host reads only these documented inputs inside our local tooltip.
     // https://github.com/TanStack/charts/blob/v1.0.0/docs/reference/focus-and-interaction.md#css-variables
     consumed: [

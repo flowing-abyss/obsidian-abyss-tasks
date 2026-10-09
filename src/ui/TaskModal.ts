@@ -1,30 +1,50 @@
-import { setIcon, type App } from 'obsidian';
+import { Scope, setIcon, type App } from 'obsidian';
 import { AppState } from '../app/AppState';
+import { createBrowserTaskScheduler } from '../browserTaskScheduler';
 import { RightPanel, type RightPanelMutationLifecycle } from '../panels/RightPanel';
+import type { ShowInTaskList } from '../panels/right/inspectorTypes';
 import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
+import type { TaskSearchApi } from '../tasks';
 import {
   sameTaskNodeRef,
   type CommentTimeContextProvider,
   type TaskApplicationApi,
   type TaskIndexEvent,
+  type TaskNodeRef,
   type TaskQueryApi,
   type TaskRef,
   type TaskResolution,
   type TaskSnapshot,
 } from '../tasks';
-import { isRealmHTMLElement } from './domRealm';
-import { isImeOwnedEvent } from './ime';
-import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
-import { presentTaskCommandResult } from './taskCommandResult';
-import { isDirtyDraftBundle, type RightPanelDraftBundle } from './taskDraftContinuity';
 import {
+  createTaskDependencySearchProvider,
+  type TaskDependencySearchProvider,
+} from './TaskDependencySearchProvider';
+import { isRealmHTMLElement } from './domRealm';
+import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
+import {
+  isPlainSearchEscape,
+  localSearchEditorOwnsEvent,
+  localSearchEventIsOwned,
+  localSearchKeyIsBlocked,
+  localSearchSurfaceIsVisible,
+} from './localSearchKeys';
+import { presentTaskCommandResult } from './taskCommandResult';
+import {
+  isDirtyDraftBundle,
+  type RightPanelDraftBundle,
+  type TaskListDraftHandoff,
+} from './taskDraftContinuity';
+import {
+  isCurrentTaskSelectionSnapshot,
   rebuildTaskSelection,
   renamedRootSelection,
   rootTaskRef,
   selectedRootResolution,
   taskNodeRef,
   taskSelectionPath,
+  taskSelectionRefPath,
   type TaskSelectionNode,
 } from './taskSelection';
 import { deviceTrackedTimeContext, type TrackingSurface } from './timeTracking/TimeBadge';
@@ -32,11 +52,14 @@ import { TrackingTicker } from './timeTracking/TrackingTicker';
 import { createTrackingActions } from './timeTracking/trackingActions';
 
 interface TaskModalOptions {
+  readonly onTaskListDraftHandoff?: TaskListDraftHandoff | undefined;
+  readonly onShowInTaskList?: ShowInTaskList | undefined;
   readonly app: App;
   readonly statusRegistry: StatusRegistry;
   readonly settings?: CalendarSettings | undefined;
   readonly queries?: TaskQueryApi | undefined;
   readonly tasks?: TaskApplicationApi | undefined;
+  readonly search?: TaskSearchApi | undefined;
   readonly commentTimeContext?: CommentTimeContextProvider | undefined;
   readonly interactionOwnership?: InteractionOwnershipPort | undefined;
 }
@@ -55,6 +78,9 @@ export class TaskModal {
   private readonly statusRegistry_abyssPrivate: StatusRegistry;
   private readonly settings_abyssPrivate: CalendarSettings | undefined;
   private readonly queries_abyssPrivate: TaskQueryApi | undefined;
+  private readonly onTaskListDraftHandoff_abyssPrivate: TaskListDraftHandoff | undefined;
+  private readonly onShowInTaskList_abyssPrivate: ShowInTaskList | undefined;
+  private readonly search_abyssPrivate: TaskSearchApi | undefined;
   private readonly tasks_abyssPrivate: TaskApplicationApi | undefined;
   private readonly commentTimeContext_abyssPrivate: CommentTimeContextProvider | undefined;
   private readonly interactionOwnership_abyssPrivate: InteractionOwnershipPort;
@@ -62,6 +88,8 @@ export class TaskModal {
   private modalEl_abyssPrivate: HTMLElement | null = null;
   private innerState_abyssPrivate: AppState | null = null;
   private innerPanel_abyssPrivate: RightPanel | null = null;
+  private releaseScope_abyssPrivate: (() => void) | undefined;
+  private closing_abyssPrivate = false;
   private keyHandler_abyssPrivate: ((e: KeyboardEvent) => void) | null = null;
   private opener_abyssPrivate: HTMLElement | null = null;
   private ownerDoc_abyssPrivate: Document | null = null;
@@ -87,12 +115,27 @@ export class TaskModal {
     this.settings_abyssPrivate = settings;
     this.queries_abyssPrivate = queries;
     this.tasks_abyssPrivate = tasks;
+    this.search_abyssPrivate = options.search;
+    this.onShowInTaskList_abyssPrivate = options.onShowInTaskList;
+    this.onTaskListDraftHandoff_abyssPrivate = options.onTaskListDraftHandoff;
     this.commentTimeContext_abyssPrivate = commentTimeContext;
     this.interactionOwnership_abyssPrivate = ownership ?? noInteractionOwnership;
   }
 
-  open(task: TaskSnapshot, context?: string): void {
+  open(task: TaskSnapshot, context?: string, initialTarget?: TaskNodeRef): void {
+    const selection =
+      initialTarget === undefined ? [task] : taskSelectionRefPath(task, initialTarget);
+    if (selection === undefined) return;
     this.close();
+    try {
+      this.mount_abyssPrivate(selection, context);
+    } catch (error) {
+      this.close();
+      throw error;
+    }
+  }
+
+  private mount_abyssPrivate(selection: TaskSelectionNode[], context?: string): void {
     this.ownershipToken_abyssPrivate = this.interactionOwnership_abyssPrivate.acquire({
       blocksShortcuts: true,
     });
@@ -102,7 +145,7 @@ export class TaskModal {
     this.opener_abyssPrivate =
       isRealmHTMLElement(active) && active !== this.ownerDoc_abyssPrivate.body ? active : null;
     this.innerState_abyssPrivate = new AppState();
-    this.innerState_abyssPrivate.set('taskStack', [task]);
+    this.innerState_abyssPrivate.set('taskStack', selection);
     this.selectionUnsub_abyssPrivate = this.innerState_abyssPrivate.on('taskStack', (stack) => {
       if (this.ownedWriteRef_abyssPrivate == null) return;
       const ref = stack[0] != null ? rootTaskRef(stack[0]) : undefined;
@@ -123,12 +166,17 @@ export class TaskModal {
 
     const panelEl = modal.createDiv({ cls: 'abyss-right abyss-modal-body' });
     const openingState = this.innerState_abyssPrivate;
+    const scope = new Scope(this.app_abyssPrivate.scope);
     this.innerPanel_abyssPrivate = new RightPanel({
+      localSearchScope: { parent: scope, keymap: this.app_abyssPrivate.keymap },
       state: this.innerState_abyssPrivate,
       app: this.app_abyssPrivate,
       statusRegistry: this.statusRegistry_abyssPrivate,
       settings: this.settings_abyssPrivate,
       tasks: this.tasks_abyssPrivate,
+      search: this.search_abyssPrivate,
+      onShowInTaskList: this.listHandoff_abyssPrivate(openingState),
+      dependencySearch: this.createDependencySearch_abyssPrivate(),
       onRenderHeaderActions: (actions) => {
         this.renderCloseButton_abyssPrivate(actions);
       },
@@ -158,13 +206,79 @@ export class TaskModal {
       if (e.target === backdrop) this.closeFromUser_abyssPrivate();
     });
 
-    this.keyHandler_abyssPrivate = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented || isImeOwnedEvent(e)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      this.closeFromUser_abyssPrivate();
+    this.bindScope_abyssPrivate(modal, scope);
+  }
+
+  private listHandoff_abyssPrivate(openingState: AppState): ShowInTaskList | undefined {
+    const action = this.onShowInTaskList_abyssPrivate;
+    if (action === undefined) return undefined;
+    return (target, request) => {
+      const current = (): boolean =>
+        this.innerState_abyssPrivate === openingState &&
+        !request.signal.aborted &&
+        request.isCurrent();
+      return action(target, {
+        ...request,
+        isCurrent: current,
+        onCommitted: (root, path) => {
+          if (!current()) return;
+          const drafts = this.innerPanel_abyssPrivate?.captureDraftHandoff();
+          if (
+            drafts !== undefined &&
+            (this.onTaskListDraftHandoff_abyssPrivate === undefined
+              ? isDirtyDraftBundle(drafts.live) || drafts.detached.length > 0
+              : !this.onTaskListDraftHandoff_abyssPrivate(drafts, root, path))
+          )
+            return;
+          this.close();
+        },
+      });
     };
-    this.ownerDoc_abyssPrivate.addEventListener('keydown', this.keyHandler_abyssPrivate);
+  }
+
+  private bindScope_abyssPrivate(modal: HTMLElement, scope: Scope): void {
+    if (this.modalEl_abyssPrivate !== modal || !localSearchSurfaceIsVisible(modal)) {
+      this.close();
+      return;
+    }
+    const doc = modal.ownerDocument;
+    const route = (event: KeyboardEvent, origin: 'dom' | 'scope'): boolean => {
+      if (
+        this.modalEl_abyssPrivate !== modal ||
+        modal.ownerDocument !== doc ||
+        !modalEscapeIsEligible(event, modal, origin)
+      )
+        return false;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.closeFromUser_abyssPrivate();
+      return true;
+    };
+    const escape = scope.register([], 'Escape', (event) =>
+      route(event, 'scope') ? false : undefined,
+    );
+    this.app_abyssPrivate.keymap.pushScope(scope);
+    this.releaseScope_abyssPrivate = () => {
+      scope.unregister(escape);
+      this.app_abyssPrivate.keymap.popScope(scope);
+    };
+    this.keyHandler_abyssPrivate = (event) => {
+      route(event, 'dom');
+    };
+    doc.addEventListener('keydown', this.keyHandler_abyssPrivate);
+  }
+
+  private createDependencySearch_abyssPrivate(): TaskDependencySearchProvider | undefined {
+    const search = this.search_abyssPrivate,
+      tasks = this.tasks_abyssPrivate,
+      owner = this.ownerDoc_abyssPrivate?.defaultView;
+    return search === undefined || tasks === undefined || owner == null
+      ? undefined
+      : createTaskDependencySearchProvider(
+          search,
+          tasks.queries,
+          createBrowserTaskScheduler(owner),
+        );
   }
 
   /** The modal hosts its own inspector, so it owns the tick and the write boundary it runs on. */
@@ -195,7 +309,6 @@ export class TaskModal {
     const closeBtn = parent.createEl('button');
     closeBtn.className = 'clickable-icon abyss-right-action-btn abyss-modal-close-btn';
     closeBtn.setAttribute('aria-label', 'Close');
-    closeBtn.setAttribute('title', 'Close');
     setIcon(closeBtn, 'x');
     closeBtn.addEventListener('click', () => {
       this.closeFromUser_abyssPrivate();
@@ -220,6 +333,16 @@ export class TaskModal {
   }
 
   close(): void {
+    if (this.closing_abyssPrivate) return;
+    this.closing_abyssPrivate = true;
+    try {
+      this.closeContents_abyssPrivate();
+    } finally {
+      this.closing_abyssPrivate = false;
+    }
+  }
+
+  private closeContents_abyssPrivate(): void {
     this.hierarchyContinuations_abyssPrivate.clear();
     this.opener_abyssPrivate = null;
     const ownershipToken = this.ownershipToken_abyssPrivate;
@@ -237,6 +360,7 @@ export class TaskModal {
     this.ownerDoc_abyssPrivate = null;
     this.innerPanel_abyssPrivate?.destroy();
     this.innerPanel_abyssPrivate = null;
+    this.releaseParentScope_abyssPrivate();
     this.timeTracking_abyssPrivate?.ticker.destroy();
     this.timeTracking_abyssPrivate = undefined;
     this.innerState_abyssPrivate = null;
@@ -244,6 +368,12 @@ export class TaskModal {
     this.modalEl_abyssPrivate = null;
     this.backdropEl_abyssPrivate?.remove();
     this.backdropEl_abyssPrivate = null;
+  }
+
+  private releaseParentScope_abyssPrivate(): void {
+    const releaseScope = this.releaseScope_abyssPrivate;
+    this.releaseScope_abyssPrivate = undefined;
+    releaseScope?.();
   }
 
   private trackHierarchy_abyssPrivate(event: RightPanelMutationLifecycle, state: AppState): void {
@@ -405,18 +535,13 @@ export class TaskModal {
     stack: TaskSelectionNode[],
   ): void {
     const current = resolution.type === 'exact' ? resolution.task : resolution.current;
-    const consumedOwnedRef = this.consumedOwnedRef_abyssPrivate(resolution);
+    if (resolution.type === 'exact' && isCurrentTaskSelectionSnapshot(current, stack)) return;
+    const consumedOwnedRef = this.ownedRefForResolution_abyssPrivate(resolution, current, stack);
     const ownedSelection =
       consumedOwnedRef === undefined
         ? undefined
-        : this.ownedSelection_abyssPrivate(consumedOwnedRef, current, stack);
-    const draft =
-      consumedOwnedRef != null
-        ? this.innerPanel_abyssPrivate?.captureDraftStateForOwnedTransition(
-            consumedOwnedRef,
-            current.ref,
-          )
-        : this.innerPanel_abyssPrivate?.captureDraftState();
+        : this.ownedSelection_abyssPrivate(consumedOwnedRef, current, stack, resolution);
+    const draft = this.captureResolvedDraft_abyssPrivate(consumedOwnedRef, current.ref);
     this.ownedWriteRef_abyssPrivate = undefined;
     this.innerState_abyssPrivate?.updateInspectorSelection(
       ownedSelection ??
@@ -426,6 +551,44 @@ export class TaskModal {
         }),
     );
     this.innerPanel_abyssPrivate?.restoreDraftState(draft, current);
+  }
+
+  private ownedRefForResolution_abyssPrivate(
+    resolution: Extract<TaskResolution, { type: 'exact' | 'rebased' }>,
+    current: TaskSnapshot,
+    stack: readonly TaskSelectionNode[],
+  ): TaskRef | undefined {
+    return (
+      this.consumedOwnedRef_abyssPrivate(resolution) ??
+      this.innerPanel_abyssPrivate?.ownedRefForCompletionFollowUp(
+        current,
+        stack,
+        resolution.basis.authorityTransition?.completionTracking,
+      )
+    );
+  }
+
+  private ownedSelection_abyssPrivate(
+    ref: TaskRef,
+    current: TaskSnapshot,
+    stack: readonly TaskSelectionNode[],
+    resolution: Extract<TaskResolution, { type: 'exact' | 'rebased' }>,
+  ): TaskSelectionNode[] | undefined {
+    return this.innerPanel_abyssPrivate?.selectionForOwnedTransition(
+      ref,
+      current,
+      stack,
+      resolution.basis.authorityTransition?.completionTracking,
+    );
+  }
+
+  private captureResolvedDraft_abyssPrivate(
+    ownedRef: TaskRef | undefined,
+    currentRef: TaskRef,
+  ): RightPanelDraftBundle | undefined {
+    return ownedRef === undefined
+      ? this.innerPanel_abyssPrivate?.captureDraftState()
+      : this.innerPanel_abyssPrivate?.captureDraftStateForOwnedTransition(ownedRef, currentRef);
   }
 
   private consumedOwnedRef_abyssPrivate(
@@ -439,14 +602,6 @@ export class TaskModal {
       this.sameRef_abyssPrivate(ownedWriteRef, resolution.previous.ref)
       ? ownedWriteRef
       : undefined;
-  }
-
-  private ownedSelection_abyssPrivate(
-    ref: TaskRef,
-    current: TaskSnapshot,
-    stack: TaskSelectionNode[],
-  ): TaskSelectionNode[] | undefined {
-    return this.innerPanel_abyssPrivate?.selectionForOwnedTransition(ref, current, stack);
   }
 
   private acknowledgeOwnWrite_abyssPrivate(taskOrRef?: TaskSelectionNode | TaskRef): void {
@@ -491,4 +646,36 @@ export class TaskModal {
   private clearResolutionMessage_abyssPrivate(): void {
     this.modalEl_abyssPrivate?.querySelector('.abyss-task-selection-message')?.remove();
   }
+}
+
+function modalEscapeIsEligible(
+  event: KeyboardEvent,
+  modal: HTMLElement,
+  origin: 'dom' | 'scope',
+): boolean {
+  if (
+    !localSearchSurfaceIsVisible(modal) ||
+    !isPlainSearchEscape(event) ||
+    localSearchKeyIsBlocked(event)
+  )
+    return false;
+  const doc = modal.ownerDocument;
+  if (
+    !localSearchEventIsOwned(event, modal, 'scope', true) &&
+    !(origin === 'dom' && event.target === doc && modal.contains(doc.activeElement))
+  )
+    return false;
+  return origin === 'dom' || !modalNestedEscapeOwner(event, doc);
+}
+
+function modalNestedEscapeOwner(event: KeyboardEvent, doc: Document): boolean {
+  // Existing editor/popover DOM handlers get their cancellation before the modal fallback.
+  const popover = (value: EventTarget | null): boolean =>
+    typeof (value as Element | null)?.closest === 'function' &&
+    (value as Element).closest('.abyss-popover') !== null;
+  return (
+    localSearchEditorOwnsEvent(event, doc) ||
+    popover(doc.activeElement) ||
+    event.composedPath().some(popover)
+  );
 }

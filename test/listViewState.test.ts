@@ -17,11 +17,14 @@ function withoutStatusGroups(state: ListViewState): ListViewState {
 }
 
 describe('isListViewOptionsCustomized', () => {
-  it('ignores property filters while retaining broader customization', () => {
-    const filtered = { ...base('tag:#work'), filters: [{ type: 'tag' as const, value: '#home' }] };
-    expect(isListViewOptionsCustomized(filtered, 'tag:#work')).toBe(false);
-    expect(isListViewCustomized(filtered, 'tag:#work')).toBe(true);
-  });
+  it.each(['tag', 'tag-exclude'] as const)(
+    'ignores %s filters while retaining broader customization',
+    (type) => {
+      const filtered = { ...base('tag:#work'), filters: [{ type, value: '#home' }] };
+      expect(isListViewOptionsCustomized(filtered, 'tag:#work')).toBe(false);
+      expect(isListViewCustomized(filtered, 'tag:#work')).toBe(true);
+    },
+  );
 
   it('detects group and sort differences', () => {
     expect(isListViewOptionsCustomized({ ...base('inbox'), groupBy: 'priority' }, 'inbox')).toBe(

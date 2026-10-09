@@ -1,8 +1,15 @@
-import { getIconIds, Notice, setIcon, Setting } from 'obsidian';
+import { getIconIds, Notice, Platform, setIcon, Setting } from 'obsidian';
 import { StatusRegistry } from '../../status/StatusRegistry';
 import { TYPE_LABELS, TYPE_ORDER } from '../../status/statusConstants';
 import type { TaskStatusType } from '../../tasks';
+import {
+  createSearchWordSegmenter,
+  matchesSearchText,
+  prepareSearchQuery,
+  TaskSearchError,
+} from '../../tasks';
 import { renderStatusMarker } from '../../ui/StatusMarker';
+import { handleLocalSearchKey } from '../../ui/localSearchKeys';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import type { CardListOptions } from '../settingsCard';
 import type { TaskStatusDef } from '../types';
@@ -73,6 +80,8 @@ export interface TaskStatusSettingsOptions {
 }
 
 export class TaskStatusSettings {
+  readonly #localKeyCleanups = new Set<() => void>();
+  readonly #segment = createSearchWordSegmenter();
   readonly #options: TaskStatusSettingsOptions;
   readonly #statusHeaderPreviewEls = new Map<string, HTMLElement>();
   readonly #deleteTimers = new Map<HTMLButtonElement, { ownerWindow: Window; timer: number }>();
@@ -82,6 +91,8 @@ export class TaskStatusSettings {
   }
 
   resetRenderedControls(): void {
+    for (const cleanup of this.#localKeyCleanups) cleanup();
+    this.#localKeyCleanups.clear();
     this.#statusHeaderPreviewEls.clear();
     for (const { ownerWindow, timer } of this.#deleteTimers.values())
       ownerWindow.clearTimeout(timer);
@@ -314,6 +325,16 @@ export class TaskStatusSettings {
           renderResults(query);
         }),
     );
+    const input = inputHost.querySelector<HTMLInputElement>('input');
+    iconWrap.tabIndex = -1;
+    const localKey = (event: KeyboardEvent): void => {
+      if (input !== null)
+        handleLocalSearchKey(event, { input, owner: iconWrap }, Platform.isMacOS ? 'meta' : 'ctrl');
+    };
+    iconWrap.addEventListener('keydown', localKey);
+    this.#localKeyCleanups.add(() => {
+      iconWrap.removeEventListener('keydown', localKey);
+    });
     const resultsHost = inputHost.createDiv({ cls: 'abyss-status-icon-results' });
     renderResults = (query, focusIcon) => {
       const selectIcon = (iconId: string): void => {
@@ -338,10 +359,22 @@ export class TaskStatusSettings {
   #renderTaskStatusIconResults(results: TaskStatusIconResults): void {
     results.host.empty();
     this.#renderClearTaskStatusIcon(results);
-    const query = results.query.trim().toLowerCase();
-    const matchingIds = results.iconIds
-      .filter((iconId) => query === '' || iconId.toLowerCase().includes(query))
-      .slice(0, 48);
+
+    let matchingIds: readonly string[] = [];
+    try {
+      const prepared = prepareSearchQuery(results.query, this.#segment);
+      const query = results.query.trim().toLowerCase();
+      matchingIds = results.iconIds
+        .filter(
+          (iconId) =>
+            query === '' ||
+            iconId.toLowerCase().includes(query) ||
+            matchesSearchText(iconId, prepared, this.#segment),
+        )
+        .slice(0, 48);
+    } catch (error) {
+      if (!(error instanceof TaskSearchError) || error.code !== 'invalid-query') throw error;
+    }
     if (matchingIds.length === 0) {
       results.host.createDiv({ cls: 'abyss-status-icon-empty', text: 'No icons found' });
     } else {

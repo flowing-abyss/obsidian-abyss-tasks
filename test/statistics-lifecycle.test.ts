@@ -3,7 +3,6 @@ import { expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TagManager } from '../src/tags/TagManager';
-import type { TaskApplicationApi, TaskCaptureApplicationApi } from '../src/tasks';
 import { PanelView } from '../src/views/PanelView';
 import {
   configuredTaskApplication,
@@ -12,6 +11,71 @@ import {
   useRealMoment,
 } from './helpers';
 useRealMoment();
+
+it('renders selected live evidence and opens the exact matched child through the shared inspector', async () => {
+  const app = await createAppWithFiles({
+    'evidence.md':
+      '- [ ] Parent ➕ 2026-10-01\n  - [ ] Matched child ➕ 2026-10-02\n  - [ ] Matched child ➕ 2026-10-02\n',
+  });
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const application = configuredTaskApplication(app, settings);
+  await application.index.initialize();
+  const root = expectDefined(application.index.list()[0]);
+  const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+  const tags = new TagManager(app, settings, async () => {}, {
+    check: () => 'ready',
+    apply: async (_change, live) => {
+      live();
+    },
+  });
+  const view = new PanelView(
+    leaf,
+    settings,
+    tags,
+    application.index,
+    application.tasks,
+    application.statusRegistry,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    application.index,
+  );
+  document.body.append(view.containerEl);
+  try {
+    await view.onOpen();
+    const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+    state.set('taskStack', [root]);
+    state.set('mode', 'statistics');
+    await vi.waitFor(() => {
+      expect(view.contentEl.querySelector('.abyss-statistics-section')).not.toBeNull();
+    });
+    expectDefined(
+      [
+        ...view.contentEl.querySelectorAll<HTMLButtonElement>('.abyss-statistics-metrics button'),
+      ].find((button) => button.textContent.startsWith('Open now')),
+    ).click();
+    expect(view.contentEl.querySelectorAll('.abyss-statistics .abyss-task-card')).toHaveLength(1);
+    expect(
+      view.contentEl.querySelector('.abyss-statistics .abyss-task-card.is-selected'),
+    ).not.toBeNull();
+    expectDefined(
+      [...view.contentEl.querySelectorAll<HTMLButtonElement>('.abyss-statistics button')].filter(
+        (button) => button.textContent.includes('Matched child'),
+      )[1],
+    ).click();
+    expect(state.get('taskStack').map((node) => node.title)).toEqual(['Parent', 'Matched child']);
+    expect(state.get('taskStack')[1]?.ref).toEqual(root.subtasks[1]?.ref);
+    expect(state.get('taskStack')[1]?.ref).toMatchObject({ relativeLine: 2 });
+    expect(view.contentEl.querySelector('.abyss-right')?.textContent).toContain('Matched child');
+    expect(state.get('mode')).toBe('statistics');
+  } finally {
+    await view.onClose();
+    application.index.destroy();
+    view.containerEl.remove();
+  }
+});
 
 it('captures scroll before mode layout changes and remounts Statistics through owner migration', async () => {
   const app = await createAppWithFiles({}),
@@ -30,8 +94,9 @@ it('captures scroll before mode layout changes and remounts Statistics through o
     settings,
     tags,
     application.index,
-    application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+    application.tasks,
     application.statusRegistry,
+    undefined,
     undefined,
     undefined,
     undefined,

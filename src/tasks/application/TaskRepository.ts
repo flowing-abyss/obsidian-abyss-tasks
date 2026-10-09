@@ -80,6 +80,8 @@ export type TaskEditCommand =
     }
   | {
       readonly type: 'close-time-entry';
+      /** Only the existing completion phase may attach this transient authority witness. */
+      readonly completionFollowUp?: true;
       readonly entry: TimeEntryRef;
       readonly stamp: AtomDateTime;
       readonly endMs: number;

@@ -7,9 +7,11 @@ import {
   TFile,
   type WorkspaceLeaf,
 } from 'obsidian';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import type { RenderedCellContext } from '../src/panels/projects/ProjectsOverviewSurface';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
+import type { ProjectsTimelineView } from '../src/panels/projects/ProjectsTimelineView';
 import { mountProjectCellEditorPosition } from '../src/panels/projects/projectCellEditorPosition';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
 import { ProjectManager } from '../src/projects/ProjectManager';
@@ -39,6 +41,22 @@ import {
   freshContainer,
   loadPluginStyles,
 } from './helpers';
+import { useHostTooltips } from './support/hostTooltips';
+import { useProjectTableViewport } from './support/projectTableViewport';
+
+useProjectTableViewport();
+useHostTooltips();
+
+beforeEach(() => {
+  const original = vi.spyOn(Element.prototype, 'clientHeight', 'get').getMockImplementation();
+  vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.classList.contains('abyss-project-timeline-scroll')
+      ? 500
+      : Number(original?.call(this) ?? 0);
+  });
+});
 
 interface TestTransfer {
   readonly types: string[];
@@ -350,8 +368,26 @@ describe('ProjectsTableView', () => {
     return { ...fixture, scroll, projects };
   }
 
+  function ownerFrames(): () => void {
+    const frames = new Map<number, FrameRequestCallback>();
+    let next = 0;
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.set(++next, callback);
+      return next;
+    });
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+      frames.delete(id);
+    });
+    return () => {
+      const pending = [...frames.values()];
+      frames.clear();
+      for (const callback of pending) callback(0);
+    };
+  }
+
   /** Replaces `ResizeObserver` with one the test fires, and returns the function that fires it. */
   function stubResizeObserver(): () => void {
+    const flushFrames = ownerFrames();
     let resize: (() => void) | undefined;
     class TestResizeObserver {
       constructor(callback: ResizeObserverCallback) {
@@ -365,6 +401,7 @@ describe('ProjectsTableView', () => {
     vi.stubGlobal('ResizeObserver', TestResizeObserver);
     return () => {
       resize?.();
+      flushFrames();
     };
   }
 
@@ -387,7 +424,96 @@ describe('ProjectsTableView', () => {
     expect(table.querySelectorAll('.abyss-project-table-row')).toHaveLength(0);
   });
 
+  it('suspends detached and zero-size refreshes until a native resize consumes the saved viewport', () => {
+    const resize = stubResizeObserver();
+    const { host, view, projects, scroll } = largeTable();
+    scroll.scrollTop = 4250.25;
+    scroll.scrollLeft = 27.5;
+    scroll.dispatchEvent(new Event('scroll'));
+    const row = expectDefined(host.querySelector('[data-project-path="Projects/P0125.md"]'));
+    const body = expectDefined(row.parentElement);
+    const children = Array.from(body.children);
+    const headerMeasure = vi.spyOn(
+      expectDefined(host.querySelector('thead')),
+      'getBoundingClientRect',
+    );
+    view.captureViewportBeforeHide();
+    host.remove();
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 0 });
+    scroll.scrollTop = 0;
+    scroll.scrollLeft = 0;
+    view.refreshFields();
+    scroll.dispatchEvent(new Event('scroll'));
+    resize();
+    expect(Array.from(body.children)).toEqual(children);
+    activeDocument.body.append(host);
+    view.update(projects);
+    resize();
+    expect(Array.from(body.children)).toEqual(children);
+    expect(headerMeasure).not.toHaveBeenCalled();
+    expect(scroll.scrollTop).toBe(0);
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 340 });
+    resize();
+    expect(host.querySelector('[data-project-path="Projects/P0125.md"]')).toBe(row);
+    expect([scroll.scrollTop, scroll.scrollLeft]).toEqual([4250.25, 27.5]);
+    scroll.scrollTop = 4251.75;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(scroll.scrollTop).toBe(4251.75);
+  });
+
+  it('keeps a distant failed editor pinned while outside focus survives settled refreshes', async () => {
+    const saveProperty = vi.fn().mockRejectedValue(new ProjectEditValidationError('Invalid end'));
+    const { host, view, projects, scroll } = largeTable(false, { saveProperty });
+    scroll.scrollTop = 4250;
+    scroll.dispatchEvent(new Event('scroll'));
+    const row = expectDefined(host.querySelector('[data-project-path="Projects/P0125.md"]'));
+    const cell = expectDefined(row.querySelector<HTMLElement>('[data-column-id="end"]'));
+    cell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const input = expectDefined(cell.querySelector<HTMLInputElement>('input'));
+    input.value = '2020-01-01';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    expect(activeDocument.activeElement).toBe(input);
+    scroll.scrollTop = 10200.25;
+    scroll.dispatchEvent(new Event('scroll'));
+    const outside = activeDocument.body.createEl('input');
+    outside.focus();
+    await flushMicrotasks();
+    await flushMicrotasks();
+    expect(activeDocument.activeElement).toBe(outside);
+    const calls = saveProperty.mock.calls.length;
+    const mounted = Array.from(host.querySelectorAll('.abyss-project-table-row'));
+    for (const refresh of [
+      () => {
+        view.update(projects);
+      },
+      () => {
+        view.refreshFields();
+      },
+    ]) {
+      refresh();
+      await flushMicrotasks();
+      expect(activeDocument.activeElement).toBe(outside);
+      expect(cell.querySelector('input')).toBe(input);
+      expect(input.value).toBe('2020-01-01');
+      expect(cell.querySelector('[role="alert"]')?.textContent).toBe('Invalid end');
+      expect(saveProperty).toHaveBeenCalledTimes(calls);
+      expect(scroll.scrollTop).toBe(10200.25);
+      expect(Array.from(host.querySelectorAll('.abyss-project-table-row'))).toEqual(mounted);
+    }
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flushMicrotasks();
+    scroll.scrollTop = 13000;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(input.isConnected).toBe(false);
+    expect(row.isConnected).toBe(false);
+    expect(saveProperty).toHaveBeenCalledTimes(calls);
+    outside.remove();
+  });
+
   it('remeasures the viewport when theme changes resize the table content', () => {
+    const flushFrames = ownerFrames();
     const observers: Array<{ targets: Element[]; trigger(): void }> = [];
     class TestResizeObserver {
       readonly targets: Element[] = [];
@@ -414,6 +540,7 @@ describe('ProjectsTableView', () => {
     for (const observer of observers) {
       if (observer.targets.includes(table)) observer.trigger();
     }
+    flushFrames();
     expect(host.querySelectorAll('.abyss-project-table-row').length).toBeLessThan(original);
     expect(host.querySelector('[data-project-path="Projects/P0000.md"]')).not.toBeNull();
     expect(host.querySelector('[data-project-path="Projects/P0005.md"]')).not.toBeNull();
@@ -431,7 +558,8 @@ describe('ProjectsTableView', () => {
     scroll.scrollTop = 999999;
     scroll.dispatchEvent(new Event('scroll'));
     expect(host.querySelector('[data-project-path="Projects/P0499.md"]')).not.toBeNull();
-    expect(scroll.scrollTop).toBeLessThan(18000);
+    // Native overscroll is used for lookup without rewriting the browser-owned offset.
+    expect(scroll.scrollTop).toBe(999999);
   });
 
   it('keeps each drop run end where the original rule drew it while the window changes', () => {
@@ -1433,7 +1561,10 @@ describe('ProjectsTableView', () => {
     expect(
       labelledText(expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-bar'))),
     ).toContain('2026-09-02 through 2026-10-01');
-    pressTimelineArrow(track);
+    expect(track.isConnected).toBe(false);
+    pressTimelineArrow(
+      expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-track')),
+    );
     await flushMicrotasks();
     expect(applyEdits).toHaveBeenCalledTimes(2);
     expect(applyEdits.mock.calls[1]?.[0]).toMatchObject([
@@ -1524,9 +1655,10 @@ describe('ProjectsTableView', () => {
     await flushMicrotasks();
     await flushMicrotasks();
 
+    expect(host.querySelector('.abyss-project-timeline-row')).toBeNull();
     expect(
-      expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-group-body')).hidden,
-    ).toBe(true);
+      host.querySelector('.abyss-project-timeline-group-header')?.getAttribute('aria-expanded'),
+    ).toBe('false');
     expect(applyEdits).toHaveBeenCalledOnce();
     expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('');
     expect(noticeSpy.mock.calls[noticeSpy.mock.calls.length - 1]?.[0]).toEqual(
@@ -2016,7 +2148,7 @@ describe('ProjectsTableView', () => {
     const pretty = expectDefined(start.querySelector<HTMLElement>('.abyss-project-pretty-date'));
 
     expect(pretty.textContent).toBe('Sep 10, 2026');
-    expect(pretty.title).toBe(startRaw);
+    expect(pretty.getAttribute('aria-label')).toBe(startRaw);
     expect(end.textContent).toBe(endRaw);
     start.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     const copied = transfer();
@@ -2272,7 +2404,7 @@ describe('ProjectsTableView', () => {
     );
     const relative = expectDefined(host.querySelector<HTMLElement>('.abyss-project-relative-date'));
     expect(relative.textContent).toBe('in 15 minutes');
-    expect(relative.title).toBe('2026-09-10T23:15:00');
+    expect(relative.getAttribute('aria-label')).toBe('2026-09-10T23:15:00');
 
     vi.advanceTimersByTime(60_000);
 
@@ -3638,6 +3770,7 @@ describe('ProjectsTableView', () => {
   });
 
   it('keeps the live column resize preview when the table resize observer fires', async () => {
+    const flushFrames = ownerFrames();
     const resizeObservers: Array<{ trigger(): void }> = [];
     class TestResizeObserver {
       constructor(private readonly callback: ResizeObserverCallback) {
@@ -3676,6 +3809,7 @@ describe('ProjectsTableView', () => {
     const savedTableWidth = table.style.width;
     const triggerResize = (): void => {
       for (const observer of resizeObservers) observer.trigger();
+      flushFrames();
     };
 
     expectDefined(
@@ -3806,6 +3940,25 @@ describe('ProjectsTableView', () => {
     expect(activeDocument.activeElement).toBe(editor);
   });
 
+  it('keeps an invalid range description stable when an unchanged cell is reconciled', () => {
+    const item = project({ frontmatter: { start: '2026-10-10', end: '2026-09-01' } });
+    const { host, view } = mount([item]);
+    const start = expectDefined(
+      host.querySelector<HTMLElement>(
+        '[data-project-path="Projects/A.md"] [data-column-id="start"]',
+      ),
+    );
+    const observer = new MutationObserver(() => {});
+    observer.observe(start, { attributes: true });
+    view.update([item]);
+    const descriptionMutations = observer
+      .takeRecords()
+      .filter((record) => record.attributeName === 'aria-description');
+    observer.disconnect();
+    expect(start.getAttribute('aria-description')).toBe('Project start is after its end date');
+    expect(descriptionMutations).toEqual([]);
+  });
+
   it('patches retained cell presentation when column, type and range inputs change', () => {
     const config = settings();
     config.projects.table.columns.push({
@@ -3831,7 +3984,12 @@ describe('ProjectsTableView', () => {
 
     expect(budget.hasClass('is-align-right')).toBe(true);
     expect(budget.hasClass('is-editable')).toBe(true);
-    expect(start.getAttribute('title')).toBe('Project start is after its end date');
+    expect(start.getAttribute('aria-label')).toBe('Start for A');
+    expect(start.getAttribute('aria-description')).toBe('Project start is after its end date');
+    expect(start.hasAttribute('title')).toBe(false);
+    expect(
+      start.querySelector('.abyss-project-table-range-warning')?.getAttribute('aria-label'),
+    ).toBe('Project start is after its end date');
 
     const budgetColumn = expectDefined(
       config.projects.table.columns.find(({ id }) => id === 'property:Budget'),
@@ -3862,6 +4020,7 @@ describe('ProjectsTableView', () => {
     expect(start.hasClass('is-invalid-range')).toBe(false);
     expect(start.getAttribute('aria-invalid')).toBeNull();
     expect(start.getAttribute('title')).toBeNull();
+    expect(start.getAttribute('aria-description')).toBeNull();
     expect(
       host.querySelector(
         '.abyss-project-table-header-cell[data-column-id="property:Budget"] .abyss-project-table-column-label',
@@ -6717,17 +6876,17 @@ describe('ProjectsTableView', () => {
     target.dispatchEvent(dragEvent('dragover', data));
     expect(target.classList.contains('is-drop-target')).toBe(true);
     expect(target.querySelector('.is-drop-before, .is-drop-after')).toBeNull();
-    expect(target.getAttribute('title')).toContain('Drop to move to');
+    expect(target.getAttribute('aria-label')).toContain('Drop to move to');
     const leave = dragEvent('dragleave', data);
     Object.defineProperty(leave, 'relatedTarget', { value: document.body });
     target.dispatchEvent(leave);
-    expect(target.getAttribute('title')).toBeNull();
+    expect(target.getAttribute('aria-label')).toBeNull();
 
     target.dispatchEvent(dragEvent('dragover', data));
     sourceRow.dispatchEvent(dragEvent('dragend', data));
     title.click();
     expect(openProject).not.toHaveBeenCalled();
-    expect(target.getAttribute('title')).toBeNull();
+    expect(target.getAttribute('aria-label')).toBeNull();
 
     protectedStore = false;
     sourceRow.dispatchEvent(dragEvent('dragstart', data));
@@ -6735,7 +6894,7 @@ describe('ProjectsTableView', () => {
     target.dispatchEvent(dragEvent('dragover', data));
     protectedStore = false;
     target.dispatchEvent(dragEvent('drop', data));
-    expect(target.getAttribute('title')).toBeNull();
+    expect(target.getAttribute('aria-label')).toBeNull();
     await flushMicrotasks();
 
     expect(applyEdits).toHaveBeenCalledOnce();
@@ -7309,3 +7468,126 @@ describe('ProjectsTableView', () => {
     expect(empty()?.textContent).toBe('No projects yet');
   });
 });
+
+it('copies all logical Timeline rows and styles newly mounted selection', () => {
+  const config = settings();
+  config.projects.overviewView = 'timeline';
+  const items = Array.from({ length: 1100 }, (_, i) =>
+    project({
+      path: `Projects/P${String(i).padStart(4, '0')}.md`,
+      name: `Project ${String(i).padStart(4, '0')}`,
+    }),
+  );
+  const { host, view } = mount(items, { settings: config });
+  const first = expectDefined(
+    host.querySelector<HTMLElement>('.abyss-project-timeline [data-column-id="name"]'),
+  );
+  first.focus();
+  first.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+  const data = transfer();
+  first.dispatchEvent(clipboardEvent('copy', data));
+  expect(data.getData('text/plain').split('\n')).toHaveLength(1100);
+  expect(data.getData('text/plain')).toContain('Project 1099');
+  const timeline = (
+    view as unknown as {
+      timelineView_abyssPrivate: ProjectsTimelineView<RenderedCellContext>;
+    }
+  ).timelineView_abyssPrivate;
+  const last = expectDefined(
+    timeline
+      .cells()
+      .identities.find(
+        (cell) => cell.projectPath === 'Projects/P1099.md' && cell.columnId === 'name',
+      ),
+  );
+  timeline.revealCell(last);
+  const cell = expectDefined(
+    host.querySelector<HTMLElement>(
+      '.abyss-project-timeline [data-project-path="Projects/P1099.md"] [data-column-id="name"]',
+    ),
+  );
+  expect(cell.classList.contains('is-selected')).toBe(true);
+  cell.click();
+  cell.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+  expect(
+    document.activeElement?.closest<HTMLElement>('.abyss-project-timeline-row')?.dataset[
+      'projectPath'
+    ],
+  ).toBe('Projects/P1098.md');
+  expect(host.querySelectorAll('.abyss-project-timeline-row').length).toBeLessThan(20);
+});
+
+it('dispatches one Timeline paste after switches and preserves editing clipboard', async () => {
+  const { host, saveProperty } = mount([project({ frontmatter: { start: '2026-09-01' } })]);
+  const switchTo = (mode: string) => {
+    expectDefined(host.querySelector<HTMLButtonElement>(`[aria-label="${mode} view"]`)).click();
+  };
+  for (let index = 0; index < 3; index++) {
+    switchTo('Timeline');
+    switchTo('Table');
+  }
+  switchTo('Timeline');
+  const start = expectDefined(
+    host.querySelector<HTMLElement>('.abyss-project-timeline [data-column-id="start"]'),
+  );
+  start.focus();
+  const data = transfer({ 'text/plain': '2026-10-07' });
+  start.dispatchEvent(clipboardEvent('paste', data));
+  await flushMicrotasks();
+  expect(saveProperty).toHaveBeenCalledOnce();
+  const root = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline'));
+  for (const target of [
+    root.createEl('input'),
+    root.createDiv({ attr: { contenteditable: 'true' } }),
+  ]) {
+    for (const type of ['copy', 'paste'] as const) {
+      const event = clipboardEvent(type, data);
+      target.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+    }
+  }
+  await flushMicrotasks();
+  expect(saveProperty).toHaveBeenCalledOnce();
+});
+
+it('shows and diagnoses native Timeline rendering failures at the owning surface', () => {
+  const notices = spyOnNotices();
+  const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const { host, view } = mount([project({})]);
+  const renderer = view as unknown as { renderTimelineCell_abyssPrivate(): never };
+  vi.spyOn(renderer, 'renderTimelineCell_abyssPrivate').mockImplementation(() => {
+    throw new Error('Broken renderer');
+  });
+  expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Timeline view"]')).click();
+  expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toBe('Broken renderer');
+  expect(notices.mock.calls[0]?.[0]).toBe('Could not render project Timeline: Broken renderer');
+  expect(log).toHaveBeenCalledOnce();
+  view.update([project({})]);
+  expect(log).toHaveBeenCalledTimes(2);
+});
+
+it('persists lazy Timeline settings and normalized Table columns after their render', () => {
+  const config = settings();
+  delete config.projects.timeline;
+  const snapshots: CalendarSettings[] = [];
+  const { host } = mount([project({})], {
+    settings: config,
+    saveViewState: async () => {
+      snapshots.push(structuredClone(config));
+    },
+  });
+  expect(config.projects.timeline).toBeUndefined();
+  expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Timeline view"]')).click();
+  expect(expectDefined(snapshots[snapshots.length - 1]).projects.timeline).toBeDefined();
+  config.projects.table.columns = [{ id: 'start', visible: true }];
+  expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Table view"]')).click();
+  expect(expectDefined(snapshots[snapshots.length - 1]).projects.table.columns[0]).toMatchObject({
+    id: 'name',
+    visible: true,
+  });
+});
+
+vi.mock('obsidian', async () => ({
+  ...(await import('obsidian-test-mocks/obsidian')),
+  setTooltip: vi.fn(),
+}));

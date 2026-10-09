@@ -76,6 +76,17 @@ describe('task command result presentation', () => {
       ?.click();
   });
 
+  it('reports unsafe comment literal text once through the existing boundary', () => {
+    presentTaskCommandResult({
+      type: 'invalid',
+      issues: [{ code: 'unsafe-comment-continuation', field: 'comment' }],
+    });
+    expect(noticeCalls()).toEqual([
+      [
+        'Could not save comment: a structural marker inside multiline code cannot be escaped safely. Use a separate inline-code span on each line.',
+      ],
+    ]);
+  });
   it('presents a blocked command once through the existing error boundary', () => {
     presentTaskCommandResult({
       type: 'blocked',

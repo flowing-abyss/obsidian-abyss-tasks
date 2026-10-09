@@ -1,8 +1,15 @@
-import { Modal, setIcon, type App } from 'obsidian';
+import { Modal, Platform, setIcon, type App } from 'obsidian';
 import { sameTag } from '../markdown/tagSyntax';
+import {
+  createSearchWordSegmenter,
+  matchesSearchText,
+  prepareSearchQuery,
+  TaskSearchError,
+} from '../tasks';
 import { isRealmHTMLElement } from './domRealm';
 import { isImeOwnedEvent } from './ime';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
+import { handleLocalSearchKey } from './localSearchKeys';
 
 type TagState = 'checked' | 'partial' | 'removing' | 'unchecked';
 const TAG_STATE_ICONS: Partial<Record<TagState, string>> = {
@@ -38,6 +45,7 @@ export class TagPickerModal extends Modal {
   private readonly candidates_abyssPrivate: readonly string[];
   private readonly onCommit_abyssPrivate: (toAdd: string[], toRemove: string[]) => void;
   private readonly interactionOwnership_abyssPrivate: InteractionOwnershipPort;
+  private readonly segment_abyssPrivate = createSearchWordSegmenter();
   private readonly pending_abyssPrivate = new Map<string, boolean>(); // true=add, false=remove
   private searchEl_abyssPrivate!: HTMLInputElement;
   private listEl_abyssPrivate!: HTMLElement;
@@ -67,7 +75,7 @@ export class TagPickerModal extends Modal {
     this.modalEl.addClass('abyss-tag-picker-modal');
     this.setTitle('Select tags');
     this.contentEl.addEventListener('keydown', (event) => {
-      this.navigateTags_abyssPrivate(event);
+      if (!this.findLocalSearch_abyssPrivate(event)) this.navigateTags_abyssPrivate(event);
     });
   }
 
@@ -114,6 +122,23 @@ export class TagPickerModal extends Modal {
         ownerWindow.clearTimeout(timer);
       };
     }
+  }
+
+  private findLocalSearch_abyssPrivate(event: KeyboardEvent): boolean {
+    if (
+      this.ownershipToken_abyssPrivate !== null &&
+      event.code === 'KeyF' &&
+      handleLocalSearchKey(
+        event,
+        { input: this.searchEl_abyssPrivate, owner: this.contentEl },
+        Platform.isMacOS ? 'meta' : 'ctrl',
+      )
+    ) {
+      this.cancelScheduledFocus_abyssPrivate?.();
+      this.cancelScheduledFocus_abyssPrivate = undefined;
+      return true;
+    }
+    return false;
   }
 
   private navigateTags_abyssPrivate(event: KeyboardEvent): void {
@@ -200,10 +225,20 @@ export class TagPickerModal extends Modal {
   }
 
   private filteredTags_abyssPrivate(query: string): readonly string[] {
-    const normalized = query.toLowerCase().replace(/^#+/u, '');
-    return normalized.length === 0
-      ? this.allTags_abyssPrivate
-      : this.allTags_abyssPrivate.filter((tag) => tag.slice(1).toLowerCase().includes(normalized));
+    try {
+      const prepared = prepareSearchQuery(query, this.segment_abyssPrivate);
+      const normalized = query.toLowerCase().replace(/^#+/u, '');
+      return normalized.length === 0
+        ? this.allTags_abyssPrivate
+        : this.allTags_abyssPrivate.filter(
+            (tag) =>
+              tag.slice(1).toLowerCase().includes(normalized) ||
+              matchesSearchText(tag, prepared, this.segment_abyssPrivate),
+          );
+    } catch (error) {
+      if (error instanceof TaskSearchError && error.code === 'invalid-query') return [];
+      throw error;
+    }
   }
 
   private renderSelected_abyssPrivate(selected: readonly string[]): void {

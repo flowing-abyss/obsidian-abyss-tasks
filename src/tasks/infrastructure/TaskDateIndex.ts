@@ -1,3 +1,4 @@
+import { taskOccupiedDates } from '../domain/taskOccupiedDates';
 import type { LocalDate } from '../domain/types';
 
 interface CalendarPlanning {
@@ -12,20 +13,15 @@ export interface CalendarDateRange {
 }
 
 export function calendarDatesForPlanning(planning: CalendarPlanning): readonly LocalDate[] {
-  if (planning.start != null && planning.due != null) return [];
-  if (planning.scheduled != null && planning.due != null && planning.scheduled !== planning.due) {
-    return [planning.scheduled, planning.due];
-  }
-  const anchor = planning.scheduled ?? planning.due;
-  return anchor != null ? [anchor] : [];
+  const occupied = taskOccupiedDates(planning);
+  return occupied.kind === 'points' ? occupied.points.map((point) => point.date) : [];
 }
 
 export function calendarRangeForPlanning(
   planning: CalendarPlanning,
 ): CalendarDateRange | undefined {
-  if (planning.start == null || planning.due == null || planning.start > planning.due)
-    return undefined;
-  return { start: planning.start, due: planning.due };
+  const occupied = taskOccupiedDates(planning);
+  return occupied.kind === 'interval' ? { start: occupied.start, due: occupied.due } : undefined;
 }
 
 interface IndexedRange<T> extends CalendarDateRange {

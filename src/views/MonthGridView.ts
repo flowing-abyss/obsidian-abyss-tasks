@@ -1,5 +1,6 @@
 import { Component, type App } from 'obsidian';
 import { weekStartOffset } from '../domain/weekGridOffset';
+import type { ShowInTaskList } from '../panels/right/inspectorTypes';
 import type { ResolvedConfig, TagGroup } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import { tagColorFor } from '../tags/tagColor';
@@ -16,6 +17,8 @@ import {
   type TaskDependencyLookup,
 } from '../ui/taskDependencyPresentation';
 import { BaseView } from './BaseView';
+import { attachCalendarNativeDrag, type CalendarNativeDragStart } from './calendarNativeDrag';
+import { calendarOccurrenceForTask } from './calendarOccurrences';
 import {
   layoutVisibleMonth,
   layoutVisibleMonthWithReplacement,
@@ -40,6 +43,7 @@ import {
   bindTaskSelection,
   calendarOccurrenceLookup,
   renderCalendarLeadingSlots,
+  renderCalendarParentButton,
   type CalendarOccurrenceLookup,
   type ForecastInteractionCallbacks,
 } from './timegrid/renderTaskMeta';
@@ -85,11 +89,13 @@ function configuredMonth(startPosition: string): MonthGridMoment {
 }
 
 export interface MonthGridViewCallbacks extends ForecastInteractionCallbacks {
+  readonly onNativeDragStart?: CalendarNativeDragStart | undefined;
   dependenciesFor?: TaskDependencyLookup | undefined;
   app: App;
   onDayClick: (date: string) => void;
   onCreateAtDate: (date: string) => void;
   onTaskClick: (task: TaskSnapshot) => void;
+  onShowParent?: ShowInTaskList | undefined;
   onTaskSelect?: ((task: TaskSnapshot) => void) | undefined;
   onDrop: (dragData: string, targetDate: string) => void;
   onSpanMove?: (task: TaskSnapshot, target: SpanMoveTarget) => void;
@@ -242,7 +248,7 @@ export class MonthGridView extends BaseView {
     });
     const addButton = cell.createEl('button', {
       cls: 'abyss-mg-add-btn',
-      attr: { type: 'button', 'aria-label': 'Add task', title: 'Add task' },
+      attr: { type: 'button', 'aria-label': 'Add task' },
       text: '+',
     });
     addButton.addEventListener('click', (event) => {
@@ -345,7 +351,9 @@ export class MonthGridView extends BaseView {
       component: this.md,
       onTaskClick: this.callbacks.onTaskClick,
       onTaskSelect: this.callbacks.onTaskSelect,
+      onShowParent: this.callbacks.onShowParent,
       onDrop: this.callbacks.onDrop,
+      onNativeDragStart: this.callbacks.onNativeDragStart,
       onStartChange: (task, date) =>
         this.callbacks.onSpanBoundary?.(task, {
           boundary: 'start',
@@ -420,6 +428,7 @@ export class MonthGridView extends BaseView {
       if (kind === 'timed')
         item.createSpan({ cls: 'abyss-mg-item-time', text: `${t.planning.time} ` });
       if (kind === 'deadline') item.createSpan({ text: '📅 ' });
+      renderCalendarParentButton(item, occurrence, callbacks);
       this.renderTitle(item, t, occurrence.kind === 'forecast');
       bindMaterializedInteractions(occurrence, () => {
         bindTaskSelection(item, t, this.callbacks.onTaskSelect);
@@ -428,8 +437,8 @@ export class MonthGridView extends BaseView {
           e.stopPropagation();
           this.callbacks.onTaskClick(t);
         });
-        if (kind !== 'deadline') {
-          this.makeDraggable(item, t, occurrence.source.target.type);
+        if (kind !== 'deadline' || calendarOccurrenceForTask(t)?.kind === 'materialized') {
+          attachCalendarNativeDrag(item, t, this.callbacks.onNativeDragStart);
           renderPlainTaskResizeHandle({ cellEl: cell, date, callbacks, tagGroups }, item, t);
         }
       });
@@ -501,25 +510,6 @@ export class MonthGridView extends BaseView {
       },
     });
     renderDependencyIndicator(el, projection);
-  }
-
-  // Native HTML5 drag source, mirroring renderAllDay.ts's renderDraggableBody pattern
-  // exactly: `dragstart`/`dragend` are independent of `click`, so a plain click on a
-  // child (status marker, rendered link) inside a draggable item still fires that
-  // child's own click handler undisturbed — only an actual drag gesture (pointer moves
-  // while down) fires `dragstart`. Deadline markers are deliberately excluded — they
-  // stay non-draggable per the existing structural rule (Task 2).
-  private makeDraggable(el: HTMLElement, t: TaskSnapshot, targetType: 'task' | 'subtask'): void {
-    if (targetType !== 'task') return;
-    el.setAttribute('draggable', 'true');
-    el.addEventListener('dragstart', (e) => {
-      e.dataTransfer?.setData('text/plain', `${t.source.filePath}:::${t.source.line}`);
-      if (e.dataTransfer != null) e.dataTransfer.effectAllowed = 'move';
-      el.addClass('is-dragging');
-    });
-    el.addEventListener('dragend', () => {
-      el.removeClass('is-dragging');
-    });
   }
 
   /**

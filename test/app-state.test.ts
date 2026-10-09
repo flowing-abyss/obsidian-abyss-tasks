@@ -1036,3 +1036,83 @@ describe('AppState task selection intent', () => {
     expect(state.taskSelectionIntentGeneration).toBe(1);
   });
 });
+
+import { localDate } from '../src/tasks';
+
+it('detaches and freezes calendar roles with the canonical center-card drag path', () => {
+  const state = new AppState();
+  const location = inspectorLocation('Root', ['Child']);
+  const roles: Array<'start' | 'scheduled'> = ['start', 'scheduled'];
+  state.set('draggingTaskNode', {
+    source: 'center-card',
+    task: location,
+    calendar: {
+      nativePayload: 'abyss-calendar:captured',
+      occupied: { kind: 'point', date: localDate('2026-10-10'), roles },
+    },
+  });
+  roles.pop();
+  const payload = expectDefined(state.get('draggingTaskNode'));
+  if (payload.source !== 'center-card' || payload.calendar === undefined)
+    throw new Error('missing calendar context');
+  expect(payload.calendar.occupied).toEqual({
+    kind: 'point',
+    date: '2026-10-10',
+    roles: ['start', 'scheduled'],
+  });
+  expect(payload.task.node).toBe(payload.task.path[0]);
+  expect(Reflect.set(payload.calendar.occupied, 'date', localDate('2026-10-11'))).toBe(false);
+  state.set('draggingTaskNode', null);
+  expect(state.get('draggingTaskNode')).toBeNull();
+});
+
+it.each(['calendar', 'projects', 'search'] as const)(
+  'atomically retires only the task-node drag on an actual mode change to %s',
+  (mode) => {
+    const state = new AppState();
+    const node = inspectorLocation('Dragging');
+    state.set('taskStack', [node.root]);
+    state.openInspectorDependency(inspectorLocation('Selected'));
+    const selection = state.get('taskStack');
+    const history = state.get('inspectorBackStack');
+    state.set('draggingTaskNode', { source: 'center-card', task: node });
+    state.set('draggingTag', '#tag');
+    state.set('draggingProject', 'project.md');
+    const observed: unknown[] = [];
+    const commits = vi.fn();
+    state.on('draggingTaskNode', () => {
+      observed.push(['drag', state.get('mode'), state.get('draggingTaskNode')]);
+    });
+    state.on('mode', () => {
+      observed.push(['mode', state.get('mode'), state.get('draggingTaskNode')]);
+      expect(() => {
+        state.set('draggingTaskNode', { source: 'center-card', task: node });
+      }).toThrow('during notification delivery');
+    });
+    state.onCommit(commits);
+    state.set('mode', mode);
+    expect(observed).toEqual([
+      ['drag', mode, null],
+      ['mode', mode, null],
+    ]);
+    expect(commits).toHaveBeenCalledExactlyOnceWith(new Set(['draggingTaskNode', 'mode']));
+    expect(state.get('taskStack')).toBe(selection);
+    expect(state.get('inspectorBackStack')).toBe(history);
+    expect(state.get('draggingTag')).toBe('#tag');
+    expect(state.get('draggingProject')).toBe('project.md');
+  },
+);
+
+it('preserves an active task-node drag and emits no commit for the same mode', () => {
+  const state = new AppState();
+  state.set('draggingTaskNode', { source: 'center-card', task: inspectorLocation('Dragging') });
+  const payload = state.get('draggingTaskNode');
+  const commits = vi.fn();
+  const listener = vi.fn();
+  state.onCommit(commits);
+  state.on('draggingTaskNode', listener);
+  state.set('mode', state.get('mode'));
+  expect(state.get('draggingTaskNode')).toBe(payload);
+  expect(commits).not.toHaveBeenCalled();
+  expect(listener).not.toHaveBeenCalled();
+});

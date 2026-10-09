@@ -1,4 +1,5 @@
 import { type App, type Component } from 'obsidian';
+import type { ShowInTaskList } from '../../panels/right/inspectorTypes';
 import type { TagGroup } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import { tagColorFor } from '../../tags/tagColor';
@@ -14,6 +15,8 @@ import {
   renderDependencyIndicator,
   type TaskDependencyLookup,
 } from '../../ui/taskDependencyPresentation';
+import { attachCalendarNativeDrag, type CalendarNativeDragStart } from '../calendarNativeDrag';
+import { calendarOccurrenceForTask } from '../calendarOccurrences';
 import {
   attachSpanInteractions,
   type InteractiveSpanBoundaryTarget,
@@ -28,6 +31,7 @@ import {
   bindTaskSelection,
   hasCountBadges,
   renderCalendarLeadingSlots,
+  renderCalendarParentButton,
   renderCountBadges,
   type CalendarContinuity,
   type CalendarOccurrenceLookup,
@@ -35,11 +39,13 @@ import {
 } from './renderTaskMeta';
 
 export interface AllDayCallbacks extends ForecastInteractionCallbacks {
+  readonly onNativeDragStart?: CalendarNativeDragStart | undefined;
   dependenciesFor?: TaskDependencyLookup | undefined;
   occurrenceFor: CalendarOccurrenceLookup;
   app: App;
   component: Component;
   onTaskClick: (task: TaskSnapshot) => void;
+  onShowParent?: ShowInTaskList | undefined;
   onTaskSelect?: ((task: TaskSnapshot) => void) | undefined;
   onDrop: (dragData: string, targetDate: string) => void; // native HTML5 DnD, existing convention
   onStartChange: (task: TaskSnapshot, newStart: string) => void; // pointer edge-resize
@@ -235,19 +241,9 @@ function bindAllDayBodyInteractions(
 ): void {
   const { nativeDraggable, selectable } = options;
   const occurrence = callbacks.occurrenceFor(task);
-  bindMaterializedInteractions(occurrence, (target) => {
+  bindMaterializedInteractions(occurrence, () => {
     if (selectable) bindTaskSelection(el, task, callbacks.onTaskSelect);
-    if (nativeDraggable && target.type === 'task') {
-      el.setAttribute('draggable', 'true');
-      el.addEventListener('dragstart', (event) => {
-        event.dataTransfer?.setData('text/plain', `${task.source.filePath}:::${task.source.line}`);
-        if (event.dataTransfer != null) event.dataTransfer.effectAllowed = 'move';
-        el.addClass('is-dragging');
-      });
-      el.addEventListener('dragend', () => {
-        el.removeClass('is-dragging');
-      });
-    }
+    if (nativeDraggable) attachCalendarNativeDrag(el, task, callbacks.onNativeDragStart);
     el.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -289,6 +285,7 @@ function renderAllDayBody(context: AllDayBodyRenderContext): HTMLElement {
   // blocks (renderTimedBlocks.ts) — previously missing here, so a completed all-day
   // span/plain item read as plain/untouched while the same task's timed block elsewhere
   // showed struck-through.
+  renderCalendarParentButton(el, occurrence, callbacks);
   const titleEl = el.createSpan({ cls: `abyss-tg-body-title${statusTitleClass(task.status)}` });
   if (occurrence.kind === 'materialized' && interactive) {
     renderTaskText(titleEl, task.markdownTitle, {
@@ -702,7 +699,10 @@ export function renderPlainTaskResizeHandle(
     onBoundary: (targetTask, target) => {
       callbacks.onExtendToSpan(targetTask, target.date);
     },
-    enableMove: callbacks.occurrenceFor(task).source.target.type === 'subtask',
+    enableMove:
+      callbacks.onNativeDragStart === undefined &&
+      (callbacks.occurrenceFor(task).source.target.type === 'subtask' ||
+        calendarOccurrenceForTask(task)?.kind === 'materialized'),
   });
 }
 
@@ -781,6 +781,7 @@ function renderDeadlineTask(context: AllDayCellRenderContext, task: TaskSnapshot
     occurrence.kind === 'forecast',
     renderControl,
   );
+  renderCalendarParentButton(marker, occurrence, callbacks);
   renderDeadlineTitle(marker, task, callbacks, occurrence);
   if (hasCountBadges(task)) {
     const meta = marker.createSpan({ cls: 'abyss-tg-body-meta' });
@@ -788,6 +789,10 @@ function renderDeadlineTask(context: AllDayCellRenderContext, task: TaskSnapshot
   }
   bindMaterializedInteractions(occurrence, () => {
     bindTaskSelection(marker, task, callbacks.onTaskSelect);
+    if (callbacks.onNativeDragStart !== undefined)
+      attachCalendarNativeDrag(marker, task, callbacks.onNativeDragStart);
+    if (calendarOccurrenceForTask(task)?.kind === 'materialized')
+      renderPlainTaskResizeHandle(context, marker, task);
     marker.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();

@@ -6,7 +6,15 @@ import type {
 } from '../settings/shortcuts';
 import { validateShortcuts } from '../settings/shortcuts';
 import type { PanelNavigationActions } from '../views/panelNavigation';
+import { isImeOwnedEvent } from './ime';
 import type { InteractionRegistry } from './interactionOwnership';
+import {
+  handleLocalSearchKey,
+  localSearchEditorOwnsEvent,
+  localSearchEventIsOwned,
+  localSearchSurfaceIsVisible,
+  type LocalSearchFocusTarget,
+} from './localSearchKeys';
 
 const PANEL_SHORTCUT_BLOCKING_SELECTOR = [
   'input',
@@ -87,11 +95,13 @@ export class PanelShortcutRouter {
   constructor(
     private readonly options: {
       readonly ownerDocument: Document;
+      readonly ownerElement?: HTMLElement;
       readonly isActive: () => boolean;
       readonly settings: () => ShortcutSettings;
       readonly platform: ShortcutPlatform;
       readonly actions: PanelNavigationActions;
       readonly registry: InteractionRegistry<ShortcutActionId>;
+      readonly localSearchTarget?: () => LocalSearchFocusTarget | undefined;
       readonly nativeHostBlocks: () => boolean;
     },
   ) {
@@ -109,8 +119,10 @@ export class PanelShortcutRouter {
 
   private route(event: KeyboardEvent): void {
     if (this.destroyed || !this.options.isActive()) return;
+    if (this.routeLocalSearch(event)) return;
     const current = this.currentShortcuts();
-    if (current === undefined || this.eventIsBlocked(event)) return;
+    if (current === undefined) return;
+    if (this.eventIsBlocked(event)) return;
 
     const match = [...current.bindings.entries()].find(([, bindings]) =>
       bindings.some((binding) => exactShortcutMatch(event, binding)),
@@ -121,6 +133,34 @@ export class PanelShortcutRouter {
     event.stopPropagation();
     event.stopImmediatePropagation();
     dispatchAction(this.options.actions, match[0]);
+  }
+
+  routeLocalSearch(event: KeyboardEvent, origin: 'dom' | 'scope' = 'dom'): boolean {
+    if (this.localSearchIsBlocked(event)) return false;
+    const owner = this.options.ownerElement;
+    if (
+      owner === undefined ||
+      !localSearchSurfaceIsVisible(owner) ||
+      !localSearchEventIsOwned(event, owner, origin, true)
+    )
+      return false;
+    const doc = owner.ownerDocument;
+    const target = this.options.localSearchTarget?.();
+    if (target?.owner.ownerDocument !== doc) return false;
+    if (localSearchEditorOwnsEvent(event, doc, target.input)) return false;
+    return handleLocalSearchKey(event, target, this.options.platform.mod);
+  }
+
+  private localSearchIsBlocked(event: KeyboardEvent): boolean {
+    return (
+      this.destroyed ||
+      !this.options.isActive() ||
+      event.defaultPrevented ||
+      event.repeat ||
+      isImeOwnedEvent(event) ||
+      this.options.nativeHostBlocks() ||
+      !this.options.registry.allows('openSearch')
+    );
   }
 
   private currentShortcuts(): ReturnType<typeof validateShortcuts> | undefined {
@@ -135,7 +175,7 @@ export class PanelShortcutRouter {
     return (
       event.defaultPrevented ||
       event.repeat ||
-      event.isComposing ||
+      isImeOwnedEvent(event) ||
       interactionPathBlocks(event, this.options.ownerDocument) ||
       this.options.nativeHostBlocks()
     );

@@ -2,13 +2,26 @@ import {
   durationMinutes,
   localTime,
   shiftLocalDate,
+  taskNodeSourceLine,
   type TaskApplicationApi,
   type TaskCommand,
   type TaskCommandResult,
   type TaskSnapshot,
 } from '../tasks';
+import {
+  calendarMutationTarget,
+  calendarOccurrenceForRender,
+  calendarOccurrenceForTask,
+  calendarPatchCommand,
+  calendarShiftScheduleCommand,
+  calendarSpanBoundaryCommand,
+  calendarTaskWithPlanning,
+  taskSnapshotForCalendarOccurrence,
+} from '../views/calendarOccurrences';
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
+import { proveOwnedTaskSelection } from './ownedTaskSelection';
 import { runAsyncAction } from './runAsyncAction';
+import { taskNodeRef, taskSelectionRefPath, type TaskSelectionNode } from './taskSelection';
 
 export interface TimedBlockKeyboardQueueHooks {
   onCommitted(
@@ -19,6 +32,7 @@ export interface TimedBlockKeyboardQueueHooks {
   ): void;
   onSettled(taskKey: string, sequence: number, summary: TimedBlockKeyboardSequenceSummary): void;
   present(result: TaskCommandResult): void;
+  onInvalidated(sequence: number): void;
 }
 
 interface TimedBlockKeyboardSequenceSummary {
@@ -39,11 +53,12 @@ const MAX_DURATION_MINUTES = 24 * 60;
 const DEFAULT_DURATION_MINUTES = 60;
 
 function sourceKey(task: TaskSnapshot): string {
-  return `${task.source.filePath}:${task.source.line}`;
+  const target = calendarMutationTarget(task);
+  return `${task.source.filePath}:${target === undefined ? task.source.line : taskNodeSourceLine(target)}`;
 }
 
 function sourceIdentity(task: TaskSnapshot): string {
-  return `${task.source.filePath}:${task.source.line}:${task.ref.revision}`;
+  return `${sourceKey(task)}:${task.ref.revision}`;
 }
 
 function timeMinutes(value: string | undefined): number {
@@ -64,14 +79,17 @@ function extendDueCommand(
   task: TaskSnapshot,
   intent: Extract<TimedBlockKeyboardIntent, { type: 'extend-due' }>,
 ): TaskCommand | undefined {
-  const hasSpan = task.planning.start != null && task.planning.due != null;
+  const occurrence = calendarOccurrenceForRender(task);
+  if (occurrence.kind !== 'materialized') return undefined;
+  const occupied = occurrence.occupied;
+  const hasSpan = occupied.kind === 'interval';
   if (intent.days < 0 && !hasSpan) return undefined;
-  const base = hasSpan ? task.planning.due : (task.planning.scheduled ?? task.planning.due);
-  if (base == null) return undefined;
+  if (occupied.kind === 'point' && occupied.roles.length === 0) return undefined;
+  const base = occupied.kind === 'interval' ? occupied.due : occupied.date;
   const due = shiftLocalDate(base, intent.days);
   const start = task.planning.start ?? base;
   if (due == null || due < start) return undefined;
-  return { type: 'extend-span', ref: task.ref, due };
+  return calendarSpanBoundaryCommand(task, 'create-span', due);
 }
 
 function commandFor(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): TaskCommand | undefined {
@@ -82,11 +100,9 @@ function commandFor(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): TaskC
         MIN_START_MINUTES,
         MAX_START_MINUTES,
       );
-      return {
-        type: 'patch',
-        target: { type: 'task', ref: task.ref },
-        patch: { time: { type: 'set', value: localTime(timeString(next)) } },
-      };
+      return calendarPatchCommand(task, {
+        time: { type: 'set', value: localTime(timeString(next)) },
+      });
     }
     case 'resize-duration': {
       const next = clamp(
@@ -94,18 +110,52 @@ function commandFor(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): TaskC
         MIN_DURATION_MINUTES,
         MAX_DURATION_MINUTES,
       );
-      return {
-        type: 'patch',
-        target: { type: 'task', ref: task.ref },
-        patch: { duration: { type: 'set', value: durationMinutes(next) } },
-      };
+      return calendarPatchCommand(task, {
+        duration: { type: 'set', value: durationMinutes(next) },
+      });
     }
     case 'shift-schedule':
-      return { type: 'shift-schedule', ref: task.ref, days: intent.days };
+      return calendarOccurrenceForTask(task) === undefined
+        ? { type: 'shift-schedule', ref: task.ref, days: intent.days }
+        : calendarShiftScheduleCommand(task, intent.days);
     case 'extend-due': {
       return extendDueCommand(task, intent);
     }
   }
+}
+
+function committedSnapshot(
+  previous: TaskSnapshot,
+  current: TaskSnapshot,
+  change: {
+    readonly command: TaskCommand;
+    readonly intent: TimedBlockKeyboardIntent;
+    readonly changed: boolean;
+  },
+): TaskSnapshot | undefined {
+  const occurrence = calendarOccurrenceForTask(previous);
+  if (occurrence === undefined) return current;
+  if (occurrence.kind !== 'materialized') return undefined;
+  let node: TaskSelectionNode | undefined = current;
+  if (occurrence.source.target.type === 'subtask') {
+    const path = taskSelectionRefPath(current, occurrence.source.target);
+    node = change.changed
+      ? proveOwnedTaskSelection(current, [occurrence.source.root], change.command)?.nodeSuccessor(
+          occurrence.source.target,
+        )
+      : path?.[path.length - 1];
+  }
+  if (node === undefined) return undefined;
+  const display = taskSnapshotForCalendarOccurrence({
+    ...occurrence,
+    source: { root: current, node, target: taskNodeRef(node) },
+    planning: node.planning,
+  });
+  return calendarTaskWithPlanning(
+    display,
+    node.planning,
+    change.intent.type === 'extend-due' ? 'create-span' : undefined,
+  );
 }
 
 export class TimedBlockKeyboardQueue {
@@ -126,6 +176,7 @@ export class TimedBlockKeyboardQueue {
   ) {}
 
   enqueue(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): number | undefined {
+    if (calendarMutationTarget(task) === undefined) return undefined;
     const taskKey = sourceKey(task);
     const taskIdentity = sourceIdentity(task);
     if (this.activeSequence === undefined || !this.activeTaskIdentities.has(taskIdentity)) {
@@ -176,12 +227,24 @@ export class TimedBlockKeyboardQueue {
 
     this.processing = true;
     this.activeExecuted = true;
-    runAsyncAction(this.run(command, queued), 'Could not update timed task');
+    runAsyncAction(this.run(command, queued, this.activeSnapshot), 'Could not update timed task');
   }
 
-  private async run(command: TaskCommand, queued: QueuedIntent): Promise<void> {
+  private async run(
+    command: TaskCommand,
+    queued: QueuedIntent,
+    previous: TaskSnapshot,
+  ): Promise<void> {
     try {
-      const result = await this.api.execute(command);
+      let prepared = command;
+      const result =
+        calendarMutationTarget(previous)?.type === 'subtask'
+          ? await this.api.execute(command, {
+              onPreparedPatch: (patch) => {
+                prepared = patch;
+              },
+            })
+          : await this.api.execute(command);
       if (queued.sequence !== this.activeSequence) return;
 
       this.hooks.present(result);
@@ -191,16 +254,17 @@ export class TimedBlockKeyboardQueue {
         return;
       }
 
-      this.activeSnapshot = result.outcome.task;
-      const nextTaskKey = sourceKey(result.outcome.task);
-      this.activeSourceChanged ||= nextTaskKey !== this.activeTaskKey;
-      this.activeTaskKey = nextTaskKey;
-      this.activeTaskIdentities.add(sourceIdentity(result.outcome.task));
-      this.activeAnyChanged ||= result.changed;
-      this.hooks.onCommitted(result.outcome.task, queued.intent, queued.sequence, result.changed);
-      if (!this.pending.some((entry) => entry.sequence === queued.sequence)) {
-        this.finishSequence(queued.sequence);
+      const updated = committedSnapshot(previous, result.outcome.task, {
+        command: prepared,
+        intent: queued.intent,
+        changed: result.changed,
+      });
+      if (updated === undefined) {
+        this.hooks.onInvalidated(queued.sequence);
+        this.cancel();
+        return;
       }
+      this.acceptCommit(updated, queued, result.changed);
     } catch {
       if (queued.sequence !== this.activeSequence) return;
       this.hooks.present({
@@ -213,6 +277,19 @@ export class TimedBlockKeyboardQueue {
     } finally {
       this.processing = false;
       this.processNext();
+    }
+  }
+
+  private acceptCommit(updated: TaskSnapshot, queued: QueuedIntent, changed: boolean): void {
+    this.activeSnapshot = updated;
+    const nextTaskKey = sourceKey(updated);
+    this.activeSourceChanged ||= nextTaskKey !== this.activeTaskKey;
+    this.activeTaskKey = nextTaskKey;
+    this.activeTaskIdentities.add(sourceIdentity(updated));
+    this.activeAnyChanged ||= changed;
+    this.hooks.onCommitted(updated, queued.intent, queued.sequence, changed);
+    if (!this.pending.some((entry) => entry.sequence === queued.sequence)) {
+      this.finishSequence(queued.sequence);
     }
   }
 

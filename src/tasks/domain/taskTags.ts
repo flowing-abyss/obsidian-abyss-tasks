@@ -70,6 +70,24 @@ export interface TaskInboxTagPolicy {
   readonly removeTagOnAssign: boolean;
 }
 
+/** Automatic subtask prefixes follow the owning root's Inbox membership, never descendant tags. */
+export function taskPrefixForSubtask(
+  prefix: string,
+  enabled: boolean,
+  rootTags: readonly string[],
+  inbox: TaskInboxTagPolicy,
+): string {
+  if (!enabled) return '';
+  const inboxTags = normalizeTaskTagInput(inbox.tag);
+  const inboxTag = inboxTags?.length === 1 ? inboxTags[0] : undefined;
+  const tagged =
+    inbox.mode !== 'untagged' &&
+    inboxTag !== undefined &&
+    rootTags.some((tag) => sameTag(tag, inboxTag));
+  const untagged = inbox.mode !== 'tag' && rootTags.length === 0;
+  return tagged || untagged ? '' : prefix;
+}
+
 export interface TaskTagChange {
   readonly add?: readonly string[];
   readonly remove?: readonly string[];

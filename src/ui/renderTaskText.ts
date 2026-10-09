@@ -5,14 +5,25 @@ import {
   parseLinks,
   type LinkToken,
 } from '../markdown/links';
+import { projectSearchText } from '../markdown/searchText';
+import { renderedAnchorSources } from './markSearchText';
 import { showMenuAtMouseEventWithFocus } from './nativeMenuFocus';
 import { runAsyncAction } from './runAsyncAction';
+import type { TaskRenderOutcome, TaskTextRender } from './taskRenderScope';
+
+const activeRenders = new WeakMap<HTMLElement, TaskTextRender>();
 
 export interface RenderTaskTextOptions {
-  readonly presentation?: 'title';
+  readonly presentation?: 'title' | 'markdown';
+  readonly signal?: AbortSignal;
+  readonly onRendered?: (element: HTMLElement) => void;
+  readonly isCurrent?: () => boolean;
+  readonly onRenderFailure?: (error: unknown) => void;
   app: App;
   sourcePath: string;
   component: Component;
+  /** Finite content-generation owner, removed from its parent when this text retires. */
+  readonly linkEventOwner?: Component;
   interactiveLinks?: boolean;
   onEditLink?: ((occurrenceIndex: number, token: LinkToken) => void) | undefined;
   beforeOpenLink?: (() => Promise<boolean>) | undefined;
@@ -23,46 +34,131 @@ export function renderTaskText(
   el: HTMLElement,
   markdownText: string,
   opts: RenderTaskTextOptions,
-): void {
+): TaskTextRender {
+  activeRenders.get(el)?.cancel();
   el.empty();
   // Editable occurrences always come from the authored source, even when labels change length.
   const tokens = parseLinks(markdownText);
   const titleMode = opts.presentation === 'title';
   const presented = titleMode ? inlineTaskTitleMarkdown(markdownText) : markdownText;
-  // Plain titles retain the synchronous path; formatting and escapes need host Markdown even
-  // without links. Non-title callers keep their existing link-driven dispatch contract.
-  if (titleMode ? !/[\\*_~`[\]<>&!]/u.test(markdownText) : tokens.length === 0) {
+  // Explicit text presentations keep plain text synchronous; formatting, escapes and paragraph
+  // structure use the host even without links. Unspecified callers retain link-driven dispatch.
+  if (
+    opts.presentation !== undefined
+      ? !needsMarkdown(markdownText, opts.presentation)
+      : tokens.length === 0
+  ) {
     el.setText(presented);
-    return;
+    if (isCancelled(opts))
+      return { settled: Promise.resolve({ type: 'cancelled' }), cancel: () => {} };
+    try {
+      opts.onRendered?.(el);
+      return { settled: Promise.resolve({ type: 'ready' }), cancel: () => {} };
+    } catch (error) {
+      return { settled: Promise.resolve({ type: 'failed', error }), cancel: () => {} };
+    }
   }
-  const holder = el.createSpan({ cls: 'abyss-md' });
-  runAsyncAction(
-    MarkdownRenderer.render(opts.app, presented, holder, opts.sourcePath, opts.component),
-    'Could not render task text',
+  return renderMarkdownText(el, presented, tokens, opts);
+}
+function needsMarkdown(text: string, presentation: 'title' | 'markdown'): boolean {
+  return (
+    /[\\*_~`[\]<>&!\r\n]/u.test(text) ||
+    (presentation === 'markdown' && /^\s*(?:#{1,6}\s|[-+]\s|\d+[.)]\s)/u.test(text))
   );
-  // Unwrap the single wrapping <p> MarkdownRenderer emits so titles stay inline.
-  const ownerWindow = holder.ownerDocument.defaultView;
-  if (ownerWindow === null) return;
+}
+function renderMarkdownText(
+  el: HTMLElement,
+  presented: string,
+  tokens: LinkToken[],
+  opts: RenderTaskTextOptions,
+): TaskTextRender {
+  const holder = el.createSpan({ cls: 'abyss-md' });
+  let resolve!: (outcome: TaskRenderOutcome) => void;
+  let done = false;
+  const settled = new Promise<TaskRenderOutcome>((r) => {
+    resolve = r;
+  });
   const wiring = opts.component.addChild(new Component());
-  const timer = ownerWindow.setTimeout(() => {
+  const ownerWindow = holder.ownerDocument.defaultView;
+  const observer =
+    ownerWindow === null
+      ? undefined
+      : new ownerWindow.MutationObserver(() => {
+          if (!el.contains(holder) || !holder.isConnected) cancel();
+        });
+  const complete = (outcome: TaskRenderOutcome): void => {
+    if (done) return;
+    done = true;
+    observer?.disconnect();
+    opts.signal?.removeEventListener('abort', cancel);
+    if (activeRenders.get(el) === receipt) activeRenders.delete(el);
+    resolve(outcome);
     opts.component.removeChild(wiring);
-    // The list may have re-rendered (filter keystroke, store update) and detached this
-    // node before the macrotask ran — skip the wasted work in that case.
-    if (!holder.isConnected) return;
+  };
+  const cancel = (): void => {
+    complete({ type: 'cancelled' });
+  };
+  const receipt: TaskTextRender = { settled, cancel };
+  activeRenders.set(el, receipt);
+  wiring.register(cancel);
+  opts.signal?.addEventListener('abort', cancel, { once: true });
+  observer?.observe(holder.ownerDocument, { subtree: true, childList: true });
+  if (isCancelled(opts)) {
+    cancel();
+    return receipt;
+  }
+  // A synchronous acquisition throw propagates to the native mount boundary, whose Component
+  // teardown releases this receipt. Promise rejection uses the owned asynchronous path below.
+  const rendering = MarkdownRenderer.render(
+    opts.app,
+    presented,
+    holder,
+    opts.sourcePath,
+    opts.component,
+  );
+  // This Promise is the host renderer's actual completion, never a timer approximation.
+  const work = (async () => {
+    await rendering;
+    if (activeRenders.get(el) !== receipt) return;
+    if (!holder.isConnected || !el.contains(holder) || opts.isCurrent?.() === false) {
+      cancel();
+      return;
+    }
     const p = holder.querySelector(':scope > p');
-    if (p != null && holder.childElementCount === 1) {
-      while (p.firstChild != null) holder.appendChild(p.firstChild);
+    if (p !== null && holder.childElementCount === 1) {
+      while (p.firstChild !== null) holder.appendChild(p.firstChild);
       p.remove();
     }
-    wireLinks(holder, tokens, opts);
-  }, 0);
-  wiring.register(() => {
-    ownerWindow.clearTimeout(timer);
-  });
+    wireLinks(holder, tokens, opts, presented);
+    opts.onRendered?.(holder);
+    complete({ type: 'ready' });
+  })();
+  runAsyncAction(
+    work.catch((error: unknown) => {
+      if (done) return;
+      if (opts.isCurrent?.() === false || !holder.isConnected || !el.contains(holder)) {
+        cancel();
+        return;
+      }
+      complete({ type: 'failed', error });
+      if (opts.onRenderFailure !== undefined) opts.onRenderFailure(error);
+      else throw error;
+    }),
+    'Could not render task text',
+  );
+  return receipt;
 }
 
-function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTextOptions): void {
+function wireLinks(
+  holder: HTMLElement,
+  tokens: LinkToken[],
+  opts: RenderTaskTextOptions,
+  presented: string,
+): void {
   const anchors = Array.from(holder.querySelectorAll('a'));
+  // Prove identity before an explicitly supplied display label can replace rendered text.
+  const occurrences =
+    opts.onEditLink === undefined ? [] : editableOccurrences(holder, anchors, tokens, presented);
   if (opts.exactLinkLabel !== undefined && anchors.length === 1) {
     anchors[0]?.setText(opts.exactLinkLabel);
   }
@@ -70,7 +166,7 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
   // Link click navigates; never bubble to the card/row handler. Obsidian's global
   // internal-link handler is bypassed by stopPropagation, so open the note ourselves.
   anchors.forEach((a) => {
-    a.addEventListener('click', (e) => {
+    registerLinkEvent(opts, a, 'click', (e) => {
       e.stopPropagation();
       if (!a.hasClass('internal-link')) return; // external links keep their default nav
       e.preventDefault();
@@ -87,7 +183,7 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
       }
     });
     // Arm Obsidian's page-preview (hover) popover for internal links.
-    a.addEventListener('mouseover', (e) => {
+    registerLinkEvent(opts, a, 'mouseover', (e) => {
       if (!a.hasClass('internal-link')) return;
       const href = a.getAttribute('data-href') ?? '';
       if (href.length > 0) {
@@ -103,17 +199,12 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
     });
   });
   if (opts.onEditLink == null) return;
-  const descriptors = anchors.map((a) => ({
-    text: a.textContent,
-    href: a.getAttribute('data-href') ?? a.getAttribute('href') ?? '',
-  }));
-  const occurrences = pairAnchorsToTokens(descriptors, tokens);
   anchors.forEach((a, i) => {
     const occurrenceIndex = occurrences[i];
     if (occurrenceIndex === undefined || occurrenceIndex < 0) return;
     const token = tokens[occurrenceIndex];
     if (token === undefined) return;
-    a.addEventListener('contextmenu', (e) => {
+    registerLinkEvent(opts, a, 'contextmenu', (e) => {
       e.preventDefault();
       e.stopPropagation();
       const menu = new Menu();
@@ -121,6 +212,56 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
       showMenuAtMouseEventWithFocus(menu, e);
     });
   });
+}
+
+function editableOccurrences(
+  holder: HTMLElement,
+  anchors: HTMLAnchorElement[],
+  tokens: LinkToken[],
+  presented: string,
+): number[] {
+  // Title embed labels can change source offsets, but cannot create new editable occurrences.
+  const presentedTokens = parseLinks(presented);
+  if (
+    presentedTokens.length !== tokens.length ||
+    presentedTokens.some((token, index) => token.raw !== tokens[index]?.raw)
+  )
+    return [];
+  const descriptors = anchors.map((anchor) => ({
+    text: anchor.textContent,
+    href: anchor.getAttribute('data-href') ?? anchor.getAttribute('href') ?? '',
+  }));
+  const candidates = pairAnchorsToTokens(descriptors, tokens);
+  const labels = new Map<number, string>();
+  for (const [index, occurrence] of candidates.entries()) {
+    const token = presentedTokens[occurrence],
+      anchor = anchors[index];
+    if (token !== undefined && anchor !== undefined) labels.set(token.index, anchor.textContent);
+  }
+  const sources = renderedAnchorSources(holder, projectSearchText(presented, 'prose', labels));
+  return candidates.map((occurrence, index) => {
+    const token = presentedTokens[occurrence],
+      anchor = anchors[index];
+    const ranges = anchor === undefined ? undefined : sources.get(anchor);
+    return token !== undefined &&
+      ranges !== undefined &&
+      ranges.length > 0 &&
+      ranges.every(
+        (range) => range.from >= token.index && range.to <= token.index + token.raw.length,
+      )
+      ? occurrence
+      : -1;
+  });
+}
+
+function registerLinkEvent<K extends keyof HTMLElementEventMap>(
+  opts: RenderTaskTextOptions,
+  anchor: HTMLAnchorElement,
+  type: K,
+  handler: (event: HTMLElementEventMap[K]) => void,
+): void {
+  if (opts.linkEventOwner === undefined) anchor.addEventListener(type, handler);
+  else opts.linkEventOwner.registerDomEvent(anchor, type, handler);
 }
 
 function buildEditLinkItem(
@@ -137,4 +278,8 @@ function buildEditLinkItem(
       .onClick(() => {
         onEditLink(occurrenceIndex, token);
       });
+}
+
+function isCancelled(opts: RenderTaskTextOptions): boolean {
+  return opts.signal?.aborted === true || opts.isCurrent?.() === false;
 }

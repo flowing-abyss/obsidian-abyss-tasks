@@ -1,7 +1,7 @@
 import { Menu, Notice, setIcon, type App, type TFile } from 'obsidian';
 import type { AppState, ListSelection } from '../app/AppState';
 import { isListViewCustomized, resolveListViewStateKey } from '../app/listViewState';
-import { sameTag } from '../markdown/tagSyntax';
+import { moment } from '../obsidianMoment';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
 import {
@@ -15,13 +15,12 @@ import { TagGroupValidationError, type TagManager } from '../tags/TagManager';
 import { isTagNavigationArchived, resolveEffectiveTagGroups } from '../tags/effectiveTagGroups';
 import { tagSettingsFailureNotice } from '../tags/tagSettingsFailure';
 import { collectTaskNodeTags } from '../tags/taskTagCatalog';
+import { activeTaskNodes } from '../task-lists/taskNodeMembership';
 import { todayTaskCategory } from '../task-lists/todayTaskCategory';
 import {
   localDate,
-  normalizeTaskTagInput,
-  type LocalDate,
   type TaskApplicationApi,
-  type TaskQueryApi,
+  type TaskNodeSnapshot,
   type TaskSnapshot,
 } from '../tasks';
 import { isImeOwnedEvent } from '../ui/ime';
@@ -75,7 +74,6 @@ export interface LeftPanelOptions {
   readonly settings: CalendarSettings;
   readonly tagManager: TagManager;
   readonly app: App;
-  readonly queries: TaskQueryApi;
   readonly tasks: TaskApplicationApi;
   readonly projectStore?: ProjectStore | null | undefined;
   readonly projectManager?: ProjectManager | null | undefined;
@@ -88,7 +86,6 @@ export class LeftPanel {
   private readonly settings_abyssPrivate: CalendarSettings;
   private readonly tagManager_abyssPrivate: TagManager;
   private readonly app_abyssPrivate: App;
-  private readonly queries_abyssPrivate: TaskQueryApi;
   private readonly tasks_abyssPrivate: TaskApplicationApi;
   private readonly onSaveViewState_abyssPrivate: () => Promise<void>;
   private readonly projectStore_abyssPrivate: ProjectStore | null;
@@ -111,7 +108,6 @@ export class LeftPanel {
       settings,
       tagManager,
       app,
-      queries,
       tasks,
       projectStore = null,
       projectManager = null,
@@ -122,7 +118,6 @@ export class LeftPanel {
     this.settings_abyssPrivate = settings;
     this.tagManager_abyssPrivate = tagManager;
     this.app_abyssPrivate = app;
-    this.queries_abyssPrivate = queries;
     this.tasks_abyssPrivate = tasks;
     this.onSaveViewState_abyssPrivate = onSaveViewState;
     this.projectStore_abyssPrivate = projectStore;
@@ -153,7 +148,10 @@ export class LeftPanel {
         appendCustomDot: (parent, selection) => {
           this.appendCustomDot_abyssPrivate(parent, selection);
         },
-        draggedCenterRoot: () => this.draggedCenterRoot_abyssPrivate(),
+        draggedCenterNode: () => {
+          const payload = this.state_abyssPrivate.get('draggingTaskNode');
+          return payload?.source === 'center-card' ? payload.task : undefined;
+        },
         assignTagFromInbox: (task, tag) => this.assignTagFromInbox_abyssPrivate(task, tag),
       },
     });
@@ -250,19 +248,24 @@ export class LeftPanel {
     // The projects mode is a self-contained deep view; search hides the left panel too.
     if (mode === 'search' || mode === 'projects' || mode === 'statistics') return;
 
-    const allTasks = [...this.queries_abyssPrivate.list()];
     const allNodes = this.tasks_abyssPrivate.queries.listNodes();
-    const today = localDate(window.moment().format('YYYY-MM-DD'));
-    const { todayCount, overdue } = this.countToday_abyssPrivate(allTasks, today);
+    const nowMs = Date.now();
+    const today = localDate(moment(nowMs).format('YYYY-MM-DD'));
+    const membership = {
+      settings: this.settings_abyssPrivate,
+      today,
+      observedTags: collectTaskNodeTags(allNodes),
+    };
+    const countNodes = (selection: ListSelection): number =>
+      activeTaskNodes(allNodes, { ...membership, selection }).length;
+    const todayNodes = activeTaskNodes(allNodes, { ...membership, selection: 'today' });
+    const overdue = todayNodes.filter(
+      ({ node }) => todayTaskCategory(node, today) === 'overdue',
+    ).length;
+    const todayCount = todayNodes.length - overdue;
 
     this.el_abyssPrivate.createDiv({ cls: 'abyss-left-section' }, (section) => {
-      this.renderSmartList_abyssPrivate(
-        section,
-        'inbox',
-        'Inbox',
-        'inbox',
-        this.countInbox_abyssPrivate(allTasks),
-      );
+      this.renderSmartList_abyssPrivate(section, 'inbox', 'Inbox', 'inbox', countNodes('inbox'));
       this.renderSmartList_abyssPrivate(
         section,
         'today',
@@ -276,7 +279,7 @@ export class LeftPanel {
         'upcoming',
         'Upcoming',
         'arrow-up-right',
-        this.countUpcoming_abyssPrivate(allTasks, today),
+        countNodes('upcoming'),
       );
     });
 
@@ -287,7 +290,7 @@ export class LeftPanel {
         body: (body) => {
           for (const tag of this.settings_abyssPrivate.pinnedTags) {
             if (isTagNavigationArchived(this.settings_abyssPrivate, tag)) continue;
-            this.tagNavigation_abyssPrivate.renderPinnedTag(body, tag, allNodes);
+            this.tagNavigation_abyssPrivate.renderPinnedTag(body, tag, countNodes);
           }
         },
       });
@@ -300,7 +303,7 @@ export class LeftPanel {
     // renders so the "+" (zero-friction tag entry) stays discoverable.
     const groups = resolveEffectiveTagGroups(
       this.settings_abyssPrivate,
-      collectTaskNodeTags(allNodes),
+      membership.observedTags,
     ).filter((group) => !group.archived);
     this.renderCollapsibleSection_abyssPrivate('tags', 'Tags', {
       addAction: (): void => {
@@ -310,7 +313,7 @@ export class LeftPanel {
       },
       body: (body) => {
         for (const group of groups) {
-          this.tagNavigation_abyssPrivate.renderTagGroup(body, group, allNodes);
+          this.tagNavigation_abyssPrivate.renderTagGroup(body, group, allNodes, countNodes);
         }
       },
     });
@@ -841,64 +844,20 @@ export class LeftPanel {
       : undefined;
   }
 
-  private async assignTagFromInbox_abyssPrivate(task: TaskSnapshot, tag: string): Promise<void> {
-    presentTaskCommandResult(
-      await this.tasks_abyssPrivate.execute({
-        type: 'patch',
-        target: { type: 'task', ref: task.ref },
-        patch: { tags: { add: [tag] } },
-      }),
-    );
-  }
-
-  private countInbox_abyssPrivate(tasks: TaskSnapshot[]): number {
-    const { inbox } = this.settings_abyssPrivate;
-    const allOpen = tasks.filter((t) => t.status === 'open');
-    const normalized = normalizeTaskTagInput(inbox.tag);
-    const inboxTag = normalized?.length === 1 ? normalized[0] : undefined;
-    const withTag =
-      inbox.mode !== 'untagged' && inboxTag !== undefined
-        ? allOpen.filter((t) => t.tags.some((candidate) => sameTag(candidate, inboxTag)))
-        : [];
-    const includeUntagged = inbox.mode !== 'tag';
-    const untagged = includeUntagged ? allOpen.filter((t) => t.tags.length === 0) : [];
-    if (withTag.length === 0) return untagged.length;
-    if (untagged.length === 0) return withTag.length;
-    const seen = new Set<string>();
-    return [...withTag, ...untagged].filter((t) => {
-      const key = `${t.source.filePath}:${t.source.line}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    }).length;
-  }
-
-  private countToday_abyssPrivate(
-    tasks: readonly TaskSnapshot[],
-    today: LocalDate,
-  ): { todayCount: number; overdue: number } {
-    let todayCount = 0;
-    let overdue = 0;
-    const activeStatuses = ['open', 'in-progress'];
-    const seen = new Set<string>();
-    for (const task of tasks) {
-      if (!activeStatuses.includes(task.status)) continue;
-      const category = todayTaskCategory(task, today);
-      if (category === undefined) continue;
-      const key = `${task.source.filePath}:${task.source.line}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      if (category === 'overdue') overdue += 1;
-      else todayCount += 1;
+  private async assignTagFromInbox_abyssPrivate(
+    task: TaskNodeSnapshot,
+    tag: string,
+  ): Promise<void> {
+    const { target } = task;
+    const patch = { tags: { add: [tag] } };
+    if (target.type === 'task') {
+      presentTaskCommandResult(
+        await this.tasks_abyssPrivate.execute({ type: 'patch', target, patch }),
+      );
+      return;
     }
-    return { todayCount, overdue };
-  }
-
-  private countUpcoming_abyssPrivate(tasks: TaskSnapshot[], today: string): number {
-    return tasks.filter((t) => {
-      if (t.status !== 'open') return false;
-      const d = t.planning.due ?? t.planning.scheduled;
-      return d !== undefined && d > today;
-    }).length;
+    presentTaskCommandResult(
+      await this.tasks_abyssPrivate.execute({ type: 'patch', target, patch }),
+    );
   }
 }

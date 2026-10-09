@@ -1,10 +1,12 @@
 import type { TaskCommand, TaskCommandResult } from '../domain/commands';
 import type {
+  DependencyDirection,
   TaskDependencyEligibility,
   TaskDependencyProjection,
   TaskNodeSnapshot,
 } from '../domain/taskDependencies';
 import type { TaskResolution } from '../domain/taskReconciliation';
+import type { TaskDependencySummary, TaskSearchAddress } from '../domain/taskSearchTypes';
 import type { TrackedEntry, TrackedTotal } from '../domain/timeTracking';
 import type {
   DateRange,
@@ -16,6 +18,7 @@ import type {
   TaskSnapshot,
   TaskStatus,
 } from '../domain/types';
+import type { TaskReadProjectionApi } from './TaskSearchApi';
 
 export interface TaskQuery {
   readonly filePath?: string;
@@ -44,6 +47,7 @@ export interface CalendarProjectionSources {
 }
 
 export interface TaskQueryApi {
+  observedTags(): readonly string[];
   list(query?: TaskQuery): readonly TaskSnapshot[];
   forCalendarProjection(dates: readonly LocalDate[]): CalendarProjectionSources;
   resolve(ref: TaskRef): TaskResolution;
@@ -60,9 +64,17 @@ export interface TimeTrackingQueryApi {
 }
 
 export interface TaskApplicationApi {
-  readonly queries: TaskQueryApi & TaskDependencyQueryApi & TimeTrackingQueryApi;
+  readonly queries: TaskQueryApi &
+    TaskDependencyQueryApi &
+    TimeTrackingQueryApi &
+    TaskReadProjectionApi;
   /** Includes atomic linked-child creation; presentation never sequences repository edits. */
-  execute(command: TaskCommand): Promise<TaskCommandResult>;
+  execute(
+    command: TaskCommand,
+    options?: {
+      readonly onPreparedPatch?: (command: Extract<TaskCommand, { type: 'patch' }>) => void;
+    },
+  ): Promise<TaskCommandResult>;
   /** Freezes the archive destination (including its date) for one single- or multi-root action. */
   planArchive?(): Promise<TaskArchiveSession>;
 }
@@ -78,9 +90,31 @@ export type TaskArchiveSession =
       execute(ref: TaskRef): Promise<TaskCommandResult>;
     };
 
+export interface TaskSearchEligibilityRequest {
+  readonly expectedGeneration: number;
+  readonly current: TaskNodeRef;
+  readonly direction: DependencyDirection;
+  readonly addresses: readonly TaskSearchAddress[];
+}
+
+export interface TaskSearchEligibilityBatch {
+  readonly generation: number;
+  readonly items: ReadonlyArray<{
+    readonly address: TaskSearchAddress;
+    readonly eligibility: TaskDependencyEligibility;
+  }>;
+}
+
 export interface TaskDependencyQueryApi {
+  /** Exact compact candidate checks, at most 200 addresses; no hydration. */
+  searchEligibility(
+    request: TaskSearchEligibilityRequest,
+    signal: AbortSignal,
+  ): Promise<TaskSearchEligibilityBatch>;
+  prepareDependencies(expectedGeneration: number, signal: AbortSignal): Promise<void>;
   listNodes(query?: TaskQuery): readonly TaskNodeSnapshot[];
   dependencies(target: TaskNodeRef): TaskDependencyProjection;
+  dependencySummary(target: TaskNodeRef): TaskDependencySummary;
   dependencyEligibility(
     blocker: TaskNodeRef,
     dependent: TaskNodeRef,

@@ -52,7 +52,7 @@
     ]
   },
   "release": {
-    "mainJsBudgetBytes": 1469913,
+    "mainJsBudgetBytes": 1853440,
     "stylesCssBudgetBytes": 181248
   },
   "keywords": [
@@ -74,6 +74,7 @@
   },
   "dependencies": {
     "@tanstack/charts": "1.0.0",
+    "minisearch": "7.2.0",
     "rrule": "2.8.1"
   },
   "devDependencies": {

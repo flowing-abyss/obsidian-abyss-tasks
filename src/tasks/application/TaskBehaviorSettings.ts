@@ -1,5 +1,6 @@
 export interface TaskBehaviorSettings {
   readonly taskPrefix: string;
+  readonly applyTaskPrefixToSubtasks: boolean;
   readonly inbox: {
     readonly mode: 'tag' | 'untagged' | 'both';
     readonly tag: string;

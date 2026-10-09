@@ -1,10 +1,11 @@
 import { type App, type Component } from 'obsidian';
+import type { ShowInTaskList } from '../../panels/right/inspectorTypes';
 import { formatDurationFromMinutes } from '../../parser/TaskParser';
 import type { TagGroup } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import { tagColorFor } from '../../tags/tagColor';
 import { tagFillTextColorVar } from '../../tags/tagFillContrast';
-import type { TaskPriority, TaskSnapshot } from '../../tasks';
+import { taskNodeSourceLine, type TaskPriority, type TaskSnapshot } from '../../tasks';
 import { plainGhostTaskTitle } from '../../ui/plainGhostTaskTitle';
 import { renderTaskText } from '../../ui/renderTaskText';
 import { renderStatusMarker } from '../../ui/StatusMarker';
@@ -15,7 +16,7 @@ import {
   renderDependencyIndicator,
   type TaskDependencyLookup,
 } from '../../ui/taskDependencyPresentation';
-import type { CalendarOccurrence } from '../calendarOccurrences';
+import { calendarOccurrenceForRender, type CalendarOccurrence } from '../calendarOccurrences';
 import { renderTimedContent } from './calendarPreview';
 import type { TimedDragTarget, TimedVerticalResizeTarget } from './dragGeometry';
 import {
@@ -34,6 +35,7 @@ import {
   bindMaterializedInteractions,
   bindTaskSelection,
   hasCountBadges,
+  renderCalendarParentButton,
   renderCountBadges,
   type CalendarOccurrenceLookup,
   type ForecastInteractionCallbacks,
@@ -57,6 +59,7 @@ export interface TimedBlockCallbacks extends ForecastInteractionCallbacks {
   app: App;
   component: Component;
   onTaskClick: (task: TaskSnapshot) => void;
+  onShowParent?: ShowInTaskList | undefined;
   onTaskSelect?: ((task: TaskSnapshot) => void) | undefined;
   onKeyboardIntent: (task: TaskSnapshot, intent: TimedBlockKeyboardIntent) => void;
   onTimeChange: (task: TaskSnapshot, newStartMinutes: number) => void;
@@ -157,7 +160,13 @@ function timedContinuity(
   task: TaskSnapshot,
   terminal: boolean,
 ): 'single' | 'continuation' | 'terminal' {
-  if (task.planning.start == null || task.planning.due == null) return 'single';
+  const occurrence = calendarOccurrenceForRender(task);
+  if (
+    (occurrence.kind === 'materialized' && occurrence.occupied.kind === 'point') ||
+    task.planning.start == null ||
+    task.planning.due == null
+  )
+    return 'single';
   return terminal ? 'terminal' : 'continuation';
 }
 
@@ -296,14 +305,16 @@ function renderTimedBlock(input: TimedBlockRenderInput): void {
   const occurrence = callbacks.occurrenceFor(task);
   const terminal =
     options?.terminal ??
-    (options == null || task.planning.due == null || task.planning.due === options.date);
+    ((occurrence.kind === 'materialized' && occurrence.occupied.kind === 'point') ||
+      options == null ||
+      task.planning.due == null ||
+      task.planning.due === options.date);
   const block = createTimedBlockElement(hourColumnEl, blockLayout, terminal, options, occurrence);
   applyTimedBlockGeometry(block, blockLayout, input.minHeightCap);
   applyTimedBlockColor(block, task, tagGroups);
   renderTimedBlockContent(block, task, blockLayout, occurrence, terminal, callbacks);
-  bindMaterializedInteractions(occurrence, (target) => {
+  bindMaterializedInteractions(occurrence, () => {
     bindTaskSelection(block, task, callbacks.onTaskSelect);
-    if (target.type !== 'task') return;
     attachTimedBlockControls({
       block,
       hourColumnEl,
@@ -338,11 +349,14 @@ function createTimedBlockElement(
     timedSpanRole(layout.task, continuity, options?.date),
   );
   block.setAttribute('data-abyss-task-file', layout.task.source.filePath);
-  block.setAttribute('data-abyss-task-line', String(layout.task.source.line));
+  block.setAttribute(
+    'data-abyss-task-line',
+    String(taskNodeSourceLine(calendarOccurrenceForRender(layout.task).source.target)),
+  );
   block.setAttribute('data-abyss-start-minutes', String(layout.startMinutes));
   if (options != null) block.setAttribute('data-tg-segment-date', options.date);
-  bindMaterializedInteractions(occurrence, (target) => {
-    if (target.type === 'task') block.setAttribute('tabindex', '0');
+  bindMaterializedInteractions(occurrence, () => {
+    block.setAttribute('tabindex', '0');
   });
   return block;
 }
@@ -422,6 +436,7 @@ function renderTimedBlockContent(
           }
         : {}),
       renderTitle: (head: HTMLElement): void => {
+        renderCalendarParentButton(head, occurrence, callbacks);
         renderTimedBlockTitle({ head, task, occurrence, terminal, callbacks });
       },
     },
@@ -496,10 +511,14 @@ function createBoundaryHandles(input: TimedBlockControlsInput): BoundaryHandleBi
     return [];
   }
   const handles: BoundaryHandleBinding[] = [];
-  const isSpan = task.planning.start != null && task.planning.due != null;
-  if (isSpan && task.planning.start === options.date)
+  const occurrence = calendarOccurrenceForRender(task);
+  const isSpan =
+    occurrence.kind === 'materialized'
+      ? occurrence.occupied.kind === 'interval'
+      : task.planning.start != null && task.planning.due != null;
+  if (isSpan && String(task.planning.start) === options.date)
     handles.push({ element: createBoundaryHandle(block, 'left', 'start'), boundary: 'start' });
-  if (isSpan && task.planning.due === options.date)
+  if (isSpan && String(task.planning.due) === options.date)
     handles.push({ element: createBoundaryHandle(block, 'right', 'due'), boundary: 'due' });
   else if (!isSpan && terminal)
     handles.push({
@@ -620,8 +639,8 @@ function keyboardIntent(event: KeyboardEvent): TimedBlockKeyboardIntent | undefi
 
 /**
  * Arrow keys emit relative domain intents. Tab and Shift+Tab cycle through the visual ordering
- * of timed blocks in the current day, keeping focus on block roots even when the key originated
- * from an embedded link. Ctrl/Meta/Alt combinations are left to the host/browser.
+ * of timed blocks and their parent buttons in the current day. Embedded links retain their
+ * owning block as the starting stop. Ctrl/Meta/Alt combinations are left to the host/browser.
  */
 function attachKeyboardHandling(
   block: HTMLElement,
@@ -634,7 +653,7 @@ function attachKeyboardHandling(
 
     if (event.key === 'Tab') {
       event.preventDefault();
-      focusAdjacentTimedBlock(block, event.shiftKey ? -1 : 1);
+      focusAdjacentTimedBlock(block, event.shiftKey ? -1 : 1, event.target);
       return;
     }
 
@@ -645,7 +664,11 @@ function attachKeyboardHandling(
   });
 }
 
-function focusAdjacentTimedBlock(block: HTMLElement, direction: -1 | 1): void {
+function focusAdjacentTimedBlock(
+  block: HTMLElement,
+  direction: -1 | 1,
+  origin: EventTarget | null,
+): void {
   const scope =
     block.closest<HTMLElement>('.abyss-tg-day-column') ??
     block.closest<HTMLElement>('.abyss-tg-hour-column');
@@ -662,11 +685,14 @@ function focusAdjacentTimedBlock(block: HTMLElement, direction: -1 | 1): void {
       ? startDifference
       : (domIndex.get(a) ?? 0) - (domIndex.get(b) ?? 0);
   });
-  const currentIndex = visualBlocks.indexOf(block);
-  if (currentIndex < 0 || visualBlocks.length === 0) return;
-
-  const targetIndex = (currentIndex + direction + visualBlocks.length) % visualBlocks.length;
-  visualBlocks[targetIndex]?.focus();
+  const stops = visualBlocks.flatMap((candidate) => {
+    const parent = candidate.querySelector<HTMLElement>('.abyss-task-parent-btn');
+    return parent === null ? [candidate] : [candidate, parent];
+  });
+  const currentIndex = stops.findIndex((candidate) => candidate === origin);
+  const index = currentIndex < 0 ? stops.indexOf(block) : currentIndex;
+  if (index < 0 || stops.length === 0) return;
+  stops[(index + direction + stops.length) % stops.length]?.focus();
 }
 
 function attachSelectedState(block: HTMLElement): void {

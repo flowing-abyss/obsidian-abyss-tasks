@@ -13,7 +13,7 @@ import {
   type TimeEntrySnapshot,
 } from '../../tasks';
 import { openAnchoredPopover, type AnchoredPopover } from '../anchoredPopover';
-import { writeText, writeTitle } from '../guardedDomWrites';
+import { writeText, writeTooltip } from '../guardedDomWrites';
 import { createInlineTaskUndo } from '../inlineTaskUndo';
 import type { InteractionOwnershipPort } from '../interactionOwnership';
 import { runAsyncAction } from '../runAsyncAction';
@@ -476,7 +476,7 @@ function renderRow(
   // The note cell truncates at every width and is dropped outright in a narrow pane, so the row
   // always carries what it says. The question a long-running row earns comes first, because that is
   // the one thing about the row a reader has to be told.
-  writeTitle(rowEl, question ?? noteLabel(row));
+  writeTooltip(rowEl, question ?? noteLabel(row));
   const remove = rowEl.createEl('button', {
     cls: 'abyss-time-row-remove',
     attr: { type: 'button', 'aria-label': 'Remove this session' },

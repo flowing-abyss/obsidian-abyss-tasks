@@ -1,5 +1,12 @@
 import { AbstractInputSuggest, type App, type TFile } from 'obsidian';
 
+import {
+  createSearchWordSegmenter,
+  matchesSearchText,
+  prepareSearchQuery,
+  TaskSearchError,
+} from '../tasks';
+
 interface VaultWithConfig {
   getConfig(key: string): unknown;
 }
@@ -58,6 +65,7 @@ export class NoteSuggest extends AbstractInputSuggest<TFile> {
 
 /** Shared vault-file filtering for inputs that combine note targets with other suggestions. */
 export class VaultFileSuggestionSource {
+  private readonly segment_abyssPrivate = createSearchWordSegmenter();
   private readonly ignoreMatchers_abyssPrivate: Array<(path: string) => boolean>;
 
   constructor(private readonly app_abyssPrivate: App) {
@@ -72,17 +80,28 @@ export class VaultFileSuggestionSource {
   }
 
   list(query: string): TFile[] {
-    const normalized = query.toLocaleLowerCase();
-    return this.app_abyssPrivate.vault
-      .getFiles()
-      .filter((file) => !this.ignoreMatchers_abyssPrivate.some((match) => match(file.path)))
-      .filter(
-        (file) =>
-          normalized.length === 0 ||
-          file.name.toLocaleLowerCase().includes(normalized) ||
-          file.path.toLocaleLowerCase().includes(normalized),
-      )
-      .sort((left, right) => left.name.localeCompare(right.name))
-      .slice(0, 50);
+    try {
+      const prepared = prepareSearchQuery(query, this.segment_abyssPrivate);
+      const normalized = query.toLocaleLowerCase();
+      return this.app_abyssPrivate.vault
+        .getFiles()
+        .filter((file) => !this.ignoreMatchers_abyssPrivate.some((match) => match(file.path)))
+        .filter(
+          (file) =>
+            normalized.length === 0 ||
+            file.name.toLocaleLowerCase().includes(normalized) ||
+            file.path.toLocaleLowerCase().includes(normalized) ||
+            matchesSearchText(
+              [file.basename, file.path].join(' '),
+              prepared,
+              this.segment_abyssPrivate,
+            ),
+        )
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .slice(0, 50);
+    } catch (error) {
+      if (error instanceof TaskSearchError && error.code === 'invalid-query') return [];
+      throw error;
+    }
   }
 }

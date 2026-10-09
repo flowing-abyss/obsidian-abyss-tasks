@@ -1,29 +1,32 @@
 import type { ListSelection } from '../app/AppState';
-import { resolveListViewStateKey } from '../app/listViewState';
+import { drainCollectionSteps, stableSortSteps, type CollectionSteps } from '../collectionSteps';
 import { sameTag } from '../markdown/tagSyntax';
 import type { CalendarSettings, ListViewState, PropertyFilter } from '../settings/types';
 import {
-  resolveEffectiveTagGroups,
-  tagMatchesGroup,
-  type EffectiveTagGroup,
-} from '../tags/effectiveTagGroups';
-import {
-  normalizeTaskTagInput,
+  localDate,
   subtreeTotal,
+  taskOccupiedDates,
   totalMs,
   type LocalDate,
   type SubtaskSnapshot,
+  type TaskNodeSnapshot,
   type TaskSnapshot,
   type TaskStatusType,
 } from '../tasks';
 import type { TaskLinkValue, TaskLinkValues } from './taskLinkValues';
-import { todayTaskCategory } from './todayTaskCategory';
+import { prepareTaskNodeMembershipSteps, taskNodeMembershipValue } from './taskNodeMembership';
+import { taskListDate } from './todayTaskCategory';
+
+export type TaskOrganizationSettings = Pick<
+  CalendarSettings,
+  'inbox' | 'taskStatuses' | 'tagGroups' | 'archivedTags' | 'archivedTagPrefixes'
+>;
 
 export interface TaskListSelectionInput {
   readonly tasks: readonly TaskSnapshot[];
-  readonly selection: ListSelection;
+  readonly selection: ListSelection | null;
   readonly viewState: ListViewState;
-  readonly settings: CalendarSettings;
+  readonly settings: TaskOrganizationSettings;
   readonly today: LocalDate;
   /** The one instant a running timer is read against, so every row of a pass agrees on it. */
   readonly nowMs: number;
@@ -32,34 +35,46 @@ export interface TaskListSelectionInput {
 }
 
 /** What an ordering needs beyond the tasks themselves, read once rather than per comparison. */
-interface TaskOrder {
-  readonly input: TaskListSelectionInput;
-  /** Distinct outgoing labels/identities in canonical order, derived before comparisons. */
-  readonly linkOrder: ReadonlyMap<TaskSnapshot, readonly TaskLinkValue[]>;
-  /** Tracked totals by task, so a sort walks each subtree once instead of on every comparison. */
-  readonly trackedMs: ReadonlyMap<TaskSnapshot, number>;
-}
+export type TaskListValue = Pick<
+  TaskSnapshot,
+  'title' | 'planning' | 'tags' | 'status' | 'statusSymbol' | 'priority'
+> & { readonly source: Pick<TaskSnapshot['source'], 'filePath' | 'line'> };
 
-function dateOf(task: TaskSnapshot): string | undefined {
-  return task.planning.due ?? task.planning.scheduled ?? task.planning.start;
-}
-
-interface SelectionContext {
-  readonly selection: ListSelection;
-  readonly settings: CalendarSettings;
+export interface TaskValueSelectionInput<T extends TaskListValue> {
+  /** Canonical catalog input when the candidate tasks have already been narrowed. */
+  readonly observedTags?: readonly string[];
+  readonly tasks: readonly T[];
+  readonly selection: ListSelection | null;
+  readonly viewState: ListViewState;
+  readonly settings: TaskOrganizationSettings;
   readonly today: LocalDate;
-  readonly groups: readonly EffectiveTagGroup[];
+  readonly nowMs: number;
+  readonly outgoingLinks?: TaskLinkValues;
+  readonly depth: (task: T) => number;
+  readonly treeTags: (task: T) => readonly string[];
+  readonly trackedMs: (task: T) => number;
 }
 
-function selected(task: TaskSnapshot, context: SelectionContext): boolean {
-  const { selection, settings, today, groups } = context;
-  if (selection === 'inbox' || selection === 'today' || selection === 'upcoming') {
-    return selectedNamedList(task, selection, settings, today);
+interface TaskOrder<T extends TaskListValue> {
+  readonly input: TaskValueSelectionInput<T>;
+  /** Distinct outgoing labels/identities in canonical order, derived before comparisons. */
+  readonly linkOrder: ReadonlyMap<T, readonly TaskLinkValue[]>;
+  /** Tracked totals by task, so a sort walks each subtree once instead of on every comparison. */
+  readonly trackedMs: ReadonlyMap<T, number>;
+  readonly statusOrder: ReadonlyMap<string, number>;
+}
+
+function matchesDate(task: TaskListValue, value: string): boolean {
+  let date: LocalDate;
+  try {
+    date = localDate(value);
+  } catch {
+    return false;
   }
-  if (typeof selection === 'string') return true;
-  if (selection.type === 'tag') return taskTreeHasTag(task, selection.tag);
-  if (selection.type === 'project') return task.source.filePath === selection.path;
-  return selectedTagGroup(task, selection.groupId, groups);
+  const occupied = taskOccupiedDates(task.planning);
+  return occupied.kind === 'interval'
+    ? occupied.start <= date && date <= occupied.due
+    : occupied.points.some((point) => point.date === date);
 }
 
 function visitTaskTags(
@@ -68,10 +83,6 @@ function visitTaskTags(
 ): boolean {
   if (node.tags.some(visit)) return true;
   return node.subtasks.some((child) => visitTaskTags(child, visit));
-}
-
-function taskTreeHasTag(task: TaskSnapshot, tag: string): boolean {
-  return visitTaskTags(task, (candidate) => sameTag(candidate, tag));
 }
 
 function taskTreeTags(task: TaskSnapshot): readonly string[] {
@@ -83,70 +94,38 @@ function taskTreeTags(task: TaskSnapshot): readonly string[] {
   return tags;
 }
 
-function selectedNamedList(
-  task: TaskSnapshot,
-  selection: 'inbox' | 'today' | 'upcoming',
-  settings: CalendarSettings,
-  today: LocalDate,
-): boolean {
-  if (selection === 'inbox') return selectedInbox(task, settings);
-  if (selection === 'today') return todayTaskCategory(task, today) !== undefined;
-  const date = task.planning.due ?? task.planning.scheduled;
-  return date !== undefined && date > today;
-}
-
-function selectedInbox(task: TaskSnapshot, settings: CalendarSettings): boolean {
-  const normalized = normalizeTaskTagInput(settings.inbox.tag);
-  const inboxTag = normalized?.length === 1 ? normalized[0] : undefined;
-  const tagged =
-    settings.inbox.mode !== 'untagged' &&
-    inboxTag !== undefined &&
-    task.tags.some((candidate) => sameTag(candidate, inboxTag));
-  const untagged = settings.inbox.mode !== 'tag' && task.tags.length === 0;
-  return tagged || untagged;
-}
-
-function selectedTagGroup(
-  task: TaskSnapshot,
-  groupId: string,
-  groups: readonly EffectiveTagGroup[],
-): boolean {
-  const configuredIds = new Set(
-    groups
-      .filter((candidate) => candidate.origin === 'configured')
-      .map((candidate) => candidate.id),
-  );
-  const key = resolveListViewStateKey({ type: 'group', groupId }, undefined, configuredIds);
-  const group =
-    groups.find((candidate) => candidate.id === groupId) ??
-    groups.find(
-      (candidate) =>
-        candidate.origin === 'discovered' &&
-        resolveListViewStateKey(
-          { type: 'group', groupId: candidate.id },
-          undefined,
-          configuredIds,
-        ) === key,
-    );
-  if (group == null) return false;
-  return visitTaskTags(task, (tag) => tagMatchesGroup(tag, group));
-}
-
-function statusTypeOf(task: TaskSnapshot): TaskStatusType {
+function statusTypeOf(task: TaskListValue): TaskStatusType {
   if (task.status === 'open') return 'todo';
   return task.status;
 }
 
-function matchesProperty(task: TaskSnapshot, filter: PropertyFilter): boolean {
-  if (filter.type === 'tag') {
-    return task.tags.some((candidate) => sameTag(candidate, filter.value));
+function* matchesTags(
+  tags: readonly string[],
+  target: string,
+  cooperative: boolean,
+): CollectionSteps<boolean> {
+  for (const candidate of tags) {
+    const matches = sameTag(candidate, target);
+    if (cooperative) yield 'atom';
+    if (matches) return true;
+  }
+  return false;
+}
+function* matchesProperty(
+  task: TaskListValue,
+  filter: PropertyFilter,
+  cooperative: boolean,
+): CollectionSteps<boolean> {
+  if (filter.type === 'tag' || filter.type === 'tag-exclude') {
+    const matched = yield* matchesTags(task.tags, filter.value, cooperative);
+    if (matched === undefined) throw new Error('Tag matching ended without a result');
+    return filter.type === 'tag' ? matched : !matched;
   }
   if (filter.type === 'file') return task.source.filePath === filter.filePath;
   if (filter.type === 'time') return String(task.planning.time) === filter.value;
   if (filter.type === 'priority') return task.priority === filter.value;
   if (filter.type === 'status') return task.statusSymbol === filter.value;
-  const date = dateOf(task);
-  return date !== undefined && String(date) === filter.value;
+  return matchesDate(task, filter.value);
 }
 
 function compareOptional(left: string | undefined, right: string | undefined): number {
@@ -179,7 +158,7 @@ function compareLinkSequence(
   return left.length - right.length;
 }
 
-function compareCreated(left: TaskSnapshot, right: TaskSnapshot): number {
+function compareCreated(left: TaskListValue, right: TaskListValue): number {
   const a = left.planning.created;
   const b = right.planning.created;
   if (a === b) return 0;
@@ -188,15 +167,23 @@ function compareCreated(left: TaskSnapshot, right: TaskSnapshot): number {
   return a.localeCompare(b);
 }
 
-function compareDate(left: TaskSnapshot, right: TaskSnapshot): number {
-  const dateOrder = compareOptional(dateOf(left), dateOf(right));
+function compareDate(
+  left: TaskListValue,
+  right: TaskListValue,
+  input: Pick<TaskValueSelectionInput<TaskListValue>, 'selection' | 'today'>,
+): number {
+  const todayListDate = input.selection === 'today' ? input.today : undefined;
+  const dateOrder = compareOptional(
+    taskListDate(left, todayListDate),
+    taskListDate(right, todayListDate),
+  );
   return dateOrder !== 0 ? dateOrder : compareOptional(left.planning.time, right.planning.time);
 }
 
-function compare(left: TaskSnapshot, right: TaskSnapshot, order: TaskOrder): number {
+function compare<T extends TaskListValue>(left: T, right: T, order: TaskOrder<T>): number {
   const { input } = order;
   const field = input.viewState.sortBy.field;
-  if (field === 'date') return compareDate(left, right);
+  if (field === 'date') return compareDate(left, right, input);
   if (field === 'priority') return left.priority.localeCompare(right.priority);
   if (field === 'title') return left.title.localeCompare(right.title);
   if (field === 'source-note') return left.source.filePath.localeCompare(right.source.filePath);
@@ -206,70 +193,261 @@ function compare(left: TaskSnapshot, right: TaskSnapshot, order: TaskOrder): num
   if (field === 'tracked') {
     return (order.trackedMs.get(left) ?? 0) - (order.trackedMs.get(right) ?? 0);
   }
-  const symbols = input.settings.taskStatuses.map((status) => status.symbol);
-  const statusOrder = (symbol: string): number => {
-    const index = symbols.indexOf(symbol === 'X' ? 'x' : symbol);
-    return index < 0 ? Number.MAX_SAFE_INTEGER : index;
-  };
+  const statusOrder = (symbol: string): number =>
+    order.statusOrder.get(symbol === 'X' ? 'x' : symbol) ?? Number.MAX_SAFE_INTEGER;
   return statusOrder(left.statusSymbol) - statusOrder(right.statusSymbol);
 }
 
-const NO_TRACKED_TOTALS: ReadonlyMap<TaskSnapshot, number> = new Map();
+function filterTaskValues<T extends TaskListValue>(input: TaskValueSelectionInput<T>): T[] {
+  return drainCollectionSteps(filterValues(input, false));
+}
+export function filterTaskValuesSteps<T extends TaskListValue>(
+  input: TaskValueSelectionInput<T>,
+): CollectionSteps<T[]> {
+  return filterValues(input, true);
+}
+interface MembershipContext {
+  readonly admits: (value: TaskListValue & { readonly depth: number }) => CollectionSteps<boolean>;
+  readonly allowed: ReadonlySet<TaskStatusType>;
+}
+function* observedTags<T extends TaskListValue>(
+  input: TaskValueSelectionInput<T>,
+  cooperative: boolean,
+): CollectionSteps<string[]> {
+  const observed: string[] = [];
+  for (const task of input.tasks) {
+    const tags = input.treeTags(task);
+    if (cooperative) yield 'atom';
+    for (const tag of tags) {
+      observed.push(tag);
+      if (cooperative) yield 'cheap';
+    }
+  }
+  return observed;
+}
+function* allowedStatuses(
+  view: ListViewState,
+  cooperative: boolean,
+): CollectionSteps<Set<TaskStatusType>> {
+  const allowed = new Set<TaskStatusType>(),
+    subset = view.statusGroups ?? [];
+  if (subset.length < 4)
+    for (const status of subset) {
+      allowed.add(status);
+      if (cooperative) yield 'cheap';
+    }
+  return allowed;
+}
+function* membershipContext<T extends TaskListValue>(
+  input: TaskValueSelectionInput<T>,
+  cooperative: boolean,
+): CollectionSteps<MembershipContext> {
+  const selection = input.selection;
+  const needsCatalog =
+    selection !== null && typeof selection === 'object' && selection.type === 'group';
+  const observed =
+    input.observedTags ?? (needsCatalog ? yield* observedTags(input, cooperative) : []);
+  if (observed === undefined) throw new Error('Observed tags ended without a result');
+  const admits = yield* prepareTaskNodeMembershipSteps(
+    { ...input, observedTags: observed },
+    cooperative,
+  );
+  if (admits === undefined) throw new Error('Membership preparation ended without a result');
+  const allowed = yield* allowedStatuses(input.viewState, cooperative);
+  if (allowed === undefined) throw new Error('Statuses ended without a result');
+  return { admits, allowed };
+}
+function* matchesProperties(
+  task: TaskListValue,
+  filters: readonly PropertyFilter[],
+  cooperative: boolean,
+): CollectionSteps<boolean> {
+  for (const filter of filters) {
+    const matches = yield* matchesProperty(task, filter, cooperative);
+    if (matches === undefined) throw new Error('Property filter ended without a result');
+    if (cooperative) yield 'cheap';
+    if (!matches) return false;
+  }
+  return true;
+}
+function* matchesTask<T extends TaskListValue>(
+  task: T,
+  input: TaskValueSelectionInput<T>,
+  context: MembershipContext,
+  cooperative: boolean,
+): CollectionSteps<boolean> {
+  const included = yield* context.admits({ ...task, depth: input.depth(task) });
+  if (included === undefined) throw new Error('Membership ended without a result');
+  if (cooperative) yield 'cheap';
+  if (!included) return false;
+  if (context.allowed.size > 0 && !context.allowed.has(statusTypeOf(task))) return false;
+  const properties = yield* matchesProperties(task, input.viewState.filters, cooperative);
+  if (properties === undefined) throw new Error('Properties ended without a result');
+  return properties;
+}
+function* filterValues<T extends TaskListValue>(
+  input: TaskValueSelectionInput<T>,
+  cooperative: boolean,
+): CollectionSteps<T[]> {
+  const context = yield* membershipContext(input, cooperative);
+  if (context === undefined) throw new Error('Membership context ended without a result');
+  const matching: T[] = [];
+  for (const task of input.tasks) {
+    const properties = yield* matchesTask(task, input, context, cooperative);
+    if (properties === undefined) throw new Error('Task matching ended without a result');
+    if (properties) matching.push(task);
+    if (cooperative) yield 'cheap';
+  }
+  return matching;
+}
 
-/**
- * Time on a task and everything under it, read once per task. A comparison is asked for it
- * O(n log n) times, so reading it here keeps a long list to one subtree walk per task and keeps
- * every row of the same pass on the one instant the caller supplied.
- */
-function trackedTotals(
-  tasks: readonly TaskSnapshot[],
-  nowMs: number,
-): ReadonlyMap<TaskSnapshot, number> {
-  const totals = new Map<TaskSnapshot, number>();
-  for (const task of tasks) totals.set(task, totalMs(subtreeTotal(task), nowMs));
+export function selectTaskValues<T extends TaskListValue>(input: TaskValueSelectionInput<T>): T[] {
+  return drainCollectionSteps(selectValues(input, false));
+}
+export function selectTaskValuesSteps<T extends TaskListValue>(
+  input: TaskValueSelectionInput<T>,
+): CollectionSteps<T[]> {
+  return selectValues(input, true);
+}
+function* linkSequence(
+  values: readonly TaskLinkValue[],
+  cooperative: boolean,
+): CollectionSteps<TaskLinkValue[]> {
+  const unique = new Map<string, TaskLinkValue>(),
+    sequence: TaskLinkValue[] = [];
+  for (const value of values) {
+    unique.set(value.key, value);
+    if (cooperative) yield 'cheap';
+  }
+  for (const value of unique.values()) {
+    sequence.push(value);
+    if (cooperative) yield 'cheap';
+  }
+  if (cooperative) return yield* stableSortSteps(sequence, compareLinkValue);
+  sequence.sort(compareLinkValue);
+  return sequence;
+}
+function* prepareLinks<T extends TaskListValue>(
+  tasks: readonly T[],
+  values: TaskLinkValues | undefined,
+  cooperative: boolean,
+): CollectionSteps<Map<T, readonly TaskLinkValue[]>> {
+  const output = new Map<T, readonly TaskLinkValue[]>();
+  for (const task of tasks) {
+    const sequence = yield* linkSequence(
+      values?.get(`${task.source.filePath}:${task.source.line}`) ?? [],
+      cooperative,
+    );
+    if (sequence === undefined) throw new Error('Link sort ended without a result');
+    if (sequence.length > 0) output.set(task, sequence);
+    if (cooperative) yield 'cheap';
+  }
+  return output;
+}
+function* prepareTracked<T extends TaskListValue>(
+  tasks: readonly T[],
+  input: TaskValueSelectionInput<T>,
+  cooperative: boolean,
+): CollectionSteps<Map<T, number>> {
+  const totals = new Map<T, number>();
+  for (const task of tasks) {
+    const total = input.trackedMs(task);
+    if (cooperative) yield 'atom';
+    totals.set(task, total);
+    if (cooperative) yield 'cheap';
+  }
   return totals;
+}
+function* prepareStatuses(
+  settings: TaskOrganizationSettings,
+  cooperative: boolean,
+): CollectionSteps<Map<string, number>> {
+  const ranks = new Map<string, number>();
+  let index = 0;
+  for (const status of settings.taskStatuses) {
+    if (!ranks.has(status.symbol)) ranks.set(status.symbol, index);
+    index++;
+    if (cooperative) yield 'cheap';
+  }
+  return ranks;
+}
+function* prepareOrder<T extends TaskListValue>(
+  tasks: readonly T[],
+  input: TaskValueSelectionInput<T>,
+  cooperative: boolean,
+): CollectionSteps<TaskOrder<T>> {
+  const field = input.viewState.sortBy.field;
+  const linkOrder =
+    field === 'outgoing-link'
+      ? yield* prepareLinks(tasks, input.outgoingLinks, cooperative)
+      : new Map<T, readonly TaskLinkValue[]>();
+  const trackedMs =
+    field === 'tracked' ? yield* prepareTracked(tasks, input, cooperative) : new Map<T, number>();
+  const statusOrder =
+    field === 'status'
+      ? yield* prepareStatuses(input.settings, cooperative)
+      : new Map<string, number>();
+  if (linkOrder === undefined || trackedMs === undefined || statusOrder === undefined)
+    throw new Error('Order preparation ended without a result');
+  return { input, linkOrder, trackedMs, statusOrder };
+}
+export type TaskValueOrderContext = { readonly kind: 'authored' } | { readonly kind: 'same-day' };
+export function* taskValueComparatorSteps<T extends TaskListValue>(
+  input: TaskValueSelectionInput<T>,
+  context: TaskValueOrderContext,
+): CollectionSteps<(left: T, right: T) => number> {
+  const order = yield* prepareOrder(input.tasks, input, true);
+  if (order === undefined) throw new Error('Order ended without a result');
+  return (left, right) => {
+    const primary =
+      context.kind === 'same-day' && input.viewState.sortBy.field === 'date'
+        ? compareOptional(left.planning.time, right.planning.time)
+        : compare(left, right, order);
+    if (primary !== 0) return input.viewState.sortBy.dir === 'asc' ? primary : -primary;
+    const created = compareCreated(left, right);
+    if (created !== 0) return created;
+    const path = left.source.filePath.localeCompare(right.source.filePath);
+    return path !== 0 ? path : left.source.line - right.source.line;
+  };
+}
+function* selectValues<T extends TaskListValue>(
+  input: TaskValueSelectionInput<T>,
+  cooperative: boolean,
+): CollectionSteps<T[]> {
+  const matching = cooperative ? yield* filterTaskValuesSteps(input) : filterTaskValues(input);
+  if (matching === undefined) throw new Error('Selection ended without a result');
+  if (matching.length < 2) return matching;
+  const comparator = yield* taskValueComparatorSteps(
+    { ...input, tasks: matching },
+    { kind: 'authored' },
+  );
+  if (comparator === undefined) throw new Error('Comparator ended without a result');
+  if (cooperative) return yield* stableSortSteps(matching, comparator);
+  matching.sort(comparator);
+  return matching;
 }
 
 export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnapshot[] {
-  const allowed = input.viewState.statusGroups;
   const query = input.textQuery?.toLowerCase() ?? '';
-  const groups = resolveEffectiveTagGroups(input.settings, input.tasks.flatMap(taskTreeTags));
-  const matching = input.tasks
-    .filter((task) => selected(task, { ...input, groups }))
-    .filter(
-      (task) =>
-        allowed == null ||
-        allowed.length === 0 ||
-        allowed.length >= 4 ||
-        allowed.includes(statusTypeOf(task)),
-    )
-    .filter((task) => input.viewState.filters.every((filter) => matchesProperty(task, filter)))
-    .filter(
-      (task) =>
-        query.length === 0 ||
-        task.title.toLowerCase().includes(query) ||
-        task.source.originalMarkdown.toLowerCase().includes(query),
-    );
-  const order: TaskOrder = {
-    input,
-    linkOrder: new Map(
-      matching.flatMap((task) => {
-        const values = input.outgoingLinks?.get(`${task.source.filePath}:${task.source.line}`);
-        const sequence = [...new Map(values?.map((value) => [value.key, value])).values()].sort(
-          compareLinkValue,
-        );
-        return sequence.length === 0 ? [] : [[task, sequence] as const];
-      }),
-    ),
-    trackedMs:
-      input.viewState.sortBy.field === 'tracked'
-        ? trackedTotals(matching, input.nowMs)
-        : NO_TRACKED_TOTALS,
+  const tasks = input.tasks.filter(
+    (task) =>
+      query.length === 0 ||
+      task.title.toLowerCase().includes(query) ||
+      task.source.originalMarkdown.toLowerCase().includes(query),
+  );
+  const values: TaskValueSelectionInput<TaskSnapshot> = {
+    ...input,
+    depth: () => 0,
+    treeTags: taskTreeTags,
+    trackedMs: (task) => totalMs(subtreeTotal(task), input.nowMs),
   };
-  return matching.sort((left, right) => {
-    const explicit = compare(left, right, order);
-    if (explicit !== 0) return input.viewState.sortBy.dir === 'asc' ? explicit : -explicit;
-    return compareCreated(left, right);
+  const selection = input.selection;
+  return selectTaskValues({
+    ...values,
+    tasks,
+    ...(selection !== null && typeof selection === 'object' && selection.type === 'group'
+      ? { observedTags: drainCollectionSteps(observedTags(values, false)) }
+      : {}),
   });
 }
 
@@ -284,4 +462,39 @@ export function searchTaskList(
       task.title.toLowerCase().includes(query) ||
       task.source.originalMarkdown.toLowerCase().includes(query),
   );
+}
+
+/** Hydrated own-node values share the root selector's filtering and ordering engine. */
+export function selectTaskNodes(
+  input: Omit<TaskListSelectionInput, 'tasks'> & {
+    readonly tasks: readonly TaskNodeSnapshot[];
+  },
+): readonly TaskNodeSnapshot[] {
+  const query = input.textQuery?.toLowerCase() ?? '';
+  const values = input.tasks.map((projection) => ({
+    ...projection.node,
+    ...taskNodeMembershipValue(projection),
+    projection,
+  }));
+  const observedTags = values.flatMap((value) => value.tags);
+  return selectTaskValues({
+    ...input,
+    tasks: values.filter(
+      (value) =>
+        query.length === 0 ||
+        value.title.toLowerCase().includes(query) ||
+        taskNodeSourceText(value.projection).toLowerCase().includes(query),
+    ),
+    observedTags,
+    depth: (value) => value.depth,
+    treeTags: (value) => value.tags,
+    trackedMs: (value) => totalMs(subtreeTotal(value.projection.node), input.nowMs),
+  }).map((value) => value.projection);
+}
+
+function taskNodeSourceText(task: TaskNodeSnapshot): string {
+  if (task.target.type === 'task') return task.root.source.originalMarkdown;
+  const block = task.target.ref.originalBlock;
+  const end = block.indexOf('\n');
+  return end === -1 ? block : block.slice(0, end);
 }

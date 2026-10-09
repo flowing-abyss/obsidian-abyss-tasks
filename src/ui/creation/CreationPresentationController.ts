@@ -5,6 +5,7 @@ import type {
   TaskRef,
   TaskResolution,
 } from '../../tasks';
+import { taskReconciliationKey } from '../../tasks';
 import type { CreationResultDescription } from '../taskCommandResult';
 import { renderedTaskElements } from '../taskPresentationIdentity';
 
@@ -14,6 +15,24 @@ const ANNOUNCEMENT_TIMEOUT_MS = 4_000;
 const NORMAL_HIGHLIGHT_MS = 1_100;
 const REDUCED_HIGHLIGHT_MS = 800;
 
+export interface CreationRevealRequest {
+  readonly signal: AbortSignal;
+  isCurrent(): boolean;
+}
+
+/** A single capture result may reveal only while its originating interaction still owns it. */
+export interface CreationRevealAuthority {
+  /** Selection ownership is independent of focus/blur permission to reveal. */
+  canSelect?(): boolean;
+  onFinished?(): void;
+  onPresented?(ref: TaskRef, element: HTMLElement): void;
+  isCurrent(): boolean;
+  reveal(
+    ref: TaskRef,
+    request: CreationRevealRequest,
+  ): HTMLElement | undefined | Promise<HTMLElement | undefined>;
+}
+
 interface PendingPresentation {
   readonly id: number;
   lookupRef: TaskRef;
@@ -22,6 +41,11 @@ interface PendingPresentation {
   highlightUntil?: number;
   highlightedElement?: HTMLElement | undefined;
   timeout: number;
+  readonly revealAuthority?: CreationRevealAuthority;
+  revealing?: boolean;
+  revealReady?: boolean;
+  attempt?: AbortController | undefined;
+  attemptCurrent?: (() => boolean) | undefined;
 }
 
 function relevantPath(event: TaskIndexEvent, path: string): boolean {
@@ -146,16 +170,23 @@ export class CreationPresentationController {
       if (this.destroyed) return;
       this.removeExpired();
       for (const entry of [...this.pending]) {
-        if (relevantPath(event, entry.lookupRef.filePath)) this.resolve(entry);
+        if (entry.attempt !== undefined) this.finish(entry);
+        else if (relevantPath(event, entry.lookupRef.filePath)) this.resolve(entry);
       }
       this.presentResolved();
     });
   }
 
-  present(result: TaskCommandResult, description: CreationResultDescription): void {
+  present(
+    result: TaskCommandResult,
+    description: CreationResultDescription,
+    revealAuthority?: CreationRevealAuthority,
+    ownsSelection = true,
+  ): void {
     if (this.destroyed) return;
     this.announce(description);
     if (
+      !ownsSelection ||
       description.kind !== 'success' ||
       description.task === undefined ||
       result.type !== 'ok' ||
@@ -165,6 +196,7 @@ export class CreationPresentationController {
     }
 
     const entry: PendingPresentation = {
+      ...(revealAuthority === undefined ? {} : { revealAuthority }),
       id: ++this.nextId,
       lookupRef: result.outcome.task.ref,
       expiresAt: this.options.now() + PRESENTATION_TIMEOUT_MS,
@@ -174,20 +206,34 @@ export class CreationPresentationController {
       this.expire(entry);
     }, PRESENTATION_TIMEOUT_MS);
     this.pending.push(entry);
-    while (this.pending.length > MAX_PENDING_PRESENTATIONS) {
-      const oldest = this.pending.shift();
-      if (oldest != null) this.discard(oldest);
-    }
+    const overflow = Math.max(0, this.pending.length - MAX_PENDING_PRESENTATIONS);
+    for (const oldest of this.pending.splice(0, overflow)) this.discard(oldest);
     this.resolve(entry);
     this.presentResolved();
   }
 
   afterRender(root: HTMLElement): void {
     if (this.destroyed) return;
+    if (this.renderRoot !== root) {
+      for (const entry of [...this.pending]) if (entry.attempt !== undefined) this.finish(entry);
+    }
     this.renderRoot = root;
     this.removeExpired();
-    for (const entry of [...this.pending]) this.resolve(entry);
+    for (const entry of [...this.pending]) {
+      this.resolve(entry);
+      if (entry.attemptCurrent?.() === false) this.finish(entry);
+    }
     this.presentResolved();
+  }
+
+  refreshMounted(root: HTMLElement): void {
+    if (this.destroyed || this.renderRoot !== root) return;
+    this.removeExpired();
+    for (const entry of [...this.pending]) {
+      if (entry.highlightUntil === undefined) continue;
+      if (entry.revealAuthority?.isCurrent() === false) this.finish(entry);
+      else this.presentEntry(root, entry);
+    }
   }
 
   destroy(): void {
@@ -195,7 +241,7 @@ export class CreationPresentationController {
     this.destroyed = true;
     this.unsubscribe();
     const entries = this.pending.splice(0);
-    for (const entry of entries) this.clearTimeout(entry.timeout);
+    for (const entry of entries) this.discard(entry);
     this.clearTimeout(this.announcementTimeout);
     this.announcementTimeout = 0;
     ++this.announcementGeneration;
@@ -232,6 +278,15 @@ export class CreationPresentationController {
   private resolve(entry: PendingPresentation): void {
     if (!this.pending.includes(entry)) return;
     const ref = canonicalRef(this.options.queries.resolve(entry.lookupRef));
+    if (
+      entry.attempt !== undefined &&
+      (ref === undefined ||
+        entry.resolvedRef === undefined ||
+        taskReconciliationKey(ref) !== taskReconciliationKey(entry.resolvedRef))
+    ) {
+      this.finish(entry);
+      return;
+    }
     if (ref === undefined) return;
     entry.lookupRef = ref;
     entry.resolvedRef = ref;
@@ -246,16 +301,112 @@ export class CreationPresentationController {
   }
 
   private presentEntry(root: HTMLElement, entry: PendingPresentation): void {
+    if (!this.presentationAuthorityCurrent(entry)) return;
     if (entry.highlightedElement != null && !root.contains(entry.highlightedElement)) {
       this.releaseHighlight(entry);
     }
-    if (entry.resolvedRef === undefined) return;
-    const matches = renderedTaskElements(root, entry.resolvedRef);
-    if (matches.length === 0) return;
-    const target = matches.find((element) => visibleWithin(root, element)) ?? matches[0];
+    if (entry.resolvedRef === undefined || entry.revealing === true) return;
+    if (!this.readyForPresentation(entry)) return;
+    const target = this.presentationTarget(root, entry.resolvedRef);
     if (target == null) return;
     if (entry.highlightUntil === undefined) this.startHighlight(entry);
     this.highlight(root, entry, target);
+  }
+
+  private presentationTarget(root: HTMLElement, ref: TaskRef): HTMLElement | undefined {
+    const matches = renderedTaskElements(root, ref);
+    return matches.find((element) => visibleWithin(root, element)) ?? matches[0];
+  }
+
+  private presentationAuthorityCurrent(entry: PendingPresentation): boolean {
+    if (entry.revealAuthority?.isCurrent() !== false) return true;
+    this.finish(entry);
+    return false;
+  }
+
+  private readyForPresentation(entry: PendingPresentation): boolean {
+    return (
+      entry.highlightUntil !== undefined ||
+      entry.revealReady === true ||
+      entry.revealAuthority === undefined ||
+      this.revealInitial(entry)
+    );
+  }
+
+  private revealInitial(entry: PendingPresentation): boolean {
+    const authority = entry.revealAuthority;
+    if (authority === undefined || entry.resolvedRef === undefined || !authority.isCurrent())
+      return false;
+    const root = this.renderRoot;
+    if (root === undefined) return false;
+    const document = root.ownerDocument;
+    const owner = document.defaultView;
+    const ref = entry.resolvedRef;
+    const attempt = new AbortController();
+    entry.attempt = attempt;
+    entry.revealing = true;
+    const sameRoot = (): boolean =>
+      this.renderRoot === root && root.ownerDocument === document && document.defaultView === owner;
+    const isCurrent = (): boolean =>
+      !this.destroyed &&
+      !attempt.signal.aborted &&
+      this.pending.includes(entry) &&
+      entry.attempt === attempt &&
+      sameRoot() &&
+      entry.resolvedRef !== undefined &&
+      taskReconciliationKey(entry.resolvedRef) === taskReconciliationKey(ref) &&
+      authority.isCurrent() &&
+      this.options.now() < entry.expiresAt;
+    entry.attemptCurrent = isCurrent;
+    const clear = (): void => {
+      if (entry.attempt !== attempt) return;
+      entry.attempt = undefined;
+      entry.attemptCurrent = undefined;
+      entry.revealing = false;
+      attempt.abort();
+    };
+    const accept = (target: HTMLElement | undefined): boolean => {
+      const ready =
+        isCurrent() &&
+        target !== undefined &&
+        target.isConnected &&
+        root.contains(target) &&
+        renderedTaskElements(root, ref).includes(target);
+      if (ready) {
+        entry.revealReady = true;
+        authority.onPresented?.(ref, target);
+      }
+      clear();
+      return ready;
+    };
+    try {
+      const result = authority.reveal(ref, { signal: attempt.signal, isCurrent });
+      if (result === undefined || !('then' in result)) return accept(result);
+      // The attempt deadline/authority cancels application ownership even if the host never settles.
+      const cancelled = new Promise<undefined>((resolve) => {
+        attempt.signal.addEventListener(
+          'abort',
+          () => {
+            resolve(undefined);
+          },
+          { once: true },
+        );
+        if (attempt.signal.aborted) resolve(undefined);
+      });
+      void Promise.race([result, cancelled]).then(
+        (target) => {
+          if (accept(target)) this.presentEntry(root, entry);
+        },
+        () => {
+          clear();
+        },
+      );
+      return false;
+    } catch {
+      // The compact Search owner reports live read/render failures once.
+      clear();
+      return false;
+    }
   }
 
   private startHighlight(entry: PendingPresentation): void {
@@ -274,7 +425,7 @@ export class CreationPresentationController {
       entry.highlightedElement = element;
     }
     element.classList.add('is-just-created');
-    if (newlyBound && !visibleWithin(root, element)) {
+    if (newlyBound && entry.revealAuthority === undefined && !visibleWithin(root, element)) {
       element.scrollIntoView({
         behavior: this.options.reducedMotion() ? 'auto' : 'smooth',
         block: 'nearest',
@@ -307,11 +458,14 @@ export class CreationPresentationController {
     const index = this.pending.indexOf(entry);
     if (index < 0) return;
     this.pending.splice(index, 1);
-    this.clearTimeout(entry.timeout);
-    this.releaseHighlight(entry);
+    this.discard(entry);
   }
 
   private discard(entry: PendingPresentation): void {
+    entry.revealAuthority?.onFinished?.();
+    entry.attempt?.abort();
+    entry.attempt = undefined;
+    entry.attemptCurrent = undefined;
     this.clearTimeout(entry.timeout);
     this.releaseHighlight(entry);
   }

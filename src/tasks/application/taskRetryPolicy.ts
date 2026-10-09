@@ -49,6 +49,8 @@ export interface PreparedMutation {
   readonly clock: ClockReading | { readonly localDate: ClockReading['localDate'] };
   readonly settings: TaskBehaviorSettings;
   readonly retry: RetryPolicy;
+  // Retain only the authored child text so a proven root rebase can recompute its prefix.
+  readonly submittedSubtaskText?: string;
   readonly validateCurrent?: (
     currentRoot: TaskSnapshot,
     rebasedTarget: TaskNodeRef,
@@ -268,11 +270,7 @@ function timingPreconditionHolds(
   patch: Pick<TaskPatch, 'time' | 'duration'>,
 ): boolean {
   if (patch.time === undefined && patch.duration === undefined) return true;
-  if (!('source' in previous) || !('source' in current)) {
-    // Child projections omit duration: only exact source proves its implicit write safe.
-    return patch.time === undefined || restorationSource(previous) === restorationSource(current);
-  }
-  return rootTimingPreconditionHolds(previous, current, patch);
+  return nodeTimingPreconditionHolds(previous, current, patch);
 }
 
 function unchangedOrRequested(previous: unknown, current: unknown, requested: unknown): boolean {
@@ -280,8 +278,10 @@ function unchangedOrRequested(previous: unknown, current: unknown, requested: un
 }
 
 /** Lossy timing projections cannot prove the codec's effective write candidate. */
-function faithfulTimingSource(task: TaskSnapshot): boolean {
-  const source = parseTaskLineSourceModel(task.source.originalMarkdown);
+function faithfulTimingSource(task: TaskStatusSnapshot): boolean {
+  const header =
+    'source' in task ? task.source.originalMarkdown : task.ref.originalBlock.split(/\r?\n/u, 1)[0];
+  const source = header === undefined ? null : parseTaskLineSourceModel(header);
   return (
     source !== null &&
     (['time', 'duration'] as const).every(
@@ -294,9 +294,9 @@ function faithfulTimingSource(task: TaskSnapshot): boolean {
   );
 }
 
-function rootTimingPreconditionHolds(
-  previous: TaskSnapshot,
-  current: TaskSnapshot,
+function nodeTimingPreconditionHolds(
+  previous: TaskStatusSnapshot,
+  current: TaskStatusSnapshot,
   patch: Pick<TaskPatch, 'time' | 'duration'>,
 ): boolean {
   if (!faithfulTimingSource(previous) || !faithfulTimingSource(current)) return false;

@@ -5,6 +5,26 @@ import { defaultShortcuts } from '../src/settings/shortcuts';
 import { expectDefined } from './helpers';
 
 describe('migrateSettings', () => {
+  it.each([
+    [undefined, false],
+    [false, false],
+    [true, true],
+    ['true', false],
+    [1, false],
+    [null, false],
+  ])('normalizes subtask prefix opt-in %j without losing unknown extensions', (value, expected) => {
+    const raw: Record<string, unknown> = {
+      futureStatic: { keep: 7 },
+      ...(value === undefined ? {} : { applyTaskPrefixToSubtasks: value }),
+    };
+    migrateSettings(raw);
+    const once = structuredClone(raw);
+    migrateSettings(raw);
+    expect(raw['applyTaskPrefixToSubtasks']).toBe(expected);
+    expect(raw['futureStatic']).toEqual({ keep: 7 });
+    expect(raw).toEqual(once);
+  });
+
   it('creates a complete shortcut collection when legacy settings have none', () => {
     const raw: Record<string, unknown> = {};
 

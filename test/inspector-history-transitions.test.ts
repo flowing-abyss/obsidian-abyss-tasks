@@ -4,7 +4,6 @@ import type { AppState } from '../src/app/AppState';
 import type { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TagManager } from '../src/tags/TagManager';
-import type { TaskApplicationApi, TaskCaptureApplicationApi } from '../src/tasks';
 import { TaskModal } from '../src/ui/TaskModal';
 import { PanelView } from '../src/views/PanelView';
 import {
@@ -44,7 +43,7 @@ async function harness(surface: 'panel' | 'modal', source: string, selected: str
         },
       }),
       application.index,
-      application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+      application.tasks,
       application.statusRegistry,
     );
     activeDocument.body.append(view.containerEl);

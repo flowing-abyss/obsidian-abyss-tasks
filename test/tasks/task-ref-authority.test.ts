@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { atomDateTime } from '../../src/tasks/domain/commentTimestamp';
 import {
   TaskRefAuthority,
   taskRefContentFingerprint,
@@ -458,4 +459,61 @@ describe('TaskRefAuthority', () => {
     expect(observedRoots(authority, 'tasks.md', '- [ ] task 9999\n')).toEqual([]);
     expect(observedRoots(authority, 'unrelated.md', '- [ ] unrelated\n')).toEqual([]);
   });
+});
+
+it('isolates completion witness evidence and removes it on restoration or abort', () => {
+  const authority = new TaskRefAuthority('completion-witness');
+  const before = '- [x] Done\n  - 2026-09-05T11:58:00Z →';
+  const after = `${before} 2026-09-05T12:00:00+00:00`;
+  const previousRevision = authority.mintRevision(before);
+  const revision = expectDefined(authority.successor(previousRevision, after));
+  const rootBefore = { filePath: 'f.md', line: 0, revision: previousRevision };
+  const rootAfter = { ...rootBefore, revision };
+  const witness = {
+    before: rootBefore,
+    after: rootAfter,
+    entry: {
+      parent: { type: 'task' as const, ref: rootBefore },
+      relativeLine: 1,
+      originalMarkdown: '  - 2026-09-05T11:58:00Z →',
+    },
+    stamp: atomDateTime('2026-09-05T12:00:00+00:00'),
+    endMs: Date.parse('2026-09-05T12:00:00Z'),
+    minimumMs: 60_000,
+    disposition: 'closed' as const,
+  };
+  const input = {
+    filePath: 'f.md',
+    candidateFingerprint: taskRefContentFingerprint(after),
+    candidateLength: after.length,
+    expectedRevision: previousRevision,
+    roots: [{ line: 0, source: after, revision, completionTracking: witness }],
+  };
+  const staged = authority.stage(input, previousRevision);
+  if (staged.type !== 'staged') throw new Error('missing stage');
+  expect(
+    authority.retainPredecessors(staged.token, before, [
+      { line: 0, source: before, revision: previousRevision },
+    ]),
+  ).toBe(true);
+  Object.assign(witness.entry, { originalMarkdown: 'forged acquisition' });
+  const first = expectDefined(
+    authority.observeTransition('f.md', after)?.transitions[0]?.completionTracking,
+  );
+  expect(first.entry.originalMarkdown).toBe('  - 2026-09-05T11:58:00Z →');
+  Object.assign(first.before, { filePath: 'forged observation' });
+  Object.assign(first.entry, { originalMarkdown: 'forged observation' });
+  const second = expectDefined(
+    authority.observeTransition('f.md', after)?.transitions[0]?.completionTracking,
+  );
+  expect(second.before.filePath).toBe('f.md');
+  expect(second.entry.originalMarkdown).toBe('  - 2026-09-05T11:58:00Z →');
+  const restored = authority.stageRestoration(staged.token, before);
+  expect(restored.type).toBe('staged');
+  const observation = expectDefined(authority.observeTransition('f.md', before));
+  expect(observation.restored).toBe(true);
+  expect(observation.transitions).toEqual([]);
+  expect(observation.roots.every((root) => root.completionTracking === undefined)).toBe(true);
+  if (restored.type === 'staged') authority.abort(restored.token);
+  expect(authority.observeTransition('f.md', after)).toBeUndefined();
 });

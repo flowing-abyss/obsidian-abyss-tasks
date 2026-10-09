@@ -652,3 +652,156 @@ describe('Statistics semantic paint contracts', () => {
     expect(statisticsNumber(0)).toBe('0');
   });
 });
+
+it('backs the finite virtual row height contract with its native producer and scoped CSS consumer', async () => {
+  const { default: ts } = await import('typescript');
+  const source = ts.sys.readFile(ts.sys.resolvePath('src/panels/task-list/TaskListSurface.ts'));
+  if (source === undefined) throw new Error('Missing task list surface owner');
+  const runtime = discoverRuntimeVariables(source);
+  expect(runtime.produced).toContain('--abyss-virtual-row-height');
+  expect(contracts.runtime.produced).toContain('--abyss-virtual-row-height');
+  const { loadPluginStyles, cssDeclarationsFor } = await import('./helpers');
+  const css = await loadPluginStyles();
+  const spacer = cssDeclarationsFor(css, '.abyss-task-list-surface > .abyss-virtual-row-spacer');
+  expect(spacer).toContain('height: var(--abyss-virtual-row-height)');
+  expect(cssDeclarationsFor(css, '.abyss-task-list-surface')).toContain('overflow-anchor: none');
+  expect(
+    analyzeCss(`.abyss-task-list-surface > .abyss-virtual-row-spacer { ${spacer} }`, {
+      file: 'fixture.css',
+      contracts: { ...fixtureContracts, runtime },
+    }),
+  ).toEqual([]);
+});
+
+it('backs Kanban column and hover spacing with a finite native spacer variable', async () => {
+  const { default: ts } = await import('typescript');
+  const source = ts.sys.readFile(
+    ts.sys.resolvePath('src/panels/projects/projectKanbanViewport.ts'),
+  );
+  if (source === undefined) throw new Error('Missing Kanban native owner');
+  const runtime = discoverRuntimeVariables(source);
+  expect(runtime.produced).toContain('--abyss-project-kanban-spacer-height');
+  expect(contracts.runtime.produced).toContain('--abyss-project-kanban-spacer-height');
+  const { loadPluginStyles, cssDeclarationsFor } = await import('./helpers');
+  const spacer = cssDeclarationsFor(
+    await loadPluginStyles(),
+    '.abyss-project-kanban-viewport-spacer',
+  );
+  expect(
+    analyzeCss(`.abyss-project-kanban-viewport-spacer { ${spacer} }`, {
+      file: 'fixture.css',
+      contracts: { ...fixtureContracts, runtime },
+    }),
+  ).toEqual([]);
+});
+
+it('backs Timeline sparse spacing with the native owner variable', async () => {
+  const { default: ts } = await import('typescript');
+  const source = ts.sys.readFile(ts.sys.resolvePath('src/panels/projects/projectTimelineRows.ts'));
+  if (source === undefined) throw new Error('Missing Timeline native owner');
+  const runtime = discoverRuntimeVariables(source);
+  expect(runtime.produced).toContain('--abyss-project-timeline-spacer-height');
+  expect(contracts.runtime.produced).toContain('--abyss-project-timeline-spacer-height');
+  const { loadPluginStyles, cssDeclarationsFor } = await import('./helpers');
+  const spacer = cssDeclarationsFor(
+    await loadPluginStyles(),
+    '.abyss-project-timeline-viewport-spacer',
+  );
+  expect(spacer).toContain('height: var(--abyss-project-timeline-spacer-height)');
+  expect(
+    analyzeCss(`.abyss-project-timeline-viewport-spacer { ${spacer} }`, {
+      file: 'fixture.css',
+      contracts: {
+        ...fixtureContracts,
+        runtime: {
+          ...runtime,
+          produced: [
+            ...runtime.produced,
+            '--abyss-project-timeline-summary-width',
+            '--abyss-project-timeline-track-width',
+          ],
+        },
+      },
+    }),
+  ).toEqual([]);
+});
+
+it('reserves dependency picker geometry while preserving constrained flex shrink', async () => {
+  const { loadPluginStyles, cssDeclarationsFor } = await import('./helpers');
+  const css = await loadPluginStyles();
+  expect(
+    cssDeclarationsFor(css, '.abyss-dep-search .abyss-dep-search-results.has-candidates'),
+  ).toContain('height: min(40vh, 16rem)');
+  const list = cssDeclarationsFor(css, '.abyss-dep-search-results');
+  expect(list).toContain('flex-shrink: 1');
+  expect(list).toContain('min-height: 0');
+  expect(list).toContain('max-height: min(40vh, 16rem)');
+});
+
+it('admits only the enrolled parked-row width producer and its scoped consumer', async () => {
+  const { default: ts } = await import('typescript');
+  const source = ts.sys.readFile(ts.sys.resolvePath('src/panels/task-list/TaskListSurface.ts'));
+  if (source === undefined) throw new Error('Missing task list surface owner');
+  const runtime = discoverRuntimeVariables(source);
+  expect(runtime.produced).toContain('--abyss-virtual-row-width');
+  expect(runtime.produced).toContain('--abyss-virtual-row-offset');
+  expect(contracts.runtime.produced).toContain('--abyss-virtual-row-offset');
+  expect(contracts.runtime.produced).toContain('--abyss-virtual-row-width');
+  const { loadPluginStyles, cssDeclarationsFor } = await import('./helpers');
+  const parked = cssDeclarationsFor(
+    await loadPluginStyles(),
+    '.abyss-task-list-surface > .abyss-virtual-row-frame > .abyss-virtual-row-parked',
+  );
+  expect(parked).toContain('width: var(--abyss-virtual-row-width)');
+  expect(parked).toContain('bottom: 100%');
+  expect(parked).toContain('top: auto');
+  expect(parked).toContain('opacity: 0');
+  expect(parked).toContain('pointer-events: none');
+  expect(parked).not.toContain('transform:');
+  const frame = cssDeclarationsFor(
+    await loadPluginStyles(),
+    '.abyss-task-list-surface > .abyss-virtual-row-frame',
+  );
+  expect(frame).toContain('position: static');
+  expect(frame).toContain('height: auto');
+  expect(frame).toContain('padding: 0');
+  expect(frame).toContain('border: 0');
+  const clipped = cssDeclarationsFor(
+    await loadPluginStyles(),
+    '.abyss-task-list-surface > .abyss-virtual-row-frame-clipped',
+  );
+  expect(clipped).toContain('overflow: clip');
+  expect(clipped).toContain('height: var(--abyss-virtual-row-height)');
+  const placed = cssDeclarationsFor(
+    await loadPluginStyles(),
+    '.abyss-task-list-surface > .abyss-virtual-row-frame-clipped > :not(.abyss-virtual-row-parked)',
+  );
+  expect(placed).toContain('top: var(--abyss-virtual-row-offset)');
+  expect(
+    analyzeCss(
+      `.abyss-task-list-surface > .abyss-virtual-row-frame-clipped > :not(.abyss-virtual-row-parked) { ${placed} }`,
+      { file: 'fixture.css', contracts: { ...fixtureContracts, runtime } },
+    ),
+  ).toEqual([]);
+  expect(
+    analyzeCss('.abyss-task-list-surface { top: var(--abyss-unowned-row-offset); }', {
+      file: 'fixture.css',
+      contracts: { ...fixtureContracts, runtime },
+    }),
+  ).not.toEqual([]);
+  expect(
+    analyzeCss(
+      `.abyss-task-list-surface > .abyss-virtual-row-frame > .abyss-virtual-row-parked { ${parked} }`,
+      {
+        file: 'fixture.css',
+        contracts: { ...fixtureContracts, runtime },
+      },
+    ),
+  ).toEqual([]);
+  expect(
+    analyzeCss('.abyss-task-list-surface { width: var(--abyss-unowned-row-width); }', {
+      file: 'fixture.css',
+      contracts: { ...fixtureContracts, runtime },
+    }),
+  ).not.toEqual([]);
+});

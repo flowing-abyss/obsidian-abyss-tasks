@@ -1,14 +1,19 @@
+import type { Component } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ProjectsTimelineView,
   type ProjectTimelineCellContext,
+  type ProjectsTimelineViewContext,
 } from '../src/panels/projects/ProjectsTimelineView';
+import type { ProjectEditResult } from '../src/projects/projectEdits';
 import type { ProjectColumn, ProjectFieldCatalogItem } from '../src/projects/projectFields';
 import { buildDefaultProjectTableSettings } from '../src/projects/projectTableSettings';
+import type { ProjectTimelineModel } from '../src/projects/projectTimelineModel';
 import { buildDefaultProjectTimelineSettings } from '../src/projects/projectTimelineSettings';
 import type { Project } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { expectDefined, freshContainer, loadPluginStyles } from './helpers';
+import { createSearchWordSegmenter } from '../src/tasks/infrastructure/search/searchWordSegmenter';
+import { expectDefined, flushMicrotasks, freshContainer, loadPluginStyles } from './helpers';
 
 interface Cell extends ProjectTimelineCellContext {
   project: Project;
@@ -60,6 +65,7 @@ function mount(
   projects: Project[],
   now = new Date(2026, 8, 13),
   scale?: ReturnType<typeof buildDefaultProjectTimelineSettings>['scale'],
+  overrides: Partial<ProjectsTimelineViewContext<Cell>> = {},
 ) {
   const host = freshContainer();
   activeDocument.body.append(host);
@@ -72,6 +78,7 @@ function mount(
     settings: () => settings,
     savedSettings: () => settings,
     modelInput: () => ({
+      segment: createSearchWordSegmenter(),
       nowMs: Date.UTC(2026, 8, 20),
       fields,
       statuses: DEFAULT_SETTINGS.projects.statuses,
@@ -96,6 +103,7 @@ function mount(
       cell.element.setText(typeof value === 'string' ? value : item.name);
       return cell;
     },
+    releaseCell: () => {},
     selectCell: (cell) => {
       selected.push(cell);
     },
@@ -120,12 +128,18 @@ function mount(
     captureRangeSource: () => ({ kind: 'rejected', reason: 'Test capture unavailable' }),
     commitRangeEdit: vi.fn().mockResolvedValue({ applied: [], failed: [] }),
     reportRangeFailure: vi.fn(),
+    reportRenderFailure: vi.fn(),
     finishEditor: async () => true,
     openRangeMenu,
     now: () => new Date(now),
+    ...overrides,
   });
   mountedView.current = view;
   mounted.add(view);
+  Object.defineProperties(view.scroll, {
+    clientHeight: { configurable: true, value: 400 },
+    clientWidth: { configurable: true, value: 400 },
+  });
   view.mount(projects, '');
   return { host, view, settings, selected, openRangeMenu };
 }
@@ -1154,10 +1168,8 @@ describe('ProjectsTimelineView', () => {
     expect(header.getAttribute('aria-expanded')).toBe('true');
     expect(settings.collapsedGroups).toEqual([]);
     expect(
-      expectDefined(header.closest('.abyss-project-timeline-group')).querySelector<HTMLElement>(
-        '.abyss-project-timeline-group-body',
-      )?.hidden,
-    ).toBe(false);
+      host.querySelector('.abyss-project-timeline-row[data-project-path="Projects/A.md"]'),
+    ).not.toBeNull();
   });
 
   it.each([
@@ -1342,4 +1354,420 @@ describe('ProjectsTimelineView', () => {
       ),
     ).toEqual(['Status', 'Start', 'End']);
   });
+});
+
+it('windows 1100 logical rows and mounts an offscreen requested cell with its row Markdown owner', () => {
+  const items = Array.from({ length: 1100 }, (_, i) =>
+    project(`Projects/P${String(i).padStart(4, '0')}.md`, '2026-09-01'),
+  );
+  const { host, view } = mount(items);
+  expect(host.querySelectorAll('.abyss-project-timeline-row').length).toBeLessThan(20);
+  const cells = view.cells().identities;
+  expect(cells.length).toBeGreaterThanOrEqual(1100);
+  const target = cells.find(
+    (cell) => cell.projectPath === 'Projects/P1099.md' && cell.columnId === 'name',
+  );
+  expect(target).toBeDefined();
+  view.revealCell(expectDefined(target));
+  expect(
+    view.renderedCells().some((cell) => cell.identity.projectPath === 'Projects/P1099.md'),
+  ).toBe(true);
+  expect(view.scroll.scrollTop).toBeGreaterThan(50_000);
+});
+
+it('bounds occurrence lookup work when native scrolling mounts fresh Timeline rows', () => {
+  const frames = controlledFrames();
+  const currentView: { current?: ProjectsTimelineView<Cell> } = {};
+  let captures = 0;
+  const f = mount(
+    Array.from({ length: 1100 }, (_, index) =>
+      project(`Projects/P${String(index).padStart(4, '0')}.md`, '2026-09-01'),
+    ),
+    undefined,
+    undefined,
+    {
+      captureRangeSource: (occurrenceId) => {
+        if (currentView.current !== undefined) {
+          expect(currentView.current.visibleRow(occurrenceId)).toBeDefined();
+          captures++;
+        }
+        return { kind: 'rejected', reason: 'Test capture unavailable' };
+      },
+    },
+  );
+  currentView.current = f.view;
+  const model = expectDefined(
+    (f.view as unknown as { model_abyssPrivate?: ProjectTimelineModel }).model_abyssPrivate,
+  );
+  let occurrenceReads = 0;
+  for (const group of model.groups) {
+    for (const row of group.rows) {
+      const occurrenceId = row.occurrenceId;
+      Object.defineProperty(row, 'occurrenceId', {
+        configurable: true,
+        get: () => {
+          occurrenceReads++;
+          return occurrenceId;
+        },
+      });
+    }
+  }
+  f.view.scroll.scrollTop = 109_000;
+  f.view.scroll.dispatchEvent(new Event('scroll'));
+  frames.run();
+  expect(captures).toBeGreaterThan(0);
+  expect(captures).toBeLessThan(30);
+  expect(f.view.renderedCells().some((cell) => cell.project.path === 'Projects/P1090.md')).toBe(
+    true,
+  );
+  expect(occurrenceReads).toBeLessThan(200);
+});
+
+function controlledFrames() {
+  const callbacks = new Map<number, FrameRequestCallback>();
+  let id = 0;
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    callbacks.set(++id, callback);
+    return id;
+  });
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((key) => {
+    callbacks.delete(key);
+  });
+  return {
+    callbacks,
+    run: () => {
+      const work = [...callbacks.values()];
+      callbacks.clear();
+      expect(work.length).toBeGreaterThan(0);
+      work.forEach((callback) => {
+        callback(0);
+      });
+    },
+  };
+}
+function gestureEvent(type: string, x: number) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    button: { value: 0 },
+    isPrimary: { value: true },
+    pointerId: { value: 1 },
+    clientX: { value: x },
+  });
+  return event;
+}
+async function gestureFixture() {
+  const frames = controlledFrames();
+  const items = Array.from({ length: 1100 }, (_, i) =>
+    project(`Projects/P${String(i).padStart(4, '0')}.md`, '2026-09-01', '2026-09-05'),
+  );
+  let resolve: ((result: ProjectEditResult) => void) | undefined;
+  const commit = vi.fn(
+    () =>
+      new Promise<ProjectEditResult>((done) => {
+        resolve = done;
+      }),
+  );
+  const f = mount(items, new Date(2026, 8, 13), undefined, {
+    commitRangeEdit: commit,
+    captureRangeSource: (occurrenceId) => {
+      const item = expectDefined(items[0]);
+      return {
+        kind: 'ready',
+        source: {
+          occurrenceId,
+          path: item.path,
+          range: {
+            kind: 'closed',
+            startDay: String(item.frontmatter['start']),
+            endDay: String(item.frontmatter['end']),
+          },
+          start: {
+            field: { id: 'start', label: 'Start', type: 'date', property: 'start' },
+            expectedExists: true,
+            expectedValue: item.frontmatter['start'],
+            sourceKey: 'start',
+            sourceProperty: 'start',
+          },
+          end: {
+            field: { id: 'end', label: 'End', type: 'date', property: 'end' },
+            expectedExists: true,
+            expectedValue: item.frontmatter['end'],
+            sourceKey: 'end',
+            sourceProperty: 'end',
+          },
+        },
+      };
+    },
+  });
+  frames.run();
+  const track = expectDefined(f.host.querySelector<HTMLElement>('.abyss-project-timeline-track'));
+  const bar = expectDefined(track.querySelector<HTMLElement>('.abyss-project-timeline-bar'));
+  vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(geometry(0, 840));
+  vi.spyOn(f.view.scroll, 'getBoundingClientRect').mockReturnValue(geometry(0, 900));
+  let captured = false;
+  Object.assign(track, {
+    setPointerCapture: () => {
+      captured = true;
+    },
+    hasPointerCapture: () => captured,
+    releasePointerCapture: () => {
+      expect(track.isConnected).toBe(true);
+      captured = false;
+    },
+  });
+  bar.dispatchEvent(gestureEvent('pointerdown', 200));
+  await flushMicrotasks();
+  bar.dispatchEvent(gestureEvent('pointermove', 240));
+  f.view.root.focus();
+  f.view.scroll.scrollTop = 80_000;
+  f.view.scroll.dispatchEvent(new Event('scroll'));
+  frames.run();
+  expect(track.isConnected).toBe(true);
+  expect(captured).toBe(true);
+  expect(f.host.querySelectorAll('.abyss-project-timeline-row').length).toBeLessThan(20);
+  return {
+    ...f,
+    items,
+    frames,
+    track,
+    bar,
+    commit,
+    resolve: (value: ProjectEditResult) => resolve?.(value),
+  };
+}
+
+it('keeps the captured offscreen Timeline node through command success until projected source changes', async () => {
+  const f = await gestureFixture();
+  f.bar.dispatchEvent(gestureEvent('pointerup', 240));
+  await flushMicrotasks();
+  expect(f.commit).toHaveBeenCalledOnce();
+  f.resolve({
+    applied: [{}] as ProjectEditResult['applied'],
+    failed: [],
+  });
+  await flushMicrotasks();
+  expect(f.track.isConnected).toBe(true);
+  expect(f.bar.classList.contains('is-previewing')).toBe(true);
+  f.items[0] = {
+    ...expectDefined(f.items[0]),
+    frontmatter: { start: '2026-09-05', end: '2026-09-09' },
+  };
+  f.view.update(f.items, '');
+  expect(f.track.isConnected).toBe(false);
+});
+
+it.each(['hide', 'detach', 'collapse', 'dispose'] as const)(
+  'invalidates a captured Timeline node before %s and cannot resurrect it',
+  async (action) => {
+    const f = await gestureFixture();
+    if (action === 'hide') f.view.hide();
+    else if (action === 'detach') f.view.captureViewportBeforeHide();
+    else if (action === 'collapse') {
+      f.settings.collapsedGroups = [
+        JSON.stringify(['status', `id:${expectDefined(f.items[0]).statusId}`]),
+      ];
+      f.view.update(f.items, '');
+    } else f.view.destroy();
+    expect(f.track.isConnected).toBe(false);
+    if (action !== 'dispose') {
+      f.view.show();
+      f.view.update(f.items, '');
+    }
+    f.bar.dispatchEvent(gestureEvent('pointerup', 240));
+    await flushMicrotasks();
+    expect(f.commit).not.toHaveBeenCalled();
+    expect(f.host.querySelector('.is-previewing')).toBeNull();
+  },
+);
+
+it('releases a failed pending Timeline preview after its source scrolls away', async () => {
+  const f = await gestureFixture();
+  f.bar.dispatchEvent(gestureEvent('pointerup', 240));
+  f.resolve({
+    applied: [],
+    failed: [{ path: expectDefined(f.items[0]).path, message: 'Changed source' }],
+  });
+  await flushMicrotasks();
+  expect(f.track.isConnected).toBe(false);
+});
+
+it('pins explicit editing ownership while a root-level picker has focus', () => {
+  const frames = controlledFrames();
+  const f = mount(Array.from({ length: 1100 }, (_, i) => project(`Projects/${i}.md`)));
+  frames.run();
+  const first = expectDefined(f.view.renderedCells()[0]);
+  f.view.setEditingCell(first.element);
+  const picker = f.view.root.createEl('input');
+  picker.focus();
+  f.view.scroll.scrollTop = 80_000;
+  f.view.scroll.dispatchEvent(new Event('scroll'));
+  frames.run();
+  expect(first.element.isConnected).toBe(true);
+  expect(document.activeElement).toBe(picker);
+  f.view.setEditingCell(undefined);
+  expect(first.element.isConnected).toBe(false);
+});
+
+it('threads each row and header Markdown owner through real renderer callbacks and clears references before unload', () => {
+  const owners = new Map<string, Component>();
+  const unloaded: string[] = [];
+  const f = mount(
+    Array.from({ length: 1100 }, (_, index) => project(`Projects/${index}.md`)),
+    undefined,
+    undefined,
+    {
+      renderCell: ({ host, markdown, occurrenceId, project: item, field, existing }) => {
+        if (!owners.has(occurrenceId)) {
+          owners.set(occurrenceId, markdown);
+          markdown.register(() => {
+            expect(
+              view.renderedCells().some((cell) => cell.identity.occurrenceId === occurrenceId),
+            ).toBe(false);
+            unloaded.push(occurrenceId);
+          });
+        }
+        expect(markdown).toBe(owners.get(occurrenceId));
+        return (
+          existing ?? {
+            element: host,
+            identity: { projectPath: item.path, columnId: field.id, occurrenceId },
+            project: item,
+            field,
+          }
+        );
+      },
+      renderGroupContent: (_marker, _label, group, markdown) => {
+        owners.set(`header:${group.key}`, markdown);
+      },
+    },
+  );
+  const view = f.view;
+  const first = expectDefined(view.renderedCells()[0]);
+  expect(new Set(owners.values()).size).toBe(owners.size);
+  view.revealCell(expectDefined(view.cells().identities[view.cells().identities.length - 1]));
+  expect(unloaded).toContain(first.identity.occurrenceId);
+  expect(first.element.isConnected).toBe(false);
+});
+
+it('coalesces horizontal grids and vertical windows and gives fresh rows the current axis', () => {
+  const frames = controlledFrames();
+  const { host, view } = mount(
+    Array.from({ length: 1100 }, (_, i) => project(`Projects/${i}.md`)),
+    new Date(2026, 8, 13),
+    'day',
+  );
+  mockTimelineGeometry(host, view, { summaryWidth: 210, trackWidth: 448, viewportWidth: 520 });
+  frames.run();
+  const old = expectDefined(host.querySelector<HTMLElement>('.abyss-project-timeline-grid'));
+  const oldAppend = vi.spyOn(old, 'appendChild');
+  view.scroll.scrollLeft = 180.5;
+  view.scroll.scrollTop = 80_000.25;
+  const horizontal = vi.spyOn(view.scroll, 'scrollLeft', 'set');
+  const vertical = vi.spyOn(view.scroll, 'scrollTop', 'set');
+  view.scroll.dispatchEvent(new Event('scroll'));
+  view.scroll.dispatchEvent(new Event('scroll'));
+  expect(frames.callbacks.size).toBe(1);
+  frames.run();
+  expect(old.isConnected).toBe(false);
+  expect(host.querySelectorAll('.abyss-project-timeline-row').length).toBeLessThan(20);
+  const grids = [...host.querySelectorAll('.abyss-project-timeline-grid')].map((grid) =>
+    [...grid.children].map((line) => (line as HTMLElement).dataset['day']),
+  );
+  expect(grids.length).toBeGreaterThan(0);
+  for (const grid of grids) expect(grid).toEqual(grids[0]);
+  const expectedDays = [
+    ...host.querySelectorAll<HTMLElement>('.abyss-project-timeline-axis-cell'),
+  ].map((cell) => cell.dataset['startDay']);
+  expect(grids[0]).toEqual(expect.arrayContaining(expectedDays));
+  expect(horizontal).not.toHaveBeenCalled();
+  // The geometry fixture measures rows at 40px, so a real anchor correction may write vertically.
+  expect(vertical.mock.calls.every(([value]) => Number.isFinite(value))).toBe(true);
+  oldAppend.mockClear();
+  view.scroll.scrollLeft = 190.5;
+  view.scroll.dispatchEvent(new Event('scroll'));
+  frames.run();
+  expect(oldAppend).not.toHaveBeenCalled();
+});
+
+it.each(['initial', 'frame'] as const)(
+  'reports %s mount errors once through the render boundary',
+  (phase) => {
+    const frames = controlledFrames();
+    const renderFailure = vi.fn();
+    const rangeFailure = vi.fn();
+    let fail = phase === 'initial';
+    const f = mount(
+      Array.from({ length: 1100 }, (_, index) => project(`Projects/${index}.md`)),
+      undefined,
+      undefined,
+      {
+        reportRenderFailure: renderFailure,
+        reportRangeFailure: rangeFailure,
+        renderCell: ({ host, project: item, field, occurrenceId }) => {
+          if (fail) throw new Error('Broken renderer');
+          return {
+            element: host,
+            identity: { occurrenceId, projectPath: item.path, columnId: field.id },
+            project: item,
+            field,
+          };
+        },
+      },
+    );
+    if (phase === 'frame') {
+      frames.run();
+      fail = true;
+      f.view.scroll.scrollTop = 80_000;
+      f.view.scroll.dispatchEvent(new Event('scroll'));
+      frames.run();
+    }
+    expect(renderFailure).toHaveBeenCalledOnce();
+    f.view.scroll.dispatchEvent(new Event('scroll'));
+    expect(frames.callbacks.size).toBe(0);
+    expect(renderFailure).toHaveBeenCalledOnce();
+    f.view.update([], '');
+    f.view.update([project('new.md')], '');
+    expect(renderFailure).toHaveBeenCalledTimes(2);
+    expect(rangeFailure).not.toHaveBeenCalled();
+    f.view.destroy();
+    for (const callback of frames.callbacks.values()) callback(0);
+    expect(renderFailure).toHaveBeenCalledTimes(2);
+  },
+);
+
+it('cancels the captured gesture before a zero-height resize evicts its row', async () => {
+  const f = await gestureFixture();
+  Object.defineProperty(f.view.scroll, 'clientHeight', { configurable: true, value: 0 });
+  window.dispatchEvent(new Event('resize'));
+  expect(f.track.isConnected).toBe(false);
+  f.bar.dispatchEvent(gestureEvent('pointerup', 240));
+  await flushMicrotasks();
+  expect(f.commit).not.toHaveBeenCalled();
+  expect(f.frames.callbacks.size).toBe(0);
+});
+
+it('keeps a vertical projection anchor without writing the independent horizontal offset', () => {
+  const frames = controlledFrames();
+  const items = Array.from({ length: 1100 }, (_, index) =>
+    project(`Projects/P${String(index).padStart(4, '0')}.md`),
+  );
+  const f = mount(items);
+  frames.run();
+  f.view.scroll.scrollTop = 5000.75;
+  f.view.scroll.scrollLeft = 137.5;
+  f.view.scroll.dispatchEvent(new Event('scroll'));
+  frames.run();
+  const horizontal = vi.spyOn(f.view.scroll, 'scrollLeft', 'set');
+  f.view.update([project('Projects/000-before.md'), ...items], '');
+  expect(f.view.scroll.scrollTop).toBe(5100.75);
+  expect(horizontal).not.toHaveBeenCalled();
+});
+
+it('does not publish a native window while destroying an explicit editor pin', () => {
+  const published = vi.fn();
+  const f = mount([project('Projects/A.md')], undefined, undefined, { windowRendered: published });
+  f.view.setEditingCell(expectDefined(f.view.renderedCells()[0]).element);
+  published.mockClear();
+  f.view.destroy();
+  expect(published).not.toHaveBeenCalled();
 });

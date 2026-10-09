@@ -62,7 +62,9 @@ export interface RenderedCellContext extends ProjectOverviewCell {
   field: ProjectFieldCatalogItem;
   ownedClear: OwnedInferredPropertyClear | undefined;
   readonly element: HTMLElement;
-  readonly markdown?: Component;
+  readonly markdown: Component;
+  readonly resources: Component;
+  contentMarkdown: Component | undefined;
   contentSignature: string;
 }
 

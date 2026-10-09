@@ -1,9 +1,13 @@
 import { parseLinks } from '../../../markdown/links';
 import {
-  instantOffsetMinutes,
-  parseCommentTimestampPrefix,
-  type AtomDateTime,
-} from '../../domain/commentTimestamp';
+  commentBlockEnd,
+  readCommentBlock,
+  replacementCommentSourceLines,
+  type CommentSource,
+  type CommentSourceLine,
+} from '../../domain/commentSource';
+import { normalizeCommentText } from '../../domain/commentText';
+import { instantOffsetMinutes, type AtomDateTime } from '../../domain/commentTimestamp';
 import {
   recurrenceOwnedSubtree,
   stripRecurrenceTerminalBlockId,
@@ -19,7 +23,7 @@ import {
   type OffsetAt,
   type ParsedTimeEntry,
 } from '../../domain/timeEntry';
-import type { LocalDate, TaskInsertionPolicy } from '../../domain/types';
+import type { CommentRef, LocalDate, TaskInsertionPolicy } from '../../domain/types';
 import { createLinkedTaskLines } from './createTaskLine';
 import {
   consumeMarkdownFenceLine,
@@ -313,13 +317,6 @@ function isConfirmedTarget(
   );
 }
 
-function commentParts(
-  line: string,
-): { readonly prefix: string; readonly text: string } | undefined {
-  const parsed = parseCommentTimestampPrefix(line);
-  return parsed != null ? { prefix: parsed.prefix, text: parsed.text } : undefined;
-}
-
 interface BlockEditContext {
   readonly indentUnit: TaskIndentUnit;
   readonly lines: SourceLine[];
@@ -339,21 +336,24 @@ function compatibleBlankLine(line: string, parent: string): boolean {
   );
 }
 
+function compatibleNestedLine(line: string, parent: string): boolean {
+  return (
+    compatibleBlankLine(line, parent) ||
+    (indentation(line) > indentation(parent) && quoteDepth(line) === quoteDepth(parent))
+  );
+}
+
 function validRestoredSubtree(lines: readonly SourceLine[], parent: string): boolean {
   const first = lines[0]?.text;
   if (first === undefined || readTaskLinePrefix(first) === null) return false;
-  const depth = indentation(first);
-  return (
-    depth > indentation(parent) &&
-    quoteDepth(first) === quoteDepth(parent) &&
-    lines
-      .slice(1)
-      .every(
-        (line) =>
-          compatibleBlankLine(line.text, parent) ||
-          (indentation(line.text) > depth && quoteDepth(line.text) === quoteDepth(first)),
-      )
-  );
+  if (!compatibleNestedLine(first, parent)) return false;
+  const commentLines = lines.map((line) => line.text);
+  let at = 1;
+  while (at < lines.length) {
+    if (!compatibleNestedLine(commentLines[at] ?? '', first)) return false;
+    at = commentBlockEnd(commentLines, at);
+  }
+  return true;
 }
 
 type RestorePlacement = Extract<TaskBlockEdit, { readonly type: 'restore-subtask' }>['placement'];
@@ -445,6 +445,7 @@ function restoreSeparator(
 
 function* rootBlockAtSteps(
   lines: readonly SourceLine[],
+  commentLines: readonly string[],
   content: string,
   index: number,
 ): Generator<undefined, { readonly block: TaskRootBlock; readonly next: number } | undefined> {
@@ -463,8 +464,8 @@ function* rootBlockAtSteps(
       continue;
     }
     if (quoteDepth(line.text) !== rootQuote || indentation(line.text) <= rootIndent) break;
-    toLine = cursor;
-    cursor++;
+    cursor = commentBlockEnd(commentLines, cursor);
+    toLine = cursor - 1;
   }
   const last = lines[toLine];
   const to = last != null ? last.to - last.ending.length : rootLine.from;
@@ -660,9 +661,10 @@ function* taskRootBlockSteps(content: string): Generator<TaskRootBlock | undefin
     lines.push(line);
     yield undefined;
   }
+  const commentLines = lines.map((line) => line.text);
   let index = 0;
   while (index < lines.length) {
-    const found = yield* rootBlockAtSteps(lines, content, index);
+    const found = yield* rootBlockAtSteps(lines, commentLines, content, index);
     if (found === undefined) {
       index++;
       yield undefined;
@@ -826,17 +828,27 @@ function appendChildLine(context: BlockEditContext, text: string): void {
 }
 
 /** Where a child's own block ends, by the same indentation rule that bounds a root block. */
-function childBlockEnd(context: BlockEditContext, from: number, blockEnd: number): number {
+function childBlockEnd(
+  context: BlockEditContext,
+  commentLines: readonly string[],
+  from: number,
+  blockEnd: number,
+): number {
   const child = context.lines[from]?.text ?? '';
   const childIndent = indentation(child);
   const childQuote = quoteDepth(child);
   let to = from;
-  for (let at = from + 1; at < blockEnd; at++) {
+  let at = from + 1;
+  while (at < blockEnd) {
     const text = context.lines[at]?.text;
     if (text === undefined) break;
-    if (isTaskBlockBlankLine(text)) continue;
+    if (isTaskBlockBlankLine(text)) {
+      at++;
+      continue;
+    }
     if (quoteDepth(text) !== childQuote || indentation(text) <= childIndent) break;
-    to = at;
+    at = commentBlockEnd(commentLines, at, blockEnd);
+    to = at - 1;
   }
   return to;
 }
@@ -852,18 +864,19 @@ function directChildBlocks(
 ): ReadonlyArray<{ readonly from: number; readonly to: number }> {
   const parentIndent = indentation(context.parent.text);
   const blockEnd = blockEndLine(context);
+  const commentLines = context.lines.map((line) => line.text);
   const ranges: Array<{ readonly from: number; readonly to: number }> = [];
   let at = context.parentLine + 1;
   while (at < blockEnd) {
     const text = context.lines[at]?.text;
     if (text === undefined) break;
     if (readTaskLinePrefix(text) !== null && indentation(text) > parentIndent) {
-      const to = childBlockEnd(context, at, blockEnd);
+      const to = childBlockEnd(context, commentLines, at, blockEnd);
       ranges.push({ from: at, to });
       at = to + 1;
       continue;
     }
-    at++;
+    at = commentBlockEnd(commentLines, at, blockEnd);
   }
   return ranges;
 }
@@ -987,14 +1000,54 @@ function reorderSubtask(
   return undefined;
 }
 
+function ownedComment(
+  content: string,
+  block: TaskRootBlock,
+  target: TaskBlockTarget,
+  comment: Pick<CommentRef, 'relativeLine' | 'originalMarkdown'>,
+): CommentSource | undefined {
+  const from = block.line + target.relativeLine + comment.relativeLine;
+  const end = block.line + target.relativeLine + target.lineCount;
+  if (comment.relativeLine <= 0 || end > block.toLine + 1) return undefined;
+  const found = readCommentBlock(content.split('\n'), from, end);
+  if (
+    found === undefined ||
+    lineWithoutCr(found.originalMarkdown) !== lineWithoutCr(comment.originalMarkdown)
+  )
+    return undefined;
+  if (
+    target.childRanges.some(
+      (range) =>
+        from <= block.line + target.relativeLine + range.to &&
+        found.toExclusive > block.line + target.relativeLine + range.from,
+    )
+  )
+    return undefined;
+  return found;
+}
+
+function commentLines(text: string, headPrefix: string, continuationPrefix: string): string[] {
+  return text
+    .split('\n')
+    .map((line, index) => `${index === 0 ? headPrefix : continuationPrefix}${line}`);
+}
+
 function addComment(
   context: BlockEditContext,
   edit: Extract<TaskBlockEdit, { readonly type: 'add-comment' }>,
 ): TaskBlockEditResult | undefined {
-  if (edit.text.length === 0 || /[\r\n]/u.test(edit.text)) {
-    return { type: 'invalid', field: 'comment' };
-  }
-  insertChildLine(context, trailingEntryRunStart(context), `- ${edit.stamp}: ${edit.text}`);
+  const normalized = normalizeCommentText(edit.text);
+  if (normalized.type !== 'ready') return { type: 'invalid', field: 'comment' };
+  const prefix = nestedLinePrefix(context);
+  insertAt(
+    context.lines,
+    trailingEntryRunStart(context),
+    insertedLines(
+      commentLines(normalized.text, `${prefix}- ${edit.stamp}: `, `${prefix}  `),
+      context.ending,
+    ),
+    context.ending,
+  );
   return undefined;
 }
 
@@ -1002,28 +1055,24 @@ function editExistingComment(
   context: BlockEditContext,
   edit: Extract<TaskBlockEdit, { readonly type: 'update-comment' | 'delete-comment' }>,
 ): TaskBlockEditResult | undefined {
-  const commentLine = context.parentLine + edit.relativeLine;
-  const current = context.lines[commentLine];
-  if (
-    edit.relativeLine <= 0 ||
-    edit.relativeLine >= context.target.lineCount ||
-    current?.text !== lineWithoutCr(edit.originalMarkdown)
-  ) {
-    return { type: 'conflict' };
-  }
-  const comment = commentParts(current.text);
-  if (comment == null) return { type: 'conflict' };
+  const comment = ownedComment(context.content, context.block, context.target, edit);
+  if (comment === undefined) return { type: 'conflict' };
   if (edit.type === 'delete-comment') {
-    context.lines.splice(commentLine, 1);
+    context.lines.splice(comment.from, comment.toExclusive - comment.from);
     return undefined;
   }
-  if (edit.text.length === 0 || /[\r\n]/u.test(edit.text)) {
-    return { type: 'invalid', field: 'comment' };
-  }
-  if (comment.text.trim() === edit.text) {
+  const normalized = normalizeCommentText(edit.text);
+  if (normalized.type !== 'ready') return { type: 'invalid', field: 'comment' };
+  if (comment.text === normalized.text)
     return { type: 'unchanged', content: context.content, block: context.block };
+  const replacements = replacementCommentSourceLines(comment, normalized.text);
+  const original = context.lines.splice(comment.from, comment.toExclusive - comment.from);
+  const additions = insertedLines(replacements, context.ending);
+  for (const [index, line] of additions.entries()) {
+    const ending = original[index]?.ending;
+    if (ending !== undefined && ending !== '') line.ending = ending;
   }
-  current.text = `${comment.prefix}${edit.text}`;
+  insertAt(context.lines, comment.from, additions, context.ending);
   return undefined;
 }
 
@@ -1368,6 +1417,28 @@ export class TaskBlockEditor {
     return descriptionLinkIn(
       readDescriptionSourceLines(content, block, target),
       target.description,
+      occurrence,
+    );
+  }
+
+  /** Proves a full comment block and maps its logical occurrence to one physical token. */
+  commentLink(
+    ...[content, block, target, comment, occurrence]: [
+      content: string,
+      block: TaskRootBlock,
+      target: TaskBlockTarget,
+      comment: CommentRef,
+      occurrence: number,
+    ]
+  ): DescriptionLinkTarget {
+    const source = ownedComment(content, block, target, comment);
+    if (source === undefined) return { type: 'conflict' };
+    return descriptionLinkIn(
+      source.lines.map((line: CommentSourceLine) => ({
+        ...line,
+        relativeLine: line.line - block.line,
+      })),
+      source.text,
       occurrence,
     );
   }

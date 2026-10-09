@@ -1,0 +1,353 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AppState } from '../src/app/AppState';
+import { ListViewControls } from '../src/panels/center/ListViewControls';
+import { mountProjectCellValuePicker } from '../src/panels/projects/projectCellValuePicker';
+import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { SettingsPersistenceCoordinator } from '../src/settings/persistence';
+import type { ListViewState } from '../src/settings/types';
+import * as policy from '../src/tasks';
+import { NoteSuggest } from '../src/ui/NoteSuggest';
+import { ProjectPropertySuggest } from '../src/ui/ProjectPropertySuggest';
+import { TagPickerModal } from '../src/ui/TagPickerModal';
+import { noInteractionOwnership } from '../src/ui/interactionOwnership';
+import { showTagDropdown } from '../src/ui/tagDropdown';
+import { appWithFiles, expectDefined, makeStubStore, useRealMoment } from './helpers';
+import { mountCanonicalSearchUi } from './support/taskSearchUiHarness';
+
+useRealMoment();
+
+const closers: Array<() => void> = [];
+afterEach(() => {
+  closers.splice(0).forEach((close) => {
+    close();
+  });
+  document.body.empty();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+const candidates = ['Alpha', 'Beta', 'Тест', '東京大学'];
+function type(input: HTMLInputElement, value: string): void {
+  input.value = value;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+describe('production local candidate searches', () => {
+  it.each([
+    ['Alhpa', 'Alpha'],
+    ['Alxha', 'Alpha'],
+    ['Btea', 'Beta'],
+    ['Тсет', 'Тест'],
+    ['Теск', 'Тест'],
+    ['大学 東京', '東京大学'],
+  ])('finds %s without replacing the accepted value %s', (query, expected) => {
+    const app = appWithFiles(Object.fromEntries(candidates.map((value) => [`${value}.md`, ''])));
+    const input = document.body.createEl('input');
+    const pick = vi.fn();
+    const notes = new NoteSuggest(app, input, pick);
+    const found = notes.getSuggestions(query);
+    expect(found.map(({ basename }) => basename)).toEqual([expected]);
+    notes.selectSuggestion(expectDefined(found[0]));
+    expect(pick).toHaveBeenCalledWith(found[0]);
+    const properties = new ProjectPropertySuggest({ app, input, values: candidates, onPick: pick });
+    expect(properties.getSuggestions(query).map(({ value }) => value)).toEqual([expected]);
+    properties.selectSuggestion(expectDefined(properties.getSuggestions(query)[0]));
+    expect(pick).toHaveBeenLastCalledWith(expected);
+  });
+
+  it('prepares once, retains note sorting/cap, and rejects a large paste before candidate segmentation', () => {
+    const app = appWithFiles(
+      Object.fromEntries(
+        Array.from({ length: 70 }, (_, i) => [`Alpha ${String(i).padStart(2, '0')}.md`, '']),
+      ),
+    );
+    const notes = new NoteSuggest(app, document.body.createEl('input'), vi.fn());
+    const prepare = vi.spyOn(policy, 'prepareSearchQuery');
+    expect(notes.getSuggestions('Alxha')).toHaveLength(50);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(notes.getSuggestions('')[0]?.basename).toBe('Alpha 00');
+    expect(notes.getSuggestions('x'.repeat(1024 * 1024))).toEqual([]);
+    const properties = new ProjectPropertySuggest({
+      app,
+      input: document.body.createEl('input'),
+      values: candidates,
+      onPick: vi.fn(),
+    });
+    prepare.mockClear();
+    expect(properties.getSuggestions('Тсет').map(({ value }) => value)).toEqual(['Тест']);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(properties.getSuggestions('')).toHaveLength(4);
+    expect(properties.getSuggestions('x'.repeat(1024 * 1024))).toEqual([]);
+  });
+
+  it.each(['dropdown', 'modal', 'cell'] as const)(
+    'prepares once in the actual %s and keeps exact typo creation/choices',
+    (kind) => {
+      const host = document.body.createDiv();
+      const commit = vi.fn(() => 'committed' as const);
+      const app = appWithFiles({});
+      let input: HTMLInputElement;
+      let values: () => string[];
+      let selectedValue: (() => unknown) | undefined;
+      if (kind === 'dropdown') {
+        showTagDropdown(
+          host,
+          candidates.map((value) => `#${value}`),
+          () => undefined,
+          commit,
+        );
+        input = expectDefined(host.querySelector<HTMLInputElement>('input'));
+        values = () =>
+          Array.from(host.querySelectorAll('.abyss-tag-dropdown-opt')).map((el) => el.textContent);
+      } else if (kind === 'modal') {
+        const modal = new TagPickerModal(
+          app,
+          () => undefined,
+          new Set(),
+          new Set(),
+          candidates.map((value) => `#${value}`),
+          commit,
+        );
+        document.body.append(modal.containerEl);
+        modal.onOpen();
+        closers.push(() => {
+          modal.onClose();
+        });
+        input = expectDefined(modal.contentEl.querySelector<HTMLInputElement>('input'));
+        values = () =>
+          Array.from(modal.contentEl.querySelectorAll('[data-tag]')).map(
+            (el) => el.getAttribute('data-tag') ?? '',
+          );
+      } else {
+        const picker = mountProjectCellValuePicker({
+          app,
+          root: host,
+          sourcePath: '',
+          label: 'Value',
+          multiple: true,
+          value: [],
+          suggestions: candidates.map((value) => ({ value, label: value })),
+          equivalent: Object.is,
+          literal: (value) => value,
+          onChange: vi.fn(),
+          onCommit: vi.fn(),
+          onInvalid: vi.fn(),
+        });
+        closers.push(() => {
+          picker.destroy();
+        });
+        input = picker.focusTarget;
+        selectedValue = () => picker.value();
+        values = () =>
+          Array.from(host.querySelectorAll<HTMLElement>('[role="option"]'))
+            .filter((el) => el.hidden !== true)
+            .map((el) => el.dataset['value'] ?? '');
+      }
+      const prepare = vi.spyOn(policy, 'prepareSearchQuery');
+      type(input, 'Тсет');
+      expect(values()).toEqual([kind === 'cell' ? 'Тест' : '#Тест']);
+      expect(prepare).toHaveBeenCalledTimes(1);
+      for (const [query, expected] of [
+        ['Alxha', 'Alpha'],
+        ['Btea', 'Beta'],
+        ['Теск', 'Тест'],
+        ['大学 東京', '東京大学'],
+      ]) {
+        type(input, expectDefined(query));
+        expect(values()).toEqual([kind === 'cell' ? expected : `#${expected}`]);
+      }
+      type(input, 'x'.repeat(1024 * 1024));
+      expect(values()).toEqual([]);
+      type(input, '');
+      expect(values()).toHaveLength(4);
+      if (kind === 'cell') {
+        prepare.mockClear();
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+        expect(prepare).toHaveBeenCalledTimes(1);
+        type(input, 'Alxha');
+        expectDefined(
+          host.querySelector<HTMLButtonElement>('.abyss-project-value-picker-action'),
+        ).click();
+        expect(selectedValue?.()).toEqual(['Alxha']);
+      }
+      if (kind === 'dropdown') {
+        type(input, 'Alxha');
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        expect(commit).toHaveBeenCalledWith(['#Alxha']);
+      }
+    },
+  );
+});
+
+it('uses the shared capability fallback only when Intl word segmentation is unavailable', () => {
+  vi.stubGlobal('Intl', { Segmenter: undefined });
+  const app = appWithFiles({ '東京大学.md': '' });
+  const notes = new NoteSuggest(app, document.body.createEl('input'), vi.fn());
+  expect(notes.getSuggestions('大学 東京').map(({ basename }) => basename)).toEqual(['東京大学']);
+});
+
+it('rejects oversized property queries before evaluating candidate exclusions, including browse-on-open', () => {
+  const exclude = vi.fn(() => false);
+  const app = appWithFiles({});
+  const properties = new ProjectPropertySuggest({
+    app,
+    input: document.body.createEl('input'),
+    values: candidates,
+    exclude,
+    browseOnOpen: true,
+    onPick: vi.fn(),
+  });
+  expect(properties.getSuggestions('x'.repeat(1024 * 1024))).toEqual([]);
+  expect(exclude).not.toHaveBeenCalled();
+});
+
+it('keeps exclusion changes in the Search controls session without static or view writes', () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const before = structuredClone(settings);
+  const state = new AppState();
+  state.set('mode', 'search');
+  let list: ListViewState = { groupBy: 'none', sortBy: { field: 'date', dir: 'asc' }, filters: [] };
+  const saveStatic = vi.fn(async () => {}),
+    write = vi.fn(async () => {});
+  const coordinator = new SettingsPersistenceCoordinator({
+    loadStatic: async () => ({}),
+    saveStatic,
+    state: { path: 'state.json', exists: async () => false, read: async () => '', write },
+  });
+  const controls = new ListViewControls({
+    state,
+    settings,
+    statusRegistry: makeStubStore([]).statusRegistry,
+    interactionOwnership: noInteractionOwnership,
+    host: { root: () => document.body, formatDate: (value) => value },
+    saveViewState: () => coordinator.saveViewState(settings),
+    statePort: {
+      read: () => list,
+      write: (next) => {
+        list = next;
+      },
+      relevance: () => true,
+      setRelevance: () => {},
+      canUseRelevance: () => true,
+    },
+  });
+  controls.addPropertyFilter({ type: 'tag', value: '#work' });
+  controls.addPropertyFilter({ type: 'tag-exclude', value: '#private' });
+  expect(list.filters).toEqual([
+    { type: 'tag', value: '#work' },
+    { type: 'tag-exclude', value: '#private' },
+  ]);
+  expect(settings).toEqual(before);
+  expect(saveStatic).not.toHaveBeenCalled();
+  expect(write).not.toHaveBeenCalled();
+});
+
+it('applies exclusions through the actual Search controls statePort to represented roots only', async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const before = structuredClone(settings);
+  const h = await mountCanonicalSearchUi(
+    {
+      'a.md':
+        '- [ ] needle Public #work\n  - [ ] Child #private\n- [ ] needle Private #work #private\n- [ ] needle Nested #work/deep',
+    },
+    settings,
+  );
+  try {
+    h.query('needle');
+    await h.completed();
+    h.panel['searchControls_abyssPrivate'].addPropertyFilter({ type: 'tag', value: '#work' });
+    await h.completed();
+    h.panel['searchControls_abyssPrivate'].addPropertyFilter({
+      type: 'tag-exclude',
+      value: '#private',
+    });
+    await h.completed();
+    expect(h.root.dataset['searchLogicalResults']).toBe('1');
+    expect(h.root.textContent).toContain('needle Public');
+    expect(h.root.textContent).not.toContain('needle Private');
+    expect(h.root.textContent).not.toContain('needle Nested');
+    expect(settings).toEqual(before);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('mounted Search tag events replace polarity and remove chips without coordinator writes or row actions', async () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const before = structuredClone(settings);
+  const saveStatic = vi.fn(async () => {}),
+    write = vi.fn(async () => {});
+  const coordinator = new SettingsPersistenceCoordinator({
+    loadStatic: async () => ({}),
+    saveStatic,
+    state: { path: 'state.json', exists: async () => false, read: async () => '', write },
+  });
+  const h = await mountCanonicalSearchUi(
+    {
+      'a.md':
+        '- [ ] needle Public #needle-work\n  - [ ] needle Child #needle-private\n- [ ] needle Private #needle-work #needle-private\n- [ ] needle Nested #needle-work/deep',
+    },
+    settings,
+  );
+  const saved = vi
+    .spyOn(h.panel, 'onSaveViewState_abyssPrivate')
+    .mockImplementation(() => coordinator.saveViewState(settings));
+  const single = vi
+    .spyOn(h.panel, 'handleTaskContextMenu_abyssPrivate')
+    .mockImplementation(() => {});
+  const bulk = vi.spyOn(h.panel['taskMenus_abyssPrivate'], 'showBulkContextMenu');
+  const selection = vi.spyOn(h.panel, 'handleTaskCardClick_abyssPrivate');
+  try {
+    h.query('needle');
+    await h.completed();
+    const tag = () =>
+      expectDefined(
+        [...h.root.querySelectorAll<HTMLElement>('.abyss-task-tag')].find(
+          (el) => el.textContent === '#needle-work',
+        ),
+      );
+    tag().click();
+    await h.completed();
+    expect(h.root.dataset['searchLogicalResults']).toBe('2');
+    const child = expectDefined(
+      [...h.root.querySelectorAll<HTMLElement>('.abyss-task-tag')].find(
+        (el) => el.textContent === '#needle-private',
+      ),
+    );
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    child.dispatchEvent(event);
+    await h.completed();
+    expect(event.defaultPrevented).toBe(true);
+    expect(h.root.dataset['searchLogicalResults']).toBe('1');
+    expect(h.root.textContent).toContain('needle Public');
+    expect(h.root.textContent).toContain('needle Child');
+    expect(h.root.textContent).not.toContain('needle Private');
+    expect(
+      [...h.root.querySelectorAll('.abyss-filter-chip-label')].map((el) => el.textContent),
+    ).toEqual(['#needle-work', '−#needle-private']);
+    tag().dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    await h.completed();
+    expect(
+      [...h.root.querySelectorAll('.abyss-filter-chip-label')].map((el) => el.textContent),
+    ).toEqual(['−#needle-work', '−#needle-private']);
+    expect(h.root.dataset['searchLogicalResults']).toBe('1');
+    expect(h.root.textContent).toContain('needle Nested');
+    expectDefined(h.root.querySelector<HTMLButtonElement>('.abyss-filter-chip-x')).click();
+    await h.completed();
+    expect(h.root.dataset['searchLogicalResults']).toBe('2');
+    expect(settings).toEqual(before);
+    expect(saved).not.toHaveBeenCalled();
+    expect(saveStatic).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    expect(single).not.toHaveBeenCalled();
+    expect(bulk).not.toHaveBeenCalled();
+    expect(selection).not.toHaveBeenCalled();
+    expect(h.state.get('taskStack')).toEqual([]);
+    const filter = vi.spyOn(h.panel['searchControls_abyssPrivate'], 'addPropertyFilter');
+    h.dispose();
+    child.click();
+    child.dispatchEvent(new MouseEvent('contextmenu', { cancelable: true }));
+    expect(filter).not.toHaveBeenCalled();
+  } finally {
+    h.dispose();
+  }
+});

@@ -547,6 +547,11 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   private ownedPointerActive_abyssPrivate = false;
   private ownedPointerCleanup_abyssPrivate: (() => void) | undefined;
   private closed_abyssPrivate = false;
+  private failureFocusAllowed_abyssPrivate = true;
+  private ownerRevision_abyssPrivate = 0;
+  private ownerDocument_abyssPrivate: Document | undefined;
+  private nativeCleanup_abyssPrivate: (() => void) | undefined;
+  private readonly migrationCleanup_abyssPrivate: () => void;
 
   constructor(private readonly options_abyssPrivate: ProjectCellEditorOptions) {
     this.committedValue_abyssPrivate = copyValue(options_abyssPrivate.value);
@@ -569,7 +574,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
       },
       invalid: (message) => {
         this.error_abyssPrivate.setText(message);
-        this.focus();
+        this.focusAfterFailure_abyssPrivate();
       },
     };
     this.control_abyssPrivate = buildControl(options_abyssPrivate, this.element, events);
@@ -588,11 +593,9 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     this.element.addEventListener('click', () => {
       this.clearOwnedPointer_abyssPrivate();
     });
-    this.element.ownerDocument.addEventListener(
-      'pointerdown',
-      this.onDocumentPointerDown_abyssPrivate,
-      true,
-    );
+    this.bindOwner_abyssPrivate();
+    this.migrationCleanup_abyssPrivate = this.element.onWindowMigrated(this.bindOwner_abyssPrivate);
+    this.element.addEventListener('focusin', this.bindOwner_abyssPrivate, true);
   }
 
   get preferredWidth(): number | undefined {
@@ -600,6 +603,8 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   }
 
   commit(): Promise<boolean> {
+    this.bindOwner_abyssPrivate();
+    this.failureFocusAllowed_abyssPrivate = true;
     return this.commitWithOptions_abyssPrivate(true, 'restore-current');
   }
 
@@ -622,15 +627,39 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   destroy(): void {
     if (this.closed_abyssPrivate) return;
     this.closed_abyssPrivate = true;
+    this.migrationCleanup_abyssPrivate();
+    this.nativeCleanup_abyssPrivate?.();
+    this.element.removeEventListener('focusin', this.bindOwner_abyssPrivate, true);
     this.clearOwnedPointer_abyssPrivate();
     this.control_abyssPrivate?.destroy?.();
-    this.element.ownerDocument.removeEventListener(
-      'pointerdown',
-      this.onDocumentPointerDown_abyssPrivate,
-      true,
-    );
     this.element.remove();
   }
+
+  private readonly bindOwner_abyssPrivate = (): void => {
+    const doc = this.element.ownerDocument;
+    if (this.closed_abyssPrivate || doc === this.ownerDocument_abyssPrivate) return;
+    if (this.ownerDocument_abyssPrivate !== undefined) this.revokeFailureFocus_abyssPrivate();
+    this.clearOwnedPointer_abyssPrivate();
+    this.nativeCleanup_abyssPrivate?.();
+    this.ownerDocument_abyssPrivate = doc;
+    this.ownerRevision_abyssPrivate += 1;
+    const win = doc.defaultView;
+    let live = true;
+    const blur = (): void => {
+      if (live && this.element.ownerDocument === doc) this.revokeFailureFocus_abyssPrivate();
+    };
+    const pointer = (event: PointerEvent): void => {
+      if (live && this.element.ownerDocument === doc)
+        this.onDocumentPointerDown_abyssPrivate(event);
+    };
+    win?.addEventListener('blur', blur);
+    doc.addEventListener('pointerdown', pointer, true);
+    this.nativeCleanup_abyssPrivate = () => {
+      live = false;
+      win?.removeEventListener('blur', blur);
+      doc.removeEventListener('pointerdown', pointer, true);
+    };
+  };
 
   private renderUnavailable_abyssPrivate(): void {
     const { field } = this.options_abyssPrivate;
@@ -642,6 +671,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   }
 
   private readonly onKeyDown_abyssPrivate = (event: KeyboardEvent): void => {
+    this.bindOwner_abyssPrivate();
     if (isImeOwnedEvent(event)) return;
     if (this.handleEscape_abyssPrivate(event)) return;
     const navigation = editorKeyboardNavigation(event);
@@ -660,6 +690,8 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   }
 
   private readonly onFocusOut_abyssPrivate = (event: FocusEvent): void => {
+    this.bindOwner_abyssPrivate();
+    const revision = this.ownerRevision_abyssPrivate;
     const next = event.relatedTarget;
     if (next instanceof Node && this.element.contains(next)) {
       return;
@@ -667,8 +699,9 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     if (this.ownedPointerActive_abyssPrivate) {
       return;
     }
+    this.revokeFailureFocus_abyssPrivate();
     const finish = (): void => {
-      if (this.closed_abyssPrivate) return;
+      if (this.closed_abyssPrivate || this.ownerRevision_abyssPrivate !== revision) return;
       const active = this.element.ownerDocument.activeElement;
       if (active instanceof Node && this.element.contains(active)) return;
       this.requestCommit_abyssPrivate(
@@ -693,25 +726,31 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
   };
 
   private readonly onOwnedPointerDown_abyssPrivate = (): void => {
+    this.bindOwner_abyssPrivate();
     this.ownedPointerCleanup_abyssPrivate?.();
     this.ownedPointerActive_abyssPrivate = true;
     const ownerDocument = this.element.ownerDocument;
     const ownerWindow = ownerDocument.defaultView;
     let timeout: number | undefined;
+    let live = true;
     const release = (): void => {
+      if (!live || this.element.ownerDocument !== ownerDocument) return;
       if (ownerWindow === null) {
         this.clearOwnedPointer_abyssPrivate();
         return;
       }
       ownerWindow.clearTimeout(timeout);
       timeout = ownerWindow.setTimeout(() => {
-        this.clearOwnedPointer_abyssPrivate();
+        if (live && this.element.ownerDocument === ownerDocument)
+          this.clearOwnedPointer_abyssPrivate();
       }, 0);
     };
     const cancel = (): void => {
-      this.clearOwnedPointer_abyssPrivate();
+      if (live && this.element.ownerDocument === ownerDocument)
+        this.clearOwnedPointer_abyssPrivate();
     };
     this.ownedPointerCleanup_abyssPrivate = () => {
+      live = false;
       ownerWindow?.clearTimeout(timeout);
       ownerDocument.removeEventListener('pointerup', release);
       ownerDocument.removeEventListener('pointercancel', cancel);
@@ -741,7 +780,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     this.error_abyssPrivate.setText(
       'This project property configuration changed. Close and reopen the editor.',
     );
-    this.focus();
+    this.focusAfterFailure_abyssPrivate();
     return false;
   }
 
@@ -799,6 +838,8 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     navigation: ProjectCellEditorNavigation,
     focusTarget?: HTMLElement,
   ): void {
+    this.bindOwner_abyssPrivate();
+    this.failureFocusAllowed_abyssPrivate = navigation !== 'preserve-focus';
     this.commitWithOptions_abyssPrivate(close, navigation, focusTarget).then(
       () => undefined,
       (error: unknown) => {
@@ -814,7 +855,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
       return { ok: true, value: control.value() };
     } catch (error) {
       this.error_abyssPrivate.setText(errorMessage(error));
-      this.focus();
+      this.focusAfterFailure_abyssPrivate();
       return { ok: false };
     }
   }
@@ -864,11 +905,26 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
     return true;
   }
 
+  private readonly revokeFailureFocus_abyssPrivate = (): void => {
+    this.failureFocusAllowed_abyssPrivate = false;
+  };
+
+  private focusAfterFailure_abyssPrivate(): void {
+    this.bindOwner_abyssPrivate();
+    if (
+      this.failureFocusAllowed_abyssPrivate &&
+      !this.closed_abyssPrivate &&
+      this.element.isConnected &&
+      this.element.ownerDocument.hasFocus()
+    )
+      this.focus();
+  }
+
   private handleSaveFailure_abyssPrivate(error: unknown): void {
     const message = errorMessage(error);
     if (isProjectEditValidationError(error)) {
       this.error_abyssPrivate.setText(message);
-      this.focus();
+      this.focusAfterFailure_abyssPrivate();
       return;
     }
     this.error_abyssPrivate.setText(
@@ -879,7 +935,7 @@ class ProjectCellEditorLifecycle implements ProjectCellEditorHandle {
       cause: error,
     });
     new Notice(`Could not save ${this.options_abyssPrivate.field.label}: ${message}`);
-    this.focus();
+    this.focusAfterFailure_abyssPrivate();
   }
 
   private finish_abyssPrivate(

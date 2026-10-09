@@ -4,7 +4,13 @@ import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { localDate, type TaskCommand, type TaskSnapshot } from '../src/tasks';
+import {
+  localDate,
+  type TaskApplicationApi,
+  type TaskCommand,
+  type TaskSnapshot,
+} from '../src/tasks';
+import { localDate as occupiedFixtureDate } from '../src/tasks/domain/validation';
 import { presentTaskCommandResult } from '../src/ui/taskCommandResult';
 import {
   calendarMutationTarget,
@@ -21,9 +27,13 @@ import {
   expectDefined,
   flushMicrotasks,
   resolvedConfig,
+  taskQueryApi,
   useRealMoment,
 } from './helpers';
 import { setCalendarDate, setCalendarViewType } from './support/panelHarness';
+
+import { canonicalSearchForIndex } from './support/taskSearchHarness';
+import { searchUiCompleted } from './support/taskSearchUiHarness';
 
 useRealMoment();
 const cleanups: Array<() => void> = [];
@@ -73,7 +83,7 @@ async function harness(markdown: string) {
     occurrenceFor: calendarOccurrenceForRender,
     dependenciesFor: (task: TaskSnapshot) => {
       const target = calendarMutationTarget(task);
-      return target === undefined ? undefined : index.dependencies(target);
+      return target === undefined ? undefined : index.dependencySummary(target);
     },
     onToggle: async (task: TaskSnapshot) => {
       await send({
@@ -123,12 +133,17 @@ async function harness(markdown: string) {
 }
 
 type Harness = Awaited<ReturnType<typeof harness>>;
-function mountCenter(h: Harness): CenterPanel {
+function mountCenter(h: Harness, queries: TaskApplicationApi['queries'] = h.index): CenterPanel {
+  const search = canonicalSearchForIndex(h.index);
+  cleanups.push(() => {
+    search.dispose();
+  });
   const panel = new CenterPanel({
     state: h.state,
     app: h.app,
     settings: { ...DEFAULT_SETTINGS, inbox: { ...DEFAULT_SETTINGS.inbox, mode: 'untagged' } },
-    queries: h.index,
+    queries,
+    search,
     statusRegistry: h.statusRegistry,
     projectStore: null,
     projectManager: null,
@@ -178,6 +193,28 @@ function physicalActivation(control: HTMLElement, type: 'pointer' | 'touch'): vo
 }
 
 describe('center dependency indicator DOM', () => {
+  it('constructs the first real card badge without list/listNodes or rich dependency reads', async () => {
+    const h = await harness('- [ ] Blocker 🆔 a\n- [ ] Current ⛔ a\n');
+    const roots = h.index.list();
+    const queries = taskQueryApi({ list: () => roots });
+    vi.spyOn(h.index, 'list').mockImplementation(() => {
+      throw new Error('full list');
+    });
+    vi.spyOn(h.index, 'listNodes').mockImplementation(() => {
+      throw new Error('full nodes');
+    });
+    vi.spyOn(h.index, 'dependencies').mockImplementation(() => {
+      throw new Error('rich dependencies');
+    });
+    mountCenter(h, queries);
+    const card = [...h.el.querySelectorAll('.abyss-task-card')].find(
+      (row) => row.querySelector('.abyss-task-title')?.textContent === 'Current',
+    );
+    expect(
+      expectDefined(card).querySelector('[data-dependency-count="blocked-by"]')?.textContent,
+    ).toBe('1');
+  });
+
   it.each([
     { suffix: '', dependent: '', counts: [], type: 'none' },
     { suffix: ' ⛔ a', dependent: '', counts: ['1'], type: 'blocked-by' },
@@ -194,7 +231,7 @@ describe('center dependency indicator DOM', () => {
       type: 'both',
     },
   ])(
-    'renders $type inline between checkbox and title without secondary copy',
+    'renders $type inline in the title row without secondary copy',
     async ({ suffix, dependent, counts, type }) => {
       addIcon(
         'lock',
@@ -212,7 +249,7 @@ describe('center dependency indicator DOM', () => {
       );
       const row = element(expectDefined(card), '.abyss-task-card-main-row');
       const indicator = row.querySelector<HTMLElement>('.abyss-dep-indicator');
-      expect(row.classList.contains('abyss-task-card-main-row--has-dep')).toBe(type !== 'none');
+      expect(row.classList.contains('abyss-task-card-main-row--has-dep')).toBe(false);
       expect(expectDefined(card).classList.contains('abyss-task-card-main-row--has-dep')).toBe(
         false,
       );
@@ -223,8 +260,8 @@ describe('center dependency indicator DOM', () => {
         ).toBe(true);
       } else {
         const group = expectDefined(indicator);
-        expect(group.previousElementSibling?.matches('[role="checkbox"]')).toBe(true);
-        expect(group.nextElementSibling?.classList.contains('abyss-task-body')).toBe(true);
+        expect(group.parentElement?.matches('.abyss-task-title-row')).toBe(true);
+        expect(group.nextElementSibling?.matches('.abyss-task-title')).toBe(true);
         expect(group.querySelectorAll('svg')).toHaveLength(1);
         expect(
           [...group.querySelectorAll('[data-dependency-count]')].map((count) => count.textContent),
@@ -234,7 +271,7 @@ describe('center dependency indicator DOM', () => {
         );
         expect(group.getAttribute('aria-label')).toContain('blocked by');
         expect(group.getAttribute('aria-label')).toContain('blocks');
-        expect(group.title).toBe(group.getAttribute('aria-label'));
+        expect(group.hasAttribute('title')).toBe(false);
         expect(group.matches('button, [role="button"]')).toBe(false);
         expect(
           [...group.children].every((piece) => piece.getAttribute('aria-hidden') === 'true'),
@@ -242,19 +279,19 @@ describe('center dependency indicator DOM', () => {
         group.click();
         expect(h.state.get('taskStack')[0]?.title).toBe('Current');
       }
-      expect(expectDefined(card).querySelector('.abyss-task-desc')).toBeNull();
+      expect(expectDefined(card).querySelector<HTMLElement>('.abyss-task-desc')?.hidden).toBe(true);
     },
   );
 
-  it("marks a selected card's main row for both the indicator and the delete button", async () => {
+  it("keeps a selected card's inline indicator beside its title and its delete button in the main row", async () => {
     const h = await harness('- [ ] Current ⛔ a\n- [ ] Schema 🆔 a\n');
     h.state.set('taskStack', [h.node('Current').root]);
     mountCenter(h);
     const row = element(h.el, '.abyss-task-card.is-selected .abyss-task-card-main-row');
 
-    expect(row.querySelector(':scope > .abyss-dep-indicator')).not.toBeNull();
+    expect(row.querySelector('.abyss-task-title-row > .abyss-dep-indicator')).not.toBeNull();
     expect(row.querySelector(':scope > .abyss-task-delete-btn')).not.toBeNull();
-    expect(row.classList.contains('abyss-task-card-main-row--has-dep')).toBe(true);
+    expect(row.classList.contains('abyss-task-card-main-row--has-dep')).toBe(false);
     expect(row.classList.contains('abyss-task-card-main-row--has-delete')).toBe(true);
   });
 
@@ -285,7 +322,7 @@ const surfaceNames = [
   'inspector-subtask',
 ] as const;
 type Surface = (typeof surfaceNames)[number];
-function mountSurface(h: Harness, surface: Surface): HTMLElement {
+async function mountSurface(h: Harness, surface: Surface): Promise<HTMLElement> {
   const task = h.node('Current').root;
   if (surface === 'center' || surface === 'search') {
     if (surface === 'search') {
@@ -293,6 +330,7 @@ function mountSurface(h: Harness, surface: Surface): HTMLElement {
       h.state.set('searchQuery', 'Current');
     }
     mountCenter(h);
+    if (surface === 'search') await searchUiCompleted(h.el);
     return expectDefined(
       [...h.el.querySelectorAll<HTMLElement>('.abyss-task-card')].find(
         (row) => row.querySelector('.abyss-task-title')?.textContent === 'Current',
@@ -343,7 +381,7 @@ function markdownFor(surface: Surface, duplicate = false): string {
 describe('strict dependency checkbox surfaces', () => {
   it('keeps search mounted when a blocked marker SVG receives the pointer click', async () => {
     const h = await harness(markdownFor('search'));
-    const row = mountSurface(h, 'search');
+    const row = await mountSurface(h, 'search');
     const marker = element(row, '.abyss-status-marker');
     const icon = marker.createSvg('svg');
     icon.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -361,7 +399,7 @@ describe('strict dependency checkbox surfaces', () => {
         '- [ ] Current ⛔ schema 🔁 tomorrow 🏁 delete 📅 2026-09-05\n- [ ] Write schema 🆔 schema\n',
       );
       expect(h.node('Current').node.onCompletion).toBe('delete');
-      mountSurface(h, surface);
+      await mountSurface(h, surface);
       const control = element(h.el, '[role="checkbox"]');
       control.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
@@ -383,7 +421,7 @@ describe('strict dependency checkbox surfaces', () => {
         .replace('⛔ schema', '⛔ schema, missing')
         .replace('- [ ] Write schema', '- [x] Write schema');
       const h = await harness(markdown);
-      const row = mountSurface(h, surface);
+      const row = await mountSurface(h, surface);
       expect(row.querySelector('[aria-disabled="true"]')).toBeNull();
       expect(row.querySelector('.abyss-dep-indicator')).toBeNull();
       element(row, '[role="checkbox"]').click();
@@ -463,6 +501,7 @@ describe('strict dependency checkbox surfaces', () => {
       const source = h.node('Current');
       const child = taskSnapshotForCalendarOccurrence({
         kind: 'materialized',
+        occupied: { kind: 'point', date: occupiedFixtureDate('2026-09-05'), roles: ['due'] },
         key: 'indexed-child',
         source,
         planning: source.node.planning,
@@ -494,7 +533,7 @@ describe('strict dependency checkbox surfaces', () => {
     '$surface suppresses $activation and synthesized clicks before dispatch',
     async ({ surface, activation }) => {
       const h = await harness(markdownFor(surface, true));
-      const row = mountSurface(h, surface);
+      const row = await mountSurface(h, surface);
       const marker = element(row, '.abyss-status-marker');
       const before = await h.app.vault.read(h.file);
       physicalActivation(marker, activation);
@@ -507,7 +546,7 @@ describe('strict dependency checkbox surfaces', () => {
       expect(wrapper?.getAttribute('aria-disabled')).toBe('true');
       expect(wrapper?.getAttribute('role')).toBe('checkbox');
       expect(wrapper?.tabIndex).toBe(0);
-      expect(wrapper?.title).toMatch(/prerequisite.*remove.*dependenc/iu);
+      expect(wrapper?.getAttribute('aria-label')).toMatch(/prerequisite.*remove.*dependenc/iu);
       wrapper?.focus();
       expect(activeDocument.activeElement).toBe(wrapper);
       physicalActivation(expectDefined(wrapper), activation);
@@ -515,14 +554,16 @@ describe('strict dependency checkbox surfaces', () => {
       expect(h.execute).not.toHaveBeenCalled();
       if (!surface.startsWith('inspector')) {
         const indicator = element(row, '.abyss-dep-indicator');
-        expect(indicator.previousElementSibling).toBe(wrapper);
+        if (['center', 'search'].includes(surface))
+          expect(indicator.parentElement?.matches('.abyss-task-title-row')).toBe(true);
+        else expect(indicator.previousElementSibling).toBe(wrapper);
       }
     },
   );
 
   it('keyboard completion and each menu completion status report one deterministic blocked Notice', async () => {
     const h = await harness(markdownFor('center'));
-    const row = mountSurface(h, 'center');
+    const row = await mountSurface(h, 'center');
     const control = element(row, '[role="checkbox"]');
     control.dispatchEvent(
       new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }),

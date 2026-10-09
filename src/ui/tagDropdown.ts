@@ -1,11 +1,21 @@
-import { normalizeTaskTagInput } from '../tasks';
+import { Platform } from 'obsidian';
+import {
+  createSearchWordSegmenter,
+  matchesSearchText,
+  normalizeTaskTagInput,
+  prepareSearchQuery,
+  TaskSearchError,
+  type SearchWordSegmenter,
+} from '../tasks';
 import { isImeOwnedEvent } from './ime';
+import { handleLocalSearchKey } from './localSearchKeys';
 import { runAsyncAction } from './runAsyncAction';
 
 let nextTagDropdownId = 0;
 type TagCommitOutcome = 'committed' | 'failed';
 
 interface TagDropdownContext {
+  readonly segment: SearchWordSegmenter;
   readonly sortedTags: readonly string[];
   readonly dropdownId: string;
   readonly input: HTMLInputElement;
@@ -29,17 +39,31 @@ function sortedCandidates(candidates: readonly string[]): readonly string[] {
   });
 }
 
-function matchingTags(tags: readonly string[], query: string): readonly string[] {
-  const normalized = query.toLowerCase().replace(/^#+/u, '');
-  return normalized.length === 0
-    ? tags
-    : tags.filter((tag) => tag.slice(1).toLowerCase().includes(normalized));
+function matchingTags(
+  tags: readonly string[],
+  query: string,
+  segment: SearchWordSegmenter,
+): readonly string[] {
+  try {
+    const prepared = prepareSearchQuery(query, segment);
+    const normalized = query.toLowerCase().replace(/^#+/u, '');
+    return normalized.length === 0
+      ? tags
+      : tags.filter(
+          (tag) =>
+            tag.slice(1).toLowerCase().includes(normalized) ||
+            matchesSearchText(tag, prepared, segment),
+        );
+  } catch (error) {
+    if (error instanceof TaskSearchError && error.code === 'invalid-query') return [];
+    throw error;
+  }
 }
 
 function renderOptions(context: TagDropdownContext, query: string): void {
   const { dropdown, input } = context;
   dropdown.empty();
-  const filtered = matchingTags(context.sortedTags, query);
+  const filtered = matchingTags(context.sortedTags, query, context.segment);
   if (context.activeTag !== undefined && !filtered.includes(context.activeTag)) {
     context.activeTag = undefined;
   }
@@ -201,6 +225,7 @@ export function showTagDropdown(
   const commit = tagCommitHandler({ input, feedback, onCommit, close });
   const context: TagDropdownContext = {
     sortedTags: sortedCandidates(candidates),
+    segment: createSearchWordSegmenter(),
     dropdownId,
     input,
     dropdown,
@@ -209,6 +234,10 @@ export function showTagDropdown(
     commit,
     activeTag: undefined,
   };
+  wrap.addEventListener('keydown', (event) => {
+    if (!closed && event.code === 'KeyF')
+      handleLocalSearchKey(event, { input, owner: wrap }, Platform.isMacOS ? 'meta' : 'ctrl');
+  });
   bindInput(context, close);
   renderOptions(context, '');
   input.focus();

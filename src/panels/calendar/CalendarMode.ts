@@ -7,6 +7,7 @@ import type { EffectiveTagGroup } from '../../tags/effectiveTagGroups';
 import type {
   LocalDate,
   TaskApplicationApi,
+  TaskNodeRef,
   TaskPriority,
   TaskQueryApi,
   TaskSnapshot,
@@ -14,10 +15,11 @@ import type {
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import type { TaskDependencyLookup } from '../../ui/taskDependencyPresentation';
+import { startTaskNodeDrag } from '../../ui/taskNodeDrag';
 import { taskSelectionPath } from '../../ui/taskSelection';
+import { calendarNativeDragPayload } from '../../views/calendarNativeDrag';
 import {
   calendarOccurrenceForTask,
-  calendarRootTaskRef,
   isForecastCalendarTask,
   type CalendarProjectionIssue,
   type CalendarTaskSource,
@@ -29,6 +31,7 @@ import {
   type CalendarProjectionDiagnosticOwner,
   type ForecastContextMenuOwner,
 } from '../../views/timegrid/renderTaskMeta';
+import type { ShowInTaskList } from '../right/inspectorTypes';
 import { CalendarNavigationBar } from './CalendarNavigationBar';
 import type { CalendarCapturePlacement } from './calendarCapturePlacement';
 import { CalendarCommands } from './calendarCommands';
@@ -54,7 +57,8 @@ import { visibleCalendarDates } from './visibleCalendarDates';
 export interface CalendarModeHost {
   /** Full panel render, used by open-day, open-week, and following a keyboard shift. */
   readonly rerender: () => void;
-  readonly openTask: (task: TaskSnapshot) => void;
+  readonly onShowParent?: ShowInTaskList | undefined;
+  readonly openTask: (task: TaskSnapshot, initialTarget?: TaskNodeRef) => void;
   readonly openForecastTask: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
   readonly toggleTask: (task: TaskSnapshot) => Promise<void>;
   readonly setTaskStatus: (task: TaskSnapshot, symbol: string) => Promise<void>;
@@ -117,6 +121,7 @@ export class CalendarMode {
     this.commands_abyssPrivate = new CalendarCommands({
       tasks: deps_abyssPrivate.tasks,
       queries: deps_abyssPrivate.queries,
+      nativeDrag: () => deps_abyssPrivate.state.get('draggingTaskNode'),
     });
     this.focusRetention_abyssPrivate = new TimedBlockFocusRetention(deps_abyssPrivate.tasks, {
       isCalendarActive: () => deps_abyssPrivate.state.get('mode') === 'calendar',
@@ -414,8 +419,10 @@ export class CalendarMode {
     CalendarHandlers,
     | 'onTaskClick'
     | 'onTaskSelect'
+    | 'onShowParent'
     | 'onForecastClick'
     | 'onForecastContextMenu'
+    | 'onNativeDragStart'
     | 'onDrop'
     | 'onDropTime'
     | 'onCreateAtTime'
@@ -424,8 +431,16 @@ export class CalendarMode {
   > {
     const { state, host } = this.deps_abyssPrivate;
     return {
+      onShowParent: host.onShowParent,
       onTaskClick: (task) => {
-        if (calendarRootTaskRef(task) !== undefined) host.openTask(task);
+        const occurrence = calendarOccurrenceForTask(task);
+        if (occurrence?.kind === 'forecast') return;
+        if (occurrence === undefined) {
+          host.openTask(task);
+          return;
+        }
+        if (taskSelectionPath(occurrence.source.root, occurrence.source.node) !== undefined)
+          host.openTask(occurrence.source.root, occurrence.source.target);
       },
       onTaskSelect: (task) => {
         const occurrence = calendarOccurrenceForTask(task);
@@ -442,6 +457,17 @@ export class CalendarMode {
       },
       onForecastContextMenu: (source, _referenceDate, anchor) => {
         host.openForecastRecurrenceEditor(anchor, source);
+      },
+      onNativeDragStart: (task, source) => {
+        const payload = calendarNativeDragPayload(task);
+        if (payload?.source !== 'center-card' || payload.calendar === undefined) return undefined;
+        startTaskNodeDrag(state, viewContainer, source, {
+          payload,
+          onEnd: () => {
+            source.removeClass('is-dragging');
+          },
+        });
+        return state.get('draggingTaskNode') === null ? undefined : payload.calendar.nativePayload;
       },
       onDrop: (dragData, targetDate) => {
         runAsyncAction(this.commands_abyssPrivate.rescheduleFromDrag(dragData, targetDate));

@@ -1,4 +1,4 @@
-import type { App, Component } from 'obsidian';
+import { setTooltip, type App, type Component } from 'obsidian';
 import type {
   ProjectDateDisplay,
   ProjectFieldCatalogItem,
@@ -107,7 +107,7 @@ function renderUnavailableType(cell: HTMLElement, field: ProjectFieldCatalogItem
   cell.createSpan({
     cls: 'abyss-project-table-unavailable',
     text: 'Type unavailable',
-    attr: { role: 'note', title: explanation, 'aria-label': explanation },
+    attr: { role: 'note', 'aria-label': explanation },
   });
 }
 
@@ -117,6 +117,8 @@ interface RenderProjectTableCellOptions {
   readonly compiledPresets?: CompiledProjectPropertyPresets;
   readonly app: App;
   readonly component: Component;
+  readonly isCurrent?: () => boolean;
+  readonly onRenderFailure?: (error: unknown) => void;
   readonly beforeOpenLink: () => Promise<boolean>;
   readonly openProject: (path: string) => void;
   readonly onRemoveListValue: (index: number) => void;
@@ -193,6 +195,9 @@ function renderValueText(
     app: options.app,
     sourcePath,
     component: options.component,
+    linkEventOwner: options.component,
+    ...(options.isCurrent === undefined ? {} : { isCurrent: options.isCurrent }),
+    ...(options.onRenderFailure === undefined ? {} : { onRenderFailure: options.onRenderFailure }),
     beforeOpenLink: options.beforeOpenLink,
     ...(presentation.link === undefined
       ? {}
@@ -248,7 +253,7 @@ function activateTag(
   raw: string,
   options: RenderProjectTableCellOptions,
 ): void {
-  anchor.addEventListener('click', (event) => {
+  options.component.registerDomEvent(anchor, 'click', (event) => {
     event.preventDefault();
     event.stopPropagation();
     runAsyncAction(
@@ -309,7 +314,7 @@ function renderListValue(itemOptions: RenderListValueOptions): void {
     text: '×',
     attr: { type: 'button', 'aria-label': `Remove ${displayed}` },
   });
-  remove.addEventListener('click', (event) => {
+  cell.component.registerDomEvent(remove, 'click', (event) => {
     event.preventDefault();
     event.stopPropagation();
     cell.onRemoveListValue(index);
@@ -352,7 +357,7 @@ function renderCheckbox(
   });
   input.checked = value === true;
   input.indeterminate = false;
-  input.addEventListener('change', () => {
+  options.component.registerDomEvent(input, 'change', () => {
     options.onToggleCheckbox(input.checked, input);
   });
 }
@@ -397,8 +402,9 @@ function renderDate(
   const text = cell.createSpan({
     cls: projectDateClass(display),
     text: displayed,
-    attr: { title: value },
+    attr: { 'aria-label': value },
   });
+  setTooltip(text, value);
   if (display === 'relative') text.dataset['relativeDateValue'] = value;
   return true;
 }
@@ -463,9 +469,10 @@ function renderName(
   const button = cell.createEl('button', {
     cls: 'abyss-project-table-name',
     text: project.name,
-    attr: { type: 'button', title: project.path },
+    attr: { type: 'button' },
   });
-  button.addEventListener('click', () => {
+  setTooltip(button, project.path);
+  options.component.registerDomEvent(button, 'click', () => {
     options.openProject(project.path);
   });
   const description = options.description;

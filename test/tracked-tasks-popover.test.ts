@@ -19,8 +19,10 @@ import {
   loadPluginStyles,
   useRealMoment,
 } from './helpers';
+import { useHostTooltips } from './support/hostTooltips';
 
 useRealMoment();
+useHostTooltips();
 
 const css = await loadPluginStyles();
 
@@ -398,7 +400,7 @@ describe('tracked tasks popover', () => {
     const markdown = await harness.read();
     expect(markdown).toContain(`  - 2026-09-18T12:18:32+03:00 → ${NOW_ATOM}\n`);
     expect(markdown).toContain(`  - ${NOW_ATOM} →\n`);
-    expect(toggle(harness.host).title).toBe('Pause Review PR');
+    expect(toggle(harness.host).getAttribute('aria-label')).toBe('Pause Review PR');
     expect(harness.reported).toEqual([]);
     // The task that is running is the task the list is about, so it takes the top of its day.
     expect(rowsOf(daySection(harness.layout, 'Today')).map(([title]) => title)).toEqual([
@@ -682,3 +684,8 @@ describe('tracked tasks popover', () => {
     ]);
   });
 });
+
+vi.mock('obsidian', async () => ({
+  ...(await import('obsidian-test-mocks/obsidian')),
+  setTooltip: vi.fn(),
+}));

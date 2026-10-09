@@ -38,9 +38,19 @@ function configureCompactPaneElements(elements: CompactPaneAccessElements): void
   elements.left.tabIndex = -1;
   elements.right.tabIndex = -1;
   elements.left.setAttribute('role', 'region');
-  elements.left.setAttribute('aria-label', 'Task lists');
+  const listsName = elements.layout.createSpan({
+    cls: 'abyss-sr-only',
+    text: 'Task lists',
+    attr: { id: `${elements.left.id}-label` },
+  });
+  elements.left.setAttribute('aria-labelledby', listsName.id);
   elements.right.setAttribute('role', 'region');
-  elements.right.setAttribute('aria-label', 'Task details');
+  const detailsName = elements.layout.createSpan({
+    cls: 'abyss-sr-only',
+    text: 'Task details',
+    attr: { id: `${elements.right.id}-label` },
+  });
+  elements.right.setAttribute('aria-labelledby', detailsName.id);
   elements.leftButton.setAttribute('aria-controls', elements.left.id);
   elements.rightButton.setAttribute('aria-controls', elements.right.id);
 }
@@ -330,7 +340,6 @@ export class CompactPaneAccess {
     const description = `${action} ${label}`;
     button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     button.setAttribute('aria-label', description);
-    button.setAttribute('title', description);
   }
 
   #updateCompactPaneAvailability(width: number, ownerWindow: Window | null): void {

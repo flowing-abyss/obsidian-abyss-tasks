@@ -13,10 +13,13 @@ import { latestSettingsSaveRevision } from '../src/settings/settingsSaveRevision
 import type { TaskStorageSettings } from '../src/settings/taskStorageSettings';
 import type { CalendarSettings } from '../src/settings/types';
 import { taskNodeAddress, type TrackedEntry } from '../src/tasks';
+import * as browserSearch from '../src/tasks/infrastructure/search/BrowserTaskSearchBackend';
+import type { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import type { PanelNavigator } from '../src/views/panelNavigation';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
 import {
   createAppWithFiles,
+  deferred,
   expectDefined,
   flushMicrotasks,
   objectMatching,
@@ -61,6 +64,7 @@ interface WorkspaceLike {
 }
 
 interface PluginLike {
+  readonly search: TaskCalendarPlugin['search'];
   app: {
     workspace: WorkspaceLike;
     metadataCache: { trigger: (event: string, ...args: unknown[]) => void };
@@ -205,7 +209,7 @@ describe('TaskCalendarPlugin saveSettings', () => {
     expect(saved['listViewStates']).toBeUndefined();
     expect(saved['sectionCollapse']).toBeUndefined();
     expect((saved['projects'] as Record<string, unknown>)['table']).toBeUndefined();
-    expect(saved[STATIC_SAVED_VIEW_STATE_MARKER]).toBe(1);
+    expect(saved[STATIC_SAVED_VIEW_STATE_MARKER]).toBe(2);
   });
 
   it('saves one validated storage draft and rebuilds source exclusion after durability', async () => {
@@ -1247,4 +1251,108 @@ describe('TaskCalendarPlugin note path lifecycle', () => {
       plugin.onunload();
     }
   });
+});
+
+it('composes the browser task scheduler into bounded canonical organization reads', async () => {
+  const yieldTask = vi.fn(async (_signal: AbortSignal) => {});
+  const scheduler = vi.spyOn(browserSearch, 'createBrowserSearchScheduler').mockReturnValue({
+    now: () => 0,
+    yield: yieldTask,
+    delay: async () => {},
+  });
+  const plugin = makePlugin();
+  try {
+    await plugin.onload();
+    const index = plugin.taskIndex as TaskIndex;
+    await index.initialize();
+    index.installCommittedContent(
+      'organization.md',
+      Array.from({ length: 201 }, (_, i) => `- [ ] item ${i}`).join('\n'),
+    );
+    const source = index.searchSource().subscribe(() => {});
+    const sizes: number[] = [];
+    const signal = new AbortController().signal;
+    for await (const batch of index.organization(
+      { expectedGeneration: source.state.generation },
+      signal,
+    ))
+      sizes.push(batch.items.length);
+    expect(sizes).toEqual([200, 1]);
+    expect(yieldTask).toHaveBeenCalledExactlyOnceWith(signal);
+    source.unsubscribe();
+  } finally {
+    plugin.onunload();
+    scheduler.mockRestore();
+  }
+});
+
+it('unload cancels startup through the real composed browser backend', async () => {
+  const constructed = deferred<void>();
+  let terminated = false;
+  const revoked: string[] = [];
+  vi.stubGlobal(
+    'Worker',
+    class {
+      constructor() {
+        constructed.resolve();
+      }
+      postMessage(): void {}
+      terminate(): void {
+        terminated = true;
+      }
+    },
+  );
+  vi.stubGlobal(
+    'URL',
+    class extends URL {
+      static override createObjectURL(): string {
+        return 'blob:composed-startup';
+      }
+      static override revokeObjectURL(url: string): void {
+        revoked.push(url);
+      }
+    },
+  );
+  const plugin = makePlugin();
+  try {
+    await plugin.onload();
+    const index = plugin.taskIndex as TaskIndex;
+    await index.initialize();
+    const outcome = plugin.search
+      .open({ kind: 'nodes', query: 'needle' }, new AbortController().signal)
+      .catch((error: unknown) => error);
+    await constructed.promise;
+    plugin.onunload();
+    expect(terminated).toBe(true);
+    expect(revoked).toEqual(['blob:composed-startup']);
+    expect(await outcome).toMatchObject({ code: 'disposed' });
+  } finally {
+    plugin.onunload();
+    vi.unstubAllGlobals();
+  }
+});
+
+it('plugin load and canonical workspace bootstrap alone leave search backend cold', async () => {
+  const factory = vi.spyOn(browserSearch.BrowserTaskSearchBackend, 'create');
+  const constructed: unknown[] = [];
+  vi.stubGlobal(
+    'Worker',
+    class {
+      constructor() {
+        constructed.push(this);
+      }
+    },
+  );
+  const plugin = makePlugin();
+  try {
+    await plugin.onload();
+    plugin.app.workspace.setLayoutReady__();
+    await plugin.taskIndex.initialize();
+    await flushMicrotasks();
+    expect(constructed).toHaveLength(0);
+    expect(factory).not.toHaveBeenCalled();
+  } finally {
+    plugin.onunload();
+    vi.unstubAllGlobals();
+  }
 });

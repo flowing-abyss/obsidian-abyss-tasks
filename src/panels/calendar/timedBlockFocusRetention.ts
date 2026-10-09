@@ -1,8 +1,14 @@
-import { localDate, shiftLocalDate, type TaskApplicationApi, type TaskSnapshot } from '../../tasks';
+import {
+  localDate,
+  shiftLocalDate,
+  taskNodeSourceLine,
+  type TaskApplicationApi,
+  type TaskSnapshot,
+} from '../../tasks';
 import { isRealmHTMLElement } from '../../ui/domRealm';
 import { presentTaskCommandResult } from '../../ui/taskCommandResult';
 import { TimedBlockKeyboardQueue } from '../../ui/timedBlockKeyboardQueue';
-import { calendarRootTaskRef } from '../../views/calendarOccurrences';
+import { calendarMutationTarget } from '../../views/calendarOccurrences';
 import type { TimedBlockKeyboardIntent } from '../../views/timegrid/renderTimedBlocks';
 
 interface TimedBlockFocusLocator {
@@ -101,6 +107,9 @@ export class TimedBlockFocusRetention {
             onSettled: (_taskKey, sequence, summary) => {
               this.handleSettled_abyssPrivate(sequence, summary.anyChanged, summary.sourceChanged);
             },
+            onInvalidated: () => {
+              this.clearFocus_abyssPrivate();
+            },
             present: (result) => {
               presentTaskCommandResult(result);
               if (result.type !== 'ok' || result.outcome.type !== 'task') {
@@ -112,7 +121,11 @@ export class TimedBlockFocusRetention {
 
   handleIntent(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): void {
     const root = this.host_abyssPrivate.root();
-    if (calendarRootTaskRef(task) === undefined || this.queue_abyssPrivate == null || root == null)
+    if (
+      calendarMutationTarget(task) === undefined ||
+      this.queue_abyssPrivate == null ||
+      root == null
+    )
       return;
     const active = root.ownerDocument.activeElement;
     const originElement = isRealmHTMLElement(active)
@@ -254,7 +267,7 @@ export class TimedBlockFocusRetention {
     const segmentDate = originElement?.dataset['tgSegmentDate'];
     return {
       filePath: task.source.filePath,
-      line: task.source.line,
+      line: taskNodeSourceLine(calendarMutationTarget(task) ?? { type: 'task', ref: task.ref }),
       ...(segmentDate !== undefined && { segmentDate }),
       sequence: ++this.nextFocusSequence_abyssPrivate,
       ...(originElement !== undefined && { originElement }),
@@ -465,8 +478,10 @@ export class TimedBlockFocusRetention {
     const pending = this.pendingFocus_abyssPrivate;
     if (!this.acceptsCommit_abyssPrivate(pending, queueSequence)) return;
     this.committedSequences_abyssPrivate.add(queueSequence);
-    const sourceChanged =
-      pending.filePath !== updated.source.filePath || pending.line !== updated.source.line;
+    const line = taskNodeSourceLine(
+      calendarMutationTarget(updated) ?? { type: 'task', ref: updated.ref },
+    );
+    const sourceChanged = pending.filePath !== updated.source.filePath || pending.line !== line;
     const nextSegmentDate = shiftFocusedSegmentDate(pending, intent, changed);
     const segmentChanged = nextSegmentDate !== pending.segmentDate;
     const identityChanged = [sourceChanged, segmentChanged].includes(true);
@@ -476,7 +491,7 @@ export class TimedBlockFocusRetention {
       this.pendingFocus_abyssPrivate = {
         ...pending,
         filePath: updated.source.filePath,
-        line: updated.source.line,
+        line,
         ...(nextSegmentDate !== undefined && { segmentDate: nextSegmentDate }),
         sequence: ++this.nextFocusSequence_abyssPrivate,
       };

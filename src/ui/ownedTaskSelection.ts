@@ -1,10 +1,14 @@
+import { parseLinks } from '../markdown/links';
 import { sameTag } from '../markdown/tagSyntax';
 import {
   dependencySubtaskChild,
+  normalizeCommentText,
   sameTaskNodeRef,
   sameTaskTreeWithOwnedChanges,
+  type CompletionTrackingWitness,
   type SubtaskSnapshot,
   type TaskCommand,
+  type TaskCommentSnapshot,
   type TaskNodeRef,
   type TaskPatch,
   type TaskSnapshot,
@@ -176,18 +180,245 @@ function selectionPaths(
   return { before, selectedPath, editedPath };
 }
 
-/** Called only for a pending inspector command's exact authority transition. */
+export interface OwnedTaskSelectionProof {
+  readonly selection: TaskSelectionNode[];
+  readonly successor: (previous: TaskSelectionNode) => TaskSelectionNode | undefined;
+  readonly nodeSuccessor: (previous: TaskNodeRef) => TaskSelectionNode | undefined;
+  readonly commentSuccessor: (previous: TaskCommentSnapshot) => TaskCommentSnapshot | undefined;
+}
+
+/** Prove once, then index the exact surviving occurrences for mounted action owners. */
+export function proveOwnedTaskSelection(
+  current: TaskSnapshot,
+  selection: readonly TaskSelectionNode[],
+  command: TaskCommand,
+  policy?: Parameters<typeof dependencySubtaskChild>[3],
+): OwnedTaskSelectionProof | undefined {
+  const rebuilt = rebuildSelection(current, selection, command, policy);
+  const before = selection[0];
+  if (rebuilt === undefined || before === undefined) return undefined;
+  return indexSelectionProof(current, before, command, rebuilt);
+}
+
+/** Root-scoped candidate address only; callers must still validate the complete reference. */
+export function taskNodeOccurrencePath(target: TaskNodeRef): string {
+  const lines: number[] = [];
+  let current = target;
+  while (current.type === 'subtask') {
+    lines.push(current.ref.relativeLine);
+    current = current.ref.parent;
+  }
+  lines.reverse();
+  return lines.join('/');
+}
+
+function indexSelectionProof(
+  current: TaskSnapshot,
+  before: TaskSelectionNode,
+  command: TaskCommand,
+  rebuilt: TaskSelectionNode[],
+): OwnedTaskSelectionProof {
+  const successors = new Map<
+    string,
+    {
+      previous: TaskNodeRef;
+      next: TaskSelectionNode;
+      comments: Map<number, { previous: TaskCommentSnapshot; next: TaskCommentSnapshot }>;
+    }
+  >();
+  const splice = command.type === 'delete-subtask' || command.type === 'restore-subtask';
+  const restore = command.type === 'restore-subtask';
+  let parent: TaskNodeRef | undefined;
+  if (command.type === 'restore-subtask') parent = command.parent;
+  if (command.type === 'delete-subtask') parent = command.subtask.parent;
+  const visit = (previous: TaskSelectionNode, next: TaskSelectionNode): void => {
+    const ref = taskNodeRef(previous);
+    const comments = new Map<
+      number,
+      { previous: TaskCommentSnapshot; next: TaskCommentSnapshot }
+    >();
+    successors.set(taskNodeOccurrencePath(ref), { previous: ref, next, comments });
+    const deletedComment =
+      command.type === 'delete-comment' &&
+      sameTaskNodeRef(taskNodeRef(previous), command.comment.parent)
+        ? previous.comments.findIndex(
+            (comment) =>
+              comment.ref.relativeLine === command.comment.relativeLine &&
+              comment.ref.originalMarkdown === command.comment.originalMarkdown,
+          )
+        : -1;
+    previous.comments.forEach((comment, position) => {
+      if (position === deletedComment) return;
+      const successor =
+        next.comments[position - (deletedComment >= 0 && position > deletedComment ? 1 : 0)];
+      if (successor !== undefined)
+        comments.set(comment.ref.relativeLine, { previous: comment, next: successor });
+    });
+    const edited = parent !== undefined && sameTaskNodeRef(taskNodeRef(previous), parent);
+    const expanded = restore ? next : previous;
+    const index = edited && splice ? removalIndex(expanded, command) : -1;
+    previous.subtasks.forEach((child, position) => {
+      if (edited && !restore && position === index) return;
+      const shift = restore ? 1 : -1;
+      const shifted = edited && position >= index ? position + shift : position;
+      const successor = next.subtasks[shifted];
+      if (successor !== undefined) visit(child, successor);
+    });
+  };
+  visit(before, current);
+  const exactOccurrence = (ref: TaskNodeRef): ReturnType<typeof successors.get> => {
+    const candidate = successors.get(taskNodeOccurrencePath(ref));
+    return candidate !== undefined && sameTaskNodeRef(candidate.previous, ref)
+      ? candidate
+      : undefined;
+  };
+  return {
+    selection: rebuilt,
+    successor: (previous) => exactOccurrence(taskNodeRef(previous))?.next,
+    nodeSuccessor: (previous) => exactOccurrence(previous)?.next,
+    commentSuccessor: (previous) => {
+      const candidate = exactOccurrence(previous.ref.parent)?.comments.get(
+        previous.ref.relativeLine,
+      );
+      return candidate?.previous.ref.originalMarkdown === previous.ref.originalMarkdown
+        ? candidate.next
+        : undefined;
+    },
+  };
+}
+
 export function rebuildOwnedTaskSelection(
   current: TaskSnapshot,
   selection: readonly TaskSelectionNode[],
   command: TaskCommand,
   policy?: Parameters<typeof dependencySubtaskChild>[3],
 ): TaskSelectionNode[] | undefined {
+  return proveOwnedTaskSelection(current, selection, command, policy)?.selection;
+}
+
+/** Called only for a pending inspector command's exact authority transition. */
+function rebuildSelection(
+  current: TaskSnapshot,
+  selection: readonly TaskSelectionNode[],
+  command: TaskCommand,
+  policy?: Parameters<typeof dependencySubtaskChild>[3],
+): TaskSelectionNode[] | undefined {
+  if (command.type === 'update-comment' || command.type === 'delete-comment')
+    return rebuildCommentSelection(current, selection, command);
+  if (command.type === 'edit-link') return rebuildLinkSelection(current, selection, command);
   if (command.type === 'delete-subtask' || command.type === 'restore-subtask')
     return rebuildRemovalSelection(current, selection, command);
   if (command.type === 'add-subtask' || command.type === 'add-comment')
     return rebuildInsertionSelection(current, selection, command, policy);
   return rebuildContentSelection(current, selection, command, policy);
+}
+
+type LinkCommand = Extract<TaskCommand, { type: 'edit-link' }>;
+
+function exactLinkSourceChange(
+  before: string,
+  after: string,
+  raw: string,
+  replacement: string,
+): boolean {
+  for (
+    let index = before.indexOf(raw);
+    index >= 0;
+    index = before.indexOf(raw, index + raw.length)
+  ) {
+    if (before.slice(0, index) + replacement + before.slice(index + raw.length) === after)
+      return true;
+  }
+  return false;
+}
+
+function linkText(node: TaskSelectionNode, command: LinkCommand): string | undefined {
+  const target = command.target;
+  if (target.type === 'title') return node.markdownTitle;
+  if (target.type === 'description') return node.description;
+  return node.comments.find((comment) => comment.ref.relativeLine === target.ref.relativeLine)
+    ?.text;
+}
+
+function linkCommentsMatch(
+  before: TaskSelectionNode,
+  after: TaskSelectionNode,
+  command: LinkCommand,
+  change: { text: string; raw: string },
+): boolean {
+  const { text, raw } = change;
+  const target = command.target;
+  if (target.type !== 'comment' || before.comments.length !== after.comments.length) return false;
+  return before.comments.every((comment, index) => {
+    const next = after.comments[index];
+    if (
+      next?.ref.relativeLine !== comment.ref.relativeLine ||
+      JSON.stringify(next.timestamp) !== JSON.stringify(comment.timestamp)
+    )
+      return false;
+    const edited = comment.ref.relativeLine === target.ref.relativeLine;
+    return edited
+      ? comment.ref.originalMarkdown === target.ref.originalMarkdown &&
+          next.text === text &&
+          exactLinkSourceChange(
+            comment.ref.originalMarkdown,
+            next.ref.originalMarkdown,
+            raw,
+            command.replacement,
+          )
+      : comment.text === next.text && comment.ref.originalMarkdown === next.ref.originalMarkdown;
+  });
+}
+
+function linkChange(
+  previous: TaskSelectionNode,
+  next: TaskSelectionNode,
+  command: LinkCommand,
+): { raw: string; fields: Set<string> } | undefined {
+  const text = linkText(previous, command);
+  if (text === undefined) return undefined;
+  const token = parseLinks(text)[command.occurrence];
+  if (token === undefined) return undefined;
+  const expected =
+    text.slice(0, token.index) + command.replacement + text.slice(token.index + token.raw.length);
+  if (command.target.type === 'comment') {
+    return linkCommentsMatch(previous, next, command, { text: expected, raw: token.raw })
+      ? { raw: token.raw, fields: new Set(['comments']) }
+      : undefined;
+  }
+  if (linkText(next, command) !== expected) return undefined;
+  return {
+    raw: token.raw,
+    fields: new Set(command.target.type === 'title' ? ['title', 'markdownTitle'] : ['description']),
+  };
+}
+
+function rebuildLinkSelection(
+  current: TaskSnapshot,
+  selection: readonly TaskSelectionNode[],
+  command: LinkCommand,
+): TaskSelectionNode[] | undefined {
+  const target =
+    command.target.type === 'comment' ? command.target.ref.parent : command.target.target;
+  const paths = selectionPaths(current, selection, target, true);
+  if (paths === undefined) return undefined;
+  const { before, selectedPath, editedPath } = paths;
+  const previous = follow(before, editedPath, true)?.[editedPath.length];
+  const next = follow(current, editedPath, true)?.[editedPath.length];
+  if (previous === undefined || next === undefined) return undefined;
+  const change = linkChange(previous, next, command);
+  if (change === undefined) return undefined;
+  if (
+    !exactLinkSourceChange(
+      before.source.originalBlock,
+      current.source.originalBlock,
+      change.raw,
+      command.replacement,
+    ) ||
+    !sameTaskTreeWithOwnedChanges(before, current, editedPath, { fields: change.fields })
+  )
+    return undefined;
+  return follow(current, selectedPath, true);
 }
 
 function rebuildContentSelection(
@@ -288,6 +519,11 @@ function rebuildInsertionSelection(
   command: Extract<TaskCommand, { type: 'add-subtask' | 'add-comment' }>,
   policy?: Parameters<typeof dependencySubtaskChild>[3],
 ): TaskSelectionNode[] | undefined {
+  const normalized =
+    command.type === 'add-comment'
+      ? normalizeCommentText(command.text)
+      : { type: 'ready' as const, text: command.text };
+  if (normalized.type !== 'ready') return undefined;
   const paths = selectionPaths(current, selection, command.parent, false);
   if (paths === undefined) return undefined;
   const { before, selectedPath, editedPath } = paths;
@@ -297,11 +533,93 @@ function rebuildInsertionSelection(
       append: command.type === 'add-subtask',
       insertion: {
         type: command.type,
-        text: command.text,
+        text: normalized.text,
         ...(policy === undefined ? {} : { policy }),
       },
     })
   )
     return undefined;
   return follow(current, selectedPath, false);
+}
+
+function rebuildCommentSelection(
+  current: TaskSnapshot,
+  selection: readonly TaskSelectionNode[],
+  command: Extract<TaskCommand, { type: 'update-comment' | 'delete-comment' }>,
+): TaskSelectionNode[] | undefined {
+  const paths = selectionPaths(current, selection, command.comment.parent, false);
+  if (paths === undefined) return undefined;
+  const normalized =
+    command.type === 'update-comment' ? normalizeCommentText(command.text) : undefined;
+  if (normalized !== undefined && normalized.type !== 'ready') return undefined;
+  const edit = {
+    ref: command.comment,
+    ...(normalized?.type === 'ready' ? { text: normalized.text } : {}),
+  };
+  if (
+    !sameTaskTreeWithOwnedChanges(paths.before, current, paths.editedPath, {
+      fields: new Set(['comments']),
+      comment: edit,
+    })
+  )
+    return undefined;
+  return follow(current, paths.selectedPath, false);
+}
+
+/** Accept only the exact application-witnessed timer step of a still-pending completed status command. */
+export function proveOwnedCompletionFollowUp(
+  current: TaskSnapshot,
+  selection: readonly TaskSelectionNode[],
+  context: {
+    readonly original: readonly TaskSelectionNode[];
+    readonly command: TaskCommand;
+    readonly witness: CompletionTrackingWitness | undefined;
+  },
+): OwnedTaskSelectionProof | undefined {
+  const { original, command, witness } = context;
+  if (
+    (command.type !== 'set-status' && command.type !== 'toggle-completion') ||
+    witness === undefined
+  )
+    return undefined;
+  const paths = completionFollowUpPaths(current, selection, {
+    original,
+    target: command.target,
+    witness,
+  });
+  if (paths === undefined) return undefined;
+  if (
+    !sameTaskTreeWithOwnedChanges(paths.before, current, paths.editedPath, {
+      fields: new Set(['timeEntries']),
+      tracking: witness,
+    })
+  )
+    return undefined;
+  const rebuilt = follow(current, paths.selectedPath, false);
+  return rebuilt === undefined
+    ? undefined
+    : indexSelectionProof(current, paths.before, command, rebuilt);
+}
+
+function completionFollowUpPaths(
+  current: TaskSnapshot,
+  selection: readonly TaskSelectionNode[],
+  context: {
+    readonly original: readonly TaskSelectionNode[];
+    readonly target: TaskNodeRef;
+    readonly witness: CompletionTrackingWitness;
+  },
+): ReturnType<typeof selectionPaths> {
+  const { original, target, witness } = context;
+  const initial = original[0];
+  if (initial === undefined || !('source' in initial)) return undefined;
+  const targetPath = childPath(initial, target, false);
+  const paths = selectionPaths(current, selection, witness.entry.parent, false);
+  if (
+    paths === undefined ||
+    targetPath?.every((index, position) => paths.editedPath[position] === index) !== true
+  )
+    return undefined;
+  const completed = follow(paths.before, targetPath, false)?.[targetPath.length];
+  return ['done', 'cancelled'].includes(completed?.status ?? '') ? paths : undefined;
 }

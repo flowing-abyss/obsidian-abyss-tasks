@@ -8,6 +8,7 @@ import type { BaseView } from '../../views/BaseView';
 import { MonthGridView } from '../../views/MonthGridView';
 import { TodayView } from '../../views/TodayView';
 import { WeekTimeGridView } from '../../views/WeekTimeGridView';
+import type { CalendarNativeDragStart } from '../../views/calendarNativeDrag';
 import type { InteractiveSpanBoundaryTarget, SpanMoveTarget } from '../../views/spanInteractions';
 import type { TimedDragTarget, TimedVerticalResizeTarget } from '../../views/timegrid/dragGeometry';
 import type {
@@ -16,11 +17,14 @@ import type {
 } from '../../views/timegrid/renderTaskMeta';
 import type { TimedBlockKeyboardIntent } from '../../views/timegrid/renderTimedBlocks';
 import type { TimedBoundaryTarget } from '../../views/timegrid/timedInteractions';
+import type { ShowInTaskList } from '../right/inspectorTypes';
 import type { CalViewType } from './calendarViewType';
 
 /** Everything a calendar view can ask the controller to do. Built once per calendar render. */
 export interface CalendarHandlers {
+  readonly onNativeDragStart?: CalendarNativeDragStart | undefined;
   readonly onTaskClick: (task: TaskSnapshot) => void;
+  readonly onShowParent?: ShowInTaskList | undefined;
   readonly onTaskSelect: (task: TaskSnapshot) => void;
   readonly onForecastClick: NonNullable<ForecastInteractionCallbacks['onForecastClick']>;
   /** "Edit repeat…" from a forecast occurrence; the anchor is the occurrence element. */
@@ -72,9 +76,11 @@ function createTodayView(deps: CalendarViewDependencies, handlers: CalendarHandl
     forecastMenuOwner: deps.forecastMenuOwner,
     onTaskClick: handlers.onTaskClick,
     onTaskSelect: handlers.onTaskSelect,
+    onShowParent: handlers.onShowParent,
     onForecastClick: handlers.onForecastClick,
     onForecastContextMenu: handlers.onForecastContextMenu,
     onDrop: handlers.onDrop,
+    onNativeDragStart: handlers.onNativeDragStart,
     onDropTime: handlers.onDropTime,
     onCreateAtTime: handlers.onCreateAtTime,
     onCreateAtDate: handlers.onCreateAtDateAllDay,
@@ -109,9 +115,11 @@ function createWeekView(
     forecastMenuOwner: deps.forecastMenuOwner,
     onTaskClick: handlers.onTaskClick,
     onTaskSelect: handlers.onTaskSelect,
+    onShowParent: handlers.onShowParent,
     onForecastClick: handlers.onForecastClick,
     onForecastContextMenu: handlers.onForecastContextMenu,
     onDrop: handlers.onDrop,
+    onNativeDragStart: handlers.onNativeDragStart,
     onDropTime: handlers.onDropTime,
     onCreateAtTime: handlers.onCreateAtTime,
     onCreateAtDate: handlers.onCreateAtDateAllDay,
@@ -153,9 +161,11 @@ function createMonthView(
     onCreateAtDate: handlers.onCreateAtDate,
     onTaskClick: handlers.onTaskClick,
     onTaskSelect: handlers.onTaskSelect,
+    onShowParent: handlers.onShowParent,
     onForecastClick: handlers.onForecastClick,
     onForecastContextMenu: handlers.onForecastContextMenu,
     onDrop: handlers.onDrop,
+    onNativeDragStart: handlers.onNativeDragStart,
     onSpanMove: handlers.onSpanMove,
     onSpanBoundary: handlers.onSpanBoundary,
     onToggle: handlers.onToggle,

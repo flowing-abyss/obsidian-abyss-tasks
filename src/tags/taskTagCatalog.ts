@@ -36,16 +36,16 @@ export function collectTaskNodeTags(nodes: readonly TaskNodeSnapshot[]): readonl
   return result;
 }
 
-/** Builds the assignable catalog strictly from public task snapshots and explicit configuration. */
+/** Builds the assignable catalog from detached observed tags and explicit configuration. */
 export function collectTaskTags(
-  nodes: readonly TaskNodeSnapshot[],
+  observedTags: readonly string[],
   settings: CalendarSettings,
   selected: readonly string[] = [],
 ): readonly string[] {
   const result: string[] = [];
   const seen = new Set<string>();
   for (const tag of selected) addInput(result, seen, tag);
-  for (const tag of collectTaskNodeTags(nodes)) addInput(result, seen, tag);
+  for (const tag of observedTags) addInput(result, seen, tag);
   for (const tag of settings.pinnedTags) addInput(result, seen, tag);
   for (const tag of settings.archivedTags) addInput(result, seen, tag);
   for (const prefix of settings.archivedTagPrefixes) addInput(result, seen, prefix);

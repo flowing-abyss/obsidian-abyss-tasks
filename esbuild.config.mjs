@@ -1,6 +1,7 @@
 import esbuild from 'esbuild';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
+import path from 'node:path';
 import process from 'process';
 
 // Shared with release-check.mjs, which re-checks the same threshold against an
@@ -42,6 +43,36 @@ const nosourcemapPlugin = {
   },
 };
 
+/** @type {import('esbuild').Plugin} */
+const taskSearchWorkerPlugin = {
+  name: 'task-search-worker',
+  setup(build) {
+    build.onResolve({ filter: /^abyss-task-search-worker$/ }, () => ({
+      path: 'abyss-task-search-worker',
+      namespace: 'task-search-worker',
+    }));
+    build.onLoad({ filter: /.*/, namespace: 'task-search-worker' }, async () => {
+      const worker = await esbuild.build({
+        entryPoints: ['src/tasks/infrastructure/search/taskSearch.worker.ts'],
+        bundle: true,
+        platform: 'browser',
+        format: 'iife',
+        target: 'es2021',
+        write: false,
+        metafile: true,
+        minify: prod,
+        mangleProps: prod ? /_abyssPrivate$/ : undefined,
+      });
+      const source = '/* abyss-task-search-worker */' + worker.outputFiles[0].text;
+      return {
+        contents: 'export default ' + JSON.stringify(source),
+        loader: 'js',
+        watchFiles: Object.keys(worker.metafile.inputs).map((file) => path.resolve(file)),
+      };
+    });
+  },
+};
+
 const context = await esbuild.context({
   banner: {
     js: banner,
@@ -77,7 +108,7 @@ const context = await esbuild.context({
   mangleProps: prod ? /_abyssPrivate$/ : undefined,
   mangleQuoted: false,
   metafile: prod || analyze,
-  plugins: [nosourcemapPlugin],
+  plugins: [taskSearchWorkerPlugin, nosourcemapPlugin],
 });
 
 if (prod) {

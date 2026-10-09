@@ -495,7 +495,7 @@ export class TaskRefAuthority {
       content,
       fingerprint: taskRefContentFingerprint(content),
       length: content.length,
-      roots: Object.freeze(roots.map((root) => Object.freeze({ ...root }))),
+      roots: Object.freeze(roots.map((root) => Object.freeze(structuredClone(root)))),
     });
     return true;
   }
@@ -554,7 +554,7 @@ export class TaskRefAuthority {
           Object.freeze({ line, source, revision }),
         ),
       ),
-      transitions: Object.freeze(transitions.map((root) => Object.freeze({ ...root }))),
+      transitions: Object.freeze(transitions.map((root) => Object.freeze(structuredClone(root)))),
       phase: 'staged',
       observed: false,
       restored,
@@ -586,7 +586,7 @@ export class TaskRefAuthority {
     transition.observed = true;
     return {
       roots: transition.roots,
-      transitions: transition.transitions,
+      transitions: structuredClone(transition.transitions),
       ...(transition.restored && { restored: true }),
     };
   }

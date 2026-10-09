@@ -2,13 +2,19 @@ import type { AppState } from '../../app/AppState';
 import { listSelectionToKey } from '../../app/listViewState';
 import type { CalendarSettings } from '../../settings/types';
 import type {
+  LocalDate,
   TaskApplicationApi,
   TaskCaptureApplicationApi,
   TaskCommandResult,
   TaskNodeSnapshot,
 } from '../../tasks';
+import type { CreationRevealAuthority } from '../../ui/creation/CreationPresentationController';
 import { isRealmHTMLElement } from '../../ui/domRealm';
 import { runAsyncAction } from '../../ui/runAsyncAction';
+import {
+  CaptureRevealIntent,
+  type CaptureRevealAuthority,
+} from '../../ui/taskCapture/CaptureRevealIntent';
 import { CaptureSurface } from '../../ui/taskCapture/CaptureSurface';
 import {
   CaptureTargetResolver,
@@ -44,6 +50,7 @@ interface PanelCaptureSession {
   returnFocus?: HTMLElement;
   restoreFocusOnClose: boolean;
   focusOnMount: boolean;
+  revealIntent?: CaptureRevealIntent | undefined;
 }
 
 interface CaptureSessionsOptions {
@@ -54,7 +61,9 @@ interface CaptureSessionsOptions {
   readonly onCreationResult: (
     result: TaskCommandResult,
     description: CreationResultDescription,
+    revealAuthority?: CreationRevealAuthority,
   ) => void;
+  readonly captureReveal?: (isCurrent: () => boolean) => CaptureRevealAuthority;
   readonly root: () => HTMLElement;
 }
 
@@ -68,12 +77,14 @@ export class CaptureSessions {
   #activeCapture: PanelCaptureSession | null = null;
   readonly #state: AppState;
   readonly #root: () => HTMLElement;
+  readonly #captureReveal: CaptureSessionsOptions['captureReveal'];
   readonly #onCreationResult: CaptureSessionsOptions['onCreationResult'];
 
   constructor(options: CaptureSessionsOptions) {
     this.#state = options.state;
     this.#root = options.root;
     this.#onCreationResult = options.onCreationResult;
+    this.#captureReveal = options.captureReveal;
     this.#captureTargets =
       options.application != null
         ? new CaptureTargetResolver(
@@ -91,6 +102,7 @@ export class CaptureSessions {
     if (placement.type === 'list') {
       host.dataset['abyssCaptureSelection'] = placement.selectionKey;
     }
+    if (host.querySelector('.abyss-add-task-trigger') !== null) return;
     const trigger = host.createEl('button', {
       cls: 'abyss-add-task-trigger',
       attr: { type: 'button' },
@@ -112,6 +124,25 @@ export class CaptureSessions {
     }
   }
 
+  openDateCapture(date: LocalDate): void {
+    if (this.#state.get('mode') !== 'tasks') return;
+    const active = this.#activeCapture;
+    if (
+      active !== null &&
+      (active.controller.snapshot().phase !== 'idle' || !active.controller.isEmpty())
+    ) {
+      active.focusOnMount = true;
+      this.remountActiveCapture();
+      if (active.surface !== undefined) this.#focusNewCaptureSurface(active, active.surface);
+      return;
+    }
+    const selection = this.#state.get('selectedList');
+    this.openCapture(
+      { type: 'list', selectionKey: listSelectionToKey(selection) },
+      { type: 'list', selection, date },
+    );
+  }
+
   openCapture(
     placement: PanelCapturePlacement,
     context: CaptureContext,
@@ -129,12 +160,17 @@ export class CaptureSessions {
         const controller = new TaskCaptureController({
           target,
           describe: describeTaskCreationResult,
+          onSubmit: () => this.#activeCapture?.revealIntent?.beginSubmission(),
           onResult: (result, description) => {
             const current = this.#activeCapture;
             if (current?.requestId === requestId && description.kind !== 'success') {
               current.restoreFocusOnClose = false;
             }
-            this.#onCreationResult(result, description);
+            this.#onCreationResult(
+              result,
+              description,
+              current?.revealIntent?.forResult(description.kind === 'success'),
+            );
           },
           onRequestClose: () => {
             this.#closeCaptureByRequestId(requestId);
@@ -150,6 +186,18 @@ export class CaptureSessions {
         };
         this.#activeCapture = session;
         this.remountActiveCapture();
+        if (!isCalendarCapturePlacement(placement)) {
+          session.revealIntent = new CaptureRevealIntent(
+            this.#captureReveal?.(
+              () =>
+                this.#activeCapture === session &&
+                session.controller.snapshot().phase !== 'closed' &&
+                session.surface?.input.isConnected === true &&
+                session.surface.input.ownerDocument.activeElement === session.surface.input,
+            ),
+          );
+          if (session.surface !== undefined) session.revealIntent.mount(session.surface.input);
+        }
       }),
     );
   }
@@ -191,6 +239,14 @@ export class CaptureSessions {
       active.restoreFocusOnClose = true;
     };
     const options = {
+      ...(active.placement.type === 'list' && {
+        preserveDraftOnBlur: (next: EventTarget | null) =>
+          this.#activeCapture === active &&
+          isRealmHTMLElement(next) &&
+          next.isConnected &&
+          this.#root().contains(next) &&
+          next.matches('button.abyss-group-add'),
+      }),
       ...(active.placement.type === 'calendar-timed' && {
         placeholder: `Task at ${active.placement.time}…`,
       }),
@@ -203,6 +259,7 @@ export class CaptureSessions {
         : 'default';
     const surface = new CaptureSurface(host, active.controller, { ...options, presentation });
     this.#applyCaptureInputClass(surface, active.placement);
+    active.revealIntent?.mount(surface.input);
     active.surface = surface;
     active.host = host;
     this.#focusNewCaptureSurface(active, surface);
@@ -241,6 +298,7 @@ export class CaptureSessions {
   unmountActiveCapture(): void {
     const active = this.#activeCapture;
     const surface = active?.surface;
+    active?.revealIntent?.unmount();
     if (active == null || surface == null) return;
     active.focusOnMount =
       active.focusOnMount || surface.input.ownerDocument.activeElement === surface.input;

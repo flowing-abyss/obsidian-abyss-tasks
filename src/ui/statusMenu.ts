@@ -55,7 +55,7 @@ export function closeStatusPopovers(ownerDocument: Document): void {
  */
 export function buildStatusSubmenu(
   sub: Menu,
-  task: TaskSnapshot | SubtaskSnapshot,
+  task: Pick<TaskSnapshot, 'statusSymbol'>,
   registry: StatusRegistry,
   onPickStatus: (char: string) => void,
 ): void {
@@ -236,7 +236,6 @@ function renderPriorityRow(
         'aria-label': option.label,
         role: 'menuitemradio',
         'aria-checked': String(active),
-        title: option.label,
       },
     });
     setIcon(button, 'flag');

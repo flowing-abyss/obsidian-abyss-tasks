@@ -17,7 +17,7 @@ import {
 } from '../../tasks';
 
 export type CaptureContext =
-  | { readonly type: 'list'; readonly selection: ListSelection }
+  | { readonly type: 'list'; readonly selection: ListSelection; readonly date?: LocalDate }
   | { readonly type: 'project-dashboard'; readonly path: string }
   | { readonly type: 'project-table'; readonly path: string }
   | {
@@ -32,6 +32,7 @@ export interface CaptureTarget {
   readonly markdownPrefix: string;
   readonly markdownSuffixes: readonly string[];
   readonly initial?: CreateTaskCommandInitial;
+  readonly draftSeed?: string;
 }
 
 function destinationUnavailableResult(): TaskCommandResult {
@@ -63,7 +64,7 @@ function cloneContext(context: CaptureContext): CaptureContext {
     return { ...context };
   if (context.type === 'default') return { ...context };
   return {
-    type: 'list',
+    ...context,
     selection: typeof context.selection === 'string' ? context.selection : { ...context.selection },
   };
 }
@@ -87,28 +88,38 @@ function projectInsertion(settings: CalendarSettings['projects']): TaskInsertion
 
 export class CaptureTargetResolver {
   constructor(
-    private readonly application: TaskCaptureApplicationApi,
-    private readonly settings: CalendarSettings = DEFAULT_SETTINGS,
-    private readonly today: () => LocalDate = () => localDate(window.moment().format('YYYY-MM-DD')),
-    private readonly taskNodes: () => readonly TaskNodeSnapshot[] = () => [],
+    private readonly application_abyssPrivate: TaskCaptureApplicationApi,
+    private readonly settings_abyssPrivate: CalendarSettings = DEFAULT_SETTINGS,
+    private readonly today_abyssPrivate: () => LocalDate = () =>
+      localDate(window.moment().format('YYYY-MM-DD')),
+    private readonly taskNodes_abyssPrivate: () => readonly TaskNodeSnapshot[] = () => [],
   ) {}
 
   async resolve(context: CaptureContext): Promise<CaptureTarget> {
     const frozenContext = cloneContext(context);
     if (frozenContext.type === 'project-dashboard' || frozenContext.type === 'project-table') {
-      return await this.projectTarget(frozenContext, frozenContext.path);
+      return await this.projectTarget_abyssPrivate(frozenContext, frozenContext.path);
     }
     if (frozenContext.type === 'default') {
-      return await this.defaultTarget(frozenContext);
+      return await this.defaultTarget_abyssPrivate(frozenContext);
     }
-    return await this.listTarget(frozenContext);
+    const target = await this.listTarget_abyssPrivate(frozenContext);
+    if (frozenContext.date === undefined) return target;
+    const initial = { ...target.initial };
+    delete initial.due;
+    return {
+      ...target,
+      label: `${target.label} · ${frozenContext.date}`,
+      initial,
+      draftSeed: ` 📅 ${frozenContext.date}`,
+    };
   }
 
-  private async defaultTarget(
+  private async defaultTarget_abyssPrivate(
     context: Extract<CaptureContext, { type: 'default' }>,
   ): Promise<CaptureTarget> {
-    const calendarToday = context.source === 'calendar' ? this.today() : undefined;
-    const session = await this.application.planCreate({ type: 'configured-default' });
+    const calendarToday = context.source === 'calendar' ? this.today_abyssPrivate() : undefined;
+    const session = await this.application_abyssPrivate.planCreate({ type: 'configured-default' });
     if (calendarToday === undefined) {
       return {
         label: 'Default destination',
@@ -128,37 +139,37 @@ export class CaptureTargetResolver {
     };
   }
 
-  private async listTarget(
+  private async listTarget_abyssPrivate(
     context: Extract<CaptureContext, { type: 'list' }>,
   ): Promise<CaptureTarget> {
     const { selection } = context;
     if (selection === 'inbox') {
-      return await this.inboxTarget(context);
+      return await this.inboxTarget_abyssPrivate(context);
     }
     if (selection === 'today' || selection === 'upcoming') {
-      return await this.datedListTarget(context, selection);
+      return await this.datedListTarget_abyssPrivate(context, selection);
     }
     if (selection.type === 'tag') {
-      return await this.tagTarget(context, normalizedTag(selection.tag));
+      return await this.tagTarget_abyssPrivate(context, normalizedTag(selection.tag));
     }
     if (selection.type === 'project') {
-      return await this.projectTarget(context, selection.path);
+      return await this.projectTarget_abyssPrivate(context, selection.path);
     }
-    return await this.tagGroupTarget(context, selection.groupId);
+    return await this.tagGroupTarget_abyssPrivate(context, selection.groupId);
   }
 
-  private async inboxTarget(
+  private async inboxTarget_abyssPrivate(
     context: Extract<CaptureContext, { type: 'list' }>,
   ): Promise<CaptureTarget> {
-    const tagged = this.settings.inbox.mode !== 'untagged';
-    const tag = tagged ? normalizedTag(this.settings.inbox.tag) : '';
+    const tagged = this.settings_abyssPrivate.inbox.mode !== 'untagged';
+    const tag = tagged ? normalizedTag(this.settings_abyssPrivate.inbox.tag) : '';
     if (tagged && tag.length === 0) {
       return unavailableTarget(context, 'Inbox · unavailable');
     }
     return {
       label: tag.length > 0 ? `Inbox · ${tag}` : 'Inbox · untagged',
       context,
-      session: await this.application.planCreate(
+      session: await this.application_abyssPrivate.planCreate(
         { type: 'configured-default' },
         { intent: 'inbox' },
       ),
@@ -168,44 +179,46 @@ export class CaptureTargetResolver {
     };
   }
 
-  private async datedListTarget(
+  private async datedListTarget_abyssPrivate(
     context: Extract<CaptureContext, { type: 'list' }>,
     selection: 'today' | 'upcoming',
   ): Promise<CaptureTarget> {
-    const today = this.today();
+    const today = this.today_abyssPrivate();
     const upcoming = selection === 'upcoming';
+    const label = upcoming ? 'Upcoming' : 'Today';
+    const relative = upcoming ? 'tomorrow' : 'today';
     const due = upcoming ? (shiftLocalDate(today, 1) ?? today) : today;
     return {
-      label: upcoming ? 'Upcoming · tomorrow' : 'Today · today',
+      label: context.date === undefined ? `${label} · ${relative}` : label,
       context,
-      session: await this.application.planCreate({ type: 'configured-default' }),
+      session: await this.application_abyssPrivate.planCreate({ type: 'configured-default' }),
       markdownPrefix: '',
       markdownSuffixes: [],
       initial: { due: { type: 'set', value: due } },
     };
   }
 
-  private async tagTarget(
+  private async tagTarget_abyssPrivate(
     context: Extract<CaptureContext, { type: 'list' }>,
     tag: string,
   ): Promise<CaptureTarget> {
     return {
       label: tag,
       context,
-      session: await this.application.planCreate({ type: 'configured-default' }),
+      session: await this.application_abyssPrivate.planCreate({ type: 'configured-default' }),
       markdownPrefix: '',
       markdownSuffixes: [],
       ...(tag.length > 0 && { initial: { tags: { add: [tag] } } }),
     };
   }
 
-  private async tagGroupTarget(
+  private async tagGroupTarget_abyssPrivate(
     context: Extract<CaptureContext, { type: 'list' }>,
     groupId: string,
   ): Promise<CaptureTarget> {
     const group = resolveEffectiveTagGroups(
-      this.settings,
-      collectTaskNodeTags(this.taskNodes()),
+      this.settings_abyssPrivate,
+      collectTaskNodeTags(this.taskNodes_abyssPrivate()),
     ).find((candidate) => candidate.id === groupId);
     const groupName = group?.name ?? 'Group';
     const tag = group === undefined ? undefined : effectiveGroupCaptureTag(group);
@@ -215,19 +228,22 @@ export class CaptureTargetResolver {
     return {
       label: `${groupName} · ${tag}`,
       context,
-      session: await this.application.planCreate({ type: 'configured-default' }),
+      session: await this.application_abyssPrivate.planCreate({ type: 'configured-default' }),
       markdownPrefix: '',
       markdownSuffixes: [],
       initial: { tags: { add: [tag] } },
     };
   }
 
-  private async projectTarget(context: CaptureContext, path: string): Promise<CaptureTarget> {
-    const insertion = projectInsertion(this.settings.projects);
+  private async projectTarget_abyssPrivate(
+    context: CaptureContext,
+    path: string,
+  ): Promise<CaptureTarget> {
+    const insertion = projectInsertion(this.settings_abyssPrivate.projects);
     return {
       label: path,
       context,
-      session: await this.application.planCreate({
+      session: await this.application_abyssPrivate.planCreate({
         type: 'explicit',
         destination: { filePath: path, insertion },
       }),

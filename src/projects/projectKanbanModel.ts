@@ -2,6 +2,7 @@ import type { ProjectTableSettings } from './projectFields';
 import type { ProjectKanbanSettings } from './projectKanbanSettings';
 import {
   buildProjectTableModel,
+  prepareProjectSearch,
   type ProjectTableGroup,
   type ProjectTableModelInput,
 } from './projectTableModel';
@@ -139,6 +140,10 @@ function tableSettings(settings: ProjectKanbanSettings): ProjectTableSettings {
 /** Projects the shared project table model independently inside ordered status columns. */
 export function buildProjectKanbanModel(input: ProjectKanbanModelInput): ProjectKanbanModel {
   const { settings, ...sharedInput } = input;
+  const search = prepareProjectSearch(
+    input.search === undefined ? '' : input.search,
+    input.segment,
+  );
   const availableStatusGroups = orderedGroups([...input.statuses], [...input.projects]);
   const byStatus = new Map<string, Project[]>();
   for (const project of input.projects) {
@@ -158,6 +163,7 @@ export function buildProjectKanbanModel(input: ProjectKanbanModelInput): Project
           : [...sourceProjects];
       const model = buildProjectTableModel({
         ...sharedInput,
+        search,
         projects,
         settings: tableSettings(settings),
       });

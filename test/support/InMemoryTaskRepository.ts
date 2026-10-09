@@ -407,15 +407,6 @@ function taskContentEdit(
   }
 }
 
-function commentLine(
-  parentLine: number,
-  comment: CommentRef,
-  lines: readonly string[],
-): number | undefined {
-  const line = parentLine + comment.relativeLine;
-  return lines[line] === legacyLine(comment.originalMarkdown) ? line : undefined;
-}
-
 function rebaseNode(node: TaskNodeRef, root: TaskRef): TaskNodeRef {
   if (node.type === 'task') return { type: 'task', ref: root };
   return {
@@ -621,7 +612,6 @@ type EditLocation =
 type TextEditLocation =
   | { readonly type: 'conflict' }
   | { readonly type: 'invalid' }
-  | { readonly type: 'comment'; readonly line: number; readonly occurrence: number }
   | {
       readonly type: 'description';
       readonly line: number;
@@ -1560,8 +1550,7 @@ export class InMemoryTaskRepository implements TaskRepository {
         ? { type: 'conflict', current }
         : { type: 'not-found', target: targetOf(command) };
     }
-    const lines = input.content.split(/\r?\n/u);
-    const target = this.resolveTextEditTarget(input, command, targetSnapshot, lines);
+    const target = this.resolveTextEditTarget(input, command, targetSnapshot);
     if (target.type === 'conflict') return { type: 'conflict', current };
     if (target.type === 'invalid') {
       return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'link' }] };
@@ -1573,20 +1562,22 @@ export class InMemoryTaskRepository implements TaskRepository {
     input: LocatedEditInput,
     command: Extract<TaskEditCommand, { readonly type: 'edit-link' }>,
     target: TaskSnapshot | SubtaskSnapshot,
-    lines: readonly string[],
   ): TextEditLocation {
-    if (command.target.type === 'comment') {
-      const line = commentLine(input.block.line + input.relativeLine, command.target.ref, lines);
-      return line === undefined
-        ? { type: 'conflict' }
-        : { type: 'comment', line, occurrence: command.occurrence };
-    }
-    const found = this.editor.descriptionLink(
-      input.content,
-      input.block,
-      blockTarget(target, input.block.toLine - input.block.line + 1, input.relativeLine),
-      command.occurrence,
+    const block = blockTarget(
+      target,
+      input.block.toLine - input.block.line + 1,
+      input.relativeLine,
     );
+    const found =
+      command.target.type === 'comment'
+        ? this.editor.commentLink(
+            input.content,
+            input.block,
+            block,
+            command.target.ref,
+            command.occurrence,
+          )
+        : this.editor.descriptionLink(input.content, input.block, block, command.occurrence);
     if (found.type !== 'ready') return found;
     return {
       type: 'description',
@@ -1600,13 +1591,10 @@ export class InMemoryTaskRepository implements TaskRepository {
     input: LocatedEditInput,
     command: Extract<TaskEditCommand, { readonly type: 'edit-link' }>,
     current: TaskSnapshot,
-    target: Extract<TextEditLocation, { readonly type: 'comment' | 'description' }>,
+    target: Extract<TextEditLocation, { readonly type: 'description' }>,
   ): TaskRepositoryResult {
     const sourceLine = input.content.split(/\r?\n/u)[target.line] ?? '';
-    const edited =
-      target.type === 'comment'
-        ? this.options.codec.editTextLink(sourceLine, target.occurrence, command.replacement)
-        : this.options.codec.editTextLinkAt(sourceLine, target, command.replacement);
+    const edited = this.options.codec.editTextLinkAt(sourceLine, target, command.replacement);
     if (edited.type === 'conflict') return { type: 'conflict', current };
     if (edited.type === 'invalid') return edited;
     if (edited.type === 'unchanged') {

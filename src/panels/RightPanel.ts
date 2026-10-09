@@ -1,13 +1,18 @@
 import type { App } from 'obsidian';
 import { Component, Notice, setIcon } from 'obsidian';
 import type { AppState, InspectorHistoryFrame } from '../app/AppState';
+import type { TaskSearchApi } from '../tasks';
+import type { LocalSearchScopeHost } from '../ui/localSearchKeys';
+import type { TaskDependencySearchProvider } from '../ui/TaskDependencySearchProvider';
 import { InspectorDependencies } from './right/InspectorDependencies';
 import { InspectorPlanningSurfaces } from './right/InspectorPlanningSurfaces';
 import { InspectorSections } from './right/InspectorSections';
 import type {
   AddDateField,
+  InspectorTaskOwner,
   PlanningControlKey,
   SchedulingDateField,
+  ShowInTaskList,
   TaskLike,
 } from './right/inspectorTypes';
 
@@ -18,9 +23,11 @@ import {
   durationMinutes,
   localTime,
   sameTaskNodeRef,
+  taskPrefixForSubtask,
   type CommentRef,
   type CommentTimeContext,
   type CommentTimeContextProvider,
+  type CompletionTrackingWitness,
   type CreateDependencySubtaskCommand,
   type DependencyDirection,
   type LocalDate,
@@ -42,7 +49,13 @@ import {
 import { type DependencyPickerCommitResult } from '../ui/dependencySearch';
 import { createInlineTaskUndo, type InlineUndoPosition } from '../ui/inlineTaskUndo';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
-import { rebuildOwnedTaskSelection } from '../ui/ownedTaskSelection';
+import {
+  proveOwnedCompletionFollowUp,
+  proveOwnedTaskSelection,
+  rebuildOwnedTaskSelection,
+  taskNodeOccurrencePath,
+  type OwnedTaskSelectionProof,
+} from '../ui/ownedTaskSelection';
 import { renderTaskText } from '../ui/renderTaskText';
 import { runAsyncAction } from '../ui/runAsyncAction';
 import { renderStatusMarker } from '../ui/StatusMarker';
@@ -50,7 +63,7 @@ import {
   PENDING_TASK_EDIT_RESULT,
   presentTaskArchiveResult,
   presentTaskCommandResult,
-  requestTaskCompletion,
+  requestTaskStatusChange,
 } from '../ui/taskCommandResult';
 import { dependencyCompletionBlocked } from '../ui/taskDependencyPresentation';
 import {
@@ -61,11 +74,19 @@ import {
   isEntryDraft,
   rebaseRightPanelDraft,
   unfocusedDraft,
+  type InspectorDraftHandoff,
   type RightPanelDraftBundle,
   type RightPanelDraftState,
 } from '../ui/taskDraftContinuity';
 import { bindTaskHierarchyDrop, executeTaskHierarchy } from '../ui/taskHierarchyActions';
-import { rebuildTaskSelection, rootTaskRef, taskNodeLine, taskNodeRef } from '../ui/taskSelection';
+import {
+  isCurrentTaskSelectionSnapshot,
+  rebuildTaskSelection,
+  rootTaskRef,
+  taskNodeLine,
+  taskNodeRef,
+  type TaskSelectionNode,
+} from '../ui/taskSelection';
 import { taskRemovalInverse } from '../ui/taskUndoNotice';
 import {
   mountTimeBadge,
@@ -75,12 +96,16 @@ import {
 } from '../ui/timeTracking/TimeBadge';
 
 interface RightPanelOptions {
+  readonly onShowInTaskList?: ShowInTaskList | undefined;
   readonly state: AppState;
   readonly app: App;
   readonly statusRegistry: StatusRegistry;
   readonly settings?: CalendarSettings | undefined;
   readonly onSuccessfulMutation?: ((ref?: TaskRef) => void) | undefined;
   readonly tasks?: TaskApplicationApi | undefined;
+  readonly search?: TaskSearchApi | undefined;
+  readonly localSearchScope?: LocalSearchScopeHost | undefined;
+  readonly dependencySearch?: TaskDependencySearchProvider | undefined;
   readonly onRenderHeaderActions?: ((actions: HTMLElement) => void) | undefined;
   readonly onMutationLifecycle?: ((event: RightPanelMutationLifecycle) => void) | undefined;
   readonly commentTimeContext?: CommentTimeContextProvider | undefined;
@@ -112,6 +137,7 @@ interface SubmittedDraft {
   readonly selection: readonly TaskLike[];
   readonly creationPolicy?: Parameters<typeof rebuildOwnedTaskSelection>[3];
   successorSelection?: readonly TaskLike[];
+  proof?: OwnedTaskSelectionProof;
   dismissed?: boolean;
   epoch: number;
   consumed: boolean;
@@ -266,7 +292,9 @@ export class RightPanel {
   private readonly completionConfirmationAbortController_abyssPrivate = new AbortController();
   private el_abyssPrivate!: HTMLElement;
   private mounted_abyssPrivate = false;
+  private listActivation_abyssPrivate = new AbortController();
   private pendingPlanningRender_abyssPrivate = false;
+  private pendingPlanningMetadata_abyssPrivate = false;
   private queuedPlanningRender_abyssPrivate:
     | { readonly ownerWindow: Window; readonly timer: number; readonly generation: number }
     | undefined;
@@ -298,6 +326,42 @@ export class RightPanel {
   private nextDetachedDraftId_abyssPrivate = 0;
   private detachedAnnouncement_abyssPrivate = '';
   private detachedFocusTimer_abyssPrivate: number | undefined;
+
+  private readonly taskOwners_abyssPrivate = new Map<string, InspectorTaskOwner[]>();
+  private readonly breadcrumbTitles_abyssPrivate: Array<{
+    readonly element: HTMLElement;
+    readonly owner: InspectorTaskOwner;
+    task: TaskLike;
+    component: Component;
+  }> = [];
+  private retainedStack_abyssPrivate: readonly TaskLike[] = [];
+  private retainedDocument_abyssPrivate: Document | undefined;
+  private metadataTask_abyssPrivate: TaskLike | undefined;
+  private retainedProof_abyssPrivate: OwnedTaskSelectionProof | undefined;
+
+  private taskOwner_abyssPrivate(task: TaskLike): InspectorTaskOwner {
+    const ref = taskNodeRef(task);
+    const key = taskNodeOccurrencePath(ref);
+    const owners = this.taskOwners_abyssPrivate.get(key) ?? [];
+    const existing = owners.find(
+      (owner) => owner.current !== undefined && sameTaskNodeRef(taskNodeRef(owner.current), ref),
+    );
+    if (existing !== undefined) return existing;
+    const owner = { current: task };
+    owners.push(owner);
+    this.taskOwners_abyssPrivate.set(key, owners);
+    return owner;
+  }
+
+  private retireTaskOwners_abyssPrivate(): void {
+    for (const owners of this.taskOwners_abyssPrivate.values())
+      for (const owner of owners) owner.current = undefined;
+    this.taskOwners_abyssPrivate.clear();
+    this.breadcrumbTitles_abyssPrivate.length = 0;
+    this.retainedStack_abyssPrivate = [];
+    this.retainedProof_abyssPrivate = undefined;
+    this.sections_abyssPrivate.destroy();
+  }
 
   private readonly sections_abyssPrivate: InspectorSections;
   private readonly dependencies_abyssPrivate: InspectorDependencies;
@@ -336,9 +400,16 @@ export class RightPanel {
       interactionOwnership,
       timeTracking,
       host: {
+        showInTaskList:
+          options.onShowInTaskList === undefined
+            ? undefined
+            : (task) => {
+                this.showInTaskList_abyssPrivate(task, options.onShowInTaskList);
+              },
         root: () => this.el_abyssPrivate,
         mounted: () => this.mounted_abyssPrivate,
         component: () => this.md_abyssPrivate,
+        taskOwner: (task) => this.taskOwner_abyssPrivate(task),
         stack: () => this.state_abyssPrivate.get('taskStack'),
         rebuildPlanningTargetStack: (root, target) => rebuildPlanningTargetStack(root, target),
         dependencyTask: (stack) => this.dependencyTask_abyssPrivate(stack),
@@ -372,14 +443,44 @@ export class RightPanel {
         promoteSubtask: (task) => this.promoteSubtask_abyssPrivate(task),
       },
     });
-    this.dependencies_abyssPrivate = this.createDependencies_abyssPrivate();
+    this.dependencies_abyssPrivate = this.createDependencies_abyssPrivate(options);
     this.sections_abyssPrivate = this.createSections_abyssPrivate();
   }
 
-  private createDependencies_abyssPrivate(): InspectorDependencies {
+  private showInTaskList_abyssPrivate(task: TaskLike, action: ShowInTaskList | undefined): void {
+    if (action === undefined) return;
+    this.listActivation_abyssPrivate.abort();
+    const controller = new AbortController();
+    this.listActivation_abyssPrivate = controller;
+    const owner = this.taskOwner_abyssPrivate(task);
+    const target = taskNodeRef(task);
+    const intent = this.state_abyssPrivate.taskSelectionIntentGeneration;
+    const window = this.el_abyssPrivate.ownerDocument.defaultView;
+    const isCurrent = (): boolean =>
+      !controller.signal.aborted &&
+      this.mounted_abyssPrivate &&
+      this.el_abyssPrivate.ownerDocument.defaultView === window &&
+      this.state_abyssPrivate.taskSelectionIntentGeneration === intent &&
+      owner.current !== undefined &&
+      sameTaskNodeRef(taskNodeRef(owner.current), target);
+    if (!isCurrent()) return;
+    void action(target, { signal: controller.signal, isCurrent }).catch((error: unknown) => {
+      if (!isCurrent()) return;
+      console.error('[abyss-tasks] task list navigation failed', {
+        phase: 'activation',
+        category: error instanceof Error ? error.name : typeof error,
+      });
+      new Notice('Could not show task in task list');
+    });
+  }
+
+  private createDependencies_abyssPrivate(options: RightPanelOptions): InspectorDependencies {
     return new InspectorDependencies({
       state: this.state_abyssPrivate,
       queries: this.tasks_abyssPrivate?.queries,
+      search: options.search,
+      provider: options.dependencySearch,
+      localSearchScope: options.localSearchScope,
       statusRegistry: this.statusRegistry_abyssPrivate,
       interactionOwnership: this.interactionOwnership_abyssPrivate,
       surfaces: this.planningSurfaces_abyssPrivate,
@@ -420,8 +521,12 @@ export class RightPanel {
       host: {
         root: () => this.el_abyssPrivate,
         component: () => this.md_abyssPrivate,
+        taskOwner: (task) => this.taskOwner_abyssPrivate(task),
         renderTaskStatusMarker: (parent, task) => {
           this.renderTaskStatusMarker_abyssPrivate(parent, task);
+        },
+        bindHierarchyDrop: (surface, task) => {
+          this.bindHierarchyDrop_abyssPrivate(surface, task);
         },
         finishTaskDrag: () => {
           this.finishTaskDrag_abyssPrivate();
@@ -472,6 +577,7 @@ export class RightPanel {
         sameTaskNodeRef(taskNodeRef(prior), taskNodeRef(selected));
       const owned = this.consumeOwnedSelection_abyssPrivate(next);
       const continuesOwnedSelection = owned !== undefined;
+      this.retainedProof_abyssPrivate = owned?.proof;
       const continuesSelection = sameSelection || continuesOwnedSelection;
       this.dependencies_abyssPrivate.updateDisclosureSelection(next, continuesSelection);
       const statusFocus = continuesSelection
@@ -493,6 +599,8 @@ export class RightPanel {
         ? this.planningSurfaces_abyssPrivate.planningFocusKeys()
         : undefined;
       this.advanceSelectionEpoch_abyssPrivate(sameSelection, continuesOwnedSelection);
+      if (this.isCompletionSubmission_abyssPrivate(owned) && owned !== undefined)
+        owned.epoch = this.selectionEpoch_abyssPrivate;
       this.render_abyssPrivate(statusFocus, controls);
     });
     const offHistory = this.state_abyssPrivate.onCommit((changed) => {
@@ -579,7 +687,20 @@ export class RightPanel {
     return task === undefined ? undefined : { snapshot: task, ref: taskNodeRef(task) };
   }
 
+  onWindowMigrated(): void {
+    this.listActivation_abyssPrivate.abort();
+    const draft = this.captureDraftState();
+    this.dependencies_abyssPrivate.cancelSearch();
+    this.planningSurfaces_abyssPrivate.clearAnchoredSurfaces();
+    this.retireTaskOwners_abyssPrivate();
+    this.render_abyssPrivate();
+    const root = this.state_abyssPrivate.get('taskStack')[0];
+    if (root !== undefined && 'source' in root) this.restoreDraftState(draft, root);
+  }
+
   destroy(): void {
+    this.listActivation_abyssPrivate.abort();
+    this.retireTaskOwners_abyssPrivate();
     this.invalidateDeferredPlanningRender_abyssPrivate();
     clearOptionalTimer(
       this.el_abyssPrivate.ownerDocument.defaultView,
@@ -604,6 +725,79 @@ export class RightPanel {
     this.planningSurfaces_abyssPrivate.clearAnchoredSurfaces();
     this.el_abyssPrivate.empty();
     this.md_abyssPrivate.unload();
+  }
+
+  captureDraftHandoff(): InspectorDraftHandoff {
+    return {
+      live: this.captureDraftState(),
+      detached: this.detachedDrafts_abyssPrivate.map(({ draft, origin }) => ({
+        entries: [draft],
+        ...(origin === undefined ? {} : { origin }),
+      })),
+    };
+  }
+
+  receiveDraftHandoff(
+    drafts: InspectorDraftHandoff,
+    root: TaskSnapshot,
+    selection: readonly TaskSelectionNode[],
+  ): boolean {
+    const current = this.state_abyssPrivate.get('taskStack');
+    if (!this.acceptsDraftHandoff_abyssPrivate(root, selection, current)) return false;
+    const selected = current[current.length - 1];
+    if (selected === undefined) return false;
+    return this.restoreHandoffDrafts_abyssPrivate(drafts, root, taskNodeRef(selected));
+  }
+
+  private restoreHandoffDrafts_abyssPrivate(
+    drafts: InspectorDraftHandoff,
+    root: TaskSnapshot,
+    selected: TaskNodeRef,
+  ): boolean {
+    const candidates = this.captureDraftState()?.entries ?? [];
+    const restore: RightPanelDraftBundle[] = [];
+    const detach = [...drafts.detached];
+    for (const draft of (drafts.live ?? { entries: [] }).entries) {
+      const disposition = this.recoveryLiveDisposition_abyssPrivate(candidates, draft, selected);
+      const bundle = { ...drafts.live, entries: [unfocusedDraft(draft)] };
+      if (disposition === 'conflict') detach.push(bundle);
+      else if (disposition === 'unrepresented') restore.push(bundle);
+    }
+    if (!this.canDetachHandoff_abyssPrivate(detach)) return false;
+    for (const bundle of restore) this.restoreDraftState(bundle, root);
+    for (const bundle of detach) this.detachDraftState(bundle);
+    return true;
+  }
+
+  private canDetachHandoff_abyssPrivate(bundles: readonly RightPanelDraftBundle[]): boolean {
+    const existing = new Map(
+      this.detachedDrafts_abyssPrivate.map(({ key, draft }) => [key, draft]),
+    );
+    for (const draft of bundles.flatMap((bundle) => bundle.entries)) {
+      const key = draftIdentity(draft);
+      const previous = existing.get(key);
+      if (previous !== undefined && !this.sameDraftPayload_abyssPrivate(previous, draft))
+        return false;
+      existing.set(key, draft);
+    }
+    return true;
+  }
+
+  private acceptsDraftHandoff_abyssPrivate(
+    root: TaskSnapshot,
+    selection: readonly TaskSelectionNode[],
+    current: readonly TaskSelectionNode[],
+  ): boolean {
+    return (
+      this.mounted_abyssPrivate &&
+      this.el_abyssPrivate.isConnected &&
+      isCurrentTaskSelectionSnapshot(root, current) &&
+      current.length === selection.length &&
+      current.every((node, index) => {
+        const expected = selection[index];
+        return expected !== undefined && sameTaskNodeRef(taskNodeRef(node), taskNodeRef(expected));
+      })
+    );
   }
 
   captureDraftState(): RightPanelDraftBundle | undefined {
@@ -696,32 +890,73 @@ export class RightPanel {
     };
   }
 
+  private isCompletionSubmission_abyssPrivate(submitted: SubmittedDraft | undefined): boolean {
+    return (
+      submitted?.command?.type === 'set-status' || submitted?.command?.type === 'toggle-completion'
+    );
+  }
+
+  ownedRefForCompletionFollowUp(
+    current: TaskSnapshot,
+    stack: readonly TaskLike[],
+    witness: CompletionTrackingWitness | undefined,
+  ): TaskRef | undefined {
+    if (witness === undefined || !sameTaskRef(witness.after, current.ref)) return undefined;
+    const submitted = this.submissionForOwnedTransition_abyssPrivate(witness.before, stack);
+    if (submitted?.consumed !== true || !this.isCompletionSubmission_abyssPrivate(submitted))
+      return undefined;
+    return this.selectionForOwnedTransition(witness.before, current, stack, witness) === undefined
+      ? undefined
+      : witness.before;
+  }
+
   selectionForOwnedTransition(
     consumedRef: TaskRef | undefined,
     current: TaskSnapshot,
     stack: readonly TaskLike[],
+    witness?: CompletionTrackingWitness,
   ): TaskLike[] | undefined {
     if (consumedRef === undefined) return undefined;
-    const submitted = [...this.submittedDrafts_abyssPrivate.values()].find(
-      (candidate) => !candidate.consumed && sameTaskRef(candidate.ref, consumedRef),
+    const submitted = this.submissionForOwnedTransition_abyssPrivate(consumedRef, stack);
+    if (submitted?.command === undefined) return undefined;
+    const proof = submitted.consumed
+      ? proveOwnedCompletionFollowUp(current, stack, {
+          original: submitted.selection,
+          command: submitted.command,
+          witness,
+        })
+      : proveOwnedTaskSelection(
+          current,
+          submitted.selection,
+          submitted.command,
+          submitted.creationPolicy,
+        );
+    if (proof !== undefined) {
+      submitted.proof = proof;
+      submitted.successorSelection = proof.selection;
+    }
+    return proof?.selection;
+  }
+
+  private submissionForOwnedTransition_abyssPrivate(
+    consumedRef: TaskRef,
+    stack: readonly TaskLike[],
+  ): SubmittedDraft | undefined {
+    const submitted = [...this.submittedDrafts_abyssPrivate.values()].find((candidate) =>
+      candidate.rootAliases.some((alias) => sameTaskRef(alias, consumedRef)),
     );
+    if (submitted?.command === undefined || submitted.epoch !== this.selectionEpoch_abyssPrivate)
+      return undefined;
+    const basis = submitted.consumed ? submitted.successorSelection : submitted.selection;
     if (
-      submitted?.command === undefined ||
-      stack.length !== submitted.selection.length ||
+      stack.length !== basis?.length ||
       !stack.every((node, index) => {
-        const previous = submitted.selection[index];
+        const previous = basis[index];
         return previous !== undefined && sameTaskNodeRef(taskNodeRef(node), taskNodeRef(previous));
       })
     )
       return undefined;
-    const successor = rebuildOwnedTaskSelection(
-      current,
-      submitted.selection,
-      submitted.command,
-      submitted.creationPolicy,
-    );
-    if (successor !== undefined) submitted.successorSelection = successor;
-    return successor;
+    return submitted;
   }
 
   captureDraftStateForOwnedTransition(
@@ -730,33 +965,56 @@ export class RightPanel {
     token?: object,
   ): RightPanelDraftBundle | undefined {
     const bundle = this.captureDraftState();
-    const submitted =
-      token != null
-        ? this.submittedDrafts_abyssPrivate.get(token)
-        : [...this.submittedDrafts_abyssPrivate.values()].find(
-            (candidate) =>
-              !candidate.consumed &&
-              candidate.rootAliases.some((alias) => sameTaskRef(alias, consumedOwnedRef)),
-          );
-    if (
-      submitted == null ||
-      submitted.consumed ||
-      !submitted.rootAliases.some((alias) => sameTaskRef(alias, consumedOwnedRef))
-    ) {
+    const submitted = this.submittedDraftForRef_abyssPrivate(consumedOwnedRef, token);
+    if (submitted?.rootAliases.some((alias) => sameTaskRef(alias, consumedOwnedRef)) !== true) {
       return bundle;
     }
     if (!submitted.rootAliases.some((alias) => sameTaskRef(alias, successorRef))) {
       submitted.rootAliases.push({ ...successorRef });
     }
+    if (submitted.consumed) {
+      if (this.isCompletionSubmission_abyssPrivate(submitted))
+        this.captureOwnedConvergence_abyssPrivate(submitted);
+      return this.mapOwnedDraftBundle_abyssPrivate(bundle, submitted.proof);
+    }
     submitted.consumed = true;
     this.captureUndoConvergence_abyssPrivate(submitted);
     this.captureOwnedConvergence_abyssPrivate(submitted);
     const submittedDraft = submitted.draft;
-    if (submittedDraft == null || bundle == null) return bundle;
+    if (submittedDraft == null || bundle == null)
+      return this.mapOwnedDraftBundle_abyssPrivate(bundle, submitted.proof);
     const entries = bundle.entries.flatMap((candidate) =>
       this.consumeSubmittedEntry_abyssPrivate(candidate, submittedDraft, submitted),
     );
-    return entries.length > 0 ? { ...bundle, entries } : undefined;
+    return this.mapOwnedDraftBundle_abyssPrivate(
+      entries.length > 0 ? { ...bundle, entries } : undefined,
+      submitted.proof,
+    );
+  }
+
+  private submittedDraftForRef_abyssPrivate(
+    consumedOwnedRef: TaskRef,
+    token: object | undefined,
+  ): SubmittedDraft | undefined {
+    return token != null
+      ? this.submittedDrafts_abyssPrivate.get(token)
+      : [...this.submittedDrafts_abyssPrivate.values()].find((candidate) =>
+          candidate.rootAliases.some((alias) => sameTaskRef(alias, consumedOwnedRef)),
+        );
+  }
+
+  private mapOwnedDraftBundle_abyssPrivate(
+    bundle: RightPanelDraftBundle | undefined,
+    proof: OwnedTaskSelectionProof | undefined,
+  ): RightPanelDraftBundle | undefined {
+    if (bundle === undefined || proof === undefined) return bundle;
+    const root = proof.selection[0];
+    if (root === undefined || !('source' in root)) return bundle;
+    const context = createRightPanelDraftRebaseContext(proof);
+    return {
+      ...bundle,
+      entries: bundle.entries.map((draft) => rebaseRightPanelDraft(draft, root, context) ?? draft),
+    };
   }
 
   private consumeSubmittedEntry_abyssPrivate(
@@ -765,11 +1023,29 @@ export class RightPanel {
     submitted: SubmittedDraft,
   ): RightPanelDraftState[] {
     const matches = this.sameDraftPayload_abyssPrivate(candidate, submittedDraft);
-    if (!isEntryDraft(candidate)) return matches ? [] : [candidate];
+    if (!isEntryDraft(candidate)) {
+      if (matches) this.consumeSubmittedEditor_abyssPrivate(candidate);
+      return matches ? [] : [candidate];
+    }
     const parent = this.successorDraftParent_abyssPrivate(candidate.parent, submitted);
     if (!matches) return [{ ...candidate, parent: parent ?? candidate.parent }];
+    this.clearSubmittedEntryInput_abyssPrivate(candidate.kind);
     if (!candidate.hadFocus || submitted.dismissed === true || parent === undefined) return [];
     return [{ ...candidate, parent, value: '', selectionStart: 0, selectionEnd: 0, dirty: false }];
+  }
+
+  private consumeSubmittedEditor_abyssPrivate(draft: RightPanelDraftState): void {
+    if (draft.kind === 'existing-comment')
+      this.sections_abyssPrivate.consumeCommentEditor(draft.target.ref);
+    if (draft.kind === 'recurrence-editor')
+      this.planningSurfaces_abyssPrivate.consumeRecurrenceDraft();
+  }
+
+  private clearSubmittedEntryInput_abyssPrivate(kind: 'new-subtask' | 'new-comment'): void {
+    const input = this.el_abyssPrivate.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+      kind === 'new-subtask' ? '.abyss-subtask-new-input' : '.abyss-comment-input',
+    );
+    if (input !== null) input.value = '';
   }
 
   private successorDraftParent_abyssPrivate(
@@ -889,10 +1165,16 @@ export class RightPanel {
 
   private creationProofPolicy_abyssPrivate(): Parameters<typeof rebuildOwnedTaskSelection>[3] {
     const settings = this.settings_abyssPrivate;
-    return settings === undefined
+    const root = this.state_abyssPrivate.get('taskStack')[0];
+    return settings === undefined || root === undefined
       ? undefined
       : {
-          taskPrefix: settings.taskPrefix,
+          taskPrefix: taskPrefixForSubtask(
+            settings.taskPrefix,
+            settings.applyTaskPrefixToSubtasks,
+            root.tags,
+            settings.inbox,
+          ),
           inbox: { ...settings.inbox },
           addCreatedDate: settings.taskLifecycle.addCreatedDate,
         };
@@ -911,7 +1193,7 @@ export class RightPanel {
     if (command.type === 'add-comment') {
       return draft.kind === 'new-comment' && sameTaskNodeRef(draft.parent, command.parent);
     }
-    if (command.type === 'update-comment') {
+    if (command.type === 'update-comment' || command.type === 'delete-comment') {
       return draft.kind === 'existing-comment' && sameCommentRef(draft.target.ref, command.comment);
     }
     return false;
@@ -1145,18 +1427,21 @@ export class RightPanel {
     task: TaskLike,
   ): HTMLInputElement | HTMLTextAreaElement | null {
     if (rebased.kind === 'title') {
-      this.clickElement_abyssPrivate('.abyss-right-title-view');
+      if (this.el_abyssPrivate.querySelector('.abyss-right-title-edit') === null)
+        this.clickElement_abyssPrivate('.abyss-right-title-view');
       return this.el_abyssPrivate.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit');
     }
     if (rebased.kind === 'description') {
-      this.clickElement_abyssPrivate('.abyss-right-desc-view');
+      if (this.el_abyssPrivate.querySelector('.abyss-right-desc-edit') === null)
+        this.clickElement_abyssPrivate('.abyss-right-desc-view');
       return this.el_abyssPrivate.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit');
     }
     if (rebased.kind === 'existing-comment') {
       return this.restoreCommentDraftElement_abyssPrivate(rebased, task);
     }
     if (rebased.kind === 'new-subtask') {
-      this.clickElement_abyssPrivate('.abyss-subtask-section .abyss-subtask-add-row');
+      if (this.el_abyssPrivate.querySelector('.abyss-subtask-new-input') === null)
+        this.clickElement_abyssPrivate('.abyss-subtask-section .abyss-subtask-add-row');
       return this.el_abyssPrivate.querySelector<HTMLInputElement>('.abyss-subtask-new-input');
     }
     return this.el_abyssPrivate.querySelector<HTMLTextAreaElement>('.abyss-comment-input');
@@ -1173,7 +1458,7 @@ export class RightPanel {
     );
     const row = this.el_abyssPrivate.querySelectorAll<HTMLElement>('.abyss-comment-row')[index];
     const text = row?.querySelector<HTMLElement>('.abyss-comment-text');
-    text?.click();
+    if (row?.querySelector('.abyss-comment-edit-input') === null) text?.click();
     return row?.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input') ?? null;
   }
 
@@ -1302,6 +1587,7 @@ export class RightPanel {
     const scheduled = this.queuedPlanningRender_abyssPrivate;
     if (scheduled !== undefined) scheduled.ownerWindow.clearTimeout(scheduled.timer);
     this.pendingPlanningRender_abyssPrivate = false;
+    this.pendingPlanningMetadata_abyssPrivate = false;
     this.queuedPlanningRender_abyssPrivate = undefined;
     this.planningRenderGeneration_abyssPrivate++;
   }
@@ -1335,7 +1621,12 @@ export class RightPanel {
         this.planningSurfaces_abyssPrivate.hasFocusedTypedInputFor(taskNodeRef(task))
       )
         return;
-      this.render_abyssPrivate(undefined, this.planningSurfaces_abyssPrivate.planningFocusKeys());
+      if (this.pendingPlanningMetadata_abyssPrivate && task !== undefined) {
+        this.pendingPlanningRender_abyssPrivate = false;
+        this.pendingPlanningMetadata_abyssPrivate = false;
+        this.refreshTaskMetadata_abyssPrivate(task);
+      } else
+        this.render_abyssPrivate(undefined, this.planningSurfaces_abyssPrivate.planningFocusKeys());
     }, 0);
     this.queuedPlanningRender_abyssPrivate = scheduled;
   }
@@ -1346,6 +1637,10 @@ export class RightPanel {
   ): void {
     const stack = this.state_abyssPrivate.get('taskStack');
     const task = stack[stack.length - 1];
+    if (task !== undefined && this.refreshRetainedInspector_abyssPrivate(task, stack)) {
+      this.planningSurfaces_abyssPrivate.restoreRenderFocus(statusFocus, controls);
+      return;
+    }
     if (
       task !== undefined &&
       this.planningSurfaces_abyssPrivate.hasFocusedTypedInputFor(taskNodeRef(task))
@@ -1362,6 +1657,7 @@ export class RightPanel {
     this.undo_abyssPrivate.detach();
     this.planningSurfaces_abyssPrivate.resetRenderedControls();
     this.dependencies_abyssPrivate.detachSearchForRender();
+    this.retireTaskOwners_abyssPrivate();
     this.md_abyssPrivate.unload();
     this.md_abyssPrivate = new Component();
     this.md_abyssPrivate.load();
@@ -1381,20 +1677,61 @@ export class RightPanel {
     this.planningSurfaces_abyssPrivate.restoreRenderFocus(statusFocus, controls);
   }
 
+  private refreshRetainedInspector_abyssPrivate(
+    next: TaskLike,
+    stack: readonly TaskLike[],
+  ): boolean {
+    const previous = this.retainedStack_abyssPrivate[this.retainedStack_abyssPrivate.length - 1];
+    const proof = this.retainedProof_abyssPrivate;
+    this.retainedProof_abyssPrivate = undefined;
+    if (
+      previous === undefined ||
+      this.retainedDocument_abyssPrivate !== this.el_abyssPrivate.ownerDocument
+    )
+      return false;
+    const successor = proof?.successor(previous);
+    if (
+      successor === undefined ||
+      !sameTaskNodeRef(taskNodeRef(successor), taskNodeRef(next)) ||
+      proof === undefined
+    )
+      return false;
+    this.advanceTaskOwners_abyssPrivate(proof);
+    this.retainedStack_abyssPrivate = stack;
+    this.updateBreadcrumbTitles_abyssPrivate();
+    this.sections_abyssPrivate.update(next, this.commentTimeContext_abyssPrivate?.(), proof);
+    this.refreshTaskMetadata_abyssPrivate(next);
+    this.planningSurfaces_abyssPrivate.updateTaskOwners();
+    this.dependencies_abyssPrivate.refresh();
+    this.timeBadge_abyssPrivate?.update();
+    this.undo_abyssPrivate.render(this.el_abyssPrivate);
+    return true;
+  }
+
+  private advanceTaskOwners_abyssPrivate(proof: OwnedTaskSelectionProof): void {
+    const owners = [...this.taskOwners_abyssPrivate.values()].flat();
+    this.taskOwners_abyssPrivate.clear();
+    for (const owner of owners) {
+      owner.current = owner.current === undefined ? undefined : proof.successor(owner.current);
+      if (owner.current !== undefined) {
+        const key = taskNodeOccurrencePath(taskNodeRef(owner.current));
+        const survivors = this.taskOwners_abyssPrivate.get(key) ?? [];
+        survivors.push(owner);
+        this.taskOwners_abyssPrivate.set(key, survivors);
+      }
+    }
+  }
+
   private async executeLinkEdit_abyssPrivate(
     target: TaskTextTarget,
     occurrence: number,
     replacement: string,
   ): Promise<void> {
-    if (this.tasks_abyssPrivate == null) return;
-    const result = await this.tasks_abyssPrivate.execute({
-      type: 'edit-link',
-      target,
-      occurrence,
-      replacement,
-    });
     const node = target.type === 'comment' ? target.ref.parent : target.target;
-    this.applyPlanningResult_abyssPrivate(result, node);
+    await this.executeOwnedCommand_abyssPrivate(
+      { type: 'edit-link', target, occurrence, replacement },
+      node,
+    );
   }
 
   /** Description block: rendered markdown (clickable links) that becomes a textarea on click. */
@@ -1414,9 +1751,11 @@ export class RightPanel {
     stack: TaskLike[],
     commentTimeContext?: CommentTimeContext,
   ): void {
+    this.retainedStack_abyssPrivate = stack;
+    this.retainedDocument_abyssPrivate = this.el_abyssPrivate.ownerDocument;
     this.renderBreadcrumb_abyssPrivate(stack);
     this.renderTaskHeader_abyssPrivate(task);
-    this.renderTaskMetadata_abyssPrivate(task, stack);
+    this.renderTaskMetadata_abyssPrivate(task);
     this.sections_abyssPrivate.renderDescriptionSection(task);
     this.dependencies_abyssPrivate.renderSections();
     this.sections_abyssPrivate.renderSubtaskSection(task);
@@ -1434,7 +1773,6 @@ export class RightPanel {
         attr: {
           type: 'button',
           'aria-label': 'Back to previous task',
-          title: 'Back to previous task',
         },
       });
       setIcon(back, 'arrow-left');
@@ -1449,20 +1787,55 @@ export class RightPanel {
     }
     for (const [index, item] of stack.slice(0, -1).entries()) {
       if (index > 0) breadcrumb.createSpan({ cls: 'abyss-breadcrumb-sep', text: ' › ' });
+      const owner = this.taskOwner_abyssPrivate(item);
       const crumb = breadcrumb.createSpan({ cls: 'abyss-breadcrumb-item' });
-      renderTaskText(crumb, item.markdownTitle, {
-        presentation: 'title',
-        app: this.app_abyssPrivate,
-        sourcePath: rootTaskRef(item).filePath,
-        component: this.md_abyssPrivate,
-        onEditLink: (occurrence, token) => {
-          this.sections_abyssPrivate.editLink(item, occurrence, token);
-        },
+      this.breadcrumbTitles_abyssPrivate.push({
+        element: crumb,
+        owner,
+        task: item,
+        component: this.renderBreadcrumbTitle_abyssPrivate(crumb, item, owner),
       });
       crumb.addEventListener('click', () => {
-        this.state_abyssPrivate.navigateInspectorSelection(stack.slice(0, index + 1));
+        if (owner.current === undefined) return;
+        this.state_abyssPrivate.navigateInspectorSelection(
+          this.retainedStack_abyssPrivate.slice(0, index + 1),
+        );
       });
     }
+  }
+
+  private updateBreadcrumbTitles_abyssPrivate(): void {
+    for (const title of this.breadcrumbTitles_abyssPrivate) {
+      const current = title.owner.current;
+      if (current === undefined || current.markdownTitle === title.task.markdownTitle) continue;
+      this.md_abyssPrivate.removeChild(title.component);
+      title.task = current;
+      title.component = this.renderBreadcrumbTitle_abyssPrivate(
+        title.element,
+        current,
+        title.owner,
+      );
+    }
+  }
+
+  private renderBreadcrumbTitle_abyssPrivate(
+    element: HTMLElement,
+    task: TaskLike,
+    owner: InspectorTaskOwner,
+  ): Component {
+    const component = this.md_abyssPrivate.addChild(new Component());
+    renderTaskText(element, task.markdownTitle, {
+      presentation: 'title',
+      app: this.app_abyssPrivate,
+      sourcePath: rootTaskRef(task).filePath,
+      component,
+      linkEventOwner: component,
+      onEditLink: (occurrence, token) => {
+        const current = owner.current;
+        if (current !== undefined) this.sections_abyssPrivate.editLink(current, occurrence, token);
+      },
+    });
+    return component;
   }
 
   private restoreDependencyFrame_abyssPrivate(): void {
@@ -1534,6 +1907,7 @@ export class RightPanel {
   }
 
   private renderTaskHeader_abyssPrivate(task: TaskLike): void {
+    const owner = this.taskOwner_abyssPrivate(task);
     const header = this.el_abyssPrivate.createDiv({ cls: 'abyss-right-header' });
     this.renderTaskStatusMarker_abyssPrivate(header, task);
     this.sections_abyssPrivate.renderTitleBlock(header, task);
@@ -1541,7 +1915,6 @@ export class RightPanel {
     const menuBtn = headerActions.createEl('button', {
       cls: 'clickable-icon abyss-right-action-btn',
       attr: {
-        title: 'More actions',
         'aria-label': 'More actions',
         'aria-haspopup': 'menu',
         'aria-expanded': 'false',
@@ -1551,19 +1924,28 @@ export class RightPanel {
     this.planningSurfaces_abyssPrivate.registerPlanningControl('more-actions', menuBtn);
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      this.planningSurfaces_abyssPrivate.renderContextMenu(task, menuBtn);
+      const current = owner.current;
+      if (current !== undefined)
+        this.planningSurfaces_abyssPrivate.renderContextMenu(current, menuBtn);
     });
     this.onRenderHeaderActions_abyssPrivate?.(headerActions);
+    this.bindHierarchyDrop_abyssPrivate(header, task);
+  }
+
+  private bindHierarchyDrop_abyssPrivate(surface: HTMLElement, task: TaskLike): void {
+    const owner = this.taskOwner_abyssPrivate(task);
     if (this.tasks_abyssPrivate !== undefined) {
       const tasks = this.tasks_abyssPrivate;
       this.md_abyssPrivate.register(
-        bindTaskHierarchyDrop(header, {
+        bindTaskHierarchyDrop(surface, {
           state: this.state_abyssPrivate,
           tasks,
           parent: () => {
             const stack = this.state_abyssPrivate.get('taskStack');
             const current = stack[stack.length - 1];
-            return current !== undefined && sameTaskNodeRef(taskNodeRef(current), taskNodeRef(task))
+            return current !== undefined &&
+              owner.current !== undefined &&
+              sameTaskNodeRef(taskNodeRef(current), taskNodeRef(owner.current))
               ? taskNodeRef(current)
               : undefined;
           },
@@ -1621,19 +2003,24 @@ export class RightPanel {
   }
 
   private renderTaskStatusMarker_abyssPrivate(parent: HTMLElement, task: TaskLike): void {
+    const owner = this.taskOwner_abyssPrivate(task);
     const marker = renderStatusMarker(parent, {
       task,
       registry: this.statusRegistry_abyssPrivate,
       completionBlocked: this.isDependencyBlocked_abyssPrivate(task),
       onLeftClick: () => {
+        const current = owner.current;
+        if (current === undefined) return;
         runAsyncAction(
-          'source' in task
-            ? this.toggleTaskLike_abyssPrivate(task)
-            : this.toggleSubTask_abyssPrivate(task),
+          'source' in current
+            ? this.toggleTaskLike_abyssPrivate(current)
+            : this.toggleSubTask_abyssPrivate(current),
         );
       },
       onContextMenu: (event) => {
-        this.planningSurfaces_abyssPrivate.openStatusMenu(event, task);
+        const current = owner.current;
+        if (current !== undefined)
+          this.planningSurfaces_abyssPrivate.openStatusMenu(event, current);
       },
     });
     this.planningSurfaces_abyssPrivate.registerStatusMarker(marker, task);
@@ -1645,7 +2032,33 @@ export class RightPanel {
     );
   }
 
-  private renderTaskMetadata_abyssPrivate(task: TaskLike, stack: readonly TaskLike[]): void {
+  private refreshTaskMetadata_abyssPrivate(task: TaskLike): void {
+    const fields = (node: TaskLike | undefined): unknown =>
+      node === undefined ? undefined : [node.planning, node.priority, node.tags, node.recurrence];
+    if (JSON.stringify(fields(this.metadataTask_abyssPrivate)) === JSON.stringify(fields(task))) {
+      this.metadataTask_abyssPrivate = task;
+      return;
+    }
+    const previous = this.metadataTask_abyssPrivate;
+    if (
+      previous !== undefined &&
+      this.planningSurfaces_abyssPrivate.hasFocusedTypedInputFor(taskNodeRef(previous))
+    ) {
+      this.pendingPlanningRender_abyssPrivate = true;
+      this.pendingPlanningMetadata_abyssPrivate = true;
+      return;
+    }
+    const old = this.el_abyssPrivate.querySelector('.abyss-chips-row');
+    this.planningSurfaces_abyssPrivate.resetMetadataControls();
+    this.renderTaskMetadata_abyssPrivate(task);
+    const next = this.el_abyssPrivate.querySelector('.abyss-chips-row:last-child');
+    if (next !== null && old !== null) old.replaceWith(next);
+    this.dependencies_abyssPrivate.updateBadge();
+  }
+
+  private renderTaskMetadata_abyssPrivate(task: TaskLike): void {
+    const owner = this.taskOwner_abyssPrivate(task);
+    this.metadataTask_abyssPrivate = task;
     const chips = this.el_abyssPrivate.createDiv({ cls: 'abyss-chips-row' });
     this.planningSurfaces_abyssPrivate.renderDateChip(chips, task);
     this.planningSurfaces_abyssPrivate.renderTimeChip(chips, task);
@@ -1658,7 +2071,7 @@ export class RightPanel {
       this.dependencies_abyssPrivate.updateBadge();
     }
     this.planningSurfaces_abyssPrivate.renderPriorityChip(chips, task);
-    this.planningSurfaces_abyssPrivate.renderRecurrenceChip(chips, task, stack);
+    this.planningSurfaces_abyssPrivate.renderRecurrenceChip(chips, task);
     if (task.planning.scheduled != null)
       this.planningSurfaces_abyssPrivate.renderScheduledChip(chips, task);
     if (task.planning.start != null)
@@ -1677,7 +2090,9 @@ export class RightPanel {
     this.planningSurfaces_abyssPrivate.registerPlanningControl('add-tag', addTagBtn);
     addTagBtn.addEventListener('click', (event) => {
       event.stopPropagation();
-      this.planningSurfaces_abyssPrivate.showTagInput(chips, task, addTagBtn);
+      const current = owner.current;
+      if (current !== undefined)
+        this.planningSurfaces_abyssPrivate.showTagInput(chips, current, addTagBtn);
     });
   }
 
@@ -1856,8 +2271,10 @@ export class RightPanel {
   }
 
   private toggleTaskLike_abyssPrivate(task: TaskLike): Promise<void> {
-    return requestTaskCompletion(
+    return requestTaskStatusChange(
       task,
+      undefined,
+      this.statusRegistry_abyssPrivate,
       () => this.commitTaskToggle_abyssPrivate(task),
       this.interactionOwnership_abyssPrivate,
       this.completionConfirmationAbortController_abyssPrivate.signal,
@@ -2186,15 +2603,14 @@ export class RightPanel {
   }
 
   private setStatus_abyssPrivate(task: TaskLike, symbol: string): Promise<void> {
-    if (this.statusRegistry_abyssPrivate.bySymbol(symbol)?.type === 'done') {
-      return requestTaskCompletion(
-        task,
-        () => this.commitStatus_abyssPrivate(task, symbol),
-        this.interactionOwnership_abyssPrivate,
-        this.completionConfirmationAbortController_abyssPrivate.signal,
-      );
-    }
-    return this.commitStatus_abyssPrivate(task, symbol);
+    return requestTaskStatusChange(
+      task,
+      symbol,
+      this.statusRegistry_abyssPrivate,
+      () => this.commitStatus_abyssPrivate(task, symbol),
+      this.interactionOwnership_abyssPrivate,
+      this.completionConfirmationAbortController_abyssPrivate.signal,
+    );
   }
 
   private commitStatus_abyssPrivate(task: TaskLike, symbol: string): Promise<void> {

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import type { CalendarSettings } from '../src/settings/types';
+import * as searchPolicy from '../src/tasks';
 import { editSettingControl, expectDefined, methodOf, useRealMoment } from './helpers';
 
 useRealMoment();
@@ -389,4 +390,72 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     expect(activeDocument.activeElement).toBe(replacement);
     tab.containerEl.remove();
   });
+});
+
+it('uses fuzzy icon discovery and only the active icon wrapper owns local Find/Escape', () => {
+  addIcon('test', '<path />');
+  addIcon('тест', '<path />');
+  const { tab, plugin } = makeTab({ withCustomStatus: true });
+  document.body.append(tab.containerEl);
+  const body = openStatusesSection(tab);
+  const search = expectDefined(
+    body.querySelector<HTMLInputElement>('input[placeholder="Search lucide icons…"]'),
+  );
+  const wrap = expectDefined(search.closest<HTMLElement>('.abyss-status-icon-field'));
+  const prepare = vi.spyOn(searchPolicy, 'prepareSearchQuery');
+  editSettingControl(search, 'tset');
+  expect(prepare).toHaveBeenCalledTimes(1);
+  const choice = expectDefined(wrap.querySelector<HTMLButtonElement>('[data-icon="test"]'));
+  expect(plugin.settings.taskStatuses.find(({ id }) => id === 'status-custom')?.icon).toBe(
+    'alert-triangle',
+  );
+  choice.focus();
+  const find = new KeyboardEvent('keydown', {
+    code: 'KeyF',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  choice.dispatchEvent(find);
+  expect(find.defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(search);
+  search.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
+  expect(document.activeElement).toBe(wrap);
+  expect(search.value).toBe('tset');
+  for (const [query, original] of [
+    ['txst', 'test'],
+    ['тсет', 'тест'],
+    ['теск', 'тест'],
+  ]) {
+    editSettingControl(search, expectDefined(query));
+    expect(wrap.querySelector(`[data-icon="${original}"]`)).not.toBeNull();
+  }
+  expectDefined(wrap.querySelector<HTMLButtonElement>('[data-icon="тест"]')).click();
+  expect(plugin.settings.taskStatuses.find(({ id }) => id === 'status-custom')?.icon).toBe('тест');
+  editSettingControl(search, 'x'.repeat(1024 * 1024));
+  expect(
+    wrap.querySelectorAll('.abyss-status-icon-result:not(.abyss-status-icon-clear)'),
+  ).toHaveLength(0);
+  editSettingControl(search, '');
+  expect(
+    wrap.querySelectorAll('.abyss-status-icon-result:not(.abyss-status-icon-clear)').length,
+  ).toBeLessThanOrEqual(48);
+  const currentControl = expectDefined(
+    wrap.querySelector<HTMLButtonElement>('.abyss-status-icon-clear'),
+  );
+  tab.hide();
+  document.body.append(wrap);
+  currentControl.focus();
+  const disposed = new KeyboardEvent('keydown', {
+    code: 'KeyF',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  currentControl.dispatchEvent(disposed);
+  expect(disposed.defaultPrevented).toBe(false);
+  tab.containerEl.remove();
+  wrap.remove();
 });

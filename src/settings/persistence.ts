@@ -1,4 +1,4 @@
-import type { TagRenameChange } from '../markdown/tagSyntax';
+import { normalizeTag, type TagRenameChange } from '../markdown/tagSyntax';
 import {
   isMalformedProjectKanbanSettings,
   normalizeProjectKanbanSettings,
@@ -15,6 +15,7 @@ import { ACTIVE_STATUS_GROUPS, TYPE_ORDER } from '../status/statusConstants';
 import type { TaskStatusType } from '../tasks/domain/types';
 import { getListViewDefaults } from './defaults';
 import { migrateSettings } from './migration';
+import { normalizeTagFilters } from './tagFilters';
 import { prepareTagViewStateRename } from './tagViewState';
 import type {
   CalendarSettings,
@@ -23,7 +24,7 @@ import type {
   SavedViewStateRecovery,
 } from './types';
 
-export const SAVED_VIEW_STATE_SCHEMA_VERSION = 1 as const;
+export const SAVED_VIEW_STATE_SCHEMA_VERSION = 2 as const;
 export const STATIC_SAVED_VIEW_STATE_MARKER = 'savedViewStateSchemaVersion' as const;
 
 interface SavedViewStatePort {
@@ -129,7 +130,7 @@ function normalizeListViewState(value: Record<string, unknown>, key: string): Li
     groupBy,
     sortBy: { field, dir },
     filters: Array.isArray(value['filters'])
-      ? (detached(value['filters']) as ListViewState['filters'])
+      ? normalizeTagFilters(detached(value['filters']) as ListViewState['filters'])
       : [],
     ...(statusGroups === undefined ? {} : { statusGroups }),
   };
@@ -137,15 +138,16 @@ function normalizeListViewState(value: Record<string, unknown>, key: string): Li
 
 function isValidPropertyFilter(value: unknown): boolean {
   if (!isRecord(value) || typeof value['type'] !== 'string') return false;
+  if (value['type'] === 'tag' || value['type'] === 'tag-exclude') {
+    return typeof value['value'] === 'string' && normalizeTag(value['value']) === value['value'];
+  }
   if (value['type'] === 'file') return typeof value['filePath'] === 'string';
   if (value['type'] === 'priority') {
     return (
       typeof value['value'] === 'string' && ['A', 'B', 'C', 'D', 'E', 'F'].includes(value['value'])
     );
   }
-  return (
-    ['tag', 'time', 'status', 'date'].includes(value['type']) && typeof value['value'] === 'string'
-  );
+  return ['time', 'status', 'date'].includes(value['type']) && typeof value['value'] === 'string';
 }
 
 function isMalformedSort(value: unknown): boolean {
@@ -288,6 +290,21 @@ function isMalformedProjectTable(value: unknown): boolean {
   );
 }
 
+function mergeMalformedViews(
+  current: unknown,
+  additions: NonNullable<SavedViewStateRecovery['malformedViews']>,
+): Record<string, unknown> {
+  const existing = isRecord(current) ? current : {};
+  const merged = { ...existing, ...detached(additions) };
+  if (additions.listViewStates !== undefined) {
+    merged.listViewStates = {
+      ...(isRecord(existing['listViewStates']) ? existing['listViewStates'] : {}),
+      ...detached(additions.listViewStates),
+    };
+  }
+  return merged;
+}
+
 function mergeRecovery(
   current: unknown,
   additions: SavedViewStateRecovery | undefined,
@@ -295,8 +312,10 @@ function mergeRecovery(
   const recovery = isRecord(current) ? detached(current) : {};
   if (additions?.preSplitData !== undefined) recovery['preSplitData'] = additions.preSplitData;
   if (additions?.malformedViews !== undefined) {
-    const existing = isRecord(recovery['malformedViews']) ? recovery['malformedViews'] : {};
-    recovery['malformedViews'] = { ...existing, ...detached(additions.malformedViews) };
+    recovery['malformedViews'] = mergeMalformedViews(
+      recovery['malformedViews'],
+      additions.malformedViews,
+    );
   }
   return Object.keys(recovery).length === 0 ? undefined : recovery;
 }
@@ -483,7 +502,7 @@ function mergeListViewStates(
       ...(isRecord(entry['sortBy']) ? detached(entry['sortBy']) : {}),
       ...detached(value.sortBy),
     };
-    entry['filters'] = detached(value.filters);
+    entry['filters'] = normalizeTagFilters(detached(value.filters));
     if (value.statusGroups === undefined) delete entry['statusGroups'];
     else entry['statusGroups'] = detached(value.statusGroups);
     merged[key] = entry;
@@ -686,7 +705,7 @@ function parseState(text: string, defaults: CalendarSettings): LoadedState {
     throw errorWithCause('Could not parse saved view state.', cause);
   }
   if (!isRecord(parsed)) throw new Error('Saved view state is not a JSON object.');
-  if (parsed['schemaVersion'] !== SAVED_VIEW_STATE_SCHEMA_VERSION) {
+  if (parsed['schemaVersion'] !== 1 && parsed['schemaVersion'] !== 2) {
     const version = parsed['schemaVersion'];
     if (typeof version === 'number' && version > SAVED_VIEW_STATE_SCHEMA_VERSION) {
       throw new Error(`Saved view state uses unsupported future schema ${String(version)}.`);
@@ -742,9 +761,7 @@ export class SettingsPersistenceCoordinator {
     }
     if (state.kind === 'unavailable' && state.issue !== undefined) {
       this.stateWritesSuspended = true;
-      if (rawStatic[STATIC_SAVED_VIEW_STATE_MARKER] !== SAVED_VIEW_STATE_SCHEMA_VERSION) {
-        this.guardedLegacyStatic = detached(rawStatic);
-      }
+      this.guardedLegacyStatic = detached(rawStatic);
       const composed = composeSettings(rawStatic, decodeViews({}, defaults), defaults);
       composed.settings.projects.table = buildDefaultConfiguredProjectTableSettings(
         composed.settings.projects,
@@ -752,21 +769,28 @@ export class SettingsPersistenceCoordinator {
       this.lastStaticSerialized = serialize(this.staticDocument(composed.settings));
       return { ...composed, issues: [state.issue] };
     }
-    if (rawStatic[STATIC_SAVED_VIEW_STATE_MARKER] === SAVED_VIEW_STATE_SCHEMA_VERSION) {
+    if (
+      rawStatic[STATIC_SAVED_VIEW_STATE_MARKER] === 1 ||
+      rawStatic[STATIC_SAVED_VIEW_STATE_MARKER] === 2
+    ) {
       const composed = composeSettings(rawStatic, decodeViews({}, defaults), defaults);
       composed.settings.projects.table = buildDefaultConfiguredProjectTableSettings(
         composed.settings.projects,
       );
-      this.lastStaticSerialized = serialize(createStaticDocument(composed.settings));
+      // Recreating missing state must verify durability before clearing stale fields or its marker.
+      this.guardedLegacyStatic = detached(rawStatic);
+      this.lastStaticSerialized = serialize(this.staticDocument(composed.settings));
       return { ...composed, issues: [] };
     }
     return this.migrateLegacyState(rawStatic, defaults);
   }
 
   saveSettings(settings: CalendarSettings): Promise<void> {
-    const payload = this.staticDocument(settings);
-    const serialized = serialize(payload);
+    const snapshot = detached(settings);
     return this.enqueue(async () => {
+      // A preceding view upgrade may have released the legacy guard while this snapshot waited.
+      const payload = this.staticDocument(snapshot);
+      const serialized = serialize(payload);
       if (serialized === this.lastStaticSerialized) return;
       await this.port.saveStatic(payload);
       this.lastStaticSerialized = serialized;
@@ -778,11 +802,24 @@ export class SettingsPersistenceCoordinator {
     const rawBase = this.rawStateEnvelope;
     const payload = createStateEnvelope(settings, rawBase, this.stateRecovery);
     const serialized = serialize(payload);
+    const upgradeStatic =
+      this.guardedLegacyStatic === undefined ? undefined : createStaticDocument(settings);
     return this.enqueue(async () => {
-      if (serialized === this.lastStateSerialized) return;
-      await this.port.state.write(this.port.state.path, serialized);
-      if (this.rawStateEnvelope === rawBase) this.rawStateEnvelope = payload;
-      this.lastStateSerialized = serialized;
+      if (serialized !== this.lastStateSerialized) {
+        await this.port.state.write(this.port.state.path, serialized);
+        if (upgradeStatic !== undefined) {
+          const verified = await this.port.state.read(this.port.state.path);
+          if (verified !== serialized)
+            throw new Error('Could not verify saved view state upgrade.');
+        }
+        if (this.rawStateEnvelope === rawBase) this.rawStateEnvelope = payload;
+        this.lastStateSerialized = serialized;
+      }
+      if (upgradeStatic !== undefined) {
+        await this.port.saveStatic(upgradeStatic);
+        this.lastStaticSerialized = serialize(upgradeStatic);
+        this.guardedLegacyStatic = undefined;
+      }
     });
   }
 
@@ -856,14 +893,18 @@ export class SettingsPersistenceCoordinator {
       this.stateRecovery,
     );
     this.lastStateSerialized = serialize(loaded.envelope);
-    const staticPayload = createStaticDocument(composed.settings);
-    this.lastStaticSerialized = serialize(staticPayload);
-    if (
-      rawStatic[STATIC_SAVED_VIEW_STATE_MARKER] !== SAVED_VIEW_STATE_SCHEMA_VERSION ||
-      hasMovedFields(rawStatic)
-    ) {
-      this.lastStaticSerialized = undefined;
-      await this.saveSettings(composed.settings);
+    if (loaded.envelope['schemaVersion'] === 1) {
+      // Reads alone keep schema 1 and its marker. Cleanup first needs a verified schema-2 write.
+      this.guardedLegacyStatic = detached(rawStatic);
+      this.lastStaticSerialized = serialize(this.staticDocument(composed.settings));
+      if (hasMovedFields(rawStatic)) await this.saveViewState(composed.settings);
+    } else {
+      const staticPayload = createStaticDocument(composed.settings);
+      this.lastStaticSerialized = serialize(staticPayload);
+      if (rawStatic[STATIC_SAVED_VIEW_STATE_MARKER] !== 2 || hasMovedFields(rawStatic)) {
+        this.lastStaticSerialized = undefined;
+        await this.saveSettings(composed.settings);
+      }
     }
     return { ...composed, issues: [] };
   }

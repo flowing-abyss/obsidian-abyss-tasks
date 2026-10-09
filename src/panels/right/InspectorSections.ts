@@ -1,9 +1,11 @@
-import type { App, Component } from 'obsidian';
+import { Component, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import type { LinkToken } from '../../markdown/links';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import {
   formatCommentTimeLabel,
+  normalizeCommentText,
+  type CommentRef,
   type CommentTimeContext,
   type SubtaskSnapshot,
   type TaskCommentSnapshot,
@@ -16,15 +18,22 @@ import {
   insertAtCaret,
   whenPasteSettled,
 } from '../../ui/attachmentDrop';
+import { commentPreview } from '../../ui/commentPreview';
 import { isImeOwnedEvent } from '../../ui/ime';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import { LinkEditModal } from '../../ui/LinkEditModal';
+import type { OwnedTaskSelectionProof } from '../../ui/ownedTaskSelection';
 import { renderTaskText } from '../../ui/renderTaskText';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { startTaskNodeDrag } from '../../ui/taskNodeDrag';
+import {
+  renderSubtaskTitleText,
+  renderTaskCommentText,
+  renderTaskDescriptionText,
+} from '../../ui/taskNodeText';
 import { rootTaskRef, taskNodeRef } from '../../ui/taskSelection';
 import { renderRowRemove } from './inspectorRowRemove';
-import type { TaskLike } from './inspectorTypes';
+import type { InspectorTaskOwner, TaskLike } from './inspectorTypes';
 
 interface InspectorSectionsOptions {
   readonly app: App;
@@ -34,7 +43,9 @@ interface InspectorSectionsOptions {
   readonly host: {
     readonly root: () => HTMLElement;
     readonly component: () => Component;
+    readonly taskOwner: (task: TaskLike) => InspectorTaskOwner;
     readonly renderTaskStatusMarker: (parent: HTMLElement, task: TaskLike) => void;
+    readonly bindHierarchyDrop: (surface: HTMLElement, task: TaskLike) => void;
     readonly finishTaskDrag: () => void;
     readonly setTaskDragCleanup: (cleanup: () => void) => void;
     readonly dismissEntrySubmission: (
@@ -75,6 +86,16 @@ interface InspectorSectionsOptions {
   };
 }
 
+interface InspectorCommentRow {
+  row: HTMLElement;
+  comment: TaskCommentSnapshot;
+  component: Component;
+  textComponent: Component | undefined;
+  update: () => void;
+  expanded: boolean;
+  disclosure: HTMLButtonElement | undefined;
+}
+
 class AsyncEditLifecycle {
   #phase: 'idle' | 'saving' | 'closed' = 'idle';
 
@@ -103,6 +124,174 @@ export class InspectorSections {
   readonly #interactionOwnership: InteractionOwnershipPort;
   readonly #host: InspectorSectionsOptions['host'];
   readonly #commands: InspectorSectionsOptions['commands'];
+  #titleComponent: Component | undefined;
+  #descriptionComponent: Component | undefined;
+  #titleUpdate: (() => void) | undefined;
+  #descriptionUpdate: (() => void) | undefined;
+  #renderedTask: TaskLike | undefined;
+  #subSection: HTMLElement | undefined;
+  #subList: HTMLElement | undefined;
+  #commentSection: HTMLElement | undefined;
+  #commentList: HTMLElement | undefined;
+  #subRows: Array<{
+    row: HTMLElement;
+    owner: InspectorTaskOwner;
+    snapshot: SubtaskSnapshot;
+    component: Component;
+  }> = [];
+  #commentRows: InspectorCommentRow[] = [];
+
+  readonly #editors = new Map<HTMLElement, { parent: Component; component: Component }>();
+
+  #editorOwner(element: HTMLElement, parent = this.#host.component()): Component {
+    const component = parent.addChild(new Component());
+    this.#editors.set(element, { parent, component });
+    component.register(() => {
+      this.#editors.delete(element);
+      element.remove();
+    });
+    return component;
+  }
+
+  #releaseEditor(element: HTMLElement): void {
+    const owner = this.#editors.get(element);
+    if (owner !== undefined) owner.parent.removeChild(owner.component);
+  }
+
+  destroy(): void {
+    for (const element of this.#editors.keys()) this.#releaseEditor(element);
+    for (const { component } of [...this.#subRows, ...this.#commentRows])
+      this.#host.component().removeChild(component);
+    if (this.#titleComponent !== undefined)
+      this.#host.component().removeChild(this.#titleComponent);
+    if (this.#descriptionComponent !== undefined)
+      this.#host.component().removeChild(this.#descriptionComponent);
+    this.#titleComponent = undefined;
+    this.#descriptionComponent = undefined;
+    this.#titleUpdate = undefined;
+    this.#descriptionUpdate = undefined;
+    this.#renderedTask = undefined;
+    this.#subRows = [];
+    this.#commentRows = [];
+    this.#subSection = undefined;
+    this.#subList = undefined;
+    this.#commentSection = undefined;
+    this.#commentList = undefined;
+  }
+
+  #sameSubtaskContent(previous: SubtaskSnapshot, next: TaskLike): boolean {
+    return (
+      previous.markdownTitle === next.markdownTitle &&
+      previous.subtasks.length === next.subtasks.length &&
+      previous.comments.length === next.comments.length &&
+      previous.subtasks.filter((child) => child.status === 'done').length ===
+        next.subtasks.filter((child) => child.status === 'done').length
+    );
+  }
+
+  update(task: TaskLike, context?: CommentTimeContext, proof?: OwnedTaskSelectionProof): void {
+    this.#updateText(task);
+    const list = this.#subList;
+    const comments = this.#commentList;
+    if (list === undefined || comments === undefined) return;
+    this.#updateSubtasks(list, task);
+    this.#updateComments(comments, task, context, proof);
+    this.#updateCount(
+      this.#subSection,
+      task.subtasks.length === 0
+        ? ''
+        : `${task.subtasks.filter((child) => child.status === 'done').length}/${task.subtasks.length}`,
+    );
+    this.#updateCount(
+      this.#commentSection,
+      task.comments.length === 0 ? '' : String(task.comments.length),
+    );
+  }
+
+  consumeCommentEditor(ref: CommentRef): void {
+    const entry = this.#commentRows.find(
+      (candidate) =>
+        candidate.comment.ref.relativeLine === ref.relativeLine &&
+        candidate.comment.ref.originalMarkdown === ref.originalMarkdown &&
+        JSON.stringify(candidate.comment.ref.parent) === JSON.stringify(ref.parent),
+    );
+    const editor = entry?.row.querySelector<HTMLElement>('.abyss-comment-edit-input');
+    if (entry === undefined || editor === null || editor === undefined) return;
+    this.#releaseEditor(editor);
+    entry.update();
+  }
+
+  #updateComments(
+    list: HTMLElement,
+    task: TaskLike,
+    context?: CommentTimeContext,
+    proof?: OwnedTaskSelectionProof,
+  ): void {
+    if (proof !== undefined)
+      this.#commentRows = this.#commentRows.filter((entry) => {
+        const successor = proof.commentSuccessor(entry.comment);
+        if (successor !== undefined) return true;
+        entry.row.remove();
+        this.#host.component().removeChild(entry.component);
+        return false;
+      });
+    task.comments.forEach((comment, index) => {
+      const entry = this.#commentRows[index];
+      if (entry === undefined) this.#renderComment(list, comment, task, context);
+      else {
+        const changed = entry.comment.text !== comment.text;
+        entry.comment = comment;
+        if (changed && entry.row.querySelector('.abyss-comment-edit-input') === null)
+          entry.update();
+      }
+    });
+  }
+
+  #updateText(task: TaskLike): void {
+    const previous = this.#renderedTask;
+    if (previous?.markdownTitle !== task.markdownTitle) this.#titleUpdate?.();
+    if (previous?.description !== task.description) this.#descriptionUpdate?.();
+    this.#renderedTask = task;
+  }
+
+  #updateSubtasks(list: HTMLElement, task: TaskLike): void {
+    for (const entry of [...this.#subRows]) {
+      const current = entry.owner.current;
+      if (
+        current === undefined ||
+        !task.subtasks.includes(current as SubtaskSnapshot) ||
+        !this.#sameSubtaskContent(entry.snapshot, current)
+      ) {
+        entry.row.remove();
+        this.#host.component().removeChild(entry.component);
+        this.#subRows.splice(this.#subRows.indexOf(entry), 1);
+      }
+    }
+    task.subtasks.forEach((sub, index) => {
+      let entry = this.#subRows.find((candidate) => candidate.owner.current === sub);
+      if (entry === undefined) {
+        this.#renderSubTask(list, sub, task);
+        entry = this.#subRows[this.#subRows.length - 1];
+        if (entry !== undefined && list.children[index] !== entry.row)
+          list.insertBefore(entry.row, list.children[index] ?? null);
+      }
+      if (entry !== undefined) {
+        entry.snapshot = sub;
+        entry.row
+          .querySelector('.abyss-subtask-label')
+          ?.classList.toggle('is-done', sub.status === 'done');
+      }
+    });
+  }
+
+  #updateCount(section: HTMLElement | undefined, text: string): void {
+    const header = section?.querySelector<HTMLElement>('.abyss-right-section-header');
+    if (header === undefined || header === null) return;
+    const count = header.querySelector<HTMLElement>('.abyss-right-section-count');
+    if (text === '') count?.remove();
+    else (count ?? header.createSpan({ cls: 'abyss-right-section-count' })).setText(text);
+  }
+
   #draggingSub: SubtaskSnapshot | null = null;
 
   constructor(options: InspectorSectionsOptions) {
@@ -113,14 +302,51 @@ export class InspectorSections {
     this.#commands = options.commands;
   }
 
-  #enablePaste(el: HTMLTextAreaElement, task: TaskLike): void {
-    enableAttachmentPaste(el, {
-      app: this.#app,
-      sourcePath: rootTaskRef(task).filePath,
-      onInsert: (links) => {
-        insertAtCaret(el, links);
-      },
-    });
+  #enableTaskDrop(
+    element: HTMLElement,
+    owner: InspectorTaskOwner,
+    onLinks: (task: TaskLike, links: string) => void,
+  ): void {
+    this.#host.component().register(
+      enableAttachmentDrop(element, {
+        app: this.#app,
+        capture: () => {
+          const task = owner.current;
+          return task === undefined
+            ? undefined
+            : {
+                sourcePath: rootTaskRef(task).filePath,
+                onLinks: (links) => {
+                  onLinks(task, links);
+                },
+              };
+        },
+      }),
+    );
+  }
+
+  #enablePaste(
+    el: HTMLTextAreaElement,
+    task: TaskLike,
+    captureSession: () => () => boolean = () => () => true,
+    component = this.#host.component(),
+  ): void {
+    component.register(
+      enableAttachmentPaste(el, {
+        app: this.#app,
+        capture: () => {
+          const isCurrent = captureSession();
+          if (!el.isConnected || !isCurrent()) return undefined;
+          return {
+            sourcePath: rootTaskRef(task).filePath,
+            isCurrent: () => el.isConnected && isCurrent(),
+            onInsert: (links) => {
+              if (el.isConnected && isCurrent()) insertAtCaret(el, links);
+            },
+          };
+        },
+      }),
+    );
   }
 
   editLink(task: TaskLike, occ: number, token: LinkToken): void {
@@ -155,29 +381,27 @@ export class InspectorSections {
   }
 
   #renderDescriptionBlock(section: HTMLElement, task: TaskLike): void {
+    const owner = this.#host.taskOwner(task);
     const view = section.createDiv({ cls: 'abyss-right-desc abyss-right-desc-view' });
-    enableAttachmentDrop(view, {
-      app: this.#app,
-      sourcePath: rootTaskRef(task).filePath,
-      onLinks: (links) => {
-        // The closure carries the observed revision; a concurrent edit is surfaced as a
-        // structured conflict instead of overwriting the changed block.
-        const current = task.description ?? '';
-        runAsyncAction(
-          this.#commands.updateDescription(
-            task,
-            current.trim().length > 0 ? `${current} ${links}` : links,
-          ),
-        );
-      },
+    this.#enableTaskDrop(view, owner, (current, links) => {
+      const description = current.description ?? '';
+      runAsyncAction(
+        this.#commands.updateDescription(
+          current,
+          description.trim().length > 0 ? `${description} ${links}` : links,
+        ),
+      );
     });
     const showView = (): void => {
-      this.#showDescription(view, task);
+      const current = owner.current;
+      if (current !== undefined) this.#showDescription(view, current);
     };
     view.addEventListener('click', (e) => {
       if ((e.target as HTMLElement).closest('a') != null) return; // let links navigate
-      this.#enterDescriptionEdit(section, view, task, showView);
+      const current = owner.current;
+      if (current !== undefined) this.#enterDescriptionEdit(section, view, current, showView);
     });
+    this.#descriptionUpdate = showView;
     showView();
   }
 
@@ -187,44 +411,68 @@ export class InspectorSections {
     task: TaskLike,
     showView: () => void,
   ): void {
+    const owner = this.#host.taskOwner(task);
+    let currentTask = task;
+    const advanceTarget = (): void => {
+      if (owner.current !== undefined) currentTask = owner.current;
+    };
     const start = view.offsetHeight;
     view.hide();
     const textarea = section.createEl('textarea', {
       cls: 'abyss-right-desc abyss-right-desc-edit',
     });
     view.insertAdjacentElement('afterend', textarea);
+    const lifecycle = new AsyncEditLifecycle();
     textarea.value = task.description ?? '';
-    this.#enablePaste(textarea, task);
+    const editorOwner = this.#editorOwner(textarea);
+    editorOwner.register(() => {
+      lifecycle.close();
+    });
+    this.#enablePaste(textarea, task, () => () => !lifecycle.isClosed(), editorOwner);
     textarea.setCssStyles({ height: `${Math.max(start, 60)}px` });
     textarea.ownerDocument.defaultView?.setTimeout(() => {
       textarea.focus();
     }, 0);
-    const lifecycle = new AsyncEditLifecycle();
-    const finish = async (save: boolean): Promise<void> => {
-      if (!lifecycle.begin()) return;
-      await whenPasteSettled(textarea);
-      const changed = textarea.value !== (task.description ?? '');
-      if (save && changed && !(await this.#commands.updateDescription(task, textarea.value))) {
-        lifecycle.retry();
-        textarea.focus();
-        return;
-      }
-      lifecycle.close();
-      textarea.remove();
+    const close = (): void => {
+      this.#releaseEditor(textarea);
       view.show();
       showView();
     };
+    const isCurrent = (): boolean => !lifecycle.isClosed() && textarea.isConnected;
+    const finish = async (): Promise<void> => {
+      if (!lifecycle.begin()) return;
+      await whenPasteSettled(textarea);
+      if (!isCurrent()) return;
+      const value = textarea.value;
+      const changed = value !== (currentTask.description ?? '');
+      const committed = !changed || (await this.#commands.updateDescription(currentTask, value));
+      if (!isCurrent()) return;
+      if (committed) advanceTarget();
+      if (!committed || textarea.value !== value) {
+        lifecycle.retry();
+        if (!committed) textarea.focus();
+        return;
+      }
+      close();
+    };
     textarea.addEventListener('blur', () => {
-      runAsyncAction(finish(true));
+      runAsyncAction(finish());
     });
     textarea.addEventListener('keydown', (event) => {
-      if (event.key !== 'Escape' || isImeOwnedEvent(event)) return;
-      event.preventDefault();
-      runAsyncAction(finish(false));
+      if (isImeOwnedEvent(event)) return;
+      if (event.key === 'Enter' || event.key === 'Escape') {
+        event.preventDefault();
+        if (event.key === 'Escape') close();
+        else runAsyncAction(finish());
+      }
     });
   }
 
   #showDescription(view: HTMLElement, task: TaskLike): void {
+    if (this.#descriptionComponent !== undefined)
+      this.#host.component().removeChild(this.#descriptionComponent);
+    this.#descriptionComponent = this.#host.component().addChild(new Component());
+    const owner = this.#host.taskOwner(task);
     const description = task.description ?? '';
     if (description.trim().length === 0) {
       view.empty();
@@ -233,12 +481,14 @@ export class InspectorSections {
       return;
     }
     view.removeClass('abyss-right-desc-empty');
-    renderTaskText(view, description, {
+    renderTaskDescriptionText(view, description, {
       app: this.#app,
       sourcePath: rootTaskRef(task).filePath,
-      component: this.#host.component(),
+      component: this.#descriptionComponent,
       onEditLink: (occurrence, token) => {
-        const target = taskNodeRef(task);
+        const current = owner.current;
+        if (current === undefined) return;
+        const target = taskNodeRef(current);
         this.#editLinkInString(
           { type: 'description', target },
           occurrence,
@@ -270,44 +520,63 @@ export class InspectorSections {
         text: `${doneSubs}/${totalSubs}`,
       });
     }
+    this.#subSection = subSection;
     const subList = subSection.createDiv({ cls: 'abyss-subtask-list' });
+    this.#subList = subList;
     for (const sub of task.subtasks) this.#renderSubTask(subList, sub, task);
     this.#renderAddSubtaskControl(subSection, task);
+    this.#host.bindHierarchyDrop(subSection, task);
   }
 
   #renderAddSubtaskControl(subSection: HTMLElement, task: TaskLike): void {
+    const owner = this.#host.taskOwner(task);
     const addSubRow = subSection.createDiv({ cls: 'abyss-subtask-add-row' });
     addSubRow.createSpan({ cls: 'abyss-subtask-add-icon', text: '+' });
     addSubRow.createSpan({ cls: 'abyss-subtask-add-label', text: 'Add sub-task' });
     addSubRow.addEventListener('click', () => {
-      this.#openSubtaskInput(subSection, addSubRow, task);
+      const current = owner.current;
+      if (current !== undefined && subSection.querySelector('.abyss-subtask-new-input') === null)
+        this.#openSubtaskInput(subSection, addSubRow, current);
     });
   }
 
   #openSubtaskInput(section: HTMLElement, trigger: HTMLElement, task: TaskLike): void {
+    const owner = this.#host.taskOwner(task);
     trigger.addClass('abyss-subtask-add-row--hidden');
     const input = section.createEl('input', {
       cls: 'abyss-subtask-new-input',
       attr: { type: 'text', placeholder: 'New sub-task…' },
     });
     const lifecycle = new AsyncEditLifecycle();
+    const editorOwner = this.#editorOwner(input);
+    let retired = false;
     const close = (): void => {
       if (lifecycle.isClosed()) return;
       lifecycle.close();
       removeDismissal();
-      input.remove();
+      this.#releaseEditor(input);
       trigger.removeClass('abyss-subtask-add-row--hidden');
     };
     const commit = async (): Promise<void> => {
       const text = input.value.trim();
-      if (text === '' || !lifecycle.begin()) return;
-      const succeeded = await this.#commands.addSubTask(task, text);
+      if (retired || text === '' || !lifecycle.begin()) return;
+      const current = owner.current;
+      if (current === undefined) return;
+      const succeeded = await this.#commands.addSubTask(current, text);
       if (lifecycle.isClosed() || !input.isConnected) return;
       lifecycle.retry();
       if (!succeeded && input.ownerDocument.activeElement === input) input.focus();
     };
-    const removeDismissal = this.#registerEntryDismissal(input, task, 'new-subtask', close);
-    this.#host.component().register(close);
+    const removeDismissal = this.#registerEntryDismissal(input, task, 'new-subtask', {
+      close,
+      component: editorOwner,
+      retire: () => {
+        retired = true;
+      },
+    });
+    editorOwner.register(() => {
+      lifecycle.close();
+    });
     input.addEventListener('keydown', (event: KeyboardEvent) => {
       if (event.key === 'Enter' && !isImeOwnedEvent(event)) {
         event.preventDefault();
@@ -321,21 +590,42 @@ export class InspectorSections {
     input: HTMLInputElement | HTMLTextAreaElement,
     task: TaskLike,
     kind: 'new-subtask' | 'new-comment',
-    close: () => void,
+    options: { close: () => void; component?: Component; retire?: () => void },
   ): () => void {
+    const { close, component = this.#host.component(), retire } = options;
+    const owner = this.#host.taskOwner(task);
     const document = input.ownerDocument;
-    const dismiss = (): void => {
-      this.#host.dismissEntrySubmission(kind, taskNodeRef(task));
+    let deferredClose = false;
+    let timer: number | undefined;
+    const retireSubmission = (): void => {
+      retire?.();
+      const current = owner.current;
+      if (current !== undefined) this.#host.dismissEntrySubmission(kind, taskNodeRef(current));
       this.#host.cancelRestoredDraftFocus(document);
+    };
+    const dismiss = (): void => {
+      retireSubmission();
       close();
     };
+    const finishGesture = (): void => {
+      if (deferredClose && timer === undefined) timer = document.defaultView?.setTimeout(close, 0);
+    };
     const outside = (event: Event): void => {
+      if (deferredClose) return;
       if (
         input.isConnected &&
         event.target !== input &&
         (event.type === 'focusin' || kind === 'new-subtask' || document.activeElement === input)
-      )
-        dismiss();
+      ) {
+        retireSubmission();
+        if (
+          kind === 'new-subtask' &&
+          event.type === 'pointerdown' &&
+          (event as PointerEvent).button === 2
+        ) {
+          deferredClose = true;
+        } else close();
+      }
     };
     const escape = (raw: Event): void => {
       const event = raw as KeyboardEvent;
@@ -344,6 +634,9 @@ export class InspectorSections {
       event.stopPropagation();
       dismiss();
     };
+    document.addEventListener('contextmenu', finishGesture);
+    document.addEventListener('pointerup', finishGesture);
+    document.addEventListener('pointercancel', finishGesture);
     document.addEventListener('pointerdown', outside);
     document.addEventListener('focusin', outside);
     input.addEventListener('keydown', escape);
@@ -351,15 +644,20 @@ export class InspectorSections {
     const cleanup = (): void => {
       if (!listening) return;
       listening = false;
+      if (timer !== undefined) document.defaultView?.clearTimeout(timer);
+      document.removeEventListener('contextmenu', finishGesture);
+      document.removeEventListener('pointerup', finishGesture);
+      document.removeEventListener('pointercancel', finishGesture);
       document.removeEventListener('pointerdown', outside);
       document.removeEventListener('focusin', outside);
       input.removeEventListener('keydown', escape);
     };
-    this.#host.component().register(cleanup);
+    component.register(cleanup);
     return cleanup;
   }
 
   renderCommentSection(task: TaskLike, commentTimeContext?: CommentTimeContext): void {
+    const owner = this.#host.taskOwner(task);
     const commentSection = this.#host.root().createDiv({ cls: 'abyss-right-section' });
     const commentHeader = commentSection.createDiv({ cls: 'abyss-right-section-header' });
     commentHeader.createSpan({ cls: 'abyss-right-section-label', text: 'Comments' });
@@ -370,7 +668,9 @@ export class InspectorSections {
         text: String(commentCount),
       });
     }
+    this.#commentSection = commentSection;
     const commentList = commentSection.createDiv({ cls: 'abyss-comment-list' });
+    this.#commentList = commentList;
     for (const comment of task.comments) {
       this.#renderComment(commentList, comment, task, commentTimeContext);
     }
@@ -378,57 +678,90 @@ export class InspectorSections {
       cls: 'abyss-comment-input',
       attr: { placeholder: 'Write a comment…', rows: '2' },
     });
-    enableAttachmentDrop(commentInput, {
-      app: this.#app,
-      sourcePath: rootTaskRef(task).filePath,
-      onLinks: (links) => {
-        commentInput.value = commentInput.value === '' ? links : `${commentInput.value} ${links}`;
-        commentInput.focus();
-      },
+    this.#host.component().register(
+      enableAttachmentDrop(commentInput, {
+        app: this.#app,
+        sourcePath: rootTaskRef(task).filePath,
+        onLinks: (links) => {
+          commentInput.value = commentInput.value === '' ? links : `${commentInput.value} ${links}`;
+          commentInput.focus();
+        },
+      }),
+    );
+    let session = 0;
+    let submittingSession: number | undefined;
+    this.#enablePaste(commentInput, task, () => {
+      const capturedSession = session;
+      return () => capturedSession === session && owner.current !== undefined;
     });
-    this.#enablePaste(commentInput, task);
-    this.#registerEntryDismissal(commentInput, task, 'new-comment', () => {
-      commentInput.blur();
+    this.#registerEntryDismissal(commentInput, task, 'new-comment', {
+      close: () => {
+        session++;
+        commentInput.blur();
+      },
     });
     commentInput.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey && !isImeOwnedEvent(e)) {
         e.preventDefault();
-        const text = commentInput.value.trim();
-        if (text !== '') {
-          runAsyncAction(this.#commands.addComment(task, text, commentList, commentInput));
-        }
+        const current = owner.current;
+        if (submittingSession === session || current === undefined) return;
+        const capturedSession = session;
+        submittingSession = capturedSession;
+        runAsyncAction(
+          (async () => {
+            try {
+              await whenPasteSettled(commentInput);
+              if (
+                !commentInput.isConnected ||
+                owner.current === undefined ||
+                capturedSession !== session
+              )
+                return;
+              const text = commentInput.value;
+              if (normalizeCommentText(text).type !== 'empty')
+                await this.#commands.addComment(current, text, commentList, commentInput);
+            } finally {
+              if (submittingSession === capturedSession) submittingSession = undefined;
+            }
+          })(),
+        );
       }
     });
   }
 
   renderTitleBlock(header: HTMLElement, task: TaskLike): void {
+    const owner = this.#host.taskOwner(task);
     const view = header.createDiv({ cls: 'abyss-right-title abyss-right-title-view' });
-    enableAttachmentDrop(view, {
-      app: this.#app,
-      sourcePath: rootTaskRef(task).filePath,
-      onLinks: (links) => {
-        runAsyncAction(this.#commands.appendToTitle(task, links));
-      },
+    this.#enableTaskDrop(view, owner, (current, links) => {
+      runAsyncAction(this.#commands.appendToTitle(current, links));
     });
     const renderView = (): void => {
-      view.setAttribute('title', task.title);
-      view.setAttribute('aria-label', task.title);
-      renderTaskText(view, task.markdownTitle, {
+      const current = owner.current;
+      if (current === undefined) return;
+      if (this.#titleComponent !== undefined)
+        this.#host.component().removeChild(this.#titleComponent);
+      this.#titleComponent = this.#host.component().addChild(new Component());
+      view.setAttribute('aria-label', current.title);
+      renderTaskText(view, current.markdownTitle, {
         presentation: 'title',
         app: this.#app,
         sourcePath: rootTaskRef(task).filePath,
-        component: this.#host.component(),
+        component: this.#titleComponent,
         onEditLink: (occ, token) => {
-          this.editLink(task, occ, token);
+          const current = owner.current;
+          if (current !== undefined) this.editLink(current, occ, token);
         },
       });
     };
+    this.#titleUpdate = renderView;
+    this.#renderedTask = task;
     renderView();
 
     // Click on empty space / non-link text enters edit mode.
     view.addEventListener('click', (e) => {
       if ((e.target as HTMLElement).closest('a') != null) return; // let links navigate
-      this.#enterTitleEdit(header, view, task, renderView);
+      const current = owner.current;
+      if (current !== undefined) this.#enterTitleEdit(header, view, current, renderView);
     });
   }
 
@@ -438,6 +771,11 @@ export class InspectorSections {
     task: TaskLike,
     renderView: () => void,
   ): void {
+    const owner = this.#host.taskOwner(task);
+    let currentTask = task;
+    const advanceTarget = (): void => {
+      if (owner.current !== undefined) currentTask = owner.current;
+    };
     // Start editing at the rendered title height, then grow for the complete source.
     const startHeight = view.offsetHeight;
     view.hide();
@@ -445,7 +783,8 @@ export class InspectorSections {
     // Keep the textarea in the title's slot so the ⋯/× action buttons stay on the right.
     view.insertAdjacentElement('afterend', ta);
     ta.value = task.markdownTitle;
-    this.#enablePaste(ta, task);
+    const editorOwner = this.#editorOwner(ta);
+    this.#enablePaste(ta, task, () => () => !lifecycle.isClosed(), editorOwner);
     // Auto-grow to content, but never below the initial title height.
     const grow = (): void => {
       ta.setCssStyles({ height: 'auto' });
@@ -458,21 +797,27 @@ export class InspectorSections {
     }, 0);
 
     const lifecycle = new AsyncEditLifecycle();
+    editorOwner.register(() => {
+      lifecycle.close();
+    });
+    const isCurrent = (): boolean => !lifecycle.isClosed() && ta.isConnected;
     const finish = async (save: boolean): Promise<void> => {
       if (!lifecycle.begin()) return;
       // Let any in-flight paste insert its link into the value before we save/remove.
       await whenPasteSettled(ta);
-      if (save && ta.value !== task.markdownTitle) {
-        const saved = await this.#commands.saveTaskTitle(task, ta.value.trim());
-        if (!saved) {
-          lifecycle.retry();
-          ta.focus();
-          return;
-        }
+      if (!isCurrent()) return;
+      const submitted = ta.value;
+      const changed = save && submitted !== currentTask.markdownTitle;
+      const saved = !changed || (await this.#commands.saveTaskTitle(currentTask, submitted.trim()));
+      if (!isCurrent()) return;
+      if (saved) advanceTarget();
+      if (!saved || ta.value !== submitted) {
+        lifecycle.retry();
+        if (!saved) ta.focus();
+        return;
       }
-      lifecycle.close();
       view.style.removeProperty('height');
-      ta.remove();
+      this.#releaseEditor(ta);
       view.show();
       renderView();
     };
@@ -493,27 +838,41 @@ export class InspectorSections {
   }
 
   #renderSubTask(container: HTMLElement, sub: SubtaskSnapshot, parentTask: TaskLike): void {
+    const component = this.#host.component().addChild(new Component());
+    const owner = this.#host.taskOwner(sub);
     const row = container.createDiv({
       cls: 'abyss-subtask-row',
       attr: { draggable: 'true', tabindex: '-1' },
     });
-    this.#bindSubtaskDragAndDrop(row, container, sub, parentTask);
+    this.#subRows.push({ row, owner, snapshot: sub, component });
+    this.#bindSubtaskDragAndDrop(row, container, { sub, parentTask }, component);
     this.#host.renderTaskStatusMarker(row, sub);
-    this.#renderSubtaskContent(row, sub);
+    this.#renderSubtaskContent(row, sub, component);
   }
 
   #bindSubtaskDragAndDrop(
     row: HTMLElement,
     container: HTMLElement,
-    sub: SubtaskSnapshot,
-    parentTask: TaskLike,
+    tasks: { sub: SubtaskSnapshot; parentTask: TaskLike },
+    component: Component,
   ): void {
-    row.addEventListener('dragstart', (e) => {
-      this.#startSubtaskDrag(row, container, sub, e);
+    const { sub, parentTask } = tasks;
+    const owner = this.#host.taskOwner(sub);
+    const parentOwner = this.#host.taskOwner(parentTask);
+    component.registerDomEvent(row, 'dragstart', (e) => {
+      const current = owner.current;
+      if (current !== undefined && !('source' in current))
+        this.#startSubtaskDrag(row, container, current, e);
     });
 
-    row.addEventListener('dragover', (e) => {
-      if (this.#draggingSub == null || this.#draggingSub.ref.relativeLine === sub.ref.relativeLine)
+    component.registerDomEvent(row, 'dragover', (e) => {
+      const current = owner.current;
+      if (
+        current === undefined ||
+        'source' in current ||
+        this.#draggingSub == null ||
+        this.#draggingSub.ref.relativeLine === current.ref.relativeLine
+      )
         return;
       e.preventDefault();
       const rect = row.getBoundingClientRect();
@@ -525,19 +884,28 @@ export class InspectorSections {
       row.addClass(isAbove ? 'drop-above' : 'drop-below');
     });
 
-    row.addEventListener('dragleave', (e) => {
+    component.registerDomEvent(row, 'dragleave', (e) => {
       if (!row.contains(e.relatedTarget as Node)) {
         row.removeClass('drop-above', 'drop-below');
       }
     });
 
-    row.addEventListener('drop', (e) => {
+    component.registerDomEvent(row, 'drop', (e) => {
       const dragged = this.#draggingSub;
-      if (dragged == null || dragged.ref.relativeLine === sub.ref.relativeLine) return;
+      const current = owner.current;
+      if (
+        current === undefined ||
+        'source' in current ||
+        dragged == null ||
+        dragged.ref.relativeLine === current.ref.relativeLine
+      )
+        return;
       e.preventDefault();
       const position = row.hasClass('drop-above') ? 'before' : 'after';
       row.removeClass('drop-above', 'drop-below');
-      runAsyncAction(this.#commands.reorderSubTask(parentTask, dragged, sub, position));
+      const parent = parentOwner.current;
+      if (parent !== undefined)
+        runAsyncAction(this.#commands.reorderSubTask(parent, dragged, current, position));
     });
   }
 
@@ -577,30 +945,32 @@ export class InspectorSections {
     }
   }
 
-  #renderSubtaskContent(row: HTMLElement, sub: SubtaskSnapshot): void {
+  #renderSubtaskContent(row: HTMLElement, sub: SubtaskSnapshot, component: Component): void {
+    const owner = this.#host.taskOwner(sub);
     const content = row.createDiv({ cls: 'abyss-subtask-content' });
     const titleRow = content.createDiv({ cls: 'abyss-subtask-title-row' });
-    const label = titleRow.createSpan({
-      cls: `abyss-subtask-label${sub.status === 'done' ? ' is-done' : ''}`,
-    });
-    renderTaskText(label, sub.markdownTitle, {
-      presentation: 'title',
+    const { element: label } = renderSubtaskTitleText(titleRow, sub, {
       app: this.#app,
       sourcePath: rootTaskRef(sub).filePath,
-      component: this.#host.component(),
+      component,
       onEditLink: (occ, token) => {
-        this.editLink(sub, occ, token);
+        const current = owner.current;
+        if (current !== undefined) this.editLink(current, occ, token);
       },
     });
-    label.addEventListener('click', () => {
+    component.registerDomEvent(label, 'click', () => {
       const stack = this.#state.get('taskStack');
-      this.#state.navigateInspectorSelection([...stack, sub]);
+      const current = owner.current;
+      if (current !== undefined) this.#state.navigateInspectorSelection([...stack, current]);
     });
     renderRowRemove(
       titleRow,
       'abyss-subtask-remove',
       { label: 'Delete sub-task', failure: 'Could not delete sub-task' },
-      () => this.#commands.deleteTask(sub),
+      async () => {
+        const current = owner.current;
+        if (current !== undefined) await this.#commands.deleteTask(current);
+      },
     );
 
     // Progress + comment count indicators
@@ -627,16 +997,38 @@ export class InspectorSections {
     task: TaskLike,
     commentTimeContext?: CommentTimeContext,
   ): void {
+    const component = this.#host.component().addChild(new Component());
+    const owner = this.#host.taskOwner(task);
     const row = container.createDiv({ cls: 'abyss-comment-row' });
-    enableAttachmentDrop(row, {
-      app: this.#app,
-      sourcePath: rootTaskRef(task).filePath,
-      onLinks: (links) => {
-        runAsyncAction(
-          this.#commands.updateComment(task, comment, `${comment.text} ${links}`.trim()),
-        );
-      },
-    });
+    const entry: InspectorCommentRow = {
+      row,
+      comment,
+      component,
+      textComponent: undefined,
+      update: () => {},
+      expanded: false,
+      disclosure: undefined,
+    };
+    this.#commentRows.push(entry);
+    component.register(
+      enableAttachmentDrop(row, {
+        app: this.#app,
+        capture: () => {
+          const current = owner.current;
+          const captured = entry.comment;
+          return current === undefined
+            ? undefined
+            : {
+                sourcePath: rootTaskRef(current).filePath,
+                onLinks: (links) => {
+                  runAsyncAction(
+                    this.#commands.updateComment(current, captured, `${captured.text} ${links}`),
+                  );
+                },
+              };
+        },
+      }),
+    );
     if (comment.timestamp != null && commentTimeContext != null) {
       row.createSpan({
         cls: 'abyss-comment-date',
@@ -644,69 +1036,121 @@ export class InspectorSections {
       });
     }
     const showText = (): void => {
-      this.#renderCommentText(row, comment, task, showText);
+      const current = owner.current;
+      if (current !== undefined) this.#renderCommentText(row, entry, current, showText);
     };
+    entry.update = showText;
     showText();
   }
 
   #renderCommentText(
     row: HTMLElement,
-    comment: TaskCommentSnapshot,
+    entry: InspectorCommentRow,
     task: TaskLike,
     showText: () => void,
   ): void {
-    const textEl = row.createEl('p', { cls: 'abyss-comment-text' });
-    renderTaskText(textEl, comment.text, {
+    const owner = this.#host.taskOwner(task);
+    if (entry.textComponent !== undefined) entry.component.removeChild(entry.textComponent);
+    entry.textComponent = entry.component.addChild(new Component());
+    row.querySelector('.abyss-comment-text')?.remove();
+    const { comment, textComponent: component } = entry;
+    const preview = entry.expanded ? undefined : commentPreview(comment.text);
+    const { element: textEl } = renderTaskCommentText(row, preview?.markdown ?? comment.text, {
       app: this.#app,
       sourcePath: rootTaskRef(task).filePath,
-      component: this.#host.component(),
+      component,
       onEditLink: (occurrence, token) => {
+        const fullOccurrence = preview?.fullOccurrences[occurrence] ?? occurrence;
+        if (owner.current === undefined || fullOccurrence < 0) return;
         this.#editLinkInString(
-          { type: 'comment', ref: comment.ref },
-          occurrence,
+          { type: 'comment', ref: entry.comment.ref },
+          fullOccurrence,
           token,
           rootTaskRef(task).filePath,
         );
       },
     });
-    textEl.addEventListener('click', (event) => {
+    if (entry.disclosure?.parentElement === row) row.insertBefore(textEl, entry.disclosure);
+    this.#renderCommentDisclosure(entry, showText);
+    component.registerDomEvent(textEl, 'click', (event) => {
       if ((event.target as HTMLElement).closest('a') != null) return;
-      this.#openCommentEditor(row, comment, task, showText);
+      const current = owner.current;
+      if (current !== undefined) this.#openCommentEditor(row, entry, current, showText);
     });
+  }
+
+  #renderCommentDisclosure(entry: InspectorCommentRow, showText: () => void): void {
+    if (/[\r\n]/u.test(entry.comment.text)) {
+      let disclosure = entry.disclosure;
+      if (disclosure === undefined) {
+        disclosure = entry.row.createEl('button', {
+          cls: 'abyss-comment-disclosure',
+          attr: { type: 'button' },
+        });
+        entry.disclosure = disclosure;
+        entry.component.registerDomEvent(disclosure, 'click', () => {
+          entry.expanded = !entry.expanded;
+          showText();
+        });
+      }
+      disclosure.setText(entry.expanded ? 'Show less' : 'Show more');
+      disclosure.setAttribute('aria-expanded', String(entry.expanded));
+      disclosure.setAttribute('aria-label', entry.expanded ? 'Collapse comment' : 'Expand comment');
+      if (disclosure.parentElement !== entry.row) entry.row.appendChild(disclosure);
+    } else entry.disclosure?.remove();
   }
 
   #openCommentEditor(
     row: HTMLElement,
-    comment: TaskCommentSnapshot,
+    entry: InspectorCommentRow,
     task: TaskLike,
     showText: () => void,
   ): void {
+    const owner = this.#host.taskOwner(task);
+    let currentTask = task;
+    let currentComment = entry.comment;
+    const advanceTarget = (): void => {
+      if (owner.current === undefined) return;
+      currentTask = owner.current;
+      currentComment = entry.comment;
+    };
     row.querySelector('.abyss-comment-text')?.remove();
+    row.querySelector('.abyss-comment-disclosure')?.remove();
     const textarea = row.createEl('textarea', { cls: 'abyss-comment-edit-input' });
-    textarea.value = comment.text;
-    this.#enablePaste(textarea, task);
     const lifecycle = new AsyncEditLifecycle();
+    textarea.value = entry.comment.text;
+    const editorOwner = this.#editorOwner(
+      textarea,
+      this.#commentRows.find((entry) => entry.row === row)?.component,
+    );
+    editorOwner.register(() => {
+      lifecycle.close();
+    });
+    this.#enablePaste(textarea, task, () => () => !lifecycle.isClosed(), editorOwner);
+    const isCurrent = (): boolean => !lifecycle.isClosed() && textarea.isConnected;
     const finish = async (): Promise<void> => {
       if (!lifecycle.begin()) return;
       await whenPasteSettled(textarea);
-      const value = textarea.value.trim();
-      if (value === comment.text) {
-        lifecycle.close();
-        textarea.remove();
+      if (!isCurrent()) return;
+      const value = textarea.value;
+      if (value === currentComment.text) {
+        this.#releaseEditor(textarea);
         showText();
         return;
       }
       const committed =
-        value === ''
-          ? await this.#commands.deleteComment(task, comment)
-          : await this.#commands.updateComment(task, comment, value);
-      if (!committed) {
+        normalizeCommentText(value).type === 'empty'
+          ? await this.#commands.deleteComment(currentTask, currentComment)
+          : await this.#commands.updateComment(currentTask, currentComment, value);
+      if (!isCurrent()) return;
+      if (committed) advanceTarget();
+      if (!committed || textarea.value !== value) {
         lifecycle.retry();
-        textarea.focus();
+        if (!committed) textarea.focus();
         return;
       }
-      lifecycle.close();
-      textarea.remove();
+      this.#releaseEditor(textarea);
+      showText();
     };
     textarea.addEventListener('blur', () => {
       textarea.ownerDocument.defaultView?.setTimeout(() => {
@@ -717,13 +1161,12 @@ export class InspectorSections {
       if (isImeOwnedEvent(event)) return;
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
-        textarea.blur();
+        runAsyncAction(finish());
       }
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
-        lifecycle.close();
-        textarea.remove();
+        this.#releaseEditor(textarea);
         showText();
       }
     });

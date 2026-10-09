@@ -134,6 +134,7 @@ describe('RailPanel', () => {
       b.getAttribute('aria-label'),
     );
     expect(labels).toEqual(['Tasks', 'Calendar', 'Projects', 'Search', 'Settings']);
+    expect(panel['el'].querySelectorAll('button[title]')).toHaveLength(0);
   });
 
   it.each([

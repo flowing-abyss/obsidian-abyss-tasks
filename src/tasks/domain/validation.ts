@@ -13,6 +13,7 @@ type TaskIssueCode =
   | 'duplicate-field'
   | 'invalid-task-syntax'
   | 'invalid-target'
+  | 'unsafe-comment-continuation'
   | 'destination-unavailable'
   | 'invalid-on-completion'
   | RecurrenceIssueCode;

@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { taskPrefixForSubtask } from '../../src/tasks';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import type { TaskBehaviorSettingsProvider } from '../../src/tasks/application/TaskBehaviorSettings';
 import type {
@@ -81,6 +82,7 @@ function behaviorSettings(
 ): ReturnType<TaskBehaviorSettingsProvider> {
   return {
     taskPrefix: '',
+    applyTaskPrefixToSubtasks: false,
     inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
     taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
     recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
@@ -131,6 +133,98 @@ function service(
 }
 
 describe('TaskApplicationService planning commands', () => {
+  it('observes the detached effective tag patch before dispatch with captured policy', async () => {
+    let removeTagOnAssign = true;
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: snapshot() },
+      changed: true,
+    });
+    const application = service({ edit }, exactQueries(snapshot()), () =>
+      behaviorSettings({ inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign } }),
+    );
+    const observer = vi.fn(
+      (command: Extract<Parameters<typeof application.execute>[0], { type: 'patch' }>) => {
+        expect(edit).not.toHaveBeenCalled();
+        expect(command.patch.tags).toEqual({ add: ['#work'], remove: ['#inbox'] });
+        removeTagOnAssign = false;
+        (command.patch.tags?.remove as string[]).push('#unowned');
+      },
+    );
+    const result = await application.execute(
+      { type: 'patch', target: { type: 'task', ref }, patch: { tags: { add: ['work'] } } },
+      { onPreparedPatch: observer },
+    );
+    expect(result.type).toBe('ok');
+    expect(observer).toHaveBeenCalledOnce();
+    expect(unwrapEdit(expectDefined(edit.mock.calls[0])[0])).toMatchObject({
+      patch: { tags: { add: ['#work'], remove: ['#inbox'] } },
+    });
+  });
+
+  it('observes each retried effective patch with the original policy snapshot', async () => {
+    const previous = snapshot();
+    const current = { ...previous, ref: { ...previous.ref, revision: 'relocated' } };
+    let removeTagOnAssign = true;
+    const edit = vi
+      .fn<TaskRepository['edit']>()
+      .mockResolvedValueOnce({
+        type: 'rebased',
+        previous,
+        current,
+        evidence: 'byte-identical-relocation',
+      })
+      .mockResolvedValueOnce({
+        type: 'committed',
+        outcome: { type: 'task', task: current },
+        changed: true,
+      });
+    const application = service({ edit }, exactQueries(previous), () =>
+      behaviorSettings({ inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign } }),
+    );
+    const observed: Array<Extract<Parameters<typeof application.execute>[0], { type: 'patch' }>> =
+      [];
+    const result = await application.execute(
+      {
+        type: 'patch',
+        target: { type: 'task', ref: previous.ref },
+        patch: { tags: { add: ['work'] } },
+      },
+      {
+        onPreparedPatch: (command) => {
+          observed.push(command);
+          removeTagOnAssign = false;
+        },
+      },
+    );
+    expect(result.type).toBe('ok');
+    expect(observed.map((command) => command.target.ref)).toEqual([previous.ref, current.ref]);
+    expect(observed.map((command) => command.patch.tags)).toEqual(
+      Array.from({ length: 2 }, () => ({ add: ['#work'], remove: ['#inbox'] })),
+    );
+    expect(edit).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not write when a prepared-patch observer fails', async () => {
+    const edit = vi.fn<TaskRepository['edit']>();
+    const application = service({ edit }, exactQueries(snapshot()));
+    await expect(
+      application.execute(
+        {
+          type: 'patch',
+          target: { type: 'task', ref },
+          patch: { priority: { type: 'set', value: 'A' } },
+        },
+        {
+          onPreparedPatch: () => {
+            throw new Error('Observer failure');
+          },
+        },
+      ),
+    ).resolves.toMatchObject({ type: 'io-error', cause: 'repository-error' });
+    expect(edit).not.toHaveBeenCalled();
+  });
+
   it('always forwards the captured day for an unstamped subtask request', async () => {
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
       type: 'committed',
@@ -153,6 +247,7 @@ describe('TaskApplicationService planning commands', () => {
       undefined,
       () => ({
         taskPrefix: '',
+        applyTaskPrefixToSubtasks: false,
         inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
         taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
         recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
@@ -543,7 +638,11 @@ describe('TaskApplicationService planning commands', () => {
     });
 
     await service({ edit }, queries(), () =>
-      behaviorSettings({ taskPrefix: 'Plan #work' }),
+      behaviorSettings({
+        taskPrefix: 'Plan #work',
+        applyTaskPrefixToSubtasks: true,
+        inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
+      }),
     ).execute({
       type: 'add-subtask',
       parent: { type: 'task', ref },
@@ -566,9 +665,10 @@ describe('TaskApplicationService planning commands', () => {
       changed: true,
     });
 
-    await service({ edit }, queries(), () =>
+    await service({ edit }, exactQueries({ ...snapshot(), tags: ['#project'] }), () =>
       behaviorSettings({
         taskPrefix: 'Plan `#inbox` #inbox',
+        applyTaskPrefixToSubtasks: true,
         inbox: { mode: 'both', tag: '#inbox', removeTagOnAssign: true },
       }),
     ).execute({
@@ -627,7 +727,7 @@ describe('TaskApplicationService planning commands', () => {
       application.execute({
         type: 'add-comment',
         parent: { type: 'task', ref },
-        text: 'from the injected clock',
+        text: 'from the injected clock\r\n \t\r- literal',
       }),
     ).resolves.toEqual({ type: 'ok', outcome: committed.outcome, changed: true });
 
@@ -635,9 +735,26 @@ describe('TaskApplicationService planning commands', () => {
     expect(edit).toHaveBeenCalledWith({
       type: 'add-comment',
       parent: { type: 'task', ref },
-      text: 'from the injected clock',
+      text: 'from the injected clock\n\\- literal',
       stamp: '2026-07-14T12:04:03+07:00',
     });
+  });
+
+  it('rejects unsafe multiline code before repository or clock access', async () => {
+    const edit = vi.fn<TaskRepository['edit']>();
+    clock.today.mockClear();
+    await expect(
+      service({ edit }).execute({
+        type: 'add-comment',
+        parent: { type: 'task', ref },
+        text: '`code\n2. literal`',
+      }),
+    ).resolves.toEqual({
+      type: 'invalid',
+      issues: [{ code: 'unsafe-comment-continuation', field: 'comment' }],
+    });
+    expect(edit).not.toHaveBeenCalled();
+    expect(clock.today).not.toHaveBeenCalled();
   });
 
   it('rejects add-comment when a legacy date-only clock cannot supply a real instant', async () => {
@@ -738,7 +855,7 @@ describe('TaskApplicationService planning commands', () => {
         relativeLine: 1,
         originalMarkdown: '  - old',
       },
-      text: 'line one\nline two',
+      text: ' \t\n',
     },
   ])('rejects invalid $type text before the repository or Clock', async (command) => {
     const edit = vi.fn<TaskRepository['edit']>();
@@ -897,6 +1014,7 @@ describe('TaskApplicationService planning commands', () => {
       taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
       recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
       taskPrefix: '',
+      applyTaskPrefixToSubtasks: false,
       inbox: { mode: 'both', tag: '#inbox', removeTagOnAssign: true },
     }));
 
@@ -945,6 +1063,7 @@ describe('TaskApplicationService planning commands', () => {
       taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
       recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
       taskPrefix: '',
+      applyTaskPrefixToSubtasks: false,
       inbox: { mode: 'tag', tag: '#Inbox', removeTagOnAssign: true },
     }));
     for (const tags of [
@@ -1761,6 +1880,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
     const today = vi.fn(() => localDate('2026-07-14'));
     const behavior = vi.fn(() => ({
       taskPrefix: '',
+      applyTaskPrefixToSubtasks: false,
       inbox: { mode: 'untagged' as const, tag: '', removeTagOnAssign: true },
       taskLifecycle: { addCreatedDate: false, addCompletionDate: true },
       recurrence: { newOccurrencePlacement: 'after' as const, removeScheduledDate: true },
@@ -2193,4 +2313,41 @@ it('reports a conflict without replaying a time edit over a concurrently changed
     }),
   ).resolves.toEqual({ type: 'conflict', current });
   expect(edit).toHaveBeenCalledOnce();
+});
+
+describe('subtask prefix root membership policy', () => {
+  it.each(
+    (
+      [
+        [false, ['#work'], 'both', '#task/inbox', ''],
+        [true, ['#work'], 'both', '#task/inbox', '#task/one-off'],
+        [true, [], 'both', '#task/inbox', ''],
+        [true, ['#TASK/INBOX'], 'both', '#task/inbox', ''],
+        [true, [], 'tag', '#task/inbox', '#task/one-off'],
+        [true, ['#TASK/INBOX'], 'untagged', '#task/inbox', '#task/one-off'],
+        [true, ['#task/inbox/child'], 'tag', '#task/inbox', '#task/one-off'],
+        [true, ['#task/inbox'], 'tag', 'task/inbox', ''],
+        [true, ['#task/inbox'], 'tag', '#task/inbox #other', '#task/one-off'],
+        [true, ['#task/inbox'], 'tag', '#bad//tag', '#task/one-off'],
+      ] as const
+    ).map(([enabled, rootTags, mode, tag, expected]) => ({
+      enabled,
+      rootTags,
+      mode,
+      tag,
+      expected,
+    })),
+  )(
+    'uses enabled=$enabled root=$rootTags mode=$mode tag=$tag',
+    ({ enabled, rootTags, mode, tag, expected }) => {
+      expect(taskPrefixForSubtask).toBeTypeOf('function');
+      expect(
+        taskPrefixForSubtask('#task/one-off', enabled, rootTags, {
+          mode,
+          tag,
+          removeTagOnAssign: false,
+        }),
+      ).toBe(expected);
+    },
+  );
 });

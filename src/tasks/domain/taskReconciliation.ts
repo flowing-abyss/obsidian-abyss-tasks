@@ -1,4 +1,6 @@
 import type { TaskResolutionCandidate } from './commands';
+import type { AtomDateTime } from './commentTimestamp';
+import type { TimeEntryRef } from './types';
 import {
   sameTaskNodeRef,
   type SubtaskRef,
@@ -7,10 +9,21 @@ import {
   type TaskRef,
   type TaskSnapshot,
 } from './types';
+export interface CompletionTrackingWitness {
+  readonly before: TaskRef;
+  readonly after: TaskRef;
+  readonly entry: TimeEntryRef;
+  readonly stamp: AtomDateTime;
+  readonly endMs: number;
+  readonly minimumMs: number;
+  readonly disposition: 'closed' | 'discarded';
+}
+
 export interface RootRevisionOverride {
   readonly line: number;
   readonly source: string;
   readonly revision: string;
+  readonly completionTracking?: CompletionTrackingWitness;
 }
 
 export type RebaseEvidence = 'byte-identical-relocation' | 'authority-transition';
@@ -207,6 +220,9 @@ function addAuthorityTransitions(
           line: transition.line,
           source: transition.source,
           revision: transition.revision,
+          ...(transition.completionTracking === undefined
+            ? {}
+            : { completionTracking: structuredClone(transition.completionTracking) }),
         },
       },
     });

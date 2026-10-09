@@ -3,7 +3,13 @@ import { RRule } from 'rrule';
 import { describe, expect, it, vi } from 'vitest';
 import type { DateRange, TaskPlanning, TaskSnapshot } from '../src/tasks/domain/types';
 import { localDate } from '../src/tasks/domain/validation';
+import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
+import { projectTaskSnapshot } from '../src/tasks/infrastructure/markdown/TaskSnapshotProjector';
 import {
+  calendarOccurrenceForTask,
+  calendarPointPatchCommand,
+  calendarShiftScheduleCommand,
+  calendarTaskWithPlanning,
   projectCalendarOccurrences,
   taskSnapshotForCalendarOccurrence,
   type CalendarProjectionIssue,
@@ -11,7 +17,7 @@ import {
   type CalendarTaskSource,
 } from '../src/views/calendarOccurrences';
 import { taskLayoutIdentity } from '../src/views/timegrid/layout';
-import { expectDefined, task } from './helpers';
+import { canonicalStatusCatalog, expectDefined, task } from './helpers';
 
 const keepScheduled = { removeScheduledDate: false } as const;
 
@@ -239,7 +245,7 @@ describe('projectCalendarOccurrences', () => {
     { removeScheduledDate: false, forecastReferences: ['2026-08-09'] },
     { removeScheduledDate: true, forecastReferences: [] },
   ])(
-    'keeps scheduled intersections alongside a start/due span when removeScheduledDate=$removeScheduledDate',
+    'admits authored intervals by their range while preserving forecast scheduled offsets when removeScheduledDate=$removeScheduledDate',
     ({ removeScheduledDate, forecastReferences }) => {
       const combined = rootSource('combined planning', {
         planning: {
@@ -268,13 +274,7 @@ describe('projectCalendarOccurrences', () => {
           occurrence.kind === 'forecast' ? occurrence.referenceDate : undefined,
         ),
       }).toEqual({
-        materializedPlanning: [
-          {
-            start: '2026-08-01',
-            due: '2026-08-02',
-            scheduled: '2026-08-10',
-          },
-        ],
+        materializedPlanning: [],
         forecastReferences,
       });
     },
@@ -510,5 +510,109 @@ describe('projectCalendarOccurrences', () => {
     planningReads = 0;
     project({ recurringSources: [first] }, range('2026-08-20', '2026-08-20'));
     expect(planningReads).toBeGreaterThan(0);
+  });
+});
+
+it('retains exact date roles for real ordinary child and root points', () => {
+  const text =
+    '- [ ] Root 🛫 2026-10-08\n  - [ ] Start only 🛫 2026-10-08\n  - [ ] Timed ⏳ 2026-10-08 ⏰ 09:00 ⏱️ 1h\n  - [ ] Inverted 🛫 2026-10-10 📅 2026-10-08 ⏳ 2026-10-10';
+  const statusCatalog = canonicalStatusCatalog();
+  const root = expectDefined(
+    projectTaskSnapshot({
+      codec: new TaskMarkdownCodec(statusCatalog),
+      statusCatalog,
+      filePath: 'Tasks.md',
+      lines: text.split('\n'),
+      line: 0,
+      exactBlock: text,
+      ref: { filePath: 'Tasks.md', line: 0, revision: 'old' },
+      presentation: { linkCount: 0 },
+      offsetAt: () => 0,
+    }),
+  );
+  const sources: CalendarTaskSource[] = [
+    source(root),
+    ...root.subtasks.map((node) => ({
+      root,
+      node,
+      target: { type: 'subtask' as const, ref: node.ref },
+    })),
+  ];
+  expect(root.subtasks[1]?.planning).toMatchObject({ duration: 60 });
+  const result = project({ materialized: sources }, range('2026-10-08', '2026-10-10'));
+  expect(result.occurrences).toHaveLength(5);
+  for (const title of ['Root', 'Start only']) {
+    const occurrence = expectDefined(
+      result.occurrences.find((value) => value.source.node.title === title),
+    );
+    expect(occurrence).toMatchObject({
+      occupied: { kind: 'point', date: '2026-10-08', roles: ['start'] },
+    });
+    const display = taskSnapshotForCalendarOccurrence(occurrence);
+    const spanPlanning = { ...display.planning, due: localDate('2026-10-09') };
+    const ordinaryPreview = calendarTaskWithPlanning(display, spanPlanning);
+    const spanPreview = calendarTaskWithPlanning(display, spanPlanning, 'create-span');
+    expect(calendarOccurrenceForTask(ordinaryPreview)).toMatchObject({
+      occupied: { kind: 'point' },
+    });
+    const promoted = expectDefined(calendarOccurrenceForTask(spanPreview));
+    expect(promoted).toMatchObject({
+      occupied: { kind: 'interval', start: '2026-10-08', due: '2026-10-09' },
+    });
+    expect(promoted.source).toBe(occurrence.source);
+    expect(promoted.key).toBe(occurrence.key);
+    expect(calendarOccurrenceForTask(display)).toBe(occurrence);
+    const invalid = calendarTaskWithPlanning(
+      display,
+      { ...spanPlanning, due: localDate('2026-10-07') },
+      'create-span',
+    );
+    expect(calendarOccurrenceForTask(invalid)).toMatchObject({ occupied: { kind: 'point' } });
+
+    expect(
+      calendarPointPatchCommand(
+        taskSnapshotForCalendarOccurrence(occurrence),
+        localDate('2026-10-09'),
+      ),
+    ).toEqual({
+      type: 'patch',
+      target: occurrence.source.target,
+      patch: { start: { type: 'set', value: '2026-10-09' } },
+    });
+  }
+  const inverted = expectDefined(
+    result.occurrences.find(
+      (value) =>
+        value.source.node.title === 'Inverted' &&
+        value.kind === 'materialized' &&
+        value.occupied.kind === 'point' &&
+        value.occupied.date === '2026-10-10',
+    ),
+  );
+  expect(
+    calendarPointPatchCommand(taskSnapshotForCalendarOccurrence(inverted), localDate('2026-10-07')),
+  ).toEqual({
+    type: 'patch',
+    target: inverted.source.target,
+    patch: {
+      start: { type: 'set', value: '2026-10-07' },
+      scheduled: { type: 'set', value: '2026-10-07' },
+    },
+  });
+  const preview = calendarTaskWithPlanning(taskSnapshotForCalendarOccurrence(inverted), {
+    ...inverted.planning,
+    start: localDate('2026-10-07'),
+    scheduled: localDate('2026-10-07'),
+  });
+  expect(calendarOccurrenceForTask(preview)).toMatchObject({
+    occupied: { kind: 'point', date: '2026-10-07', roles: ['start', 'scheduled'] },
+  });
+  expect(calendarShiftScheduleCommand(taskSnapshotForCalendarOccurrence(inverted), -3)).toEqual({
+    type: 'patch',
+    target: inverted.source.target,
+    patch: {
+      start: { type: 'set', value: '2026-10-07' },
+      scheduled: { type: 'set', value: '2026-10-07' },
+    },
   });
 });

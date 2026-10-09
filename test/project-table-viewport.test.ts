@@ -90,6 +90,19 @@ describe('project table viewport geometry', () => {
     expect(viewport.measure([{ key: 'a', height: 60 }], 34).scrollTop).toBe(60);
   });
 
+  it('preserves the trailing offset when a detached host is scrolled to the content end', () => {
+    const viewport = new ProjectTableViewport();
+    viewport.replace([
+      { key: 'a', height: 34 },
+      { key: 'b', height: 34 },
+    ]);
+    expect(viewport.window(68, 0, []).scrollTop).toBe(68);
+    expect(viewport.measure([{ key: 'a', height: 60 }], 68)).toEqual({
+      scrollTop: 94,
+      changed: true,
+    });
+  });
+
   it('keeps pinned rows at their original offsets with intervening spacers', () => {
     const viewport = new ProjectTableViewport();
     viewport.replace(
@@ -138,4 +151,16 @@ describe('project table viewport geometry', () => {
     viewport.replace([]);
     expect(viewport.window(999, 0, [])).toMatchObject({ scrollTop: 0, segments: [] });
   });
+});
+
+it('retains the exact forward survivor after 5000 deleted rows and a reorder', () => {
+  const viewport = new ProjectTableViewport();
+  viewport.replace(
+    ['before', 'anchor', ...Array.from({ length: 5000 }, (_, i) => `gone:${i}`), 'after'].map(
+      (key) => ({ key, height: 40 }),
+    ),
+  );
+  const anchor = viewport.captureAnchor(45);
+  viewport.replace(['after', 'before'].map((key) => ({ key, height: 40 })));
+  expect(viewport.restoreAnchor(anchor, 99)).toBe(5);
 });

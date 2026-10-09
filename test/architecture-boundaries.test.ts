@@ -75,6 +75,92 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
 };
 
 const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
+  normalizeCommentText: ['src/ui/ownedTaskSelection.ts'],
+  TaskSearchEligibilityRequest: ['src/ui/TaskDependencySearchProvider.ts'],
+  TaskSearchEligibilityBatch: ['src/ui/TaskDependencySearchProvider.ts'],
+  createSearchWordSegmenter: [
+    'src/ui/dependencySearch.ts',
+    'src/panels/center/TaskSearch.ts',
+    'src/ui/NoteSuggest.ts',
+    'src/ui/ProjectPropertySuggest.ts',
+    'src/ui/tagDropdown.ts',
+    'src/ui/TagPickerModal.ts',
+    'src/panels/projects/projectCellValuePicker.ts',
+    'src/settings/sections/TaskStatusSettings.ts',
+    'src/panels/projects/ProjectsTableView.ts',
+  ],
+  matchSearchText: ['src/ui/markSearchText.ts'],
+  matchesSearchText: [
+    'src/ui/NoteSuggest.ts',
+    'src/ui/ProjectPropertySuggest.ts',
+    'src/ui/tagDropdown.ts',
+    'src/ui/TagPickerModal.ts',
+    'src/panels/projects/projectCellValuePicker.ts',
+    'src/settings/sections/TaskStatusSettings.ts',
+    'src/projects/projectTableModel.ts',
+  ],
+  prepareSearchQuery: [
+    'src/ui/dependencySearch.ts',
+    'src/panels/center/TaskSearch.ts',
+    'src/ui/NoteSuggest.ts',
+    'src/ui/ProjectPropertySuggest.ts',
+    'src/ui/tagDropdown.ts',
+    'src/ui/TagPickerModal.ts',
+    'src/panels/projects/projectCellValuePicker.ts',
+    'src/settings/sections/TaskStatusSettings.ts',
+    'src/projects/projectTableModel.ts',
+  ],
+  PreparedSearchQuery: [
+    'src/ui/dependencySearch.ts',
+    'src/ui/markSearchText.ts',
+    'src/panels/projects/projectCellValuePicker.ts',
+    'src/projects/projectTableModel.ts',
+  ],
+  SearchWordSegmenter: [
+    'src/ui/markSearchText.ts',
+    'src/ui/tagDropdown.ts',
+    'src/panels/projects/projectCellValuePicker.ts',
+    'src/projects/projectTableModel.ts',
+  ],
+  taskSearchContext: ['src/panels/center/TaskSearch.ts'],
+  TaskSearchContext: ['src/panels/center/TaskCardRenderer.ts'],
+  TaskSearchEvidence: ['src/panels/center/TaskSearchTree.ts'],
+  TaskSearchTreeNode: ['src/panels/center/TaskSearchTree.ts'],
+  TaskSearchApi: [
+    'src/ui/dependencySearch.ts',
+    'src/ui/TaskModal.ts',
+    'src/panels/RightPanel.ts',
+    'src/panels/right/InspectorDependencies.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+    'src/panels/center/TaskSearch.ts',
+    'src/panels/task-list/TaskSearchRows.ts',
+    'src/views/PanelView.ts',
+  ],
+  TaskReadProjectionApi: ['src/panels/center/TaskSearch.ts'],
+  TaskSearchState: [
+    'src/panels/center/TaskSearch.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+    'src/ui/dependencySearch.ts',
+  ],
+  TaskSearchError: [
+    'src/ui/searchStatus.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+    'src/ui/dependencySearch.ts',
+  ],
+  TaskSearchAddress: [
+    'src/panels/task-list/TaskSearchRows.ts',
+    'src/task-lists/taskSearchOrganization.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+  ],
+  TaskSearchHit: [
+    'src/task-lists/taskSearchOrganization.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+  ],
+  TaskSearchHydratedHit: ['src/panels/task-list/TaskSearchRows.ts'],
+  TaskOrganizationRecord: [
+    'src/task-lists/taskSearchOrganization.ts',
+    'src/panels/task-list/taskDailyRows.ts',
+  ],
   ArchiveRecovery: ['src/ui/TaskArchiveRecoveryModal.ts'],
   CalendarProjectionSources: ['src/views/calendarOccurrences.ts'],
   CalendarTaskSource: ['src/views/calendarOccurrences.ts'],
@@ -84,6 +170,13 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   CreateTaskCommandInitial: ['src/ui/taskCapture/CaptureTargetResolver.ts'],
   CreateDependencySubtaskCommand: ['src/panels/RightPanel.ts'],
   DateRange: ['src/views/calendarOccurrences.ts'],
+  FieldUpdate: ['src/views/calendarOccurrences.ts'],
+  LocalTime: ['src/views/calendarOccurrences.ts'],
+  taskOccupiedDates: [
+    'src/views/calendarOccurrences.ts',
+    'src/panels/task-list/taskDailyRows.ts',
+    'src/panels/center/TaskCardRenderer.ts',
+  ],
   DependencyDirection: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorDependencies.ts'],
   LocalDate: [
     'src/statistics/types.ts',
@@ -95,9 +188,10 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   MoveRecovery: ['src/ui/TaskMoveRecoveryModal.ts'],
   TaskHierarchyRecovery: ['src/ui/taskCommandResult.ts'],
   hierarchyWouldCycle: ['src/ui/taskHierarchyActions.ts'],
+  taskPrefixForSubtask: ['src/panels/RightPanel.ts'],
   normalizeTaskTagInput: [
     'src/settings/SettingsTab.ts',
-    'src/task-lists/TaskListSelector.ts',
+    'src/task-lists/taskNodeMembership.ts',
     'src/ui/tagDropdown.ts',
     'src/ui/taskCapture/CaptureTargetResolver.ts',
   ],
@@ -126,6 +220,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/RightPanel.ts',
     'src/panels/right/InspectorPlanningSurfaces.ts',
   ],
+  CompletionTrackingWitness: ['src/panels/RightPanel.ts'],
   TaskCommentSnapshot: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorSections.ts'],
   TaskCreateSession: ['src/ui/taskCapture/CaptureTargetResolver.ts'],
   TaskIndexEvent: ['src/projects/ProjectStore.ts'],
@@ -138,7 +233,47 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/right/InspectorDependencies.ts',
     'src/panels/right/InspectorSections.ts',
   ],
-  TaskPlanning: ['src/views/calendarOccurrences.ts'],
+  TaskPlanning: ['src/views/calendarOccurrences.ts', 'src/task-lists/taskNodeMembership.ts'],
+  TaskStatus: ['src/task-lists/taskNodeMembership.ts'],
+  taskNodeSourceLine: [
+    'src/ui/timedBlockKeyboardQueue.ts',
+    'src/panels/calendar/timedBlockFocusRetention.ts',
+    'src/views/timegrid/renderTimedBlocks.ts',
+    'src/task-lists/taskNodeMembership.ts',
+    'src/panels/center/TaskCardRenderer.ts',
+  ],
+  taskTreeNodes: ['src/panels/CenterPanel.ts'],
+  taskSearchAddressKey: [
+    'src/panels/CenterPanel.ts',
+    'src/panels/task-list/TaskSearchRows.ts',
+    'src/task-lists/taskSearchOrganization.ts',
+  ],
+  nodeAtSearchAddress: ['src/panels/task-list/TaskSearchRows.ts'],
+  TaskDateRole: [
+    'src/app/AppState.ts',
+    'src/task-lists/taskOccurrencePresentation.ts',
+    'src/views/calendarOccurrences.ts',
+  ],
+  taskHasFutureDate: ['src/task-lists/taskNodeMembership.ts'],
+  taskTodayOccurrence: [
+    'src/panels/CenterPanel.ts',
+    'src/task-lists/taskNodeMembership.ts',
+    'src/task-lists/todayTaskCategory.ts',
+  ],
+  TaskOccurrenceCompletion: [
+    'src/ui/StatusMarker.ts',
+    'src/panels/center/TaskCardRenderer.ts',
+    'src/panels/CenterPanel.ts',
+    'src/task-lists/taskOccurrencePresentation.ts',
+    'src/panels/center/taskNodeBatch.ts',
+    'src/panels/center/TaskCommands.ts',
+    'src/panels/center/TaskMenus.ts',
+  ],
+  rootTaskNodeSnapshot: [
+    'src/panels/CenterPanel.ts',
+    'src/panels/center/TaskCommands.ts',
+    'src/panels/center/TaskCardRenderer.ts',
+  ],
   TaskOccurrenceResult: ['src/ui/recurrence/RecurrenceEditor.ts'],
   TaskPatch: ['src/panels/RightPanel.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
   TaskPriority: [
@@ -148,7 +283,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
     'src/panels/RightPanel.ts',
     'src/panels/right/InspectorPlanningSurfaces.ts',
   ],
-  TaskQueryApi: ['src/main.ts'],
+  TaskQueryApi: ['src/main.ts', 'src/panels/right/InspectorPlanningSurfaces.ts'],
   TaskStatisticsSource: [
     'src/main.ts',
     'src/views/PanelView.ts',
@@ -163,9 +298,10 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   ],
   TaskDependencyQueryApi: [
     'src/main.ts',
-    'src/panels/right/InspectorPlanningSurfaces.ts',
     'src/panels/right/InspectorDependencies.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
   ],
+  TaskDependencySummary: ['src/ui/taskDependencyPresentation.ts'],
   TaskDependencyEligibility: ['src/ui/dependencySearch.ts'],
   TaskDependencyProjection: ['src/panels/right/InspectorDependencies.ts'],
   TaskDependencyRelation: ['src/panels/right/InspectorDependencies.ts'],
@@ -221,6 +357,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   ],
   localDayStartMs: [
     'src/statistics/statisticsCalendar.ts',
+    'src/views/PanelView.ts',
     'src/ui/timeTracking/formatTracked.ts',
     'src/ui/timeTracking/RailTrackingWidget.ts',
     'src/ui/timeTracking/TrackedTasksPopover.ts',
@@ -253,6 +390,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   shiftLocalDate: ['src/ui/timedBlockKeyboardQueue.ts'],
   shiftLocalDayStartMs: [
     'src/statistics/statisticsCalendar.ts',
+    'src/views/PanelView.ts',
     'src/ui/timeTracking/formatTracked.ts',
     'src/ui/timeTracking/RailTrackingWidget.ts',
   ],
@@ -275,24 +413,49 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string | readonly string
   'TaskApplicationApi.planArchive': 'src/panels/center/TaskCommands.ts',
   'TaskApplicationApi.queries': 'src/ui/TaskMoveRecoveryModal.ts',
   'TaskQueryApi.forCalendarProjection': 'src/panels/calendar/calendarContent.ts',
-  'TaskQueryApi.list': [
+  'TaskQueryApi.list': ['src/panels/CenterPanel.ts', 'src/panels/calendar/calendarCommands.ts'],
+  'TaskQueryApi.observedTags': [
     'src/panels/CenterPanel.ts',
-    'src/panels/calendar/calendarCommands.ts',
     'src/panels/center/TaskSearch.ts',
+    'src/panels/right/InspectorPlanningSurfaces.ts',
   ],
   'TaskQueryApi.resolve': 'src/views/PanelView.ts',
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',
   'TaskQueryApi.subscribeReconciled': 'src/projects/ProjectStore.ts',
-  'TaskDependencyQueryApi.listNodes': [
-    'src/panels/right/InspectorDependencies.ts',
-    'src/panels/right/InspectorPlanningSurfaces.ts',
-    'src/panels/left/TagNavigation.ts',
+  'TaskSearchApi.prepare': ['src/views/PanelView.ts', 'src/panels/center/TaskSearch.ts'],
+  'TaskSearchApi.open': [
+    'src/panels/center/TaskSearch.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
   ],
+  'TaskSearchApi.read': [
+    'src/panels/center/TaskSearch.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+  ],
+  'TaskSearchApi.release': [
+    'src/panels/center/TaskSearch.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+  ],
+  'TaskSearchApi.resolveHits': [
+    'src/ui/TaskDependencySearchProvider.ts',
+    'src/panels/task-list/TaskSearchRows.ts',
+    'src/panels/center/TaskSearch.ts',
+  ],
+  'TaskSearchApi.subscribe': [
+    'src/panels/center/TaskSearch.ts',
+    'src/ui/TaskDependencySearchProvider.ts',
+    'src/ui/dependencySearch.ts',
+  ],
+  'TaskReadProjectionApi.matchesSearchAddress': 'src/panels/CenterPanel.ts',
+  'TaskReadProjectionApi.organization': 'src/panels/center/TaskSearch.ts',
+  'TaskReadProjectionApi.resolveSearchHits': 'src/tasks/infrastructure/search/TaskSearchService.ts',
+  'TaskDependencyQueryApi.searchEligibility': 'src/ui/TaskDependencySearchProvider.ts',
+  'TaskDependencyQueryApi.prepareDependencies': 'src/panels/CenterPanel.ts',
+  'TaskDependencyQueryApi.listNodes': ['src/panels/left/TagNavigation.ts'],
   'TaskDependencyQueryApi.dependencies': [
     'src/panels/RightPanel.ts',
-    'src/panels/CenterPanel.ts',
     'src/panels/right/InspectorDependencies.ts',
   ],
+  'TaskDependencyQueryApi.dependencySummary': 'src/panels/CenterPanel.ts',
   'TaskDependencyQueryApi.dependencyEligibility': 'src/panels/right/InspectorDependencies.ts',
 };
 
@@ -880,33 +1043,84 @@ function publicTaskImports(path: string): ReadonlySet<string> {
 
 function publicInterfaceMembers(): string[] {
   const result: string[] = [];
-  for (const statement of syntax('src/tasks/application/TaskApplicationApi.ts').statements) {
-    if (!ts.isInterfaceDeclaration(statement)) continue;
-    if (
-      statement.name.text !== 'TaskApplicationApi' &&
-      statement.name.text !== 'TaskQueryApi' &&
-      statement.name.text !== 'TaskDependencyQueryApi'
-    )
-      continue;
-    for (const member of statement.members) {
-      if (member.name != null && ts.isIdentifier(member.name))
-        result.push(`${statement.name.text}.${member.name.text}`);
+  const files = [
+    'src/tasks/application/TaskApplicationApi.ts',
+    'src/tasks/application/TaskSearchApi.ts',
+  ];
+  const names = new Set([
+    'TaskApplicationApi',
+    'TaskQueryApi',
+    'TaskDependencyQueryApi',
+    'TaskSearchApi',
+    'TaskReadProjectionApi',
+  ]);
+  for (const file of files)
+    for (const statement of syntax(file).statements) {
+      if (!ts.isInterfaceDeclaration(statement) || !names.has(statement.name.text)) continue;
+      for (const member of statement.members)
+        if (member.name != null && ts.isIdentifier(member.name))
+          result.push(`${statement.name.text}.${member.name.text}`);
     }
-  }
   return result.sort((left, right) => left.localeCompare(right));
 }
 
 function propertyAccesses(path: string): ReadonlySet<string> {
+  return propertyAccessesIn(syntax(path));
+}
+
+function propertyAccessesIn(module: ts.SourceFile): ReadonlySet<string> {
   const names = new Set<string>();
   const visit = (node: ts.Node): void => {
     if (ts.isPropertyAccessExpression(node)) names.add(node.name.text);
     ts.forEachChild(node, visit);
   };
-  visit(syntax(path));
+  visit(module);
   return names;
 }
 
+function compactEligibilityConsumerViolations(path: string, module: ts.SourceFile): string[] {
+  const consumers = PUBLIC_INTERFACE_MEMBER_CONSUMERS['TaskDependencyQueryApi.searchEligibility'];
+  return propertyAccessesIn(module).has('searchEligibility') && consumers !== path
+    ? [`${path}:searchEligibility`]
+    : [];
+}
+
+function searchConstructionSites(path: string, module: ts.SourceFile): string[] {
+  const sites: string[] = [];
+  function visit(node: ts.Node): void {
+    if (ts.isNewExpression(node) && node.expression.getText(module) === 'TaskSearchService')
+      sites.push(path);
+    ts.forEachChild(node, visit);
+  }
+  visit(module);
+  return sites;
+}
+
 describe('task architecture boundaries', () => {
+  it(
+    'owns the shared search service only in the composition root',
+    () => {
+      const sites = sourceFiles().flatMap((absolute) => {
+        const path = repoPath(absolute);
+        return searchConstructionSites(path, syntax(path));
+      });
+      expect(sites).toEqual(['src/main.ts']);
+      expect(
+        searchConstructionSites(
+          'src/panels/probe.ts',
+          syntaxFromText('src/panels/probe.ts', 'new TaskSearchService(options)'),
+        ),
+      ).toEqual(['src/panels/probe.ts']);
+      expect(
+        searchConstructionSites(
+          'src/panels/probe.ts',
+          syntaxFromText('src/panels/probe.ts', 'search.open(request, signal)'),
+        ),
+      ).toEqual([]);
+    },
+    SOURCE_WALK_TIMEOUT_MS,
+  );
+
   it(
     'keeps task domain and application free of ambient time and DOM access',
     () => {
@@ -1197,6 +1411,32 @@ describe('task architecture boundaries', () => {
       ).toBe(true);
     }
   });
+
+  it(
+    'confines compact eligibility consumption to the real dependency provider',
+    () => {
+      const provider = 'src/ui/TaskDependencySearchProvider.ts';
+      const allowed = syntaxFromText(provider, 'queries.searchEligibility(request, signal)');
+      expect(compactEligibilityConsumerViolations(provider, allowed)).toEqual([]);
+      const unrelated = 'src/panels/probe.ts';
+      expect(compactEligibilityConsumerViolations(unrelated, allowed)).toEqual([
+        'src/panels/probe.ts:searchEligibility',
+      ]);
+      expect(
+        compactEligibilityConsumerViolations(
+          unrelated,
+          syntaxFromText(unrelated, 'queries.dependencyEligibility(blocker, dependent)'),
+        ),
+      ).toEqual([]);
+      expect(
+        sourceFiles().flatMap((absolute) => {
+          const path = repoPath(absolute);
+          return compactEligibilityConsumerViolations(path, syntax(path));
+        }),
+      ).toEqual([]);
+    },
+    SOURCE_WALK_TIMEOUT_MS,
+  );
 
   it('keeps every public application/query member exercised by a named production consumer', () => {
     expect(publicInterfaceMembers()).toEqual(

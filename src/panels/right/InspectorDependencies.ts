@@ -1,3 +1,4 @@
+import { setTooltip } from 'obsidian';
 import type { AppState, TaskNodeDragPayload } from '../../app/AppState';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import {
@@ -8,9 +9,9 @@ import {
   type TaskDependencyQueryApi,
   type TaskDependencyRelation,
   type TaskNodeRef,
+  type TaskSearchApi,
 } from '../../tasks';
 import {
-  dependencySearchOptions,
   focusWithoutScroll,
   mountDependencySearch,
   type DependencyPickerCommitResult,
@@ -18,6 +19,7 @@ import {
 } from '../../ui/dependencySearch';
 import type { InlineUndoPosition } from '../../ui/inlineTaskUndo';
 import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
+import type { LocalSearchScopeHost } from '../../ui/localSearchKeys';
 import { runAsyncAction } from '../../ui/runAsyncAction';
 import { renderStatusMarker } from '../../ui/StatusMarker';
 import {
@@ -25,6 +27,7 @@ import {
   dependencyDirectionLabel,
   dependencyRelationPresentation,
 } from '../../ui/taskDependencyPresentation';
+import type { TaskDependencySearchProvider } from '../../ui/TaskDependencySearchProvider';
 import { startTaskNodeDrag } from '../../ui/taskNodeDrag';
 import { taskNodeRef } from '../../ui/taskSelection';
 import type { InspectorPlanningSurfaces } from './InspectorPlanningSurfaces';
@@ -32,8 +35,11 @@ import { renderRowRemove } from './inspectorRowRemove';
 import type { TaskLike } from './inspectorTypes';
 
 interface InspectorDependenciesOptions {
+  readonly localSearchScope?: LocalSearchScopeHost | undefined;
   readonly state: AppState;
   readonly queries: TaskDependencyQueryApi | undefined;
+  readonly search: TaskSearchApi | undefined;
+  readonly provider: TaskDependencySearchProvider | undefined;
   readonly statusRegistry: StatusRegistry;
   readonly interactionOwnership: InteractionOwnershipPort;
   readonly surfaces: Pick<
@@ -111,7 +117,10 @@ function updateDependencyBadgeCounts(
 }
 
 export class InspectorDependencies {
+  readonly #localSearchScope: LocalSearchScopeHost | undefined;
   readonly #state: AppState;
+  readonly #searchApi: TaskSearchApi | undefined;
+  readonly #provider: TaskDependencySearchProvider | undefined;
   readonly #queries: TaskDependencyQueryApi | undefined;
   readonly #statusRegistry: StatusRegistry;
   readonly #interactionOwnership: InteractionOwnershipPort;
@@ -126,8 +135,11 @@ export class InspectorDependencies {
   #retainedSearch: DependencySearchHandle | undefined;
   #retainedFocus: HTMLElement | null = null;
   constructor(options: InspectorDependenciesOptions) {
+    this.#localSearchScope = options.localSearchScope;
     this.#state = options.state;
     this.#queries = options.queries;
+    this.#searchApi = options.search;
+    this.#provider = options.provider;
     this.#statusRegistry = options.statusRegistry;
     this.#interactionOwnership = options.interactionOwnership;
     this.#surfaces = options.surfaces;
@@ -139,6 +151,7 @@ export class InspectorDependencies {
     this.#disclosure = undefined;
   }
   cancelSearch(): void {
+    if (this.#search !== undefined) this.#surfaces.releasePlacement(this.#search.element);
     this.#search?.destroy();
     this.#search = undefined;
     this.#retainedSearch = undefined;
@@ -157,6 +170,7 @@ export class InspectorDependencies {
     this.#retainedFocus = search?.element.contains(focused) === true ? focused : null;
     if (search !== undefined) {
       this.#surfaces.releasePlacement(search.element);
+      search.detach({ forRender: true });
       search.element.remove();
     }
   }
@@ -169,6 +183,7 @@ export class InspectorDependencies {
       this.#host.root().append(search.element);
       search.refresh();
       this.#positionDependencySearch(search.element, focused);
+      search.attach();
     }
   }
   updateDisclosureSelection(stack: readonly TaskLike[], preserveLatch: boolean): void {
@@ -203,7 +218,6 @@ export class InspectorDependencies {
       this.#createDependencyBadgeBody(badge);
     const counts = dependencyCountPresentation(projection);
     body.setAttribute('aria-label', counts.ariaLabel);
-    body.title = counts.title;
     body.setAttribute('aria-expanded', String(this.#search !== undefined));
     updateDependencyBadgeCounts(body, counts);
     this.#updateDependencyBadgeAdd(badge, projection);
@@ -244,7 +258,7 @@ export class InspectorDependencies {
       const add = badge.createEl('button', {
         cls: 'abyss-dep-badge-add',
         text: '+',
-        attr: { type: 'button', 'aria-label': 'Add dependency sections', title: 'Add dependency' },
+        attr: { type: 'button', 'aria-label': 'Add dependency sections' },
       });
       add.addEventListener('click', () => {
         this.#search?.close(false);
@@ -532,19 +546,19 @@ export class InspectorDependencies {
           this.#host.root().querySelector<HTMLElement>('.abyss-inspector-back')?.focus();
       });
     }
-    row.createEl(relation.type === 'resolved' ? 'button' : 'span', {
+    const title = row.createEl(relation.type === 'resolved' ? 'button' : 'span', {
       cls: `abyss-subtask-label abyss-dep-title${presentation.done ? ' is-done' : ''}`,
       text: presentation.title,
       attr: {
-        title: presentation.title,
         ...(relation.type === 'resolved' ? { type: 'button' } : {}),
       },
     });
+    setTooltip(title, presentation.title);
     if (presentation.unavailable)
       row.createSpan({
         cls: 'abyss-dep-id',
         text: relation.dependencyId,
-        attr: { title: relation.dependencyId },
+        attr: { 'aria-label': relation.dependencyId },
       });
     const dependent =
       direction === 'blocks' && relation.type === 'resolved' ? relation.task.target : current;
@@ -629,6 +643,9 @@ export class InspectorDependencies {
 
   showSearch(direction?: DependencyDirection): void {
     this.#surfaces.clearPopovers();
+    const provider = this.#provider,
+      search = this.#searchApi;
+    if (provider === undefined || search === undefined) return;
     this.#searchAnchor =
       direction === undefined
         ? '.abyss-dep-badge-body'
@@ -636,22 +653,22 @@ export class InspectorDependencies {
     this.#search = mountDependencySearch(this.#host.root(), {
       direction: direction ?? 'blocked-by',
       canChangeDirection: direction === undefined,
-      options: (query, chosen) => {
+      provider,
+      search,
+      current: () => {
         const current = this.#host.dependencyTask();
-        const queries = this.#queries;
-        if (queries === undefined || current === undefined) return [];
-        return dependencySearchOptions({
-          current: taskNodeRef(current),
-          direction: chosen,
-          query,
-          tasks: queries.listNodes(),
-          eligibility: (blocker, dependent) => queries.dependencyEligibility(blocker, dependent),
-        });
+        return this.#host.mounted() && current !== undefined ? taskNodeRef(current) : undefined;
       },
       selectExisting: async (option, chosen) => {
         const current = this.#host.dependencyTask();
         if (current === undefined)
           return { type: 'validation-error', message: 'The current task is no longer available.' };
+        const eligibility =
+          chosen === 'blocked-by'
+            ? this.#queries?.dependencyEligibility(option.task.target, taskNodeRef(current))
+            : this.#queries?.dependencyEligibility(taskNodeRef(current), option.task.target);
+        if (eligibility?.type !== 'allowed')
+          return { type: 'validation-error', message: 'Task changed. Select again or edit text.' };
         const committed = await this.#commands.executeDependencyCommand({
           type: 'add-dependency',
           blocker: chosen === 'blocked-by' ? option.task.target : taskNodeRef(current),
@@ -668,6 +685,7 @@ export class InspectorDependencies {
         if (restoreFocus) focusWithoutScroll(this.#dependencyAnchor());
       },
       ownership: this.#interactionOwnership,
+      localSearchScope: this.#localSearchScope,
       position: (element) => {
         this.#positionDependencySearch(element);
       },

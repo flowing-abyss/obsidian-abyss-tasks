@@ -1,8 +1,14 @@
 import { MarkdownRenderer, Menu, Notice } from 'obsidian';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import * as kanbanDrop from '../src/panels/projects/projectKanbanDrop';
 import { isProjectKanbanCustomized } from '../src/panels/projects/ProjectKanbanOptions';
+import type { RenderedCellContext } from '../src/panels/projects/ProjectsOverviewSurface';
 import { ProjectsTableView } from '../src/panels/projects/ProjectsTableView';
+import {
+  decodeProjectTableClipboard,
+  parseProjectTableTsv,
+} from '../src/panels/projects/projectTableClipboard';
 import type { ProjectTableSelectableCell } from '../src/panels/projects/projectTableSelection';
 import { projectTimelineOptionsRows } from '../src/panels/projects/ProjectTimelineOptions';
 import type { ProjectPropertyCatalog } from '../src/projects/ObsidianProjectProperties';
@@ -16,6 +22,7 @@ import {
   type ProjectEditResult,
 } from '../src/projects/projectEdits';
 import type { ProjectFieldCatalogItem } from '../src/projects/projectFields';
+import * as kanbanModel from '../src/projects/projectKanbanModel';
 import {
   buildDefaultProjectKanbanSettings,
   normalizeProjectKanbanSettings,
@@ -35,6 +42,22 @@ import {
   freshContainer,
   objectMatching,
 } from './helpers';
+import { useProjectTableViewport } from './support/projectTableViewport';
+import { projectNativeBindings, projectWindowMigration } from './support/projectWindowMigration';
+import { taskViewportOwner } from './support/taskViewportOwner';
+
+useProjectTableViewport();
+
+beforeEach(() => {
+  const original = vi.spyOn(Element.prototype, 'clientHeight', 'get').getMockImplementation();
+  vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.classList.contains('abyss-project-timeline-scroll')
+      ? 500
+      : Number(original?.call(this) ?? 0);
+  });
+});
 
 interface TestTransfer {
   readonly types: string[];
@@ -171,6 +194,120 @@ function mountView(
   return { host, view, settings, applyEdits, app };
 }
 
+function frameColumnRectangle(
+  element: HTMLElement,
+  activeId: string,
+  plannedId: string,
+  origin: number,
+): DOMRect {
+  const column = element.closest<HTMLElement>('.abyss-project-kanban-column');
+  const key = column?.dataset['statusKey'];
+  const left = key === `id:${activeId}` ? 320 : 20;
+  if (element.matches('.abyss-project-kanban-column'))
+    return key === `id:${activeId}` || key === `id:${plannedId}`
+      ? rectangle(left, 150, left + 240, 650)
+      : rectangle(0, 0, 0, 0);
+  if (element.matches('.abyss-project-kanban-column-body'))
+    return rectangle(left, 200, left + 240, 600);
+  if (element.matches('.abyss-project-kanban-window')) {
+    const top = frameContentTop(column, origin);
+    return rectangle(left, top, left + 240, top + 400);
+  }
+  return rectangle(0, 0, 0, 0);
+}
+
+function frameContentTop(column: HTMLElement | null, origin: number): number {
+  return (
+    origin -
+    (column?.querySelector<HTMLElement>('.abyss-project-kanban-column-body')?.scrollTop ?? 0)
+  );
+}
+
+function frameBoard(count = 2, collapsed = false, grouped = false) {
+  const planned = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+  const active = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+  const names =
+    count === 2 ? ['A', 'M'] : Array.from({ length: count }, (_, index) => `Project ${index}`);
+  const projects = ['Z', ...names].map((name, index) => {
+    const status = name === 'Z' ? planned : active;
+    return project({
+      path: `Projects/${name}.md`,
+      name,
+      statusId: status.id,
+      frontmatter: { status: status.name, Budget: index },
+    });
+  });
+  const frames = new Map<number, FrameRequestCallback>();
+  let id = 0;
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    frames.set(++id, callback);
+    return id;
+  });
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((key) => {
+    frames.delete(key);
+  });
+  let origin = 200;
+  let height = 128;
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    if (this.matches('.abyss-project-kanban-window-row')) return rectangle(0, 0, 240, height);
+    if (this.matches('.abyss-project-kanban-scroll')) return rectangle(20, 150, 680, 650);
+    if (this.matches('.abyss-project-kanban-hover-preview')) return rectangle(570, 150, 680, 650);
+    if (this.matches('.abyss-project-kanban-hover-body')) return rectangle(570, 200, 680, 600);
+    if (this.matches('.abyss-project-kanban-hover-group')) return rectangle(570, 200, 680, 250);
+    return frameColumnRectangle(this, active.id, planned.id, origin);
+  });
+  const h = mountView(projects);
+  h.settings.projects.kanban = buildDefaultProjectKanbanSettings(h.settings.projects.table);
+  h.settings.projects.kanban.fields = [];
+  h.settings.projects.kanban.groupBy = grouped ? 'property:Budget' : 'none';
+  h.settings.projects.kanban.sortBy = { field: 'name', dir: 'asc' };
+  h.settings.projects.kanban.collapsedColumns = collapsed ? [`id:${active.id}`] : [];
+  clickView(h.host, 'Kanban');
+  const frame = () => {
+    const work = [...frames.values()];
+    frames.clear();
+    work.forEach((callback) => {
+      callback(0);
+    });
+  };
+  frame();
+  const source = expectDefined(
+    h.host.querySelector<HTMLElement>(
+      '.abyss-project-kanban-card[data-project-path="Projects/Z.md"]',
+    ),
+  );
+  const target = expectDefined(
+    h.host.querySelector<HTMLElement>(
+      `.abyss-project-kanban-column[data-status-key="id:${active.id}"]`,
+    ),
+  );
+  const body = expectDefined(
+    target.querySelector<HTMLElement>('.abyss-project-kanban-column-body'),
+  );
+  const planner = vi.spyOn(kanbanDrop, 'planProjectKanbanDrop');
+  const data = transfer();
+  source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  source.dispatchEvent(dragEvent('dragstart', data));
+  target.dispatchEvent(dragEvent('dragover', data, { clientX: 400, clientY: 220 }));
+  return {
+    ...h,
+    projects,
+    source,
+    target,
+    body,
+    planner,
+    frame,
+    setHeight: (value: number) => {
+      height = value;
+    },
+    setOrigin: (value: number) => {
+      origin = value;
+    },
+  };
+}
+
 function installObsidianDomExtensions(ownerWindow: Window & typeof window): void {
   const prototypePairs: Array<[object, object]> = [
     [HTMLElement.prototype, ownerWindow.HTMLElement.prototype],
@@ -225,6 +362,30 @@ function installObsidianDomExtensions(ownerWindow: Window & typeof window): void
 
 function clickView(host: HTMLElement, mode: 'Table' | 'Kanban' | 'Timeline'): void {
   expectDefined(host.querySelector<HTMLButtonElement>(`[aria-label="${mode} view"]`)).click();
+}
+
+function departPendingKanban(
+  departure: string,
+  host: HTMLElement,
+  source: HTMLElement,
+  notify: (host: HTMLElement) => void,
+) {
+  const owner = departure === 'adopt' ? taskViewportOwner() : undefined;
+  if (departure.startsWith('blur') || departure === 'fresh-interaction')
+    window.dispatchEvent(new Event('blur'));
+  if (departure === 'blur-return' || departure === 'blur-focusin')
+    window.dispatchEvent(new Event('focus'));
+  if (departure === 'blur-focusin')
+    source.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+  if (departure === 'fresh-interaction')
+    source.dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift', bubbles: true }));
+  if (owner !== undefined) {
+    owner.doc.body.append(host);
+    notify(host);
+    document.body.append(host);
+    notify(host);
+  }
+  return owner;
 }
 
 function rectangle(left: number, top: number, right: number, bottom: number): DOMRect {
@@ -2083,6 +2244,232 @@ describe('project Kanban overview', () => {
     expect(target.classList.contains('is-drop-target')).toBe(false);
   });
 
+  it.each([
+    ['asc', 256, ['Projects/A.md', 'Projects/M.md', 'Projects/Z.md']],
+    ['desc', 0, ['Projects/Z.md', 'Projects/M.md', 'Projects/A.md']],
+  ] as const)(
+    'previews the actual %s sorted landing independently of the hovered gap',
+    async (dir, top, order) => {
+      const planned = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+      const active = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+      const projects = ['Z', 'A', 'M'].map((name) => {
+        const status = name === 'Z' ? planned : active;
+        return project({
+          path: `Projects/${name}.md`,
+          name,
+          statusId: status.id,
+          frontmatter: { status: status.name },
+        });
+      });
+      const frames: FrameRequestCallback[] = [];
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        frames.push(callback);
+        return frames.length;
+      });
+      const secondPath = `Projects/${dir === 'asc' ? 'M' : 'A'}.md`;
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        const status = this.closest<HTMLElement>('.abyss-project-kanban-column')?.dataset[
+          'statusKey'
+        ];
+        const left = status === `id:${active.id}` ? 320 : 20;
+        if (this.matches('.abyss-project-kanban-column'))
+          return rectangle(left, 150, left + 240, 650);
+        if (this.matches('.abyss-project-kanban-window'))
+          return rectangle(left, 200, left + 240, 600);
+        if (this.matches('.abyss-project-kanban-column-body'))
+          return rectangle(left, 200, left + 240, 600);
+        if (this.matches('.abyss-project-kanban-scroll')) return rectangle(20, 150, 600, 650);
+        if (this.matches('.abyss-project-kanban-window-row')) return rectangle(0, 0, 240, 128);
+        if (this.matches('.abyss-project-kanban-card')) {
+          const second = this.dataset['projectPath'] === secondPath;
+          const y = 200 + (second ? 128 : 0);
+          return rectangle(left, y, left + 240, y + 120);
+        }
+        return rectangle(0, 0, 0, 0);
+      });
+      const { host, settings } = mountView(projects);
+      settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+      settings.projects.kanban.fields = [];
+      settings.projects.kanban.sortBy = { field: 'name', dir };
+      clickView(host, 'Kanban');
+      frames.splice(0).forEach((callback) => {
+        callback(0);
+      });
+      const card = (name: string) =>
+        expectDefined(
+          host.querySelector<HTMLElement>(
+            `.abyss-project-kanban-card[data-project-path="Projects/${name}.md"]`,
+          ),
+        );
+      const source = card('Z');
+      const data = transfer();
+      source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      source.dispatchEvent(dragEvent('dragstart', data));
+      const point = { clientX: 400, clientY: dir === 'asc' ? 220 : 350 };
+      card('A').dispatchEvent(dragEvent('dragover', data, point));
+      const markerTop = () =>
+        expectDefined(
+          host.querySelector<HTMLElement>('.abyss-project-kanban-insertion-line'),
+        ).style.getPropertyValue('--abyss-project-kanban-insertion-top');
+      expect(markerTop()).toBe(`${top}px`);
+      card('M').dispatchEvent(
+        dragEvent('dragover', data, { clientX: 400, clientY: dir === 'asc' ? 430 : 300 }),
+      );
+      expect(markerTop()).toBe(`${top}px`);
+      card('A').dispatchEvent(dragEvent('drop', data, point));
+      await flushMicrotasks();
+      const column = expectDefined(
+        host.querySelector<HTMLElement>(
+          `.abyss-project-kanban-column[data-status-key="id:${active.id}"]`,
+        ),
+      );
+      expect(
+        Array.from(
+          column.querySelectorAll<HTMLElement>('.abyss-project-kanban-card'),
+          (element) => element.dataset['projectPath'],
+        ),
+      ).toEqual(order);
+    },
+  );
+
+  it.each([1000, 10000])(
+    'holds a stationary drag over %s projects without another full plan',
+    (count) => {
+      const h = frameBoard(count);
+      expect(h.planner).toHaveBeenCalledOnce();
+      for (let frame = 0; frame < 60; frame++) h.frame();
+      expect(h.planner).toHaveBeenCalledOnce();
+      expect(h.host.querySelectorAll('.abyss-project-kanban-card').length).toBeLessThan(30);
+    },
+  );
+  it.each(['data', 'settings', 'catalog', 'observation'] as const)(
+    'invalidates %s publication while board rendering is deferred by the drag',
+    (kind) => {
+      const h = frameBoard();
+      if (kind === 'data')
+        h.view.update(
+          h.projects.map((candidate) =>
+            candidate.name === 'Z'
+              ? { ...candidate, frontmatter: { status: 'changed' } }
+              : candidate,
+          ),
+        );
+      if (kind === 'settings') {
+        expectDefined(h.settings.projects.kanban).sortBy.dir = 'desc';
+        h.view.refreshFields();
+      }
+      if (kind === 'catalog') h.view.refreshFields();
+      if (kind === 'observation')
+        h.view.observeProjectSource({ path: 'Projects/Z.md', revision: 1, project: h.projects[0] });
+      expect(h.source.isConnected).toBe(true);
+      h.frame();
+      expect(h.planner).toHaveBeenCalledTimes(2);
+      if (kind === 'data' || kind === 'settings')
+        expect(h.target.classList.contains('is-drop-disabled')).toBe(true);
+      h.frame();
+      expect(h.planner).toHaveBeenCalledTimes(2);
+      if (kind === 'observation') {
+        h.view.observeProjectSource({ path: 'Projects/Z.md', revision: 1, project: undefined });
+        h.frame();
+        expect(h.planner).toHaveBeenCalledTimes(2);
+      }
+    },
+  );
+  it('refreshes measured marker bounds before replanning only a changed scroll target', () => {
+    const h = frameBoard();
+    h.setHeight(200);
+    h.setOrigin(190);
+    h.body.dispatchEvent(new Event('scroll'));
+    h.frame();
+    h.frame();
+    expect(h.planner).toHaveBeenCalledOnce();
+    expect(
+      h.target
+        .querySelector<HTMLElement>('.abyss-project-kanban-insertion-line')
+        ?.style.getPropertyValue('--abyss-project-kanban-insertion-top'),
+    ).toBe('400px');
+    h.body.scrollTop = 200;
+    h.body.dispatchEvent(new Event('scroll'));
+    h.frame();
+    expect(h.planner).toHaveBeenCalledTimes(2);
+    h.frame();
+    expect(h.planner).toHaveBeenCalledTimes(2);
+  });
+  it('never opens a known-stale delayed forecast after source invalidation', () => {
+    vi.useFakeTimers();
+    const h = frameBoard(2, true);
+    vi.advanceTimersByTime(300);
+    h.view.update(
+      h.projects.map((candidate) =>
+        candidate.name === 'Z' ? { ...candidate, frontmatter: { status: 'changed' } } : candidate,
+      ),
+    );
+    vi.advanceTimersByTime(150);
+    expect(h.host.querySelector('.abyss-project-kanban-hover-preview')).toBeNull();
+    h.frame();
+    vi.advanceTimersByTime(450);
+    expect(h.host.querySelector('.abyss-project-kanban-hover-preview')).toBeNull();
+    expect(h.planner).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([1000, 10000])(
+    'resolves a far-tail semantic hit without scanning %s groups each frame',
+    (count) => {
+      let reads = 0;
+      const build = kanbanModel.buildProjectKanbanModel;
+      vi.spyOn(kanbanModel, 'buildProjectKanbanModel').mockImplementation((input) => {
+        const model = build(input);
+        for (const column of model.columns)
+          for (const group of column.groups) {
+            const key = group.key;
+            Object.defineProperty(group, 'key', {
+              get() {
+                reads++;
+                return key;
+              },
+            });
+          }
+        return model;
+      });
+      const h = frameBoard(count, false, true);
+      h.body.scrollTop = 1e9;
+      h.frame();
+      reads = 0;
+      for (let frame = 0; frame < 60; frame++) h.frame();
+      expect(h.planner).toHaveBeenCalledTimes(2);
+      expect(reads).toBeLessThanOrEqual(60);
+    },
+  );
+
+  it('replaces logical target groups when a populated group becomes empty-valued', () => {
+    const h = frameBoard(2, false, true);
+    h.source.dispatchEvent(dragEvent('dragend', transfer()));
+    h.view.update(
+      h.projects.map((candidate) =>
+        candidate.name === 'Z'
+          ? candidate
+          : { ...candidate, frontmatter: { status: candidate.frontmatter['status'] } },
+      ),
+    );
+    h.frame();
+    const source = expectDefined(
+      h.host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/Z.md"]',
+      ),
+    );
+    const data = transfer();
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    source.dispatchEvent(dragEvent('dragstart', data));
+    h.target.dispatchEvent(dragEvent('dragover', data, { clientX: 400, clientY: 220 }));
+    expect(h.planner.mock.lastCall?.[0].target.group).toMatchObject({
+      key: 'empty',
+      value: undefined,
+    });
+    expect(h.target.classList.contains('is-drop-target')).toBe(true);
+  });
+
   it('places a lower-half card drop immediately after that card', () => {
     const status = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
     const projects = ['A', 'B', 'C'].map((name) =>
@@ -2125,8 +2512,11 @@ describe('project Kanban overview', () => {
     );
     expect(line.style.getPropertyValue('--abyss-project-kanban-insertion-top')).not.toBe('');
     expect(middle.getBoundingClientRect()).toEqual(initialRect);
-    expect(line.previousElementSibling).toBe(middle);
-    expect(line.nextElementSibling).toBe(last);
+    expect(line.parentElement?.classList.contains('abyss-project-kanban-window')).toBe(true);
+    expect(line.style.getPropertyValue('--abyss-project-kanban-insertion-top')).toBe('192px');
+    expect(last.closest('.abyss-project-kanban-window-row')?.previousElementSibling).toBe(
+      middle.closest('.abyss-project-kanban-window-row'),
+    );
   });
 
   it('renders a completed manual-only reorder immediately', async () => {
@@ -2885,6 +3275,79 @@ describe('project Kanban overview', () => {
     expect(overlay.querySelector('.abyss-project-kanban-insertion-line')).not.toBeNull();
   });
 
+  it('retains the sorted rail forecast after an animation frame without another pointer event', () => {
+    vi.useFakeTimers();
+    const planned = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const active = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const projects = ['Z', 'A', 'M'].map((name) => {
+      const status = name === 'Z' ? planned : active;
+      return project({
+        path: `Projects/${name}.md`,
+        name,
+        statusId: status.id,
+        frontmatter: { status: status.name },
+      });
+    });
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.matches('.abyss-project-kanban-hover-preview')) return rectangle(371, 150, 643, 650);
+      if (this.matches('.abyss-project-kanban-hover-body')) return rectangle(371, 200, 643, 600);
+      if (this.matches('.abyss-project-kanban-hover-group')) {
+        const height = this.querySelector('.abyss-project-kanban-hover-card') === null ? 8 : 50;
+        return rectangle(371, 200, 643, 200 + height);
+      }
+      if (this.matches('.abyss-project-kanban-column')) {
+        return this.dataset['statusKey'] === `id:${active.id}`
+          ? rectangle(320, 150, 365, 650)
+          : rectangle(20, 150, 260, 650);
+      }
+      if (this.matches('.abyss-project-kanban-scroll')) return rectangle(20, 150, 680, 650);
+      return rectangle(0, 0, 0, 0);
+    });
+    const { host, settings } = mountView(projects);
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.fields = [];
+    settings.projects.kanban.sortBy = { field: 'name', dir: 'asc' };
+    settings.projects.kanban.collapsedColumns = [`id:${active.id}`];
+    clickView(host, 'Kanban');
+    const source = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/Z.md"]',
+      ),
+    );
+    const column = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${active.id}"]`,
+      ),
+    );
+    const data = transfer();
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    source.dispatchEvent(dragEvent('dragstart', data));
+    column.dispatchEvent(dragEvent('dragover', data, { clientX: 340, clientY: 350 }));
+    vi.advanceTimersByTime(450);
+    const overlay = expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-kanban-hover-preview'),
+    );
+    const markerTop = () =>
+      overlay
+        .querySelector<HTMLElement>('.abyss-project-kanban-insertion-line')
+        ?.style.getPropertyValue('--abyss-project-kanban-insertion-top');
+    expect(markerTop()).toBe('108px');
+
+    frames.splice(0).forEach((callback) => {
+      callback(0);
+    });
+
+    expect(markerTop()).toBe('108px');
+    expect(column.querySelector('.abyss-project-kanban-insertion-line')).toBeNull();
+  });
+
   it('positions initial and sustained rail forecasts in the scrolled destination group', () => {
     vi.useFakeTimers();
     const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
@@ -2915,18 +3378,27 @@ describe('project Kanban overview', () => {
     settings.projects.kanban.collapsedColumns = [`id:${targetStatus.id}`];
     view.refreshFields();
     clickView(host, 'Kanban');
+    const forecastRows: Readonly<Record<string, readonly [number, number]>> = {
+      'Projects/B.md': [172, 50],
+      'Projects/C.md': [254, 90],
+      'Projects/A.md': [344, 42],
+      'value:boris': [140, 32],
+      'value:maria': [222, 32],
+    };
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
       this: HTMLElement,
     ) {
       const scrollTop =
         host.querySelector<HTMLElement>('.abyss-project-kanban-hover-body')?.scrollTop ?? 0;
       if (this.matches('.abyss-project-kanban-hover-preview')) return rectangle(0, 100, 272, 500);
-      if (this.matches('[data-group-key="value:boris"].abyss-project-kanban-hover-group'))
-        return rectangle(0, 140 - scrollTop, 272, 230 - scrollTop);
-      if (this.matches('[data-group-key="value:maria"].abyss-project-kanban-hover-group'))
-        return rectangle(0, 260 - scrollTop, 272, 420 - scrollTop);
+      if (this.matches('.abyss-project-kanban-hover-body')) return rectangle(0, 140, 272, 500);
+      if (this.matches('.abyss-project-kanban-hover-group')) {
+        const path = this.querySelector<HTMLElement>('[data-project-path]')?.dataset['projectPath'];
+        const [top, height] = expectDefined(forecastRows[path ?? this.dataset['groupKey'] ?? '']);
+        return rectangle(0, top - scrollTop, 272, top + height - scrollTop);
+      }
       if (this.matches('[data-project-path="Projects/C.md"].abyss-project-kanban-hover-card'))
-        return rectangle(4, 300 - scrollTop, 268, 330 - scrollTop);
+        return rectangle(4, 258 - scrollTop, 268, 336 - scrollTop);
       return rectangle(0, 0, 1000, 700);
     });
     const card = expectDefined(
@@ -2948,27 +3420,28 @@ describe('project Kanban overview', () => {
     const overlay = expectDefined(
       host.querySelector<HTMLElement>('.abyss-project-kanban-hover-preview'),
     );
-    expect(overlay.querySelectorAll('.abyss-project-kanban-hover-group')).toHaveLength(2);
-    const group = expectDefined(
-      overlay.querySelector<HTMLElement>(
-        '[data-group-key="value:maria"].abyss-project-kanban-hover-group',
-      ),
+    expect(
+      new Set(
+        Array.from(
+          overlay.querySelectorAll<HTMLElement>('.abyss-project-kanban-hover-group'),
+          (element) => element.dataset['groupKey'],
+        ),
+      ).size,
+    ).toBe(2);
+    const body = expectDefined(
+      overlay.querySelector<HTMLElement>('.abyss-project-kanban-hover-body'),
     );
     let marker = expectDefined(
-      group.querySelector<HTMLElement>('.abyss-project-kanban-insertion-line'),
+      body.querySelector<HTMLElement>('.abyss-project-kanban-insertion-line'),
     );
-    expect(marker.parentElement).toBe(group);
-    expect(marker.style.getPropertyValue('--abyss-project-kanban-insertion-top')).toBe('70px');
+    expect(marker.parentElement).toBe(body);
+    expect(marker.style.getPropertyValue('--abyss-project-kanban-insertion-top')).toBe('204px');
 
-    expectDefined(
-      overlay.querySelector<HTMLElement>('.abyss-project-kanban-hover-body'),
-    ).scrollTop = 30;
+    body.scrollTop = 30;
     column.dispatchEvent(dragEvent('dragover', data));
-    marker = expectDefined(
-      group.querySelector<HTMLElement>('.abyss-project-kanban-insertion-line'),
-    );
-    expect(marker.parentElement).toBe(group);
-    expect(marker.style.getPropertyValue('--abyss-project-kanban-insertion-top')).toBe('70px');
+    marker = expectDefined(body.querySelector<HTMLElement>('.abyss-project-kanban-insertion-line'));
+    expect(marker.parentElement).toBe(body);
+    expect(marker.style.getPropertyValue('--abyss-project-kanban-insertion-top')).toBe('204px');
   });
 
   it('restores focus to the exact destination occurrence after a list-group move', async () => {
@@ -3027,14 +3500,36 @@ describe('project Kanban overview', () => {
     const targetStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
     const history = new ProjectEditHistory(applyEdits);
     const { host, settings, view } = mountView(
-      [project({ statusId: sourceStatus.id, frontmatter: { status: sourceStatus.name } })],
+      [
+        project({
+          name: 'Z moving',
+          statusId: sourceStatus.id,
+          frontmatter: { status: sourceStatus.name },
+        }),
+        project({
+          path: 'Projects/Neighbor.md',
+          name: 'A source neighbor',
+          statusId: sourceStatus.id,
+          frontmatter: { status: sourceStatus.name },
+        }),
+        project({
+          path: 'Projects/Destination.md',
+          name: 'A target neighbor',
+          statusId: targetStatus.id,
+          frontmatter: { status: targetStatus.name },
+        }),
+      ],
       { applyEdits, history },
     );
     settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
     view.refreshFields();
     const external = activeDocument.body.createEl('button', { text: 'Outside overview' });
     clickView(host, 'Kanban');
-    const source = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+    const source = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/A.md"]',
+      ),
+    );
     const target = expectDefined(
       host.querySelector<HTMLElement>(
         `.abyss-project-kanban-column[data-status-key="id:${targetStatus.id}"]`,
@@ -3049,10 +3544,231 @@ describe('project Kanban overview', () => {
     expect(applyEdits).toHaveBeenCalledOnce();
 
     external.focus();
+    const board = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-scroll'));
+    const sourceBody = expectDefined(
+      source
+        .closest('.abyss-project-kanban-column')
+        ?.querySelector<HTMLElement>('.abyss-project-kanban-column-body'),
+    );
+    const targetBody = expectDefined(
+      target.querySelector<HTMLElement>('.abyss-project-kanban-column-body'),
+    );
+    board.scrollLeft = 19.25;
+    sourceBody.scrollTop = 0.25;
+    targetBody.scrollTop = 0.75;
     finishWrite?.();
     await flushMicrotasks();
 
     expect(activeDocument.activeElement).toBe(external);
+    expect(board.scrollLeft).toBe(19.25);
+    expect(sourceBody.scrollTop).toBe(0.25);
+    expect(targetBody.scrollTop).toBe(0.75);
+  });
+
+  it('retained Kanban view routes adopted outside focus and releases acquired owners', async () => {
+    const migration = projectWindowMigration();
+    const oldBindings = projectNativeBindings(document);
+    let finishWrite: (() => void) | undefined;
+    const applyEdits = vi.fn(
+      (changes: readonly ProjectCellChange[]) =>
+        new Promise<ProjectEditResult>((resolve) => {
+          finishWrite = () => {
+            resolve(appliedResult(changes));
+          };
+        }),
+    );
+    const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const targetStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const history = new ProjectEditHistory(applyEdits);
+    const { host, settings, view } = mountView(
+      [
+        project({
+          name: 'Z moving',
+          statusId: sourceStatus.id,
+          frontmatter: { status: sourceStatus.name },
+        }),
+        project({
+          path: 'Projects/Neighbor.md',
+          name: 'A source neighbor',
+          statusId: sourceStatus.id,
+          frontmatter: { status: sourceStatus.name },
+        }),
+        project({
+          path: 'Projects/Destination.md',
+          name: 'A target neighbor',
+          statusId: targetStatus.id,
+          frontmatter: { status: targetStatus.name },
+        }),
+      ],
+      { applyEdits, history },
+    );
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    view.refreshFields();
+    const external = activeDocument.body.createEl('button', { text: 'Outside overview' });
+    clickView(host, 'Kanban');
+    const source = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/A.md"]',
+      ),
+    );
+    const target = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${targetStatus.id}"]`,
+      ),
+    );
+    const owner = taskViewportOwner();
+    installObsidianDomExtensions(owner.win);
+    const newBindings = projectNativeBindings(owner.doc);
+    owner.doc.body.append(host);
+    migration.notify(host);
+    source.focus();
+    const data = transfer();
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    source.dispatchEvent(dragEvent('dragstart', data));
+    target.dispatchEvent(dragEvent('drop', data));
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledOnce();
+
+    const outside = owner.doc.body.createEl('input');
+    owner.doc.body.append(outside);
+    outside.focus();
+    const board = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-scroll'));
+    const sourceBody = expectDefined(
+      source
+        .closest('.abyss-project-kanban-column')
+        ?.querySelector<HTMLElement>('.abyss-project-kanban-column-body'),
+    );
+    const targetBody = expectDefined(
+      target.querySelector<HTMLElement>('.abyss-project-kanban-column-body'),
+    );
+    board.scrollLeft = 19.25;
+    sourceBody.scrollTop = 0.25;
+    targetBody.scrollTop = 0.75;
+    finishWrite?.();
+    await flushMicrotasks();
+
+    expect(owner.doc.activeElement).toBe(outside);
+    expect(board.scrollLeft).toBe(19.25);
+    expect(sourceBody.scrollTop).toBe(0.25);
+    expect(targetBody.scrollTop).toBe(0.75);
+    expect(history.canUndo).toBe(true);
+    view.destroy();
+    for (const { add, remove } of [...oldBindings.audits, ...newBindings.audits])
+      for (const args of add.mock.calls.filter(
+        ([type, , options]) => ['blur', 'focusin'].includes(type) && options === undefined,
+      ))
+        expect(remove).toHaveBeenCalledWith(...args);
+    expect(migration.bindings.size).toBe(0);
+    owner.destroy();
+    external.remove();
+  });
+
+  it.each([
+    'blur',
+    'blur-return',
+    'blur-focusin',
+    'fresh-interaction',
+    'hide-return',
+    'adopt',
+    'eligible',
+  ] as const)('pending Kanban drop presentation is revoked by %s', async (departure) => {
+    const migration = projectWindowMigration();
+    let finishWrite: (() => void) | undefined;
+    const applyEdits = vi.fn(
+      (changes: readonly ProjectCellChange[]) =>
+        new Promise<ProjectEditResult>((resolve) => {
+          finishWrite = () => {
+            resolve(appliedResult(changes));
+          };
+        }),
+    );
+    const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+    const targetStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+    const history = new ProjectEditHistory(applyEdits);
+    const { host, settings, view } = mountView(
+      [
+        project({
+          name: 'Z moving',
+          statusId: sourceStatus.id,
+          frontmatter: { status: sourceStatus.name },
+        }),
+        project({
+          path: 'Projects/Neighbor.md',
+          name: 'A source neighbor',
+          statusId: sourceStatus.id,
+          frontmatter: { status: sourceStatus.name },
+        }),
+        project({
+          path: 'Projects/Destination.md',
+          name: 'A target neighbor',
+          statusId: targetStatus.id,
+          frontmatter: { status: targetStatus.name },
+        }),
+      ],
+      { applyEdits, history },
+    );
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.collapsedColumns = [`id:${targetStatus.id}`];
+    view.refreshFields();
+    const external = activeDocument.body.createEl('button', { text: 'Outside overview' });
+    clickView(host, 'Kanban');
+    const source = expectDefined(
+      host.querySelector<HTMLElement>(
+        '.abyss-project-kanban-card[data-project-path="Projects/A.md"]',
+      ),
+    );
+    const target = expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban-column[data-status-key="id:${targetStatus.id}"]`,
+      ),
+    );
+    source.focus();
+    const data = transfer();
+    source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    source.dispatchEvent(dragEvent('dragstart', data));
+    target.dispatchEvent(dragEvent('drop', data));
+    await flushMicrotasks();
+    expect(applyEdits).toHaveBeenCalledOnce();
+
+    const owner = departPendingKanban(departure, host, source, (element) => {
+      migration.notify(element);
+    });
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+    const board = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-scroll'));
+    const sourceBody = expectDefined(
+      source
+        .closest('.abyss-project-kanban-column')
+        ?.querySelector<HTMLElement>('.abyss-project-kanban-column-body'),
+    );
+    const targetBody = expectDefined(
+      target.querySelector<HTMLElement>('.abyss-project-kanban-column-body'),
+    );
+    board.scrollLeft = 19.25;
+    sourceBody.scrollTop = 0.25;
+    targetBody.scrollTop = 0.75;
+    if (departure === 'hide-return') {
+      view.captureViewportBeforeHide();
+      host.remove();
+      document.body.append(host);
+    }
+    finishWrite?.();
+    await flushMicrotasks();
+
+    if (departure === 'eligible') {
+      expect(settings.projects.kanban.collapsedColumns).not.toContain(`id:${targetStatus.id}`);
+      expect(focus).toHaveBeenCalled();
+    } else {
+      expect(settings.projects.kanban.collapsedColumns).toContain(`id:${targetStatus.id}`);
+      expect(board.scrollLeft).toBe(19.25);
+      expect(sourceBody.scrollTop).toBe(0.25);
+      expect(targetBody.scrollTop).toBe(0.75);
+      if (departure === 'fresh-interaction') expect(focus).toHaveBeenCalled();
+      else expect(focus).not.toHaveBeenCalled();
+    }
+    expect(history.canUndo).toBe(true);
+    view.destroy();
+    owner?.destroy();
+    external.remove();
   });
 
   it('retains a newer board cell selection while a dropped card write is pending', async () => {
@@ -3253,7 +3969,9 @@ describe('project Kanban overview', () => {
     const line = expectDefined(
       target.querySelector<HTMLElement>('.abyss-project-kanban-insertion-line'),
     );
-    expect(line.nextElementSibling).toBe(existingGroup);
+    expect(existingGroup.dataset['groupKey']).toBe('value:p2');
+    expect(line.parentElement?.classList.contains('abyss-project-kanban-window')).toBe(true);
+    expect(line.style.getPropertyValue('--abyss-project-kanban-insertion-top')).toBe('0px');
   });
 
   it('mounts the New project input outside the hidden table surface while on the board', () => {
@@ -3523,26 +4241,90 @@ describe('project Kanban overview', () => {
     expect(view.selectedProjectPath()).toBe('Projects/A.md');
   });
 
-  it('moves a focused card between status columns without replacing its DOM node', () => {
-    const initial = project();
-    const { host, view, settings } = mountView([initial]);
-    clickView(host, 'Kanban');
-    const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
-    card.focus();
-    const focusedCell = activeDocument.activeElement;
-    expect(card.contains(focusedCell)).toBe(true);
-    const destination = expectDefined(settings.projects.statuses[1]);
+  it.each([0, 1])(
+    'moves a focused card from status column %s without replacing its DOM or Component',
+    (sourceIndex) => {
+      const initial = project({
+        statusId: expectDefined(DEFAULT_SETTINGS.projects.statuses[sourceIndex]).id,
+      });
+      const { host, view, settings } = mountView([initial]);
+      clickView(host, 'Kanban');
+      const card = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+      card.focus();
+      const focusedCell = activeDocument.activeElement;
+      expect(card.contains(focusedCell)).toBe(true);
+      const board = (
+        view as unknown as {
+          kanbanView_abyssPrivate: {
+            renderedCells(): readonly RenderedCellContext[];
+          };
+        }
+      ).kanbanView_abyssPrivate;
+      const retainedCell = expectDefined(
+        board.renderedCells().find((cell) => cell.element === focusedCell),
+      );
+      const markdown = retainedCell.markdown;
+      const fieldOwner = retainedCell.resources;
+      const fieldUnload = vi.spyOn(fieldOwner, 'unload');
+      const oldName = expectDefined(retainedCell.element.querySelector('button'));
+      const destination = expectDefined(settings.projects.statuses[1 - sourceIndex]);
+      const unload = vi.spyOn(markdown, 'unload');
+      const start = expectDefined(card.querySelector<HTMLElement>('[data-column-id="start"]'));
 
-    view.update([{ ...initial, statusId: destination.id }]);
+      view.update([{ ...initial, statusId: destination.id }]);
 
-    const moved = expectDefined(
-      host.querySelector<HTMLElement>(
-        `.abyss-project-kanban-column[data-status-key="id:${destination.id}"] .abyss-project-kanban-card`,
-      ),
-    );
-    expect(moved).toBe(card);
-    expect(activeDocument.activeElement).toBe(focusedCell);
-  });
+      const moved = expectDefined(
+        host.querySelector<HTMLElement>(
+          `.abyss-project-kanban-column[data-status-key="id:${destination.id}"] .abyss-project-kanban-card`,
+        ),
+      );
+      expect(moved).toBe(card);
+      expect(board.renderedCells().find((cell) => cell.element === focusedCell)).toBe(retainedCell);
+      expect(retainedCell.resources).toBe(fieldOwner);
+      expect(fieldUnload).not.toHaveBeenCalled();
+      expect(activeDocument.activeElement).toBe(focusedCell);
+      expect(board.renderedCells().find((cell) => cell.element === focusedCell)?.markdown).toBe(
+        markdown,
+      );
+      for (let revision = 2; revision < 5; revision++)
+        view.update([
+          { ...initial, statusId: destination.id, frontmatter: { start: `2026-09-0${revision}` } },
+        ]);
+      const select = vi.spyOn(
+        view as unknown as {
+          selectCell_abyssPrivate(cell: RenderedCellContext, extend: boolean): void;
+        },
+        'selectCell_abyssPrivate',
+      );
+      start.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(select).toHaveBeenCalledOnce();
+      expect(select.mock.calls[0]?.[0].project.frontmatter['start']).toBe('2026-09-04');
+      expect(unload).not.toHaveBeenCalled();
+      const currentContent = expectDefined(retainedCell.contentMarkdown);
+      const contentUnload = vi.spyOn(currentContent, 'unload');
+      const currentName = expectDefined(retainedCell.element.querySelector('button'));
+      const open = vi.spyOn(view, 'finishEditorBeforeAction');
+      expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban')).focus();
+      view.update([]);
+      expect(fieldUnload).toHaveBeenCalledOnce();
+      expect(contentUnload).toHaveBeenCalledOnce();
+      oldName.click();
+      currentName.click();
+      expect(open).not.toHaveBeenCalled();
+      expect(unload).toHaveBeenCalledOnce();
+      expect(start.isConnected).toBe(false);
+      const calls = select.mock.calls.length;
+      for (const type of ['mousedown', 'click', 'focus', 'dblclick', 'contextmenu']) {
+        const event =
+          type === 'focus'
+            ? new FocusEvent(type, { cancelable: true })
+            : new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, shiftKey: true });
+        start.dispatchEvent(event);
+        expect(event.defaultPrevented, type).toBe(false);
+      }
+      expect(select.mock.calls).toHaveLength(calls);
+    },
+  );
 
   it('presents creation after a card drag releases deferred reconciliation', async () => {
     let finishCreate: ((path: string) => void) | undefined;
@@ -3935,7 +4717,7 @@ describe('project Kanban overview', () => {
     expect(view.selectedProjectPath()).toBeUndefined();
   });
 
-  it('excludes retained cells from selection when their status column is collapsed', async () => {
+  it('evicts collapsed-column cells and excludes them from selection', async () => {
     const { host, view } = mountView();
     clickView(host, 'Kanban');
     const start = expectDefined(
@@ -3951,7 +4733,7 @@ describe('project Kanban overview', () => {
     await flushMicrotasks();
 
     expect(column.classList.contains('is-collapsed')).toBe(true);
-    expect(start.isConnected).toBe(true);
+    expect(start.isConnected).toBe(false);
     expect(view.selectedProjectPath()).toBeUndefined();
   });
 
@@ -3974,7 +4756,12 @@ describe('project Kanban overview', () => {
 
     header.click();
     await flushMicrotasks();
+    expect(start.isConnected).toBe(false);
     start.click();
+    expect(view.selectedProjectPath()).toBeUndefined();
+    expectDefined(
+      host.querySelector<HTMLElement>('.abyss-project-timeline [data-column-id="start"]'),
+    ).click();
     expect(header.getAttribute('aria-expanded')).toBe('true');
     expect(view.selectedProjectPath()).toBe('Projects/A.md');
   });
@@ -4568,7 +5355,7 @@ describe('project Kanban overview', () => {
       ),
     );
     expect(start.textContent).toBe('Sep 10, 2026');
-    expect(start.title).toBe(startRaw);
+    expect(start.getAttribute('aria-label')).toBe(startRaw);
     expect(end.textContent).toBe(endRaw);
   });
 
@@ -4710,7 +5497,11 @@ describe('project Kanban overview', () => {
     expect(activeColumn.classList).not.toContain('is-collapsed');
     expect(doneColumn.classList).toContain('is-collapsed');
     expect(
-      targetHeader
+      expectDefined(
+        activeColumn.querySelector<HTMLElement>(
+          '[data-group-key="value:2026-09-01"] .abyss-project-kanban-group-header',
+        ),
+      )
         .closest<HTMLElement>('.abyss-project-kanban-group')
         ?.querySelector<HTMLElement>('.abyss-project-kanban-group-body')?.hidden,
     ).toBe(false);
@@ -5343,4 +6134,478 @@ describe('project overview cell lists', () => {
     expect(selected).toHaveLength(1);
     expect(selected[0]).toBe(focused);
   });
+});
+
+describe('Kanban native card windows', () => {
+  it.each([1000, 10000])(
+    'keeps the full %s-card logical projection with bounded live cards',
+    (count) => {
+      const projects = Array.from({ length: count }, (_, index) =>
+        project({
+          path: `Projects/${index}.md`,
+          name: `Project ${String(index).padStart(5, '0')}`,
+        }),
+      );
+      const { host, view } = mountView(projects);
+      clickView(host, 'Kanban');
+      expect(host.querySelectorAll('.abyss-project-kanban-card').length).toBeLessThan(30);
+      const board = (
+        view as unknown as {
+          kanbanView_abyssPrivate: {
+            cells(): { identities: readonly ProjectTableSelectableCell[] };
+            revealCell(identity: ProjectTableSelectableCell): void;
+          };
+        }
+      ).kanbanView_abyssPrivate;
+      const identities = board.cells().identities;
+      const last = expectDefined(
+        identities.find((identity) => identity.projectPath === `Projects/${count - 1}.md`),
+      );
+      board.revealCell(last);
+      expect(
+        Array.from(host.querySelectorAll<HTMLElement>('.abyss-project-kanban-card')).some(
+          (element) => element.dataset['occurrenceId'] === last.occurrenceId,
+        ),
+      ).toBe(true);
+      expect(host.querySelectorAll('.abyss-project-kanban-card').length).toBeLessThan(30);
+    },
+  );
+});
+
+it('activates visible columns plus one neighbor while retaining a provisional offscreen source', () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const base = expectDefined(settings.projects.statuses[0]);
+  settings.projects.statuses = Array.from({ length: 6 }, (_, index) => ({
+    ...base,
+    id: `window-${index}`,
+    name: `Window ${index}`,
+  }));
+  const projects = settings.projects.statuses.flatMap((status) =>
+    Array.from({ length: 100 }, (_, index) =>
+      project({
+        path: `Projects/${status.id}-${index}.md`,
+        name: `Project ${index}`,
+        statusId: status.id,
+        frontmatter: { status: status.name },
+      }),
+    ),
+  );
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    if (this.matches('.abyss-project-kanban-scroll')) return rectangle(0, 0, 400, 500);
+    if (this.matches('.abyss-project-kanban-column')) {
+      const index = settings.projects.statuses.findIndex(
+        (status) => `id:${status.id}` === this.dataset['statusKey'],
+      );
+      const left = index * 200 - (this.parentElement?.scrollLeft ?? 0);
+      return rectangle(left, 0, left + 200, 500);
+    }
+    return rectangle(0, 0, 0, 0);
+  });
+  const { host } = mountView(projects, { settings });
+  clickView(host, 'Kanban');
+  const columns = Array.from(host.querySelectorAll<HTMLElement>('.abyss-project-kanban-column'));
+  const source = expectDefined(
+    columns[0]?.querySelector<HTMLElement>('.abyss-project-kanban-card'),
+  );
+  expect(columns[2]?.querySelector('.abyss-project-kanban-card')).not.toBeNull();
+  expect(columns[3]?.querySelector('.abyss-project-kanban-card')).toBeNull();
+  source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  const board = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-scroll'));
+  board.scrollLeft = 400;
+  board.dispatchEvent(new Event('scroll'));
+  expect(source.isConnected).toBe(true);
+  expect(columns[0]?.querySelectorAll('.abyss-project-kanban-card')).toHaveLength(1);
+  expect(columns[1]?.querySelector('.abyss-project-kanban-card')).toBeNull();
+  expect(columns[4]?.querySelector('.abyss-project-kanban-card')).not.toBeNull();
+  document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+  expect(source.isConnected).toBe(false);
+});
+
+it('retains a rejected editor draft while its card scrolls outside the Kanban window', async () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    frames.push(callback);
+    return frames.length;
+  });
+  const applyEdits = vi.fn().mockResolvedValue({
+    applied: [],
+    failed: [{ path: 'Projects/0.md', message: 'Source changed' }],
+  });
+  const projects = Array.from({ length: 1000 }, (_, index) =>
+    project({ path: `Projects/${index}.md`, name: `Project ${String(index).padStart(4, '0')}` }),
+  );
+  const { host } = mountView(projects, { applyEdits, history: new ProjectEditHistory(applyEdits) });
+  clickView(host, 'Kanban');
+  const start = expectDefined(
+    host.querySelector<HTMLElement>('.abyss-project-kanban [data-column-id="start"]'),
+  );
+  start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  const input = expectDefined(start.querySelector<HTMLInputElement>('input[type="date"]'));
+  input.value = '2026-10-02';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await flushMicrotasks();
+  const body = expectDefined(start.closest<HTMLElement>('.abyss-project-kanban-column-body'));
+  body.scrollTop = 150000;
+  body.dispatchEvent(new Event('scroll'));
+  frames.splice(0).forEach((callback) => {
+    callback(0);
+  });
+  expect(input.isConnected).toBe(true);
+  expect(input.value).toBe('2026-10-02');
+  expect(log).toHaveBeenCalledOnce();
+  expect(host.querySelectorAll('.abyss-project-kanban-card').length).toBeLessThan(30);
+});
+
+it('copies the complete logical Kanban group and patches selection on newly mounted cells', () => {
+  const projects = Array.from({ length: 1000 }, (_, index) =>
+    project({ path: `Projects/${index}.md`, name: `Project ${String(index).padStart(4, '0')}` }),
+  );
+  const { host, view } = mountView(projects);
+  clickView(host, 'Kanban');
+  const first = expectDefined(
+    host.querySelector<HTMLElement>('.abyss-project-kanban [data-column-id="name"]'),
+  );
+  first.focus();
+  first.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+  first.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true }));
+  const data = transfer();
+  const copy = new Event('copy', { bubbles: true, cancelable: true });
+  Object.defineProperty(copy, 'clipboardData', { value: data });
+  first.dispatchEvent(copy);
+  expect(data.getData('text/plain').split('\n')).toHaveLength(1000);
+  expect(data.getData('text/plain')).toContain('Project 0999');
+  const board = (
+    view as unknown as {
+      kanbanView_abyssPrivate: {
+        cells(): { identities: readonly ProjectTableSelectableCell[] };
+        revealCell(identity: ProjectTableSelectableCell): void;
+      };
+    }
+  ).kanbanView_abyssPrivate;
+  board.revealCell(
+    expectDefined(
+      board
+        .cells()
+        .identities.find(
+          (identity) => identity.projectPath === 'Projects/999.md' && identity.columnId === 'name',
+        ),
+    ),
+  );
+  const last = expectDefined(
+    host.querySelector<HTMLElement>(
+      '.abyss-project-kanban-card[data-project-path="Projects/999.md"] [data-column-id="name"]',
+    ),
+  );
+  expect(last.classList.contains('is-selected')).toBe(true);
+  last.click();
+  last.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+  expect(
+    activeDocument.activeElement?.closest<HTMLElement>('.abyss-project-kanban-card')?.dataset[
+      'projectPath'
+    ],
+  ).toBe('Projects/998.md');
+});
+
+it('uses one existing paste command after repeated board remounts and preserves native editing clipboard', async () => {
+  const { host, applyEdits } = mountView();
+  for (let index = 0; index < 3; index++) {
+    clickView(host, 'Kanban');
+    clickView(host, 'Table');
+  }
+  clickView(host, 'Kanban');
+  const start = expectDefined(
+    host.querySelector<HTMLElement>('.abyss-project-kanban [data-column-id="start"]'),
+  );
+  start.focus();
+  const data = transfer();
+  data.setData('text/plain', '2026-10-07');
+  const paste = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(paste, 'clipboardData', { value: data });
+  start.dispatchEvent(paste);
+  await flushMicrotasks();
+  expect(applyEdits).toHaveBeenCalledOnce();
+  expect(applyEdits.mock.calls[0]?.[0]).toMatchObject([
+    {
+      path: 'Projects/A.md',
+      field: { id: 'start' },
+      value: '2026-10-07',
+      expectedValue: '2026-09-01',
+    },
+  ]);
+  const board = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban'));
+  const input = board.createEl('input');
+  const editable = board.createDiv({ attr: { contenteditable: 'true' } });
+  for (const target of [input, editable])
+    for (const type of ['copy', 'paste']) {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'clipboardData', { value: data });
+      target.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(data.getData('text/plain')).toBe('2026-10-07');
+    }
+  await flushMicrotasks();
+  expect(applyEdits).toHaveBeenCalledOnce();
+});
+
+it('reveals the exact focused drop destination when its status column was collapsed', async () => {
+  const sourceStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[0]);
+  const destinationStatus = expectDefined(DEFAULT_SETTINGS.projects.statuses[1]);
+  const { host, settings } = mountView([project({ frontmatter: { status: sourceStatus.name } })]);
+  settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+  settings.projects.kanban.collapsedColumns = [`id:${destinationStatus.id}`];
+  clickView(host, 'Kanban');
+  const source = expectDefined(host.querySelector<HTMLElement>('.abyss-project-kanban-card'));
+  const destination = expectDefined(
+    host.querySelector<HTMLElement>(
+      `.abyss-project-kanban-column[data-status-key="id:${destinationStatus.id}"]`,
+    ),
+  );
+  source.focus();
+  const data = transfer();
+  source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  source.dispatchEvent(dragEvent('dragstart', data));
+  destination.dispatchEvent(dragEvent('drop', data));
+  await flushMicrotasks();
+  expect(destination.classList.contains('is-collapsed')).toBe(false);
+  expect(activeDocument.activeElement?.closest<HTMLElement>('.abyss-project-kanban-column')).toBe(
+    destination,
+  );
+});
+
+it.each(['Kanban', 'Timeline'] as const)(
+  'copies heterogeneous logical %s cells with rectangular blank padding',
+  (mode) => {
+    const items = Array.from({ length: 1000 }, (_, index) =>
+      project({
+        path: `Projects/Sparse${String(index).padStart(4, '0')}.md`,
+        name: `Sparse ${String(index).padStart(4, '0')}`,
+        frontmatter:
+          index === 20
+            ? {}
+            : {
+                start: '2026-09-01',
+                end: '2026-09-30',
+                ...(index === 700 ? { description: 'Late selected description', Budget: 77 } : {}),
+              },
+        ...(index === 20
+          ? {
+              stats: {
+                total: 0,
+                done: 0,
+                cancelled: 0,
+                inProgress: 0,
+                tracked: { closedMs: 0, openStartsMs: [] },
+              },
+            }
+          : {}),
+      }),
+    );
+    const { host, settings, applyEdits } = mountView(items);
+    settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+    settings.projects.kanban.groupBy = 'none';
+    settings.projects.kanban.sortBy = { field: 'name', dir: 'asc' };
+    settings.projects.kanban.showEmptyFields = false;
+    settings.projects.kanban.showEmptyProgress = false;
+    settings.projects.kanban.fields = [
+      { id: 'start', visible: true },
+      { id: 'end', visible: true },
+    ];
+    settings.projects.timeline = buildDefaultProjectTimelineSettings(settings.projects.table);
+    settings.projects.timeline.groupBy = 'none';
+    settings.projects.timeline.sortBy = { field: 'name', dir: 'asc' };
+    settings.projects.timeline.showEmptyFields = false;
+    settings.projects.timeline.fields = [
+      { id: 'start', visible: true },
+      { id: 'end', visible: true },
+      { id: 'property:Budget', visible: true },
+    ];
+    clickView(host, mode);
+    const surface = expectDefined(
+      host.querySelector<HTMLElement>(
+        mode === 'Kanban' ? '.abyss-project-kanban' : '.abyss-project-timeline',
+      ),
+    );
+    const first = expectDefined(surface.querySelector<HTMLElement>('[data-column-id="name"]'));
+    first.click();
+    first.focus();
+    const copy = () => {
+      const data = transfer();
+      const event = new Event('copy', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'clipboardData', { value: data });
+      first.dispatchEvent(event);
+      return { data, event };
+    };
+    expect(copy().data.getData('text/plain')).toBe('Sparse 0000');
+    const mounted = surface.querySelectorAll('[data-column-id="name"]').length;
+    first.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+    const { data, event } = copy();
+    expect(event.defaultPrevented).toBe(true);
+    const rows = expectDefined(
+      decodeProjectTableClipboard(data.getData('application/x-abyss-project-table')),
+    );
+    const text = parseProjectTableTsv(data.getData('text/plain'));
+    expect(rows).toHaveLength(1000);
+    expect(rows[0]).toHaveLength(5);
+    expect(rows.every((row) => row.length === 5)).toBe(true);
+    expect(text.every((row) => row.length === 5)).toBe(true);
+    expect(rows[0]?.[0]).toEqual({
+      value: 'Sparse 0000',
+      sourcePath: items[0]?.path,
+      fieldType: 'name',
+    });
+    expect(rows[20]?.[1]).toEqual({ value: undefined, sourcePath: '', fieldType: null });
+    expect(text[20]?.[1]).toBe('');
+    expect(rows[700]?.[4]?.value).toBe(mode === 'Kanban' ? 'Late selected description' : 77);
+    expect(text[999]?.[4]).toBe('');
+    expect(activeDocument.activeElement).toBe(first);
+    expect(surface.querySelectorAll('[data-column-id="name"]')).toHaveLength(mounted);
+    expect(mounted).toBeLessThan(100);
+    expect(applyEdits).not.toHaveBeenCalled();
+  },
+);
+
+it('copies only the selected repeated subgroup in projection order across status columns', () => {
+  const statuses = DEFAULT_SETTINGS.projects.statuses;
+  const statusOne = expectDefined(statuses[0]).name;
+  const statusTwo = expectDefined(statuses[1]).name;
+  const items = [
+    project({
+      path: 'Projects/A.md',
+      name: 'A',
+      frontmatter: { status: statusOne, Owners: ['Shared', 'Other'] },
+    }),
+    project({
+      path: 'Projects/B.md',
+      name: 'B',
+      frontmatter: { status: statusOne, Owners: ['Other'] },
+    }),
+    project({
+      path: 'Projects/C.md',
+      name: 'C',
+      frontmatter: { status: statusTwo, Owners: ['Shared'], description: 'Later column' },
+    }),
+    project({
+      path: 'Projects/D.md',
+      name: 'D',
+      frontmatter: { status: statusTwo, Owners: ['Other'] },
+    }),
+  ];
+  const { host, settings } = mountView(items, {
+    catalog: catalog([{ name: 'Owners', type: 'list' }]),
+  });
+  settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+  settings.projects.kanban.groupBy = 'property:Owners';
+  settings.projects.kanban.sortBy = { field: 'name', dir: 'asc' };
+  clickView(host, 'Kanban');
+  const name = expectDefined(
+    host.querySelector<HTMLElement>(
+      '[data-group-key="value:shared"] [data-project-path="Projects/A.md"] [data-column-id="name"]',
+    ),
+  );
+  name.click();
+  name.focus();
+  name.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true }));
+  const data = transfer();
+  const event = new Event('copy', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', { value: data });
+  name.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
+  const rows = expectDefined(
+    decodeProjectTableClipboard(data.getData('application/x-abyss-project-table')),
+  );
+  expect(rows.map((row) => row[0]?.value)).toEqual(['A', 'C']);
+  expect(rows.map((row) => row[0]?.sourcePath)).toEqual(['Projects/A.md', 'Projects/C.md']);
+  expect(rows[0]?.[expectDefined(rows[0]).length - 1]).toEqual({
+    value: undefined,
+    sourcePath: '',
+    fieldType: null,
+  });
+  expect(rows[1]?.[expectDefined(rows[1]).length - 1]?.value).toBe('Later column');
+});
+
+it('copies a sparse Shift rectangle and clears real destinations while rejecting missing or read-only targets', async () => {
+  const items = ['A', 'B', 'C'].map((name) =>
+    project({
+      path: `Projects/${name}.md`,
+      name,
+      frontmatter: { start: '2026-09-01', ...(name === 'B' ? {} : { end: '2026-09-30' }) },
+    }),
+  );
+  const { host, view, settings, applyEdits } = mountView(items);
+  settings.projects.kanban = buildDefaultProjectKanbanSettings(settings.projects.table);
+  settings.projects.kanban.groupBy = 'none';
+  settings.projects.kanban.sortBy = { field: 'name', dir: 'asc' };
+  settings.projects.kanban.showEmptyFields = false;
+  clickView(host, 'Kanban');
+  const cell = (path: string, column: string) =>
+    expectDefined(
+      host.querySelector<HTMLElement>(
+        `.abyss-project-kanban [data-project-path="Projects/${path}.md"] [data-column-id="${column}"]`,
+      ),
+    );
+  const first = cell('A', 'start');
+  first.click();
+  const last = cell('C', 'end');
+  last.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+  const data = transfer();
+  const dispatch = (target: HTMLElement, type: 'copy' | 'paste') => {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', { value: data });
+    target.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  };
+  dispatch(last, 'copy');
+  const rows = expectDefined(
+    decodeProjectTableClipboard(data.getData('application/x-abyss-project-table')),
+  );
+  expect(rows.map((row) => row.map(({ value }) => value))).toEqual([
+    ['2026-09-01', '2026-09-30'],
+    ['2026-09-01', undefined],
+    ['2026-09-01', '2026-09-30'],
+  ]);
+  expect(parseProjectTableTsv(data.getData('text/plain'))[1]).toEqual(['2026-09-01', '']);
+  first.click();
+  dispatch(first, 'paste');
+  await flushMicrotasks();
+  expect(applyEdits).not.toHaveBeenCalled();
+  expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain(
+    'no longer visible',
+  );
+  const name = cell('A', 'name');
+  name.click();
+  dispatch(name, 'paste');
+  await flushMicrotasks();
+  expect(applyEdits).not.toHaveBeenCalled();
+  expect(host.querySelector('.abyss-project-table-feedback')?.textContent).toContain('read-only');
+  clickView(host, 'Table');
+  view.update(
+    items.map((item) =>
+      item.name === 'B'
+        ? { ...item, frontmatter: { ...item.frontmatter, end: '2026-10-10' } }
+        : item,
+    ),
+  );
+  const destination = expectDefined(
+    host.querySelector<HTMLElement>(
+      '.abyss-project-table [data-project-path="Projects/A.md"] [data-column-id="start"]',
+    ),
+  );
+  destination.click();
+  dispatch(destination, 'paste');
+  await flushMicrotasks();
+  expect(applyEdits).toHaveBeenCalledOnce();
+  expect(applyEdits.mock.calls[0]?.[0]).toHaveLength(6);
+  expect(applyEdits.mock.calls[0]?.[0]).toContainEqual(
+    expect.objectContaining({
+      path: 'Projects/B.md',
+      field: objectMatching({ id: 'end' }),
+      value: undefined,
+      expectedValue: '2026-10-10',
+      expectedExists: true,
+    }),
+  );
 });

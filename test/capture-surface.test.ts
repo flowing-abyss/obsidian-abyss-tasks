@@ -665,3 +665,22 @@ describe('CaptureSurface', () => {
     expect(highlightRule).toContain('animation: none');
   });
 });
+
+it('treats an untouched date seed as empty under the surface blur policy', async () => {
+  const base = harness();
+  const controller = new TaskCaptureController({
+    target: { ...base.controller.target, draftSeed: ' 📅 2026-10-10' },
+    describe: describeTaskCreationResult,
+    onResult: () => {},
+    onRequestClose: () => {},
+  });
+  const surface = new CaptureSurface(host(), controller, { closeOnEmptyBlur: false });
+  expect(surface.input.value).toBe(' 📅 2026-10-10');
+  surface.input.dispatchEvent(new Event('blur'));
+  await flushMicrotasks();
+  expect(controller.snapshot().phase).toBe('idle');
+  expect(base.execute).not.toHaveBeenCalled();
+  surface.destroy();
+  controller.destroy();
+  base.controller.destroy();
+});

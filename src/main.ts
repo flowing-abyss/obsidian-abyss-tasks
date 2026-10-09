@@ -1,3 +1,4 @@
+import taskSearchWorkerSource from 'abyss-task-search-worker';
 import { getAllTags, normalizePath, Notice, Plugin, TFile, type TAbstractFile } from 'obsidian';
 import { extractMarkdownBodyTags } from './markdown/markdownTagRename';
 import { compileNotePathPattern, type NotePathPattern } from './markdown/notePathPattern';
@@ -28,6 +29,7 @@ import type { CalendarSettings } from './settings/types';
 import { ViewStatePathOwner } from './settings/ViewStatePathOwner';
 import { StatusRegistry } from './status/StatusRegistry';
 import { TagManager } from './tags/TagManager';
+import type { TaskSearchApi } from './tasks';
 import {
   localDate,
   recentTrackingWindow,
@@ -45,6 +47,10 @@ import {
   TaskDependencyService,
   type TaskDiagnosticSink,
 } from './tasks/application/TaskDependencyService';
+import type {
+  TaskSearchDiagnostic,
+  TaskSearchScheduler,
+} from './tasks/application/TaskSearchBackend';
 import { systemClock } from './tasks/domain/clock';
 import type { CommentTimeContextProvider } from './tasks/domain/commentTimeLabel';
 import { StatusCatalog } from './tasks/domain/StatusCatalog';
@@ -56,6 +62,14 @@ import { TaskMarkdownCodec } from './tasks/infrastructure/markdown/TaskMarkdownC
 import { nativeTaskIndentUnit } from './tasks/infrastructure/obsidian/nativeTaskIndentation';
 import { ObsidianTaskDestinationProvider } from './tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider';
 import { ObsidianTaskRepository } from './tasks/infrastructure/obsidian/ObsidianTaskRepository';
+import {
+  BrowserTaskSearchBackend,
+  createBrowserSearchScheduler,
+} from './tasks/infrastructure/search/BrowserTaskSearchBackend';
+import { createMiniSearchTaskEngine } from './tasks/infrastructure/search/MiniSearchTaskEngine';
+import { createSearchWordSegmenter } from './tasks/infrastructure/search/searchWordSegmenter';
+import { TaskSearchRuntime } from './tasks/infrastructure/search/TaskSearchRuntime';
+import { TaskSearchService } from './tasks/infrastructure/search/TaskSearchService';
 import { TaskIndex, type TaskSourceMetadata } from './tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from './tasks/infrastructure/TaskRefAuthority';
 import { presentTaskCommandResult } from './ui/taskCommandResult';
@@ -83,6 +97,10 @@ export default class TaskCalendarPlugin extends Plugin {
   private taskIndex!: TaskIndex;
   taskStatistics!: TaskStatisticsSource;
   private statisticsArchivePattern!: NotePathPattern;
+  private taskSearch!: TaskSearchService;
+  get search(): TaskSearchApi {
+    return this.taskSearch;
+  }
   private statusCatalog!: StatusCatalog;
   private statusRegistry!: StatusRegistry;
   private projectManager!: ProjectManager;
@@ -106,10 +124,28 @@ export default class TaskCalendarPlugin extends Plugin {
     this.initializeIndexWhenReady();
   }
 
+  private initializeSearch(scheduler: TaskSearchScheduler): void {
+    const segment = createSearchWordSegmenter();
+    this.taskSearch = new TaskSearchService({
+      source: this.taskIndex.searchSource(),
+      reads: this.taskIndex,
+      segment,
+      scheduler,
+      createBackend: async (mode, signal) =>
+        mode === 'worker'
+          ? BrowserTaskSearchBackend.create(taskSearchWorkerSource, signal)
+          : new TaskSearchRuntime(createMiniSearchTaskEngine(segment)),
+      diagnose: (value: TaskSearchDiagnostic) => {
+        console.error('[abyss-tasks] search operation failed', value);
+      },
+    });
+  }
+
   private initializeTaskServices(): void {
     this.statusCatalog = new StatusCatalog(toStatusRules(this.settings.taskStatuses));
     this.statusRegistry = new StatusRegistry(this.settings.taskStatuses);
     const refAuthority = new TaskRefAuthority();
+    const scheduler = createBrowserSearchScheduler();
     this.initializeTaskStatisticsPolicy();
     this.taskIndex = new TaskIndex(this.app, {
       statusCatalog: this.statusCatalog,
@@ -117,8 +153,10 @@ export default class TaskCalendarPlugin extends Plugin {
       excludeSource: (source) => this.isTaskSourceExcluded(source),
       statisticsFileKind: (path, tags, frontmatter) =>
         this.taskStatisticsFileKind(path, tags, frontmatter),
+      readYield: (signal) => scheduler.yield(signal),
     });
     this.taskStatistics = this.taskIndex;
+    this.initializeSearch(scheduler);
     const codec = new TaskMarkdownCodec(this.statusCatalog);
     const repository = new ObsidianTaskRepository(this.app, {
       codec,
@@ -156,6 +194,7 @@ export default class TaskCalendarPlugin extends Plugin {
       destinationProvider,
       () => ({
         taskPrefix: this.settings.taskPrefix,
+        applyTaskPrefixToSubtasks: this.settings.applyTaskPrefixToSubtasks,
         inbox: this.settings.inbox,
         taskLifecycle: this.settings.taskLifecycle,
         recurrence: this.settings.recurrence,
@@ -212,6 +251,7 @@ export default class TaskCalendarPlugin extends Plugin {
           commentTimeContext,
           () => this.saveViewStateWithNotice(),
           this.projectManager,
+          this.search,
           this.taskStatistics,
         ),
     );
@@ -305,6 +345,7 @@ export default class TaskCalendarPlugin extends Plugin {
 
   override onunload(): void {
     this.viewStatePaths.flushPendingSave();
+    this.taskSearch.dispose();
     this.taskIndex.destroy();
   }
 

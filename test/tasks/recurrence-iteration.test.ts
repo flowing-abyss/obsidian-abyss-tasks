@@ -604,3 +604,31 @@ describe('stripTerminalBlockId', () => {
     ).toBeLessThan(8);
   });
 });
+
+it('keeps accepted quote continuations inside root and nested recurrence ownership', () => {
+  const source =
+    '   >   > - [ ] Root\n   >   >   - [ ] Child 🔁 every day\n   >   >     - head\n> >       tail\n   >   >     - [ ] Deep\n   >   >   - [ ] Neighbor';
+  expect(recurrenceOwnedSubtree(source, 0)).toEqual({
+    fromLine: 0,
+    toLine: 5,
+    taskLines: [0, 1, 4, 5],
+  });
+  expect(recurrenceOwnedSubtree(source, 1)).toEqual({ fromLine: 1, toLine: 4, taskLines: [1, 4] });
+  expect(
+    prepareRecurrenceIteration({
+      rootBlock: source,
+      ownerRelativeLine: 1,
+      nextPlanning: {},
+      dayDelta: 1,
+      doneSymbol: 'x',
+      todoSymbol: ' ',
+      today: localDate('2026-10-07'),
+      addCreatedDate: false,
+      addCompletionDate: false,
+    }),
+  ).toMatchObject({
+    type: 'prepared',
+    cleanSubtree:
+      '   >   >   - [ ] Child 🔁 every day\n   >   >     - head\n> >       tail\n   >   >     - [ ] Deep',
+  });
+});

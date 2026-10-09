@@ -1,5 +1,8 @@
+import { Scope } from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
-import type { AppState } from '../src/app/AppState';
+import { AppState } from '../src/app/AppState';
+import { navigateTaskListTarget } from '../src/panels/center/TaskListNavigation';
+import type { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type {
   TaskApplicationApi,
@@ -11,6 +14,7 @@ import type {
   TaskSnapshot,
 } from '../src/tasks';
 import { TaskModal } from '../src/ui/TaskModal';
+import { PanelNavigator } from '../src/views/panelNavigation';
 import {
   createAppWithFiles,
   dropFocusFromDisabledButton,
@@ -24,7 +28,10 @@ import {
   useRealMoment,
   type TestTaskQueries,
 } from './helpers';
+import { scopeKeyboardEvent } from './support/scopeKeyboardEvent';
+import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 
+import { inspectorCleanups, inspectorHarness } from './support/inspectorHarness';
 useRealMoment();
 
 function queryEvents(): {
@@ -192,6 +199,117 @@ describe('TaskModal with real RightPanel', () => {
     activeDocument.querySelectorAll('.abyss-status-popover').forEach((element) => {
       element.remove();
     });
+  });
+
+  it('keeps the original nested modal entry connected through repeated real-index insertions', async () => {
+    const h = await inspectorHarness('- [ ] Root\n  - [ ] Owner\n    - [ ] Existing', 'Owner');
+    modal = new TaskModal({
+      app: h.app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.api,
+    });
+    modal.open(h.node('Root').root);
+    try {
+      expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-subtask-label'),
+      ).click();
+      const root = expectDefined(activeDocument.querySelector('.abyss-modal'));
+      expectDefined(root.querySelector<HTMLElement>('.abyss-subtask-add-row')).click();
+      const input = expectDefined(root.querySelector<HTMLInputElement>('.abyss-subtask-new-input'));
+      const header = expectDefined(root.querySelector('.abyss-right-header'));
+      for (const title of ['First', 'Second', 'Third']) {
+        input.value = title;
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await vi.waitFor(() => {
+          expect(h.node('Owner').node.subtasks.some((child) => child.title === title)).toBe(true);
+        });
+        await flushMicrotasks(20);
+        expect(input.isConnected).toBe(true);
+        expect(root.querySelector('.abyss-subtask-new-input')).toBe(input);
+        expect(activeDocument.activeElement).toBe(input);
+        expect(root.querySelector('.abyss-right-header')).toBe(header);
+      }
+    } finally {
+      modal.close();
+      for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+    }
+  });
+
+  it('retains the inspector DOM, focus, caret and scroll when another root changes', async () => {
+    const h = await createCanonicalSearchHarness(
+      { 'tasks.md': '- [ ] Selected\n- [ ] Other' },
+      DEFAULT_SETTINGS,
+    );
+    modal = new TaskModal({
+      app: h.app,
+      statusRegistry: h.statusRegistry,
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.tasks,
+    });
+    try {
+      modal.open(expectDefined(h.index.list()[0]));
+      const state = (modal as unknown as { innerState_abyssPrivate: AppState })
+        .innerState_abyssPrivate;
+      const header = expectDefined(
+        activeDocument.querySelector('.abyss-modal .abyss-right-header'),
+      );
+      const input = expectDefined(
+        activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+      );
+      const scroll = expectDefined(
+        activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-right'),
+      );
+      input.value = 'Unsubmitted comment';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.focus();
+      input.setSelectionRange(3, 8);
+      scroll.scrollTop = 137;
+      const stack = state.get('taskStack');
+      const other = expectDefined(h.index.list()[1]);
+      const result = await h.tasks.execute({
+        type: 'patch',
+        target: { type: 'task', ref: other.ref },
+        patch: { markdownTitle: { type: 'set', value: 'Changed other' } },
+      });
+      expect(result.type).toBe('ok');
+      await vi.waitFor(() => {
+        expect(h.index.list()[1]?.title).toBe('Changed other');
+      });
+      expect(state.get('taskStack')).toBe(stack);
+      expect(activeDocument.querySelector('.abyss-modal .abyss-right-header')).toBe(header);
+      expect(activeDocument.querySelector('.abyss-modal .abyss-comment-input')).toBe(input);
+      expect(input.isConnected).toBe(true);
+      expect(activeDocument.activeElement).toBe(input);
+      expect([input.selectionStart, input.selectionEnd]).toEqual([3, 8]);
+      expect(scroll.scrollTop).toBe(137);
+    } finally {
+      modal.close();
+      h.close();
+    }
+  });
+
+  it('refreshes same-ref custom status semantics through the actual modal reconciliation', async () => {
+    const app = await createAppWithFiles({ 'tasks.md': '- [?] Custom' });
+    const observed = task({ title: 'Custom', statusSymbol: '?' });
+    const events = queryEvents();
+    let current = observed;
+    const queries = taskQueryApi({
+      resolve: () => ({ type: 'exact', task: current, basis: { observed } }),
+      subscribe: events.subscribe,
+    });
+    modal = new TaskModal({ app, statusRegistry: testStatusRegistry(), queries });
+    modal.open(observed);
+    const header = expectDefined(activeDocument.querySelector('.abyss-modal .abyss-right-header'));
+    current = { ...observed, status: 'cancelled' };
+    events.publish({ type: 'changed', files: [observed.ref.filePath] });
+    const state = (modal as unknown as { innerState_abyssPrivate: AppState })
+      .innerState_abyssPrivate;
+    expect(state.get('taskStack')[0]?.ref).toEqual(observed.ref);
+    expect(state.get('taskStack')[0]?.status).toBe('cancelled');
+    expect(activeDocument.querySelector('.abyss-modal .abyss-right-header')).not.toBe(header);
   });
 
   it('keeps unsaved Weekly inline after current modal chips through a same-file line shift', async () => {
@@ -473,6 +591,7 @@ describe('TaskModal with real RightPanel', () => {
     input.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
     );
+    await flushMicrotasks();
     input.value = 'next local draft';
     input.setSelectionRange(4, 9);
     input.focus();
@@ -548,6 +667,7 @@ describe('TaskModal with real RightPanel', () => {
     input.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
     );
+    await flushMicrotasks();
     input.focus();
     input.setSelectionRange(2, 7);
     resolution = {
@@ -738,6 +858,7 @@ describe('TaskModal with real RightPanel', () => {
     input.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
     );
+    await flushMicrotasks();
     resolution = {
       type: 'rebased',
       previous: observed,
@@ -1237,7 +1358,10 @@ describe('TaskModal with real RightPanel', () => {
         execute,
       },
     });
+    const push = vi.spyOn(app.keymap, 'pushScope');
+    const pop = vi.spyOn(app.keymap, 'popScope');
     modal.open(observed);
+    expect(push).toHaveBeenCalledOnce();
     const comment = expectDefined(
       activeDocument.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
     );
@@ -1252,6 +1376,10 @@ describe('TaskModal with real RightPanel', () => {
       activeDocument.querySelector('.abyss-modal .abyss-detached-draft')?.textContent,
     ).toContain('local unsaved');
     expect(execute).not.toHaveBeenCalled();
+    expect(pop).not.toHaveBeenCalled();
+    expectDefined(document.querySelector<HTMLElement>('.abyss-modal-backdrop')).click();
+    expect(pop).toHaveBeenCalledExactlyOnceWith(push.mock.calls[0]?.[0]);
+    expect(document.querySelector('.abyss-modal')).toBeNull();
   });
 
   describe('its own removal of the task', () => {
@@ -1866,7 +1994,9 @@ describe('TaskModal with real RightPanel', () => {
         execute: vi.fn<TaskApplicationApi['execute']>(),
       },
     });
+    const register = vi.spyOn(Scope.prototype, 'register');
     modal.open(current);
+    const modalEscape = expectDefined(register.mock.calls.find((call) => call[1] === 'Escape'))[2];
 
     const opener = entry.openSelector.startsWith('.')
       ? activeDocument.querySelector<HTMLElement>(`.abyss-modal ${entry.openSelector}`)
@@ -1882,6 +2012,8 @@ describe('TaskModal with real RightPanel', () => {
       bubbles: true,
       cancelable: true,
     });
+    owned.focus();
+    expect(modalEscape(escape, { key: 'Escape', vkey: 'Escape', modifiers: '' })).toBeUndefined();
     owned.dispatchEvent(escape);
     await flushMicrotasks();
 
@@ -1963,4 +2095,412 @@ describe('TaskModal with real RightPanel', () => {
     expect(rebuilt.getAttribute('data-priority')).toBe('A');
     expect(activeDocument.activeElement).toBe(rebuilt);
   });
+});
+
+it('routes the real modal picker before its parent and releases child scopes first across close/reopen', async () => {
+  const h = await createCanonicalSearchHarness(
+    { 'scope.md': '- [ ] Current 🆔 current\n- [ ] Candidate 🆔 candidate' },
+    DEFAULT_SETTINGS,
+  );
+  const push = vi.spyOn(h.app.keymap, 'pushScope');
+  const pop = vi.spyOn(h.app.keymap, 'popScope');
+  const register = vi.spyOn(Scope.prototype, 'register');
+  const modal = new TaskModal({
+    app: h.app,
+    statusRegistry: testStatusRegistry(),
+    settings: DEFAULT_SETTINGS,
+    queries: h.index,
+    tasks: h.tasks,
+    search: h.search,
+  });
+  const current = expectDefined(h.index.list()[0]);
+  const hostFrame = document.body.createEl('iframe');
+  const hostWindow = expectDefined(hostFrame.contentWindow);
+  try {
+    modal.open(current);
+    const parent = expectDefined(push.mock.calls[0])[0];
+    const parentEscape = expectDefined(register.mock.calls.find((call) => call[1] === 'Escape'))[2];
+    const badge = expectDefined(
+      document.querySelector<HTMLButtonElement>('.abyss-modal .abyss-dep-badge-body'),
+    );
+    badge.click();
+    const picker = expectDefined(
+      document.querySelector<HTMLElement>('.abyss-modal .abyss-dep-search'),
+    );
+    const input = expectDefined(picker.querySelector('input'));
+    input.value = 'retained';
+    expect(push).toHaveBeenCalledTimes(2);
+    const child = expectDefined(push.mock.calls[1])[0];
+    const childEscape = expectDefined(register.mock.calls[register.mock.calls.length - 1])[2];
+    const event = () =>
+      scopeKeyboardEvent(expectDefined(document.activeElement), { key: 'Escape' }, [hostWindow]);
+    const context = { key: 'Escape', vkey: 'Escape', modifiers: '' };
+    const first = event();
+    expect(first.target).toBe(input);
+    expect(first.composedPath()[0]).not.toBe(first.target);
+    expect(first.composedPath()[0]).not.toBe(input.ownerDocument.defaultView);
+    expect(first.view?.document).toBe(input.ownerDocument);
+    expect(childEscape(first, context)).toBe(false);
+    expect(parentEscape(first, context)).toBeUndefined();
+    expect(input.value).toBe('retained');
+    expect(document.activeElement).toBe(picker);
+    const second = event();
+    expect(childEscape(second, context)).toBe(false);
+    expect(parentEscape(second, context)).toBeUndefined();
+    expect(document.activeElement).toBe(badge);
+    expect(document.querySelector('.abyss-modal')).not.toBeNull();
+    expect(pop.mock.calls.map(([scope]) => scope)).toEqual([child]);
+    badge.click();
+    const secondChild = expectDefined(push.mock.calls[2])[0];
+    modal.close();
+    modal.close();
+    expect(pop.mock.calls.map(([scope]) => scope)).toEqual([child, secondChild, parent]);
+    modal.open(current);
+    expect(parentEscape(event(), context)).toBeUndefined();
+    expect(document.querySelector('.abyss-modal')).not.toBeNull();
+    const newEscape = expectDefined(register.mock.calls[register.mock.calls.length - 1])[2];
+    expectDefined(document.querySelector<HTMLButtonElement>('.abyss-modal-close-btn')).focus();
+    const final = event();
+    expect(newEscape(final, context)).toBe(false);
+    document.dispatchEvent(final);
+    expect(pop).toHaveBeenCalledTimes(4);
+  } finally {
+    modal.close();
+    h.close();
+    hostFrame.remove();
+    vi.restoreAllMocks();
+  }
+});
+
+it('uses multiline comment disclosure and description keyboard submission in the real modal', async () => {
+  const h = await createCanonicalSearchHarness(
+    { 'modal.md': '- [ ] Owner\n  - > old description\n  - first\n    second' },
+    DEFAULT_SETTINGS,
+  );
+  const modal = new TaskModal({
+    app: h.app,
+    statusRegistry: testStatusRegistry(),
+    settings: DEFAULT_SETTINGS,
+    queries: h.index,
+    tasks: h.tasks,
+    search: h.search,
+  });
+  try {
+    modal.open(expectDefined(h.index.list()[0]));
+    const root = expectDefined(document.querySelector('.abyss-modal'));
+    expect(root.querySelector('.abyss-comment-text')?.textContent).toBe('first');
+    const disclosure = expectDefined(
+      root.querySelector<HTMLButtonElement>('.abyss-comment-disclosure'),
+    );
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
+    disclosure.click();
+    expect(root.querySelector('.abyss-comment-edit-input')).toBeNull();
+    expectDefined(root.querySelector<HTMLElement>('.abyss-comment-text')).click();
+    const comment = expectDefined(
+      root.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input'),
+    );
+    expect(comment.value).toBe('first\nsecond');
+    comment.value = 'edited first\nedited second';
+    comment.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }),
+    );
+    await flushMicrotasks();
+    expect(h.index.list()[0]?.comments[0]?.text).toBe('first\nsecond');
+    comment.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.waitFor(() => {
+      expect(h.index.list()[0]?.comments[0]?.text).toBe('edited first\nedited second');
+    });
+    expectDefined(root.querySelector<HTMLElement>('.abyss-right-desc-view')).click();
+    const description = expectDefined(
+      root.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit'),
+    );
+    description.value = 'one\ntwo';
+    description.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }),
+    );
+    description.dispatchEvent(new Event('blur'));
+    await vi.waitFor(() => {
+      expect(h.index.list()[0]?.description).toBe('one\ntwo');
+    });
+    expect(root.querySelector('.abyss-right-desc-edit')).toBeNull();
+  } finally {
+    modal.close();
+    h.close();
+    vi.restoreAllMocks();
+  }
+});
+
+it.each([false, true])(
+  'modal offers task-list navigation only with a real outer capability: %s',
+  async (enabled) => {
+    const app = await createAppWithFiles({});
+    const callback = vi.fn<
+      NonNullable<ConstructorParameters<typeof TaskModal>[0]['onShowInTaskList']>
+    >(async () => {});
+    const modal = new TaskModal({
+      app,
+      statusRegistry: testStatusRegistry(),
+      ...(enabled ? { onShowInTaskList: callback } : {}),
+    });
+    const snapshot = task();
+    try {
+      modal.open(snapshot);
+      click(
+        expectDefined(
+          activeDocument.querySelector<HTMLElement>('.abyss-modal [aria-label="More actions"]'),
+        ),
+      );
+      const action = [
+        ...activeDocument.querySelectorAll<HTMLElement>('.abyss-modal .abyss-context-item'),
+      ].find((item) => item.textContent === 'Show in task list');
+      expect(action !== undefined).toBe(enabled);
+      if (action !== undefined) {
+        click(action);
+        expect(callback).toHaveBeenCalledWith(
+          { type: 'task', ref: snapshot.ref },
+          expect.anything(),
+        );
+        expect(expectDefined(callback.mock.calls[0]?.[1]).isCurrent()).toBe(true);
+      }
+    } finally {
+      modal.close();
+    }
+  },
+);
+
+async function modalHandoffHarness(mode: string) {
+  const h = await inspectorHarness('- [ ] Current\n  - [ ] Child');
+  const root = h.node('Current').root;
+  const child = h.node('Child').node;
+  const outer = new AppState();
+  let accept: (() => void) | undefined;
+  const navigation = new PanelNavigator(outer, structuredClone(DEFAULT_SETTINGS), {
+    calendarView: () => 'month',
+    setCalendarView: () => {},
+    openQuickCapture: () => {},
+    finishProjectTableEditorBefore: (action) => {
+      accept = action;
+      if (mode === 'accepted' || mode.startsWith('dirty') || mode.startsWith('detached')) action();
+    },
+  });
+  let held = 0;
+  const modal = new TaskModal({
+    app: h.app,
+    statusRegistry: testStatusRegistry(),
+    tasks: h.api,
+    queries: h.index,
+    interactionOwnership: {
+      acquire: () => {
+        held++;
+        return {
+          release: () => {
+            held--;
+          },
+        };
+      },
+    },
+    onTaskListDraftHandoff:
+      mode === 'dirty-unavailable'
+        ? undefined
+        : (bundle, current) => {
+            expect(outer.get('taskStack')).toEqual([root, child]);
+            if (mode !== 'dirty-stale') h.state.set('taskStack', [root, child]);
+            if (mode === 'dirty-conflict')
+              expectDefined(h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input')).value =
+                'newer receiver draft';
+            if (mode === 'detached-conflict')
+              h.panel.detachDraftState({
+                ...bundle.detached[0],
+                entries: expectDefined(bundle.detached[0]).entries.map((draft) =>
+                  draft.kind === 'new-comment'
+                    ? { ...draft, value: 'newer detached draft' }
+                    : draft,
+                ),
+              });
+            return h.panel.receiveDraftHandoff(bundle, current, [root, child]);
+          },
+    onShowInTaskList: (_target, request) =>
+      navigateTaskListTarget(
+        {
+          type: 'resolved',
+          target: {
+            root,
+            path: [root, child],
+            address: {
+              epoch: 'handoff-test',
+              version: 0,
+              rootId: 0,
+              childLines: [1],
+            },
+          },
+        },
+        {
+          search: h.search,
+          state: outer,
+          navigation,
+          request,
+          destination: () => 'today',
+          installReveal: () => {},
+          onCommitted: () => {},
+          afterCommit: () => request.onCommitted?.(root, [root, child]),
+        },
+      ),
+  });
+  return { h, root, child, outer, modal, held: () => held, accept: () => accept?.() };
+}
+
+function prepareHandoffDrafts(mode: string, modal: TaskModal, root: TaskSnapshot): void {
+  if (mode.startsWith('detached')) {
+    const panel = (
+      modal as unknown as {
+        innerPanel_abyssPrivate: RightPanel;
+      }
+    ).innerPanel_abyssPrivate;
+    panel.detachDraftState({
+      origin: { taskTitle: 'Previous', filePath: 'old.md', line: 3 },
+      entries: [
+        {
+          kind: 'new-comment',
+          parent: { type: 'task', ref: root.ref },
+          value: 'earlier detached draft',
+          selectionStart: 0,
+          selectionEnd: 0,
+          hadFocus: false,
+          dirty: true,
+        },
+      ],
+    });
+  }
+  if (mode.startsWith('dirty')) {
+    expectDefined(
+      document.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+    ).value = 'keep my draft';
+  }
+}
+
+function assertHandoffDrafts(mode: string, h: Awaited<ReturnType<typeof inspectorHarness>>): void {
+  if (mode === 'detached-conflict') {
+    expect(expectDefined(h.el.querySelector('.abyss-detached-draft')).textContent).toContain(
+      'newer detached draft',
+    );
+    expect(
+      expectDefined(document.querySelector('.abyss-modal .abyss-detached-draft')).textContent,
+    ).toContain('earlier detached draft');
+  }
+  if (mode === 'dirty')
+    expect(
+      expectDefined(h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input')).value,
+    ).toBe('keep my draft');
+  if (mode === 'dirty-conflict') {
+    expect(
+      expectDefined(h.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input')).value,
+    ).toBe('newer receiver draft');
+    expect(expectDefined(h.el.querySelector('.abyss-detached-draft')).textContent).toContain(
+      'keep my draft',
+    );
+  }
+  if (mode === 'detached') {
+    expect(expectDefined(h.el.querySelector('.abyss-detached-draft')).textContent).toContain(
+      'earlier detached draft',
+    );
+    expect(expectDefined(h.el.querySelector('.abyss-detached-draft')).textContent).toContain(
+      'Previous',
+    );
+  }
+  if (mode === 'dirty-unavailable' || mode === 'dirty-stale')
+    expect(
+      expectDefined(
+        document.querySelector<HTMLTextAreaElement>('.abyss-modal .abyss-comment-input'),
+      ).value,
+    ).toBe('keep my draft');
+}
+
+it.each([
+  'accepted',
+  'delayed',
+  'rejected',
+  'cancelled',
+  'dirty',
+  'dirty-unavailable',
+  'dirty-conflict',
+  'dirty-stale',
+  'detached',
+  'detached-conflict',
+])('hands modal ownership to the committed list only: %s', async (mode) => {
+  const { h, root, child, outer, modal, held, accept } = await modalHandoffHarness(mode);
+  try {
+    modal.open(root);
+    click(
+      expectDefined(document.querySelector<HTMLElement>('.abyss-modal .abyss-subtask-content')),
+    );
+    prepareHandoffDrafts(mode, modal, root);
+    click(
+      expectDefined(
+        document.querySelector<HTMLElement>('.abyss-modal [aria-label="More actions"]'),
+      ),
+    );
+    click(
+      expectDefined(
+        [...document.querySelectorAll<HTMLElement>('.abyss-modal .abyss-context-item')].find(
+          (item) => item.textContent === 'Show in task list',
+        ),
+      ),
+    );
+    await flushMicrotasks();
+    if (mode === 'delayed' || mode === 'rejected' || mode === 'cancelled') {
+      expect(document.querySelector('.abyss-modal')).not.toBeNull();
+      expect(held()).toBe(1);
+    }
+    if (mode === 'delayed') accept();
+    if (mode === 'cancelled') {
+      modal.open(root);
+      accept();
+    }
+    const closed = ['accepted', 'delayed', 'dirty', 'dirty-conflict', 'detached'].includes(mode);
+    expect(document.querySelector('.abyss-modal') === null).toBe(closed);
+    expect(held()).toBe(closed ? 0 : 1);
+    if (closed) expect(outer.get('taskStack')).toEqual([root, child]);
+    assertHandoffDrafts(mode, h);
+  } finally {
+    modal.close();
+    for (const cleanup of inspectorCleanups.splice(0)) cleanup();
+  }
+});
+
+it('opens an exact nested initial target, rejects unproven ancestry and retains ordinary root opening', async () => {
+  const h = await inspectorHarness(
+    '- [ ] Current\n  - [ ] Parent\n    - [/] Same ⏳ 2026-10-08\n    - [ ] Same',
+  );
+  const root = expectDefined(h.index.list()[0]);
+  const parent = expectDefined(root.subtasks[0]);
+  const child = expectDefined(parent.subtasks[0]);
+  const sibling = expectDefined(parent.subtasks[1]);
+  const modal = new TaskModal({
+    app: h.app,
+    tasks: h.api,
+    queries: h.index,
+    settings: DEFAULT_SETTINGS,
+    statusRegistry: testStatusRegistry(),
+  });
+  try {
+    modal.open(root, undefined, { type: 'subtask', ref: child.ref });
+    const selected = () => modal['innerState_abyssPrivate']?.get('taskStack');
+    expect(selected()).toEqual([root, parent, child]);
+    expect(document.querySelector('.abyss-modal .abyss-right-title')?.textContent).toBe('Same');
+    modal.close();
+    modal.open(root, undefined, { type: 'subtask', ref: { ...child.ref, relativeLine: 999 } });
+    expect(document.querySelector('.abyss-modal')).toBeNull();
+    modal.open(root, undefined, {
+      type: 'subtask',
+      ref: { ...child.ref, parent: { type: 'task', ref: root.ref } },
+    });
+    expect(document.querySelector('.abyss-modal')).toBeNull();
+    modal.open(root, undefined, { type: 'subtask', ref: sibling.ref });
+    expect(selected()).toEqual([root, parent, sibling]);
+    modal.close();
+    modal.open(root);
+    expect(selected()).toEqual([root]);
+  } finally {
+    modal.close();
+  }
 });

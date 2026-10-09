@@ -5,7 +5,11 @@ import type { ListSelection } from '../../src/app/AppState';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../../src/settings/defaults';
 import type { ListViewState } from '../../src/settings/types';
 import { discoveredPrefixGroupId } from '../../src/tags/effectiveTagGroups';
-import { searchTaskList, selectTaskList } from '../../src/task-lists/TaskListSelector';
+import {
+  searchTaskList,
+  selectTaskList,
+  selectTaskNodes,
+} from '../../src/task-lists/TaskListSelector';
 import {
   localDate,
   type LocalDate,
@@ -13,7 +17,8 @@ import {
   type TaskSnapshot,
   type TimeEntrySnapshot,
 } from '../../src/tasks';
-import { task, taskFromCodecLine } from '../helpers';
+import { taskTreeNodes } from '../../src/tasks/domain/taskSearchProjection';
+import { subtask, task, taskFromCodecLine } from '../helpers';
 
 function snapshot(
   title: string,
@@ -102,13 +107,74 @@ describe('selectTaskList', () => {
   ];
 
   it.each([
-    ['inbox', 'inbox', ['overdue', 'today due', 'future', 'untagged', 'project']],
+    ['inbox', 'inbox', ['overdue', 'today due', 'future', 'project', 'untagged']],
     ['today', 'today', ['overdue', 'today due']],
     ['upcoming', 'upcoming', ['future']],
     ['tag', { type: 'tag', tag: '#work' }, ['tagged']],
     ['project', { type: 'project', path: 'Projects/A.md' }, ['project']],
   ] as const)('selects the %s list', (_name, selection, expected) => {
     expect(titles(tasks, selection)).toEqual(expected);
+  });
+
+  it('sorts mixed Today dates by time, retaining elapsed and equal-time order', () => {
+    const candidates = [
+      task({
+        source: { filePath: 'tasks.md' },
+        title: 'late',
+        planning: { due: today, time: '18:00' },
+      }),
+      task({ source: { filePath: 'tasks.md' }, title: 'untimed', planning: { due: today } }),
+      task({
+        source: { filePath: 'tasks.md' },
+        title: 'early scheduled',
+        planning: { scheduled: today, due: '2026-07-14', time: '08:00' },
+      }),
+      task({
+        source: { filePath: 'tasks.md' },
+        title: 'morning',
+        planning: { due: today, time: '09:00' },
+      }),
+      task({
+        source: { filePath: 'tasks.md' },
+        title: 'same morning',
+        planning: { scheduled: today, due: '2026-07-20', time: '09:00' },
+      }),
+      task({
+        source: { filePath: 'tasks.md' },
+        title: 'overdue',
+        planning: { due: '2026-07-12', scheduled: today, time: '20:00' },
+      }),
+    ];
+    expect(titles(candidates, 'today')).toEqual([
+      'overdue',
+      'early scheduled',
+      'morning',
+      'same morning',
+      'late',
+      'untimed',
+    ]);
+    expect(
+      titles(candidates, 'today', {
+        groupBy: 'none',
+        sortBy: { field: 'date', dir: 'desc' },
+        filters: [],
+      }),
+    ).toEqual(['untimed', 'late', 'morning', 'same morning', 'early scheduled', 'overdue']);
+    expect(
+      titles(candidates, 'today', {
+        groupBy: 'none',
+        sortBy: { field: 'title', dir: 'asc' },
+        filters: [],
+      }),
+    ).toEqual(['early scheduled', 'late', 'morning', 'overdue', 'same morning', 'untimed']);
+    expect(titles(candidates, { type: 'project', path: 'tasks.md' })).toEqual([
+      'overdue',
+      'morning',
+      'late',
+      'untimed',
+      'early scheduled',
+      'same morning',
+    ]);
   });
 
   it('keeps Today membership date-only and respects requested completed statuses', () => {
@@ -172,7 +238,7 @@ describe('selectTaskList', () => {
     ).toEqual(['tagged']);
   });
 
-  it('opens the unique root whose subtask owns a selected discovered tag or prefix group', () => {
+  it('does not borrow child tags for root-only tag or group selections', () => {
     const rootRef = snapshot('root').ref;
     const child = {
       ...snapshot('child'),
@@ -195,7 +261,7 @@ describe('selectTaskList', () => {
         today,
         nowMs: Date.parse('2026-07-13T12:00:00Z'),
       }).map((task) => task.title),
-    ).toEqual(['root']);
+    ).toEqual([]);
     expect(
       selectTaskList({
         tasks: [root],
@@ -205,8 +271,46 @@ describe('selectTaskList', () => {
         today,
         nowMs: Date.parse('2026-07-13T12:00:00Z'),
       }).map((task) => task.title),
-    ).toEqual(['root']);
+    ).toEqual([]);
   });
+
+  it.each([
+    ['discovered:prefix:work', false, ['needle']],
+    ['discovered:prefix:WORK', false, ['needle']],
+    ['discovered:prefix:work', true, ['needle configured']],
+    ['discovered:prefix:WORK::1', true, ['needle']],
+  ] as const)(
+    'keeps the full catalog while text filtering %s (collision: %s)',
+    (groupId, collision, want) => {
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      settings.tagGroups = collision
+        ? [
+            {
+              id: 'discovered:prefix:work',
+              name: 'Configured',
+              mode: 'manual',
+              tags: ['#personal'],
+            },
+          ]
+        : [];
+      const tasks = [
+        snapshot('needle', { tags: ['#Work'] }),
+        snapshot('unrelated', { line: 1, tags: ['#work/child'] }),
+        snapshot('needle configured', { line: 2, tags: ['#personal'] }),
+      ];
+      expect(
+        selectTaskList({
+          tasks,
+          selection: { type: 'group', groupId },
+          viewState: withoutStatusGroups(getListViewDefaults('group:work')),
+          settings,
+          today,
+          nowMs: 0,
+          textQuery: 'needle',
+        }).map((task) => task.title),
+      ).toEqual(want);
+    },
+  );
 
   it('applies status and property filters before sorting', () => {
     const candidates = [
@@ -264,7 +368,7 @@ describe('selectTaskList', () => {
     ).toEqual(['lower', 'legacy', 'old', 'new']);
   });
 
-  it('preserves incoming order for equal created dates', () => {
+  it('uses ascending source lines for equal created dates', () => {
     const viewState: ListViewState = {
       groupBy: 'priority',
       sortBy: { field: 'priority', dir: 'desc' },
@@ -274,14 +378,37 @@ describe('selectTaskList', () => {
     expect(
       titles(
         [
-          snapshot('first', { planning: { created: '2026-08-22' as LocalDate } }),
           snapshot('second', { line: 1, planning: { created: '2026-08-22' as LocalDate } }),
+          snapshot('first', { planning: { created: '2026-08-22' as LocalDate } }),
         ],
         { type: 'project', path: 'tasks.md' },
         viewState,
       ),
     ).toEqual(['first', 'second']);
   });
+
+  it.each(['asc', 'desc'] as const)(
+    'keeps creation, source path and source line ties ascending for %s priority',
+    (dir) => {
+      const created = localDate('2026-08-22');
+      expect(
+        titles(
+          [
+            snapshot('z new', { filePath: 'z.md', planning: { created } }),
+            snapshot('a later line', { filePath: 'a.md', line: 8, planning: { created } }),
+            snapshot('a earlier line', { filePath: 'a.md', line: 2, planning: { created } }),
+            snapshot('z old', {
+              filePath: 'z.md',
+              line: 1,
+              planning: { created: localDate('2026-08-01') },
+            }),
+          ],
+          'inbox',
+          { groupBy: 'none', sortBy: { field: 'priority', dir }, filters: [] },
+        ),
+      ).toEqual(['z old', 'a earlier line', 'a later line', 'z new']);
+    },
+  );
 
   it('does not reverse created order for a descending explicit sort', () => {
     const viewState: ListViewState = {
@@ -412,9 +539,9 @@ describe('selectTaskList', () => {
     expect(titles([inlineOnly], { type: 'tag', tag: '#work' })).toEqual([]);
   });
 
-  it('does not treat a start-only task as Today list membership', () => {
+  it('admits a start-only task to Today', () => {
     const startOnly = snapshot('start only', { planning: { start: today } });
-    expect(titles([startOnly], 'today')).toEqual([]);
+    expect(titles([startOnly], 'today')).toEqual(['start only']);
   });
 
   it('includes Today when scheduled matches despite a future due date', () => {
@@ -597,7 +724,7 @@ describe('selectTaskList sorted by tracked time', () => {
       nowMs: NOW,
     });
 
-    expect(result.map((task) => task.title)).toEqual(['nested tag', 'root tag']);
+    expect(result.map((task) => task.title)).toEqual(['root tag']);
   });
 
   it('puts the most tracked task first when sorting down', () => {
@@ -712,4 +839,77 @@ describe('complete outgoing sequence ordering', () => {
       }).map((value) => value.title),
     ).toEqual(expected);
   });
+});
+
+it('ANDs own-child exclusion with exact inclusion, status, file, priority, text and explicit group admission', () => {
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    tagGroups: [{ id: 'chosen', name: 'Chosen', mode: 'manual' as const, tags: ['#work'] }],
+  };
+  const child = (title: string, tags: string[], overrides: Partial<SubtaskSnapshot> = {}) =>
+    subtask({ title, tags, priority: 'B', ...overrides });
+  const roots = [
+    task({
+      title: 'Parent',
+      tags: ['#private'],
+      source: { filePath: 'tasks.md' },
+      subtasks: [
+        child('needle Child', ['#Work']),
+        child('needle Deep', ['#work', '#work/deep']),
+        child('needle Private', ['#work', '#private']),
+        child('needle Done', ['#work'], { status: 'done', statusSymbol: 'x' }),
+        child('needle Low', ['#work'], { priority: 'F' }),
+        child('other', ['#work']),
+        child('needle Outside', ['#else']),
+      ],
+    }),
+    task({
+      title: 'needle Other file',
+      tags: ['#work'],
+      source: { filePath: 'other.md' },
+      priority: 'B',
+    }),
+  ];
+  const filters: ListViewState['filters'] = [
+    { type: 'tag', value: '#WORK' },
+    { type: 'tag-exclude', value: '#PRIVATE' },
+    { type: 'tag-exclude', value: '#work/deep' },
+    { type: 'priority', value: 'B' },
+    { type: 'status', value: ' ' },
+    { type: 'file', filePath: 'tasks.md' },
+  ];
+  const input = {
+    tasks: roots.flatMap((root) => [...taskTreeNodes(root)]),
+    selection: { type: 'group' as const, groupId: 'chosen' },
+    settings,
+    today,
+    nowMs: 0,
+    textQuery: 'needle',
+    viewState: { ...getListViewDefaults('inbox'), filters },
+  };
+  expect(selectTaskNodes(input).map(({ node }) => node.title)).toEqual(['needle Child']);
+  expect(
+    selectTaskNodes({
+      ...input,
+      viewState: { ...input.viewState, filters: filters.filter((f) => f.type !== 'tag') },
+    }).map(({ node }) => node.title),
+  ).toEqual(['needle Child']);
+  expect(
+    selectTaskList({
+      ...input,
+      tasks: roots,
+      selection: null,
+      textQuery: '',
+      viewState: { ...input.viewState, filters: [{ type: 'tag-exclude', value: '#private' }] },
+    }).map((root) => root.title),
+  ).toEqual(['needle Other file']);
+  expect(
+    selectTaskList({
+      ...input,
+      tasks: roots,
+      selection: null,
+      textQuery: '',
+      viewState: { ...input.viewState, filters: [{ type: 'tag', value: '#work' }] },
+    }).map((root) => root.title),
+  ).toEqual(['needle Other file']);
 });

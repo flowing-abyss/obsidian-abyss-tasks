@@ -15,6 +15,7 @@ import {
   subscribeInspectorReconciliation,
   type InspectorHarness,
 } from './support/inspectorHarness';
+import { searchUiCompleted } from './support/taskSearchUiHarness';
 
 useRealMoment();
 
@@ -68,9 +69,24 @@ function change(input: HTMLInputElement, value: string): void {
 }
 
 function expectRebuiltFocus(before: HTMLElement, after: HTMLElement): void {
-  expect(before.isConnected).toBe(false);
-  expect(after).not.toBe(before);
+  expect(before.isConnected).toBe(before === after);
   expect(activeDocument.activeElement).toBe(after);
+}
+
+/** A host metadata refresh changes presentation while keeping the selected source/ref exact. */
+async function refreshSelectedPresentation(h: InspectorHarness, markdown: string): Promise<void> {
+  const root = expectDefined(h.state.get('taskStack')[0]);
+  await h.app.vault.modify(h.file, `\n${markdown}`);
+  const cache = expectDefined(h.app.metadataCache.getFileCache(h.file));
+  h.app.metadataCache.trigger('changed', h.file, await h.app.vault.read(h.file), {
+    ...cache,
+    frontmatter: { ...cache.frontmatter, color: '#abc' },
+  });
+  await flushMicrotasks(40);
+  const current = h.node('Current').root;
+  expect(current.ref).toEqual(root.ref);
+  expect(current.presentation.noteColor).toBe('#abc');
+  expect(h.state.get('taskStack')[0]?.ref).toEqual(root.ref);
 }
 
 function selectedTitle(h: InspectorHarness): string | undefined {
@@ -176,7 +192,7 @@ describe('inspector planning focus continuity', () => {
   });
 
   it.each(['Current', 'Child'])(
-    'retains the rebuilt child status focus under %s',
+    'retains the child status control and focus under %s',
     async (selected) => {
       const h = await hosted(childCompleted, selected);
       const locate = () => {
@@ -291,8 +307,7 @@ describe('inspector planning focus continuity', () => {
     const tagInput = control<HTMLInputElement>(h, '.abyss-tag-input');
     tagInput.value = 'qasp1aa-draft';
     tagInput.dispatchEvent(new Event('input', { bubbles: true }));
-    await h.app.vault.modify(h.file, `\n${continuityExternal}`);
-    await flushMicrotasks(40);
+    await refreshSelectedPresentation(h, continuityExternal);
     expect(h.el.querySelector('.abyss-tag-input')).toBe(tagInput);
     expect(activeDocument.activeElement).toBe(tagInput);
     expect(await h.read()).toBe(continuityExternal);
@@ -345,8 +360,7 @@ describe('inspector planning focus continuity', () => {
       const input = control<HTMLInputElement>(h, '.abyss-date-input');
       key(input, '2');
       change(input, '2031-02-12');
-      await h.app.vault.modify(h.file, `\n${continuityExternal}`);
-      await flushMicrotasks(40);
+      await refreshSelectedPresentation(h, continuityExternal);
       expect(h.el.querySelector('.abyss-date-input')).toBe(input);
       key(input, 'Escape');
       const outside = activeDocument.body.createEl('button', { text: 'Outside' });
@@ -539,7 +553,9 @@ describe('inspector planning focus continuity', () => {
     await h.app.vault.modify(h.file, '\n- [ ] Current\n- [ ] Other edited\n');
     await flushMicrotasks(40);
 
-    expectRebuiltFocus(chip, dateChip(h));
+    expect(dateChip(h)).toBe(chip);
+    expect(chip.isConnected).toBe(true);
+    expect(activeDocument.activeElement).toBe(chip);
   });
 
   it('returns focus to the rebuilt repeat chip after Clear repeat', async () => {
@@ -745,7 +761,7 @@ describe('inspector repeat editor focus continuity', () => {
     expect(activeDocument.activeElement).toBe(activeDocument.body);
   });
 
-  it('returns focus to the rebuilt repeat chip when the note changes elsewhere during a repeat save', async () => {
+  it('returns focus to the rebuilt repeat chip when selected presentation changes during a repeat save', async () => {
     const h = await hosted('- [ ] Current 📅 2026-09-23\n- [ ] Other\n');
     const chip = control(h, '.abyss-repeat-chip');
     const held = holdNextWrite(h, { dropSaveFocus: true });
@@ -756,8 +772,7 @@ describe('inspector repeat editor focus continuity', () => {
     activate(editorButton(h, 'Save repeat'));
     await flushMicrotasks();
     const editor = control<HTMLElement>(h, '.abyss-recurrence-editor');
-    await h.app.vault.modify(h.file, '\n- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
-    await flushMicrotasks(40);
+    await refreshSelectedPresentation(h, '- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
     expect(editor.isConnected).toBe(false);
     expect(h.el.querySelector('.abyss-recurrence-editor')).not.toBeNull();
     held.release();
@@ -781,8 +796,7 @@ describe('inspector repeat editor focus continuity', () => {
     await flushMicrotasks();
     activate(editorButton(h, 'Daily'));
     const editor = control<HTMLElement>(h, '.abyss-recurrence-editor');
-    await h.app.vault.modify(h.file, '\n- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
-    await flushMicrotasks(40);
+    await refreshSelectedPresentation(h, '- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
     expect(editor.isConnected).toBe(false);
     expect(h.el.querySelector('.abyss-recurrence-editor')).not.toBeNull();
     activate(editorButton(h, 'Save repeat'));
@@ -808,8 +822,7 @@ describe('inspector repeat editor focus continuity', () => {
     activate(editorButton(h, 'Save repeat'));
     await flushMicrotasks();
     const editor = control<HTMLElement>(h, '.abyss-recurrence-editor');
-    await h.app.vault.modify(h.file, '\n- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
-    await flushMicrotasks(40);
+    await refreshSelectedPresentation(h, '- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
     expect(editor.isConnected).toBe(false);
     expect(h.el.querySelector('.abyss-recurrence-editor')).not.toBeNull();
     held.release();
@@ -829,8 +842,7 @@ describe('inspector repeat editor focus continuity', () => {
     activate(editorButton(h, 'Daily'));
     const editor = control<HTMLElement>(h, '.abyss-recurrence-editor');
     outside.focus();
-    await h.app.vault.modify(h.file, '\n- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
-    await flushMicrotasks(40);
+    await refreshSelectedPresentation(h, '- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
 
     expect(editor.isConnected).toBe(false);
     expect(h.el.querySelector('.abyss-recurrence-editor')).not.toBeNull();
@@ -854,8 +866,7 @@ describe('inspector repeat editor focus continuity', () => {
     activate(editorButton(h, 'Save repeat'));
     await flushMicrotasks();
     const editor = control<HTMLElement>(h, '.abyss-recurrence-editor');
-    await h.app.vault.modify(h.file, '\n- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
-    await flushMicrotasks(40);
+    await refreshSelectedPresentation(h, '- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
     expect(editor.isConnected).toBe(false);
     expect(h.el.querySelector('.abyss-recurrence-editor')).not.toBeNull();
     held.release();
@@ -906,8 +917,7 @@ describe('inspector repeat editor focus continuity', () => {
     await flushMicrotasks();
     activate(editorButton(h, 'Daily'));
     const editor = control<HTMLElement>(h, '.abyss-recurrence-editor');
-    await h.app.vault.modify(h.file, '\n- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
-    await flushMicrotasks(40);
+    await refreshSelectedPresentation(h, '- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
     expect(editor.isConnected).toBe(false);
     const daily = editorButton(h, 'Daily');
     expect(activeDocument.activeElement).toBe(daily);
@@ -929,8 +939,7 @@ describe('inspector repeat editor focus continuity', () => {
     await flushMicrotasks();
     activate(editorButton(h, 'Daily'));
     const editor = control<HTMLElement>(h, '.abyss-recurrence-editor');
-    await h.app.vault.modify(h.file, '\n- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
-    await flushMicrotasks(40);
+    await refreshSelectedPresentation(h, '- [ ] Current 📅 2026-09-23\n- [ ] Other edited\n');
     expect(editor.isConnected).toBe(false);
     expect(h.el.querySelector('.abyss-recurrence-editor')).not.toBeNull();
     const interval = control<HTMLInputElement>(
@@ -1045,6 +1054,7 @@ describe('inspector write outcomes', () => {
     const input = control<HTMLInputElement>(h, '.abyss-dep-search input');
     input.value = 'Blocker';
     input.dispatchEvent(new Event('input', { bubbles: true }));
+    await searchUiCompleted(control(h, '.abyss-dep-search'));
     activate(control(h, '.abyss-dep-search-create'));
     await flushMicrotasks();
 

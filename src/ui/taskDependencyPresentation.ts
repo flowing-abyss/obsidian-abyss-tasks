@@ -1,12 +1,12 @@
 import { setIcon } from 'obsidian';
 import type {
   DependencyDirection,
-  TaskDependencyProjection,
   TaskDependencyRelation,
+  TaskDependencySummary,
   TaskSnapshot,
 } from '../tasks';
 
-export type TaskDependencyLookup = (task: TaskSnapshot) => TaskDependencyProjection | undefined;
+export type TaskDependencyLookup = (task: TaskSnapshot) => TaskDependencySummary | undefined;
 
 export type DependencyIndicatorPresentation =
   | { readonly type: 'none' }
@@ -20,7 +20,7 @@ export type DependencyIndicatorPresentation =
     };
 
 export function dependencyIndicatorPresentation(
-  projection: TaskDependencyProjection | undefined,
+  projection: TaskDependencySummary | undefined,
 ): DependencyIndicatorPresentation {
   if (projection === undefined) return { type: 'none' };
   const { blockedBy, blocks, ariaLabel } = dependencyCountPresentation(projection);
@@ -31,7 +31,7 @@ export function dependencyIndicatorPresentation(
 }
 
 export function dependencyCompletionBlocked(
-  projection: TaskDependencyProjection | undefined,
+  projection: TaskDependencySummary | undefined,
 ): boolean {
   return (projection?.activeBlockedByCount ?? 0) > 0;
 }
@@ -39,13 +39,13 @@ export function dependencyCompletionBlocked(
 /** Renders the indicator into `parent` and returns it, or returns `undefined` for `none`. */
 export function renderDependencyIndicator(
   parent: HTMLElement,
-  projection: TaskDependencyProjection | undefined,
+  projection: TaskDependencySummary | undefined,
 ): HTMLElement | undefined {
   const presentation = dependencyIndicatorPresentation(projection);
   if (presentation.type === 'none') return undefined;
   const group = parent.createSpan({
     cls: 'abyss-dep-indicator',
-    attr: { role: 'img', 'aria-label': presentation.ariaLabel, title: presentation.ariaLabel },
+    attr: { role: 'img', 'aria-label': presentation.ariaLabel },
   });
   const direction = presentation.type === 'blocks' ? 'blocks' : 'blocked-by';
   setIcon(
@@ -87,7 +87,7 @@ export interface DependencyCountPresentation {
 }
 
 export function dependencyCountPresentation(
-  projection: TaskDependencyProjection,
+  projection: TaskDependencySummary,
 ): DependencyCountPresentation {
   const blockedBy = projection.activeBlockedByCount;
   const blocks = projection.activeBlocksCount;

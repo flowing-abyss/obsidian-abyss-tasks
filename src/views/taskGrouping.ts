@@ -1,6 +1,8 @@
+import { drainCollectionSteps, stableSortSteps, type CollectionSteps } from '../collectionSteps';
 import { noteNameOfPath, withoutMarkdownExtension } from '../markdown/noteName';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskLinkValue, TaskLinkValues } from '../task-lists/taskLinkValues';
+import { taskListDate } from '../task-lists/todayTaskCategory';
 import type { TaskSnapshot, TaskStatusType } from '../tasks';
 
 const PRIORITY_LABELS: Record<string, string> = {
@@ -44,11 +46,7 @@ function compareByTag(a: TaskSnapshot, b: TaskSnapshot): number {
   return ta.localeCompare(tb);
 }
 
-function appendToBucket(
-  buckets: Map<string, TaskSnapshot[]>,
-  key: string,
-  task: TaskSnapshot,
-): void {
+function appendToBucket<T>(buckets: Map<string, T[]>, key: string, task: T): void {
   const existing = buckets.get(key);
   if (existing === undefined) buckets.set(key, [task]);
   else existing.push(task);
@@ -90,87 +88,171 @@ export function sortTasksByField(
  * One bucket of a grouped list: a key that names the bucket whatever its label says, the label its
  * header shows, and its tasks in input order.
  */
-export interface TaskGroup {
+export type TaskGroupValue = Pick<
+  TaskSnapshot,
+  'priority' | 'statusSymbol' | 'tags' | 'planning'
+> & { readonly source: Pick<TaskSnapshot['source'], 'filePath' | 'line'> };
+export interface TaskGroup<T extends TaskGroupValue = TaskSnapshot> {
   readonly key: string;
   readonly label: string;
-  readonly tasks: TaskSnapshot[];
+  readonly tasks: T[];
 }
 
-export function groupTasksByPriority(tasks: readonly TaskSnapshot[]): TaskGroup[] {
-  const PRIORITY_ORDER = ['A', 'B', 'C', 'D', 'E', 'F'] as const;
-  const map = new Map<string, TaskSnapshot[]>();
-  for (const t of tasks) {
-    appendToBucket(map, t.priority, t);
+function* priorityGroups<T extends TaskGroupValue>(
+  tasks: readonly T[],
+  cooperative: boolean,
+): CollectionSteps<Array<TaskGroup<T>>> {
+  const map = new Map<string, T[]>();
+  let groups: Array<TaskGroup<T>> = [];
+  try {
+    for (const task of tasks) {
+      appendToBucket(map, task.priority, task);
+      if (cooperative) yield 'cheap';
+    }
+    for (const priority of ['A', 'B', 'C', 'D', 'E', 'F']) {
+      const bucket = map.get(priority);
+      if (bucket !== undefined)
+        groups.push({ key: priority, label: PRIORITY_LABELS[priority] ?? priority, tasks: bucket });
+      if (cooperative) yield 'cheap';
+    }
+    return groups;
+  } finally {
+    map.clear();
+    groups = [];
   }
-  return PRIORITY_ORDER.flatMap((priority) => {
-    const bucket = map.get(priority);
-    return bucket === undefined
-      ? []
-      : [{ key: priority, label: PRIORITY_LABELS[priority] ?? priority, tasks: bucket }];
-  });
 }
-
-export function groupTasksByStatus(
-  tasks: readonly TaskSnapshot[],
+function* addStatusTask<T extends TaskGroupValue>(
+  task: T,
   registry: StatusRegistry,
-): TaskGroup[] {
-  const buckets = new Map<
-    string,
-    { key: string; order: number; label: string; tasks: TaskSnapshot[] }
-  >();
-  for (const t of tasks) {
-    const def = registry.bySymbol(t.statusSymbol);
-    const key = def?.id ?? '__other__';
-    const label = def?.name ?? 'Other';
-    const order = def != null ? registry.orderIndex(t.statusSymbol) : Number.MAX_SAFE_INTEGER;
-    const bucket = buckets.get(key);
-    if (bucket === undefined) buckets.set(key, { key, order, label, tasks: [t] });
-    else bucket.tasks.push(t);
-  }
-  return [...buckets.values()]
-    .sort((x, y) => x.order - y.order)
-    .map(({ key, label, tasks }) => ({ key, label, tasks }));
+  buckets: Map<string, TaskGroup<T> & { order: number }>,
+  cooperative: boolean,
+): CollectionSteps<boolean> {
+  const def = registry.bySymbol(task.statusSymbol);
+  if (cooperative) yield 'atom';
+  const key = def?.id ?? '__other__',
+    label = def?.name ?? 'Other';
+  const order = def != null ? registry.orderIndex(task.statusSymbol) : Number.MAX_SAFE_INTEGER;
+  if (cooperative) yield 'atom';
+  const bucket = buckets.get(key);
+  if (bucket === undefined) buckets.set(key, { key, label, order, tasks: [task] });
+  else bucket.tasks.push(task);
+  if (cooperative) yield 'cheap';
+  return true;
 }
-
-export function groupTasksByTag(tasks: readonly TaskSnapshot[]): TaskGroup[] {
-  const map = new Map<string, TaskSnapshot[]>();
-  for (const t of tasks) {
-    const tag = t.tags[0] ?? '';
-    const key = tag.length > 0 ? tag : 'No tag';
-    appendToBucket(map, key, t);
-  }
-  const groups: TaskGroup[] = [];
-  for (const [label, gtasks] of map) {
-    if (label !== 'No tag') groups.push({ key: label, label, tasks: gtasks });
-  }
-  groups.sort((a, b) => a.label.localeCompare(b.label));
-  const noTag = map.get('No tag');
-  if (noTag !== undefined) groups.push({ key: 'No tag', label: 'No tag', tasks: noTag });
-  return groups;
+function* orderStatusGroups<T extends TaskGroupValue>(
+  values: Array<TaskGroup<T> & { order: number }>,
+  cooperative: boolean,
+): CollectionSteps<Array<TaskGroup<T> & { order: number }>> {
+  const compare = (a: (typeof values)[number], b: (typeof values)[number]): number =>
+    a.order - b.order;
+  if (cooperative) return yield* stableSortSteps(values, compare);
+  values.sort(compare);
+  return values;
 }
-
+function* statusGroups<T extends TaskGroupValue>(
+  tasks: readonly T[],
+  registry: StatusRegistry,
+  cooperative: boolean,
+): CollectionSteps<Array<TaskGroup<T>>> {
+  const buckets = new Map<string, TaskGroup<T> & { order: number }>();
+  const ordered: Array<TaskGroup<T> & { order: number }> = [];
+  let output: Array<TaskGroup<T>> = [];
+  try {
+    for (const task of tasks) {
+      const added = yield* addStatusTask(task, registry, buckets, cooperative);
+      if (added === undefined) throw new Error('Status admission ended without a result');
+    }
+    for (const value of buckets.values()) {
+      ordered.push(value);
+      if (cooperative) yield 'cheap';
+    }
+    const sorted = yield* orderStatusGroups(ordered, cooperative);
+    if (sorted === undefined) throw new Error('Group sort ended without a result');
+    for (const { key, label, tasks } of sorted) {
+      output.push({ key, label, tasks });
+      if (cooperative) yield 'cheap';
+    }
+    return output;
+  } finally {
+    buckets.clear();
+    ordered.length = 0;
+    output = [];
+  }
+}
+function* orderTagGroups<T extends TaskGroupValue>(
+  values: Array<TaskGroup<T>>,
+  cooperative: boolean,
+): CollectionSteps<Array<TaskGroup<T>>> {
+  const compare = (a: TaskGroup<T>, b: TaskGroup<T>): number => a.label.localeCompare(b.label);
+  if (cooperative) return yield* stableSortSteps(values, compare);
+  values.sort(compare);
+  return values;
+}
+function firstTagGroup(task: TaskGroupValue): string {
+  const tag = task.tags[0] ?? '';
+  return tag.length > 0 ? tag : 'No tag';
+}
+function* tagGroups<T extends TaskGroupValue>(
+  tasks: readonly T[],
+  cooperative: boolean,
+): CollectionSteps<Array<TaskGroup<T>>> {
+  const buckets = new Map<string, T[]>();
+  let groups: Array<TaskGroup<T>> = [];
+  try {
+    for (const task of tasks) {
+      appendToBucket(buckets, firstTagGroup(task), task);
+      if (cooperative) yield 'cheap';
+    }
+    for (const [label, tasks] of buckets) {
+      if (label !== 'No tag') groups.push({ key: label, label, tasks });
+      if (cooperative) yield 'cheap';
+    }
+    const sorted = yield* orderTagGroups(groups, cooperative);
+    if (sorted === undefined) throw new Error('Group sort ended without a result');
+    const missing = buckets.get('No tag');
+    if (missing !== undefined) sorted.push({ key: 'No tag', label: 'No tag', tasks: missing });
+    return sorted;
+  } finally {
+    buckets.clear();
+    groups = [];
+  }
+}
 type DateGroupLabel = 'Overdue' | 'Today' | 'Tomorrow' | 'Upcoming' | 'No date';
-
-function dateGroupLabel(task: TaskSnapshot, today: string, tomorrow: string): DateGroupLabel {
-  const date = task.planning.due ?? task.planning.scheduled ?? task.planning.start;
+function dateGroupLabel(
+  task: TaskGroupValue,
+  today: string,
+  tomorrow: string,
+  todayList: boolean,
+): DateGroupLabel {
+  const date = taskListDate(task, todayList ? today : undefined);
   if (date === undefined) return 'No date';
   if (date < today) return 'Overdue';
   if (date === today) return 'Today';
   return date === tomorrow ? 'Tomorrow' : 'Upcoming';
 }
-
-export function groupTasksByDate(
-  tasks: readonly TaskSnapshot[],
-  today: string,
-  tomorrow: string,
-): TaskGroup[] {
-  const buckets = new Map<DateGroupLabel, TaskSnapshot[]>();
-  for (const task of tasks) appendToBucket(buckets, dateGroupLabel(task, today, tomorrow), task);
-  const order: readonly DateGroupLabel[] = ['Overdue', 'Today', 'Tomorrow', 'Upcoming', 'No date'];
-  return order.flatMap((label) => {
-    const bucket = buckets.get(label);
-    return bucket === undefined ? [] : [{ key: label, label, tasks: bucket }];
-  });
+function* dateGroups<T extends TaskGroupValue>(
+  tasks: readonly T[],
+  context: { readonly today: string; readonly tomorrow: string; readonly todayList: boolean },
+  cooperative: boolean,
+): CollectionSteps<Array<TaskGroup<T>>> {
+  const { today, tomorrow, todayList } = context;
+  const buckets = new Map<string, T[]>();
+  let groups: Array<TaskGroup<T>> = [];
+  try {
+    for (const task of tasks) {
+      appendToBucket(buckets, dateGroupLabel(task, today, tomorrow, todayList), task);
+      if (cooperative) yield 'cheap';
+    }
+    for (const label of ['Overdue', 'Today', 'Tomorrow', 'Upcoming', 'No date']) {
+      const bucket = buckets.get(label);
+      if (bucket !== undefined) groups.push({ key: label, label, tasks: bucket });
+      if (cooperative) yield 'cheap';
+    }
+    return groups;
+  } finally {
+    buckets.clear();
+    groups = [];
+  }
 }
 
 // undefined, or all 4 status groups selected, means "no filtering".
@@ -189,72 +271,254 @@ export function filterTasksByStatusGroups(
 }
 
 /** Canonical note names; same-name notes show their paths instead of ambiguous basenames. */
-function orderedNoteGroups(
-  groups: TaskGroup[],
-  paths: ReadonlyMap<string, string> = new Map(),
-): TaskGroup[] {
+function noteGroupLabel(
+  group: { key: string; label: string },
+  labels: ReadonlyMap<string, number>,
+  paths: ReadonlyMap<string, string>,
+): string {
+  return (labels.get(group.label) ?? 0) > 1
+    ? (paths.get(group.key) ?? withoutMarkdownExtension(group.key))
+    : group.label;
+}
+function* orderedNoteGroups<T extends TaskGroupValue>(
+  groups: Array<TaskGroup<T>>,
+  paths: ReadonlyMap<string, string>,
+  cooperative: boolean,
+): CollectionSteps<Array<TaskGroup<T>>> {
   const labels = new Map<string, number>();
-  for (const group of groups) labels.set(group.label, (labels.get(group.label) ?? 0) + 1);
-  return groups
-    .map((group) => ({
-      ...group,
-      label:
-        (labels.get(group.label) ?? 0) > 1
-          ? (paths.get(group.key) ?? withoutMarkdownExtension(group.key))
-          : group.label,
-    }))
-    .sort((a, b) => {
-      const labelOrder = a.label.localeCompare(b.label);
-      return labelOrder !== 0 ? labelOrder : a.key.localeCompare(b.key);
-    });
+  let output: Array<TaskGroup<T>> = [];
+  try {
+    for (const group of groups) {
+      labels.set(group.label, (labels.get(group.label) ?? 0) + 1);
+      if (cooperative) yield 'cheap';
+    }
+    for (const group of groups) {
+      const label = noteGroupLabel(group, labels, paths);
+      if (cooperative) yield 'atom';
+      output.push({ ...group, label });
+      if (cooperative) yield 'cheap';
+    }
+    const compare = (a: TaskGroup<T>, b: TaskGroup<T>): number => {
+      const label = a.label.localeCompare(b.label);
+      return label !== 0 ? label : a.key.localeCompare(b.key);
+    };
+    if (cooperative) return yield* stableSortSteps(output, compare);
+    output.sort(compare);
+    return output;
+  } finally {
+    labels.clear();
+    output = [];
+  }
 }
-
-export function groupTasksBySourceNote(tasks: readonly TaskSnapshot[]): TaskGroup[] {
-  const buckets = new Map<string, TaskSnapshot[]>();
-  for (const task of tasks) appendToBucket(buckets, task.source.filePath, task);
-  return orderedNoteGroups(
-    [...buckets].map(([key, tasks]) => ({ key, label: noteNameOfPath(key), tasks })),
-  );
+function* sourceGroups<T extends TaskGroupValue>(
+  tasks: readonly T[],
+  cooperative: boolean,
+): CollectionSteps<Array<TaskGroup<T>>> {
+  const buckets = new Map<string, T[]>();
+  let groups: Array<TaskGroup<T>> = [];
+  try {
+    for (const task of tasks) {
+      appendToBucket(buckets, task.source.filePath, task);
+      if (cooperative) yield 'cheap';
+    }
+    for (const [key, tasks] of buckets) {
+      const label = noteNameOfPath(key);
+      if (cooperative) yield 'atom';
+      groups.push({ key, label, tasks });
+      if (cooperative) yield 'cheap';
+    }
+    return yield* orderedNoteGroups(groups, new Map(), cooperative);
+  } finally {
+    buckets.clear();
+    groups = [];
+  }
 }
-
-function appendLinkedTask(
-  groups: Map<string, TaskGroup>,
+function appendLinkedTask<T extends TaskGroupValue>(
+  groups: Map<string, TaskGroup<T>>,
   link: TaskLinkValue,
-  task: TaskSnapshot,
+  task: T,
 ): void {
   const group = groups.get(link.key);
   if (group === undefined)
     groups.set(link.key, { key: link.key, label: link.label, tasks: [task] });
   else group.tasks.push(task);
 }
-
 function disambiguatedLinkLabel(link: TaskLinkValue, sourcePath: string): string {
   return link.key.startsWith('note:')
     ? withoutMarkdownExtension(link.target)
     : `${link.target} (${sourcePath})`;
 }
-
-export function groupTasksByOutgoingLink(
-  tasks: readonly TaskSnapshot[],
+interface OutgoingBuckets<T extends TaskGroupValue> {
+  groups: Map<string, TaskGroup<T>>;
+  paths: Map<string, string>;
+  missing: T[];
+  seen: Set<string>;
+}
+function* admitOutgoingLink<T extends TaskGroupValue>(
+  task: T,
+  link: TaskLinkValue,
+  context: OutgoingBuckets<T>,
+  cooperative: boolean,
+): CollectionSteps<boolean> {
+  const { groups, paths, seen } = context;
+  seen.add(link.key);
+  if (cooperative) yield 'cheap';
+  const label = disambiguatedLinkLabel(link, task.source.filePath);
+  if (cooperative) yield 'atom';
+  paths.set(link.key, label);
+  if (cooperative) yield 'cheap';
+  appendLinkedTask(groups, link, task);
+  if (cooperative) yield 'cheap';
+  return true;
+}
+function* admitOutgoingLinks<T extends TaskGroupValue>(
+  task: T,
+  links: readonly TaskLinkValue[],
+  context: OutgoingBuckets<T>,
+  cooperative: boolean,
+): CollectionSteps<boolean> {
+  const { seen } = context;
+  for (const link of links) {
+    if (seen.has(link.key)) {
+      if (cooperative) yield 'cheap';
+      continue;
+    }
+    const added = yield* admitOutgoingLink(task, link, context, cooperative);
+    if (added === undefined) throw new Error('Link admission ended without a result');
+  }
+  return true;
+}
+function* admitOutgoingRoots<T extends TaskGroupValue>(
+  roots: ReadonlyMap<string, T>,
   values: TaskLinkValues,
-): TaskGroup[] {
-  const groups = new Map<string, TaskGroup>();
-  const paths = new Map<string, string>();
-  const missing: TaskSnapshot[] = [];
-  const roots = new Map(tasks.map((task) => [`${task.source.filePath}:${task.source.line}`, task]));
+  context: OutgoingBuckets<T>,
+  cooperative: boolean,
+): CollectionSteps<boolean> {
+  const { missing, seen } = context;
   for (const task of roots.values()) {
     const links = values.get(`${task.source.filePath}:${task.source.line}`) ?? [];
     if (links.length === 0) missing.push(task);
-    const seen = new Set<string>();
-    for (const link of links) {
-      if (seen.has(link.key)) continue;
-      seen.add(link.key);
-      paths.set(link.key, disambiguatedLinkLabel(link, task.source.filePath));
-      appendLinkedTask(groups, link, task);
-    }
+    if (cooperative) yield 'cheap';
+    seen.clear();
+    const added = yield* admitOutgoingLinks(task, links, context, cooperative);
+    if (added === undefined) throw new Error('Link admission ended without a result');
   }
-  const ordered = orderedNoteGroups([...groups.values()], paths);
-  if (missing.length > 0)
-    ordered.push({ key: 'no-outgoing-links', label: 'No outgoing links', tasks: missing });
-  return ordered;
+  return true;
+}
+function* outgoingGroups<T extends TaskGroupValue>(
+  tasks: readonly T[],
+  values: TaskLinkValues,
+  cooperative: boolean,
+): CollectionSteps<Array<TaskGroup<T>>> {
+  const groups = new Map<string, TaskGroup<T>>(),
+    paths = new Map<string, string>(),
+    roots = new Map<string, T>();
+  let missing: T[] = [],
+    output: Array<TaskGroup<T>> = [];
+  const seen = new Set<string>();
+  try {
+    for (const task of tasks) {
+      roots.set(`${task.source.filePath}:${task.source.line}`, task);
+      if (cooperative) yield 'cheap';
+    }
+    const admitted = yield* admitOutgoingRoots(
+      roots,
+      values,
+      { groups, paths, missing, seen },
+      cooperative,
+    );
+    if (admitted === undefined) throw new Error('Outgoing admission ended without a result');
+    for (const group of groups.values()) {
+      output.push(group);
+      if (cooperative) yield 'cheap';
+    }
+    const ordered = yield* orderedNoteGroups(output, paths, cooperative);
+    if (ordered === undefined) throw new Error('Group ordering ended without a result');
+    if (missing.length > 0)
+      ordered.push({ key: 'no-outgoing-links', label: 'No outgoing links', tasks: missing });
+    return ordered;
+  } finally {
+    groups.clear();
+    paths.clear();
+    roots.clear();
+    seen.clear();
+    missing = [];
+    output = [];
+  }
+}
+
+export function groupTasksByPriority<T extends TaskGroupValue>(
+  tasks: readonly T[],
+): Array<TaskGroup<T>> {
+  return drainCollectionSteps(priorityGroups(tasks, false));
+}
+export function groupTasksByPrioritySteps<T extends TaskGroupValue>(
+  tasks: readonly T[],
+): CollectionSteps<Array<TaskGroup<T>>> {
+  return priorityGroups(tasks, true);
+}
+
+export function groupTasksByStatus<T extends TaskGroupValue>(
+  tasks: readonly T[],
+  registry: StatusRegistry,
+): Array<TaskGroup<T>> {
+  return drainCollectionSteps(statusGroups(tasks, registry, false));
+}
+export function groupTasksByStatusSteps<T extends TaskGroupValue>(
+  tasks: readonly T[],
+  registry: StatusRegistry,
+): CollectionSteps<Array<TaskGroup<T>>> {
+  return statusGroups(tasks, registry, true);
+}
+
+export function groupTasksByTag<T extends TaskGroupValue>(
+  tasks: readonly T[],
+): Array<TaskGroup<T>> {
+  return drainCollectionSteps(tagGroups(tasks, false));
+}
+export function groupTasksByTagSteps<T extends TaskGroupValue>(
+  tasks: readonly T[],
+): CollectionSteps<Array<TaskGroup<T>>> {
+  return tagGroups(tasks, true);
+}
+
+export function groupTasksByDate<T extends TaskGroupValue>(
+  tasks: readonly T[],
+  today: string,
+  tomorrow: string,
+  todayList = false,
+): Array<TaskGroup<T>> {
+  return drainCollectionSteps(dateGroups(tasks, { today, tomorrow, todayList }, false));
+}
+export function groupTasksByDateSteps<T extends TaskGroupValue>(
+  tasks: readonly T[],
+  today: string,
+  tomorrow: string,
+  todayList = false,
+): CollectionSteps<Array<TaskGroup<T>>> {
+  return dateGroups(tasks, { today, tomorrow, todayList }, true);
+}
+
+export function groupTasksBySourceNote<T extends TaskGroupValue>(
+  tasks: readonly T[],
+): Array<TaskGroup<T>> {
+  return drainCollectionSteps(sourceGroups(tasks, false));
+}
+export function groupTasksBySourceNoteSteps<T extends TaskGroupValue>(
+  tasks: readonly T[],
+): CollectionSteps<Array<TaskGroup<T>>> {
+  return sourceGroups(tasks, true);
+}
+
+export function groupTasksByOutgoingLink<T extends TaskGroupValue>(
+  tasks: readonly T[],
+  values: TaskLinkValues,
+): Array<TaskGroup<T>> {
+  return drainCollectionSteps(outgoingGroups(tasks, values, false));
+}
+export function groupTasksByOutgoingLinkSteps<T extends TaskGroupValue>(
+  tasks: readonly T[],
+  values: TaskLinkValues,
+): CollectionSteps<Array<TaskGroup<T>>> {
+  return outgoingGroups(tasks, values, true);
 }

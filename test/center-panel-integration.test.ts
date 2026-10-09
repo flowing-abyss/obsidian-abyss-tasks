@@ -1,10 +1,20 @@
-import { addIcon, MarkdownRenderer, Menu, Modal, removeIcon, TFile, type App } from 'obsidian';
+import {
+  addIcon,
+  MarkdownRenderer,
+  Menu,
+  Modal,
+  removeIcon,
+  Scope,
+  TFile,
+  type App,
+} from 'obsidian';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { moment } from '../src/obsidianMoment';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
 import type { TaskCardRenderer } from '../src/panels/center/TaskCardRenderer';
+import { TaskListSurface } from '../src/panels/task-list/TaskListSurface';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
@@ -16,10 +26,11 @@ import type {
   TaskCommandResult,
   TaskCreateSession,
   TaskIndexEvent,
+  TaskNodeSnapshot,
   TaskQueryApi,
   TaskSnapshot,
 } from '../src/tasks';
-import { localDate, localTime } from '../src/tasks';
+import { localDate, localTime, rootTaskNodeSnapshot } from '../src/tasks';
 import type { TaskQuery } from '../src/tasks/application/TaskApplicationApi';
 import { TaskModal } from '../src/ui/TaskModal';
 import { InteractionRegistry, type InteractionOwnershipPort } from '../src/ui/interactionOwnership';
@@ -60,6 +71,11 @@ import {
   setCalendarViewType,
   taskCommandsOf,
 } from './support/panelHarness';
+import { prepareTaskPanelViewport } from './support/taskPanelViewport';
+import { canonicalSearchForIndex } from './support/taskSearchHarness';
+import { mountCanonicalSearchUi, searchUiCompleted } from './support/taskSearchUiHarness';
+
+import { taskViewportOwner } from './support/taskViewportOwner';
 
 const TODAY = moment().format('YYYY-MM-DD');
 
@@ -92,7 +108,9 @@ function expectRootTaskPatch(
 
 useRealMoment();
 
+const searchCleanups: Array<() => void> = [];
 afterEach(() => {
+  for (const cleanup of searchCleanups.splice(0)) cleanup();
   vi.useRealTimers();
 });
 
@@ -259,7 +277,7 @@ async function makePanel(
 ): Promise<{
   panel: CenterPanel;
   state: AppState;
-  index: TaskQueryApi;
+  index: ReturnType<typeof configuredTaskApplication>['index'];
   tasks: TaskApplicationApi;
   app: App;
 }> {
@@ -268,16 +286,21 @@ async function makePanel(
   const state = new AppState();
   const taskApplication = configuredTaskApplication(app, settings, options);
   await taskApplication.index.initialize();
+  const search = canonicalSearchForIndex(taskApplication.index);
+  searchCleanups.push(() => {
+    search.dispose();
+  });
   const panel = new CenterPanel({
     state,
     app,
     settings,
     queries: taskApplication.index,
+    search,
     statusRegistry: taskApplication.statusRegistry,
     projectStore: null,
     projectManager: null,
     tasks: taskApplication.tasks,
-    captureApplication: taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+    captureApplication: taskApplication.tasks,
   });
   return {
     panel,
@@ -301,7 +324,7 @@ describe('CenterPanel task-card primary row', () => {
       source: { filePath: 'regular-tasks.md', line: 4 },
     });
     const state = new AppState();
-    state.set('mode', 'search');
+    state.set('selectedList', { type: 'project', path: snapshot.source.filePath });
     state.set('searchQuery', 'Migaku');
     const panel = makeStaticPanel(state, [snapshot]);
     addIcon('x', '<svg data-lucide="x"><path d="M18 6 6 18M6 6l12 12" /></svg>');
@@ -360,7 +383,7 @@ describe('CenterPanel task-card primary row', () => {
       source: { filePath: 'inbox.md', line: 2 },
     });
     const state = new AppState();
-    state.set('mode', 'search');
+    state.set('selectedList', { type: 'project', path: snapshot.source.filePath });
     state.set('searchQuery', 'Ordinary');
     const panel = makeStaticPanel(state, [snapshot]);
     try {
@@ -372,7 +395,7 @@ describe('CenterPanel task-card primary row', () => {
       const titleRow = expectDefined(mainRow.querySelector<HTMLElement>('.abyss-task-title-row'));
       expect(titleRow.querySelector('.abyss-recurrence-badge')).toBeNull();
       expect(titleRow.firstElementChild?.classList.contains('abyss-task-title')).toBe(true);
-      expect(mainRow.querySelector('.abyss-task-desc')).toBeNull();
+      expect(mainRow.querySelector<HTMLElement>('.abyss-task-desc')?.hidden).toBe(true);
     } finally {
       panel.destroy();
     }
@@ -386,7 +409,7 @@ describe('CenterPanel task-card primary row', () => {
       source: { filePath: 'inbox.md', line: 3 },
     });
     const state = new AppState();
-    state.set('mode', 'search');
+    state.set('selectedList', { type: 'project', path: snapshot.source.filePath });
     state.set('searchQuery', 'deliberately');
     const panel = makeStaticPanel(state, [snapshot]);
     try {
@@ -398,7 +421,7 @@ describe('CenterPanel task-card primary row', () => {
       const body = expectDefined(mainRow.querySelector<HTMLElement>('.abyss-task-body'));
       expect(body.querySelector('.abyss-task-title')).not.toBeNull();
       expect(mainRow.querySelector('.abyss-task-meta-right')).not.toBeNull();
-      expect(panel['el'].querySelector('.abyss-task-desc')).toBeNull();
+      expect(panel['el'].querySelector<HTMLElement>('.abyss-task-desc')?.hidden).toBe(true);
     } finally {
       panel.destroy();
     }
@@ -420,10 +443,10 @@ describe('CenterPanel list selection', () => {
       .queries_abyssPrivate;
     const list = vi.spyOn(queries, 'list');
 
-    const selected = call<TaskSnapshot[]>(panel, 'getFilteredTasks') as TaskSnapshot[];
+    const selected = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks') as TaskNodeSnapshot[];
 
     expect(list).toHaveBeenCalledWith(undefined);
-    expect(selected.map(({ title }) => title)).toEqual(['exact']);
+    expect(selected.map(({ node }) => node.title)).toEqual(['exact']);
   });
 
   it('excludes a date-less task from today while retaining an explicitly planned task from the same daily note', () => {
@@ -445,7 +468,9 @@ describe('CenterPanel list selection', () => {
     const panel = makeStaticPanel(state, [dailyOnly, planned]);
 
     expect(
-      (call<TaskSnapshot[]>(panel, 'getFilteredTasks') as TaskSnapshot[]).map((item) => item.title),
+      (call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks') as TaskNodeSnapshot[]).map(
+        (item) => item.node.title,
+      ),
     ).toEqual(['planned']);
   });
 });
@@ -1178,7 +1203,13 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
     state.set('selectedList', 'today');
     const panel = makeStaticPanel(
       state,
-      [task({ title: 'Keep the task list viewport', planning: { due: TODAY } })],
+      Array.from({ length: 50 }, (_, line) =>
+        task({
+          title: `Task ${line}`,
+          planning: { due: TODAY },
+          source: { filePath: 'large.md', line },
+        }),
+      ),
       DEFAULT_SETTINGS,
     );
     const container = freshContainer();
@@ -1260,11 +1291,14 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
   it('clamps retained task-list offsets after refreshed content shrinks', () => {
     const state = new AppState();
     state.set('selectedList', 'today');
-    const panel = makeStaticPanel(
-      state,
-      [task({ title: 'Clamped task', planning: { due: TODAY } })],
-      DEFAULT_SETTINGS,
+    const tasks = Array.from({ length: 50 }, (_, line) =>
+      task({
+        title: `Task ${line}`,
+        planning: { due: TODAY },
+        source: { filePath: 'large.md', line },
+      }),
     );
+    const panel = makeStaticPanel(state, tasks, DEFAULT_SETTINGS);
     const container = freshContainer();
     activeDocument.body.append(container);
 
@@ -1280,17 +1314,18 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       scroll.scrollTop = 380;
       scroll.scrollLeft = 260;
 
+      tasks.splice(5);
+      state.set('centerListViewState', { ...state.get('centerListViewState'), groupBy: 'none' });
       panel.refresh();
 
-      expect(scroll.scrollTop).toBe(120);
-      expect(scroll.scrollLeft).toBe(110);
+      expect(scroll.scrollTop).toBe(20);
     } finally {
       panel.destroy();
       container.remove();
     }
   });
 
-  it('installs a complete interactive grouped list with bounded attached-list mutations', () => {
+  it('installs a complete interactive grouped list with bounded attached-list mutations', async () => {
     vi.useFakeTimers();
     vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, holder) => {
       holder.createEl('p', undefined, (paragraph) => {
@@ -1327,22 +1362,30 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       const observer = new MutationObserver(() => {});
       observer.observe(scroll, { childList: true });
 
-      state.set('centerFilter', 'task');
+      panel.refresh();
 
       const attachedListRecords = observer.takeRecords();
       expect(attachedListRecords.length).toBeLessThanOrEqual(2);
       expect(container.querySelector('.abyss-center-scroll')).toBe(scroll);
-      expect(scroll.querySelectorAll(':scope > .abyss-group-header')).toHaveLength(1);
-      const cards = Array.from(scroll.querySelectorAll<HTMLElement>(':scope > .abyss-task-card'));
+      expect(
+        scroll.querySelectorAll(':scope > .abyss-virtual-row-frame > .abyss-group-header'),
+      ).toHaveLength(1);
+      const cards = Array.from(
+        scroll.querySelectorAll<HTMLElement>(
+          ':scope > .abyss-virtual-row-frame > .abyss-task-card',
+        ),
+      );
       expect(cards.map(({ dataset }) => dataset['line'])).toEqual(['0', '1', '2']);
-      expect(Array.from(scroll.children)).toEqual([
-        expectDefined(scroll.querySelector(':scope > .abyss-group-header')),
+      expect(Array.from(scroll.children, (frame) => frame.firstElementChild)).toEqual([
+        expectDefined(
+          scroll.querySelector(':scope > .abyss-virtual-row-frame > .abyss-group-header'),
+        ),
         ...cards,
       ]);
       expect(cards.every((card) => card.getAttribute('draggable') === 'true')).toBe(true);
       const markdownHolder = expectDefined(scroll.querySelector<HTMLElement>('.abyss-md'));
       expect(markdownHolder.isConnected).toBe(true);
-      vi.runAllTimers();
+      await vi.advanceTimersByTimeAsync(0);
       expect(markdownHolder.querySelector(':scope > p')).toBeNull();
 
       expectDefined(cards[1]).click();
@@ -1406,6 +1449,57 @@ describe('CenterPanel shared list capture', () => {
     type: 'io-error',
     cause: 'repository-error',
     contentState: 'unknown',
+  });
+
+  it('keeps the active capture draft and composition while adopted Tasks resume native scrolling', async () => {
+    const snapshots = Array.from({ length: 1200 }, (_, line) =>
+      task({
+        title: `Task ${line}`,
+        planning: { due: TODAY },
+        source: { filePath: 'adopt.md', line },
+      }),
+    );
+    const { panel, state, planCreate, sessionExecute } = captureHarness(
+      async () => successfulCapture(),
+      snapshots,
+    );
+    state.set('selectedList', 'today');
+    const container = freshContainer();
+    panel.mount(container);
+    const owner = taskViewportOwner();
+    try {
+      const input = await openListCapture(container);
+      setCaptureDraft(input, 'unfinished draft');
+      input.setSelectionRange(2, 8);
+      input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+      const scroll = expectDefined(container.querySelector<HTMLElement>('.abyss-center-scroll'));
+      container.remove();
+      scroll.dispatchEvent(new Event('scroll'));
+      owner.doc.body.append(container);
+      scroll.scrollTop = 76000;
+      scroll.dispatchEvent(new owner.win.Event('scroll'));
+      owner.flush();
+      expect(
+        [...scroll.querySelectorAll<HTMLElement>('.abyss-task-card')].some(
+          (card) => Number(card.dataset['line']) > 1100,
+        ),
+      ).toBe(true);
+      expect(container.querySelector('.abyss-quick-capture-input')).toBe(input);
+      expect(input.value).toBe('unfinished draft');
+      expect([input.selectionStart, input.selectionEnd]).toEqual([2, 8]);
+      input.dispatchEvent(
+        new owner.win.KeyboardEvent('keydown', {
+          key: 'Enter',
+          isComposing: true,
+          bubbles: true,
+        }),
+      );
+      expect(planCreate).toHaveBeenCalledOnce();
+      expect(sessionExecute).not.toHaveBeenCalled();
+    } finally {
+      panel.destroy();
+      owner.destroy();
+    }
   });
 
   it('keeps one focused session open across consecutive Enter successes', async () => {
@@ -1722,8 +1816,8 @@ describe('CenterPanel shared list capture', () => {
     },
   );
 
-  it('remounts the active draft and focus across a full CenterPanel rerender', async () => {
-    const { panel, state, sessionExecute } = captureHarness(async () => successfulCapture());
+  it('retains the composing draft input and selection across a full CenterPanel rerender', async () => {
+    const { panel, sessionExecute } = captureHarness(async () => successfulCapture());
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
@@ -1731,14 +1825,20 @@ describe('CenterPanel shared list capture', () => {
       const before = await openListCapture(container);
       setCaptureDraft(before, 'survive the render');
       before.focus();
+      before.setSelectionRange(2, 6);
+      before.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
 
-      state.set('centerFilter', 'force full render');
+      panel.refresh();
 
       const after = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input');
-      expect(after).not.toBe(before);
-      expect(before.isConnected).toBe(false);
+      expect(after).toBe(before);
+      expect(before.isConnected).toBe(true);
       expect(after?.value).toBe('survive the render');
       expect(activeDocument.activeElement).toBe(after);
+      expect([before.selectionStart, before.selectionEnd]).toEqual([2, 6]);
+      before.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, isComposing: true }),
+      );
       expect(sessionExecute).not.toHaveBeenCalled();
     } finally {
       panel.destroy();
@@ -1843,7 +1943,7 @@ describe('CenterPanel shared list capture', () => {
 
   it('keeps an escaped pending failure editable on only the remounted surface', async () => {
     const result = deferred<TaskCommandResult>();
-    const { panel, state, sessionExecute } = captureHarness(() => result.promise);
+    const { panel, sessionExecute } = captureHarness(() => result.promise);
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
@@ -1853,19 +1953,19 @@ describe('CenterPanel shared list capture', () => {
       before.focus();
       pressCaptureKey(before, 'Enter');
       pressCaptureKey(before, 'Escape');
-      state.set('centerFilter', 'rerender while pending');
+      panel.refresh();
 
       const after = expectDefined(
         container.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
       );
-      expect(after).not.toBe(before);
+      expect(after).toBe(before);
       expect(after.readOnly).toBe(true);
       expect(after.value).toBe('pending repair');
       result.resolve(captureFailure());
       await flushMicrotasks();
 
       expect(sessionExecute).toHaveBeenCalledOnce();
-      expect(before.isConnected).toBe(false);
+      expect(before.isConnected).toBe(true);
       expect(container.querySelector('.abyss-quick-capture-input')).toBe(after);
       expect(after.readOnly).toBe(false);
       expect(after.value).toBe('pending repair');
@@ -2097,11 +2197,8 @@ describe('CalendarCommands.rescheduleFromDrag', () => {
     }
   });
 
-  // Task 26: dropping a previously-timed block onto the all-day/"No-time" row reuses this
-  // same onDrop path (renderAllDayCell's generic onDrop callback) — the inverse of Round 2
-  // Task 8's setTaskTimeFromDrop. A task carrying ⏰/⏱️ tokens must have both stripped, in
-  // addition to the date move every onDrop call already performs.
-  it('a previously-timed task dropped onto the all-day row has ⏰ time and ⏱️ duration stripped, date still moved', async () => {
+  // Moving an already timed point to all-day preserves the existing time-and-duration clearing.
+  it('a timed point dropped onto the all-day row clears time and duration and moves its date', async () => {
     const { panel, index, app } = await makePanel(
       { 't.md': '- [ ] task 📅 2026-06-20 ⏰ 09:00 ⏱️ 1h30m' },
       DEFAULT_SETTINGS,
@@ -2172,7 +2269,14 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     });
     const panel = makeStaticPanel(state, tasks);
     const container = freshContainer();
-    const renderResult = call<void>(panel, 'renderWithGrouping', container, tasks);
+    panel.mount(container);
+    const host = expectDefined(container.querySelector<HTMLElement>('.abyss-center-scroll'));
+    const renderResult = call<void>(
+      panel,
+      'renderWithGrouping',
+      host,
+      tasks.map(rootTaskNodeSnapshot),
+    );
     if (renderResult instanceof Promise) throw new Error('Expected synchronous grouped rendering');
     return container;
   }
@@ -2203,10 +2307,10 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     const container = renderWithGroupingByDate(tasks);
     const headers = container.querySelectorAll('.abyss-group-header');
     const labels = Array.from(headers).map((h) => h.textContent.trim());
-    expect(labels).toContain('Overdue  1');
-    expect(labels).toContain('Today  1');
-    expect(labels).toContain('Tomorrow  1');
-    expect(labels).toContain('Upcoming  1');
+    expect(labels).toContain('Overdue');
+    expect(labels).toContain('Today');
+    expect(labels).toContain('Tomorrow');
+    expect(labels).toContain('Upcoming');
   });
 
   it('renders a daily-note-only task in No date rather than Today', () => {
@@ -2215,7 +2319,7 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
       Array.from(container.querySelectorAll('.abyss-group-header')).map(
         (header) => header.textContent,
       ),
-    ).toContain('No date  1');
+    ).toContain('No date');
   });
 
   it('empty groups are skipped (only non-empty groups render)', () => {
@@ -2229,7 +2333,7 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     const container = renderWithGroupingByDate(tasks);
     const headers = container.querySelectorAll('.abyss-group-header');
     const labels = Array.from(headers).map((h) => h.textContent.trim());
-    expect(labels).toEqual(['Today  1']);
+    expect(labels).toEqual(['Today']);
   });
 
   it('no-date task falls into "No date" bucket (not Overdue)', () => {
@@ -2237,52 +2341,23 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     const container = renderWithGroupingByDate(tasks);
     const headers = container.querySelectorAll('.abyss-group-header');
     const labels = Array.from(headers).map((h) => h.textContent.trim());
-    expect(labels).toEqual(['No date  1']);
+    expect(labels).toEqual(['No date']);
   });
 });
 
 describe('CenterPanel.renderSearch', () => {
   fixedToday('2026-06-25');
 
-  function withQueuedAnimationFrames(
-    run: (flush: () => void, callbacks: Map<number, FrameRequestCallback>) => void,
-  ): void {
-    const callbacks = new Map<number, FrameRequestCallback>();
-    let nextFrame = 1;
-    const requestAnimationFrame = methodOf(window, 'requestAnimationFrame');
-    const cancelAnimationFrame = methodOf(window, 'cancelAnimationFrame');
-    window.requestAnimationFrame = (callback: FrameRequestCallback): number => {
-      const frame = nextFrame++;
-      callbacks.set(frame, callback);
-      return frame;
-    };
-    window.cancelAnimationFrame = (frame: number): void => {
-      callbacks.delete(frame);
-    };
-
-    try {
-      run(() => {
-        const queued = [...callbacks.entries()];
-        callbacks.clear();
-        for (const [, callback] of queued) callback(0);
-      }, callbacks);
-    } finally {
-      window.requestAnimationFrame = requestAnimationFrame;
-      window.cancelAnimationFrame = cancelAnimationFrame;
-    }
-  }
-
-  it('releases non-composing Escape from Search without changing the query or results', () => {
+  it('releases non-composing Escape from Search without changing the query or results', async () => {
     vi.useFakeTimers();
-    const state = new AppState();
-    const panel = makeStaticPanel(state, [
-      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
-      task({ title: 'walk dog', source: { filePath: 'b.md', line: 0 } }),
-    ]);
-    const container = freshContainer();
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': '- [ ] buy milk', 'b.md': '- [ ] walk dog' },
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    const { state, panel } = h;
+    const container = h.root;
     const ownerDocument = container.ownerDocument;
     ownerDocument.body.append(container);
-    panel.mount(container);
     panel['navigation_abyssPrivate'].openSearch();
     vi.runOnlyPendingTimers();
     const input = expectDefined(
@@ -2291,6 +2366,8 @@ describe('CenterPanel.renderSearch', () => {
     const focus = vi.spyOn(panel['el'], 'focus');
     const router = new PanelShortcutRouter({
       ownerDocument,
+      ownerElement: panel['el'],
+      localSearchTarget: () => panel.localSearchTarget(),
       isActive: () => true,
       settings: () => DEFAULT_SETTINGS.shortcuts,
       platform: { mod: 'ctrl' },
@@ -2301,11 +2378,9 @@ describe('CenterPanel.renderSearch', () => {
 
     try {
       expect(ownerDocument.activeElement).toBe(input);
-      withQueuedAnimationFrames((flush) => {
-        input.value = 'milk';
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        flush();
-      });
+      h.query('milk');
+      await vi.advanceTimersByTimeAsync(100);
+      await h.completed();
       const resultText = expectDefined(
         panel['el'].querySelector<HTMLElement>('.abyss-center-scroll'),
       ).textContent;
@@ -2338,8 +2413,7 @@ describe('CenterPanel.renderSearch', () => {
       expect(state.get('mode')).toBe('projects');
     } finally {
       router.destroy();
-      panel.destroy();
-      container.remove();
+      h.dispose();
     }
   });
 
@@ -2382,272 +2456,115 @@ describe('CenterPanel.renderSearch', () => {
     }
   });
 
-  it('renders matching task cards for a query', () => {
-    const tasks = [
-      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
-      task({ title: 'walk dog', source: { filePath: 'b.md', line: 0 } }),
-    ];
-    const state = new AppState();
-    state.set('mode', 'search');
-    state.set('searchQuery', 'milk');
-    const panel = makeStaticPanel(state, tasks);
-    panel.mount(freshContainer());
-    const cards = panel['el'].querySelectorAll('.abyss-task-card');
-    expect(cards).toHaveLength(1);
-    // Title renders via MarkdownRenderer (mocked as a noop in tests), so identity
-    // is asserted via the card's stable file-path/line dataset instead of title text.
-    expect(cards[0]?.querySelector('.abyss-task-title')).toBeTruthy();
-    expect((cards[0] as HTMLElement).dataset['filePath']).toBe('a.md');
-    expect((cards[0] as HTMLElement).dataset['line']).toBe('0');
-    panel.destroy();
-  });
-
-  it('searches the persisted query list without requesting calendar projections', () => {
-    const persisted = task({
-      title: 'forecast boundary needle',
-      recurrence: 'every day',
-      planning: { due: '2026-06-01' },
-      source: { filePath: 'persisted.md', line: 4 },
-    });
-    const source = {
-      root: persisted,
-      target: { type: 'task' as const, ref: persisted.ref },
-      node: persisted,
-    };
-    const list = vi.fn(() => [persisted]);
-    const forCalendarProjection = vi.fn(() => ({
-      materialized: [source],
-      recurringSources: [source],
-    }));
-    const queries = taskQueryApi({ list, forCalendarProjection });
-    const state = new AppState();
-    state.set('mode', 'search');
-    state.set('searchQuery', 'needle');
-    const panel = new CenterPanel({
-      state,
-      app: {} as App,
-      settings: DEFAULT_SETTINGS,
-      queries,
-      statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
-    });
-
-    panel.mount(freshContainer());
-
-    expect(panel['el'].querySelectorAll('.abyss-task-card')).toHaveLength(1);
-    expect(panel['el'].querySelector<HTMLElement>('.abyss-task-card')?.dataset['filePath']).toBe(
-      'persisted.md',
-    );
-    expect(list).toHaveBeenCalled();
-    expect(forCalendarProjection).not.toHaveBeenCalled();
-    panel.destroy();
-  });
-
-  it('keeps the live search input mounted and coalesces result refreshes into one frame', () => {
-    const tasks = [
-      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
-      task({ title: 'walk dog', source: { filePath: 'b.md', line: 0 } }),
-    ];
-    const state = new AppState();
-    state.set('mode', 'search');
-    const panel = makeStaticPanel(state, tasks);
-    const container = freshContainer();
-    document.body.append(container);
-    panel.mount(container);
-    const originalInput = expectDefined(
-      panel['el'].querySelector<HTMLInputElement>('.abyss-search-global'),
-    );
-    originalInput.focus();
-    const renderSpy = vi.spyOn(
-      panel as unknown as { render_abyssPrivate: () => void },
-      'render_abyssPrivate',
-    );
-    const renderFlatSpy = vi.spyOn(
-      panel as unknown as {
-        renderFlat_abyssPrivate: (host: HTMLElement, tasks: TaskSnapshot[]) => void;
+  it('renders canonical matches without calendar projection or full-list clones', async () => {
+    const h = await mountCanonicalSearchUi(
+      {
+        'persisted.md': '- [ ] forecast boundary needle 🔁 every day 📅 2026-06-01',
+        'other.md': '- [ ] walk dog',
       },
-      'renderFlat_abyssPrivate',
+      structuredClone(DEFAULT_SETTINGS),
     );
-
-    withQueuedAnimationFrames((flush) => {
-      originalInput.value = 'mil';
-      originalInput.dispatchEvent(new Event('input', { bubbles: true }));
-      originalInput.value = 'milk';
-      originalInput.dispatchEvent(new Event('input', { bubbles: true }));
-      flush();
-    });
-
-    expect(panel['el'].querySelector('.abyss-search-global')).toBe(originalInput);
-    expect(document.activeElement).toBe(originalInput);
-    expect(originalInput.value).toBe('milk');
-    expect(panel['el'].querySelectorAll('.abyss-task-card')).toHaveLength(1);
-    expect(renderSpy).not.toHaveBeenCalled();
-    expect(renderFlatSpy).toHaveBeenCalledTimes(1);
-    panel.destroy();
-    container.remove();
-  });
-
-  it('preserves the live search shell and coalesces task-index refreshes into one frame', () => {
-    const tasks = [
-      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
-      task({ title: 'walk dog', source: { filePath: 'b.md', line: 0 } }),
-    ];
-    const state = new AppState();
-    state.set('mode', 'search');
-    state.set('searchQuery', 'milk');
-    const panel = makeStaticPanel(state, tasks);
-    const container = freshContainer();
-    document.body.append(container);
-    panel.mount(container);
-    const originalInput = expectDefined(
-      panel['el'].querySelector<HTMLInputElement>('.abyss-search-global'),
-    );
-    originalInput.focus();
-    originalInput.setSelectionRange(1, 3);
-    const renderFlatSpy = vi.spyOn(
-      panel as unknown as {
-        renderFlat_abyssPrivate: (host: HTMLElement, tasks: TaskSnapshot[]) => void;
-      },
-      'renderFlat_abyssPrivate',
-    );
-
-    tasks.splice(
-      0,
-      tasks.length,
-      task({ title: 'walk dog', source: { filePath: 'b.md', line: 0 } }),
-      task({ title: 'milk delivery', source: { filePath: 'c.md', line: 0 } }),
-    );
-
-    withQueuedAnimationFrames((flush, callbacks) => {
-      panel.refresh();
-      panel.refresh();
-
-      expect(callbacks).toHaveLength(1);
-      expect(panel['el'].querySelector('.abyss-search-global')).toBe(originalInput);
-      expect(panel['el'].querySelector<HTMLElement>('.abyss-task-card')?.dataset['filePath']).toBe(
-        'a.md',
+    try {
+      const calendar = vi.spyOn(h.index, 'forCalendarProjection').mockImplementation(() => {
+        throw new Error('Calendar read');
+      });
+      vi.spyOn(h.index, 'list').mockImplementation(() => {
+        throw new Error('Full task read');
+      });
+      h.query('needle');
+      await vi.advanceTimersByTimeAsync(100);
+      await h.completed();
+      expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+      expect(h.root.querySelector<HTMLElement>('.abyss-task-card')?.dataset['filePath']).toBe(
+        'persisted.md',
       );
-      flush();
-    });
-
-    expect(panel['el'].querySelector('.abyss-search-global')).toBe(originalInput);
-    expect(document.activeElement).toBe(originalInput);
-    expect(originalInput.value).toBe('milk');
-    expect(originalInput.selectionStart).toBe(1);
-    expect(originalInput.selectionEnd).toBe(3);
-    expect(panel['el'].querySelectorAll('.abyss-task-card')).toHaveLength(1);
-    expect(panel['el'].querySelector<HTMLElement>('.abyss-task-card')?.dataset['filePath']).toBe(
-      'c.md',
+      expect(calendar).not.toHaveBeenCalled();
+    } finally {
+      h.dispose();
+    }
+  });
+  it('retains live input and coalesces query and organization refreshes with the owner debounce', async () => {
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': '- [ ] milk\n- [ ] dog' },
+      structuredClone(DEFAULT_SETTINGS),
     );
-    expect(renderFlatSpy).toHaveBeenCalledTimes(1);
-    panel.destroy();
-    container.remove();
+    try {
+      const input = expectDefined(h.root.querySelector<HTMLInputElement>('.abyss-search-global'));
+      const open = vi.spyOn(h.search, 'open');
+      h.query('m');
+      h.query('mil');
+      h.query('milk');
+      h.panel.refresh();
+      h.panel.refresh();
+      expect(h.root.dataset['searchPhase']).toBe('pending');
+      expect(open).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(100);
+      await h.completed();
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(h.root.querySelector('.abyss-search-global')).toBe(input);
+      h.index.installCommittedContent('a.md', '- [ ] milk changed');
+      await vi.advanceTimersByTimeAsync(100);
+      await h.completed();
+      expect(h.root.querySelector('.abyss-search-global')).toBe(input);
+      expect(h.root.textContent).toContain('milk changed');
+    } finally {
+      h.dispose();
+    }
   });
-
-  it('leaves a queued search refresh inert after changing modes', () => {
-    const state = new AppState();
-    state.set('mode', 'search');
-    const panel = makeStaticPanel(state, [
-      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
-    ]);
-    const container = freshContainer();
-    document.body.append(container);
-    panel.mount(container);
-    const input = expectDefined(
-      panel['el'].querySelector<HTMLInputElement>('.abyss-search-global'),
+  it.each(['mode', 'dispose'] as const)(
+    'cancels a queued query on %s replacement',
+    async (kind) => {
+      const h = await mountCanonicalSearchUi(
+        { 'a.md': '- [ ] milk' },
+        structuredClone(DEFAULT_SETTINGS),
+      );
+      const open = vi.spyOn(h.search, 'open');
+      h.query('milk');
+      if (kind === 'mode') h.state.set('mode', 'tasks');
+      else h.panel.destroy();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(open).not.toHaveBeenCalled();
+      expect(h.root.querySelector('.abyss-search-global')).toBeNull();
+      h.dispose();
+    },
+  );
+  it.each([
+    ['📅 2026-06-25', 'today'],
+    ['📅 2026-07-01', 'upcoming'],
+    ['', 'inbox'],
+  ] as const)('routes canonical activation with %s planning to %s', async (planning, want) => {
+    const h = await mountCanonicalSearchUi(
+      { 'a.md': `- [ ] buy milk ${planning}` },
+      structuredClone(DEFAULT_SETTINGS),
     );
-
-    withQueuedAnimationFrames((_flush, callbacks) => {
-      input.value = 'milk';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      expect(callbacks).toHaveLength(1);
-      const callback = expectDefined([...callbacks.values()][0]);
-      state.set('mode', 'projects');
-      expect(() => {
-        callback(0);
-      }).not.toThrow();
-    });
-
-    expect(panel['el'].querySelector('.abyss-search-global')).toBeNull();
-    expect(panel['el'].querySelectorAll('.abyss-task-card')).toHaveLength(0);
-    panel.destroy();
-    container.remove();
-  });
-
-  it('leaves a queued search refresh inert after destruction', () => {
-    const state = new AppState();
-    state.set('mode', 'search');
-    const panel = makeStaticPanel(state, [
-      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
-    ]);
-    const container = freshContainer();
-    document.body.append(container);
-    panel.mount(container);
-    const input = expectDefined(
-      panel['el'].querySelector<HTMLInputElement>('.abyss-search-global'),
-    );
-
-    withQueuedAnimationFrames((_flush, callbacks) => {
-      input.value = 'milk';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      expect(callbacks).toHaveLength(1);
-      const callback = expectDefined([...callbacks.values()][0]);
-      panel.destroy();
-      expect(() => {
-        callback(0);
-      }).not.toThrow();
-    });
-
-    expect(panel['el'].childElementCount).toBe(0);
-    container.remove();
-  });
-
-  it('clicking a result sets selectedList + mode + taskStack on state', () => {
-    const t = task({
-      title: 'buy milk',
-      planning: { due: '2026-06-25' },
-      source: { filePath: 'a.md', line: 0 },
-    });
-    const state = new AppState();
-    state.set('mode', 'search');
-    state.set('searchQuery', 'milk');
-    const panel = makeStaticPanel(state, [t]);
-    panel.mount(freshContainer());
-    const card = expectDefined(panel['el'].querySelector<HTMLElement>('.abyss-task-card'));
-    card.click();
-    expect(state.get('mode')).toBe('tasks');
-    expect(state.get('selectedList')).toBe('today');
-    const taskStack = state.get('taskStack');
-    expect(taskStack).toHaveLength(1);
-    const selected = expectDefined(taskStack[0]);
-    if (!('filePath' in selected.ref)) throw new Error('expected a root task selection');
-    expect(selected.ref.filePath).toBe(t.ref.filePath);
-    expect(selected.ref.line).toBe(t.ref.line);
-    expect(selected.title).toBe(t.title);
-    panel.destroy();
-  });
-
-  it('routes a daily-note-only search result to inbox', () => {
-    const t = task({ title: 'daily-only', presentation: {} });
-    const state = new AppState();
-    state.set('mode', 'search');
-    state.set('searchQuery', 'daily');
-    const panel = makeStaticPanel(state, [t]);
-    panel.mount(freshContainer());
-    expectDefined(panel['el'].querySelector<HTMLElement>('.abyss-task-card')).click();
-    expect(state.get('selectedList')).toBe('inbox');
-    panel.destroy();
+    try {
+      h.query('milk');
+      await vi.advanceTimersByTimeAsync(100);
+      await h.completed();
+      expectDefined(h.root.querySelector<HTMLElement>('.abyss-task-card')).click();
+      await vi.waitFor(() => {
+        expect(h.state.get('mode')).toBe('tasks');
+      });
+      await vi.advanceTimersByTimeAsync(100);
+      await h.completed();
+      expect(h.state.get('mode')).toBe('tasks');
+      expect(h.state.get('selectedList')).toBe(want);
+      expect(h.state.get('taskStack')[0]?.title).toBe('buy milk');
+    } finally {
+      h.dispose();
+    }
   });
 });
 
 describe('CenterPanel source note chip', () => {
   fixedToday('2026-06-25');
 
-  function makeSearchPanel(
+  function makeSourcePanel(
     tasks: TaskSnapshot[],
     settingsOverrides: Partial<typeof DEFAULT_SETTINGS> = {},
   ): CenterPanel {
     const state = new AppState();
-    state.set('mode', 'search');
+    state.set('selectedList', { type: 'project', path: tasks[0]?.source.filePath ?? 'a.md' });
     state.set('searchQuery', tasks[0]?.title ?? '');
     const panel = makeStaticPanel(state, tasks, {
       ...DEFAULT_SETTINGS,
@@ -2664,7 +2581,7 @@ describe('CenterPanel source note chip', () => {
       source: { filePath: 'periodic/daily/2026-06-25.md' },
       presentation: {},
     });
-    const panel = makeSearchPanel([t], { sourceNoteDisplay: 'always' });
+    const panel = makeSourcePanel([t], { sourceNoteDisplay: 'always' });
     expect(panel['el'].querySelector('.abyss-task-source-note')).not.toBeNull();
     panel.destroy();
   });
@@ -2676,7 +2593,7 @@ describe('CenterPanel source note chip', () => {
       planning: { due: '2026-06-25' },
       source: { filePath: 'Projects/alpha.md' },
     });
-    const panel = makeSearchPanel([t], { sourceNoteDisplay: 'never' });
+    const panel = makeSourcePanel([t], { sourceNoteDisplay: 'never' });
     expect(panel['el'].querySelector('.abyss-task-source-note')).toBeNull();
     panel.destroy();
   });
@@ -2687,7 +2604,7 @@ describe('CenterPanel source note chip', () => {
       planning: { due: '2026-06-25' },
       source: { filePath: 'Projects/alpha.md' },
     });
-    const panel = makeSearchPanel([t], { sourceNoteDisplay: 'non-default' });
+    const panel = makeSourcePanel([t], { sourceNoteDisplay: 'non-default' });
     const chip = panel['el'].querySelector('.abyss-task-source-note');
     expect(chip).not.toBeNull();
     expect(chip?.textContent).toContain('alpha');
@@ -2701,7 +2618,7 @@ describe('CenterPanel source note chip', () => {
       source: { filePath: 'periodic/daily/2026-06-25.md' },
       presentation: {},
     });
-    const panel = makeSearchPanel([t], { sourceNoteDisplay: 'non-default' });
+    const panel = makeSourcePanel([t], { sourceNoteDisplay: 'non-default' });
     expect(panel['el'].querySelector('.abyss-task-source-note')?.textContent).toContain(
       '2026-06-25',
     );
@@ -2719,7 +2636,7 @@ describe('CenterPanel source note chip', () => {
         originalBlock: '- [ ] project task #work',
       },
     });
-    const panel = makeSearchPanel([t], { sourceNoteDisplay: 'always' });
+    const panel = makeSourcePanel([t], { sourceNoteDisplay: 'always' });
     const meta = panel['el'].querySelector('.abyss-task-meta-right');
     expect(meta).not.toBeNull();
     const children = Array.from(expectDefined(meta).children);
@@ -2750,10 +2667,14 @@ describe('CenterPanel project selection', () => {
     const { panel, state, index } = await makePanel(files, DEFAULT_SETTINGS, seeds);
     const list = vi.spyOn(index, 'list');
     state.set('selectedList', { type: 'project', path: 'Projects/A.md' });
-    const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks') as TaskSnapshot[];
+    const tasks = call<TaskNodeSnapshot[]>(panel, 'getFilteredTasks') as TaskNodeSnapshot[];
     expect(list).toHaveBeenCalledWith({ filePath: 'Projects/A.md' });
     expect(tasks).toHaveLength(2);
-    expect(tasks.every((item) => item.source.filePath === 'Projects/A.md')).toBe(true);
+    expect(
+      tasks.every(
+        (item) => item.root.source.filePath === 'Projects/A.md' && item.target.type === 'task',
+      ),
+    ).toBe(true);
     expect(call<string>(panel, 'getTitle')).toBe('A');
   });
 
@@ -3229,7 +3150,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       const remounted = expectDefined(
         container.querySelector<HTMLInputElement>('.abyss-quick-capture-input'),
       );
-      expect(remounted).not.toBe(first);
+      expect(remounted).toBe(first);
       expect(activeDocument.activeElement).toBe(remounted);
       setCaptureDraft(remounted, 'second project task');
       pressCaptureKey(remounted, 'Enter');
@@ -3484,6 +3405,9 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const queries = queryApiForSnapshots(() => tasks);
     const listNodes = vi.fn(queries.listNodes.bind(queries));
     queries.listNodes = listNodes;
+    // Match the production compact tag port; count population and color reads independently.
+    const observedTags = vi.fn(() => tasks.flatMap((task) => task.tags));
+    queries.observedTags = observedTags;
     const state = new AppState();
     state.set('selectedList', 'today');
     const panel = new CenterPanel({
@@ -3506,8 +3430,9 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
 
     panel.mount(el);
 
-    expect(el.querySelectorAll('.abyss-task-card')).toHaveLength(tasks.length);
+    expect(el.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(100);
     expect(listNodes).toHaveBeenCalledTimes(1);
+    expect(observedTags).toHaveBeenCalledTimes(1);
     const firstTag = expectDefined(el.querySelector<HTMLElement>('.abyss-task-tag'));
     expect(firstTag.textContent).toBe('#work/client');
     expect(firstTag.classList.contains('abyss-task-tag--colored')).toBe(true);
@@ -3599,11 +3524,15 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
       ) {
         return this;
       });
-      panel['taskMenus_abyssPrivate'].showBulkContextMenu(
-        new MouseEvent('contextmenu'),
-        card,
-        tasks.slice(0, 2),
-      );
+      panel['taskMenus_abyssPrivate'].showBulkContextMenu(new MouseEvent('contextmenu'), card, {
+        signal: new AbortController().signal,
+        summaries: tasks.slice(0, 2),
+        resolve: async () =>
+          tasks.slice(0, 2).map((root) => ({
+            task: rootTaskNodeSnapshot(root),
+            completion: { kind: 'allowed' as const },
+          })),
+      });
       clickSetTag(expectDefined(shown.mock.instances[0]) as Menu);
       shown.mockRestore();
       expect(listNodes).toHaveBeenCalledTimes(1);
@@ -3649,7 +3578,10 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const state = new AppState();
     const panel = new CenterPanel({
       state,
-      app: {} as App,
+      app: {
+        scope: new Scope(),
+        keymap: { pushScope: vi.fn(), popScope: vi.fn() },
+      } as unknown as App,
       settings: DEFAULT_SETTINGS,
       queries,
       statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
@@ -3668,6 +3600,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     );
     const item = expectDefined(forecastBadge.parentElement);
     expect(item.getAttribute('draggable')).toBeNull();
+    expect(item.querySelector('.abyss-task-parent-btn')).toBeNull();
     item.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(state.get('taskStack')).toEqual([]);
     item.dispatchEvent(new MouseEvent('dragstart', { bubbles: true }));
@@ -3683,6 +3616,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     );
     const timedBlock = expectDefined(timedForecastBadge.closest<HTMLElement>('.abyss-tg-block'));
     expect(timedBlock.querySelector('.abyss-status-marker')).toBeNull();
+    expect(timedBlock.querySelector('.abyss-task-parent-btn')).toBeNull();
     expect(timedBlock.getAttribute('tabindex')).toBe('-1');
     expect(timedBlock.querySelector('[data-resize-edge]')).toBeNull();
     timedBlock.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -3694,6 +3628,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     );
     const spanBody = expectDefined(spanBadge.closest<HTMLElement>('.abyss-tg-body'));
     expect(spanBody.getAttribute('draggable')).toBeNull();
+    expect(spanBody.querySelector('.abyss-task-parent-btn')).toBeNull();
     expect(spanBody.querySelector('[data-resize-edge]')).toBeNull();
     spanBody.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(state.get('taskStack')).toEqual([]);
@@ -3820,7 +3755,10 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const state = new AppState();
     const panel = new CenterPanel({
       state,
-      app: {} as App,
+      app: {
+        scope: new Scope(),
+        keymap: { pushScope: vi.fn(), popScope: vi.fn() },
+      } as unknown as App,
       settings: DEFAULT_SETTINGS,
       queries,
       statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
@@ -3830,19 +3768,17 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     });
     const el = freshContainer();
     panel.mount(el);
-    const openModal = vi.spyOn(
-      (panel as unknown as { taskModal_abyssPrivate: { open(task: TaskSnapshot): void } })
-        .taskModal_abyssPrivate,
-      'open',
-    );
     setCalendarDate(panel, moment('2026-08-09'));
     state.set('mode', 'calendar');
 
     const item = el.querySelector<HTMLElement>('.abyss-mg-block-dot');
     expect(item).not.toBeNull();
-    expect(item?.getAttribute('draggable')).toBeNull();
+    expect(item?.getAttribute('draggable')).toBe('true');
     item?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    expect(openModal).not.toHaveBeenCalled();
+    expect(document.querySelector('.abyss-modal .abyss-right-title')?.textContent).toBe(
+      'Nested repeat',
+    );
+    panel['taskModal_abyssPrivate']?.close();
     const marker = item?.querySelector<HTMLElement>('.abyss-status-marker');
     marker?.click();
 
@@ -3856,7 +3792,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     expect(timedBlock.getAttribute('tabindex')).toBe('0');
     timedBlock.click();
     expect(state.get('taskStack')).toEqual([root, child]);
-    expect(timedBlock.querySelector('[data-resize-edge]')).toBeNull();
+    expect(timedBlock.querySelector('[data-resize-edge="duration"]')).not.toBeNull();
   });
 
   it('keeps direct RightPanel and modal completion on the same exact application target seam', async () => {
@@ -5054,7 +4990,10 @@ function forecastPanelFixture(): {
   const state = new AppState();
   const panel = new CenterPanel({
     state,
-    app: {} as App,
+    app: {
+      scope: new Scope(),
+      keymap: { pushScope: vi.fn(), popScope: vi.fn() },
+    } as unknown as App,
     settings: DEFAULT_SETTINGS,
     queries,
     statusRegistry: new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
@@ -5633,7 +5572,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
 
       const remounted = timedBlock(h.el);
       expect(remounted).not.toBe(block);
-      expect(foreignDocument.activeElement).toBe(remounted);
+      await vi.waitFor(() => {
+        expect(foreignDocument.activeElement).toBe(remounted);
+      });
     } finally {
       h.panel.destroy();
       iframe.remove();
@@ -6771,13 +6712,18 @@ describe('calendar child day gestures persist on the child', () => {
       });
       const root = expectDefined(h.index.list()[0]);
       const child = expectDefined(root.subtasks[0]);
-      const projected = taskSnapshotForCalendarOccurrence({
-        kind: 'materialized',
-        key: 'child',
-        source: { root, node: child, target: { type: 'subtask', ref: child.ref } },
-        planning: child.planning,
-        recurring: false,
-      });
+      const projected = taskSnapshotForCalendarOccurrence(
+        expectDefined(
+          projectCalendarOccurrences(
+            {
+              materialized: [{ root, node: child, target: { type: 'subtask', ref: child.ref } }],
+              recurringSources: [],
+            },
+            { from: localDate('2026-07-08'), to: localDate('2026-07-08') },
+            { removeScheduledDate: false },
+          ).occurrences[0],
+        ),
+      );
       await calendarCommand<Promise<void>>(h.panel, method, projected, target);
       const file = h.app.vault.getAbstractFileByPath('child.md');
       if (!(file instanceof TFile)) throw new Error('Missing fixture');
@@ -6867,6 +6813,40 @@ describe('CenterPanel actual centre focus continuity', () => {
       },
     };
   }
+  it.each([false, true])(
+    'retires selection for a recurring successor even with identical source (%s)',
+    async (identical) => {
+      const source = `- [ ] Repeat 🔁 every day 🏁 delete${identical ? ' ➕ 2026-10-02' : ' 📅 2026-10-02'}\n`;
+      const h = await makePanel(
+        { 'repeat.md': source },
+        { ...DEFAULT_SETTINGS, taskLifecycle: { addCreatedDate: false, addCompletionDate: false } },
+        [],
+        { authority: true },
+      );
+      const el = document.body.createDiv();
+      h.panel.mount(el);
+      h.state.set('selectedList', { type: 'project', path: 'repeat.md' });
+      try {
+        const card = expectDefined(el.querySelector<HTMLElement>('.abyss-task-card'));
+        card.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
+        expect(el.querySelectorAll('.abyss-multi-selected')).toHaveLength(1);
+        const original = expectDefined(h.index.list()[0]);
+        const result = await h.tasks.execute({
+          type: 'toggle-completion',
+          target: { type: 'task', ref: original.ref },
+        });
+        expect(result).toMatchObject({ type: 'ok', outcome: { type: 'recurrence' } });
+        expect(h.index.list()[0]?.ref.revision).not.toBe(original.ref.revision);
+        if (identical) expect(await readMd(h.app, 'repeat.md')).toBe(source);
+        h.panel.refresh();
+        await vi.advanceTimersByTimeAsync(25);
+        expect(el.querySelectorAll('.abyss-multi-selected')).toHaveLength(0);
+      } finally {
+        h.panel.destroy();
+        el.remove();
+      }
+    },
+  );
   it('returns menus and unrelated publications to Bob, then yields to native note focus', async () => {
     const h = await mounted(DEFAULT_SETTINGS, false, true);
     let menu: Menu | undefined;
@@ -6891,7 +6871,7 @@ describe('CenterPanel actual centre focus continuity', () => {
       await h.app.vault.process(file, (text) => text.replace('other #', 'other changed #'));
       await vi.advanceTimersByTimeAsync(25);
       const nextBob = expectDefined(h.cards()[1]);
-      expect(bob.isConnected).toBe(false);
+      expect(bob.isConnected).toBe(true);
       expect(document.activeElement).toBe(nextBob);
       nextBob.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       outside.focus();
@@ -6917,7 +6897,7 @@ describe('CenterPanel actual centre focus continuity', () => {
       await h.app.vault.process(f, (text) => text.replace('other #', 'other changed #'));
       await vi.advanceTimersByTimeAsync(25);
       expect(expectDefined(h.index.list()[0]).ref).toEqual(ref);
-      expect(old.isConnected).toBe(false);
+      expect(old.isConnected).toBe(true);
       const live = expectDefined(h.cards()[0]);
       expect(document.activeElement).toBe(live);
       live.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
@@ -6945,6 +6925,84 @@ describe('CenterPanel actual centre focus continuity', () => {
       h.cleanup();
     }
   });
+  it.each(['return', 'outside', 'row-retired'] as const)(
+    'keeps asynchronous bulk context-menu focus ownership through %s',
+    async (disposition) => {
+      const h = await mounted();
+      const pending = deferred<void>(),
+        entered = deferred<void>();
+      const targets = h.panel['taskMenuTargets_abyssPrivate'].bind(h.panel);
+      vi.spyOn(h.panel, 'taskMenuTargets_abyssPrivate').mockImplementation(() => {
+        const current = targets();
+        return {
+          ...current,
+          resolve: async (signal: AbortSignal) => {
+            entered.resolve();
+            await pending.promise;
+            return current.resolve(signal);
+          },
+        };
+      });
+      let menu: Menu | undefined;
+      const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+        this: Menu,
+      ) {
+        menu = this.setParentElement(document.body);
+        return this;
+      });
+      const outside = document.body.createEl('input');
+      const execute = vi.spyOn(h.tasks, 'execute');
+      try {
+        const [first, second] = h.cards();
+        expectDefined(first).dispatchEvent(
+          new MouseEvent('click', { bubbles: true, metaKey: true }),
+        );
+        expectDefined(second).dispatchEvent(
+          new MouseEvent('click', { bubbles: true, metaKey: true }),
+        );
+        const opener = expectDefined(second);
+        opener.focus();
+        opener.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        opener.blur();
+        const items = (
+          expectDefined(menu) as unknown as {
+            menuItems__: Array<{ title__: string; onClick__: (event: MouseEvent) => void }>;
+          }
+        ).menuItems__;
+        expectDefined(items.find((item) => item.title__ === 'Tomorrow')).onClick__(
+          new MouseEvent('click'),
+        );
+        await entered.promise;
+        expectDefined(menu).hide();
+        expect(execute).not.toHaveBeenCalled();
+        expect(document.activeElement).toBe(document.body);
+        if (disposition === 'outside') outside.focus();
+        if (disposition === 'row-retired') {
+          h.index.installCommittedContent('focus.md', '- [ ] other #task/inbox');
+          await vi.advanceTimersByTimeAsync(25);
+          expect(opener.isConnected).toBe(false);
+        }
+        pending.resolve();
+        await vi.advanceTimersByTimeAsync(25);
+        if (disposition === 'row-retired') {
+          expect(execute).not.toHaveBeenCalled();
+          expect(document.activeElement).toBe(document.body);
+        } else {
+          expect(await readMd(h.app, 'focus.md')).toBe(
+            h.before.replaceAll('📅 2026-10-02', '📅 2026-10-03'),
+          );
+          const live = expectDefined(h.cards().find((card) => card.textContent.includes('second')));
+          expect(document.activeElement).toBe(disposition === 'outside' ? outside : live);
+        }
+      } finally {
+        pending.resolve();
+        outside.remove();
+        show.mockRestore();
+        h.cleanup();
+      }
+    },
+  );
+
   it('returns actual bulk Tomorrow only to the original second opener successor', async () => {
     const h = await mounted();
     let menu: Menu | undefined;
@@ -7036,7 +7094,7 @@ describe('CenterPanel actual centre focus continuity', () => {
               patch: { tags: remove ? { remove: ['#work'] } : { add: ['#work'] } },
             })),
           );
-          expect(opener.isConnected).toBe(false);
+          expect(opener.isConnected).toBe(true);
           expect(document.activeElement).toBe(h.cards()[openerIndex]);
           expect(h.state.get('taskStack')[0]?.ref).toEqual(inspectorRef);
           expect(h.el.querySelectorAll('.abyss-multi-selected')).toHaveLength(2);
@@ -7124,7 +7182,7 @@ describe('CenterPanel actual centre focus continuity', () => {
             ? '- [ ] first #task/inbox 📅 2026-10-02'
             : '- [ ] first #task/inbox #work 📅 2026-10-02';
         const secondLine =
-          disposition === 'other-failed'
+          disposition !== 'outside'
             ? '- [ ] second #task/inbox 📅 2026-10-02'
             : '- [ ] second #task/inbox #work 📅 2026-10-02';
         expect(await readMd(h.app, 'focus.md')).toBe(
@@ -7145,26 +7203,34 @@ describe('CenterPanel actual centre focus continuity', () => {
 
   it('reveals the exact Search destination after list and stack navigation without acquiring focus', async () => {
     const h = await mounted();
-    const reveal = vi.fn();
-    const render = vi.spyOn(h.panel, 'refresh');
-    // Mounted card hook observes the real destination scroll primitive, not a private reveal call.
-    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
-    HTMLElement.prototype.scrollIntoView = reveal;
+    const reveal = vi.spyOn(TaskListSurface.prototype, 'reveal');
+    const rect = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        let height = 900;
+        if (this.classList.contains('abyss-task-card')) height = 64;
+        if (this.classList.contains('abyss-group-header')) height = 32;
+        return new DOMRect(0, 0, 700, height);
+      });
     try {
       h.state.set('searchQuery', 'first');
       h.state.set('mode', 'search');
-      await vi.advanceTimersByTimeAsync(25);
+      await vi.advanceTimersByTimeAsync(100);
+      await searchUiCompleted(h.el);
       expectDefined(h.el.querySelector<HTMLElement>('.abyss-task-title')).click();
+      await vi.advanceTimersByTimeAsync(100);
+      await searchUiCompleted(h.el);
       expect(h.state.get('mode')).toBe('tasks');
       expect(h.state.get('selectedList')).toBe('today');
       expect(h.state.get('taskStack')[0]).toEqual(h.index.list()[0]);
-      expect(reveal).toHaveBeenCalledWith({ block: 'nearest' });
+      const surface = expectDefined(h.panel['taskSurface_abyssPrivate']);
+      const key = expectDefined(surface.search?.order.firstOccurrenceOf('focus.md:0'));
+      expect(reveal).toHaveBeenCalledWith(key, { waitForReady: true });
+      expect(surface.surface.element(key)?.classList.contains('is-search-revealed')).toBe(true);
       expect(document.activeElement).not.toBe(h.cards()[0]);
     } finally {
-      if (original != null)
-        Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', original);
-      else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
-      render.mockRestore();
+      rect.mockRestore();
+      reveal.mockRestore();
       h.cleanup();
     }
   });
@@ -7316,4 +7382,1155 @@ it('Statistics evidence property chips explicitly enter Tasks before changing ta
   expect(state.get('mode')).toBe('tasks');
   expect(state.get('centerListViewState').filters).toContainEqual({ type: 'tag', value: '#work' });
   panel.destroy();
+});
+
+describe('calendar native exact-node drag authority', () => {
+  it.each([false, true].flatMap((child) => ['date', 'time'].map((lane) => ({ child, lane }))))(
+    'retains native $lane drops for child=$child',
+    async ({ child, lane }) => {
+      const header = '- [ ] Start only 🛫 2026-10-08';
+      const original = child ? `- [ ] Parent\n  ${header}\n` : `${header}\n`;
+      const h = await makePanel({ 'native.md': original });
+      h.state.set('mode', 'calendar');
+      setCalendarViewType(h.panel, 'week');
+      setCalendarDate(h.panel, moment('2026-10-08'));
+      const container = freshContainer();
+      h.panel.mount(container);
+      const chip = expectDefined(
+        [...container.querySelectorAll<HTMLElement>('.abyss-tg-plain')].find((item) =>
+          item.textContent.includes('Start only'),
+        ),
+      );
+      expect(chip.getAttribute('draggable')).toBe('true');
+      let serialized = '';
+      const transfer = {
+        setData: (_format: string, text: string) => {
+          serialized = text;
+        },
+        getData: () => serialized,
+        effectAllowed: '',
+      };
+      const start = new MouseEvent('dragstart', { bubbles: true, cancelable: true });
+      Object.defineProperty(start, 'dataTransfer', { value: transfer });
+      chip.dispatchEvent(start);
+      const payload = expectDefined(h.state.get('draggingTaskNode'));
+      expect(payload.task.target.type).toBe(child ? 'subtask' : 'task');
+      expect(serialized.startsWith('abyss-calendar:')).toBe(true);
+      const selector =
+        lane === 'time'
+          ? '.abyss-tg-day-column[data-tg-date="2026-10-09"] .abyss-tg-hour-column'
+          : '.abyss-tg-allday-cell[data-tg-date="2026-10-09"]';
+      const destination = expectDefined(container.querySelector<HTMLElement>(selector));
+      const drop = new MouseEvent('drop', { bubbles: true, cancelable: true, clientY: 432 });
+      Object.defineProperty(drop, 'dataTransfer', { value: transfer });
+      destination.dispatchEvent(drop);
+      const file = h.app.vault.getAbstractFileByPath('native.md');
+      if (!(file instanceof TFile)) throw new Error('missing native fixture');
+      const expected =
+        lane === 'time'
+          ? original.replace('Start only 🛫 2026-10-08', 'Start only ⏰ 09:00 🛫 2026-10-09')
+          : original.replace('2026-10-08', '2026-10-09');
+      await vi.waitFor(async () => {
+        expect(await h.app.vault.read(file)).toBe(expected);
+      });
+      expect(h.state.get('draggingTaskNode')).toBeNull();
+      h.panel.destroy();
+      container.remove();
+    },
+  );
+});
+
+describe('default empty-query indexed Upcoming', () => {
+  fixedToday('2026-10-06');
+  it('uses canonical browse and retains shell owners through filter clear and Date/None changes', async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 6, 12));
+    const h = await makePanel({ 'daily.md': '- [ ] Range 🛫 2026-10-07 📅 2026-10-09' });
+    const el = document.body.createDiv();
+    h.state.set('selectedList', 'upcoming');
+    h.panel.mount(el);
+    try {
+      await searchUiCompleted(el);
+      const filter = el.querySelector('.abyss-center-search');
+      const view = el.querySelector('.abyss-view-state-btn');
+      const add = el.querySelector('.abyss-add-task-bar');
+      expect(el.querySelectorAll('.abyss-group-header')).toHaveLength(3);
+      expect(el.querySelectorAll('.abyss-task-card')).toHaveLength(3);
+      expect(el.getAttribute('data-search-logical-results')).toBe('1');
+      h.state.set('centerFilter', 'Range');
+      await searchUiCompleted(el);
+      h.state.set('centerFilter', '');
+      await searchUiCompleted(el);
+      expect(el.querySelectorAll('.abyss-task-card')).toHaveLength(3);
+      expectDefined(el.querySelectorAll<HTMLElement>('.abyss-task-card')[1]).dispatchEvent(
+        new MouseEvent('click', { bubbles: true, metaKey: true }),
+      );
+      expect(el.querySelectorAll('.abyss-multi-selected')).toHaveLength(1);
+      h.state.set('centerListViewState', {
+        ...h.state.get('centerListViewState'),
+        groupBy: 'none',
+      });
+      await flushMicrotasks();
+      expect(el.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+      expect(el.querySelectorAll('.abyss-multi-selected')).toHaveLength(0);
+      h.state.set('centerListViewState', {
+        ...h.state.get('centerListViewState'),
+        groupBy: 'date',
+      });
+      await searchUiCompleted(el);
+      expect(el.querySelectorAll('.abyss-task-card')).toHaveLength(3);
+      expect(el.querySelector('.abyss-center-search')).toBe(filter);
+      expect(el.querySelector('.abyss-view-state-btn')).toBe(view);
+      expect(el.querySelector('.abyss-add-task-bar')).toBe(add);
+    } finally {
+      h.panel.destroy();
+      el.remove();
+    }
+  });
+  it('mounts a bounded first window from the complete domain and reaches its last task', async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 6, 12));
+    const h = await makePanel({ 'full.md': '- [ ] All 🛫 0000-01-01 📅 9999-12-31' });
+    const hydrate = vi.spyOn(h.index, 'resolveSearchHits');
+    const updates = vi.spyOn(TaskListSurface.prototype, 'update');
+    const el = document.body.createDiv();
+    prepareTaskPanelViewport(el, true);
+    h.state.set('selectedList', 'upcoming');
+    h.panel.mount(el);
+    try {
+      await searchUiCompleted(el);
+      const order = expectDefined(updates.mock.lastCall?.[0]);
+      expect(order.taskCount).toBeGreaterThan(2_900_000);
+      expect(order.rowCount).toBe(order.taskCount * 2);
+      expect(order.anchorRanges()).toHaveLength(2);
+      expect(el.querySelectorAll('.abyss-task-card').length).toBeLessThan(100);
+      expect(hydrate.mock.calls.flatMap(([hits]) => hits).length).toBeLessThan(100);
+      const key = expectDefined(order.taskKeyAt(order.taskCount - 1));
+      expect(key).toContain('9999-12-31');
+      expect(order.rowIndexOf(key)).toBe(order.rowCount - 1);
+      expect(updates.mock.lastCall?.[1].indexedHeights).toEqual({ group: 32, task: 64 });
+      const file = expectDefined(h.app.vault.getFileByPath('full.md'));
+      expect(await h.app.vault.read(file)).toBe('- [ ] All 🛫 0000-01-01 📅 9999-12-31');
+      const surface = expectDefined(h.panel['taskSurface_abyssPrivate']).surface;
+      surface.reveal(key);
+      await vi.waitFor(() => {
+        expect(surface.element(key)?.textContent).toContain('All');
+      });
+      const selection = h.panel['rowSelection_abyssPrivate'];
+      const press = (value: string, options: KeyboardEventInit = {}): void => {
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: value, bubbles: true, ...options }));
+      };
+      press('Home');
+      expect(selection.focus).toBe(order.taskKeyAt(0));
+      press('ArrowDown');
+      expect(selection.focus).toBe(order.taskKeyAt(1));
+      press('ArrowUp');
+      expect(selection.focus).toBe(order.taskKeyAt(0));
+      press('End', { shiftKey: true });
+      expect(selection.focus).toBe(key);
+      expect(selection.size).toBe(order.taskCount);
+      expect(selection.selectedNodes(order)).toHaveLength(1);
+      expect(selection.selectedNodes(order)[0]?.completion.kind).toBe('allowed');
+      press('Home');
+      press('a', { metaKey: true });
+      expect(selection.size).toBe(order.taskCount);
+      const targets = h.panel['taskMenuTargets_abyssPrivate']();
+      expect(targets.summaries).toHaveLength(1);
+      const selected = await targets.resolve(targets.signal);
+      expect(selected).toHaveLength(1);
+      const execute = vi.spyOn(h.tasks, 'execute');
+      await taskCommandsOf(h.panel).setBulkTaskStatus(selected, 'x');
+      expect(execute.mock.calls.filter(([command]) => command.type === 'set-status')).toHaveLength(
+        1,
+      );
+      expect(await h.app.vault.read(file)).toContain('- [x] All');
+      expect(await h.app.vault.read(file)).toContain('🛫 0000-01-01 📅 9999-12-31');
+      expect(el.querySelectorAll('.abyss-task-card').length).toBeLessThan(100);
+      expect(hydrate.mock.calls.flatMap(([hits]) => hits).length).toBeLessThan(200);
+    } finally {
+      h.panel.destroy();
+      el.remove();
+    }
+  });
+});
+
+describe('central task contextmenu lifecycle', () => {
+  it('restores card focus without taking outside focus and retires listeners on remount', () => {
+    const addItem = methodOf(Menu.prototype, 'addItem');
+    const add = vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, cb) {
+      return addItem.call(this, (item) => {
+        (item as unknown as { dom: HTMLElement }).dom = createDiv();
+        cb(item);
+      });
+    });
+    let menu: Menu | undefined;
+    const surfaces: HTMLElement[] = [];
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+      this: Menu,
+    ) {
+      menu = this.setParentElement(document.body);
+      const surface = (this as unknown as { dom: HTMLElement }).dom;
+      surface.addClass('menu');
+      surface.createDiv({ cls: 'menu-item', text: 'First action' });
+      document.body.append(surface);
+      surfaces.push(surface);
+      return this;
+    });
+    const state = new AppState();
+    state.set('selectedList', { type: 'project', path: 'f.md' });
+    const panel = makeStaticPanel(
+      state,
+      [task({ tags: ['#Work'] })],
+      structuredClone(DEFAULT_SETTINGS),
+    );
+    const root = document.body.createDiv();
+    panel.mount(root);
+    const single = vi.spyOn(panel['taskMenus_abyssPrivate'], 'createTaskContextMenu');
+    try {
+      const card = expectDefined(root.querySelector<HTMLElement>('.abyss-task-card'));
+      const openMenu = (opener: HTMLElement) =>
+        opener.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      card.focus();
+      openMenu(card);
+      expect(single).toHaveBeenCalledTimes(1);
+      expect(state.get('taskStack')).toEqual([]);
+      expect(panel['rowSelection_abyssPrivate'].size).toBe(0);
+      expectDefined(menu).hide();
+      expect(document.activeElement).toBe(card);
+      const outside = document.body.createEl('input');
+      openMenu(card);
+      outside.focus();
+      expectDefined(menu).hide();
+      expect(document.activeElement).toBe(outside);
+      outside.remove();
+      panel.destroy();
+      const remount = document.body.createDiv();
+      panel.mount(remount);
+      openMenu(card);
+      expect(single).toHaveBeenCalledTimes(2);
+      const retired = expectDefined(remount.querySelector<HTMLElement>('.abyss-task-card'));
+      openMenu(retired);
+      expect(single).toHaveBeenCalledTimes(3);
+      expectDefined(menu).hide();
+      panel.destroy();
+      openMenu(retired);
+      expect(single).toHaveBeenCalledTimes(3);
+      remount.remove();
+    } finally {
+      panel.destroy();
+      root.remove();
+      add.mockRestore();
+      show.mockRestore();
+      for (const surface of surfaces) surface.remove();
+    }
+  });
+});
+
+it('central contextmenu preserves exact child menu authority, marker guards and the selected bulk route', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2026, 9, 8, 12));
+  const addItem = methodOf(Menu.prototype, 'addItem');
+  const add = vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, cb) {
+    return addItem.call(this, (item) => {
+      (item as unknown as { dom: HTMLElement }).dom = createDiv();
+      cb(item);
+    });
+  });
+  let menu: Menu | undefined;
+  const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+    this: Menu,
+  ) {
+    menu = this.setParentElement(document.body);
+    return this;
+  });
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const h = await mountCanonicalSearchUi(
+    {
+      'a.md':
+        '- [ ] Parent #parent 🛫 2026-10-07 📅 2026-10-09\n  - [ ] Child #child 🛫 2026-10-07 📅 2026-10-09',
+    },
+    settings,
+    'tasks',
+  );
+  const single = vi.spyOn(h.panel['taskMenus_abyssPrivate'], 'createTaskContextMenu');
+  const bulk = vi.spyOn(h.panel['taskMenus_abyssPrivate'], 'showBulkContextMenu');
+  const execute = vi.spyOn(h.tasks, 'execute');
+  try {
+    h.state.set('selectedList', 'today');
+    await vi.waitFor(() => {
+      expect(h.root.querySelectorAll('.abyss-task-card')).toHaveLength(2);
+    });
+    const cards = [...h.root.querySelectorAll<HTMLElement>('.abyss-task-card')];
+    const child = expectDefined(cards.find((card) => card.dataset['line'] === '1'));
+    child.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(single.mock.lastCall?.[1]).toMatchObject({
+      target: { type: 'subtask' },
+      node: { title: 'Child', tags: ['#child'] },
+    });
+    expect(child.querySelector('[role=checkbox]')?.getAttribute('aria-disabled')).toBe('true');
+    const items = (
+      expectDefined(menu) as unknown as {
+        menuItems__: Array<{ title__: string; disabled: boolean }>;
+      }
+    ).menuItems__;
+    expect(items.find((item) => item.title__ === 'Status')?.disabled).toBe(false);
+    expect(items.find((item) => item.title__.startsWith('Archive'))?.disabled).toBe(true);
+    expectDefined(menu).hide();
+    expectDefined(child.querySelector<HTMLElement>('[role=checkbox]')).click();
+    expect(execute).not.toHaveBeenCalled();
+    for (const card of cards)
+      card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    const selected = h.panel['rowSelection_abyssPrivate'].size;
+    const selection = vi.spyOn(h.panel, 'handleTaskCardClick_abyssPrivate');
+    expect(selected).toBe(2);
+    child.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(bulk).toHaveBeenCalledTimes(1);
+    expect(single).toHaveBeenCalledTimes(1);
+    expect(selection).not.toHaveBeenCalled();
+    expect(h.panel['rowSelection_abyssPrivate'].size).toBe(selected);
+    expectDefined(menu).hide();
+  } finally {
+    h.dispose();
+    add.mockRestore();
+    show.mockRestore();
+  }
+});
+
+describe('CenterPanel finite source occurrence replacement', () => {
+  fixedToday('2026-10-02');
+  async function mounted(before: string, outgoing = false) {
+    const h = await makePanel({ 'identity.md': before }, structuredClone(DEFAULT_SETTINGS), [], {
+      authority: true,
+    });
+    const el = document.body.createDiv();
+    prepareTaskPanelViewport(el);
+    h.panel.mount(el);
+    h.state.set('selectedList', 'today');
+    h.state.set('centerListViewState', {
+      ...h.state.get('centerListViewState'),
+      groupBy: outgoing ? 'outgoing-link' : 'none',
+    });
+    const off = h.index.subscribe(() => {
+      h.panel.refresh();
+    });
+    const file = h.app.vault.getAbstractFileByPath('identity.md');
+    if (!(file instanceof TFile)) throw new Error('Missing finite identity fixture');
+    await vi.advanceTimersByTimeAsync(25);
+    return {
+      ...h,
+      el,
+      cards: (line: number) => [
+        ...el.querySelectorAll<HTMLElement>(`.abyss-task-card[data-line="${line}"]`),
+      ],
+      replace: async (content: string) => {
+        await h.app.vault.modify(file, content);
+        h.index.installCommittedContent(file.path, content);
+        await vi.advanceTimersByTimeAsync(25);
+      },
+      cleanup: () => {
+        off();
+        h.panel.destroy();
+        el.remove();
+      },
+    };
+  }
+  const subject = '- [ ] Same [[A]] [[B]] ⏳ 2026-10-02';
+  const neighbor = '- [ ] Neighbor ⏳ 2026-10-02';
+  it.each([
+    {
+      name: 'child to root',
+      before: ['- [ ] Parent', `  ${subject}`, neighbor],
+      after: ['- [ ] Parent', subject, neighbor],
+      line: 1,
+      neighborLine: 2,
+      outgoing: false,
+    },
+    {
+      name: 'root to child',
+      before: ['- [ ] Parent', subject, neighbor],
+      after: ['- [ ] Parent', `  ${subject}`, neighbor],
+      line: 1,
+      neighborLine: 2,
+      outgoing: false,
+    },
+    {
+      name: 'changed child ancestry',
+      before: ['- [ ] Outer', '  - [ ] Middle', `    ${subject}`, neighbor],
+      after: ['- [ ] Outer', '- [ ] Middle', `  ${subject}`, neighbor],
+      line: 2,
+      neighborLine: 3,
+      outgoing: false,
+    },
+    {
+      name: 'duplicate outgoing child to root',
+      before: ['- [ ] Parent', `  ${subject}`, neighbor],
+      after: ['- [ ] Parent', subject, neighbor],
+      line: 1,
+      neighborLine: 2,
+      outgoing: true,
+    },
+  ])('retires exact finite ownership on $name at the same physical key', async (fixture) => {
+    const before = `${fixture.before.join('\n')}\n`;
+    const after = `${fixture.after.join('\n')}\n`;
+    const render = vi
+      .spyOn(MarkdownRenderer, 'render')
+      .mockImplementation(async (_app, text, holder) => {
+        holder.setText(text);
+      });
+    const h = await mounted(before, fixture.outgoing);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const execute = vi.spyOn(h.tasks, 'execute');
+    try {
+      const old = h.cards(fixture.line);
+      expect(old).toHaveLength(fixture.outgoing ? 2 : 1);
+      const frames = old.map((card) => card.parentElement);
+      const oldControls = old.flatMap((card) => [
+        ...card.querySelectorAll<HTMLElement>('.abyss-task-parent-btn, [role="checkbox"]'),
+      ]);
+      const untouched = expectDefined(h.cards(fixture.neighborLine)[0]);
+      const untouchedControl = untouched.querySelector('[role="checkbox"]');
+      old[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
+      await h.replace(after);
+      expect(errors).not.toHaveBeenCalled();
+      const live = h.cards(fixture.line);
+      expect(live).toHaveLength(old.length);
+      expect(live.map((card) => card.parentElement)).toEqual(frames);
+      expect(h.cards(fixture.neighborLine)[0]).toBe(untouched);
+      expect(untouched.querySelector('[role="checkbox"]')).toBe(untouchedControl);
+      expect(h.el.querySelectorAll('.abyss-multi-selected')).toHaveLength(0);
+      expect(live.every((card) => card.textContent.includes('Same'))).toBe(true);
+      for (const control of oldControls) {
+        expect(control.isConnected).toBe(false);
+        control.click();
+        control.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      }
+      await vi.advanceTimersByTimeAsync(25);
+      expect(execute).not.toHaveBeenCalled();
+      expect(h.el.querySelector('.abyss-status-popover')).toBeNull();
+      expect(h.el.querySelector('.abyss-search-revealed')).toBeNull();
+      const current = expectDefined(
+        h.index.listNodes().find((node) => node.node.title.startsWith('Same')),
+      );
+      expectDefined(live[0]?.querySelector<HTMLElement>('[role="checkbox"]')).click();
+      await vi.advanceTimersByTimeAsync(25);
+      expect(execute).toHaveBeenCalledExactlyOnceWith({
+        type: 'toggle-completion',
+        target: current.target,
+      });
+      expect(
+        h.index.listNodes().find((node) => node.node.title.startsWith('Same'))?.node.status,
+      ).toBe('done');
+      expect(await readMd(h.app, 'identity.md')).toContain(neighbor);
+    } finally {
+      h.cleanup();
+      render.mockRestore();
+      errors.mockRestore();
+    }
+  });
+
+  it('retains same-node metadata controls, focus, holder and neighboring frame', async () => {
+    const before = ['- [ ] Parent', `  ${subject}`, neighbor, ''].join('\n');
+    const h = await mounted(before);
+    try {
+      const card = expectDefined(h.cards(1)[0]);
+      const frame = card.parentElement;
+      const marker = expectDefined(card.querySelector<HTMLElement>('[role="checkbox"]'));
+      const other = expectDefined(h.cards(2)[0]);
+      const otherFrame = other.parentElement;
+      const updated = before.replace('Same [[A]]', 'Same ⏫ [[A]]');
+      await h.replace(updated);
+      marker.focus();
+      expect(document.activeElement).toBe(marker);
+      await h.replace(updated.replace('Neighbor ⏳', 'Neighbor updated ⏳'));
+      expect(h.cards(1)[0]).toBe(card);
+      expect(card.parentElement).toBe(frame);
+      expect(card.querySelector('[role="checkbox"]')).toBe(marker);
+      expect(document.activeElement).toBe(marker);
+      expect(marker.getAttribute('data-priority')).toBe('B');
+      expect(h.cards(2)[0]).toBe(other);
+      expect(other.parentElement).toBe(otherFrame);
+    } finally {
+      h.cleanup();
+    }
+  });
+  it('cancels the replaced card receipt before late Markdown can settle its holder', async () => {
+    const oldText = deferred<void>();
+    const newText = deferred<void>();
+    let calls = 0;
+    const render = vi
+      .spyOn(MarkdownRenderer, 'render')
+      .mockImplementation(async (_app, text, holder) => {
+        holder.setText(text);
+        if (text !== '**Same**') return;
+        if (++calls === 1) {
+          await oldText.promise;
+          holder.setText('Obsolete text');
+          throw new Error('retired source Markdown');
+        }
+        await newText.promise;
+      });
+    const before = `- [ ] Parent\n  - [ ] **Same** ⏳ 2026-10-02\n${neighbor}\n`;
+    const h = await mounted(before);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const card = expectDefined(h.cards(1)[0]);
+      const previous = expectDefined(h.panel['ordinaryCards_abyssPrivate'].get('identity.md:1'));
+      const oldReceipt = previous.settled;
+      await h.replace(before.replace('  - [ ] **Same**', '- [ ] **Same**'));
+      expect(errors).not.toHaveBeenCalled();
+      const current = expectDefined(h.panel['ordinaryCards_abyssPrivate'].get('identity.md:1'));
+      expect(current).not.toBe(previous);
+      expect(current.element).toBe(card);
+      expect(await oldReceipt).toEqual({ type: 'cancelled' });
+      let settled = false;
+      void current.settled.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      oldText.resolve();
+      await vi.advanceTimersByTimeAsync(25);
+      expect(settled).toBe(false);
+      expect(card.textContent).not.toContain('Obsolete text');
+      expect(errors).not.toHaveBeenCalled();
+      newText.resolve();
+      expect(await current.settled).toEqual({ type: 'ready' });
+    } finally {
+      oldText.resolve();
+      newText.resolve();
+      h.cleanup();
+      render.mockRestore();
+      errors.mockRestore();
+    }
+  });
+
+  it('retires an open grouped context-menu pin and its focus return on identity replacement', async () => {
+    const before = ['- [ ] Parent', `  ${subject}`, neighbor, ''].join('\n');
+    const h = await mounted(before, true);
+    const addItem = methodOf(Menu.prototype, 'addItem');
+    const add = vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, cb) {
+      return addItem.call(this, (item) => {
+        (item as unknown as { dom: HTMLElement }).dom = createDiv();
+        cb(item);
+      });
+    });
+    let menu: Menu | undefined;
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+      this: Menu,
+    ) {
+      menu = this.setParentElement(document.body);
+      return this;
+    });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const card = expectDefined(h.cards(1)[1]);
+      const marker = expectDefined(card.querySelector<HTMLElement>('[role="checkbox"]'));
+      marker.focus();
+      card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const hide = vi.spyOn(expectDefined(menu), 'hide');
+      expect(h.panel['taskInteractionPins_abyssPrivate'].size).toBe(1);
+      await h.replace(before.replace(`  ${subject}`, subject));
+      expect(errors).not.toHaveBeenCalled();
+      expect(hide).toHaveBeenCalledOnce();
+      expect(h.panel['taskInteractionPins_abyssPrivate'].size).toBe(0);
+      expect(marker.isConnected).toBe(false);
+      expect(document.activeElement).not.toBe(marker);
+      expect(document.activeElement).not.toBe(card);
+      expect(h.cards(1)).toHaveLength(2);
+      expect(h.cards(1).every((row) => row.querySelector('.abyss-task-parent-btn') === null)).toBe(
+        true,
+      );
+    } finally {
+      h.cleanup();
+      show.mockRestore();
+      add.mockRestore();
+      errors.mockRestore();
+    }
+  });
+});
+
+describe('calendar child inspector and parent navigation', () => {
+  fixedToday('2026-10-08');
+  const variants = [
+    ['Day', '⏳ 2026-10-08 ⏰ 09:00', '.abyss-tg-block'],
+    ['Week', '🛫 2026-10-08 📅 2026-10-09 ⏰ 09:00', '.abyss-tg-block-continuation'],
+    [
+      'Week',
+      '🛫 2026-10-07 📅 2026-10-08 ⏰ 09:00',
+      '.abyss-tg-block:not(.abyss-tg-block-continuation)',
+    ],
+    ['Day', '⏳ 2026-10-08', '.abyss-tg-body'],
+    ['Day', '⏳ 2026-10-07 📅 2026-10-08', '.abyss-tg-deadline-marker'],
+    ['Week', '🛫 2026-10-08 📅 2026-10-10', '.abyss-tg-body'],
+    ['Month', '⏳ 2026-10-08', '.abyss-mg-plain'],
+    ['Month', '⏳ 2026-10-08 ⏰ 09:00', '.abyss-mg-block-dot'],
+    ['Month', '⏳ 2026-10-07 📅 2026-10-08', '.abyss-mg-deadline-marker'],
+    ['Month', '🛫 2026-10-08 📅 2026-10-12', '.abyss-tg-body'],
+  ] as const;
+
+  async function mounted(planning: string, view: CalendarViewLabel, extra = '') {
+    const h = await makePanel(
+      {
+        'calendar-child.md': `- [ ] Root\n  - [ ] Parent\n    - [/] Child ${planning}\n    - [ ] Child\n${extra}`,
+      },
+      DEFAULT_SETTINGS,
+      [],
+      { authority: true },
+    );
+    const el = document.body.createDiv();
+    h.panel.mount(el);
+    h.state.set('mode', 'calendar');
+    clickCalendarView(el, view);
+    return { ...h, el };
+  }
+
+  it.each(variants)(
+    '%s %s opens the exact child inspector from the real card',
+    async (view, planning, selector) => {
+      const h = await mounted(planning, view);
+      try {
+        const card = expectDefined(h.el.querySelector<HTMLElement>(selector));
+        card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        const modal = expectDefined(document.querySelector('.abyss-modal'));
+        expect(modal).not.toBeNull();
+        expect(modal.querySelector('.abyss-right-title')?.textContent).toBe('Child');
+        expect(
+          modal
+            .querySelector('.abyss-right-header > .abyss-status-marker')
+            ?.getAttribute('data-status-type'),
+        ).toBe('in-progress');
+        expect(modal.textContent).toContain('Root');
+        expect(modal.textContent).toContain('Parent');
+        const modalOwner = expectDefined(h.panel['taskModal_abyssPrivate']);
+        const selection = expectDefined(modalOwner['innerState_abyssPrivate']).get('taskStack');
+        expect(selection.map((node) => node.title)).toEqual(['Root', 'Parent', 'Child']);
+        expect(selection[2]?.statusSymbol).toBe('/');
+        expect(selection[2]?.planning).toEqual(
+          h.index.list()[0]?.subtasks[0]?.subtasks[0]?.planning,
+        );
+      } finally {
+        h.panel.destroy();
+        h.el.remove();
+      }
+    },
+  );
+
+  it('child inspector completion changes only that child and keeps its selection after publication', async () => {
+    const h = await mounted('⏳ 2026-10-08 ⏰ 09:00', 'Day');
+    try {
+      expectDefined(h.el.querySelector<HTMLElement>('.abyss-tg-block')).dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+      );
+      expectDefined(
+        document.querySelector<HTMLElement>(
+          '.abyss-modal .abyss-right-header > .abyss-status-marker',
+        ),
+      ).click();
+      await vi.advanceTimersByTimeAsync(30);
+      const lines = (await readMd(h.app, 'calendar-child.md')).split('\n');
+      expect(lines[0]).toBe('- [ ] Root');
+      expect(lines[1]).toBe('  - [ ] Parent');
+      expect(lines[2]).toContain('    - [x] Child');
+      expect(lines[3]).toBe('    - [ ] Child');
+      const selection = expectDefined(
+        expectDefined(h.panel['taskModal_abyssPrivate'])['innerState_abyssPrivate'],
+      ).get('taskStack');
+      expect(selection.map((node) => node.title)).toEqual(['Root', 'Parent', 'Child']);
+      expect(selection[2]?.status).toBe('done');
+    } finally {
+      h.panel.destroy();
+      h.el.remove();
+    }
+  });
+  it.each(variants)(
+    '%s %s parent control reveals the immediate parent without selecting the child',
+    async (view, planning, selector) => {
+      const h = await mounted(planning, view);
+      try {
+        const card = expectDefined(h.el.querySelector<HTMLElement>(selector));
+        const button = expectDefined(
+          card.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'),
+        );
+        expect(button.getAttribute('aria-label')).toBe('Show parent: Parent');
+        h.state.set('taskStack', []);
+        button.focus();
+        button.dispatchEvent(
+          new PointerEvent('pointerdown', {
+            bubbles: true,
+            cancelable: true,
+            button: 0,
+            pointerId: 1,
+          }),
+        );
+        const mouse = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 });
+        button.dispatchEvent(mouse);
+        expect(mouse.defaultPrevented).toBe(true);
+        expect(document.activeElement).toBe(button);
+        expect(h.state.get('taskStack')).toEqual([]);
+        const drag = new Event('dragstart', { bubbles: true, cancelable: true });
+        button.dispatchEvent(drag);
+        expect(drag.defaultPrevented).toBe(true);
+        expect(h.state.get('draggingTaskNode')).toBeNull();
+        button.click();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(h.state.get('mode')).toBe('tasks');
+        expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Root', 'Parent']);
+        expect(await readMd(h.app, 'calendar-child.md')).toContain(`    - [/] Child ${planning}`);
+      } finally {
+        h.panel.destroy();
+        h.el.remove();
+      }
+    },
+  );
+
+  it('timed parent control participates in Tab order and isolates arrows and activation', async () => {
+    const h = await mounted('⏳ 2026-10-08 ⏰ 09:00', 'Day', '- [ ] Next ⏳ 2026-10-08 ⏰ 10:00\n');
+    try {
+      const card = expectDefined(h.el.querySelector<HTMLElement>('.abyss-tg-block'));
+      const button = expectDefined(card.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'));
+      const execute = vi.spyOn(h.tasks, 'execute');
+      card.focus();
+      card.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+      );
+      expect(document.activeElement).toBe(button);
+      button.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+      );
+      expect(execute).not.toHaveBeenCalled();
+      button.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Tab',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      expect(document.activeElement).toBe(card);
+      button.focus();
+      button.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+      );
+      const next = expectDefined(h.el.querySelectorAll<HTMLElement>('.abyss-tg-block')[1]);
+      expect(next.querySelector('.abyss-task-parent-btn')).toBeNull();
+      expect(document.activeElement).toBe(next);
+      next.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Tab',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      expect(document.activeElement).toBe(button);
+      button.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Root', 'Parent']);
+    } finally {
+      h.panel.destroy();
+      h.el.remove();
+    }
+  });
+
+  it.each(['Day', 'Week', 'Month'] as const)(
+    '%s retires pending parent reveals and old controls on patch and destroy',
+    async (view) => {
+      const h = await mounted('⏳ 2026-10-08 ⏰ 09:00', view);
+      const reveal = vi.spyOn(h.panel, 'showTaskInList').mockImplementation(async () => {});
+      try {
+        const old = expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'));
+        old.click();
+        const pending = expectDefined(reveal.mock.calls[0]?.[1]);
+        expect(pending.signal.aborted).toBe(false);
+        const root = expectDefined(h.index.list()[0]);
+        await h.tasks.execute({
+          type: 'set-status',
+          target: { type: 'subtask', ref: expectDefined(root.subtasks[0]?.subtasks[0]).ref },
+          symbol: ' ',
+        });
+        await vi.advanceTimersByTimeAsync(25);
+        expect(pending.signal.aborted).toBe(true);
+        document.body.append(old);
+        old.click();
+        expect(reveal).toHaveBeenCalledTimes(1);
+        old.remove();
+        const replacement = expectDefined(
+          h.el.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'),
+        );
+        replacement.dispatchEvent(
+          new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }),
+        );
+        expect(reveal).toHaveBeenCalledTimes(2);
+        expect(reveal.mock.calls[1]?.[0]).toEqual({
+          type: 'subtask',
+          ref: h.index.list()[0]?.subtasks[0]?.ref,
+        });
+        const next = expectDefined(reveal.mock.calls[1]?.[1]);
+        h.panel.destroy();
+        expect(next.signal.aborted).toBe(true);
+        document.body.append(replacement);
+        replacement.click();
+        expect(reveal).toHaveBeenCalledTimes(2);
+        replacement.remove();
+      } finally {
+        h.panel.destroy();
+        h.el.remove();
+      }
+    },
+  );
+
+  function parentPress(button: HTMLElement): void {
+    button.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        pointerId: 7,
+        button: 0,
+        clientX: 100,
+        clientY: 100,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    button.dispatchEvent(
+      new MouseEvent('mousedown', {
+        button: 0,
+        clientX: 100,
+        clientY: 100,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }
+
+  function releaseParentPress(target: HTMLElement, x = 150, y = 135): void {
+    target.dispatchEvent(
+      new PointerEvent('pointermove', {
+        pointerId: 7,
+        clientX: x,
+        clientY: y,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    target.dispatchEvent(
+      new PointerEvent('pointerup', {
+        pointerId: 7,
+        button: 0,
+        clientX: x,
+        clientY: y,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    target.dispatchEvent(
+      new MouseEvent('mouseup', {
+        button: 0,
+        clientX: x,
+        clientY: y,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }
+
+  function releasedClick(target: HTMLElement, x = 150, y = 135): void {
+    target.dispatchEvent(
+      new PointerEvent('click', {
+        pointerId: 7,
+        button: 0,
+        detail: 1,
+        clientX: x,
+        clientY: y,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }
+
+  it.each([
+    ['Day', '⏳ 2026-10-08', '.abyss-tg-cell-items'],
+    ['Day', '⏳ 2026-10-08 ⏰ 09:00', '.abyss-tg-hour-column'],
+    ['Week', '⏳ 2026-10-08', '.abyss-tg-cell-items'],
+    ['Month', '⏳ 2026-10-08', '.abyss-mg-cell-items'],
+  ] as const)(
+    '%s parent press with retargeted release does not activate the empty cell',
+    async (view, planning, selector) => {
+      const h = await mounted(planning, view, `- [ ] Neighbor ${planning}\n`);
+      try {
+        const before = await readMd(h.app, 'calendar-child.md');
+        const button = expectDefined(
+          h.el.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'),
+        );
+        const empty = expectDefined(button.closest<HTMLElement>(selector));
+        const execute = vi.spyOn(h.tasks, 'execute');
+        h.state.set('taskStack', []);
+        parentPress(button);
+        // Browser release over another item retargets click to the shared items ancestor.
+        const neighbor = expectDefined(
+          [...empty.querySelectorAll<HTMLElement>('.abyss-calendar-item')].find((item) =>
+            item.textContent.includes('Neighbor'),
+          ),
+        );
+        releaseParentPress(neighbor);
+        releasedClick(empty);
+        await vi.advanceTimersByTimeAsync(30);
+        expect(h.el.querySelector('.abyss-capture-input')).toBeNull();
+        expect(h.state.get('mode')).toBe('calendar');
+        expect(empty.isConnected).toBe(true);
+        expect(h.state.get('taskStack')).toEqual([]);
+        expect(h.state.get('draggingTaskNode')).toBeNull();
+        expect(execute).not.toHaveBeenCalled();
+        expect(await readMd(h.app, 'calendar-child.md')).toBe(before);
+        empty.dispatchEvent(
+          new PointerEvent('pointerdown', { pointerId: 8, button: 0, bubbles: true }),
+        );
+        empty.click();
+        await vi.advanceTimersByTimeAsync(30);
+        if (view === 'Month') expect(h.el.querySelector('.abyss-mg-grid')).toBeNull();
+        else expect(h.el.querySelectorAll('.abyss-capture-input')).toHaveLength(1);
+      } finally {
+        h.panel.destroy();
+        h.el.remove();
+      }
+    },
+  );
+
+  it('parent press moved away and back does not reveal on release, but the next genuine click does', async () => {
+    const h = await mounted('⏳ 2026-10-08', 'Day');
+    try {
+      const button = expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'));
+      parentPress(button);
+      document.dispatchEvent(
+        new PointerEvent('pointermove', { pointerId: 7, clientX: 150, clientY: 135 }),
+      );
+      releaseParentPress(button, 100, 100);
+      releasedClick(button, 100, 100);
+      await vi.advanceTimersByTimeAsync(30);
+      expect(h.state.get('mode')).toBe('calendar');
+      parentPress(button);
+      releaseParentPress(button, 100, 100);
+      releasedClick(button, 100, 100);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['Root', 'Parent']);
+    } finally {
+      h.panel.destroy();
+      h.el.remove();
+    }
+  });
+
+  it.each(['pointercancel', 'blur', 'view', 'patch', 'next-press', 'no-click'] as const)(
+    'parent press releases its click guard on %s',
+    async (end) => {
+      const h = await mounted('⏳ 2026-10-08', 'Day');
+      try {
+        const button = expectDefined(
+          h.el.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'),
+        );
+        const initialEmpty = expectDefined(button.closest<HTMLElement>('.abyss-tg-cell-items'));
+        parentPress(button);
+        if (end === 'pointercancel')
+          document.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 7 }));
+        if (end === 'blur') window.dispatchEvent(new Event('blur'));
+        if (end === 'view') {
+          clickCalendarView(h.el, 'Month');
+          clickCalendarView(h.el, 'Day');
+        }
+        if (end === 'patch') {
+          const child = expectDefined(h.index.list()[0]?.subtasks[0]?.subtasks[0]);
+          await h.tasks.execute({
+            type: 'set-status',
+            target: { type: 'subtask', ref: child.ref },
+            symbol: ' ',
+          });
+        }
+        if (end === 'next-press')
+          initialEmpty.dispatchEvent(
+            new PointerEvent('pointerdown', { pointerId: 8, button: 0, bubbles: true }),
+          );
+        if (end === 'no-click') {
+          releaseParentPress(initialEmpty);
+          await vi.advanceTimersByTimeAsync(1);
+        }
+        const empty = expectDefined(h.el.querySelector<HTMLElement>('.abyss-tg-cell-items'));
+        releaseParentPress(empty);
+        releasedClick(empty);
+        await vi.advanceTimersByTimeAsync(30);
+        expect(h.el.querySelectorAll('.abyss-capture-input')).toHaveLength(1);
+        expect(h.state.get('taskStack')).toEqual([]);
+      } finally {
+        h.panel.destroy();
+        h.el.remove();
+      }
+    },
+  );
+
+  it('Escape abandons parent activation while consuming only its pending release click', async () => {
+    const h = await mounted('⏳ 2026-10-08', 'Day');
+    try {
+      const button = expectDefined(h.el.querySelector<HTMLButtonElement>('.abyss-task-parent-btn'));
+      const empty = expectDefined(button.closest<HTMLElement>('.abyss-tg-cell-items'));
+      parentPress(button);
+      button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      releaseParentPress(empty);
+      releasedClick(empty);
+      await vi.advanceTimersByTimeAsync(30);
+      expect(h.el.querySelector('.abyss-capture-input')).toBeNull();
+      expect(h.state.get('mode')).toBe('calendar');
+      releasedClick(empty);
+      await vi.advanceTimersByTimeAsync(30);
+      expect(h.el.querySelectorAll('.abyss-capture-input')).toHaveLength(1);
+    } finally {
+      h.panel.destroy();
+      h.el.remove();
+    }
+  });
+});
+
+describe('date header capture through the retained task bar', () => {
+  fixedToday('2026-10-08');
+  it('preserves an authored draft across native header focus before click, then submits on ordinary outside blur', async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 8, 12));
+    const { panel, state, index, app } = await makePanel(
+      { 'range.md': '- [ ] Range 🛫 2026-10-09 📅 2026-10-11', 'capture.md': '' },
+      { ...DEFAULT_SETTINGS, taskFilePath: 'capture.md', listViewStates: {} },
+      [],
+      { authority: true },
+    );
+    state.set('selectedList', 'upcoming');
+    const container = activeDocument.body.createDiv();
+    panel.mount(container);
+    try {
+      await searchUiCompleted(container);
+      const buttons = container.querySelectorAll<HTMLButtonElement>('.abyss-group-add');
+      expectDefined(buttons[1]).click();
+      await flushMicrotasks();
+      const input = expectDefined(
+        container.querySelector<HTMLInputElement>('.abyss-capture-input'),
+      );
+      setCaptureDraft(input, 'Preserved edited date 📅 2026-10-12');
+      const otherDate = expectDefined(buttons[0]);
+      // The browser transfers focus and dispatches blur/relatedTarget before activating a button.
+      otherDate.focus();
+      await flushMicrotasks();
+      const file = expectDefined(app.vault.getFileByPath('capture.md'));
+      expect(await app.vault.read(file)).toBe('');
+      expect(container.querySelector('.abyss-capture-input')).toBe(input);
+      expect(input.value).toBe('Preserved edited date 📅 2026-10-12');
+      expect(activeDocument.activeElement).toBe(otherDate);
+      const outside = container.createEl('button', { text: 'Unrelated action' });
+      // Tab through the header action without activating it leaves the retained draft available.
+      outside.focus();
+      await flushMicrotasks();
+      expect(await app.vault.read(file)).toBe('');
+      expect(container.querySelector('.abyss-capture-input')).toBe(input);
+      otherDate.focus();
+      otherDate.click();
+      await flushMicrotasks();
+      expect(container.querySelector('.abyss-capture-input')).toBe(input);
+      expect(activeDocument.activeElement).toBe(input);
+      expect(input.value).toBe('Preserved edited date 📅 2026-10-12');
+      outside.focus();
+      await flushMicrotasks();
+      expect(await app.vault.read(file)).toBe(
+        '- [ ] Preserved edited date ➕ 2026-10-08 📅 2026-10-12',
+      );
+      expect(container.querySelector('.abyss-capture-input')).toBeNull();
+      expect(activeDocument.activeElement).toBe(outside);
+    } finally {
+      panel.destroy();
+      index.destroy();
+      container.remove();
+    }
+  });
+  it.each(['today', 'upcoming'] as const)(
+    'creates on the exact %s occurrence day with an editable seed and consecutive reset',
+    async (selection) => {
+      vi.useRealTimers();
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 9, 8, 12));
+      const { panel, state, index, app } = await makePanel(
+        { 'range.md': '- [ ] Range 🛫 2026-10-08 📅 2026-10-11', 'capture.md': '' },
+        { ...DEFAULT_SETTINGS, taskFilePath: 'capture.md', listViewStates: {} },
+        [],
+        { authority: true },
+      );
+      state.set('selectedList', selection);
+      state.set('centerListViewState', {
+        groupBy: 'date',
+        sortBy: { field: 'date', dir: 'asc' },
+        filters: [],
+      });
+      const container = activeDocument.body.createDiv();
+      panel.mount(container);
+      try {
+        if (selection === 'upcoming') await searchUiCompleted(container);
+        const headers = [...container.querySelectorAll<HTMLElement>('.abyss-group-header')];
+        const header = expectDefined(headers[selection === 'upcoming' ? 1 : 0]);
+        const expectedDate = selection === 'upcoming' ? '2026-10-10' : '2026-10-08';
+        if (selection === 'upcoming') expect(headers[0]?.textContent).toContain('Tomorrow');
+        expect(
+          header.querySelector('button'),
+          headers.map((h) => h.outerHTML).join('\n'),
+        ).not.toBeNull();
+        const plus = expectDefined(header.querySelector<HTMLButtonElement>('button'));
+        plus.focus();
+        panel.refresh();
+        if (selection === 'upcoming') await searchUiCompleted(container);
+        expect(activeDocument.activeElement).toBe(plus);
+        plus.click();
+        await flushMicrotasks();
+        const input = expectDefined(
+          container.querySelector<HTMLInputElement>('.abyss-capture-input'),
+        );
+        expect(input.closest('.abyss-add-task-bar')).not.toBeNull();
+        expect(input.value).toBe(` 📅 ${expectedDate}`);
+        expect(input.selectionStart).toBe(0);
+        pressCaptureKey(input, 'Enter');
+        await flushMicrotasks();
+        const file = app.vault.getFileByPath('capture.md');
+        expect(file).not.toBeNull();
+        if (file === null) throw new Error('Missing capture fixture');
+        expect(await app.vault.read(file)).toBe('');
+        setCaptureDraft(input, ' 📅 2026-10-13');
+        pressCaptureKey(input, 'Enter');
+        await flushMicrotasks();
+        expect(input.getAttribute('aria-invalid')).toBe('true');
+        expect(await app.vault.read(file)).toBe('');
+        setCaptureDraft(input, `First 📅 ${expectedDate}`);
+        pressCaptureKey(input, 'Enter');
+        await flushMicrotasks();
+        expect(await app.vault.read(file)).toContain(
+          `- [ ] First ➕ 2026-10-08 📅 ${expectedDate}`,
+        );
+        expect(input.value).toBe(` 📅 ${expectedDate}`);
+        expect(input.selectionStart).toBe(0);
+        vi.setSystemTime(new Date(2026, 9, 9, 12));
+        setCaptureDraft(input, 'Edited 📅 2026-10-15');
+        pressCaptureKey(input, 'Enter');
+        await flushMicrotasks();
+        expect(await app.vault.read(file)).toContain('- [ ] Edited ➕ 2026-10-08 📅 2026-10-15');
+        setCaptureDraft(input, 'Undated');
+        pressCaptureKey(input, 'Enter');
+        await flushMicrotasks();
+        expect(await app.vault.read(file)).toContain('- [ ] Undated ➕ 2026-10-08');
+        const before = await app.vault.read(file);
+        input.dispatchEvent(new Event('blur'));
+        await flushMicrotasks();
+        expect(container.querySelector('.abyss-capture-input')).toBeNull();
+        expect(await app.vault.read(file)).toBe(before);
+      } finally {
+        panel.destroy();
+        index.destroy();
+        container.remove();
+      }
+    },
+  );
 });

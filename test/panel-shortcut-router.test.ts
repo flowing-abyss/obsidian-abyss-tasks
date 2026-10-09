@@ -5,7 +5,8 @@ import { InteractionRegistry } from '../src/ui/interactionOwnership';
 import { nativeInteractionBlocksPanelShortcuts } from '../src/ui/nativeInteractionBlocker';
 import { PanelShortcutRouter } from '../src/ui/panelShortcutRouter';
 import type { PanelNavigationActions } from '../src/views/panelNavigation';
-import { methodOf } from './helpers';
+import { expectDefined, methodOf } from './helpers';
+import { scopeKeyboardEvent } from './support/scopeKeyboardEvent';
 
 function navigationActions(): PanelNavigationActions {
   return {
@@ -525,4 +526,267 @@ describe('PanelShortcutRouter', () => {
     expect(unmatchedStop).not.toHaveBeenCalled();
     expect(unmatchedImmediate).not.toHaveBeenCalled();
   });
+});
+
+describe('owned local Find and Escape', () => {
+  it.each(['ctrl', 'meta'] as const)(
+    'routes the %s primary from buttons and the same input, rejecting drafts/leases/native owners',
+    (primary) => {
+      const h = harness();
+      h.router.destroy();
+      h.panel.tabIndex = -1;
+      const input = h.panel.createEl('input');
+      input.value = 'Теск';
+      const button = h.panel.createEl('button');
+      const router = new PanelShortcutRouter({
+        ownerDocument: document,
+        ownerElement: h.panel,
+        isActive: () => h.panel.isConnected && h.panel.hidden !== true,
+        settings: () => h.settings,
+        platform: { mod: primary },
+        actions: h.actions,
+        registry: h.registry,
+        nativeHostBlocks: h.nativeHostBlocks,
+        localSearchTarget: () => ({ input, owner: h.panel }),
+      });
+      liveRouters.push(router);
+      const modifiers = { ctrlKey: primary === 'ctrl', metaKey: primary === 'meta' };
+      button.focus();
+      const host = vi.fn();
+      document.addEventListener('keydown', host, true);
+      try {
+        expect(keydown(button, 'KeyF', modifiers).defaultPrevented).toBe(true);
+        expect(host).not.toHaveBeenCalled();
+      } finally {
+        document.removeEventListener('keydown', host, true);
+      }
+      expect(document.activeElement).toBe(input);
+      expect(input.selectionEnd).toBe(4);
+      input.setSelectionRange(2, 2);
+      keydown(input, 'KeyF', modifiers);
+      expect(input.selectionStart).toBe(0);
+      for (const extra of [
+        { altKey: true },
+        { shiftKey: true },
+        { ctrlKey: true, metaKey: true },
+        { ctrlKey: false, metaKey: false },
+        { ctrlKey: primary !== 'ctrl', metaKey: primary !== 'meta' },
+        { isComposing: true },
+        { keyCode: 229 },
+        { repeat: true },
+      ]) {
+        button.focus();
+        expect(keydown(button, 'KeyF', { ...modifiers, ...extra }).defaultPrevented).toBe(false);
+        expect(document.activeElement).toBe(button);
+      }
+      const prevented = new KeyboardEvent('keydown', {
+        code: 'KeyF',
+        ...modifiers,
+        bubbles: true,
+        cancelable: true,
+      });
+      prevented.preventDefault();
+      button.dispatchEvent(prevented);
+      expect(document.activeElement).toBe(button);
+      h.nativeHostBlocks.mockReturnValue(true);
+      expect(keydown(button, 'KeyF', modifiers).defaultPrevented).toBe(false);
+      h.nativeHostBlocks.mockReturnValue(false);
+      const lease = h.registry.acquire({ blocksShortcuts: true });
+      expect(keydown(button, 'KeyF', modifiers).defaultPrevented).toBe(false);
+      lease.release();
+      const draft = h.panel.createEl('textarea');
+      draft.focus();
+      expect(keydown(draft, 'KeyF', modifiers).defaultPrevented).toBe(false);
+      expect(document.activeElement).toBe(draft);
+      input.focus();
+      for (const extra of [
+        { altKey: true },
+        { shiftKey: true },
+        { ctrlKey: true },
+        { metaKey: true },
+        { isComposing: true },
+        { keyCode: 229 },
+        { repeat: true },
+      ]) {
+        expect(keydown(input, 'Escape', { key: 'Escape', ...extra }).defaultPrevented).toBe(false);
+        expect(document.activeElement).toBe(input);
+        expect(input.value).toBe('Теск');
+      }
+      const escape = keydown(input, 'Escape', { key: 'Escape' });
+      expect(escape.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(h.panel);
+      expect(input.value).toBe('Теск');
+      const otherPane = document.body.createEl('section');
+      mounted.push(otherPane);
+      const otherButton = otherPane.createEl('button');
+      otherButton.focus();
+      expect(keydown(otherButton, 'KeyF', modifiers).defaultPrevented).toBe(false);
+      expect(document.activeElement).toBe(otherButton);
+    },
+  );
+});
+
+it.each(['ctrl', 'meta'] as const)(
+  'routes host-Window Scope transport with %s through the current adopted owner',
+  (primary) => {
+    const h = harness();
+    h.router.destroy();
+    h.panel.tabIndex = -1;
+    let active = true;
+    const input = h.panel.createEl('input');
+    input.value = 'preserved';
+    const router = new PanelShortcutRouter({
+      ownerDocument: document,
+      ownerElement: h.panel,
+      isActive: () => active,
+      settings: () => h.settings,
+      platform: { mod: primary },
+      actions: h.actions,
+      registry: h.registry,
+      nativeHostBlocks: h.nativeHostBlocks,
+      localSearchTarget: () => ({ input, owner: h.panel }),
+    });
+    liveRouters.push(router);
+    const frame = document.body.createEl('iframe');
+    mounted.push(frame);
+    const doc = expectDefined(frame.contentDocument);
+    doc.body.append(h.panel);
+    input.focus();
+    const find = {
+      key: 'f',
+      code: 'KeyF',
+      ctrlKey: primary === 'ctrl',
+      metaKey: primary === 'meta',
+    };
+    const hostWindow = window;
+    const event = () => scopeKeyboardEvent(input, find, [hostWindow]);
+    const accepted = event();
+    expect(accepted.target).toBe(doc.activeElement);
+    expect(accepted.composedPath()).toEqual([hostWindow]);
+    expect(accepted.composedPath()[0]).not.toBe(accepted.target);
+    expect(hostWindow).not.toBe(doc.defaultView);
+    expect(accepted.view?.document).toBe(doc);
+    expect(accepted.isTrusted).toBe(false);
+    expect.soft(router.routeLocalSearch(accepted, 'scope')).toBe(true);
+    expect.soft(accepted.defaultPrevented).toBe(true);
+    expect.soft([input.selectionStart, input.selectionEnd]).toEqual([0, 9]);
+    expect(router.routeLocalSearch(event(), 'dom')).toBe(false);
+    for (const extra of [
+      { altKey: true },
+      { shiftKey: true },
+      { ctrlKey: true, metaKey: true },
+      { ctrlKey: false, metaKey: false },
+      { ctrlKey: primary !== 'ctrl', metaKey: primary !== 'meta' },
+      { repeat: true },
+      { isComposing: true },
+      { keyCode: 229 },
+    ]) {
+      const rejected = scopeKeyboardEvent(input, { ...find, ...extra }, [hostWindow]);
+      expect(router.routeLocalSearch(rejected, 'scope')).toBe(false);
+      expect(rejected.defaultPrevented).toBe(false);
+    }
+    const prevented = event();
+    prevented.preventDefault();
+    expect(router.routeLocalSearch(prevented, 'scope')).toBe(false);
+    const escape = scopeKeyboardEvent(input, { key: 'Escape' }, [hostWindow]);
+    expect(router.routeLocalSearch(escape, 'scope')).toBe(true);
+    expect(doc.activeElement).toBe(h.panel);
+    expect(input.value).toBe('preserved');
+
+    input.focus();
+    const other = h.panel.createEl('button');
+    const oldInput = document.body.createEl('input');
+    mounted.push(oldInput);
+    for (const rejected of [
+      scopeKeyboardEvent(other, find, [hostWindow]),
+      scopeKeyboardEvent(input, find, [other]),
+      scopeKeyboardEvent(input, find, []),
+      scopeKeyboardEvent(input, find, [doc]),
+      scopeKeyboardEvent(input, find, [hostWindow, other]),
+      scopeKeyboardEvent(oldInput, { ...find, view: doc.defaultView }, [hostWindow]),
+      scopeKeyboardEvent(input, { ...find, view: window }, [hostWindow]),
+    ]) {
+      expect(router.routeLocalSearch(rejected, 'scope')).toBe(false);
+      expect(rejected.defaultPrevented).toBe(false);
+    }
+    other.focus();
+    expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+    expect(doc.activeElement).toBe(other);
+    const editor = h.panel.createEl('textarea');
+    editor.focus();
+    expect(router.routeLocalSearch(scopeKeyboardEvent(editor, find, [hostWindow]), 'scope')).toBe(
+      false,
+    );
+    expect(doc.activeElement).toBe(editor);
+    const foreign = document.body.createEl('input');
+    doc.body.append(foreign);
+    foreign.focus();
+    expect(router.routeLocalSearch(scopeKeyboardEvent(foreign, find, [hostWindow]), 'scope')).toBe(
+      false,
+    );
+    expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+    input.focus();
+    h.nativeHostBlocks.mockReturnValue(true);
+    expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+    h.nativeHostBlocks.mockReturnValue(false);
+    const lease = h.registry.acquire({ blocksShortcuts: true });
+    expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+    lease.release();
+    active = false;
+    expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+    active = true;
+    h.panel.hidden = true;
+    expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+    h.panel.hidden = false;
+    h.panel.remove();
+    expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+    doc.body.append(h.panel);
+    input.focus();
+    router.destroy();
+    expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+  },
+);
+
+it('guards public scope routing live, permits neutral focus only for scope, and ignores broken navigation settings', () => {
+  const h = harness();
+  h.router.destroy();
+  const input = h.panel.createEl('input');
+  const router = new PanelShortcutRouter({
+    ownerDocument: document,
+    ownerElement: h.panel,
+    isActive: () => h.panel.hidden !== true,
+    settings: () => {
+      throw new Error('bad settings');
+    },
+    platform: { mod: 'ctrl' },
+    actions: h.actions,
+    registry: h.registry,
+    nativeHostBlocks: h.nativeHostBlocks,
+    localSearchTarget: () => ({ input, owner: h.panel }),
+  });
+  liveRouters.push(router);
+  const event = () =>
+    new KeyboardEvent('keydown', { code: 'KeyF', ctrlKey: true, cancelable: true });
+  expect(router.routeLocalSearch(event())).toBe(false);
+  expect(router.routeLocalSearch(event(), 'scope')).toBe(true);
+  input.blur();
+  h.panel.hidden = true;
+  expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+  h.panel.hidden = false;
+  const other = document.body.createEl('button');
+  mounted.push(other);
+  other.focus();
+  expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+  other.remove();
+  const frame = document.body.createEl('iframe');
+  mounted.push(frame);
+  const foreign = expectDefined(frame.contentDocument);
+  foreign.body.append(h.panel);
+  expect(router.routeLocalSearch(event(), 'scope')).toBe(true);
+  input.blur();
+  h.panel.remove();
+  expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
+  document.body.append(h.panel);
+  router.destroy();
+  expect(router.routeLocalSearch(event(), 'scope')).toBe(false);
 });

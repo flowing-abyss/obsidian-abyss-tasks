@@ -65,7 +65,19 @@ const PARSER_GRAMMAR_TESTS = new Set([
   'test/task-parser-deep.test.ts',
 ]);
 
-const CALENDAR_PROJECTION_CONSUMERS = new Set(['src/panels/calendar/calendarContent.ts']);
+// Rendering/claimed native drags project canonical sources; queued edits reconstruct only a
+// proven canonical successor through the same adapter boundary.
+const CALENDAR_PROJECTION_CONSUMERS = {
+  'src/panels/calendar/calendarContent.ts': [
+    'projectCalendarOccurrences',
+    'taskSnapshotForCalendarOccurrence',
+  ],
+  'src/views/calendarNativeDrag.ts': [
+    'projectCalendarOccurrences',
+    'taskSnapshotForCalendarOccurrence',
+  ],
+  'src/ui/timedBlockKeyboardQueue.ts': ['taskSnapshotForCalendarOccurrence'],
+};
 
 function source(path: string): string {
   return node.fs.readFileSync(resolve(ROOT, path), 'utf8');
@@ -352,7 +364,7 @@ describe('final task consumer contract', () => {
   });
 
   it(
-    'confines projection adapters to the two calendar composition roots',
+    'confines projection adapters to exact calendar consumers and bindings',
     () => {
       const projectionBindings = new Set([
         'projectCalendarOccurrences',
@@ -362,14 +374,12 @@ describe('final task consumer contract', () => {
         namedImports(path, source(path)).some((name) => projectionBindings.has(name)),
       );
 
-      expect(new Set(consumers)).toEqual(CALENDAR_PROJECTION_CONSUMERS);
-      expect(
-        [...CALENDAR_PROJECTION_CONSUMERS].every(
-          (path) =>
-            namedImports(path, source(path)).filter((name) => projectionBindings.has(name))
-              .length === projectionBindings.size,
-        ),
-      ).toBe(true);
+      expect(new Set(consumers)).toEqual(new Set(Object.keys(CALENDAR_PROJECTION_CONSUMERS)));
+      for (const [path, bindings] of Object.entries(CALENDAR_PROJECTION_CONSUMERS)) {
+        expect(
+          new Set(namedImports(path, source(path)).filter((name) => projectionBindings.has(name))),
+        ).toEqual(new Set(bindings));
+      }
     },
     SOURCE_WALK_TIMEOUT_MS,
   );

@@ -1,8 +1,20 @@
-import { Menu, MenuItem, Notice, Platform, TFile, WorkspaceLeaf, type App } from 'obsidian';
+import {
+  MarkdownRenderer,
+  Menu,
+  MenuItem,
+  Notice,
+  Platform,
+  TFile,
+  WorkspaceLeaf,
+  type App,
+} from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { type AppState, type ListSelection } from '../src/app/AppState';
 import type { CenterPanel } from '../src/panels/CenterPanel';
+import type { RightPanel } from '../src/panels/RightPanel';
+import { TaskListSurface } from '../src/panels/task-list/TaskListSurface';
 import { ProjectManager } from '../src/projects/ProjectManager';
+import type { ProjectStore } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
@@ -20,6 +32,8 @@ import type {
   TaskRef,
   TaskSnapshot,
 } from '../src/tasks';
+import { clockFrom } from '../src/tasks/domain/clock';
+import { TaskModal } from '../src/ui/TaskModal';
 import type { CreationPresentationController } from '../src/ui/creation/CreationPresentationController';
 import type { InteractionRegistry } from '../src/ui/interactionOwnership';
 import { PanelShortcutRouter } from '../src/ui/panelShortcutRouter';
@@ -28,6 +42,7 @@ import type { QuickCaptureCoordinator } from '../src/ui/taskCapture/QuickCapture
 import { requestTaskCompletion } from '../src/ui/taskCommandResult';
 import { renderedTaskNodeElements, taskPresentationKey } from '../src/ui/taskPresentationIdentity';
 import { taskNodeLine, type TaskSelectionNode } from '../src/ui/taskSelection';
+import * as timeBadge from '../src/ui/timeTracking/TimeBadge';
 import type { CompactPaneAccess } from '../src/views/CompactPaneAccess';
 import { MonthGridView } from '../src/views/MonthGridView';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
@@ -46,6 +61,9 @@ import {
   useRealMoment,
 } from './helpers';
 import { taskCommandsOf } from './support/panelHarness';
+import { prepareTaskPanelViewport } from './support/taskPanelViewport';
+import { canonicalSearchForIndex, createCanonicalSearchHarness } from './support/taskSearchHarness';
+import { searchUiCompleted } from './support/taskSearchUiHarness';
 
 function workspaceState(app: App): { activeLeaf: WorkspaceLeaf | null } {
   return app.workspace;
@@ -163,7 +181,7 @@ describe('PanelView centre composition', () => {
       DEFAULT_SETTINGS,
       makeTagManager(app),
       application.index,
-      application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+      application.tasks,
       application.statusRegistry,
       onSaveSettings,
       undefined,
@@ -211,7 +229,7 @@ describe('PanelView dependency command convergence', () => {
       DEFAULT_SETTINGS,
       makeTagManager(app),
       application.index,
-      application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+      application.tasks,
       application.statusRegistry,
     );
     await view.onOpen();
@@ -265,7 +283,7 @@ describe('PanelView dependency command convergence', () => {
         DEFAULT_SETTINGS,
         makeTagManager(app),
         application.index,
-        application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        application.tasks,
         application.statusRegistry,
       );
       await view.onOpen();
@@ -349,7 +367,7 @@ describe('PanelView inspector focus continuity', () => {
       DEFAULT_SETTINGS,
       makeTagManager(app),
       application.index,
-      application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+      application.tasks,
       application.statusRegistry,
     );
     await view.onOpen();
@@ -463,7 +481,7 @@ async function openRemovalPanel(
     settings,
     makeTagManager(app, settings),
     application.index,
-    application.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+    application.tasks,
     application.statusRegistry,
     async () => {},
     undefined,
@@ -1455,7 +1473,7 @@ describe('PanelView', () => {
         settings,
         tagManager,
         taskApplication.index,
-        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.tasks,
         taskApplication.statusRegistry,
       );
       vi.spyOn(app.workspace, 'getActiveViewOfType').mockImplementation((type) =>
@@ -1580,6 +1598,21 @@ describe('PanelView', () => {
         layout.querySelector<HTMLButtonElement>('[aria-label="Show task details"]'),
       );
 
+      for (const [region, label] of [
+        [left, 'Task lists'],
+        [right, 'Task details'],
+      ] as const) {
+        expect(region.hasAttribute('aria-label')).toBe(false);
+        const name = expectDefined(
+          region.ownerDocument.getElementById(
+            expectDefined(region.getAttribute('aria-labelledby')),
+          ),
+        );
+        expect(name.isConnected).toBe(true);
+        expect(name.textContent).toBe(label);
+      }
+      expect(lists.hasAttribute('title')).toBe(false);
+      expect(details.hasAttribute('title')).toBe(false);
       expect(lists.tagName).toBe('BUTTON');
       expect(details.tagName).toBe('BUTTON');
       expect(lists.getAttribute('aria-controls')).toBe(left.id);
@@ -1980,7 +2013,13 @@ describe('PanelView', () => {
           'The new task is invalid and was not created.',
         );
         expect(present).toHaveBeenCalledOnce();
-        expect(present).toHaveBeenCalledWith(failure, expect.objectContaining({ kind: 'error' }));
+        expect(present).toHaveBeenCalledWith(
+          failure,
+          expect.objectContaining({ kind: 'error' }),
+          expect.anything(),
+          trigger !== 'task selection',
+        );
+        expect(expectDefined(present.mock.calls[0]?.[2]).isCurrent()).toBe(false);
         expect(internals.interactionRegistry_abyssPrivate.allows('openCalendar')).toBe(false);
 
         input.dispatchEvent(
@@ -2043,7 +2082,13 @@ describe('PanelView', () => {
       expect(internals.quickCapture_abyssPrivate.phase).toBe('closed');
       expect(layout.querySelector('.abyss-quick-capture-input')).toBeNull();
       expect(present).toHaveBeenCalledOnce();
-      expect(present).toHaveBeenCalledWith(result, expect.objectContaining({ kind: 'success' }));
+      expect(present).toHaveBeenCalledWith(
+        result,
+        expect.objectContaining({ kind: 'success' }),
+        expect.anything(),
+        true,
+      );
+      expect(expectDefined(present.mock.calls[0]?.[2]).isCurrent()).toBe(false);
       expect(internals.interactionRegistry_abyssPrivate.allows('openCalendar')).toBe(true);
       expect(right.classList.contains('is-compact-open')).toBe(true);
       const outside = activeDocument.body.createEl('button');
@@ -2114,6 +2159,7 @@ describe('PanelView', () => {
     });
 
     it('routes shortcuts only for its connected visible active leaf and detaches on close', async () => {
+      view.containerEl.remove();
       const internals = view as unknown as { panelNavigation_abyssPrivate: PanelNavigator };
       const openQuickCapture = vi
         .spyOn(internals.panelNavigation_abyssPrivate, 'openQuickCapture')
@@ -2186,6 +2232,7 @@ describe('PanelView', () => {
       workspaceState(app).activeLeaf = leaf;
       const frame = document.body.createEl('iframe');
       const destination = expectDefined(frame.contentWindow) as EventWindow;
+      prepareTaskPanelViewport(destination.document.body);
       const destroyRouter = vi.spyOn(PanelShortcutRouter.prototype, 'destroy');
       const destinationListeners = vi.spyOn(destination.document, 'addEventListener');
       const pressQ = (owner: EventWindow): KeyboardEvent => {
@@ -2274,7 +2321,7 @@ describe('PanelView', () => {
             },
           }) satisfies TaskCommandResult,
       );
-      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const application = taskApplication.tasks;
       vi.spyOn(application, 'planCreate').mockResolvedValue({
         type: 'ready',
         destination: { filePath: 'capture.md', insertion: { type: 'append' } },
@@ -2282,6 +2329,7 @@ describe('PanelView', () => {
       });
       const frame = document.body.createEl('iframe');
       const destination = expectDefined(frame.contentWindow) as EventWindow;
+      prepareTaskPanelViewport(destination.document.body);
       const timers = new Map<number, { delay: number; run: () => void }>();
       // Native Obsidian installs its DOM helpers in every window; test-mocks only
       // installs them in the main realm. Adopt new descendants from that realm too.
@@ -2641,7 +2689,7 @@ describe('PanelView', () => {
     it('opens and owns Quick Capture without changing mode, then refocuses only from panel chrome', async () => {
       document.body.appendChild(view.containerEl);
       workspaceState(app).activeLeaf = leaf;
-      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const application = taskApplication.tasks;
       const execute = vi.fn().mockResolvedValue({
         type: 'ok',
         changed: true,
@@ -2781,8 +2829,7 @@ describe('PanelView', () => {
             outcome: { type: 'task', task: created },
           } satisfies TaskCommandResult;
         });
-        const captureApplication = taskApplication.tasks as TaskApplicationApi &
-          TaskCaptureApplicationApi;
+        const captureApplication = taskApplication.tasks;
         const planCreate = vi.spyOn(captureApplication, 'planCreate').mockResolvedValue({
           type: 'ready',
           destination: { filePath: 'capture.md', insertion: { type: 'append' } },
@@ -2823,14 +2870,15 @@ describe('PanelView', () => {
     );
 
     it('reveals a created task without smooth scrolling and with the short highlight under reduced motion', async () => {
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rect(0, 0, 700, 64));
+      const reveal = vi.spyOn(TaskListSurface.prototype, 'reveal');
       const consoleError = vi.spyOn(console, 'error');
       const matchMedia = vi.fn(() => ({ matches: true }));
       vi.stubGlobal('matchMedia', matchMedia);
       const setTimeout = vi.spyOn(window, 'setTimeout');
       const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
       state.set('selectedList', 'inbox');
-      const captureApplication = taskApplication.tasks as TaskApplicationApi &
-        TaskCaptureApplicationApi;
+      const captureApplication = taskApplication.tasks;
       vi.spyOn(captureApplication, 'planCreate').mockResolvedValue({
         type: 'ready',
         destination: { filePath: 'capture.md', insertion: { type: 'append' } },
@@ -2859,11 +2907,9 @@ describe('PanelView', () => {
 
       expect(view.contentEl.querySelector('.abyss-task-card.is-just-created')).not.toBeNull();
       expect(matchMedia).toHaveBeenCalledWith('(prefers-reduced-motion: reduce)');
-      expect(scrollIntoView).toHaveBeenCalledWith({
-        behavior: 'auto',
-        block: 'nearest',
-        inline: 'nearest',
-      });
+      expect(reveal).toHaveBeenCalledWith('capture.md:0', { waitForReady: true });
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      expect(input.ownerDocument.activeElement).toBe(input);
       const delays = setTimeout.mock.calls.map(([, delay]) => delay);
       expect(delays).toContain(800);
       expect(delays).not.toContain(1100);
@@ -2980,7 +3026,7 @@ describe('PanelView', () => {
     });
 
     it('keeps planCreate on the PanelView application wrapper', async () => {
-      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const application = taskApplication.tasks;
       const planCreate = vi.spyOn(application, 'planCreate');
       const center = (
         view as unknown as {
@@ -3340,11 +3386,38 @@ describe('PanelView', () => {
       }).not.toThrow();
     });
 
-    it('recomputes rendered tag contrast when Obsidian emits css-change', () => {
-      const panels = view as unknown as { center_abyssPrivate: { refresh(): void } };
-      const refresh = vi.spyOn(panels.center_abyssPrivate, 'refresh');
-      app.workspace.trigger('css-change');
-      expect(refresh).toHaveBeenCalledOnce();
+    it('recomputes rendered tag contrast when Obsidian emits css-change', async () => {
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      settings.tagGroups.push({
+        id: 'work',
+        name: 'Work',
+        mode: 'prefix',
+        prefix: 'work',
+        color: '#ffffff',
+      });
+      document.body.setCssProps({ '--background-primary': '#ffffff' });
+      const content = `- [ ] Root #work 📅 ${window.moment().format('YYYY-MM-DD')}`;
+      await app.vault.create('tasks.md', content);
+      taskApplication.index.installCommittedContent('tasks.md', content);
+      state.set('mode', 'calendar');
+      const item = expectDefined(
+        view.contentEl.querySelector<HTMLElement>('.abyss-mg-plain, .abyss-mg-deadline-marker'),
+      );
+      expect(item.style.getPropertyValue('--abyss-tag-text-color')).toBe(
+        'var(--abyss-tag-text-dark)',
+      );
+      document.body.setCssProps({ '--background-primary': '#000000' });
+      try {
+        app.workspace.trigger('css-change');
+        const updated = expectDefined(
+          view.contentEl.querySelector<HTMLElement>('.abyss-mg-plain, .abyss-mg-deadline-marker'),
+        );
+        expect(updated.style.getPropertyValue('--abyss-tag-text-color')).toBe(
+          'var(--abyss-tag-text-light)',
+        );
+      } finally {
+        document.body.style.removeProperty('--background-primary');
+      }
     });
 
     it('refreshes the selected group title after static tag settings change', () => {
@@ -3456,7 +3529,7 @@ describe('PanelView', () => {
         settings,
         tagManager,
         taskApplication.index,
-        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.tasks,
         taskApplication.statusRegistry,
       );
       const titleEl = createDiv();
@@ -3487,7 +3560,7 @@ describe('PanelView', () => {
         settings,
         tagManager,
         taskApplication.index,
-        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.tasks,
         taskApplication.statusRegistry,
       );
       Object.assign(fresh, { titleEl: createDiv() });
@@ -3526,7 +3599,7 @@ describe('PanelView', () => {
         settings,
         tagManager,
         taskApplication.index,
-        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.tasks,
         taskApplication.statusRegistry,
       );
       Object.assign(fresh, { titleEl: createDiv() });
@@ -3599,7 +3672,7 @@ describe('PanelView', () => {
         settings,
         makeTagManager(app, settings),
         taskApplication.index,
-        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.tasks,
         taskApplication.statusRegistry,
       );
       vi.spyOn(app.workspace, 'getActiveViewOfType').mockImplementation((type) =>
@@ -3640,9 +3713,60 @@ describe('PanelView', () => {
       return event;
     }
 
+    it.each(['Table', 'Kanban', 'Timeline'])(
+      'Find/Escape belongs to the visible %s overview, preserving drafts and retained dashboards',
+      (mode) => {
+        const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+        const switcher = expectDefined(
+          view.contentEl.querySelector<HTMLButtonElement>(`[aria-label="${mode} view"]`),
+        );
+        switcher.click();
+        switcher.focus();
+        const input = expectDefined(
+          view.contentEl.querySelector<HTMLInputElement>('[aria-label="Filter projects"]'),
+        );
+        input.value = 'Alxha';
+        const find = new KeyboardEvent('keydown', {
+          code: 'KeyF',
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        });
+        switcher.dispatchEvent(find);
+        expect(find.defaultPrevented).toBe(true);
+        expect(document.activeElement).toBe(input);
+        expect(input.selectionEnd).toBe(5);
+        input.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+        );
+        expect(document.activeElement).toBe(input.closest('.abyss-projects-table'));
+        expect(input.value).toBe('Alxha');
+        state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+        const center = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+        const dashboardFind = new KeyboardEvent('keydown', {
+          code: 'KeyF',
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        });
+        center.dispatchEvent(dashboardFind);
+        expect(dashboardFind.defaultPrevented).toBe(false);
+        state.set('projectsPanel', { view: 'table' });
+        state.set('mode', 'calendar');
+        const calendarFind = new KeyboardEvent('keydown', {
+          code: 'KeyF',
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        });
+        center.dispatchEvent(calendarFind);
+        expect(calendarFind.defaultPrevented).toBe(false);
+      },
+    );
+
     it('opens Q for the focused range occurrence, freezes its project, and restores cell focus', async () => {
       const pending = deferred<TaskCreateSession>();
-      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const application = taskApplication.tasks;
       const planCreate = vi.spyOn(application, 'planCreate').mockReturnValue(pending.promise);
       const alphaStatus = cell('Projects/A.md', 'status');
       const betaStatus = cell('Projects/B.md', 'status');
@@ -3685,7 +3809,7 @@ describe('PanelView', () => {
     });
 
     it('uses the projects default destination when the table has no selection', async () => {
-      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const application = taskApplication.tasks;
       const planCreate = vi.spyOn(application, 'planCreate');
       const center = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
 
@@ -3763,12 +3887,23 @@ describe('PanelView', () => {
     });
 
     it('leaves Q in a project cell editor instead of opening Quick Capture', () => {
-      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const application = taskApplication.tasks;
       const planCreate = vi.spyOn(application, 'planCreate');
       const start = cell('Projects/B.md', 'start');
       start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
       const editor = expectDefined(start.querySelector<HTMLInputElement>('input'));
 
+      editor.focus();
+      const find = new KeyboardEvent('keydown', {
+        code: 'KeyF',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      editor.dispatchEvent(find);
+      expect(find.defaultPrevented).toBe(false);
+      expect(document.activeElement).toBe(editor);
+      expect(editor.isConnected).toBe(true);
       const typed = pressQ(editor);
 
       expect(typed.defaultPrevented).toBe(false);
@@ -3797,7 +3932,7 @@ describe('PanelView', () => {
         DEFAULT_SETTINGS,
         makeTagManager(app),
         taskApplication.index,
-        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.tasks,
         taskApplication.statusRegistry,
       );
       await view.onOpen();
@@ -3822,6 +3957,53 @@ describe('PanelView', () => {
       expect(stack[0] != null && 'source' in stack[0] ? stack[0].source.filePath : undefined).toBe(
         root.source.filePath,
       );
+    });
+
+    it('retains the inspector DOM, focus, caret and scroll when an unrelated root changes', async () => {
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      const root = expectDefined(taskApplication.index.list()[0]);
+      state.set('taskStack', [root]);
+      const header = expectDefined(view.contentEl.querySelector('.abyss-right-header'));
+      const input = expectDefined(
+        view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
+      const scroll = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-right'));
+      input.value = 'Unsubmitted comment';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.focus();
+      input.setSelectionRange(3, 8);
+      scroll.scrollTop = 137;
+      const stack = state.get('taskStack');
+      const file = expectDefined(app.vault.getAbstractFileByPath('today.md'));
+      if (!(file instanceof TFile)) throw new Error('Missing fixture');
+      await app.vault.modify(file, `${await app.vault.read(file)}\n- [ ] Unrelated root`);
+      await vi.waitFor(() => {
+        expect(taskApplication.index.list()).toHaveLength(2);
+      });
+      expect(state.get('taskStack')).toBe(stack);
+      expect(view.contentEl.querySelector('.abyss-right-header')).toBe(header);
+      expect(view.contentEl.querySelector('.abyss-comment-input')).toBe(input);
+      expect(input.isConnected).toBe(true);
+      expect(activeDocument.activeElement).toBe(input);
+      expect([input.selectionStart, input.selectionEnd]).toEqual([3, 8]);
+      expect(scroll.scrollTop).toBe(137);
+    });
+
+    it('refreshes same-ref custom status semantics through the actual sidebar reconciliation', () => {
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      const root = expectDefined(taskApplication.index.list()[0]);
+      state.set('taskStack', [root]);
+      const header = expectDefined(view.contentEl.querySelector('.abyss-right-header'));
+      const current = { ...root, status: 'cancelled' as const };
+      vi.spyOn(taskApplication.index, 'resolve').mockReturnValue({
+        type: 'exact',
+        task: current,
+        basis: { observed: root },
+      });
+      emitQueryEvent(taskApplication.index, { type: 'changed', files: [root.ref.filePath] });
+      expect(state.get('taskStack')[0]?.ref).toEqual(root.ref);
+      expect(state.get('taskStack')[0]?.status).toBe('cancelled');
+      expect(view.contentEl.querySelector('.abyss-right-header')).not.toBe(header);
     });
 
     it('query update with non-matching changedFile → taskStack unchanged', () => {
@@ -4211,7 +4393,7 @@ describe('PanelView', () => {
         DEFAULT_SETTINGS,
         makeTagManager(app),
         taskApplication.index,
-        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.tasks,
         taskApplication.statusRegistry,
       );
       await view.onOpen();
@@ -4235,9 +4417,17 @@ describe('PanelView', () => {
       );
       (
         view as unknown as {
-          applyResolution_abyssPrivate(result: { type: 'exact'; task: typeof snapshot }): void;
+          applyResolution_abyssPrivate(result: {
+            type: 'exact';
+            task: typeof snapshot;
+            basis: { observed: typeof snapshot };
+          }): void;
         }
-      ).applyResolution_abyssPrivate({ type: 'exact', task: snapshot });
+      ).applyResolution_abyssPrivate({
+        type: 'exact',
+        task: snapshot,
+        basis: { observed: snapshot },
+      });
       const stack = state.get('taskStack');
       // Stack should still have 2 elements (root + fresh subtask found by line match)
       expect(stack).toHaveLength(2);
@@ -4269,12 +4459,1384 @@ describe('PanelView', () => {
       );
       (
         view as unknown as {
-          applyResolution_abyssPrivate(result: { type: 'exact'; task: typeof snapshot }): void;
+          applyResolution_abyssPrivate(result: {
+            type: 'exact';
+            task: typeof snapshot;
+            basis: { observed: typeof snapshot };
+          }): void;
         }
-      ).applyResolution_abyssPrivate({ type: 'exact', task: snapshot });
+      ).applyResolution_abyssPrivate({
+        type: 'exact',
+        task: snapshot,
+        basis: { observed: snapshot },
+      });
       const stack = state.get('taskStack');
       // Fresh subtask not found at line 999 → break → stack truncated to [freshRoot]
       expect(stack).toHaveLength(1);
     });
   });
+});
+
+it('injects the actual canonical service into a mounted PanelView Search owner', async () => {
+  const app = await createAppWithFiles({ 'tasks.md': '- [ ] needle' });
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const application = configuredTaskApplication(app, settings);
+  await application.index.initialize();
+  const search = canonicalSearchForIndex(application.index);
+  const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+  const view = new PanelView(
+    leaf,
+    settings,
+    makeTagManager(app),
+    application.index,
+    application.tasks,
+    application.statusRegistry,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    search,
+  );
+  activeDocument.body.append(view.containerEl);
+  try {
+    await view.onOpen();
+    const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+    state.set('mode', 'search');
+    const input = expectDefined(
+      view.contentEl.querySelector<HTMLInputElement>('.abyss-search-global'),
+    );
+    input.value = 'needle';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await searchUiCompleted(
+      view.contentEl.querySelector<HTMLElement>('.abyss-center') ?? view.contentEl,
+    );
+    expect(view.contentEl.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+  } finally {
+    await view.onClose();
+    search.dispose();
+    application.index.destroy();
+    view.containerEl.remove();
+  }
+});
+
+/** Control only the host presentation boundary; search/index/panel remain real. */
+function panelFrames(owner: Window) {
+  let next = 0;
+  const frames = new Map<number, FrameRequestCallback>();
+  vi.spyOn(owner, 'requestAnimationFrame').mockImplementation((callback) => {
+    frames.set(++next, callback);
+    return next;
+  });
+  vi.spyOn(owner, 'cancelAnimationFrame').mockImplementation((id) => {
+    frames.delete(id);
+  });
+  return {
+    frames,
+    present() {
+      for (const [id, callback] of [...frames]) {
+        frames.delete(id);
+        callback(0);
+      }
+    },
+  };
+}
+
+async function prewarmPanel(initialize = true, markdown = '- [ ] needle') {
+  const h = await createCanonicalSearchHarness(
+    { 'tasks.md': markdown },
+    structuredClone(DEFAULT_SETTINGS),
+    initialize,
+  );
+  const frames = panelFrames(window);
+  const views: PanelView[] = [];
+  async function mount(ready = true, hidden = false) {
+    h.app.workspace.layoutReady = ready;
+    const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(h.app);
+    const view = new PanelView(
+      leaf,
+      structuredClone(DEFAULT_SETTINGS),
+      makeTagManager(h.app),
+      h.index,
+      h.tasks,
+      h.statusRegistry,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      h.search,
+    );
+    views.push(view);
+    document.body.append(view.containerEl);
+    view.containerEl.hidden = hidden;
+    setGeometry(view.containerEl, rect(20, 20, 640, 480));
+    setGeometry(view.contentEl, rect(20, 20, 640, 480));
+    let migrate: (owner: Window) => void = () => {};
+    vi.spyOn(view.contentEl, 'onWindowMigrated').mockImplementation((callback) => {
+      migrate = callback;
+      return () => {};
+    });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return rect(0, 0, 700, this.hasClass('abyss-task-card') ? 64 : 900);
+    });
+    await view.onOpen();
+    return { view, migrate };
+  }
+  return {
+    ...h,
+    frames,
+    mount,
+    async dispose() {
+      for (const view of views) {
+        await view.onClose();
+        view.containerEl.remove();
+      }
+      h.close();
+      vi.restoreAllMocks();
+    },
+  };
+}
+
+describe('PanelView useful shared prewarm', () => {
+  it.each([true, false])(
+    'presents the mounted visible shell before preparation, layout ready first: %s',
+    async (ready) => {
+      const h = await prewarmPanel();
+      try {
+        const { view } = await h.mount(ready);
+        expect(view.contentEl.querySelector('.abyss-center-header')).not.toBeNull();
+        expect(h.backends).toHaveLength(0);
+        if (!ready) {
+          h.frames.present();
+          expect(h.backends).toHaveLength(0);
+          (h.app.workspace as unknown as { setLayoutReady__(): void }).setLayoutReady__();
+        }
+        expect(h.frames.frames.size).toBe(1);
+        // A visible sidebar is useful even when the editor owns the active leaf.
+        expect(h.app.workspace.getActiveViewOfType(PanelView)).not.toBe(view);
+        h.frames.present();
+        expect(h.backends).toHaveLength(0);
+        await vi.waitFor(() => {
+          expect(h.backends).toHaveLength(1);
+        });
+        const cursor = await h.search.open(
+          { kind: 'roots', query: 'needle' },
+          new AbortController().signal,
+        );
+        expect(cursor.total).toBe(1);
+        h.search.release(cursor);
+        h.app.workspace.trigger('layout-change');
+        h.app.workspace.trigger('resize');
+        expect(h.frames.frames.size).toBe(0);
+      } finally {
+        await h.dispose();
+      }
+    },
+  );
+
+  it('leaves hidden restored and zero-area panels cold until a visible opportunity', async () => {
+    const h = await prewarmPanel();
+    try {
+      const { view } = await h.mount(true, true);
+      h.frames.present();
+      await flushMicrotasks();
+      expect(h.backends).toHaveLength(0);
+      view.containerEl.hidden = false;
+      setGeometry(view.contentEl, rect(0, 0, 0, 0));
+      h.app.workspace.trigger('layout-change');
+      expect(h.frames.frames.size).toBe(0);
+      setGeometry(view.contentEl, rect(20, 20, 640, 480));
+      h.app.workspace.trigger('active-leaf-change', null);
+      h.frames.present();
+      await vi.waitFor(() => {
+        expect(h.backends).toHaveLength(1);
+      });
+    } finally {
+      await h.dispose();
+    }
+  });
+
+  it('rechecks hidden frame and task callbacks without consuming the later opportunity', async () => {
+    const h = await prewarmPanel();
+    try {
+      const { view } = await h.mount();
+      view.containerEl.hidden = true;
+      h.frames.present();
+      expect(h.frames.frames.size).toBe(0);
+      view.containerEl.hidden = false;
+      h.app.workspace.trigger('resize');
+      h.frames.present();
+      view.containerEl.hidden = true;
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 10));
+      expect(h.backends).toHaveLength(0);
+      view.containerEl.hidden = false;
+      h.app.workspace.trigger('layout-change');
+      h.frames.present();
+      await vi.waitFor(() => {
+        expect(h.backends).toHaveLength(1);
+      });
+    } finally {
+      await h.dispose();
+    }
+  });
+
+  it.each(['frame', 'task', 'layout'] as const)(
+    'close cancels a pending %s and never starts late work',
+    async (phase) => {
+      const h = await prewarmPanel();
+      try {
+        const { view } = await h.mount(phase !== 'layout');
+        if (phase === 'task') h.frames.present();
+        await view.onClose();
+        (h.app.workspace as unknown as { setLayoutReady__(): void }).setLayoutReady__();
+        h.app.workspace.trigger('resize');
+        h.frames.present();
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 10));
+        expect(h.backends).toHaveLength(0);
+        expect(h.frames.frames.size).toBe(0);
+      } finally {
+        await h.dispose();
+      }
+    },
+  );
+
+  it.each(['frame', 'task'] as const)(
+    'cancels the old owner %s callback and schedules only through the migrated owner',
+    async (phase) => {
+      const h = await prewarmPanel();
+      const iframe = document.body.createEl('iframe');
+      try {
+        const owner = expectDefined(iframe.contentWindow);
+        const migrated = panelFrames(owner);
+        const { view, migrate } = await h.mount();
+        if (phase === 'task') h.frames.present(); // old owner's task is queued
+        owner.document.body.append(view.containerEl);
+        migrate(owner);
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 10));
+        expect(h.backends).toHaveLength(0);
+        expect(migrated.frames.size).toBe(1);
+        migrated.present();
+        await vi.waitFor(() => {
+          expect(h.backends).toHaveLength(1);
+        });
+      } finally {
+        await h.dispose();
+        iframe.remove();
+      }
+    },
+  );
+
+  it('two panels and early input join one preparation, and close/reopen retains its backend', async () => {
+    const h = await prewarmPanel();
+    try {
+      h.scheduler.hold();
+      const first = await h.mount();
+      await h.mount();
+      const state = (first.view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      state.set('mode', 'search');
+      const input = expectDefined(
+        first.view.contentEl.querySelector<HTMLInputElement>('.abyss-search-global'),
+      );
+      input.value = 'needle';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await vi.waitFor(() => {
+        expect(h.backends).toHaveLength(1);
+      });
+      expect(h.backends[0]?.searchCalls).toBe(0);
+      h.frames.present();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 10));
+      expect(h.backends).toHaveLength(1);
+      await h.scheduler.flush();
+      await searchUiCompleted(
+        expectDefined(first.view.contentEl.querySelector<HTMLElement>('.abyss-center')),
+      );
+      expect(first.view.contentEl.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+      expect(h.backends[0]?.searchCalls).toBe(1);
+      await first.view.onClose();
+      await h.mount();
+      h.frames.present();
+      const cursor = await h.search.open(
+        { kind: 'roots', query: 'needle' },
+        new AbortController().signal,
+      );
+      expect(cursor.total).toBe(1);
+      expect(h.backends).toHaveLength(1);
+      h.search.release(cursor);
+    } finally {
+      await h.dispose();
+    }
+  });
+
+  it('one accepted task change replaces Search once while preserving inspector reconciliation', async () => {
+    const h = await prewarmPanel();
+    try {
+      const { view } = await h.mount();
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      state.set('mode', 'search');
+      const input = expectDefined(
+        view.contentEl.querySelector<HTMLInputElement>('.abyss-search-global'),
+      );
+      input.value = 'needle';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+      await searchUiCompleted(root);
+      state.set('taskStack', [expectDefined(h.index.list()[0])]);
+      const calls = expectDefined(h.backends[0]).searchCalls;
+      const request = Number(root.dataset['searchRequest']);
+      h.index.installCommittedContent('tasks.md', '- [ ] needle updated');
+      await searchUiCompleted(root);
+      expect(expectDefined(h.backends[0]).searchCalls - calls).toBe(1);
+      expect(Number(root.dataset['searchRequest']) - request).toBe(2);
+      expect(root.textContent).toContain('needle updated');
+      expect(state.get('taskStack')[0]).toMatchObject({ title: 'needle updated' });
+    } finally {
+      await h.dispose();
+    }
+  });
+});
+
+it.each(['search', 'tasks'] as const)(
+  'PanelView host CSS/project notifications retain a completed %s request and viewport',
+  async (mode) => {
+    const h = await prewarmPanel();
+    try {
+      h.index.installCommittedContent(
+        'tasks.md',
+        Array.from({ length: 101 }, (_, i) => `- [ ] needle ${i}`).join('\n'),
+      );
+      const { view } = await h.mount();
+      const internals = view as unknown as {
+        state_abyssPrivate: AppState;
+        projectStore_abyssPrivate: ProjectStore;
+      };
+      const state = internals.state_abyssPrivate;
+      state.set('selectedList', 'inbox');
+      state.set('mode', mode);
+      const input = expectDefined(
+        view.contentEl.querySelector<HTMLInputElement>(
+          mode === 'search' ? '.abyss-search-global' : '.abyss-center-search',
+        ),
+      );
+      input.value = 'needle';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+      await searchUiCompleted(root);
+      const scroll = expectDefined(root.querySelector<HTMLElement>('.abyss-center-scroll'));
+      scroll.scrollTop = 50 * 64;
+      scroll.dispatchEvent(new Event('scroll'));
+      await vi.waitFor(() => {
+        h.frames.present();
+        expect(root.textContent).toContain('needle 50');
+      });
+      const card = expectDefined(root.querySelector<HTMLElement>('.abyss-task-card'));
+      if (mode === 'tasks') {
+        card.click();
+        card.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true }));
+        expect(root.querySelectorAll('.abyss-multi-selected')).toHaveLength(1);
+      }
+      const request = root.dataset['searchRequest'];
+      const calls = h.backends[0]?.searchCalls;
+      internals.projectStore_abyssPrivate.refresh();
+      h.app.workspace.trigger('css-change');
+      h.app.workspace.trigger('resize');
+      h.app.metadataCache.trigger('resolved');
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 200));
+      expect(root.dataset['searchRequest']).toBe(request);
+      expect(h.backends[0]?.searchCalls).toBe(calls);
+      expect(card.isConnected).toBe(true);
+      if (mode === 'tasks') expect(root.querySelectorAll('.abyss-multi-selected')).toHaveLength(1);
+      expect(root.textContent).toContain('needle 50');
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+it('passive panel preparation failure is sanitized, quiet and never rearmed by layout events', async () => {
+  const h = await prewarmPanel();
+  const notice = vi
+    .spyOn(Notice.prototype as unknown as { constructor__(s: string): void }, 'constructor__')
+    .mockImplementation(() => {});
+  const sentinel = 'PRIVATE source query task text';
+  let failed = false;
+  const off = h.search.subscribe((state) => {
+    failed = state.phase === 'failed';
+  });
+  vi.spyOn(h.source, 'documents').mockImplementation(() => {
+    throw new Error(sentinel);
+  });
+  try {
+    await h.mount();
+    h.frames.present();
+    await vi.waitFor(() => {
+      expect(failed).toBe(true);
+    });
+    expect(notice).not.toHaveBeenCalled();
+    expect(h.diagnostics.length).toBeGreaterThan(0);
+    expect(JSON.stringify(h.diagnostics)).not.toContain(sentinel);
+    const attempts = h.backends.length;
+    h.app.workspace.trigger('layout-change');
+    h.app.workspace.trigger('resize');
+    h.frames.present();
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 10));
+    expect(h.backends).toHaveLength(attempts);
+  } finally {
+    off();
+    await h.dispose();
+  }
+});
+
+it('closing a panel waiting on an already started build leaves shared preparation alive', async () => {
+  const h = await prewarmPanel();
+  try {
+    h.scheduler.hold();
+    const { view } = await h.mount();
+    h.frames.present();
+    await vi.waitFor(() => {
+      expect(h.backends).toHaveLength(1);
+    });
+    await view.onClose();
+    await h.scheduler.flush();
+    const cursor = await h.search.open(
+      { kind: 'roots', query: 'needle' },
+      new AbortController().signal,
+    );
+    expect(cursor.total).toBe(1);
+    expect(h.backends).toHaveLength(1);
+    h.search.release(cursor);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it('visible prewarm waits on canonical bootstrap and early input joins that same source preparation', async () => {
+  const h = await prewarmPanel(false);
+  try {
+    seedTaskCache(h.app, 'tasks.md', [{ task: ' ', parent: -1, line: 0 }]);
+    const { view } = await h.mount();
+    h.frames.present();
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 10));
+    expect(h.backends).toHaveLength(0);
+    const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+    state.set('mode', 'search');
+    const input = expectDefined(
+      view.contentEl.querySelector<HTMLInputElement>('.abyss-search-global'),
+    );
+    input.value = 'needle';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
+    expect(h.backends).toHaveLength(0);
+    await h.index.initialize();
+    await searchUiCompleted(
+      expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center')),
+    );
+    expect(h.backends).toHaveLength(1);
+    expect(h.backends[0]?.searchCalls).toBe(1);
+    expect(view.contentEl.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it.each(['edit', 'rename', 'delete'] as const)(
+  'panel preparation publishes latest canonical %s while its shared build is held',
+  async (action) => {
+    const h = await prewarmPanel();
+    try {
+      h.scheduler.hold();
+      await h.mount();
+      h.frames.present();
+      await vi.waitFor(() => {
+        expect(h.backends).toHaveLength(1);
+      });
+      const file = expectDefined(h.app.vault.getFileByPath('tasks.md'));
+      if (action === 'edit') {
+        await h.app.vault.modify(file, '- [ ] needle updated\n- [ ] needle added');
+        h.index.installCommittedContent(file.path, '- [ ] needle updated\n- [ ] needle added');
+      } else if (action === 'rename') await h.app.vault.rename(file, 'renamed.md');
+      else await h.app.fileManager.trashFile(file);
+      await flushMicrotasks(20);
+      await h.scheduler.flush();
+      const cursor = await h.search.open(
+        { kind: 'roots', query: 'needle' },
+        new AbortController().signal,
+      );
+      expect(cursor.total).toBe({ delete: 0, edit: 2, rename: 1 }[action]);
+      const page = await h.search.read(cursor, 0, 50, new AbortController().signal);
+      const hydrated = await h.search.resolveHits(page.hits, new AbortController().signal);
+      expect(hydrated.map((hit) => hit.task.root.source.filePath)).toEqual(
+        { delete: [], edit: ['tasks.md', 'tasks.md'], rename: ['renamed.md'] }[action],
+      );
+      expect(h.backends).toHaveLength(1);
+      h.search.release(cursor);
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+it('a detached or off-viewport panel keeps its later visible prewarm opportunity', async () => {
+  const h = await prewarmPanel();
+  try {
+    const { view } = await h.mount();
+    view.containerEl.remove();
+    h.frames.present();
+    expect(h.frames.frames.size).toBe(0);
+    expect(h.backends).toHaveLength(0);
+    document.body.append(view.containerEl);
+    setGeometry(view.contentEl, rect(10000, 10000, 640, 480));
+    h.app.workspace.trigger('layout-change');
+    expect(h.frames.frames.size).toBe(0);
+    setGeometry(view.contentEl, rect(20, 20, 640, 480));
+    h.app.workspace.trigger('resize');
+    h.frames.present();
+    await vi.waitFor(() => {
+      expect(h.backends).toHaveLength(1);
+    });
+  } finally {
+    await h.dispose();
+  }
+});
+
+describe('mounted Search window migration', () => {
+  it.each(['search', 'tasks', 'empty-tasks'] as const)(
+    'resumes %s through the new owner and accepts real input with the same backend',
+    async (mode) => {
+      const h = await prewarmPanel();
+      const iframe = document.body.createEl('iframe');
+      try {
+        h.index.installCommittedContent('tasks.md', '- [ ] needle\n- [ ] other');
+        const { view, migrate } = await h.mount();
+        const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+        state.set('mode', mode === 'search' ? 'search' : 'tasks');
+        state.set('selectedList', 'inbox');
+        const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+        const input = expectDefined(
+          root.querySelector<HTMLInputElement>(
+            mode === 'search' ? '.abyss-search-global' : '.abyss-center-search',
+          ),
+        );
+        if (mode !== 'empty-tasks') {
+          input.value = 'needle';
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          await searchUiCompleted(root);
+          expect(root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+        } else {
+          expect(root.querySelectorAll('.abyss-task-card')).toHaveLength(2);
+        }
+        const backend = h.backends[0];
+        const request = Number(root.dataset['searchRequest'] ?? 0);
+        const owner = expectDefined(iframe.contentWindow) as EventWindow;
+        // Match the host's per-window DOM extensions, as in the capture migration tests.
+        vi.spyOn(owner.document, 'createElement').mockImplementation((tag, options) =>
+          owner.document.adoptNode(document.createElement(tag, options)),
+        );
+        const scroll = expectDefined(root.querySelector('.abyss-center-scroll'));
+        vi.spyOn(scroll, 'cloneNode').mockImplementation((deep) =>
+          owner.document.adoptNode(document.importNode(scroll, deep)),
+        );
+        owner.document.body.append(view.containerEl);
+        prepareTaskPanelViewport(view.containerEl);
+        migrate(owner);
+        expect(root.querySelector('input.abyss-center-search')).toBe(input);
+        expect(input.value).toBe(mode === 'empty-tasks' ? '' : 'needle');
+        input.value = 'other';
+        input.dispatchEvent(new owner.Event('input', { bubbles: true }));
+        await searchUiCompleted(root);
+        expect(Number(root.dataset['searchRequest'])).toBeGreaterThan(request);
+        expect(root.dataset['searchLogicalResults']).toBe('1');
+        expect(root.querySelector('.abyss-task-title')?.textContent).toBe('other');
+        expect(h.backends).toHaveLength(1);
+        if (backend !== undefined) expect(h.backends[0]).toBe(backend);
+        if (mode !== 'search') {
+          input.value = '';
+          input.dispatchEvent(new owner.Event('input', { bubbles: true }));
+          expect(root.querySelectorAll('.abyss-task-card')).toHaveLength(2);
+          expect(root.querySelector('input.abyss-center-search')).toBe(input);
+        }
+      } finally {
+        await h.dispose();
+        iframe.remove();
+      }
+    },
+  );
+
+  it('releases the debounce in its original window before resuming the retained query', async () => {
+    const h = await prewarmPanel();
+    const iframe = document.body.createEl('iframe');
+    try {
+      const { view, migrate } = await h.mount();
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      state.set('mode', 'search');
+      const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+      const input = expectDefined(root.querySelector<HTMLInputElement>('.abyss-search-global'));
+      await searchUiCompleted(root);
+      const setTimer = vi.spyOn(window, 'setTimeout');
+      const clearTimer = vi.spyOn(window, 'clearTimeout');
+      input.value = 'needle';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      const timerAt = setTimer.mock.calls.findIndex(([, delay]) => delay === 60);
+      expect(timerAt).toBeGreaterThanOrEqual(0);
+      const timer = setTimer.mock.results[timerAt]?.value as number;
+      const owner = expectDefined(iframe.contentWindow) as EventWindow;
+      owner.document.body.append(view.containerEl);
+      prepareTaskPanelViewport(view.containerEl);
+      migrate(owner);
+      expect(clearTimer).toHaveBeenCalledWith(timer);
+      await searchUiCompleted(root);
+      expect(input.value).toBe('needle');
+      expect(root.dataset['searchLogicalResults']).toBe('1');
+      expect(h.backends).toHaveLength(1);
+      expect(h.backends[0]?.searchCalls).toBe(1);
+    } finally {
+      await h.dispose();
+      iframe.remove();
+    }
+  });
+
+  it.each(['cursor', 'Markdown'] as const)(
+    'cancels held %s work and settles the new owner without old completion',
+    async (phase) => {
+      const h = await prewarmPanel();
+      const iframe = document.body.createEl('iframe');
+      const entered = deferred<void>(),
+        release = deferred<void>();
+      let oldSignal: AbortSignal | undefined;
+      try {
+        h.index.installCommittedContent('tasks.md', '- [ ] **needle**\n- [ ] **other**');
+        const { view, migrate } = await h.mount();
+        const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+        state.set('mode', 'search');
+        const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+        const input = expectDefined(root.querySelector<HTMLInputElement>('.abyss-search-global'));
+        let held = false;
+        if (phase === 'cursor') {
+          const read = h.search.read.bind(h.search);
+          vi.spyOn(h.search, 'read').mockImplementation(async (cursor, offset, limit, signal) => {
+            if (!held) {
+              held = true;
+              oldSignal = signal;
+              entered.resolve();
+              await release.promise;
+            }
+            return read(cursor, offset, limit, signal);
+          });
+        }
+        // Obsidian's host renderer is external; retain its real promise boundary and supplied text.
+        vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, markdown, el) => {
+          if (phase === 'Markdown' && !held) {
+            held = true;
+            entered.resolve();
+            await release.promise;
+          }
+          el.createEl('strong', { text: markdown.replaceAll('**', '') });
+        });
+        const completions: string[] = [];
+        const observer = new MutationObserver(() => {
+          if (root.dataset['searchPhase'] === 'complete')
+            completions.push(root.dataset['searchRequest'] ?? '');
+        });
+        observer.observe(root, { attributes: true });
+        input.value = 'needle';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await entered.promise;
+        const oldRequest = root.dataset['searchRequest'];
+        expect(root.dataset['searchPhase']).toBe('pending');
+        const backend = h.backends[0];
+        const owner = expectDefined(iframe.contentWindow) as EventWindow;
+        owner.document.body.append(view.containerEl);
+        prepareTaskPanelViewport(view.containerEl);
+        migrate(owner);
+        if (phase === 'cursor') expect(oldSignal?.aborted).toBe(true);
+        // Migration itself must resume the retained query while the old operation is still held.
+        await searchUiCompleted(root);
+        expect(input.value).toBe('needle');
+        expect(root.querySelector('.abyss-task-title')?.textContent).toBe('needle');
+        input.value = 'other';
+        input.dispatchEvent(new owner.Event('input', { bubbles: true }));
+        await searchUiCompleted(root);
+        const currentRequest = root.dataset['searchRequest'];
+        release.resolve();
+        await flushMicrotasks();
+        expect(root.dataset['searchRequest']).toBe(currentRequest);
+        expect(root.dataset['searchPhase']).toBe('complete');
+        expect(root.querySelector('.abyss-task-title')?.textContent).toBe('other');
+        expect(completions).not.toContain(oldRequest);
+        expect(h.backends).toEqual([backend]);
+        observer.disconnect();
+      } finally {
+        release.resolve();
+        await h.dispose();
+        iframe.remove();
+      }
+    },
+  );
+});
+
+it.each(['toggle', 'other-root', 'deleted'] as const)(
+  'Search receipt expiry preserves the real PanelView inspector after %s',
+  async (reason) => {
+    const h = await prewarmPanel(true, '- [ ] needle\n  - [ ] child\n- [ ] other');
+    try {
+      const { view } = await h.mount();
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      state.set('mode', 'search');
+      state.set('searchQuery', 'needle');
+      const center = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+      await searchUiCompleted(center);
+      expectDefined(center.querySelector<HTMLElement>('.abyss-task-card')).click();
+      await vi.waitFor(() => {
+        expect(state.get('mode')).toBe('tasks');
+      });
+      await searchUiCompleted(center);
+      if (reason === 'toggle')
+        expectDefined(
+          center.querySelector<HTMLElement>('.is-search-revealed .abyss-status-marker'),
+        ).click();
+      else if (reason === 'deleted')
+        await h.app.fileManager.trashFile(expectDefined(h.app.vault.getFileByPath('tasks.md')));
+      else
+        h.index.installCommittedContent(
+          'tasks.md',
+          '- [ ] needle\n  - [ ] child\n- [ ] other changed',
+        );
+      await vi.waitFor(() => {
+        expect(center.dataset['searchPhase']).toBe('idle');
+      });
+      expect(center.dataset['searchLogicalResults']).toBeUndefined();
+      expect(center.textContent).not.toContain('Type to search');
+      if (reason !== 'deleted') expect(center.querySelector('.abyss-task-card')).not.toBeNull();
+      if (reason === 'deleted') expect(state.get('taskStack')).toEqual([]);
+      else {
+        const selected = expectDefined(state.get('taskStack')[0]);
+        expect(selected.title).toBe('needle');
+        expect(selected.status).toBe(reason === 'toggle' ? 'done' : 'open');
+        expect(state.get('inspectorBackStack')).toEqual([]);
+      }
+      const input = expectDefined(center.querySelector<HTMLInputElement>('.abyss-center-search'));
+      input.value = 'other';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await searchUiCompleted(center);
+      expect(center.dataset['searchPhase']).toBe('complete');
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+it.each(
+  (['tasks', 'search'] as const).flatMap((mode) => [true, false].map((apple) => ({ mode, apple }))),
+)(
+  'owns Find/Escape in the actual $mode shell, Apple primary=$apple without changing results or inspector',
+  async ({ mode, apple }) => {
+    const h = await prewarmPanel();
+    const previousApple = Platform.isMacOS;
+    const previousIos = Platform.isIosApp;
+    const previousAndroid = Platform.isAndroidApp;
+    // The SDK's isMacOS convention covers iPhone/iPad Command as well as desktop Apple hosts.
+    Platform.isMacOS = apple;
+    Platform.isIosApp = apple;
+    Platform.isAndroidApp = !apple;
+    const primary = { ctrlKey: !apple, metaKey: apple };
+    const restorePlatform = (): void => {
+      Platform.isMacOS = previousApple;
+      Platform.isIosApp = previousIos;
+      Platform.isAndroidApp = previousAndroid;
+    };
+    try {
+      const { view, migrate } = await h.mount();
+      let activeView: PanelView | null = view;
+      vi.spyOn(h.app.workspace, 'getActiveViewOfType').mockImplementation((type) =>
+        type === PanelView ? activeView : null,
+      );
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      state.set('mode', mode);
+      state.set('selectedList', 'inbox');
+      const center = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+      const input = expectDefined(
+        center.querySelector<HTMLInputElement>('input.abyss-center-search'),
+      );
+      input.value = 'needle';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await searchUiCompleted(center);
+      const request = center.dataset['searchRequest'];
+      const builds = h.backends.length;
+      const searches = h.backends[0]?.searchCalls;
+      const button = expectDefined(center.querySelector<HTMLButtonElement>('button'));
+      button.focus();
+      const find = new KeyboardEvent('keydown', {
+        key: 'а',
+        code: 'KeyF',
+        ...primary,
+        bubbles: true,
+        cancelable: true,
+      });
+      button.dispatchEvent(find);
+      expect(find.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(input);
+      expect(input.selectionEnd).toBe(6);
+      input.setSelectionRange(2, 2);
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { code: 'KeyF', ...primary, bubbles: true }),
+      );
+      expect(input.selectionStart).toBe(0);
+      const inspector = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-right'));
+      const layout = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-layout'));
+      setGeometry(layout, rect(0, 0, 390, 480));
+      window.dispatchEvent(new Event('resize'));
+      state.set('taskStack', [expectDefined(h.index.list()[0])]);
+      if (mode === 'tasks') expect(inspector.classList.contains('is-compact-open')).toBe(true);
+      const inspectorClass = inspector.className;
+      const stack = state.get('taskStack');
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(escape);
+      expect(escape.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(center);
+      expect(input.value).toBe('needle');
+      expect(inspector.className).toBe(inspectorClass);
+      expect(state.get('taskStack')).toBe(stack);
+      expect(center.dataset['searchRequest']).toBe(request);
+      expect(h.backends).toHaveLength(builds);
+      expect(h.backends[0]?.searchCalls).toBe(searches);
+      const draft = center.createEl('input');
+      draft.value = 'draft';
+      draft.focus();
+      const blocked = new KeyboardEvent('keydown', {
+        code: 'KeyF',
+        ...primary,
+        bubbles: true,
+        cancelable: true,
+      });
+      draft.dispatchEvent(blocked);
+      expect(blocked.defaultPrevented).toBe(false);
+      expect(document.activeElement).toBe(draft);
+      draft.remove();
+      for (const cls of ['menu', 'modal-container']) {
+        const native = document.body.createDiv({ cls });
+        setGeometry(native, rect(0, 0, 200, 200));
+        button.focus();
+        const nativeFind = new KeyboardEvent('keydown', {
+          code: 'KeyF',
+          ...primary,
+          bubbles: true,
+          cancelable: true,
+        });
+        button.dispatchEvent(nativeFind);
+        expect(nativeFind.defaultPrevented).toBe(false);
+        expect(document.activeElement).toBe(button);
+        native.remove();
+      }
+      activeView = null;
+      const inactive = new KeyboardEvent('keydown', {
+        code: 'KeyF',
+        ...primary,
+        bubbles: true,
+        cancelable: true,
+      });
+      center.dispatchEvent(inactive);
+      expect(inactive.defaultPrevented).toBe(false);
+      activeView = view;
+      const frame = document.body.createEl('iframe');
+      const targetDocument = expectDefined(frame.contentDocument);
+      targetDocument.body.append(targetDocument.adoptNode(view.containerEl));
+      migrate(expectDefined(frame.contentWindow));
+      const oldFind = new KeyboardEvent('keydown', {
+        code: 'KeyF',
+        ...primary,
+        bubbles: true,
+        cancelable: true,
+      });
+      document.body.dispatchEvent(oldFind);
+      expect(oldFind.defaultPrevented).toBe(false);
+      const newFind = new KeyboardEvent('keydown', {
+        code: 'KeyF',
+        ...primary,
+        bubbles: true,
+        cancelable: true,
+      });
+      center.dispatchEvent(newFind);
+      expect(newFind.defaultPrevented).toBe(true);
+      expect(targetDocument.activeElement).toBe(input);
+      await view.onClose();
+      const disposed = new KeyboardEvent('keydown', {
+        code: 'KeyF',
+        ...primary,
+        bubbles: true,
+        cancelable: true,
+      });
+      center.dispatchEvent(disposed);
+      expect(disposed.defaultPrevented).toBe(false);
+      frame.remove();
+    } finally {
+      await h.dispose();
+      restorePlatform();
+    }
+  },
+);
+
+it('Find followed by Escape cancels the Search shell pending autofocus', async () => {
+  const h = await prewarmPanel();
+  try {
+    const { view } = await h.mount();
+    vi.spyOn(h.app.workspace, 'getActiveViewOfType').mockImplementation((type) =>
+      type === PanelView ? view : null,
+    );
+    const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+    state.set('mode', 'search');
+    const center = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+    center.dispatchEvent(
+      new KeyboardEvent('keydown', { code: 'KeyF', ctrlKey: true, bubbles: true }),
+    );
+    const input = expectDefined(center.querySelector<HTMLInputElement>('.abyss-search-global'));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 20));
+    expect(document.activeElement).toBe(center);
+  } finally {
+    await h.dispose();
+  }
+});
+
+async function openCompletionShell(
+  shell: string,
+  app: App,
+  application: TaskApplication,
+  root: TaskSnapshot,
+) {
+  if (shell === 'modal') {
+    const modal = new TaskModal({
+      app,
+      statusRegistry: application.statusRegistry,
+      settings: DEFAULT_SETTINGS,
+      queries: application.index,
+      tasks: application.tasks,
+    });
+    modal.open(root);
+    const internals = modal as unknown as {
+      innerState_abyssPrivate: AppState;
+      innerPanel_abyssPrivate: RightPanel;
+    };
+    return {
+      state: internals.innerState_abyssPrivate,
+      panel: internals.innerPanel_abyssPrivate,
+      surface: expectDefined(activeDocument.querySelector<HTMLElement>('.abyss-modal-body')),
+      close: async () => {
+        modal.close();
+      },
+    };
+  }
+  const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+  const view = new PanelView(
+    leaf,
+    DEFAULT_SETTINGS,
+    makeTagManager(app),
+    application.index,
+    application.tasks,
+    application.statusRegistry,
+  );
+  await view.onOpen();
+  activeDocument.body.append(view.containerEl);
+  const internals = view as unknown as {
+    state_abyssPrivate: AppState;
+    right_abyssPrivate: RightPanel;
+  };
+  return {
+    state: internals.state_abyssPrivate,
+    panel: internals.right_abyssPrivate,
+    surface: view.contentEl,
+    close: async () => {
+      await view.onClose();
+    },
+  };
+}
+
+describe('real shell completion follow-up ownership', () => {
+  it.each(
+    ['panel', 'modal'].flatMap((shell) =>
+      ['Owner', 'Leaf'].flatMap((selected) =>
+        [59_999, 60_000].flatMap((duration) =>
+          ['\n', '\r\n'].map((eol) => ({ shell, selected, duration, eol })),
+        ),
+      ),
+    ),
+  )(
+    '$shell retains selected $selected through both publications at $duration ms eol=$eol',
+    async ({ shell, selected, duration, eol }) => {
+      const start = Date.parse('2026-09-05T11:59:00Z');
+      const app = await createAppWithFiles({
+        'tracked.md':
+          '\n- [ ] Root\n  - [ ] Owner\n    - [ ] Leaf\n      - 2026-09-05T11:59:00Z →\n  - [ ] Neighbor\n    - 2026-09-05T11:55:00Z →'.replaceAll(
+            '\n',
+            eol,
+          ),
+      });
+      const application = configuredTaskApplication(app, DEFAULT_SETTINGS, {
+        authority: true,
+        clock: clockFrom(start + duration, 420),
+      });
+      await application.index.initialize();
+      const root = expectDefined(application.index.list()[0]);
+      const owner = expectDefined(root.subtasks[0]);
+      const leafTask = expectDefined(owner.subtasks[0]);
+      const mounted = await openCompletionShell(shell, app, application, root);
+      const { state, panel, surface } = mounted;
+      state.set('taskStack', selected === 'Owner' ? [root, owner] : [root, owner, leafTask]);
+      const header = expectDefined(surface.querySelector('.abyss-right-header'));
+      const input = expectDefined(
+        surface.querySelector<HTMLTextAreaElement>('.abyss-comment-input'),
+      );
+      input.value = 'live draft';
+      const observations: boolean[] = [];
+      const off = state.on('taskStack', () => {
+        observations.push(header.isConnected && input.isConnected);
+      });
+      try {
+        await (
+          panel as unknown as { toggleTaskLike_abyssPrivate(node: typeof leafTask): Promise<void> }
+        ).toggleTaskLike_abyssPrivate(leafTask);
+        await flushMicrotasks(30);
+        expect(observations.length).toBeGreaterThanOrEqual(2);
+        expect(observations.every(Boolean)).toBe(true);
+        expect(surface.querySelector('.abyss-right-header')).toBe(header);
+        expect(surface.querySelector('.abyss-comment-input')).toBe(input);
+        expect(input.value).toBe('live draft');
+        const current = expectDefined(application.index.list()[0]);
+        expect(current.subtasks[0]?.subtasks[0]?.timeEntries).toHaveLength(
+          duration < 60_000 ? 0 : 1,
+        );
+        expect(current.subtasks[1]?.timeEntries[0]?.state).toBe('running');
+        expect(state.get('taskStack').map((node) => node.title)).toEqual(
+          selected === 'Owner' ? ['Root', 'Owner'] : ['Root', 'Owner', 'Leaf'],
+        );
+      } finally {
+        off();
+        await mounted.close();
+        application.index.destroy();
+      }
+    },
+  );
+});
+
+describe('PanelView local day boundary', () => {
+  const source = [
+    '- [ ] needle due 📅 2026-10-07',
+    '- [ ] needle tomorrow 📅 2026-10-08',
+    '- [ ] needle interval 🛫 2026-10-06 📅 2026-10-09',
+  ].join('\n');
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([
+    ['today', false],
+    ['today', true],
+    ['upcoming', false],
+    ['upcoming', true],
+  ] as const)(
+    'refreshes idle %s membership and badges, compact: %s',
+    async (selection, compact) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 9, 7, 12));
+      const h = await prewarmPanel(true, source);
+      const timers = vi.spyOn(window, 'setTimeout');
+      try {
+        const { view } = await h.mount();
+        const state = view['state_abyssPrivate'];
+        state.set('mode', 'tasks');
+        state.set('selectedList', selection);
+        state.set('centerListViewState', { ...state.get('centerListViewState'), groupBy: 'none' });
+        const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+        if (compact) {
+          const input = expectDefined(root.querySelector<HTMLInputElement>('.abyss-center-search'));
+          input.value = 'needle';
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          await searchUiCompleted(root);
+        }
+        const titles = () =>
+          Array.from(root.querySelectorAll('.abyss-task-title'), (el) => el.textContent);
+        const badge = (index: number) => {
+          const row = view.contentEl.querySelectorAll('.abyss-left-item')[index];
+          return row?.querySelector('.abyss-left-count')?.textContent;
+        };
+        expect(titles()).toEqual(
+          selection === 'today'
+            ? ['needle due', 'needle interval']
+            : ['needle tomorrow', 'needle interval'],
+        );
+        expect(badge(1)).toBe('2');
+        expect(badge(2)).toBe('2');
+        const commit = vi.fn();
+        const unsubscribe = state.onCommit(commit);
+        const generation = root.dataset['searchGeneration'];
+        const request = Number(root.dataset['searchRequest'] ?? 0);
+        const boundaryCallbacks = timers.mock.calls
+          .filter(([, delay]) => delay === 12 * 60 * 60 * 1000)
+          .map(([callback]) => callback);
+        expect(boundaryCallbacks.length).toBeGreaterThan(0);
+        vi.setSystemTime(new Date(2026, 9, 8));
+        for (const callback of boundaryCallbacks) {
+          if (typeof callback === 'function') callback();
+        }
+        if (compact) await searchUiCompleted(root);
+        expect(badge(1)).toBe('2+1');
+        expect(badge(2)).toBe('1');
+        expect(titles()).toEqual(
+          selection === 'today'
+            ? ['needle due', 'needle tomorrow', 'needle interval']
+            : ['needle interval'],
+        );
+        if (compact) {
+          expect(Number(root.dataset['searchRequest'])).toBeGreaterThan(request);
+          expect(root.dataset['searchGeneration']).toBe(generation);
+        }
+        expect(commit).not.toHaveBeenCalled();
+        unsubscribe();
+        const file = expectDefined(h.app.vault.getFileByPath('tasks.md'));
+        expect(await h.app.vault.read(file)).toBe(source);
+      } finally {
+        await h.dispose();
+      }
+    },
+  );
+
+  it('rebinds default indexed Upcoming dates at mounted midnight without a source event', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 7, 12));
+    const h = await prewarmPanel(true, source);
+    const timers = vi.spyOn(window, 'setTimeout');
+    try {
+      const { view } = await h.mount();
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        if (this.hasClass('abyss-group-header')) return rect(0, 0, 700, 32);
+        return rect(0, 0, 700, this.hasClass('abyss-task-card') ? 64 : 900);
+      });
+      const state = view['state_abyssPrivate'];
+      state.set('mode', 'tasks');
+      state.set('selectedList', 'upcoming');
+      const root = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-center'));
+      await searchUiCompleted(root);
+      const cards = [...root.querySelectorAll<HTMLElement>('.abyss-task-card')];
+      expect(cards).toHaveLength(3);
+      expect(root.querySelectorAll('.abyss-group-header')).toHaveLength(2);
+      expectDefined(cards[1]).dispatchEvent(
+        new MouseEvent('click', { bubbles: true, metaKey: true }),
+      );
+      expectDefined(cards[2]).dispatchEvent(
+        new MouseEvent('click', { bubbles: true, metaKey: true }),
+      );
+      expect(root.querySelectorAll('.abyss-multi-selected')).toHaveLength(2);
+      const generation = root.dataset['searchGeneration'];
+      const request = Number(root.dataset['searchRequest']);
+      const callbacks = timers.mock.calls
+        .filter(([, delay]) => delay === 12 * 60 * 60 * 1000)
+        .map(([callback]) => callback);
+      expect(callbacks.length).toBeGreaterThan(0);
+      vi.setSystemTime(new Date(2026, 9, 8));
+      for (const callback of callbacks) if (typeof callback === 'function') callback();
+      await searchUiCompleted(root);
+      expect(root.querySelectorAll('.abyss-group-header')).toHaveLength(1);
+      expect(root.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+      expect(root.querySelectorAll('.abyss-multi-selected')).toHaveLength(1);
+      expect(root.querySelector('.abyss-task-title')?.textContent).toBe('needle interval');
+      expect(root.dataset['searchGeneration']).toBe(generation);
+      expect(Number(root.dataset['searchRequest'])).toBeGreaterThan(request);
+      const badges = [...view.contentEl.querySelectorAll('.abyss-left-item')].map(
+        (row) => row.querySelector('.abyss-left-count')?.textContent,
+      );
+      expect(badges[1]).toBe('2+1');
+      expect(badges[2]).toBe('1');
+      const file = expectDefined(h.app.vault.getFileByPath('tasks.md'));
+      expect(await h.app.vault.read(file)).toBe(source);
+    } finally {
+      await h.dispose();
+    }
+  });
+
+  function observeBoundaryTimers(owner: Window) {
+    const set = vi.spyOn(owner, 'setTimeout');
+    const clear = vi.spyOn(owner, 'clearTimeout');
+    return {
+      set,
+      clear,
+      latest() {
+        const [callback, delay] = expectDefined(set.mock.lastCall);
+        if (typeof callback !== 'function') throw new Error('Expected a boundary callback');
+        return {
+          fire: callback as () => void,
+          delay,
+          id: set.mock.results[set.mock.results.length - 1]?.value as number,
+        };
+      },
+    };
+  }
+
+  it('re-arms early timers and same-day wakes, then refreshes once on focus or visible wake', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 7, 12));
+    const h = await prewarmPanel(true, source);
+    try {
+      const { view } = await h.mount();
+      const timers = observeBoundaryTimers(window);
+      view['bindDayBoundary_abyssPrivate']();
+      const first = timers.latest();
+      const left = vi.spyOn(view['left_abyssPrivate'], 'refresh');
+      const center = vi.spyOn(view['center_abyssPrivate'], 'refresh');
+      first.fire();
+      expect(timers.clear).toHaveBeenCalledWith(first.id);
+      expect(timers.latest().delay).toBe(12 * 60 * 60 * 1000);
+      window.dispatchEvent(new Event('focus'));
+      expect(left).not.toHaveBeenCalled();
+      expect(center).not.toHaveBeenCalled();
+      vi.setSystemTime(new Date(2026, 9, 7, 23, 59, 59, 999));
+      window.dispatchEvent(new Event('focus'));
+      expect(timers.latest().delay).toBe(1);
+      timers.latest().fire();
+      expect(timers.latest().delay).toBe(1);
+      expect(left).not.toHaveBeenCalled();
+      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+      vi.setSystemTime(new Date(2026, 9, 8, 8));
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(left).toHaveBeenCalledTimes(1);
+      expect(center).toHaveBeenCalledExactlyOnceWith('view');
+      expect(timers.latest().delay).toBe(16 * 60 * 60 * 1000);
+      vi.setSystemTime(new Date(2026, 9, 9, 9));
+      visibility.mockReturnValue('hidden');
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(left).toHaveBeenCalledTimes(1);
+      visibility.mockReturnValue('visible');
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('focus'));
+      expect(left).toHaveBeenCalledTimes(2);
+      expect(center).toHaveBeenCalledTimes(2);
+      expect(timers.latest().delay).toBe(15 * 60 * 60 * 1000);
+    } finally {
+      await h.dispose();
+    }
+  });
+
+  it('moves the day owner once, checks the retained day immediately, and retires stale callbacks', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 7, 12));
+    const h = await prewarmPanel(true, source);
+    const iframe = document.body.createEl('iframe');
+    try {
+      const { view, migrate } = await h.mount();
+      const oldTimers = observeBoundaryTimers(window);
+      const oldRemove = vi.spyOn(window, 'removeEventListener');
+      const oldDocumentRemove = vi.spyOn(document, 'removeEventListener');
+      view['bindDayBoundary_abyssPrivate']();
+      const old = oldTimers.latest();
+      oldRemove.mockClear();
+      oldDocumentRemove.mockClear();
+      const left = vi.spyOn(view['left_abyssPrivate'], 'refresh');
+      const center = vi.spyOn(view['center_abyssPrivate'], 'refresh');
+      const owner = expectDefined(iframe.contentWindow) as EventWindow;
+      vi.spyOn(owner.document, 'createElement').mockImplementation((tag, options) =>
+        owner.document.adoptNode(document.createElement(tag, options)),
+      );
+      const timers = observeBoundaryTimers(owner);
+      const add = vi.spyOn(owner, 'addEventListener');
+      const remove = vi.spyOn(owner, 'removeEventListener');
+      const documentAdd = vi.spyOn(owner.document, 'addEventListener');
+      const documentRemove = vi.spyOn(owner.document, 'removeEventListener');
+      owner.document.body.append(view.containerEl);
+      prepareTaskPanelViewport(view.containerEl);
+      vi.setSystemTime(new Date(2026, 9, 8, 8));
+      // A queued callback is inert even before the host announces the new owner.
+      old.fire();
+      expect(left).not.toHaveBeenCalled();
+      migrate(owner);
+      expect(left).toHaveBeenCalledTimes(1);
+      expect(center).toHaveBeenCalledExactlyOnceWith('view');
+      expect(oldTimers.clear).toHaveBeenCalledWith(old.id);
+      expect(oldRemove).toHaveBeenCalledWith('focus', old.fire);
+      const oldVisibility = expectDefined(
+        oldDocumentRemove.mock.calls.find(([type]) => type === 'visibilitychange'),
+      )[1];
+      expect(oldVisibility).toBeTypeOf('function');
+      const current = timers.latest();
+      expect(current.delay).toBe(16 * 60 * 60 * 1000);
+      expect(add).toHaveBeenCalledWith('focus', current.fire);
+      expect(documentAdd.mock.calls.filter(([type]) => type === 'visibilitychange')).toHaveLength(
+        1,
+      );
+      migrate(owner);
+      expect(timers.clear).toHaveBeenCalledWith(current.id);
+      expect(remove).toHaveBeenCalledWith('focus', current.fire);
+      expect(left).toHaveBeenCalledTimes(1);
+      const final = timers.latest();
+      expect(documentAdd.mock.calls.filter(([type]) => type === 'visibilitychange')).toHaveLength(
+        2,
+      );
+      vi.setSystemTime(new Date(2026, 9, 9));
+      old.fire();
+      current.fire();
+      expect(left).toHaveBeenCalledTimes(1);
+      const visibilityListeners = documentAdd.mock.calls.filter(
+        ([type]) => type === 'visibilitychange',
+      );
+      const visible = expectDefined(visibilityListeners[visibilityListeners.length - 1])[1];
+      expect(documentRemove).not.toHaveBeenCalledWith('visibilitychange', visible);
+      await view.onClose();
+      expect(timers.clear).toHaveBeenCalledWith(final.id);
+      expect(remove).toHaveBeenCalledWith('focus', final.fire);
+      expect(documentRemove).toHaveBeenCalledWith('visibilitychange', visible);
+      vi.setSystemTime(new Date(2026, 9, 9));
+      old.fire();
+      current.fire();
+      final.fire();
+      window.dispatchEvent(new Event('focus'));
+      owner.dispatchEvent(new owner.Event('focus'));
+      owner.document.dispatchEvent(new owner.Event('visibilitychange'));
+      expect(left).toHaveBeenCalledTimes(1);
+      expect(center).toHaveBeenCalledTimes(1);
+    } finally {
+      await h.dispose();
+      iframe.remove();
+    }
+  });
+
+  it.each([
+    {
+      start: '2026-03-29T00:00:00+01:00',
+      transition: '2026-03-29T01:00:00Z',
+      before: 60,
+      after: 120,
+      hours: 23,
+    },
+    {
+      start: '2026-10-25T00:00:00+02:00',
+      transition: '2026-10-25T01:00:00Z',
+      before: 120,
+      after: 60,
+      hours: 25,
+    },
+  ] as const)(
+    'schedules a $hours-hour civil day across the $transition offset transition',
+    async ({ start, transition, before, after, hours }) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(start));
+      const h = await prewarmPanel();
+      try {
+        const { view } = await h.mount();
+        vi.spyOn(timeBadge, 'deviceTrackedTimeContext').mockReturnValue({
+          nowMs: Date.parse(start),
+          offsetAt: (epochMs) => (epochMs < Date.parse(transition) ? before : after),
+        });
+        const timers = observeBoundaryTimers(window);
+        view['bindDayBoundary_abyssPrivate']();
+        expect(timers.latest().delay).toBe(hours * 60 * 60 * 1000);
+      } finally {
+        await h.dispose();
+      }
+    },
+  );
 });

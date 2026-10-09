@@ -35,6 +35,7 @@ async function harness(
   addCreatedDate = true,
   behavior: {
     readonly taskPrefix: string;
+    readonly applyTaskPrefixToSubtasks: boolean;
     readonly inbox: {
       readonly mode: 'tag' | 'untagged' | 'both';
       readonly tag: string;
@@ -42,6 +43,7 @@ async function harness(
     };
   } = {
     taskPrefix: '',
+    applyTaskPrefixToSubtasks: false,
     inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
   },
 ) {
@@ -65,14 +67,16 @@ async function harness(
   });
   const diagnostics = vi.fn<TaskDiagnosticSink>();
   const dependencies = new TaskDependencyService(index, repository, generate, diagnostics);
+  const today = vi.fn(() => localDate('2026-09-06'));
   const application = new TaskApplicationService(
     index,
     repository,
     statuses,
-    { today: () => localDate('2026-09-06') },
+    { today },
     undefined,
     () => ({
       taskPrefix: behavior.taskPrefix,
+      applyTaskPrefixToSubtasks: behavior.applyTaskPrefixToSubtasks,
       inbox: behavior.inbox,
       taskLifecycle: { addCreatedDate, addCompletionDate: true },
       recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
@@ -96,7 +100,7 @@ async function harness(
       direction,
       text,
     });
-  return { app, index, repository, application, diagnostics, node, read, create, file };
+  return { app, index, repository, application, diagnostics, node, read, create, file, today };
 }
 
 function outcome(result: TaskCommandResult) {
@@ -123,9 +127,199 @@ function corruptRoot(
 }
 
 describe('public atomic dependency subtask creation', () => {
+  const prefixCases = [
+    {
+      name: 'disabled root',
+      root: 'Current #project',
+      owner: undefined,
+      enabled: false,
+      child: 'Child #custom',
+    },
+    {
+      name: 'enabled non-Inbox root',
+      root: 'Current #project',
+      owner: undefined,
+      enabled: true,
+      child: '#task/one-off Child #custom',
+    },
+    {
+      name: 'case-insensitive Inbox root',
+      root: 'Current #TASK/INBOX',
+      owner: undefined,
+      enabled: true,
+      child: 'Child #custom',
+    },
+    {
+      name: 'untagged Inbox root',
+      root: 'Current',
+      owner: undefined,
+      enabled: true,
+      child: 'Child #custom',
+    },
+    {
+      name: 'tagged child of Inbox root',
+      root: 'Current #task/inbox',
+      owner: 'Owner #project',
+      enabled: true,
+      child: 'Child #custom',
+    },
+    {
+      name: 'untagged child of non-Inbox root',
+      root: 'Current #project',
+      owner: 'Owner',
+      enabled: true,
+      child: '#task/one-off Child #custom',
+    },
+    {
+      name: 'Inbox-tagged child of non-Inbox root',
+      root: 'Current #project',
+      owner: 'Owner #task/inbox',
+      enabled: true,
+      child: '#task/one-off Child #custom',
+    },
+  ];
+  it.each(
+    prefixCases.flatMap((testCase) =>
+      (['blocks', 'blocked-by'] as const).map((direction) => ({ ...testCase, direction })),
+    ),
+  )(
+    'uses owning root prefix policy for $name, $direction',
+    async ({ root, owner, enabled, child, direction }) => {
+      const source = [
+        `- [ ] ${root}`,
+        ...(owner === undefined ? [] : [`  - [ ] ${owner}`]),
+        '',
+      ].join('\n');
+      const h = await harness(source, undefined, false, {
+        taskPrefix: '#task/one-off',
+        applyTaskPrefixToSubtasks: enabled,
+        inbox: { mode: 'both', tag: '#task/inbox', removeTagOnAssign: true },
+      });
+      const target = h.node(owner?.split(' #')[0] ?? 'Current').target;
+      const created = outcome(await h.create(direction, 'Child #custom', target));
+      expect(created.child.root.source.originalBlock).toContain(
+        `${child} ${direction === 'blocks' ? '⛔' : '🆔'} 00000000`,
+      );
+      const node = h.index.listNodes().find((candidate) => candidate.node.title === 'Child');
+      expect(node?.node.tags).toEqual(
+        enabled && child.startsWith('#task/one-off') ? ['#task/one-off', '#custom'] : ['#custom'],
+      );
+      expect((await h.read()).match(/Child/g)).toHaveLength(1);
+    },
+  );
+
+  it.each(
+    (['ordinary', 'blocks', 'blocked-by'] as const).flatMap((route) => [
+      { route, before: '#project', after: '#task/inbox', child: 'Child #custom' },
+      { route, before: '#task/inbox', after: '#project', child: '#task/one-off Child #custom' },
+    ]),
+  )(
+    'uses fresh owning-root membership for $route after $before becomes $after',
+    async ({ route, before, after, child }) => {
+      const h = await harness(`- [ ] Current ${before}\n  - [ ] Owner\n`, undefined, false, {
+        taskPrefix: '#task/one-off',
+        applyTaskPrefixToSubtasks: true,
+        inbox: { mode: 'both', tag: '#task/inbox', removeTagOnAssign: true },
+      });
+      const target = h.node('Owner').target;
+      expect(
+        (
+          await h.repository.edit({
+            type: 'patch',
+            target: { type: 'task', ref: h.node('Current').root.ref },
+            patch: { tags: { remove: [before], add: [after] } },
+          })
+        ).type,
+      ).toBe('committed');
+      const result =
+        route === 'ordinary'
+          ? await h.application.execute({
+              type: 'add-subtask',
+              parent: target,
+              text: 'Child #custom',
+            })
+          : await h.create(route, 'Child #custom', target);
+      expect(result.type).toBe('ok');
+      expect(await h.read()).toContain(`- [ ] ${child}`);
+      expect(h.node('Owner').node.subtasks[0]?.tags).toEqual(
+        child.startsWith('#task/one-off') ? ['#task/one-off', '#custom'] : ['#custom'],
+      );
+      expect((await h.read()).match(/Child/g)).toHaveLength(1);
+    },
+  );
+
+  it.each(
+    (['ordinary', 'blocks', 'blocked-by'] as const).flatMap((route) => [
+      { route, before: '#project', after: '#task/inbox', child: 'Child #custom' },
+      { route, before: '#task/inbox', after: '#project', child: '#task/one-off Child #custom' },
+    ]),
+  )(
+    'recomputes $route prefix on a proven root rebase from $before to $after with frozen settings',
+    async ({ route, before, after, child }) => {
+      const behavior = {
+        taskPrefix: '#task/one-off',
+        applyTaskPrefixToSubtasks: true,
+        inbox: { mode: 'both' as const, tag: '#task/inbox', removeTagOnAssign: true },
+      };
+      const h = await harness(
+        `- [ ] Current ${before}\n  - [ ] Owner\n`,
+        undefined,
+        true,
+        behavior,
+      );
+      const target = h.node('Owner').target;
+      const changeMembership = async () => {
+        const result = await originalEdit({
+          type: 'patch',
+          target: { type: 'task', ref: h.node('Current').root.ref },
+          patch: { tags: { remove: [before], add: [after] } },
+        });
+        expect(result.type).toBe('committed');
+        behavior.taskPrefix = '#changed';
+        behavior.applyTaskPrefixToSubtasks = false;
+        h.today.mockReturnValue(localDate('2026-12-31'));
+      };
+      const originalEdit = h.repository.edit.bind(h.repository);
+      if (route === 'ordinary') {
+        vi.spyOn(h.repository, 'edit').mockImplementationOnce(async (request) => {
+          await changeMembership();
+          return originalEdit(request);
+        });
+      } else {
+        const write = h.repository.createDependencySubtask.bind(h.repository);
+        vi.spyOn(h.repository, 'createDependencySubtask').mockImplementationOnce(
+          async (request) => {
+            await changeMembership();
+            return write(request);
+          },
+        );
+      }
+      const result =
+        route === 'ordinary'
+          ? await h.application.execute({
+              type: 'add-subtask',
+              parent: target,
+              text: 'Child #custom',
+            })
+          : await h.create(route, 'Child #custom', target);
+      expect(result.type).toBe('ok');
+      const added = h.node('Owner').node.subtasks[0];
+      expect(added?.markdownTitle).toBe('Child');
+      expect(added?.planning.created).toBe('2026-09-06');
+      expect(await h.read()).toContain(`- [ ] ${child}`);
+      expect(added?.tags).toEqual(
+        child.startsWith('#task/one-off') ? ['#task/one-off', '#custom'] : ['#custom'],
+      );
+      expect((await h.read()).match(/Child/g)).toHaveLength(1);
+      expect(await h.read()).not.toContain('#changed');
+      expect(h.today).toHaveBeenCalledOnce();
+    },
+  );
+
   it('applies the captured Markdown prefix once to linked child creation', async () => {
     const h = await harness('- [ ] Current\n', undefined, false, {
       taskPrefix: 'Plan `#inbox` #inbox',
+      applyTaskPrefixToSubtasks: true,
       inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
     });
 

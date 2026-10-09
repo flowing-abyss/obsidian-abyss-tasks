@@ -2,10 +2,14 @@ import { formatDurationFromMinutes } from '../../parser/TaskParser';
 import {
   clampDurationToDay,
   localTime,
-  shiftLocalDate,
   durationMinutes as validatedDurationMinutes,
   type TaskSnapshot,
 } from '../../tasks';
+import {
+  calendarOccurrenceForRender,
+  calendarShiftPlanning,
+  calendarTaskWithPlanning,
+} from '../calendarOccurrences';
 import { populateCalendarPreview } from './calendarPreview';
 import {
   resolveBoundaryTarget,
@@ -179,40 +183,13 @@ function previewElement(options: PreviewElementOptions): HTMLElement {
   return preview;
 }
 
-function shiftedStartAndDue(
-  planning: TaskSnapshot['planning'],
-  days: number,
-): TaskSnapshot['planning'] | undefined {
-  if (planning.start == null || planning.due == null) return undefined;
-  const start = shiftLocalDate(planning.start, days);
-  const due = shiftLocalDate(planning.due, days);
-  return start != null && due != null ? { ...planning, start, due } : undefined;
-}
-
-function shiftedScheduled(
-  planning: TaskSnapshot['planning'],
-  days: number,
-): TaskSnapshot['planning'] | undefined {
-  if (planning.scheduled == null) return undefined;
-  const scheduled = shiftLocalDate(planning.scheduled, days);
-  return scheduled != null ? { ...planning, scheduled } : undefined;
-}
-
-function shiftedDue(
-  planning: TaskSnapshot['planning'],
-  days: number,
-): TaskSnapshot['planning'] | undefined {
-  if (planning.due == null) return undefined;
-  const due = shiftLocalDate(planning.due, days);
-  return due != null ? { ...planning, due } : undefined;
-}
-
 function shiftedPlanning(task: TaskSnapshot, days: number): TaskSnapshot['planning'] | undefined {
-  const planning = task.planning;
-  if (planning.start != null && planning.due != null) return shiftedStartAndDue(planning, days);
-  if (planning.scheduled != null) return shiftedScheduled(planning, days);
-  if (planning.due != null) return shiftedDue(planning, days);
-  return undefined;
+  const occurrence = calendarOccurrenceForRender(task);
+  return calendarShiftPlanning(
+    task.planning,
+    days,
+    occurrence.kind === 'materialized' ? occurrence.occupied : undefined,
+  );
 }
 
 function withoutTimedPlanning(planning: TaskSnapshot['planning']): TaskSnapshot['planning'] {
@@ -254,7 +231,12 @@ function applyPreviewPacking(
 ): void {
   const planning = prospectivePlanning(binding.task, target);
   if (planning === undefined || binding.previewPositionFor === undefined) return;
-  const positioned = binding.previewPositionFor(binding.task, planning, date);
+  const source = calendarTaskWithPlanning(
+    binding.task,
+    planning,
+    'boundary' in target && target.boundary === 'create-span' ? 'create-span' : undefined,
+  );
+  const positioned = binding.previewPositionFor(source, planning, date);
   if (positioned === undefined) return;
   const width = 100 / positioned.columns;
   preview.style.left = `${positioned.column * width}%`;
@@ -266,6 +248,13 @@ function previewPhase(
   target: TimedPreviewTarget,
   date: string,
 ): 'ghost' | 'terminal' {
+  const occurrence = calendarOccurrenceForRender(binding.task);
+  if (
+    'destination' in target &&
+    occurrence.kind === 'materialized' &&
+    occurrence.occupied.kind === 'point'
+  )
+    return 'terminal';
   const planning = prospectivePlanning(binding.task, target);
   return planning?.due == null || String(planning.due) === date ? 'terminal' : 'ghost';
 }

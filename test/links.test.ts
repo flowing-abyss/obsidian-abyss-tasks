@@ -250,10 +250,10 @@ describe('pairAnchorsToTokens', () => {
     expect(pairAnchorsToTokens(anchors, tokens)).toEqual([0]);
   });
 
-  it('matches a wiki anchor whose href leaves out the folder and extension', () => {
+  it('omits a wiki anchor whose href loses the authored folder identity', () => {
     const tokens = [mkWiki('Folder/Note.md', 'Alias')];
     const anchors = [{ text: 'Note', href: 'Note' }];
-    expect(pairAnchorsToTokens(anchors, tokens)).toEqual([0]);
+    expect(pairAnchorsToTokens(anchors, tokens)).toEqual([-1]);
   });
 });
 
@@ -641,4 +641,100 @@ describe('inline task title Markdown', () => {
     expect(collapseWikiLinks('[[Folder/Note.md|Readable alias]]')).toBe('🔗 Readable alias');
     expect(collapseWikiLinks('[[Folder/Note.md]]')).toBe('🔗 Folder/Note');
   });
+});
+
+it.each([
+  {
+    source: 'https://one.example [https://one.example](https://two.example)',
+    anchors: [
+      { text: 'https://one.example', href: 'https://one.example' },
+      { text: 'https://one.example', href: 'https://two.example' },
+    ],
+    expected: [-1, 0],
+  },
+  {
+    source: '<a href="https://one.example">same</a> [same](https://two.example)',
+    anchors: [
+      { text: 'same', href: 'https://one.example' },
+      { text: 'same', href: 'https://two.example' },
+    ],
+    expected: [-1, 0],
+  },
+  {
+    source:
+      'https://one.example [https://one.example](https://one.example) [later](https://two.example)',
+    anchors: [
+      { text: 'https://one.example', href: 'https://one.example' },
+      { text: 'https://one.example', href: 'https://one.example' },
+      { text: 'later', href: 'https://two.example' },
+    ],
+    expected: [-1, -1, 1],
+  },
+  {
+    source: '[same](one) [same](one) [same](two)',
+    anchors: [
+      { text: 'same', href: 'one' },
+      { text: 'same', href: 'one' },
+      { text: 'same', href: 'two' },
+    ],
+    expected: [0, 1, 2],
+  },
+  {
+    source: '[[Folder/Note.md#Heading|Alias]] [[Other/Note#Heading|Alias]]',
+    anchors: [
+      { text: 'Alias', href: 'Folder/Note#Heading' },
+      { text: 'Alias', href: 'Third/Note#Heading' },
+    ],
+    expected: [0, -1],
+  },
+])('pairs only provable authored anchor occurrences: $source', ({ source, anchors, expected }) => {
+  expect(pairAnchorsToTokens(anchors, parseLinks(source))).toEqual(expected);
+});
+
+it('does not rescan all authored links for each rendered anchor', () => {
+  const count = 1024;
+  let visits = 0;
+  const tokens = parseLinks('[same](target) '.repeat(count)).map(
+    (token) =>
+      new Proxy(token, {
+        get(target, key, receiver) {
+          if (key === 'target' || key === 'display') visits++;
+          return Reflect.get(target, key, receiver) as unknown;
+        },
+      }),
+  );
+  expect(
+    pairAnchorsToTokens(
+      [
+        ...Array.from({ length: count }, () => ({ text: 'generated', href: 'other' })),
+        ...Array.from({ length: count }, () => ({ text: 'same', href: 'target' })),
+      ],
+      tokens,
+    ),
+  ).toEqual([
+    ...Array.from({ length: count }, () => -1),
+    ...Array.from({ length: count }, (_, index) => index),
+  ]);
+  expect(visits).toBeLessThan(8 * count);
+});
+
+it('normalizes only the note extension and preserves literal .md inside heading identities', () => {
+  expect(
+    pairAnchorsToTokens(
+      [
+        { text: 'one', href: 'Folder/Note#Heading' },
+        { text: 'two', href: 'Folder/Note#Heading.md' },
+        { text: 'three', href: '#Local' },
+      ],
+      parseLinks(
+        '[[Folder/Note#Heading.md|one]] [[Folder/Note.md#Heading.md|two]] [[#Local.md|three]]',
+      ),
+    ),
+  ).toEqual([-1, -1, -1]);
+  expect(
+    pairAnchorsToTokens(
+      [{ text: 'two', href: 'Folder/Note#Heading.md' }],
+      parseLinks('[[Folder/Note.md#Heading.md|two]]'),
+    ),
+  ).toEqual([0]);
 });

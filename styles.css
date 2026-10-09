@@ -153,7 +153,8 @@
   box-shadow: var(--shadow-l, none);
 }
 
-:where(.abyss-panel-view, .abyss-modal) .is-just-created {
+:where(.abyss-panel-view, .abyss-modal) .is-just-created,
+:where(.abyss-panel-view, .abyss-modal) .is-search-revealed {
   --abyss-creation-accent: var(--abyss-tag-color, var(--interactive-accent));
 
   outline: 2px solid var(--abyss-creation-accent);
@@ -175,7 +176,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :where(.abyss-panel-view, .abyss-modal) .is-just-created {
+  :where(.abyss-panel-view, .abyss-modal) .is-just-created,
+  :where(.abyss-panel-view, .abyss-modal) .is-search-revealed {
     outline: 2px solid var(--abyss-creation-accent);
     outline-offset: 2px;
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--abyss-creation-accent) 28%, transparent);
@@ -2160,14 +2162,11 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   font-size: 13px;
   width: 160px;
   outline: none;
-  transition:
-    border-color 0.15s,
-    width 0.2s;
+  transition: border-color 0.15s;
 }
 
 .abyss-center-search:focus {
   border-color: var(--interactive-accent);
-  width: 200px;
 }
 
 .abyss-search-global {
@@ -2195,6 +2194,53 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   font-size: 14px;
 }
 
+/* This host owns its anchor corrections; other scrollers retain native anchoring. */
+.abyss-task-list-surface {
+  position: relative;
+  display: flow-root;
+  overflow-anchor: none;
+}
+
+/* Retained editors keep their measurable box and DOM ownership outside the scrollable flow. */
+.abyss-task-list-surface > .abyss-virtual-row-frame {
+  display: block;
+  position: static;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.abyss-task-list-surface > .abyss-virtual-row-frame-clipped {
+  display: flow-root;
+  position: relative;
+  height: var(--abyss-virtual-row-height);
+  overflow: clip;
+}
+
+.abyss-task-list-surface > .abyss-virtual-row-frame-clipped > :not(.abyss-virtual-row-parked) {
+  position: relative;
+  top: var(--abyss-virtual-row-offset);
+}
+
+.abyss-task-list-surface > .abyss-virtual-row-frame > .abyss-virtual-row-parked {
+  position: absolute;
+  top: auto;
+  bottom: 100%;
+  width: var(--abyss-virtual-row-width);
+  box-sizing: border-box;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.abyss-task-list-surface > .abyss-virtual-row-spacer {
+  height: var(--abyss-virtual-row-height);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  pointer-events: none;
+}
+
 .abyss-group-header {
   padding: var(--size-4-4) var(--size-4-4) var(--size-2-3);
   font-size: 10px;
@@ -2208,6 +2254,30 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   user-select: none;
   margin-top: var(--size-2-1);
   border-top: 1px solid var(--background-modifier-border);
+}
+
+.abyss-group-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.abyss-group-header .abyss-group-add {
+  flex: 0 0 auto;
+  padding: var(--size-2-1);
+  color: var(--text-muted);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.abyss-group-header:hover .abyss-group-add,
+.abyss-group-header:focus-within .abyss-group-add {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.abyss-group-add:focus-visible {
+  outline: 2px solid var(--background-modifier-border-focus);
+  outline-offset: 2px;
 }
 
 .abyss-group-header--first {
@@ -2294,15 +2364,17 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
    icon, so its baseline is the icon's bottom edge. The same strut as the marker's gives the lock a
    baseline half a cap height below its centre, so the icon centres on the title's caps instead of
    sitting on the baseline. */
-.abyss-task-card-main-row > .abyss-dep-indicator {
+.abyss-task-title-row > .abyss-dep-indicator {
   min-height: var(--abyss-task-card-marker-size);
+  margin-inline-end: var(--size-4-1);
+  vertical-align: baseline;
 }
 
-.abyss-task-card-main-row > .abyss-dep-indicator > .abyss-dep-lock {
+.abyss-task-title-row > .abyss-dep-indicator > .abyss-dep-lock {
   align-items: center;
 }
 
-.abyss-task-card-main-row > .abyss-dep-indicator > .abyss-dep-lock::before {
+.abyss-task-title-row > .abyss-dep-indicator > .abyss-dep-lock::before {
   content: '';
   inline-size: 0;
   block-size: calc(2 * var(--abyss-task-card-cap-half));
@@ -2331,7 +2403,8 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   box-shadow: inset 2px 0 0 var(--interactive-accent);
 }
 
-.abyss-task-card:focus-visible {
+.abyss-task-card:focus-visible,
+.abyss-search-context .abyss-subtask-row:focus-visible {
   outline: 1px solid var(--background-modifier-border-focus);
   outline-offset: -1px;
 }
@@ -2397,7 +2470,13 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   outline-offset: 2px;
 }
 
+.abyss-status-marker--continuation {
+  opacity: 0.68;
+  cursor: not-allowed;
+}
+
 .abyss-status-marker--blocked {
+  border-width: 1.5px;
   border-style: dashed;
   cursor: not-allowed;
 }
@@ -2534,6 +2613,40 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   flex-direction: column;
   gap: 3px;
   margin-top: var(--size-2-1);
+}
+
+.abyss-task-card .abyss-search-context .abyss-task-desc {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+
+/* Search children reuse the card marker's baseline strut at the child title's smaller cap
+   height. Align to that first title line even when descriptions or semantic chips add rows. */
+.abyss-task-card .abyss-search-context .abyss-subtask-row {
+  align-items: baseline;
+}
+
+.abyss-task-card .abyss-search-context .abyss-status-marker::before {
+  block-size: calc(2 * var(--font-ui-small) * var(--abyss-task-card-cap-ratio));
+}
+
+.abyss-task-card .abyss-search-context > .abyss-subtask-content,
+.abyss-task-card .abyss-search-context .abyss-subtask-content > .abyss-subtask-content,
+.abyss-task-card .abyss-search-context .abyss-comment-row {
+  margin-inline-start: var(--size-4-3);
+  margin-top: var(--size-4-1);
+}
+
+:is(.abyss-task-card, .abyss-dep-search) .abyss-search-match {
+  background: var(--highlight-background, var(--text-highlight-bg));
+  color: var(--text-normal);
+  border-radius: var(--radius-s);
+}
+
+:where(.abyss-panel-view) .is-search-revealed {
+  animation-duration: 2000ms;
 }
 
 .abyss-task-desc {
@@ -2792,37 +2905,12 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
   /* The row under the title starts at the text's left edge, so a list of cards keeps one rhythm
      instead of chips ending at the right and starting at random points. */
-  .abyss-task-meta-right {
+  .abyss-task-card-main-row > .abyss-task-meta-right {
     grid-column: 2 / -1;
     grid-row: 2;
     width: 100%;
     min-inline-size: 0;
     justify-content: flex-start;
-  }
-
-  .abyss-task-card-main-row--has-dep {
-    grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr);
-  }
-
-  .abyss-task-card-main-row--has-dep.abyss-task-card-main-row--has-delete {
-    grid-template-columns: var(--abyss-task-card-marker-size) auto minmax(0, 1fr) 24px;
-  }
-
-  .abyss-task-card-main-row > .abyss-dep-indicator {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .abyss-task-card-main-row--has-dep > .abyss-task-body {
-    grid-column: 3;
-  }
-
-  .abyss-task-card-main-row--has-dep > .abyss-task-meta-right {
-    grid-column: 3 / -1;
-  }
-
-  .abyss-task-card-main-row--has-dep > .abyss-task-delete-btn {
-    grid-column: 4;
   }
 
   .abyss-task-source-note {
@@ -3410,7 +3498,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   gap: 0 var(--size-4-1);
   font-size: 17px;
   line-height: 1.4;
-  padding: var(--size-4-2) var(--size-4-3);
+  padding: var(--size-4-2) var(--size-4-4);
   position: relative;
   border-bottom: 1px solid var(--background-modifier-border);
 }
@@ -3518,7 +3606,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: flex;
   flex-wrap: wrap;
   gap: var(--size-2-3);
-  padding: var(--size-4-1) var(--size-4-4) 10px;
+  padding: var(--size-4-1) var(--size-4-4) var(--size-2-3);
 }
 
 .abyss-chip {
@@ -4384,7 +4472,28 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 /* Right panel body */
 .abyss-right-section {
-  padding: var(--size-4-4) var(--size-4-4) 0;
+  padding: var(--size-4-3) var(--size-4-4) 0;
+  font-size: var(--font-ui-small);
+}
+
+/* Keep inspector content and editors on one UI tier without changing shared Search context. */
+.abyss-right-section
+  :is(
+    .abyss-right-desc,
+    .abyss-subtask-label,
+    .abyss-subtask-new-input,
+    .abyss-subtask-add-label,
+    .abyss-comment-row,
+    .abyss-comment-text,
+    .abyss-comment-input,
+    .abyss-comment-edit-input
+  ) {
+  font-size: var(--font-ui-small);
+}
+
+.abyss-right-section
+  :is(.abyss-comment-date, .abyss-subtask-progress, .abyss-subtask-comment-count) {
+  font-size: var(--font-ui-smaller);
 }
 
 .abyss-right-section + .abyss-right-section {
@@ -4395,14 +4504,14 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: flex;
   align-items: center;
   gap: var(--size-4-2);
-  margin-bottom: 10px;
+  margin-bottom: var(--size-4-2);
 }
 
 .abyss-right-section-label {
   font-size: var(--font-ui-smaller, 11px);
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   color: var(--text-muted);
 }
 
@@ -4711,6 +4820,10 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   font: inherit;
 }
 
+.abyss-dep-search .abyss-dep-search-results.has-candidates {
+  height: min(40vh, 16rem);
+}
+
 .abyss-dep-search-results {
   flex-shrink: 1;
   margin-top: var(--size-2-3);
@@ -4723,6 +4836,10 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   display: block;
   padding: 5px var(--size-2-3);
   text-align: left;
+}
+
+.abyss-dep-search .abyss-dep-search-create[hidden] {
+  display: none;
 }
 
 .abyss-dep-search-option:is(.is-active, :hover) {
@@ -4775,7 +4892,7 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 
 .abyss-subtask-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--size-4-2);
   padding: 3px 0;
   cursor: grab;
@@ -4788,7 +4905,22 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 }
 
 .abyss-subtask-row.abyss-undo-row {
+  align-items: center;
   cursor: default;
+}
+
+.abyss-subtask-section .abyss-subtask-row {
+  line-height: 1.4;
+}
+
+/* Center the existing 19px marker on the first 1.4-line-height label, independent of
+   wrapping and metadata. Use the label's tier because the marker has its own 12px font. */
+.abyss-subtask-section .abyss-subtask-row > :is(.abyss-status-marker, .abyss-status-control) {
+  margin-block-start: calc((var(--font-ui-small) * 1.4 - 19px) / 2);
+}
+
+.abyss-subtask-section .abyss-subtask-title-row {
+  align-items: flex-start;
 }
 
 .abyss-undo-row button {
@@ -4943,6 +5075,10 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
   margin-bottom: 10px;
 }
 
+.abyss-comment-list:empty {
+  display: none;
+}
+
 .abyss-comment-row {
   font-size: 13px;
   color: var(--text-normal);
@@ -4961,6 +5097,17 @@ button.abyss-compact-pane-button[aria-expanded='true'] {
 .abyss-comment-date {
   font-size: 11px;
   color: var(--text-muted);
+}
+
+.abyss-panel-view .abyss-comment-disclosure,
+.abyss-modal .abyss-comment-disclosure {
+  align-self: flex-start;
+  height: auto;
+  padding: var(--size-2-1) 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
 }
 
 .abyss-comment-input {
@@ -7100,6 +7247,7 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-kanban-column-body {
+  overflow-anchor: none;
   position: relative;
   overflow-y: auto;
   min-width: 0;
@@ -7181,6 +7329,8 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-kanban-hover-body {
+  position: relative;
+  overflow-anchor: none;
   overflow-y: auto;
   padding: 0 var(--size-4-2) var(--size-4-2);
 }
@@ -7193,7 +7343,6 @@ button.abyss-project-table-status-pill {
 }
 
 .abyss-project-kanban-hover-card {
-  margin-top: var(--size-2-3);
   padding: var(--size-4-2);
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
@@ -7202,8 +7351,18 @@ button.abyss-project-table-status-pill {
   font-size: var(--font-ui-small);
 }
 
-.abyss-project-kanban-group + .abyss-project-kanban-group {
-  margin-top: var(--size-4-2);
+.abyss-project-kanban-window {
+  position: relative;
+}
+
+.abyss-project-kanban-window-row {
+  padding-bottom: var(--size-4-2);
+}
+
+.abyss-project-kanban-viewport-spacer {
+  height: var(--abyss-project-kanban-spacer-height);
+  overflow-anchor: none;
+  pointer-events: none;
 }
 
 .abyss-project-kanban-group {
@@ -8376,6 +8535,11 @@ button.abyss-project-table-status-pill {
 .abyss-projects-dashboard {
   padding: var(--size-4-3) var(--size-4-4);
   overflow-y: auto;
+}
+
+/* TaskListSurface owns this viewport; its Add task sibling must not become a native anchor. */
+.abyss-project-dashboard-session {
+  overflow-anchor: none;
 }
 
 .abyss-project-back {
@@ -9940,4 +10104,52 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 .abyss-statistics-context-row > * {
   min-inline-size: 0;
   max-inline-size: 100%;
+}
+
+.abyss-project-timeline-groups {
+  overflow-anchor: none;
+}
+
+.abyss-project-timeline-viewport-spacer {
+  height: var(--abyss-project-timeline-spacer-height);
+  width: calc(
+    var(--abyss-project-timeline-summary-width) + var(--abyss-project-timeline-track-width)
+  );
+  overflow-anchor: none;
+  pointer-events: none;
+}
+
+.abyss-task-card .abyss-search-context .abyss-comment-row {
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  flex-direction: row;
+  align-items: baseline;
+  gap: var(--size-4-1);
+}
+
+.abyss-task-card .abyss-search-context .abyss-comment-row::before {
+  content: '-';
+  flex: none;
+}
+
+.abyss-task-card .abyss-search-context .abyss-comment-text {
+  min-width: 0;
+}
+
+.abyss-panel-view .abyss-task-parent-btn {
+  display: inline-flex;
+  flex-shrink: 0;
+  margin-inline-end: var(--size-2-1);
+  padding: var(--size-2-1);
+  vertical-align: middle;
+  color: var(--text-muted);
+}
+
+/* Calendar rows already provide the compact indicator gap. Keep the button's start and block
+   padding for its native hover/focus target without adding space between the icon and title. */
+.abyss-panel-view .abyss-calendar-leading-row > .abyss-task-parent-btn {
+  margin-inline-end: 0;
+  padding-inline-end: 0;
 }

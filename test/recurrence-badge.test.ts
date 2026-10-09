@@ -26,7 +26,7 @@ describe('renderRecurrenceBadge', () => {
 
     expect(container.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
     expect(badge.dataset['recurrenceValidity']).toBe('valid');
-    expect(badge.getAttribute('title')).toBe('Repeats: every week');
+    expect(badge.hasAttribute('title')).toBe(false);
     expect(badge.getAttribute('aria-label')).toBe('Repeats: every week');
     expect(badge.querySelectorAll('.abyss-recurrence-badge-icon')).toHaveLength(1);
     expect(badge.querySelector('.abyss-recurrence-badge-icon')?.getAttribute('data-icon')).toBe(
@@ -48,7 +48,7 @@ describe('renderRecurrenceBadge', () => {
     expect(badge.classList.contains('abyss-recurrence-badge')).toBe(true);
     expect(badge.dataset['recurrenceValidity']).toBe('invalid');
     expect(badge.dataset['recurrenceForecast']).toBe('true');
-    expect(badge.getAttribute('title')).toBe('Invalid repeat rule: Start the rule with “every”.');
+    expect(badge.hasAttribute('title')).toBe(false);
     expect(badge.getAttribute('aria-label')).toBe(
       'Invalid repeat rule: Start the rule with “every”.',
     );

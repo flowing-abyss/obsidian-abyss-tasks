@@ -6,11 +6,13 @@
  * row and hook to its kind.
  *
  * Every limit, the configs' included, is twice the slowest time its kind of work took, rounded up
- * to 5 s. The slowest time covers the heavy files at 30 busy loops on the gate's forks pool (with
- * coverage, lint:store without), the sizing rounds under the same load, CI's Node 22 and 24
- * runners, and the durations SP1o's gate recorded at load 38 for the rows it stopped, which are
- * lower bounds. When a sizing round puts a row or hook above half its limit, its kind re-sizes
- * once: to two and a half times the kind's slowest time with every sizing round so far included,
+ * to 5 s. The original four kinds cover heavy files at 30 busy loops on the gate's forks pool
+ * (with coverage, lint:store without), sizing rounds under the same load, CI's Node 22 and 24
+ * runners, and SP1o's gate durations at load 38 for stopped rows (lower bounds). The lifecycle
+ * audit and canonical search scale-audit kinds follow the same formula with their separate
+ * measurements documented below. When a sizing round puts a row or hook above half its limit,
+ * its kind re-sizes once: to two and a half times the kind's slowest time with every sizing round
+ * so far included,
  * rounded up to 5 s, so that the next round does not depend on no row beating its own record. The
  * time limit check's own rows neither start a re-size nor count toward one. Every limit here stays
  * above the configs' limit: a kind that the light limit reaches merges into light work.
@@ -44,3 +46,22 @@ export const SOURCE_WALK_TIMEOUT_MS = 80_000;
  * load 38 (the CSS policy CLI row took 7.33 s at 30 busy loops).
  */
 export const CHILD_PROCESS_TIMEOUT_MS = 20_000;
+
+/**
+ * A paired 1000/10000-row lifecycle audit with twenty full-range outward/return cycles per
+ * scale, retaining real DOM, Components and native resource recording. Twice Table's 108.461 s
+ * in the 2026-10-04 diagnostic coverage run on Node 26 with 30 busy loops and concurrent shared
+ * machine test workers, rounded up to 5 s. The other five cases completed in 8.080–47.113 s;
+ * quiet covering coverage took 1.325–8.090 s. Only the exact full-cycle helper owns this kind.
+ */
+export const VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS = 220_000;
+
+/**
+ * The fixed 50,000-root canonical Search-to-Tasks navigation audit, including real index/search
+ * preparation, complete destination organization, and bounded exact hydration. Twice its 22.284 s
+ * completed 2026-10-06 diagnostic on Node 24.19.0 with Vitest 5.0.3 V8 coverage and 30 bounded
+ * busy CPU workers, rounded up to 5 s. The original structural assertions passed; the run took
+ * 7.130 s process CPU. This sizes contended correctness work, not product/UI latency. Only the
+ * exact fixed-scale function in task-search-navigation.test.ts owns this kind.
+ */
+export const CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS = 45_000;

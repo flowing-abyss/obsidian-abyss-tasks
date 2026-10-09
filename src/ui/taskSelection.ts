@@ -54,6 +54,41 @@ export function taskSelectionRefPath(
   return stack;
 }
 
+/** Read-only equality for an unchanged index snapshot; this never proves a successor. */
+export function isCurrentTaskSelectionSnapshot(
+  current: TaskSnapshot,
+  selection: readonly TaskSelectionNode[],
+): boolean {
+  const previous = selection[0];
+  const selected = selection[selection.length - 1];
+  if (previous === undefined || !('source' in previous) || selected === undefined) return false;
+  // Queries detach snapshots, but identity still avoids traversing a retained root.
+  if (current !== previous && !sameSnapshotValue(current, previous)) return false;
+  const path = taskSelectionPath(current, selected);
+  return (
+    path?.length === selection.length &&
+    path.every((node, index) => index === 0 || sameSnapshotValue(node, selection[index]))
+  );
+}
+
+function sameSnapshotValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object')
+    return false;
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  const keys = Object.keys(left);
+  const other = right as Record<string, unknown>;
+  const value = left as Record<string, unknown>;
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(other, key) &&
+        sameSnapshotValue(value[key], other[key]),
+    )
+  );
+}
+
 /** The root task a node reference hangs off, which is the only part of it that names a file. */
 export function rootTaskNodeRef(ref: TaskNodeRef): TaskRef {
   let current = ref;

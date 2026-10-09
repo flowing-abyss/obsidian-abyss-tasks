@@ -3,7 +3,13 @@ import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import { renderStatusMarker, setStatusMarkerCompletionBlocked } from '../src/ui/StatusMarker';
+import { localDate } from '../src/tasks';
+import {
+  renderStatusMarker,
+  setStatusMarkerCompletionBlocked,
+  setStatusMarkerOccurrenceCompletion,
+  updateStatusMarker,
+} from '../src/ui/StatusMarker';
 import { expectDefined } from './helpers';
 import { expandCompoundSelectorLists } from './support/expandedCss';
 
@@ -314,3 +320,104 @@ describe('renderStatusMarker', () => {
     expect(el.textContent).toBe('@');
   });
 });
+
+it('updates marker state, priority, and blocked semantics without replacing its focus identity', () => {
+  const parent = document.body.createDiv();
+  try {
+    const marker = renderStatusMarker(parent, {
+      task: { statusSymbol: ' ', priority: 'A' },
+      registry: reg,
+      onLeftClick: () => {},
+      onContextMenu: () => {},
+    });
+    marker.focus();
+    updateStatusMarker(marker, { task: { statusSymbol: 'x', priority: 'D' }, registry: reg });
+    expect(document.activeElement).toBe(marker);
+    expect(marker.getAttribute('aria-checked')).toBe('true');
+    expect(marker.getAttribute('data-status-type')).toBe('done');
+    expect(marker.hasAttribute('data-priority')).toBe(false);
+    updateStatusMarker(marker, {
+      task: { statusSymbol: ' ' },
+      registry: reg,
+      completionBlocked: true,
+    });
+    const wrapper = expectDefined(parent.querySelector<HTMLElement>('.abyss-status-control'));
+    expect(document.activeElement).toBe(wrapper);
+    expect(wrapper.getAttribute('aria-checked')).toBe('false');
+    expect(wrapper.getAttribute('aria-label')).toContain('Task status: To-do.');
+    updateStatusMarker(marker, {
+      task: { statusSymbol: 'x' },
+      registry: reg,
+      completionBlocked: true,
+    });
+    expect(document.activeElement).toBe(wrapper);
+    expect(wrapper.getAttribute('aria-checked')).toBe('true');
+    expect(wrapper.getAttribute('aria-label')).toContain('Task status: Done.');
+  } finally {
+    parent.remove();
+  }
+});
+
+it.each([' ', '/', 'x', '-', '@', 'w'])(
+  'preserves %j status identity, icons and priority through passive transitions',
+  (symbol) => {
+    addIcon('hourglass', '<svg><path d="M6 3h12M6 21h12"/></svg>');
+    const registry = new StatusRegistry([
+      ...reg.all(),
+      {
+        id: 'waiting',
+        symbol: 'w',
+        name: 'Waiting',
+        type: 'in-progress',
+        icon: 'hourglass',
+        core: false,
+      },
+    ]);
+    const left = vi.fn();
+    const parent = document.body.createDiv();
+    const marker = renderStatusMarker(parent, {
+      task: { statusSymbol: symbol, priority: 'B' },
+      registry,
+      onLeftClick: left,
+      onContextMenu: () => {},
+    });
+    const before = {
+      status: marker.dataset['status'],
+      type: marker.dataset['statusType'],
+      icon: marker.innerHTML,
+      checked: marker.getAttribute('aria-checked'),
+      label: marker.getAttribute('aria-label'),
+    };
+    marker.focus();
+    setStatusMarkerOccurrenceCompletion(
+      marker,
+      { kind: 'continuation', due: localDate('2026-10-09') },
+      'Complete from the row for Oct 9, or in the task details.',
+    );
+    const control = expectDefined(parent.querySelector<HTMLElement>('[role=checkbox]'));
+    expect(control.getAttribute('aria-label')).toContain(before.label);
+    expect(control.getAttribute('aria-label')).toContain('Complete from the row for Oct 9');
+    expect(control.getAttribute('aria-checked')).toBe(before.checked);
+    expect(control.getAttribute('aria-disabled')).toBe('true');
+    expect(document.activeElement).toBe(control);
+    expect(marker.dataset['status']).toBe(before.status);
+    expect(marker.dataset['statusType']).toBe(before.type);
+    expect(marker.dataset['priority']).toBe('B');
+    expect(marker.innerHTML).toBe(before.icon);
+    marker.click();
+    control.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    expect(left).not.toHaveBeenCalled();
+    setStatusMarkerCompletionBlocked(marker, true);
+    expect(control.getAttribute('aria-label')).toContain('Complete prerequisite tasks');
+    expect(control.getAttribute('aria-label')).toContain('Complete from the row for Oct 9');
+    setStatusMarkerCompletionBlocked(marker, false);
+    expect(control.getAttribute('aria-disabled')).toBe('true');
+    setStatusMarkerOccurrenceCompletion(marker, { kind: 'allowed' }, '');
+    expect(document.activeElement).toBe(marker);
+    expect(marker.getAttribute('aria-label')).toBe(before.label);
+    expect(marker.hasAttribute('aria-disabled')).toBe(false);
+    marker.click();
+    expect(left).toHaveBeenCalledOnce();
+    parent.remove();
+  },
+);

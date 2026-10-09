@@ -13,8 +13,10 @@ import {
   flushMicrotasks,
   useRealMoment,
 } from './helpers';
+import { accessibleName, useHostTooltips } from './support/hostTooltips';
 
 useRealMoment();
+useHostTooltips();
 
 const OFFSET_MINUTES = 180;
 /** 2026-09-18T14:05:32+03:00, a Friday, the instant every fixture below is written against. */
@@ -244,11 +246,11 @@ describe('rail tracking widget', () => {
     expect(host.classList.contains('is-tracking')).toBe(false);
     expect(taskTotal(host).textContent).toBe('0m');
     expect(toggle(host).disabled).toBe(false);
-    expect(toggle(host).title).toBe('Resume Write report');
     expect(toggle(host).getAttribute('aria-label')).toBe('Resume Write report');
-    expect(taskTotal(host).title).toBe('Tracked on this task today');
+    expect(accessibleName(toggle(host))).toBe('Resume Write report');
+    expect(taskTotal(host).getAttribute('aria-label')).toBe('Tracked on this task today');
     // A screen reader hears the number, not only what the number is about.
-    expect(taskTotal(host).getAttribute('aria-label')).toBe('Tracked on this task today, 0m');
+    expect(accessibleName(taskTotal(host))).toBe('Tracked on this task today, 0m');
   });
 
   it('says one number and nothing a clock would say', async () => {
@@ -259,7 +261,11 @@ describe('rail tracking widget', () => {
     expect(host.querySelector('.abyss-rail-tracking-day')).toBeNull();
     expect(host.querySelector('.abyss-rail-tracking-caption')).toBeNull();
     expect(host.querySelector('.abyss-rail-tracking-colon')).toBeNull();
-    expect([...host.children].map((child) => child.className)).toEqual([
+    expect(
+      [...host.children]
+        .filter((child) => !child.matches('.abyss-sr-only'))
+        .map((child) => child.className),
+    ).toEqual([
       'abyss-rail-tracking-toggle',
       'abyss-rail-tracking-task',
       'abyss-rail-tracking-rule',
@@ -275,9 +281,9 @@ describe('rail tracking widget', () => {
 
     expect(host.classList.contains('is-tracking')).toBe(true);
     expect(toggle(host).classList.contains('is-active')).toBe(false);
-    expect(toggle(host).title).toBe('Pause Write report');
+    expect(toggle(host).getAttribute('aria-label')).toBe('Pause Write report');
     expect(taskTotal(host).textContent).toBe(`1h${THIN}47m`);
-    expect(taskTotal(host).getAttribute('aria-label')).toBe('Tracked on this task today, 1h 47m');
+    expect(accessibleName(taskTotal(host))).toBe('Tracked on this task today, 1h 47m');
 
     const observer = new MutationObserver(() => {});
     observer.observe(host, {
@@ -358,7 +364,7 @@ describe('rail tracking widget', () => {
 
     expect(await harness.read()).toContain(`  - 2026-09-18T12:18:32+03:00 → ${NOW_ATOM}\n`);
     expect(harness.host.classList.contains('is-tracking')).toBe(false);
-    expect(toggle(harness.host).title).toBe('Resume Write report');
+    expect(toggle(harness.host).getAttribute('aria-label')).toBe('Resume Write report');
     expect(taskTotal(harness.host).textContent).toBe(`1h${THIN}47m`);
     expect(harness.reported).toEqual([]);
   });
@@ -371,7 +377,7 @@ describe('rail tracking widget', () => {
 
     expect(await harness.read()).toContain(`  - ${NOW_ATOM} →\n`);
     expect(harness.host.classList.contains('is-tracking')).toBe(true);
-    expect(toggle(harness.host).title).toBe('Pause Write report');
+    expect(toggle(harness.host).getAttribute('aria-label')).toBe('Pause Write report');
   });
 
   it('refuses to resume a task that has since been finished', async () => {
@@ -383,7 +389,9 @@ describe('rail tracking widget', () => {
 
     expect(host.hidden).toBe(false);
     expect(toggle(host).disabled).toBe(true);
-    expect(toggle(host).title).toBe('The last tracked task is already finished');
+    expect(toggle(host).getAttribute('aria-label')).toBe(
+      'The last tracked task is already finished',
+    );
   });
 
   it('starts the day again at local midnight', async () => {
@@ -413,8 +421,11 @@ describe('rail tracking widget', () => {
     );
 
     expect(host.classList.contains('is-stale')).toBe(true);
-    expect(toggle(host).title).toBe('Still tracking since 02:00?');
-    expect(toggle(host).getAttribute('aria-label')).toBe('Pause Write report');
+    expect(toggle(host).getAttribute('aria-label')).toBe('Still tracking since 02:00?');
+    expect(accessibleName(toggle(host))).toBe('Pause Write report');
+    const nameId = expectDefined(toggle(host).getAttribute('aria-labelledby'));
+    expect(expectDefined(toggle(host).ownerDocument.getElementById(nameId)).isConnected).toBe(true);
+    expect(toggle(host).hasAttribute('title')).toBe(false);
   });
 
   it('releases every timer and subscription it owns', async () => {
@@ -453,7 +464,7 @@ describe('rail tracking widget', () => {
     // One repaint per index event: the shared ticker also emits on an index change, and a surface
     // that painted from both would show the stale model for an instant and write the DOM twice.
     expect(harness.contextReads()).toBe(mounted + 2);
-    expect(toggle(harness.host).title).toBe('Resume Write report');
+    expect(toggle(harness.host).getAttribute('aria-label')).toBe('Resume Write report');
   });
 
   it('leaves the widget alone when another file changes', async () => {
@@ -479,3 +490,8 @@ describe('rail tracking widget', () => {
     }
   });
 });
+
+vi.mock('obsidian', async () => ({
+  ...(await import('obsidian-test-mocks/obsidian')),
+  setTooltip: vi.fn(),
+}));

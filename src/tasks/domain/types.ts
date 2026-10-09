@@ -51,6 +51,7 @@ export interface SubtaskRef {
   readonly originalBlock: string;
 }
 
+/** Owns the complete contiguous comment block, including its authored continuation prefixes. */
 export interface CommentRef {
   readonly parent: TaskNodeRef;
   readonly relativeLine: number;
@@ -116,6 +117,7 @@ export interface SubtaskPlanning {
   readonly completion?: LocalDate;
   readonly cancelled?: LocalDate;
   readonly time?: LocalTime;
+  readonly duration?: DurationMinutes;
 }
 
 interface TaskSource {

@@ -1,6 +1,27 @@
+import { build } from 'esbuild';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  plugins: [
+    {
+      name: 'embedded-search-worker-test',
+      resolveId(id) {
+        return id === 'abyss-task-search-worker' ? '\0abyss-task-search-worker' : undefined;
+      },
+      async load(id) {
+        if (id !== '\0abyss-task-search-worker') return undefined;
+        const result = await build({
+          entryPoints: ['src/tasks/infrastructure/search/taskSearch.worker.ts'],
+          bundle: true,
+          platform: 'browser',
+          format: 'iife',
+          target: 'es2021',
+          write: false,
+        });
+        return `export default ${JSON.stringify(result.outputFiles[0]?.text)}`;
+      },
+    },
+  ],
   test: {
     clearMocks: true,
     restoreMocks: true,

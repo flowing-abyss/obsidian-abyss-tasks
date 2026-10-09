@@ -30,6 +30,20 @@ const additions: ReadonlyArray<{ name: string; edit: TaskBlockEdit; line: string
 ];
 
 describe('native nested indentation', () => {
+  it.each(['\t', '    '] as const)(
+    'keeps native creation prefixes for multiline comments with %j',
+    (unit) => {
+      const source = '- [ ] root\r\n';
+      expect(
+        written(
+          source,
+          { type: 'add-comment', stamp, text: 'one\ntwo\nthree' },
+          { relativeLine: 0, lineCount: 1, childRanges: [] },
+          new TaskBlockEditor(() => unit),
+        ),
+      ).toBe(`- [ ] root\r\n${unit}- ${stamp}: one\r\n${unit}  two\r\n${unit}  three\r\n`);
+    },
+  );
   it.each(additions)('defaults a childless root and subtask to TAB for $name', ({ edit, line }) => {
     for (const ending of ['\n', '\r\n']) {
       for (const final of ['', ending]) {

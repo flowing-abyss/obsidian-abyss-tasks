@@ -1,5 +1,7 @@
-import { ItemView, Notice, Platform, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
+import { ItemView, Notice, Platform, Scope, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
 import { AppState, type AppStateData } from '../app/AppState';
+import { createBrowserTaskScheduler } from '../browserTaskScheduler';
+import { moment } from '../obsidianMoment';
 import { CenterPanel } from '../panels/CenterPanel';
 import { LeftPanel } from '../panels/LeftPanel';
 import { RailPanel } from '../panels/RailPanel';
@@ -29,13 +31,28 @@ import type {
   TaskQueryApi,
   TaskRef,
   TaskResolution,
+  TaskSearchApi,
   TaskSnapshot,
   TaskStatisticsSource,
   TimeTrackingQueryApi,
 } from '../tasks';
-import { parseRecurrenceRule, taskCommandRootRef, taskNodeAddress } from '../tasks';
-import { CreationPresentationController } from '../ui/creation/CreationPresentationController';
+import {
+  localDayStartMs,
+  parseRecurrenceRule,
+  shiftLocalDayStartMs,
+  taskCommandRootRef,
+  taskNodeAddress,
+} from '../tasks';
+import {
+  createTaskDependencySearchProvider,
+  type TaskDependencySearchProvider,
+} from '../ui/TaskDependencySearchProvider';
+import {
+  CreationPresentationController,
+  type CreationRevealAuthority,
+} from '../ui/creation/CreationPresentationController';
 import { InteractionRegistry } from '../ui/interactionOwnership';
+import { bindLocalSearchScope } from '../ui/localSearchKeys';
 import { nativeInteractionBlocksPanelShortcuts } from '../ui/nativeInteractionBlocker';
 import { PanelShortcutRouter } from '../ui/panelShortcutRouter';
 import { prefersReducedMotion } from '../ui/reducedMotion';
@@ -46,6 +63,7 @@ import {
 import { QuickCaptureCoordinator } from '../ui/taskCapture/QuickCaptureCoordinator';
 import { presentTaskCommandResult, type CreationResultDescription } from '../ui/taskCommandResult';
 import {
+  isCurrentTaskSelectionSnapshot,
   rebuildTaskSelection,
   renamedRootSelection,
   rootTaskNodeRef,
@@ -107,6 +125,7 @@ type PanelViewDependencies = [
   commentTimeContext?: CommentTimeContextProvider,
   onSaveViewState?: () => Promise<void>,
   projectManager?: ProjectManager,
+  search?: TaskSearchApi,
   statisticsSource?: TaskStatisticsSource,
 ];
 
@@ -174,6 +193,9 @@ export class PanelView extends ItemView {
   private ownedWriteRef_abyssPrivate: TaskRef | undefined = undefined;
   private interactionRegistry_abyssPrivate: InteractionRegistry<ShortcutActionId> | undefined;
   private quickCapture_abyssPrivate: QuickCaptureCoordinator | undefined;
+  private localScope_abyssPrivate: Scope | undefined;
+  private priorScope_abyssPrivate: Scope | null = null;
+  private unbindLocalScope_abyssPrivate: (() => void) | undefined;
   private shortcutRouter_abyssPrivate: PanelShortcutRouter | undefined = undefined;
   private shortcutDocument_abyssPrivate: Document | undefined = undefined;
   private shortcutMigrationCleanup_abyssPrivate: (() => void) | undefined = undefined;
@@ -181,6 +203,7 @@ export class PanelView extends ItemView {
   private readonly compactPaneAccess_abyssPrivate: CompactPaneAccess;
   private readonly settings_abyssPrivate: CalendarSettings;
   private readonly tagManager_abyssPrivate: TagManager;
+  private readonly search_abyssPrivate: TaskSearchApi | undefined;
   private readonly queries_abyssPrivate: TaskQueryApi & TimeTrackingQueryApi;
   private readonly tasks_abyssPrivate: TaskApplicationApi & TaskCaptureApplicationApi;
   private readonly statusRegistry_abyssPrivate: StatusRegistry;
@@ -190,6 +213,13 @@ export class PanelView extends ItemView {
   private readonly projectManager_abyssPrivate: ProjectManager | undefined;
   private timeTracking_abyssPrivate: TrackingSurface | undefined;
   private railTracking_abyssPrivate: RailTrackingWidgetHandle | undefined;
+  private searchWait_abyssPrivate: AbortController | undefined = undefined;
+  private panelsMounted_abyssPrivate = false;
+  private dayBoundaryCleanup_abyssPrivate: (() => void) | undefined = undefined;
+  private lastLocalDay_abyssPrivate: string | undefined = undefined;
+  private searchOpportunityConsumed_abyssPrivate = false;
+  private cancelSearchPresentation_abyssPrivate: (() => void) | undefined = undefined;
+  private searchOpportunitiesCleanup_abyssPrivate: (() => void) | undefined = undefined;
 
   private readonly statisticsSource_abyssPrivate: TaskStatisticsSource | undefined;
 
@@ -205,10 +235,12 @@ export class PanelView extends ItemView {
       commentTimeContext,
       onSaveViewState = async () => {},
       projectManager,
+      search,
       statisticsSource,
     ] = dependencies;
     this.statisticsSource_abyssPrivate = statisticsSource;
     this.settings_abyssPrivate = settings;
+    this.search_abyssPrivate = search;
     this.tagManager_abyssPrivate = tagManager;
     this.queries_abyssPrivate = queries;
     this.tasks_abyssPrivate = tasks;
@@ -259,6 +291,10 @@ export class PanelView extends ItemView {
   }
 
   override onOpen(): Promise<void> {
+    this.createLocalScope_abyssPrivate();
+    this.searchWait_abyssPrivate = new AbortController();
+    this.panelsMounted_abyssPrivate = false;
+    this.searchOpportunityConsumed_abyssPrivate = false;
     this.contentEl.empty();
     this.contentEl.addClass('abyss-panel-view');
 
@@ -296,7 +332,124 @@ export class PanelView extends ItemView {
     this.subscribeToQueries_abyssPrivate();
     this.refreshHostHeader_abyssPrivate();
     this.watchPhoneKeyboard_abyssPrivate();
+    this.panelsMounted_abyssPrivate = true;
+    this.bindDayBoundary_abyssPrivate();
+    this.registerSearchOpportunities_abyssPrivate();
+    this.checkSearchOpportunity_abyssPrivate();
     return Promise.resolve();
+  }
+
+  /** One owner-window wake path for date-sensitive lists and navigation counts. */
+  private bindDayBoundary_abyssPrivate(): void {
+    this.dayBoundaryCleanup_abyssPrivate?.();
+    this.dayBoundaryCleanup_abyssPrivate = undefined;
+    const document = this.contentEl.ownerDocument;
+    const owner = document.defaultView;
+    if (owner === null || !this.panelsMounted_abyssPrivate) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const current = (): boolean =>
+      !cancelled &&
+      this.panelsMounted_abyssPrivate &&
+      this.contentEl.ownerDocument === document &&
+      this.contentEl.ownerDocument.defaultView === owner;
+    const check = (): void => {
+      if (!current()) return;
+      if (timer !== undefined) owner.clearTimeout(timer);
+      const { nowMs, offsetAt } = deviceTrackedTimeContext();
+      const day = moment(nowMs).format('YYYY-MM-DD');
+      const previous = this.lastLocalDay_abyssPrivate;
+      this.lastLocalDay_abyssPrivate = day;
+      if (previous !== undefined && previous !== day) {
+        this.left_abyssPrivate.refresh();
+        this.center_abyssPrivate.refresh('view');
+      }
+      const next = shiftLocalDayStartMs(localDayStartMs(nowMs, offsetAt), 1, offsetAt);
+      timer = owner.setTimeout(check, Math.max(1, next - nowMs));
+    };
+    const visible = (): void => {
+      if (document.visibilityState === 'visible') check();
+    };
+    owner.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', visible);
+    this.dayBoundaryCleanup_abyssPrivate = () => {
+      cancelled = true;
+      if (timer !== undefined) owner.clearTimeout(timer);
+      owner.removeEventListener('focus', check);
+      document.removeEventListener('visibilitychange', visible);
+    };
+    check();
+  }
+
+  private registerSearchOpportunities_abyssPrivate(): void {
+    const wait = this.searchWait_abyssPrivate;
+    const workspace = this.app.workspace;
+    const check = (): void => {
+      if (this.searchWait_abyssPrivate === wait && wait?.signal.aborted === false)
+        this.checkSearchOpportunity_abyssPrivate();
+    };
+    const refs = [
+      workspace.on('layout-change', check),
+      workspace.on('active-leaf-change', check),
+      workspace.on('resize', check),
+    ];
+    this.searchOpportunitiesCleanup_abyssPrivate = () => {
+      for (const ref of refs) workspace.offref(ref);
+    };
+    workspace.onLayoutReady(check);
+  }
+
+  private canPrepareSearch_abyssPrivate(owner: NonNullable<Document['defaultView']>): boolean {
+    return (
+      this.panelsMounted_abyssPrivate &&
+      this.searchWait_abyssPrivate?.signal.aborted === false &&
+      this.app.workspace.layoutReady &&
+      this.contentEl.isConnected &&
+      this.contentEl.ownerDocument.defaultView === owner &&
+      hasVisibleAncestors(this.contentEl, owner) &&
+      hasPresentedPanelGeometry(this.containerEl, owner) &&
+      hasPresentedPanelGeometry(this.contentEl, owner)
+    );
+  }
+
+  /** A frame and a task offer the mounted shell a presentation opportunity, not a paint guarantee. */
+  private checkSearchOpportunity_abyssPrivate(): void {
+    const owner = this.contentEl.ownerDocument.defaultView;
+    if (owner === null || !this.canPrepareSearch_abyssPrivate(owner)) {
+      this.cancelSearchPresentation_abyssPrivate?.();
+      return;
+    }
+    const search = this.search_abyssPrivate;
+    if (
+      search === undefined ||
+      this.searchOpportunityConsumed_abyssPrivate ||
+      this.cancelSearchPresentation_abyssPrivate !== undefined
+    )
+      return;
+    const wait = this.searchWait_abyssPrivate;
+    if (wait === undefined) return;
+    let timer: number | undefined;
+    const current = (): boolean =>
+      this.searchWait_abyssPrivate === wait && this.canPrepareSearch_abyssPrivate(owner);
+    const frame = owner.requestAnimationFrame(() => {
+      if (!current()) {
+        this.cancelSearchPresentation_abyssPrivate?.();
+        return;
+      }
+      timer = owner.setTimeout(() => {
+        this.cancelSearchPresentation_abyssPrivate = undefined;
+        if (!current()) return;
+        this.searchOpportunityConsumed_abyssPrivate = true;
+        search.prepare(wait.signal).catch(() => {
+          // The shared service owns sanitized failure diagnostics; only active input owns a Notice.
+        });
+      }, 0);
+    });
+    this.cancelSearchPresentation_abyssPrivate = () => {
+      owner.cancelAnimationFrame(frame);
+      if (timer !== undefined) owner.clearTimeout(timer);
+      this.cancelSearchPresentation_abyssPrivate = undefined;
+    };
   }
 
   /**
@@ -348,6 +501,9 @@ export class PanelView extends ItemView {
           this.compactPaneAccess_abyssPrivate.cancelPending();
           this.compactPaneAccess_abyssPrivate.close(false);
           this.quickCapture_abyssPrivate?.openOrFocus();
+        },
+        clearTaskSearchReveal: () => {
+          this.center_abyssPrivate.clearTaskSearchReveal();
         },
         finishProjectTableEditorBefore: (action) => {
           this.center_abyssPrivate.finishProjectTableEditorBefore(action);
@@ -475,7 +631,6 @@ export class PanelView extends ItemView {
     compactLeftButton.setAttrs({
       type: 'button',
       'aria-label': 'Show task lists',
-      title: 'Show task lists',
       'aria-expanded': 'false',
     });
     setIcon(compactLeftButton, 'panel-left');
@@ -484,7 +639,6 @@ export class PanelView extends ItemView {
     compactRightButton.setAttrs({
       type: 'button',
       'aria-label': 'Show task details',
-      title: 'Show task details',
       'aria-expanded': 'false',
     });
     setIcon(compactRightButton, 'panel-right');
@@ -532,7 +686,6 @@ export class PanelView extends ItemView {
       settings: this.settings_abyssPrivate,
       tagManager: this.tagManager_abyssPrivate,
       app: this.app,
-      queries: this.queries_abyssPrivate,
       tasks: selectionTasks,
       projectStore,
       projectManager,
@@ -541,6 +694,9 @@ export class PanelView extends ItemView {
     });
     this.center_abyssPrivate = new CenterPanel({
       statisticsSource: this.statisticsSource_abyssPrivate,
+      onTaskListDraftHandoff: (drafts, root, selection) =>
+        this.right_abyssPrivate.receiveDraftHandoff(drafts, root, selection),
+      ...(this.search_abyssPrivate === undefined ? {} : { search: this.search_abyssPrivate }),
       state: this.state_abyssPrivate,
       app: this.app,
       settings: this.settings_abyssPrivate,
@@ -552,10 +708,14 @@ export class PanelView extends ItemView {
       tasks: selectionTasks,
       commentTimeContext: this.commentTimeContext_abyssPrivate,
       captureApplication: selectionTasks,
-      onCreationResult: (result, description) => {
-        this.presentCreationResult_abyssPrivate(result, description);
+      onCreationResult: (result, description, revealAuthority) => {
+        this.presentCreationResult_abyssPrivate(result, description, revealAuthority);
       },
-      onRenderComplete: (root) => this.creationPresentation_abyssPrivate?.afterRender(root),
+      onTaskRowsSettled: (root) => this.creationPresentation_abyssPrivate?.refreshMounted(root),
+      onRenderComplete: (root) => {
+        this.creationPresentation_abyssPrivate?.afterRender(root);
+        this.checkSearchOpportunity_abyssPrivate();
+      },
       interactionOwnership: this.interactionRegistry_abyssPrivate,
       navigation: this.panelNavigation_abyssPrivate,
       onSaveViewState: this.onSaveViewState_abyssPrivate,
@@ -565,11 +725,22 @@ export class PanelView extends ItemView {
       },
     });
     this.right_abyssPrivate = new RightPanel({
+      localSearchScope:
+        this.localScope_abyssPrivate === undefined
+          ? undefined
+          : {
+              parent: this.localScope_abyssPrivate,
+              keymap: this.app.keymap,
+            },
       state: this.state_abyssPrivate,
       app: this.app,
       statusRegistry: this.statusRegistry_abyssPrivate,
       settings: this.settings_abyssPrivate,
       tasks: this.createInspectorTasks_abyssPrivate(selectionTasks),
+      search: this.search_abyssPrivate,
+      onShowInTaskList: (target, request) =>
+        this.center_abyssPrivate.showTaskInList(target, request),
+      dependencySearch: this.createDependencySearch_abyssPrivate(),
       onMutationLifecycle: (event) => {
         if (event.operation !== 'hierarchy') this.trackOwnWrite_abyssPrivate(event);
       },
@@ -577,6 +748,19 @@ export class PanelView extends ItemView {
       interactionOwnership: this.interactionRegistry_abyssPrivate,
       timeTracking,
     });
+  }
+
+  private createDependencySearch_abyssPrivate(): TaskDependencySearchProvider | undefined {
+    const search = this.search_abyssPrivate;
+    if (search === undefined) return undefined;
+    return {
+      open: (query, current, direction, signal) =>
+        createTaskDependencySearchProvider(
+          search,
+          this.tasks_abyssPrivate.queries,
+          createBrowserTaskScheduler(this.contentEl.ownerDocument.defaultView ?? activeWindow),
+        ).open(query, current, direction, signal),
+    };
   }
 
   /** One tick and one write boundary for every tracking control this view hosts. */
@@ -597,7 +781,7 @@ export class PanelView extends ItemView {
   private registerProjectUpdates_abyssPrivate(projectStore: ProjectStore): void {
     this.projectStoreUnsub_abyssPrivate = projectStore.onUpdate(() => {
       this.left_abyssPrivate.refresh();
-      if (this.state_abyssPrivate.get('mode') === 'projects') this.center_abyssPrivate.refresh();
+      this.center_abyssPrivate.refresh('projects');
     });
   }
 
@@ -605,7 +789,13 @@ export class PanelView extends ItemView {
     this.registerEvent(
       this.app.workspace.on('css-change', () => {
         this.compactPaneAccess_abyssPrivate.refreshWidth();
-        this.center_abyssPrivate.refresh();
+        const mode = this.state_abyssPrivate.get('mode');
+        if (
+          mode !== 'search' &&
+          !(mode === 'tasks' && this.state_abyssPrivate.get('centerFilter').length > 0)
+        )
+          this.center_abyssPrivate.refresh();
+        this.checkSearchOpportunity_abyssPrivate();
       }),
     );
 
@@ -719,16 +909,26 @@ export class PanelView extends ItemView {
       undefined,
       () => selectionTasks.queries.listNodes(),
     );
+    let ownsSelection = this.center_abyssPrivate.captureCreationSelection();
     this.quickCapture_abyssPrivate = new QuickCaptureCoordinator({
       host: elements.quickCaptureHost,
       context: () => this.quickCaptureContext_abyssPrivate(),
       resolveTarget: (context) => captureTargets.resolve(context),
+      captureReveal: (isCurrent) => this.center_abyssPrivate.captureCreationReveal(isCurrent),
+      onSubmit: () => {
+        ownsSelection = this.center_abyssPrivate.captureCreationSelection();
+      },
       interactionOwnership: interactionRegistry,
-      onResult: (result, description) => {
+      onResult: (result, description, revealAuthority) => {
         // Taken before presenting, so a presentation failure cannot leave it for a later capture.
         const pendingPane = this.compactPaneAccess_abyssPrivate.takePending();
         try {
-          this.presentCreationResult_abyssPrivate(result, description);
+          this.presentCreationResult_abyssPrivate(
+            result,
+            description,
+            revealAuthority,
+            ownsSelection(),
+          );
         } finally {
           if (description.kind === 'success' && pendingPane != null) {
             this.compactPaneAccess_abyssPrivate.schedule(pendingPane);
@@ -739,8 +939,23 @@ export class PanelView extends ItemView {
     this.bindPanelShortcuts_abyssPrivate();
     this.shortcutMigrationCleanup_abyssPrivate = this.contentEl.onWindowMigrated(() => {
       this.bindPanelShortcuts_abyssPrivate();
-      if (this.state_abyssPrivate.get('mode') === 'statistics') this.center_abyssPrivate.refresh();
+      this.bindDayBoundary_abyssPrivate();
+      this.center_abyssPrivate.onWindowMigrated();
+      this.right_abyssPrivate.onWindowMigrated();
+      this.cancelSearchPresentation_abyssPrivate?.();
+      this.checkSearchOpportunity_abyssPrivate();
     });
+  }
+
+  private createLocalScope_abyssPrivate(): void {
+    this.priorScope_abyssPrivate = this.scope;
+    const scope = new Scope(this.scope ?? this.app.scope);
+    this.localScope_abyssPrivate = scope;
+    this.scope = scope;
+    this.unbindLocalScope_abyssPrivate = bindLocalSearchScope(
+      scope,
+      (event) => this.shortcutRouter_abyssPrivate?.routeLocalSearch(event, 'scope') ?? false,
+    );
   }
 
   private bindPanelShortcuts_abyssPrivate(): void {
@@ -750,12 +965,14 @@ export class PanelView extends ItemView {
     this.shortcutRouter_abyssPrivate?.destroy();
     this.shortcutRouter_abyssPrivate = new PanelShortcutRouter({
       ownerDocument,
+      ownerElement: this.contentEl,
       isActive: () => this.ownsPanelShortcuts_abyssPrivate(),
       settings: () => this.settings_abyssPrivate.shortcuts,
       platform: { mod: Platform.isMacOS ? 'meta' : 'ctrl' },
       actions: this.panelNavigation_abyssPrivate,
       registry: interactionRegistry,
-      nativeHostBlocks: () => nativeInteractionBlocksPanelShortcuts(ownerDocument),
+      nativeHostBlocks: () => nativeInteractionBlocksPanelShortcuts(this.contentEl.ownerDocument),
+      localSearchTarget: () => this.center_abyssPrivate.localSearchTarget(),
     });
     this.shortcutDocument_abyssPrivate = ownerDocument;
   }
@@ -763,7 +980,20 @@ export class PanelView extends ItemView {
   private presentCreationResult_abyssPrivate(
     result: TaskCommandResult,
     description: CreationResultDescription,
+    revealAuthority?: CreationRevealAuthority,
+    ownsSelection = true,
   ): void {
+    const maySelect = ownsSelection && revealAuthority?.canSelect?.() !== false;
+    if (maySelect) this.selectCreationResult_abyssPrivate(result);
+    this.creationPresentation_abyssPrivate?.present(
+      result,
+      description,
+      revealAuthority,
+      maySelect,
+    );
+  }
+
+  private selectCreationResult_abyssPrivate(result: TaskCommandResult): void {
     if (result.type === 'ok' && result.outcome.type === 'task') {
       const resolution = this.queries_abyssPrivate.resolve(result.outcome.task.ref);
       if (resolution.type === 'exact' || resolution.type === 'rebased') {
@@ -771,7 +1001,6 @@ export class PanelView extends ItemView {
         this.state_abyssPrivate.set('taskStack', [current]);
       }
     }
-    this.creationPresentation_abyssPrivate?.present(result, description);
   }
 
   private subscribeToState_abyssPrivate(layout: HTMLElement): void {
@@ -833,7 +1062,8 @@ export class PanelView extends ItemView {
     this.queryUnsub_abyssPrivate = this.queries_abyssPrivate.subscribe((event) => {
       this.rebaseRetiredDiscoveredPrefix_abyssPrivate();
       this.left_abyssPrivate.refresh();
-      if (this.state_abyssPrivate.get('mode') !== 'calendar') this.center_abyssPrivate.refresh();
+      if (this.state_abyssPrivate.get('mode') !== 'calendar')
+        this.center_abyssPrivate.refresh('source');
       const stack = this.state_abyssPrivate.get('taskStack');
       if (stack.length === 0) return;
       const root = stack[0];
@@ -860,10 +1090,22 @@ export class PanelView extends ItemView {
   }
 
   override async onClose(): Promise<void> {
+    this.panelsMounted_abyssPrivate = false;
+    this.dayBoundaryCleanup_abyssPrivate?.();
+    this.dayBoundaryCleanup_abyssPrivate = undefined;
+    this.searchWait_abyssPrivate?.abort();
+    this.cancelSearchPresentation_abyssPrivate?.();
+    this.searchOpportunitiesCleanup_abyssPrivate?.();
+    this.searchOpportunitiesCleanup_abyssPrivate = undefined;
     this.compactPaneAccess_abyssPrivate.reset();
     this.destroyInteractionControllers_abyssPrivate();
     this.releaseSubscriptions_abyssPrivate();
     this.destroyOwnedViews_abyssPrivate();
+    this.unbindLocalScope_abyssPrivate?.();
+    this.unbindLocalScope_abyssPrivate = undefined;
+    if (this.localScope_abyssPrivate !== undefined && this.scope === this.localScope_abyssPrivate)
+      this.scope = this.priorScope_abyssPrivate;
+    this.localScope_abyssPrivate = undefined;
     this.keyboardCleanup_abyssPrivate?.();
     this.keyboardCleanup_abyssPrivate = undefined;
     this.contentEl.empty();
@@ -966,11 +1208,19 @@ export class PanelView extends ItemView {
     stack: readonly TaskSelectionNode[],
   ): void {
     const current = resolution.type === 'exact' ? resolution.task : resolution.current;
-    const consumedOwnedRef = this.consumedOwnedRef_abyssPrivate(resolution);
+    if (resolution.type === 'exact' && isCurrentTaskSelectionSnapshot(current, stack)) return;
+    const consumedOwnedRef =
+      this.consumedOwnedRef_abyssPrivate(resolution) ??
+      this.right_abyssPrivate.ownedRefForCompletionFollowUp(
+        current,
+        stack,
+        resolution.basis.authorityTransition?.completionTracking,
+      );
     const ownedSelection = this.right_abyssPrivate.selectionForOwnedTransition(
       consumedOwnedRef,
       current,
       stack,
+      resolution.basis.authorityTransition?.completionTracking,
     );
     const draft =
       consumedOwnedRef != null

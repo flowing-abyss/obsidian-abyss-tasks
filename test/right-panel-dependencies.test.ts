@@ -26,19 +26,25 @@ import {
   useRealMoment,
 } from './helpers';
 import { expandCompoundSelectorLists } from './support/expandedCss';
+import { useHostTooltips } from './support/hostTooltips';
 import {
   inspectorCleanups as cleanups,
   inspectorHarness as harness,
   notices,
   subscribeInspectorReconciliation,
 } from './support/inspectorHarness';
+import { prepareTaskPanelViewport, useTaskPanelViewport } from './support/taskPanelViewport';
+import { searchUiCompleted } from './support/taskSearchUiHarness';
 
 useRealMoment();
+useHostTooltips();
+useTaskPanelViewport();
 afterEach(() => {
   for (const cleanup of cleanups.splice(0)) {
     cleanup();
   }
   activeDocument.body.empty();
+  flushPaint = undefined;
   vi.restoreAllMocks();
 });
 
@@ -50,11 +56,29 @@ function labels(el: HTMLElement): Array<string | null> {
 function button(el: HTMLElement, selector: string): HTMLButtonElement {
   return expectDefined(el.querySelector<HTMLButtonElement>(selector));
 }
-function search(el: HTMLElement, query: string): HTMLInputElement {
+let flushPaint: (() => void) | undefined;
+async function search(el: HTMLElement, query: string): Promise<HTMLInputElement> {
+  if (!Reflect.has(el.ownerDocument, 'fonts')) prepareTaskPanelViewport(el);
   const input = expectDefined(el.querySelector<HTMLInputElement>('.abyss-dep-search input'));
   input.value = query;
   input.dispatchEvent(new Event('input', { bubbles: true }));
+  flushPaint?.();
+  await searchUiCompleted(expectDefined(input.closest<HTMLElement>('.abyss-dep-search')));
   return input;
+}
+
+function closePickerWithEscape(input: HTMLInputElement): void {
+  const picker = expectDefined(input.closest<HTMLElement>('.abyss-dep-search'));
+  const query = input.value;
+  input.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
+  expect(picker.isConnected).toBe(true);
+  expect(input.ownerDocument.activeElement).toBe(picker);
+  expect(input.value).toBe(query);
+  picker.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+  );
 }
 
 function modalRootPosition(location: string): number {
@@ -204,12 +228,12 @@ describe('dependency picker visible containment', () => {
       expect(picker.querySelectorAll('.abyss-dep-search-direction')).toHaveLength(
         source === 'badge' ? 2 : 0,
       );
-      const input = search(h.el, 'New child');
+      const input = await search(h.el, 'New child');
       expect(h.el.ownerDocument.activeElement).toBe(input);
       expect(
         expectDefined(picker.querySelector<HTMLElement>('.abyss-dep-search-create')).hidden,
       ).toBe(false);
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      closePickerWithEscape(input);
       expect(picker.isConnected).toBe(false);
       expect(h.el.ownerDocument.activeElement).toBe(trigger);
     },
@@ -260,7 +284,8 @@ describe('dependency picker visible containment', () => {
     button(h.el, '.abyss-dep-badge-body').click();
     expect(calls).toEqual([{ positioned: true, preventScroll: true }]);
     button(h.el, '[data-direction="blocks"]').click();
-    search(h.el, 'Invalid 🆔 authored').dispatchEvent(
+    await searchUiCompleted(expectDefined(h.el.querySelector<HTMLElement>('.abyss-dep-search')));
+    (await search(h.el, 'Invalid 🆔 authored')).dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
     );
     await flushMicrotasks(30);
@@ -343,6 +368,13 @@ describe('dependency picker visible containment', () => {
       frames.clear();
       for (const callback of due) callback(0);
     };
+    flushPaint = () => {
+      const due = [...frames.values()];
+      frames.clear();
+      due.forEach((callback) => {
+        callback(0);
+      });
+    };
     button(h.el, '.abyss-dep-badge-body').click();
     const picker = expectDefined(h.el.querySelector<HTMLElement>('.abyss-dep-search'));
     const first = expectDefined(observers[0]);
@@ -351,7 +383,7 @@ describe('dependency picker visible containment', () => {
     );
     expect(first.targets).toEqual(expect.arrayContaining([...picker.children]));
     expect(picker.style.getPropertyValue('--abyss-pop-top')).toBe('296px');
-    search(h.el, 'New child');
+    await search(h.el, 'New child');
     expect(picker.querySelectorAll('[role="option"]')).toHaveLength(0);
     expect(picker.querySelector<HTMLElement>('.abyss-dep-search-create')?.hidden).toBe(false);
     height = 200; // The DOM-only renderer does not measure the changed content.
@@ -373,7 +405,7 @@ describe('dependency picker visible containment', () => {
     resized(first);
     expect(picker.style.getPropertyValue('--abyss-pop-top')).toBe('116px');
     blockRect.mockReturnValue(new DOMRect(100, 100, 400, 900));
-    search(h.el, 'Invalid 🆔 authored').dispatchEvent(
+    (await search(h.el, 'Invalid 🆔 authored')).dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
     );
     await flushMicrotasks(30);
@@ -381,11 +413,13 @@ describe('dependency picker visible containment', () => {
     height = 240;
     resized(first);
     expect(picker.style.getPropertyValue('--abyss-pop-top')).toBe('96px');
-    search(h.el, 'Draft');
+    await search(h.el, 'Draft');
     height = 200;
     // Placing the picker again for a new selection cancels the frame its old owner asked for.
     first.resize();
     h.state.updateInspectorSelection([h.node('Current').root]);
+    flushPaint();
+    await searchUiCompleted(picker);
     expect(frames.size).toBe(0);
     expect(h.el.querySelector('.abyss-dep-search')).toBe(picker);
     expect(picker.querySelector('input')?.value).toBe('Draft');
@@ -443,7 +477,7 @@ describe('dependency picker visible containment', () => {
     panelRect.mockReturnValue(new DOMRect(100, 140, 400, 500));
     doc.dispatchEvent(new Event('scroll'));
     expect(picker.style.getPropertyValue('--abyss-pop-top')).toBe(`${parseFloat(before) - 40}px`);
-    search(h.el, '').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    closePickerWithEscape(await search(h.el, ''));
     expect(doc.activeElement).toBe(trigger);
     expect(picker.isConnected).toBe(false);
   });
@@ -459,6 +493,7 @@ describe('inspector subtask row removal', () => {
       settings: DEFAULT_SETTINGS,
       queries: h.index,
       tasks: h.api,
+      search: h.search,
     });
     cleanups.unshift(() => {
       modal.close();
@@ -514,6 +549,7 @@ describe('inspector subtask row removal', () => {
         settings: DEFAULT_SETTINGS,
         queries: h.index,
         tasks: h.api,
+        search: h.search,
       });
       cleanups.unshift(() => {
         modal.close();
@@ -608,6 +644,7 @@ describe('inspector subtask row removal', () => {
       settings: DEFAULT_SETTINGS,
       queries: h.index,
       tasks: h.api,
+      search: h.search,
     });
     cleanups.unshift(() => {
       modal.close();
@@ -850,8 +887,12 @@ describe('inspector subtask row removal', () => {
     const cssReader = createCssReader(css);
     const value = (selector: string, property: string) =>
       cssDeclarationValue(cssReader.declarationText(selector), property);
-    // A sub-task row reads at its label's size, and its 22px remove control sets its height.
+    // Inspector labels and their Undo replacement share the ordinary UI text tier.
     expect(value('.abyss-subtask-label', 'font-size')).toBe('var(--font-ui-small)');
+    expect(value('.abyss-right-section .abyss-subtask-label', 'font-size')).toBe(
+      'var(--font-ui-small)',
+    );
+    // The 22px remove control sets the row's minimum height, including its Undo replacement.
     expect(value('.abyss-subtask-remove', 'height')).toBe('22px');
     expect(value('.abyss-subtask-section .abyss-undo-row', 'font-size')).toBe(
       'var(--font-ui-small)',
@@ -972,7 +1013,7 @@ describe('inspector dependency navigation', () => {
       else label.click();
       expect(h.state.get('taskStack').map((node) => node.title)).toEqual(['B', 'B.2']);
       const firstBack = button(h.el, '[aria-label="Back to previous task"]');
-      expect(firstBack.title).toBe('Back to previous task');
+      expect(firstBack.getAttribute('aria-label')).toBe('Back to previous task');
       expect(firstBack.tabIndex).toBe(0);
       expect(activeDocument.activeElement).toBe(firstBack);
       button(h.el, '[data-dependency-direction="blocked-by"] .abyss-dep-title').click();
@@ -1189,7 +1230,7 @@ describe('inspector dependency navigation', () => {
       'unrelated.md': unrelated,
     });
     button(h.el, '.abyss-dep-badge-body').click();
-    const input = search(h.el, 'Candidate');
+    const input = await search(h.el, 'Candidate');
     const sections = [...h.el.querySelectorAll('.abyss-dep-section')];
     const matches = () =>
       [
@@ -1198,8 +1239,52 @@ describe('inspector dependency navigation', () => {
     expect(matches()).toHaveLength(0);
     const file = h.app.vault.getAbstractFileByPath('unrelated.md');
     if (!(file instanceof TFile)) throw new Error('Missing unrelated fixture');
+    const picker = expectDefined(input.closest<HTMLElement>('.abyss-dep-search'));
+    const previousRequest = picker.dataset['searchRequest'];
+    const previousGeneration = Number(picker.dataset['searchGeneration']);
+    const published = deferred<number>();
+    const subscription = h.index.searchSource().subscribe((event) => {
+      if (event.type === 'files' && event.files.some(({ path }) => path === file.path))
+        published.resolve(event.generation);
+    });
+    cleanups.push(subscription.unsubscribe);
+    let completed = false;
+    const receipt = published.promise.then(async (generation) => {
+      await searchUiCompleted(picker, () => generation);
+      completed = true;
+    });
+    // The previous completed page cannot satisfy a receipt owned by the source edit.
+    await searchUiCompleted(picker);
+    expect(completed).toBe(false);
+    const frames = new Map<number, FrameRequestCallback>();
+    const queued = deferred<void>();
+    let frameId = 0;
+    const win = expectDefined(picker.ownerDocument.defaultView);
+    vi.spyOn(win, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.set(++frameId, callback);
+      queued.resolve();
+      return frameId;
+    });
+    vi.spyOn(win, 'cancelAnimationFrame').mockImplementation((id) => {
+      frames.delete(id);
+    });
     await h.app.vault.modify(file, unrelated.replace('Unrelated\n', 'Candidate\n'));
-    await flushMicrotasks(30);
+    const generation = await published.promise;
+    await queued.promise;
+    expect(generation).toBeGreaterThan(previousGeneration);
+    expect(h.node('Candidate').node.title).toBe('Candidate');
+    expect(picker.dataset['searchRequest']).not.toBe(previousRequest);
+    expect(picker.dataset['searchPhase']).toBe('pending');
+    expect(picker.dataset['searchGeneration']).toBe(String(previousGeneration));
+    expect(matches()).toHaveLength(0);
+    expect(completed).toBe(false);
+    expect(frames.size).toBeGreaterThan(0);
+    const due = [...frames.values()];
+    frames.clear();
+    for (const callback of due) callback(0);
+    await receipt;
+    expect(picker.dataset['searchPhase']).toBe('complete');
+    expect(picker.dataset['searchGeneration']).toBe(String(generation));
     expect(matches()).toHaveLength(1);
     expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
     expect(input.value).toBe('Candidate');
@@ -1398,6 +1483,7 @@ describe('inspector dependency navigation', () => {
         settings: DEFAULT_SETTINGS,
         queries: h.index,
         tasks: h.api,
+        search: h.search,
       });
       cleanups.unshift(() => {
         modal.close();
@@ -1440,6 +1526,7 @@ describe('owned dependency destination editing', () => {
       settings: DEFAULT_SETTINGS,
       queries: h.index,
       tasks: h.api,
+      search: h.search,
     });
     cleanups.unshift(() => {
       modal.close();
@@ -1456,7 +1543,7 @@ describe('owned dependency destination editing', () => {
     const history = local.innerState_abyssPrivate.get('inspectorBackStack');
     const original = JSON.stringify(history);
     button(el, '.abyss-dep-badge-body').click();
-    const input = search(el, 'Created child');
+    const input = await search(el, 'Created child');
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await flushMicrotasks(30);
     expect(local.innerState_abyssPrivate.get('taskStack').map((node) => node.title)).toEqual([
@@ -1492,7 +1579,7 @@ describe('owned dependency destination editing', () => {
       return { ...result, outcome: { ...result.outcome, dependencyId: 'unproven' } };
     });
     button(h.el, '.abyss-dep-badge-body').click();
-    const input = search(h.el, 'Private draft');
+    const input = await search(h.el, 'Private draft');
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await flushMicrotasks();
     expect(captured).toHaveLength(1);
@@ -1514,7 +1601,7 @@ describe('owned dependency destination editing', () => {
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.spyOn(h.api, 'execute').mockRejectedValueOnce(new Error('private content'));
     button(h.el, '.abyss-dep-badge-body').click();
-    const input = search(h.el, 'Draft child');
+    const input = await search(h.el, 'Draft child');
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await flushMicrotasks();
     expect(captured).toHaveLength(1);
@@ -1538,6 +1625,7 @@ describe('owned dependency destination editing', () => {
         settings: DEFAULT_SETTINGS,
         queries: h.index,
         tasks: h.api,
+        search: h.search,
       });
       cleanups.unshift(() => {
         modal.close();
@@ -1597,6 +1685,7 @@ describe('owned dependency destination editing', () => {
       settings: DEFAULT_SETTINGS,
       queries: h.index,
       tasks: h.api,
+      search: h.search,
     });
     cleanups.unshift(() => {
       modal.close();
@@ -1639,6 +1728,7 @@ describe('live dependency history restoration', () => {
         settings: DEFAULT_SETTINGS,
         queries: h.index,
         tasks: h.api,
+        search: h.search,
       });
       cleanups.unshift(() => {
         modal.close();
@@ -1841,6 +1931,7 @@ describe('TaskModal dependency selection', () => {
         settings: DEFAULT_SETTINGS,
         queries: h.index,
         tasks: h.api,
+        search: h.search,
       });
       cleanups.unshift(() => {
         modal.close();
@@ -1854,7 +1945,7 @@ describe('TaskModal dependency selection', () => {
       expect(el.querySelector('.abyss-right-title')?.textContent).toBe('Current');
       button(el, '.abyss-dep-badge-add').click();
       button(el, '[aria-label="Add dependency: Blocked by"]').click();
-      const input = search(el, 'Candidate');
+      const input = await search(el, 'Candidate');
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       await flushMicrotasks(30);
@@ -1906,6 +1997,7 @@ describe('TaskModal dependency selection', () => {
       settings: DEFAULT_SETTINGS,
       queries: h.index,
       tasks: h.api,
+      search: h.search,
     });
     cleanups.unshift(() => {
       modal.close();
@@ -1957,7 +2049,7 @@ describe('RightPanel dependency inspector', () => {
       const execute = vi.spyOn(h.api, 'execute');
       button(h.el, '.abyss-dep-badge-add').click();
       button(h.el, '[aria-label="Add dependency: Blocked by"]').click();
-      const input = search(h.el, 'Candidate');
+      const input = await search(h.el, 'Candidate');
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       await flushMicrotasks(50);
@@ -1988,7 +2080,7 @@ describe('RightPanel dependency inspector', () => {
       const add = vi.spyOn(h.el.ownerDocument, 'addEventListener');
       const remove = vi.spyOn(h.el.ownerDocument, 'removeEventListener');
       button(h.el, '.abyss-dep-badge-body').click();
-      const input = search(h.el, 'Candidate');
+      const input = await search(h.el, 'Candidate');
       const owned = add.mock.calls.filter(([type]) =>
         ['scroll', 'focusin', 'pointerdown'].includes(type),
       );
@@ -1997,15 +2089,18 @@ describe('RightPanel dependency inspector', () => {
       if (mode === 'selection') h.state.set('taskStack', [h.node('Candidate').root]);
       if (mode === 'success') {
         button(h.el, '[data-direction="blocks"]').click();
+        await searchUiCompleted(
+          expectDefined(h.el.querySelector<HTMLElement>('.abyss-dep-search')),
+        );
         button(h.el, '[role="option"]').click();
         await flushMicrotasks(50);
         expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        closePickerWithEscape(input);
       }
       if (mode === 'refresh') {
         h.state.set('taskStack', [h.node('Current').root]);
         expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        closePickerWithEscape(input);
       }
       expect(owned.length).toBeGreaterThan(0);
       for (const [type, listener] of owned)
@@ -2024,9 +2119,7 @@ describe('RightPanel dependency inspector', () => {
     const remove = vi.spyOn(h.el.ownerDocument, 'removeEventListener');
     for (let count = 0; count < 2; count++) {
       button(h.el, '.abyss-dep-badge-body').click();
-      search(h.el, '').dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
-      );
+      closePickerWithEscape(await search(h.el, ''));
     }
     const scrollCallbacks = add.mock.calls
       .filter(([type]) => type === 'scroll')
@@ -2095,11 +2188,11 @@ describe('RightPanel dependency inspector', () => {
     expect(divider.hidden).toBe(true);
     expect(blocks.hidden).toBe(true);
     expect(body.getAttribute('aria-label')).toBe('Dependencies: blocked by 0; blocks 0');
-    expect(body.title).toBe('Dependencies: blocked by 0; blocks 0');
+    expect(body.hasAttribute('title')).toBe(false);
     expect(plus.parentElement).toBe(badge);
     expect(body.contains(plus)).toBe(false);
     expect(plus.getAttribute('aria-label')).toBe('Add dependency sections');
-    expect(plus.title).toBe('Add dependency');
+    expect(plus.hasAttribute('title')).toBe(false);
 
     const decoy = body.createSpan({ cls: 'abyss-dep-test-decoy' });
     body.insertBefore(decoy, blockedBy);
@@ -2110,7 +2203,7 @@ describe('RightPanel dependency inspector', () => {
     expect(blockedBy.className).toBe('abyss-dep-count');
     expect(divider.hidden).toBe(true);
     expect(blocks.hidden).toBe(true);
-    search(h.el, '').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    closePickerWithEscape(await search(h.el, ''));
 
     await h.api.execute({
       type: 'add-dependency',
@@ -2158,37 +2251,22 @@ describe('RightPanel dependency inspector', () => {
     expect(settledBlocks.hidden).toBe(true);
   });
 
-  it('keeps blank Create hidden without an author display override and exposes a focusable nonblank action', async () => {
-    if (!Platform.isDesktop) throw new Error('CSS contract requires desktop filesystem access');
-    const fs = await import('node:fs');
-    const { parse } = await import('postcss');
-    const sheet = parse(fs.readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8'));
+  it('keeps blank Create hidden and exposes a focusable nonblank action', async () => {
     const h = await harness('- [ ] Current\n');
     button(h.el, '.abyss-dep-badge-body').click();
     const create = button(h.el, '.abyss-dep-search-create');
-    const authorDisplays = () => {
-      const values: string[] = [];
-      sheet.walkRules((rule) => {
-        if (create.matches(rule.selector))
-          rule.walkDecls('display', (declaration) => {
-            values.push(declaration.value);
-          });
-      });
-      return values;
-    };
     expect(create.hidden).toBe(true);
-    expect(authorDisplays()).toEqual([]);
     expect(activeWindow.getComputedStyle(create).display).toBe('none');
-    search(h.el, 'New task');
+    await search(h.el, 'New task');
     expect(create.hidden).toBe(false);
-    expect(authorDisplays()).toContain('block');
     expect(activeWindow.getComputedStyle(create).display).not.toBe('none');
+    expect(create.textContent).toBe('Create “New task” as sub-task');
+    expect(create.disabled).toBe(false);
     expect(create.tabIndex).toBe(0);
     create.focus();
     expect(activeDocument.activeElement).toBe(create);
-    search(h.el, '  ');
+    await search(h.el, '  ');
     expect(create.hidden).toBe(true);
-    expect(authorDisplays()).toEqual([]);
     expect(activeWindow.getComputedStyle(create).display).toBe('none');
   });
 
@@ -2238,8 +2316,9 @@ describe('RightPanel dependency inspector', () => {
     expect(button(h.el, '[data-direction="blocked-by"]').getAttribute('aria-pressed')).toBe('true');
     expect(button(h.el, '[data-direction="blocks"]').getAttribute('aria-pressed')).toBe('false');
     button(h.el, '[data-direction="blocks"]').click();
+    await searchUiCompleted(expectDefined(h.el.querySelector<HTMLElement>('.abyss-dep-search')));
     expect(button(h.el, '[data-direction="blocks"]').getAttribute('aria-pressed')).toBe('true');
-    search(h.el, '').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    closePickerWithEscape(await search(h.el, ''));
 
     button(h.el, '.abyss-dep-badge-add').click();
     button(h.el, '[aria-label="Add dependency: Blocks"]').click();
@@ -2251,7 +2330,7 @@ describe('RightPanel dependency inspector', () => {
     const h = await harness('- [ ] Current\n- [ ] Candidate\n');
     const execute = vi.spyOn(h.api, 'execute');
     button(h.el, '.abyss-dep-badge-body').click();
-    const input = search(h.el, 'Brand new 🆔 authored');
+    const input = await search(h.el, 'Brand new 🆔 authored');
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await flushMicrotasks();
 
@@ -2271,11 +2350,14 @@ describe('RightPanel dependency inspector', () => {
       if (context === 'general') {
         button(h.el, '.abyss-dep-badge-body').click();
         button(h.el, '[data-direction="blocks"]').click();
+        await searchUiCompleted(
+          expectDefined(h.el.querySelector<HTMLElement>('.abyss-dep-search')),
+        );
       } else {
         button(h.el, '.abyss-dep-badge-add').click();
         button(h.el, '[aria-label="Add dependency: Blocks"]').click();
       }
-      const input = search(h.el, 'Brand new');
+      const input = await search(h.el, 'Brand new');
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       await flushMicrotasks();
       expect(await h.read()).toBe(
@@ -2342,8 +2424,9 @@ describe('RightPanel dependency inspector', () => {
     const release = vi.fn();
     const acquire = vi.spyOn(noInteractionOwnership, 'acquire').mockReturnValue({ release });
     button(h.el, '.abyss-dep-badge-body').click();
-    const input = search(h.el, 'Candidate');
+    const input = await search(h.el, 'Candidate');
     button(h.el, '[data-direction="blocks"]').click();
+    await searchUiCompleted(expectDefined(h.el.querySelector<HTMLElement>('.abyss-dep-search')));
     input.focus();
     h.state.set('taskStack', [h.node('Current').root]);
     expect(h.el.querySelectorAll('[data-direction]')).toHaveLength(2);
@@ -2377,7 +2460,7 @@ describe('RightPanel dependency inspector', () => {
       const doc = h.el.ownerDocument;
       const execute = vi.spyOn(h.api, 'execute');
       button(h.el, '.abyss-dep-badge-body').click();
-      const input = search(h.el, 'Candidate');
+      const input = await search(h.el, 'Candidate');
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
       const selected = input.getAttribute('aria-activedescendant');
       const create = button(h.el, '.abyss-dep-search-create');
@@ -2385,6 +2468,7 @@ describe('RightPanel dependency inspector', () => {
       const focus = vi.spyOn(create, 'focus');
 
       h.state.set('taskStack', [h.node('Current').root]);
+      await searchUiCompleted(expectDefined(input.closest<HTMLElement>('.abyss-dep-search')));
 
       expect(doc.activeElement).toBe(create);
       expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
@@ -2415,7 +2499,7 @@ describe('RightPanel dependency inspector', () => {
   it('preserves a direction control through refresh without changing its action', async () => {
     const h = await harness('- [ ] Current\n- [ ] Candidate\n');
     button(h.el, '.abyss-dep-badge-body').click();
-    const input = search(h.el, 'Candidate');
+    const input = await search(h.el, 'Candidate');
     const direction = button(h.el, '[data-direction="blocks"]');
     direction.focus();
     const focus = vi.spyOn(direction, 'focus');
@@ -2433,17 +2517,18 @@ describe('RightPanel dependency inspector', () => {
   it('falls back to the input when the focused result is rebuilt without losing selection', async () => {
     const h = await harness('- [ ] Current\n- [ ] Candidate\n');
     button(h.el, '.abyss-dep-badge-body').click();
-    const input = search(h.el, 'Candidate');
+    const input = await search(h.el, 'Candidate');
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     const option = button(h.el, '[aria-selected="true"]');
     option.focus();
     const focus = vi.spyOn(input, 'focus');
-
+    h.index.installCommittedContent('unrelated.md', '- [ ] Unrelated');
     h.state.set('taskStack', [h.node('Current').root]);
 
     expect(option.isConnected).toBe(false);
     expect(h.el.ownerDocument.activeElement).toBe(input);
     expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
+    await searchUiCompleted(expectDefined(input.closest<HTMLElement>('.abyss-dep-search')));
     expect(button(h.el, '[aria-selected="true"]').id).toBe(
       input.getAttribute('aria-activedescendant'),
     );
@@ -2452,7 +2537,7 @@ describe('RightPanel dependency inspector', () => {
   it('falls back to the input if the retained Create control becomes hidden', async () => {
     const h = await harness('- [ ] Current\n');
     button(h.el, '.abyss-dep-badge-body').click();
-    const input = search(h.el, 'Candidate');
+    const input = await search(h.el, 'Candidate');
     const create = button(h.el, '.abyss-dep-search-create');
     create.focus();
     input.value = '';
@@ -2468,7 +2553,7 @@ describe('RightPanel dependency inspector', () => {
     const pending = deferred<TaskCommandResult>();
     vi.spyOn(h.api, 'execute').mockReturnValue(pending.promise);
     button(h.el, '.abyss-dep-badge-body').click();
-    const input = search(h.el, 'Candidate');
+    const input = await search(h.el, 'Candidate');
     const create = button(h.el, '.abyss-dep-search-create');
     create.focus();
     create.click();
@@ -2551,7 +2636,7 @@ describe('RightPanel dependency inspector', () => {
   it('reconciles counterpart completion and missing IDs through normal index events without discarding an editing draft', async () => {
     const h = await harness('- [ ] Current ⛔ blocker\n- [ ] Blocker 🆔 blocker\n');
     button(h.el, '.abyss-dep-badge-body').click();
-    const input = search(h.el, 'Keep this query');
+    const input = await search(h.el, 'Keep this query');
     await h.api.execute({ type: 'toggle-completion', target: h.node('Blocker').target });
     await flushMicrotasks();
     expect(button(h.el, '.abyss-dep-badge-body').getAttribute('aria-label')).toBe(
@@ -2603,14 +2688,14 @@ describe('RightPanel dependency inspector', () => {
     badge.click();
     expect(h.el.querySelector('.abyss-dep-search')).not.toBeNull();
     expect(labels(h.el)).toEqual(['Description', 'Sub-tasks', 'Comments']);
-    search(h.el, '').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    closePickerWithEscape(await search(h.el, ''));
     expect(activeDocument.activeElement).toBe(badge);
     plus.click();
     expect(labels(h.el)).toEqual(['Description', 'Blocked by', 'Blocks', 'Sub-tasks', 'Comments']);
     expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
     expect(h.el.querySelector('.abyss-dep-badge-add')).toBeNull();
     button(h.el, '[aria-label="Add dependency: Blocked by"]').click();
-    search(h.el, '').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    closePickerWithEscape(await search(h.el, ''));
     expect(labels(h.el)).toEqual(['Description', 'Blocked by', 'Blocks', 'Sub-tasks', 'Comments']);
     const outside = activeDocument.body.createEl('button');
     outside.focus();
@@ -2663,7 +2748,7 @@ describe('RightPanel dependency inspector', () => {
       button(h.el, '.abyss-dep-badge-add').click();
       button(h.el, `[data-dependency-direction="${direction}"] .abyss-dep-add`).click();
       expect(h.el.querySelector('[aria-label="Dependency direction"]')).toBeNull();
-      const input = search(h.el, 'Candidate');
+      const input = await search(h.el, 'Candidate');
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       await flushMicrotasks(50);
@@ -2736,8 +2821,9 @@ describe('RightPanel dependency inspector', () => {
       };
       vi.spyOn(h.api, 'execute').mockResolvedValue(results[type]);
       button(h.el, '.abyss-dep-badge-body').click();
-      search(h.el, 'Candidate');
+      await search(h.el, 'Candidate');
       button(h.el, '[data-direction="blocks"]').click();
+      await searchUiCompleted(expectDefined(h.el.querySelector<HTMLElement>('.abyss-dep-search')));
       button(h.el, '[role="option"]').click();
       await flushMicrotasks(20);
       expect(h.el.querySelector('.abyss-dep-search input')).toHaveProperty('value', 'Candidate');
@@ -2754,8 +2840,9 @@ describe('RightPanel dependency inspector', () => {
     const h = await harness('- [ ] Current\n- [ ] Candidate\n');
     vi.spyOn(h.api, 'execute').mockRejectedValue(failure);
     button(h.el, '.abyss-dep-badge-body').click();
-    search(h.el, 'Candidate');
+    await search(h.el, 'Candidate');
     button(h.el, '[data-direction="blocks"]').click();
+    await searchUiCompleted(expectDefined(h.el.querySelector<HTMLElement>('.abyss-dep-search')));
     button(h.el, '[role="option"]').click();
     await flushMicrotasks(20);
     expect(captured).toHaveLength(1);
@@ -2781,6 +2868,7 @@ describe('continuous dependency entry', () => {
       settings: DEFAULT_SETTINGS,
       queries: h.index,
       tasks: h.api,
+      search: h.search,
     });
     cleanups.unshift(() => {
       modal.close();
@@ -2843,6 +2931,7 @@ describe('continuous dependency entry', () => {
         settings: DEFAULT_SETTINGS,
         queries: h.index,
         tasks: h.api,
+        search: h.search,
       });
       cleanups.unshift(() => {
         modal.close();
@@ -2860,11 +2949,12 @@ describe('continuous dependency entry', () => {
       } else {
         button(el, '.abyss-dep-badge-body').click();
         if (direction === 'blocks') button(el, '[data-direction="blocks"]').click();
+        await searchUiCompleted(expectDefined(el.querySelector<HTMLElement>('.abyss-dep-search')));
       }
       const execute = vi.spyOn(h.api, 'execute');
-      const input = search(el, 'First created');
+      const input = await search(el, 'First created');
       for (const text of ['First created', 'Second created', 'Candidate one', 'Candidate two']) {
-        search(el, text);
+        await search(el, text);
         if (text.startsWith('Candidate'))
           input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -2892,10 +2982,185 @@ describe('continuous dependency entry', () => {
       ]);
       expect(await h.read()).toContain('\t\t- [ ] First created');
       expect(await h.read()).toContain('\t\t- [ ] Second created');
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      closePickerWithEscape(input);
       expect(el.querySelector('.abyss-dep-search')).toBeNull();
       modal.close();
       h.panel.destroy();
     },
   );
 });
+describe('bounded dependency search integration', () => {
+  it.each(
+    (['blocks', 'blocked-by'] as const).flatMap((direction) =>
+      [false, true].map((modal) => ({ direction, modal })),
+    ),
+  )(
+    'opens $direction with modal=$modal without any eager list read and sends the exact resolved command',
+    async ({ direction, modal: floating }) => {
+      const h = await harness('- [ ] Current 🆔 current\n- [ ] Candidate 🆔 candidate\n');
+      const current = h.node('Current'),
+        candidate = h.node('Candidate');
+      const modal = new TaskModal({
+        app: h.app,
+        statusRegistry: testStatusRegistry(),
+        settings: DEFAULT_SETTINGS,
+        queries: h.index,
+        tasks: h.api,
+        search: h.search,
+      });
+      cleanups.unshift(() => {
+        modal.close();
+      });
+      if (floating) modal.open(current.root);
+      const el = floating ? button(activeDocument.body, '.abyss-modal-body') : h.el;
+      vi.spyOn(h.index, 'list').mockImplementation(() => {
+        throw new Error('No eager roots');
+      });
+      vi.spyOn(h.index, 'listNodes').mockImplementation(() => {
+        throw new Error('No eager nodes');
+      });
+      const execute = vi.spyOn(h.api, 'execute').mockResolvedValue({ type: 'invalid', issues: [] });
+      button(el, '.abyss-dep-badge-body').click();
+      if (direction === 'blocks') button(el, '[data-direction="blocks"]').click();
+      const input = await search(el, 'Candidate');
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await vi.waitFor(() => {
+        expect(execute).toHaveBeenCalledOnce();
+      });
+      expect(execute.mock.calls[0]?.[0]).toEqual({
+        type: 'add-dependency',
+        blocker: direction === 'blocks' ? current.target : candidate.target,
+        dependent: direction === 'blocks' ? candidate.target : current.target,
+      });
+    },
+  );
+  it('shows the canonical cycle reason as a disabled mounted option', async () => {
+    const h = await harness(
+      '- [ ] Current 🆔 current ⛔ previous\n- [ ] Previous 🆔 previous ⛔ distant\n- [ ] Distant 🆔 distant\n',
+    );
+    button(h.el, '.abyss-dep-badge-body').click();
+    button(h.el, '[data-direction="blocks"]').click();
+    await search(h.el, 'Distant');
+    const option = button(h.el, '[role="option"]');
+    expect(option.disabled).toBe(true);
+    expect(option.textContent).toContain('Would create a cycle');
+  });
+});
+it('ends the owned picker on inspector window migration without disposing shared search', async () => {
+  const h = await harness('- [ ] Current\n- [ ] Candidate\n');
+  button(h.el, '.abyss-dep-badge-body').click();
+  await search(h.el, 'Candidate');
+  const release = vi.spyOn(h.search, 'release'),
+    dispose = vi.spyOn(h.search, 'dispose');
+  h.panel.onWindowMigrated();
+  expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
+  expect(release).toHaveBeenCalledOnce();
+  expect(dispose).not.toHaveBeenCalled();
+});
+it.each(['blocks', 'blocked-by'] as const)(
+  'rejects a held %s fresh resolve when the actual inspector switches tasks',
+  async (direction) => {
+    const h = await harness('- [ ] Current\n- [ ] Candidate\n- [ ] Other\n');
+    const other = h.node('Other').root;
+    button(h.el, '.abyss-dep-badge-body').click();
+    if (direction === 'blocks') button(h.el, '[data-direction="blocks"]').click();
+    const input = await search(h.el, 'Candidate');
+    const held = deferred<void>(),
+      resolve = h.search.resolveHits.bind(h.search);
+    vi.spyOn(h.search, 'resolveHits').mockImplementationOnce(async (...args) => {
+      await held.promise;
+      return resolve(...args);
+    });
+    const execute = vi.spyOn(h.api, 'execute').mockResolvedValue({ type: 'invalid', issues: [] });
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    h.state.set('taskStack', [other]);
+    held.resolve();
+    await flushMicrotasks(50);
+    expect(execute).not.toHaveBeenCalled();
+    expect(h.el.querySelector('.abyss-dep-search')).toBeNull();
+  },
+);
+it('retains one lease and cursor through an unchanged synchronous inspector render', async () => {
+  const h = await harness('- [ ] Current\n- [ ] Candidate\n');
+  button(h.el, '.abyss-dep-badge-body').click();
+  const input = await search(h.el, 'Candidate');
+  const open = vi.spyOn(h.search, 'open'),
+    release = vi.spyOn(h.search, 'release'),
+    subscribe = vi.spyOn(h.search, 'subscribe');
+  h.state.set('taskStack', [h.node('Current').root]);
+  await flushMicrotasks(50);
+  expect(h.el.querySelector('.abyss-dep-search input')).toBe(input);
+  expect(open).not.toHaveBeenCalled();
+  expect(release).not.toHaveBeenCalled();
+  expect(subscribe).not.toHaveBeenCalled();
+});
+
+it.each(['End', 'Home'])(
+  'TaskModal dependency picker owns Find and Escape after logical %s movement',
+  async (label) => {
+    const candidates = Array.from({ length: 31 }, (_, i) => `- [ ] Candidate ${i} 🆔 c${i}`).join(
+      '\n',
+    );
+    const h = await harness(`- [ ] Current 🆔 current\n${candidates}\n`);
+    const ownership = { acquire: vi.fn(() => ({ release: vi.fn() })) };
+    const modal = new TaskModal({
+      app: h.app,
+      statusRegistry: testStatusRegistry(),
+      settings: DEFAULT_SETTINGS,
+      queries: h.index,
+      tasks: h.api,
+      search: h.search,
+      interactionOwnership: ownership,
+    });
+    cleanups.unshift(() => {
+      modal.close();
+    });
+    modal.open(h.node('Current').root);
+    const el = button(activeDocument.body, '.abyss-modal-body');
+    button(el, '.abyss-dep-badge-body').click();
+    const input = await search(el, 'Candidate');
+    const control = button(el, '.abyss-dep-search-create');
+    control.focus();
+    const find = new KeyboardEvent('keydown', {
+      code: 'KeyF',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    control.dispatchEvent(find);
+    expect(find.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(input);
+    expect(input.selectionEnd).toBe(9);
+    const picker = expectDefined(input.closest<HTMLElement>('.abyss-dep-search'));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+    await vi.waitFor(() => {
+      const id = input.getAttribute('aria-activedescendant');
+      expect(id === null ? null : input.ownerDocument.getElementById(id)?.textContent).toContain(
+        'Candidate 30',
+      );
+    });
+    if (label === 'Home') {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+      await vi.waitFor(() => {
+        const id = input.getAttribute('aria-activedescendant');
+        expect(id === null ? null : input.ownerDocument.getElementById(id)?.textContent).toContain(
+          'Candidate 0',
+        );
+      });
+    }
+    expect(picker.querySelector('[aria-label="Next page"]')).toBeNull();
+    const focused = expectDefined(document.activeElement);
+    closePickerWithEscape(input);
+    expect(el.querySelector('.abyss-dep-search')).toBeNull();
+    expect(el.isConnected).toBe(true);
+    expect(focused).toBe(input);
+    expect(ownership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
+  },
+);
+
+vi.mock('obsidian', async () => ({
+  ...(await import('obsidian-test-mocks/obsidian')),
+  setTooltip: vi.fn(),
+}));

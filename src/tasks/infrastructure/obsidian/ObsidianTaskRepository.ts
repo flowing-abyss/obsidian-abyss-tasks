@@ -42,6 +42,7 @@ import {
   taskNodeRootRef as rootRefOf,
   taskMutationNodeRef,
 } from '../../domain/taskCommandTargets';
+import type { CompletionTrackingWitness } from '../../domain/taskReconciliation';
 import type {
   CommentRef,
   LocalDate,
@@ -590,18 +591,6 @@ function taskContentEdit(
   }
 }
 
-function commentRelativeLine(
-  parentRelativeLine: number,
-  comment: CommentRef,
-  lines: readonly string[],
-  rootLine: number,
-): number | undefined {
-  const relativeLine = parentRelativeLine + comment.relativeLine;
-  return lines[rootLine + relativeLine] === legacyLine(comment.originalMarkdown)
-    ? relativeLine
-    : undefined;
-}
-
 interface MoveTargetInput {
   readonly sourceTask: TaskSnapshot;
   readonly sourceBlock: TaskRootBlock;
@@ -785,6 +774,31 @@ interface SurvivingEditStageInput {
   readonly surviving: TaskRootBlock;
 }
 
+function completionTrackingWitness(
+  input: SurvivingEditStageInput,
+  revision: string,
+): CompletionTrackingWitness | undefined {
+  const { process, edit, surviving } = input;
+  const command = process.command;
+  return command.type === 'close-time-entry' &&
+    command.completionFollowUp === true &&
+    edit.result.type === 'committed' &&
+    edit.result.outcome.type === 'task'
+    ? {
+        before: { ...process.rootRef },
+        after: { filePath: process.rootRef.filePath, line: surviving.line, revision },
+        entry: structuredClone(command.entry),
+        stamp: command.stamp,
+        endMs: command.endMs,
+        minimumMs: command.minimumMs,
+        disposition:
+          edit.result.outcome.discardedShortEntry === true
+            ? ('discarded' as const)
+            : ('closed' as const),
+      }
+    : undefined;
+}
+
 interface RejectedRollbackContext {
   readonly authority: TaskRefAuthority;
   readonly snapshotState: TaskSnapshotState;
@@ -792,10 +806,7 @@ interface RejectedRollbackContext {
   readonly expectedRevision: string;
 }
 
-/** A comment link is numbered in its one line; the editor finds a description link. */
-type TextEditTarget =
-  | { readonly type: 'comment'; readonly relativeLine: number; readonly occurrence: number }
-  | DescriptionLinkTarget;
+type TextEditTarget = DescriptionLinkTarget;
 
 export class ObsidianTaskRepository implements TaskRepository {
   readonly supportsRevisionPreconditions = true as const;
@@ -2293,13 +2304,21 @@ export class ObsidianTaskRepository implements TaskRepository {
       this.invalidateStagedEdit_abyssPrivate(transaction);
       return originalContent;
     }
+    const completionTracking = completionTrackingWitness(input, revision);
     const staged = authority.stage(
       {
         filePath: process.rootRef.filePath,
         candidateFingerprint: taskRefContentFingerprint(edit.content),
         candidateLength: edit.content.length,
         expectedRevision: process.rootRef.revision,
-        roots: [{ line: surviving.line, source: surviving.source, revision }],
+        roots: [
+          {
+            line: surviving.line,
+            source: surviving.source,
+            revision,
+            ...(completionTracking === undefined ? {} : { completionTracking }),
+          },
+        ],
       },
       indexedRevision,
     );
@@ -2650,8 +2669,7 @@ export class ObsidianTaskRepository implements TaskRepository {
         content,
       };
     }
-    const lines = content.split(/\r?\n/u);
-    const target = this.resolveTextEditTarget_abyssPrivate(input, command, targetNode, lines);
+    const target = this.resolveTextEditTarget_abyssPrivate(input, command, targetNode);
     if (target.type === 'conflict') return { result: conflict(current), content };
     if (target.type === 'invalid') {
       return {
@@ -2666,14 +2684,11 @@ export class ObsidianTaskRepository implements TaskRepository {
     input: LocatedEditInput,
     command: Extract<TaskEditCommand, { readonly type: 'edit-link' }>,
     current: TaskSnapshot,
-    target: Extract<TextEditTarget, { readonly type: 'comment' | 'ready' }>,
+    target: Extract<TextEditTarget, { readonly type: 'ready' }>,
   ): EditOutcome {
     const { content, block } = input;
     const source = content.split(/\r?\n/u)[block.line + target.relativeLine] ?? '';
-    const editResult =
-      target.type === 'comment'
-        ? this.codec_abyssPrivate.editTextLink(source, target.occurrence, command.replacement)
-        : this.codec_abyssPrivate.editTextLinkAt(source, target, command.replacement);
+    const editResult = this.codec_abyssPrivate.editTextLinkAt(source, target, command.replacement);
     if (editResult.type === 'conflict') return { result: conflict(current), content };
     if (editResult.type === 'invalid') return { result: editResult, content };
     if (editResult.type === 'unchanged') {
@@ -2708,18 +2723,15 @@ export class ObsidianTaskRepository implements TaskRepository {
     input: LocatedEditInput,
     command: Extract<TaskEditCommand, { readonly type: 'edit-link' }>,
     node: TaskSnapshot | SubtaskSnapshot,
-    lines: readonly string[],
   ): TextEditTarget {
     if (command.target.type === 'comment') {
-      const relativeLine = commentRelativeLine(
-        input.relativeLine,
+      return this.editor_abyssPrivate.commentLink(
+        input.content,
+        input.block,
+        blockTarget(node, input.block, input.relativeLine),
         command.target.ref,
-        lines,
-        input.block.line,
+        command.occurrence,
       );
-      return relativeLine === undefined
-        ? { type: 'conflict' }
-        : { type: 'comment', relativeLine, occurrence: command.occurrence };
     }
     if (command.target.type !== 'description') return { type: 'invalid' };
     return this.editor_abyssPrivate.descriptionLink(

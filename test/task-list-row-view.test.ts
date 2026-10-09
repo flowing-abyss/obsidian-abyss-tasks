@@ -5,9 +5,13 @@ import {
   type TaskListTaskRow,
 } from '../src/panels/task-list/taskListRows';
 import {
+  mountGroupHeader,
+  mountTaskListRow,
   mountTaskListRows,
   NO_MOUNTED_TASK_LIST_ROWS,
 } from '../src/panels/task-list/taskListRowView';
+import { localDate } from '../src/tasks';
+import { TaskRenderScope, type TaskRenderOutcome } from '../src/ui/taskRenderScope';
 import { freshContainer, task } from './helpers';
 
 const TODAY = '2026-06-26';
@@ -34,11 +38,11 @@ describe('mountTaskListRows', () => {
     expect(
       Array.from(container.children).map((child) => [child.className, child.textContent]),
     ).toEqual([
-      ['abyss-group-header abyss-group-header--first', 'Overdue  1'],
+      ['abyss-group-header abyss-group-header--first', 'Overdue'],
       ['abyss-task-card', 'late'],
-      ['abyss-group-header', 'Today  1'],
+      ['abyss-group-header', 'Today'],
       ['abyss-task-card', 'now'],
-      ['abyss-group-header', 'No date  1'],
+      ['abyss-group-header', 'No date'],
       ['abyss-task-card', 'loose'],
     ]);
   });
@@ -135,4 +139,102 @@ it('gives source-note headers their full physical path through the host tooltip'
   expect(mounted.element('group:source-note:Work/Projects/Unique.md')?.textContent).toBe(
     'Unique  1',
   );
+});
+
+it('waits for every owned text receipt and cancels the mount scope', async () => {
+  const scope = new TaskRenderScope(new AbortController().signal);
+  let resolve!: (outcome: TaskRenderOutcome) => void;
+  const render = {
+    settled: new Promise<TaskRenderOutcome>((r) => {
+      resolve = r;
+    }),
+    cancel: () => {
+      resolve({ type: 'cancelled' });
+    },
+  };
+  const mounted = mountTaskListRows(
+    freshContainer(),
+    rows,
+    (host, row) => {
+      scope.track(render);
+      return renderCard(host, row);
+    },
+    scope,
+  );
+  let done = false;
+  void mounted.settled.then(
+    () => {
+      done = true;
+    },
+    () => {
+      done = true;
+    },
+  );
+  await Promise.resolve();
+  expect(done).toBe(false);
+  mounted.cancel();
+  expect(await mounted.settled).toEqual({ type: 'cancelled' });
+});
+it('settles a failed mount without leaving another render pending', async () => {
+  const scope = new TaskRenderScope(new AbortController().signal);
+  let resolve!: (outcome: TaskRenderOutcome) => void;
+  const pending = {
+    settled: new Promise<TaskRenderOutcome>((r) => {
+      resolve = r;
+    }),
+    cancel: () => {
+      resolve({ type: 'cancelled' });
+    },
+  };
+  const error = new Error('render failed');
+  scope.track(pending);
+  scope.track({ settled: Promise.resolve({ type: 'failed', error }), cancel: () => {} });
+  expect(await scope.finish()).toEqual({ type: 'failed', error });
+});
+it('mounts an isolated non-first logical header without the first-header class', () => {
+  const container = freshContainer();
+  const header = rows.rowAt(rows.rowIndexOf('group:date:Today'));
+  if (header === undefined) throw new Error('Missing Today fixture');
+  const element = mountTaskListRow(container, header, renderCard);
+  expect(container.firstElementChild).toBe(element);
+  expect(element.className).toBe('abyss-group-header');
+  expect(element.textContent).toBe('Today');
+});
+
+it('retains focused date actions across updates, uses current date and retires detached handlers', () => {
+  const host = activeDocument.body.createDiv();
+  const dates: string[] = [];
+  const row = {
+    kind: 'group',
+    key: 'opaque',
+    label: 'Localized day',
+    count: 7,
+    first: true,
+    dateGroup: { date: localDate('2026-10-08') },
+  } as const;
+  const mount = mountGroupHeader(host, row, (date) => dates.push(date));
+  const button = mount.element.querySelector('button');
+  expect(button).not.toBeNull();
+  button?.focus();
+  mount.update({
+    ...row,
+    label: 'Another day',
+    first: false,
+    dateGroup: { date: localDate('2026-10-09') },
+  });
+  expect(activeDocument.activeElement).toBe(button);
+  expect(mount.element.querySelector('button')).toBe(button);
+  button?.click();
+  expect(dates).toEqual(['2026-10-09']);
+  expect(mount.element.textContent).toBe('Another day');
+  mount.update({ ...row, dateGroup: {} });
+  expect(mount.element.querySelector('button')).toBeNull();
+  button?.click();
+  expect(dates).toHaveLength(1);
+  mount.update(row);
+  const retired = mount.element.querySelector('button');
+  mount.destroy();
+  retired?.click();
+  expect(dates).toHaveLength(1);
+  host.remove();
 });

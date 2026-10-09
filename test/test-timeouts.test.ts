@@ -89,6 +89,8 @@ const FIXTURE_LIMITS = [
   'export const TYPESCRIPT_PROGRAM_TIMEOUT_MS = 80_000;',
   'export const SOURCE_WALK_TIMEOUT_MS = 80_000;',
   'export const CHILD_PROCESS_TIMEOUT_MS = 20_000;',
+  'export const VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS = 220_000;',
+  'export const CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS = 45_000;',
 ];
 const PROGRAM_WORK = 'program work needs TYPESCRIPT_PROGRAM_TIMEOUT_MS';
 const CHILD_WORK = 'child process work needs CHILD_PROCESS_TIMEOUT_MS';
@@ -169,6 +171,112 @@ describe('test time limits', () => {
         on(4, `row 'builds': ${PROGRAM_WORK}`),
         on(13, `row 'builds %s': ${PROGRAM_WORK}`),
         on(19, `row 'builds $name from a table': ${PROGRAM_WORK}`),
+      ]);
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
+
+  it(
+    'classifies full-range lifecycle cycles only through their owning helper',
+    () => {
+      expect(
+        findings(
+          [
+            "import { it } from 'vitest';",
+            "import { runVirtualSurfaceAuditCycles as audit } from './support/virtualSurfaceAudit';",
+            "import { runVirtualSurfaceAuditCycles as other } from './support/otherAudit';",
+            "import { VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS } from './support/timeouts';",
+            "it('full audit without its limit', async () => { await audit(async () => {}); });",
+            "it('full audit with its limit', async () => { await audit(async () => {}); }, VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS);",
+            "it('unrelated helper with the same name', async () => { await other(async () => {}); });",
+            "it('local same-named function', async () => {",
+            '  async function runVirtualSurfaceAuditCycles() {}',
+            '  await runVirtualSurfaceAuditCycles();',
+            '});',
+            "it('light work borrowing the audit limit', () => {}, VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS);",
+            "it('unrelated helper borrowing the audit limit', async () => { await other(async () => {}); }, VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS);",
+            "it('full audit with a literal limit', async () => { await audit(async () => {}); }, 25_000);",
+          ],
+          {
+            'test/support/virtualSurfaceAudit.ts': [
+              'export async function runVirtualSurfaceAuditCycles(cycle: (index: number) => Promise<void>) {',
+              '  for (let index = 0; index < 20; index++) await cycle(index);',
+              '}',
+            ],
+            'test/support/otherAudit.ts': [
+              'export async function runVirtualSurfaceAuditCycles(cycle: (index: number) => Promise<void>) {',
+              '  await cycle(0);',
+              '}',
+            ],
+          },
+        ),
+      ).toEqual([
+        on(
+          5,
+          "row 'full audit without its limit': virtual surface audit work needs VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS",
+        ),
+        on(12, "row 'light work borrowing the audit limit': a limit on light work"),
+        on(13, "row 'unrelated helper borrowing the audit limit': a limit on light work"),
+        on(
+          14,
+          "row 'full audit with a literal limit': virtual surface audit work needs VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS from test/support/timeouts.ts, not a number",
+        ),
+      ]);
+    },
+    TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+  );
+
+  it(
+    'classifies canonical search scale work only through its exact owning declaration',
+    () => {
+      const work =
+        'canonical search scale audit work needs CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS';
+      expect(
+        findings(
+          [
+            "import { it } from 'vitest';",
+            "import { runCanonicalSearchNavigationScaleAudit as audit, cheap } from './task-search-navigation.test';",
+            "import { audit as forwarded } from './support/searchAuditBridge';",
+            "import { runCanonicalSearchNavigationScaleAudit as other } from './support/otherAudit';",
+            "import { CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS, CHILD_PROCESS_TIMEOUT_MS } from './support/timeouts';",
+            "it('missing limit', async () => { await audit(); });",
+            "it('exact declaration', async () => { await audit(); }, CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS);",
+            "it('re-exported declaration', async () => { await forwarded(); }, CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS);",
+            "it('other module stays light', async () => { await other(); });",
+            "it('other module cannot borrow', async () => { await other(); }, CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS);",
+            "it('cheap same-file helper stays light', async () => { await cheap(); });",
+            "it('cheap same-file helper cannot borrow', async () => { await cheap(); }, CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS);",
+            "it('local same-name stays light', async () => { async function runCanonicalSearchNavigationScaleAudit() {} await runCanonicalSearchNavigationScaleAudit(); });",
+            "it('plain work cannot borrow', () => {}, CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS);",
+            "it('wrong kind', async () => { await audit(); }, CHILD_PROCESS_TIMEOUT_MS);",
+            "it('literal limit', async () => { await audit(); }, 45_000);",
+          ],
+          {
+            'test/task-search-navigation.test.ts': [
+              "import { it } from 'vitest';",
+              "import { CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS } from './support/timeouts';",
+              'export async function runCanonicalSearchNavigationScaleAudit({ signal, onTestFinished }) {',
+              '  onTestFinished(() => { signal.throwIfAborted(); });',
+              '  for (let count = 0; count < 50000; count++) await Promise.resolve();',
+              '}',
+              'export async function cheap() {}',
+              "it('direct audit callback', runCanonicalSearchNavigationScaleAudit, CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS);",
+            ],
+            'test/support/searchAuditBridge.ts': [
+              "export { runCanonicalSearchNavigationScaleAudit as audit } from '../task-search-navigation.test';",
+            ],
+            'test/support/otherAudit.ts': [
+              'export async function runCanonicalSearchNavigationScaleAudit() {}',
+            ],
+          },
+        ),
+      ).toEqual([
+        on(6, `row 'missing limit': ${work}`),
+        on(10, "row 'other module cannot borrow': a limit on light work"),
+        on(12, "row 'cheap same-file helper cannot borrow': a limit on light work"),
+        on(14, "row 'plain work cannot borrow': a limit on light work"),
+        on(15, `row 'wrong kind': ${work}, not CHILD_PROCESS_TIMEOUT_MS`),
+        on(16, `row 'literal limit': ${work} from test/support/timeouts.ts, not a number`),
       ]);
     },
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
@@ -715,6 +823,30 @@ function runFlags(scripts: Readonly<Record<string, string>>): string[] {
   return flags;
 }
 
+it(
+  'reads runner signal forwarding and a directly invoked finish hook as light work',
+  () => {
+    expect(
+      findings([
+        "import { it } from 'vitest';",
+        'async function helper(signal: AbortSignal) { signal.throwIfAborted(); }',
+        "it('owns cancellation', async ({ signal, onTestFinished }) => {",
+        '  const lifetime = new AbortController();',
+        '  const abort = () => lifetime.abort(signal.reason);',
+        "  signal.addEventListener('abort', abort, { once: true });",
+        '  if (signal.aborted) abort();',
+        '  onTestFinished(() => {',
+        "    signal.removeEventListener('abort', abort);",
+        "    lifetime.abort(new Error('Search test finished'));",
+        '  });',
+        '  await helper(lifetime.signal);',
+        '});',
+      ]),
+    ).toEqual([]);
+  },
+  TYPESCRIPT_PROGRAM_TIMEOUT_MS,
+);
+
 describe('gate time limits', () => {
   it(
     'holds every row and hook that either gate runs to the limit of its work',
@@ -724,12 +856,14 @@ describe('gate time limits', () => {
     TYPESCRIPT_PROGRAM_TIMEOUT_MS,
   );
 
-  it('pins the four limits, each above the light limit of both gate configs', () => {
+  it('pins the heavy-work limits, each above the light limit of both gate configs', () => {
     expect({ ...limits }).toEqual({
       LINTER_TIMEOUT_MS: 120_000,
       TYPESCRIPT_PROGRAM_TIMEOUT_MS: 80_000,
       SOURCE_WALK_TIMEOUT_MS: 80_000,
       CHILD_PROCESS_TIMEOUT_MS: 20_000,
+      VIRTUAL_SURFACE_AUDIT_TIMEOUT_MS: 220_000,
+      CANONICAL_SEARCH_SCALE_AUDIT_TIMEOUT_MS: 45_000,
     });
     const light = Math.max(...Object.keys(GATE_OPTIONS).map(lightLimit));
     expect(Object.entries(limits).filter(([, limit]) => limit <= light)).toEqual([]);

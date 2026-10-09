@@ -1,4 +1,4 @@
-import type { App } from 'obsidian';
+import { Scope, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import type { RightPanel, RightPanelMutationLifecycle } from '../src/panels/RightPanel';
@@ -6,6 +6,7 @@ import { localDate, type CommentTimeContextProvider, type TaskApplicationApi } f
 import type { TaskRef } from '../src/tasks/domain/types';
 import type { InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import { expectDefined, task, taskQueryApi, testStatusRegistry } from './helpers';
+import { scopeKeyboardEvent } from './support/scopeKeyboardEvent';
 
 // vi.hoisted runs BEFORE vi.mock factory execution, avoiding TDZ.
 // The factory captures these refs by closure.
@@ -55,7 +56,10 @@ vi.mock('../src/panels/RightPanel', () => ({
 import { TaskModal } from '../src/ui/TaskModal';
 
 function fakeApp(): App {
-  return {} as App;
+  return {
+    scope: new Scope(),
+    keymap: { pushScope: vi.fn(), popScope: vi.fn() },
+  } as unknown as App;
 }
 
 describe('TaskModal', () => {
@@ -388,4 +392,118 @@ describe('TaskModal', () => {
       expect(activeDocument.body.querySelectorAll('.abyss-modal-backdrop')).toHaveLength(1);
     });
   });
+});
+
+it('acquires the custom modal parent only after mount and retires children before parent on reentrant close/reopen', () => {
+  const app = fakeApp();
+  const push = vi.spyOn(app.keymap, 'pushScope');
+  const pop = vi.spyOn(app.keymap, 'popScope');
+  const register = vi.spyOn(Scope.prototype, 'register');
+  const unregister = vi.spyOn(Scope.prototype, 'unregister');
+  const modal = new TaskModal({ app, statusRegistry: testStatusRegistry() });
+  const order: string[] = [];
+  pop.mockImplementation(() => {
+    order.push('parent');
+  });
+  mockState.mountImpl.mockImplementationOnce(() => {
+    expect(push).not.toHaveBeenCalled();
+  });
+  modal.open(task());
+  expect(push).toHaveBeenCalledOnce();
+  expect(register.mock.calls.map(([mods, key]) => [mods, key])).toEqual([[[], 'Escape']]);
+  const stale = expectDefined(register.mock.calls[0])[2];
+  mockState.destroyImpl.mockImplementationOnce(() => {
+    order.push('child');
+    modal.close();
+  });
+  modal.close();
+  modal.close();
+  expect(order).toEqual(['child', 'parent']);
+  expect(unregister).toHaveBeenCalledOnce();
+  modal.open(task());
+  expect(
+    stale(new KeyboardEvent('keydown', { key: 'Escape' }), {
+      key: 'Escape',
+      vkey: 'Escape',
+      modifiers: '',
+    }),
+  ).toBeUndefined();
+  expect(document.querySelector('.abyss-modal')).not.toBeNull();
+  modal.close();
+  expect(push).toHaveBeenCalledTimes(2);
+  expect(pop).toHaveBeenCalledTimes(2);
+  vi.restoreAllMocks();
+});
+
+it('closes from host-Window Scope transport while deferring nested editors and foreign focus', () => {
+  const app = fakeApp();
+  const register = vi.spyOn(Scope.prototype, 'register');
+  const modal = new TaskModal({ app, statusRegistry: testStatusRegistry() });
+  modal.open(task());
+  const owner = expectDefined(document.querySelector<HTMLElement>('.abyss-modal'));
+  const callback = expectDefined(register.mock.calls[0])[2];
+  const context = { key: 'Escape', vkey: 'Escape', modifiers: '' };
+  const foreign = document.body.createEl('button');
+  const frame = document.body.createEl('iframe');
+  const hostWindow = expectDefined(frame.contentWindow);
+  try {
+    const editor = owner.createEl('input');
+    editor.focus();
+    const editorEscape = scopeKeyboardEvent(editor, { key: 'Escape' }, [hostWindow]);
+    expect(callback(editorEscape, context)).toBeUndefined();
+    expect(editorEscape.defaultPrevented).toBe(false);
+    foreign.focus();
+    expect(
+      callback(scopeKeyboardEvent(foreign, { key: 'Escape' }, [hostWindow]), context),
+    ).toBeUndefined();
+    const button = expectDefined(owner.querySelector('button'));
+    button.focus();
+    const event = scopeKeyboardEvent(button, { key: 'Escape' }, [hostWindow]);
+    expect(event.composedPath()[0]).not.toBe(owner.ownerDocument.defaultView);
+    expect(event.composedPath()[0]).not.toBe(event.target);
+    expect(event.view?.document).toBe(owner.ownerDocument);
+    expect(callback(event, context)).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
+    expect(owner.isConnected).toBe(false);
+    expect(
+      callback(scopeKeyboardEvent(button, { key: 'Escape' }, [hostWindow]), context),
+    ).toBeUndefined();
+  } finally {
+    modal.close();
+    foreign.remove();
+    frame.remove();
+    vi.restoreAllMocks();
+  }
+});
+
+it('leaves no modal lease or mounted DOM after failed mount', () => {
+  const app = fakeApp();
+  const push = vi.spyOn(app.keymap, 'pushScope');
+  const modal = new TaskModal({ app, statusRegistry: testStatusRegistry() });
+  mockState.mountImpl.mockImplementationOnce(() => {
+    throw new Error('mount failure');
+  });
+  expect(() => {
+    modal.open(task());
+  }).toThrow('mount failure');
+  expect(push).not.toHaveBeenCalled();
+  expect(document.querySelector('.abyss-modal')).toBeNull();
+  modal.close();
+});
+
+it('never pushes a modal scope when mount leaves its DOM inactive', () => {
+  const app = fakeApp();
+  const push = vi.spyOn(app.keymap, 'pushScope');
+  const modal = new TaskModal({ app, statusRegistry: testStatusRegistry() });
+  mockState.mountImpl.mockImplementationOnce((element: HTMLElement) => {
+    expectDefined(element.closest<HTMLElement>('.abyss-modal')).hidden = true;
+  });
+  try {
+    modal.open(task());
+    expect(push).not.toHaveBeenCalled();
+    expect(document.querySelector('.abyss-modal')).toBeNull();
+  } finally {
+    modal.close();
+    vi.restoreAllMocks();
+  }
 });

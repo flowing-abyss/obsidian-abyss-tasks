@@ -1,4 +1,5 @@
 import { Notice, type App } from 'obsidian';
+import type { StatusRegistry } from '../status/StatusRegistry';
 import {
   parseRecurrenceRule,
   type TaskApplicationApi,
@@ -9,6 +10,7 @@ import {
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 import { TaskArchiveRecoveryModal } from './TaskArchiveRecoveryModal';
 import { TaskMoveRecoveryModal } from './TaskMoveRecoveryModal';
+import type { TaskSelectionNode } from './taskSelection';
 
 interface CompletionConfirmationTask {
   readonly status: string;
@@ -76,6 +78,21 @@ export function requestTaskCompletion(
     teardownSignal,
     activeDocument,
   );
+}
+
+export function requestTaskStatusChange(
+  ...[task, symbol, registry, commit, ownership, teardownSignal]: [
+    TaskSelectionNode,
+    string | undefined,
+    StatusRegistry,
+    () => Promise<void>,
+    InteractionOwnershipPort,
+    AbortSignal,
+  ]
+): Promise<void> {
+  return symbol === undefined || registry.bySymbol(symbol)?.type === 'done'
+    ? requestTaskCompletion(task, commit, ownership, teardownSignal)
+    : commit();
 }
 
 function requiresCompletionConfirmation(task: CompletionConfirmationTask): boolean {
@@ -267,7 +284,12 @@ function describeCommandError(
     case 'not-found':
       return { message: 'This task no longer exists.', requiresRecovery: true };
     case 'invalid':
-      return { message: 'The task update is invalid and was not saved.', requiresRecovery: false };
+      return {
+        message: result.issues.some((issue) => issue.code === 'unsafe-comment-continuation')
+          ? 'Could not save comment: a structural marker inside multiline code cannot be escaped safely. Use a separate inline-code span on each line.'
+          : 'The task update is invalid and was not saved.',
+        requiresRecovery: false,
+      };
     case 'io-error':
       return describeIoError(result.cause);
     case 'partial':

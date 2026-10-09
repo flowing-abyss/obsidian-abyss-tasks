@@ -459,6 +459,7 @@ async function makePanel(
     onSuccessfulMutation,
     commentTimeContext,
     interactionOwnership,
+    onShowInTaskList,
   ]: readonly [
     files?: Record<string, string>,
     tasks?: TaskApplicationApi,
@@ -466,6 +467,7 @@ async function makePanel(
     onSuccessfulMutation?: (ref?: TaskRef) => void,
     commentTimeContext?: CommentTimeContextProvider,
     interactionOwnership?: InteractionOwnershipPort,
+    onShowInTaskList?: ConstructorParameters<typeof RightPanel>[0]['onShowInTaskList'],
   ]
 ): Promise<{ panel: RightPanel; state: AppState; app: App; el: HTMLElement; index: TaskIndex }> {
   const app = await createAppWithFiles(files);
@@ -492,6 +494,7 @@ async function makePanel(
     statusRegistry,
     settings: DEFAULT_SETTINGS,
     onSuccessfulMutation,
+    onShowInTaskList,
     tasks: tasks ?? defaultTasks,
     commentTimeContext,
     interactionOwnership,
@@ -1009,8 +1012,9 @@ describe('RightPanel.renderTask', () => {
         .reverse()
         .find(([el]) => el.classList.contains('abyss-right-title-view')),
     );
-    expect(call[2].component).toBe(headerCall[2].component);
+    const unloadHeader = vi.spyOn(headerCall[2].component, 'unload');
     click(crumb);
+    expect(unloadHeader).toHaveBeenCalledOnce();
     expect(state.get('taskStack')).toEqual([parent]);
   });
 
@@ -1023,7 +1027,8 @@ describe('RightPanel.renderTask', () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [task({ title, markdownTitle })]);
     const view = expectDefined(el.querySelector<HTMLElement>('.abyss-right-title-view'));
-    expect(view.title).toBe(title);
+    expect(view.getAttribute('aria-label')).toBe(title);
+    expect(view.hasAttribute('title')).toBe(false);
     click(view);
     expect(el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')?.value).toBe(
       markdownTitle,
@@ -1086,23 +1091,28 @@ describe('RightPanel.renderTask', () => {
   it('editing the title and blurring writes back via updateTaskTitle', async () => {
     const fileContent = '- [ ] My task\n';
     const { panel, state, el, app } = await makePanel({ 'f.md': fileContent });
-    const current = task({
-      title: 'My task',
-      source: { originalMarkdown: '- [ ] My task', originalBlock: '- [ ] My task' },
-    });
-    attachCurrentRef(panel, current);
-    state.set('taskStack', [current]);
-    const view = expectDefined(el.querySelector<HTMLElement>('.abyss-right-title-view'));
-    click(view);
-    const ta = expectDefined(el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'));
-    ta.value = 'Updated task';
-    ta.dispatchEvent(new Event('blur', { bubbles: true }));
-    await flushMicrotasks();
+    activeDocument.body.append(el);
+    try {
+      const current = task({
+        title: 'My task',
+        source: { originalMarkdown: '- [ ] My task', originalBlock: '- [ ] My task' },
+      });
+      attachCurrentRef(panel, current);
+      state.set('taskStack', [current]);
+      const view = expectDefined(el.querySelector<HTMLElement>('.abyss-right-title-view'));
+      click(view);
+      const ta = expectDefined(el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit'));
+      ta.value = 'Updated task';
+      ta.dispatchEvent(new Event('blur', { bubbles: true }));
+      await flushMicrotasks();
 
-    const written = await readMd(app, 'f.md');
-    expect(written).toContain('Updated task');
-    expect(el.querySelector('.abyss-right-title-edit')).toBeNull();
-    expect(el.querySelector('.abyss-right-title-view')).not.toBeNull();
+      const written = await readMd(app, 'f.md');
+      expect(written).toContain('Updated task');
+      expect(el.querySelector('.abyss-right-title-edit')).toBeNull();
+      expect(el.querySelector('.abyss-right-title-view')).not.toBeNull();
+    } finally {
+      el.remove();
+    }
   });
 
   it.each(['blur', 'Escape'] as const)(
@@ -3676,4 +3686,47 @@ describe('case-compatible selected child input', () => {
     expect((document.activeElement as HTMLElement).textContent).toBe('+ tag');
     el.remove();
   });
+});
+
+it('renders formatting-only description and comment through the shared Markdown path', async () => {
+  vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, source, holder) => {
+    if (source === '**description**') holder.createEl('strong').appendText('description');
+    else if (source === '`comment`') holder.createEl('code').appendText('comment');
+    else holder.setText(source);
+  });
+  const { state, el, index } = await makePanel({
+    'tasks.md': '- [ ] Current\n  - > **description**\n  - 2026-10-04: `comment`',
+  });
+  document.body.append(el);
+  state.set('taskStack', [expectDefined(index.list()[0])]);
+  await flushMicrotasks();
+  expect(el.querySelector('.abyss-right-desc-view strong')?.textContent).toBe('description');
+  const description = expectDefined(el.querySelector('.abyss-right-desc.abyss-right-desc-view'));
+  expect(description.querySelector('.abyss-task-desc')).toBeNull();
+  expect(description.querySelector(':scope > .abyss-md')).not.toBeNull();
+  expect(el.querySelector('.abyss-comment-text code')?.textContent).toBe('comment');
+});
+
+it('offers exact list navigation only with a capability and retains accepted action beyond menu dismissal', async () => {
+  const accepted = vi.fn<
+    NonNullable<ConstructorParameters<typeof RightPanel>[0]['onShowInTaskList']>
+  >(async () => {});
+  const h = await makePanel({}, undefined, undefined, undefined, undefined, undefined, accepted);
+  document.body.append(h.el);
+  const root = task();
+  h.state.set('taskStack', [root]);
+  click(expectDefined(h.el.querySelector<HTMLElement>('[aria-label="More actions"]')));
+  const action = expectDefined(
+    [...h.el.querySelectorAll<HTMLElement>('.abyss-context-item')].find(
+      (el) => el.textContent === 'Show in task list',
+    ),
+  );
+  click(action);
+  expect(h.el.querySelector('.abyss-task-context-menu')).toBeNull();
+  expect(accepted.mock.calls[0]?.[0]).toEqual({ type: 'task', ref: root.ref });
+  const request = expectDefined(accepted.mock.calls[0]?.[1]);
+  expect(request.isCurrent()).toBe(true);
+  h.state.set('taskStack', [task({ title: 'later', source: { filePath: 'later.md', line: 0 } })]);
+  expect(request.isCurrent()).toBe(false);
+  h.el.remove();
 });

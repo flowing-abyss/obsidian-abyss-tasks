@@ -21,6 +21,7 @@ import {
 import type { ProjectTimelineSettings } from '../../projects/projectTimelineSettings';
 import type { StatusGroup } from '../../projects/status';
 import { moveProjectColumn, setProjectColumnVisibility } from '../../settings/projectTableSettings';
+import type { LocalSearchFocusTarget } from '../../ui/localSearchKeys';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import {
   openViewOptionsPopover,
@@ -105,6 +106,18 @@ function tableDateDisplayLabel(display: ProjectDateDisplay | undefined): string 
   return display === undefined ? 'Custom' : projectDateDisplayLabel(display);
 }
 
+function searchOwnerIsVisible(owner: HTMLElement): boolean {
+  const win = owner.ownerDocument.defaultView;
+  let ancestor: HTMLElement | null = owner;
+  while (ancestor !== null) {
+    if (ancestor.hidden === true || ancestor.getAttribute('aria-hidden') === 'true') return false;
+    const style = win?.getComputedStyle(ancestor);
+    if (style?.display === 'none' || style?.visibility === 'hidden') return false;
+    ancestor = ancestor.parentElement;
+  }
+  return true;
+}
+
 export class ProjectsTableToolbar {
   readonly searchInput: HTMLInputElement;
   private readonly badges_abyssPrivate: HTMLElement;
@@ -161,6 +174,14 @@ export class ProjectsTableToolbar {
       options_abyssPrivate.onSearch(this.searchInput.value);
     });
     this.sync();
+  }
+
+  localSearchTarget(): LocalSearchFocusTarget | undefined {
+    const owner = this.options_abyssPrivate.host;
+    if (!owner.isConnected || !this.searchInput.isConnected) return undefined;
+    if (!searchOwnerIsVisible(owner)) return undefined;
+    owner.tabIndex = -1;
+    return { input: this.searchInput, owner };
   }
 
   update(statuses: readonly StatusGroup[]): void {

@@ -20,7 +20,7 @@ describe('todayTaskCategory', () => {
     [{ scheduled: '2026-10-02' }, undefined],
     [{ due: '2026-10-04' }, undefined],
     [{ scheduled: '2026-10-04' }, undefined],
-    [{ start: '2026-10-03' }, undefined],
+    [{ start: '2026-10-03' }, 'today'],
     [{}, undefined],
   ] satisfies ReadonlyArray<[TaskFixtureInput['planning'], 'today' | 'overdue' | undefined]>)(
     'classifies planning %j as %s',

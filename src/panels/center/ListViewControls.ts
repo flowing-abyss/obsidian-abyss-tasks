@@ -9,8 +9,10 @@ import {
   statusGroupsEqual,
 } from '../../app/listViewState';
 import { noteNameOfPath } from '../../markdown/noteName';
+import { normalizeTag } from '../../markdown/tagSyntax';
 import { PRIORITY_LEVELS } from '../../priority';
 import { getListViewDefaults } from '../../settings/defaults';
+import { upsertTagFilter } from '../../settings/tagFilters';
 import type { CalendarSettings, ListViewState, PropertyFilter } from '../../settings/types';
 import type { StatusRegistry } from '../../status/StatusRegistry';
 import { ACTIVE_STATUS_GROUPS, ALL_STATUS_GROUPS, TYPE_LABELS } from '../../status/statusConstants';
@@ -28,8 +30,17 @@ interface ListViewControlsHost {
   formatDate(value: string): string;
 }
 
+export interface ListViewControlsStatePort {
+  read(): ListViewState;
+  write(next: ListViewState): void;
+  relevance(): boolean;
+  setRelevance(value: boolean): void;
+  canUseRelevance(): boolean;
+}
+
 interface ListViewControlsOptions {
   readonly state: AppState;
+  readonly statePort?: ListViewControlsStatePort;
   readonly settings: CalendarSettings;
   readonly statusRegistry: StatusRegistry;
   readonly interactionOwnership: InteractionOwnershipPort;
@@ -49,7 +60,12 @@ export class ListViewControls {
     this.#viewStatePopoverCleanup?.();
   }
 
+  #read(): ListViewState {
+    return this.#options.statePort?.read() ?? this.#options.state.get('centerListViewState');
+  }
+
   initializeListViewState(): void {
+    if (this.#options.statePort !== undefined) return;
     const key = this.#savedStateKey();
     const viewState = this.#options.settings.listViewStates?.[key] ?? getListViewDefaults(key);
     this.#options.state.set('centerListViewState', viewState);
@@ -57,7 +73,7 @@ export class ListViewControls {
 
   /** Renders one chip per filter right before the view-state button and returns them in order. */
   renderPropertyChips(controls: HTMLElement, viewButton: HTMLElement): HTMLElement[] {
-    const vs = this.#options.state.get('centerListViewState');
+    const vs = this.#read();
     const chips: HTMLElement[] = [];
     for (const [i, f] of vs.filters.entries()) {
       const label = this.#filterChipLabel(f);
@@ -90,7 +106,10 @@ export class ListViewControls {
   #nonPriorityFilterLabel(
     filter: Exclude<PropertyFilter, { readonly type: 'file' } | { readonly type: 'priority' }>,
   ): string {
-    if (filter.type === 'tag') return filter.value;
+    if (filter.type === 'tag' || filter.type === 'tag-exclude') {
+      const tag = normalizeTag(filter.value) ?? filter.value;
+      return filter.type === 'tag-exclude' ? `−${tag}` : tag;
+    }
     if (filter.type === 'time') return `⏰ ${filter.value}`;
     if (filter.type === 'status') {
       return this.#options.statusRegistry.bySymbol(filter.value)?.name ?? filter.value;
@@ -99,7 +118,13 @@ export class ListViewControls {
   }
 
   addPropertyFilter(filter: PropertyFilter): void {
-    const vs = this.#options.state.get('centerListViewState');
+    const vs = this.#read();
+    if (filter.type === 'tag' || filter.type === 'tag-exclude') {
+      const filters = upsertTagFilter(vs.filters, filter);
+      if (JSON.stringify(filters) === JSON.stringify(vs.filters)) return;
+      this.#updateViewState({ ...vs, filters });
+      return;
+    }
     const key = this.#propertyFilterKey(filter);
     const already = vs.filters.some((existing) => this.#propertyFilterKey(existing) === key);
     if (already) return;
@@ -114,12 +139,16 @@ export class ListViewControls {
   }
 
   #removePropertyFilter(idx: number): void {
-    const vs = this.#options.state.get('centerListViewState');
+    const vs = this.#read();
     const next: ListViewState = { ...vs, filters: vs.filters.filter((_, i) => i !== idx) };
     this.#updateViewState(next);
   }
 
   #updateViewState(next: ListViewState): void {
+    if (this.#options.statePort !== undefined) {
+      this.#options.statePort.write(next);
+      return;
+    }
     this.#options.settings.listViewStates ??= {};
     this.#options.settings.listViewStates[this.#savedStateKey()] = next;
     runAsyncAction(this.#options.saveViewState(), 'Could not save list view state');
@@ -131,6 +160,7 @@ export class ListViewControls {
   }
 
   #savedStateKey(): string {
+    if (this.#options.statePort !== undefined) return 'all';
     return resolveListViewStateKey(
       this.#options.state.get('selectedList'),
       this.#options.settings.listViewStates,
@@ -138,9 +168,27 @@ export class ListViewControls {
     );
   }
 
+  #defaults(): ListViewState {
+    if (this.#options.statePort !== undefined)
+      return { groupBy: 'none', sortBy: { field: 'date', dir: 'asc' }, filters: [] };
+    return getListViewDefaults(this.#savedStateKey());
+  }
+  #customized(includeFilters: boolean): boolean {
+    const view = this.#read();
+    if (this.#options.statePort !== undefined)
+      return (
+        !this.#options.statePort.relevance() ||
+        view.groupBy !== 'none' ||
+        normalizeStatusGroups(view.statusGroups) !== undefined ||
+        (includeFilters && view.filters.length > 0)
+      );
+    return includeFilters
+      ? isListViewCustomized(view, this.#savedStateKey())
+      : isListViewOptionsCustomized(view, this.#savedStateKey());
+  }
+
   renderViewStateButton(container: HTMLElement): HTMLButtonElement {
-    const vs = this.#options.state.get('centerListViewState');
-    const isNonDefault = isListViewOptionsCustomized(vs, this.#savedStateKey());
+    const isNonDefault = this.#customized(false);
 
     const btn = container.createEl('button', {
       cls: `abyss-view-state-btn${isNonDefault ? ' abyss-view-state-btn--active' : ''}`,
@@ -159,7 +207,7 @@ export class ListViewControls {
       return;
     }
 
-    const defaults = getListViewDefaults(this.#savedStateKey());
+    const defaults = this.#defaults();
     const close = openViewOptionsPopover({
       host: this.#options.host.root(),
       anchor,
@@ -168,10 +216,10 @@ export class ListViewControls {
         this.#sortByRowSpec(defaults),
         this.#statusGroupsRowSpec(),
       ],
-      showReset: () =>
-        isListViewCustomized(this.#options.state.get('centerListViewState'), this.#savedStateKey()),
+      showReset: () => this.#customized(true),
       onReset: () => {
-        this.#updateViewState(getListViewDefaults(this.#savedStateKey()));
+        this.#options.statePort?.setRelevance(true);
+        this.#updateViewState(this.#defaults());
       },
       interactionOwnership: this.#options.interactionOwnership,
       onClose: () => {
@@ -198,10 +246,10 @@ export class ListViewControls {
       icon: 'layout-list',
       label: 'Group by',
       displayValue: () => {
-        const groupBy = this.#options.state.get('centerListViewState').groupBy;
+        const groupBy = this.#read().groupBy;
         return labels[groupBy] ?? groupBy;
       },
-      activeValue: () => this.#options.state.get('centerListViewState').groupBy,
+      activeValue: () => this.#read().groupBy,
       options: Object.entries(labels).map(([value, label]) => ({
         label,
         value,
@@ -209,7 +257,7 @@ export class ListViewControls {
         ...this.#noteDescription(value),
       })),
       onSelect: (value) => {
-        const viewState = this.#options.state.get('centerListViewState');
+        const viewState = this.#read();
         this.#updateViewState({
           ...viewState,
           groupBy: value as ListViewState['groupBy'],
@@ -234,22 +282,34 @@ export class ListViewControls {
       icon: 'arrow-up-down',
       label: 'Sort by',
       displayValue: () => {
-        const { sortBy } = this.#options.state.get('centerListViewState');
+        if (this.#options.statePort?.relevance() === true) return 'Relevance';
+        const { sortBy } = this.#read();
         return `${this.#capitalize(sortBy.field)} ${sortBy.dir === 'asc' ? '↑' : '↓'}`;
       },
-      activeValue: () => this.#options.state.get('centerListViewState').sortBy.field,
-      options: fields.map((field) => ({
-        label: () => {
-          const { sortBy } = this.#options.state.get('centerListViewState');
-          const arrow = sortBy.dir === 'asc' ? '↑' : '↓';
-          return `${this.#capitalize(field)} ${sortBy.field === field ? arrow : ''}`.trim();
-        },
-        value: field,
-        isDefault: field === defaults.sortBy.field,
-        ...this.#noteDescription(field),
-      })),
+      activeValue: () =>
+        this.#options.statePort?.relevance() === true ? 'relevance' : this.#read().sortBy.field,
+      options: [
+        ...(this.#options.statePort?.canUseRelevance() === true
+          ? [{ label: 'Relevance', value: 'relevance' }]
+          : []),
+        ...fields.map((field) => ({
+          label: () => {
+            const { sortBy } = this.#read();
+            const arrow = sortBy.dir === 'asc' ? '↑' : '↓';
+            return `${this.#capitalize(field)} ${sortBy.field === field ? arrow : ''}`.trim();
+          },
+          value: field,
+          isDefault: field === defaults.sortBy.field,
+          ...this.#noteDescription(field),
+        })),
+      ],
       onSelect: (value) => {
-        const viewState = this.#options.state.get('centerListViewState');
+        if (value === 'relevance') {
+          this.#options.statePort?.setRelevance(true);
+          return;
+        }
+        this.#options.statePort?.setRelevance(false);
+        const viewState = this.#read();
         const field = value as ListViewState['sortBy']['field'];
         // Tracked time is asked for to find where the time went, so it opens on the busiest task;
         // every other field opens ascending. Choosing the field again flips it either way.
@@ -286,14 +346,12 @@ export class ListViewControls {
       kind: 'multi',
       icon: 'eye',
       label: 'Show',
-      displayValue: () =>
-        this.#statusGroupsLabel(this.#options.state.get('centerListViewState').statusGroups),
-      selected: () =>
-        this.#options.state.get('centerListViewState').statusGroups ?? ALL_STATUS_GROUPS,
+      displayValue: () => this.#statusGroupsLabel(this.#read().statusGroups),
+      selected: () => this.#read().statusGroups ?? ALL_STATUS_GROUPS,
       options: ALL_STATUS_GROUPS.map((value) => ({ label: TYPE_LABELS[value], value })),
       onToggle: (rawValue) => {
         const value = rawValue as TaskStatusType;
-        const viewState = this.#options.state.get('centerListViewState');
+        const viewState = this.#read();
         const current = viewState.statusGroups ?? ALL_STATUS_GROUPS;
         const next = current.includes(value)
           ? current.filter((group) => group !== value)
@@ -306,20 +364,14 @@ export class ListViewControls {
           onSelect: () => {
             apply(ACTIVE_STATUS_GROUPS);
           },
-          active: () =>
-            statusGroupsEqual(
-              this.#options.state.get('centerListViewState').statusGroups,
-              ACTIVE_STATUS_GROUPS,
-            ),
+          active: () => statusGroupsEqual(this.#read().statusGroups, ACTIVE_STATUS_GROUPS),
         },
         {
           label: 'All',
           onSelect: () => {
             apply(undefined);
           },
-          active: () =>
-            normalizeStatusGroups(this.#options.state.get('centerListViewState').statusGroups) ===
-            undefined,
+          active: () => normalizeStatusGroups(this.#read().statusGroups) === undefined,
         },
       ],
     };
@@ -333,7 +385,7 @@ export class ListViewControls {
   }
 
   #applyStatusGroupsChange(groups: TaskStatusType[] | undefined): void {
-    const viewState = this.#options.state.get('centerListViewState');
+    const viewState = this.#read();
     const withoutStatusGroups = { ...viewState };
     delete withoutStatusGroups.statusGroups;
     this.#updateViewState(

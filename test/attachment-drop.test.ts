@@ -3,12 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   attachFilesAsLinks,
   defaultPastedName,
+  enableAttachmentDrop,
   enableAttachmentPaste,
   insertAtCaret,
   resolveDraggedItems,
   whenPasteSettled,
 } from '../src/ui/attachmentDrop';
-import { createAppWithFiles, methodOf } from './helpers';
+import { createAppWithFiles, deferred, flushMicrotasks, methodOf } from './helpers';
 
 const file = (name: string): File => ({ name }) as unknown as File;
 
@@ -181,4 +182,220 @@ describe('resolveDraggedItems', () => {
   it('returns empty for a null dataTransfer and no drag manager', () => {
     expect(resolveDraggedItems(null, undefined)).toEqual({ externalFiles: [], vaultFiles: [] });
   });
+});
+
+describe('attachment drop target capture', () => {
+  it('captures once before asynchronous file saving and disposes its listeners', async () => {
+    const bytes = deferred<ArrayBuffer>();
+    const app = await createAppWithFiles({ 'saved.png': '' });
+    Object.assign(app, { dragManager: undefined });
+    const saved = await tfile('saved.png');
+    vi.spyOn(app.fileManager, 'getAvailablePathForAttachment').mockResolvedValue('saved.png');
+    vi.spyOn(app.vault, 'createBinary').mockResolvedValue(saved);
+    vi.spyOn(app.fileManager, 'generateMarkdownLink').mockReturnValue('[[saved.png]]');
+    const element = activeDocument.body.createDiv();
+    let target = 'before';
+    const received: string[] = [];
+    const capture = vi.fn(() => {
+      const captured = target;
+      return {
+        sourcePath: 'tasks.md',
+        onLinks: (links: string) => {
+          received.push(`${captured}:${links}`);
+        },
+      };
+    });
+    const cleanup = enableAttachmentDrop(element, {
+      app,
+      sourcePath: 'tasks.md',
+      onLinks: () => {
+        received.push('uncaptured');
+      },
+      capture,
+    });
+    const event = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', {
+      value: {
+        files: [{ name: 'image.png', type: 'image/png', arrayBuffer: () => bytes.promise }],
+      },
+    });
+    element.dispatchEvent(event);
+    target = 'after';
+    bytes.resolve(new ArrayBuffer(1));
+    await vi.waitFor(() => {
+      expect(received).toEqual(['before:[[saved.png]]']);
+    });
+    expect(capture).toHaveBeenCalledOnce();
+    cleanup();
+    element.dispatchEvent(event);
+    await flushMicrotasks();
+    expect(capture).toHaveBeenCalledOnce();
+    element.remove();
+  });
+
+  it('rejects a retired owner before saving any file', async () => {
+    const app = await createAppWithFiles({});
+    Object.assign(app, { dragManager: undefined });
+    const save = vi.spyOn(app.vault, 'createBinary');
+    const bytes = vi.fn().mockResolvedValue(new ArrayBuffer(1));
+    const element = activeDocument.body.createDiv();
+    const onLinks = vi.fn();
+    const cleanup = enableAttachmentDrop(element, {
+      app,
+      sourcePath: 'tasks.md',
+      onLinks,
+      capture: () => undefined,
+    });
+    const event = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', {
+      value: { files: [{ name: 'image.png', type: 'image/png', arrayBuffer: bytes }] },
+    });
+    element.dispatchEvent(event);
+    await flushMicrotasks();
+    expect(bytes).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    expect(onLinks).not.toHaveBeenCalled();
+    cleanup();
+    element.remove();
+  });
+});
+
+describe('attachment paste captured insertion lifetime', () => {
+  it('keeps each captured session independent and suppresses insertion after disposal', async () => {
+    const app = await createAppWithFiles({ 'saved.png': '' });
+    const saved = await tfile('saved.png');
+    vi.spyOn(app.fileManager, 'getAvailablePathForAttachment').mockResolvedValue('saved.png');
+    vi.spyOn(app.vault, 'createBinary').mockResolvedValue(saved);
+    vi.spyOn(app.fileManager, 'generateMarkdownLink').mockReturnValue('[[saved.png]]');
+    const el = activeDocument.body.createEl('textarea');
+    let session = 0;
+    const values: string[] = [];
+    const cleanup = enableAttachmentPaste(el, {
+      app,
+      sourcePath: 'tasks.md',
+      onInsert: () => {
+        values.push('uncaptured');
+      },
+      capture: () => {
+        const captured = session;
+        return {
+          sourcePath: 'tasks.md',
+          onInsert: (links: string) => {
+            if (captured === session) values.push(links);
+          },
+        };
+      },
+    });
+    const paste = (bytes: Promise<ArrayBuffer>) => {
+      const event = new Event('paste', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'clipboardData', {
+        value: { files: [{ name: 'saved.png', arrayBuffer: () => bytes }] },
+      });
+      el.dispatchEvent(event);
+    };
+    const stale = deferred<ArrayBuffer>();
+    paste(stale.promise);
+    session++;
+    const live = deferred<ArrayBuffer>();
+    paste(live.promise);
+    stale.resolve(new ArrayBuffer(1));
+    await flushMicrotasks(20);
+    expect(values).toEqual([]);
+    live.resolve(new ArrayBuffer(1));
+    await whenPasteSettled(el);
+    expect(values).toEqual(['[[saved.png]]']);
+    const disposed = deferred<ArrayBuffer>();
+    paste(disposed.promise);
+    cleanup();
+    disposed.resolve(new ArrayBuffer(1));
+    await whenPasteSettled(el);
+    expect(values).toEqual(['[[saved.png]]']);
+    el.remove();
+  });
+
+  it('rejects a retired context before starting attachment work', async () => {
+    const app = await createAppWithFiles({});
+    const bytes = vi.fn().mockResolvedValue(new ArrayBuffer(1));
+    const el = activeDocument.body.createEl('textarea');
+    const cleanup = enableAttachmentPaste(el, {
+      app,
+      sourcePath: 'tasks.md',
+      onInsert: () => {},
+      capture: () => undefined,
+    });
+    const event = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', {
+      value: { files: [{ name: 'saved.png', arrayBuffer: bytes }] },
+    });
+    el.dispatchEvent(event);
+    await whenPasteSettled(el);
+    expect(bytes).not.toHaveBeenCalled();
+    cleanup();
+    el.remove();
+  });
+});
+
+it('settles every live paste and retires cancellation from future waits without replacement work', async () => {
+  const app = await createAppWithFiles({ 'saved.png': '' });
+  vi.spyOn(app.fileManager, 'getAvailablePathForAttachment').mockResolvedValue('saved.png');
+  vi.spyOn(app.vault, 'createBinary').mockResolvedValue(await tfile('saved.png'));
+  vi.spyOn(app.fileManager, 'generateMarkdownLink').mockReturnValue('[[saved.png]]');
+  const el = activeDocument.body.createEl('textarea');
+  let session = 0;
+  const inserted: string[] = [];
+  const cleanup = enableAttachmentPaste(el, {
+    app,
+    capture: () => {
+      const captured = session;
+      return {
+        sourcePath: 'tasks.md',
+        isCurrent: () => captured === session,
+        onInsert: (link) => {
+          inserted.push(link);
+        },
+      };
+    },
+  });
+  const paste = (...acquisitions: Array<Promise<ArrayBuffer>>) => {
+    for (const bytes of acquisitions) {
+      const event = new Event('paste', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'clipboardData', {
+        value: { files: [{ name: 'saved.png', arrayBuffer: () => bytes }] },
+      });
+      el.dispatchEvent(event);
+    }
+  };
+  try {
+    const a = deferred<ArrayBuffer>(),
+      b = deferred<ArrayBuffer>();
+    paste(a.promise);
+    paste(b.promise);
+    let settled = false;
+    const waiting = whenPasteSettled(el).then(() => {
+      settled = true;
+    });
+    b.resolve(new ArrayBuffer(1));
+    await flushMicrotasks(30);
+    expect(settled).toBe(false);
+    expect(inserted).toEqual(['[[saved.png]]']);
+    a.resolve(new ArrayBuffer(1));
+    await waiting;
+    expect(inserted).toEqual(['[[saved.png]]', '[[saved.png]]']);
+    const cancelled = deferred<ArrayBuffer>();
+    paste(cancelled.promise);
+    session++;
+    let freshSettled = false;
+    const freshWait = whenPasteSettled(el).then(() => {
+      freshSettled = true;
+    });
+    await flushMicrotasks();
+    expect(freshSettled).toBe(true);
+    await freshWait;
+    cancelled.resolve(new ArrayBuffer(1));
+    await flushMicrotasks(30);
+    expect(inserted).toHaveLength(2);
+  } finally {
+    cleanup();
+    el.remove();
+  }
 });

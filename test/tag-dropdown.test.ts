@@ -145,3 +145,38 @@ describe('inline tag dropdown', () => {
     },
   );
 });
+
+it('Find selects the actual tag input and Escape keeps the existing close owner', () => {
+  const host = document.body.createDiv();
+  const close = vi.fn();
+  const wrap = showTagDropdown(
+    host,
+    ['#Alpha'],
+    () => undefined,
+    vi.fn(() => 'committed' as const),
+    close,
+  );
+  const input = expectDefined(wrap.querySelector<HTMLInputElement>('input'));
+  input.value = 'Alxha';
+  const find = new KeyboardEvent('keydown', {
+    code: 'KeyF',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  input.dispatchEvent(find);
+  expect(find.defaultPrevented).toBe(true);
+  expect(input.selectionEnd).toBe(5);
+  key(input, 'Escape');
+  expect(close).toHaveBeenCalledOnce();
+  host.append(wrap);
+  const disposed = new KeyboardEvent('keydown', {
+    code: 'KeyF',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  input.dispatchEvent(disposed);
+  expect(disposed.defaultPrevented).toBe(false);
+  host.remove();
+});

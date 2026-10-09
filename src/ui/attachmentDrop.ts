@@ -27,11 +27,18 @@ export function resolveDraggedItems(
   return { externalFiles: [], vaultFiles };
 }
 
-export interface AttachmentDropOptions {
-  app: App;
+interface AttachmentDropContext {
   sourcePath: string;
   onLinks: (linkMarkdown: string) => void;
 }
+
+export type AttachmentDropOptions = { app: App } & (
+  | AttachmentDropContext
+  | {
+      /** Capture once before asynchronous saving; undefined rejects a retired target. */
+      capture: () => AttachmentDropContext | undefined;
+    }
+);
 
 interface AppWithDragManager {
   dragManager?: DragManagerLike;
@@ -68,7 +75,12 @@ export function enableAttachmentDrop(el: HTMLElement, opts: AttachmentDropOption
     e.preventDefault();
     e.stopPropagation();
     el.removeClass('abyss-drop-active');
-    runAsyncAction(handleDrop(opts, externalFiles, vaultFiles), 'Could not attach dropped files');
+    const captured = 'capture' in opts ? opts.capture() : opts;
+    if (captured === undefined) return;
+    runAsyncAction(
+      handleDrop({ app: opts.app, ...captured }, externalFiles, vaultFiles),
+      'Could not attach dropped files',
+    );
   };
 
   el.addEventListener('dragover', onDragOver);
@@ -134,7 +146,7 @@ export function insertAtCaret(textarea: HTMLTextAreaElement, text: string): void
 }
 
 async function handleDrop(
-  opts: AttachmentDropOptions,
+  opts: AttachmentDropContext & { app: App },
   externalFiles: File[],
   vaultFiles: TFile[],
 ): Promise<void> {
@@ -147,47 +159,72 @@ async function handleDrop(
   new Notice(`Attached ${links.length} file${links.length > 1 ? 's' : ''}`);
 }
 
-export interface AttachmentPasteOptions {
-  app: App;
+interface AttachmentPasteContext {
+  /** Frozen session validity; later input reuse must not revive this acquisition. */
+  readonly isCurrent?: () => boolean;
   sourcePath: string;
   onInsert: (linkMarkdown: string) => void;
 }
 
-// Tracks an in-flight paste-attach per element so a caller that finalizes on blur
-// (an edit textarea removed on save) can await it before reading/removing the element.
-// The stored promise never rejects: attachFilesAsLinks catches per-file errors internally,
-// so awaiting it in a blur handler cannot turn into an unhandled rejection.
-const pendingPastes = new WeakMap<HTMLElement, Promise<unknown>>();
+export type AttachmentPasteOptions = { app: App } & (
+  | AttachmentPasteContext
+  | {
+      /** Capture insertion ownership once, before asynchronous attachment saving. */
+      capture: () => AttachmentPasteContext | undefined;
+    }
+);
 
-/**
- * Resolve once any in-flight paste-attach for `el` has inserted its link. Callers that
- * destroy the element on blur/save must await this first, or a paste that resolves after
- * removal is silently lost (the file is saved but its link never persisted).
- */
-export function whenPasteSettled(el: HTMLElement): Promise<void> {
-  return Promise.resolve(pendingPastes.get(el)).then(() => undefined);
+interface PendingPaste {
+  readonly work: Promise<unknown>;
+  readonly isCurrent: () => boolean;
+}
+const pendingPastes = new WeakMap<HTMLElement, Set<PendingPaste>>();
+
+/** Wait for every acquisition in the currently live session, including work acquired while waiting. */
+export async function whenPasteSettled(el: HTMLElement): Promise<void> {
+  const session = pendingPastes.get(el);
+  if (session === undefined) return;
+  // Freeze this session's work: a cancelled session never waits on later reuse of the element.
+  const live = [...session].filter((paste) => paste.isCurrent());
+  await Promise.all(live.map((paste) => paste.work));
+  if (
+    live.some((paste) => paste.isCurrent()) &&
+    [...(pendingPastes.get(el) ?? [])].some((paste) => paste.isCurrent())
+  )
+    await whenPasteSettled(el);
 }
 
 /** Wire clipboard paste-to-attach onto a textarea. Returns a disposer. */
 export function enableAttachmentPaste(el: HTMLElement, opts: AttachmentPasteOptions): () => void {
+  let active = true;
   const onPaste = (e: ClipboardEvent): void => {
     const files = e.clipboardData != null ? Array.from(e.clipboardData.files) : [];
     if (files.length === 0) return; // no files → let the normal (text) paste happen
     e.preventDefault();
     e.stopPropagation();
-    const done = attachFilesAsLinks(opts.app, files, opts.sourcePath).then((links) => {
-      if (links.length === 0) return;
-      opts.onInsert(links.join(' '));
+    const captured = 'capture' in opts ? opts.capture() : opts;
+    if (captured === undefined || captured.isCurrent?.() === false) return;
+    const done = attachFilesAsLinks(opts.app, files, captured.sourcePath).then((links) => {
+      if (!active || captured.isCurrent?.() === false || links.length === 0) return;
+      captured.onInsert(links.join(' '));
       new Notice(`Attached ${links.length} file${links.length > 1 ? 's' : ''}`);
     });
+    const session = pendingPastes.get(el) ?? new Set<PendingPaste>();
     const tracked = done.finally(() => {
-      if (pendingPastes.get(el) === tracked) pendingPastes.delete(el);
+      session.delete(pending);
+      if (session.size === 0 && pendingPastes.get(el) === session) pendingPastes.delete(el);
     });
-    pendingPastes.set(el, tracked);
+    const pending: PendingPaste = {
+      work: tracked,
+      isCurrent: () => active && captured.isCurrent?.() !== false,
+    };
+    session.add(pending);
+    pendingPastes.set(el, session);
     runAsyncAction(tracked, 'Could not attach pasted files');
   };
   el.addEventListener('paste', onPaste);
   return () => {
+    active = false;
     el.removeEventListener('paste', onPaste);
   };
 }

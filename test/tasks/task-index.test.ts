@@ -140,6 +140,44 @@ function captureCreateCallback(
 }
 
 describe('TaskIndex lifecycle and events', () => {
+  it('refreshes complete formatted root and child comment refs after an external file change', async () => {
+    const source =
+      '- [ ] Root\n\t- 2026-10-07: head\n\t\ttail\n\t\tthird\n\t- [ ] Child\n\t\t- child head\n\t\t\tchild tail\n\t- [ ] Sibling';
+    const initial =
+      '- [ ] Root\n\t- 2026-10-07: head\n\t  tail\n\t  third\n\t- [ ] Child\n\t\t- child head\n\t\t  child tail\n\t- [ ] Sibling';
+    const { app, index, fireChanged } = await setup({ 'tasks.md': initial });
+    await index.initialize();
+    const previous = expectDefined(index.list()[0]);
+    expect(previous.comments[0]?.text).toBe('head\ntail\nthird');
+    fireChanged(mdFile(app, 'tasks.md'), source, taskCache());
+    const root = expectDefined(index.list()[0]);
+    expect(root.ref.revision).not.toBe(previous.ref.revision);
+    expect(root.comments).toMatchObject([
+      {
+        text: 'head\ntail\nthird',
+        ref: {
+          relativeLine: 1,
+          originalMarkdown: '\t- 2026-10-07: head\n\t\ttail\n\t\tthird',
+        },
+      },
+    ]);
+    expect(root.subtasks).toMatchObject([
+      {
+        title: 'Child',
+        comments: [
+          {
+            text: 'child head\nchild tail',
+            ref: {
+              relativeLine: 1,
+              originalMarkdown: '\t\t- child head\n\t\t\tchild tail',
+            },
+          },
+        ],
+      },
+      { title: 'Sibling', comments: [] },
+    ]);
+    index.destroy();
+  });
   it.each(['metadata', 'fallback'] as const)(
     'indexes exact mixed-marker hierarchy with %s',
     async (mode) => {
@@ -1751,7 +1789,7 @@ describe('TaskIndex lifecycle and events', () => {
 
     const projection = index.forCalendarProjection([localDate('2026-08-08')]);
     expect(projection.recurringSources).toEqual([]);
-    expect(projection.materialized.map(({ node }) => node.title)).toEqual([]);
+    expect(projection.materialized.map(({ node }) => node.title)).toEqual(['no longer repeating']);
     index.destroy();
   });
 

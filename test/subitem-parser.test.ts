@@ -10,6 +10,37 @@ const parseSubItems = (lines: string[], taskLineIdx: number, filePath: string) =
   parseSubItemsWithCatalog(lines, taskLineIdx, filePath, statusCatalog);
 
 describe('parseSubItems', () => {
+  it('recovers formatted root and child comments without taking neighboring tasks', () => {
+    const lines = [
+      '- [ ] Parent',
+      '\t- head',
+      '\t\ttail',
+      '\t\tthird',
+      '\t- [ ] Child',
+      '\t\t- child head',
+      '\t\t\tchild tail',
+      '\t- [ ] Sibling',
+    ];
+    const result = parseSubItems(lines, 0, FILE);
+    expect(result.comments).toMatchObject([{ line: 1, text: 'head\ntail\nthird' }]);
+    expect(result.subtasks).toMatchObject([
+      { line: 4, text: 'Child', comments: [{ line: 5, text: 'child head\nchild tail' }] },
+      { line: 7, text: 'Sibling' },
+    ]);
+    expect(result.subtasks[1]?.comments).toBeUndefined();
+  });
+  it('shares canonical multiline comment ownership and preserves hard-break spaces', () => {
+    const lines = [
+      '> - [ ] Parent',
+      '> \t- 2026-10-06:  first  ',
+      '> \t  second',
+      '> \t  \\- [ ] literal',
+      '> \t- [ ] Child',
+    ];
+    const result = parseSubItems(lines, 0, FILE);
+    expect(result.comments).toMatchObject([{ line: 1, text: ' first  \nsecond\n\\- [ ] literal' }]);
+    expect(result.subtasks).toMatchObject([{ line: 4, text: 'Child' }]);
+  });
   it('preserves mixed-marker nested children and their source positions', () => {
     const lines = ['12) [ ] Parent', '  * [x] Child', '    + [ ] Grandchild', '  3. [ ] Sibling'];
     const result = parseSubItems(lines, 0, FILE);

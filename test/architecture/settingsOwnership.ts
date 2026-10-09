@@ -7,6 +7,7 @@ type SettingsOwner = 'static' | 'view' | 'partitioned';
 export const CALENDAR_SETTINGS_OWNERS = {
   firstDayOfWeek: 'static',
   taskPrefix: 'static',
+  applyTaskPrefixToSubtasks: 'static',
   taskFilePath: 'static',
   taskArchivePath: 'static',
   taskIgnoreQuery: 'static',

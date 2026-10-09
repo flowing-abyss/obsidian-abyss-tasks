@@ -3,13 +3,20 @@ import { listSelectionToKey, resolveListViewStateKey } from '../app/listViewStat
 import type { TagRenameChange } from '../markdown/tagSyntax';
 import type { CalViewType } from '../panels/calendar/calendarViewType';
 import { getListViewDefaults } from '../settings/defaults';
+import { normalizeTagFilters } from '../settings/tagFilters';
 import { renameTagSelection } from '../settings/tagViewState';
 import type { CalendarSettings, ListViewState } from '../settings/types';
 import { renameFileFilters } from '../settings/viewStatePaths';
 
+export interface PanelNavigationTransition {
+  canCommit(): boolean;
+  commit(): void;
+  afterCommit?(): void;
+}
+
 export interface PanelNavigationActions {
   openTasks(): void;
-  openList(selection: ListSelection): void;
+  openList(selection: ListSelection, transition?: PanelNavigationTransition): void;
   openCalendar(): void;
   openCalendarView(view: CalViewType): void;
   openProjects(): void;
@@ -24,6 +31,7 @@ export interface PanelNavigationCenterPort {
   setCalendarView(view: CalViewType): void;
   openQuickCapture(): void;
   finishProjectTableEditorBefore?(action: () => void): void;
+  clearTaskSearchReveal?(): void;
 }
 
 export class PanelNavigator implements PanelNavigationActions {
@@ -42,18 +50,25 @@ export class PanelNavigator implements PanelNavigationActions {
     this.openList(this.lastTasksList);
   }
 
-  openList(selection: ListSelection): void {
-    this.beforeModeChange(() => {
+  openList(selection: ListSelection, transition?: PanelNavigationTransition): void {
+    const change = (): void => {
+      if (transition?.canCommit() === false) return;
       this.state.batch(() => {
+        if (transition === undefined) this.center.clearTaskSearchReveal?.();
         this.persistListState(this.lastTasksList);
         this.lastTasksList = selection;
         const next = this.listState(selection);
+        transition?.commit();
         this.state.set('selectedList', selection);
         this.state.set('centerListViewState', next);
         this.state.set('centerFilter', '');
         this.state.set('mode', 'tasks');
       });
-    });
+      transition?.afterCommit?.();
+    };
+    if (transition !== undefined && this.center.finishProjectTableEditorBefore !== undefined)
+      this.center.finishProjectTableEditorBefore(change);
+    else this.beforeModeChange(change);
   }
 
   openCalendar(): void {
@@ -103,13 +118,16 @@ export class PanelNavigator implements PanelNavigationActions {
       this.state.set('selectedList', selection);
       const current = this.state.get('centerListViewState');
       const filters = current.filters.map((filter) => {
-        if (filter.type !== 'tag') return filter;
+        if (filter.type !== 'tag' && filter.type !== 'tag-exclude') return filter;
         const renamed = renameTagSelection({ type: 'tag', tag: filter.value }, change, ids);
         return typeof renamed === 'object' && renamed.type === 'tag'
           ? { ...filter, value: renamed.tag }
           : filter;
       });
-      this.state.set('centerListViewState', { ...this.listState(selection), filters });
+      this.state.set('centerListViewState', {
+        ...this.listState(selection),
+        filters: normalizeTagFilters(filters),
+      });
     });
   }
 
