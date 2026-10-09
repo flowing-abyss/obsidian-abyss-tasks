@@ -480,6 +480,9 @@ export class StatisticsMode {
   }
   private action_abyssPrivate(action: StatisticsAction): void {
     switch (action.type) {
+      case 'cohorts':
+        this.change_abyssPrivate({ cohortsExpanded: action.expanded, page: 0 });
+        break;
       case 'scope':
         this.change_abyssPrivate({ scope: action.scope, page: undefined });
         break;

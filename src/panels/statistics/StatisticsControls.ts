@@ -9,7 +9,7 @@ import {
 import { WorkBudget } from '../../statistics/statisticsWork';
 export type StatisticsChoices = Pick<
   StatisticsRequest,
-  'view' | 'period' | 'scope' | 'group' | 'page' | 'weekStart' | 'focusKey'
+  'view' | 'period' | 'scope' | 'group' | 'page' | 'weekStart' | 'focusKey' | 'cohortsExpanded'
 >;
 const PERIODS: ReadonlyArray<readonly [StatisticsPeriod, string]> = [
   ['today', 'Today'],

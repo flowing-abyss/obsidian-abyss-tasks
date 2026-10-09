@@ -16,6 +16,8 @@ export interface CalendarSegment {
 }
 export interface StatisticsBucket {
   readonly key: string;
+  readonly partial?: boolean | undefined;
+  readonly granularity?: 'day' | 'week' | 'month' | undefined;
   readonly fromDay: number;
   readonly toDay: number;
   readonly startMs: number;
@@ -39,6 +41,10 @@ export function dayOf(date: LocalDate): number {
 }
 export function dateOf(day: number): LocalDate {
   return localDate(new Date(day * DAY).toISOString().slice(0, 10));
+}
+/** Inclusive civil-date label for a half-open bucket or clipped creation week. */
+export function dateInterval(fromDay: number, toDay: number): string {
+  return toDay - fromDay === 1 ? dateOf(fromDay) : `${dateOf(fromDay)} – ${dateOf(toDay - 1)}`;
 }
 function localDay(ms: number, offsetAt: OffsetAt): number {
   return Math.floor((ms + offsetAt(ms) * 60000) / DAY);
@@ -189,6 +195,14 @@ function nextBucket(day: number, length: number, request: StatisticsRequest): nu
   if (length <= 120) return weekFloor(day, request.firstDayOfWeek) + 7;
   return monthDay(day, Math.max(1, Math.ceil(length / 28 / 239)));
 }
+function bucketGranularity(length: number): NonNullable<StatisticsBucket['granularity']> {
+  if (length <= 31) return 'day';
+  return length <= 120 ? 'week' : 'month';
+}
+function bucketFloor(day: number, length: number, request: StatisticsRequest): number {
+  if (length <= 31) return day;
+  return length <= 120 ? weekFloor(day, request.firstDayOfWeek) : monthDay(day, 0);
+}
 async function buildBuckets(
   window: readonly [number, number],
   request: StatisticsRequest,
@@ -196,11 +210,16 @@ async function buildBuckets(
 ): Promise<StatisticsBucket[]> {
   const result: StatisticsBucket[] = [];
   let a = window[0];
+  const length = window[1] - window[0];
+  const granularity = bucketGranularity(length);
   while (a < window[1]) {
-    const end = Math.min(window[1], nextBucket(a, window[1] - window[0], request));
+    const end = Math.min(window[1], nextBucket(a, length, request)),
+      floor = bucketFloor(a, length, request);
     result.push(
       Object.freeze({
         key: dateOf(a),
+        partial: a !== floor || end < nextBucket(floor, length, request),
+        granularity,
         fromDay: a,
         toDay: end,
         startMs: midnight(a, request),

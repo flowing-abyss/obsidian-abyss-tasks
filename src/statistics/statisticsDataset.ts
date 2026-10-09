@@ -34,6 +34,7 @@ function verified(
 function validInstant(ms: number | undefined): ms is number {
   return ms !== undefined && Number.isFinite(ms) && ms >= -62167219200000 && ms < 253402300800000;
 }
+type TaskStatisticsDateIssue = TaskStatisticsSnapshot['files'][number]['dateIssues'][number];
 type SourceFile = TaskStatisticsSnapshot['files'][number];
 interface PendingNode {
   node: TaskSnapshot | SubtaskSnapshot;
@@ -63,12 +64,18 @@ class DatasetBuilder {
   }
   private async issueFields(
     file: SourceFile,
-  ): Promise<Map<number, { fields: Set<string>; count: number }>> {
-    const result = new Map<number, { fields: Set<string>; count: number }>();
+  ): Promise<
+    Map<number, { fields: Set<string>; count: number; issues: TaskStatisticsDateIssue[] }>
+  > {
+    const result = new Map<
+      number,
+      { fields: Set<string>; count: number; issues: TaskStatisticsDateIssue[] }
+    >();
     for (const issue of file.dateIssues) {
-      const fields = result.get(issue.line) ?? { fields: new Set<string>(), count: 0 };
+      const fields = result.get(issue.line) ?? { fields: new Set<string>(), count: 0, issues: [] };
       fields.fields.add(issue.field);
       fields.count++;
+      fields.issues.push(Object.freeze({ ...issue }));
       result.set(issue.line, fields);
       this.dateIssues++;
       await this.budget.step();
@@ -86,11 +93,11 @@ class DatasetBuilder {
   private record(
     item: PendingNode,
     file: SourceFile,
-    issues: Map<number, { fields: Set<string>; count: number }>,
+    issues: Map<number, { fields: Set<string>; count: number; issues: TaskStatisticsDateIssue[] }>,
   ): StatisticsTask {
     const n = item.node,
-      issue = issues.get(item.line),
-      fields = issue?.fields;
+      issue = issues.get(item.line) ?? { count: 0, fields: new Set<string>(), issues: [] },
+      fields = issue.fields;
     const key = JSON.stringify([file.kind, file.path, item.rootLine, item.path]);
     return Object.freeze({
       index: this.tasks.length,
@@ -99,7 +106,8 @@ class DatasetBuilder {
       filePath: file.path,
       fileKind: file.kind,
       sourceRevision: file.revision,
-      dateIssueCount: issue?.count ?? 0,
+      dateIssueCount: issue.count,
+      dateIssues: Object.freeze(issue.issues),
       nodePath: Object.freeze(item.path),
       title: n.title,
       status: n.status,
@@ -107,10 +115,10 @@ class DatasetBuilder {
       tags: Object.freeze([...new Set(n.tags.map((t) => t.replace(/^#/u, '').toLowerCase()))]),
       recurring: item.recurring || n.recurrence !== undefined,
       ...this.membership(file),
-      created: verified(n.planning.created, fields?.has('created') === true),
-      completion: verified(n.planning.completion, fields?.has('completion') === true),
-      cancelled: verified(n.planning.cancelled, fields?.has('cancelled') === true),
-      due: verified(n.planning.due, fields?.has('due') === true),
+      created: verified(n.planning.created, fields.has('created') === true),
+      completion: verified(n.planning.completion, fields.has('completion') === true),
+      cancelled: verified(n.planning.cancelled, fields.has('cancelled') === true),
+      due: verified(n.planning.due, fields.has('due') === true),
       dependencyId: n.dependencyId,
       dependsOn: Object.freeze([...new Set(n.dependsOn)]),
     });

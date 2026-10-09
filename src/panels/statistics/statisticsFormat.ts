@@ -24,6 +24,7 @@ const TONE_TOKENS: Record<StatisticsTone, string> = {
   created: '--color-blue',
   completed: '--color-green',
   cancelled: '--color-orange',
+  progress: '--text-normal',
   overdue: '--color-red',
   neutral: '--text-muted',
   muted: '--text-faint',

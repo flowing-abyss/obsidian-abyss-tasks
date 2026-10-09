@@ -439,6 +439,7 @@ export default defineConfig(
       'src/statistics/statisticsDependencies.ts',
       'src/statistics/statisticsEvidence.ts',
       'src/statistics/statisticsFlow.ts',
+      'src/statistics/statisticsDates.ts',
       'src/statistics/statisticsIntervals.ts',
       'src/statistics/statisticsPatterns.ts',
       'src/statistics/statisticsProjects.ts',

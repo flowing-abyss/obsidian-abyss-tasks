@@ -17,6 +17,8 @@ import {
 } from './helpers/statisticsScaleFixtures';
 
 function metric(view: StatisticsViewModel, id: string): number | null | undefined {
+  if (id.startsWith('new-'))
+    return chart(view, 'new-outcomes').marks.find((mark) => mark.key === id)?.weight;
   return view.sections.flatMap((section) => section.metrics).find((value) => value.id === id)
     ?.value;
 }
@@ -144,7 +146,7 @@ describe.each([
           'new-done',
           'new-cancelled',
         ].map((id) => metric(rhythm, id)),
-      ).toEqual([created, completed, cancelled, 4 * m, 3 * m, 3 * m, m]);
+      ).toEqual([created, completed, cancelled, 4 * m, 2 * m, 3 * m, m]);
       const eventMarks = chart(rhythm, 'rhythm').marks;
       expect(
         eventMarks
@@ -154,14 +156,14 @@ describe.each([
       for (const [index, value] of [3, 1, 2, 1, 0, 0, 0].entries()) {
         expect(
           eventMarks
-            .filter((mark) => mark.key.startsWith(`created:${index}:`))
+            .filter((mark) => mark.key === `created:${index}`)
             .reduce((sum, mark) => sum + Number(mark.weight), 0),
         ).toBe(value * m);
       }
-      pageChecks(rhythm, 'created:2:recurring', 2 * m);
+      pageChecks(rhythm, 'created:2', 2 * m);
       exhaust(
         rhythm,
-        'created:2:recurring',
+        'created:2',
         new Set(
           Array.from({ length: m }, (_, j) => [scaleNodeKey(j, 4), scaleNodeKey(j, 5)]).flat(),
         ),
@@ -201,7 +203,7 @@ describe.each([
         ['on-time', 'late', 'overdue', 'upcoming', 'cancelled', 'unknown'].map((id) =>
           metric(deadlines, id),
         ),
-      ).toEqual([m, 3 * m, 2 * m, 2 * m, m, 0]);
+      ).toEqual([m, 3 * m, m, 2 * m, m, 0]);
       expect(chart(deadlines, 'due-delta').marks.map((mark) => mark.y)).toEqual([
         0,
         0,
@@ -212,7 +214,8 @@ describe.each([
         0,
         0,
       ]);
-      pageChecks(deadlines, 'deadline:overdue', 2 * m);
+      pageChecks(deadlines, 'deadline:overdue', m);
+      pageChecks(deadlines, 'deadline:archived-open', m);
     });
     it('cohorts retains exact totals and physical evidence', async () => {
       views.set('cohorts', await get('cohorts'));

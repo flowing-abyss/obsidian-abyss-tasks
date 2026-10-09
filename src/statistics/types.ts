@@ -58,6 +58,7 @@ export interface StatisticsRequest {
   readonly calendarTransitions?: readonly number[] | undefined;
   readonly weekStart?: LocalDate | undefined;
   readonly page?: number | undefined;
+  readonly cohortsExpanded?: boolean | undefined;
   readonly focusKey?: string | undefined;
 }
 export interface StatisticsWork {
@@ -76,6 +77,7 @@ export interface StatisticsTask {
   readonly fileKind: 'live' | 'archive';
   readonly sourceRevision: number;
   readonly dateIssueCount: number;
+  readonly dateIssues: TaskStatisticsSnapshot['files'][number]['dateIssues'];
   readonly nodePath: readonly number[];
   readonly title: string;
   readonly status: TaskSnapshot['status'];
@@ -145,7 +147,7 @@ interface StatisticsLegend {
   readonly selectionId?: string | undefined;
 }
 export type StatisticsTone =
-  'created' | 'completed' | 'cancelled' | 'overdue' | 'neutral' | 'muted' | 'accent';
+  'created' | 'completed' | 'cancelled' | 'progress' | 'overdue' | 'neutral' | 'muted' | 'accent';
 export interface StatisticsSection {
   readonly reading?: string | undefined;
   readonly emptyMessage?: string | undefined;
@@ -157,6 +159,7 @@ export interface StatisticsSection {
   readonly legend: readonly StatisticsLegend[];
 }
 export type StatisticsAction =
+  | { readonly type: 'cohorts'; readonly label: string; readonly expanded: boolean }
   | {
       readonly type: 'period';
       readonly label: string;

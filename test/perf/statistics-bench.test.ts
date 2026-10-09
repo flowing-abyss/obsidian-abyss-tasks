@@ -233,7 +233,7 @@ async function benchmarkSize(n: number) {
     timeline = required(await session.view({ ...baseline, view: 'timeline' }, work));
   const evidence: Record<string, unknown> = {};
   for (const [name, model, selection, total] of [
-    ['dense', rhythm, 'created:2:recurring', n / 5],
+    ['dense', rhythm, 'created:2', n / 5],
     ['sparse', timeline, 'day-time:1', n / 10],
   ] as const) {
     for (const offset of [0, total - 50]) {

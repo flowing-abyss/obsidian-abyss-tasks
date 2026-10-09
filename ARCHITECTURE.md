@@ -456,14 +456,21 @@ Source opening rejects both changed block provenance and a current acquisition i
 [`src/statistics/`](src/statistics/) consumes the public retained source snapshot and explicit
 project path/name descriptors. `prepareStatisticsDataset` flattens every physical node and its
 own entries once, keeps live/archive provenance and structural source refs, inherits recurrence,
-and excludes only date fields identified as invalid or ambiguous by source evidence. Project
+and preserves field-specific source date issues while excluding invalid or ambiguous date values.
+The pure `statisticsDates` helper separates missing, authored-invalid and future date eligibility;
+completion-period exclusions remain distinct from scope-wide undatable completion coverage. Project
 identity uses paths; unknown archive membership, live no-project, and untagged groups have distinct
 synthetic identities. These derived records grant no task mutation authority.
 
 `StatisticsSession` captures explicit time, calendar and scope for eleven engine-neutral views.
 Current open/Aging/dependency populations use live records; retained archive evidence participates
 in historical metrics and time. Global source readiness/issues remain visible independently of
-scoped retained coverage. Cohorts include only one-off nodes, excluding inherited recurrence. Every preset ends on the observed local day; tracking additionally clips
+scoped retained coverage. Cohorts include only one-off nodes, excluding inherited recurrence.
+Cohort expansion is a reversible display choice within the same period: eight recent creation
+weeks, or bounded windows of 104 weeks, preserving each row denominator. Due outcomes use a
+due-period cohort; lateness uses completions in the period with usable due dates. Archived open
+due records are separate from live overdue work. Every preset ends on the observed local day;
+tracking additionally clips
 to the exact observation instant. Six/twelve-month windows subtract calendar months from the civil
 exclusive end, clamping the day in the destination month.
 

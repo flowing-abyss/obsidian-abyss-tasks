@@ -84,13 +84,10 @@ export class StatisticsSession {
 }
 function sameRequest(a: StatisticsRequest, b: StatisticsRequest): boolean {
   return (
-    a.offsetAt === b.offsetAt &&
-    a.calendarTransitions === b.calendarTransitions &&
-    a.nowMs === b.nowMs &&
-    a.firstDayOfWeek === b.firstDayOfWeek &&
-    a.period === b.period &&
+    sameCalendar(a, b) &&
     a.group === b.group &&
     a.page === b.page &&
+    a.cohortsExpanded === b.cohortsExpanded &&
     a.weekStart === b.weekStart &&
     a.focusKey === b.focusKey &&
     JSON.stringify(a.scope) === JSON.stringify(b.scope)

@@ -1200,7 +1200,7 @@ it('owns one details popover with definitions and coverage and releases it on na
   const dialog = expectDefined(h.host.querySelector<HTMLElement>('[role="dialog"]'));
   expect(dialog.textContent).toContain('Rhythm details');
   expect(dialog.textContent).toContain('Tasks & subtasks in scope');
-  expect(dialog.textContent).toContain('Recorded task events');
+  expect(dialog.textContent).toContain('Recorded task dates');
   expect(h.host.querySelector('details')).toBeNull();
   dialog.dispatchEvent(
     new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
@@ -1304,4 +1304,55 @@ it('uses the supplied concise observation title for Results', async () => {
   expect(h.host.querySelector('.abyss-statistics-evidence-header h3')?.textContent).toBe(
     'Monday completions',
   );
+});
+
+it('expands and restores cohort display while preserving period and resetting the page choice', async () => {
+  const h = await harness();
+  h.replace(
+    source(
+      Array.from({ length: 105 }, (_, i) =>
+        task(`week${i}`, {
+          planning: {
+            created: date(
+              new Date(Date.parse('2024-01-01') + i * 7 * 86400000).toISOString().slice(0, 10),
+            ),
+          },
+        }),
+      ),
+    ),
+  );
+  h.mode.render(h.host);
+  await h.wait();
+  h.reset();
+  const period = expectDefined(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]'));
+  period.value = 'all';
+  period.dispatchEvent(new Event('change'));
+  h.mode.navigation.selectView('cohorts');
+  await h.wait();
+  const context = h.host.querySelector('.abyss-statistics-context')?.textContent;
+  const click = async (label: string) => {
+    h.reset();
+    expectDefined(
+      [...h.host.querySelectorAll('button')].find((button) => button.textContent === label),
+    ).click();
+    await h.wait();
+  };
+  await click('Show older cohorts');
+  await click('Older weeks');
+  expect(
+    [...h.host.querySelectorAll('button')].some((button) => button.textContent === 'Newer weeks'),
+  ).toBe(true);
+  await click('Show recent cohorts');
+  expect(
+    [...h.host.querySelectorAll('button')].some((button) => button.textContent === 'Newer weeks'),
+  ).toBe(false);
+  expect(period.value).toBe('all');
+  expect(h.host.querySelector('.abyss-statistics-context')?.textContent).toBe(context);
+  await click('Show older cohorts');
+  expect(
+    [...h.host.querySelectorAll('button')].some((button) => button.textContent === 'Older weeks'),
+  ).toBe(true);
+  expect(
+    [...h.host.querySelectorAll('button')].some((button) => button.textContent === 'Newer weeks'),
+  ).toBe(false);
 });

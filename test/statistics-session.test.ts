@@ -265,9 +265,11 @@ it('reconciles all eleven views against the independent ten-role retained-eviden
     m(rhythm, 'created'),
     m(rhythm, 'completed'),
     m(rhythm, 'cancelled'),
-    m(rhythm, 'new-open'),
+    rhythm.sections
+      .find((s) => s.id === 'new-outcomes')
+      ?.charts[0]?.marks.find((mark) => mark.key === 'new-open')?.weight,
     m(rhythm, 'open-now'),
-  ]).toEqual([7, 4, 1, 3, 4]);
+  ]).toEqual([7, 4, 1, 2, 4]);
   const complete = await get('completion');
   expect([m(complete, 'valid-pairs'), m(complete, 'median'), m(complete, 'p90')]).toEqual([
     3, 5, 29,
@@ -277,7 +279,7 @@ it('reconciles all eleven views against the independent ten-role retained-eviden
     ['on-time', 'late', 'overdue', 'upcoming', 'cancelled', 'unknown'].map((id) =>
       m(deadlines, id),
     ),
-  ).toEqual([1, 3, 2, 2, 1, 0]);
+  ).toEqual([1, 3, 1, 2, 1, 0]);
   const cohorts = await get('cohorts'),
     cells = required(required(cohorts.sections[0]).charts[0]).marks;
   expect(cells.map((cell) => cell.denominator)).toEqual([5, 5, 5, 5, 5]);
