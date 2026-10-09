@@ -140,7 +140,7 @@ async function patternNumerators(
 }
 function patternObservation(cell: number, value: number, hours: number): StatisticsObservation {
   return {
-    title: `${required(DAYS[Math.floor(cell / 24)])} · ${String(cell % 24).padStart(2, '0')}:00–${String((cell % 24) + 1).padStart(2, '0')}:00`,
+    title: `${required(DAYS[Math.floor(cell / 24)])} · ${String(cell % 24).padStart(2, '0')}:00-${String((cell % 24) + 1).padStart(2, '0')}:00`,
     values: [
       {
         label: 'Rate',
@@ -148,7 +148,7 @@ function patternObservation(cell: number, value: number, hours: number): Statist
         unit: 'min/h',
       },
       { label: 'Recorded time', value, unit: 'minutes' },
-      { label: 'Elapsed exposure', value: hours, unit: 'hours' },
+      { label: 'Calendar hours in this slot', value: hours, unit: 'hours' },
     ],
     note: hours === 0 ? 'No elapsed time in this hour during this period' : undefined,
   };
@@ -178,7 +178,7 @@ export async function patternsSection(
     state: hours[cell] === 0 ? ('unavailable' as const) : ('measured' as const),
     detail:
       hours[cell] === 0
-        ? 'No elapsed exposure for this local calendar hour'
+        ? 'This weekday and hour have not occurred in the selected period'
         : `${value} recorded minutes / ${required(hours[cell])} elapsed exposure hours; mean ${value / required(hours[cell])} minutes per hour`,
     observation: patternObservation(cell, value, required(hours[cell])),
     selectionId:
@@ -199,8 +199,6 @@ export async function patternsSection(
     emptyMessage: minutes.some((value) => value > 0)
       ? undefined
       : 'No recorded time in this period.',
-    context:
-      'Mean recorded minutes per elapsed hour. Overlapping recordings add; zero exposure is unavailable.',
     metrics: [],
     charts: [
       {

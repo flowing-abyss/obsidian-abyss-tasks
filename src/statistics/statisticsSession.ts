@@ -4,6 +4,7 @@ import { EvidenceRegistry } from './statisticsEvidence';
 import { flowView } from './statisticsFlow';
 import { projectView } from './statisticsProjects';
 import { timeView } from './statisticsTime';
+import { STATISTICS_VIEWS } from './statisticsViews';
 import { StatisticsCancelled, WorkBudget } from './statisticsWork';
 import type {
   StatisticsDataset,
@@ -30,9 +31,13 @@ export class StatisticsSession {
   >();
   constructor(private readonly dataset: StatisticsDataset) {}
   async view(
-    request: StatisticsRequest,
+    input: StatisticsRequest,
     work: StatisticsWork,
   ): Promise<StatisticsViewModel | undefined> {
+    const request =
+      STATISTICS_VIEWS.find((view) => view.id === input.view)?.family === 'Projects'
+        ? input
+        : { ...input, projectStatus: undefined };
     try {
       const budget = new WorkBudget(work);
       budget.check();
@@ -67,9 +72,14 @@ export class StatisticsSession {
     request: StatisticsRequest,
     budget: WorkBudget,
   ): Promise<StatisticsScopedCoverage> {
-    const key = JSON.stringify(request.scope);
+    const key = JSON.stringify([request.scope, request.projectStatus]);
     if (this.scopeCache?.key === key) return this.scopeCache.coverage;
-    const coverage = await scopedCoverage(this.dataset, request.scope, budget);
+    const coverage = await scopedCoverage(
+      this.dataset,
+      request.scope,
+      budget,
+      request.projectStatus,
+    );
     this.scopeCache = { key, coverage };
     return coverage;
   }
@@ -90,6 +100,7 @@ function sameRequest(a: StatisticsRequest, b: StatisticsRequest): boolean {
     a.cohortsExpanded === b.cohortsExpanded &&
     a.weekStart === b.weekStart &&
     a.focusKey === b.focusKey &&
+    a.projectStatus === b.projectStatus &&
     JSON.stringify(a.scope) === JSON.stringify(b.scope)
   );
 }

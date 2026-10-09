@@ -196,6 +196,8 @@ it('uses the cohort classifier in cell evidence, including unknown timing', asyn
         }),
         task('cancelled', { status: 'cancelled', planning: { created: date('2026-10-01') } }),
         task('unknown', { status: 'done', planning: { created: date('2026-10-01') } }),
+        task('open', { planning: { created: date('2026-10-01') } }),
+        task('in progress', { status: 'in-progress', planning: { created: date('2026-10-01') } }),
       ]),
       [],
       work,
@@ -213,9 +215,11 @@ it('uses the cohort classifier in cell evidence, including unknown timing', asyn
   expect(cell.state).toBe('unknown');
   expect(cell.weight).toBeUndefined();
   expect(view.evidence(required(cell.selectionId), 0, 50).rows.map((row) => row.context)).toEqual([
-    'Within 3 days',
-    'Cancelled',
-    'Unknown timing',
+    'Completed within 3 days',
+    undefined,
+    'Completion age unavailable',
+    undefined,
+    undefined,
   ]);
 });
 it('discloses scoped due and cohort date eligibility separately from period outcomes', async () => {
@@ -528,9 +532,13 @@ it('labels partial cohort weeks with included dates and offers no expansion for 
   );
   expect(view.actions).toEqual([]);
   const cell = required(view.sections[0]?.charts[0]?.marks[0]);
-  expect(cell.observation?.title).toContain('2026-09-10 – 2026-09-13');
+  expect(cell.observation?.title).toContain('2026-09-10 - 2026-09-13');
   expect(cell.observation?.note).toContain('Partial week');
-  expect(cell.observation?.values).toContainEqual({ label: 'Cohort', value: 1, unit: 'tasks' });
+  expect(cell.observation?.values).toContainEqual({
+    label: 'Tasks created that week',
+    value: 1,
+    unit: 'tasks',
+  });
 });
 
 it('labels due-today outcomes and measures lateness by completion period independently of due period', async () => {
@@ -557,7 +565,7 @@ it('labels due-today outcomes and measures lateness by completion period indepen
     'Due today',
   );
   expect(view.sections[0]?.charts[0]?.series.find((s) => s.key === 'overdue')?.label).toBe(
-    'Due cohort · overdue',
+    'Still open and overdue',
   );
   const lateness = required(view.sections.find((s) => s.id === 'lateness'));
   expect(lateness.charts[0]?.marks.reduce((sum, m) => sum + Number(m.y), 0)).toBe(1);
@@ -582,7 +590,7 @@ it('reports the actual inclusive partial weekly interval and zero counts without
   );
   const chart = required(view.sections[0]?.charts[0]);
   const mark = required(chart.marks.find((m) => m.series === 'created' && m.x === '2026-10-05'));
-  expect(mark.observation?.title).toBe('2026-10-05 – 2026-10-09 · Created');
+  expect(mark.observation?.title).toBe('2026-10-05 - 2026-10-09 · Created');
   expect(mark.observation?.values).toEqual([{ label: 'Count', value: 2, unit: 'tasks' }]);
   expect(mark.observation?.note).toContain('Partial week');
   expect(view.evidence(required(mark.selectionId), 0, 50).rows.map((r) => r.title)).toEqual([
@@ -694,10 +702,14 @@ it('keeps the cross-year range and exact population while compacting a large coh
     ),
   );
   const chart = required(view.sections[0]?.charts[0]);
-  expect(chart.y.tickLabels).toEqual([['2025-12-29', '2025-12-29–01-04·1k']]);
+  expect(chart.y.tickLabels).toEqual([['2025-12-29', '2025-12-29-01-04 · 1k']]);
   const observation = required(chart.marks[0]?.observation);
-  expect(observation.title).toContain('2025-12-29 – 2026-01-04');
-  expect(observation.values).toContainEqual({ label: 'Cohort', value: 1001, unit: 'tasks' });
+  expect(observation.title).toContain('2025-12-29 - 2026-01-04');
+  expect(observation.values).toContainEqual({
+    label: 'Tasks created that week',
+    value: 1001,
+    unit: 'tasks',
+  });
 });
 
 it('keeps zero completion defects in compact coverage and names unavailable ages', async () => {

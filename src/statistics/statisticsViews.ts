@@ -50,7 +50,7 @@ export function finish(
   return Object.freeze({
     view: request.view,
     title: required(STATISTICS_VIEWS.find((v) => v.id === request.view)).title,
-    dateLabel: `${calendar.fromDate} – ${dateOf(calendar.toDay - 1)}`,
+    dateLabel: `${calendar.fromDate} - ${dateOf(calendar.toDay - 1)}`,
     currentState: request.view === 'aging' || request.view === 'dependencies',
     asOfMs: request.nowMs,
     coverage: evidence.coverage,

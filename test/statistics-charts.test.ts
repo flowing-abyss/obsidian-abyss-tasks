@@ -1,7 +1,6 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StatisticsCharts } from '../src/panels/statistics/StatisticsCharts';
-import { StatisticsDetails } from '../src/panels/statistics/StatisticsDetails';
 import { StatisticsSections } from '../src/panels/statistics/StatisticsSections';
 import { TanStackStatisticsChart } from '../src/panels/statistics/TanStackStatisticsChart';
 import {
@@ -260,11 +259,11 @@ describe('Statistics chart adapter', () => {
   });
   it('describes a session histogram range with the actual session count', () => {
     const chart = model({
-      x: { type: 'band', label: 'Session length', categories: ['15–30 min'] },
+      x: { type: 'band', label: 'Session length', categories: ['15-30 min'] },
       y: { type: 'number', label: 'Sessions', unit: 'count', domain: [0, 10] },
     });
-    expect(statisticsMarkDescription({ key: 'bin', x: '15–30 min', y: 3 }, chart)).toBe(
-      '15–30 min\nSessions: 3 sessions',
+    expect(statisticsMarkDescription({ key: 'bin', x: '15-30 min', y: 3 }, chart)).toBe(
+      '15-30 min\nSessions: 3 sessions',
     );
   });
   it('formats provided observations once and uses their concise title for evidence', () => {
@@ -290,7 +289,7 @@ describe('Statistics chart adapter', () => {
         { label: 'Completion', value: '25%' },
         { label: 'Elapsed time', value: '0.00025 h' },
         { label: 'Timing', value: 'Unavailable' },
-        { label: 'Reading', value: 'Through now' },
+        { label: 'Note', value: 'Through now' },
       ],
     });
     expect(statisticsMarkTitle(mark, model())).toBe('Sunday at 02:00');
@@ -355,7 +354,7 @@ describe('Statistics chart adapter', () => {
       model({
         kind: 'heatmap',
         x: { type: 'band', label: 'Horizon', categories: ['1', '7', '30'] },
-        y: { type: 'band', label: 'Cohort', categories: ['Sep 28'] },
+        y: { type: 'band', label: 'Tasks created that week', categories: ['Sep 28'] },
         marks: [
           {
             key: 'zero',
@@ -1230,8 +1229,8 @@ it.each([640, 240])('expands folded clock fragments once before packing at %ipx'
     const tooltip = required(
       el.ownerDocument.querySelector('.abyss-statistics-tooltip'),
     ).textContent;
-    expect(tooltip).toContain('01:30 UTC+02:00 – 02:00 UTC+02:00');
-    expect(tooltip).toContain('01:00 UTC+01:00 – 01:45 UTC+01:00');
+    expect(tooltip).toContain('01:30 UTC+02:00 - 02:00 UTC+02:00');
+    expect(tooltip).toContain('01:00 UTC+01:00 - 01:45 UTC+01:00');
     expect(tooltip).toContain('One physical tracking entry');
     key(chart.svg(), 'Enter');
   }
@@ -1388,7 +1387,7 @@ it('keeps positive rank geometry with long human labels at constrained width', (
         categories: ['a', 'b', 'c'],
         tickLabels: titles.map((label, i) => [String.fromCharCode(97 + i), label]),
       },
-      y: { type: 'number', label: 'Direct waiting dependents', domain: [0, 100], unit: 'count' },
+      y: { type: 'number', label: 'Waiting directly dependents', domain: [0, 100], unit: 'count' },
       series: [],
       layout: undefined,
       marks: titles.map((label, i) => ({
@@ -1487,12 +1486,12 @@ it.each([
   ],
   [
     '7+ days early',
-    '1–6 days early',
+    '1-6 days early',
     'On due date',
     '1 day late',
-    '2–3 days late',
-    '4–7 days late',
-    '8–30 days late',
+    '2-3 days late',
+    '4-7 days late',
+    '8-30 days late',
     '31+ days late',
   ],
 ])('preserves meaningful compact axis labels beginning with %s at240px', (...categories) => {
@@ -1546,62 +1545,6 @@ it('renders concise section reading and empty guidance with only a zero heatmap 
   ).toHaveLength(1);
   expect(surface.textContent).not.toContain('>0');
 });
-it('keeps nonzero selectable coverage and source issues in compact labelled Details', async () => {
-  const dataset = required(await prepareStatisticsDataset(source([task('A')]), [], work));
-  const view = required(
-    await new StatisticsSession(dataset).view(request({ view: 'rhythm' }), work),
-  );
-  const surface = host();
-  const anchor = surface.createEl('button');
-  const select = vi.fn();
-  const details = new StatisticsDetails();
-  mounts.push({
-    destroy: () => {
-      details.close();
-    },
-  });
-  details.open(
-    surface,
-    anchor,
-    {
-      ...view,
-      coverage: {
-        ...view.coverage,
-        scope: { ...view.coverage.scope, archive: 2 },
-        source: {
-          ...view.coverage.source,
-          sourceIssues: [{ path: 'offline.md', reason: 'read-failed' }],
-        },
-      },
-      sections: [
-        {
-          ...required(view.sections[0]),
-          metrics: [
-            { id: 'empty', role: 'coverage', label: 'Missing creation', value: 0 },
-            {
-              id: 'missing',
-              role: 'coverage',
-              label: 'Undated in scope',
-              value: 3,
-              selectionId: 'missing',
-            },
-          ],
-        },
-      ],
-    },
-    select,
-  );
-  const dialog = required(surface.querySelector('[role="dialog"]'));
-  expect(dialog.textContent).toContain('Definition:');
-  expect(dialog.textContent).toContain('Archived: 2');
-  expect(dialog.textContent).toContain('offline.md: read-failed');
-  expect(dialog.textContent).not.toContain('Missing creation');
-  expect(dialog.textContent).not.toContain('Node or ancestor');
-  expect(dialog.textContent).not.toContain('0 broken entries');
-  required(dialog.querySelector('button')).click();
-  expect(select).toHaveBeenCalledWith('missing');
-  expect(dialog.isConnected).toBe(false);
-});
 
 it('keeps prose readable in the engine wrapping label column and short units in the value column', () => {
   const element = host();
@@ -1629,64 +1572,9 @@ it('keeps prose readable in the engine wrapping label column and short units in 
   expect(rows[0]?.textContent).toBe('Tasks1 task');
   const prose = required(rows[1]);
   expect(prose.children[1]?.textContent).toBe(
-    'Reading: A long contextual reading that stays fully readable.',
+    'Note: A long contextual reading that stays fully readable.',
   );
   expect(prose.children[2]?.textContent).toBe('');
-});
-
-it('separates adjacent selectable Details coverage metrics into accessible rows with exact selections', async () => {
-  const dataset = required(await prepareStatisticsDataset(source([task('A')]), [], work));
-  const original = required(
-    await new StatisticsSession(dataset).view(request({ view: 'rhythm' }), work),
-  );
-  const labels = ['Creation date unavailable or future', 'Completion date unavailable or future'];
-  const ids = ['created-unavailable', 'completed-unavailable'];
-  const view = {
-    ...original,
-    sections: [
-      {
-        ...required(original.sections[0]),
-        metrics: labels.map((label, index) => ({
-          id: required(ids[index]),
-          role: 'coverage' as const,
-          label,
-          value: 1,
-          selectionId: required(ids[index]),
-        })),
-      },
-    ],
-  };
-  const surface = host();
-  const anchor = surface.createEl('button');
-  const select = vi.fn();
-  const details = new StatisticsDetails();
-  mounts.push({
-    destroy: () => {
-      details.close();
-    },
-  });
-  for (let index = 0; index < labels.length; index++) {
-    details.open(surface, anchor, view, select);
-    expect(surface.querySelectorAll('[role="listitem"]')).toHaveLength(2);
-    const list = required(surface.querySelector('[role="list"]'));
-    expect(list.getAttribute('aria-label')).toBe(`${required(view.sections[0]).title} coverage`);
-    const rows = Array.from(list.querySelectorAll('[role="listitem"]'));
-    expect(rows).toHaveLength(2);
-    rows.forEach((row, rowIndex) => {
-      expect(row.parentElement).toBe(list);
-      expect(row.textContent).toBe(`${required(labels[rowIndex])}: 1`);
-      const button = required(row.querySelector('button'));
-      expect(button.type).toBe('button');
-      expect(button.textContent).toBe(`${required(labels[rowIndex])}: 1`);
-    });
-    const button = required(required(rows[index]).querySelector('button'));
-    button.focus();
-    expect(surface.ownerDocument.activeElement).toBe(button);
-    button.click();
-    expect(select).toHaveBeenLastCalledWith(required(ids[index]));
-    expect(surface.querySelector('[role="dialog"]')).toBeNull();
-  }
-  expect(select.mock.calls).toEqual([['created-unavailable'], ['completed-unavailable']]);
 });
 
 it.each([1360, 320])(
@@ -1721,8 +1609,8 @@ it.each([1360, 320])(
     const el = host(document, width);
     mount(el, chart);
     const ticks = [...el.querySelectorAll('svg text')].map((node) => node.textContent);
-    expect(ticks).toContain('2026-10-05–10-09·2*');
-    expect(ticks).toContain('2026-09-28–10-04·1');
+    expect(ticks).toContain('2026-10-05-10-09 · 2*');
+    expect(ticks).toContain('2026-09-28-10-04 · 1');
     expect(ticks).toContain('Creation dates · task count');
     expect(ticks).toContain('1 day');
     const clip = required(el.querySelector('clipPath rect'));
@@ -1732,7 +1620,7 @@ it.each([1360, 320])(
       ticks.filter((label) => label.startsWith('2026-')).some((label) => label.includes('…')),
     ).toBe(false);
     expect(chart.marks.find((mark) => mark.y === '2026-10-05')?.observation?.title).toContain(
-      '2026-10-05 – 2026-10-09',
+      '2026-10-05 - 2026-10-09',
     );
     expect(view.sections[0]?.reading).toContain('* partial week');
   },
@@ -1742,7 +1630,7 @@ it.each([1360, 320])(
   'preserves cross-year cohort range and maximum integer population at %ipx',
   (width) => {
     const el = host(document, width);
-    const label = '2025-12-29–01-04·9010T';
+    const label = '2025-12-29-01-04 · 9010T';
     mount(
       el,
       model({
@@ -2036,7 +1924,6 @@ it('restores the ranking position through atomic group focus and source shrink',
       {
         id: 'allocation',
         title: 'Allocation',
-        context: '',
         metrics: [],
         legend: [],
         charts: [ranking],
@@ -2494,19 +2381,19 @@ it.each([430, 1360])(
       [
         'completion',
         'completion-age',
-        ['Same day', '1', '2–3', '4–7', '8–14', '15–30', '31–60', '61+'],
+        ['Same day', '1', '2-3', '4-7', '8-14', '15-30', '31-60', '61+'],
       ],
       [
         'deadlines',
         'due-delta',
         [
           '7+ days early',
-          '1–6 days early',
+          '1-6 days early',
           'On due date',
           '1 day late',
-          '2–3 days late',
-          '4–7 days late',
-          '8–30 days late',
+          '2-3 days late',
+          '4-7 days late',
+          '8-30 days late',
           '31+ days late',
         ],
       ],
@@ -2516,11 +2403,11 @@ it.each([430, 1360])(
         [
           '0',
           'Up to 5',
-          'Over 5–15',
-          'Over 15–30',
-          'Over 30–60',
-          'Over 60–120',
-          'Over 120–240',
+          'Over 5-15',
+          'Over 15-30',
+          'Over 30-60',
+          'Over 60-120',
+          'Over 120-240',
           'Over 240',
         ],
       ],
@@ -2529,7 +2416,7 @@ it.each([430, 1360])(
       [
         'aging',
         'age-project:unassigned',
-        ['0–7', '8–14', '15–30', '31–60', '61+', 'Age unavailable'],
+        ['0-7', '8-14', '15-30', '31-60', '61+', 'Age unavailable'],
       ],
       ['dependencies', 'dependency-rank', ['Co-prerequisite X']],
     ] as const) {
@@ -2577,7 +2464,7 @@ it('keeps exact distinct five-digit semantic populations in a real tooltip', () 
           observation: {
             title: 'Creation cohort',
             values: [
-              { label: 'Cohort', value: 10499, unit: 'tasks' },
+              { label: 'Tasks created that week', value: 10499, unit: 'tasks' },
               { label: 'Completed', value: 10001, unit: 'tasks' },
               { label: 'Sessions', value: 1001, unit: 'sessions' },
               { label: 'Small', value: 1, unit: 'tasks' },
@@ -2637,7 +2524,6 @@ it('places a density intensity key with its chart before the weekly overview and
       {
         id: 'timeline',
         title: 'Timeline',
-        context: '',
         metrics: [],
         charts: [density, overview],
         legend: [],

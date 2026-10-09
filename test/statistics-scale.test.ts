@@ -300,7 +300,7 @@ describe.each([
         0,
         0,
       ]);
-      // Twenty-minute entries belong in the >15–30 interval along with thirty-minute entries.
+      // Twenty-minute entries belong in the >15-30 interval along with thirty-minute entries.
     });
     it('patterns retains exact totals and physical evidence', async () => {
       views.set('patterns', await get('patterns'));

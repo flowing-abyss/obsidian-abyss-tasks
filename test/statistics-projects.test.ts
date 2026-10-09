@@ -158,13 +158,12 @@ it('keeps dependency scope and current status explicit with exact affected-task 
   expect(missing.map((r) => r.title)).toEqual(['B']);
   expect(required(missing[0]).context).toContain('missing-1, missing-2, archived');
   expect(view.evidence('dependency:ambiguous', 0, 50).rows[0]?.context).toContain('dup');
-  expect(view.sections[0]?.context).toContain('open/in-progress');
   const rank = required(view.sections[0]?.charts[0]);
   expect(
     statisticsMarkDescription(required(rank.marks.find((m) => m.label === 'A')), rank),
-  ).toContain('Direct waiting: 1 task');
+  ).toContain('Waiting directly: 1 task');
   expect(rank.marks.find((m) => m.label === 'A')?.observation).toMatchObject({
-    values: [{ label: 'Direct waiting', value: 1, unit: 'tasks' }],
+    values: [{ label: 'Waiting directly', value: 1, unit: 'tasks' }],
   });
   expect(required(rank.marks.find((m) => m.label === 'A')).observation?.note).toContain(
     'Inspect dependencies',
@@ -679,8 +678,8 @@ it.each(['90d', '6m'] as const)(
       unit: 'tasks',
     });
     expect(last.observation?.values).toContainEqual({
-      label: 'Period prefix',
-      value: period === '90d' ? '2026-07-07 – 2026-10-04' : '2026-04-05 – 2026-10-04',
+      label: 'Dates counted',
+      value: period === '90d' ? '2026-07-07 - 2026-10-04' : '2026-04-05 - 2026-10-04',
     });
     expect(view.evidence(required(last.selectionId), 0, 50).rows.map((r) => r.title)).toEqual([
       'early',
@@ -716,7 +715,7 @@ it('keeps Movement page scales, focus scope, positions and undated project cover
   const second = required(await session.view(request({ view: 'movement', page: 1 }), work));
   expect(required(required(first.sections[1]).charts[0]).x).toMatchObject({ domain: [0, 20] });
   expect(required(required(second.sections[1]).charts[0]).x).toMatchObject({ domain: [0, 20] });
-  expect(required(second.sections[0]).reading).toContain('Projects 13–14 of 14');
+  expect(required(second.sections[0]).reading).toContain('Projects 13 to 14 of 14');
   const undated = required(
     required(second.sections[0]).charts.find((c) => c.facet?.key === 'project:P13.md'),
   );
@@ -778,7 +777,7 @@ it('keeps Movement page scales, focus scope, positions and undated project cover
     ),
   );
   expect(required(stale.sections[0]).charts).toHaveLength(1);
-  expect(required(stale.sections[0]).reading).toContain('Projects 1–1 of 1');
+  expect(required(stale.sections[0]).reading).toContain('Projects 1 to 1 of 1');
 });
 it('separates missing creation and completion before creation with exact origin evidence', async () => {
   const ds = required(
@@ -806,7 +805,7 @@ it('keeps unknown-only Aging explicit and qualifies project captions across boun
   const ds = required(await prepareStatisticsDataset(source([task('unknown')]), [], work));
   const unknown = required(await new StatisticsSession(ds).view(request({ view: 'aging' }), work));
   expect(required(unknown.sections[0]).emptyMessage).toContain('age unavailable');
-  expect(required(unknown.sections[0]).reading).toContain('own recorded time');
+  expect(required(unknown.sections[0]).reading).toContain('including those with no recorded time');
   const projects = Array.from({ length: 13 }, (_, i) => ({
     path: `P${String(i).padStart(2, '0')}.md`,
     name: i === 0 || i === 12 ? 'Same' : `P${i}`,

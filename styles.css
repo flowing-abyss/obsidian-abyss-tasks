@@ -10081,8 +10081,17 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   border-block-start: 1px solid var(--background-modifier-border);
 }
 
+.abyss-statistics-section-heading {
+  margin-block-end: var(--size-4-3);
+}
+
+.abyss-statistics-section-heading .abyss-statistics-context {
+  margin-block-start: var(--size-4-2);
+  line-height: var(--line-height-normal);
+}
+
 .abyss-statistics-section-heading h3 {
-  margin: 0 0 var(--size-4-3);
+  margin: 0;
   font-size: var(--font-ui-small);
   font-weight: var(--font-semibold);
   font-family: var(--font-interface, var(--font-interface-theme));
@@ -10106,8 +10115,7 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 button.abyss-statistics-metric,
 .abyss-statistics-legend button,
 .abyss-statistics-chart-caption button,
-button.abyss-statistics-evidence-action,
-.abyss-statistics-details button {
+button.abyss-statistics-evidence-action {
   height: auto;
   padding: var(--size-2-1);
   border: none;
@@ -10124,8 +10132,7 @@ button.abyss-statistics-evidence-action,
 button.abyss-statistics-metric:hover,
 .abyss-statistics-legend button:hover,
 .abyss-statistics-chart-caption button:hover,
-button.abyss-statistics-evidence-action:hover,
-.abyss-statistics-details button:hover {
+button.abyss-statistics-evidence-action:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
@@ -10225,6 +10232,7 @@ button.abyss-statistics-evidence-action:hover,
 }
 
 .abyss-statistics-details {
+  z-index: var(--layer-popover, 30);
   inline-size: min(32rem, var(--abyss-pop-width, calc(100% - 16px)));
   max-block-size: var(--abyss-pop-height);
   overflow: auto;
@@ -10237,13 +10245,7 @@ button.abyss-statistics-evidence-action:hover,
   font-size: var(--font-ui-small);
 }
 
-.abyss-statistics-coverage {
-  display: grid;
-  gap: var(--size-4-1);
-}
-
-.abyss-statistics-details h3,
-.abyss-statistics-details h4 {
+.abyss-statistics-details h3 {
   font-family: var(--font-interface, var(--font-interface-theme));
   margin: 0 0 var(--size-4-2);
   font-size: var(--font-ui-small);
@@ -10251,7 +10253,33 @@ button.abyss-statistics-evidence-action:hover,
 }
 
 .abyss-statistics-details p {
-  margin-block: var(--size-4-2) var(--size-4-4);
+  margin-block: var(--size-4-3) 0;
+  line-height: var(--line-height-normal);
+}
+
+.abyss-statistics-scope-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-1);
+  padding: var(--size-4-2) var(--size-4-3);
+  border-block-end: 1px solid var(--background-modifier-border);
+}
+
+.abyss-statistics-scope-tabs button {
+  flex: 1;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.abyss-statistics-scope-tabs button[aria-pressed='true'] {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.abyss-statistics-actions select {
+  max-inline-size: 100%;
 }
 
 .abyss-statistics-navigation h2 {

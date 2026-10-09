@@ -225,8 +225,6 @@ async function concentration(
     reading:
       'All tasks and subtasks in scope, ordered by recorded time, including those with none in this period.',
     ...(model.total === 0 ? { emptyMessage: 'No recorded time in this period' } : {}),
-    context:
-      'Includes eligible zero-time tasks. Recorded time does not establish whether a task was started.',
     metrics: [metric('task-denominator', 'Tasks and subtasks', ranks.length)],
     charts: [
       {
@@ -323,8 +321,6 @@ export async function allocation(
           ctx.request.group === 'tag'
             ? 'Tags overlap; time can appear under more than one tag.'
             : 'Each recording belongs to one group.',
-        context:
-          'Groups use current membership. Recorded intervals are clipped to this period and observation time.',
         ...(model.focused?.value === 0 ? { emptyMessage: 'No recorded time in this period' } : {}),
         metrics: [metric('group-count', 'Groups', model.groups.length)],
         charts: [chart],

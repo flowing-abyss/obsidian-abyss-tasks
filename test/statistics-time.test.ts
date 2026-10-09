@@ -477,7 +477,7 @@ it('names recorded minutes, elapsed exposure and fractional mean in pattern deta
   const unavailable = required(chart.marks.find((mark) => mark.x === 15 && mark.y === 'Thu'));
   expect(positive.detail).toContain('0.00025 recorded minutes / 1 elapsed exposure hours');
   expect(positive.detail).toContain('mean 0.00025 minutes per hour');
-  expect(unavailable.detail).toContain('No elapsed exposure');
+  expect(unavailable.detail).toContain('have not occurred');
 });
 
 it('gives repeated owner transitions distinct occurrence identities and event instants', async () => {
@@ -512,11 +512,11 @@ it('gives repeated owner transitions distinct occurrence identities and event in
     categories: [
       '0',
       'Up to 5',
-      'Over 5–15',
-      'Over 15–30',
-      'Over 30–60',
-      'Over 60–120',
-      'Over 120–240',
+      'Over 5-15',
+      'Over 15-30',
+      'Over 30-60',
+      'Over 60-120',
+      'Over 120-240',
       'Over 240',
     ],
   });
@@ -556,8 +556,8 @@ it('distinguishes excluded and future days from observed zero in a partial selec
   );
   const model = await v.get('timeline');
   const section = required(model.sections[0]);
-  expect(section.reading).toContain('Sep 7–13, 2026');
-  expect(section.reading).toContain('Included Sep 10–13');
+  expect(section.reading).toContain('Sep 7-13, 2026');
+  expect(section.reading).toContain('Included Sep 10-13');
   expect(value(model, 'day:0')).toBeNull();
   expect(value(model, 'day:2')).toBeNull();
   expect(value(model, 'day:3')).toBe(20);
@@ -587,7 +587,7 @@ it('keeps an empty selected week reachable with its range and separate period mi
   expect(value(model, 'recorded-minutes')).toBe(60);
   expect(value(model, 'week-minutes')).toBe(0);
   expect(model.sections[0]?.emptyMessage).toBe('No recorded time in this week.');
-  expect(model.sections[0]?.reading).toContain('Oct 5–11, 2026');
+  expect(model.sections[0]?.reading).toContain('Oct 5-11, 2026');
   expect(
     model.actions.some((action) => action.type === 'week' && action.label === 'Previous week'),
   ).toBe(true);
@@ -607,8 +607,8 @@ it('gives hourly aggregation a truthful title and original physical evidence', a
     mark = required(chart.marks[0]);
   expect(section.title).toBe('Recorded minutes by hour');
   expect(chart.accessibleLabel).toContain('hour');
-  expect(mark.observation?.title).toContain('10:00–11:00');
-  expect(mark.observation?.note).toContain('Hourly aggregate');
+  expect(mark.observation?.title).toContain('10:00-11:00');
+  expect(mark.observation?.note).toContain('Hourly total');
   expect(mark.observation?.values).toContainEqual({
     label: 'Recorded time',
     value: 3505,
@@ -645,7 +645,7 @@ it('describes selected clipped portions and running endpoints without completing
   const marks = required(model.sections[0]?.charts[0]).marks;
   const clipped = required(marks.find((mark) => mark.label === 'clipped'));
   expect(required(clipped.observation).note).toContain('Portion shown');
-  expect(required(clipped.observation).title).toContain('00:00–00:20');
+  expect(required(clipped.observation).title).toContain('00:00-00:20');
   expect(
     required(clipped.observation).values.find((v) => v.label === 'Full session start')?.value,
   ).toContain('2026-10-08T23:50');
@@ -678,7 +678,7 @@ it('makes only positive pattern cells actionable and reports zero-positive data'
     unit: 'minutes',
   });
   expect(zero.observation?.values).toContainEqual({
-    label: 'Elapsed exposure',
+    label: 'Calendar hours in this slot',
     value: 1,
     unit: 'hours',
   });
@@ -746,7 +746,7 @@ it('reports session bin counts once and preserves a real zero-duration sample', 
     mark = required(chart.marks.find((m) => m.y === 2));
   expect(chart.y.label).toBe('Sessions');
   expect(mark.observation).toEqual({
-    title: 'Over 5–15 min',
+    title: 'Over 5-15 min',
     values: [{ label: 'Sessions', value: 2, unit: 'sessions' }],
   });
   const zero = await (
@@ -770,7 +770,7 @@ it('keeps a small positive interval and its physical task identifiable in the ob
   ).get('timeline');
   const chart = required(model.sections[0]?.charts[0]),
     mark = required(chart.marks[0]);
-  expect(mark.observation?.title).toContain('09:00–09:00:00.015');
+  expect(mark.observation?.title).toContain('09:00-09:00:00.015');
   expect(mark.observation?.values).toContainEqual({ label: 'Task', value: 'tiny' });
   expect(mark.observation?.values).toContainEqual({
     label: 'Recorded time',
@@ -800,7 +800,7 @@ it('keeps the observation cutoff separate from earlier portions of a running ses
   ).get('timeline');
   const fragments = required(model.sections[0]?.charts[0]).marks;
   expect(fragments).toHaveLength(2);
-  expect(fragments[0]?.observation?.title).toContain('23:50–24:00');
+  expect(fragments[0]?.observation?.title).toContain('23:50-24:00');
   for (const mark of fragments) {
     expect(mark.observation?.note).toContain('Running through 2026-10-09T10:30');
     expect(mark.observation?.values.some((value) => value.label === 'Full session end')).toBe(
@@ -898,10 +898,10 @@ it('keeps the selected-week reading compact while retaining precise physical obs
     )
   ).get('timeline');
   expect(model.sections[0]?.reading).toBe(
-    'Oct 5–11, 2026 · Included Oct 9 · Through 17:30 UTC+7 · overlapping entries add',
+    'Oct 5-11, 2026 · Included Oct 9 · Through 17:30 UTC+7 · overlapping entries add',
   );
   const mark = required(model.sections[0]?.charts[0]?.marks[0]);
-  expect(mark.observation?.title).toContain('16:00–16:00:00.015');
+  expect(mark.observation?.title).toContain('16:00-16:00:00.015');
   expect(mark.clock?.endMs).toBe(Date.parse('2026-10-09T09:00:00.015Z'));
   expect(model.evidence(required(mark.selectionId), 0, 1).rows[0]?.entryTiming?.endMs).toBe(
     Date.parse('2026-10-09T09:00:00.015Z'),
@@ -953,7 +953,7 @@ it('ranks all 17 Allocation groups without paging, including zero totals and col
   });
   expect(
     required(focused.sections[0]).metrics.find((metric) => metric.id === 'recorded-minutes'),
-  ).toMatchObject({ value: 392, label: 'All recorded time in scope' });
+  ).toMatchObject({ value: 392, label: 'Recorded time in this period' });
   expect(
     required(focused.sections.find((section) => section.id === 'concentration')).reading,
   ).toContain('All tasks and subtasks in scope');

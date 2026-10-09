@@ -51,12 +51,12 @@ class DatasetBuilder {
   private dateIssues = 0;
   private live = 0;
   private archive = 0;
-  private readonly projects = new Map<string, string>();
+  private readonly projects = new Map<string, StatisticsProject>();
   constructor(private readonly budget: WorkBudget) {}
   async prepareProjects(projects: readonly StatisticsProject[]): Promise<StatisticsProject[]> {
     const result: StatisticsProject[] = [];
     for (const p of projects) {
-      this.projects.set(p.path, p.name);
+      this.projects.set(p.path, p);
       result.push(Object.freeze({ ...p }));
       await this.budget.step();
     }
@@ -82,13 +82,19 @@ class DatasetBuilder {
     }
     return result;
   }
-  private membership(file: SourceFile): { projectKey: string; projectName: string } {
+  private membership(
+    file: SourceFile,
+  ): Pick<StatisticsTask, 'projectKey' | 'projectName' | 'projectStatus'> {
     if (file.kind === 'archive')
       return { projectKey: ARCHIVE_PROJECT, projectName: 'Unknown project · archive' };
-    const name = this.projects.get(file.path);
-    return name === undefined
+    const project = this.projects.get(file.path);
+    return project === undefined
       ? { projectKey: NO_PROJECT, projectName: 'No project' }
-      : { projectKey: projectKey(file.path), projectName: name };
+      : {
+          projectKey: projectKey(file.path),
+          projectName: project.name,
+          projectStatus: project.statusKey ?? 'none',
+        };
   }
   private record(
     item: PendingNode,
@@ -229,7 +235,12 @@ export async function prepareStatisticsDataset(
     throw error;
   }
 }
-export function inScope(task: StatisticsTask, scope: StatisticsScope): boolean {
+export function inScope(
+  task: StatisticsTask,
+  scope: StatisticsScope,
+  projectStatus?: string,
+): boolean {
+  if (projectStatus !== undefined && task.projectStatus !== projectStatus) return false;
   switch (scope.type) {
     case 'all':
       return true;
@@ -258,6 +269,7 @@ export async function scopedCoverage(
   dataset: StatisticsDataset,
   scope: StatisticsScope,
   budget: WorkBudget,
+  projectStatus?: string,
 ): Promise<StatisticsScopedCoverage> {
   let nodes = 0,
     entries = 0,
@@ -266,7 +278,7 @@ export async function scopedCoverage(
   const owners = new Set<number>(),
     kinds = { live: 0, archive: 0 };
   for (const task of dataset.tasks) {
-    if (inScope(task, scope)) {
+    if (inScope(task, scope, projectStatus)) {
       owners.add(task.index);
       nodes++;
       dateIssues += task.dateIssueCount;

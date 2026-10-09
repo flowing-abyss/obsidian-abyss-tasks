@@ -124,7 +124,7 @@ function suppliedContent(observation: StatisticsObservation): MarkContent {
     label,
     value: observationRowValue(value, unit, range),
   }));
-  if (note !== undefined && note !== '') rows.push({ label: 'Reading', value: note });
+  if (note !== undefined && note !== '') rows.push({ label: 'Note', value: note });
   return { title, rows };
 }
 function barContent(mark: StatisticsMark, model: StatisticsChartModel): MarkContent {
@@ -234,11 +234,11 @@ function supplementalRows(mark: StatisticsMark): ContentRow[] {
     rows.push({ label: 'Overdue', value: observationValue(mark.overdue, 'tasks') });
   const ranges = mark.clockRanges ?? [];
   for (const range of ranges)
-    rows.push({ label: 'Clock range', value: `${range.startLabel} – ${range.endLabel}` });
+    rows.push({ label: 'Clock range', value: `${range.startLabel} - ${range.endLabel}` });
   if (mark.clockRanges === undefined && mark.clock !== undefined)
-    rows.push({ label: 'Clock range', value: `${mark.clock.startLabel} – ${mark.clock.endLabel}` });
+    rows.push({ label: 'Clock range', value: `${mark.clock.startLabel} - ${mark.clock.endLabel}` });
   if (mark.detail !== undefined && mark.detail !== '')
-    rows.push({ label: 'Reading', value: mark.detail });
+    rows.push({ label: 'Note', value: mark.detail });
   return rows;
 }
 export function statisticsMarkContent(

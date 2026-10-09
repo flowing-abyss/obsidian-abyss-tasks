@@ -67,11 +67,11 @@ async function sessionChart(
     labels = [
       '0',
       'Up to 5',
-      'Over 5–15',
-      'Over 15–30',
-      'Over 30–60',
-      'Over 60–120',
-      'Over 120–240',
+      'Over 5-15',
+      'Over 15-30',
+      'Over 30-60',
+      'Over 60-120',
+      'Over 120-240',
       'Over 240',
     ];
   for (const item of entries) {
@@ -118,10 +118,8 @@ async function changesSection(ctx: StatisticsContext): Promise<StatisticsSection
   });
   return {
     id: 'changes',
-    title: 'Recorded task changes',
-    reading: 'Between consecutive sole recorded tasks · up to 5 min apart',
-    context:
-      'Consecutive sole owners within five minutes. Overlaps and hidden owners break adjacency; this is not a cognitive-switch count.',
+    title: 'Changes between recorded tasks',
+    reading: 'A different task starts recording within 5 minutes, with no overlap.',
     metrics: [
       metric('recorded-changes', 'Recorded changes', transitions.length, {
         selectionId: 'recorded-changes',
@@ -147,12 +145,10 @@ async function sessions(ctx: StatisticsContext): Promise<StatisticsSection[]> {
   return [
     {
       id: 'sessions',
-      title: 'Closed-session lengths',
+      title: 'Session lengths',
       reading: 'Started in this period · full elapsed duration',
       emptyMessage:
         population.entries.length === 0 ? 'No closed sessions started in this period.' : undefined,
-      context:
-        'Starts within this period and ends by as-of; includes valid zero-length sessions. Running and broken recordings are excluded.',
       metrics: [
         metric('session-count', 'Closed sessions', population.entries.length, {
           selectionId: 'sessions',
@@ -182,7 +178,7 @@ async function sessions(ctx: StatisticsContext): Promise<StatisticsSection[]> {
   ];
 }
 function recordedTimeLabel(view: StatisticsViewModel['view']): string {
-  if (view === 'allocation') return 'All recorded time in scope';
+  if (view === 'allocation') return 'Recorded time in this period';
   if (view === 'timeline') return 'Period recorded time';
   if (view === 'sessions') return 'Recorded in period';
   return 'Recorded time';

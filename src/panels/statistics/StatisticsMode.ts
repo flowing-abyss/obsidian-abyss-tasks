@@ -1,6 +1,8 @@
 import { Notice, setIcon, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import type { ProjectStore } from '../../projects/ProjectStore';
+import { statusGroupKey } from '../../projects/projectTableModel';
+import { orderedGroups } from '../../projects/status';
 import type { CalendarSettings } from '../../settings/types';
 import {
   prepareStatisticsDataset,
@@ -19,7 +21,12 @@ import type { InteractionOwnershipPort } from '../../ui/interactionOwnership';
 import type { TrackedTimeContext } from '../../ui/timeTracking/formatTracked';
 import type { TrackingTicker } from '../../ui/timeTracking/TrackingTicker';
 import type { StatisticsChartRenderer } from './StatisticsChart';
-import { statisticsButton, StatisticsControls, type StatisticsChoices } from './StatisticsControls';
+import {
+  restoreStatisticsControlFocus,
+  statisticsButton,
+  StatisticsControls,
+  type StatisticsChoices,
+} from './StatisticsControls';
 import { StatisticsDetails } from './StatisticsDetails';
 import { StatisticsEvidence, type StatisticsEvidenceHost } from './StatisticsEvidence';
 import { statisticsMarkTitle } from './statisticsFormat';
@@ -206,19 +213,12 @@ export class StatisticsMode {
     this.controlsHost_abyssPrivate = headerControls.createDiv({ cls: 'abyss-statistics-controls' });
     const details = headerControls.createEl('button', {
       cls: 'abyss-view-state-btn',
-      attr: { type: 'button', 'aria-label': 'Analysis details' },
+      attr: { type: 'button', 'aria-label': 'About this view' },
     });
     setIcon(details, 'info');
     details.addEventListener('click', () => {
       if (this.model_abyssPrivate !== undefined && this.root_abyssPrivate !== undefined)
-        this.details_abyssPrivate.open(
-          this.root_abyssPrivate,
-          details,
-          this.model_abyssPrivate,
-          (id) => {
-            this.select_abyssPrivate(id);
-          },
-        );
+        this.details_abyssPrivate.open(this.root_abyssPrivate, details, this.model_abyssPrivate);
     });
     this.options_abyssPrivate.host.header?.(header, title, headerControls);
     this.renderControls_abyssPrivate();
@@ -341,7 +341,7 @@ export class StatisticsMode {
     const snapshot = source.readStatistics();
     await projects.whenSettled();
     if (work.isCancelled()) return;
-    const descriptors = projects.list().map(({ path, name }) => ({ path, name }));
+    const descriptors = this.projectDescriptors_abyssPrivate();
     const catalog = JSON.stringify(descriptors);
     if (!source.isStatisticsCurrent(snapshot)) {
       this.requested_abyssPrivate = true;
@@ -410,7 +410,10 @@ export class StatisticsMode {
       this.contextPending_abyssPrivate = false;
       this.observation_abyssPrivate = observation;
       this.install_abyssPrivate(model);
-    } else this.options_abyssPrivate.host.renderComplete();
+    } else {
+      this.renderActions_abyssPrivate(model);
+      this.options_abyssPrivate.host.renderComplete();
+    }
     this.forceClock_abyssPrivate = false;
     this.requested_abyssPrivate = false;
     this.armMinute_abyssPrivate();
@@ -446,9 +449,14 @@ export class StatisticsMode {
     }
   }
   private catalog_abyssPrivate(): string {
-    return JSON.stringify(
-      this.options_abyssPrivate.projects.list().map(({ path, name }) => ({ path, name })),
-    );
+    return JSON.stringify(this.projectDescriptors_abyssPrivate());
+  }
+  private projectDescriptors_abyssPrivate(): StatisticsProject[] {
+    return this.options_abyssPrivate.projects.list().map((project) => ({
+      path: project.path,
+      name: project.name,
+      statusKey: statusGroupKey(project),
+    }));
   }
   private install_abyssPrivate(model: StatisticsViewModel): void {
     const restoreScroll = this.model_abyssPrivate === undefined;
@@ -494,7 +502,10 @@ export class StatisticsMode {
     }
   }
   private renderActions_abyssPrivate(model: StatisticsViewModel): void {
-    this.actions_abyssPrivate?.empty();
+    const host = this.actions_abyssPrivate;
+    if (host === undefined) return;
+    const focused = host.querySelector(':focus');
+    host.empty();
     this.controls_abyssPrivate.prepareGroups(
       model.view === 'allocation'
         ? model.chartActions.flatMap(([, action]) =>
@@ -502,28 +513,31 @@ export class StatisticsMode {
           )
         : [],
     );
-    if (
-      model.view === 'allocation' &&
-      model.chartActions.length > 8 &&
-      this.actions_abyssPrivate !== undefined
-    ) {
-      const find = statisticsButton(this.actions_abyssPrivate, 'Find group', () => {
+    if (model.view === 'allocation' && model.chartActions.length > 8) {
+      const find = statisticsButton(host, 'Find group', () => {
         this.controls_abyssPrivate.openGroup();
       });
       find.setAttribute('aria-haspopup', 'dialog');
       find.setAttribute('aria-label', 'Find group');
     }
-    if (this.actions_abyssPrivate !== undefined) {
-      const previous = this.earlierPeriod_abyssPrivate;
-      if (previous !== undefined && this.choices_abyssPrivate.period === 'all')
-        statisticsButton(this.actions_abyssPrivate, 'Return to previous period', () => {
-          this.change_abyssPrivate({ period: previous, page: undefined, weekStart: undefined });
-        });
-      for (const action of model.actions)
-        statisticsButton(this.actions_abyssPrivate, action.label, () => {
-          this.action_abyssPrivate(action);
-        });
-    }
+    this.controls_abyssPrivate.renderProjectStatus(
+      host,
+      this.choices_abyssPrivate,
+      orderedGroups(
+        this.options_abyssPrivate.settings.projects.statuses,
+        this.options_abyssPrivate.projects.list(),
+      ),
+    );
+    const previous = this.earlierPeriod_abyssPrivate;
+    if (previous !== undefined && this.choices_abyssPrivate.period === 'all')
+      statisticsButton(host, 'Return to previous period', () => {
+        this.change_abyssPrivate({ period: previous, page: undefined, weekStart: undefined });
+      });
+    for (const action of model.actions)
+      statisticsButton(host, action.label, () => {
+        this.action_abyssPrivate(action);
+      });
+    restoreStatisticsControlFocus(host, focused);
   }
   private action_abyssPrivate(action: StatisticsAction): void {
     switch (action.type) {

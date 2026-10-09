@@ -60,6 +60,8 @@ export interface StatisticsRequest {
   readonly page?: number | undefined;
   readonly cohortsExpanded?: boolean | undefined;
   readonly focusKey?: string | undefined;
+  /** Current project status, applied only to the Projects views. */
+  readonly projectStatus?: string | undefined;
 }
 export interface StatisticsWork {
   readonly yieldControl: () => Promise<void>;
@@ -68,6 +70,7 @@ export interface StatisticsWork {
 export interface StatisticsProject {
   readonly path: string;
   readonly name: string;
+  readonly statusKey?: string | undefined;
 }
 export interface StatisticsTask {
   readonly index: number;
@@ -86,6 +89,7 @@ export interface StatisticsTask {
   readonly recurring: boolean;
   readonly projectKey: string;
   readonly projectName: string;
+  readonly projectStatus?: string | undefined;
   readonly created?: LocalDate | undefined;
   readonly completion?: LocalDate | undefined;
   readonly cancelled?: LocalDate | undefined;
@@ -136,7 +140,6 @@ export interface StatisticsMetric {
   readonly value: number | null;
   readonly unit?: 'tasks' | 'entries' | 'minutes' | 'days' | 'percent' | 'changes' | undefined;
   readonly selectionId?: string | undefined;
-  readonly context?: string | undefined;
 }
 interface StatisticsLegend {
   readonly muted?: boolean | undefined;
@@ -153,7 +156,6 @@ export interface StatisticsSection {
   readonly emptyMessage?: string | undefined;
   readonly id: string;
   readonly title: string;
-  readonly context: string;
   readonly metrics: readonly StatisticsMetric[];
   readonly charts: readonly StatisticsChartModel[];
   readonly legend: readonly StatisticsLegend[];

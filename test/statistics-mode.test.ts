@@ -22,7 +22,14 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
-async function harness(acceptedSource?: TaskStatisticsSource) {
+async function harness(
+  acceptedSource?: TaskStatisticsSource,
+  projects: ConstructorParameters<typeof StatisticsMode>[0]['projects'] = {
+    list: () => [],
+    onUpdate: () => () => {},
+    whenSettled: async () => {},
+  },
+) {
   const app = await createAppWithFiles({});
   let snapshot = source([task('A', { planning: { created: date('2026-10-01') } })]);
   const listeners = new Set<() => void>();
@@ -48,12 +55,13 @@ async function harness(acceptedSource?: TaskStatisticsSource) {
   const state = new AppState();
   state.set('mode', 'statistics');
   const releaseEvidence = vi.fn();
+  const settings = structuredClone(DEFAULT_SETTINGS);
   const mode = new StatisticsMode({
     state,
     app,
-    settings: structuredClone(DEFAULT_SETTINGS),
+    settings,
     source: acceptedSource ?? sourcePort,
-    projects: { list: () => [], onUpdate: () => () => {}, whenSettled: async () => {} },
+    projects,
     renderer,
     context: () => ({ nowMs, offsetAt: utc }),
     queries: {
@@ -87,6 +95,7 @@ async function harness(acceptedSource?: TaskStatisticsSource) {
     listeners,
     renderer,
     sourcePort,
+    settings,
     releaseEvidence,
     advance: (milliseconds = 60000) => {
       nowMs += milliseconds;
@@ -103,6 +112,98 @@ async function harness(acceptedSource?: TaskStatisticsSource) {
     },
   };
 }
+
+it('retains the project-status filter across project views and refreshes it when only a project status changes', async () => {
+  const subscribers = new Set<() => void>();
+  let statusId = 'status-3';
+  const h = await harness(undefined, {
+    list: () => [
+      {
+        path: 'A.md',
+        name: 'A project',
+        frontmatter: {},
+        tags: [],
+        statusId,
+        rawStatus: null,
+        stats: {
+          total: 1,
+          done: 0,
+          cancelled: 0,
+          inProgress: 0,
+          tracked: { closedMs: 0, openStartsMs: [] },
+        },
+      },
+    ],
+    onUpdate: (listener) => {
+      subscribers.add(listener);
+      return () => {
+        subscribers.delete(listener);
+      };
+    },
+    whenSettled: async () => {},
+  });
+  const views = vi.spyOn(StatisticsSession.prototype, 'view');
+  h.mode.render(h.host);
+  await h.wait();
+  expect(h.host.querySelector('[aria-label="Project status"]')).toBeNull();
+  h.reset();
+  h.mode.navigation.selectView('movement');
+  await h.wait();
+  const filter = expectDefined(
+    h.host.querySelector<HTMLSelectElement>('[aria-label="Project status"]'),
+  );
+  h.reset();
+  filter.value = 'id:status-3';
+  filter.dispatchEvent(new Event('change', { bubbles: true }));
+  await h.wait();
+  const latest = async () =>
+    expectDefined(await returned(views.mock.results[views.mock.results.length - 1]));
+  expect((await latest()).coverage.scope.nodes).toBe(1);
+  h.reset();
+  statusId = 'status-2';
+  for (const listener of subscribers) listener();
+  await h.wait();
+  expect((await latest()).coverage.scope.nodes).toBe(0);
+  h.reset();
+  h.mode.navigation.selectView('aging');
+  await h.wait();
+  expect(h.host.querySelector<HTMLSelectElement>('[aria-label="Project status"]')?.value).toBe(
+    'id:status-3',
+  );
+  expect((await latest()).coverage.scope.nodes).toBe(0);
+  h.reset();
+  h.mode.navigation.selectView('rhythm');
+  await h.wait();
+  expect(h.host.querySelector('[aria-label="Project status"]')).toBeNull();
+  expect((await latest()).coverage.scope.nodes).toBe(1);
+});
+
+it('refreshes configured project-status options even when the accepted model is unchanged', async () => {
+  const h = await harness();
+  const views = vi.spyOn(StatisticsSession.prototype, 'view');
+  h.mode.render(h.host);
+  await h.wait();
+  h.reset();
+  h.mode.navigation.selectView('movement');
+  await h.wait();
+  const before = await returned(views.mock.results[views.mock.results.length - 1]);
+  h.settings.projects.statuses = [
+    { id: 'new-status', name: 'waiting', displayName: 'Waiting for review', onLeftPanel: false },
+    { ...expectDefined(h.settings.projects.statuses[0]), displayName: 'New ideas' },
+  ];
+  h.reset();
+  h.mode.refresh();
+  await h.wait();
+  expect(await returned(views.mock.results[views.mock.results.length - 1])).toBe(before);
+  const options = expectDefined(
+    h.host.querySelector<HTMLSelectElement>('[aria-label="Project status"]'),
+  ).options;
+  expect([...options].map((option) => [option.value, option.textContent])).toEqual([
+    ['', 'All project statuses'],
+    ['id:new-status', 'Waiting for review'],
+    ['id:status-1', 'New ideas'],
+  ]);
+});
 it('exposes explicit source Retry for partial results, repeated failure and recovery without routine reads', async () => {
   const { TaskIndex } = await import('../src/tasks/infrastructure/TaskIndex');
   const { canonicalStatusCatalog } = await import('./helpers');
@@ -159,10 +260,8 @@ it('exposes explicit source Retry for partial results, repeated failure and reco
   expect(retry()).toBeUndefined();
   expect(h.host.textContent).not.toContain('partial coverage');
   expect(h.host.textContent).not.toContain('archive.md: read-failed');
-  expectDefined(h.host.querySelector<HTMLButtonElement>('[aria-label="Analysis details"]')).click();
-  expect(h.host.querySelector('[role="dialog"]')?.textContent).toContain(
-    '2 Tasks & subtasks in scope',
-  );
+  expectDefined(h.host.querySelector<HTMLButtonElement>('[aria-label="About this view"]')).click();
+  expect(h.host.querySelector('[role="dialog"]')?.textContent).toContain('About Rhythm');
 });
 it('captures scroll before teardown and restores after accepted content only on reentry', async () => {
   const h = await harness();
@@ -531,6 +630,51 @@ it('prepares a yielding cached scope inventory, bounds native suggestions and di
   }
   controls.destroy();
   element.remove();
+});
+
+it('separates project and tag suggestions while preserving the search and exact selection', async () => {
+  const { StatisticsControls } = await import('../src/panels/statistics/StatisticsControls');
+  const { prepareStatisticsDataset } = await import('../src/statistics');
+  const opened: Array<InstanceType<typeof SuggestModal<ScopeOption>>> = [];
+  vi.spyOn(SuggestModal.prototype, 'open').mockImplementation(function (
+    this: InstanceType<typeof SuggestModal<ScopeOption>>,
+  ) {
+    opened.push(this);
+  });
+  const controls = new StatisticsControls(await createAppWithFiles({}), vi.fn());
+  const host = document.body.createDiv();
+  await controls.prepare(
+    expectDefined(
+      await prepareStatisticsDataset(
+        source([task('Shared', { tags: ['shared'] })]),
+        [{ path: 'Shared.md', name: 'Shared' }],
+        work,
+      ),
+    ),
+    work,
+  );
+  controls.render(host, request());
+  controls.openScope({ type: 'all' });
+  const picker = expectDefined(opened[0]);
+  picker.inputEl.value = 'shared';
+  const category = (name: string) =>
+    expectDefined(
+      [...picker.modalEl.querySelectorAll('button')].find((button) => button.textContent === name),
+    );
+  category('Projects').click();
+  expect(picker.inputEl.value).toBe('shared');
+  expect((await picker.getSuggestions(picker.inputEl.value)).map(([scope]) => scope)).toEqual([
+    { type: 'project', path: 'Shared.md' },
+  ]);
+  category('Tags').click();
+  expect((await picker.getSuggestions(picker.inputEl.value)).map(([scope]) => scope)).toEqual([
+    { type: 'tag', tag: 'shared' },
+  ]);
+  expect(category('Tags').getAttribute('aria-pressed')).toBe('true');
+  category('All').click();
+  expect(await picker.getSuggestions('shared')).toHaveLength(2);
+  controls.destroy();
+  host.remove();
 });
 it('refreshes visible running archive time each minute and disposes its timers', async () => {
   vi.useFakeTimers();
@@ -905,11 +1049,11 @@ it('discards a superseded cold scope, period and view request and installs only 
     views.mock.results[views.mock.results.length - 1],
   );
   expect(expectDefined(current).coverage.scope.nodes).toBe(1);
-  expect(expectDefined(current).dateLabel).toBe('2026-10-01 – 2026-10-04');
+  expect(expectDefined(current).dateLabel).toBe('2026-10-01 - 2026-10-04');
   expect(content.hidden).toBe(false);
   expect(previous.isConnected).toBe(false);
   expect(h.host.querySelector('.abyss-statistics-context')?.textContent).toBe(
-    '#latest · Oct 1, 2026 – Oct 4, 2026',
+    '#latest · Oct 1, 2026 - Oct 4, 2026',
   );
   expect(h.host.querySelector('[aria-label="Scope"]')?.textContent).toBe('#latest');
   expect(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]')?.value).toBe('month');
@@ -1144,7 +1288,7 @@ it('identifies a selected numeric heatmap hour using its semantic local range', 
   );
   mounted[2](expectDefined(mark.selectionId));
   const heading = expectDefined(h.host.querySelector('.abyss-statistics-evidence-header h3'));
-  expect(heading.textContent).toContain('07:00–08:00');
+  expect(heading.textContent).toContain('07:00-08:00');
   expect(heading.textContent).toContain(String(mark.y));
 });
 it.each([true, false])(
@@ -1204,19 +1348,17 @@ function mountAnalysisNavigation(
   return left;
 }
 
-it('owns one details popover with definitions and coverage and releases it on navigation and unmount', async () => {
+it('owns one help popover and releases it on navigation and unmount', async () => {
   const h = await harness();
   h.mode.render(h.host);
   await h.wait();
   const details = expectDefined(
-    h.host.querySelector<HTMLButtonElement>('[aria-label="Analysis details"]'),
+    h.host.querySelector<HTMLButtonElement>('[aria-label="About this view"]'),
   );
   details.focus();
   details.click();
   const dialog = expectDefined(h.host.querySelector<HTMLElement>('[role="dialog"]'));
-  expect(dialog.textContent).toContain('Rhythm details');
-  expect(dialog.textContent).toContain('Tasks & subtasks in scope');
-  expect(dialog.textContent).toContain('Recorded task dates');
+  expect(dialog.getAttribute('aria-label')).toBe('About Rhythm');
   expect(h.host.querySelector('details')).toBeNull();
   dialog.dispatchEvent(
     new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),

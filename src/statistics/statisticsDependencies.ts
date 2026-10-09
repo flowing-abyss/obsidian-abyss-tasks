@@ -174,7 +174,11 @@ async function waitingFor(
 async function waitingPopulation(ctx: StatisticsContext, graph: DependencyGraph): Promise<Waiting> {
   const waiting: Waiting = { direct: new Map(), sole: new Map(), nodes: [] };
   for (const task of ctx.dataset.tasks) {
-    if (task.fileKind === 'live' && active(task) && inScope(task, ctx.request.scope))
+    if (
+      task.fileKind === 'live' &&
+      active(task) &&
+      inScope(task, ctx.request.scope, ctx.request.projectStatus)
+    )
       await waitingFor(task, ctx, graph, waiting);
     await ctx.budget.step();
   }
@@ -194,7 +198,8 @@ async function issueMetrics(
     const scoped: number[] = [];
     for (const index of indices) {
       const task = required(ctx.dataset.tasks[index]);
-      if (active(task) && inScope(task, ctx.request.scope)) scoped.push(index);
+      if (active(task) && inScope(task, ctx.request.scope, ctx.request.projectStatus))
+        scoped.push(index);
       await ctx.budget.step();
     }
     metrics.push({
@@ -211,8 +216,6 @@ async function issueMetrics(
           );
         }),
       ),
-      context:
-        'Live open/in-progress tasks in scope; categories may overlap. Cycles use resolved live relations across all statuses.',
     });
   }
   return metrics;
@@ -232,7 +235,7 @@ function rankChart(
       title: required(tasks[index]).title,
       values: [
         {
-          label: 'Direct waiting',
+          label: 'Waiting directly',
           value: required(waiting.direct.get(index)).length,
           unit: 'tasks',
         },
@@ -360,7 +363,9 @@ async function appendNodes(
 }
 function nodeSeries(ctx: StatisticsContext, node: number, focus: number): string {
   if (node === focus) return 'focus';
-  return inScope(required(ctx.dataset.tasks[node]), ctx.request.scope) ? 'scope' : 'external';
+  return inScope(required(ctx.dataset.tasks[node]), ctx.request.scope, ctx.request.projectStatus)
+    ? 'scope'
+    : 'external';
 }
 interface NeighborhoodEdges {
   edges: Array<{ from: string; to: string; selectionId: string }>;
@@ -456,8 +461,21 @@ function nodeObservation(
   return {
     title: task.title,
     values: [
-      { label: 'Scope', value: inScope(task, ctx.request.scope) ? 'In scope' : 'Outside scope' },
-      { label: 'Current status', value: task.status },
+      {
+        label: 'Scope',
+        value: inScope(task, ctx.request.scope, ctx.request.projectStatus)
+          ? 'In scope'
+          : 'Outside scope',
+      },
+      {
+        label: 'Task status',
+        value: {
+          open: 'Open',
+          'in-progress': 'In progress',
+          done: 'Completed',
+          cancelled: 'Cancelled',
+        }[task.status],
+      },
       { label: 'Unsatisfied prerequisites', value: prerequisites },
       { label: 'Omitted prerequisites or relations', value: omitted },
     ],
@@ -496,7 +514,7 @@ function neighborhoodDescription(
   return `Prerequisite → dependent. Showing ${shown} of ${total} tasks and ${links.edges.length} of ${links.total} relations${partial}. Direct, downstream and sole counts cover the complete live open/in-progress population in scope; outside-scope tasks provide context.${sharedPrerequisiteReading(marks, links)}`;
 }
 function focusLabel(ctx: StatisticsContext, focus: number): string {
-  return inScope(required(ctx.dataset.tasks[focus]), ctx.request.scope)
+  return inScope(required(ctx.dataset.tasks[focus]), ctx.request.scope, ctx.request.projectStatus)
     ? 'Selected prerequisite'
     : 'Selected prerequisite · Outside scope';
 }
@@ -594,19 +612,19 @@ async function focusedChain(
   const neighborhood = await includePrerequisites(ctx, graph, await downstream(ctx, graph, focus));
   const edges = await neighborhoodEdges(ctx, graph, neighborhood);
   const populations: Array<[string, string, readonly number[]]> = [
-    ['direct', 'Direct waiting', waiting.direct.get(focus) ?? []],
+    ['direct', 'Waiting directly', waiting.direct.get(focus) ?? []],
     ['downstream', 'Downstream waiting', neighborhood.downstream],
     ['sole', 'Waiting only on this', waiting.sole.get(focus) ?? []],
-    ['chain-omitted', 'Omitted neighborhood nodes', neighborhood.nodes.slice(80)],
+    ['chain-omitted', 'Tasks not shown', neighborhood.nodes.slice(80)],
   ];
   const metrics = populations.map(([id, label, indices]) =>
     metric(id, label, indices.length, ctx.evidence.tasks(id, indices)),
   );
   metrics.push(
-    metric('chain-edges', 'Neighborhood edges', edges.total, 'chain-edges'),
+    metric('chain-edges', 'Dependency links', edges.total, 'chain-edges'),
     metric(
       'chain-omitted-edges',
-      'Omitted neighborhood edges',
+      'Dependency links not shown',
       edges.omitted,
       'chain-omitted-edges',
     ),
@@ -685,8 +703,6 @@ export async function dependencySections(ctx: StatisticsContext): Promise<{
           ranked.length === 0
             ? 'No resolved waiting prerequisites among live open/in-progress tasks in scope.'
             : undefined,
-        context:
-          'Current live open/in-progress tasks in scope. Lookup uses live tasks across scopes; unresolved IDs may refer to absent or archived targets. Satisfied prerequisites are excluded from the waiting graph. Direct and downstream counts do not promise release: waiting only on this is a conservative sole-prerequisite count, excluding unresolved IDs and structural cycles. Choose a prerequisite to inspect its downstream chain.',
         metrics: metrics.map((value) =>
           value.value === 0 &&
           (value.id.startsWith('dependency:') || value.id.startsWith('chain-omitted'))
@@ -703,5 +719,6 @@ export async function dependencySections(ctx: StatisticsContext): Promise<{
 }
 
 function appendScoped(ctx: StatisticsContext, index: number, indices: number[]): void {
-  if (inScope(required(ctx.dataset.tasks[index]), ctx.request.scope)) indices.push(index);
+  if (inScope(required(ctx.dataset.tasks[index]), ctx.request.scope, ctx.request.projectStatus))
+    indices.push(index);
 }

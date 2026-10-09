@@ -1,5 +1,7 @@
 import { DropdownComponent, SuggestModal, type App } from 'obsidian';
+import type { StatusGroup } from '../../projects/status';
 import {
+  STATISTICS_VIEWS,
   type StatisticsAction,
   type StatisticsDataset,
   type StatisticsPeriod,
@@ -10,7 +12,15 @@ import {
 import { WorkBudget } from '../../statistics/statisticsWork';
 export type StatisticsChoices = Pick<
   StatisticsRequest,
-  'view' | 'period' | 'scope' | 'group' | 'page' | 'weekStart' | 'focusKey' | 'cohortsExpanded'
+  | 'view'
+  | 'period'
+  | 'scope'
+  | 'group'
+  | 'page'
+  | 'weekStart'
+  | 'focusKey'
+  | 'cohortsExpanded'
+  | 'projectStatus'
 >;
 const PERIODS: ReadonlyArray<readonly [StatisticsPeriod, string]> = [
   ['today', 'Today'],
@@ -33,7 +43,7 @@ export function statisticsButton(
   button.addEventListener('click', action);
   return button;
 }
-function restoreControlFocus(host: HTMLElement, focused: Element | null): void {
+export function restoreStatisticsControlFocus(host: HTMLElement, focused: Element | null): void {
   if (focused === null) return;
   for (const attribute of ['data-statistics-family', 'data-statistics-view', 'aria-label']) {
     const value = focused.getAttribute(attribute);
@@ -71,7 +81,31 @@ export class StatisticsControls {
             this.change_abyssPrivate({ period, page: undefined, weekStart: undefined });
         },
       });
-    restoreControlFocus(host, focused);
+    restoreStatisticsControlFocus(host, focused);
+  }
+  renderProjectStatus(
+    host: HTMLElement,
+    choices: StatisticsChoices,
+    groups: readonly StatusGroup[],
+  ): void {
+    if (STATISTICS_VIEWS.find((view) => view.id === choices.view)?.family !== 'Projects') return;
+    const options: Array<readonly [string, string]> = [
+      ['', 'All project statuses'],
+      ...groups.map(({ key, label }) => [key, label] as const),
+    ];
+    const selected = choices.projectStatus;
+    if (selected !== undefined && !groups.some(({ key }) => key === selected))
+      options.push([selected, 'Selected status (unavailable)']);
+    this.select_abyssPrivate(host, 'Project status', options, {
+      value: selected ?? '',
+      change: (value) => {
+        this.change_abyssPrivate({
+          projectStatus: value === '' ? undefined : value,
+          page: undefined,
+          focusKey: undefined,
+        });
+      },
+    });
   }
   private select_abyssPrivate(
     host: HTMLElement,
@@ -164,7 +198,7 @@ export class StatisticsControls {
         return 'Entire vault';
     }
   }
-  openScope(_scope: StatisticsScope): void {
+  openScope(scope: StatisticsScope): void {
     const previous = this.picker_abyssPrivate;
     this.picker_abyssPrivate = undefined;
     previous?.close();
@@ -179,14 +213,17 @@ export class StatisticsControls {
     const picker: ScopePicker = new ScopePicker(
       this.app_abyssPrivate,
       this.inventory_abyssPrivate,
-      (scope) => {
-        this.change_abyssPrivate({ scope, page: undefined, focusKey: undefined });
+      {
+        choose: (scope) => {
+          this.change_abyssPrivate({ scope, page: undefined, focusKey: undefined });
+        },
+        closed: () => {
+          if (this.picker_abyssPrivate !== picker) return;
+          this.picker_abyssPrivate = undefined;
+          restore();
+        },
       },
-      () => {
-        if (this.picker_abyssPrivate !== picker) return;
-        this.picker_abyssPrivate = undefined;
-        restore();
-      },
+      scopeCategory(scope),
     );
     this.picker_abyssPrivate = picker;
     picker.open();
@@ -226,26 +263,73 @@ export class StatisticsControls {
   }
 }
 type ScopeOption = readonly [StatisticsScope, string, string];
+type ScopeCategory = 'all' | 'project' | 'tag' | 'priority';
+function scopeCategory(scope: StatisticsScope): ScopeCategory {
+  if (scope.type === 'tag' || scope.type === 'priority') return scope.type;
+  if (scope.type === 'project' || scope.type === 'unassigned' || scope.type === 'archive')
+    return 'project';
+  return 'all';
+}
 /** Native searchable picker bounds suggestion DOM while every exact path/tag stays searchable. */
 class ScopePicker extends SuggestModal<ScopeOption> {
   constructor(
     app: App,
     private inventory_abyssPrivate: readonly ScopeOption[],
-    private readonly choose_abyssPrivate: (scope: StatisticsScope) => void,
-    private readonly closed_abyssPrivate: () => void,
+    private readonly callbacks_abyssPrivate: {
+      choose(scope: StatisticsScope): void;
+      closed(): void;
+    },
+    private category_abyssPrivate: ScopeCategory = 'all',
   ) {
     super(app);
     this.limit = 50;
-    this.setPlaceholder('Search scope by project name, path, tag or priority');
+    const categories = this.modalEl.createDiv({
+      cls: 'abyss-statistics-scope-tabs',
+      attr: { role: 'group', 'aria-label': 'Scope type' },
+    });
+    this.modalEl.prepend(categories);
+    for (const [key, label] of [
+      ['all', 'All'],
+      ['project', 'Projects'],
+      ['tag', 'Tags'],
+      ['priority', 'Priority'],
+    ] as const) {
+      const button = statisticsButton(categories, label, () => {
+        this.category_abyssPrivate = key;
+        this.updateCategory_abyssPrivate(categories);
+        this.inputEl.trigger('input');
+        this.inputEl.focus({ preventScroll: true });
+      });
+      button.dataset['scopeCategory'] = key;
+    }
+    this.updateCategory_abyssPrivate(categories);
+  }
+  private updateCategory_abyssPrivate(categories: HTMLElement): void {
+    const category = this.category_abyssPrivate;
+    const placeholders = {
+      all: 'Search projects, tags or priority',
+      project: 'Search projects',
+      tag: 'Search tags',
+      priority: 'Search priority',
+    };
+    this.setPlaceholder(placeholders[category]);
+    for (const button of categories.querySelectorAll('button'))
+      button.setAttribute('aria-pressed', String(button.dataset['scopeCategory'] === category));
   }
   updateInventory(inventory: readonly ScopeOption[]): void {
     this.inventory_abyssPrivate = inventory;
     this.inputEl.trigger('input');
   }
+  private matchesCategory_abyssPrivate(scope: StatisticsScope): boolean {
+    return (
+      this.category_abyssPrivate === 'all' || scopeCategory(scope) === this.category_abyssPrivate
+    );
+  }
   override getSuggestions(query: string): ScopeOption[] {
     const normalized = query.trim().toLowerCase(),
       result: ScopeOption[] = [];
     for (const option of this.inventory_abyssPrivate) {
+      if (!this.matchesCategory_abyssPrivate(option[0])) continue;
       const exact = exactScopeText(option[0]);
       if (exact?.toLowerCase() === normalized) {
         result.unshift(option);
@@ -259,10 +343,10 @@ class ScopePicker extends SuggestModal<ScopeOption> {
   }
   override onClose(): void {
     super.onClose();
-    this.closed_abyssPrivate();
+    this.callbacks_abyssPrivate.closed();
   }
   override onChooseSuggestion(option: ScopeOption): void {
-    this.choose_abyssPrivate(option[0]);
+    this.callbacks_abyssPrivate.choose(option[0]);
   }
 }
 

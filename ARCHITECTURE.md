@@ -419,10 +419,17 @@ stay together; Allocation grouping has a separate purposeful row within the meas
 CompactPaneAccess continues measuring the actual fixed header.
 Control focus restoration prevents scrolling, and the Statistics scroller disables browser anchoring
 so staged section replacements preserve the user's viewport.
-Shared legends/intensity keys use the same semantic paint as the adapter; explanatory context and
-scope eligibility stay in one owned Analysis details anchored popover, using CenterPanel's existing
-interaction ownership. It closes on intent/model changes, unmount and document migration; source
-availability and Retry remain visible outside the popover. Exact period labels format civil dates
+Shared legends/intensity keys use the same semantic paint as the adapter. The owned Analysis help
+popover contains a short, view-specific explanation, with no source inventory or diagnostic metric
+list. It uses CenterPanel's existing interaction ownership and closes on repeated activation,
+intent/model changes, unmount and document migration. Source availability and Retry remain visible
+outside the popover. Scope suggestions keep native search and keyboard selection with explicit
+All, Projects, Tags and Priority category controls. Project views add a transient current-project-status
+filter beside their navigation actions, using the shared project status groups and identity keys.
+Project status changes invalidate the task/project observation even when task sources are unchanged.
+Movement, Aging and Dependencies apply this filter to their metrics and exact evidence; dependency
+lookup still retains prerequisites outside it as context. Flow and Time ignore the retained project
+status choice. No task metadata or persisted settings are added. Exact period labels format civil dates
 with UTC pinned for display, preserving the model's date boundaries. Each chart mount supplies a stable unique
 engine resource prefix so SVG clip paths cannot collide across facets or leaves. Accessible chart
 names live on HTML wrappers: nonempty SVG `aria-label` triggers Obsidian’s HTML-only tooltip path.
@@ -604,7 +611,8 @@ concise Results titles. Prose and clock ranges use the engine’s wrapping label
 numeric/unit values retain its value column, without inline-style overrides. Geometry-aware
 fallback reports segment magnitudes rather than offsets. Semantic task/session/count populations
 use exact separated integers; compact counts remain available for axes and summary pills.
-Optional section reading/empty messages and compact Details definitions/coverage remain model data.
+Section captions and empty messages remain model data; concise view help belongs to presentation.
+The session cache and scoped coverage include the effective project status filter.
 Statistics content, figure and Results scrollers reserve stable scrollbar space.
 
 [`THIRD_PARTY_NOTICES.txt`](THIRD_PARTY_NOTICES.txt) retains the pinned runtime license inventory,

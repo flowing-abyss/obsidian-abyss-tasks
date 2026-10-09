@@ -53,7 +53,7 @@ async function datePopulation(
     if (
       (ctx.request.view !== 'cohorts' || !task.recurring) &&
       dateApplies(task, field) &&
-      inScope(task, ctx.request.scope)
+      inScope(task, ctx.request.scope, ctx.request.projectStatus)
     ) {
       const valid =
         field === 'due'
@@ -83,10 +83,6 @@ export async function dateEligibility(
           role: 'coverage',
           selectionId: ctx.evidence.tasks(id, indices),
         }),
-        context:
-          field === 'due'
-            ? 'Saved due-date availability across this scope, including future planning; independent of period outcomes.'
-            : 'Date availability by as-of across this scope, independent of period events; terminal dates apply only to the matching current terminal status.',
       });
     }
   }
@@ -103,7 +99,7 @@ export function age(t: StatisticsTask, calendar: StatisticsCalendar): number | u
 export function overdue(t: StatisticsTask, calendar: StatisticsCalendar): boolean {
   return t.due !== undefined && dayOf(t.due) < calendar.todayDay;
 }
-const AGE_LABELS = ['0–7', '8–14', '15–30', '31–60', '61+', 'Unknown'];
+const AGE_LABELS = ['0-7', '8-14', '15-30', '31-60', '61+', 'Unknown'];
 export function ageBand(value: number | undefined): number {
   if (value === undefined) return 5;
   const index = [7, 14, 30, 60].findIndex((limit) => value <= limit);
@@ -147,15 +143,15 @@ async function histogram(
     id === 'due-delta'
       ? [
           '7+ days early',
-          '1–6 days early',
+          '1-6 days early',
           'On due date',
           '1 day late',
-          '2–3 days late',
-          '4–7 days late',
-          '8–30 days late',
+          '2-3 days late',
+          '4-7 days late',
+          '8-30 days late',
           '31+ days late',
         ]
-      : ['Same day', '1', '2–3', '4–7', '8–14', '15–30', '31–60', '61+'];
+      : ['Same day', '1', '2-3', '4-7', '8-14', '15-30', '31-60', '61+'];
   return {
     id,
     accessibleLabel:
@@ -234,7 +230,7 @@ function currentAge(
 async function rhythmPopulation(ctx: StatisticsContext): Promise<Map<string, number[]>> {
   const ids = new Map<string, number[]>();
   for (const task of ctx.dataset.tasks) {
-    if (inScope(task, ctx.request.scope)) rhythmTask(ctx, ids, task);
+    if (inScope(task, ctx.request.scope, ctx.request.projectStatus)) rhythmTask(ctx, ids, task);
     await ctx.budget.step();
   }
   return ids;
@@ -405,8 +401,8 @@ function newOutcomes(metrics: readonly StatisticsMetric[]): StatisticsSection {
   });
   return {
     id: 'new-outcomes',
-    title: `Of ${total} new tasks`,
-    context: 'Tasks created in the selected period, classified by their current state.',
+    title: `${total} tasks created in this period`,
+    reading: 'Shown by current task status.',
     metrics: [],
     legend: series,
     charts: [
@@ -451,7 +447,6 @@ async function rhythm(ctx: StatisticsContext): Promise<StatisticsSection[]> {
       title: 'Recorded task dates',
       reading:
         'Created above zero; completed and cancelled below. Retained dates and current statuses can change earlier totals.',
-      context: 'Current outcomes of new tasks are separate from recorded completions.',
       metrics: metrics
         .filter(
           (value) =>
@@ -471,7 +466,6 @@ async function rhythm(ctx: StatisticsContext): Promise<StatisticsSection[]> {
     {
       id: 'current',
       title: `Open now · ${dateOf(ctx.calendar.todayDay)}`,
-      context: 'Live tasks; overdue means the saved due date is before today.',
       reading: 'Current live open work, including In progress; independent of the selected period.',
       metrics: metrics.filter((value) => value.id === 'open-now' || value.id === 'in-progress-now'),
       charts: [ageChart(ctx, ids)],
@@ -540,11 +534,8 @@ async function completion(ctx: StatisticsContext): Promise<StatisticsSection[]> 
   return [
     {
       id: 'completion',
-      title: 'Time from creation to completion',
-      reading:
-        'One-off tasks and subtasks completed in this period · days from their saved creation dates.',
-      context:
-        'Measured completions require usable creation/completion dates. Undatable completions are scope-wide coverage, independent of this period.',
+      title: 'Days from creation to completion',
+      reading: 'Tasks and subtasks completed in this period. Recurring tasks are excluded.',
       emptyMessage:
         pairs.length === 0 ? 'No usable creation-to-completion pairs in this period.' : undefined,
       metrics: [
@@ -567,7 +558,7 @@ async function completion(ctx: StatisticsContext): Promise<StatisticsSection[]> 
         }),
         ...problemMetrics,
         metric('median', 'Median', percentile(values, 0.5), { unit: 'days' }),
-        metric('p90', '90% completed within', percentile(values, 0.9), { unit: 'days' }),
+        metric('p90', '90% within', percentile(values, 0.9), { unit: 'days' }),
       ],
       charts: [
         await histogram(ctx, pairs, {
@@ -593,7 +584,7 @@ function deadlineOutcome(t: StatisticsTask, c: StatisticsCalendar): string {
 const DEADLINE_LABELS: Record<string, string> = {
   'on-time': 'Completed on time',
   late: 'Completed late',
-  overdue: 'Due cohort · overdue',
+  overdue: 'Still open and overdue',
   upcoming: 'Due today',
   cancelled: 'Cancelled',
   unknown: 'Completion date unavailable',
@@ -628,7 +619,7 @@ async function deadlinePopulation(
 async function dueCoverage(ctx: StatisticsContext): Promise<StatisticsMetric[]> {
   const groups = new Map<string, number[]>();
   for (const task of ctx.dataset.tasks) {
-    if (inScope(task, ctx.request.scope)) {
+    if (inScope(task, ctx.request.scope, ctx.request.projectStatus)) {
       const reason = dateProblem(task, 'due', ctx.calendar);
       if (reason !== undefined) addIndex(groups, reason, task.index);
     }
@@ -662,8 +653,6 @@ async function deadlines(ctx: StatisticsContext): Promise<StatisticsSection[]> {
       id: 'deadlines',
       title: 'Tasks due in this period',
       reading: `Saved outcomes as of ${dateOf(ctx.calendar.todayDay)}; due-date edits change this comparison.`,
-      context:
-        'Retained tasks and subtasks due in this period. Archived open records are separate from live work.',
       emptyMessage: maximum === 0 ? 'No tasks due in this period.' : undefined,
       metrics: [
         ...keys.map((key) =>
@@ -682,7 +671,7 @@ async function deadlines(ctx: StatisticsContext): Promise<StatisticsSection[]> {
           kind: 'bars',
           layout: 'stacked',
           x: bands(
-            'Due cohort',
+            'Due date',
             ctx.calendar.buckets.map((bucket) => bucket.key),
           ),
           y: numeric('Tasks', maximum, 0, 'count'),
@@ -703,7 +692,6 @@ async function latenessSection(
     id: 'lateness',
     title: 'How early or late completed tasks finished',
     reading: 'Tasks and subtasks completed in this period with usable saved due dates · days.',
-    context: 'Completion-period population; due dates may be outside the selected period.',
     emptyMessage:
       deltas.length === 0
         ? 'No dated completions with usable due dates in this period.'
@@ -814,14 +802,14 @@ function cohortContext(
   task: StatisticsTask,
   horizon: number,
   calendar: StatisticsCalendar,
-): string {
+): string | undefined {
   const outcome = cohortOutcome(task, horizon, calendar);
   const labels = {
-    within: `Within ${horizon} days`,
-    later: `Later than ${horizon} days`,
-    open: 'Open',
-    cancelled: 'Cancelled',
-    unknown: 'Unknown timing',
+    within: `Completed within ${horizon} days`,
+    later: `Completed after ${horizon} days`,
+    open: undefined,
+    cancelled: undefined,
+    unknown: 'Completion age unavailable',
   };
   return labels[outcome];
 }
@@ -829,7 +817,11 @@ async function cohortGroups(ctx: StatisticsContext): Promise<Map<number, Cohort>
   const groups = new Map<number, Cohort>();
   for (const task of ctx.dataset.tasks) {
     const created = datedEvent(task, 'created', ctx.calendar);
-    if (!task.recurring && inScope(task, ctx.request.scope) && inPeriod(created, ctx.calendar)) {
+    if (
+      !task.recurring &&
+      inScope(task, ctx.request.scope, ctx.request.projectStatus) &&
+      inPeriod(created, ctx.calendar)
+    ) {
       const week = weekFloor(created, ctx.request.firstDayOfWeek),
         cohort = groups.get(week) ?? {
           indices: [],
@@ -855,7 +847,7 @@ function cohortText(mature: boolean, unknown: number, percent: number): string {
 }
 function cohortMaturity(mature: boolean, unknown: number): string {
   if (!mature) return 'Not yet observable';
-  return unknown > 0 ? 'Unknown completion timing' : 'Mature';
+  return unknown > 0 ? 'Unknown completion timing' : 'Enough time has passed';
 }
 function cohortMarks(ctx: StatisticsContext, week: number, cohort: Cohort): StatisticsMark[] {
   return HORIZONS.map((horizon, i) => {
@@ -879,17 +871,17 @@ function cohortMarks(ctx: StatisticsContext, week: number, cohort: Cohort): Stat
         },
       ),
       observation: {
-        title: `Created ${dateInterval(Math.max(week, ctx.calendar.fromDay), Math.min(week + 7, ctx.calendar.toDay))} · Completed within ${horizon} days`,
+        title: `Created ${dateInterval(Math.max(week, ctx.calendar.fromDay), Math.min(week + 7, ctx.calendar.toDay))} · Completion within ${horizon} days`,
         values: [
-          { label: 'Completed', value: within, unit: 'tasks' },
-          { label: 'Cohort', value: cohort.indices.length, unit: 'tasks' },
+          { label: `Completed within ${horizon} days`, value: within, unit: 'tasks' },
+          { label: 'Tasks created that week', value: cohort.indices.length, unit: 'tasks' },
           {
             label: 'Share',
             value: mature && cohort.unknown === 0 ? (within / cohort.indices.length) * 100 : null,
             unit: '%',
           },
           {
-            label: 'Maturity',
+            label: 'Timing',
             value: cohortMaturity(mature, cohort.unknown),
           },
         ],
@@ -907,9 +899,9 @@ const COHORT_COUNT_FORMAT = new Intl.NumberFormat('en', {
 function cohortRowLabel(ctx: StatisticsContext, week: number, size: number): string {
   const first = dateOf(Math.max(week, ctx.calendar.fromDay)),
     last = dateOf(Math.min(week + 7, ctx.calendar.toDay) - 1),
-    range = first === last ? first : `${first}–${last.slice(5)}`,
+    range = first === last ? first : `${first}-${last.slice(5)}`,
     partial = week < ctx.calendar.fromDay || week + 7 > ctx.calendar.toDay;
-  return `${range}·${COHORT_COUNT_FORMAT.format(size).replace('K', 'k')}${partial ? '*' : ''}`;
+  return `${range} · ${COHORT_COUNT_FORMAT.format(size).replace('K', 'k')}${partial ? '*' : ''}`;
 }
 async function cohorts(ctx: StatisticsContext): Promise<StatisticsViewModel> {
   const groups = await cohortGroups(ctx),
@@ -936,8 +928,6 @@ async function cohorts(ctx: StatisticsContext): Promise<StatisticsViewModel> {
         title: 'Completed within days of creation',
         reading:
           'One-off tasks and subtasks · cancellations included. Rows show dates · task count; * partial week.',
-        context:
-          'N includes cancellations. A horizon matures after the youngest creation completes its final horizon day.',
         metrics: [
           metric('cohorts', 'Cohorts', weeks.length),
           ...(await dateEligibility(ctx, ['created'])),
@@ -1010,7 +1000,7 @@ async function earlierActivity(ctx: StatisticsContext): Promise<StatisticsAction
   if (ctx.request.period === 'all') return [];
   let earlier = false;
   for (const task of ctx.dataset.tasks) {
-    if (inScope(task, ctx.request.scope)) {
+    if (inScope(task, ctx.request.scope, ctx.request.projectStatus)) {
       const day = latestActivity(task, ctx);
       if (day >= ctx.calendar.fromDay) return [];
       earlier ||= Number.isFinite(day);

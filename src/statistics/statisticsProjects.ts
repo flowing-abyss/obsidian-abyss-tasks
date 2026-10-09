@@ -38,7 +38,7 @@ function axisExtent(maximum: number): number {
   return maximum === 0 ? 1 : maximum;
 }
 function positions(page: number, count: number): string {
-  return `Projects ${count === 0 ? 0 : page * 12 + 1}–${Math.min(count, (page + 1) * 12)} of ${count}`;
+  return `Projects ${count === 0 ? 0 : page * 12 + 1} to ${Math.min(count, (page + 1) * 12)} of ${count}`;
 }
 function unavailableDescription(unavailable: MovementGroup['unavailable']): string | undefined {
   if (unavailable.size === 0) return undefined;
@@ -119,7 +119,7 @@ class Movement {
   }
   async prepare(): Promise<void> {
     for (const task of this.ctx.dataset.tasks) {
-      if (inScope(task, this.ctx.request.scope)) {
+      if (inScope(task, this.ctx.request.scope, this.ctx.request.projectStatus)) {
         const group = this.groups.get(task.projectKey) ?? {
           label: this.labels.get(task.projectKey) ?? task.projectName,
           unavailable: new Map<EventKind, number[]>(),
@@ -161,7 +161,7 @@ class Movement {
       const day = datedEvent(task, event, calendar);
       return (
         task.projectKey === key &&
-        inScope(task, request.scope) &&
+        inScope(task, request.scope, request.projectStatus) &&
         day !== undefined &&
         day >= calendar.fromDay &&
         day < to
@@ -192,7 +192,7 @@ class Movement {
           values: [
             { label: event[0]?.toUpperCase() + event.slice(1), value: total, unit: 'tasks' },
             {
-              label: 'Period prefix',
+              label: 'Dates counted',
               value: dateInterval(this.ctx.calendar.fromDay, bucket.toDay),
             },
           ],
@@ -289,9 +289,7 @@ async function movement(ctx: StatisticsContext): Promise<StatisticsViewModel> {
           focused === undefined
             ? 'Project movement'
             : `Project movement · ${required(model.groups.get(focused)).label}`,
-        reading: `Recorded task events by current project · tasks and subtasks · ${focused === undefined ? positions(page, keys.length) : 'Within selected scope'}. Zero precedes this period; points show bucket endpoints.`,
-        context:
-          'Cumulative retained events classified by current project. Zero origin precedes the period. Missing date series are unavailable; this does not reconstruct historical backlog.',
+        reading: `Tasks and subtasks added up over this period. ${focused === undefined ? positions(page, keys.length) : 'Selected project'}.`,
         metrics: [...(await dateEligibility(ctx, EVENTS)), ...coverage],
         charts,
         legend: EVENTS.map((key) => ({
@@ -375,8 +373,7 @@ function originSection({
 }): StatisticsSection {
   return {
     id: 'completion-origins',
-    title: 'Completions: new work or older work?',
-    context: 'Current project membership; same project page as Movement.',
+    title: 'New and older work completed',
     metrics: [],
     legend: originSeries,
     charts: [
@@ -412,7 +409,7 @@ interface AgeGroup {
   label: string;
   bands: number[][];
 }
-const AGE_LABELS = ['0–7', '8–14', '15–30', '31–60', '61+', 'Age unavailable'];
+const AGE_LABELS = ['0-7', '8-14', '15-30', '31-60', '61+', 'Age unavailable'];
 class Aging {
   readonly open: number[] = [];
   readonly unknown: number[] = [];
@@ -431,7 +428,11 @@ class Aging {
       await this.ctx.budget.step();
     }
     for (const task of this.ctx.dataset.tasks) {
-      if (task.fileKind === 'live' && active(task) && inScope(task, this.ctx.request.scope))
+      if (
+        task.fileKind === 'live' &&
+        active(task) &&
+        inScope(task, this.ctx.request.scope, this.ctx.request.projectStatus)
+      )
         this.addTask(task);
       await this.ctx.budget.step();
     }
@@ -539,7 +540,7 @@ class Aging {
       },
       series: [
         { key: 'overdue', label: 'Overdue', tone: 'overdue' },
-        { key: 'mixed', label: 'Mixed group', tone: 'cancelled' },
+        { key: 'mixed', label: 'Some overdue', tone: 'cancelled' },
         { key: 'not-overdue', label: 'Not overdue', tone: 'accent' },
       ],
       marks,
@@ -612,10 +613,8 @@ async function aging(ctx: StatisticsContext): Promise<StatisticsViewModel> {
       {
         id: 'aging',
         title: 'Current open task age and recorded time',
-        reading: `Live tasks and subtasks · each node’s own recorded time. ${chart.layout === 'density' ? 'Fill shows task count; outlines show overdue status.' : 'Point size shows task count; color shows overdue status.'}`,
+        reading: `Open tasks and subtasks, including those with no recorded time. ${chart.layout === 'density' ? 'Fill shows task count; outlines show overdue status.' : 'Point size shows task count; color shows overdue status.'}`,
         emptyMessage: model.emptyMessage(),
-        context:
-          'Live tasks; all-time node-own recorded time. Missing recorded time does not mean unstarted.',
         metrics: [
           metric(
             'open-now',
@@ -640,7 +639,6 @@ async function aging(ctx: StatisticsContext): Promise<StatisticsViewModel> {
         id: 'age-composition',
         title: 'Age composition by project',
         reading: positions(composition.page, composition.keys.length),
-        context: 'Current containing project; missing ages stay explicit.',
         metrics: [],
         charts: composition.charts,
         legend: [],

@@ -61,16 +61,16 @@ function calendarRange(first: number, last: number, includeYear: boolean): strin
   if (sameYear && a.getUTCMonth() === z.getUTCMonth()) {
     const month = a.toLocaleDateString('en', { month: 'short', timeZone: 'UTC' }),
       year = includeYear ? `, ${a.getUTCFullYear()}` : '';
-    return `${month} ${a.getUTCDate()}–${z.getUTCDate()}${year}`;
+    return `${month} ${a.getUTCDate()}-${z.getUTCDate()}${year}`;
   }
-  return `${format(a)}–${format(z)}`;
+  return `${format(a)}-${format(z)}`;
 }
 function clockRange(start: number, end: number, offset: number): string {
   const a = new Date(start + offset * 60000).toISOString(),
     z = new Date(end + offset * 60000).toISOString();
   const time = (iso: string): string =>
     iso.slice(17, 23) === '00.000' ? iso.slice(11, 16) : iso.slice(11, 23).replace(/\.000$/, '');
-  return `${a.slice(0, 10)} · ${time(a)}–${z.slice(0, 10) === a.slice(0, 10) ? time(z) : '24:00'} · UTC${offset >= 0 ? '+' : ''}${offset / 60}`;
+  return `${a.slice(0, 10)} · ${time(a)}-${z.slice(0, 10) === a.slice(0, 10) ? time(z) : '24:00'} · UTC${offset >= 0 ? '+' : ''}${offset / 60}`;
 }
 function clockMetadata(
   start: number,
@@ -377,9 +377,9 @@ class Timeline {
         return {
           key,
           observation: {
-            title: `${dateOf(g.window.day)} · ${String(x / 60).padStart(2, '0')}:00–${String(x / 60 + 1).padStart(2, '0')}:00`,
+            title: `${dateOf(g.window.day)} · ${String(x / 60).padStart(2, '0')}:00-${String(x / 60 + 1).padStart(2, '0')}:00`,
             values: [{ label: 'Recorded time', value: g.value, unit: 'minutes' }],
-            note: 'Hourly aggregate; includes separate overlapping recordings and elapsed offset windows',
+            note: 'Hourly total. Overlapping recordings add; the hour may contain gaps.',
           },
           x,
           x2: x + 60,
@@ -411,11 +411,11 @@ class Timeline {
         return {
           key: bucket.key,
           observation: {
-            title: `${dateOf(bucket.fromDay)}–${dateOf(bucket.toDay - 1)}`,
+            title: `${dateOf(bucket.fromDay)}-${dateOf(bucket.toDay - 1)}`,
             values: [{ label: 'Recorded time', value, unit: 'minutes' }],
             note:
               bucket.fromDay < this.ctx.calendar.fromDay || bucket.toDay > this.ctx.calendar.toDay
-                ? `Partial week · included ${dateOf(Math.max(bucket.fromDay, this.ctx.calendar.fromDay))}–${dateOf(Math.min(bucket.toDay, this.ctx.calendar.toDay) - 1)}`
+                ? `Partial week · included ${dateOf(Math.max(bucket.fromDay, this.ctx.calendar.fromDay))}-${dateOf(Math.min(bucket.toDay, this.ctx.calendar.toDay) - 1)}`
                 : undefined,
           },
           x: bucket.key,
@@ -503,7 +503,6 @@ class Timeline {
               : undefined,
         },
       ),
-      context: this.dayState(lane),
     }));
   }
   chartActions(): Array<readonly [string, StatisticsAction]> {
@@ -553,9 +552,6 @@ export async function timeline(
         emptyMessage: model.dayTotals.some((value) => value > 0)
           ? undefined
           : 'No recorded time in this week.',
-        context: model.hourly
-          ? 'Hourly sums of separate recordings; a filled bin does not claim continuous recording. Durations use actual elapsed time; repeated clock hours retain their real offset windows.'
-          : 'Local time of day; offset changes split intervals. Gaps stay empty and repeated clock hours retain explicit offsets. Durations use actual elapsed time.',
         metrics: [
           metric(
             'week-minutes',

@@ -44,7 +44,7 @@ export function dateOf(day: number): LocalDate {
 }
 /** Inclusive civil-date label for a half-open bucket or clipped creation week. */
 export function dateInterval(fromDay: number, toDay: number): string {
-  return toDay - fromDay === 1 ? dateOf(fromDay) : `${dateOf(fromDay)} – ${dateOf(toDay - 1)}`;
+  return toDay - fromDay === 1 ? dateOf(fromDay) : `${dateOf(fromDay)} - ${dateOf(toDay - 1)}`;
 }
 function localDay(ms: number, offsetAt: OffsetAt): number {
   return Math.floor((ms + offsetAt(ms) * 60000) / DAY);

@@ -223,9 +223,9 @@ export class StatisticsSections {
     const max = scale.domain[1];
     const labels = [
       '0',
-      `>0–<${statisticsNumber(max * 0.34)}`,
-      `${statisticsNumber(max * 0.34)}–<${statisticsNumber(max * 0.67)}`,
-      `${statisticsNumber(max * 0.67)}–${statisticsNumber(max)}`,
+      `>0-<${statisticsNumber(max * 0.34)}`,
+      `${statisticsNumber(max * 0.34)}-<${statisticsNumber(max * 0.67)}`,
+      `${statisticsNumber(max * 0.67)}-${statisticsNumber(max)}`,
     ];
     for (const [index, level] of (max > 0
       ? (['zero', 'low', 'medium', 'high'] as const)
