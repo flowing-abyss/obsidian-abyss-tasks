@@ -511,7 +511,8 @@ task sources. Group search uses a bounded native SuggestModal over current aggre
 
 Movement keeps at most twelve project facets per page. Local project focus and return preserve
 scope and page, while stale page/focus requests clamp to available groups. Both event and origin
-scales are computed across all scoped projects. Accumulated event marks use civil-day endpoint positions, name actual bucket
+scales are computed across all scoped projects. Completion-origin rows keep a compact 28-pixel
+pitch and top placement inside the fixed bounded plot slot across page/focus changes. Accumulated event marks use civil-day endpoint positions, name actual bucket
 endpoints and select exact period prefixes; the zero origin precedes the period. Creation-date
 unavailability and completion-before-creation have separate origin evidence. Duplicate project
 titles carry their paths in Movement and Aging. Aging retains every live open node and its own

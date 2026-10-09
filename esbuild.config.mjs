@@ -10,7 +10,8 @@ import process from 'process';
 // regression is a user-facing cost, not just a build metric. Bump this in
 // package.json if the plugin legitimately grows, but bump it deliberately.
 // Analysis Movement endpoints, project coverage/focus and Aging density received a measured
-// 4 KiB main increase (1845 KiB main / unchanged 181 KiB CSS); dependency scope is unchanged.
+// 5 KiB total main increase including compact origin-band geometry
+// (1846 KiB main / unchanged 181 KiB CSS); dependency scope is unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),
 ).release;

@@ -43,7 +43,10 @@ const CHART_MARGINS: Partial<Record<StatisticsChartModel['kind'], typeof TIMELIN
   timeline: TIMELINE_MARGIN,
 };
 
-function chartMargin(model: StatisticsChartModel): { margin?: typeof TIMELINE_MARGIN } {
+function chartMargin(model: StatisticsChartModel): { margin?: Partial<typeof TIMELINE_MARGIN> } {
+  // Unused rows stay below the real rows inside the 384px slot, preserving 28px pitch.
+  if (model.id === 'completion-origins' && model.y.type === 'band')
+    return { margin: { top: 12, bottom: 372 - model.y.categories.length * 28 } };
   const margin =
     model.rowViewport === true
       ? { top: 0, bottom: 0, left: 160, right: 64 }
@@ -91,6 +94,8 @@ function positionScale(
   const value = model[side];
   if (value.type === 'band') {
     const scale = scaleBand<string>().domain(value.categories);
+    if (model.id === 'completion-origins' && side === 'y')
+      return scale.paddingInner(0.18).paddingOuter(0.09);
     return model.rowViewport === true
       ? scale.paddingInner(0.25).paddingOuter(0.125)
       : scale.padding(bandPadding(model));

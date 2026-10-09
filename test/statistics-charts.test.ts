@@ -2184,27 +2184,66 @@ it('retains empty Movement headings through populated transitions and suspension
   expect(element.children).toHaveLength(0);
 });
 
-it('keeps completion-origin plot height stable on short project pages', () => {
-  const rows = Array.from({ length: 12 }, (_, i) => `P${i}`);
-  const origins = model({
-    id: 'completion-origins',
-    kind: 'bars',
-    layout: 'stacked',
-    x: { type: 'number', label: 'Completed tasks', domain: [0, 20] },
-    y: { type: 'band', label: 'Project', categories: rows },
-    marks: rows.map((row) => ({ key: row, x: 0, x2: 1, y: row, series: 'created' })),
-  });
-  const element = host(),
-    chart = mount(element, origins);
-  const fullHeight = required(chart.svg().getAttribute('viewBox')).split(' ')[3];
-  expect(Number(fullHeight)).toBeGreaterThan(0);
-  chart.handle.update({
-    ...origins,
-    y: { type: 'band', label: 'Project', categories: ['P12'] },
-    marks: [{ key: 'P12', x: 0, x2: 1, y: 'P12', series: 'created' }],
-  });
-  expect(required(chart.svg().getAttribute('viewBox')).split(' ')[3]).toBe(fullHeight);
-});
+it.each([640, 240])(
+  'keeps completion-origin rectangle pitch and placement through12→2→1→12 rows at %spx',
+  (width) => {
+    const rows = Array.from({ length: 12 }, (_, i) => `P${i}`);
+    const origins = model({
+      id: 'completion-origins',
+      kind: 'bars',
+      layout: 'stacked',
+      x: { type: 'number', label: 'Completed tasks', domain: [0, 20] },
+      y: { type: 'band', label: 'Project', categories: rows },
+      marks: rows.map((row) => ({
+        key: row,
+        x: 0,
+        x2: 1,
+        y: row,
+        series: 'created',
+        selectionId: row,
+      })),
+    });
+    const element = host(document, width),
+      chart = mount(element, origins);
+    const geometry = () =>
+      marks(element)
+        .filter((mark) => n(mark, 'width') > 0)
+        .map((mark) => ({ y: n(mark, 'y'), height: n(mark, 'height') }))
+        .sort((a, b) => a.y - b.y);
+    const baseline = geometry(),
+      fullHeight = required(chart.svg().getAttribute('viewBox')).split(' ')[3];
+    expect(baseline).toHaveLength(12);
+    expect(required(baseline[0]).height).toBeGreaterThan(20);
+    expect(required(baseline[0]).height).toBeLessThan(28);
+    expect(required(baseline[1]).y - required(baseline[0]).y).toBeCloseTo(28, 5);
+    for (const categories of [['P12', 'P13'], ['focused'], rows]) {
+      chart.handle.update({
+        ...origins,
+        y: { type: 'band', label: 'Project', categories },
+        marks: categories.map((row) => ({
+          key: row,
+          x: 0,
+          x2: 1,
+          y: row,
+          series: 'created',
+          selectionId: row,
+        })),
+      });
+      expect(required(chart.svg().getAttribute('viewBox')).split(' ')[3]).toBe(fullHeight);
+      const rectangles = geometry();
+      expect(rectangles).toHaveLength(categories.length);
+      for (const [index, rectangle] of rectangles.entries()) {
+        expect(rectangle.height).toBeCloseTo(required(baseline[index]).height, 5);
+        expect(rectangle.y).toBeCloseTo(required(baseline[index]).y, 5);
+      }
+      const labels = [...element.querySelectorAll('text')].map((node) => node.textContent);
+      expect(labels.filter((label) => categories.includes(label))).toEqual(categories);
+      key(chart.svg(), 'Home');
+      key(chart.svg(), 'Enter');
+      expect(chart.select).toHaveBeenLastCalledWith(categories[0]);
+    }
+  },
+);
 
 it('keeps overdue, mixed and not-overdue outlines distinct on actual Aging density', async () => {
   const now = Date.parse('2026-10-04T12:00Z');
