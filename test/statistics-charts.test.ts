@@ -2193,7 +2193,7 @@ it('latches deferred row-render failures until explicit retry and retires pendin
   expect(element.querySelector('svg')).toBeNull();
 });
 
-it('keeps zero-time Allocation concentration in the reserved plot with an honest empty message', async () => {
+it('keeps a fixed empty focus slot and compact zero-time concentration', async () => {
   const dataset = required(await prepareStatisticsDataset(source([task('zero')]), [], work));
   const view = required(
     await new StatisticsSession(dataset).view(request({ view: 'allocation' }), work),
@@ -2202,10 +2202,14 @@ it('keeps zero-time Allocation concentration in the reserved plot with an honest
     sections = new StatisticsSections(element, new TanStackStatisticsChart(), vi.fn());
   mounts.push(sections);
   sections.update(view);
-  const plot = required(element.querySelector('.abyss-statistics-allocation-empty-plot'));
-  expect(plot.textContent).toBe('No recorded time in this period');
-  expect(plot.closest('section')?.textContent).toContain('Tasks and subtasks');
-  expect(plot.querySelector('svg')).toBeNull();
+  const concentration = required(
+    [...element.querySelectorAll('section')].find((section) =>
+      section.textContent.includes('Time across tasks'),
+    ),
+  );
+  expect(concentration.textContent).toContain('No recorded time in this period');
+  expect(concentration.textContent).toContain('Tasks and subtasks');
+  expect(concentration.querySelector('.abyss-statistics-allocation-plot, svg')).toBeNull();
   const focused = required(
     await new StatisticsSession(dataset).view(
       request({ view: 'allocation', focusKey: 'unassigned' }),
@@ -2462,4 +2466,244 @@ it('keeps undated-only Movement coverage without a contradictory empty-populatio
   expect(surface.querySelector('svg')).toBeNull();
   expect(surface.textContent).toContain('No usable event dates');
   expect(surface.textContent).not.toContain('No eligible records in this selection');
+});
+
+it.each([430, 1360])(
+  'keeps every finite histogram category and cohort horizon visible at %ipx',
+  async (width) => {
+    const nodes = [
+      task('one day', {
+        status: 'done',
+        planning: {
+          created: date('2026-10-01'),
+          completion: date('2026-10-02'),
+          due: date('2026-10-01'),
+        },
+        timeEntries: [closed('2026-10-02T09:00Z', '2026-10-02T09:10Z')],
+      }),
+      task('old open', { planning: { created: date('2026-01-01') } }),
+      task('Co-prerequisite X', { dependencyId: 'X' }),
+      task('Prerequisite A', { dependencyId: 'A' }),
+      task('Prerequisite B', { dependencyId: 'B' }),
+      task('Prerequisite C', { dependencyId: 'C' }),
+      task('waiting', { dependsOn: ['A', 'B', 'C', 'X'] }),
+    ];
+    const dataset = required(await prepareStatisticsDataset(source(nodes), [], work));
+    const session = new StatisticsSession(dataset);
+    for (const [viewId, chartId, labels] of [
+      [
+        'completion',
+        'completion-age',
+        ['Same day', '1', '2–3', '4–7', '8–14', '15–30', '31–60', '61+'],
+      ],
+      [
+        'deadlines',
+        'due-delta',
+        [
+          '7+ days early',
+          '1–6 days early',
+          'On due date',
+          '1 day late',
+          '2–3 days late',
+          '4–7 days late',
+          '8–30 days late',
+          '31+ days late',
+        ],
+      ],
+      [
+        'sessions',
+        'session-lengths',
+        [
+          '0',
+          'Up to 5',
+          'Over 5–15',
+          'Over 15–30',
+          'Over 30–60',
+          'Over 60–120',
+          'Over 120–240',
+          'Over 240',
+        ],
+      ],
+      ['cohorts', 'cohorts', ['1 day', '3 days', '7 days', '14 days', '30 days']],
+      ['rhythm', 'ages', ['61+', 'Unknown']],
+      [
+        'aging',
+        'age-project:unassigned',
+        ['0–7', '8–14', '15–30', '31–60', '61+', 'Age unavailable'],
+      ],
+      ['dependencies', 'dependency-rank', ['Co-prerequisite X']],
+    ] as const) {
+      const view = required(await session.view(request({ view: viewId, period: 'all' }), work));
+      const chart = required(view.sections.flatMap((s) => s.charts).find((c) => c.id === chartId));
+      const element = host(document, width);
+      const rendered = mount(element, chart);
+      const ticks = [...element.querySelectorAll('svg text')].map((node) => node.textContent);
+      for (const label of labels) expect(ticks, `${viewId}: ${label}`).toContain(label);
+      expect(element.querySelector('.abyss-statistics-axis-measure')).toBeNull();
+      if (width === 1360 && viewId !== 'dependencies')
+        expect(
+          [...element.querySelectorAll('svg text')].some(
+            (node) => node.getAttribute('transform')?.includes('rotate(-75') === true,
+          ),
+        ).toBe(false);
+      if (viewId === 'dependencies') {
+        const title = required(
+          [...element.querySelectorAll('svg text')].find(
+            (node) => node.textContent === 'Prerequisite',
+          ),
+        );
+        const viewportHeight = Number(
+          required(rendered.svg().getAttribute('viewBox')).split(' ')[3],
+        );
+        expect(n(title, 'y') + n(title, 'font-size') * 1.3).toBeLessThanOrEqual(viewportHeight);
+      }
+      expect(rendered.svg().querySelectorAll('text').length).toBeLessThan(180);
+      rendered.handle.destroy();
+      element.remove();
+    }
+  },
+);
+
+it('keeps exact distinct five-digit semantic populations in a real tooltip', () => {
+  const element = host();
+  const rendered = mount(
+    element,
+    model({
+      marks: [
+        {
+          key: 'cohort',
+          x: 'Mon',
+          y: 4,
+          observation: {
+            title: 'Creation cohort',
+            values: [
+              { label: 'Cohort', value: 10499, unit: 'tasks' },
+              { label: 'Completed', value: 10001, unit: 'tasks' },
+              { label: 'Sessions', value: 1001, unit: 'sessions' },
+              { label: 'Small', value: 1, unit: 'tasks' },
+              { label: 'Missing', value: null, unit: 'tasks' },
+            ],
+          },
+        },
+      ],
+    }),
+  );
+  key(rendered.svg(), 'Home');
+  const tooltip = required(document.querySelector('.abyss-statistics-tooltip')).textContent;
+  for (const value of ['10,499 tasks', '10,001 tasks', '1,001 sessions', '1 task', 'Unavailable'])
+    expect(tooltip).toContain(value);
+  expect(
+    statisticsMarkContent(
+      { key: 'fallback', x: 'Mon', y: 10499, numerator: 10001, denominator: 10499 },
+      model(),
+    ).rows,
+  ).toContainEqual({ label: 'Count', value: '10,001 / 10,499' });
+});
+
+it('places a density intensity key with its chart before the weekly overview and the shared event key before facets', () => {
+  const element = host();
+  const section = new StatisticsSections(element, new TanStackStatisticsChart(), vi.fn());
+  mounts.push(section);
+  const density = model({
+    id: 'density',
+    kind: 'heatmap',
+    intensityScale: { domain: [0, 652], unit: 'Minutes' },
+    series: [],
+    marks: [{ key: 'cell', x: 'Mon', y: 1, weight: 652 }],
+  });
+  const overview = model({ id: 'timeline-overview' });
+  const base: StatisticsViewModel = {
+    view: 'timeline',
+    title: 'Timeline',
+    dateLabel: 'All time',
+    currentState: false,
+    asOfMs: 0,
+    coverage: {
+      source: {
+        countingUnit: 'Tasks & subtasks',
+        recurrence: 'Node or ancestor; retained instances only',
+        nodes: 0,
+        live: 0,
+        archive: 0,
+        entries: 0,
+        brokenEntries: 0,
+        dateIssues: 0,
+        ready: true,
+        sourceIssues: [],
+      },
+      scope: { nodes: 0, live: 0, archive: 0, entries: 0, brokenEntries: 0, dateIssues: 0 },
+    },
+    sections: [
+      {
+        id: 'timeline',
+        title: 'Timeline',
+        context: '',
+        metrics: [],
+        charts: [density, overview],
+        legend: [],
+      },
+    ],
+    actions: [],
+    chartActions: [],
+    evidence: () => ({ total: 0, rows: [] }),
+  };
+  section.update(base);
+  const figures = element.querySelectorAll('figure');
+  expect(figures[0]?.querySelector('.abyss-statistics-intensity')?.textContent).toContain('652');
+  expect(figures[1]?.querySelector('.abyss-statistics-intensity')).toBeNull();
+  section.update({
+    ...base,
+    view: 'movement',
+    sections: [
+      {
+        ...required(base.sections[0]),
+        charts: [
+          model({
+            layout: 'facets',
+            facet: { key: 'a', label: 'A', description: 'Created dates unavailable: 1' },
+          }),
+          model({ id: 'other', layout: 'facets', facet: { key: 'b', label: 'B' } }),
+        ],
+        legend: [
+          { key: 'created', label: 'Created', tone: 'created' },
+          { key: 'completed', label: 'Completed', tone: 'completed' },
+        ],
+      },
+    ],
+  });
+  const legend = required(element.querySelector('.abyss-statistics-legend'));
+  expect(
+    legend.compareDocumentPosition(required(element.querySelector('figure'))) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  const first = required(element.querySelector('figure'));
+  expect(first.querySelector('figcaption')?.textContent).toBe('A');
+  expect(first.lastElementChild?.textContent).toContain('Created dates unavailable');
+});
+
+it('describes week selection truthfully to keyboard users', () => {
+  const el = host();
+  mount(el, model({ id: 'timeline-overview', activation: 'week' }));
+  expect(el.textContent).toContain('Enter or Space selects the week');
+  expect(el.textContent).not.toContain('opens the underlying records');
+});
+
+it('shows the positive 61+ Aging facet category at a constrained plot width', async () => {
+  const ds = required(
+    await prepareStatisticsDataset(
+      source([task('old', { planning: { created: date('2026-01-01') } })]),
+      [],
+      work,
+    ),
+  );
+  const view = required(await new StatisticsSession(ds).view(request({ view: 'aging' }), work));
+  const chart = required(
+    view.sections.flatMap((s) => s.charts).find((c) => c.id === 'age-project:unassigned'),
+  );
+  const element = host(document, 280);
+  mount(element, chart);
+  expect(chart.marks.find((mark) => mark.x === '61+')?.y).toBe(1);
+  expect([...element.querySelectorAll('svg text')].map((node) => node.textContent)).toContain(
+    '61+',
+  );
 });

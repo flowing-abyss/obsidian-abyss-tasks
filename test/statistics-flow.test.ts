@@ -699,3 +699,121 @@ it('keeps the cross-year range and exact population while compacting a large coh
   expect(observation.title).toContain('2025-12-29 – 2026-01-04');
   expect(observation.values).toContainEqual({ label: 'Cohort', value: 1001, unit: 'tasks' });
 });
+
+it('keeps zero completion defects in compact coverage and names unavailable ages', async () => {
+  const ds = required(
+    await prepareStatisticsDataset(
+      source([
+        task('undated'),
+        task('measured', {
+          status: 'done',
+          planning: { created: date('2026-10-01'), completion: date('2026-10-02') },
+        }),
+      ]),
+      [],
+      work,
+    ),
+  );
+  const session = new StatisticsSession(ds);
+  const completion = required(await session.view(request({ view: 'completion' }), work));
+  expect(
+    completion.sections[0]?.metrics
+      .filter((m) => m.id.startsWith('creation-') && m.value === 0)
+      .every((m) => m.role === 'coverage'),
+  ).toBe(true);
+  const rhythm = required(await session.view(request(), work));
+  const unknown = required(
+    rhythm.sections
+      .flatMap((s) => s.charts)
+      .find((c) => c.id === 'ages')
+      ?.marks.find((m) => m.x === 'Unknown'),
+  );
+  expect(unknown.observation?.title).toBe('Age unavailable · Not overdue');
+  expect(rhythm.evidence(required(unknown.selectionId), 0, 50).rows[0]?.title).toBe('undated');
+});
+
+it('offers earlier activity only for saved scoped history outside an empty recent period', async () => {
+  const ds = required(
+    await prepareStatisticsDataset(
+      source([
+        task('older', { tags: ['selected'], planning: { created: date('2026-08-01') } }),
+        task('undated', { tags: ['selected'] }),
+      ]),
+      [],
+      work,
+    ),
+  );
+  const session = new StatisticsSession(ds);
+  const view = required(
+    await session.view(
+      request({ view: 'rhythm', period: 'week', scope: { type: 'tag', tag: 'selected' } }),
+      work,
+    ),
+  );
+  expect(view.actions).toContainEqual({
+    type: 'period',
+    label: 'View earlier activity',
+    period: 'all',
+  });
+  expect(view.sections.flatMap((s) => s.metrics).find((m) => m.id === 'open-now')?.value).toBe(2);
+  const outside = required(
+    await session.view(request({ period: 'week', scope: { type: 'tag', tag: 'other' } }), work),
+  );
+  expect(outside.actions).toEqual([]);
+  const unknown = required(
+    await new StatisticsSession(
+      required(await prepareStatisticsDataset(source([task('undated')]), [], work)),
+    ).view(request({ period: 'week' }), work),
+  );
+  expect(unknown.actions).toEqual([]);
+});
+
+it('omits zero recurrence tooltip copy and retains nonzero retained-instance disclosure', async () => {
+  const ds = required(
+    await prepareStatisticsDataset(
+      source([
+        task('oneoff', { planning: { created: date('2026-10-01') } }),
+        task('recurring', { recurrence: 'every day', planning: { created: date('2026-10-02') } }),
+      ]),
+      [],
+      work,
+    ),
+  );
+  const view = required(await new StatisticsSession(ds).view(request(), work));
+  const marks = required(view.sections[0]?.charts[0]).marks;
+  expect(
+    marks.find(
+      (mark) =>
+        mark.observation?.title.startsWith('2026-10-01') === true && mark.series === 'created',
+    )?.observation?.note,
+  ).not.toContain('0 recurring');
+  expect(
+    marks.find(
+      (mark) =>
+        mark.observation?.title.startsWith('2026-10-02') === true && mark.series === 'created',
+    )?.observation?.note,
+  ).toContain('1 recurring retained instance');
+});
+
+it('names a one-day completion bin with a singular unit without changing its task evidence', async () => {
+  const ds = required(
+    await prepareStatisticsDataset(
+      source([
+        task('one day', {
+          status: 'done',
+          planning: { created: date('2026-10-01'), completion: date('2026-10-02') },
+        }),
+      ]),
+      [],
+      work,
+    ),
+  );
+  const view = required(
+    await new StatisticsSession(ds).view(request({ view: 'completion' }), work),
+  );
+  const mark = required(view.sections[0]?.charts[0]?.marks.find((value) => value.x === '1'));
+  expect(mark.observation?.title).toBe('1 day');
+  expect(view.evidence(required(mark.selectionId), 0, 50).rows.map((row) => row.title)).toEqual([
+    'one day',
+  ]);
+});

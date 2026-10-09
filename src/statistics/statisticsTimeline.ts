@@ -397,6 +397,7 @@ class Timeline {
     const values = this.overview.values();
     return {
       id: 'timeline-overview',
+      activation: 'week',
       accessibleLabel: 'Select a calendar week in the period',
       kind: 'bars',
       x: bands(

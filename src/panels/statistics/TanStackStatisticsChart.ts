@@ -43,8 +43,56 @@ const CHART_MARGINS: Partial<Record<StatisticsChartModel['kind'], typeof TIMELIN
   timeline: TIMELINE_MARGIN,
 };
 
-function chartMargin(model: StatisticsChartModel): { margin?: Partial<typeof TIMELINE_MARGIN> } {
+interface FiniteLabels {
+  readonly count: number;
+  readonly width: number;
+  readonly left: number;
+}
+function finiteLabels(host: HTMLElement, model: StatisticsChartModel): FiniteLabels | undefined {
+  const axis = model.x;
+  if (axis.finite !== true) return undefined;
+  const labels =
+    axis.tickLabels?.map(([, label]) => label) ?? (axis.type === 'band' ? axis.categories : []);
+  const measure = host.createSpan({ cls: 'abyss-statistics-axis-measure' });
+  const width = (label: string): number => {
+    measure.textContent = label;
+    const measured = measure.getBoundingClientRect().width;
+    return measured > 0 ? measured : label.length * 6;
+  };
+  try {
+    const longestY = (model.y.tickLabels?.map(([, label]) => label) ?? []).reduce(
+      (longest, label) => (label.length > longest.length ? label : longest),
+      '',
+    );
+    return {
+      count: labels.length,
+      width: Math.max(0, ...labels.map((label) => width(shortLabel(label, 24)))),
+      left: Math.max(60, width(longestY) + 36),
+    };
+  } finally {
+    measure.remove();
+  }
+}
+function compactFinite(labels: FiniteLabels | undefined, width: number): boolean {
+  return (
+    labels !== undefined &&
+    labels.width + 8 > (width - labels.left - 16) / Math.max(1, labels.count)
+  );
+}
+
+function finiteBottom(labels: FiniteLabels | undefined, width: number): number {
+  // Rotated tick extent plus a complete axis title and ordinary spacing.
+  return labels !== undefined && compactFinite(labels, width)
+    ? Math.ceil(labels.width * 0.97) + 48
+    : 0;
+}
+
+function chartMargin(
+  model: StatisticsChartModel,
+  bottom: number,
+): { margin?: Partial<typeof TIMELINE_MARGIN> } {
   // Ordinary axis margins preserve 28px row pitch without reserving absent rows.
+  if (bottom > 0) return { margin: { bottom } };
   if (model.id === 'completion-origins' && model.y.type === 'band')
     return { margin: { top: 12, bottom: 36 } };
   const margin =
@@ -54,10 +102,10 @@ function chartMargin(model: StatisticsChartModel): { margin?: Partial<typeof TIM
   return margin === undefined ? {} : { margin };
 }
 
-function height(model: StatisticsChartModel): number {
+function height(model: StatisticsChartModel, bottom: number): number {
   if (model.rowViewport === true && model.y.type === 'band') return model.y.categories.length * 32;
   if (model.id === 'allocation-focus') return 288;
-  return baseHeight(model);
+  return baseHeight(model) + Math.max(0, bottom - 42);
 }
 function baseHeight(model: StatisticsChartModel): number {
   if (model.y.type === 'number') return numericHeight(model, model.y.domain[1]);
@@ -115,6 +163,7 @@ function tickCandidates(value: StatisticsAxis, width: number): number[] | undefi
       : undefined;
   const candidates = value.ticks ?? value.tickLabels?.map(([position]) => position) ?? counts;
   if (candidates === undefined) return undefined;
+  if (value.finite === true) return [...candidates];
   const stride = Math.max(1, Math.ceil(candidates.length / Math.max(2, Math.floor(width / 105))));
   return candidates.filter((_, index) => index % stride === 0 || index === candidates.length - 1);
 }
@@ -127,14 +176,24 @@ function tickLabelLength(value: StatisticsAxis, side: 'x' | 'y', width: number):
   const slots = value.type === 'band' && side === 'x' ? value.categories.length : 2;
   return Math.max(4, Math.min(24, Math.floor(width / slots / 9)));
 }
+function axisTicks(
+  value: StatisticsAxis,
+  width: number,
+  side: 'x' | 'y',
+): { values?: readonly Value[]; count?: number } {
+  if (value.finite === true && value.type === 'band') return { values: value.categories };
+  const candidates = tickCandidates(value, width);
+  return candidates === undefined
+    ? { count: side === 'x' ? Math.max(2, Math.floor(width / 105)) : 4 }
+    : { values: candidates };
+}
 function axisPolicy(
   value: StatisticsAxis,
   width: number,
   side: 'x' | 'y',
+  compact = false,
 ): Exclude<ChartPositionScaleOptions<Value>['axis'], false | undefined> {
   const labels = new Map<string | number, string>(value.tickLabels ?? []);
-  const candidates = tickCandidates(value, width);
-  const count = side === 'x' ? Math.max(2, Math.floor(width / 105)) : 4;
   const unit =
     value.type === 'number'
       ? ({ count: '', days: ' d', minutes: ' min' }[value.unit ?? ''] ?? value.unit)
@@ -144,7 +203,7 @@ function axisPolicy(
     ...(value.label === '' ? {} : { label: { text: value.label, fontSize: 11, fill: MUTED } }),
     ticks: {
       size: 0,
-      ...(candidates === undefined ? { count } : { values: candidates }),
+      ...axisTicks(value, width, side),
       format: (tick) => {
         const label =
           labels.get(tick) ?? (typeof tick === 'number' ? statisticsNumber(tick, unit) : tick);
@@ -153,7 +212,12 @@ function axisPolicy(
           : label;
       },
     },
-    tickLabels: { fontSize: 11, opacity: 1, thin: { minGap: 9, priority: 'ends' } },
+    tickLabels: {
+      fontSize: 11,
+      opacity: 1,
+      thin: value.finite === true ? false : { minGap: 9, priority: 'ends' },
+      ...(compact && side === 'x' ? { rotate: -75, anchor: 'end' as const } : {}),
+    },
   };
 }
 function timelineDayLabel(label: string): string {
@@ -195,12 +259,13 @@ function axis(
   model: StatisticsChartModel,
   side: 'x' | 'y',
   width: number,
+  finite: FiniteLabels | undefined,
 ): ChartPositionScaleOptions<Value> {
   const hidden = model.kind === 'network',
     policy =
       model.kind === 'timeline' && side === 'y'
         ? timelineDayAxis(model.y)
-        : axisPolicy(model[side], width, side);
+        : axisPolicy(model[side], width, side, compactFinite(finite, width));
   const grid = !hidden && model[side].type === 'number' && model.kind !== 'heatmap' && side === 'y';
   return {
     scale: positionScale(model, side),
@@ -642,11 +707,38 @@ function tooltipOptions(
 }
 
 function chartDescription(model: StatisticsChartModel): string {
+  if (model.activation === 'week')
+    return 'Use arrow keys to inspect weeks; Enter or Space selects the week.';
   if (model.id === 'dependency-rank')
     return 'Use arrow keys to inspect prerequisites; Enter or Space: Inspect dependencies.';
   return model.rowViewport === true
     ? 'Use arrow keys to inspect groups; Enter or Space opens the group timeline.'
     : 'Use arrow keys to inspect marks; Enter or Space opens the underlying records.';
+}
+
+function chartDefinition(
+  model: StatisticsChartModel,
+  finite: FiniteLabels | undefined,
+): HostOptions['definition'] {
+  return defineChart({
+    chart: ({ width, height }) => ({
+      marks: marks(model, width, height),
+      scales: { x: axis(model, 'x', width, finite), y: axis(model, 'y', width, finite) },
+      theme: {
+        foreground: FOREGROUND,
+        muted: MUTED,
+        grid: 'var(--background-modifier-border)',
+        background: BACKGROUND,
+        palette: [ACCENT],
+      },
+      clip: model.rowViewport !== true && model.kind !== 'network' && model.kind !== 'scatter',
+      ...chartMargin(model, finiteBottom(finite, width)),
+    }),
+    focus: 'nearest',
+    focusRing: { fill: BACKGROUND, radius: 6, strokeWidth: 2 },
+    svgAnimation: false,
+    tooltip: tooltipOptions(model),
+  });
 }
 
 /** The sole engine boundary; the owning mode drives data/theme updates and handles failures. */
@@ -666,6 +758,12 @@ export class TanStackStatisticsChart implements StatisticsChartRenderer {
     const options = (input: StatisticsChartModel): HostOptions => {
       const model = timelineLayout(input),
         epoch = ++generation;
+      host.classList.toggle(
+        'abyss-statistics-chart-surface--categories',
+        model.x.finite === true && model.x.type === 'band' && model.x.categories.length > 10,
+      );
+      const finite = finiteLabels(host, model),
+        bottom = finiteBottom(finite, measuredWidth(host));
       host.setAttribute('role', 'group');
       host.setAttribute('aria-label', model.accessibleLabel);
       const selections = new Set(
@@ -674,28 +772,9 @@ export class TanStackStatisticsChart implements StatisticsChartRenderer {
         ),
       );
       return {
-        definition: defineChart({
-          chart: ({ width, height }) => ({
-            marks: marks(model, width, height),
-            scales: { x: axis(model, 'x', width), y: axis(model, 'y', width) },
-            theme: {
-              foreground: FOREGROUND,
-              muted: MUTED,
-              grid: 'var(--background-modifier-border)',
-              background: BACKGROUND,
-              palette: [ACCENT],
-            },
-            clip:
-              model.rowViewport !== true && model.kind !== 'network' && model.kind !== 'scatter',
-            ...chartMargin(model),
-          }),
-          focus: 'nearest',
-          focusRing: { fill: BACKGROUND, radius: 6, strokeWidth: 2 },
-          svgAnimation: false,
-          tooltip: tooltipOptions(model),
-        }),
+        definition: chartDefinition(model, finite),
         idPrefix,
-        height: height(model),
+        height: height(model, bottom),
         initialWidth: measuredWidth(host),
         ariaLabel: '',
         ariaDescription: chartDescription(model),

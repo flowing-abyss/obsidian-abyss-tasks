@@ -9948,6 +9948,17 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   font-family: var(--font-interface, var(--font-interface-theme));
 }
 
+.abyss-statistics-axis-measure {
+  position: absolute;
+  visibility: hidden;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.abyss-statistics-chart-surface--categories {
+  min-width: 70rem;
+}
+
 .abyss-statistics-chart-svg {
   display: block;
   max-width: 100%;

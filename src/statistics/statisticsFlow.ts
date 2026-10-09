@@ -124,6 +124,7 @@ interface HistogramValue {
   index: number;
 }
 function histogramLabel(id: string, label: string): string {
+  if (label === '1') return '1 day';
   return id === 'due-delta' || label === 'Same day' ? label : `${label} days`;
 }
 function completionContext(task: StatisticsTask): string {
@@ -162,7 +163,7 @@ async function histogram(
         ? 'Days from creation to completion for one-off tasks completed in this period'
         : id,
     kind: 'bars',
-    x: bands(unit, labels),
+    x: { ...bands(unit, labels), finite: true },
     y: numeric('Tasks', Math.max(0, ...bins.map((bin) => bin.length)), 0, 'count'),
     series: [{ key: 'count', label: 'Tasks', tone: 'accent' }],
     marks: bins.map((bin, i) => ({
@@ -267,7 +268,9 @@ function rhythmBucket(
       observation: {
         title: `${dateInterval(interval.fromDay, interval.toDay)} · ${required(RHYTHM_LABELS[event])}`,
         values: [{ label: 'Count', value: list.length, unit: 'tasks' }],
-        note: `${bucketNote(interval)}${recurring} recurring retained instances included.`,
+        note:
+          bucketNote(interval) +
+          (recurring > 0 ? `${recurring} recurring retained instances included.` : ''),
       },
     });
     if (sign === 1) positive += list.length;
@@ -311,6 +314,9 @@ async function rhythmChart(
     marks,
   };
 }
+function ageLabel(index: number): string {
+  return index === 5 ? 'Age unavailable' : `${required(AGE_LABELS[index])} days`;
+}
 function ageChart(ctx: StatisticsContext, ids: Map<string, number[]>): StatisticsChartModel {
   const marks: StatisticsMark[] = [];
   for (let i = 0; i < 6; i++) {
@@ -331,7 +337,7 @@ function ageChart(ctx: StatisticsContext, ids: Map<string, number[]>): Statistic
         selectionId: ctx.evidence.tasks(id, list),
         weight: list.length,
         observation: {
-          title: `${required(AGE_LABELS[i])} days · ${state === 'overdue' ? 'Overdue' : 'Not overdue'}`,
+          title: `${ageLabel(i)} · ${state === 'overdue' ? 'Overdue' : 'Not overdue'}`,
           values: [{ label: 'Count', value: list.length, unit: 'tasks' }],
         },
       });
@@ -343,7 +349,7 @@ function ageChart(ctx: StatisticsContext, ids: Map<string, number[]>): Statistic
     accessibleLabel: 'Current open task ages',
     kind: 'bars',
     layout: 'stacked',
-    x: bands('Age in days', AGE_LABELS),
+    x: { ...bands('Age in days', AGE_LABELS), finite: true },
     y: numeric('Tasks', Math.max(0, ...marks.map((m) => Number(m.y))), 0, 'count'),
     series: [
       { key: 'current', label: 'Not overdue', tone: 'neutral' },
@@ -527,7 +533,7 @@ async function completion(ctx: StatisticsContext): Promise<StatisticsSection[]> 
       indices.length,
       {
         selectionId: contextualTasks(ctx, id, indices, () => reason),
-        role: id.startsWith('completion-') ? 'coverage' : undefined,
+        role: id.startsWith('completion-') || indices.length === 0 ? 'coverage' : undefined,
       },
     );
   });
@@ -944,6 +950,7 @@ async function cohorts(ctx: StatisticsContext): Promise<StatisticsViewModel> {
             intensityScale: { domain: [0, 100], unit: '%' },
             x: {
               ...numeric('Completed within', 30, 0, 'days'),
+              finite: true,
               ticks: HORIZONS,
               tickLabels: HORIZONS.map(
                 (value) => [value, `${value} ${value === 1 ? 'day' : 'days'}`] as const,
@@ -989,5 +996,26 @@ export async function flowView(ctx: StatisticsContext): Promise<StatisticsViewMo
   const builders = { rhythm, completion, deadlines };
   const view = ctx.request.view;
   const builder = view === 'rhythm' || view === 'completion' ? builders[view] : deadlines;
-  return finish(ctx, await builder(ctx));
+  const sections = await builder(ctx);
+  return finish(ctx, sections, await earlierActivity(ctx));
+}
+
+function latestActivity(task: StatisticsTask, ctx: StatisticsContext): number {
+  let latest = -Infinity;
+  for (const event of EVENTS)
+    latest = Math.max(latest, datedEvent(task, event, ctx.calendar) ?? -Infinity);
+  return latest;
+}
+async function earlierActivity(ctx: StatisticsContext): Promise<StatisticsAction[]> {
+  if (ctx.request.period === 'all') return [];
+  let earlier = false;
+  for (const task of ctx.dataset.tasks) {
+    if (inScope(task, ctx.request.scope)) {
+      const day = latestActivity(task, ctx);
+      if (day >= ctx.calendar.fromDay) return [];
+      earlier ||= Number.isFinite(day);
+    }
+    await ctx.budget.step();
+  }
+  return earlier ? [{ type: 'period', label: 'View earlier activity', period: 'all' }] : [];
 }

@@ -88,6 +88,7 @@ export class StatisticsMode {
   private scrollTop_abyssPrivate = 0;
   private observation_abyssPrivate: Observation | undefined;
   private model_abyssPrivate: StatisticsViewModel | undefined;
+  private earlierPeriod_abyssPrivate: StatisticsChoices['period'] | undefined;
   private midnight_abyssPrivate: number | undefined;
   private minute_abyssPrivate: number | undefined;
   private owner_abyssPrivate: Window | undefined;
@@ -285,6 +286,7 @@ export class StatisticsMode {
     for (const listener of this.navigationListeners_abyssPrivate) listener();
   }
   private change_abyssPrivate(next: Partial<StatisticsChoices>): void {
+    if (next.period !== undefined) this.earlierPeriod_abyssPrivate = undefined;
     this.details_abyssPrivate.close();
     this.clearSelection_abyssPrivate(false);
     if (next.view === 'patterns') this.forceClock_abyssPrivate = true;
@@ -397,6 +399,13 @@ export class StatisticsMode {
     if (changed) {
       this.details_abyssPrivate.close();
       this.sections_abyssPrivate?.update(model);
+      if (
+        (model.view === 'allocation' || model.view === 'movement') &&
+        model.coverage.source.ready &&
+        model.coverage.source.sourceIssues.length === 0 &&
+        !model.actions.some((action) => action.type === 'focus' && action.focusKey === undefined)
+      )
+        this.choices_abyssPrivate = { ...this.choices_abyssPrivate, focusKey: undefined };
       this.clearSelection_abyssPrivate(false);
       this.contextPending_abyssPrivate = false;
       this.observation_abyssPrivate = observation;
@@ -505,6 +514,11 @@ export class StatisticsMode {
       find.setAttribute('aria-label', 'Find group');
     }
     if (this.actions_abyssPrivate !== undefined) {
+      const previous = this.earlierPeriod_abyssPrivate;
+      if (previous !== undefined && this.choices_abyssPrivate.period === 'all')
+        statisticsButton(this.actions_abyssPrivate, 'Return to previous period', () => {
+          this.change_abyssPrivate({ period: previous, page: undefined, weekStart: undefined });
+        });
       for (const action of model.actions)
         statisticsButton(this.actions_abyssPrivate, action.label, () => {
           this.action_abyssPrivate(action);
@@ -519,9 +533,13 @@ export class StatisticsMode {
       case 'scope':
         this.change_abyssPrivate({ scope: action.scope, page: undefined });
         break;
-      case 'period':
+      case 'period': {
+        const previous = this.choices_abyssPrivate.period;
         this.change_abyssPrivate({ period: action.period, page: undefined, weekStart: undefined });
+        if (action.period === 'all' && previous !== 'all')
+          this.earlierPeriod_abyssPrivate = previous;
         break;
+      }
       case 'week':
         this.change_abyssPrivate({ weekStart: action.weekStart, page: undefined });
         break;

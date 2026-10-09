@@ -1066,3 +1066,22 @@ it.each([
     expect(required(required(view.sections[0]).charts[0]).y.tickLabels).toEqual([[key, name]]);
   },
 );
+
+it('replaces a zero-time focus scale with an empty state while retaining scope concentration', async () => {
+  const session = await views(
+    [
+      task('zero', { tags: ['zero'] }),
+      task('timed', {
+        tags: ['timed'],
+        timeEntries: [closed('2026-10-04T09:00Z', '2026-10-04T09:10Z')],
+      }),
+    ],
+    { period: 'today', group: 'tag', focusKey: 'tag:zero' },
+  );
+  const focused = await session.get('allocation');
+  expect(focused.sections[0]?.charts[0]?.marks).toEqual([]);
+  expect(focused.sections[0]?.emptyMessage).toBe('No recorded time in this period');
+  expect(
+    focused.sections.find((s) => s.id === 'concentration')?.charts[0]?.marks.length,
+  ).toBeGreaterThan(0);
+});

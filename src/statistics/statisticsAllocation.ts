@@ -200,7 +200,7 @@ class Allocation {
       },
       y: numeric('Recorded minutes', this.focusedMaximum, 0, 'minutes'),
       series: [],
-      marks,
+      marks: group.value === 0 ? [] : marks,
     };
   }
 }

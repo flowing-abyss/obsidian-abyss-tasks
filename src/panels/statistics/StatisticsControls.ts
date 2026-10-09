@@ -147,10 +147,22 @@ export class StatisticsControls {
     }
   }
   scopeLabel(scope: StatisticsScope): string {
-    return (
-      this.labels_abyssPrivate.get(JSON.stringify(scope)) ??
-      (scope.type === 'project' ? `${scope.path} · unavailable` : 'Entire vault')
-    );
+    const label = this.labels_abyssPrivate.get(JSON.stringify(scope));
+    if (label !== undefined) return label;
+    switch (scope.type) {
+      case 'project':
+        return `${scope.path} · unavailable`;
+      case 'tag':
+        return `#${scope.tag} · no matches`;
+      case 'priority':
+        return `Priority ${scope.priority}`;
+      case 'unassigned':
+        return 'No project';
+      case 'archive':
+        return 'Unknown project · archive';
+      case 'all':
+        return 'Entire vault';
+    }
   }
   openScope(_scope: StatisticsScope): void {
     const previous = this.picker_abyssPrivate;

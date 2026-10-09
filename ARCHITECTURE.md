@@ -517,7 +517,10 @@ cycles and unresolved IDs; direct and downstream counts do not promise that work
 Allocation retains complete ranked aggregate groups and uses transient `focusKey` actions to replace
 the ranking with one group's bucket timeline without changing global scope or period. Group totals
 partition project/priority time; tag groups preserve full overlapping credit. Concentration includes
-eligible zero-time tasks and subtasks and has no percentage curve when total recorded time is zero.
+eligible zero-time tasks and subtasks and has no percentage curve when total recorded time is zero. A zero-time local focus uses the fixed allocation slot with an
+explicit empty state; genuinely empty scope concentration stays compact. Accepted complete observations
+clear unavailable Allocation/Movement focus keys after rendering succeeds, so restored membership does
+not reopen a group; pending or failed acquisition retains navigation.
 The left navigation owns visible Allocation grouping through `StatisticsNavigationPort`; it reads no
 task sources. Group search uses a bounded native SuggestModal over current aggregate identities.
 
@@ -536,6 +539,9 @@ distinct unavailable band, separate from zero-day ages.
 Timeline geometry uses local clock minutes, split at day/offset boundaries, with actual instants,
 offsets and endpoint labels separate from elapsed contributions. Its bounded weekly overview uses
 a frozen `chartActions` registry for week activation; source evidence remains separately selectable.
+Empty recent Flow activity offers an explicit all-time period action only when older dated events
+exist in the same scope. StatisticsMode retains the previous period transiently for a return action;
+a manual period choice clears that return. No source history or persisted preference is created.
 Relevant date-eligibility metrics use the coverage role and scoped evidence, independently of
 selected-period event numerators.
 
@@ -551,7 +557,10 @@ marks and semantic metadata contain no engine, DOM or raw style types; source re
 [`StatisticsChart`](src/panels/statistics/StatisticsChart.ts) is the data-only mount/update/destroy
 port. [`TanStackStatisticsChart`](src/panels/statistics/TanStackStatisticsChart.ts) is the sole
 TanStack Charts import boundary. It converts model coordinates, endpoints, explicit numeric tick
-labels and semantic states into public SVG marks; task classification and evidence selection stay
+labels and semantic states into public SVG marks. Explicit finite-axis semantics preserve all
+histogram categories and cohort horizons with measured fit, rotating only when needed; larger bounded prerequisite rankings
+use the figure's horizontal scroll surface. Continuous ticks retain thinning. Typed week activation
+provides the keyboard description; task classification and evidence selection stay
 with the pure model and the owning mode. Selection callbacks expose only opaque selection IDs.
 Each complete options update replaces its generation, so callbacks from superseded options are
 inert even when a later model reuses a selection string. Engine construction/update failures
@@ -574,7 +583,9 @@ matching fixed pitch; packed numeric Timeline lanes alone reverse the vertical T
 section, updates surviving charts and destroys removed charts. Empty charts are omitted unless their
 model supplies an explicit unavailable message; those retain their real facet heading and a native
 text surface without an engine mount. Empty/populated updates replace that owned surface, and
-nonzero per-facet date gaps are compact model descriptions in the caption. Sections suppresses
+nonzero per-facet date gaps are compact model descriptions after facet plots, so optional coverage
+does not shift their plot starts. Section-owned intensity keys decorate their actual figure, before
+any following chart; shared section legends precede the charts. Sections suppresses
 its generic empty-population fallback when those chart-level unavailable messages are visible. Suspend
 releases hosts while retaining the models; resume remounts when visibility or owner document changes.
 Each host belongs to its own document/window and delegates responsive layout and disposal to the
@@ -591,7 +602,8 @@ geometry; the engine disposes portal observers/listeners with its chart. Content
 engine-neutral mark observations, including explicit half-open ranges with inclusive maxima, with labelled values and units shared with accessible text and
 concise Results titles. Prose and clock ranges use the engine’s wrapping label column; short
 numeric/unit values retain its value column, without inline-style overrides. Geometry-aware
-fallback reports segment magnitudes rather than offsets.
+fallback reports segment magnitudes rather than offsets. Semantic task/session/count populations
+use exact separated integers; compact counts remain available for axes and summary pills.
 Optional section reading/empty messages and compact Details definitions/coverage remain model data.
 Statistics content, figure and Results scrollers reserve stable scrollbar space.
 

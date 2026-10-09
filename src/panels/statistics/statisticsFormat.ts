@@ -86,7 +86,12 @@ function axisValue(axis: StatisticsAxis, value: number | string): string {
 function observationValue(value: number | string | null, unit?: string): string {
   if (value === null) return 'Unavailable';
   if (typeof value === 'string') return value;
-  return statisticsNumber(value, unitSuffix(unit, value));
+  const count =
+    unit === undefined || ['count', 'tasks', 'sessions', 'entries', 'changes'].includes(unit);
+  return `${count ? exactNumber(value) : statisticsNumber(value)}${unitSuffix(unit, value)}`;
+}
+function exactNumber(value: number): string {
+  return Number.isInteger(value) ? value.toLocaleString('en-US') : statisticsNumber(value);
 }
 function unitSuffix(unit: string | undefined, value: number): string {
   if (unit === undefined || unit === 'count') return '';
@@ -223,7 +228,7 @@ function supplementalRows(mark: StatisticsMark): ContentRow[] {
   if (mark.numerator !== undefined && mark.denominator !== undefined)
     rows.push({
       label: 'Count',
-      value: `${statisticsNumber(mark.numerator)} / ${statisticsNumber(mark.denominator)}`,
+      value: `${exactNumber(mark.numerator)} / ${exactNumber(mark.denominator)}`,
     });
   if (mark.overdue !== undefined)
     rows.push({ label: 'Overdue', value: observationValue(mark.overdue, 'tasks') });

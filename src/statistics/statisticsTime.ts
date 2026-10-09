@@ -82,7 +82,7 @@ async function sessionChart(
     id: 'session-lengths',
     accessibleLabel: 'Full closed-session length distribution',
     kind: 'bars',
-    x: bands('Minutes', labels),
+    x: { ...bands('Minutes', labels), finite: true },
     y: numeric('Sessions', Math.max(0, ...bins.map((bin) => bin.length)), 0, 'count'),
     series: [],
     marks: bins.map((bin, i) => ({

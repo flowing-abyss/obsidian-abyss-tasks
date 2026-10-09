@@ -107,14 +107,20 @@ export class StatisticsSections {
     heading.createEl('h3', { text: model.title });
     if (model.reading !== undefined)
       heading.createDiv({ cls: 'abyss-statistics-context', text: model.reading });
+    this.legend_abyssPrivate(element, model);
     const chartHost = element.createDiv();
-    const allocation = model.id === 'allocation' || model.id === 'concentration';
+    const allocation = model.id === 'allocation';
     chartHost.classList.toggle('abyss-statistics-allocation-plot', allocation);
     const charts = new StatisticsCharts(
       chartHost,
       this.renderer_abyssPrivate,
       this.select_abyssPrivate,
-      this.rowOptions_abyssPrivate,
+      {
+        ...this.rowOptions_abyssPrivate,
+        decorate: (figure, chart) => {
+          this.intensityChart_abyssPrivate(figure, chart);
+        },
+      },
     );
     try {
       charts.update(model.charts);
@@ -123,8 +129,9 @@ export class StatisticsSections {
       element.remove();
       throw error;
     }
-    this.legend_abyssPrivate(element, model);
-    this.intensity_abyssPrivate(element, model);
+    for (const chart of model.charts)
+      if (chart.marks.length === 0 && chart.kind !== 'timeline' && chart.emptyMessage === undefined)
+        this.intensityChart_abyssPrivate(element, chart);
     this.metrics_abyssPrivate(element, model);
     this.empty_abyssPrivate(element, chartHost, model);
     return { element, charts, model };
@@ -135,8 +142,7 @@ export class StatisticsSections {
     model: StatisticsSection,
   ): void {
     const allocation =
-      (model.id === 'allocation' || model.id === 'concentration') &&
-      model.charts.every((chart) => chart.marks.length === 0);
+      model.id === 'allocation' && model.charts.every((chart) => chart.marks.length === 0);
     if (
       model.emptyMessage !== undefined ||
       (model.charts.length > 0 &&
@@ -205,9 +211,6 @@ export class StatisticsSections {
         setStatisticsKey(swatch, 'opacity', String(statisticsSeriesOpacity(item)));
       }
     }
-  }
-  private intensity_abyssPrivate(element: HTMLElement, model: StatisticsSection): void {
-    for (const chart of model.charts) this.intensityChart_abyssPrivate(element, chart);
   }
   private intensityChart_abyssPrivate(element: HTMLElement, chart: StatisticsChartModel): void {
     const scale = chart.intensityScale;

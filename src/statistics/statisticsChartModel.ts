@@ -1,6 +1,8 @@
 import type { StatisticsTone } from './types';
 export type StatisticsAxis =
   | {
+      /** Every enumerated semantic bin must keep a visible label. */
+      readonly finite?: boolean | undefined;
       readonly type: 'number';
       readonly domain: readonly [number, number];
       readonly label: string;
@@ -9,6 +11,7 @@ export type StatisticsAxis =
       readonly tickLabels?: ReadonlyArray<readonly [number, string]> | undefined;
     }
   | {
+      readonly finite?: boolean | undefined;
       readonly type: 'band';
       readonly categories: readonly string[];
       readonly tickLabels?: ReadonlyArray<readonly [string, string]> | undefined;
@@ -60,6 +63,7 @@ export interface StatisticsMark {
 }
 export interface StatisticsChartModel {
   readonly emptyMessage?: string | undefined;
+  readonly activation?: 'week' | undefined;
   /** Horizontal ranking with one mark per ordered y category; presentation mounts a row window. */
   readonly rowViewport?: boolean | undefined;
   readonly id: string;

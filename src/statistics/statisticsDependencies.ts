@@ -250,6 +250,7 @@ function rankChart(
         'Prerequisite',
         marks.map((m) => m.key),
       ),
+      finite: true,
       tickLabels: marks.map((m) => [m.key, m.label] as const),
     },
     y: numeric('Direct waiting dependents', Math.max(0, ...marks.map((m) => m.y)), 0, 'count'),

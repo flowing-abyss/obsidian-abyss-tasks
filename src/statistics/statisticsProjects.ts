@@ -585,7 +585,7 @@ class Aging {
       kind: 'bars',
       layout: 'facets',
       facet: { key, label: group.label },
-      x: bands('Age days', AGE_LABELS),
+      x: { ...bands('Age days', AGE_LABELS), finite: true },
       y: numeric('Tasks', maximum, 0, 'count'),
       series: [
         { key: 'known', label: 'Known age', tone: 'accent' },

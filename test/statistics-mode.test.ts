@@ -1084,7 +1084,7 @@ it('keeps the primary plot ahead of summary stacks before and after evidence ope
   const metrics = expectDefined(section.querySelector('.abyss-statistics-metrics'));
   const legend = expectDefined(section.querySelector('.abyss-statistics-legend'));
   expect(plot.compareDocumentPosition(metrics) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(plot.compareDocumentPosition(legend) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(legend.compareDocumentPosition(plot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   const originalChildren = [...section.children];
   const mounted = expectDefined(h.renderer.mount.mock.calls[0]);
   mounted[2](
@@ -1630,6 +1630,11 @@ it('focuses Allocation groups without changing period or scope and recovers afte
   expect(h.host.textContent).toContain('Recorded time allocation');
   expect(h.host.textContent).not.toContain('Recorded time · #tag8');
   expect(h.host.querySelector('[aria-label="Find group"]')).toBeNull();
+  h.reset();
+  h.replace(source(nodes));
+  await h.wait();
+  expect(h.host.textContent).toContain('Recorded time allocation');
+  expect(h.host.textContent).not.toContain('Recorded time · #tag8');
   expect(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]')?.value).toBe('week');
   expect(h.mode.navigation.snapshot()).toEqual({
     view: 'allocation',
@@ -1723,3 +1728,122 @@ it('restores the live ranking after Find group focus/back and clamps after sourc
     group: 'tag',
   });
 });
+
+it('retains a selected tag identity when its last occurrence disappears and restores it on refresh', async () => {
+  type ScopeOption = readonly [StatisticsScope, string, string];
+  const opened: Array<InstanceType<typeof SuggestModal<ScopeOption>>> = [];
+  vi.spyOn(SuggestModal.prototype, 'open').mockImplementation(function (
+    this: InstanceType<typeof SuggestModal<ScopeOption>>,
+  ) {
+    opened.push(this);
+  });
+  const h = await harness();
+  const views = vi.spyOn(StatisticsSession.prototype, 'view');
+  const selected = task('selected', {
+    tags: ['selected'],
+    planning: { created: date('2026-10-01') },
+  });
+  h.replace(source([selected]));
+  h.mode.render(h.host);
+  await h.wait();
+  h.mode.navigation.openScope();
+  const picker = expectDefined(opened[0]);
+  h.reset();
+  picker.onChooseSuggestion(
+    expectDefined((await picker.getSuggestions('selected'))[0]),
+    new MouseEvent('click'),
+  );
+  await h.wait();
+  h.reset();
+  h.replace(source([{ ...selected, tags: [] }]));
+  await h.wait();
+  expect(h.mode.navigation.snapshot().scopeLabel).toContain('#selected');
+  expect(
+    expectDefined(await returned(views.mock.results[views.mock.results.length - 1])).coverage.scope
+      .nodes,
+  ).toBe(0);
+  h.reset();
+  h.replace(source([selected]));
+  await h.wait();
+  expect(h.mode.navigation.snapshot().scopeLabel).toBe('#selected');
+  expect(
+    expectDefined(await returned(views.mock.results[views.mock.results.length - 1])).coverage.scope
+      .nodes,
+  ).toBe(1);
+});
+
+it('returns from explicit earlier activity to the truthful previous period and clears the return on manual period choice', async () => {
+  const h = await harness();
+  h.replace(source([task('older', { planning: { created: date('2026-08-01') } })]));
+  h.mode.render(h.host);
+  await h.wait();
+  const button = (label: string) =>
+    expectDefined([...h.host.querySelectorAll('button')].find((b) => b.textContent === label));
+  h.reset();
+  button('View earlier activity').click();
+  await h.wait();
+  expect(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]')?.value).toBe('all');
+  expect(h.host.textContent).toContain('Return to previous period');
+  h.reset();
+  button('Return to previous period').click();
+  await h.wait();
+  expect(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]')?.value).toBe('week');
+  h.reset();
+  button('View earlier activity').click();
+  await h.wait();
+  h.reset();
+  const period = expectDefined(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]'));
+  period.value = 'month';
+  period.dispatchEvent(new Event('change'));
+  await h.wait();
+  expect(h.host.textContent).not.toContain('Return to previous period');
+});
+
+it.each(['allocation', 'movement'] as const)(
+  'clears vanished %s focus only after a complete accepted refresh',
+  async (view) => {
+    const h = await harness();
+    const node = task('focused', { tags: ['selected'], planning: { created: date('2026-10-01') } });
+    h.replace(source([node]));
+    if (view === 'allocation') h.mode.navigation.selectGroup('tag');
+    else h.mode.navigation.selectView('movement');
+    h.mode.render(h.host);
+    await h.wait();
+    const mounted = expectDefined(
+      h.renderer.mount.mock.calls.find(([, model]) =>
+        view === 'allocation' ? model.rowViewport === true : model.layout === 'facets',
+      ),
+    );
+    const id =
+      view === 'allocation'
+        ? expectDefined(mounted[1].marks[0]?.selectionId)
+        : expectDefined(mounted[1].facet?.actionId);
+    h.reset();
+    mounted[2](id);
+    await h.wait();
+    const focusedTitle =
+      view === 'allocation' ? 'Recorded time · #selected' : 'Project movement · No project';
+    expect(h.host.textContent).toContain(focusedTitle);
+    h.reset();
+    h.replace({ ...source([]), ready: false });
+    await h.wait();
+    h.reset();
+    h.replace(source([node]));
+    await h.wait();
+    expect(h.host.textContent).toContain(focusedTitle);
+    h.reset();
+    h.replace({ ...source([]), issues: [{ path: 'focused.md', reason: 'read-failed' }] });
+    await h.wait();
+    h.reset();
+    h.replace(source([node]));
+    await h.wait();
+    expect(h.host.textContent).toContain(focusedTitle);
+    h.reset();
+    h.replace(source([]));
+    await h.wait();
+    h.reset();
+    h.replace(source([node]));
+    await h.wait();
+    expect(h.host.textContent).not.toContain(focusedTitle);
+  },
+);

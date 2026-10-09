@@ -15,7 +15,7 @@ import type {
   StatisticsTask,
   StatisticsWork,
 } from './types';
-export const NO_PROJECT = 'unassigned';
+const NO_PROJECT = 'unassigned';
 const ARCHIVE_PROJECT = 'archive:unknown';
 function projectKey(path: string): string {
   return `project:${path}`;

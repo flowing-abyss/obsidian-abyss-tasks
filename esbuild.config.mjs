@@ -12,7 +12,8 @@ import process from 'process';
 // Analysis Movement endpoints, project coverage/focus and Aging density received a measured
 // 5 KiB total main increase including compact origin-band geometry.
 // Task 7's eligible/scoped/bounded dependency correction adds 3,525 measured bytes;
-// allow its approved 4 KiB increase (1850 KiB main / unchanged 181 KiB CSS).
+// allow its approved 4 KiB increase. The final twelve Analysis clarity corrections add
+// 2,894 measured bytes; allow the approved further 3 KiB (1853 KiB main / unchanged 181 KiB CSS).
 // Dependency scope and budget enforcement are unchanged.
 const { mainJsBudgetBytes: MAIN_JS_BUDGET_BYTES } = JSON.parse(
   readFileSync('package.json', 'utf8'),

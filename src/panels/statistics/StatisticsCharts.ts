@@ -21,6 +21,7 @@ export class StatisticsCharts {
     private readonly rowOptions_abyssPrivate: {
       positions?: Map<string, number>;
       onFailure?: (error: unknown) => void;
+      decorate?: (figure: HTMLElement, chart: StatisticsChartModel) => void;
     } = {},
   ) {
     this.document_abyssPrivate = host.ownerDocument;
@@ -60,6 +61,8 @@ export class StatisticsCharts {
     if (existing !== undefined) {
       existing.handle.update(model);
       this.caption_abyssPrivate(existing.element, model);
+      existing.element.querySelector('.abyss-statistics-intensity')?.remove();
+      this.rowOptions_abyssPrivate.decorate?.(existing.element, model);
       if (model.rowViewport !== true || existing.element.parentElement !== this.host)
         this.host.append(existing.element);
       return;
@@ -70,6 +73,7 @@ export class StatisticsCharts {
     surface.className = 'abyss-statistics-chart-surface';
     element.append(surface);
     this.caption_abyssPrivate(element, model);
+    this.rowOptions_abyssPrivate.decorate?.(element, model);
     this.host.append(element);
     try {
       this.mounted_abyssPrivate.set(model.id, {
@@ -136,6 +140,7 @@ export class StatisticsCharts {
 
   private caption_abyssPrivate(element: HTMLElement, model: StatisticsChartModel): void {
     element.classList.toggle('abyss-statistics-chart--facet', model.layout === 'facets');
+    element.querySelector('.abyss-statistics-chart-coverage')?.remove();
     const existing = element.querySelector('figcaption');
     if (model.facet === undefined) {
       existing?.remove();
@@ -156,7 +161,10 @@ export class StatisticsCharts {
       });
     }
     if (model.facet.description !== undefined)
-      caption.createDiv({ text: model.facet.description, cls: 'abyss-statistics-context' });
+      (model.layout === 'facets' ? element : caption).createDiv({
+        text: model.facet.description,
+        cls: 'abyss-statistics-context abyss-statistics-chart-coverage',
+      });
     element.prepend(caption);
   }
   private release_abyssPrivate(): void {
