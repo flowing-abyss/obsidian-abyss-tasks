@@ -77,6 +77,90 @@ it('renders selected live evidence and opens the exact matched child through the
   }
 });
 
+it('moves and clears live evidence highlights without enabling delete controls', async () => {
+  const app = await createAppWithFiles({
+    'evidence.md': '- [ ] First root ➕ 2026-10-01\n- [ ] Second root ➕ 2026-10-01\n',
+  });
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const application = configuredTaskApplication(app, settings);
+  await application.index.initialize();
+  const [firstRoot, secondRoot] = application.index.list();
+  const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+  const tags = new TagManager(app, settings, async () => {}, {
+    check: () => 'ready',
+    apply: async (_change, live) => {
+      live();
+    },
+  });
+  const view = new PanelView(
+    leaf,
+    settings,
+    tags,
+    application.index,
+    application.tasks,
+    application.statusRegistry,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    application.index,
+  );
+  document.body.append(view.containerEl);
+  try {
+    await view.onOpen();
+    const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+    state.set('taskStack', [expectDefined(firstRoot)]);
+    state.set('mode', 'statistics');
+    await vi.waitFor(() => {
+      expect(view.contentEl.querySelector('.abyss-statistics-section')).not.toBeNull();
+    });
+    expectDefined(
+      [
+        ...view.contentEl.querySelectorAll<HTMLButtonElement>('.abyss-statistics-metrics button'),
+      ].find((button) => button.textContent.startsWith('Open now')),
+    ).click();
+    const evidence = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-statistics'));
+    const [firstCard, secondCard] = evidence.querySelectorAll<HTMLElement>('.abyss-task-card');
+    const actions = [...evidence.querySelectorAll<HTMLButtonElement>('button')].filter((button) =>
+      button.textContent.startsWith('Select task · '),
+    );
+    expect(actions).toHaveLength(2);
+    expect([...evidence.querySelectorAll('.abyss-task-card.is-selected')]).toEqual([firstCard]);
+    expectDefined(actions[1]).click();
+    expect(state.get('taskStack')[0]?.ref).toEqual(expectDefined(secondRoot).ref);
+    expect
+      .soft(
+        [...evidence.querySelectorAll('.abyss-task-card.is-selected')],
+        'selection moves to the second exact root',
+      )
+      .toEqual([secondCard]);
+    expect(evidence.querySelector('.abyss-task-delete-btn')).toBeNull();
+    expectDefined(actions[0]).click();
+    expect(state.get('taskStack')[0]?.ref).toEqual(expectDefined(firstRoot).ref);
+    expect
+      .soft(
+        [...evidence.querySelectorAll('.abyss-task-card.is-selected')],
+        'selection returns to the first exact root',
+      )
+      .toEqual([firstCard]);
+    state.set('taskStack', []);
+    expect
+      .soft(
+        evidence.querySelectorAll('.abyss-task-card.is-selected'),
+        'clearing the inspector clears evidence selection',
+      )
+      .toHaveLength(0);
+    expect(evidence.querySelector('.abyss-task-delete-btn')).toBeNull();
+    expect(view.contentEl.querySelector('.abyss-statistics')).toBe(evidence);
+    expect(state.get('mode')).toBe('statistics');
+  } finally {
+    await view.onClose();
+    application.index.destroy();
+    view.containerEl.remove();
+  }
+});
+
 it('captures scroll before mode layout changes and remounts Statistics through owner migration', async () => {
   const app = await createAppWithFiles({}),
     settings = structuredClone(DEFAULT_SETTINGS);

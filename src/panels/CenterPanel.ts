@@ -481,6 +481,7 @@ export class CenterPanel {
               this.taskCardRenderer_abyssPrivate.render(host, root, statisticsGroups, {
                 selected: taskStackRowKey(state.get('taskStack')) === taskRowKey(root),
                 showDelete: false,
+                rowKey: taskRowKey(root),
               });
             },
             select: (stack) => {
@@ -2000,6 +2001,8 @@ export class CenterPanel {
 
   private updateTaskStackSelection_abyssPrivate(): void {
     const stack = this.state_abyssPrivate.get('taskStack');
+    if (this.state_abyssPrivate.get('mode') === 'statistics')
+      this.updateStatisticsEvidenceSelection_abyssPrivate(taskStackRowKey(stack));
     const root = stack[0];
     const current = stack[stack.length - 1];
     const detailKey = this.detailOccurrenceKey_abyssPrivate();
@@ -2021,6 +2024,14 @@ export class CenterPanel {
         item.classList.add('is-selected');
       });
     }
+  }
+
+  private updateStatisticsEvidenceSelection_abyssPrivate(selected: string | undefined): void {
+    for (const card of this.el.querySelectorAll<HTMLElement>('.abyss-statistics .abyss-task-card'))
+      card.classList.toggle(
+        'is-selected',
+        selected !== undefined && card.dataset['rowKey'] === selected,
+      );
   }
 
   private handleStateCommit_abyssPrivate(changed: ReadonlySet<string>): void {
