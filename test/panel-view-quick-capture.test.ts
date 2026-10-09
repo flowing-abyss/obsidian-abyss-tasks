@@ -570,19 +570,19 @@ describe('physical Q creation reveal through PanelView', () => {
           taskCardMountBound(h.root),
         );
         expect(document.activeElement).toBe(input);
+        const freshPresented = nextQuickPresentation(h.presentation);
         enter(input, 'ZZ fresh Q needle');
-        await vi.waitFor(() => {
-          expect(h.root.querySelector('.is-just-created')).not.toBeNull();
-        });
+        const receipt = expectDefined(await freshPresented);
         const fresh = expectDefined(
           h.index
             .list({ filePath: 'created.md' })
             .find((task) => task.title === 'ZZ fresh Q needle'),
         );
+        expect(receipt.ref).toEqual(fresh.ref);
+        expect(receipt.element.classList.contains('is-just-created')).toBe(true);
+        expect(h.root.querySelector('.is-just-created')).toBe(receipt.element);
         expect(h.state.get('taskStack')).toEqual([fresh]);
-        expect(renderedTaskElements(h.root, fresh.ref)).toContain(
-          h.root.querySelector('.is-just-created'),
-        );
+        expect(renderedTaskElements(h.root, fresh.ref)).toContain(receipt.element);
         expect(scroll.scrollTop).toBeGreaterThan(550);
         expect(h.root.querySelectorAll('.abyss-task-card').length).toBeLessThanOrEqual(
           taskCardMountBound(h.root, 1),
