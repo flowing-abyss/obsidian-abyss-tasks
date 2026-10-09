@@ -1,8 +1,14 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StatisticsCharts } from '../src/panels/statistics/StatisticsCharts';
+import { StatisticsDetails } from '../src/panels/statistics/StatisticsDetails';
+import { StatisticsSections } from '../src/panels/statistics/StatisticsSections';
 import { TanStackStatisticsChart } from '../src/panels/statistics/TanStackStatisticsChart';
-import { statisticsMarkDescription } from '../src/panels/statistics/statisticsFormat';
+import {
+  statisticsMarkContent,
+  statisticsMarkDescription,
+  statisticsMarkTitle,
+} from '../src/panels/statistics/statisticsFormat';
 import type { StatisticsChartModel } from '../src/statistics';
 import { prepareStatisticsDataset, StatisticsSession } from '../src/statistics';
 import { contracts } from '../tooling/css-contracts.mjs';
@@ -161,8 +167,68 @@ describe('Statistics chart adapter', () => {
   it('describes the selected stacked contribution rather than its cumulative endpoint', () => {
     const value = model();
     const recurring = required(value.marks.find((mark) => mark.key === 'r'));
-    expect(statisticsMarkDescription(recurring, value)).toContain('Day: Mon · Tasks: 2');
+    expect(statisticsMarkDescription(recurring, value)).toContain('Created: 2 tasks');
     expect(statisticsMarkDescription(recurring, value)).toContain('Created');
+  });
+  it('describes a horizontal stacked segment once with its own task magnitude', () => {
+    const chart = model({
+      layout: 'stacked',
+      x: { type: 'number', label: 'Tasks', unit: 'count', domain: [0, 20] },
+      y: { type: 'band', label: '', categories: ['New tasks'] },
+    });
+    const description = statisticsMarkDescription(
+      { key: 'm', x: 6, x2: 14, y: 'New tasks', weight: 8, series: 'completed' },
+      chart,
+    );
+    expect(description).toBe('New tasks\nCompleted: 8 tasks');
+    expect(
+      statisticsMarkContent(
+        { key: 'm', x: 6, x2: 14, y: 'New tasks', weight: 8, series: 'completed' },
+        chart,
+      ),
+    ).toEqual({ title: 'New tasks', rows: [{ label: 'Completed', value: '8 tasks' }] });
+  });
+  it('describes a negative vertical segment with positive task magnitude', () => {
+    expect(
+      statisticsMarkDescription({ key: 'm', x: 'Mon', y: -8, series: 'completed' }, model()),
+    ).toBe('Mon\nCompleted: 8 tasks');
+  });
+  it('describes a session histogram range with the actual session count', () => {
+    const chart = model({
+      x: { type: 'band', label: 'Session length', categories: ['15–30 min'] },
+      y: { type: 'number', label: 'Sessions', unit: 'count', domain: [0, 10] },
+    });
+    expect(statisticsMarkDescription({ key: 'bin', x: '15–30 min', y: 3 }, chart)).toBe(
+      '15–30 min\nSessions: 3 sessions',
+    );
+  });
+  it('formats provided observations once and uses their concise title for evidence', () => {
+    const mark = {
+      key: 'rate',
+      x: 2,
+      y: 'Sun',
+      observation: {
+        title: 'Sunday at 02:00',
+        values: [
+          { label: 'Recording rate', value: 1 / 3, unit: 'min/h' },
+          { label: 'Completion', value: 25, unit: 'percent' },
+          { label: 'Elapsed time', value: 0.00025, unit: 'hours' },
+          { label: 'Timing', value: null, unit: 'days' },
+        ],
+        note: 'Through now',
+      },
+    };
+    expect(statisticsMarkContent(mark, model())).toEqual({
+      title: 'Sunday at 02:00',
+      rows: [
+        { label: 'Recording rate', value: '0.3 min/h' },
+        { label: 'Completion', value: '25%' },
+        { label: 'Elapsed time', value: '0.00025 h' },
+        { label: 'Timing', value: 'Unavailable' },
+        { label: 'Reading', value: 'Through now' },
+      ],
+    });
+    expect(statisticsMarkTitle(mark, model())).toBe('Sunday at 02:00');
   });
   it('renders explicit diverging endpoints in one shared column and activates semantic evidence', () => {
     const el = host();
@@ -580,7 +646,7 @@ describe('Statistics chart adapter', () => {
     expect(element.textContent).toContain('2026-10-01');
     expect(element.textContent).toContain('2026-10-02');
   });
-  it('exposes numerator, denominator and fractional mean inside local tooltips', () => {
+  it('exposes numerator, denominator and fractional mean inside owner-document portal tooltips', () => {
     const element = host();
     const chart = mount(
       element,
@@ -604,12 +670,13 @@ describe('Statistics chart adapter', () => {
       }),
     );
     key(chart.svg(), 'Home');
-    const tooltip = element.querySelector<HTMLElement>('.abyss-statistics-tooltip');
+    const tooltip = element.ownerDocument.querySelector<HTMLElement>('.abyss-statistics-tooltip');
     expect(tooltip?.textContent).toContain('0.00025');
     expect(tooltip?.textContent).toContain('0.0005 / 2');
     expect(tooltip?.textContent).toContain('0.0005 recorded minutes / 2 elapsed exposure hours');
     expect(tooltip?.textContent).toContain('mean 0.00025 minutes per hour');
-    expect(element.contains(tooltip)).toBe(true);
+    expect(element.contains(tooltip)).toBe(false);
+    expect(tooltip?.parentElement).toBe(element.ownerDocument.body);
     const inputs = contracts.runtime.consumed.filter((name) =>
       name.startsWith('--ts-chart-tooltip-'),
     );
@@ -617,6 +684,36 @@ describe('Statistics chart adapter', () => {
     for (const variable of inputs)
       expect(tooltip?.getAttribute('style')).toContain(`var(${variable},`);
     expect(tooltip?.style.background).toContain('var(--ts-chart-tooltip-background,');
+  });
+  it('escapes observation text and releases its owner-document tooltip on destroy', () => {
+    const element = host();
+    const chart = mount(
+      element,
+      model({
+        marks: [
+          {
+            key: 'escaped',
+            x: 'Mon',
+            y: 1,
+            selectionId: 'record',
+            observation: {
+              title: '<img src=x onerror=alert(1)>',
+              values: [{ label: '<b>Tasks</b>', value: '<script>bad()</script>' }],
+            },
+          },
+        ],
+      }),
+    );
+    key(chart.svg(), 'Home');
+    const tooltip = required(element.ownerDocument.querySelector('.abyss-statistics-tooltip'));
+    expect(tooltip.textContent).toContain('<img src=x onerror=alert(1)>');
+    expect(tooltip.querySelector('img, script, b')).toBeNull();
+    element.setAttribute('inert', '');
+    key(chart.svg(), 'Enter');
+    expect(chart.select).not.toHaveBeenCalled();
+    chart.handle.destroy();
+    expect(tooltip.isConnected).toBe(false);
+    expect(element.ownerDocument.querySelector('.abyss-statistics-tooltip')).toBeNull();
   });
   it('relayouts at the measured width and makes a queued resize inert after destroy', () => {
     const observers: ResizeObserverCallback[] = [],
@@ -687,6 +784,11 @@ describe('Statistics chart adapter', () => {
     key(chart.svg(), 'Home');
     key(chart.svg(), 'Enter');
     expect(chart.select).toHaveBeenCalledWith('recurring');
+    const tooltip = required(realm.window.document.querySelector('.abyss-statistics-tooltip'));
+    expect(tooltip.parentElement).toBe(realm.window.document.body);
+    expect(document.querySelector('.abyss-statistics-tooltip')).toBeNull();
+    chart.handle.destroy();
+    expect(tooltip.isConnected).toBe(false);
   });
 });
 
@@ -984,7 +1086,9 @@ it.each([640, 240])('expands folded clock fragments once before packing at %ipx'
   expect(required(second).y - required(first).y).toBeCloseTo(required(first).h / 0.8);
   for (const position of ['Home', 'End']) {
     key(chart.svg(), position);
-    const tooltip = required(el.querySelector('.abyss-statistics-tooltip')).textContent;
+    const tooltip = required(
+      el.ownerDocument.querySelector('.abyss-statistics-tooltip'),
+    ).textContent;
     expect(tooltip).toContain('01:30 UTC+02:00 – 02:00 UTC+02:00');
     expect(tooltip).toContain('01:00 UTC+01:00 – 01:45 UTC+01:00');
     expect(tooltip).toContain('One physical tracking entry');
@@ -1268,4 +1372,123 @@ it.each([
   expect(labels).toContain(categories[0]);
   expect(labels.length).toBeLessThan(categories.length);
   expect(labels.length).toBeGreaterThan(1);
+});
+
+it('renders concise section reading and empty guidance with only a zero heatmap scale', async () => {
+  const dataset = required(await prepareStatisticsDataset(source([task('A')]), [], work));
+  const view = required(
+    await new StatisticsSession(dataset).view(request({ view: 'rhythm' }), work),
+  );
+  const surface = host();
+  const renderer = { mount: vi.fn(() => ({ update: vi.fn(), destroy: vi.fn() })) };
+  const sections = new StatisticsSections(surface, renderer, vi.fn());
+  mounts.push(sections);
+  sections.update({
+    ...view,
+    sections: [
+      {
+        ...required(view.sections[0]),
+        reading: 'Through the selected period.',
+        emptyMessage: 'No recorded time.',
+        charts: [
+          model({ kind: 'heatmap', intensityScale: { domain: [0, 0], unit: 'min/h' }, marks: [] }),
+        ],
+        metrics: [],
+        legend: [],
+      },
+    ],
+  });
+  expect(surface.textContent).toContain('Through the selected period.');
+  expect(surface.textContent).toContain('No recorded time.');
+  expect(
+    surface.querySelectorAll('.abyss-statistics-intensity .abyss-statistics-swatch'),
+  ).toHaveLength(1);
+  expect(surface.textContent).not.toContain('>0');
+});
+it('keeps nonzero selectable coverage and source issues in compact labelled Details', async () => {
+  const dataset = required(await prepareStatisticsDataset(source([task('A')]), [], work));
+  const view = required(
+    await new StatisticsSession(dataset).view(request({ view: 'rhythm' }), work),
+  );
+  const surface = host();
+  const anchor = surface.createEl('button');
+  const select = vi.fn();
+  const details = new StatisticsDetails();
+  mounts.push({
+    destroy: () => {
+      details.close();
+    },
+  });
+  details.open(
+    surface,
+    anchor,
+    {
+      ...view,
+      coverage: {
+        ...view.coverage,
+        scope: { ...view.coverage.scope, archive: 2 },
+        source: {
+          ...view.coverage.source,
+          sourceIssues: [{ path: 'offline.md', reason: 'read-failed' }],
+        },
+      },
+      sections: [
+        {
+          ...required(view.sections[0]),
+          metrics: [
+            { id: 'empty', role: 'coverage', label: 'Missing creation', value: 0 },
+            {
+              id: 'missing',
+              role: 'coverage',
+              label: 'Undated in scope',
+              value: 3,
+              selectionId: 'missing',
+            },
+          ],
+        },
+      ],
+    },
+    select,
+  );
+  const dialog = required(surface.querySelector('[role="dialog"]'));
+  expect(dialog.textContent).toContain('Definition:');
+  expect(dialog.textContent).toContain('Archived: 2');
+  expect(dialog.textContent).toContain('offline.md: read-failed');
+  expect(dialog.textContent).not.toContain('Missing creation');
+  expect(dialog.textContent).not.toContain('Node or ancestor');
+  expect(dialog.textContent).not.toContain('0 broken entries');
+  required(dialog.querySelector('button')).click();
+  expect(select).toHaveBeenCalledWith('missing');
+  expect(dialog.isConnected).toBe(false);
+});
+
+it('keeps prose readable in the engine wrapping label column and short units in the value column', () => {
+  const element = host();
+  const chart = mount(
+    element,
+    model({
+      marks: [
+        {
+          key: 'note',
+          x: 'Mon',
+          y: 1,
+          observation: {
+            title: 'Monday',
+            values: [{ label: 'Tasks', value: 1, unit: 'tasks' }],
+            note: 'A long contextual reading that stays fully readable.',
+          },
+        },
+      ],
+    }),
+  );
+  key(chart.svg(), 'Home');
+  const rows = Array.from(
+    element.ownerDocument.querySelectorAll('.abyss-statistics-tooltip .ts-chart-tooltip__row'),
+  );
+  expect(rows[0]?.textContent).toBe('Tasks1 task');
+  const prose = required(rows[1]);
+  expect(prose.children[1]?.textContent).toBe(
+    'Reading: A long contextual reading that stays fully readable.',
+  );
+  expect(prose.children[2]?.textContent).toBe('');
 });

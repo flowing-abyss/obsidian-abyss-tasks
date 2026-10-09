@@ -177,7 +177,7 @@ export const contracts = {
       '--abyss-project-kanban-spacer-height',
       '--abyss-project-timeline-spacer-height',
     ],
-    // The pinned external DOM host reads only these documented inputs inside our local tooltip.
+    // The pinned external DOM host reads only these documented inputs on our owned tooltip class.
     // https://github.com/TanStack/charts/blob/v1.0.0/docs/reference/focus-and-interaction.md#css-variables
     consumed: [
       '--abyss-tag-text-light',

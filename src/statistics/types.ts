@@ -147,6 +147,8 @@ interface StatisticsLegend {
 export type StatisticsTone =
   'created' | 'completed' | 'cancelled' | 'overdue' | 'neutral' | 'muted' | 'accent';
 export interface StatisticsSection {
+  readonly reading?: string | undefined;
+  readonly emptyMessage?: string | undefined;
   readonly id: string;
   readonly title: string;
   readonly context: string;

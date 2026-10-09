@@ -11,12 +11,17 @@ import { scaleLinear } from '@tanstack/charts/scales/linear';
 import { defineChart } from '@tanstack/charts/scene';
 import { text } from '@tanstack/charts/text';
 import { tooltip } from '@tanstack/charts/tooltip';
-import type { ChartMark, ChartPoint, ChartPositionScaleOptions } from '@tanstack/charts/types';
+import { portal } from '@tanstack/charts/tooltip/portal';
+import type {
+  ChartMark,
+  ChartPositionScaleOptions,
+  ChartTooltipInput,
+} from '@tanstack/charts/types';
 import type { StatisticsAxis, StatisticsChartModel, StatisticsMark } from '../../statistics';
 import type { StatisticsChartHandle, StatisticsChartRenderer } from './StatisticsChart';
 import {
   statisticsIntensityPaint,
-  statisticsMarkDescription,
+  statisticsMarkContent,
   statisticsNumber,
   statisticsSeriesOpacity,
   statisticsSeriesPaint,
@@ -533,6 +538,32 @@ function acquireChart(
   return chart;
 }
 
+function tooltipRow(row: { label: string; value: string }): { label: string; value: string } {
+  // The pinned engine wraps labels, but keeps values on one line. Prose and clock
+  // ranges remain complete in its flexible label column, without cascade overrides.
+  if (row.label === 'Reading' || row.label === 'Clock range' || row.value.length > 24)
+    return { label: `${row.label}: ${row.value}`, value: '' };
+  return row;
+}
+
+function tooltipOptions(
+  model: StatisticsChartModel,
+): ChartTooltipInput<StatisticsMark, Value, Value, 'dom'> {
+  return {
+    use: tooltip,
+    className: 'abyss-statistics-tooltip',
+    motion: false,
+    portal,
+    placement: ['top', 'right', 'left', 'bottom'],
+    content: (points) => {
+      const point = points[0];
+      if (point === undefined) return { rows: [] };
+      const content = statisticsMarkContent(point.datum, model);
+      return { ...content, rows: content.rows.map(tooltipRow) };
+    },
+  };
+}
+
 /** The sole engine boundary; the owning mode drives data/theme updates and handles failures. */
 export class TanStackStatisticsChart implements StatisticsChartRenderer {
   mount(
@@ -576,13 +607,7 @@ export class TanStackStatisticsChart implements StatisticsChartRenderer {
           focus: 'nearest',
           focusRing: { fill: BACKGROUND, radius: 6, strokeWidth: 2 },
           svgAnimation: false,
-          tooltip: {
-            use: tooltip,
-            className: 'abyss-statistics-tooltip',
-            motion: false,
-            format: (point: ChartPoint<StatisticsMark, Value, Value>) =>
-              statisticsMarkDescription(point.datum, model),
-          },
+          tooltip: tooltipOptions(model),
         }),
         idPrefix,
         height: height(model),
@@ -593,7 +618,13 @@ export class TanStackStatisticsChart implements StatisticsChartRenderer {
         className: 'abyss-statistics-chart-svg',
         onSelect: (point) => {
           const id = point?.datum.selectionId;
-          if (!destroyed && generation === epoch && id !== undefined && selections.has(id))
+          if (
+            !destroyed &&
+            generation === epoch &&
+            host.closest('[inert]') === null &&
+            id !== undefined &&
+            selections.has(id)
+          )
             onSelect(id);
         },
       };

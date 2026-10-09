@@ -5,6 +5,7 @@ import { LeftPanel } from '../src/panels/LeftPanel';
 import type { StatisticsChartRenderer } from '../src/panels/statistics/StatisticsChart';
 import type { StatisticsChoices } from '../src/panels/statistics/StatisticsControls';
 import { StatisticsMode } from '../src/panels/statistics/StatisticsMode';
+import { TanStackStatisticsChart } from '../src/panels/statistics/TanStackStatisticsChart';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { StatisticsScope, StatisticsViewModel } from '../src/statistics';
 import { StatisticsSession } from '../src/statistics/statisticsSession';
@@ -855,7 +856,9 @@ it('discards a superseded cold scope, period and view request and installs only 
   h.reset();
   await selectScope(h.host, 'old');
   await entered.promise;
-  expect(content.hidden).toBe(true);
+  expect(content.hidden).toBe(false);
+  expect(content.inert).toBe(true);
+  expect(content.getAttribute('aria-busy')).toBe('true');
   expect(h.host.querySelector('.abyss-statistics-context')?.textContent).toBe(
     'Preparing analysis…',
   );
@@ -868,7 +871,9 @@ it('discards a superseded cold scope, period and view request and installs only 
   expectDefined(
     h.host.querySelector<HTMLButtonElement>('[data-statistics-view="cohorts"]'),
   ).click();
-  expect(content.hidden).toBe(true);
+  expect(content.hidden).toBe(false);
+  expect(content.inert).toBe(true);
+  expect(content.getAttribute('aria-busy')).toBe('true');
   expect(h.host.querySelector('.abyss-statistics-context')?.textContent).toBe(
     'Preparing analysis…',
   );
@@ -1211,4 +1216,92 @@ it('owns one details popover with definitions and coverage and releases it on na
   h.mode.unmount();
   expect(h.host.querySelector('[role="dialog"]')).toBeNull();
   expect(h.listeners.size).toBe(0);
+});
+
+it('mounts replacement charts in a connected off-flow measurable host while preserving accepted geometry', async () => {
+  const h = await harness();
+  h.mode.render(h.host);
+  await h.wait();
+  const content = expectDefined(h.host.querySelector<HTMLElement>('.abyss-statistics-content'));
+  const before = [...content.children];
+  const mountedWidths: number[] = [];
+  h.renderer.mount.mockImplementation((surface, chart, select) => {
+    expect(surface.isConnected).toBe(true);
+    expect(surface.closest('[hidden]')).toBeNull();
+    const stage = expectDefined(surface.closest('.abyss-statistics-staging'));
+    expect(stage.parentElement).toBe(content);
+    expect([...content.children].filter((child) => child !== stage)).toEqual(before);
+    // JSDOM has no layout. Supply the accepted measurable width at the real engine boundary;
+    // connected staging/hidden assertions above check the host that supplies native layout.
+    surface.getBoundingClientRect = () => ({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 1390,
+      bottom: 250,
+      width: 1390,
+      height: 250,
+      toJSON: () => ({}),
+    });
+    const handle = new TanStackStatisticsChart().mount(surface, chart, select);
+    mountedWidths.push(
+      Number(expectDefined(surface.querySelector('svg')?.getAttribute('viewBox')).split(' ')[2]),
+    );
+    return handle;
+  });
+  h.reset();
+  const period = expectDefined(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]'));
+  period.value = 'month';
+  period.dispatchEvent(new Event('change'));
+  const prior = expectDefined(h.renderer.mount.mock.calls[0]);
+  prior[2](
+    expectDefined(prior[1].marks.find((mark) => mark.selectionId !== undefined)?.selectionId),
+  );
+  expect(h.host.querySelector('.abyss-statistics-evidence')?.textContent).toBe('');
+  await h.wait();
+  expect(content.inert).toBe(false);
+  expect(content.querySelector('.abyss-statistics-staging')).toBeNull();
+  expect(mountedWidths.length).toBeGreaterThan(0);
+  expect(mountedWidths.every((width) => width === 1390)).toBe(true);
+});
+
+it('uses the supplied concise observation title for Results', async () => {
+  const original = expectDefined(
+    Object.getOwnPropertyDescriptor(StatisticsSession.prototype, 'view'),
+  ).value as StatisticsSession['view'];
+  vi.spyOn(StatisticsSession.prototype, 'view').mockImplementation(async function (
+    this: StatisticsSession,
+    request,
+    work,
+  ) {
+    const view = await original.call(this, request, work);
+    if (view === undefined) return undefined;
+    return {
+      ...view,
+      sections: view.sections.map((section) => ({
+        ...section,
+        charts: section.charts.map((chart) => ({
+          ...chart,
+          marks: chart.marks.map((mark) => ({
+            ...mark,
+            observation: {
+              title: 'Monday completions',
+              values: [{ label: 'Completed', value: 8, unit: 'tasks' }],
+            },
+          })),
+        })),
+      })),
+    };
+  });
+  const h = await harness();
+  h.mode.render(h.host);
+  await h.wait();
+  const mounted = expectDefined(h.renderer.mount.mock.calls[0]);
+  mounted[2](
+    expectDefined(mounted[1].marks.find((mark) => mark.selectionId !== undefined)?.selectionId),
+  );
+  expect(h.host.querySelector('.abyss-statistics-evidence-header h3')?.textContent).toBe(
+    'Monday completions',
+  );
 });

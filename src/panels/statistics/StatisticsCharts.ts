@@ -64,7 +64,15 @@ export class StatisticsCharts {
     try {
       this.mounted_abyssPrivate.set(model.id, {
         element,
-        handle: this.renderer.mount(surface, model, this.onSelect),
+        handle: this.renderer.mount(surface, model, (id) => {
+          if (
+            !this.destroyed_abyssPrivate &&
+            !this.suspended_abyssPrivate &&
+            surface.isConnected &&
+            surface.closest('[inert]') === null
+          )
+            this.onSelect(id);
+        }),
       });
     } catch (error) {
       element.remove();

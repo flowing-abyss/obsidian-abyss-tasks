@@ -14,7 +14,17 @@ export type StatisticsAxis =
       readonly tickLabels?: ReadonlyArray<readonly [string, string]> | undefined;
       readonly label: string;
     };
+export interface StatisticsObservation {
+  readonly title: string;
+  readonly values: ReadonlyArray<{
+    readonly label: string;
+    readonly value: number | string | null;
+    readonly unit?: string | undefined;
+  }>;
+  readonly note?: string | undefined;
+}
 export interface StatisticsMark {
+  readonly observation?: StatisticsObservation | undefined;
   readonly key: string;
   readonly x: number | string;
   readonly y: number | string;

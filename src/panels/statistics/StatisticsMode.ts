@@ -22,7 +22,7 @@ import type { StatisticsChartRenderer } from './StatisticsChart';
 import { statisticsButton, StatisticsControls, type StatisticsChoices } from './StatisticsControls';
 import { StatisticsDetails } from './StatisticsDetails';
 import { StatisticsEvidence, type StatisticsEvidenceHost } from './StatisticsEvidence';
-import { statisticsMarkDescription } from './statisticsFormat';
+import { statisticsMarkTitle } from './statisticsFormat';
 import type { StatisticsNavigationPort } from './StatisticsNavigation';
 import { StatisticsSections } from './StatisticsSections';
 import { StatisticsWorkScheduler } from './StatisticsWorkScheduler';
@@ -282,7 +282,11 @@ export class StatisticsMode {
     this.notifyNavigation_abyssPrivate();
     this.contextPending_abyssPrivate = true;
     this.generation_abyssPrivate++;
-    if (this.content_abyssPrivate !== undefined) this.content_abyssPrivate.hidden = true;
+    if (this.content_abyssPrivate !== undefined) {
+      this.content_abyssPrivate.inert = true;
+      this.content_abyssPrivate.setAttribute('inert', '');
+      this.content_abyssPrivate.setAttribute('aria-busy', 'true');
+    }
     this.label_abyssPrivate?.setText('Preparing analysis…');
     this.status_abyssPrivate?.empty();
     this.renderControls_abyssPrivate();
@@ -439,7 +443,11 @@ export class StatisticsMode {
       }`,
     );
     this.sourceStatus_abyssPrivate(model);
-    if (this.content_abyssPrivate !== undefined) this.content_abyssPrivate.hidden = false;
+    if (this.content_abyssPrivate !== undefined) {
+      this.content_abyssPrivate.inert = false;
+      this.content_abyssPrivate.removeAttribute('inert');
+      this.content_abyssPrivate.removeAttribute('aria-busy');
+    }
     this.renderControls_abyssPrivate();
     this.renderActions_abyssPrivate(model);
     this.options_abyssPrivate.host.renderComplete();
@@ -491,7 +499,12 @@ export class StatisticsMode {
   }
   private select_abyssPrivate(id: string): void {
     const model = this.model_abyssPrivate;
-    if (model === undefined || this.evidenceHost_abyssPrivate === undefined) return;
+    if (
+      this.contextPending_abyssPrivate ||
+      model === undefined ||
+      this.evidenceHost_abyssPrivate === undefined
+    )
+      return;
     const action = model.chartActions.find(([key]) => key === id)?.[1];
     if (action !== undefined) {
       this.action_abyssPrivate(action);
@@ -610,8 +623,7 @@ function selectionLabel(model: StatisticsViewModel, id: string): string {
     if (legend !== undefined) return legend.label;
     for (const chart of section.charts) {
       const mark = chart.marks.find((mark) => mark.selectionId === id);
-      if (mark !== undefined)
-        return statisticsMarkDescription(mark, chart).split('\n').slice(0, 2).join(' · ');
+      if (mark !== undefined) return statisticsMarkTitle(mark, chart);
     }
   }
   return 'Selected records';

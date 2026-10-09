@@ -37,12 +37,13 @@ export class StatisticsDetails {
   }
   private coverage_abyssPrivate(element: HTMLElement, model: StatisticsViewModel): void {
     const coverage = model.coverage.scope;
-    element.createEl('p', {
-      text: `${coverage.nodes} Tasks & subtasks in scope · ${coverage.live} live · ${coverage.archive} archived · ${coverage.entries} time entries · ${coverage.brokenEntries} broken entries · ${coverage.dateIssues} date issues`,
-    });
-    element.createEl('p', {
-      text: `Recurring: ${model.coverage.source.recurrence}. Current project membership and tags classify retained history.`,
-    });
+    element.createDiv({ text: `${statisticsNumber(coverage.nodes)} Tasks & subtasks in scope` });
+    for (const [label, count] of [
+      ['Archived', coverage.archive],
+      ['Unusable time entries', coverage.brokenEntries],
+      ['Date issues', coverage.dateIssues],
+    ] as const)
+      if (count > 0) element.createDiv({ text: `${label}: ${statisticsNumber(count)}` });
     for (const issue of model.coverage.source.sourceIssues)
       element.createDiv({ text: `${issue.path}: ${issue.reason}` });
   }
@@ -52,10 +53,13 @@ export class StatisticsDetails {
     select: (id: string) => void,
   ): void {
     element.createEl('h4', { text: section.title });
-    element.createEl('p', { text: section.context });
+    element.createEl('p', { text: `Definition: ${section.context}` });
     for (const metric of section.metrics) {
-      if (metric.role === 'coverage') this.metric_abyssPrivate(element, metric, select);
-      if (metric.context !== undefined) element.createEl('p', { text: metric.context });
+      if (metric.role === 'coverage' && metric.value !== 0) {
+        this.metric_abyssPrivate(element, metric, select);
+        if (metric.context !== undefined)
+          element.createDiv({ cls: 'abyss-statistics-context', text: metric.context });
+      }
     }
   }
   private metric_abyssPrivate(

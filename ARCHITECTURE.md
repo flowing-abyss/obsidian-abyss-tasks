@@ -400,9 +400,11 @@ owner timer is the fallback. Hidden views do not aggregate.
 [`StatisticsControls`](src/panels/statistics/StatisticsControls.ts) prepares a yielding scope inventory
 and keyed label lookup once per normalized dataset. The native searchable SuggestModal renders
 at most 50 suggestions while retaining every project path and tag; duplicate names show path context.
-[`StatisticsSections`](src/panels/statistics/StatisticsSections.ts) stages changed chart sections and
-commits only after all mounts succeed, preserving coherent last-good graphs and labels on background
-failure. Requested contexts show loading/error state. The mode owns diagnostic logging and retry.
+[`StatisticsSections`](src/panels/statistics/StatisticsSections.ts) stages changed chart sections in a connected, invisible, width-constrained host outside normal flow.
+The staging host mirrors the requested section grid without adding accepted content height; mounts
+receive measurable final widths. Commit follows only after all mounts succeed, preserving coherent
+last-good graphs and labels on failure. Pending contexts retain accepted geometry, expose busy state
+and make old interactions inert; selection callbacks also reject pending or released surfaces. The mode owns diagnostic logging and retry.
 Partial source-acquisition diagnostics expose the same explicit Retry without re-reading sources on
 routine refresh. CenterPanel unmounts outgoing Statistics during the mode notification, before the
 outer layout changes; scroll is captured before teardown and restored after the first accepted
@@ -510,7 +512,15 @@ over a 240px chart; controls continue wrapping within the host width. Facet head
 shared by charts and mode legends. Fixed event tones use semantic host colors, recurring series
 retain muted opacity, and categorical series use a finite host-token palette keyed by identity and
 the section's complete peer list. Tooltip variables are declared on the plugin-owned Statistics
-surface and enrolled as exact external CSS consumers; tooltips remain inside that surface.
+tooltip class and enrolled as exact external CSS consumers. The official tooltip portal uses the
+owner-document top layer or body fallback, retaining those tokens while staying outside scroller
+geometry; the engine disposes portal observers/listeners with its chart. Content is structured from
+engine-neutral mark observations, with labelled values and units shared with accessible text and
+concise Results titles. Prose and clock ranges use the engine’s wrapping label column; short
+numeric/unit values retain its value column, without inline-style overrides. Geometry-aware
+fallback reports segment magnitudes rather than offsets.
+Optional section reading/empty messages and compact Details definitions/coverage remain model data.
+Statistics content, figure and Results scrollers reserve stable scrollbar space.
 
 [`THIRD_PARTY_NOTICES.txt`](THIRD_PARTY_NOTICES.txt) retains the pinned runtime license inventory,
 including MiniSearch and the chart dependencies retained by the adapter's bundle analysis. The esbuild

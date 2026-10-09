@@ -24,25 +24,35 @@ export class StatisticsSections {
     private readonly select_abyssPrivate: (id: string) => void,
   ) {}
   update(view: StatisticsViewModel): void {
-    const staged = this.stage_abyssPrivate(view);
-    this.host_abyssPrivate.classList.toggle(
-      'abyss-statistics-content--rhythm',
-      view.view === 'rhythm',
-    );
-    for (const [key, section] of this.sections_abyssPrivate)
-      if (staged.has(key) || !view.sections.some((model) => model.id === key)) {
-        section.charts.destroy();
-        section.element.remove();
-        this.sections_abyssPrivate.delete(key);
+    const staging = this.host_abyssPrivate.createDiv({ cls: 'abyss-statistics-staging' });
+    staging.classList.toggle('abyss-statistics-content--rhythm', view.view === 'rhythm');
+    staging.inert = true;
+    staging.setAttribute('inert', '');
+    staging.setAttribute('aria-hidden', 'true');
+    try {
+      const staged = this.stage_abyssPrivate(view, staging);
+      this.host_abyssPrivate.classList.toggle(
+        'abyss-statistics-content--rhythm',
+        view.view === 'rhythm',
+      );
+      for (const [key, section] of this.sections_abyssPrivate)
+        if (staged.has(key) || !view.sections.some((model) => model.id === key)) {
+          section.charts.destroy();
+          section.element.remove();
+          this.sections_abyssPrivate.delete(key);
+        }
+      for (const [key, section] of staged) this.sections_abyssPrivate.set(key, section);
+      for (const model of view.sections) {
+        const section = this.sections_abyssPrivate.get(model.id);
+        if (section !== undefined) this.host_abyssPrivate.append(section.element);
       }
-    for (const [key, section] of staged) this.sections_abyssPrivate.set(key, section);
-    for (const model of view.sections) {
-      const section = this.sections_abyssPrivate.get(model.id);
-      if (section !== undefined) this.host_abyssPrivate.append(section.element);
+    } finally {
+      staging.remove();
     }
   }
   private stage_abyssPrivate(
     view: StatisticsViewModel,
+    staging: HTMLElement,
   ): Map<string, { element: HTMLElement; charts: StatisticsCharts; model: StatisticsSection }> {
     const staged = new Map<
       string,
@@ -50,8 +60,11 @@ export class StatisticsSections {
     >();
     try {
       for (const model of view.sections) {
-        if (this.sections_abyssPrivate.get(model.id)?.model === model) continue;
-        const section = this.build_abyssPrivate(model);
+        if (this.sections_abyssPrivate.get(model.id)?.model === model) {
+          staging.createEl('section', { cls: 'abyss-statistics-section' });
+          continue;
+        }
+        const section = this.build_abyssPrivate(model, staging);
         staged.set(model.id, section);
       }
     } catch (error) {
@@ -63,14 +76,19 @@ export class StatisticsSections {
     }
     return staged;
   }
-  private build_abyssPrivate(model: StatisticsSection): {
+  private build_abyssPrivate(
+    model: StatisticsSection,
+    staging: HTMLElement,
+  ): {
     element: HTMLElement;
     charts: StatisticsCharts;
     model: StatisticsSection;
   } {
-    const element = this.host_abyssPrivate.createEl('section', { cls: 'abyss-statistics-section' });
+    const element = staging.createEl('section', { cls: 'abyss-statistics-section' });
     const heading = element.createDiv({ cls: 'abyss-statistics-section-heading' });
     heading.createEl('h3', { text: model.title });
+    if (model.reading !== undefined)
+      heading.createDiv({ cls: 'abyss-statistics-context', text: model.reading });
     const charts = new StatisticsCharts(
       element.createDiv(),
       this.renderer_abyssPrivate,
@@ -86,8 +104,14 @@ export class StatisticsSections {
     this.legend_abyssPrivate(element, model);
     this.intensity_abyssPrivate(element, model);
     this.metrics_abyssPrivate(element, model);
-    if (model.charts.length > 0 && model.charts.every((chart) => chart.marks.length === 0))
-      element.createDiv({ text: 'No eligible records in this selection.' });
+    if (
+      model.emptyMessage !== undefined ||
+      (model.charts.length > 0 && model.charts.every((chart) => chart.marks.length === 0))
+    )
+      element.createDiv({
+        cls: 'abyss-statistics-context',
+        text: model.emptyMessage ?? 'No eligible records in this selection.',
+      });
     return { element, charts, model };
   }
   private metrics_abyssPrivate(element: HTMLElement, model: StatisticsSection): void {
@@ -165,7 +189,10 @@ export class StatisticsSections {
       `${statisticsNumber(max * 0.34)}–<${statisticsNumber(max * 0.67)}`,
       `${statisticsNumber(max * 0.67)}–${statisticsNumber(max)}`,
     ];
-    for (const [index, level] of (['zero', 'low', 'medium', 'high'] as const).entries()) {
+    for (const [index, level] of (max > 0
+      ? (['zero', 'low', 'medium', 'high'] as const)
+      : (['zero'] as const)
+    ).entries()) {
       const item = key.createSpan({
           text: ['0', '', '', statisticsNumber(max)][index] ?? '',
           attr: { 'aria-label': labels[index] ?? '', title: labels[index] ?? '' },
