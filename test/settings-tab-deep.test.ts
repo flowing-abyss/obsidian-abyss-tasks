@@ -1169,6 +1169,28 @@ describe('CalendarSettingsTab Hotkeys', () => {
     );
   }
 
+  it('renders Analysis before Search and persists customized and disabled Hotkeys values', async () => {
+    const { tab, plugin } = makeTab();
+    const body = hotkeysBody(tab);
+    const inputs = [...body.querySelectorAll<HTMLInputElement>('[data-shortcut-action]')];
+    const input = shortcutInput(body, 'openStatistics');
+    expect(inputs[inputs.length - 2]).toBe(input);
+    expect(inputs[inputs.length - 1]?.dataset['shortcutAction']).toBe('openSearch');
+    expect(body.querySelector(`label[for="${input.id}"]`)?.textContent).toBe('Analysis');
+    expect(input.value).toBe('A');
+    input.value = 'Alt 8 | shift a';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await flushMicrotasks();
+    expect(plugin.settings.shortcuts.openStatistics).toBe('Alt 8 | shift a');
+    expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await flushMicrotasks();
+    expect(plugin.settings.shortcuts.openStatistics).toBe('');
+    expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+    expect(input.getAttribute('aria-invalid')).toBeNull();
+  });
+
   it('persists raw invalid values and announces the row-level issue', () => {
     const { tab, plugin } = makeTab();
     const input = shortcutInput(hotkeysBody(tab), 'openQuickCapture');

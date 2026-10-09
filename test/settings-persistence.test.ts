@@ -107,6 +107,76 @@ function stateEnvelope(overrides: Record<string, unknown> = {}): Record<string, 
 
 describe('SettingsPersistenceCoordinator migration', () => {
   it.each([
+    [undefined, 'A'],
+    [7, 'A'],
+    ['', ''],
+    ['Alt 8 | shift a', 'Alt 8 | shift a'],
+  ])(
+    'round-trips Analysis %j as static settings while retaining shortcut extensions',
+    async (value, expected) => {
+      const port = memoryPort(
+        markedStatic({
+          shortcuts: {
+            openTasks: 'Shift L',
+            ...(value === undefined ? {} : { openStatistics: value }),
+            futureAction: 'A',
+            futureOptions: { retained: 7 },
+          },
+          futureStatic: { retained: 9 },
+        }),
+        stateEnvelope({ futureView: { retained: 11 } }),
+      );
+      const coordinator = new SettingsPersistenceCoordinator(port);
+      const { settings } = await coordinator.loadSettings(DEFAULT_SETTINGS);
+      expect(settings.shortcuts).toMatchObject({
+        openTasks: 'Shift L',
+        openStatistics: expected,
+        futureAction: 'A',
+        futureOptions: { retained: 7 },
+      });
+      const staticBefore = structuredClone(port.staticData);
+      port.writes.length = 0;
+      settings.shortcuts.openStatistics = 'Alt 9';
+      settings.sectionCollapse.tags = true;
+      await coordinator.saveViewState(settings);
+      expect(port.writes).toEqual([STATE_PATH]);
+      expect(port.staticData).toEqual(staticBefore);
+      expect(port.stateText).not.toContain('shortcuts');
+      expect(port.stateText).not.toContain('openStatistics');
+      expect(JSON.parse(port.stateText ?? '')).toMatchObject({
+        views: { futureView: { retained: 11 } },
+      });
+      const stateBefore = port.stateText;
+      port.writes.length = 0;
+      await coordinator.saveSettings(settings);
+      expect(port.writes).toEqual(['data.json']);
+      expect(port.stateText).toBe(stateBefore);
+      expect(port.staticData).toMatchObject({
+        shortcuts: {
+          openTasks: 'Shift L',
+          openStatistics: 'Alt 9',
+          futureAction: 'A',
+          futureOptions: { retained: 7 },
+        },
+        futureStatic: { retained: 9 },
+      });
+      const reloaded = await new SettingsPersistenceCoordinator(port).loadSettings(
+        DEFAULT_SETTINGS,
+      );
+      expect(reloaded.settings.shortcuts.openStatistics).toBe('Alt 9');
+      reloaded.settings.shortcuts.openStatistics = '';
+      await coordinator.saveSettings(reloaded.settings);
+      expect(
+        (await new SettingsPersistenceCoordinator(port).loadSettings(DEFAULT_SETTINGS)).settings
+          .shortcuts,
+      ).toMatchObject({
+        openStatistics: '',
+        futureOptions: { retained: 7 },
+      });
+    },
+  );
+
+  it.each([
     [undefined, false],
     [false, false],
     [true, true],

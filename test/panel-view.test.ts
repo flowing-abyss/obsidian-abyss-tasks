@@ -2158,6 +2158,97 @@ describe('PanelView', () => {
       );
     });
 
+    it('leaves A unconsumed without a Statistics source capability', () => {
+      document.body.append(view.containerEl);
+      workspaceState(app).activeLeaf = leaf;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      const event = new KeyboardEvent('keydown', {
+        key: 'ф',
+        code: 'KeyA',
+        bubbles: true,
+        cancelable: true,
+      });
+      view.contentEl.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false);
+      expect(state.get('mode')).toBe('tasks');
+      expect(view.contentEl.querySelector('.abyss-statistics')).toBeNull();
+    });
+
+    it('opens Analysis with A, retains view and period on repeated A, and saves no Analysis choices', async () => {
+      await view.onClose();
+      view.containerEl.remove();
+      const saveStatic = vi.fn(async () => {});
+      const saveView = vi.fn(async () => {});
+      view = new PanelView(
+        leaf,
+        settings,
+        tagManager,
+        taskApplication.index,
+        taskApplication.tasks,
+        taskApplication.statusRegistry,
+        saveStatic,
+        undefined,
+        saveView,
+        undefined,
+        undefined,
+        taskApplication.index,
+      );
+      await view.onOpen();
+      setGeometry(view.containerEl, rect(20, 20, 640, 480));
+      setGeometry(view.contentEl, rect(20, 20, 640, 480));
+      document.body.append(view.containerEl);
+      workspaceState(app).activeLeaf = leaf;
+      const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+      state.set('mode', 'calendar');
+      const pressA = (): KeyboardEvent => {
+        const event = new KeyboardEvent('keydown', {
+          key: 'ф',
+          code: 'KeyA',
+          bubbles: true,
+          cancelable: true,
+        });
+        view.contentEl.dispatchEvent(event);
+        return event;
+      };
+      expect(pressA().defaultPrevented).toBe(true);
+      expect(state.get('mode')).toBe('statistics');
+      const analysis = expectDefined(
+        view.contentEl.querySelector<HTMLButtonElement>(
+          '.abyss-left [data-statistics-view="completion"]',
+        ),
+      );
+      analysis.click();
+      const period = expectDefined(
+        view.contentEl.querySelector<HTMLSelectElement>('[aria-label="Period"]'),
+      );
+      period.value = '90d';
+      period.dispatchEvent(new Event('change'));
+      view.contentEl.focus();
+      expect(pressA().defaultPrevented).toBe(true);
+      expect(
+        view.contentEl
+          .querySelector('[data-statistics-view="completion"]')
+          ?.getAttribute('aria-current'),
+      ).toBe('page');
+      expect(view.contentEl.querySelector<HTMLSelectElement>('[aria-label="Period"]')?.value).toBe(
+        '90d',
+      );
+      const shortcuts = settings.shortcuts;
+      shortcuts.openStatistics = 'Alt 8';
+      expect(pressA().defaultPrevented).toBe(false);
+      const customized = new KeyboardEvent('keydown', {
+        key: '8',
+        code: 'Digit8',
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      view.contentEl.dispatchEvent(customized);
+      expect(customized.defaultPrevented).toBe(true);
+      expect(saveStatic).not.toHaveBeenCalled();
+      expect(saveView).not.toHaveBeenCalled();
+    });
+
     it('routes shortcuts only for its connected visible active leaf and detaches on close', async () => {
       view.containerEl.remove();
       const internals = view as unknown as { panelNavigation_abyssPrivate: PanelNavigator };
@@ -3764,6 +3855,80 @@ describe('PanelView', () => {
       },
     );
 
+    it.each(['accept', 'reject'] as const)(
+      'routes A through the real pending project editor and respects %s',
+      async (outcome) => {
+        await view.onClose();
+        view.containerEl.remove();
+        view = new PanelView(
+          leaf,
+          settings,
+          makeTagManager(app, settings),
+          taskApplication.index,
+          taskApplication.tasks,
+          taskApplication.statusRegistry,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          taskApplication.index,
+        );
+        await view.onOpen();
+        document.body.append(view.containerEl);
+        setGeometry(view.containerEl, rect(20, 20, 640, 480));
+        setGeometry(view.contentEl, rect(20, 20, 640, 480));
+        const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+        state.set('mode', 'projects');
+        const gate = deferred<void>();
+        const process = app.vault.process.bind(app.vault);
+        const write = vi
+          .spyOn(app.vault, 'process')
+          .mockImplementation(async (file, change, options) => {
+            await gate.promise;
+            if (outcome === 'reject') throw new Error('project disk unavailable');
+            return process(file, change, options);
+          });
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+          const start = cell('Projects/A.md', 'start');
+          start.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+          const editor = expectDefined(start.querySelector<HTMLInputElement>('input'));
+          editor.focus();
+          editor.value = '2026-09-05';
+          editor.dispatchEvent(new Event('input', { bubbles: true }));
+          view.contentEl.tabIndex = -1;
+          view.contentEl.focus();
+          await vi.waitFor(() => {
+            expect(write).toHaveBeenCalledOnce();
+          });
+          const event = new KeyboardEvent('keydown', {
+            key: 'a',
+            code: 'KeyA',
+            bubbles: true,
+            cancelable: true,
+          });
+          view.contentEl.dispatchEvent(event);
+          expect(event.defaultPrevented).toBe(true);
+          expect(state.get('mode')).toBe('projects');
+          gate.resolve();
+          await vi.waitFor(() => {
+            expect(state.get('mode')).toBe(outcome === 'accept' ? 'statistics' : 'projects');
+            if (outcome === 'accept') expect(editor.isConnected).toBe(false);
+            else expect(view.contentEl.querySelector('.abyss-project-editor-error')).not.toBeNull();
+          });
+          expect(write).toHaveBeenCalledOnce();
+          if (outcome === 'reject') {
+            expect(editor.isConnected).toBe(true);
+            expect(editor.value).toBe('2026-09-05');
+          }
+        } finally {
+          gate.resolve();
+          await flushMicrotasks();
+        }
+      },
+    );
+
     it('opens Q for the focused range occurrence, freezes its project, and restores cell focus', async () => {
       const pending = deferred<TaskCreateSession>();
       const application = taskApplication.tasks;
@@ -3942,6 +4107,54 @@ describe('PanelView', () => {
       await view.onClose();
       taskApplication.index.destroy();
     });
+
+    it.each(['ctrl', 'meta'] as const)(
+      'keeps %s+A task select-all when Analysis has a source',
+      async (primary) => {
+        await view.onClose();
+        view.containerEl.remove();
+        view = new PanelView(
+          leaf,
+          DEFAULT_SETTINGS,
+          makeTagManager(app),
+          taskApplication.index,
+          taskApplication.tasks,
+          taskApplication.statusRegistry,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          taskApplication.index,
+        );
+        await view.onOpen();
+        document.body.append(view.containerEl);
+        workspaceState(app).activeLeaf = leaf;
+        setGeometry(view.containerEl, rect(20, 20, 640, 480));
+        setGeometry(view.contentEl, rect(20, 20, 640, 480));
+        try {
+          const card = expectDefined(view.contentEl.querySelector<HTMLElement>('.abyss-task-card'));
+          const event = new KeyboardEvent('keydown', {
+            key: 'a',
+            code: 'KeyA',
+            ctrlKey: primary === 'ctrl',
+            metaKey: primary === 'meta',
+            bubbles: true,
+            cancelable: true,
+          });
+          card.dispatchEvent(event);
+          const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;
+          expect(event.defaultPrevented).toBe(true);
+          expect(state.get('mode')).toBe('tasks');
+          expect(view.contentEl.querySelector('.abyss-selection-live')?.textContent).toBe(
+            '1 task selected',
+          );
+        } finally {
+          view.containerEl.remove();
+          workspaceState(app).activeLeaf = null;
+        }
+      },
+    );
 
     it('query update matching root task path → taskStack replaced with fresh task', () => {
       const state = (view as unknown as { state_abyssPrivate: AppState }).state_abyssPrivate;

@@ -9,6 +9,7 @@ export const SHORTCUT_ACTIONS = [
   { id: 'openCalendarWeek', label: 'Calendar: week', defaultValue: 'W' },
   { id: 'openCalendarMonth', label: 'Calendar: month', defaultValue: 'M' },
   { id: 'openProjects', label: 'Projects', defaultValue: 'P' },
+  { id: 'openStatistics', label: 'Analysis', defaultValue: 'A' },
   { id: 'openSearch', label: 'Search', defaultValue: 'S' },
 ] as const;
 
@@ -233,7 +234,7 @@ function activeCandidates(
   return active;
 }
 
-/** Completes persisted shortcut settings without normalizing user-entered strings. */
+/** Completes persisted shortcuts, preserving authored strings and unknown extensions. */
 export function migrateShortcuts(raw: Record<string, unknown>): void {
   const stored = raw['shortcuts'];
   if (
@@ -248,10 +249,25 @@ export function migrateShortcuts(raw: Record<string, unknown>): void {
 
   const shortcuts = stored as Record<string, unknown>;
   const defaults = defaultShortcuts();
+  const plainAIsClaimed = SHORTCUT_ACTION_IDS.some((action) => {
+    if (action === 'openStatistics') return false;
+    const value = shortcuts[action];
+    if (typeof value !== 'string') return false;
+    return value.split('|').some((fragment) => {
+      // Any modifier excludes plain A, so the Mod platform choice is immaterial here.
+      const parsed = parseShortcut(action, fragment, { mod: 'ctrl' });
+      return (
+        parsed?.code === 'KeyA' &&
+        !parsed.modifiers.alt &&
+        !parsed.modifiers.ctrl &&
+        !parsed.modifiers.meta &&
+        !parsed.modifiers.shift
+      );
+    });
+  });
   for (const action of SHORTCUT_ACTION_IDS) {
-    if (typeof shortcuts[action] !== 'string') shortcuts[action] = defaults[action];
-  }
-  for (const action of Object.keys(shortcuts)) {
-    if (!SHORTCUT_ACTION_IDS.includes(action as ShortcutActionId)) delete shortcuts[action];
+    if (typeof shortcuts[action] !== 'string') {
+      shortcuts[action] = action === 'openStatistics' && plainAIsClaimed ? '' : defaults[action];
+    }
   }
 }

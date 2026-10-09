@@ -75,7 +75,7 @@ interface RouterHarness {
 const liveRouters: PanelShortcutRouter[] = [];
 const mounted: Element[] = [];
 
-function harness(): RouterHarness {
+function harness(isActionAvailable?: (action: ShortcutActionId) => boolean): RouterHarness {
   const actions = navigationActions();
   const registry = new InteractionRegistry<ShortcutActionId>();
   const settings = structuredClone(DEFAULT_SETTINGS.shortcuts);
@@ -92,6 +92,7 @@ function harness(): RouterHarness {
     actions,
     registry,
     nativeHostBlocks,
+    ...(isActionAvailable === undefined ? {} : { isActionAvailable }),
   });
   liveRouters.push(router);
   return {
@@ -223,6 +224,7 @@ describe('PanelShortcutRouter', () => {
     ['openCalendarWeek', 'KeyW', 'openCalendarView', 'week'],
     ['openCalendarMonth', 'KeyM', 'openCalendarView', 'month'],
     ['openProjects', 'KeyP', 'openProjects', undefined],
+    ['openStatistics', 'KeyA', 'openStatistics', undefined],
     ['openSearch', 'KeyS', 'openSearch', undefined],
   ] as const)(
     'maps %s exactly once to its semantic navigation action',
@@ -239,12 +241,28 @@ describe('PanelShortcutRouter', () => {
     },
   );
 
-  it("uses the physical code when a Russian layout reports key='й'", () => {
+  it('leaves unavailable Analysis unconsumed and permits other available actions', () => {
+    let available = false;
+    const h = harness((action) => action !== 'openStatistics' || available);
+    const unavailable = keydown(h.panel, 'KeyA');
+    expect(unavailable.defaultPrevented).toBe(false);
+    expect(methodOf(h.actions, 'openStatistics')).not.toHaveBeenCalled();
+    expect(keydown(h.panel, 'KeyS').defaultPrevented).toBe(true);
+    expect(methodOf(h.actions, 'openSearch')).toHaveBeenCalledOnce();
+    available = true;
+    expect(keydown(h.panel, 'KeyA', { key: 'ф' }).defaultPrevented).toBe(true);
+    expect(methodOf(h.actions, 'openStatistics')).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['KeyQ', 'й', 'openQuickCapture'],
+    ['KeyA', 'ф', 'openStatistics'],
+  ] as const)('uses physical %s when a Russian layout reports %s', (code, key, action) => {
     const h = harness();
 
-    const event = keydown(h.panel, 'KeyQ', { key: 'й' });
+    const event = keydown(h.panel, code, { key });
 
-    expect(methodOf(h.actions, 'openQuickCapture')).toHaveBeenCalledOnce();
+    expect(methodOf(h.actions, action)).toHaveBeenCalledOnce();
     expect(event.defaultPrevented).toBe(true);
   });
 
@@ -376,36 +394,48 @@ describe('PanelShortcutRouter', () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
-  it('ignores inactive, hidden, disconnected, and destroyed panel ownership', () => {
-    const h = harness();
-    h.setActive(false);
-    const inactive = keydown(h.panel, 'KeyQ');
-    h.setActive(true);
-    h.panel.hidden = true;
-    const hidden = keydown(h.panel, 'KeyQ');
-    h.panel.hidden = false;
-    h.panel.remove();
-    const disconnected = keydown(document.body, 'KeyQ');
-    document.body.appendChild(h.panel);
-    h.router.destroy();
-    const destroyed = keydown(h.panel, 'KeyQ');
+  it.each(['KeyQ', 'KeyA'])(
+    'ignores inactive, hidden, disconnected, and destroyed ownership for %s',
+    (code) => {
+      const h = harness();
+      h.setActive(false);
+      const inactive = keydown(h.panel, code);
+      h.setActive(true);
+      h.panel.hidden = true;
+      const hidden = keydown(h.panel, code);
+      h.panel.hidden = false;
+      h.panel.remove();
+      const disconnected = keydown(document.body, code);
+      document.body.appendChild(h.panel);
+      h.router.destroy();
+      const destroyed = keydown(h.panel, code);
 
-    expect(methodOf(h.actions, 'openQuickCapture')).not.toHaveBeenCalled();
-    expect(
-      [inactive, hidden, disconnected, destroyed].every((event) => !event.defaultPrevented),
-    ).toBe(true);
-  });
+      expect(methodOf(h.actions, 'openQuickCapture')).not.toHaveBeenCalled();
+      expect(methodOf(h.actions, 'openStatistics')).not.toHaveBeenCalled();
+      expect(
+        [inactive, hidden, disconnected, destroyed].every((event) => !event.defaultPrevented),
+      ).toBe(true);
+    },
+  );
 
   it.each([
     ['repeat', 'KeyQ', { repeat: true }],
     ['composition', 'KeyQ', { isComposing: true }],
     ['unmatched code', 'KeyZ', {}],
+    ['Analysis repeat', 'KeyA', { repeat: true }],
+    ['Analysis composition', 'KeyA', { isComposing: true }],
+    ['Analysis legacy IME', 'KeyA', { keyCode: 229 }],
+    ['Analysis Alt', 'KeyA', { altKey: true }],
+    ['Analysis Shift', 'KeyA', { shiftKey: true }],
+    ['Analysis Ctrl select-all', 'KeyA', { ctrlKey: true }],
+    ['Analysis Cmd select-all', 'KeyA', { metaKey: true }],
   ] as const)('does not consume %s keydown events', (_name, code, options) => {
     const h = harness();
 
     const event = keydown(h.panel, code, options);
 
     expect(methodOf(h.actions, 'openQuickCapture')).not.toHaveBeenCalled();
+    expect(methodOf(h.actions, 'openStatistics')).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });
 
@@ -424,22 +454,25 @@ describe('PanelShortcutRouter', () => {
     expect(methodOf(h.actions, 'openQuickCapture')).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['input', 'input'],
-    ['textarea', 'textarea'],
-    ['select', 'select'],
-    ['button', 'button'],
-    ['link', 'a'],
-    ['contenteditable', 'div'],
-  ] as const)('suppresses shortcuts from a composed-path %s', (_name, tagName) => {
+  it.each(
+    [
+      ['input', 'input'],
+      ['textarea', 'textarea'],
+      ['select', 'select'],
+      ['button', 'button'],
+      ['link', 'a'],
+      ['contenteditable', 'div'],
+    ].flatMap(([name, tag]) => ['KeyQ', 'KeyA'].map((code) => [name, tag, code] as const)),
+  )('suppresses shortcuts from a composed-path %s for %s / %s', (_name, tagName, code) => {
     const h = harness();
-    const element = createEl(tagName);
+    const element = createEl(tagName as keyof HTMLElementTagNameMap);
     if (_name === 'contenteditable') element.setAttribute('contenteditable', 'true');
     h.panel.appendChild(element);
 
-    const event = keydown(element, 'KeyQ');
+    const event = keydown(element, code);
 
     expect(methodOf(h.actions, 'openQuickCapture')).not.toHaveBeenCalled();
+    expect(methodOf(h.actions, 'openStatistics')).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });
 
@@ -482,20 +515,25 @@ describe('PanelShortcutRouter', () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
-  it('lets native hosts and the interaction registry block without consuming the event', () => {
-    const native = harness();
-    native.nativeHostBlocks.mockReturnValue(true);
-    const nativeEvent = keydown(native.panel, 'KeyQ');
+  it.each(['KeyQ', 'KeyA'])(
+    'lets native hosts and the interaction registry block %s without consuming',
+    (code) => {
+      const native = harness();
+      native.nativeHostBlocks.mockReturnValue(true);
+      const nativeEvent = keydown(native.panel, code);
 
-    const registered = harness();
-    registered.registry.acquire({ blocksShortcuts: true });
-    const registryEvent = keydown(registered.panel, 'KeyQ');
+      const registered = harness();
+      registered.registry.acquire({ blocksShortcuts: true });
+      const registryEvent = keydown(registered.panel, code);
 
-    expect(methodOf(native.actions, 'openQuickCapture')).not.toHaveBeenCalled();
-    expect(methodOf(registered.actions, 'openQuickCapture')).not.toHaveBeenCalled();
-    expect(nativeEvent.defaultPrevented).toBe(false);
-    expect(registryEvent.defaultPrevented).toBe(false);
-  });
+      expect(methodOf(native.actions, 'openQuickCapture')).not.toHaveBeenCalled();
+      expect(methodOf(registered.actions, 'openQuickCapture')).not.toHaveBeenCalled();
+      expect(methodOf(native.actions, 'openStatistics')).not.toHaveBeenCalled();
+      expect(methodOf(registered.actions, 'openStatistics')).not.toHaveBeenCalled();
+      expect(nativeEvent.defaultPrevented).toBe(false);
+      expect(registryEvent.defaultPrevented).toBe(false);
+    },
+  );
 
   it('prevents default and both propagation paths only for an accepted action', () => {
     const h = harness();

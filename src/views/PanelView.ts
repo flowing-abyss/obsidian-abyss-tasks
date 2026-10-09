@@ -983,6 +983,8 @@ export class PanelView extends ItemView {
       ownerDocument,
       ownerElement: this.contentEl,
       isActive: () => this.ownsPanelShortcuts_abyssPrivate(),
+      isActionAvailable: (action) =>
+        action !== 'openStatistics' || this.statisticsSource_abyssPrivate !== undefined,
       settings: () => this.settings_abyssPrivate.shortcuts,
       platform: { mod: Platform.isMacOS ? 'meta' : 'ctrl' },
       actions: this.panelNavigation_abyssPrivate,

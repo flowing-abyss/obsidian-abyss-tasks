@@ -24,6 +24,7 @@ describe('shortcut defaults', () => {
       openCalendarWeek: 'W',
       openCalendarMonth: 'M',
       openProjects: 'P',
+      openStatistics: 'A',
       openSearch: 'S',
     });
   });
@@ -92,6 +93,21 @@ describe('parseShortcut', () => {
 });
 
 describe('validateShortcuts', () => {
+  it('retains unknown extensions without treating them as executable actions', () => {
+    const values = {
+      ...defaultShortcuts(),
+      futureAction: 'A',
+      futureOptions: { keep: true },
+    };
+
+    const result = validateShortcuts(values, mac);
+
+    expect(result.bindings.get('openStatistics')).toMatchObject([{ code: 'KeyA' }]);
+    expect([...result.bindings.keys()]).not.toContain('futureAction');
+    expect(result.issues.size).toBe(0);
+    expect(values.futureOptions).toEqual({ keep: true });
+  });
+
   it.each([
     {
       name: 'keeps valid alternatives around an invalid fragment',

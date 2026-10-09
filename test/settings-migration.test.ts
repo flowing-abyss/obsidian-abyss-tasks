@@ -52,12 +52,13 @@ describe('migrateSettings', () => {
     });
   });
 
-  it('heals malformed shortcut values, drops unknown actions, and is idempotent', () => {
+  it('heals malformed known shortcut values, preserves extensions, and is idempotent', () => {
     const raw: Record<string, unknown> = {
       shortcuts: {
         openQuickCapture: 9,
         openTasks: 'not a supported binding',
-        unknownAction: 'Q',
+        unknownAction: 'A',
+        futureOptions: { keep: 7 },
       },
     };
 
@@ -69,8 +70,51 @@ describe('migrateSettings', () => {
     expect(raw['shortcuts']).toEqual({
       ...defaultShortcuts(),
       openTasks: 'not a supported binding',
+      unknownAction: 'A',
+      futureOptions: { keep: 7 },
     });
   });
+
+  it.each(['a', ' A ', 'Q | a'])('preserves an existing physical A alternative: %s', (value) => {
+    const raw: Record<string, unknown> = { shortcuts: { openTasks: value } };
+    migrateSettings(raw);
+    expect(raw['shortcuts']).toMatchObject({ openTasks: value, openStatistics: '' });
+    const once = structuredClone(raw);
+    migrateSettings(raw);
+    expect(raw).toEqual(once);
+  });
+
+  it.each(['Shift A', 'Mod A', 'Ctrl+A'])('backfills plain A independently of %s', (value) => {
+    const raw: Record<string, unknown> = { shortcuts: { openTasks: value } };
+    migrateSettings(raw);
+    expect(raw['shortcuts']).toMatchObject({ openTasks: value, openStatistics: 'A' });
+  });
+
+  it.each([undefined, null, 7, { future: true }])(
+    'heals malformed Analysis %j without erasing a conflicted legacy A candidate',
+    (value) => {
+      const raw: Record<string, unknown> = {
+        shortcuts: { openTasks: 'a', openInbox: 'A | I', openStatistics: value },
+      };
+      migrateSettings(raw);
+      expect(raw['shortcuts']).toMatchObject({
+        openTasks: 'a',
+        openInbox: 'A | I',
+        openStatistics: '',
+      });
+    },
+  );
+
+  it.each(['', '   ', 'Alt 8 | shift a', 'Ctrl+A', 'A'])(
+    'preserves explicit Analysis string %j even beside a legacy A collision',
+    (value) => {
+      const raw: Record<string, unknown> = {
+        shortcuts: { openTasks: 'A', openStatistics: value },
+      };
+      migrateSettings(raw);
+      expect(raw['shortcuts']).toMatchObject({ openTasks: 'A', openStatistics: value });
+    },
+  );
 
   it('replaces a malformed shortcut collection with fresh defaults', () => {
     const raw: Record<string, unknown> = { shortcuts: ['Q'] };

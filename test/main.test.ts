@@ -172,7 +172,7 @@ describe('TaskCalendarPlugin loadSettings', () => {
     expect(plugin.settings).not.toHaveProperty('inboxTag');
   });
 
-  it('migrates shortcuts before the shallow defaults merge', async () => {
+  it('migrates shortcuts before the shallow defaults merge and preserves extensions', async () => {
     const plugin = makePlugin({
       shortcuts: { openQuickCapture: '', openTasks: 42, unknownAction: 'Q' },
     });
@@ -183,8 +183,8 @@ describe('TaskCalendarPlugin loadSettings', () => {
       ...DEFAULT_SETTINGS.shortcuts,
       openQuickCapture: '',
       openTasks: 'L',
+      unknownAction: 'Q',
     });
-    expect(plugin.settings.shortcuts).not.toHaveProperty('unknownAction');
   });
 
   it('stores state beside the plugin using the configured vault directory fallback', async () => {

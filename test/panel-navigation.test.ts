@@ -211,6 +211,24 @@ describe('PanelNavigator', () => {
     expect(state.get('mode')).toBe('calendar');
   });
 
+  it.each(['accept', 'reject'] as const)(
+    'keeps Analysis navigation pending until project editor %s',
+    (outcome) => {
+      const h = harness({ mode: 'projects' });
+      let continueNavigation: (() => void) | undefined;
+      h.finishProjectTableEditorBefore.mockImplementation((action) => {
+        continueNavigation = action;
+      });
+      h.navigator.openStatistics();
+      expect(h.state.get('mode')).toBe('projects');
+      expect(h.save).not.toHaveBeenCalled();
+      // The editor boundary calls the continuation only after accepted completion.
+      if (outcome === 'accept') expectDefined(continueNavigation)();
+      expect(h.state.get('mode')).toBe(outcome === 'accept' ? 'statistics' : 'projects');
+      expect(h.save).not.toHaveBeenCalled();
+    },
+  );
+
   it('opens Quick Capture through its port without changing the active mode or list', () => {
     const selection = { type: 'tag', tag: '#next' } as const;
     const { state, center, navigator } = harness({ mode: 'search', selection });

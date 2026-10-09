@@ -1329,8 +1329,12 @@ current mode and projection. Focus return is local to the interaction's owner an
 requires a connected target and valid identity, and yields to later user focus or navigation.
 Inspector history records structural paths for its session, not durable task identity. Focus
 restoration never writes data or changes task selection. PanelView rebinds shortcuts and
-native interaction blocking when its document changes. Owners release listeners, observers,
-interaction leases, and scheduled work on teardown.
+native interaction blocking when its document changes. Configurable navigation comes from the
+Hotkeys action roster through PanelShortcutRouter's semantic dispatcher. Analysis uses the
+`openStatistics` action with physical plain A by default; PanelView's optional source capability
+controls availability before the router consumes the event. Repeated Analysis navigation retains
+its transient view, scope, and period, and project-editor completion still gates mode transitions.
+Owners release listeners, observers, interaction leases, and scheduled work on teardown.
 
 Local Find and plain-search Escape use finite Obsidian Scope bindings, with the existing DOM
 listeners as guarded fallbacks. PanelView owns one inherited `View.scope`, restores its previous
@@ -1778,6 +1782,13 @@ the runtime authority; panels do not receive separate settings copies. Static sa
 rollback revision and refresh project settings. View-state saves use a separate callback and do
 neither. Task-status changes rebuild the catalog, registry, and index interpretation together;
 ProjectStore rescans membership/status changes while presentation changes reuse its snapshots.
+
+Shortcuts, including `shortcuts.openStatistics`, belong only to static settings; Analysis choices
+remain transient. On load, absent or malformed Analysis bindings acquire A only when no existing
+known action's parsed alternative claims physical plain A. Explicit strings, including blank values,
+and unknown shortcut extensions survive migration and ordinary saves; extensions never enter the
+executable action roster. An older binary may discard the added preference when it saves, so rollback
+does not promise a lossless shortcut round trip.
 
 Saved views write schema 2 with the existing `savedViewStateSchemaVersion` static marker set to 2.
 Schema 1 and legacy inclusion clauses remain readable. A schema-1 read without moved static keys

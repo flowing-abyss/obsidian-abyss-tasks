@@ -81,6 +81,9 @@ function dispatchAction(actions: PanelNavigationActions, action: ShortcutActionI
     openProjects: () => {
       actions.openProjects();
     },
+    openStatistics: () => {
+      actions.openStatistics();
+    },
     openSearch: () => {
       actions.openSearch();
     },
@@ -97,6 +100,7 @@ export class PanelShortcutRouter {
       readonly ownerDocument: Document;
       readonly ownerElement?: HTMLElement;
       readonly isActive: () => boolean;
+      readonly isActionAvailable?: (action: ShortcutActionId) => boolean;
       readonly settings: () => ShortcutSettings;
       readonly platform: ShortcutPlatform;
       readonly actions: PanelNavigationActions;
@@ -128,6 +132,7 @@ export class PanelShortcutRouter {
       bindings.some((binding) => exactShortcutMatch(event, binding)),
     );
     if (match == null || !this.options.registry.allows(match[0])) return;
+    if (this.options.isActionAvailable?.(match[0]) === false) return;
 
     event.preventDefault();
     event.stopPropagation();
