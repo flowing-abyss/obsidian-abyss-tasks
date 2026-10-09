@@ -10246,6 +10246,11 @@ button.abyss-statistics-evidence-action:hover,
   font-size: var(--font-ui-small);
 }
 
+.abyss-statistics-coverage {
+  display: grid;
+  gap: var(--size-4-1);
+}
+
 .abyss-statistics-details h3,
 .abyss-statistics-details h4 {
   font-family: var(--font-interface, var(--font-interface-theme));

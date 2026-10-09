@@ -1492,3 +1492,58 @@ it('keeps prose readable in the engine wrapping label column and short units in 
   );
   expect(prose.children[2]?.textContent).toBe('');
 });
+
+it('separates adjacent selectable Details coverage metrics into accessible rows with exact selections', async () => {
+  const dataset = required(await prepareStatisticsDataset(source([task('A')]), [], work));
+  const original = required(
+    await new StatisticsSession(dataset).view(request({ view: 'rhythm' }), work),
+  );
+  const labels = ['Creation date unavailable or future', 'Completion date unavailable or future'];
+  const ids = ['created-unavailable', 'completed-unavailable'];
+  const view = {
+    ...original,
+    sections: [
+      {
+        ...required(original.sections[0]),
+        metrics: labels.map((label, index) => ({
+          id: required(ids[index]),
+          role: 'coverage' as const,
+          label,
+          value: 1,
+          selectionId: required(ids[index]),
+        })),
+      },
+    ],
+  };
+  const surface = host();
+  const anchor = surface.createEl('button');
+  const select = vi.fn();
+  const details = new StatisticsDetails();
+  mounts.push({
+    destroy: () => {
+      details.close();
+    },
+  });
+  for (let index = 0; index < labels.length; index++) {
+    details.open(surface, anchor, view, select);
+    expect(surface.querySelectorAll('[role="listitem"]')).toHaveLength(2);
+    const list = required(surface.querySelector('[role="list"]'));
+    expect(list.getAttribute('aria-label')).toBe(`${required(view.sections[0]).title} coverage`);
+    const rows = Array.from(list.querySelectorAll('[role="listitem"]'));
+    expect(rows).toHaveLength(2);
+    rows.forEach((row, rowIndex) => {
+      expect(row.parentElement).toBe(list);
+      expect(row.textContent).toBe(`${required(labels[rowIndex])}: 1`);
+      const button = required(row.querySelector('button'));
+      expect(button.type).toBe('button');
+      expect(button.textContent).toBe(`${required(labels[rowIndex])}: 1`);
+    });
+    const button = required(required(rows[index]).querySelector('button'));
+    button.focus();
+    expect(surface.ownerDocument.activeElement).toBe(button);
+    button.click();
+    expect(select).toHaveBeenLastCalledWith(required(ids[index]));
+    expect(surface.querySelector('[role="dialog"]')).toBeNull();
+  }
+  expect(select.mock.calls).toEqual([['created-unavailable'], ['completed-unavailable']]);
+});

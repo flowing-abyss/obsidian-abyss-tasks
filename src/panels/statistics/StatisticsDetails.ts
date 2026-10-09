@@ -54,27 +54,32 @@ export class StatisticsDetails {
   ): void {
     element.createEl('h4', { text: section.title });
     element.createEl('p', { text: `Definition: ${section.context}` });
-    for (const metric of section.metrics) {
-      if (metric.role === 'coverage' && metric.value !== 0) {
-        this.metric_abyssPrivate(element, metric, select);
-        if (metric.context !== undefined)
-          element.createDiv({ cls: 'abyss-statistics-context', text: metric.context });
-      }
-    }
+    const metrics = section.metrics.filter(
+      (metric) => metric.role === 'coverage' && metric.value !== 0,
+    );
+    if (metrics.length === 0) return;
+    const list = element.createDiv({
+      cls: 'abyss-statistics-coverage',
+      attr: { role: 'list', 'aria-label': `${section.title} coverage` },
+    });
+    for (const metric of metrics) this.metric_abyssPrivate(list, metric, select);
   }
   private metric_abyssPrivate(
     element: HTMLElement,
     metric: StatisticsMetric,
     select: (id: string) => void,
   ): void {
+    const row = element.createDiv({ attr: { role: 'listitem' } });
     const text = `${metric.label}: ${metric.value === null ? 'Unavailable' : statisticsNumber(metric.value)}`;
     const id = metric.selectionId;
-    if (id === undefined) element.createDiv({ text });
+    if (id === undefined) row.createDiv({ text });
     else
-      statisticsButton(element, text, () => {
+      statisticsButton(row, text, () => {
         this.close();
         select(id);
       });
+    if (metric.context !== undefined)
+      row.createDiv({ cls: 'abyss-statistics-context', text: metric.context });
   }
   close(): void {
     this.popover_abyssPrivate?.close();
