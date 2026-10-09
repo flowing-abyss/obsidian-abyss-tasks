@@ -9,7 +9,7 @@ import {
   statisticsMarkDescription,
   statisticsMarkTitle,
 } from '../src/panels/statistics/statisticsFormat';
-import type { StatisticsChartModel } from '../src/statistics';
+import type { StatisticsChartModel, StatisticsViewModel } from '../src/statistics';
 import { prepareStatisticsDataset, StatisticsSession } from '../src/statistics';
 import { contracts } from '../tooling/css-contracts.mjs';
 import { closed, date, request, source, task, work } from './helpers/statisticsFixtures';
@@ -1694,9 +1694,9 @@ it('bounds sparse Timeline height at the sixteen-overlap boundary and uses the e
   }
 });
 
-it.each([1, 17])(
-  'retains seven readable Timeline days at a 320px plot surface with %i Friday recordings',
-  async (count) => {
+it.each([1, 17].flatMap((count) => [320, 1360].map((width) => ({ count, width }))))(
+  'retains configured Timeline day order at $width pixels with $count Friday recordings',
+  async ({ count, width }) => {
     const dataset = required(
       await prepareStatisticsDataset(
         source(
@@ -1721,7 +1721,7 @@ it.each([1, 17])(
       ),
     );
     const chart = required(view.sections[0]?.charts[0]),
-      element = host(document, 320);
+      element = host(document, width);
     const rendered = mount(element, chart);
     const labels = [...element.querySelectorAll('svg text')].map((text) => text.textContent);
     const expected = [
@@ -1741,6 +1741,270 @@ it.each([1, 17])(
     expect(chart.marks[0]?.observation?.title).toContain('2026-10-09');
     expect(chart.layout).toBe(count === 1 ? undefined : 'density');
     expect(marks(element).length).toBeGreaterThan(0);
-    expect(rendered.svg().getAttribute('viewBox')).toContain('320');
+    expect(rendered.svg().getAttribute('viewBox')).toContain(String(width));
+    const positions = expected.map((label) => {
+      const text = required(
+        [...element.querySelectorAll('svg text')].find((text) => text.textContent === label),
+      );
+      return Number(text.getAttribute('y'));
+    });
+    for (let i = 1; i < positions.length; i++)
+      expect(required(positions[i])).toBeGreaterThan(required(positions[i - 1]));
   },
 );
+
+it.each([320, 1360])(
+  'windows 10,000 ranking rows at %i pixels with exact 32px native geometry and stable domain',
+  async (width) => {
+    const values = Array.from({ length: 10000 }, (_, i) => ({
+      key: `group:${i}`,
+      x: 10000 - i,
+      x2: 0,
+      y: `group:${i}`,
+      selectionId: `opaque:${i}`,
+      label: `Group ${i}`,
+    }));
+    const ranking = model({
+      id: 'allocation-ranking:project',
+      rowViewport: true,
+      layout: undefined,
+      series: [],
+      x: { type: 'number', label: 'Recorded minutes', domain: [0, 10000], unit: 'minutes' },
+      y: {
+        type: 'band',
+        label: '',
+        categories: values.map((m) => m.key),
+        tickLabels: values.map((m) => [m.key, m.label]),
+      },
+      marks: values,
+    });
+    const element = host(document, width),
+      selected = vi.fn();
+    const engine = new TanStackStatisticsChart();
+    const renderer = {
+      mount: (surface: HTMLElement, value: StatisticsChartModel, select: (id: string) => void) => {
+        // JSDOM does not lay out the absolute row window; supply its real native-width contract.
+        Object.defineProperty(surface, 'clientWidth', { configurable: true, value: width });
+        return engine.mount(surface, value, select);
+      },
+    };
+    const charts = new StatisticsCharts(element, renderer, selected);
+    mounts.push(charts);
+    charts.update([ranking]);
+    const scroller = required(element.querySelector<HTMLElement>('.abyss-statistics-row-viewport'));
+    expect(marks(element).length).toBeLessThan(40);
+    expect(required(element.querySelector('svg')).getAttribute('viewBox')?.split(' ')[2]).toBe(
+      String(width),
+    );
+    const rects = marks(element);
+    expect(n(required(rects[1]), 'y') - n(required(rects[0]), 'y')).toBeCloseTo(32, 2);
+    scroller.scrollTop = 319712;
+    scroller.dispatchEvent(new Event('scroll'));
+    await new Promise<void>((resolve) =>
+      window.requestAnimationFrame(() => {
+        resolve();
+      }),
+    );
+    expect(marks(element).length).toBeLessThan(40);
+    expect(element.textContent).toContain('Group 9999');
+    expect(element.textContent).not.toContain('Group 0');
+    expect(
+      required(element.querySelector('.abyss-statistics-row-content')).getAttribute('style'),
+    ).toContain('319');
+    const last = required(marks(element)[marks(element).length - 1]);
+    expect(
+      n(last, 'y') +
+        Number(
+          element
+            .querySelector<HTMLElement>('.abyss-statistics-row-content')
+            ?.style.getPropertyValue('--abyss-statistics-row-offset')
+            .slice(0, -2),
+        ),
+    ).toBeCloseTo(319972, 1);
+    expect(n(last, 'width')).toBeCloseTo((width - 224) / 10000, 2);
+    const current = required(capture.options[capture.options.length - 1]?.onSelect);
+    current({ datum: required(values[9999]) });
+    expect(selected).toHaveBeenLastCalledWith('opaque:9999');
+    charts.update([
+      {
+        ...ranking,
+        marks: values.slice(0, 1),
+        y: {
+          type: 'band',
+          label: '',
+          categories: ['group:0'],
+          tickLabels: [['group:0', 'Group 0']],
+        },
+      },
+    ]);
+    expect(scroller.scrollTop).toBe(0);
+    expect(element.textContent).toContain('Group 0');
+  },
+);
+
+it('restores the ranking position through atomic group focus and source shrink', () => {
+  const positions = new Map<string, number>(),
+    element = host(),
+    select = vi.fn();
+  let broken = false;
+  const real = new TanStackStatisticsChart();
+  const renderer = {
+    mount: (host: HTMLElement, value: StatisticsChartModel, select: (id: string) => void) => {
+      if (broken && value.rowViewport === true && value.marks.length === 1)
+        throw new Error('staging failed');
+      return real.mount(host, value, select);
+    },
+  };
+  const sections = new StatisticsSections(element, renderer, select, { positions });
+  mounts.push(sections);
+  const ranking = model({
+    id: 'allocation-ranking:project',
+    rowViewport: true,
+    layout: undefined,
+    series: [],
+    x: { type: 'number', label: 'Recorded minutes', domain: [0, 100] },
+    y: { type: 'band', label: '', categories: Array.from({ length: 100 }, (_, i) => `G${i}`) },
+    marks: Array.from({ length: 100 }, (_, i) => ({
+      key: `G${i}`,
+      x: 100 - i,
+      x2: 0,
+      y: `G${i}`,
+      selectionId: `G${i}`,
+    })),
+  });
+  const view = {
+    view: 'allocation' as const,
+    title: 'Allocation',
+    dateLabel: 'Today',
+    currentState: false,
+    asOfMs: 0,
+    coverage: {
+      source: { ready: true, sourceIssues: [], revision: 1, files: 0, archiveFiles: 0 },
+      scope: { tasks: 0 },
+    },
+    actions: [],
+    chartActions: [],
+    evidence: () => ({ total: 0, rows: [] }),
+    sections: [
+      {
+        id: 'allocation',
+        title: 'Allocation',
+        context: '',
+        metrics: [],
+        legend: [],
+        charts: [ranking],
+      },
+    ],
+  } as unknown as StatisticsViewModel;
+  sections.update(view);
+  required(element.querySelector<HTMLElement>('.abyss-statistics-row-viewport')).scrollTop = 2016;
+  sections.update({
+    ...view,
+    sections: [{ ...required(view.sections[0]), charts: [model({ id: 'allocation-focus' })] }],
+  });
+  sections.update(view);
+  expect(
+    required(element.querySelector<HTMLElement>('.abyss-statistics-row-viewport')).scrollTop,
+  ).toBe(2016);
+  const small = {
+    ...ranking,
+    y: { type: 'band' as const, label: '', categories: ['G0'] },
+    marks: ranking.marks.slice(0, 1),
+  };
+  broken = true;
+  expect(() => {
+    sections.update({ ...view, sections: [{ ...required(view.sections[0]), charts: [small] }] });
+  }).toThrow('staging failed');
+  expect(positions.get('allocation-ranking:project')).toBe(2016);
+  expect(
+    required(element.querySelector<HTMLElement>('.abyss-statistics-row-viewport')).scrollTop,
+  ).toBe(2016);
+  broken = false;
+  sections.update({ ...view, sections: [{ ...required(view.sections[0]), charts: [small] }] });
+  expect(
+    required(element.querySelector<HTMLElement>('.abyss-statistics-row-viewport')).scrollTop,
+  ).toBe(0);
+  expect(positions.get('allocation-ranking:project')).toBe(0);
+});
+it('latches deferred row-render failures until explicit retry and retires pending work on destruction', async () => {
+  const { StatisticsRowChart } = await import('../src/panels/statistics/StatisticsRowChart');
+  const error = new Error('row update failed'),
+    failure = vi.fn();
+  const real = new TanStackStatisticsChart();
+  let broken = true;
+  const renderer = {
+    mount: (element: HTMLElement, value: StatisticsChartModel, select: (id: string) => void) => {
+      const handle = real.mount(element, value, select);
+      return {
+        destroy: () => {
+          handle.destroy();
+        },
+        update: (value: StatisticsChartModel) => {
+          if (broken) throw error;
+          handle.update(value);
+        },
+      };
+    },
+  };
+  const ranking = model({
+    id: 'allocation-ranking:tag',
+    rowViewport: true,
+    layout: undefined,
+    series: [],
+    x: { type: 'number', label: 'Recorded minutes', domain: [0, 100] },
+    y: { type: 'band', label: '', categories: Array.from({ length: 100 }, (_, i) => `G${i}`) },
+    marks: Array.from({ length: 100 }, (_, i) => ({ key: `G${i}`, x: 100 - i, x2: 0, y: `G${i}` })),
+  });
+  const element = host(),
+    row = new StatisticsRowChart(element, renderer, ranking, {
+      onSelect: vi.fn(),
+      positions: new Map(),
+      onFailure: failure,
+    });
+  mounts.push(row);
+  const scroll = required(element.querySelector<HTMLElement>('.abyss-statistics-row-viewport'));
+  const frame = async () =>
+    new Promise<void>((resolve) =>
+      window.requestAnimationFrame(() => {
+        resolve();
+      }),
+    );
+  scroll.scrollTop = 1600;
+  scroll.dispatchEvent(new Event('scroll'));
+  await frame();
+  expect(failure).toHaveBeenCalledExactlyOnceWith(error);
+  scroll.dispatchEvent(new Event('scroll'));
+  await frame();
+  expect(failure).toHaveBeenCalledTimes(1);
+  broken = false;
+  row.update(ranking);
+  expect(element.textContent).toContain('G50');
+  scroll.dispatchEvent(new Event('scroll'));
+  row.destroy();
+  await frame();
+  expect(failure).toHaveBeenCalledTimes(1);
+  expect(element.querySelector('svg')).toBeNull();
+});
+
+it('keeps zero-time Allocation concentration in the reserved plot with an honest empty message', async () => {
+  const dataset = required(await prepareStatisticsDataset(source([task('zero')]), [], work));
+  const view = required(
+    await new StatisticsSession(dataset).view(request({ view: 'allocation' }), work),
+  );
+  const element = host(),
+    sections = new StatisticsSections(element, new TanStackStatisticsChart(), vi.fn());
+  mounts.push(sections);
+  sections.update(view);
+  const plot = required(element.querySelector('.abyss-statistics-allocation-empty-plot'));
+  expect(plot.textContent).toBe('No recorded time in this period');
+  expect(plot.closest('section')?.textContent).toContain('Tasks and subtasks');
+  expect(plot.querySelector('svg')).toBeNull();
+  const focused = required(
+    await new StatisticsSession(dataset).view(
+      request({ view: 'allocation', focusKey: 'unassigned' }),
+      work,
+    ),
+  );
+  sections.update(focused);
+  expect(element.querySelectorAll('.abyss-statistics-allocation-empty-plot')).toHaveLength(1);
+});

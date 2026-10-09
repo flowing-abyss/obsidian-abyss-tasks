@@ -43,12 +43,20 @@ const CHART_MARGINS: Partial<Record<StatisticsChartModel['kind'], typeof TIMELIN
   timeline: TIMELINE_MARGIN,
 };
 
-function chartMargin(kind: StatisticsChartModel['kind']): { margin?: typeof TIMELINE_MARGIN } {
-  const margin = CHART_MARGINS[kind];
+function chartMargin(model: StatisticsChartModel): { margin?: typeof TIMELINE_MARGIN } {
+  const margin =
+    model.rowViewport === true
+      ? { top: 0, bottom: 0, left: 160, right: 64 }
+      : CHART_MARGINS[model.kind];
   return margin === undefined ? {} : { margin };
 }
 
 function height(model: StatisticsChartModel): number {
+  if (model.rowViewport === true && model.y.type === 'band') return model.y.categories.length * 32;
+  if (model.id === 'allocation-focus') return 288;
+  return baseHeight(model);
+}
+function baseHeight(model: StatisticsChartModel): number {
   if (model.y.type === 'number') return numericHeight(model, model.y.domain[1]);
   if (model.kind === 'bars' && model.x.type === 'number')
     return model.y.categories.length * 28 + 48;
@@ -80,8 +88,12 @@ function positionScale(
   side: 'x' | 'y',
 ): ChartPositionScaleOptions<Value>['scale'] {
   const value = model[side];
-  if (value.type === 'band')
-    return scaleBand<string>().domain(value.categories).padding(bandPadding(model));
+  if (value.type === 'band') {
+    const scale = scaleBand<string>().domain(value.categories);
+    return model.rowViewport === true
+      ? scale.paddingInner(0.25).paddingOuter(0.125)
+      : scale.padding(bandPadding(model));
+  }
   if (model.kind === 'heatmap')
     return scaleBand<number>().domain([...new Set(model.marks.map((mark) => number(mark, side)))]);
   return scaleLinear().domain([...value.domain]);
@@ -168,6 +180,12 @@ function timelineDayAxis(
     tickLabels: { fontSize: 11, opacity: 1, thin: false },
   };
 }
+function reverseY(model: StatisticsChartModel): boolean {
+  return model.kind === 'network' || (model.kind === 'timeline' && model.y.type === 'number');
+}
+function hiddenAxis(model: StatisticsChartModel, side: 'x' | 'y'): boolean {
+  return model.kind === 'network' || (model.rowViewport === true && side === 'x');
+}
 function axis(
   model: StatisticsChartModel,
   side: 'x' | 'y',
@@ -181,9 +199,9 @@ function axis(
   const grid = !hidden && model[side].type === 'number' && model.kind !== 'heatmap' && side === 'y';
   return {
     scale: positionScale(model, side),
-    reverse: (hidden || model.kind === 'timeline') && side === 'y',
+    reverse: reverseY(model) && side === 'y',
     grid: grid ? { stroke: 'var(--background-modifier-border)', strokeOpacity: 0.55 } : false,
-    axis: hidden ? false : policy,
+    axis: hiddenAxis(model, side) ? false : policy,
   };
 }
 function seriesMarks(model: StatisticsChartModel): RenderMark[] {
@@ -505,6 +523,7 @@ function marks(model: StatisticsChartModel, width: number, height: number): Rend
   else if (model.kind === 'network') result = networkMarks(model, width, height);
   else if (model.kind === 'scatter' && model.layout === 'density') result = densityMarks(model);
   else result = seriesMarks(model);
+  result.push(...rankingValues(model));
   if (model.layout === 'diverging')
     result.push(decorative(ruleY([0], { id: 'zero', stroke: MUTED, strokeWidth: 1 })));
   for (const [index, guide] of (model.guides ?? []).entries())
@@ -517,6 +536,27 @@ function marks(model: StatisticsChartModel, width: number, height: number): Rend
       guideLabel(model, guide, index),
     );
   return result;
+}
+function rankingValues(model: StatisticsChartModel): RenderMark[] {
+  if (model.rowViewport === true && model.x.type === 'number') {
+    const maximum = model.x.domain[1];
+    return [
+      decorative(
+        text(model.marks, {
+          id: 'ranking-values',
+          x: () => maximum,
+          y: 'y',
+          key: 'key',
+          text: (mark) => statisticsNumber(number(mark, 'x'), ' min'),
+          dx: 8,
+          fill: FOREGROUND,
+          fontSize: 11,
+          anchor: 'start',
+        }),
+      ),
+    ];
+  }
+  return [];
 }
 function guideLabel(
   model: StatisticsChartModel,
@@ -608,6 +648,12 @@ function tooltipOptions(
   };
 }
 
+function chartDescription(model: StatisticsChartModel): string {
+  return model.rowViewport === true
+    ? 'Use arrow keys to inspect groups; Enter or Space opens the group timeline.'
+    : 'Use arrow keys to inspect marks; Enter or Space opens the underlying records.';
+}
+
 /** The sole engine boundary; the owning mode drives data/theme updates and handles failures. */
 export class TanStackStatisticsChart implements StatisticsChartRenderer {
   mount(
@@ -644,8 +690,9 @@ export class TanStackStatisticsChart implements StatisticsChartRenderer {
               background: BACKGROUND,
               palette: [ACCENT],
             },
-            clip: model.kind !== 'network' && model.kind !== 'scatter',
-            ...chartMargin(model.kind),
+            clip:
+              model.rowViewport !== true && model.kind !== 'network' && model.kind !== 'scatter',
+            ...chartMargin(model),
           }),
           focus: 'nearest',
           focusRing: { fill: BACKGROUND, radius: 6, strokeWidth: 2 },
@@ -656,8 +703,7 @@ export class TanStackStatisticsChart implements StatisticsChartRenderer {
         height: height(model),
         initialWidth: measuredWidth(host),
         ariaLabel: '',
-        ariaDescription:
-          'Use arrow keys to inspect marks; Enter or Space opens the underlying records.',
+        ariaDescription: chartDescription(model),
         className: 'abyss-statistics-chart-svg',
         onSelect: (point) => {
           const id = point?.datum.selectionId;

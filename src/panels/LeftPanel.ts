@@ -253,6 +253,7 @@ export class LeftPanel {
     const scroll = this.el_abyssPrivate.scrollTop;
     const focused = this.el_abyssPrivate.querySelector(':focus');
     const view = focused?.getAttribute('data-statistics-view');
+    const group = focused?.getAttribute('data-statistics-group');
     const scope = focused?.getAttribute('aria-label') === 'Scope';
     this.el_abyssPrivate.empty();
     this.renderSections_abyssPrivate();
@@ -267,10 +268,52 @@ export class LeftPanel {
           [...this.el_abyssPrivate.querySelectorAll<HTMLElement>('[data-statistics-view]')].find(
             (row) => row.dataset['statisticsView'] === view,
           ) ?? null;
+      replacement = this.groupFocus_abyssPrivate(group, replacement);
       replacement?.focus({ preventScroll: true });
     }
   }
 
+  private groupFocus_abyssPrivate(
+    group: string | null | undefined,
+    fallback: HTMLElement | null,
+  ): HTMLElement | null {
+    if (group == null) return fallback;
+    return (
+      [...this.el_abyssPrivate.querySelectorAll<HTMLElement>('[data-statistics-group]')].find(
+        (row) => row.dataset['statisticsGroup'] === group,
+      ) ?? null
+    );
+  }
+  private statisticsGroups_abyssPrivate(
+    section: HTMLElement,
+    current: ReturnType<StatisticsNavigationPort['snapshot']>,
+    navigation: StatisticsNavigationPort,
+  ): void {
+    if (current.view !== 'allocation') return;
+    const grouping = section.createDiv({
+      cls: 'abyss-statistics-navigation-group',
+      attr: { 'aria-label': 'Group by' },
+    });
+    grouping.createDiv({ cls: 'abyss-left-section-header', text: 'Group by' });
+    for (const [key, label] of [
+      ['project', 'Projects'],
+      ['tag', 'Tags'],
+      ['priority', 'Priority'],
+    ] as const) {
+      const choice = grouping.createEl('button', {
+        cls: 'abyss-left-item',
+        text: label,
+        attr: { type: 'button' },
+      });
+      choice.dataset['statisticsGroup'] = key;
+      choice.classList.toggle('is-active', current.group === key);
+      if (current.group === key) choice.setAttribute('aria-current', 'page');
+      choice.addEventListener('click', () => {
+        navigation.selectGroup(key);
+        this.options_abyssPrivate.onAnalysisNavigate?.();
+      });
+    }
+  }
   private renderStatistics_abyssPrivate(): void {
     const navigation = this.options_abyssPrivate.statisticsNavigation;
     if (navigation === undefined) return;
@@ -308,6 +351,8 @@ export class LeftPanel {
           navigation.selectView(view.id);
           this.options_abyssPrivate.onAnalysisNavigate?.();
         });
+        if (view.id === 'allocation')
+          this.statisticsGroups_abyssPrivate(section, current, navigation);
       }
     }
   }

@@ -7,7 +7,7 @@ import type { StatisticsChoices } from '../src/panels/statistics/StatisticsContr
 import { StatisticsMode } from '../src/panels/statistics/StatisticsMode';
 import { TanStackStatisticsChart } from '../src/panels/statistics/TanStackStatisticsChart';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import type { StatisticsScope, StatisticsViewModel } from '../src/statistics';
+import type { StatisticsAction, StatisticsScope, StatisticsViewModel } from '../src/statistics';
 import { StatisticsSession } from '../src/statistics/statisticsSession';
 import { TagManager } from '../src/tags/TagManager';
 import type { TaskStatisticsSnapshot, TaskStatisticsSource } from '../src/tasks';
@@ -955,7 +955,7 @@ it('refreshes an open scope picker when a new inventory is accepted, preserving 
   expect(opened).toHaveLength(1);
   controls.destroy();
 });
-it('retains focused Period and Group by controls across accepted navigation', async () => {
+it('retains focused Period controls across accepted navigation', async () => {
   const { StatisticsControls } = await import('../src/panels/statistics/StatisticsControls');
   const app = await createAppWithFiles({});
   const host = document.body.createDiv();
@@ -970,7 +970,7 @@ it('retains focused Period and Group by controls across accepted navigation', as
     controls.render(host, choices);
   });
   controls.render(host, choices);
-  for (const selector of ['select[aria-label="Period"]', 'button[aria-label="Group by Tags"]']) {
+  for (const selector of ['select[aria-label="Period"]']) {
     const control = host.querySelector<HTMLElement>(selector);
     if (control === null) throw new Error(`Missing control ${selector}`);
     control.focus();
@@ -1028,7 +1028,11 @@ it('navigates all eleven analyses through its transient port and retains the sel
     h.reset();
     h.mode.navigation.selectView(view);
     await h.wait();
-    expect(h.mode.navigation.snapshot()).toEqual({ view, scopeLabel: 'Entire vault' });
+    expect(h.mode.navigation.snapshot()).toEqual({
+      view,
+      scopeLabel: 'Entire vault',
+      group: 'project',
+    });
     expect(h.host.querySelector('.abyss-statistics .abyss-center-title')?.textContent).toBe(
       expectDefined(view[0]).toUpperCase() + view.slice(1),
     );
@@ -1088,30 +1092,24 @@ it('keeps the primary plot ahead of summary stacks before and after evidence ope
   expect([...section.children]).toEqual(originalChildren);
   expect(plot.closest('[hidden]')).toBeNull();
 });
-it('keeps Allocation grouping in a distinct header row outside the global controls', async () => {
+it('routes Allocation grouping through navigation and retains it across views', async () => {
   const h = await harness();
   h.mode.render(h.host);
   await h.wait();
   h.reset();
+  h.mode.navigation.selectGroup('tag');
+  await h.wait();
+  expect(h.mode.navigation.snapshot()).toMatchObject({ view: 'allocation', group: 'tag' });
+  expect(
+    h.host.querySelector('.abyss-statistics .abyss-center-header [aria-label="Group by"]'),
+  ).toBeNull();
+  h.reset();
+  h.mode.navigation.selectView('timeline');
+  await h.wait();
+  h.reset();
   h.mode.navigation.selectView('allocation');
   await h.wait();
-  const header = expectDefined(h.host.querySelector('.abyss-statistics .abyss-center-header'));
-  const global = expectDefined(header.querySelector('.abyss-center-controls'));
-  const grouping = expectDefined(header.querySelector('[aria-label="Group by"]'));
-  expect(global.contains(grouping)).toBe(false);
-  expect(global.querySelector('[aria-label="Period"]')).not.toBeNull();
-  expect(global.querySelector('[aria-label="Analysis details"]')).not.toBeNull();
-  expect([...grouping.querySelectorAll('button')].map((button) => button.textContent)).toEqual([
-    'Project',
-    'Tags',
-    'Priority',
-  ]);
-  h.reset();
-  expectDefined(grouping.querySelector<HTMLButtonElement>('[aria-label="Group by Tags"]')).click();
-  await h.wait();
-  expect(header.querySelector('[aria-label="Group by Tags"]')?.getAttribute('aria-pressed')).toBe(
-    'true',
-  );
+  expect(h.mode.navigation.snapshot()).toMatchObject({ view: 'allocation', group: 'tag' });
 });
 it('identifies the selected Rhythm date and series in the result heading', async () => {
   const h = await harness();
@@ -1500,4 +1498,91 @@ it('reveals selected weeks when Next and Previous cross an overview page edge', 
   await click('Previous week');
   expect(overview()[1].marks.find((mark) => mark.selected === true)?.x).toBe('2021-12-20');
   expect(period.value).toBe('all');
+});
+
+it('finds any Allocation group with a bounded native picker and restores focus on dismissal', async () => {
+  type Focus = Extract<StatisticsAction, { type: 'focus' }>;
+  const opened: Array<InstanceType<typeof SuggestModal<Focus>>> = [];
+  vi.spyOn(SuggestModal.prototype, 'open').mockImplementation(function (
+    this: InstanceType<typeof SuggestModal<Focus>>,
+  ) {
+    opened.push(this);
+  });
+  const { StatisticsControls } = await import('../src/panels/statistics/StatisticsControls');
+  const app = await createAppWithFiles({}),
+    change = vi.fn(),
+    controls = new StatisticsControls(app, change),
+    host = document.body.createDiv();
+  const choices = {
+    view: 'allocation' as const,
+    period: 'today' as const,
+    scope: { type: 'all' as const },
+    group: 'project' as const,
+  };
+  controls.render(host, choices);
+  const actions: Focus[] = Array.from({ length: 10000 }, (_, i) => ({
+    type: 'focus',
+    label: `Build · Projects/P${i}.md`,
+    focusKey: `project:Projects/P${i}.md`,
+  }));
+  controls.prepareGroups(actions);
+  const button = host.createEl('button', { text: 'Find group' });
+  button.focus();
+  controls.openGroup();
+  const picker = expectDefined(opened[0]);
+  expect(picker.getSuggestions('')).toHaveLength(50);
+  const match = await picker.getSuggestions('Projects/P9999.md');
+  expect(match).toEqual([actions[9999]]);
+  picker.onClose();
+  expect(change).not.toHaveBeenCalled();
+  expect(document.activeElement).toBe(button);
+  controls.openGroup();
+  expectDefined(opened[1]).onChooseSuggestion(expectDefined(match[0]), new MouseEvent('click'));
+  expect(change).toHaveBeenCalledExactlyOnceWith({ focusKey: 'project:Projects/P9999.md' });
+  controls.destroy();
+  host.remove();
+});
+
+it('focuses Allocation groups without changing period or scope and recovers after the focused group disappears', async () => {
+  const h = await harness();
+  const nodes = Array.from({ length: 9 }, (_, i) =>
+    task(`group${i}`, {
+      tags: [`tag${i}`],
+      timeEntries: [closed('2026-10-04T09:00Z', '2026-10-04T09:10Z')],
+    }),
+  );
+  h.replace(source(nodes));
+  h.mode.navigation.selectGroup('tag');
+  h.mode.render(h.host);
+  await h.wait();
+  expect(h.host.querySelector('[aria-label="Find group"]')).not.toBeNull();
+  const ranking = expectDefined(
+    h.renderer.mount.mock.calls.find(([, value]) => value.rowViewport === true),
+  );
+  const chosen = expectDefined(ranking[1].marks.find((mark) => mark.key === 'tag:tag8'));
+  h.reset();
+  ranking[2](expectDefined(chosen.selectionId));
+  await h.wait();
+  expect(h.host.textContent).toContain('Recorded time · #tag8');
+  expect(h.host.textContent).toContain('All tags');
+  expect(h.host.textContent).toContain('All tasks and subtasks in scope');
+  expect(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]')?.value).toBe('week');
+  expect(h.mode.navigation.snapshot()).toEqual({
+    view: 'allocation',
+    scopeLabel: 'Entire vault',
+    group: 'tag',
+  });
+  expect(h.host.querySelector<HTMLElement>('.abyss-statistics-evidence')?.hidden).toBe(true);
+  h.reset();
+  h.replace(source(nodes.slice(0, 8)));
+  await h.wait();
+  expect(h.host.textContent).toContain('Recorded time allocation');
+  expect(h.host.textContent).not.toContain('Recorded time · #tag8');
+  expect(h.host.querySelector('[aria-label="Find group"]')).toBeNull();
+  expect(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]')?.value).toBe('week');
+  expect(h.mode.navigation.snapshot()).toEqual({
+    view: 'allocation',
+    scopeLabel: 'Entire vault',
+    group: 'tag',
+  });
 });

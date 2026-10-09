@@ -1,5 +1,6 @@
 import { DropdownComponent, SuggestModal, type App } from 'obsidian';
 import {
+  type StatisticsAction,
   type StatisticsDataset,
   type StatisticsPeriod,
   type StatisticsRequest,
@@ -49,18 +50,18 @@ export class StatisticsControls {
   private dataset_abyssPrivate: StatisticsDataset | undefined;
   private inventory_abyssPrivate: Array<readonly [StatisticsScope, string, string]> = [];
   private picker_abyssPrivate: ScopePicker | undefined;
+  private groupPicker_abyssPrivate: GroupPicker | undefined;
+  private groups_abyssPrivate: readonly FocusAction[] = [];
   private labels_abyssPrivate = new Map<string, string>();
   constructor(
     private readonly app_abyssPrivate: App,
     private readonly change_abyssPrivate: (next: Partial<StatisticsChoices>) => void,
   ) {}
-  render(host: HTMLElement, choices: StatisticsChoices, groupHost = host): void {
+  render(host: HTMLElement, choices: StatisticsChoices): void {
     this.document_abyssPrivate = host.ownerDocument;
     this.closing_abyssPrivate = false;
     const focused = host.querySelector(':focus');
-    const groupFocused = groupHost === host ? null : groupHost.querySelector(':focus');
     host.empty();
-    if (groupHost !== host) groupHost.empty();
     if (choices.view !== 'aging' && choices.view !== 'dependencies')
       this.select_abyssPrivate(host, 'Period', PERIODS, {
         value: choices.period,
@@ -70,27 +71,7 @@ export class StatisticsControls {
             this.change_abyssPrivate({ period, page: undefined, weekStart: undefined });
         },
       });
-    if (choices.view === 'allocation') {
-      const group = groupHost.createDiv({
-        cls: 'abyss-cal-view-switcher abyss-statistics-group',
-        attr: { role: 'group', 'aria-label': 'Group by' },
-      });
-      for (const [key, label] of [
-        ['project', 'Project'],
-        ['tag', 'Tags'],
-        ['priority', 'Priority'],
-      ] as const) {
-        const button = statisticsButton(group, label, () => {
-          this.change_abyssPrivate({ group: key, page: undefined });
-        });
-        button.className = 'abyss-cal-view-btn';
-        button.classList.toggle('is-active', choices.group === key);
-        button.setAttribute('aria-label', `Group by ${label}`);
-        button.setAttribute('aria-pressed', String(choices.group === key));
-      }
-    }
     restoreControlFocus(host, focused);
-    if (groupHost !== host) restoreControlFocus(groupHost, groupFocused);
   }
   private select_abyssPrivate(
     host: HTMLElement,
@@ -198,10 +179,38 @@ export class StatisticsControls {
     this.picker_abyssPrivate = picker;
     picker.open();
   }
+  prepareGroups(groups: readonly FocusAction[]): void {
+    this.groups_abyssPrivate = groups;
+    this.groupPicker_abyssPrivate?.updateInventory(groups);
+  }
+  openGroup(): void {
+    this.groupPicker_abyssPrivate?.close();
+    const target = this.document_abyssPrivate?.activeElement as HTMLElement | null;
+    const root = target?.closest('.abyss-statistics');
+    const picker: GroupPicker = new GroupPicker(
+      this.app_abyssPrivate,
+      this.groups_abyssPrivate,
+      (action) => {
+        this.change_abyssPrivate({ focusKey: action.focusKey });
+      },
+      () => {
+        if (this.groupPicker_abyssPrivate !== picker) return;
+        this.groupPicker_abyssPrivate = undefined;
+        const current = root?.querySelector<HTMLElement>('[aria-label="Find group"]') ?? target;
+        if (!this.closing_abyssPrivate && current?.isConnected === true)
+          current.focus({ preventScroll: true });
+      },
+    );
+    this.groupPicker_abyssPrivate = picker;
+    picker.open();
+  }
   destroy(): void {
     this.closing_abyssPrivate = true;
     this.picker_abyssPrivate?.close();
     this.picker_abyssPrivate = undefined;
+    this.groupPicker_abyssPrivate?.close();
+    this.groupPicker_abyssPrivate = undefined;
+    this.groups_abyssPrivate = [];
   }
 }
 type ScopeOption = readonly [StatisticsScope, string, string];
@@ -249,4 +258,49 @@ function exactScopeText(scope: StatisticsScope): string | undefined {
   if (scope.type === 'project') return scope.path;
   if (scope.type === 'tag') return scope.tag;
   return undefined;
+}
+
+type FocusAction = Extract<StatisticsAction, { type: 'focus' }>;
+class GroupPicker extends SuggestModal<FocusAction> {
+  constructor(
+    app: App,
+    private groups_abyssPrivate: readonly FocusAction[],
+    private readonly choose_abyssPrivate: (action: FocusAction) => void,
+    private readonly closed_abyssPrivate: () => void,
+  ) {
+    super(app);
+    this.limit = 50;
+    this.setPlaceholder('Find group by name, path, tag or priority');
+  }
+  updateInventory(groups: readonly FocusAction[]): void {
+    this.groups_abyssPrivate = groups;
+    this.inputEl.trigger('input');
+  }
+  override getSuggestions(query: string): FocusAction[] {
+    const normalized = query.trim().toLowerCase(),
+      result: FocusAction[] = [];
+    for (const group of this.groups_abyssPrivate) {
+      const key = group.focusKey ?? '';
+      const identity = key.slice(key.indexOf(':') + 1).toLowerCase();
+      if (identity === normalized) {
+        result.unshift(group);
+        if (result.length > this.limit) result.pop();
+      } else if (
+        result.length < this.limit &&
+        `${group.label} ${identity}`.toLowerCase().includes(normalized)
+      )
+        result.push(group);
+    }
+    return result;
+  }
+  override renderSuggestion(action: FocusAction, element: HTMLElement): void {
+    element.setText(action.label);
+  }
+  override onChooseSuggestion(action: FocusAction): void {
+    this.choose_abyssPrivate(action);
+  }
+  override onClose(): void {
+    super.onClose();
+    this.closed_abyssPrivate();
+  }
 }

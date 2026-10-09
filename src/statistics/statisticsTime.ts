@@ -182,6 +182,7 @@ async function sessions(ctx: StatisticsContext): Promise<StatisticsSection[]> {
   ];
 }
 function recordedTimeLabel(view: StatisticsViewModel['view']): string {
+  if (view === 'allocation') return 'All recorded time in scope';
   if (view === 'timeline') return 'Period recorded time';
   if (view === 'sessions') return 'Recorded in period';
   return 'Recorded time';
@@ -234,6 +235,7 @@ export async function timeView({
     );
     sections = result.sections;
     actions = result.actions;
+    chartActions = result.chartActions;
   }
   sections[0] = {
     ...required(sections[0]),

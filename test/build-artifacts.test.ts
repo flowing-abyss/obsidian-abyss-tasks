@@ -81,6 +81,8 @@ const privateOwners = new Set([
   'StatisticsWorkScheduler',
   'StatisticsCharts',
   'ScopePicker',
+  'GroupPicker',
+  'StatisticsRowChart',
   'TaskCaptureController',
   'CaptureSurface',
   'CaptureTargetResolver',

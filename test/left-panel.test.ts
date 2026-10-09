@@ -3268,9 +3268,10 @@ it('renders all Analysis rows from the owning port and preserves sidebar focus/s
     },
   });
   let view: StatisticsViewId = 'rhythm';
+  let group: 'project' | 'tag' | 'priority' = 'project';
   const listeners = new Set<() => void>();
   const navigation: StatisticsNavigationPort = {
-    snapshot: () => ({ view, scopeLabel: 'Entire vault' }),
+    snapshot: () => ({ view, scopeLabel: 'Entire vault', group }),
     subscribe: (listener) => {
       listeners.add(listener);
       return () => {
@@ -3279,6 +3280,13 @@ it('renders all Analysis rows from the owning port and preserves sidebar focus/s
     },
     selectView: (next) => {
       view = next;
+      listeners.forEach((listener) => {
+        listener();
+      });
+    },
+    selectGroup: (next) => {
+      group = next;
+      view = 'allocation';
       listeners.forEach((listener) => {
         listener();
       });
@@ -3329,8 +3337,24 @@ it('renders all Analysis rows from the owning port and preserves sidebar focus/s
       host.querySelector<HTMLButtonElement>('[data-statistics-view="allocation"]'),
     ).click();
     expect(close).toHaveBeenCalledTimes(2);
+    const grouping = expectDefined(host.querySelector('[aria-label="Group by"]'));
+    expect([...grouping.querySelectorAll('button')].map((row) => row.textContent)).toEqual([
+      'Projects',
+      'Tags',
+      'Priority',
+    ]);
+    const tag = expectDefined(
+      grouping.querySelector<HTMLButtonElement>('[data-statistics-group="tag"]'),
+    );
+    tag.focus();
+    tag.click();
+    expect(group).toBe('tag');
+    expect(host.querySelector('[data-statistics-group="tag"]')?.getAttribute('aria-current')).toBe(
+      'page',
+    );
+    expect(document.activeElement).toBe(host.querySelector('[data-statistics-group="tag"]'));
     expectDefined(host.querySelector<HTMLButtonElement>('[aria-label="Scope"]')).click();
-    expect(close).toHaveBeenCalledTimes(3);
+    expect(close).toHaveBeenCalledTimes(4);
     state.set('mode', 'tasks');
     expect(host.textContent).toContain('Inbox');
     expect(host.querySelector('[data-statistics-view]')).toBeNull();

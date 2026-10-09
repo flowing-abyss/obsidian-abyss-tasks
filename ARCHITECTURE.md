@@ -502,6 +502,13 @@ active degrees; iterative graph diagnostics and one selected downstream traversa
 transitive closures. Normalization, calendar discovery, sorting and cold aggregation share a
 cancellable yielding work port.
 
+Allocation retains complete ranked aggregate groups and uses transient `focusKey` actions to replace
+the ranking with one group's bucket timeline without changing global scope or period. Group totals
+partition project/priority time; tag groups preserve full overlapping credit. Concentration includes
+eligible zero-time tasks and subtasks and has no percentage curve when total recorded time is zero.
+The left navigation owns visible Allocation grouping through `StatisticsNavigationPort`; it reads no
+task sources. Group search uses a bounded native SuggestModal over current aggregate identities.
+
 Timeline geometry uses local clock minutes, split at day/offset boundaries, with actual instants,
 offsets and endpoint labels separate from elapsed contributions. Its bounded weekly overview uses
 a frozen `chartActions` registry for week activation; source evidence remains separately selectable.
@@ -525,6 +532,15 @@ with the pure model and the owning mode. Selection callbacks expose only opaque 
 Each complete options update replaces its generation, so callbacks from superseded options are
 inert even when a later model reuses a selection string. Engine construction/update failures
 propagate to the owning mode.
+
+[`StatisticsRowChart`](src/panels/statistics/StatisticsRowChart.ts) wraps the renderer with the shared
+`RowViewport`: 32-pixel rows, a 288-pixel native scroller and 64-pixel overscan. It slices categories,
+tick labels and marks while retaining the complete numeric domain and opaque actions. Owner-window
+scroll/resize work coalesces and retires on destruction; deferred render failures latch and forward
+to the mode's existing Analysis diagnostic/Retry boundary. Explicit updates retry. Mode owns at most
+three ranking scroll positions (one per grouping), released at session destruction. Sections captures
+outgoing positions before atomic staging and restores them if staging fails. Adapter row bands use
+matching fixed pitch; packed numeric Timeline lanes alone reverse the vertical Timeline scale.
 
 [`StatisticsCharts`](src/panels/statistics/StatisticsCharts.ts) retains keyed mounts for the current
 section, updates surviving charts, destroys removed charts, and omits charts with no marks. Suspend

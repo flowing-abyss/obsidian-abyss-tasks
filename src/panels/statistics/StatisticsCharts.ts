@@ -1,5 +1,6 @@
 import type { StatisticsChartModel } from '../../statistics';
 import type { StatisticsChartHandle, StatisticsChartRenderer } from './StatisticsChart';
+import { StatisticsRowChart } from './StatisticsRowChart';
 
 interface MountedChart {
   readonly element: HTMLElement;
@@ -7,6 +8,7 @@ interface MountedChart {
 }
 /** Owns one selected section. Suspending releases all native observers and retains only models. */
 export class StatisticsCharts {
+  private readonly rowPositions_abyssPrivate: Map<string, number>;
   private models_abyssPrivate: readonly StatisticsChartModel[] = [];
   private readonly mounted_abyssPrivate = new Map<string, MountedChart>();
   private document_abyssPrivate: Document;
@@ -16,8 +18,14 @@ export class StatisticsCharts {
     private host: HTMLElement,
     private readonly renderer: StatisticsChartRenderer,
     private readonly onSelect: (selectionId: string) => void,
+    private readonly rowOptions_abyssPrivate: {
+      positions?: Map<string, number>;
+      onFailure?: (error: unknown) => void;
+    } = {},
   ) {
     this.document_abyssPrivate = host.ownerDocument;
+    this.rowPositions_abyssPrivate =
+      this.rowOptions_abyssPrivate.positions ?? new Map<string, number>();
   }
   update(models: readonly StatisticsChartModel[]): void {
     if (this.destroyed_abyssPrivate) return;
@@ -64,7 +72,7 @@ export class StatisticsCharts {
     try {
       this.mounted_abyssPrivate.set(model.id, {
         element,
-        handle: this.renderer.mount(surface, model, (id) => {
+        handle: this.mount_abyssPrivate(surface, model, (id) => {
           if (
             !this.destroyed_abyssPrivate &&
             !this.suspended_abyssPrivate &&
@@ -78,6 +86,27 @@ export class StatisticsCharts {
       element.remove();
       throw error;
     }
+  }
+  rememberRowScroll(): void {
+    for (const { handle } of this.mounted_abyssPrivate.values())
+      if (handle instanceof StatisticsRowChart) handle.rememberScroll();
+  }
+  private mount_abyssPrivate(
+    surface: HTMLElement,
+    model: StatisticsChartModel,
+    select: (id: string) => void,
+  ): StatisticsChartHandle {
+    return model.rowViewport === true
+      ? new StatisticsRowChart(surface, this.renderer, model, {
+          onSelect: select,
+          positions: this.rowPositions_abyssPrivate,
+          onFailure:
+            this.rowOptions_abyssPrivate.onFailure ??
+            ((error) => {
+              throw error;
+            }),
+        })
+      : this.renderer.mount(surface, model, select);
   }
   private caption_abyssPrivate(element: HTMLElement, model: StatisticsChartModel): void {
     element.classList.toggle('abyss-statistics-chart--facet', model.facet !== undefined);
@@ -111,6 +140,7 @@ export class StatisticsCharts {
   }
   suspend(): void {
     if (this.destroyed_abyssPrivate) return;
+    this.rememberRowScroll();
     this.suspended_abyssPrivate = true;
     this.release_abyssPrivate();
   }

@@ -10012,16 +10012,6 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   flex-wrap: nowrap;
 }
 
-.abyss-statistics-group-controls {
-  display: flex;
-  grid-column: 1 / -1;
-  justify-content: flex-end;
-}
-
-.abyss-statistics-group-controls:empty {
-  display: none;
-}
-
 .abyss-statistics-content {
   position: relative;
   scrollbar-gutter: stable;
@@ -10072,11 +10062,6 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 
 .abyss-statistics-controls label {
   min-inline-size: 0;
-}
-
-.abyss-statistics-group .abyss-cal-view-btn {
-  transition: none;
-  box-shadow: none;
 }
 
 .abyss-statistics-section {
@@ -10350,4 +10335,36 @@ button.abyss-statistics-evidence-action:hover,
 .abyss-panel-view .abyss-calendar-leading-row > .abyss-task-parent-btn {
   margin-inline-end: 0;
   padding-inline-end: 0;
+}
+
+.abyss-statistics-navigation-group {
+  padding-inline-start: var(--size-4-3);
+}
+
+.abyss-statistics-row-viewport {
+  block-size: 288px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  position: relative;
+}
+
+.abyss-statistics-row-canvas {
+  block-size: var(--abyss-statistics-row-height);
+  position: relative;
+}
+
+.abyss-statistics-row-content {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: var(--abyss-statistics-row-offset);
+}
+
+.abyss-statistics-allocation-plot {
+  min-block-size: 288px;
+}
+
+.abyss-statistics-allocation-empty-plot {
+  min-block-size: 288px;
+  display: grid;
+  place-content: center;
 }

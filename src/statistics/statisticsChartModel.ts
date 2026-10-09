@@ -56,6 +56,8 @@ export interface StatisticsMark {
     | undefined;
 }
 export interface StatisticsChartModel {
+  /** Horizontal ranking with one mark per ordered y category; presentation mounts a row window. */
+  readonly rowViewport?: boolean | undefined;
   readonly id: string;
   readonly accessibleLabel: string;
   readonly kind: 'bars' | 'lines' | 'scatter' | 'heatmap' | 'timeline' | 'network';

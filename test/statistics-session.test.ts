@@ -287,7 +287,9 @@ it('reconciles all eleven views against the independent ten-role retained-eviden
   expect(required(cells[1]).state).toBe('immature');
   const allocation = await get('allocation');
   expect(m(allocation, 'recorded-minutes')).toBe(9980);
-  expect(required(allocation.sections[0]).legend.map((item) => item.value)).toEqual([9475, 505]);
+  expect(
+    required(required(allocation.sections[0]).charts[0]).marks.map((mark) => mark.weight),
+  ).toEqual([9475, 505]);
   const timeline = await get('timeline');
   expect(m(timeline, 'week-minutes')).toBe(9980);
   expect([0, 1, 2, 3, 4, 5, 6].map((day) => m(timeline, `day:${day}`))).toEqual([

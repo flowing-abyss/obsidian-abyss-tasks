@@ -22,8 +22,14 @@ export class StatisticsSections {
     private readonly host_abyssPrivate: HTMLElement,
     private readonly renderer_abyssPrivate: StatisticsChartRenderer,
     private readonly select_abyssPrivate: (id: string) => void,
+    private readonly rowOptions_abyssPrivate: {
+      positions?: Map<string, number>;
+      onFailure?: (error: unknown) => void;
+    } = {},
   ) {}
   update(view: StatisticsViewModel): void {
+    for (const section of this.sections_abyssPrivate.values()) section.charts.rememberRowScroll();
+    const rowPositions = new Map(this.rowOptions_abyssPrivate.positions);
     const staging = this.host_abyssPrivate.createDiv({ cls: 'abyss-statistics-staging' });
     staging.classList.toggle('abyss-statistics-content--rhythm', view.view === 'rhythm');
     staging.inert = true;
@@ -46,9 +52,18 @@ export class StatisticsSections {
         const section = this.sections_abyssPrivate.get(model.id);
         if (section !== undefined) this.host_abyssPrivate.append(section.element);
       }
+    } catch (error) {
+      this.restoreRowPositions_abyssPrivate(rowPositions);
+      throw error;
     } finally {
       staging.remove();
     }
+  }
+  private restoreRowPositions_abyssPrivate(previous: ReadonlyMap<string, number>): void {
+    const positions = this.rowOptions_abyssPrivate.positions;
+    if (positions === undefined) return;
+    positions.clear();
+    for (const [key, value] of previous) positions.set(key, value);
   }
   private stage_abyssPrivate(
     view: StatisticsViewModel,
@@ -89,10 +104,14 @@ export class StatisticsSections {
     heading.createEl('h3', { text: model.title });
     if (model.reading !== undefined)
       heading.createDiv({ cls: 'abyss-statistics-context', text: model.reading });
+    const chartHost = element.createDiv();
+    const allocation = model.id === 'allocation' || model.id === 'concentration';
+    chartHost.classList.toggle('abyss-statistics-allocation-plot', allocation);
     const charts = new StatisticsCharts(
-      element.createDiv(),
+      chartHost,
       this.renderer_abyssPrivate,
       this.select_abyssPrivate,
+      this.rowOptions_abyssPrivate,
     );
     try {
       charts.update(model.charts);
@@ -104,15 +123,27 @@ export class StatisticsSections {
     this.legend_abyssPrivate(element, model);
     this.intensity_abyssPrivate(element, model);
     this.metrics_abyssPrivate(element, model);
+    this.empty_abyssPrivate(element, chartHost, model);
+    return { element, charts, model };
+  }
+  private empty_abyssPrivate(
+    element: HTMLElement,
+    chartHost: HTMLElement,
+    model: StatisticsSection,
+  ): void {
+    const allocation =
+      (model.id === 'allocation' || model.id === 'concentration') &&
+      model.charts.every((chart) => chart.marks.length === 0);
     if (
       model.emptyMessage !== undefined ||
       (model.charts.length > 0 && model.charts.every((chart) => chart.marks.length === 0))
     )
-      element.createDiv({
-        cls: 'abyss-statistics-context',
+      (allocation ? chartHost : element).createDiv({
+        cls: allocation
+          ? 'abyss-statistics-context abyss-statistics-allocation-empty-plot'
+          : 'abyss-statistics-context',
         text: model.emptyMessage ?? 'No eligible records in this selection.',
       });
-    return { element, charts, model };
   }
   private metrics_abyssPrivate(element: HTMLElement, model: StatisticsSection): void {
     const metrics = element.createDiv({ cls: 'abyss-statistics-metrics' });
@@ -214,6 +245,7 @@ export class StatisticsSections {
       }
   }
   destroy(): void {
+    for (const section of this.sections_abyssPrivate.values()) section.charts.rememberRowScroll();
     for (const section of this.sections_abyssPrivate.values()) section.charts.destroy();
     this.sections_abyssPrivate.clear();
     this.host_abyssPrivate.empty();

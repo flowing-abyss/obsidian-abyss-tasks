@@ -236,7 +236,10 @@ describe.each([
       expect(metric(allocation, 'recorded-minutes')).toBe(minutes);
       expect(
         Object.fromEntries(
-          required(allocation.sections[0]).legend.map((item) => [item.key, item.value]),
+          chart(allocation, 'allocation-ranking:project').marks.map((mark) => [
+            mark.key,
+            mark.weight,
+          ]),
         ),
       ).toEqual({
         'archive:unknown': 9475 * m,
@@ -244,6 +247,21 @@ describe.each([
         'project:projects/beta.md': 50.5 * m,
         unassigned: 50.5 * m,
       });
+      const focused = await get('allocation', { focusKey: 'project:projects/beta.md' });
+      const buckets = chart(focused, 'allocation-focus').marks;
+      expect(buckets.map((mark) => mark.weight)).toEqual([24 * m, 0, 0, 8 * m, 8 * m, 0, 10.5 * m]);
+      for (const [index, count] of [
+        [0, 0.8 * m],
+        [3, 0.8 * m],
+        [4, 0.8 * m],
+        [6, 0.7 * m],
+      ]) {
+        const id = required(required(buckets[required(index)]).selectionId);
+        pageChecks(focused, id, required(count));
+        expect(
+          focused.evidence(id, 0, 50).rows.every((row) => row.filePath === 'projects/beta.md'),
+        ).toBe(true);
+      }
       expect(metric(allocation, 'task-denominator')).toBe(n);
       const share = chart(allocation, 'time-share').marks;
       expect(share.map((mark) => mark.x)).toEqual([0, 10, 90, 100]);
@@ -373,8 +391,8 @@ describe.each([
       expect(['direct', 'downstream', 'sole'].map((id) => metric(priority, id))).toEqual([1, 2, 1]);
       const tags = await get('allocation', { group: 'tag' });
       expect(
-        required(tags.sections[0])
-          .legend.map((item) => item.value)
+        chart(tags, 'allocation-ranking:tag')
+          .marks.map((mark) => mark.weight)
           .sort((a, b) => (a ?? 0) - (b ?? 0)),
       ).toEqual([325 * m, minutes]);
       const archive = await get('aging', { scope: { type: 'archive' } });

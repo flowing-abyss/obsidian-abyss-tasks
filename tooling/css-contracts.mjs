@@ -171,6 +171,8 @@ export const contracts = {
   runtime: {
     // Exact native spacer producer/consumer is exercised by css-policy.test.ts.
     produced: [
+      '--abyss-statistics-row-height',
+      '--abyss-statistics-row-offset',
       '--abyss-virtual-row-height',
       '--abyss-virtual-row-offset',
       '--abyss-virtual-row-width',

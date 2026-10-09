@@ -805,3 +805,27 @@ it('admits only the enrolled parked-row width producer and its scoped consumer',
     }),
   ).not.toEqual([]);
 });
+
+it('backs bounded Statistics ranking geometry with exact native height and offset variables', async () => {
+  const ts = await import('typescript');
+  const source = ts.sys.readFile(ts.sys.resolvePath('src/panels/statistics/StatisticsRowChart.ts'));
+  if (source === undefined) throw new Error('Missing Statistics row chart');
+  const runtime = discoverRuntimeVariables(source);
+  expect(runtime.produced).toEqual([
+    '--abyss-statistics-row-height',
+    '--abyss-statistics-row-offset',
+  ]);
+  for (const variable of runtime.produced) expect(contracts.runtime.produced).toContain(variable);
+  const { loadPluginStyles, cssDeclarationsFor } = await import('./helpers');
+  const css = await loadPluginStyles();
+  const canvas = cssDeclarationsFor(css, '.abyss-statistics-row-canvas'),
+    content = cssDeclarationsFor(css, '.abyss-statistics-row-content');
+  expect(canvas).toContain('block-size: var(--abyss-statistics-row-height)');
+  expect(content).toContain('inset-block-start: var(--abyss-statistics-row-offset)');
+  expect(
+    analyzeCss(
+      `.abyss-statistics-row-canvas { ${canvas} } .abyss-statistics-row-content { ${content} }`,
+      { file: 'fixture.css', contracts: { ...fixtureContracts, runtime } },
+    ),
+  ).toEqual([]);
+});

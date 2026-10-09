@@ -112,12 +112,12 @@ it('counts overlapping owners and normalized tags without double-counting grand 
   );
   const a = await v.get('allocation');
   expect(value(a, 'recorded-minutes')).toBe(120);
+  expect(required(a.sections[0]?.charts[0]?.marks.find((m) => m.key === 'tag:work')).weight).toBe(
+    60,
+  );
   expect(
-    required(required(a.sections[0]).charts.find((c) => c.facet?.label === 'work')).marks.reduce(
-      (s, m) => s + Number(m.weight),
-      0,
-    ),
-  ).toBe(60);
+    required(a.sections[0]?.charts[0]).marks.reduce((sum, m) => sum + (m.weight ?? 0), 0),
+  ).toBe(180);
 });
 it('does owner sweep before scope; hidden overlaps and intermediate owners break transitions', async () => {
   const v = await views(
@@ -211,14 +211,15 @@ it('retains full century duration with bounded history marks and complete source
     true,
   );
 });
-it('exposes every normalized tag beyond the facet cap and project remainder', async () => {
+it('exposes every normalized tag in one ranking beyond the former page cap', async () => {
   const tags = Array.from({ length: 170 }, (_, i) => `tag${i}`);
   const v = await views(
     [task('tagged', { tags, timeEntries: [closed('2026-10-04T09:00Z', '2026-10-04T10:00Z')] })],
     { group: 'tag', page: 14 },
   );
   const a = await v.get('allocation');
-  expect(required(a.sections[0]).charts).toHaveLength(2);
+  expect(required(a.sections[0]).charts).toHaveLength(1);
+  expect(a.sections[0]?.charts[0]?.marks).toHaveLength(170);
   expect(value(a, 'recorded-minutes')).toBe(60);
   expect(value(a, 'group-count')).toBe(170);
 });
@@ -906,3 +907,162 @@ it('keeps the selected-week reading compact while retaining precise physical obs
     Date.parse('2026-10-09T09:00:00.015Z'),
   );
 });
+
+it('ranks all 17 Allocation groups without paging, including zero totals and colliding names', async () => {
+  const nodes = Array.from({ length: 17 }, (_, i) =>
+    task(`P${i}`, {
+      timeEntries:
+        i === 16
+          ? []
+          : [closed('2026-10-04T09:00Z', `2026-10-04T09:${String(32 - i).padStart(2, '0')}Z`)],
+    }),
+  );
+  const projects = nodes.map((node, i) => ({
+    path: node.ref.filePath,
+    name: i < 2 ? 'Build' : `Project ${i}`,
+  }));
+  const dataset = required(await prepareStatisticsDataset(source(nodes), projects, work));
+  const session = new StatisticsSession(dataset);
+  const overview = required(
+    await session.view(request({ view: 'allocation', period: 'today', page: 3 }), work),
+  );
+  const chart = required(required(overview.sections[0]).charts[0]);
+  expect(chart.rowViewport).toBe(true);
+  expect(chart.marks).toHaveLength(17);
+  expect(chart.x).toMatchObject({ type: 'number', domain: [0, 32], unit: 'minutes' });
+  expect(chart.marks.map((m) => m.weight)).toEqual([
+    32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 0,
+  ]);
+  expect(required(chart.y.tickLabels).slice(0, 2)).toEqual([
+    ['project:P0.md', 'Build · P0.md'],
+    ['project:P1.md', 'Build · P1.md'],
+  ]);
+  expect(overview.actions.some((action) => action.type === 'page')).toBe(false);
+  expect(required(overview.sections[0]).legend).toEqual([]);
+  const focused = required(
+    await session.view(
+      request({ view: 'allocation', period: 'today', focusKey: 'project:P1.md' }),
+      work,
+    ),
+  );
+  expect(required(focused.sections[0]).title).toContain('Build · P1.md');
+  expect(required(focused.sections[0]).charts).toHaveLength(1);
+  expect(required(required(focused.sections[0]).charts[0]).y).toMatchObject({
+    domain: [0, 31],
+    unit: 'minutes',
+  });
+  expect(
+    required(focused.sections[0]).metrics.find((metric) => metric.id === 'recorded-minutes'),
+  ).toMatchObject({ value: 392, label: 'All recorded time in scope' });
+  expect(
+    required(focused.sections.find((section) => section.id === 'concentration')).reading,
+  ).toContain('All tasks and subtasks in scope');
+  const positive = required(
+    required(required(focused.sections[0]).charts[0]).marks.find((m) => (m.weight ?? 0) > 0),
+  );
+  const evidence = focused.evidence(required(positive.selectionId), 0, 50);
+  expect(evidence.total).toBe(1);
+  expect(required(evidence.rows[0]).filePath).toBe('P1.md');
+  expect(required(evidence.rows[0]).contributionMinutes).toBe(31);
+  expect(focused.actions).toContainEqual({
+    type: 'focus',
+    label: 'All projects',
+    focusKey: undefined,
+  });
+  expect(overview.chartActions).toContainEqual([
+    'allocation-focus:project:P1.md',
+    { type: 'focus', label: 'Build · P1.md', focusKey: 'project:P1.md' },
+  ]);
+  const stale = required(
+    await session.view(request({ view: 'allocation', period: 'today', focusKey: 'removed' }), work),
+  );
+  expect(required(required(stale.sections[0]).charts[0]).rowViewport).toBe(true);
+});
+it('keeps tag focus within global scope and removes undefined zero-time concentration', async () => {
+  const nodes = [
+    task('included', {
+      tags: ['work', 'home'],
+      timeEntries: [closed('2026-10-04T09:00Z', '2026-10-04T10:00Z')],
+    }),
+    task('outside', {
+      tags: ['home'],
+      timeEntries: [closed('2026-10-04T09:00Z', '2026-10-04T11:00Z')],
+    }),
+  ];
+  const view = await (
+    await views(nodes, {
+      view: 'allocation',
+      period: 'today',
+      group: 'tag',
+      scope: { type: 'tag', tag: 'work' },
+      focusKey: 'tag:home',
+    })
+  ).get('allocation');
+  expect(view.sections[0]?.reading).toContain('Tags overlap');
+  expect(view.sections[0]?.charts[0]?.marks.reduce((sum, m) => sum + (m.weight ?? 0), 0)).toBe(60);
+  expect(view.actions).toEqual([{ type: 'focus', label: 'All tags', focusKey: undefined }]);
+  const zero = await (await views([task('zero')], { period: 'today' })).get('allocation');
+  const concentration = required(zero.sections.find((section) => section.id === 'concentration'));
+  expect(concentration.charts[0]?.marks).toEqual([]);
+  expect(concentration.emptyMessage).toBe('No recorded time in this period');
+  expect(concentration.metrics[0]?.value).toBe(1);
+});
+
+it('keeps a ten-minute group readable against 100,000 scope minutes while preserving the ranking maximum', async () => {
+  const nodes = Array.from({ length: 10000 }, (_, index) =>
+    task(`ScaleGroup${index}`, {
+      tags: ['common', `group${index}`],
+      timeEntries: [closed('2026-10-04T09:00Z', '2026-10-04T09:10Z')],
+    }),
+  );
+  const dataset = required(await prepareStatisticsDataset(source(nodes), [], work));
+  const session = new StatisticsSession(dataset);
+  const ranking = required(
+    await session.view(request({ view: 'allocation', period: 'today', group: 'tag' }), work),
+  );
+  const overview = required(required(ranking.sections[0]).charts[0]);
+  expect(overview.marks).toHaveLength(10001);
+  expect(overview.x).toMatchObject({ domain: [0, 100000] });
+  const focused = required(
+    await session.view(
+      request({ view: 'allocation', period: 'today', group: 'tag', focusKey: 'tag:group9999' }),
+      work,
+    ),
+  );
+  const chart = required(required(focused.sections[0]).charts[0]);
+  expect(chart.y).toMatchObject({ domain: [0, 10] });
+  expect(chart.marks.map((mark) => mark.weight)).toEqual([10]);
+  const rows = focused.evidence(required(required(chart.marks[0]).selectionId), 0, 50);
+  expect(rows.total).toBe(1);
+  expect(required(rows.rows[0])).toMatchObject({
+    filePath: 'ScaleGroup9999.md',
+    contributionMinutes: 10,
+  });
+  expect(value(focused, 'recorded-minutes')).toBe(100000);
+  expect(required(required(ranking.sections[0]).charts[0]).x).toMatchObject({
+    domain: [0, 100000],
+  });
+});
+
+it.each([
+  { group: 'project' as const, name: 'No project', key: 'unassigned' },
+  { group: 'tag' as const, name: 'Untagged', key: 'untagged' },
+])(
+  'keeps synthetic $name identity plain when real project names collide',
+  async ({ group, name, key }) => {
+    const dataset = required(
+      await prepareStatisticsDataset(
+        source([task('free')]),
+        [
+          { name, path: 'a.md' },
+          { name, path: 'b.md' },
+        ],
+        work,
+      ),
+    );
+    const view = required(
+      await new StatisticsSession(dataset).view(request({ view: 'allocation', group }), work),
+    );
+    expect(required(required(view.sections[0]).charts[0]).y.tickLabels).toEqual([[key, name]]);
+  },
+);

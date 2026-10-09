@@ -159,6 +159,7 @@ export interface StatisticsSection {
   readonly legend: readonly StatisticsLegend[];
 }
 export type StatisticsAction =
+  | { readonly type: 'focus'; readonly label: string; readonly focusKey: string | undefined }
   | { readonly type: 'cohorts'; readonly label: string; readonly expanded: boolean }
   | {
       readonly type: 'period';

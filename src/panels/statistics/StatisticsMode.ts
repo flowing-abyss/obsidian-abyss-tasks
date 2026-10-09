@@ -66,7 +66,7 @@ export class StatisticsMode {
   private selectionOpener_abyssPrivate: HTMLElement | SVGElement | null = null;
   private root_abyssPrivate: HTMLElement | undefined;
   private controlsHost_abyssPrivate: HTMLElement | undefined;
-  private groupHost_abyssPrivate: HTMLElement | undefined;
+  private readonly rowPositions_abyssPrivate = new Map<string, number>();
   private label_abyssPrivate: HTMLElement | undefined;
   private status_abyssPrivate: HTMLElement | undefined;
   private content_abyssPrivate: HTMLElement | undefined;
@@ -99,6 +99,7 @@ export class StatisticsMode {
     this.navigation = {
       snapshot: () => ({
         view: this.choices_abyssPrivate.view,
+        group: this.choices_abyssPrivate.group,
         scopeLabel: this.controls_abyssPrivate.scopeLabel(this.choices_abyssPrivate.scope),
       }),
       subscribe: (listener) => {
@@ -109,6 +110,14 @@ export class StatisticsMode {
       },
       selectView: (view) => {
         this.change_abyssPrivate({ view, page: undefined, focusKey: undefined });
+      },
+      selectGroup: (group) => {
+        this.change_abyssPrivate({
+          view: 'allocation',
+          group,
+          focusKey: undefined,
+          page: undefined,
+        });
       },
       openScope: () => {
         this.controls_abyssPrivate.openScope(this.choices_abyssPrivate.scope);
@@ -172,6 +181,12 @@ export class StatisticsMode {
       (id) => {
         this.select_abyssPrivate(id);
       },
+      {
+        positions: this.rowPositions_abyssPrivate,
+        onFailure: (error) => {
+          this.failure_abyssPrivate(error);
+        },
+      },
     );
     this.subscribe_abyssPrivate();
     this.armMidnight_abyssPrivate();
@@ -188,7 +203,6 @@ export class StatisticsMode {
       headerControls = header.createDiv({ cls: 'abyss-center-controls' });
     this.title_abyssPrivate = title;
     this.controlsHost_abyssPrivate = headerControls.createDiv({ cls: 'abyss-statistics-controls' });
-    this.groupHost_abyssPrivate = header.createDiv({ cls: 'abyss-statistics-group-controls' });
     const details = headerControls.createEl('button', {
       cls: 'abyss-view-state-btn',
       attr: { type: 'button', 'aria-label': 'Analysis details' },
@@ -210,11 +224,7 @@ export class StatisticsMode {
   }
   private renderControls_abyssPrivate(): void {
     if (this.controlsHost_abyssPrivate !== undefined)
-      this.controls_abyssPrivate.render(
-        this.controlsHost_abyssPrivate,
-        this.choices_abyssPrivate,
-        this.groupHost_abyssPrivate,
-      );
+      this.controls_abyssPrivate.render(this.controlsHost_abyssPrivate, this.choices_abyssPrivate);
   }
   private isAttached_abyssPrivate(host: HTMLElement): boolean {
     return (
@@ -476,6 +486,24 @@ export class StatisticsMode {
   }
   private renderActions_abyssPrivate(model: StatisticsViewModel): void {
     this.actions_abyssPrivate?.empty();
+    this.controls_abyssPrivate.prepareGroups(
+      model.view === 'allocation'
+        ? model.chartActions.flatMap(([, action]) =>
+            action.type === 'focus' && action.focusKey !== undefined ? [action] : [],
+          )
+        : [],
+    );
+    if (
+      model.view === 'allocation' &&
+      model.chartActions.length > 8 &&
+      this.actions_abyssPrivate !== undefined
+    ) {
+      const find = statisticsButton(this.actions_abyssPrivate, 'Find group', () => {
+        this.controls_abyssPrivate.openGroup();
+      });
+      find.setAttribute('aria-haspopup', 'dialog');
+      find.setAttribute('aria-label', 'Find group');
+    }
     if (this.actions_abyssPrivate !== undefined) {
       for (const action of model.actions)
         statisticsButton(this.actions_abyssPrivate, action.label, () => {
@@ -500,6 +528,7 @@ export class StatisticsMode {
       case 'page':
         this.change_abyssPrivate({ page: action.page });
         break;
+      case 'focus':
       case 'chain':
         this.change_abyssPrivate({ focusKey: action.focusKey });
         break;
@@ -616,6 +645,7 @@ export class StatisticsMode {
     this.unmount();
     this.evidence_abyssPrivate.destroy();
     this.navigationListeners_abyssPrivate.clear();
+    this.rowPositions_abyssPrivate.clear();
     this.destroyed_abyssPrivate = true;
     this.observation_abyssPrivate = undefined;
   }
