@@ -1,6 +1,7 @@
 import { setIcon } from 'obsidian';
 import type { StatisticsEvidenceRow, StatisticsViewModel } from '../../statistics';
 import {
+  formatTrackedDuration,
   sameTaskNodeRef,
   type TaskQueryApi,
   type TaskSnapshot,
@@ -159,6 +160,19 @@ export class StatisticsEvidence {
     });
   }
   private context_abyssPrivate(group: HTMLElement, row: StatisticsEvidenceRow): void {
+    if (row.entryTiming !== undefined) {
+      const { startMs, endMs } = row.entryTiming;
+      let text = `Unusable recording · ${row.entry?.originalMarkdown ?? ''}`;
+      if (startMs !== undefined)
+        text =
+          endMs === undefined
+            ? `Running session · ${evidenceInstant(startMs)}`
+            : `Full session · ${evidenceInstant(startMs)} → ${evidenceInstant(endMs)} · ${formatTrackedDuration(endMs - startMs)}`;
+      group.createDiv({
+        text,
+        cls: 'abyss-statistics-context',
+      });
+    }
     if (row.context !== undefined)
       group.createDiv({ text: row.context, cls: 'abyss-statistics-context' });
     if (row.atMs !== undefined)
@@ -172,6 +186,10 @@ export class StatisticsEvidence {
         cls: 'abyss-statistics-context',
       });
   }
+}
+
+function evidenceInstant(ms: number): string {
+  return new Date(ms).toLocaleString('en', { timeZoneName: 'short' });
 }
 
 function evidenceAction(row: StatisticsEvidenceRow): string {

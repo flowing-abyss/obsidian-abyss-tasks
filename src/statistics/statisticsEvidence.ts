@@ -42,6 +42,7 @@ export class EvidenceRegistry {
       ...this.taskRow(required(this.dataset.tasks[entry.owner]), context),
       key: entry.key,
       entry: entry.ref,
+      entryTiming: { startMs: entry.startMs, endMs: entry.endMs },
       contributionMinutes,
     };
   }

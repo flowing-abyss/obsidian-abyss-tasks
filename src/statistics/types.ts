@@ -187,6 +187,8 @@ export interface StatisticsEvidenceRow {
   readonly filePath: string;
   readonly node: TaskNodeRef;
   readonly entry?: TimeEntryRef | undefined;
+  /** Normalized physical endpoints; contributionMinutes may describe a clipped interval. */
+  readonly entryTiming?: Pick<StatisticsEntry, 'startMs' | 'endMs'> | undefined;
   readonly relatedNode?: TaskNodeRef | undefined;
   readonly atMs?: number | undefined;
   readonly contributionMinutes?: number | undefined;

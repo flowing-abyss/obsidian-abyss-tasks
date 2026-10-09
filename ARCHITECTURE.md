@@ -441,6 +441,10 @@ cached observations retain them. Invalidation returns removed-result focus to th
 heading and leaves unrelated inspector/editor focus alone. Archive rows only open their current
 retained source at its line; they never enter mutation queries or task commands. Recorded transitions
 retain occurrence keys and instants even when the same owner pair repeats.
+Lazy entry evidence rows carry normalized physical endpoints alongside their unchanged exact refs.
+The renderer formats only the selected page, showing each full closed-session range and duration
+or running start separately from period-clipped recorded-minute contributions; repeated entries
+remain visible beneath the single shared root card.
 Detached archive root revisions carry exact accepted block provenance under a non-authoritative
 Statistics prefix; descendants share that parent reference and their model keys exclude source bytes.
 Source opening rejects both changed block provenance and a current acquisition issue for that path.

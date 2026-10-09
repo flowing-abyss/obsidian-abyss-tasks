@@ -213,6 +213,139 @@ it('pages physical source rows in batches of 50 and retains occurrence-specific 
   element.remove();
 });
 
+it('shows every histogram session with its own timing and duration under one live root card', async () => {
+  const entries = [
+    closed('2026-10-04T08:00Z', '2026-10-04T08:10Z'),
+    closed('2026-10-04T09:00Z', '2026-10-04T09:12Z', 2),
+  ];
+  const root = task('One task', { timeEntries: entries });
+  const snapshot = source([root]);
+  const model = required(
+    await new StatisticsSession(required(await prepareStatisticsDataset(snapshot, [], work))).view(
+      request({ view: 'sessions' }),
+      work,
+    ),
+  );
+  const selection = required(
+    model.sections
+      .flatMap((section) => section.charts)
+      .flatMap((chart) => chart.marks)
+      .find((mark) => mark.key === 'session-bin:2'),
+  );
+  const id = required(selection.selectionId);
+  const page = model.evidence(id, 0, 50);
+  expect(page.total).toBe(2);
+  expect(page.rows.map((row) => row.entry)).toEqual(
+    entries.map((entry) => ({
+      parent: { type: 'task', ref: root.ref },
+      relativeLine: entry.relativeLine,
+      originalMarkdown: entry.originalMarkdown,
+    })),
+  );
+  const element = document.body.createDiv();
+  cleanup.push(() => {
+    element.remove();
+  });
+  new StatisticsEvidence(
+    {
+      readStatistics: () => snapshot,
+      isStatisticsCurrent: () => true,
+      whenStatisticsSettled: async () => {},
+      refreshStatistics: async () => {},
+      subscribeStatistics: () => () => {},
+    },
+    { resolve: () => ({ type: 'exact', task: root, basis: { observed: root } }) },
+    {
+      renderRoot: (host) => {
+        host.createDiv({ cls: 'root-card', text: root.title });
+      },
+      select: vi.fn(),
+      openSource: async () => {},
+    },
+  ).render(element, model, { id, label: required(selection.label) }, vi.fn());
+  const rows = [...element.querySelectorAll<HTMLElement>('[data-evidence-key]')];
+  expect(rows).toHaveLength(2);
+  expect(element.querySelectorAll('.root-card')).toHaveLength(1);
+  expect(new Set(rows.map((row) => row.dataset['evidenceKey'])).size).toBe(2);
+  expect(new Set(rows.map((row) => row.textContent)).size).toBe(2);
+  for (const [index, duration] of ['10m', '12m'].entries()) {
+    const entry = required(entries[index]);
+    expect(rows[index]?.textContent).toContain('Full session');
+    expect(rows[index]?.textContent).toContain(duration);
+    for (const instant of [required(entry.startMs), required(entry.endMs)])
+      expect(rows[index]?.textContent).toContain(
+        new Date(instant).toLocaleString('en', { timeZoneName: 'short' }),
+      );
+  }
+});
+
+it('keeps full session timing separate from clipped contributions and running archive records', async () => {
+  const snapshot = source(
+    [],
+    [
+      task('Archive', {
+        timeEntries: [
+          closed('2026-10-03T23:50Z', '2026-10-04T00:20Z'),
+          {
+            state: 'running',
+            startMs: Date.parse('2026-10-04T10:10Z'),
+            relativeLine: 2,
+            originalMarkdown: 'running',
+          },
+          { state: 'broken', relativeLine: 3, originalMarkdown: 'broken' },
+          closed('2026-10-04T09:00Z', '2026-10-04T08:00Z', 4),
+        ],
+      }),
+    ],
+  );
+  const model = required(
+    await new StatisticsSession(required(await prepareStatisticsDataset(snapshot, [], work))).view(
+      request({ view: 'allocation', period: 'today', nowMs: Date.parse('2026-10-04T10:30Z') }),
+      work,
+    ),
+  );
+  const element = document.body.createDiv();
+  cleanup.push(() => {
+    element.remove();
+  });
+  const openSource = vi.fn(async () => {});
+  new StatisticsEvidence(
+    {
+      readStatistics: () => snapshot,
+      isStatisticsCurrent: () => true,
+      whenStatisticsSettled: async () => {},
+      refreshStatistics: async () => {},
+      subscribeStatistics: () => () => {},
+    },
+    {
+      resolve: () => {
+        throw new Error('Archive evidence cannot acquire mutation authority');
+      },
+    },
+    { renderRoot: vi.fn(), select: vi.fn(), openSource },
+  ).render(element, model, { id: 'recorded-time', label: 'Recorded time' }, vi.fn());
+  const rows = [...element.querySelectorAll<HTMLElement>('[data-evidence-key]')];
+  expect(rows).toHaveLength(2);
+  expect(rows[0]?.textContent).toContain('Full session');
+  expect(rows[0]?.textContent).toContain('30m');
+  expect(rows[0]?.textContent).toContain(
+    new Date('2026-10-03T23:50Z').toLocaleString('en', { timeZoneName: 'short' }),
+  );
+  expect(rows[1]?.textContent).toContain('Running session');
+  expect(rows[1]?.textContent).not.toContain('Full session');
+  expect(rows[1]?.textContent).toContain(
+    new Date('2026-10-04T10:10Z').toLocaleString('en', { timeZoneName: 'short' }),
+  );
+  for (const row of rows) {
+    expect(row.textContent).toContain('20 recorded minutes');
+    row.querySelector('button')?.click();
+  }
+  expect(openSource.mock.calls).toEqual([
+    ['Archive.md', 0],
+    ['Archive.md', 0],
+  ]);
+});
+
 it('renders repeated owner changes as distinct native evidence rows with their event context', async () => {
   const snapshot = source(
     [],
