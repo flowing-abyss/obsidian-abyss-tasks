@@ -57,16 +57,28 @@ it('renders selected live evidence and opens the exact matched child through the
         ...view.contentEl.querySelectorAll<HTMLButtonElement>('.abyss-statistics-metrics button'),
       ].find((button) => button.textContent.includes('Open now')),
     ).click();
-    expect(view.contentEl.querySelectorAll('.abyss-statistics .abyss-task-card')).toHaveLength(1);
+    expect(view.contentEl.querySelectorAll('.abyss-statistics .abyss-task-card')).toHaveLength(3);
     expect(view.contentEl.querySelector('.abyss-statistics-chart')?.closest('[hidden]')).toBeNull();
     expect(
       view.contentEl.querySelector('.abyss-statistics .abyss-task-card.is-selected'),
     ).not.toBeNull();
-    expectDefined(
-      [...view.contentEl.querySelectorAll<HTMLButtonElement>('.abyss-statistics button')].filter(
-        (button) => button.textContent.includes('Matched child'),
-      )[1],
-    ).click();
+    const cards = [
+      ...view.contentEl.querySelectorAll<HTMLElement>('.abyss-statistics .abyss-task-card'),
+    ];
+    expect(cards.map((card) => card.querySelector('.abyss-task-title')?.textContent)).toEqual([
+      'Parent',
+      'Matched child',
+      'Matched child',
+    ]);
+    const childCard = expectDefined(cards[2]);
+    expect(childCard.dataset['line']).toBe('2');
+    expect(childCard.querySelector('.abyss-task-parent-btn')?.getAttribute('aria-label')).toContain(
+      'Parent',
+    );
+    childCard.click();
+    expect([
+      ...view.contentEl.querySelectorAll('.abyss-statistics .abyss-task-card.is-selected'),
+    ]).toEqual([childCard]);
     expect(state.get('taskStack').map((node) => node.title)).toEqual(['Parent', 'Matched child']);
     expect(state.get('taskStack')[1]?.ref).toEqual(root.subtasks[1]?.ref);
     expect(state.get('taskStack')[1]?.ref).toMatchObject({ relativeLine: 2 });

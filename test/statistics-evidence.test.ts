@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { StatisticsEvidence } from '../src/panels/statistics/StatisticsEvidence';
 import { prepareStatisticsDataset, StatisticsSession } from '../src/statistics';
 import { required } from '../src/statistics/statisticsWork';
-import type { TaskStatisticsSource } from '../src/tasks';
+import type { TaskNodeSnapshot, TaskStatisticsSource } from '../src/tasks';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
 import { canonicalStatusCatalog, createAppWithFiles } from './helpers';
@@ -40,7 +40,11 @@ async function archivedEvidence() {
       work,
     ),
   );
-  const host = { renderRoot: vi.fn(), select: vi.fn(), openSource: vi.fn(async () => {}) };
+  const host = {
+    renderNode: vi.fn(() => ({ destroy: () => {} })),
+    select: vi.fn(),
+    openSource: vi.fn(async () => {}),
+  };
   const queries = {
     resolve: vi.fn(() => {
       throw new Error('Archive evidence cannot acquire mutation authority');
@@ -115,10 +119,23 @@ it('rejects retained archive evidence when its settled current source has an acq
     [h.path, 1],
   ]);
 });
-it('renders one shared live root with exact matched children, and archives have source-only actions', async () => {
+it('renders exact matched children with disposable projections and source-only archives', async () => {
   const root = task('Root');
   const children = [0, 1].map((index) => ({
-    ...task(`Child ${index}`, { planning: { created: date('2026-10-01') } }),
+    title: `Child ${index}`,
+    markdownTitle: `Child ${index}`,
+    status: 'open' as const,
+    statusSymbol: ' ',
+    planning: { created: date('2026-10-01') },
+    priority: 'C' as const,
+    onCompletion: 'keep' as const,
+    onCompletionExplicit: false,
+    tags: [],
+    dependsOn: [],
+    subtasks: [],
+    comments: [],
+    timeEntries: [],
+    presentation: { linkCount: 0 },
     ref: {
       parent: { type: 'task' as const, ref: root.ref },
       relativeLine: index + 1,
@@ -143,10 +160,17 @@ it('renders one shared live root with exact matched children, and archives have 
         : { type: 'not-found' as const, ref: live.ref },
     ),
   };
+  const destroyed = vi.fn();
   const host = {
-    renderRoot: vi.fn((host: HTMLElement, _root: unknown, activate: () => void) => {
-      const card = host.createEl('button', { text: 'Root card' });
+    renderNode: vi.fn((host: HTMLElement, projection: TaskNodeSnapshot, activate: () => void) => {
+      const card = host.createEl('button', { text: projection.node.title });
       card.addEventListener('click', activate);
+      return {
+        destroy: () => {
+          destroyed();
+          card.remove();
+        },
+      };
     }),
     select: vi.fn(),
     openSource: vi.fn(async () => {}),
@@ -156,25 +180,33 @@ it('renders one shared live root with exact matched children, and archives have 
   const model = required(await new StatisticsSession(dataset).view(request(), work));
   const element = document.body.createDiv();
   evidence.render(element, model, { id: 'created', label: 'Created' }, vi.fn());
-  expect(host.renderRoot).toHaveBeenCalledTimes(1);
+  expect(host.renderNode.mock.calls.map((call) => call[1].node)).toEqual(children);
+  expect(host.renderNode.mock.calls.map((call) => call[1].path)).toEqual([
+    [children[0]],
+    [children[1]],
+  ]);
   expect(element.textContent).toContain('3 matching records');
-  expect(element.textContent).toContain('2 matched subtask records shown');
+  expect(element.textContent).not.toContain('Select matched subtask');
+  expect(element.textContent).not.toContain('matched subtask records shown');
   const buttons = [...element.querySelectorAll('button')];
-  buttons.find((button) => button.textContent === 'Root card')?.click();
-  expect(host.select).toHaveBeenCalledWith([live]);
-  expect(element.textContent).not.toContain('Select task · Root');
-  buttons.find((button) => button.textContent.includes('Child 1'))?.click();
-  expect(host.select).toHaveBeenCalledWith([live, children[1]]);
+  buttons.find((button) => button.textContent === 'Child 0')?.click();
+  buttons.find((button) => button.textContent === 'Child 1')?.click();
+  expect(host.select.mock.calls).toEqual([[[live, children[0]]], [[live, children[1]]]]);
   buttons.find((button) => button.textContent.includes('Archived'))?.click();
   expect(host.openSource).toHaveBeenCalledWith('Archived.md', 0);
   expect(queries.resolve).not.toHaveBeenCalledWith(archived.ref);
   current = false;
-  buttons.find((button) => button.textContent.includes('Child 0'))?.click();
-  buttons.find((button) => button.textContent.includes('Archived'))?.click();
-  buttons.find((button) => button.textContent === 'Root card')?.click();
+  buttons.forEach((button) => {
+    button.click();
+  });
   expect(host.select).toHaveBeenCalledTimes(2);
   expect(host.openSource).toHaveBeenCalledTimes(1);
   expect(element.textContent).toContain('changed or was removed');
+  evidence.render(element, model, { id: 'created', label: 'Created' }, vi.fn());
+  expect(destroyed).toHaveBeenCalledTimes(2);
+  evidence.destroy();
+  evidence.destroy();
+  expect(destroyed).toHaveBeenCalledTimes(2);
   element.remove();
 });
 it('pages physical source rows in batches of 50 and retains occurrence-specific keys', async () => {
@@ -196,12 +228,20 @@ it('pages physical source rows in batches of 50 and retains occurrence-specific 
     ),
   );
   const element = document.body.createDiv();
-  new StatisticsEvidence(
+  const evidence = new StatisticsEvidence(
     port,
     { resolve: (ref) => ({ type: 'not-found', ref }) },
-    { renderRoot: vi.fn(), select: vi.fn(), openSource: async () => {} },
-  ).render(element, model, { id: 'created', label: 'Created' }, vi.fn());
+    {
+      renderNode: vi.fn(() => ({ destroy: () => {} })),
+      select: vi.fn(),
+      openSource: async () => {},
+    },
+  );
+  evidence.render(element, model, { id: 'created', label: 'Created' }, vi.fn());
   expect(element.querySelectorAll('[data-evidence-key]')).toHaveLength(50);
+  const retiredMore = required(
+    [...element.querySelectorAll('button')].find((button) => button.textContent === 'Load more'),
+  );
   [...element.querySelectorAll('button')]
     .find((button) => button.textContent === 'Load more')
     ?.click();
@@ -210,6 +250,13 @@ it('pages physical source rows in batches of 50 and retains occurrence-specific 
     .find((button) => button.textContent === 'Load more')
     ?.click();
   expect(element.querySelectorAll('[data-evidence-key]')).toHaveLength(101);
+  evidence.render(element, model, { id: 'created', label: 'Created' }, vi.fn());
+  retiredMore.click();
+  required(
+    [...element.querySelectorAll('button')].find((button) => button.textContent === 'Load more'),
+  ).click();
+  expect(element.querySelectorAll('[data-evidence-key]')).toHaveLength(100);
+  evidence.destroy();
   element.remove();
 });
 
@@ -256,8 +303,13 @@ it('shows every histogram session with its own timing and duration under one liv
     },
     { resolve: () => ({ type: 'exact', task: root, basis: { observed: root } }) },
     {
-      renderRoot: (host) => {
-        host.createDiv({ cls: 'root-card', text: root.title });
+      renderNode: (host) => {
+        const card = host.createDiv({ cls: 'root-card', text: root.title });
+        return {
+          destroy: () => {
+            card.remove();
+          },
+        };
       },
       select: vi.fn(),
       openSource: async () => {},
@@ -294,6 +346,7 @@ it('keeps full session timing separate from clipped contributions and running ar
           },
           { state: 'broken', relativeLine: 3, originalMarkdown: 'broken' },
           closed('2026-10-04T09:00Z', '2026-10-04T08:00Z', 4),
+          closed('2026-10-04T09:00Z', '2026-10-04T11:00Z', 5),
         ],
       }),
     ],
@@ -322,48 +375,59 @@ it('keeps full session timing separate from clipped contributions and running ar
         throw new Error('Archive evidence cannot acquire mutation authority');
       },
     },
-    { renderRoot: vi.fn(), select: vi.fn(), openSource },
+    { renderNode: vi.fn(() => ({ destroy: () => {} })), select: vi.fn(), openSource },
   ).render(element, model, { id: 'recorded-time', label: 'Recorded time' }, vi.fn());
   const rows = [...element.querySelectorAll<HTMLElement>('[data-evidence-key]')];
-  expect(rows).toHaveLength(2);
-  expect(rows[0]?.textContent).toContain('Full session');
-  expect(rows[0]?.textContent).toContain('30m');
-  expect(rows[0]?.textContent).toContain(
+  expect(rows).toHaveLength(3);
+  const first = required(rows[0]),
+    running = required(rows[1]),
+    future = required(rows[2]);
+  expect(first.textContent).toContain('Full session');
+  expect(first.textContent).toContain('30m');
+  expect(first.textContent).toContain(
     new Date('2026-10-03T23:50Z').toLocaleString('en', { timeZoneName: 'short' }),
   );
-  expect(rows[1]?.textContent).toContain('Running session');
-  expect(rows[1]?.textContent).not.toContain('Full session');
-  expect(rows[1]?.textContent).toContain(
+  expect(running.textContent).toContain('Running session');
+  expect(running.textContent).toContain('Through');
+  expect(running.textContent).toContain(
+    new Date('2026-10-04T10:30Z').toLocaleString('en', { timeZoneName: 'short' }),
+  );
+  expect(running.textContent).not.toContain('Full session');
+  expect(running.textContent).toContain(
     new Date('2026-10-04T10:10Z').toLocaleString('en', { timeZoneName: 'short' }),
   );
-  for (const row of rows) {
-    expect(row.textContent).toContain('20 recorded minutes');
+  expect(future.textContent).toContain('Through');
+  expect(future.textContent).not.toContain('Full session');
+  expect(future.textContent).toContain('Recorded end');
+  expect(future.textContent).toContain(
+    new Date('2026-10-04T11:00Z').toLocaleString('en', { timeZoneName: 'short' }),
+  );
+  for (const [index, row] of rows.entries()) {
+    expect(row.textContent).toContain(`${index === 2 ? 90 : 20} recorded minutes`);
     row.querySelector('button')?.click();
   }
   expect(openSource.mock.calls).toEqual([
+    ['Archive.md', 0],
     ['Archive.md', 0],
     ['Archive.md', 0],
   ]);
 });
 
 it('renders repeated owner changes as distinct native evidence rows with their event context', async () => {
-  const snapshot = source(
-    [],
-    [
-      task('A', {
-        timeEntries: [
-          closed('2026-10-04T08:00Z', '2026-10-04T08:10Z'),
-          closed('2026-10-04T08:20Z', '2026-10-04T08:30Z', 2),
-        ],
-      }),
-      task('B', {
-        timeEntries: [
-          closed('2026-10-04T08:10Z', '2026-10-04T08:20Z'),
-          closed('2026-10-04T08:30Z', '2026-10-04T08:40Z', 2),
-        ],
-      }),
-    ],
-  );
+  const snapshot = source([
+    task('A', {
+      timeEntries: [
+        closed('2026-10-04T08:00Z', '2026-10-04T08:10Z'),
+        closed('2026-10-04T08:20Z', '2026-10-04T08:30Z', 2),
+      ],
+    }),
+    task('B', {
+      timeEntries: [
+        closed('2026-10-04T08:10Z', '2026-10-04T08:20Z'),
+        closed('2026-10-04T08:30Z', '2026-10-04T08:40Z', 2),
+      ],
+    }),
+  ]);
   const model = required(
     await new StatisticsSession(required(await prepareStatisticsDataset(snapshot, [], work))).view(
       request({ view: 'sessions' }),
@@ -380,13 +444,101 @@ it('renders repeated owner changes as distinct native evidence rows with their e
   const element = document.body.createDiv();
   new StatisticsEvidence(
     port,
-    { resolve: (ref) => ({ type: 'not-found', ref }) },
-    { renderRoot: vi.fn(), select: vi.fn(), openSource: async () => {} },
+    {
+      resolve: (ref) => {
+        const root = required(
+          snapshot.files
+            .flatMap((file) => file.roots)
+            .find((root) => root.ref.filePath === ref.filePath),
+        );
+        return { type: 'exact', task: root, basis: { observed: root } };
+      },
+    },
+    {
+      renderNode: (host, projection) => {
+        const card = host.createDiv({ cls: 'native-card', text: projection.node.title });
+        return {
+          destroy: () => {
+            card.remove();
+          },
+        };
+      },
+      select: vi.fn(),
+      openSource: async () => {},
+    },
   ).render(element, model, { id: 'recorded-changes', label: 'Recorded changes' }, vi.fn());
   const rows = [...element.querySelectorAll<HTMLElement>('[data-evidence-key]')];
   expect(rows).toHaveLength(3);
+  expect(
+    rows.map((row) => [...row.querySelectorAll('.native-card')].map((card) => card.textContent)),
+  ).toEqual([
+    ['A', 'B'],
+    ['B', 'A'],
+    ['A', 'B'],
+  ]);
   expect(new Set(rows.map((row) => row.dataset['evidenceKey'])).size).toBe(3);
   for (const [index, row] of model.evidence('recorded-changes', 0, 50).rows.entries())
     expect(rows[index]?.textContent).toContain(new Date(required(row.atMs)).toLocaleString('en'));
+  element.remove();
+});
+
+it('shows both native ends for A → C and B → C, retaining each transition context', async () => {
+  const a = task('A', { timeEntries: [closed('2026-10-04T08:00Z', '2026-10-04T08:10Z')] });
+  const b = task('B', { timeEntries: [closed('2026-10-04T08:30Z', '2026-10-04T08:40Z')] });
+  const c = task('C', {
+    timeEntries: [
+      closed('2026-10-04T08:12Z', '2026-10-04T08:20Z'),
+      closed('2026-10-04T08:43Z', '2026-10-04T08:50Z', 2),
+    ],
+  });
+  const snapshot = source([a, b, c]);
+  const model = required(
+    await new StatisticsSession(required(await prepareStatisticsDataset(snapshot, [], work))).view(
+      request({ view: 'sessions' }),
+      work,
+    ),
+  );
+  const element = document.body.createDiv();
+  const evidence = new StatisticsEvidence(
+    {
+      readStatistics: () => snapshot,
+      isStatisticsCurrent: () => true,
+      whenStatisticsSettled: async () => {},
+      refreshStatistics: async () => {},
+      subscribeStatistics: () => () => {},
+    },
+    {
+      resolve: (ref) => {
+        const root = required([a, b, c].find((root) => root.ref.filePath === ref.filePath));
+        return { type: 'exact', task: root, basis: { observed: root } };
+      },
+    },
+    {
+      renderNode: (host, projection) => {
+        const card = host.createDiv({ cls: 'native-card', text: projection.node.title });
+        return {
+          destroy: () => {
+            card.remove();
+          },
+        };
+      },
+      select: vi.fn(),
+      openSource: async () => {},
+    },
+  );
+  evidence.render(element, model, { id: 'recorded-changes', label: 'Recorded changes' }, vi.fn());
+  const rows = [...element.querySelectorAll('[data-evidence-key]')];
+  expect(rows).toHaveLength(2);
+  expect(
+    rows.map((row) => [...row.querySelectorAll('.native-card')].map((card) => card.textContent)),
+  ).toEqual([
+    ['A', 'C'],
+    ['B', 'C'],
+  ]);
+  expect(rows[0]?.textContent).toContain('2 minute gap');
+  expect(rows[1]?.textContent).toContain('3 minute gap');
+  expect(rows[0]?.textContent).toContain(new Date('2026-10-04T08:12Z').toLocaleString('en'));
+  expect(rows[1]?.textContent).toContain(new Date('2026-10-04T08:43Z').toLocaleString('en'));
+  evidence.destroy();
   element.remove();
 });

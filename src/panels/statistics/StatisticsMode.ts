@@ -537,6 +537,7 @@ export class StatisticsMode {
     if (host === undefined || host.hidden === true) return;
     const focused = host.contains(host.ownerDocument.activeElement);
     const opener = this.selectionOpener_abyssPrivate;
+    this.evidence_abyssPrivate.clear();
     host.empty();
     host.hidden = true;
     this.selectionOpener_abyssPrivate = null;
@@ -593,6 +594,7 @@ export class StatisticsMode {
     this.scheduler_abyssPrivate = undefined;
     this.sections_abyssPrivate?.destroy();
     this.sections_abyssPrivate = undefined;
+    this.evidence_abyssPrivate.clear();
     this.root_abyssPrivate?.remove();
     this.root_abyssPrivate = undefined;
     this.content_abyssPrivate = undefined;
@@ -602,6 +604,7 @@ export class StatisticsMode {
   }
   destroy(): void {
     this.unmount();
+    this.evidence_abyssPrivate.destroy();
     this.navigationListeners_abyssPrivate.clear();
     this.destroyed_abyssPrivate = true;
     this.observation_abyssPrivate = undefined;

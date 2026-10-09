@@ -428,12 +428,14 @@ Bounded Timeline intervals are packed into clock-aligned subrows; dependency lay
 adjacency with distinct sibling rows and vertical long chains. These display coordinates never alter
 source identities, durations, graph counts or evidence authority.
 
-[`StatisticsEvidence`](src/panels/statistics/StatisticsEvidence.ts) pages 50 physical records, renders
-the existing live root card once, and offers exact matched-child selection with shown-record counts.
-The shared root card receives an activation override through TaskCardRenderer's existing keyboard
-path: every activation freshly validates and selects the root independently of the child record that
-introduced it. Child actions separately revalidate the complete descendant path. Evidence retains
-plots and keyed chart handles; pointer exploration preserves focus, while presentation-owned keyboard
+[`StatisticsEvidence`](src/panels/statistics/StatisticsEvidence.ts) pages 50 physical records and
+owns disposable native TaskCardRenderer mounts for exact live node projections. The renderer uses
+its normal child status, Markdown, menus, commands, and parent-context affordance. Exact descendant
+paths are uniquely validated against the current root before rendering and activation. CenterPanel
+supplies projected row/selection identity and rejects stale card actions; StatisticsMode releases
+evidence mounts on Clear, changed observations, unmount and destruction. Ordinary physical entries
+share a card per exact node, while each transition occurrence mounts both ends, including repeated
+owner pairs. Evidence retains plots and keyed chart handles; pointer exploration preserves focus, while presentation-owned keyboard
 activation can focus the results heading without scrolling. Clear restores a connected opener only
 when results own focus. Mark headings reuse the shared tooltip description's concise label/series,
 with typed axis labels, tick labels and units; stacked contribution values use weight rather than a
@@ -446,7 +448,8 @@ retain occurrence keys and instants even when the same owner pair repeats.
 Lazy entry evidence rows carry normalized physical endpoints alongside their unchanged exact refs.
 The renderer formats only the selected page, showing each full closed-session range and duration
 or running start separately from period-clipped recorded-minute contributions; repeated entries
-remain visible beneath the single shared root card.
+remain visible beneath their shared exact-node card. Running and future-ended records name the
+observation boundary with Through; selected minutes remain distinct from the physical full range.
 Detached archive root revisions carry exact accepted block provenance under a non-authoritative
 Statistics prefix; descendants share that parent reference and their model keys exclude source bytes.
 Source opening rejects both changed block provenance and a current acquisition issue for that path.

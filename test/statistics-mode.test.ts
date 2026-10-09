@@ -46,6 +46,7 @@ async function harness(acceptedSource?: TaskStatisticsSource) {
   };
   const state = new AppState();
   state.set('mode', 'statistics');
+  const releaseEvidence = vi.fn();
   const mode = new StatisticsMode({
     state,
     app,
@@ -54,11 +55,21 @@ async function harness(acceptedSource?: TaskStatisticsSource) {
     projects: { list: () => [], onUpdate: () => () => {}, whenSettled: async () => {} },
     renderer,
     context: () => ({ nowMs, offsetAt: utc }),
+    queries: {
+      resolve: (ref) => {
+        const root = snapshot.files
+          .flatMap((file) => file.roots)
+          .find((root) => root.ref.filePath === ref.filePath);
+        return root === undefined
+          ? { type: 'not-found', ref }
+          : { type: 'exact', task: root, basis: { observed: root } };
+      },
+    },
     host: {
       renderComplete: () => {
         rendered.resolve();
       },
-      renderRoot: () => {},
+      renderNode: () => ({ destroy: releaseEvidence }),
       select: () => {},
       openSource: async () => {},
     },
@@ -75,6 +86,7 @@ async function harness(acceptedSource?: TaskStatisticsSource) {
     listeners,
     renderer,
     sourcePort,
+    releaseEvidence,
     advance: (milliseconds = 60000) => {
       nowMs += milliseconds;
     },
@@ -308,7 +320,7 @@ it('joins real accepted source and project membership only after both barriers, 
       },
     },
     host: {
-      renderRoot: () => {},
+      renderNode: () => ({ destroy: () => {} }),
       select: () => {},
       openSource: async () => {},
       renderComplete: () => {
@@ -718,7 +730,7 @@ async function selectedProjectHarness() {
     context: () => ({ nowMs: Date.parse('2026-10-04T12:00Z'), offsetAt: utc }),
     renderer: { mount: () => ({ update: () => {}, destroy: () => {} }) },
     host: {
-      renderRoot: () => {},
+      renderNode: () => ({ destroy: () => {} }),
       select: () => {},
       openSource: async () => {},
       renderComplete: () => {
@@ -1045,14 +1057,14 @@ it('keeps charts visible for pointer evidence, preserves scroll on Clear, and re
   expect(chart.isConnected).toBe(true);
   expect(chart.closest('[hidden]')).toBeNull();
   expect(h.host.querySelector('.abyss-statistics-evidence')?.textContent).toContain(
-    'matching records',
+    'matching record',
   );
   expect(document.activeElement).toBe(outside);
   h.reset();
   h.mode.refresh();
   await h.wait();
   expect(h.host.querySelector('.abyss-statistics-evidence')?.textContent).toContain(
-    'matching records',
+    'matching record',
   );
   expectDefined(h.host.querySelector<HTMLButtonElement>('[aria-label="Clear selection"]')).click();
   expect(content.scrollTop).toBe(128);
@@ -1355,4 +1367,38 @@ it('expands and restores cohort display while preserving period and resetting th
   expect(
     [...h.host.querySelectorAll('button')].some((button) => button.textContent === 'Newer weeks'),
   ).toBe(false);
+});
+
+it('releases native evidence mounts on Clear, intent changes, accepted revision and unmount', async () => {
+  const h = await harness();
+  h.mode.render(h.host);
+  await h.wait();
+  const open = () => {
+    const metric = expectDefined(h.host.querySelector<HTMLElement>('.abyss-statistics-metric'));
+    metric.click();
+  };
+  open();
+  expect(h.host.querySelector('.abyss-statistics-evidence-count')?.textContent).toBe(
+    '1 matching record',
+  );
+  expectDefined(h.host.querySelector<HTMLButtonElement>('[aria-label="Clear selection"]')).click();
+  expect(h.releaseEvidence).toHaveBeenCalledTimes(1);
+  open();
+  h.reset();
+  h.mode.navigation.selectView('completion');
+  await h.wait();
+  expect(h.releaseEvidence).toHaveBeenCalledTimes(2);
+  h.reset();
+  h.mode.navigation.selectView('rhythm');
+  await h.wait();
+  open();
+  h.reset();
+  h.replace(source([task('B', { planning: { created: date('2026-10-02') } })]));
+  await h.wait();
+  expect(h.releaseEvidence).toHaveBeenCalledTimes(3);
+  open();
+  h.mode.unmount();
+  expect(h.releaseEvidence).toHaveBeenCalledTimes(4);
+  h.mode.destroy();
+  expect(h.releaseEvidence).toHaveBeenCalledTimes(4);
 });

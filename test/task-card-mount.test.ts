@@ -7,7 +7,9 @@ import {
   type TaskCardInteractionContext,
 } from '../src/panels/center/TaskCardRenderer';
 import type { TaskListNavigationRequest } from '../src/panels/center/TaskListNavigation';
+import { StatisticsEvidence } from '../src/panels/statistics/StatisticsEvidence';
 import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { prepareStatisticsDataset, StatisticsSession } from '../src/statistics';
 import { selectTaskNodes } from '../src/task-lists/TaskListSelector';
 import type { TaskOccurrencePresentation } from '../src/task-lists/taskOccurrencePresentation';
 import {
@@ -19,6 +21,7 @@ import {
   type TaskSnapshot,
 } from '../src/tasks';
 import { noInteractionOwnership } from '../src/ui/interactionOwnership';
+import type { TaskSelectionNode } from '../src/ui/taskSelection';
 import {
   deferred,
   expectDefined,
@@ -27,6 +30,7 @@ import {
   testStatusRegistry,
   useRealMoment,
 } from './helpers';
+import { request, work } from './helpers/statisticsFixtures';
 import { createCanonicalSearchHarness } from './support/taskSearchHarness';
 useRealMoment();
 afterEach(() => {
@@ -1131,5 +1135,88 @@ it('keeps exact roots and children after clicking their rendered interval endpoi
   } finally {
     source.close();
     h.hostComponent.unload();
+  }
+});
+
+it('mounts Analysis children as native cards with exact status commands and parent context', async () => {
+  const source = await createCanonicalSearchHarness(
+    {
+      'tree.md':
+        '- [ ] Unmatched parent\n  - [/] First ➕ 2026-10-01\n  - [ ] Second ➕ 2026-10-01',
+    },
+    structuredClone(DEFAULT_SETTINGS),
+  );
+  const h = renderer();
+  const selected = vi.fn<(stack: TaskSelectionNode[]) => void>();
+  const container = document.body.createDiv();
+  const stop = source.index.subscribeStatistics(() => {});
+  await source.index.whenStatisticsSettled();
+  const snapshot = source.index.readStatistics();
+  const model = expectDefined(
+    await new StatisticsSession(
+      expectDefined(await prepareStatisticsDataset(snapshot, [], work)),
+    ).view(request(), work),
+  );
+  const evidence = new StatisticsEvidence(source.index, source.index, {
+    renderNode: (host, projection, activate) =>
+      h.subject.mount(host, projection.root, [], {
+        projection,
+        selected: false,
+        showDelete: false,
+        onActivate: activate,
+        isCurrent: () => source.index.resolve(projection.root.ref).type === 'exact',
+      }),
+    select: selected,
+    openSource: async () => {},
+  });
+  try {
+    evidence.render(container, model, { id: 'created', label: 'Created' }, () => {});
+    const cards = [...container.querySelectorAll<HTMLElement>('.abyss-task-card')];
+    const firstCard = expectDefined(cards[0]),
+      secondCard = expectDefined(cards[1]);
+    expect(cards.map((card) => card.querySelector('.abyss-task-title')?.textContent)).toEqual([
+      'First',
+      'Second',
+    ]);
+    expect(firstCard.querySelector('.abyss-status-marker')?.getAttribute('data-status-type')).toBe(
+      'in-progress',
+    );
+    expect(secondCard.querySelector('.abyss-status-marker')?.getAttribute('data-status-type')).toBe(
+      'todo',
+    );
+    expect(container.textContent).not.toContain('Select matched subtask');
+    const first = expectDefined(
+      source.index.listNodes().find((node) => node.node.title === 'First'),
+    );
+    const status = expectDefined(firstCard.querySelector<HTMLElement>('.abyss-status-marker'));
+    status.click();
+    expect(h.toggleTask).toHaveBeenCalledWith(first.node, undefined);
+    expectDefined(firstCard.querySelector<HTMLElement>('.abyss-task-parent-btn')).click();
+    expect(h.showTaskInList.mock.calls[0]?.[0]).toEqual({ type: 'task', ref: first.root.ref });
+    const oldActivation = h.context()?.onActivate;
+    oldActivation?.(first.root);
+    expect(selected.mock.calls[0]?.[0].map((node) => node.title)).toEqual([
+      'Unmatched parent',
+      'Second',
+    ]);
+    source.index.installCommittedContent(
+      'tree.md',
+      '- [ ] Replacement\n  - [/] First ➕ 2026-10-01\n  - [ ] Second ➕ 2026-10-01',
+    );
+    await source.index.whenStatisticsSettled();
+    status.click();
+    oldActivation?.(first.root);
+    expect(h.toggleTask).toHaveBeenCalledTimes(1);
+    expect(selected).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('changed or was removed');
+    evidence.clear();
+    expect(container.querySelectorAll('.abyss-task-card')).toHaveLength(0);
+    expect(h.unbound).toHaveBeenCalledTimes(2);
+  } finally {
+    evidence.destroy();
+    stop();
+    source.close();
+    h.hostComponent.unload();
+    container.remove();
   }
 });

@@ -483,13 +483,21 @@ export class CenterPanel {
               this.md_abyssPrivate.load();
               statisticsGroups = this.effectiveTagGroups_abyssPrivate();
             },
-            renderRoot: (host, root, activate) => {
-              this.taskCardRenderer_abyssPrivate.render(host, root, statisticsGroups, {
-                selected: taskStackRowKey(state.get('taskStack')) === taskRowKey(root),
-                showDelete: false,
-                onActivate: activate,
-                rowKey: taskRowKey(root),
-              });
+            renderNode: (host, projection, activate) => {
+              const rowKey = taskStackRowKey([projection.root, ...projection.path]) ?? '';
+              return this.taskCardRenderer_abyssPrivate.mount(
+                host,
+                projection.root,
+                statisticsGroups,
+                {
+                  projection,
+                  selected: taskStackRowKey(state.get('taskStack')) === rowKey,
+                  showDelete: false,
+                  onActivate: activate,
+                  rowKey,
+                  isCurrent: () => queries.resolve(projection.root.ref).type === 'exact',
+                },
+              );
             },
             select: (stack) => {
               state.set('taskStack', stack);
