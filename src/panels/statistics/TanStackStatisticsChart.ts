@@ -183,8 +183,8 @@ function timelineDayAxis(
 function reverseY(model: StatisticsChartModel): boolean {
   return model.kind === 'network' || (model.kind === 'timeline' && model.y.type === 'number');
 }
-function hiddenAxis(model: StatisticsChartModel, side: 'x' | 'y'): boolean {
-  return model.kind === 'network' || (model.rowViewport === true && side === 'x');
+function hiddenAxis(model: StatisticsChartModel): boolean {
+  return model.kind === 'network' || model.rowViewport === true;
 }
 function axis(
   model: StatisticsChartModel,
@@ -201,7 +201,7 @@ function axis(
     scale: positionScale(model, side),
     reverse: reverseY(model) && side === 'y',
     grid: grid ? { stroke: 'var(--background-modifier-border)', strokeOpacity: 0.55 } : false,
-    axis: hiddenAxis(model, side) ? false : policy,
+    axis: hiddenAxis(model) ? false : policy,
   };
 }
 function seriesMarks(model: StatisticsChartModel): RenderMark[] {
@@ -523,7 +523,6 @@ function marks(model: StatisticsChartModel, width: number, height: number): Rend
   else if (model.kind === 'network') result = networkMarks(model, width, height);
   else if (model.kind === 'scatter' && model.layout === 'density') result = densityMarks(model);
   else result = seriesMarks(model);
-  result.push(...rankingValues(model));
   if (model.layout === 'diverging')
     result.push(decorative(ruleY([0], { id: 'zero', stroke: MUTED, strokeWidth: 1 })));
   for (const [index, guide] of (model.guides ?? []).entries())
@@ -536,27 +535,6 @@ function marks(model: StatisticsChartModel, width: number, height: number): Rend
       guideLabel(model, guide, index),
     );
   return result;
-}
-function rankingValues(model: StatisticsChartModel): RenderMark[] {
-  if (model.rowViewport === true && model.x.type === 'number') {
-    const maximum = model.x.domain[1];
-    return [
-      decorative(
-        text(model.marks, {
-          id: 'ranking-values',
-          x: () => maximum,
-          y: 'y',
-          key: 'key',
-          text: (mark) => statisticsNumber(number(mark, 'x'), ' min'),
-          dx: 8,
-          fill: FOREGROUND,
-          fontSize: 11,
-          anchor: 'start',
-        }),
-      ),
-    ];
-  }
-  return [];
 }
 function guideLabel(
   model: StatisticsChartModel,

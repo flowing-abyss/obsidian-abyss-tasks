@@ -1,6 +1,7 @@
 import type { StatisticsChartModel } from '../../statistics';
 import { RowViewport } from '../virtualization/rowViewport';
 import type { StatisticsChartHandle, StatisticsChartRenderer } from './StatisticsChart';
+import { statisticsNumber } from './statisticsFormat';
 
 /** Native owner of a bounded aggregate row window; source/evidence remain in the pure model. */
 export class StatisticsRowChart implements StatisticsChartHandle {
@@ -8,12 +9,16 @@ export class StatisticsRowChart implements StatisticsChartHandle {
   private readonly scroller_abyssPrivate: HTMLElement;
   private readonly canvas_abyssPrivate: HTMLElement;
   private readonly surface_abyssPrivate: HTMLElement;
+  private readonly buttons_abyssPrivate: HTMLElement;
   private readonly owner_abyssPrivate: Window;
   private handle_abyssPrivate: StatisticsChartHandle | undefined;
   private readonly observer_abyssPrivate: ResizeObserver | undefined;
   private frame_abyssPrivate: number | undefined;
   private destroyed_abyssPrivate = false;
   private failed_abyssPrivate = false;
+  // Native staging/reparenting may clamp scrollTop; retain the logical position until commit.
+  private staged_abyssPrivate: boolean;
+  private top_abyssPrivate = 0;
   private model_abyssPrivate: StatisticsChartModel;
   constructor(
     host: HTMLElement,
@@ -28,6 +33,7 @@ export class StatisticsRowChart implements StatisticsChartHandle {
     const owner = host.ownerDocument.defaultView;
     if (owner === null) throw new Error('Statistics row charts require an owning window');
     this.owner_abyssPrivate = owner;
+    this.staged_abyssPrivate = host.closest('.abyss-statistics-staging') !== null;
     this.model_abyssPrivate = initial;
     this.scroller_abyssPrivate = host.createDiv({
       cls: 'abyss-statistics-row-viewport',
@@ -38,6 +44,9 @@ export class StatisticsRowChart implements StatisticsChartHandle {
     });
     this.surface_abyssPrivate = this.canvas_abyssPrivate.createDiv({
       cls: 'abyss-statistics-row-content',
+    });
+    this.buttons_abyssPrivate = this.canvas_abyssPrivate.createDiv({
+      cls: 'abyss-statistics-row-content abyss-statistics-row-buttons',
     });
     this.scroller_abyssPrivate.addEventListener('scroll', this.schedule_abyssPrivate);
     try {
@@ -54,13 +63,17 @@ export class StatisticsRowChart implements StatisticsChartHandle {
     }
   }
   rememberScroll(): void {
-    this.options_abyssPrivate.positions.set(
-      this.model_abyssPrivate.id,
-      this.scroller_abyssPrivate.scrollTop,
-    );
+    if (this.staged_abyssPrivate) return;
+    this.top_abyssPrivate = this.scroller_abyssPrivate.scrollTop;
+    this.options_abyssPrivate.positions.set(this.model_abyssPrivate.id, this.top_abyssPrivate);
+  }
+  restoreScroll(): void {
+    if (this.destroyed_abyssPrivate) return;
+    this.staged_abyssPrivate = false;
+    this.scroller_abyssPrivate.scrollTop = this.top_abyssPrivate;
   }
   private readonly schedule_abyssPrivate = (): void => {
-    if (this.destroyed_abyssPrivate || this.failed_abyssPrivate) return;
+    if (this.destroyed_abyssPrivate || this.failed_abyssPrivate || this.staged_abyssPrivate) return;
     this.rememberScroll();
     if (this.frame_abyssPrivate !== undefined) return;
     this.frame_abyssPrivate = this.owner_abyssPrivate.requestAnimationFrame(() => {
@@ -90,15 +103,16 @@ export class StatisticsRowChart implements StatisticsChartHandle {
       '--abyss-statistics-row-height',
       `${this.viewport_abyssPrivate.totalHeight}px`,
     );
-    this.scroller_abyssPrivate.scrollTop = this.viewport_abyssPrivate.restoreAnchor(anchor, top);
+    this.top_abyssPrivate = this.viewport_abyssPrivate.restoreAnchor(anchor, top);
     this.render_abyssPrivate();
   }
   private render_abyssPrivate(): void {
     const model = this.model_abyssPrivate;
     if (model.y.type !== 'band') return;
-    const window = this.viewport_abyssPrivate.window(this.scroller_abyssPrivate.scrollTop, 288, []);
+    const window = this.viewport_abyssPrivate.window(this.top_abyssPrivate, 288, []);
+    this.top_abyssPrivate = window.scrollTop;
     this.scroller_abyssPrivate.scrollTop = window.scrollTop;
-    this.rememberScroll();
+    this.options_abyssPrivate.positions.set(model.id, window.scrollTop);
     const categories = model.y.categories.slice(window.start, window.end);
     const sliced: StatisticsChartModel = {
       ...model,
@@ -120,6 +134,40 @@ export class StatisticsRowChart implements StatisticsChartHandle {
         this.options_abyssPrivate.onSelect,
       );
     else this.handle_abyssPrivate.update(sliced);
+    this.renderButtons_abyssPrivate(sliced, window.start * 32);
+  }
+  private renderButtons_abyssPrivate(model: StatisticsChartModel, offset: number): void {
+    this.buttons_abyssPrivate.style.setProperty('--abyss-statistics-row-offset', `${offset}px`);
+    const active = this.buttons_abyssPrivate.ownerDocument.activeElement;
+    const focused = this.buttons_abyssPrivate.contains(active)
+      ? active?.getAttribute('data-row-selection')
+      : undefined;
+    this.buttons_abyssPrivate.empty();
+    const labels = new Map<string | number, string>(model.y.tickLabels);
+    for (const mark of model.marks) {
+      const id = mark.selectionId;
+      if (id === undefined) continue;
+      const label = labels.get(mark.y) ?? mark.label ?? String(mark.y);
+      const value = statisticsNumber(typeof mark.x === 'number' ? mark.x : 0, ' min');
+      const button = this.buttons_abyssPrivate.createEl('button', {
+        cls: 'abyss-statistics-row-button',
+        attr: { type: 'button', 'aria-label': `${label}, ${value}`, title: label },
+      });
+      button.dataset['rowSelection'] = id;
+      button.createSpan({ cls: 'abyss-statistics-row-label', text: label });
+      button.createSpan({ cls: 'abyss-statistics-row-value', text: value });
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (
+          !this.destroyed_abyssPrivate &&
+          button.isConnected &&
+          button.closest('[inert]') === null &&
+          this.model_abyssPrivate.marks.includes(mark)
+        )
+          this.options_abyssPrivate.onSelect(id);
+      });
+      if (focused === id) button.focus({ preventScroll: true });
+    }
   }
   destroy(): void {
     if (this.destroyed_abyssPrivate) return;

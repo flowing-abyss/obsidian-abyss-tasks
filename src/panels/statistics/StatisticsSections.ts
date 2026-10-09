@@ -50,7 +50,10 @@ export class StatisticsSections {
       for (const [key, section] of staged) this.sections_abyssPrivate.set(key, section);
       for (const model of view.sections) {
         const section = this.sections_abyssPrivate.get(model.id);
-        if (section !== undefined) this.host_abyssPrivate.append(section.element);
+        if (section !== undefined) {
+          this.host_abyssPrivate.append(section.element);
+          section.charts.restoreRowScroll();
+        }
       }
     } catch (error) {
       this.restoreRowPositions_abyssPrivate(rowPositions);

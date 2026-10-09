@@ -539,7 +539,11 @@ tick labels and marks while retaining the complete numeric domain and opaque act
 scroll/resize work coalesces and retires on destruction; deferred render failures latch and forward
 to the mode's existing Analysis diagnostic/Retry boundary. Explicit updates retry. Mode owns at most
 three ranking scroll positions (one per grouping), released at session destruction. Sections captures
-outgoing positions before atomic staging and restores them if staging fails. Adapter row bands use
+outgoing positions before atomic staging and restores them if staging fails. RowChart retains logical
+clamped positions through staging and ignores native reset events until Sections restores scroll in
+the accepted live tree after reparenting. Bounded native row buttons own label/value activation and
+keyboard focus in fixed 160/64-pixel margins; the middle plot retains engine hover and selection.
+Removed, inert and destroyed row controls cannot activate. Adapter row bands use
 matching fixed pitch; packed numeric Timeline lanes alone reverse the vertical Timeline scale.
 
 [`StatisticsCharts`](src/panels/statistics/StatisticsCharts.ts) retains keyed mounts for the current

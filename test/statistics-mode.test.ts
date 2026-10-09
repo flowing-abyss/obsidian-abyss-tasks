@@ -13,6 +13,7 @@ import { TagManager } from '../src/tags/TagManager';
 import type { TaskStatisticsSnapshot, TaskStatisticsSource } from '../src/tasks';
 import { configuredTaskApplication, createAppWithFiles, deferred, expectDefined } from './helpers';
 import { closed, date, request, source, task, utc, work } from './helpers/statisticsFixtures';
+import { resetStatisticsScrollAtCommit } from './support/statisticsNativeScroll';
 const cleanups: Array<() => void> = [];
 afterEach(() => {
   cleanups.splice(0).forEach((fn) => {
@@ -1578,6 +1579,92 @@ it('focuses Allocation groups without changing period or scope and recovers afte
   await h.wait();
   expect(h.host.textContent).toContain('Recorded time allocation');
   expect(h.host.textContent).not.toContain('Recorded time · #tag8');
+  expect(h.host.querySelector('[aria-label="Find group"]')).toBeNull();
+  expect(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]')?.value).toBe('week');
+  expect(h.mode.navigation.snapshot()).toEqual({
+    view: 'allocation',
+    scopeLabel: 'Entire vault',
+    group: 'tag',
+  });
+});
+
+it('restores the live ranking after Find group focus/back and clamps after source shrink at commit', async () => {
+  resetStatisticsScrollAtCommit();
+  type Focus = Extract<StatisticsAction, { type: 'focus' }>;
+  const opened: Array<InstanceType<typeof SuggestModal<Focus>>> = [];
+  vi.spyOn(SuggestModal.prototype, 'open').mockImplementation(function (
+    this: InstanceType<typeof SuggestModal<Focus>>,
+  ) {
+    opened.push(this);
+  });
+  const h = await harness();
+  const nodes = Array.from({ length: 100 }, (_, i) =>
+    task(`group${i}`, {
+      tags: [`tag${i}`],
+      timeEntries: [closed('2026-10-04T09:00Z', '2026-10-04T09:10Z')],
+    }),
+  );
+  h.replace(source(nodes));
+  h.mode.navigation.selectGroup('tag');
+  h.mode.render(h.host);
+  await h.wait();
+  expect(h.host.querySelector('[aria-label="Find group"]')).not.toBeNull();
+  expectDefined(h.host.querySelector<HTMLElement>('.abyss-statistics-row-viewport')).scrollTop =
+    2912;
+  h.reset();
+  expectDefined(h.host.querySelector<HTMLButtonElement>('[aria-label="Find group"]')).click();
+  const picker = expectDefined(opened[0]);
+  picker.onChooseSuggestion(
+    expectDefined((await picker.getSuggestions('#tag99'))[0]),
+    new MouseEvent('click'),
+  );
+  await h.wait();
+  expect(h.host.textContent).toContain('Recorded time · #tag99');
+  expect(h.host.textContent).toContain('All tags');
+  expect(h.host.textContent).toContain('All tasks and subtasks in scope');
+  expect(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]')?.value).toBe('week');
+  expect(h.mode.navigation.snapshot()).toEqual({
+    view: 'allocation',
+    scopeLabel: 'Entire vault',
+    group: 'tag',
+  });
+  expect(h.host.querySelector<HTMLElement>('.abyss-statistics-evidence')?.hidden).toBe(true);
+  h.reset();
+  expectDefined(
+    [...h.host.querySelectorAll('button')].find((button) => button.textContent === 'All tags'),
+  ).click();
+  await h.wait();
+  expect(
+    expectDefined(h.host.querySelector<HTMLElement>('.abyss-statistics-row-viewport')).scrollTop,
+  ).toBe(2912);
+  expect(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]')?.value).toBe('week');
+  for (const target of ['abyss-statistics-row-label', 'abyss-statistics-row-value']) {
+    const button = expectDefined(
+      [...h.host.querySelectorAll<HTMLButtonElement>('.abyss-statistics-row-button')].find(
+        (row) => row.getAttribute('aria-label') === '#tag99, 10 min',
+      ),
+    );
+    h.reset();
+    expectDefined(button.querySelector<HTMLElement>(`.${target}`)).click();
+    await h.wait();
+    expect(h.host.textContent).toContain('Recorded time · #tag99');
+    h.reset();
+    expectDefined(
+      [...h.host.querySelectorAll('button')].find((back) => back.textContent === 'All tags'),
+    ).click();
+    await h.wait();
+    expect(
+      expectDefined(h.host.querySelector<HTMLElement>('.abyss-statistics-row-viewport')).scrollTop,
+    ).toBe(2912);
+  }
+  h.reset();
+  h.replace(source(nodes.slice(0, 8)));
+  await h.wait();
+  expect(h.host.textContent).toContain('Recorded time allocation');
+  expect(h.host.textContent).not.toContain('Recorded time · #tag99');
+  expect(
+    expectDefined(h.host.querySelector<HTMLElement>('.abyss-statistics-row-viewport')).scrollTop,
+  ).toBe(0);
   expect(h.host.querySelector('[aria-label="Find group"]')).toBeNull();
   expect(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]')?.value).toBe('week');
   expect(h.mode.navigation.snapshot()).toEqual({

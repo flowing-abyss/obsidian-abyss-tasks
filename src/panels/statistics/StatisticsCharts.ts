@@ -59,7 +59,8 @@ export class StatisticsCharts {
     if (existing !== undefined) {
       existing.handle.update(model);
       this.caption_abyssPrivate(existing.element, model);
-      this.host.append(existing.element);
+      if (model.rowViewport !== true || existing.element.parentElement !== this.host)
+        this.host.append(existing.element);
       return;
     }
     const element = this.host.createEl('figure');
@@ -90,6 +91,10 @@ export class StatisticsCharts {
   rememberRowScroll(): void {
     for (const { handle } of this.mounted_abyssPrivate.values())
       if (handle instanceof StatisticsRowChart) handle.rememberScroll();
+  }
+  restoreRowScroll(): void {
+    for (const { handle } of this.mounted_abyssPrivate.values())
+      if (handle instanceof StatisticsRowChart) handle.restoreScroll();
   }
   private mount_abyssPrivate(
     surface: HTMLElement,

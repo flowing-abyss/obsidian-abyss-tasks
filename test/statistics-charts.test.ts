@@ -13,6 +13,7 @@ import type { StatisticsChartModel, StatisticsViewModel } from '../src/statistic
 import { prepareStatisticsDataset, StatisticsSession } from '../src/statistics';
 import { contracts } from '../tooling/css-contracts.mjs';
 import { closed, date, request, source, task, work } from './helpers/statisticsFixtures';
+import { resetStatisticsScrollAtCommit } from './support/statisticsNativeScroll';
 
 const capture = vi.hoisted<{
   options: Array<{ onSelect?: ((point: unknown) => void) | undefined }>;
@@ -1762,7 +1763,7 @@ it.each([320, 1360])(
       x2: 0,
       y: `group:${i}`,
       selectionId: `opaque:${i}`,
-      label: `Group ${i}`,
+      label: i === 0 ? 'Common tag with a much longer label than later groups' : `Group ${i}`,
     }));
     const ranking = model({
       id: 'allocation-ranking:project',
@@ -1797,6 +1798,9 @@ it.each([320, 1360])(
       String(width),
     );
     const rects = marks(element);
+    expect(n(required(rects[0]), 'x')).toBe(160);
+    expect(n(required(rects[0]), 'width')).toBe(width - 224);
+    expect(element.querySelectorAll('.abyss-statistics-row-button').length).toBeLessThan(40);
     expect(n(required(rects[1]), 'y') - n(required(rects[0]), 'y')).toBeCloseTo(32, 2);
     scroller.scrollTop = 319712;
     scroller.dispatchEvent(new Event('scroll'));
@@ -1812,6 +1816,8 @@ it.each([320, 1360])(
       required(element.querySelector('.abyss-statistics-row-content')).getAttribute('style'),
     ).toContain('319');
     const last = required(marks(element)[marks(element).length - 1]);
+    expect(n(last, 'x')).toBe(160);
+    expect(element.querySelectorAll('.abyss-statistics-row-button').length).toBeLessThan(40);
     expect(
       n(last, 'y') +
         Number(
@@ -1843,6 +1849,7 @@ it.each([320, 1360])(
 );
 
 it('restores the ranking position through atomic group focus and source shrink', () => {
+  resetStatisticsScrollAtCommit();
   const positions = new Map<string, number>(),
     element = host(),
     select = vi.fn();
@@ -1926,6 +1933,60 @@ it('restores the ranking position through atomic group focus and source shrink',
   ).toBe(0);
   expect(positions.get('allocation-ranking:project')).toBe(0);
 });
+it('opens zero and subpixel ranking rows through native label/value targets and retires old targets', () => {
+  const element = host(),
+    selected = vi.fn();
+  const ranking = model({
+    id: 'allocation-ranking:tag',
+    rowViewport: true,
+    layout: undefined,
+    series: [],
+    x: { type: 'number', label: 'Recorded minutes', domain: [0, 100000] },
+    y: {
+      type: 'band',
+      label: '',
+      categories: ['tiny', 'zero'],
+      tickLabels: [
+        ['tiny', '#tiny'],
+        ['zero', '#zero'],
+      ],
+    },
+    marks: [
+      { key: 'tiny', x: 10, x2: 0, y: 'tiny', selectionId: 'focus:tiny' },
+      { key: 'zero', x: 0, x2: 0, y: 'zero', selectionId: 'focus:zero' },
+    ],
+  });
+  const charts = new StatisticsCharts(element, new TanStackStatisticsChart(), selected);
+  mounts.push(charts);
+  charts.update([ranking]);
+  const buttons = [...element.querySelectorAll<HTMLButtonElement>('.abyss-statistics-row-button')];
+  expect(buttons).toHaveLength(2);
+  const tiny = required(buttons[0]),
+    zero = required(buttons[1]);
+  expect(tiny.type).toBe('button');
+  expect(tiny.textContent).toBe('#tiny10 min');
+  required(tiny.querySelector<HTMLElement>('.abyss-statistics-row-label')).click();
+  expect(selected.mock.calls).toEqual([['focus:tiny']]);
+  required(zero.querySelector<HTMLElement>('.abyss-statistics-row-value')).click();
+  expect(selected.mock.calls).toEqual([['focus:tiny'], ['focus:zero']]);
+  tiny.focus();
+  charts.update([ranking]);
+  expect(document.activeElement?.textContent).toBe('#tiny10 min');
+  tiny.click();
+  expect(selected).toHaveBeenCalledTimes(2);
+  const other = element.createEl('button', { text: 'Other owner' });
+  other.dataset['rowSelection'] = 'focus:tiny';
+  other.focus();
+  charts.update([ranking]);
+  expect(document.activeElement).toBe(other);
+  element.inert = true;
+  element.setAttribute('inert', '');
+  required(element.querySelector<HTMLButtonElement>('.abyss-statistics-row-button')).click();
+  expect(selected).toHaveBeenCalledTimes(2);
+  charts.destroy();
+  zero.click();
+  expect(selected).toHaveBeenCalledTimes(2);
+});
 it('latches deferred row-render failures until explicit retry and retires pending work on destruction', async () => {
   const { StatisticsRowChart } = await import('../src/panels/statistics/StatisticsRowChart');
   const error = new Error('row update failed'),
@@ -1953,7 +2014,13 @@ it('latches deferred row-render failures until explicit retry and retires pendin
     series: [],
     x: { type: 'number', label: 'Recorded minutes', domain: [0, 100] },
     y: { type: 'band', label: '', categories: Array.from({ length: 100 }, (_, i) => `G${i}`) },
-    marks: Array.from({ length: 100 }, (_, i) => ({ key: `G${i}`, x: 100 - i, x2: 0, y: `G${i}` })),
+    marks: Array.from({ length: 100 }, (_, i) => ({
+      key: `G${i}`,
+      x: 100 - i,
+      x2: 0,
+      y: `G${i}`,
+      selectionId: `G${i}`,
+    })),
   });
   const element = host(),
     row = new StatisticsRowChart(element, renderer, ranking, {
