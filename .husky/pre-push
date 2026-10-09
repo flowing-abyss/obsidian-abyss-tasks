@@ -1,1 +1,3 @@
+# Verification creates temporary repositories that must not inherit this hook's Git paths.
+unset $(git rev-parse --local-env-vars)
 pnpm verify
