@@ -15,8 +15,13 @@ import {
 import { inScope } from './statisticsDataset';
 import { BucketDurations, contribution, type RecordedSpan } from './statisticsIntervals';
 import { metric } from './statisticsViews';
-import { required } from './statisticsWork';
-import type { StatisticsAction, StatisticsContext, StatisticsSection } from './types';
+import { required, sorted } from './statisticsWork';
+import type {
+  StatisticsAction,
+  StatisticsContext,
+  StatisticsMetric,
+  StatisticsSection,
+} from './types';
 interface Lane {
   day: number;
   start: number;
@@ -34,13 +39,21 @@ interface Fragment {
 function clockPosition(ms: number, window: ClockWindow): number {
   return (ms + window.offset * 60000 - window.day * DAY) / 60000;
 }
+function instantLabel(ms: number, offset: number): string {
+  return `${new Date(ms + offset * 60000).toISOString().replace('Z', '')} (UTC${offset >= 0 ? '+' : ''}${offset / 60})`;
+}
+function clockRange(start: number, end: number, offset: number): string {
+  const a = new Date(start + offset * 60000).toISOString(),
+    z = new Date(end + offset * 60000).toISOString();
+  const time = (iso: string): string =>
+    iso.slice(17, 23) === '00.000' ? iso.slice(11, 16) : iso.slice(11, 23).replace(/\.000$/, '');
+  return `${a.slice(0, 10)} · ${time(a)}–${z.slice(0, 10) === a.slice(0, 10) ? time(z) : '24:00'} · UTC${offset >= 0 ? '+' : ''}${offset / 60}`;
+}
 function clockMetadata(
   start: number,
   end: number,
   offset: number,
 ): NonNullable<StatisticsMark['clock']> {
-  const label = (ms: number): string =>
-    `${new Date(ms + offset * 60000).toISOString().replace('Z', '')} (UTC${offset >= 0 ? '+' : ''}${offset / 60})`;
   return {
     startMs: start,
     endMs: end,
@@ -49,8 +62,8 @@ function clockMetadata(
       (start + offset * 60000) / 60000 - Math.floor((start + offset * 60000) / DAY) * 1440,
     localEndMinutes:
       (end + offset * 60000) / 60000 - Math.floor((start + offset * 60000) / DAY) * 1440,
-    startLabel: label(start),
-    endLabel: label(end),
+    startLabel: instantLabel(start, offset),
+    endLabel: instantLabel(end, offset),
   };
 }
 class Timeline {
@@ -64,6 +77,37 @@ class Timeline {
   private readonly densityWindows: ClockWindow[] = [];
   private readonly fragments: Fragment[] = [];
   private dense = false;
+  get hourly(): boolean {
+    return this.dense;
+  }
+  dayLabel(lane: Lane, index: number): string {
+    const value = required(this.dayTotals[index]);
+    const minutes =
+        value > 0 && value < 0.1 ? Number(value.toPrecision(2)) : Number(value.toFixed(1)),
+      total = `${minutes} min`;
+    return `${dateOf(lane.day)} · ${this.dayState(lane) ?? total}`;
+  }
+  dayState(lane: Lane): string | undefined {
+    const c = this.ctx.calendar;
+    if (lane.day < c.fromDay) return 'Outside period';
+    if (lane.day > c.todayDay || lane.start >= c.endMs) return 'Not yet elapsed';
+    return undefined;
+  }
+  reading(): string {
+    const c = this.ctx.calendar,
+      first = Math.max(this.week, c.fromDay),
+      last = Math.min(this.week + 6, c.todayDay),
+      range = `${dateOf(this.week)}–${dateOf(this.week + 6)}`,
+      included =
+        first !== this.week || last !== this.week + 6
+          ? ` · Included ${dateOf(first)}–${dateOf(last)}`
+          : '',
+      through =
+        last === c.todayDay
+          ? ` · Through ${instantLabel(c.endMs, this.ctx.request.offsetAt(c.endMs))}`
+          : '';
+    return `${range}${included}${through} · overlapping entries add`;
+  }
   private readonly daily: BucketDurations;
   private density: BucketDurations | undefined;
   private readonly overview: BucketDurations;
@@ -167,7 +211,41 @@ class Timeline {
       }
       await this.ctx.budget.step();
     }
+    if (!this.dense) this.dense = await this.overlapExceedsFrame();
     this.dayTotals.push(...this.daily.values());
+  }
+  private async overlapExceedsFrame(): Promise<boolean> {
+    const groups = new Map<number, Array<{ at: number; delta: number }>>();
+    for (const fragment of this.fragments) {
+      const events = groups.get(fragment.window.day) ?? [];
+      events.push(
+        { at: clockPosition(fragment.start, fragment.window), delta: 1 },
+        { at: clockPosition(fragment.end, fragment.window), delta: -1 },
+      );
+      groups.set(fragment.window.day, events);
+      await this.ctx.budget.step();
+    }
+    let lanes = 0;
+    for (const day of this.days) {
+      const events = await sorted(
+        groups.get(day.day) ?? [],
+        (a, z) => {
+          const position = a.at - z.at;
+          return position === 0 ? a.delta - z.delta : position;
+        },
+        this.ctx.budget,
+      );
+      let active = 0,
+        peak = 0;
+      for (const event of events) {
+        active += event.delta;
+        peak = Math.max(peak, active);
+        await this.ctx.budget.step();
+      }
+      lanes += Math.max(2, peak);
+      if (lanes > 28) return true;
+    }
+    return false;
   }
   private async fragmentsFor(span: RecordedSpan): Promise<void> {
     for (const window of this.windows) {
@@ -187,15 +265,52 @@ class Timeline {
     return this.fragments.map((fragment) => {
       const entry = required(this.ctx.dataset.entries[fragment.span.entry]),
         key = `timeline:${entry.key}:${fragment.start}`,
-        duration = (fragment.end - fragment.start) / 60000;
+        duration = (fragment.end - fragment.start) / 60000,
+        task = required(this.ctx.dataset.tasks[fragment.span.owner]);
+      const clipped = entry.startMs !== fragment.start || entry.endMs !== fragment.end,
+        fullValues = clipped
+          ? [
+              {
+                label: 'Full session start',
+                value: instantLabel(
+                  required(entry.startMs),
+                  this.ctx.request.offsetAt(required(entry.startMs)),
+                ),
+              },
+              ...(entry.state === 'closed'
+                ? [
+                    {
+                      label: 'Full session end',
+                      value: instantLabel(
+                        required(entry.endMs),
+                        this.ctx.request.offsetAt(required(entry.endMs)),
+                      ),
+                    },
+                  ]
+                : []),
+            ]
+          : [];
+      let note = clipped ? 'Portion shown' : undefined;
+      if (entry.state === 'running')
+        note = `Running through ${instantLabel(this.ctx.request.nowMs, this.ctx.request.offsetAt(this.ctx.request.nowMs))} · Portion shown`;
       return {
         key,
+        observation: {
+          title: clockRange(fragment.start, fragment.end, fragment.window.offset),
+          values: [
+            { label: 'Task', value: task.title },
+            { label: 'Project', value: task.projectName },
+            { label: 'Recorded time', value: duration, unit: 'minutes' },
+            ...fullValues,
+          ],
+          note,
+        },
         x: clockPosition(fragment.start, fragment.window),
         x2: clockPosition(fragment.end, fragment.window),
         y: dateOf(fragment.window.day),
         weight: duration,
         clock: clockMetadata(fragment.start, fragment.end, fragment.window.offset),
-        label: required(this.ctx.dataset.tasks[fragment.span.owner]).title,
+        label: task.title,
         selectionId: this.ctx.evidence.rows(key, 1, () =>
           this.ctx.evidence.entryRow(entry, duration),
         ),
@@ -238,6 +353,11 @@ class Timeline {
         const x = Math.floor(clockPosition(g.window.start, g.window) / 60) * 60;
         return {
           key,
+          observation: {
+            title: `${dateOf(g.window.day)} · ${String(x / 60).padStart(2, '0')}:00–${String(x / 60 + 1).padStart(2, '0')}:00`,
+            values: [{ label: 'Recorded time', value: g.value, unit: 'minutes' }],
+            note: 'Hourly aggregate; includes separate overlapping recordings and elapsed offset windows',
+          },
           x,
           x2: x + 60,
           y: dateOf(g.window.day),
@@ -266,6 +386,14 @@ class Timeline {
         const bucket = required(this.overviewBuckets[i]);
         return {
           key: bucket.key,
+          observation: {
+            title: `${dateOf(bucket.fromDay)}–${dateOf(bucket.toDay - 1)}`,
+            values: [{ label: 'Recorded time', value, unit: 'minutes' }],
+            note:
+              bucket.fromDay < this.ctx.calendar.fromDay || bucket.toDay > this.ctx.calendar.toDay
+                ? `Partial week · included ${dateOf(Math.max(bucket.fromDay, this.ctx.calendar.fromDay))}–${dateOf(Math.min(bucket.toDay, this.ctx.calendar.toDay) - 1)}`
+                : undefined,
+          },
           x: bucket.key,
           y: value,
           selected: bucket.fromDay === this.week,
@@ -304,7 +432,9 @@ class Timeline {
     return [
       {
         id: 'timeline',
-        accessibleLabel: 'Recorded intervals in the selected local week',
+        accessibleLabel: this.dense
+          ? 'Recorded minutes by local hour in the selected week'
+          : 'Recorded intervals in the selected local week',
         kind: 'timeline',
         layout: this.dense ? 'density' : undefined,
         x: {
@@ -319,11 +449,7 @@ class Timeline {
           label: 'Local day',
           categories: this.days.map((lane) => dateOf(lane.day)),
           tickLabels: this.days.map(
-            (lane, i) =>
-              [
-                dateOf(lane.day),
-                `${dateOf(lane.day)} · ${Number((this.dayTotals[i] ?? 0).toFixed(1))} min`,
-              ] as const,
+            (lane, i) => [dateOf(lane.day), this.dayLabel(lane, i)] as const,
           ),
         },
         series,
@@ -337,6 +463,24 @@ class Timeline {
       },
       this.overviewChart(),
     ];
+  }
+  dailyMetrics(): StatisticsMetric[] {
+    return this.days.map((lane, i) => ({
+      ...metric(
+        `day:${i}`,
+        dateOf(lane.day),
+        this.dayState(lane) === undefined ? required(this.dayTotals[i]) : null,
+        {
+          role: 'coverage',
+          unit: 'minutes',
+          selectionId:
+            required(this.dayTotals[i]) > 0
+              ? this.selection(`day-time:${i}`, [[lane.start, lane.end]])
+              : undefined,
+        },
+      ),
+      context: this.dayState(lane),
+    }));
   }
   chartActions(): Array<readonly [string, StatisticsAction]> {
     return this.overviewBuckets.map(
@@ -380,9 +524,14 @@ export async function timeline(
     sections: [
       {
         id: 'timeline',
-        title: 'Recorded intervals',
-        context:
-          'Local time of day; offset changes split intervals. Gaps stay empty and repeated clock hours retain explicit offsets. Durations use actual elapsed time.',
+        title: model.hourly ? 'Recorded minutes by hour' : 'Recorded intervals',
+        reading: model.reading(),
+        emptyMessage: model.dayTotals.some((value) => value > 0)
+          ? undefined
+          : 'No recorded time in this week.',
+        context: model.hourly
+          ? 'Hourly sums of separate recordings; a filled bin does not claim continuous recording. Durations use actual elapsed time; repeated clock hours retain their real offset windows.'
+          : 'Local time of day; offset changes split intervals. Gaps stay empty and repeated clock hours retain explicit offsets. Durations use actual elapsed time.',
         metrics: [
           metric(
             'week-minutes',
@@ -390,18 +539,14 @@ export async function timeline(
             model.dayTotals.reduce((a, z) => a + z, 0),
             {
               unit: 'minutes',
-              selectionId: model.selection('week-time', [
-                [required(model.days[0]).start, required(model.days[6]).end],
-              ]),
+              selectionId: model.dayTotals.some((value) => value > 0)
+                ? model.selection('week-time', [
+                    [required(model.days[0]).start, required(model.days[6]).end],
+                  ])
+                : undefined,
             },
           ),
-          ...model.days.map((lane, i) =>
-            metric(`day:${i}`, dateOf(lane.day), required(model.dayTotals[i]), {
-              role: 'coverage',
-              unit: 'minutes',
-              selectionId: model.selection(`day-time:${i}`, [[lane.start, lane.end]]),
-            }),
-          ),
+          ...model.dailyMetrics(),
         ],
         charts,
         legend: series.map((item) => ({

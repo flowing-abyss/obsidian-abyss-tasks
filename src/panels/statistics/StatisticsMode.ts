@@ -239,9 +239,9 @@ export class StatisticsMode {
         this.options_abyssPrivate.ticker.subscribe(() => {
           const now = this.options_abyssPrivate.context().nowMs;
           if (
-            this.observation_abyssPrivate?.running === true &&
+            this.clockAccruing_abyssPrivate() &&
             Math.floor(now / 60000) !==
-              Math.floor(this.observation_abyssPrivate.context.nowMs / 60000)
+              Math.floor((this.observation_abyssPrivate?.context.nowMs ?? now) / 60000)
           ) {
             this.forceClock_abyssPrivate = true;
             this.schedule_abyssPrivate(true);
@@ -277,6 +277,7 @@ export class StatisticsMode {
   private change_abyssPrivate(next: Partial<StatisticsChoices>): void {
     this.details_abyssPrivate.close();
     this.clearSelection_abyssPrivate(false);
+    if (next.view === 'patterns') this.forceClock_abyssPrivate = true;
     this.choices_abyssPrivate = { ...this.choices_abyssPrivate, ...next };
     this.title_abyssPrivate?.setText(this.viewTitle_abyssPrivate());
     this.notifyNavigation_abyssPrivate();
@@ -435,11 +436,15 @@ export class StatisticsMode {
     this.model_abyssPrivate = model;
     this.title_abyssPrivate?.setText(model.title);
     this.notifyNavigation_abyssPrivate();
+    const through =
+      model.view === 'patterns' && this.observation_abyssPrivate !== undefined
+        ? ` · Through ${new Date(model.asOfMs + this.observation_abyssPrivate.context.offsetAt(model.asOfMs) * 60000).toISOString().slice(11, 16)}`
+        : '';
     this.label_abyssPrivate?.setText(
       `${this.controls_abyssPrivate.scopeLabel(this.choices_abyssPrivate.scope)} · ${
         model.currentState
           ? `Current state · ${new Date(model.asOfMs).toLocaleDateString('en')}`
-          : formatRange(model.dateLabel)
+          : `${formatRange(model.dateLabel)}${through}`
       }`,
     );
     this.sourceStatus_abyssPrivate(model);
@@ -490,7 +495,7 @@ export class StatisticsMode {
         this.change_abyssPrivate({ period: action.period, page: undefined, weekStart: undefined });
         break;
       case 'week':
-        this.change_abyssPrivate({ weekStart: action.weekStart });
+        this.change_abyssPrivate({ weekStart: action.weekStart, page: undefined });
         break;
       case 'page':
         this.change_abyssPrivate({ page: action.page });
@@ -547,13 +552,18 @@ export class StatisticsMode {
     }
   }
 
+  private clockAccruing_abyssPrivate(): boolean {
+    return (
+      this.observation_abyssPrivate?.running === true ||
+      this.choices_abyssPrivate.view === 'patterns'
+    );
+  }
   private armMinute_abyssPrivate(): void {
-    if (this.observation_abyssPrivate?.running === true && this.minute_abyssPrivate !== undefined)
-      return;
+    if (this.clockAccruing_abyssPrivate() && this.minute_abyssPrivate !== undefined) return;
     if (this.minute_abyssPrivate !== undefined)
       this.owner_abyssPrivate?.clearTimeout(this.minute_abyssPrivate);
     this.minute_abyssPrivate = undefined;
-    if (this.observation_abyssPrivate?.running !== true) return;
+    if (!this.clockAccruing_abyssPrivate()) return;
     this.minute_abyssPrivate = this.owner_abyssPrivate?.setTimeout(() => {
       this.minute_abyssPrivate = undefined;
       this.forceClock_abyssPrivate = true;

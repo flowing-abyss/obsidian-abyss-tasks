@@ -30,26 +30,24 @@ function classifySession(
   population: SessionPopulation,
   entry: StatisticsEntry,
 ): void {
-  if (entry.state === 'running') {
-    population.running++;
-    return;
-  }
   if (entry.state === 'broken') {
     population.broken++;
+    return;
+  }
+  const start = required(entry.startMs);
+  if (start < ctx.calendar.startMs || start >= ctx.calendar.civilEndMs) return;
+  if (entry.state === 'running') {
+    population.running++;
     return;
   }
   if (required(entry.endMs) > ctx.request.nowMs) {
     population.future++;
     return;
   }
-  if (
-    required(entry.startMs) >= ctx.calendar.startMs &&
-    required(entry.startMs) < ctx.calendar.civilEndMs
-  )
-    population.entries.push({
-      entry: entry.index,
-      minutes: (required(entry.endMs) - required(entry.startMs)) / 60000,
-    });
+  population.entries.push({
+    entry: entry.index,
+    minutes: (required(entry.endMs) - start) / 60000,
+  });
 }
 async function sessionPopulation(ctx: StatisticsContext): Promise<SessionPopulation> {
   const population: SessionPopulation = { entries: [], running: 0, broken: 0, future: 0 };
@@ -85,24 +83,24 @@ async function sessionChart(
     accessibleLabel: 'Full closed-session length distribution',
     kind: 'bars',
     x: bands('Minutes', labels),
-    y: numeric('Entries', Math.max(0, ...bins.map((bin) => bin.length)), 0, 'count'),
+    y: numeric('Sessions', Math.max(0, ...bins.map((bin) => bin.length)), 0, 'count'),
     series: [],
     marks: bins.map((bin, i) => ({
       key: `session-bin:${i}`,
       x: required(labels[i]),
-      label: `${required(labels[i])} minutes`,
-      detail: sessionRange(edges, i),
+      observation: {
+        title: `${required(labels[i])} min`,
+        values: [{ label: 'Sessions', value: bin.length, unit: 'sessions' }],
+      },
       y: bin.length,
-      selectionId: ctx.evidence.rows(`session-bin:${i}`, bin.length, (index) =>
-        ctx.evidence.entryRow(required(ctx.dataset.entries[required(bin[index])])),
-      ),
+      selectionId:
+        bin.length > 0
+          ? ctx.evidence.rows(`session-bin:${i}`, bin.length, (index) =>
+              ctx.evidence.entryRow(required(ctx.dataset.entries[required(bin[index])])),
+            )
+          : undefined,
     })),
   };
-}
-function sessionRange(edges: readonly number[], index: number): string {
-  if (index === 0) return 'Exactly zero minutes';
-  const upper = edges[index] === Infinity ? '' : `; at most ${required(edges[index])} minutes`;
-  return `More than ${required(edges[index - 1])} minutes${upper}`;
 }
 async function changesSection(ctx: StatisticsContext): Promise<StatisticsSection> {
   const transitions = await ownerTransitions(ctx.dataset, ctx.request, ctx.calendar, ctx.budget);
@@ -121,6 +119,7 @@ async function changesSection(ctx: StatisticsContext): Promise<StatisticsSection
   return {
     id: 'changes',
     title: 'Recorded task changes',
+    reading: 'Between consecutive sole recorded tasks · up to 5 min apart',
     context:
       'Consecutive sole owners within five minutes. Overlaps and hidden owners break adjacency; this is not a cognitive-switch count.',
     metrics: [
@@ -148,7 +147,10 @@ async function sessions(ctx: StatisticsContext): Promise<StatisticsSection[]> {
   return [
     {
       id: 'sessions',
-      title: 'Full closed-session lengths',
+      title: 'Closed-session lengths',
+      reading: 'Started in this period · full elapsed duration',
+      emptyMessage:
+        population.entries.length === 0 ? 'No closed sessions started in this period.' : undefined,
       context:
         'Starts within this period and ends by as-of; includes valid zero-length sessions. Running and broken recordings are excluded.',
       metrics: [
@@ -157,16 +159,32 @@ async function sessions(ctx: StatisticsContext): Promise<StatisticsSection[]> {
           unit: 'entries',
         }),
         metric('median', 'Median', percentile(values, 0.5), { unit: 'minutes' }),
-        metric('p90', 'P90', percentile(values, 0.9), { unit: 'minutes' }),
-        metric('running-excluded', 'Running', population.running, { unit: 'entries' }),
-        metric('broken-excluded', 'Broken', population.broken, { unit: 'entries' }),
-        metric('future-end-excluded', 'Ends after as-of', population.future, { unit: 'entries' }),
+        metric('p90', '90% within', percentile(values, 0.9), { unit: 'minutes' }),
+        metric('running-excluded', 'Running sessions started in period', population.running, {
+          role: 'coverage',
+          unit: 'entries',
+        }),
+        metric('broken-excluded', 'Unusable time entries in scope (all dates)', population.broken, {
+          role: 'coverage',
+          unit: 'entries',
+        }),
+        metric(
+          'future-end-excluded',
+          'Sessions started in period ending after observation',
+          population.future,
+          { role: 'coverage', unit: 'entries' },
+        ),
       ],
       charts: [await sessionChart(ctx, population.entries)],
       legend: [],
     },
     await changesSection(ctx),
   ];
+}
+function recordedTimeLabel(view: StatisticsViewModel['view']): string {
+  if (view === 'timeline') return 'Period recorded time';
+  if (view === 'sessions') return 'Recorded in period';
+  return 'Recorded time';
 }
 export async function timeView({
   dataset,
@@ -220,7 +238,7 @@ export async function timeView({
   sections[0] = {
     ...required(sections[0]),
     metrics: [
-      metric('recorded-minutes', 'Recorded time', total, {
+      metric('recorded-minutes', recordedTimeLabel(r.view), total, {
         selectionId: 'recorded-time',
         unit: 'minutes',
       }),

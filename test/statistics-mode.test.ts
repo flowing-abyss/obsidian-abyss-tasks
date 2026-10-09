@@ -12,7 +12,7 @@ import { StatisticsSession } from '../src/statistics/statisticsSession';
 import { TagManager } from '../src/tags/TagManager';
 import type { TaskStatisticsSnapshot, TaskStatisticsSource } from '../src/tasks';
 import { configuredTaskApplication, createAppWithFiles, deferred, expectDefined } from './helpers';
-import { date, request, source, task, utc, work } from './helpers/statisticsFixtures';
+import { closed, date, request, source, task, utc, work } from './helpers/statisticsFixtures';
 const cleanups: Array<() => void> = [];
 afterEach(() => {
   cleanups.splice(0).forEach((fn) => {
@@ -1127,8 +1127,11 @@ it('identifies the selected Rhythm date and series in the result heading', async
   );
   expect(heading.textContent).not.toBe(mounted[1].accessibleLabel);
 });
-it('identifies a selected numeric heatmap hour using its typed axis label', async () => {
+it('identifies a selected numeric heatmap hour using its semantic local range', async () => {
   const h = await harness();
+  h.replace(
+    source([task('timed', { timeEntries: [closed('2026-10-01T07:00Z', '2026-10-01T08:00Z')] })]),
+  );
   h.mode.render(h.host);
   await h.wait();
   h.reset();
@@ -1137,11 +1140,13 @@ it('identifies a selected numeric heatmap hour using its typed axis label', asyn
   const mounted = expectDefined(
     h.renderer.mount.mock.calls.find((call) => call[1].kind === 'heatmap'),
   );
-  const mark = expectDefined(mounted[1].marks.find((mark) => mark.x === 7));
+  const mark = expectDefined(
+    mounted[1].marks.find((mark) => mark.x === 7 && (mark.weight ?? 0) > 0),
+  );
   mounted[2](expectDefined(mark.selectionId));
   const heading = expectDefined(h.host.querySelector('.abyss-statistics-evidence-header h3'));
-  expect(heading.textContent).toContain('Local hour: 07:00');
-  expect(heading.textContent).toContain(`Weekday: ${mark.y}`);
+  expect(heading.textContent).toContain('07:00–08:00');
+  expect(heading.textContent).toContain(String(mark.y));
 });
 it.each([true, false])(
   'clears obsolete evidence and restores focus only when removed results owned it (%s)',
@@ -1401,4 +1406,98 @@ it('releases native evidence mounts on Clear, intent changes, accepted revision 
   expect(h.releaseEvidence).toHaveBeenCalledTimes(4);
   h.mode.destroy();
   expect(h.releaseEvidence).toHaveBeenCalledTimes(4);
+});
+
+it('refreshes idle Patterns exposure through owning time and stops its clock while hidden', async () => {
+  vi.useFakeTimers();
+  const h = await harness();
+  h.advance(Date.parse('2026-10-01T09:15Z') - Date.parse('2026-10-04T12:00Z'));
+  h.replace(
+    source([task('closed', { timeEntries: [closed('2026-10-01T09:00Z', '2026-10-01T09:15Z')] })]),
+  );
+  h.mode.navigation.selectView('patterns');
+  h.mode.render(h.host);
+  await h.wait();
+  h.reset();
+  const period = expectDefined(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]'));
+  period.value = 'today';
+  period.dispatchEvent(new Event('change'));
+  await h.wait();
+  const latest = () =>
+    expectDefined(
+      h.renderer.mount.mock.calls.filter((call) => call[1].id === 'patterns').slice(-1)[0]?.[1],
+    );
+  expect(latest().marks.find((mark) => mark.x === 9 && mark.y === 'Thu')).toMatchObject({
+    weight: 60,
+    numerator: 15,
+    denominator: 0.25,
+  });
+  h.reset();
+  h.advance(3600000);
+  await vi.advanceTimersByTimeAsync(60000);
+  expect(latest().marks.find((mark) => mark.x === 9 && mark.y === 'Thu')).toMatchObject({
+    weight: 15,
+    numerator: 15,
+    denominator: 1,
+  });
+  expect(latest().marks.find((mark) => mark.x === 10 && mark.y === 'Thu')).toMatchObject({
+    weight: 0,
+    denominator: 0.25,
+    selectionId: undefined,
+  });
+  expect(latest().marks.find((mark) => mark.x === 11 && mark.y === 'Thu')).toMatchObject({
+    state: 'unavailable',
+    weight: undefined,
+  });
+  expect(
+    h.host.querySelector('.abyss-statistics-label')?.textContent ?? h.host.textContent,
+  ).toContain('Through 10:15');
+  h.reset();
+  h.mode.navigation.selectView('rhythm');
+  await h.wait();
+  const mounts = h.renderer.mount.mock.calls.length;
+  h.advance(60000);
+  await vi.advanceTimersByTimeAsync(60000);
+  expect(h.renderer.mount.mock.calls).toHaveLength(mounts);
+  h.mode.unmount();
+  expect(vi.getTimerCount()).toBe(0);
+  h.mode.destroy();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('reveals selected weeks when Next and Previous cross an overview page edge', async () => {
+  const h = await harness();
+  h.replace(source([task('old', { planning: { created: date('2020-01-01') } })]));
+  h.mode.navigation.selectView('timeline');
+  h.mode.render(h.host);
+  await h.wait();
+  h.reset();
+  const period = expectDefined(h.host.querySelector<HTMLSelectElement>('[aria-label="Period"]'));
+  period.value = 'all';
+  period.dispatchEvent(new Event('change'));
+  await h.wait();
+  const click = async (label: string) => {
+    const button = expectDefined(
+      [...h.host.querySelectorAll('button')].find((button) => button.textContent === label),
+    );
+    h.reset();
+    button.click();
+    await h.wait();
+  };
+  await click('Earlier weeks');
+  await click('Earlier weeks');
+  await click('Earlier weeks');
+  const overview = () =>
+    expectDefined(
+      h.renderer.mount.mock.calls.filter((call) => call[1].id === 'timeline-overview').slice(-1)[0],
+    );
+  h.reset();
+  overview()[2](expectDefined(overview()[1].marks.slice(-1)[0]?.selectionId));
+  await h.wait();
+  expect(overview()[1].marks.find((mark) => mark.selected === true)?.x).toBe('2021-12-20');
+  await click('Next week');
+  expect(overview()[1].marks.find((mark) => mark.selected === true)?.x).toBe('2021-12-27');
+  await click('Previous week');
+  expect(overview()[1].marks.find((mark) => mark.selected === true)?.x).toBe('2021-12-20');
+  expect(period.value).toBe('all');
 });

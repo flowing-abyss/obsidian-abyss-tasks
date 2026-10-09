@@ -314,7 +314,7 @@ it('shows every histogram session with its own timing and duration under one liv
       select: vi.fn(),
       openSource: async () => {},
     },
-  ).render(element, model, { id, label: required(selection.label) }, vi.fn());
+  ).render(element, model, { id, label: required(selection.observation).title }, vi.fn());
   const rows = [...element.querySelectorAll<HTMLElement>('[data-evidence-key]')];
   expect(rows).toHaveLength(2);
   expect(element.querySelectorAll('.root-card')).toHaveLength(1);

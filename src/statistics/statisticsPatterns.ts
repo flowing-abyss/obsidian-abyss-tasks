@@ -1,5 +1,5 @@
 import { HOUR, type CalendarSegment } from './statisticsCalendar';
-import { bands, numeric } from './statisticsChartModel';
+import { bands, numeric, type StatisticsObservation } from './statisticsChartModel';
 import { inScope } from './statisticsDataset';
 import { endpoints, span, type RecordedSpan } from './statisticsIntervals';
 import type { WorkBudget } from './statisticsWork';
@@ -138,6 +138,21 @@ async function patternNumerators(
     if (next !== undefined) await sweep.span(at, next, count);
   }
 }
+function patternObservation(cell: number, value: number, hours: number): StatisticsObservation {
+  return {
+    title: `${required(DAYS[Math.floor(cell / 24)])} · ${String(cell % 24).padStart(2, '0')}:00–${String((cell % 24) + 1).padStart(2, '0')}:00`,
+    values: [
+      {
+        label: 'Rate',
+        value: hours === 0 ? null : value / hours,
+        unit: 'min/h',
+      },
+      { label: 'Recorded time', value, unit: 'minutes' },
+      { label: 'Elapsed exposure', value: hours, unit: 'hours' },
+    ],
+    note: hours === 0 ? 'No elapsed time in this hour during this period' : undefined,
+  };
+}
 export async function patternsSection(
   { dataset, request: r, calendar: c, evidence: e, budget: b }: StatisticsContext,
   spans: readonly RecordedSpan[],
@@ -165,17 +180,25 @@ export async function patternsSection(
       hours[cell] === 0
         ? 'No elapsed exposure for this local calendar hour'
         : `${value} recorded minutes / ${required(hours[cell])} elapsed exposure hours; mean ${value / required(hours[cell])} minutes per hour`,
-    selectionId: e.entryQuery(`pattern:${cell}`, (entry) => {
-      if (!inScope(required(dataset.tasks[entry.owner]), r.scope)) return undefined;
-      const s = span(entry, c.startMs, c.endMs, r.nowMs);
-      if (s === undefined) return undefined;
-      const amount = index.between(s.start, s.end, cell) / 60000;
-      return amount > 0 ? amount : undefined;
-    }),
+    observation: patternObservation(cell, value, required(hours[cell])),
+    selectionId:
+      value > 0
+        ? e.entryQuery(`pattern:${cell}`, (entry) => {
+            if (!inScope(required(dataset.tasks[entry.owner]), r.scope)) return undefined;
+            const s = span(entry, c.startMs, c.endMs, r.nowMs);
+            if (s === undefined) return undefined;
+            const amount = index.between(s.start, s.end, cell) / 60000;
+            return amount > 0 ? amount : undefined;
+          })
+        : undefined,
   }));
   return {
     id: 'patterns',
-    title: 'Recorded time by local calendar hour',
+    title: 'When time was recorded',
+    reading: 'Recorded minutes per elapsed hour · overlapping entries add',
+    emptyMessage: minutes.some((value) => value > 0)
+      ? undefined
+      : 'No recorded time in this period.',
     context:
       'Mean recorded minutes per elapsed hour. Overlapping recordings add; zero exposure is unavailable.',
     metrics: [],

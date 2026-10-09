@@ -30,7 +30,7 @@ export class StatisticsCharts {
     const retained = new Set<string>();
     this.host.classList.add('abyss-statistics-charts');
     for (const model of models) {
-      if (model.marks.length === 0) continue;
+      if (model.marks.length === 0 && model.kind !== 'timeline') continue;
       if (retained.has(model.id))
         throw new Error(`Duplicate Statistics chart identity: ${model.id}`);
       retained.add(model.id);

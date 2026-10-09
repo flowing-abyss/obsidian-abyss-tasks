@@ -3,7 +3,7 @@ import { prepareStatisticsDataset } from '../src/statistics/statisticsDataset';
 import { StatisticsSession } from '../src/statistics/statisticsSession';
 import { required } from '../src/statistics/statisticsWork';
 import type { StatisticsRequest, StatisticsViewModel } from '../src/statistics/types';
-import { closed, request, source, task, work } from './helpers/statisticsFixtures';
+import { closed, date, request, source, task, work } from './helpers/statisticsFixtures';
 const value = (v: StatisticsViewModel, id: string) =>
   v.sections.flatMap((s) => s.metrics).find((m) => m.id === id)?.value;
 async function views(
@@ -546,4 +546,341 @@ it('uses bounded project series on intervals and explicit measured intensity sca
   expect(patterns.sections[0]?.charts[0]?.intensityScale?.unit).toBe(
     'mean minutes per elapsed hour',
   );
+});
+
+it('distinguishes excluded and future days from observed zero in a partial selected week', async () => {
+  const v = await views(
+    [task('early', { timeEntries: [closed('2026-09-09T23:50Z', '2026-09-10T00:20Z')] })],
+    { period: '30d', nowMs: Date.parse('2026-10-09T10:30Z'), weekStart: date('2026-09-07') },
+  );
+  const model = await v.get('timeline');
+  const section = required(model.sections[0]);
+  expect(section.reading).toContain('2026-09-07–2026-09-13');
+  expect(section.reading).toContain('2026-09-10');
+  expect(value(model, 'day:0')).toBeNull();
+  expect(value(model, 'day:2')).toBeNull();
+  expect(value(model, 'day:3')).toBe(20);
+  expect(value(model, 'day:4')).toBe(0);
+  expect(section.charts[0]?.y.tickLabels).toContainEqual([
+    '2026-09-07',
+    '2026-09-07 · Outside period',
+  ]);
+  const today = await (
+    await views([], { period: 'today', nowMs: Date.parse('2026-10-09T10:30Z') })
+  ).get('timeline');
+  expect(value(today, 'day:4')).toBe(0);
+  expect(value(today, 'day:5')).toBeNull();
+  expect(today.sections[0]?.charts[0]?.y.tickLabels).toContainEqual([
+    '2026-10-10',
+    '2026-10-10 · Not yet elapsed',
+  ]);
+});
+
+it('keeps an empty selected week reachable with its range and separate period minutes', async () => {
+  const model = await (
+    await views(
+      [task('earlier', { timeEntries: [closed('2026-10-01T09:00Z', '2026-10-01T10:00Z')] })],
+      { period: '30d', nowMs: Date.parse('2026-10-09T10:30Z') },
+    )
+  ).get('timeline');
+  expect(value(model, 'recorded-minutes')).toBe(60);
+  expect(value(model, 'week-minutes')).toBe(0);
+  expect(model.sections[0]?.emptyMessage).toBe('No recorded time in this week.');
+  expect(model.sections[0]?.reading).toContain('2026-10-05–2026-10-11');
+  expect(
+    model.actions.some((action) => action.type === 'week' && action.label === 'Previous week'),
+  ).toBe(true);
+});
+
+it('gives hourly aggregation a truthful title and original physical evidence', async () => {
+  const model = await (
+    await views(
+      Array.from({ length: 701 }, (_, i) =>
+        task(`interval${i}`, { timeEntries: [closed('2026-10-04T10:10Z', '2026-10-04T10:15Z')] }),
+      ),
+      { period: 'today' },
+    )
+  ).get('timeline');
+  const section = required(model.sections[0]),
+    chart = required(section.charts[0]),
+    mark = required(chart.marks[0]);
+  expect(section.title).toBe('Recorded minutes by hour');
+  expect(chart.accessibleLabel).toContain('hour');
+  expect(mark.observation?.title).toContain('10:00–11:00');
+  expect(mark.observation?.note).toContain('Hourly aggregate');
+  expect(mark.observation?.values).toContainEqual({
+    label: 'Recorded time',
+    value: 3505,
+    unit: 'minutes',
+  });
+  const evidence = model.evidence(required(mark.selectionId), 700, 50);
+  expect(evidence.total).toBe(701);
+  expect(evidence.rows[0]?.entryTiming).toEqual({
+    startMs: Date.parse('2026-10-04T10:10Z'),
+    endMs: Date.parse('2026-10-04T10:15Z'),
+  });
+  expect(evidence.rows[0]?.contributionMinutes).toBe(5);
+});
+
+it('describes selected clipped portions and running endpoints without completing a running entry', async () => {
+  const model = await (
+    await views(
+      [
+        task('clipped', { timeEntries: [closed('2026-10-08T23:50Z', '2026-10-09T00:20Z')] }),
+        task('running', {
+          timeEntries: [
+            {
+              state: 'running',
+              startMs: Date.parse('2026-10-09T10:10Z'),
+              relativeLine: 1,
+              originalMarkdown: 'running',
+            },
+          ],
+        }),
+      ],
+      { period: 'today', nowMs: Date.parse('2026-10-09T10:30Z') },
+    )
+  ).get('timeline');
+  const marks = required(model.sections[0]?.charts[0]).marks;
+  const clipped = required(marks.find((mark) => mark.label === 'clipped'));
+  expect(required(clipped.observation).note).toContain('Portion shown');
+  expect(required(clipped.observation).title).toContain('00:00–00:20');
+  expect(
+    required(clipped.observation).values.find((v) => v.label === 'Full session start')?.value,
+  ).toContain('2026-10-08T23:50');
+  expect(model.evidence(required(clipped.selectionId), 0, 1).rows[0]?.entryTiming?.startMs).toBe(
+    Date.parse('2026-10-08T23:50Z'),
+  );
+  const running = required(marks.find((mark) => mark.label === 'running'));
+  expect(required(running.observation).note).toContain('Running through');
+  expect(required(running.observation).note).toContain('10:30');
+  expect(required(running.observation).values.some((v) => v.label === 'Full session end')).toBe(
+    false,
+  );
+  expect(
+    model.evidence(required(running.selectionId), 0, 1).rows[0]?.entryTiming?.endMs,
+  ).toBeUndefined();
+});
+
+it('makes only positive pattern cells actionable and reports zero-positive data', async () => {
+  const v = await views([], { period: 'today', nowMs: Date.parse('2026-10-01T12:00Z') });
+  const model = await v.get('patterns'),
+    chart = required(model.sections[0]?.charts[0]);
+  expect(model.sections[0]?.emptyMessage).toBe('No recorded time in this period.');
+  expect(chart.intensityScale?.domain).toEqual([0, 0]);
+  expect(chart.marks.every((mark) => mark.selectionId === undefined)).toBe(true);
+  const zero = required(chart.marks.find((mark) => mark.x === 9 && mark.y === 'Thu'));
+  expect(zero.state).toBe('measured');
+  expect(zero.observation?.values).toContainEqual({
+    label: 'Recorded time',
+    value: 0,
+    unit: 'minutes',
+  });
+  expect(zero.observation?.values).toContainEqual({
+    label: 'Elapsed exposure',
+    value: 1,
+    unit: 'hours',
+  });
+  const future = required(chart.marks.find((mark) => mark.x === 13 && mark.y === 'Thu'));
+  expect(future.state).toBe('unavailable');
+  expect(future.observation?.values).toContainEqual({ label: 'Rate', value: null, unit: 'min/h' });
+});
+
+it('keeps session exclusions in the starts cohort and undatable coverage scope-wide', async () => {
+  const model = await (
+    await views(
+      [
+        task('sessions', {
+          timeEntries: [
+            closed('2026-10-08T23:50Z', '2026-10-09T00:20Z'),
+            {
+              state: 'running',
+              startMs: Date.parse('2026-10-09T10:10Z'),
+              relativeLine: 2,
+              originalMarkdown: 'running',
+            },
+            closed('2026-10-09T09:00Z', '2026-10-09T11:00Z', 3),
+            { state: 'broken', relativeLine: 4, originalMarkdown: 'broken' },
+            {
+              state: 'running',
+              startMs: Date.parse('2026-10-10T09:00Z'),
+              relativeLine: 5,
+              originalMarkdown: 'future running',
+            },
+            closed('2026-10-10T09:00Z', '2026-10-10T11:00Z', 6),
+          ],
+        }),
+      ],
+      { period: 'today', nowMs: Date.parse('2026-10-09T10:30Z') },
+    )
+  ).get('sessions');
+  expect(value(model, 'recorded-minutes')).toBe(130);
+  expect(value(model, 'session-count')).toBe(0);
+  expect(value(model, 'running-excluded')).toBe(1);
+  expect(value(model, 'future-end-excluded')).toBe(1);
+  const section = required(model.sections[0]);
+  expect(section.reading).toContain('Started in this period');
+  expect(section.emptyMessage).toBe('No closed sessions started in this period.');
+  expect(section.metrics.find((m) => m.id === 'broken-excluded')).toMatchObject({
+    role: 'coverage',
+    label: 'Unusable time entries in scope (all dates)',
+    value: 1,
+  });
+  expect(section.metrics.find((m) => m.id === 'running-excluded')?.role).toBe('coverage');
+  expect(section.charts[0]?.marks.every((mark) => mark.selectionId === undefined)).toBe(true);
+});
+
+it('reports session bin counts once and preserves a real zero-duration sample', async () => {
+  const model = await (
+    await views([
+      task('two', {
+        timeEntries: [
+          closed('2026-10-04T08:00Z', '2026-10-04T08:10Z'),
+          closed('2026-10-04T09:00Z', '2026-10-04T09:12Z', 2),
+        ],
+      }),
+    ])
+  ).get('sessions');
+  const chart = required(model.sections[0]?.charts[0]),
+    mark = required(chart.marks.find((m) => m.y === 2));
+  expect(chart.y.label).toBe('Sessions');
+  expect(mark.observation).toEqual({
+    title: 'Over 5–15 min',
+    values: [{ label: 'Sessions', value: 2, unit: 'sessions' }],
+  });
+  const zero = await (
+    await views([task('zero', { timeEntries: [closed('2026-10-04T08:00Z', '2026-10-04T08:00Z')] })])
+  ).get('sessions');
+  expect(zero.sections[0]?.emptyMessage).toBeUndefined();
+  expect(value(zero, 'median')).toBe(0);
+  expect(zero.sections[0]?.charts[0]?.marks[0]?.observation?.values[0]?.value).toBe(1);
+});
+
+it('keeps a small positive interval and its physical task identifiable in the observation', async () => {
+  const model = await (
+    await views(
+      [
+        task('tiny', {
+          timeEntries: [closed('2026-10-01T09:00:00.000Z', '2026-10-01T09:00:00.015Z')],
+        }),
+      ],
+      { period: 'today', nowMs: Date.parse('2026-10-01T12:00Z') },
+    )
+  ).get('timeline');
+  const chart = required(model.sections[0]?.charts[0]),
+    mark = required(chart.marks[0]);
+  expect(mark.observation?.title).toContain('09:00–09:00:00.015');
+  expect(mark.observation?.values).toContainEqual({ label: 'Task', value: 'tiny' });
+  expect(mark.observation?.values).toContainEqual({
+    label: 'Recorded time',
+    value: 0.00025,
+    unit: 'minutes',
+  });
+  expect(chart.y.tickLabels?.find(([day]) => day === '2026-10-01')?.[1]).not.toContain(' · 0 min');
+});
+
+it('keeps the observation cutoff separate from earlier portions of a running session', async () => {
+  const model = await (
+    await views(
+      [
+        task('across midnight', {
+          timeEntries: [
+            {
+              state: 'running',
+              startMs: Date.parse('2026-10-08T23:50Z'),
+              relativeLine: 1,
+              originalMarkdown: 'running',
+            },
+          ],
+        }),
+      ],
+      { period: 'week', nowMs: Date.parse('2026-10-09T10:30Z') },
+    )
+  ).get('timeline');
+  const fragments = required(model.sections[0]?.charts[0]).marks;
+  expect(fragments).toHaveLength(2);
+  expect(fragments[0]?.observation?.title).toContain('23:50–24:00');
+  for (const mark of fragments) {
+    expect(mark.observation?.note).toContain('Running through 2026-10-09T10:30');
+    expect(mark.observation?.values.some((value) => value.label === 'Full session end')).toBe(
+      false,
+    );
+    expect(
+      model.evidence(required(mark.selectionId), 0, 1).rows[0]?.entryTiming?.endMs,
+    ).toBeUndefined();
+  }
+});
+
+it.each([16, 17, 700, 701])(
+  'bounds %i simultaneous timeline entries while preserving hourly evidence',
+  async (count) => {
+    const model = await (
+      await views(
+        Array.from({ length: count }, (_, i) =>
+          task(`parallel${i}`, {
+            timeEntries: [closed('2026-10-04T10:10Z', '2026-10-04T10:15Z')],
+          }),
+        ),
+        { period: 'today' },
+      )
+    ).get('timeline');
+    const chart = required(model.sections[0]?.charts[0]);
+    expect(chart.layout).toBe(count === 16 ? undefined : 'density');
+    expect(value(model, 'week-minutes')).toBe(count * 5);
+    expect(chart.marks.reduce((total, mark) => total + (mark.weight ?? 0), 0)).toBe(count * 5);
+    const mark = required(chart.marks[0]);
+    expect(model.evidence(required(mark.selectionId), 0, 50).total).toBe(count === 16 ? 1 : count);
+    expect(
+      model
+        .evidence(required(mark.selectionId), 0, 50)
+        .rows.every((row) => row.contributionMinutes === 5),
+    ).toBe(true);
+  },
+);
+
+it('keeps sequential local-clock intervals sparse and counts repeated-hour overlaps for the lane bound', async () => {
+  const sequential = await (
+    await views(
+      [
+        task('sequential', {
+          timeEntries: Array.from({ length: 100 }, (_, i) =>
+            closed(
+              new Date(Date.parse('2026-10-04T09:00Z') + i * 60000).toISOString(),
+              new Date(Date.parse('2026-10-04T09:00Z') + (i + 1) * 60000).toISOString(),
+              i + 1,
+            ),
+          ),
+        }),
+      ],
+      { period: 'today' },
+    )
+  ).get('timeline');
+  expect(sequential.sections[0]?.charts[0]?.layout).toBeUndefined();
+  expect(sequential.sections[0]?.charts[0]?.marks).toHaveLength(100);
+  const transition = Date.parse('2026-10-25T01:00Z');
+  const repeated = await (
+    await views(
+      Array.from({ length: 9 }, (_, i) =>
+        task(`fold${i}`, {
+          timeEntries: [closed('2026-10-25T00:00Z', '2026-10-25T02:00Z')],
+        }),
+      ),
+      {
+        period: 'today',
+        nowMs: Date.parse('2026-10-25T12:00Z'),
+        offsetAt: (ms) => (ms < transition ? 60 : 0),
+      },
+    )
+  ).get('timeline');
+  const chart = required(repeated.sections[0]?.charts[0]),
+    mark = required(chart.marks.find((mark) => mark.x === 60));
+  expect(chart.layout).toBe('density');
+  expect(mark.weight).toBe(1080);
+  expect(mark.clockRanges?.map((range) => range.offsetMinutes)).toEqual([60, 0]);
+  expect(repeated.evidence(required(mark.selectionId), 0, 50).total).toBe(9);
+  expect(
+    repeated
+      .evidence(required(mark.selectionId), 0, 50)
+      .rows.every((row) => row.contributionMinutes === 120),
+  ).toBe(true);
 });

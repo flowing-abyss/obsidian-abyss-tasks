@@ -225,6 +225,7 @@ function setStatisticsKey(element: HTMLElement, key: 'paint' | 'opacity', value:
 }
 
 function metricUnit(unit: string | undefined, value: number | null): string {
+  if (value === null) return '';
   if (unit === 'minutes') return ' min';
   if (unit !== 'days') return '';
   return value === 1 ? ' day' : ' days';

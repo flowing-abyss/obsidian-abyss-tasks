@@ -393,7 +393,9 @@ An observation awaits source settlement, captures its snapshot, awaits accepted 
 captures current path/name descriptors, then validates source/catalog identity before and after
 preparation. Stale attempts repeat settlement without forcing source refresh. Ordinary control
 switches reuse the normalized dataset/session and captured analysis time; source/catalog changes,
-visible running minutes, local midnight and reactivation renew the observation. Owner-window
+visible running minutes, visible Patterns elapsed exposure, local midnight and reactivation renew
+the observation. Patterns also renews the captured clock on entry; its bounded minute timer belongs
+to the visible owner and stops on hide/disposal. Owner-window
 MessageChannel work yields close both ports and release canceled waiters on unmount; a bounded
 owner timer is the fallback. Hidden views do not aggregate.
 
@@ -424,7 +426,18 @@ availability and Retry remain visible outside the popover. Exact period labels f
 with UTC pinned for display, preserving the model's date boundaries. Each chart mount supplies a stable unique
 engine resource prefix so SVG clip paths cannot collide across facets or leaves. Accessible chart
 names live on HTML wrappers: nonempty SVG `aria-label` triggers Obsidian’s HTML-only tooltip path.
-Bounded Timeline intervals are packed into clock-aligned subrows; dependency layout follows actual
+Timeline retains its seven-day clock frame even without intervals, distinguishing days outside
+the selected period or not yet elapsed from observed zero. Week activation clears the overview
+page choice so the selected week remains visible. Its dense fallback explicitly reports hourly
+sums with original physical-entry evidence. The model selects that fallback when the seven-day
+sum of max(2, peak simultaneous local-clock intervals) exceeds 28 or fragments exceed 700. Its
+bounded, yielding endpoint sweep includes repeated clock-hour overlap and treats touching
+endpoints as adjacent. Sparse observations retain selected portions, full
+source endpoints and running cutoffs. Sessions keeps its full-duration starts cohort separate
+from clipped period minutes; undatable entries remain scope-wide coverage. Patterns exposes
+recorded-minute numerators and elapsed-hour denominators, with evidence activation only for
+positive cells. Bounded Timeline intervals are packed into clock-aligned subrows; dependency
+layout follows actual
 adjacency with distinct sibling rows and vertical long chains. These display coordinates never alter
 source identities, durations, graph counts or evidence authority.
 

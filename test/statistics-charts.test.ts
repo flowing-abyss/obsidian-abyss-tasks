@@ -1634,3 +1634,62 @@ it.each([1360, 320])(
     expect(n(required(el.querySelector('clipPath rect')), 'width')).toBeGreaterThan(0);
   },
 );
+
+it('retains an empty timeline frame and formats null units separately from measured zero', async () => {
+  const dataset = required(await prepareStatisticsDataset(source([]), [], work));
+  const view = required(
+    await new StatisticsSession(dataset).view(request({ view: 'timeline', period: 'today' }), work),
+  );
+  const surface = host(),
+    sections = new StatisticsSections(surface, new TanStackStatisticsChart(), vi.fn());
+  mounts.push(sections);
+  sections.update({
+    ...view,
+    sections: [
+      {
+        ...required(view.sections[0]),
+        metrics: [
+          { id: 'absent-days', label: 'Absent days', value: null, unit: 'days' },
+          { id: 'absent-time', label: 'Absent time', value: null, unit: 'minutes' },
+          { id: 'zero-time', label: 'Measured zero', value: 0, unit: 'minutes' },
+        ],
+      },
+    ],
+  });
+  expect(surface.querySelectorAll('svg')).toHaveLength(2);
+  expect(surface.textContent).toContain('No recorded time in this week.');
+  expect(
+    [...surface.querySelectorAll('.abyss-statistics-metric-value')].map((el) => el.textContent),
+  ).toEqual(['Unavailable', 'Unavailable', '0 min']);
+});
+
+it('bounds sparse Timeline height at the sixteen-overlap boundary and uses the existing hourly plot above it', async () => {
+  for (const count of [16, 17, 700, 701]) {
+    const dataset = required(
+      await prepareStatisticsDataset(
+        source(
+          Array.from({ length: count }, (_, i) =>
+            task(`overlap${i}`, {
+              timeEntries: [closed('2026-10-04T10:10Z', '2026-10-04T10:15Z')],
+            }),
+          ),
+        ),
+        [],
+        work,
+      ),
+    );
+    const view = required(
+      await new StatisticsSession(dataset).view(
+        request({ view: 'timeline', period: 'today' }),
+        work,
+      ),
+    );
+    const chart = required(view.sections[0]?.charts[0]),
+      surface = host();
+    const handle = new TanStackStatisticsChart().mount(surface, chart, vi.fn());
+    mounts.push(handle);
+    const dimensions = required(surface.querySelector('svg')?.getAttribute('viewBox')).split(' ');
+    expect(Number(dimensions[3])).toBeLessThanOrEqual(489);
+    expect(chart.layout).toBe(count === 16 ? undefined : 'density');
+  }
+});
