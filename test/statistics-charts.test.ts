@@ -165,6 +165,64 @@ function expectVisible(
 }
 
 describe('Statistics chart adapter', () => {
+  it('bounds dense shared-prerequisite names without discarding their nodes or complete edge evidence', async () => {
+    const ids = Array.from({ length: 12 }, (_, i) => `id${i}`);
+    const ds = required(
+      await prepareStatisticsDataset(
+        source([
+          ...ids.map((id) => task(id, { dependencyId: id })),
+          ...Array.from({ length: 60 }, (_, i) => task(`D${i}`, { dependsOn: ids })),
+        ]),
+        [],
+        work,
+      ),
+    );
+    const view = required(
+      await new StatisticsSession(ds).view(
+        request({ view: 'dependencies', focusKey: required(ds.tasks[0]).key }),
+        work,
+      ),
+    );
+    const graph = required(required(view.sections[0]).charts.find((c) => c.kind === 'network'));
+    const el = host();
+    mount(el, graph);
+    expect(marks(el, 'text')).toHaveLength(8);
+    expect(marks(el, 'circle')).toHaveLength(72);
+    expect(graph.facet?.description).toContain('4 more');
+    expect(view.evidence('chain-edges', 700, 50).total).toBe(720);
+  });
+  it.each([1375, 240])(
+    'names and separates the selected and shared co-prerequisite in an actual dense graph at %ipx',
+    async (width) => {
+      const ds = required(
+        await prepareStatisticsDataset(
+          source([
+            task('A', { dependencyId: 'A' }),
+            task('X', { dependencyId: 'X' }),
+            ...Array.from({ length: 79 }, (_, i) => task(`D${i}`, { dependsOn: ['A', 'X'] })),
+          ]),
+          [],
+          work,
+        ),
+      );
+      const view = required(
+        await new StatisticsSession(ds).view(
+          request({ view: 'dependencies', focusKey: required(ds.tasks[0]).key }),
+          work,
+        ),
+      );
+      const graph = required(required(view.sections[0]).charts.find((c) => c.kind === 'network'));
+      const el = host(document, width);
+      mount(el, graph);
+      const labels = marks(el, 'text');
+      const [a, x] = marks(el, 'circle');
+      expect(Math.abs(n(required(a), 'cy') - n(required(x), 'cy'))).toBeGreaterThanOrEqual(32);
+      expect(labels.map((label) => label.textContent)).toEqual(['A', 'X']);
+      expect(labels.length).toBeLessThanOrEqual(8);
+      expect(marks(el, 'circle')).toHaveLength(80);
+      expect(n(required(x), 'r')).toBe(7);
+    },
+  );
   it('describes dependency-rank keyboard activation as inspecting dependencies', () => {
     const el = host();
     const chart = mount(el, model({ id: 'dependency-rank' }));
@@ -800,6 +858,77 @@ describe('Statistics chart adapter', () => {
 });
 
 describe('keyed chart owner', () => {
+  it('keeps a full co-prerequisite identity adjacent to the dense graph when labels must truncate', async () => {
+    const ds = required(
+      await prepareStatisticsDataset(
+        source([
+          task('Prerequisite A', { dependencyId: 'A' }),
+          task('Co-prerequisite X', { dependencyId: 'X' }),
+          ...Array.from({ length: 79 }, (_, i) => task(`D${i}`, { dependsOn: ['A', 'X'] })),
+        ]),
+        [],
+        work,
+      ),
+    );
+    const view = required(
+      await new StatisticsSession(ds).view(
+        request({ view: 'dependencies', focusKey: required(ds.tasks[0]).key }),
+        work,
+      ),
+    );
+    const graph = required(required(view.sections[0]).charts.find((c) => c.kind === 'network'));
+    const el = host(document, 240),
+      owner = new StatisticsCharts(el, new TanStackStatisticsChart(), vi.fn());
+    mounts.push(owner);
+    owner.update([graph]);
+    expect(el.querySelector('figcaption')?.textContent).toContain(
+      'Other prerequisites: Co-prerequisite X',
+    );
+  });
+  it('keeps a dependency caption on the full-span figure while project facets keep their grid layout', async () => {
+    const ds = required(
+      await prepareStatisticsDataset(
+        source([
+          task('A', { dependencyId: 'A', planning: { created: date('2026-10-01') } }),
+          task('B', { dependsOn: ['A'], planning: { created: date('2026-10-01') } }),
+        ]),
+        [{ path: 'A.md', name: 'Project' }],
+        work,
+      ),
+    );
+    const session = new StatisticsSession(ds);
+    const dependency = required(
+      await session.view(
+        request({ view: 'dependencies', focusKey: required(ds.tasks[0]).key }),
+        work,
+      ),
+    );
+    const graph = required(
+      required(dependency.sections[0]).charts.find((c) => c.kind === 'network'),
+    );
+    const el = host(),
+      owner = new StatisticsCharts(el, new TanStackStatisticsChart(), vi.fn());
+    mounts.push(owner);
+    owner.update([graph]);
+    const figure = required(el.querySelector('figure'));
+    expect(figure.querySelector('figcaption')?.textContent).toContain('Waiting neighborhood · A');
+    expect(figure.classList.contains('abyss-statistics-chart--facet')).toBe(false);
+    for (const view of ['movement', 'aging'] as const) {
+      const model = required(await session.view(request({ view }), work));
+      const facet = required(
+        model.sections.flatMap((s) => s.charts).find((c) => c.layout === 'facets'),
+      );
+      owner.update([facet]);
+      expect(el.querySelector('figure')?.classList.contains('abyss-statistics-chart--facet')).toBe(
+        true,
+      );
+      expect(el.querySelector('figcaption')?.textContent).toContain(required(facet.facet).label);
+    }
+    owner.update([graph]);
+    expect(el.querySelector('figure')?.classList.contains('abyss-statistics-chart--facet')).toBe(
+      false,
+    );
+  });
   it('reuses surviving charts, removes empty charts, and suspends/resumes across document adoption', () => {
     const el = host();
     const owner = new StatisticsCharts(el, new TanStackStatisticsChart(), vi.fn());

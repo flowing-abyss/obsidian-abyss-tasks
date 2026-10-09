@@ -135,7 +135,7 @@ export class StatisticsCharts {
   }
 
   private caption_abyssPrivate(element: HTMLElement, model: StatisticsChartModel): void {
-    element.classList.toggle('abyss-statistics-chart--facet', model.facet !== undefined);
+    element.classList.toggle('abyss-statistics-chart--facet', model.layout === 'facets');
     const existing = element.querySelector('figcaption');
     if (model.facet === undefined) {
       existing?.remove();

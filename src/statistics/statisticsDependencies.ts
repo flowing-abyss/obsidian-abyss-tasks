@@ -466,14 +466,45 @@ function nodeObservation(
         : 'Prerequisite → dependent. Only unsatisfied resolved relations are shown.',
   };
 }
-function neighborhoodDescription(shown: number, total: number, links: NeighborhoodEdges): string {
+function sharedPrerequisiteReading(
+  marks: readonly StatisticsMark[],
+  links: NeighborhoodEdges,
+): string {
+  const focus = marks.find((mark) => mark.series === 'focus');
+  if (focus === undefined) return '';
+  const direct = new Set(
+    links.edges.filter((edge) => edge.from === focus.key).map((edge) => edge.to),
+  );
+  const shared = new Set(
+    links.edges
+      .filter((edge) => edge.from !== focus.key && direct.has(edge.to))
+      .map((edge) => edge.from),
+  );
+  const names = marks.filter((mark) => shared.has(mark.key)).map((mark) => mark.label ?? mark.key);
+  if (names.length === 0) return '';
+  const more = names.length > 7 ? `; ${names.length - 7} more` : '';
+  return ` Other prerequisites: ${names.slice(0, 7).join(', ')}${more}.`;
+}
+function neighborhoodDescription(
+  shown: number,
+  total: number,
+  links: NeighborhoodEdges,
+  marks: readonly StatisticsMark[],
+): string {
   const partial = shown < total || links.edges.length < links.total ? ' · partial graph' : '';
-  return `Prerequisite → dependent. Showing ${shown} of ${total} tasks and ${links.edges.length} of ${links.total} relations${partial}. Direct, downstream and sole counts cover the complete live open/in-progress population in scope; outside-scope tasks provide context.`;
+  return `Prerequisite → dependent. Showing ${shown} of ${total} tasks and ${links.edges.length} of ${links.total} relations${partial}. Direct, downstream and sole counts cover the complete live open/in-progress population in scope; outside-scope tasks provide context.${sharedPrerequisiteReading(marks, links)}`;
 }
 function focusLabel(ctx: StatisticsContext, focus: number): string {
   return inScope(required(ctx.dataset.tasks[focus]), ctx.request.scope)
     ? 'Selected prerequisite'
     : 'Selected prerequisite · Outside scope';
+}
+function siblingPosition(key: string, siblings: readonly string[], rows: number): number {
+  const index = siblings.indexOf(key);
+  // Dense fan-out must not compress a small set of prerequisites into adjacent leaf rows.
+  return rows > 16 && siblings.length < rows
+    ? ((index + 1) * (rows - 1)) / (siblings.length + 1)
+    : index + (rows - siblings.length) / 2;
 }
 function networkChart(
   ctx: StatisticsContext,
@@ -519,7 +550,7 @@ function networkChart(
     const key = required(ctx.dataset.tasks[node]).key,
       level = required(levels.get(key)),
       siblings = required(columns.get(level));
-    const position = siblings.indexOf(key) + (rows - siblings.length) / 2;
+    const position = siblingPosition(key, siblings, rows);
     const prerequisites = incoming.get(node) ?? 0;
     const shownPrerequisites = edges.filter((edge) => edge.to === key).length;
     const omitted = prerequisites - shownPrerequisites;
@@ -539,7 +570,7 @@ function networkChart(
     facet: {
       key: required(ctx.dataset.tasks[focus]).key,
       label: `Waiting neighborhood · ${required(ctx.dataset.tasks[focus]).title}`,
-      description: neighborhoodDescription(shown.length, nodes.length, links),
+      description: neighborhoodDescription(shown.length, nodes.length, links, marks),
     },
     kind: 'network',
     x: numeric('Local layout', vertical ? rows - 1 : depth),

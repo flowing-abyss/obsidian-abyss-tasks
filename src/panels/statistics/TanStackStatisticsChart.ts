@@ -209,7 +209,10 @@ function axis(
     axis: hiddenAxis(model) ? false : policy,
   };
 }
-function seriesMarks(model: StatisticsChartModel): RenderMark[] {
+function seriesMarks(
+  model: StatisticsChartModel,
+  namedNetworkNodes?: ReadonlySet<string>,
+): RenderMark[] {
   const result: RenderMark[] = [];
   const series = [...model.series];
   if (model.marks.some((mark) => mark.series === undefined))
@@ -217,7 +220,7 @@ function seriesMarks(model: StatisticsChartModel): RenderMark[] {
   for (const item of series) {
     const rows = model.marks.filter((mark) => (mark.series ?? '') === item.key);
     if (rows.length === 0) continue;
-    result.push(seriesMark(model, item, rows));
+    result.push(seriesMark(model, item, rows, namedNetworkNodes));
   }
   return result;
 }
@@ -225,6 +228,7 @@ function seriesMark(
   model: StatisticsChartModel,
   item: StatisticsChartModel['series'][number],
   rows: readonly StatisticsMark[],
+  namedNetworkNodes?: ReadonlySet<string>,
 ): RenderMark {
   const paint = statisticsSeriesPaint(item, model.series),
     opacity = statisticsSeriesOpacity(item);
@@ -266,7 +270,7 @@ function seriesMark(
     });
   const radius =
     model.kind === 'network'
-      ? (mark: StatisticsMark) => (model.marks.length > 16 && mark.series !== 'focus' ? 3 : 7)
+      ? (mark: StatisticsMark) => networkRadius(mark, model.marks.length, namedNetworkNodes)
       : (mark: StatisticsMark) => Math.min(10, 4 + Math.log2(Math.max(1, mark.weight ?? 1)));
   return dot(rows, {
     id: `points:${item.key}`,
@@ -279,6 +283,9 @@ function seriesMark(
     stroke: BACKGROUND,
     strokeWidth: 1.5,
   });
+}
+function networkRadius(mark: StatisticsMark, count: number, named?: ReadonlySet<string>): number {
+  return count > 16 && named?.has(mark.key) !== true && mark.series !== 'focus' ? 3 : 7;
 }
 function heatBucket(mark: StatisticsMark, maximum: number): string {
   if (mark.state !== undefined && mark.state !== 'measured') return mark.state;
@@ -438,8 +445,20 @@ function densityMarks(model: StatisticsChartModel): RenderMark[] {
     }),
   );
 }
+function networkLabels(model: StatisticsChartModel): readonly StatisticsMark[] {
+  if (model.marks.length <= 16) return model.marks;
+  const focus = model.marks.find((mark) => mark.series === 'focus');
+  if (focus === undefined) return [];
+  const edges = model.edges ?? [];
+  const direct = new Set(edges.filter((edge) => edge.from === focus.key).map((edge) => edge.to));
+  const coPrerequisites = new Set(
+    edges.filter((edge) => edge.from !== focus.key && direct.has(edge.to)).map((edge) => edge.from),
+  );
+  return [focus, ...model.marks.filter((mark) => coPrerequisites.has(mark.key)).slice(0, 7)];
+}
 function networkMarks(model: StatisticsChartModel, width: number, height: number): RenderMark[] {
   const nodes = new Map(model.marks.map((mark) => [mark.key, mark]));
+  const labels = networkLabels(model);
   const edges: StatisticsMark[] = [];
   // Each label points into the viewport from its node. Budget one em per character,
   // including the ellipsis, within that viewport half at constrained widths.
@@ -471,26 +490,23 @@ function networkMarks(model: StatisticsChartModel, width: number, height: number
       strokeWidth: 1.5,
       headLength: 10,
     }),
-    ...seriesMarks(model),
+    ...seriesMarks(model, new Set(labels.map((mark) => mark.key))),
     decorative(
-      text(
-        model.marks.filter((mark) => model.marks.length <= 16 || mark.series === 'focus'),
-        {
-          id: 'node-labels',
-          x: 'x',
-          y: 'y',
-          key: 'key',
-          text: (mark) => shortLabel(mark.label ?? '', labelLength),
-          anchor: (mark) =>
-            model.x.type === 'number' &&
-            number(mark, 'x') > (model.x.domain[0] + model.x.domain[1]) / 2
-              ? 'end'
-              : 'start',
-          dy: -16,
-          fontSize: 11,
-          fill: FOREGROUND,
-        },
-      ),
+      text(labels, {
+        id: 'node-labels',
+        x: 'x',
+        y: 'y',
+        key: 'key',
+        text: (mark) => shortLabel(mark.label ?? '', labelLength),
+        anchor: (mark) =>
+          model.x.type === 'number' &&
+          number(mark, 'x') > (model.x.domain[0] + model.x.domain[1]) / 2
+            ? 'end'
+            : 'start',
+        dy: -16,
+        fontSize: 11,
+        fill: FOREGROUND,
+      }),
     ),
   ];
 }
