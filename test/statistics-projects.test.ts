@@ -6,6 +6,243 @@ import { required } from '../src/statistics/statisticsWork';
 import { closed, date, request, source, task, work } from './helpers/statisticsFixtures';
 const metrics = (v: Awaited<ReturnType<StatisticsSession['view']>>) =>
   required(v).sections.flatMap((s) => s.metrics);
+const metricValue = (v: Awaited<ReturnType<StatisticsSession['view']>>, id: string) =>
+  required(metrics(v).find((m) => m.id === id)).value;
+it.each(['done', 'cancelled'] as const)(
+  'retires a retained dependency focus after its prerequisite becomes %s',
+  async (status) => {
+    const nodes = [task('A', { dependencyId: 'A' }), task('B', { dependsOn: ['A'] })];
+    const initial = required(await prepareStatisticsDataset(source(nodes), [], work));
+    const focused = request({ view: 'dependencies', focusKey: required(initial.tasks[0]).key });
+    const before = required(await new StatisticsSession(initial).view(focused, work));
+    expect(metricValue(before, 'downstream')).toBe(1);
+    const changed = required(
+      await prepareStatisticsDataset(
+        source([{ ...required(nodes[0]), status }, required(nodes[1])]),
+        [],
+        work,
+      ),
+    );
+    const after = required(await new StatisticsSession(changed).view(focused, work));
+    expect(metricValue(after, 'waiting')).toBe(0);
+    expect(after.sections.flatMap((s) => s.charts).some((c) => c.kind === 'network')).toBe(false);
+    expect(metrics(after).some((m) => ['direct', 'sole', 'downstream'].includes(m.id))).toBe(false);
+    expect(after.sections[0]?.emptyMessage).toContain('No resolved waiting');
+  },
+);
+it('keeps shared blockers visible at the cap and qualifies every omitted incoming relation', async () => {
+  const nodes = [
+    task('A', { dependencyId: 'A' }),
+    task('X', { dependencyId: 'X' }),
+    ...Array.from({ length: 79 }, (_, i) =>
+      task(`D${i}`, { tags: ['scope'], dependsOn: ['A', 'X'] }),
+    ),
+  ];
+  const ds = required(await prepareStatisticsDataset(source(nodes), [], work));
+  const view = required(
+    await new StatisticsSession(ds).view(
+      request({
+        view: 'dependencies',
+        scope: { type: 'tag', tag: 'scope' },
+        focusKey: required(ds.tasks[0]).key,
+      }),
+      work,
+    ),
+  );
+  const chart = required(view.sections[0]?.charts.find((c) => c.kind === 'network'));
+  expect(chart.marks).toHaveLength(80);
+  expect(chart.marks.map((m) => m.label)).toContain('X');
+  expect(chart.edges).toHaveLength(156);
+  expect(chart.facet?.description).toContain('80 of 81 tasks');
+  expect(chart.facet?.description).toContain('156 of 158 relations');
+  expect(chart.facet?.description).toContain('Prerequisite → dependent');
+  expect(metricValue(view, 'direct')).toBe(79);
+  expect(metricValue(view, 'downstream')).toBe(79);
+  expect(metricValue(view, 'sole')).toBe(0);
+  expect(view.evidence('direct', 50, 50).total).toBe(79);
+  expect(view.evidence('chain-edges', 150, 50).total).toBe(158);
+  expect(view.evidence('chain-omitted', 0, 50).total).toBe(1);
+  for (const mark of chart.marks.filter((m) => required(m.label).startsWith('D'))) {
+    expect(chart.edges?.filter((edge) => edge.to === mark.key)).toHaveLength(2);
+    expect(mark.observation?.values).toContainEqual({
+      label: 'Omitted prerequisites or relations',
+      value: 0,
+    });
+  }
+});
+it('counts incoming context omitted by the edge cap for each dense dependency node', async () => {
+  const dense = required(
+    await prepareStatisticsDataset(
+      source(
+        Array.from({ length: 20 }, (_, i) =>
+          task(`dense${i}`, {
+            dependencyId: `id${i}`,
+            dependsOn: Array.from({ length: i }, (_, j) => `id${j}`),
+          }),
+        ),
+      ),
+      [],
+      work,
+    ),
+  );
+  const capped = required(
+    await new StatisticsSession(dense).view(
+      request({ view: 'dependencies', focusKey: required(dense.tasks[0]).key }),
+      work,
+    ),
+  );
+  const graph = required(capped.sections[0]?.charts.find((c) => c.kind === 'network'));
+  for (const mark of graph.marks) {
+    const shown = required(graph.edges).filter((edge) => edge.to === mark.key).length;
+    expect(mark.observation?.values).toContainEqual({
+      label: 'Omitted prerequisites or relations',
+      value: Number(mark.label?.slice(5)) - shown,
+    });
+  }
+});
+it('keeps dependency scope and current status explicit with exact affected-task diagnostics', async () => {
+  const nodes = [
+    task('A', { dependencyId: 'A' }),
+    task('Done', { dependencyId: 'done', status: 'done' }),
+    task('B', {
+      dependencyId: 'B',
+      tags: ['scope'],
+      dependsOn: ['A', 'done', 'missing-1', 'missing-2', 'archived'],
+    }),
+    task('Outside', { dependencyId: 'outside', dependsOn: ['A'] }),
+    task('Outside leaf', { dependsOn: ['outside'] }),
+    task('Closed unresolved', { status: 'done', tags: ['scope'], dependsOn: ['missing-3'] }),
+    task('Duplicate 1', { dependencyId: 'dup' }),
+    task('Duplicate 2', { dependencyId: 'dup' }),
+    task('Ambiguous', { tags: ['scope'], dependsOn: ['dup'] }),
+    task('Cycle 1', { tags: ['scope'], dependencyId: 'c1', dependsOn: ['c2'] }),
+    task('Cycle 2', { tags: ['scope'], dependencyId: 'c2', dependsOn: ['c1'] }),
+  ];
+  const ds = required(
+    await prepareStatisticsDataset(
+      source(nodes, [task('Archived', { dependencyId: 'archived' })]),
+      [],
+      work,
+    ),
+  );
+  const view = required(
+    await new StatisticsSession(ds).view(
+      request({
+        view: 'dependencies',
+        scope: { type: 'tag', tag: 'scope' },
+        focusKey: required(ds.tasks[0]).key,
+      }),
+      work,
+    ),
+  );
+  const chart = required(view.sections[0]?.charts.find((c) => c.kind === 'network'));
+  expect(chart.marks.map((m) => m.label)).toEqual(['A', 'B']);
+  expect(chart.series.find((s) => s.key === 'external')?.label).toBe('Outside scope');
+  expect(chart.series.find((s) => s.key === 'focus')?.label).toContain('Outside scope');
+  expect(metricValue(view, 'waiting')).toBe(3);
+  expect(metricValue(view, 'downstream')).toBe(1);
+  expect(metricValue(view, 'sole')).toBe(0);
+  expect(metrics(view).find((m) => m.id === 'dependency:missing')).toMatchObject({
+    value: 1,
+    label: 'Tasks with unresolved IDs',
+  });
+  expect(metrics(view).find((m) => m.id === 'dependency:ambiguous')).toMatchObject({
+    value: 1,
+    label: 'Tasks with duplicate-ID references',
+  });
+  expect(metrics(view).find((m) => m.id === 'dependency:cyclic')).toMatchObject({
+    value: 2,
+    label: 'Tasks in cycles',
+  });
+  const missing = view.evidence('dependency:missing', 0, 50).rows;
+  expect(missing.map((r) => r.title)).toEqual(['B']);
+  expect(required(missing[0]).context).toContain('missing-1, missing-2, archived');
+  expect(view.evidence('dependency:ambiguous', 0, 50).rows[0]?.context).toContain('dup');
+  expect(view.sections[0]?.context).toContain('open/in-progress');
+  const rank = required(view.sections[0]?.charts[0]);
+  expect(
+    statisticsMarkDescription(required(rank.marks.find((m) => m.label === 'A')), rank),
+  ).toContain('Direct waiting: 1 task');
+  expect(rank.marks.find((m) => m.label === 'A')?.observation).toMatchObject({
+    values: [{ label: 'Direct waiting', value: 1, unit: 'tasks' }],
+  });
+  expect(required(rank.marks.find((m) => m.label === 'A')).observation?.note).toContain(
+    'Inspect dependencies',
+  );
+  expect(view.actions).toContainEqual({
+    type: 'focus',
+    label: 'Back to prerequisites',
+    focusKey: undefined,
+  });
+});
+it('retains outside-scope paths only when they explain scoped downstream waiting work', async () => {
+  const ds = required(
+    await prepareStatisticsDataset(
+      source([
+        task('A', { dependencyId: 'A' }),
+        task('Co', { dependencyId: 'co' }),
+        task('Bridge', { dependencyId: 'bridge', dependsOn: ['A', 'co'] }),
+        task('Scoped', { tags: ['scope'], dependsOn: ['bridge'] }),
+        task('Direct', { tags: ['scope'], dependsOn: ['A'] }),
+        task('Unrelated leaf', { dependsOn: ['A'] }),
+      ]),
+      [],
+      work,
+    ),
+  );
+  const view = required(
+    await new StatisticsSession(ds).view(
+      request({
+        view: 'dependencies',
+        scope: { type: 'tag', tag: 'scope' },
+        focusKey: required(ds.tasks[0]).key,
+      }),
+      work,
+    ),
+  );
+  expect(metricValue(view, 'direct')).toBe(1);
+  expect(metricValue(view, 'downstream')).toBe(2);
+  expect(view.evidence('downstream', 0, 50).rows.map((row) => row.title)).toEqual([
+    'Direct',
+    'Scoped',
+  ]);
+  const chart = required(required(view.sections[0]).charts.find((c) => c.kind === 'network'));
+  expect(chart.marks.map((m) => m.label)).toEqual(['A', 'Co', 'Bridge', 'Direct', 'Scoped']);
+  expect(chart.marks.filter((m) => m.series === 'external').map((m) => m.label)).toEqual([
+    'Co',
+    'Bridge',
+  ]);
+});
+it('returns to the same prerequisite page and clamps it after the waiting population shrinks', async () => {
+  const nodes = Array.from({ length: 14 }, (_, i) => [
+    task(`P${String(i).padStart(2, '0')}`, { dependencyId: `id${i}` }),
+    task(`D${i}`, { dependsOn: [`id${i}`] }),
+  ]).flat();
+  const ds = required(await prepareStatisticsDataset(source(nodes), [], work));
+  const session = new StatisticsSession(ds),
+    req = request({ view: 'dependencies', page: 1 });
+  const rank = required(await session.view(req, work));
+  const marks = required(required(rank.sections[0]).charts[0]).marks;
+  const focus = required(await session.view({ ...req, focusKey: required(marks[0]).key }, work));
+  expect(focus.actions).toContainEqual({
+    type: 'focus',
+    label: 'Back to prerequisites',
+    focusKey: undefined,
+  });
+  const back = required(await session.view({ ...req, focusKey: undefined }, work));
+  expect(required(required(back.sections[0]).charts[0]).marks.map((m) => m.label)).toEqual([
+    'P12',
+    'P13',
+  ]);
+  const shrunk = required(await prepareStatisticsDataset(source(nodes.slice(0, 4)), [], work));
+  const stale = required(
+    await new StatisticsSession(shrunk).view({ ...req, focusKey: required(marks[0]).key }, work),
+  );
+  expect(required(required(stale.sections[0]).charts[0]).marks.map((m) => m.label)).toEqual([
+    'P00',
+    'P01',
+  ]);
+});
 it('counts focused downstream once through external prerequisites and disqualifies unresolved sole claims', async () => {
   const nodes = [
     task('A', { dependencyId: 'A' }),
@@ -47,6 +284,75 @@ it('counts focused downstream once through external prerequisites and disqualifi
   );
   expect(metrics(badView).find((m) => m.id === 'sole')?.value).toBe(0);
 });
+it.each(['done', 'cancelled'] as const)(
+  'matches the native dependency golden populations before and after A becomes %s',
+  async (status) => {
+    const tagged = { tags: ['analysis-clarity-deps-20261009'] };
+    const nodes = [
+      task('Prerequisite A', { ...tagged, dependencyId: 'A' }),
+      task('Co-prerequisite X', { ...tagged, dependencyId: 'X' }),
+      ...Array.from({ length: 79 }, (_, i) =>
+        task(`Shared${i}`, { ...tagged, dependsOn: ['A', 'X'] }),
+      ),
+      task('Sole A', { ...tagged, dependsOn: ['A'] }),
+      task('Missing open', { ...tagged, dependsOn: ['missing-1', 'missing-2'] }),
+      task('Missing closed', { ...tagged, status: 'done', dependsOn: ['missing-3'] }),
+      task('Duplicate1', { dependencyId: 'duplicate' }),
+      task('Duplicate2', { dependencyId: 'duplicate' }),
+      task('Ambiguous', { ...tagged, dependsOn: ['duplicate'] }),
+      task('Cycle left', { ...tagged, dependencyId: 'left', dependsOn: ['right'] }),
+      task('Cycle right', { ...tagged, dependencyId: 'right', dependsOn: ['left'] }),
+      task('Outside branch', { dependsOn: ['A'] }),
+    ];
+    const ds = required(await prepareStatisticsDataset(source(nodes), [], work));
+    const req = request({
+      view: 'dependencies',
+      scope: { type: 'tag', tag: 'analysis-clarity-deps-20261009' },
+      focusKey: required(ds.tasks[0]).key,
+    });
+    const initial = required(await new StatisticsSession(ds).view(req, work));
+    for (const [id, want] of [
+      ['waiting', 82],
+      ['direct', 80],
+      ['sole', 1],
+      ['dependency:missing', 1],
+      ['dependency:ambiguous', 1],
+      ['dependency:cyclic', 2],
+    ] as const)
+      expect(metricValue(initial, id)).toBe(want);
+    expect(
+      required(required(initial.sections[0]).charts[0]).marks.find(
+        (m) => m.label === 'Co-prerequisite X',
+      )?.y,
+    ).toBe(79);
+    expect(initial.evidence('downstream', 0, 50).total).toBe(80);
+    const changed = required(
+      await prepareStatisticsDataset(
+        source([{ ...required(nodes[0]), status }, ...nodes.slice(1)]),
+        [],
+        work,
+      ),
+    );
+    const after = required(await new StatisticsSession(changed).view(req, work));
+    for (const [id, want] of [
+      ['waiting', 81],
+      ['direct', 79],
+      ['downstream', 79],
+      ['sole', 79],
+    ] as const)
+      expect(metricValue(after, id)).toBe(want);
+    expect(
+      required(required(after.sections[0]).charts[0]).marks.some(
+        (m) => m.label === 'Prerequisite A',
+      ),
+    ).toBe(false);
+    expect(
+      after.sections[0]?.charts
+        .find((c) => c.kind === 'network')
+        ?.marks.some((m) => m.label === 'Prerequisite A'),
+    ).toBe(false);
+  },
+);
 it('handles cycles, ambiguous IDs and canonical cancelled status without recursive traversal', async () => {
   const ds = await prepareStatisticsDataset(
     source([

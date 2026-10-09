@@ -502,6 +502,18 @@ active degrees; iterative graph diagnostics and one selected downstream traversa
 transitive closures. Normalization, calendar discovery, sorting and cold aggregation share a
 cancellable yielding work port.
 
+Dependency focus is eligible only while its live active prerequisite has scoped waiting dependents;
+changed observations recover to the first eligible prerequisite or an empty ranking. Transient Back
+to prerequisites clears graph focus separately from Results, retaining scope and rank page. The local
+waiting neighborhood excludes satisfied prerequisites and outside-scope branches that explain no
+scoped waiting task. Immediate active co-prerequisites precede fan-out under the node cap. Chart
+captions distinguish displayed task/relation subsets from complete scoped metrics, and each node
+observation counts omitted incoming context, including relations beyond the edge cap. Exact omitted
+node/edge evidence remains available. Diagnostics count affected live open/in-progress tasks in scope,
+retain unresolved/duplicate referenced IDs in evidence, and state that structural cycles use the
+resolved live graph across statuses. Sole-prerequisite eligibility stays conservative around those
+cycles and unresolved IDs; direct and downstream counts do not promise that work will be released.
+
 Allocation retains complete ranked aggregate groups and uses transient `focusKey` actions to replace
 the ranking with one group's bucket timeline without changing global scope or period. Group totals
 partition project/priority time; tag groups preserve full overlapping credit. Concentration includes

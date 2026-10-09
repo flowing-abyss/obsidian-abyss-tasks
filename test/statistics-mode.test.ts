@@ -1544,6 +1544,56 @@ it('finds any Allocation group with a bounded native picker and restores focus o
   host.remove();
 });
 
+it.each(['done', 'cancelled'] as const)(
+  'recovers dependency focus after a real source refresh to %s and returns separately from Results',
+  async (status) => {
+    const h = await harness();
+    const nodes = [
+      task('A', { dependencyId: 'A' }),
+      task('X', { dependencyId: 'X' }),
+      task('B', { dependsOn: ['A', 'X'] }),
+    ];
+    h.replace(source(nodes));
+    h.mode.navigation.selectView('dependencies');
+    h.mode.render(h.host);
+    await h.wait();
+    const rank = expectDefined(
+      h.renderer.mount.mock.calls.find(([, model]) => model.id === 'dependency-rank'),
+    );
+    const mark = expectDefined(rank[1].marks.find((m) => m.label === 'A'));
+    h.reset();
+    rank[2](expectDefined(mark.selectionId));
+    await h.wait();
+    expect(h.host.textContent).toContain('Waiting neighborhood · A');
+    const chain = expectDefined(
+      h.renderer.mount.mock.calls.find(([, model]) => model.id === 'dependency-chain'),
+    );
+    chain[2](expectDefined(chain[1].marks.find((m) => m.label === 'B')?.selectionId));
+    expect(h.host.querySelector<HTMLElement>('.abyss-statistics-evidence')?.hidden).toBe(false);
+    expectDefined(
+      h.host.querySelector<HTMLButtonElement>('[aria-label="Clear selection"]'),
+    ).click();
+    expect(h.host.querySelector<HTMLElement>('.abyss-statistics-evidence')?.hidden).toBe(true);
+    expect(h.host.textContent).toContain('Waiting neighborhood · A');
+    h.reset();
+    h.replace(source([{ ...expectDefined(nodes[0]), status }, ...nodes.slice(1)]));
+    await h.wait();
+    expect(h.host.textContent).toContain('Waiting neighborhood · X');
+    expect(h.host.textContent).not.toContain('Waiting neighborhood · A');
+    const content = expectDefined(h.host.querySelector<HTMLElement>('.abyss-statistics-content'));
+    content.scrollTop = 145;
+    h.reset();
+    expectDefined(
+      [...h.host.querySelectorAll<HTMLButtonElement>('button')].find(
+        (b) => b.textContent === 'Back to prerequisites',
+      ),
+    ).click();
+    await h.wait();
+    expect(h.host.textContent).not.toContain('Waiting neighborhood');
+    expect(content.scrollTop).toBe(145);
+    expect(h.mode.navigation.snapshot().view).toBe('dependencies');
+  },
+);
 it('focuses Allocation groups without changing period or scope and recovers after the focused group disappears', async () => {
   const h = await harness();
   const nodes = Array.from({ length: 9 }, (_, i) =>

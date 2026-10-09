@@ -165,6 +165,12 @@ function expectVisible(
 }
 
 describe('Statistics chart adapter', () => {
+  it('describes dependency-rank keyboard activation as inspecting dependencies', () => {
+    const el = host();
+    const chart = mount(el, model({ id: 'dependency-rank' }));
+    expect(chart.svg().querySelector('desc')?.textContent).toContain('Inspect dependencies');
+    expect(chart.svg().querySelector('desc')?.textContent).not.toContain('underlying records');
+  });
   it('describes the selected stacked contribution rather than its cumulative endpoint', () => {
     const value = model();
     const recurring = required(value.marks.find((mark) => mark.key === 'r'));

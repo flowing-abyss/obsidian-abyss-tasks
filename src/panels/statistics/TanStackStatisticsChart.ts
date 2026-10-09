@@ -626,6 +626,8 @@ function tooltipOptions(
 }
 
 function chartDescription(model: StatisticsChartModel): string {
+  if (model.id === 'dependency-rank')
+    return 'Use arrow keys to inspect prerequisites; Enter or Space: Inspect dependencies.';
   return model.rowViewport === true
     ? 'Use arrow keys to inspect groups; Enter or Space opens the group timeline.'
     : 'Use arrow keys to inspect marks; Enter or Space opens the underlying records.';

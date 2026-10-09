@@ -3,6 +3,7 @@ import {
   numeric,
   type StatisticsChartModel,
   type StatisticsMark,
+  type StatisticsObservation,
 } from './statisticsChartModel';
 import { active, inScope } from './statisticsDataset';
 import { metric, pageActions } from './statisticsViews';
@@ -22,6 +23,8 @@ class DependencyGraph {
   readonly ambiguous = new Set<number>();
   readonly self = new Set<number>();
   readonly cyclic = new Set<number>();
+  readonly missingIds = new Map<number, string[]>();
+  readonly ambiguousIds = new Map<number, string[]>();
   private readonly ids = new Map<string, number[]>();
   constructor(
     private readonly dataset: StatisticsDataset,
@@ -51,8 +54,7 @@ class DependencyGraph {
     for (const id of task.dependsOn) {
       const matches = this.ids.get(id);
       if (matches?.length !== 1) {
-        const issues = matches === undefined ? this.missing : this.ambiguous;
-        issues.add(task.index);
+        this.recordIssue(task.index, id, matches === undefined);
       } else {
         const prerequisite = required(matches[0]);
         required(this.prerequisites[task.index]).push(prerequisite);
@@ -61,6 +63,14 @@ class DependencyGraph {
       }
       await this.budget.step();
     }
+  }
+  private recordIssue(node: number, id: string, missing: boolean): void {
+    const issues = missing ? this.missing : this.ambiguous;
+    issues.add(node);
+    const details = missing ? this.missingIds : this.ambiguousIds;
+    const ids = details.get(node) ?? [];
+    ids.push(id);
+    details.set(node, ids);
   }
   private async finishOrder(root: number, seen: Set<number>, order: number[]): Promise<void> {
     const stack = [{ node: root, next: 0 }];
@@ -175,25 +185,35 @@ async function issueMetrics(
   graph: DependencyGraph,
 ): Promise<StatisticsMetric[]> {
   const metrics: StatisticsMetric[] = [];
-  for (const [name, indices] of [
-    ['missing', graph.missing],
-    ['ambiguous', graph.ambiguous],
-    ['self', graph.self],
-    ['cyclic', graph.cyclic],
+  for (const [name, label, indices, details] of [
+    ['missing', 'Tasks with unresolved IDs', graph.missing, graph.missingIds],
+    ['ambiguous', 'Tasks with duplicate-ID references', graph.ambiguous, graph.ambiguousIds],
+    ['self', 'Tasks referencing themselves', graph.self, undefined],
+    ['cyclic', 'Tasks in cycles', graph.cyclic, undefined],
   ] as const) {
     const scoped: number[] = [];
     for (const index of indices) {
-      if (inScope(required(ctx.dataset.tasks[index]), ctx.request.scope)) scoped.push(index);
+      const task = required(ctx.dataset.tasks[index]);
+      if (active(task) && inScope(task, ctx.request.scope)) scoped.push(index);
       await ctx.budget.step();
     }
-    metrics.push(
-      metric(
+    metrics.push({
+      ...metric(
         `dependency:${name}`,
-        `${name} links`,
+        label,
         scoped.length,
-        ctx.evidence.tasks(`dependency:${name}`, scoped),
+        ctx.evidence.rows(`dependency:${name}`, scoped.length, (index) => {
+          const node = required(scoped[index]);
+          const ids = details?.get(node);
+          return ctx.evidence.taskRow(
+            required(ctx.dataset.tasks[node]),
+            ids === undefined ? undefined : `Referenced IDs: ${ids.join(', ')}`,
+          );
+        }),
       ),
-    );
+      context:
+        'Live open/in-progress tasks in scope; categories may overlap. Cycles use resolved live relations across all statuses.',
+    });
   }
   return metrics;
 }
@@ -208,6 +228,17 @@ function rankChart(
     x: required(tasks[index]).key,
     y: required(waiting.direct.get(index)).length,
     label: required(tasks[index]).title,
+    observation: {
+      title: required(tasks[index]).title,
+      values: [
+        {
+          label: 'Direct waiting',
+          value: required(waiting.direct.get(index)).length,
+          unit: 'tasks',
+        },
+      ],
+      note: 'Live open/in-progress dependents in scope. Inspect dependencies.',
+    },
     selectionId: ctx.evidence.tasks(`direct:${index}`, required(waiting.direct.get(index))),
   }));
   return {
@@ -250,17 +281,58 @@ async function downstream(
     }
     await ctx.budget.step();
   }
-  return { nodes, visited, downstream: result };
+  return scopedNeighborhood(ctx, graph, { nodes, visited, downstream: result });
+}
+async function scopedNeighborhood(
+  ctx: StatisticsContext,
+  graph: DependencyGraph,
+  neighborhood: Neighborhood,
+): Promise<Neighborhood> {
+  // Keep outside-scope paths only when they explain a scoped waiting descendant.
+  const relevant = new Set([required(neighborhood.nodes[0])]),
+    pending: number[] = [];
+  for (const node of neighborhood.downstream) {
+    relevant.add(node);
+    pending.push(node);
+    await ctx.budget.step();
+  }
+  for (let cursor = 0; cursor < pending.length; cursor++) {
+    for (const prerequisite of required(graph.prerequisites[required(pending[cursor])])) {
+      appendUnvisited(prerequisite, neighborhood.visited, relevant, pending);
+      await ctx.budget.step();
+    }
+    await ctx.budget.step();
+  }
+  const retained: number[] = [];
+  for (const node of neighborhood.nodes) {
+    if (relevant.has(node)) retained.push(node);
+    await ctx.budget.step();
+  }
+  return { nodes: retained, visited: relevant, downstream: neighborhood.downstream };
+}
+function appendUnvisited(
+  node: number,
+  allowed: ReadonlySet<number>,
+  seen: Set<number>,
+  target: number[],
+): void {
+  if (allowed.has(node) && !seen.has(node)) {
+    seen.add(node);
+    target.push(node);
+  }
 }
 async function includePrerequisites(
   ctx: StatisticsContext,
   graph: DependencyGraph,
   neighborhood: Neighborhood,
-): Promise<void> {
+): Promise<Neighborhood> {
   const descendants = neighborhood.nodes.length;
   for (let i = 0; i < descendants; i++) {
     for (const prerequisite of required(graph.prerequisites[required(neighborhood.nodes[i])])) {
-      if (!neighborhood.visited.has(prerequisite)) {
+      if (
+        active(required(ctx.dataset.tasks[prerequisite])) &&
+        !neighborhood.visited.has(prerequisite)
+      ) {
         neighborhood.visited.add(prerequisite);
         neighborhood.nodes.push(prerequisite);
       }
@@ -268,39 +340,87 @@ async function includePrerequisites(
     }
     await ctx.budget.step();
   }
+  // Context co-prerequisites precede fan-out so the cap does not hide a shared blocker.
+  const prioritized = [required(neighborhood.nodes[0])];
+  await appendNodes(ctx, neighborhood.nodes, prioritized, [descendants, neighborhood.nodes.length]);
+  await appendNodes(ctx, neighborhood.nodes, prioritized, [1, descendants]);
+  return { ...neighborhood, nodes: prioritized };
+}
+async function appendNodes(
+  ctx: StatisticsContext,
+  source: readonly number[],
+  target: number[],
+  [start, end]: readonly [number, number],
+): Promise<void> {
+  for (let i = start; i < end; i++) {
+    target.push(required(source[i]));
+    await ctx.budget.step();
+  }
 }
 function nodeSeries(ctx: StatisticsContext, node: number, focus: number): string {
   if (node === focus) return 'focus';
   return inScope(required(ctx.dataset.tasks[node]), ctx.request.scope) ? 'scope' : 'external';
 }
+interface NeighborhoodEdges {
+  edges: Array<{ from: string; to: string; selectionId: string }>;
+  total: number;
+  omitted: number;
+  incoming: Map<number, number>;
+}
+interface EdgeCollection {
+  shown: ReadonlySet<number>;
+  visited: ReadonlySet<number>;
+  edges: NeighborhoodEdges['edges'];
+  all: Array<readonly [number, number]>;
+  omitted: Array<readonly [number, number]>;
+  incoming: Map<number, number>;
+}
+function collectEdge(
+  ctx: StatisticsContext,
+  relation: readonly [number, number],
+  collection: EdgeCollection,
+): void {
+  const [prerequisite, node] = relation;
+  if (!active(required(ctx.dataset.tasks[prerequisite]))) return;
+  collection.incoming.set(node, (collection.incoming.get(node) ?? 0) + 1);
+  if (!collection.visited.has(prerequisite)) return;
+  collection.all.push(relation);
+  if (visibleEdge(relation, collection.shown, collection.edges.length))
+    collection.edges.push({
+      from: required(ctx.dataset.tasks[prerequisite]).key,
+      to: required(ctx.dataset.tasks[node]).key,
+      selectionId: ctx.evidence.tasks(`edge:${prerequisite}:${node}`, [prerequisite, node]),
+    });
+  else collection.omitted.push(relation);
+}
 async function neighborhoodEdges(
   ctx: StatisticsContext,
   graph: DependencyGraph,
   neighborhood: Neighborhood,
-): Promise<{ edges: NonNullable<StatisticsChartModel['edges']>; total: number; omitted: number }> {
-  const shown = new Set(neighborhood.nodes.slice(0, 80)),
-    edges: Array<{ from: string; to: string; selectionId: string }> = [];
-  const all: Array<readonly [number, number]> = [],
-    omitted: Array<readonly [number, number]> = [];
+): Promise<NeighborhoodEdges> {
+  const collection: EdgeCollection = {
+    shown: new Set(neighborhood.nodes.slice(0, 80)),
+    visited: neighborhood.visited,
+    edges: [],
+    all: [],
+    omitted: [],
+    incoming: new Map(),
+  };
   for (const node of neighborhood.nodes) {
     for (const prerequisite of required(graph.prerequisites[node])) {
       await ctx.budget.step();
-      if (!neighborhood.visited.has(prerequisite)) continue;
-      const relation: readonly [number, number] = [prerequisite, node];
-      all.push(relation);
-      if (visibleEdge(relation, shown, edges.length))
-        edges.push({
-          from: required(ctx.dataset.tasks[prerequisite]).key,
-          to: required(ctx.dataset.tasks[node]).key,
-          selectionId: ctx.evidence.tasks(`edge:${prerequisite}:${node}`, [prerequisite, node]),
-        });
-      else omitted.push(relation);
+      collectEdge(ctx, [prerequisite, node], collection);
     }
     await ctx.budget.step();
   }
-  edgeEvidence(ctx, 'chain-edges', all);
-  edgeEvidence(ctx, 'chain-omitted-edges', omitted);
-  return { edges, total: all.length, omitted: omitted.length };
+  edgeEvidence(ctx, 'chain-edges', collection.all);
+  edgeEvidence(ctx, 'chain-omitted-edges', collection.omitted);
+  return {
+    edges: collection.edges,
+    total: collection.all.length,
+    omitted: collection.omitted.length,
+    incoming: collection.incoming,
+  };
 }
 function visibleEdge(
   relation: readonly [number, number],
@@ -325,12 +445,43 @@ function edgeEvidence(
     };
   });
 }
+function nodeObservation(
+  ctx: StatisticsContext,
+  node: number,
+  prerequisites: number,
+  omitted: number,
+): StatisticsObservation {
+  const task = required(ctx.dataset.tasks[node]);
+  return {
+    title: task.title,
+    values: [
+      { label: 'Scope', value: inScope(task, ctx.request.scope) ? 'In scope' : 'Outside scope' },
+      { label: 'Current status', value: task.status },
+      { label: 'Unsatisfied prerequisites', value: prerequisites },
+      { label: 'Omitted prerequisites or relations', value: omitted },
+    ],
+    note:
+      omitted > 0
+        ? 'Partial incoming context; omitted counts include upstream prerequisites outside this local neighborhood.'
+        : 'Prerequisite → dependent. Only unsatisfied resolved relations are shown.',
+  };
+}
+function neighborhoodDescription(shown: number, total: number, links: NeighborhoodEdges): string {
+  const partial = shown < total || links.edges.length < links.total ? ' · partial graph' : '';
+  return `Prerequisite → dependent. Showing ${shown} of ${total} tasks and ${links.edges.length} of ${links.total} relations${partial}. Direct, downstream and sole counts cover the complete live open/in-progress population in scope; outside-scope tasks provide context.`;
+}
+function focusLabel(ctx: StatisticsContext, focus: number): string {
+  return inScope(required(ctx.dataset.tasks[focus]), ctx.request.scope)
+    ? 'Selected prerequisite'
+    : 'Selected prerequisite · Outside scope';
+}
 function networkChart(
   ctx: StatisticsContext,
   focus: number,
   nodes: readonly number[],
-  edges: NonNullable<StatisticsChartModel['edges']>,
+  links: NeighborhoodEdges,
 ): StatisticsChartModel {
+  const { edges, incoming } = links;
   const shown = nodes.slice(0, 80);
   const keys = shown.map((node) => required(ctx.dataset.tasks[node]).key);
   const levels = new Map<string, number>(),
@@ -369,11 +520,15 @@ function networkChart(
       level = required(levels.get(key)),
       siblings = required(columns.get(level));
     const position = siblings.indexOf(key) + (rows - siblings.length) / 2;
+    const prerequisites = incoming.get(node) ?? 0;
+    const shownPrerequisites = edges.filter((edge) => edge.to === key).length;
+    const omitted = prerequisites - shownPrerequisites;
     return {
       key,
       x: vertical ? position : level,
       y: vertical ? level : position,
       label: required(ctx.dataset.tasks[node]).title,
+      observation: nodeObservation(ctx, node, prerequisites, omitted),
       series: nodeSeries(ctx, node, focus),
       selectionId: ctx.evidence.tasks(`node:${node}`, [node]),
     };
@@ -381,13 +536,18 @@ function networkChart(
   return {
     id: 'dependency-chain',
     accessibleLabel: 'Directed local prerequisite chain; arrows point toward waiting dependents',
+    facet: {
+      key: required(ctx.dataset.tasks[focus]).key,
+      label: `Waiting neighborhood · ${required(ctx.dataset.tasks[focus]).title}`,
+      description: neighborhoodDescription(shown.length, nodes.length, links),
+    },
     kind: 'network',
     x: numeric('Local layout', vertical ? rows - 1 : depth),
     y: numeric('Local layout', vertical ? depth : rows - 1),
     series: [
-      { key: 'focus', label: 'Selected prerequisite', tone: 'accent' },
+      { key: 'focus', label: focusLabel(ctx, focus), tone: 'accent' },
       { key: 'scope', label: 'In scope', tone: 'neutral' },
-      { key: 'external', label: 'External prerequisite', tone: 'muted' },
+      { key: 'external', label: 'Outside scope', tone: 'muted' },
     ],
     marks,
     edges,
@@ -399,8 +559,7 @@ async function focusedChain(
   waiting: Waiting,
   focus: number,
 ): Promise<{ chart: StatisticsChartModel; metrics: StatisticsMetric[] }> {
-  const neighborhood = await downstream(ctx, graph, focus);
-  await includePrerequisites(ctx, graph, neighborhood);
+  const neighborhood = await includePrerequisites(ctx, graph, await downstream(ctx, graph, focus));
   const edges = await neighborhoodEdges(ctx, graph, neighborhood);
   const populations: Array<[string, string, readonly number[]]> = [
     ['direct', 'Direct waiting', waiting.direct.get(focus) ?? []],
@@ -420,15 +579,18 @@ async function focusedChain(
       'chain-omitted-edges',
     ),
   );
-  return { chart: networkChart(ctx, focus, neighborhood.nodes, edges.edges), metrics };
+  return {
+    chart: networkChart(ctx, focus, neighborhood.nodes, edges),
+    metrics,
+  };
 }
-async function findFocus(ctx: StatisticsContext): Promise<number> {
+async function findFocus(ctx: StatisticsContext, ranked: readonly number[]): Promise<number> {
   if (ctx.request.focusKey === undefined) return -1;
-  for (const task of ctx.dataset.tasks) {
-    if (task.fileKind === 'live' && task.key === ctx.request.focusKey) return task.index;
+  for (const index of ranked) {
+    if (required(ctx.dataset.tasks[index]).key === ctx.request.focusKey) return index;
     await ctx.budget.step();
   }
-  return -1;
+  return ranked[0] ?? -1;
 }
 export async function dependencySections(ctx: StatisticsContext): Promise<{
   sections: StatisticsSection[];
@@ -448,7 +610,10 @@ export async function dependencySections(ctx: StatisticsContext): Promise<{
       ),
     ctx.budget,
   );
-  const page = Math.max(0, Math.floor(ctx.request.page ?? 0)),
+  const page = Math.min(
+      Math.max(0, Math.ceil(ranked.length / 12) - 1),
+      Math.max(0, Math.floor(ctx.request.page ?? 0)),
+    ),
     visible = ranked.slice(page * 12, (page + 1) * 12),
     actions: StatisticsAction[] = pageActions(page, ranked.length, 12),
     charts = [rankChart(ctx, visible, waiting)];
@@ -465,25 +630,31 @@ export async function dependencySections(ctx: StatisticsContext): Promise<{
   const metrics = [
     metric(
       'waiting',
-      'Current waiting dependents',
+      'Tasks with resolved waiting prerequisites',
       waiting.nodes.length,
       ctx.evidence.tasks('dependency:waiting', waiting.nodes),
     ),
     ...(await issueMetrics(ctx, graph)),
   ];
-  const focus = await findFocus(ctx);
+  const focus = await findFocus(ctx, ranked);
   if (focus >= 0) {
     const chain = await focusedChain(ctx, graph, waiting, focus);
     charts.push(chain.chart);
     metrics.push(...chain.metrics);
+    actions.push({ type: 'focus', label: 'Back to prerequisites', focusKey: undefined });
   }
   return {
     sections: [
       {
         id: 'dependencies',
         title: 'Current dependencies',
+        reading: 'Direct counts overlap for shared prerequisites; waiting tasks are counted once.',
+        emptyMessage:
+          ranked.length === 0
+            ? 'No resolved waiting prerequisites among live open/in-progress tasks in scope.'
+            : undefined,
         context:
-          'Live canonical status; external prerequisites remain visible. Missing, ambiguous and cyclic relations cannot establish a sole blocker. Choose a prerequisite to inspect its downstream chain.',
+          'Current live open/in-progress tasks in scope. Lookup uses live tasks across scopes; unresolved IDs may refer to absent or archived targets. Satisfied prerequisites are excluded from the waiting graph. Direct and downstream counts do not promise release: waiting only on this is a conservative sole-prerequisite count, excluding unresolved IDs and structural cycles. Choose a prerequisite to inspect its downstream chain.',
         metrics: metrics.map((value) =>
           value.value === 0 &&
           (value.id.startsWith('dependency:') || value.id.startsWith('chain-omitted'))
