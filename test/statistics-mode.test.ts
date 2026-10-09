@@ -632,7 +632,7 @@ it('moves keyboard focus into evidence and returns it to the retained analytical
   h.mode.render(h.host);
   await h.wait();
   const opener = expectDefined(
-    [...h.host.querySelectorAll<HTMLButtonElement>('.abyss-statistics-metrics button')].find(
+    [...h.host.querySelectorAll<HTMLButtonElement>('.abyss-statistics-legend button')].find(
       (button) => button.textContent.includes('Created'),
     ),
   );

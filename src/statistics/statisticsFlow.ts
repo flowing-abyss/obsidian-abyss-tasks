@@ -371,6 +371,8 @@ function newOutcomes(metrics: readonly StatisticsMetric[]): StatisticsSection {
   const series = values.map((value, index) => ({
     key: value.id,
     label: value.label,
+    value: value.value ?? 0,
+    selectionId: value.selectionId,
     tone: required((['neutral', 'progress', 'completed', 'cancelled'] as const)[index]),
   }));
   const denominator = values.reduce((sum, value) => sum + (value.value ?? 0), 0);
@@ -444,12 +446,20 @@ async function rhythm(ctx: StatisticsContext): Promise<StatisticsSection[]> {
       reading:
         'Created above zero; completed and cancelled below. Retained dates and current statuses can change earlier totals.',
       context: 'Current outcomes of new tasks are separate from recorded completions.',
-      metrics: metrics.filter(
-        (value) =>
-          !value.id.startsWith('new-') && value.id !== 'open-now' && value.id !== 'in-progress-now',
-      ),
+      metrics: metrics
+        .filter(
+          (value) =>
+            !value.id.startsWith('new-') &&
+            value.id !== 'open-now' &&
+            value.id !== 'in-progress-now',
+        )
+        .map((value) => ({ ...value, role: 'coverage' as const })),
       charts: [chart],
-      legend: chart.series,
+      legend: chart.series.map((series) => ({
+        ...series,
+        value: (ids.get(series.key) ?? []).length,
+        selectionId: series.key,
+      })),
     },
     newOutcomes(metrics),
     {

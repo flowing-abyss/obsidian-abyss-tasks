@@ -366,9 +366,12 @@ it('shows three dated event series and four exclusive current creation outcomes'
       work,
     ),
   );
-  const chart = required(view.sections[0]?.charts[0]);
+  const events = required(view.sections[0]);
+  const chart = required(events.charts[0]);
   expect(chart.series.map((s) => s.label)).toEqual(['Created', 'Completed', 'Cancelled']);
   expect(chart.marks).toHaveLength(15);
+  expect(events.metrics.every((m) => m.role === 'coverage')).toBe(true);
+  expect(events.legend.map((item) => item.value)).toEqual([5, 2, 1]);
   expect(chart.marks.find((m) => m.key === 'created:1')?.observation).toMatchObject({
     title: '2026-10-06 · Created',
     values: [{ label: 'Count', value: 3, unit: 'tasks' }],
