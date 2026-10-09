@@ -2,6 +2,7 @@ import { JSDOM } from 'jsdom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StatisticsCharts } from '../src/panels/statistics/StatisticsCharts';
 import { TanStackStatisticsChart } from '../src/panels/statistics/TanStackStatisticsChart';
+import { statisticsMarkDescription } from '../src/panels/statistics/statisticsFormat';
 import type { StatisticsChartModel } from '../src/statistics';
 import { prepareStatisticsDataset, StatisticsSession } from '../src/statistics';
 import { contracts } from '../tooling/css-contracts.mjs';
@@ -157,6 +158,12 @@ function expectVisible(
 }
 
 describe('Statistics chart adapter', () => {
+  it('describes the selected stacked contribution rather than its cumulative endpoint', () => {
+    const value = model();
+    const recurring = required(value.marks.find((mark) => mark.key === 'r'));
+    expect(statisticsMarkDescription(recurring, value)).toContain('Day: Mon · Tasks: 2');
+    expect(statisticsMarkDescription(recurring, value)).toContain('Created');
+  });
   it('renders explicit diverging endpoints in one shared column and activates semantic evidence', () => {
     const el = host();
     const chart = mount(el);

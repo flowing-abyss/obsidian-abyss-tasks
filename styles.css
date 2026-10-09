@@ -9994,6 +9994,33 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
   box-shadow: none;
 }
 
+.abyss-statistics > .abyss-center-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.abyss-statistics .abyss-center-title {
+  min-inline-size: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.abyss-statistics .abyss-center-controls {
+  margin-inline-start: 0;
+  flex-wrap: nowrap;
+}
+
+.abyss-statistics-group-controls {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+
+.abyss-statistics-group-controls:empty {
+  display: none;
+}
+
 .abyss-statistics-content {
   flex: 1;
   min-block-size: 0;
@@ -10025,6 +10052,7 @@ body.is-tablet .abyss-tracked-row button.abyss-tracked-row-open {
 }
 
 .abyss-statistics-controls {
+  flex-wrap: nowrap;
   gap: var(--size-4-2);
 }
 
@@ -10145,7 +10173,7 @@ button.abyss-statistics-evidence-action:hover,
 
 .abyss-statistics-evidence {
   display: flex;
-  flex: 0 1 35%;
+  flex: 0 1 30%;
   flex-direction: column;
   min-block-size: min(8rem, 35%);
   max-block-size: 35%;
@@ -10255,16 +10283,6 @@ button.abyss-statistics-evidence-action:hover,
 @container abyss-task-list (max-width: 42rem) {
   .abyss-statistics-content--rhythm {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .abyss-statistics > .abyss-center-header,
-  .abyss-statistics .abyss-center-controls {
-    flex-wrap: wrap;
-  }
-
-  .abyss-statistics .abyss-center-controls {
-    justify-content: flex-end;
-    min-inline-size: 0;
   }
 }
 

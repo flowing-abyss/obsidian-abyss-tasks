@@ -408,8 +408,11 @@ routine refresh. CenterPanel unmounts outgoing Statistics during the mode notifi
 outer layout changes; scroll is captured before teardown and restored after the first accepted
 content installation on reentry or owner migration, never on background observation updates.
 The root is a bounded flex column: a fixed native header/context, a center-owned chart scroller,
-and a normally absent results region capped at 35% of center height with its own fixed heading and
-records scroller. CompactPaneAccess continues measuring the actual fixed header.
+and a normally absent results region with a 30% basis, capped at 35% of center height, with its own
+fixed heading and records scroller. Plots precede legends and summary metrics in stable document
+order, preserving short-window plot space without reordering on selection. Global header controls
+stay together; Allocation grouping has a separate purposeful row within the measured fixed header.
+CompactPaneAccess continues measuring the actual fixed header.
 Control focus restoration prevents scrolling, and the Statistics scroller disables browser anchoring
 so staged section replacements preserve the user's viewport.
 Shared legends/intensity keys use the same semantic paint as the adapter; explanatory context and
@@ -430,7 +433,10 @@ path: every activation freshly validates and selects the root independently of t
 introduced it. Child actions separately revalidate the complete descendant path. Evidence retains
 plots and keyed chart handles; pointer exploration preserves focus, while presentation-owned keyboard
 activation can focus the results heading without scrolling. Clear restores a connected opener only
-when results own focus. Intent changes and accepted changed observations clear results; unchanged
+when results own focus. Mark headings reuse the shared tooltip description's concise label/series,
+with typed axis labels, tick labels and units; stacked contribution values use weight rather than a
+cumulative endpoint. No opaque selection identity is parsed.
+Intent changes and accepted changed observations clear results; unchanged
 cached observations retain them. Invalidation returns removed-result focus to the stable center
 heading and leaves unrelated inspector/editor focus alone. Archive rows only open their current
 retained source at its line; they never enter mutation queries or task commands. Recorded transitions

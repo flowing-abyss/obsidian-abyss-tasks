@@ -54,11 +54,13 @@ export class StatisticsControls {
     private readonly app_abyssPrivate: App,
     private readonly change_abyssPrivate: (next: Partial<StatisticsChoices>) => void,
   ) {}
-  render(host: HTMLElement, choices: StatisticsChoices): void {
+  render(host: HTMLElement, choices: StatisticsChoices, groupHost = host): void {
     this.document_abyssPrivate = host.ownerDocument;
     this.closing_abyssPrivate = false;
     const focused = host.querySelector(':focus');
+    const groupFocused = groupHost === host ? null : groupHost.querySelector(':focus');
     host.empty();
+    if (groupHost !== host) groupHost.empty();
     if (choices.view !== 'aging' && choices.view !== 'dependencies')
       this.select_abyssPrivate(host, 'Period', PERIODS, {
         value: choices.period,
@@ -69,7 +71,7 @@ export class StatisticsControls {
         },
       });
     if (choices.view === 'allocation') {
-      const group = host.createDiv({
+      const group = groupHost.createDiv({
         cls: 'abyss-cal-view-switcher abyss-statistics-group',
         attr: { role: 'group', 'aria-label': 'Group by' },
       });
@@ -88,6 +90,7 @@ export class StatisticsControls {
       }
     }
     restoreControlFocus(host, focused);
+    if (groupHost !== host) restoreControlFocus(groupHost, groupFocused);
   }
   private select_abyssPrivate(
     host: HTMLElement,

@@ -1053,6 +1053,79 @@ it('keeps charts visible for pointer evidence, preserves scroll on Clear, and re
   expect(content.scrollTop).toBe(128);
   expect(document.activeElement).toBe(outside);
 });
+it('keeps the primary plot ahead of summary stacks before and after evidence opens', async () => {
+  const h = await harness();
+  h.mode.render(h.host);
+  await h.wait();
+  const section = expectDefined(h.host.querySelector('.abyss-statistics-section'));
+  const plot = expectDefined(section.querySelector('.abyss-statistics-charts'));
+  const metrics = expectDefined(section.querySelector('.abyss-statistics-metrics'));
+  const legend = expectDefined(section.querySelector('.abyss-statistics-legend'));
+  expect(plot.compareDocumentPosition(metrics) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(plot.compareDocumentPosition(legend) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const originalChildren = [...section.children];
+  const mounted = expectDefined(h.renderer.mount.mock.calls[0]);
+  mounted[2](
+    expectDefined(mounted[1].marks.find((mark) => mark.selectionId !== undefined)?.selectionId),
+  );
+  expect([...section.children]).toEqual(originalChildren);
+  expect(plot.closest('[hidden]')).toBeNull();
+});
+it('keeps Allocation grouping in a distinct header row outside the global controls', async () => {
+  const h = await harness();
+  h.mode.render(h.host);
+  await h.wait();
+  h.reset();
+  h.mode.navigation.selectView('allocation');
+  await h.wait();
+  const header = expectDefined(h.host.querySelector('.abyss-statistics .abyss-center-header'));
+  const global = expectDefined(header.querySelector('.abyss-center-controls'));
+  const grouping = expectDefined(header.querySelector('[aria-label="Group by"]'));
+  expect(global.contains(grouping)).toBe(false);
+  expect(global.querySelector('[aria-label="Period"]')).not.toBeNull();
+  expect(global.querySelector('[aria-label="Analysis details"]')).not.toBeNull();
+  expect([...grouping.querySelectorAll('button')].map((button) => button.textContent)).toEqual([
+    'Project',
+    'Tags',
+    'Priority',
+  ]);
+  h.reset();
+  expectDefined(grouping.querySelector<HTMLButtonElement>('[aria-label="Group by Tags"]')).click();
+  await h.wait();
+  expect(header.querySelector('[aria-label="Group by Tags"]')?.getAttribute('aria-pressed')).toBe(
+    'true',
+  );
+});
+it('identifies the selected Rhythm date and series in the result heading', async () => {
+  const h = await harness();
+  h.mode.render(h.host);
+  await h.wait();
+  const mounted = expectDefined(h.renderer.mount.mock.calls[0]);
+  const mark = expectDefined(mounted[1].marks.find((mark) => (mark.weight ?? 0) > 0));
+  mounted[2](expectDefined(mark.selectionId));
+  const heading = expectDefined(h.host.querySelector('.abyss-statistics-evidence-header h3'));
+  expect(heading.textContent).toContain(String(mark.x));
+  expect(heading.textContent).toContain(
+    expectDefined(mounted[1].series.find((series) => series.key === mark.series)).label,
+  );
+  expect(heading.textContent).not.toBe(mounted[1].accessibleLabel);
+});
+it('identifies a selected numeric heatmap hour using its typed axis label', async () => {
+  const h = await harness();
+  h.mode.render(h.host);
+  await h.wait();
+  h.reset();
+  h.mode.navigation.selectView('patterns');
+  await h.wait();
+  const mounted = expectDefined(
+    h.renderer.mount.mock.calls.find((call) => call[1].kind === 'heatmap'),
+  );
+  const mark = expectDefined(mounted[1].marks.find((mark) => mark.x === 7));
+  mounted[2](expectDefined(mark.selectionId));
+  const heading = expectDefined(h.host.querySelector('.abyss-statistics-evidence-header h3'));
+  expect(heading.textContent).toContain('Local hour: 07:00');
+  expect(heading.textContent).toContain(`Weekday: ${mark.y}`);
+});
 it.each([true, false])(
   'clears obsolete evidence and restores focus only when removed results owned it (%s)',
   async (focusedResult) => {

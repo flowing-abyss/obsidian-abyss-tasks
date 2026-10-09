@@ -22,6 +22,7 @@ import type { StatisticsChartRenderer } from './StatisticsChart';
 import { statisticsButton, StatisticsControls, type StatisticsChoices } from './StatisticsControls';
 import { StatisticsDetails } from './StatisticsDetails';
 import { StatisticsEvidence, type StatisticsEvidenceHost } from './StatisticsEvidence';
+import { statisticsMarkDescription } from './statisticsFormat';
 import type { StatisticsNavigationPort } from './StatisticsNavigation';
 import { StatisticsSections } from './StatisticsSections';
 import { StatisticsWorkScheduler } from './StatisticsWorkScheduler';
@@ -65,6 +66,7 @@ export class StatisticsMode {
   private selectionOpener_abyssPrivate: HTMLElement | SVGElement | null = null;
   private root_abyssPrivate: HTMLElement | undefined;
   private controlsHost_abyssPrivate: HTMLElement | undefined;
+  private groupHost_abyssPrivate: HTMLElement | undefined;
   private label_abyssPrivate: HTMLElement | undefined;
   private status_abyssPrivate: HTMLElement | undefined;
   private content_abyssPrivate: HTMLElement | undefined;
@@ -186,6 +188,7 @@ export class StatisticsMode {
       headerControls = header.createDiv({ cls: 'abyss-center-controls' });
     this.title_abyssPrivate = title;
     this.controlsHost_abyssPrivate = headerControls.createDiv({ cls: 'abyss-statistics-controls' });
+    this.groupHost_abyssPrivate = header.createDiv({ cls: 'abyss-statistics-group-controls' });
     const details = headerControls.createEl('button', {
       cls: 'abyss-view-state-btn',
       attr: { type: 'button', 'aria-label': 'Analysis details' },
@@ -203,7 +206,15 @@ export class StatisticsMode {
         );
     });
     this.options_abyssPrivate.host.header?.(header, title, headerControls);
-    this.controls_abyssPrivate.render(this.controlsHost_abyssPrivate, this.choices_abyssPrivate);
+    this.renderControls_abyssPrivate();
+  }
+  private renderControls_abyssPrivate(): void {
+    if (this.controlsHost_abyssPrivate !== undefined)
+      this.controls_abyssPrivate.render(
+        this.controlsHost_abyssPrivate,
+        this.choices_abyssPrivate,
+        this.groupHost_abyssPrivate,
+      );
   }
   private isAttached_abyssPrivate(host: HTMLElement): boolean {
     return (
@@ -274,8 +285,7 @@ export class StatisticsMode {
     if (this.content_abyssPrivate !== undefined) this.content_abyssPrivate.hidden = true;
     this.label_abyssPrivate?.setText('Preparing analysis…');
     this.status_abyssPrivate?.empty();
-    if (this.controlsHost_abyssPrivate !== undefined)
-      this.controls_abyssPrivate.render(this.controlsHost_abyssPrivate, this.choices_abyssPrivate);
+    this.renderControls_abyssPrivate();
     this.schedule_abyssPrivate(false);
   }
   private schedule_abyssPrivate(background: boolean): void {
@@ -430,8 +440,7 @@ export class StatisticsMode {
     );
     this.sourceStatus_abyssPrivate(model);
     if (this.content_abyssPrivate !== undefined) this.content_abyssPrivate.hidden = false;
-    if (this.controlsHost_abyssPrivate !== undefined)
-      this.controls_abyssPrivate.render(this.controlsHost_abyssPrivate, this.choices_abyssPrivate);
+    this.renderControls_abyssPrivate();
     this.renderActions_abyssPrivate(model);
     this.options_abyssPrivate.host.renderComplete();
     if (restoreScroll && this.content_abyssPrivate !== undefined)
@@ -601,7 +610,8 @@ function selectionLabel(model: StatisticsViewModel, id: string): string {
     if (legend !== undefined) return legend.label;
     for (const chart of section.charts) {
       const mark = chart.marks.find((mark) => mark.selectionId === id);
-      if (mark !== undefined) return mark.label ?? chart.accessibleLabel;
+      if (mark !== undefined)
+        return statisticsMarkDescription(mark, chart).split('\n').slice(0, 2).join(' · ');
     }
   }
   return 'Selected records';

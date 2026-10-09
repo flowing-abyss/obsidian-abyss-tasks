@@ -71,9 +71,6 @@ export class StatisticsSections {
     const element = this.host_abyssPrivate.createEl('section', { cls: 'abyss-statistics-section' });
     const heading = element.createDiv({ cls: 'abyss-statistics-section-heading' });
     heading.createEl('h3', { text: model.title });
-    this.metrics_abyssPrivate(element, model);
-    this.legend_abyssPrivate(element, model);
-    this.intensity_abyssPrivate(element, model);
     const charts = new StatisticsCharts(
       element.createDiv(),
       this.renderer_abyssPrivate,
@@ -86,6 +83,9 @@ export class StatisticsSections {
       element.remove();
       throw error;
     }
+    this.legend_abyssPrivate(element, model);
+    this.intensity_abyssPrivate(element, model);
+    this.metrics_abyssPrivate(element, model);
     if (model.charts.length > 0 && model.charts.every((chart) => chart.marks.length === 0))
       element.createDiv({ text: 'No eligible records in this selection.' });
     return { element, charts, model };

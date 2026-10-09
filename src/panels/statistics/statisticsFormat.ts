@@ -1,4 +1,9 @@
-import type { StatisticsChartModel, StatisticsMark, StatisticsTone } from '../../statistics';
+import type {
+  StatisticsAxis,
+  StatisticsChartModel,
+  StatisticsMark,
+  StatisticsTone,
+} from '../../statistics';
 
 type PaintKey = {
   readonly key: string;
@@ -23,6 +28,7 @@ const TONE_TOKENS: Record<StatisticsTone, string> = {
   muted: '--text-faint',
   accent: '--interactive-accent',
 };
+const UNIT_SUFFIXES: Record<string, string> = { days: ' d', minutes: ' min', count: '' };
 function categorySlot(key: string): number {
   let hash = 0;
   for (const character of key) hash = (Math.imul(hash, 31) + character.charCodeAt(0)) >>> 0;
@@ -79,12 +85,26 @@ function observationDescription(mark: StatisticsMark): string[] {
   if (mark.overdue !== undefined) pieces.push(`${mark.overdue} overdue`);
   return pieces;
 }
+function axisDescription(axis: StatisticsAxis, value: number | string): string {
+  const label = axis.tickLabels?.find(([position]) => position === value)?.[1];
+  const unit = axis.type === 'number' ? axis.unit : undefined;
+  const suffix = unit === undefined ? '' : (UNIT_SUFFIXES[unit] ?? ` ${unit}`);
+  const formatted = label ?? (typeof value === 'number' ? statisticsNumber(value, suffix) : value);
+  return `${axis.label}: ${formatted}`;
+}
+function markLabel(mark: StatisticsMark, model: StatisticsChartModel): string {
+  const y =
+    model.kind === 'bars' && mark.y2 !== undefined && mark.weight !== undefined
+      ? mark.weight
+      : mark.y;
+  return mark.label ?? `${axisDescription(model.x, mark.x)} · ${axisDescription(model.y, y)}`;
+}
 export function statisticsMarkDescription(
   mark: StatisticsMark,
   model: StatisticsChartModel,
 ): string {
   const series = model.series.find((candidate) => candidate.key === mark.series);
-  const pieces = [mark.label ?? `${mark.x}, ${mark.y}`, series?.label];
+  const pieces = [markLabel(mark, model), series?.label];
   pieces.push(...observationDescription(mark));
   if (mark.clock !== undefined)
     pieces.push(
